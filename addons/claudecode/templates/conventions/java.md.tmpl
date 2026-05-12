@@ -1,0 +1,14 @@
+### Java/Kotlin (JVM)
+
+- Follow standard Java naming: `PascalCase` for classes, `camelCase` for methods and variables, `UPPER_SNAKE_CASE` for constants.
+- Use constructor injection for dependencies. Avoid field injection and `@Autowired` on fields.
+- Prefer immutable data classes. In Kotlin use `data class`; in Java use records or final fields with builder pattern.
+- Handle exceptions at the appropriate layer. Do not catch `Exception` or `Throwable` broadly — catch specific types.
+- Write unit tests with JUnit 5. Use `@ParameterizedTest` for data-driven tests.
+- Use `Optional` for nullable return types in Java. In Kotlin, use nullable types with `?` instead of null checks.
+- Close resources with try-with-resources (Java) or `.use {}` (Kotlin). Never leave streams or connections unclosed.
+- Keep Maven/Gradle dependencies locked. Use dependency verification or a lock file. Do not add dependencies via raw CLI commands.
+- Prefer `final` variables in Java and `val` in Kotlin to reduce mutability.
+- Run `mvn verify` or `gradle check` before committing to catch compilation and test failures.
+- Use SLF4J for logging. Never use `System.out.println` in production code.
+- Apply null-safety annotations (`@NonNull`, `@Nullable`) on public API boundaries in Java code.

@@ -1,0 +1,14 @@
+### Terraform/OpenTofu
+
+- Use modules to organize infrastructure. Keep root modules thin — delegate to child modules.
+- Pin provider and module versions explicitly. Use `~>` for minor version constraints, not `>=`.
+- Name resources with `snake_case`. Use descriptive names that reflect purpose, not implementation.
+- Always run `terraform plan` and review the plan before applying changes.
+- Use `terraform fmt` to enforce consistent formatting. Run it before every commit.
+- Store remote state in a backend with locking (S3+DynamoDB, GCS, Terraform Cloud). Never commit `.tfstate` files.
+- Use variables and locals for values referenced more than once. Avoid hardcoded strings.
+- Define output values for any resource attributes that downstream modules or scripts need.
+- Use `terraform validate` and `tflint` in CI to catch configuration errors early.
+- Tag all resources with at minimum: `project`, `environment`, and `managed-by = "terraform"`.
+- Separate environments (dev/staging/prod) using workspaces or separate root modules — not conditionals.
+- Use `moved` blocks for resource renames. Never delete and recreate resources that hold state.

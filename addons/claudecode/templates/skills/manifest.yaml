@@ -1,0 +1,25 @@
+skills:
+  - name: deploy
+    description: "Deploy to staging/production via CI pipeline"
+    tags: [ops, ci, deployment]
+    applicable_languages: []
+  - name: review-pr
+    description: "Structured pull request review with checklist"
+    tags: [review, quality]
+    applicable_languages: []
+  - name: security-review
+    description: "Security-focused code review with OWASP checks"
+    tags: [security, review]
+    applicable_languages: []
+  - name: generate-tests
+    description: "Generate comprehensive test suites for existing code"
+    tags: [testing, quality]
+    applicable_languages: []
+  - name: refactor
+    description: "Refactor code for clarity, performance, and maintainability"
+    tags: [refactoring, quality]
+    applicable_languages: []
+  - name: db-migration
+    description: "Create safe, reversible database schema migrations"
+    tags: [database, ops]
+    applicable_languages: [go, python, javascript]

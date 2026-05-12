@@ -1,0 +1,13 @@
+{ pkgs, lib, ... }:
+{
+  packages = {{ nixPkgList .Packages }};
+  bareList = {{ nixList .BareItems }};
+  stringList = {{ nixStringList .StringItems }};
+  greeting = {{ nixString .Greeting }};
+  enableFeature = {{ nixBool .EnableFeature }};
+  shellScript = ''
+    {{ nixMultiline .ShellScript }}
+  '';
+  env = {{ nixAttrSet .EnvVars }};
+{{ indent 2 .IndentedBlock }}
+}

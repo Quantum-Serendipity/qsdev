@@ -1,0 +1,17 @@
+{{ comment "##" .Header }}
+
+{{ upper .Title }}
+
+{{ lower .Subtitle }}
+
+{{ if hasAny .Tags }}Tags: {{ join ", " .Tags }}{{ end }}
+
+{{ if contains .Tags "go" }}This is a Go project.{{ end }}
+
+{{ $meta := dict "version" .Version "name" .Name }}Version: {{ index $meta "version" }}, Name: {{ index $meta "name" }}
+
+Default value: {{ default "fallback" .MaybeEmpty }}
+
+{{ nindent 4 .Block }}
+
+{{ trimTrailingNewline .TrailingText }}

@@ -1,0 +1,16 @@
+### JavaScript / TypeScript
+
+- Use strict TypeScript (`"strict": true` in tsconfig.json) for all new code.
+- Prefer `const` over `let`; never use `var`.
+- Add explicit return types on all exported functions and public API boundaries.
+- Use `unknown` instead of `any`. If `any` is unavoidable, add a comment explaining why.
+- Run the type checker (`tsc --noEmit`) before committing to catch type errors early.
+- Prefer named exports over default exports for better refactoring and auto-import support.
+- Use `async/await` over raw Promises and `.then()` chains for readability.
+- Handle all Promise rejections. Never leave a `.catch()` empty or omit error handling.
+- Prefer `===` and `!==` over loose equality operators.
+- Use template literals instead of string concatenation for multi-part strings.
+- Keep dependencies minimal. Audit new packages for size, maintenance status, and supply chain risk.
+- Write tests alongside implementation. Prefer integration tests that exercise real behavior over mocks.
+- Use `readonly` on properties and parameters that should not be mutated.
+- Avoid side effects in module scope. Defer initialization to explicit function calls.

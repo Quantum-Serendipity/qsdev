@@ -1,0 +1,77 @@
+# CLAUDE.md
+
+<!-- BEGIN GENERATED SECTION — do not edit between markers -->
+
+## Project Overview
+
+{{ .ProjectDescription }}
+{{ if .ArchitectureNotes }}
+
+## Architecture
+
+{{ .ArchitectureNotes }}
+{{ end }}
+{{ if hasAny .BuildCommands }}
+
+## Build Commands
+
+```bash
+{{ range .BuildCommands -}}
+{{ . }}
+{{ end -}}
+```
+{{ end }}
+{{ if hasAny .TestCommands }}
+
+## Test Commands
+
+```bash
+{{ range .TestCommands -}}
+{{ . }}
+{{ end -}}
+```
+{{ end }}
+{{ if hasAny .LintCommands }}
+
+## Lint Commands
+
+```bash
+{{ range .LintCommands -}}
+{{ . }}
+{{ end -}}
+```
+{{ end }}
+{{ if hasAny .Languages }}
+
+## Language Conventions
+{{ range .Languages }}
+{{ if eq (lower .) "go" }}{{ template "conventions/go.md" }}{{ end -}}
+{{ if eq (lower .) "javascript/typescript" }}{{ template "conventions/javascript.md" }}{{ end -}}
+{{ if eq (lower .) "python" }}{{ template "conventions/python.md" }}{{ end -}}
+{{ if eq (lower .) "rust" }}{{ template "conventions/rust.md" }}{{ end -}}
+{{ if eq (lower .) "java/kotlin (jvm)" }}{{ template "conventions/java.md" }}{{ end -}}
+{{ if eq (lower .) "c#/.net" }}{{ template "conventions/dotnet.md" }}{{ end -}}
+{{ if eq (lower .) "docker / containerfiles" }}{{ template "conventions/docker.md" }}{{ end -}}
+{{ if eq (lower .) "terraform/opentofu" }}{{ template "conventions/terraform.md" }}{{ end -}}
+{{ end }}
+{{ end }}
+
+## Security
+
+- All packages are managed through devenv.nix — do not run raw install commands outside the Nix shell.
+- Never commit secrets, tokens, or credentials. The pre-commit hook `ripsecrets` blocks accidental leaks.
+- Lock files must always be committed. Never delete or regenerate lock files without review.
+{{- if hasAny .PackageManagers }}
+- Package managers in this project: {{ join ", " .PackageManagers }}.
+{{- end }}
+{{- if .HasSecurityHooks }}
+- Safety-block hooks are enabled. Claude Code will be blocked from running destructive commands.
+{{- end }}
+- Prefer vendored or pinned dependencies over floating version ranges.
+- Review all dependency updates for supply chain risk before merging.
+
+<!-- END GENERATED SECTION -->
+
+## Custom Instructions
+
+Add your project-specific instructions below this line.

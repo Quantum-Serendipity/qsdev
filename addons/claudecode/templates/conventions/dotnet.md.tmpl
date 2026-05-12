@@ -1,0 +1,14 @@
+### C#/.NET
+
+- Follow .NET naming conventions: `PascalCase` for public members and types, `camelCase` for local variables, `_camelCase` for private fields.
+- Use `async`/`await` consistently. Never block on async code with `.Result` or `.Wait()`.
+- Prefer records or `readonly struct` for immutable data transfer objects.
+- Use dependency injection via `IServiceCollection`. Avoid `new`-ing services directly.
+- Handle errors with specific exception types. Use `ArgumentException` for invalid parameters, not generic `Exception`.
+- Write tests with xUnit or NUnit. Use `[Theory]`/`[InlineData]` for parameterized tests.
+- Use `IDisposable`/`IAsyncDisposable` and `using` statements for resource cleanup.
+- Keep NuGet packages locked via `packages.lock.json`. Run `dotnet restore --locked-mode` in CI.
+- Prefer LINQ for collection transformations but avoid deeply nested LINQ chains that hurt readability.
+- Enable nullable reference types (`<Nullable>enable</Nullable>`) and resolve all nullability warnings.
+- Run `dotnet build --warnaserror` and `dotnet test` before committing.
+- Use `string.Empty` instead of `""` and `nameof()` instead of magic strings for member references.

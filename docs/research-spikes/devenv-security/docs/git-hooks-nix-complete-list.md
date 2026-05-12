@@ -1,0 +1,93 @@
+# Complete List of git-hooks.nix Hooks
+- **Source**: https://raw.githubusercontent.com/cachix/git-hooks.nix/master/modules/hooks.nix
+- **Retrieved**: 2026-05-12
+
+## Security-Related Hooks
+- **ripsecrets** - Detect secrets and credentials in code
+- **reuse** - License compliance checking tool (REUSE specification)
+- **check-added-large-files** - Prevent large file commits
+- **no-commit-to-branch** - Branch protection hook
+
+## Linting & Formatting Hooks (Complete List, 120+)
+- **actionlint** - Validate GitHub Actions workflow files
+- **action-validator** - Validate GitHub Action and Workflow YAML
+- **alejandra** - Nix code formatter
+- **ansible-lint** - Ansible playbook linter
+- **autoflake** - Remove unused Python imports/variables
+- **biome** - Web project toolchain (formatting/linting)
+- **black** - Python code formatter
+- **cabal-fmt** - Haskell Cabal file formatter
+- **cabal-gild** - Cabal file formatter
+- **cabal2nix** - Convert Cabal to Nix
+- **cargo-check** - Rust package error checker
+- **cargo-sort** - Sort Cargo.toml
+- **chart-testing** - Helm chart linter
+- **checkmake** - Makefile analyzer
+- **check-builtin-literals** - Python literal syntax enforcer
+- **check-case-conflicts** - Case conflict detector
+- **clippy** - Rust linter
+- **cmake-format** - CMake formatter
+- **convco** - Conventional commits validator
+- **credo** - Elixir linter
+- **deadnix** - Nix dead code remover
+- **denofmt** - Deno formatter
+- **denolint** - Deno linter
+- **dune-fmt** - OCaml formatter
+- **eclint** - EditorConfig linter
+- **eslint** - JavaScript linter
+- **flake8** - Python linter
+- **flynt** - Python f-string converter
+- **fourmolu** - Haskell formatter
+- **golines** - Go line shortener
+- **gotest** - Go test runner
+- **headache** - Header file manager
+- **hledger-fmt** - Ledger formatter
+- **hlint** - Haskell linter
+- **hpack** - Haskell package generator
+- **isort** - Python import sorter
+- **latexindent** - LaTeX indenter
+- **lacheck** - LaTeX linter
+- **lua-ls** - Lua language server
+- **lychee** - Link checker
+- **markdownlint** - Markdown linter
+- **mdl** - Markdown linter
+- **mkdocs-linkcheck** - MkDocs link validator
+- **mypy** - Python type checker
+- **nbstripout** - Jupyter notebook stripper
+- **nil** - Nix language server
+- **nixf-diagnose** - Nix diagnostics
+- **nixfmt** - Nix formatter
+- **nixfmt-classic** - Legacy Nix formatter
+- **nixfmt-rfc-style** - RFC 166 Nix formatter
+- **nufmt** - Nu shell formatter
+- **ormolu** - Haskell formatter
+- **oxfmt** - Oxidation formatter
+- **oxlint** - JavaScript/TypeScript linter
+- **php-cs-fixer** - PHP formatter
+- **phpcbf** - PHP code beautifier
+- **phpcs** - PHP code sniffer
+- **phpstan** - PHP static analyzer
+- **prettier** - Multi-language formatter
+- **pretty-format-json** - JSON formatter
+- **proselint** - Prose linter
+- **promtool-rules** - Prometheus rules validator
+- **psalm** - PHP static analyzer
+- **pylint** - Python linter
+- **pyright** - Python type checker
+- **pyupgrade** - Python syntax upgrader
+- **regal** - Rego policy linter
+- **revive** - Go linter
+- **rome** - (Deprecated; use biome)
+- **rumdl** - Markdown linter
+- **rustfmt** - Rust formatter
+- **shfmt** - Shell formatter
+- **sqlfluff** - SQL linter/formatter
+- **statix** - Nix linter
+- **sort-file-contents** - File content sorter
+- **treefmt** - Multi-language formatter
+- **typos** - Spell checker
+- **uv-export** - Python dependency exporter
+- **vale** - Prose style checker
+- **woodpecker-cli-lint** - CI workflow validator
+- **yamlfmt** - YAML formatter
+- **yamllint** - YAML linter

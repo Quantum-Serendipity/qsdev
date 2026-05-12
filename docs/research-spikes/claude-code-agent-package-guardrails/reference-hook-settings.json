@@ -1,0 +1,77 @@
+{
+  "$comment": [
+    "Claude Code settings.json for package install guardrails.",
+    "Place this in .claude/settings.json (project-level, shared via git),",
+    "~/.claude/settings.json (user-level), or",
+    "/etc/claude-code/managed-settings.json (enterprise, non-overridable).",
+    "",
+    "Three layers of defense:",
+    "  1. PreToolUse hook — validates packages against OSV.dev + registry age",
+    "  2. Permission deny rules — blocks dangerous command patterns outright",
+    "  3. Permission ask rules — requires user approval for risky operations"
+  ],
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/.claude/hooks/reference-hook-script.py",
+            "timeout": 30,
+            "if": "Bash(npm install *) || Bash(npm i *) || Bash(npm add *) || Bash(npx *) || Bash(yarn add *) || Bash(yarn install *) || Bash(pnpm add *) || Bash(pnpm install *) || Bash(pnpm i *) || Bash(bun add *) || Bash(bun install *) || Bash(bun i *) || Bash(pip install *) || Bash(pip3 install *) || Bash(uv pip install *) || Bash(uv add *) || Bash(cargo add *) || Bash(cargo install *) || Bash(go get *) || Bash(go install *) || Bash(gem install *) || Bash(composer require *) || Bash(nix-env *) || Bash(nix profile install *)",
+            "statusMessage": "Checking package safety against vulnerability databases..."
+          }
+        ]
+      }
+    ]
+  },
+
+  "permissions": {
+    "deny": [
+      "Bash(curl * | bash)",
+      "Bash(curl * | sh)",
+      "Bash(wget * | bash)",
+      "Bash(wget * | sh)",
+      "Bash(curl * | sudo bash)",
+      "Bash(curl * | sudo sh)",
+      "Bash(wget * | sudo bash)",
+      "Bash(wget * | sudo sh)",
+
+      "Bash(nix-env *)",
+      "Bash(nix-env -i *)",
+      "Bash(nix-env --install *)",
+
+      "Bash(cachix use *)",
+
+      "Bash(npm install --registry https://registry.npmjs.org*)",
+      "Bash(npm i --registry https://registry.npmjs.org*)",
+      "Bash(yarn add --registry https://registry.npmjs.org*)",
+      "Bash(pnpm add --registry https://registry.npmjs.org*)",
+      "Bash(pip install --index-url https://pypi.org*)",
+      "Bash(pip3 install --index-url https://pypi.org*)",
+
+      "Bash(npm install -g *)",
+      "Bash(npm i -g *)",
+      "Bash(npm install --global *)",
+      "Bash(pip install --user *)",
+      "Bash(pip3 install --user *)",
+      "Bash(sudo pip install *)",
+      "Bash(sudo pip3 install *)",
+      "Bash(sudo npm install *)",
+      "Bash(sudo gem install *)"
+    ],
+
+    "ask": [
+      "Bash(nix flake update *)",
+      "Bash(nix flake update)",
+      "Bash(nix profile install *)",
+      "Bash(npm install)",
+      "Bash(npm i)",
+      "Bash(yarn install)",
+      "Bash(pnpm install)",
+      "Bash(bun install)"
+    ]
+  }
+}

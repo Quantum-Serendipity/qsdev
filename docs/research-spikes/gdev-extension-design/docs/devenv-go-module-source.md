@@ -1,0 +1,127 @@
+# devenv Go Language Module Source Code (go.nix)
+- **Source**: https://raw.githubusercontent.com/cachix/devenv/main/src/modules/languages/go.nix
+- **Retrieved**: 2026-05-12
+
+```nix
+{ pkgs, config, lib, ... }:
+
+let
+  cfg = config.languages.go;
+
+  go-overlay = config.lib.getInput {
+    name = "go-overlay";
+    url = "github:purpleclay/go-overlay";
+    attribute = "languages.go.version";
+    follows = [ "nixpkgs" ];
+  };
+
+  go-bin = go-overlay.lib.mkGoBin pkgs;
+
+  buildGoModule = pkgs.buildGoModule.override { go = cfg.package; };
+  
+  buildWithSpecificGo = pkg:
+    let
+      overrideArgs = lib.functionArgs pkg.override;
+      goModuleArgs = lib.filterAttrs (name: _: lib.match "buildGo.*Module" name != null) overrideArgs;
+      goModuleOverrides = lib.mapAttrs (_: _: buildGoModule) goModuleArgs;
+    in
+    if goModuleOverrides != { } then
+      pkg.override goModuleOverrides
+    else
+      throw ''
+        `languages.go` failed to override the Go version for ${pkg.pname or "unknown"}.
+        Expected to find a `buildGo*Module` argument in its override function.
+
+        Found: ${toString (lib.attrNames overrideArgs)}
+      '';
+in
+{
+  options.languages.go = {
+    enable = lib.mkEnableOption "tools for Go development";
+
+    package = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.go;
+      defaultText = lib.literalExpression "pkgs.go";
+      description = "The Go package to use.";
+    };
+
+    version = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = ''
+        The Go version to use.
+        This automatically sets the `languages.go.package` using [go-overlay](https://github.com/purpleclay/go-overlay).
+      '';
+      example = "1.22.0";
+    };
+
+    enableHardeningWorkaround = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Enable hardening workaround required for Delve debugger (https://github.com/go-delve/delve/issues/3085)";
+    };
+
+    delve = {
+      enable = lib.mkEnableOption "Delve debugger" // { default = true; };
+      package = lib.mkOption {
+        type = lib.types.package;
+        default = pkgs.delve;
+        defaultText = lib.literalExpression "pkgs.delve";
+        description = "The Delve package to use. Override this to customize the build, e.g. to disable tests.";
+      };
+    };
+
+    lsp = {
+      enable = lib.mkEnableOption "Go Language Server" // { default = true; };
+      package = lib.mkOption {
+        type = lib.types.package;
+        default = pkgs.gopls;
+        defaultText = lib.literalExpression "pkgs.gopls";
+        description = "The Go language server package to use.";
+      };
+    };
+  };
+
+  config = lib.mkIf cfg.enable {
+    languages.go.package = lib.mkIf (cfg.version != null) (
+      go-bin.versions.${cfg.version}
+        or (throw "Unsupported Go version '${cfg.version}', see https://github.com/purpleclay/go-overlay for supported versions")
+    );
+
+    packages = [
+      cfg.package
+    ]
+    ++ lib.optional cfg.delve.enable (buildWithSpecificGo cfg.delve.package)
+    ++ [
+      (buildWithSpecificGo pkgs.gotools)
+      (buildWithSpecificGo pkgs.gomodifytags)
+      (buildWithSpecificGo pkgs.impl)
+      (buildWithSpecificGo pkgs.go-tools)
+      (buildWithSpecificGo pkgs.gotests)
+      (buildWithSpecificGo pkgs.iferr)
+    ] ++ lib.optional cfg.lsp.enable (buildWithSpecificGo cfg.lsp.package);
+
+    hardeningDisable = lib.optional (cfg.enableHardeningWorkaround) "fortify";
+
+    env.GOROOT = cfg.package + "/share/go/";
+    env.GOPATH = config.env.DEVENV_STATE + "/go";
+    env.GOTOOLCHAIN = "local";
+
+    enterShell = ''
+      export PATH=$GOPATH/bin:$PATH
+    '';
+  };
+}
+```
+
+## Key Patterns
+
+1. **Standard module structure**: `{ pkgs, config, lib, ... }:` function signature
+2. **Config shorthand**: `cfg = config.languages.go;`
+3. **Lazy input fetching**: `config.lib.getInput` fetches overlays only when version option is used
+4. **Option types**: `mkEnableOption`, `mkOption` with `types.package`, `types.str`, `types.bool`, `types.nullOr`
+5. **Conditional config**: `lib.mkIf cfg.enable { ... }` gates entire config block
+6. **Package override pattern**: `buildWithSpecificGo` ensures all Go tools use the same Go version
+7. **Environment variables**: Set via `env.GOROOT`, `env.GOPATH`, etc.
+8. **Shell initialization**: `enterShell` adds Go bin to PATH

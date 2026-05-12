@@ -1,0 +1,24 @@
+# Go
+.go/
+vendor/
+*.exe
+*.test
+*.out
+
+# Nix
+result
+result-*
+.direnv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated
+dist/

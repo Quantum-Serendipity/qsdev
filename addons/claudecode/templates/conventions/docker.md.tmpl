@@ -1,0 +1,14 @@
+### Docker / Containerfiles
+
+- Use multi-stage builds to keep final images small. Separate build dependencies from runtime.
+- Pin base image versions with full digests or specific tags — never use `latest` in production Dockerfiles.
+- Run containers as non-root. Add a `USER` instruction after installing packages.
+- Order Dockerfile instructions from least to most frequently changed for optimal layer caching.
+- Use `.dockerignore` to exclude `.git/`, `node_modules/`, build artifacts, and secrets from the build context.
+- Prefer `COPY` over `ADD` unless you specifically need tar extraction or URL fetching.
+- Combine `RUN` commands with `&&` to reduce layers. Clean up package manager caches in the same layer.
+- Use `HEALTHCHECK` instructions for services that should be monitored.
+- Never embed secrets, tokens, or credentials in Dockerfiles. Use build secrets (`--mount=type=secret`) or runtime environment variables.
+- Validate Dockerfiles with `hadolint` before committing. Fix all warnings.
+- Use explicit `EXPOSE` declarations to document which ports the container listens on.
+- Prefer `ENTRYPOINT` with `CMD` for default arguments over shell-form commands.

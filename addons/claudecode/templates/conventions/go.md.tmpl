@@ -1,0 +1,16 @@
+### Go
+
+- Always handle errors explicitly. Wrap errors with context using `fmt.Errorf("doing X: %w", err)`.
+- Use table-driven tests with `t.Run` subtests for comprehensive coverage.
+- Place internal implementation details in `internal/` packages to enforce encapsulation.
+- Follow Go naming conventions: MixedCaps (exported) and mixedCaps (unexported). No underscores in names.
+- Prefer stdlib packages over third-party dependencies when reasonable.
+- Accept `context.Context` as the first parameter in functions that do I/O or may be cancelled.
+- Use `struct{}` for signal channels and sets. Prefer `make` over `var` for maps and slices you will write to.
+- Group imports into stdlib, external, and internal blocks separated by blank lines.
+- Write doc comments on all exported types, functions, and package declarations.
+- Run `go vet ./...` and `golangci-lint run` before committing.
+- Do not use `init()` functions unless absolutely necessary; prefer explicit initialization.
+- Prefer returning errors over panicking. Reserve `panic` for truly unrecoverable programmer mistakes.
+- Use `t.Helper()` in test helper functions so failure messages report the correct call site.
+- Avoid global mutable state. Pass dependencies explicitly via function parameters or struct fields.

@@ -1,0 +1,78 @@
+{ pkgs, lib, config, ... }:
+{
+  # Base packages
+  packages = {{ nixPkgList .Packages }};
+{{range $key, $val := .EnvVars}}
+  env.{{ $key }} = {{ nixString $val }};
+{{- end}}
+
+  # Credential-bearing variables stripped from the shell
+  unsetEnvVars = {{ nixStringList .UnsetEnvVars }};
+
+  # Disable .env file loading for security
+  dotenv.enable = false;
+{{- range .LanguageFragments}}
+
+  # {{ .DisplayName }}
+{{ .NixFragment | trimTrailingNewline }}
+{{- end}}
+{{- if .Services}}
+
+  # Services
+{{- range .Services}}
+  services.{{ .NixName }} = {
+    enable = true;
+{{- range .ConfigLines}}
+    {{ . }}
+{{- end}}
+  };
+{{- end}}
+{{- end}}
+{{- if .GitHooksEnabled}}
+
+  # Git hooks — managed by prek (devenv 1.11+ default hook runner).
+  # Tiers: baseline (always-on), enhanced (language-aware), specialized (custom)
+  git-hooks.hooks = {
+    # Baseline security hooks (always enabled)
+{{- range .SecurityHooks}}
+    {{ . }}.enable = true;
+{{- end}}
+    # Enhanced hooks (language-aware, from ecosystem modules)
+{{- range .BuiltInHooks}}
+    {{ . }}.enable = true;
+{{- end}}
+    # Specialized hooks (custom definitions)
+{{- range .CustomHooks}}
+    {{ .ID }} = {
+      enable = true;
+      name = {{ nixString .Name }};
+      description = {{ nixString .Description }};
+{{- if .RawEntry }}
+      entry = {{ .Entry }};
+{{- else }}
+      entry = {{ nixString .Entry }};
+{{- end }}
+      language = {{ nixString .Language }};
+{{- if .Types}}
+      types = {{ nixStringList .Types }};
+{{- end}}
+{{- if .Stages}}
+      stages = {{ nixStringList .Stages }};
+{{- end}}
+{{- if .Files}}
+      files = {{ nixString .Files }};
+{{- end}}
+      pass_filenames = {{ nixBool .PassFilenames }};
+    };
+{{- end}}
+  };
+{{- end}}
+
+  enterShell = ''
+{{ nixMultiline .EnterShell | indent 4 }}
+  '';
+
+  enterTest = ''
+{{ nixMultiline .EnterTest | indent 4 }}
+  '';
+}

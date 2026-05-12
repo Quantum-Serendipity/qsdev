@@ -1,0 +1,16 @@
+### Python
+
+- Add type hints to all public function signatures and class attributes.
+- Use `pathlib.Path` instead of `os.path` for file system operations.
+- Prefer `dataclasses` or Pydantic models over plain dicts for structured data.
+- Use f-strings for string formatting. Avoid `.format()` and `%`-style formatting.
+- Write tests with `pytest`. Use fixtures for shared setup and parametrize for variant coverage.
+- Use `ruff` for linting and formatting. Run `ruff check .` before committing.
+- Prefer `from __future__ import annotations` for modern annotation syntax in older Python versions.
+- Use context managers (`with` statements) for resource management (files, connections, locks).
+- Raise specific exception types rather than bare `Exception` or `RuntimeError`.
+- Avoid mutable default arguments. Use `None` as default and initialize inside the function body.
+- Keep functions short and focused. Extract helpers rather than nesting deeply.
+- Use `logging` instead of `print()` for diagnostic output in library and application code.
+- Prefer list comprehensions and generator expressions over `map()`/`filter()` with lambdas.
+- Pin dependencies in `requirements.txt` or `pyproject.toml`. Never use unpinned ranges in production.

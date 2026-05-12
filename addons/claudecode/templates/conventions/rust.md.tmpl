@@ -1,0 +1,16 @@
+### Rust
+
+- Propagate errors with the `?` operator. Use `anyhow::Result` for applications and custom error types for libraries.
+- Run `cargo clippy` before committing and address all warnings.
+- Prefer `&str` over `String` in function parameters to avoid unnecessary allocations.
+- Derive `Debug` on all public types. Also derive `Clone`, `PartialEq`, and `Eq` where semantically appropriate.
+- Write doc comments (`///`) on all public items. Include examples in doc comments for non-trivial APIs.
+- Use `#[must_use]` on functions whose return value should not be silently discarded.
+- Prefer iterators and combinators (`.map()`, `.filter()`, `.collect()`) over manual loops when they improve clarity.
+- Avoid `unwrap()` and `expect()` in library code. Reserve them for cases where failure is a programmer bug.
+- Use `cargo fmt` to maintain consistent formatting across the codebase.
+- Prefer enums with data over stringly-typed interfaces for representing variants.
+- Keep `unsafe` blocks minimal and well-documented. Always add a `// SAFETY:` comment explaining the invariants.
+- Use `Cow<'_, str>` when a function might or might not need to allocate a new string.
+- Organize modules with `pub(crate)` visibility by default; only `pub` items that are part of the external API.
+- Write both unit tests (in `#[cfg(test)]` modules) and integration tests (in `tests/`) for thorough coverage.

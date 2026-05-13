@@ -238,6 +238,11 @@ func updateCmd() *cobra.Command {
 }
 
 func addServiceCmd() *cobra.Command {
+	var (
+		force  bool
+		dryRun bool
+	)
+
 	cmd := &cobra.Command{
 		Use:       "add-service <name>",
 		Short:     "Add a development service to the environment",
@@ -263,17 +268,28 @@ func addServiceCmd() *cobra.Command {
 				return err
 			}
 
-			// Check for duplicate.
-			for _, svc := range answers.Services {
-				if svc.Name == serviceName {
-					return fmt.Errorf("service %q is already configured", serviceName)
+			// Check for duplicate (skip when --force is set).
+			if !force {
+				for _, svc := range answers.Services {
+					if svc.Name == serviceName {
+						return fmt.Errorf("service %q is already configured; use --force to overwrite", serviceName)
+					}
 				}
 			}
 
-			// Add service.
-			answers.Services = append(answers.Services, types.ServiceChoice{
-				Name: serviceName,
-			})
+			// Add service (avoid duplicates even with --force).
+			alreadyPresent := false
+			for _, svc := range answers.Services {
+				if svc.Name == serviceName {
+					alreadyPresent = true
+					break
+				}
+			}
+			if !alreadyPresent {
+				answers.Services = append(answers.Services, types.ServiceChoice{
+					Name: serviceName,
+				})
+			}
 
 			// Generate files.
 			registry := ecosystem.DefaultRegistry()
@@ -281,6 +297,13 @@ func addServiceCmd() *cobra.Command {
 			files, err := gen.Generate(answers)
 			if err != nil {
 				return fmt.Errorf("generating files: %w", err)
+			}
+
+			// Dry-run: show preview and exit.
+			if dryRun {
+				preview := generate.PreviewFiles(files, nil, projectRoot)
+				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
+				return nil
 			}
 
 			// Write files to disk.
@@ -306,10 +329,18 @@ func addServiceCmd() *cobra.Command {
 		},
 	}
 
+	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing files")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
+
 	return cmd
 }
 
 func addLanguageCmd() *cobra.Command {
+	var (
+		force  bool
+		dryRun bool
+	)
+
 	cmd := &cobra.Command{
 		Use:       "add-language <name>",
 		Short:     "Add a language ecosystem to the environment",
@@ -335,17 +366,28 @@ func addLanguageCmd() *cobra.Command {
 				return err
 			}
 
-			// Check for duplicate.
-			for _, lang := range answers.Languages {
-				if lang.Name == langName {
-					return fmt.Errorf("language %q is already configured", langName)
+			// Check for duplicate (skip when --force is set).
+			if !force {
+				for _, lang := range answers.Languages {
+					if lang.Name == langName {
+						return fmt.Errorf("language %q is already configured; use --force to overwrite", langName)
+					}
 				}
 			}
 
-			// Add language.
-			answers.Languages = append(answers.Languages, types.LanguageChoice{
-				Name: langName,
-			})
+			// Add language (avoid duplicates even with --force).
+			alreadyPresent := false
+			for _, lang := range answers.Languages {
+				if lang.Name == langName {
+					alreadyPresent = true
+					break
+				}
+			}
+			if !alreadyPresent {
+				answers.Languages = append(answers.Languages, types.LanguageChoice{
+					Name: langName,
+				})
+			}
 
 			// Generate files.
 			registry := ecosystem.DefaultRegistry()
@@ -353,6 +395,13 @@ func addLanguageCmd() *cobra.Command {
 			files, err := gen.Generate(answers)
 			if err != nil {
 				return fmt.Errorf("generating files: %w", err)
+			}
+
+			// Dry-run: show preview and exit.
+			if dryRun {
+				preview := generate.PreviewFiles(files, nil, projectRoot)
+				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
+				return nil
 			}
 
 			// Write files to disk.
@@ -377,6 +426,9 @@ func addLanguageCmd() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing files")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
 
 	return cmd
 }

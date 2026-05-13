@@ -189,11 +189,12 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 			Label:       ".NET SDK version",
 			Description: "Select the .NET SDK major version",
 			Type:        ecosystem.FieldTypeSelect,
+			// .NET 6 is EOL (end-of-life) and removed from wizard options.
+			// Programmatic use of version "6" is still handled by sdkVersionToNixPackage.
 			Options: []ecosystem.WizardOption{
 				{Label: ".NET 9", Value: "9"},
 				{Label: ".NET 8 (LTS)", Value: "8"},
 				{Label: ".NET 7", Value: "7"},
-				{Label: ".NET 6 (LTS)", Value: "6"},
 			},
 			Default: "8",
 		},
@@ -252,6 +253,10 @@ func sdkVersionToNixPackage(version string) string {
 		return "dotnet-sdk_8"
 	case "7":
 		return "dotnet-sdk_7"
+	case "6":
+		// .NET 6 is EOL but still mapped explicitly so programmatic callers
+		// get the version they asked for rather than a silent upgrade.
+		return "dotnet-sdk_6"
 	default:
 		return "dotnet-sdk_8"
 	}

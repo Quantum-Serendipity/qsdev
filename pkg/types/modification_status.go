@@ -31,7 +31,7 @@ var modificationStatusFromString = func() map[string]ModificationStatus {
 }()
 
 func (s ModificationStatus) String() string {
-	if int(s) < len(modificationStatusNames) {
+	if int(s) >= 0 && int(s) < len(modificationStatusNames) {
 		return modificationStatusNames[s]
 	}
 	return "invalid"

@@ -37,7 +37,7 @@ var mergeStrategyFromString = func() map[string]MergeStrategy {
 }()
 
 func (m MergeStrategy) String() string {
-	if int(m) < len(mergeStrategyNames) {
+	if int(m) >= 0 && int(m) < len(mergeStrategyNames) {
 		return mergeStrategyNames[m]
 	}
 	return "unknown"

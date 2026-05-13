@@ -59,21 +59,15 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		evidence = append(evidence, "MODULE.bazel found")
 	}
 	if hasWorkspace {
-		if confidence < ecosystem.ConfidenceProbable {
-			confidence = ecosystem.ConfidenceProbable
-		}
+		confidence = ecosystem.ConfidenceCertain
 		evidence = append(evidence, "WORKSPACE found")
 	}
 	if hasWorkspaceBazel {
-		if confidence < ecosystem.ConfidenceProbable {
-			confidence = ecosystem.ConfidenceProbable
-		}
+		confidence = ecosystem.ConfidenceCertain
 		evidence = append(evidence, "WORKSPACE.bazel found")
 	}
 	if hasBazelrc {
-		if confidence < ecosystem.ConfidenceProbable {
-			confidence = ecosystem.ConfidenceProbable
-		}
+		confidence = ecosystem.ConfidenceCertain
 		evidence = append(evidence, ".bazelrc found")
 	}
 

@@ -758,18 +758,22 @@ func TestWizardFields(t *testing.T) {
 	if f.Default != "8" {
 		t.Errorf("Default = %q, want %q", f.Default, "8")
 	}
-	if len(f.Options) != 4 {
-		t.Fatalf("Options count = %d, want 4", len(f.Options))
+	// .NET 6 is EOL and not offered in the wizard; only 9, 8, 7 remain.
+	if len(f.Options) != 3 {
+		t.Fatalf("Options count = %d, want 3", len(f.Options))
 	}
 
 	values := make(map[string]bool)
 	for _, o := range f.Options {
 		values[o.Value] = true
 	}
-	for _, v := range []string{"9", "8", "7", "6"} {
+	for _, v := range []string{"9", "8", "7"} {
 		if !values[v] {
 			t.Errorf("missing option value %q", v)
 		}
+	}
+	if values["6"] {
+		t.Error("option value \"6\" should not be present (EOL)")
 	}
 }
 

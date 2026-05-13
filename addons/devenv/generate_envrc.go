@@ -26,7 +26,7 @@ func GenerateEnvrc(answers types.WizardAnswers) *types.GeneratedFile {
 		Path:     ".envrc",
 		Content:  []byte(envrcContent),
 		Mode:     0o644,
-		Strategy: types.Overwrite,
+		Strategy: types.Skip,
 	}
 }
 

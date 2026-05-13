@@ -18,6 +18,8 @@ var ExportSaveAnswers = saveAnswers
 var ExportLoadAnswers = loadAnswers
 
 // ExportBuildClaudeAnswersFromFlags exposes buildClaudeAnswersFromFlags for external tests.
+//
+// Parameters: projectRoot, preset string, skills, mcpServers []string, yes, noSafetyBlock bool
 var ExportBuildClaudeAnswersFromFlags = buildClaudeAnswersFromFlags
 
 // ExportValidPermissionPresets exposes validPermissionPresets for external tests.
@@ -50,3 +52,6 @@ var (
 
 type ExportVersionDiff = VersionDiff
 type ExportUpdateSummary = UpdateSummary
+
+// ExportContains exposes the contains helper for external tests.
+var ExportContains = contains

@@ -137,7 +137,7 @@ func TestDevenvNixFragment(t *testing.T) {
 	requiredStrings := []string{
 		"languages.go",
 		"enable = true",
-		"package = pkgs.go",
+		"package = pkgs.go;",
 		"GOFLAGS",
 		`"-mod=readonly"`,
 		"GONOSUMCHECK",
@@ -148,6 +148,34 @@ func TestDevenvNixFragment(t *testing.T) {
 		if !strings.Contains(fragment, s) {
 			t.Errorf("DevenvNixFragment() missing %q\ngot:\n%s", s, fragment)
 		}
+	}
+}
+
+func TestDevenvNixFragment_VersionMapping(t *testing.T) {
+	m := &golang.Module{}
+
+	tests := []struct {
+		name       string
+		version    string
+		wantPkg    string
+	}{
+		{"empty version uses latest", "", "package = pkgs.go;"},
+		{"major.minor maps correctly", "1.24", "package = pkgs.go_1_24;"},
+		{"major.minor.patch extracts major.minor", "1.23.5", "package = pkgs.go_1_23;"},
+		{"patch version stripped", "1.24.1", "package = pkgs.go_1_24;"},
+		{"single component uses latest", "1", "package = pkgs.go;"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fragment, err := m.DevenvNixFragment(ecosystem.ModuleConfig{Version: tt.version})
+			if err != nil {
+				t.Fatalf("DevenvNixFragment() returned error: %v", err)
+			}
+			if !strings.Contains(fragment, tt.wantPkg) {
+				t.Errorf("DevenvNixFragment(version=%q) should contain %q\ngot:\n%s", tt.version, tt.wantPkg, fragment)
+			}
+		})
 	}
 }
 

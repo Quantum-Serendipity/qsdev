@@ -82,6 +82,13 @@ type DetectedProject struct {
 	RemoteURL   string `yaml:"remote_url"    json:"remote_url"`
 }
 
+// NewDetectedProject returns a DetectedProject with all maps initialized.
+func NewDetectedProject() DetectedProject {
+	return DetectedProject{
+		Ecosystems: make(map[string]bool),
+	}
+}
+
 // HookChoices represents the user's selections for Claude Code automation hooks.
 type HookChoices struct {
 	AutoFormat  bool `yaml:"auto_format"  json:"auto_format"`
@@ -141,6 +148,10 @@ func (a *WizardAnswers) IsComplete() bool {
 // FillDefaults populates empty fields from detection results and hardcoded
 // defaults. It does NOT overwrite fields that already have values.
 func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
+	if a.EnvVars == nil {
+		a.EnvVars = make(map[string]string)
+	}
+	a.Detected = detected
 	// Fill languages from detection if none set.
 	if len(a.Languages) == 0 {
 		if detected.HasGoMod {

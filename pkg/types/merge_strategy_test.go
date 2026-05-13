@@ -123,3 +123,42 @@ func TestMergeStrategyJSONRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestMergeStrategyNegativeValueString(t *testing.T) {
+	got := types.MergeStrategy(-1).String()
+	if got != "unknown" {
+		t.Errorf("MergeStrategy(-1).String() = %q, want %q", got, "unknown")
+	}
+}
+
+func TestMergeStrategyAllValuesYAMLRoundTrip(t *testing.T) {
+	type wrapper struct {
+		Strategy types.MergeStrategy `yaml:"strategy"`
+	}
+	allStrategies := []types.MergeStrategy{
+		types.Overwrite,
+		types.Append,
+		types.Merge,
+		types.Skip,
+		types.SectionMarker,
+		types.ThreeWayMerge,
+		types.LibraryManaged,
+		types.ManualMerge,
+	}
+	for _, ms := range allStrategies {
+		t.Run(ms.String(), func(t *testing.T) {
+			w := wrapper{Strategy: ms}
+			data, err := yaml.Marshal(w)
+			if err != nil {
+				t.Fatalf("yaml.Marshal(%v): %v", ms, err)
+			}
+			var got wrapper
+			if err := yaml.Unmarshal(data, &got); err != nil {
+				t.Fatalf("yaml.Unmarshal(%v): %v", ms, err)
+			}
+			if got.Strategy != ms {
+				t.Errorf("YAML round-trip: got %v, want %v", got.Strategy, ms)
+			}
+		})
+	}
+}

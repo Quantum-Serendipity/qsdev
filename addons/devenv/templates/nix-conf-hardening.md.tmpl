@@ -237,7 +237,6 @@ Place in `/etc/nixos/configuration.nix` or a dedicated `nix-hardening.nix` impor
 
     # Pre-approve devenv caches for unprivileged users.
     trusted-substituters = [
-      "https://cache.nixos.org"
 {{- range .DefaultCaches }}
       "{{ .URL }}"
 {{- end }}
@@ -245,7 +244,6 @@ Place in `/etc/nixos/configuration.nix` or a dedicated `nix-hardening.nix` impor
 
     # Signing keys for each approved cache.
     trusted-public-keys = [
-      "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
 {{- range .DefaultCaches }}
       "{{ .PublicKey }}"
 {{- end }}
@@ -291,7 +289,7 @@ allowed-users = root @nixbld @wheel
 # Binary cache allowlist
 substituters = https://cache.nixos.org
 trusted-substituters = {{ range .DefaultCaches }}{{ .URL }} {{ end }}
-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= {{ range .DefaultCaches }}{{ .PublicKey }} {{ end }}
+trusted-public-keys = {{ range .DefaultCaches }}{{ .PublicKey }} {{ end }}
 
 # Cache connection limits
 connect-timeout = 10

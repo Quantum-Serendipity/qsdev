@@ -41,9 +41,9 @@ func (m *Module) DisplayName() string { return "R" }
 // Tier returns the implementation priority tier.
 func (m *Module) Tier() int { return 4 }
 
-// Detect scans projectRoot for R ecosystem indicators: DESCRIPTION (certain),
-// renv.lock (certain, sets PM to renv), .Rprofile (probable), *.R (probable),
-// and *.Rmd (probable).
+// Detect scans projectRoot for R ecosystem indicators: renv.lock (certain, sets
+// PM to renv), DESCRIPTION (probable alone, certain when combined with NAMESPACE,
+// *.Rproj, or renv.lock), .Rprofile (probable), *.R (probable), *.Rmd (probable).
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	var (
 		evidence   []string
@@ -52,17 +52,45 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		pm         string
 	)
 
-	// Certain indicators.
-	if fileExists(filepath.Join(projectRoot, "DESCRIPTION")) {
-		evidence = append(evidence, "DESCRIPTION found")
-		confidence = ecosystem.ConfidenceCertain
-		detected = true
-	}
-	if fileExists(filepath.Join(projectRoot, "renv.lock")) {
+	// Strong R indicators (certain on their own).
+	hasNamespace := fileExists(filepath.Join(projectRoot, "NAMESPACE"))
+	rprojMatches, _ := filepath.Glob(filepath.Join(projectRoot, "*.Rproj"))
+	hasRproj := len(rprojMatches) > 0
+	hasRenvLock := fileExists(filepath.Join(projectRoot, "renv.lock"))
+
+	if hasRenvLock {
 		evidence = append(evidence, "renv.lock found")
 		confidence = ecosystem.ConfidenceCertain
 		detected = true
 		pm = "renv"
+	}
+
+	// DESCRIPTION alone is only probable — many non-R projects (Debian, Perl)
+	// use DESCRIPTION files. Upgrade to certain when combined with other R
+	// indicators.
+	hasDescription := fileExists(filepath.Join(projectRoot, "DESCRIPTION"))
+	if hasDescription {
+		evidence = append(evidence, "DESCRIPTION found")
+		if hasNamespace || hasRproj || hasRenvLock {
+			confidence = ecosystem.ConfidenceCertain
+		} else if confidence < ecosystem.ConfidenceProbable {
+			confidence = ecosystem.ConfidenceProbable
+		}
+		detected = true
+	}
+	if hasNamespace {
+		evidence = append(evidence, "NAMESPACE found")
+		if confidence < ecosystem.ConfidenceProbable {
+			confidence = ecosystem.ConfidenceProbable
+		}
+		detected = true
+	}
+	if hasRproj {
+		evidence = append(evidence, "*.Rproj file found")
+		if confidence < ecosystem.ConfidenceProbable {
+			confidence = ecosystem.ConfidenceProbable
+		}
+		detected = true
 	}
 
 	// Probable indicators.
@@ -181,4 +209,10 @@ func fileExists(path string) bool {
 		return false
 	}
 	return !info.IsDir()
+}
+
+// globFiles returns all files matching a glob pattern, ignoring errors.
+func globFiles(pattern string) []string {
+	matches, _ := filepath.Glob(pattern)
+	return matches
 }

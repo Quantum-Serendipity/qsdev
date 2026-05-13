@@ -51,14 +51,12 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		files = append(files, *claudeMdFile)
 	}
 
-	// 3. Package guard hook (only when SafetyBlock is enabled)
-	hookFile, err := GeneratePackageGuardHook(answers)
+	// 3. Hook files (package guard, audit log, etc.)
+	hookFiles, err := GenerateHookFiles(answers)
 	if err != nil {
-		return nil, fmt.Errorf("generating package guard hook: %w", err)
+		return nil, fmt.Errorf("generating hook files: %w", err)
 	}
-	if hookFile != nil {
-		files = append(files, *hookFile)
-	}
+	files = append(files, hookFiles...)
 
 	// 4. Skills
 	skillFiles, err := deploySkills(answers)

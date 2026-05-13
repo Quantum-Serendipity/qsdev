@@ -27,6 +27,7 @@ type ClaudeMdTemplateData struct {
 	VersionSentinelUncovered []string
 	SembleEnabled          bool
 	SembleMode             string
+	TrailOfBitsEnabled     bool
 }
 
 // BuildClaudeMdData assembles all template data from wizard answers and ecosystem
@@ -63,6 +64,7 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 	data.PackageManagers = dedup(data.PackageManagers)
 
 	// Agent tools metadata for CLAUDE.md.
+	data.TrailOfBitsEnabled = contains(answers.Skills, "security-review")
 	data.PostmortemEnabled = answers.AgentTools.PostmortemEnabled
 	data.SembleEnabled = answers.AgentTools.SembleEnabled
 	data.SembleMode = answers.AgentTools.SembleMode

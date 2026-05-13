@@ -49,6 +49,10 @@ var knownMCPServers = map[string]MCPServerEntry{
 		Command: "uvx",
 		Args:    []string{"--from", "semble[mcp]", "semble"},
 	},
+	"context7": {
+		Command: "npx",
+		Args:    []string{"-y", "@upstash/context7-mcp"},
+	},
 }
 
 // GenerateMcpJson produces a .mcp.json file from the wizard answers and addon

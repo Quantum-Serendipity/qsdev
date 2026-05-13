@@ -20,6 +20,7 @@ func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, erro
 			Content:  content,
 			Mode:     0o755,
 			Strategy: types.Overwrite,
+			Owner:    "attach-guard",
 		})
 	}
 

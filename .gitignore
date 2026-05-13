@@ -22,3 +22,9 @@ Thumbs.db
 
 # Generated
 dist/
+dist_share/
+bin/
+
+# Go workspace (local dev override — never commit)
+go.work
+go.work.sum

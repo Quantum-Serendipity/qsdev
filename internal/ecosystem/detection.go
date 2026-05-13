@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
@@ -68,6 +69,11 @@ func hasExecutableHooks(hooksDir string) bool {
 		// Skip .sample files shipped by git init
 		if strings.HasSuffix(e.Name(), ".sample") {
 			continue
+		}
+		// On Windows, file mode bits are not meaningful; treat any
+		// non-sample hook file as executable.
+		if runtime.GOOS == "windows" {
+			return true
 		}
 		info, err := e.Info()
 		if err != nil {

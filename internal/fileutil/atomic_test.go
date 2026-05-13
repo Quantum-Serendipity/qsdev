@@ -3,6 +3,7 @@ package fileutil_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -31,8 +32,10 @@ func TestWriteFileAtomic_CreatesFileWithCorrectContentAndPermissions(t *testing.
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
-	if info.Mode().Perm() != 0644 {
-		t.Errorf("mode = %o, want %o", info.Mode().Perm(), 0644)
+	if runtime.GOOS != "windows" {
+		if info.Mode().Perm() != 0644 {
+			t.Errorf("mode = %o, want %o", info.Mode().Perm(), 0644)
+		}
 	}
 }
 
@@ -77,6 +80,9 @@ func TestWriteFileAtomic_CreatesNestedDirectories(t *testing.T) {
 }
 
 func TestWriteFileAtomic_CleansUpTempFileOnWriteFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("read-only directory permissions not enforced on Windows")
+	}
 	dir := t.TempDir()
 	// Make the directory read-only so Chmod will fail after write succeeds
 	// but we can still create temp files. Instead, test a simpler scenario:
@@ -109,6 +115,9 @@ func TestWriteFileAtomic_CleansUpTempFileOnWriteFailure(t *testing.T) {
 }
 
 func TestWriteFileAtomic_Mode0755Preserved(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions not supported on Windows")
+	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "script.sh")
 	content := []byte("#!/bin/bash\necho hello")

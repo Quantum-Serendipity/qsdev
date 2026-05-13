@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
@@ -78,7 +79,7 @@ func CheckModified(stored types.GeneratedState, projectRoot string) map[string]F
 		status.CurrentHash = hash
 
 		hashMatch := hash == fs.Hash
-		modeMatch := info.Mode().Perm() == fs.Mode.Perm()
+		modeMatch := runtime.GOOS == "windows" || info.Mode().Perm() == fs.Mode.Perm()
 
 		switch {
 		case hashMatch && modeMatch:

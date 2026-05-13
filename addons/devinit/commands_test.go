@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -235,6 +236,9 @@ func TestInitCmd_SavesState(t *testing.T) {
 }
 
 func TestInitCmd_RequiresWizardOrYes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("huh TUI forms hang on Windows without TTY")
+	}
 	dir := t.TempDir()
 
 	// Without --yes and without a complete set of flags, the wizard will

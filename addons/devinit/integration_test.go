@@ -3,6 +3,7 @@ package devinit
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -309,7 +310,7 @@ func TestIntegration_SecurityHardenedDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("package-guard.py not found: %v", err)
 	}
-	if info.Mode().Perm()&0o100 == 0 {
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0 {
 		t.Error("package-guard.py should be executable")
 	}
 

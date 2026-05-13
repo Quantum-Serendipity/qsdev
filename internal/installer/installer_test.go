@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -69,6 +70,9 @@ func withPATH(t *testing.T, dir string) {
 }
 
 func TestInstall_AlreadyInstalled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("installer tests use Unix shell scripts")
+	}
 	tmp := t.TempDir()
 	writeScript(t, tmp, "fake-tool-binary", `echo "v1.2.3"`)
 	withPATH(t, tmp)
@@ -90,7 +94,9 @@ func TestInstall_AlreadyInstalled(t *testing.T) {
 }
 
 func TestInstall_ManagerNotAvailable(t *testing.T) {
-	// PATH is empty -- neither the tool nor the manager exist.
+	if runtime.GOOS == "windows" {
+		t.Skip("installer tests use Unix shell scripts")
+	}
 	tmp := t.TempDir()
 	withPATH(t, tmp)
 
@@ -118,6 +124,9 @@ func TestInstall_ManagerNotAvailable(t *testing.T) {
 }
 
 func TestInstall_ManagerSucceeds(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("installer tests use Unix shell scripts")
+	}
 	tmp := t.TempDir()
 	// Manager exists and succeeds, but the tool itself is not on PATH
 	// before install. The fake manager just exits 0.
@@ -141,6 +150,9 @@ func TestInstall_ManagerSucceeds(t *testing.T) {
 }
 
 func TestInstall_ManagerFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("installer tests use Unix shell scripts")
+	}
 	tmp := t.TempDir()
 	writeScript(t, tmp, "fake-mgr", `exit 1`)
 	withPATH(t, tmp)
@@ -160,6 +172,9 @@ func TestInstall_ManagerFails(t *testing.T) {
 }
 
 func TestSimulate_AlreadyInstalled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("installer tests use Unix shell scripts")
+	}
 	tmp := t.TempDir()
 	writeScript(t, tmp, "fake-tool-binary", `echo "v1.2.3"`)
 	withPATH(t, tmp)
@@ -178,6 +193,9 @@ func TestSimulate_AlreadyInstalled(t *testing.T) {
 }
 
 func TestSimulate_ManagerAvailable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("installer tests use Unix shell scripts")
+	}
 	tmp := t.TempDir()
 	// Manager exists but tool does not.
 	writeScript(t, tmp, "fake-mgr", `exit 0`)
@@ -200,6 +218,9 @@ func TestSimulate_ManagerAvailable(t *testing.T) {
 }
 
 func TestSimulate_NoManager(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("installer tests use Unix shell scripts")
+	}
 	tmp := t.TempDir()
 	withPATH(t, tmp)
 

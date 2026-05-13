@@ -7,11 +7,8 @@
 package nixlang
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -19,9 +16,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("nix: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Module implements ecosystem.EcosystemModule for the Nix ecosystem.
@@ -39,10 +34,10 @@ func (m *Module) Tier() int { return 3 }
 // Detect scans projectRoot for Nix ecosystem indicators: flake.nix,
 // flake.lock, default.nix, and shell.nix.
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
-	hasFlakeNix := fileExists(filepath.Join(projectRoot, "flake.nix"))
-	hasFlakeLock := fileExists(filepath.Join(projectRoot, "flake.lock"))
-	hasDefaultNix := fileExists(filepath.Join(projectRoot, "default.nix"))
-	hasShellNix := fileExists(filepath.Join(projectRoot, "shell.nix"))
+	hasFlakeNix := fileutil.FileExists(projectRoot, "flake.nix")
+	hasFlakeLock := fileutil.FileExists(projectRoot, "flake.lock")
+	hasDefaultNix := fileutil.FileExists(projectRoot, "default.nix")
+	hasShellNix := fileutil.FileExists(projectRoot, "shell.nix")
 
 	if !hasFlakeNix && !hasFlakeLock && !hasDefaultNix && !hasShellNix {
 		return ecosystem.DetectionResult{
@@ -186,11 +181,3 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	return nil
 }
 
-// fileExists reports whether a file at the given path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
-}

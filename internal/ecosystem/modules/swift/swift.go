@@ -7,12 +7,11 @@
 package swift
 
 import (
-	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -20,9 +19,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("swift: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Module implements ecosystem.EcosystemModule for the Swift programming language.
@@ -40,8 +37,8 @@ func (m *Module) Tier() int { return 3 }
 // Detect scans projectRoot for Swift ecosystem indicators: Package.swift,
 // Package.resolved, and *.xcodeproj directories.
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
-	hasPackageSwift := fileExists(filepath.Join(projectRoot, "Package.swift"))
-	hasPackageResolved := fileExists(filepath.Join(projectRoot, "Package.resolved"))
+	hasPackageSwift := fileutil.FileExists(projectRoot, "Package.swift")
+	hasPackageResolved := fileutil.FileExists(projectRoot, "Package.resolved")
 	xcodeprojMatches, _ := filepath.Glob(filepath.Join(projectRoot, "*.xcodeproj"))
 	hasXcodeproj := len(xcodeprojMatches) > 0
 
@@ -162,11 +159,3 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	return nil
 }
 
-// fileExists reports whether a file at the given path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
-}

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -20,9 +21,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("java: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Module implements ecosystem.EcosystemModule for the Java/Kotlin (JVM) ecosystem.
@@ -41,12 +40,12 @@ func (m *Module) Tier() int { return 1 }
 // file, and Kotlin source files. It populates Extras with the detected build
 // tool ("maven", "gradle", or "both") and whether Kotlin is present.
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
-	hasMaven := fileExists(filepath.Join(projectRoot, "pom.xml"))
+	hasMaven := fileutil.FileExists(projectRoot, "pom.xml")
 
-	hasGradle := fileExists(filepath.Join(projectRoot, "build.gradle")) ||
-		fileExists(filepath.Join(projectRoot, "build.gradle.kts")) ||
-		fileExists(filepath.Join(projectRoot, "settings.gradle")) ||
-		fileExists(filepath.Join(projectRoot, "settings.gradle.kts"))
+	hasGradle := fileutil.FileExists(projectRoot, "build.gradle") ||
+		fileutil.FileExists(projectRoot, "build.gradle.kts") ||
+		fileutil.FileExists(projectRoot, "settings.gradle") ||
+		fileutil.FileExists(projectRoot, "settings.gradle.kts")
 
 	if !hasMaven && !hasGradle {
 		return ecosystem.DetectionResult{
@@ -357,15 +356,6 @@ func buildGradleProperties() string {
 	b.WriteString("# Require strict dependency verification (checksum + signature validation).\n")
 	b.WriteString("systemProp.org.gradle.dependency.verification=strict\n")
 	return b.String()
-}
-
-// fileExists reports whether a file at the given path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
 }
 
 // parseJavaVersion reads .java-version in projectRoot and returns the

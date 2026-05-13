@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -20,9 +21,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("golang: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // goVersionRe matches the "go X.Y" or "go X.Y.Z" directive in go.mod.
@@ -43,7 +42,7 @@ func (m *Module) Tier() int { return 1 }
 // Detect scans projectRoot for a go.mod file and extracts the Go version directive.
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	modPath := filepath.Join(projectRoot, "go.mod")
-	if !fileExists(modPath) {
+	if !fileutil.FileExists(modPath) {
 		return ecosystem.DetectionResult{
 			Detected:   false,
 			Confidence: ecosystem.ConfidenceAbsent,
@@ -219,15 +218,6 @@ func goVersionToNixPackage(version string) string {
 		return "pkgs.go"
 	}
 	return fmt.Sprintf("pkgs.go_%s_%s", parts[0], parts[1])
-}
-
-// fileExists reports whether a file at the given path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
 }
 
 // parseGoVersion reads go.mod in projectRoot and extracts the Go version

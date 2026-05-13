@@ -12,11 +12,10 @@
 package rlang
 
 import (
-	"fmt"
-	"os"
 	"path/filepath"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -24,9 +23,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("rlang: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Module implements ecosystem.EcosystemModule for the R programming language.
@@ -53,10 +50,10 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	)
 
 	// Strong R indicators (certain on their own).
-	hasNamespace := fileExists(filepath.Join(projectRoot, "NAMESPACE"))
+	hasNamespace := fileutil.FileExists(projectRoot, "NAMESPACE")
 	rprojMatches, _ := filepath.Glob(filepath.Join(projectRoot, "*.Rproj"))
 	hasRproj := len(rprojMatches) > 0
-	hasRenvLock := fileExists(filepath.Join(projectRoot, "renv.lock"))
+	hasRenvLock := fileutil.FileExists(projectRoot, "renv.lock")
 
 	if hasRenvLock {
 		evidence = append(evidence, "renv.lock found")
@@ -68,7 +65,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	// DESCRIPTION alone is only probable — many non-R projects (Debian, Perl)
 	// use DESCRIPTION files. Upgrade to certain when combined with other R
 	// indicators.
-	hasDescription := fileExists(filepath.Join(projectRoot, "DESCRIPTION"))
+	hasDescription := fileutil.FileExists(projectRoot, "DESCRIPTION")
 	if hasDescription {
 		evidence = append(evidence, "DESCRIPTION found")
 		if hasNamespace || hasRproj || hasRenvLock {
@@ -94,7 +91,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	// Probable indicators.
-	if fileExists(filepath.Join(projectRoot, ".Rprofile")) {
+	if fileutil.FileExists(projectRoot, ".Rprofile") {
 		evidence = append(evidence, ".Rprofile found")
 		if confidence < ecosystem.ConfidenceProbable {
 			confidence = ecosystem.ConfidenceProbable
@@ -202,17 +199,3 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	return nil
 }
 
-// fileExists reports whether a file at the given path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
-}
-
-// globFiles returns all files matching a glob pattern, ignoring errors.
-func globFiles(pattern string) []string {
-	matches, _ := filepath.Glob(pattern)
-	return matches
-}

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -22,9 +23,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("php: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // phpVersionRe matches a PHP version constraint and extracts the major.minor
@@ -49,8 +48,8 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	composerJSON := filepath.Join(projectRoot, "composer.json")
 	composerLock := filepath.Join(projectRoot, "composer.lock")
 
-	hasJSON := fileExists(composerJSON)
-	hasLock := fileExists(composerLock)
+	hasJSON := fileutil.FileExists(composerJSON)
+	hasLock := fileutil.FileExists(composerLock)
 
 	if !hasJSON && !hasLock {
 		return ecosystem.DetectionResult{
@@ -249,15 +248,6 @@ func phpPackage(version string) string {
 	default:
 		return "php83"
 	}
-}
-
-// fileExists reports whether a file at the given path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
 }
 
 // parsePHPVersion reads composer.json and extracts the PHP version from the

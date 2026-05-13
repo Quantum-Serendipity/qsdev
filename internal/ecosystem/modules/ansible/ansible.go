@@ -6,12 +6,10 @@
 package ansible
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -19,9 +17,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("ansible: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Module is the stateless Ansible ecosystem module.
@@ -44,33 +40,33 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	result := ecosystem.DetectionResult{}
 
 	// Certain indicators.
-	if fileExists(filepath.Join(projectRoot, "ansible.cfg")) {
+	if fileutil.FileExists(projectRoot, "ansible.cfg") {
 		result.Detected = true
 		result.Confidence = ecosystem.ConfidenceCertain
 		result.Evidence = append(result.Evidence, "ansible.cfg found")
 	}
-	if fileExists(filepath.Join(projectRoot, "galaxy.yml")) {
+	if fileutil.FileExists(projectRoot, "galaxy.yml") {
 		result.Detected = true
 		result.Confidence = ecosystem.ConfidenceCertain
 		result.Evidence = append(result.Evidence, "galaxy.yml found")
 	}
 
 	// Probable indicators.
-	if dirExists(filepath.Join(projectRoot, "playbooks")) {
+	if fileutil.DirExists(projectRoot, "playbooks") {
 		result.Evidence = append(result.Evidence, "playbooks/ directory found")
 		if !result.Detected {
 			result.Detected = true
 			result.Confidence = ecosystem.ConfidenceProbable
 		}
 	}
-	if dirExists(filepath.Join(projectRoot, "roles")) {
+	if fileutil.DirExists(projectRoot, "roles") {
 		result.Evidence = append(result.Evidence, "roles/ directory found")
 		if !result.Detected {
 			result.Detected = true
 			result.Confidence = ecosystem.ConfidenceProbable
 		}
 	}
-	if fileExists(filepath.Join(projectRoot, "requirements.yml")) {
+	if fileutil.FileExists(projectRoot, "requirements.yml") {
 		result.Evidence = append(result.Evidence, "requirements.yml found")
 		if !result.Detected {
 			result.Detected = true
@@ -176,16 +172,3 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	return nil
 }
 
-// --- helpers ---
-
-// fileExists reports whether the given path names an existing regular file.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
-// dirExists reports whether the given path names an existing directory.
-func dirExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
-}

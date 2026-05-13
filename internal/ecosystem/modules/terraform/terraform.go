@@ -7,11 +7,11 @@ package terraform
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -19,9 +19,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("terraform: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Module is the stateless Terraform/OpenTofu ecosystem module.
@@ -47,7 +45,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	// Determine variant: check for .opentofu/ directory first.
-	if dirExists(filepath.Join(projectRoot, ".opentofu")) {
+	if fileutil.DirExists(projectRoot, ".opentofu") {
 		result.SuggestedConfig.Extras["variant"] = "opentofu"
 	} else {
 		result.SuggestedConfig.Extras["variant"] = "terraform"
@@ -70,7 +68,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	// Check for .terraform.lock.hcl (probable if no .tf files found).
-	if fileExists(filepath.Join(projectRoot, ".terraform.lock.hcl")) {
+	if fileutil.FileExists(projectRoot, ".terraform.lock.hcl") {
 		result.Evidence = append(result.Evidence, ".terraform.lock.hcl found")
 		if !result.Detected {
 			result.Detected = true
@@ -205,12 +203,14 @@ func (m *Module) DenyRules(config ecosystem.ModuleConfig) []string {
 	rules := []string{
 		"Bash(terraform init *)",
 		"Bash(terraform apply *)",
+		"Bash(terraform providers *)",
 	}
 
 	if variant == "opentofu" {
 		rules = append(rules,
 			"Bash(tofu init *)",
 			"Bash(tofu apply *)",
+			"Bash(tofu providers *)",
 		)
 	}
 
@@ -313,14 +313,3 @@ func binaryName(variant string) string {
 	return "terraform"
 }
 
-// fileExists reports whether the given path names an existing regular file.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
-// dirExists reports whether the given path names an existing directory.
-func dirExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
-}

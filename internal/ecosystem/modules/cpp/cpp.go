@@ -7,11 +7,11 @@ package cpp
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -19,9 +19,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("cpp: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Module is the stateless C/C++ ecosystem module.
@@ -49,7 +47,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	certainBuildSystem := false
 
 	// Check CMakeLists.txt (Certain, build_system="cmake").
-	if fileExists(filepath.Join(projectRoot, "CMakeLists.txt")) {
+	if fileutil.FileExists(projectRoot, "CMakeLists.txt") {
 		result.Detected = true
 		result.Confidence = ecosystem.ConfidenceCertain
 		result.Evidence = append(result.Evidence, "CMakeLists.txt found")
@@ -58,7 +56,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	// Check meson.build (Certain, build_system="meson").
-	if fileExists(filepath.Join(projectRoot, "meson.build")) {
+	if fileutil.FileExists(projectRoot, "meson.build") {
 		result.Detected = true
 		result.Confidence = ecosystem.ConfidenceCertain
 		result.Evidence = append(result.Evidence, "meson.build found")
@@ -69,7 +67,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	// Check conanfile.py / conanfile.txt (Certain, PM="conan").
-	if fileExists(filepath.Join(projectRoot, "conanfile.py")) || fileExists(filepath.Join(projectRoot, "conanfile.txt")) {
+	if fileutil.FileExists(projectRoot, "conanfile.py") || fileutil.FileExists(projectRoot, "conanfile.txt") {
 		result.Detected = true
 		result.Confidence = ecosystem.ConfidenceCertain
 		result.Evidence = append(result.Evidence, "conanfile found")
@@ -78,7 +76,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	// Check vcpkg.json (Certain, PM="vcpkg").
-	if fileExists(filepath.Join(projectRoot, "vcpkg.json")) {
+	if fileutil.FileExists(projectRoot, "vcpkg.json") {
 		result.Detected = true
 		result.Confidence = ecosystem.ConfidenceCertain
 		result.Evidence = append(result.Evidence, "vcpkg.json found")
@@ -101,7 +99,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	// Check Makefile (Probable, build_system="make" only if no certain build system found).
-	if fileExists(filepath.Join(projectRoot, "Makefile")) {
+	if fileutil.FileExists(projectRoot, "Makefile") {
 		result.Evidence = append(result.Evidence, "Makefile found")
 		if !result.Detected {
 			result.Detected = true
@@ -373,10 +371,3 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
-// --- helpers ---
-
-// fileExists reports whether the given path names an existing regular file.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}

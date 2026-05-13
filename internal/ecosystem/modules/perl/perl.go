@@ -11,11 +11,8 @@
 package perl
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -23,9 +20,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("perl: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Module implements ecosystem.EcosystemModule for the Perl programming language.
@@ -52,28 +47,28 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	)
 
 	// Certain indicator.
-	if fileExists(filepath.Join(projectRoot, "cpanfile")) {
+	if fileutil.FileExists(projectRoot, "cpanfile") {
 		evidence = append(evidence, "cpanfile found")
 		confidence = ecosystem.ConfidenceCertain
 		detected = true
 	}
 
 	// Probable indicators.
-	if fileExists(filepath.Join(projectRoot, "Makefile.PL")) {
+	if fileutil.FileExists(projectRoot, "Makefile.PL") {
 		evidence = append(evidence, "Makefile.PL found")
 		if confidence < ecosystem.ConfidenceProbable {
 			confidence = ecosystem.ConfidenceProbable
 		}
 		detected = true
 	}
-	if fileExists(filepath.Join(projectRoot, "Build.PL")) {
+	if fileutil.FileExists(projectRoot, "Build.PL") {
 		evidence = append(evidence, "Build.PL found")
 		if confidence < ecosystem.ConfidenceProbable {
 			confidence = ecosystem.ConfidenceProbable
 		}
 		detected = true
 	}
-	if fileExists(filepath.Join(projectRoot, "cpanfile.snapshot")) {
+	if fileutil.FileExists(projectRoot, "cpanfile.snapshot") {
 		evidence = append(evidence, "cpanfile.snapshot found")
 		if confidence < ecosystem.ConfidenceProbable {
 			confidence = ecosystem.ConfidenceProbable
@@ -180,11 +175,3 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	return nil
 }
 
-// fileExists reports whether a file at the given path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
-}

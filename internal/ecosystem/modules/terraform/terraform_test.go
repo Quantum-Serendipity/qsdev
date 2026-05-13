@@ -332,8 +332,8 @@ func TestDenyRules_Terraform(t *testing.T) {
 	}
 	rules := m.DenyRules(config)
 
-	if len(rules) != 2 {
-		t.Fatalf("expected 2 deny rules for terraform, got %d", len(rules))
+	if len(rules) != 3 {
+		t.Fatalf("expected 3 deny rules for terraform, got %d", len(rules))
 	}
 
 	for _, rule := range rules {
@@ -350,14 +350,16 @@ func TestDenyRules_OpenTofu(t *testing.T) {
 	}
 	rules := m.DenyRules(config)
 
-	if len(rules) != 4 {
-		t.Fatalf("expected 4 deny rules for opentofu, got %d", len(rules))
+	if len(rules) != 6 {
+		t.Fatalf("expected 6 deny rules for opentofu, got %d", len(rules))
 	}
 
 	hasTerraformInit := false
 	hasTerraformApply := false
+	hasTerraformProviders := false
 	hasTofuInit := false
 	hasTofuApply := false
+	hasTofuProviders := false
 
 	for _, rule := range rules {
 		switch {
@@ -365,10 +367,14 @@ func TestDenyRules_OpenTofu(t *testing.T) {
 			hasTerraformInit = true
 		case strings.Contains(rule, "terraform apply"):
 			hasTerraformApply = true
+		case strings.Contains(rule, "terraform providers"):
+			hasTerraformProviders = true
 		case strings.Contains(rule, "tofu init"):
 			hasTofuInit = true
 		case strings.Contains(rule, "tofu apply"):
 			hasTofuApply = true
+		case strings.Contains(rule, "tofu providers"):
+			hasTofuProviders = true
 		}
 	}
 
@@ -378,11 +384,17 @@ func TestDenyRules_OpenTofu(t *testing.T) {
 	if !hasTerraformApply {
 		t.Error("expected deny rule for terraform apply")
 	}
+	if !hasTerraformProviders {
+		t.Error("expected deny rule for terraform providers")
+	}
 	if !hasTofuInit {
 		t.Error("expected deny rule for tofu init")
 	}
 	if !hasTofuApply {
 		t.Error("expected deny rule for tofu apply")
+	}
+	if !hasTofuProviders {
+		t.Error("expected deny rule for tofu providers")
 	}
 }
 

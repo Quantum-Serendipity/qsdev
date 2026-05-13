@@ -7,11 +7,11 @@ package shell
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -19,9 +19,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("shell: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Module is the stateless Bash/Shell ecosystem module.
@@ -52,7 +50,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	// Check for scripts/ directory.
-	if dirExists(filepath.Join(projectRoot, "scripts")) {
+	if fileutil.DirExists(projectRoot, "scripts") {
 		result.Evidence = append(result.Evidence, "scripts/ directory found")
 		if !result.Detected {
 			result.Detected = true
@@ -61,7 +59,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	// Check for .envrc (evidence only, no confidence boost).
-	if fileExists(filepath.Join(projectRoot, ".envrc")) {
+	if fileutil.FileExists(projectRoot, ".envrc") {
 		result.Evidence = append(result.Evidence, ".envrc found")
 	}
 
@@ -155,16 +153,3 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	return nil
 }
 
-// --- helpers ---
-
-// fileExists reports whether the given path names an existing regular file.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
-// dirExists reports whether the given path names an existing directory.
-func dirExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
-}

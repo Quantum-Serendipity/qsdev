@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -41,20 +42,20 @@ func ValidateAnswers(answers types.WizardAnswers) error {
 
 	// Validate language names.
 	for _, lang := range answers.Languages {
-		if !containsStr(validLanguages, lang.Name) {
+		if !ecosystem.ContainsStr(validLanguages, lang.Name) {
 			errs = append(errs, fmt.Sprintf("unknown language %q; valid languages: %v", lang.Name, validLanguages))
 		}
 
 		// Validate node package manager if set.
 		if lang.Name == "javascript" && lang.PackageManager != "" {
-			if !containsStr(validNodePkgMgrs, lang.PackageManager) {
+			if !ecosystem.ContainsStr(validNodePkgMgrs, lang.PackageManager) {
 				errs = append(errs, fmt.Sprintf("unknown node package manager %q; valid values: %v", lang.PackageManager, validNodePkgMgrs))
 			}
 		}
 
 		// Validate python package manager if set.
 		if lang.Name == "python" && lang.PackageManager != "" {
-			if !containsStr(validPythonPkgMgrs, lang.PackageManager) {
+			if !ecosystem.ContainsStr(validPythonPkgMgrs, lang.PackageManager) {
 				errs = append(errs, fmt.Sprintf("unknown python package manager %q; valid values: %v", lang.PackageManager, validPythonPkgMgrs))
 			}
 		}
@@ -62,14 +63,14 @@ func ValidateAnswers(answers types.WizardAnswers) error {
 
 	// Validate service names.
 	for _, svc := range answers.Services {
-		if !containsStr(validServices, svc.Name) {
+		if !ecosystem.ContainsStr(validServices, svc.Name) {
 			errs = append(errs, fmt.Sprintf("unknown service %q; valid services: %v", svc.Name, validServices))
 		}
 	}
 
 	// Validate permission level.
 	if answers.PermissionLevel != "" {
-		if !containsStr(validPermissionPresets, answers.PermissionLevel) {
+		if !ecosystem.ContainsStr(validPermissionPresets, answers.PermissionLevel) {
 			errs = append(errs, fmt.Sprintf("unknown permission preset %q; valid presets: %v", answers.PermissionLevel, validPermissionPresets))
 		}
 	}
@@ -85,14 +86,4 @@ func ValidateAnswers(answers types.WizardAnswers) error {
 		return nil
 	}
 	return fmt.Errorf("validation errors:\n  - %s", strings.Join(errs, "\n  - "))
-}
-
-// containsStr checks whether a string slice includes the given value.
-func containsStr(slice []string, val string) bool {
-	for _, s := range slice {
-		if s == val {
-			return true
-		}
-	}
-	return false
 }

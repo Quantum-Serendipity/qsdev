@@ -1,6 +1,9 @@
 package devenv
 
-import "fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+import (
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+)
 
 // ExportServiceToTemplateData exposes serviceToTemplateData for external tests.
 var ExportServiceToTemplateData = func(svc types.ServiceChoice) (ServiceTemplateData, error) {
@@ -24,7 +27,7 @@ var ExportValidLanguages = validLanguages
 
 // ExportContains exposes contains for external tests.
 var ExportContains = func(slice []string, val string) bool {
-	return contains(slice, val)
+	return ecosystem.ContainsStr(slice, val)
 }
 
 // ExportAnswersPath exposes answersPath for external tests.

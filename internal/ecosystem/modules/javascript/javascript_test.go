@@ -606,8 +606,8 @@ func TestCICommands_NPM(t *testing.T) {
 	if len(cmds) != 1 {
 		t.Fatalf("CICommands() returned %d commands, want 1", len(cmds))
 	}
-	if cmds[0].Command != "npm ci" {
-		t.Errorf("Command = %q, want %q", cmds[0].Command, "npm ci")
+	if cmds[0].Command != "npm ci --ignore-scripts" {
+		t.Errorf("Command = %q, want %q", cmds[0].Command, "npm ci --ignore-scripts")
 	}
 	if cmds[0].Phase != ecosystem.CIPhaseInstall {
 		t.Errorf("Phase = %v, want CIPhaseInstall", cmds[0].Phase)
@@ -657,8 +657,8 @@ func TestCICommands_DefaultPM(t *testing.T) {
 	if len(cmds) != 1 {
 		t.Fatalf("CICommands() returned %d commands, want 1", len(cmds))
 	}
-	if cmds[0].Command != "npm ci" {
-		t.Errorf("default CICommands should use npm ci, got %q", cmds[0].Command)
+	if cmds[0].Command != "npm ci --ignore-scripts" {
+		t.Errorf("default CICommands should use npm ci --ignore-scripts, got %q", cmds[0].Command)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -644,6 +645,9 @@ func TestInitCmd_WithServices(t *testing.T) {
 }
 
 func TestInitCmd_DirenvEnabled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("devenv/direnv not supported on Windows")
+	}
 	tmpDir := t.TempDir()
 	chdir(t, tmpDir)
 
@@ -686,6 +690,9 @@ func TestInitCmd_NoDirenv(t *testing.T) {
 }
 
 func TestUpdateCmd_DryRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file mode comparison differs on Windows")
+	}
 	tmpDir := t.TempDir()
 	chdir(t, tmpDir)
 

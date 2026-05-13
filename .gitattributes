@@ -1,0 +1,11 @@
+* text=auto
+*.go text eol=lf
+*.nix text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+*.ps1 text eol=lf
+*.py text eol=lf
+*.tmpl text eol=lf

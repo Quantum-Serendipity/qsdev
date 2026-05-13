@@ -51,11 +51,13 @@ func newRenderer(fsys fs.FS, root string, funcMap template.FuncMap) (*Renderer, 
 		}
 
 		// Template name = path relative to root, minus .tmpl suffix.
+		// Use filepath.ToSlash so template names are always forward-slash
+		// separated, matching how they're referenced in {{template}} calls.
 		relPath, err := filepath.Rel(root, path)
 		if err != nil {
 			return fmt.Errorf("computing relative path for %s: %w", path, err)
 		}
-		name := strings.TrimSuffix(relPath, ".tmpl")
+		name := strings.TrimSuffix(filepath.ToSlash(relPath), ".tmpl")
 
 		_, err = t.New(name).Parse(string(data))
 		if err != nil {

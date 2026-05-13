@@ -26,6 +26,6 @@ func Configure(opts ...option) {
 }
 
 func initialize() error {
-	instance.AddCommands(devenvCmd())
+	instance.AddCommands(devenvCmd(), completionCmd())
 	return nil
 }

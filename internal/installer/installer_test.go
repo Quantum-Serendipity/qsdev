@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/installer"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/installer"
 )
 
 // testSpec returns a ToolSpec that references fake binaries so tests

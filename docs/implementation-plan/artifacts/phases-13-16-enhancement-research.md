@@ -78,7 +78,7 @@ A detection engine determines the appropriate mode when `gdev init` runs:
 | **Update** | `.gdev.yaml` exists, newer gdev version | Show changes since last version, offer `--update` |
 | **Repair** | `.gdev.yaml` exists, generated files drifted | Show drifted files, offer to fix |
 
-**Target**: 3 commands (`git clone`, `cd`, `gdev init`), under 2 minutes for returning engineers. Machine-specific setup (`gdev setup`) runs once per machine, not per project. The detection engine distinguishes machine-specific setup (devenv, direnv, claude CLI installation) from project-specific setup (already in git).
+**Target**: 3 commands (`git clone`, `cd`, `gdev init`), under 2 minutes for returning engineers. Machine-specific setup (`gdev devenv setup`) runs once per machine, not per project. The detection engine distinguishes machine-specific setup (devenv, direnv, claude CLI installation) from project-specific setup (already in git).
 
 **Edge cases addressed**: Nix download failures (offline), trust prompt fatigue (pre-trust company directories), version skew in team (actionable errors), partial state from interrupted init (atomic write pipeline), conflicting existing config (plan preview before writing).
 
@@ -108,7 +108,7 @@ A read-only validation command for CI pipelines that verifies project compliance
 
 **Auto-fix mode** (`gdev check --fix`): Applies deterministic fixes for safe issues (missing deny rules, missing pre-commit hooks, missing .gitignore entries). Does NOT auto-fix config structure changes, explicitly disabled security settings, or CI workflow changes.
 
-**Distinguished from `gdev doctor`**: `gdev check` validates project config compliance (runs in CI); `gdev doctor` validates machine/system state (runs locally). They complement each other.
+**Distinguished from `gdev devenv doctor`**: `gdev check` validates project config compliance (runs in CI); `gdev devenv doctor` validates machine/system state (runs locally). They complement each other.
 
 ### 3.5 Client-Specific Profiles with Compliance Levels
 
@@ -171,7 +171,7 @@ The `` !`command` `` syntax is a preprocessor that runs shell commands before sk
 
 ```markdown
 ## Current system state
-!`gdev doctor --json 2>/dev/null || echo '{"error": "gdev not installed"}'`
+!`gdev devenv doctor --json 2>/dev/null || echo '{"error": "gdev not installed"}'`
 ```
 
 This is the strongest CLI wrapper pattern identified in the ecosystem (from the GitHub PR summary skill pattern). It gives Claude actual project state before reasoning begins, which is dramatically more efficient than having Claude run discovery commands one by one.
@@ -425,9 +425,9 @@ Each project's CI pipeline generates `gdev status --json > posture.json` as a bu
 
 ### 6.1 `gdev repair` (Conservative Self-Healing)
 
-A companion to `gdev doctor` (read-only diagnostic):
+A companion to `gdev devenv doctor` (read-only diagnostic):
 
-- `gdev doctor` diagnoses (never modifies files)
+- `gdev devenv doctor` diagnoses (never modifies files)
 - `gdev repair` fixes what can be safely fixed automatically
 
 **Auto-fix rules**:

@@ -216,11 +216,11 @@ if exitErr, ok := err.(*exec.ExitError); ok {
 
 ### Tests Requiring Root/Admin
 
-For package installation tests (e.g., `gdev setup` running `apt-get install`):
+For package installation tests (e.g., `gdev devenv setup` running `apt-get install`):
 
 1. **Skip in normal test runs**: Use build tags or conditions
    ```
-   [exec:sudo] [linux] exec sudo gdev setup
+   [exec:sudo] [linux] exec sudo gdev devenv setup
    ```
 2. **Run in CI containers**: Docker containers where the test user is root
 3. **Mock the package manager**: For unit tests, inject a mock `PackageManager` interface
@@ -1230,7 +1230,7 @@ func TestDetectDistro(t *testing.T) {
 
 ### Wall-Clock Assertions in E2E Tests
 
-For `gdev init` (target: <60s) and `gdev doctor` (target: <2s):
+For `gdev init` (target: <60s) and `gdev devenv doctor` (target: <2s):
 
 ```go
 func TestInitPerformance(t *testing.T) {
@@ -1263,7 +1263,7 @@ func TestDoctorPerformance(t *testing.T) {
     elapsed := time.Since(start)
 
     assert.Less(t, elapsed, 2*time.Second,
-        "gdev doctor took %s, exceeding 2s limit", elapsed)
+        "gdev devenv doctor took %s, exceeding 2s limit", elapsed)
 }
 ```
 
@@ -1365,7 +1365,7 @@ go build -cover -o gdev .
 ```bash
 mkdir -p coverdata
 GOCOVERDIR=coverdata ./gdev init --answers-file test-answers.yaml
-GOCOVERDIR=coverdata ./gdev doctor
+GOCOVERDIR=coverdata ./gdev devenv doctor
 GOCOVERDIR=coverdata ./gdev enable precommit
 GOCOVERDIR=coverdata ./gdev status
 ```

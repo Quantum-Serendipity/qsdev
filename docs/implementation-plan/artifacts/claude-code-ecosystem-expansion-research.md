@@ -384,7 +384,7 @@ Research date: 2026-05-12.
 - **Maturity**: 2,392 stars. Created Apr 2025, actively maintained. Apache-2.0. Python.
 - **License**: Apache-2.0
 - **Consulting relevance**: HIGH. Meta-security: scans the AI tooling itself for vulnerabilities. As gdev installs multiple plugins and MCP servers, scanning them for injection risks is essential defense-in-depth.
-- **gdev integration**: Run as a post-setup validation step in `gdev doctor`. Verify all installed MCP servers and plugins are clean. Include in CI pipeline.
+- **gdev integration**: Run as a post-setup validation step in `gdev devenv doctor`. Verify all installed MCP servers and plugins are clean. Include in CI pipeline.
 
 ### 7.4 Snyk MCP Server
 

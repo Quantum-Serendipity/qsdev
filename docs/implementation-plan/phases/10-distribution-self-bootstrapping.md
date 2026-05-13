@@ -6,7 +6,7 @@ Package gdev as a single downloadable binary/installer for every major platform,
 
 ## Dependencies
 
-Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection, package manager abstraction, `gdev doctor`, `gdev setup`).
+Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection, package manager abstraction, `gdev devenv doctor`, `gdev devenv setup`).
 
 ## Phase Outputs
 
@@ -135,7 +135,7 @@ Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection,
    - Verify SHA256 (`sha256sum` or `shasum -a 256`)
    - Extract to `~/.gdev/bin/` (user-local, no sudo needed)
    - Add `~/.gdev/bin` to PATH in detected shell RC file (bash/zsh/fish)
-   - Print success message with next steps (`gdev doctor`, `gdev setup`)
+   - Print success message with next steps (`gdev devenv doctor`, `gdev devenv setup`)
    - Error handling: fail on any step, clean up partial downloads
 2. Create `scripts/install.ps1` (PowerShell):
    - Detect arch (`[System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture`)
@@ -232,7 +232,7 @@ Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection,
    - Idempotent: check if PATH entry already exists before adding
    - Platform-specific: use `$PROFILE` for PowerShell, `[Environment]::SetEnvironmentVariable` for Windows system PATH
 4. Include pre-generated completions in `embed.FS` for the nFPM packages (installed to system completion directories).
-5. Wire completion install into `gdev setup` flow (Unit 9.6).
+5. Wire completion install into `gdev devenv setup` flow (Unit 9.6).
 
 **Acceptance Criteria:**
 - [ ] `gdev completion bash` outputs valid bash completion script

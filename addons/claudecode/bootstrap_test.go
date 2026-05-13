@@ -3,7 +3,7 @@ package claudecode_test
 import (
 	"testing"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/addons/claudecode"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
 )
 
 func TestInstallClaudeStep_NotNil(t *testing.T) {

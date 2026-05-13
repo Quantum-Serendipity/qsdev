@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 // FlagSet tracks which CLI flags were explicitly set by the user.

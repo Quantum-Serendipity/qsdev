@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/haskell"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/haskell"
 )
 
 // newModule returns a fresh Module for testing.

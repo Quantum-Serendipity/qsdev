@@ -32,7 +32,7 @@ The optimal flow for minimum friction:
       - Install devenv.sh if missing
       - Install direnv if missing  
       - Install claude CLI if missing
-   -> Offers to install missing tools via gdev setup
+   -> Offers to install missing tools via gdev devenv setup
    -> Generates local-only files (.gdev.local.yaml template)
    -> Activates devenv shell
 4. devenv shell                        # Working environment
@@ -49,7 +49,7 @@ When `gdev init` runs in a directory with existing config, it must distinguish:
 | `.gdev.yaml` exists | File existence check | Enter "join" mode (not "create" mode) |
 | Generated files present (devenv.nix, .claude/) | File existence + hash check against `.gdev.yaml` config | Skip generation, verify state |
 | Generated files match expected state | SHA256 comparison against what `.gdev.yaml` would produce | Report drift if mismatched |
-| Local tools installed (devenv, direnv, claude) | `which` / PATH check | Offer `gdev setup` for missing |
+| Local tools installed (devenv, direnv, claude) | `which` / PATH check | Offer `gdev devenv setup` for missing |
 | devenv shell activated | `DEVENV_ROOT` env var check | Skip activation prompt |
 | Trust not established (mise model) | Check if project path is trusted | Prompt for trust on first run |
 
@@ -136,12 +136,12 @@ These must happen on each developer's machine:
 - Generate `.gdev.local.yaml` from template
 - Authenticate to any MCP servers (GitHub token, etc.)
 
-### The `gdev setup` Command
+### The `gdev devenv setup` Command
 
-For machine-specific setup, `gdev setup` (run once per machine, not per project) handles:
+For machine-specific setup, `gdev devenv setup` (run once per machine, not per project) handles:
 
 ```
-$ gdev setup
+$ gdev devenv setup
   Checking system prerequisites...
   
   ✓ Nix package manager (v2.28.0)
@@ -180,7 +180,7 @@ $ gdev setup
 | Step | Command | Time | Notes |
 |------|---------|------|-------|
 | 1 | `curl -fsSL https://get.myxdev.dev \| sh` | 30-60s | Installs gdev binary |
-| 2 | `gdev setup` | 2-5 min | Installs devenv, direnv, claude, shell hooks |
+| 2 | `gdev devenv setup` | 2-5 min | Installs devenv, direnv, claude, shell hooks |
 | 3 | `git clone <url> && cd <project>` | 10-30s | |
 | 4 | `gdev init` | 5-10s | |
 | 5 | `devenv shell` | 30-120s | First Nix download |
@@ -239,7 +239,7 @@ The detection engine determines the mode, then the UI adapts:
 
 1. **Nix download fails (no internet):** If Nix derivations are not cached, `devenv shell` fails. Mitigation: `gdev init` warns if Nix cache is empty and suggests pre-populating.
 
-2. **Trust prompt fatigue:** If every project requires trusting, engineers may blindly trust everything. Mitigation: `gdev setup` can pre-trust the company's project directory (like mise's `trusted_config_paths`).
+2. **Trust prompt fatigue:** If every project requires trusting, engineers may blindly trust everything. Mitigation: `gdev devenv setup` can pre-trust the company's project directory (like mise's `trusted_config_paths`).
 
 3. **Version skew in team:** One engineer has gdev v0.16, another v0.14. The `.gdev.yaml` `gdev_version` constraint catches this, but the error must be actionable (include `gdev self-update` command).
 

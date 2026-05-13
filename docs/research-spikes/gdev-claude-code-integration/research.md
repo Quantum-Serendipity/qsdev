@@ -40,7 +40,7 @@ Skills are the correct primary integration mechanism for exposing gdev to Claude
 
 The key design decisions:
 1. **Skills, not commands**: Use `.claude/skills/` directory structure for supporting files, frontmatter control, and auto-invocation
-2. **Dynamic context injection**: Every skill pre-captures `gdev doctor --json` / `gdev status --json` so Claude reasons from actual state
+2. **Dynamic context injection**: Every skill pre-captures `gdev devenv doctor --json` / `gdev status --json` so Claude reasons from actual state
 3. **User-only for side effects**: Init, enable, disable, update require explicit `/gdev-*` invocation
 4. **Claude-invocable for diagnostics**: Doctor, status, list are safe for autonomous use
 5. **JSON output contract**: All gdev commands must support `--json` for reliable machine parsing

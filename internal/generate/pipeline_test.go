@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/generate"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/generate"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 func TestWriteFiles_CreatesNewFiles(t *testing.T) {

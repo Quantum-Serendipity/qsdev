@@ -190,7 +190,7 @@ This is a Phase 12 prerequisite. Phase 15 drift detection uses `Category` to dec
 
 **Code at `addons/claudecode/generate_skills.go:60-77`:** Skills are deployed as plain `.md` files from `embed.FS` with `Strategy: types.LibraryManaged`
 
-**Validation:** This is correct. The `` !`command` `` syntax is a Claude Code runtime feature -- Claude Code preprocesses skill files at invocation time. Skills deployed as static markdown with `!` syntax will work natively without any Go-side template processing. New gdev operation skills with `!`gdev doctor --json`` will work as-is.
+**Validation:** This is correct. The `` !`command` `` syntax is a Claude Code runtime feature -- Claude Code preprocesses skill files at invocation time. Skills deployed as static markdown with `!` syntax will work natively without any Go-side template processing. New gdev operation skills with `!`gdev devenv doctor --json`` will work as-is.
 
 **No adjustment needed.**
 

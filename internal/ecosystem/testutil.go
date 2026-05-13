@@ -1,6 +1,6 @@
 package ecosystem
 
-import "fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+import "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 
 // MockModule is a configurable implementation of EcosystemModule for testing.
 // Each field corresponds to the return value of the matching interface method.

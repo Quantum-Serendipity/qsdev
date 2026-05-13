@@ -16,7 +16,7 @@ The best-established pattern for CLI diagnostic tools is the "doctor" command, e
 
 **The pattern**: Diagnose -> Report -> Suggest fixes (sometimes auto-fix).
 
-gdev already plans a `gdev doctor` command (Phase 9). This research focuses on what it should check and whether auto-repair is feasible.
+gdev already plans a `gdev devenv doctor` command (Phase 9). This research focuses on what it should check and whether auto-repair is feasible.
 
 ## Common Failure Modes in gdev-Managed Environments
 
@@ -57,14 +57,14 @@ gdev already plans a `gdev doctor` command (Phase 9). This research focuses on w
 | New ecosystem detected | Developer added package.json to a Go project | Detection engine finds unmanaged ecosystem | Suggest `gdev init` to add ecosystem |
 | Tool removed from gdev | gdev update drops deprecated tool | Config references non-existent tool | Warn, offer migration path |
 
-## Design: `gdev doctor` + `gdev repair`
+## Design: `gdev devenv doctor` + `gdev repair`
 
-### `gdev doctor` (Diagnostic Only)
+### `gdev devenv doctor` (Diagnostic Only)
 
 Reports environment health without modifying anything. Follows flutter doctor's UX pattern:
 
 ```
-$ gdev doctor
+$ gdev devenv doctor
 gdev Doctor
 ===========
 
@@ -79,7 +79,7 @@ gdev Doctor
 [✓] Branch naming hook (active, pattern: ^(feat|fix|chore|docs|refactor|test|ci)/[a-z0-9-]+$)
 
 Issues found: 2 warnings, 1 error
-Run gdev repair to fix automatically, or gdev doctor -v for details.
+Run gdev repair to fix automatically, or gdev devenv doctor -v for details.
 ```
 
 **Key checks** (ordered by importance):
@@ -125,7 +125,7 @@ Fix a specific file. Useful when doctor reports one issue and the developer want
 2. **repair is conservative by default**. Only fix what's unambiguously safe. `--force` for aggressive repair.
 3. **Always backup before overwriting**. `<file>.bak` with timestamp.
 4. **Hash tracking is the foundation**. The SHA256 hash system from the migration strategy design enables all corruption detection. No hash = can't detect drift.
-5. **Exit codes matter**. `gdev doctor` should exit 0 (healthy), 1 (warnings), 2 (errors) for CI integration.
+5. **Exit codes matter**. `gdev devenv doctor` should exit 0 (healthy), 1 (warnings), 2 (errors) for CI integration.
 
 ## Comparison: gdev repair vs "Just Re-run gdev init"
 
@@ -145,5 +145,5 @@ Both are needed. `gdev repair` is for "fix what's broken." `gdev init --update` 
 - [x] Key tradeoffs -- auto-fix safety vs manual effort, conservative vs aggressive repair
 - [x] Compared to alternatives -- flutter doctor, brew doctor, re-running gdev init
 - [x] Failure modes -- repair corrupts user edits (mitigated by backup), false positive in hash check (mitigated by --force), repair breaks devenv eval (mitigated by never touching devenv.nix)
-- [x] Concrete examples -- gdev doctor output mockup, gdev repair output mockup, failure mode table
+- [x] Concrete examples -- gdev devenv doctor output mockup, gdev repair output mockup, failure mode table
 - [x] Standalone-readable -- yes

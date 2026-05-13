@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/state"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 // UpdateSummary categorizes what changed during an update.

@@ -2,11 +2,11 @@
 
 ## Goal
 
-Implement the OS detection engine, package manager abstraction layer, tool prerequisite detection, shell integration, and privilege escalation handling that enable gdev to work across Windows, macOS, and all major Linux distributions. At the end of this phase, `gdev doctor` accurately reports the system environment and `gdev setup` can install missing prerequisites on any supported platform.
+Implement the OS detection engine, package manager abstraction layer, tool prerequisite detection, shell integration, and privilege escalation handling that enable gdev to work across Windows, macOS, and all major Linux distributions. At the end of this phase, `gdev devenv doctor` accurately reports the system environment and `gdev devenv setup` can install missing prerequisites on any supported platform.
 
 ## Dependencies
 
-Phase 1 complete (shared types, addon scaffolding). Phase 6 partial (wizard infrastructure — `gdev setup` shares the huh TUI patterns).
+Phase 1 complete (shared types, addon scaffolding). Phase 6 partial (wizard infrastructure — `gdev devenv setup` shares the huh TUI patterns).
 
 ## Phase Outputs
 
@@ -15,8 +15,8 @@ Phase 1 complete (shared types, addon scaffolding). Phase 6 partial (wizard infr
 - Tool-to-package-name registry mapping 13+ tools across all package managers
 - Shell detection and RC file resolution for bash, zsh, fish, PowerShell, nushell
 - Privilege escalation abstraction (sudo, doas, pkexec, gsudo, UAC)
-- `gdev doctor` command with structured diagnostic output
-- `gdev setup` command with interactive prerequisite installation
+- `gdev devenv doctor` command with structured diagnostic output
+- `gdev devenv setup` command with interactive prerequisite installation
 
 ---
 
@@ -111,7 +111,7 @@ Phase 1 complete (shared types, addon scaffolding). Phase 6 partial (wizard infr
 
 **Description:** Implement a `PackageManager` interface with concrete implementations for 12 package managers, plus a tool-to-package-name registry that resolves platform-specific package names.
 
-**Context:** Different OS families use different package managers, and the same tool often has different package names across them (e.g., `shellcheck` on Debian vs `ShellCheck` on Fedora vs `dev-util/shellcheck` on Gentoo). The abstraction provides a uniform `Install(tool)` API that resolves the correct package name and invokes the right command. This powers `gdev setup` and the bootstrap step registration from Phase 6.
+**Context:** Different OS families use different package managers, and the same tool often has different package names across them (e.g., `shellcheck` on Debian vs `ShellCheck` on Fedora vs `dev-util/shellcheck` on Gentoo). The abstraction provides a uniform `Install(tool)` API that resolves the correct package name and invokes the right command. This powers `gdev devenv setup` and the bootstrap step registration from Phase 6.
 
 **Desired Outcome:** A `PackageManager` interface that can install any prerequisite tool on any supported OS with the correct package name and elevation.
 
@@ -203,9 +203,9 @@ Phase 1 complete (shared types, addon scaffolding). Phase 6 partial (wizard infr
 
 ### Unit 9.4: Tool Prerequisite Detection & Health Checks
 
-**Description:** Implement the prerequisite detection engine that checks for the presence and version of all required/optional tools, producing a structured health report used by `gdev doctor` and `gdev setup`.
+**Description:** Implement the prerequisite detection engine that checks for the presence and version of all required/optional tools, producing a structured health report used by `gdev devenv doctor` and `gdev devenv setup`.
 
-**Context:** Before gdev can bootstrap a development environment, it must know what's already installed and what's missing. This engine checks for 13+ tools, extracts versions where possible, and classifies each as: installed (with version), missing (installable), or missing (requires manual steps). The results feed into `gdev doctor` (diagnostic display) and `gdev setup` (guided installation).
+**Context:** Before gdev can bootstrap a development environment, it must know what's already installed and what's missing. This engine checks for 13+ tools, extracts versions where possible, and classifies each as: installed (with version), missing (installable), or missing (requires manual steps). The results feed into `gdev devenv doctor` (diagnostic display) and `gdev devenv setup` (guided installation).
 
 **Desired Outcome:** A `ToolCheck` engine that produces a complete prerequisite report in <2 seconds across all platforms.
 
@@ -229,7 +229,7 @@ Phase 1 complete (shared types, addon scaffolding). Phase 6 partial (wizard infr
    - `curl` — `curl --version`, recommended
    - `python3` — `python3 --version`, recommended (used by Version-Sentinel), check >=3.11
 4. For each check: `exec.LookPath` for existence, version command for version extraction, compare against minimum version where applicable.
-5. Classify auto-installability: map each tool × current OS to whether `gdev setup` can install it automatically.
+5. Classify auto-installability: map each tool × current OS to whether `gdev devenv setup` can install it automatically.
 6. Handle nix-on-Windows special case: nix is NOT installable on native Windows, only in WSL2. Flag this clearly.
 7. Handle NixOS special case: suggest declarative configuration instead of `nix profile install` when `OSInfo.Family == "nixos"`.
 8. Implement `RunAllChecks(osInfo *sysinfo.OSInfo) []ToolStatus` — runs all checks in parallel (each check is independent).
@@ -253,13 +253,13 @@ Phase 1 complete (shared types, addon scaffolding). Phase 6 partial (wizard infr
 
 ---
 
-### Unit 9.5: `gdev doctor` Command
+### Unit 9.5: `gdev devenv doctor` Command
 
-**Description:** Implement the `gdev doctor` command that displays a comprehensive system diagnostic report: OS info, detected tools, package managers, shell, and recommended actions.
+**Description:** Implement the `gdev devenv doctor` command that displays a comprehensive system diagnostic report: OS info, detected tools, package managers, shell, and recommended actions.
 
-**Context:** `gdev doctor` is the first thing a developer runs when troubleshooting. It should produce a clear, structured report that support engineers can read. The output format follows the pattern established by `flutter doctor`, `brew doctor`, and `mise doctor`. The command uses Units 9.1-9.4 to gather all information.
+**Context:** `gdev devenv doctor` is the first thing a developer runs when troubleshooting. It should produce a clear, structured report that support engineers can read. The output format follows the pattern established by `flutter doctor`, `brew doctor`, and `mise doctor`. The command uses Units 9.1-9.4 to gather all information.
 
-**Desired Outcome:** `gdev doctor` prints a complete diagnostic report with actionable recommendations.
+**Desired Outcome:** `gdev devenv doctor` prints a complete diagnostic report with actionable recommendations.
 
 **Steps:**
 1. Create `internal/doctor/report.go` with `FormatReport(osInfo *sysinfo.OSInfo, checks []ToolStatus) string`.
@@ -270,36 +270,36 @@ Phase 1 complete (shared types, addon scaffolding). Phase 6 partial (wizard infr
    - **Required Tools**: Status table with ✓/✗, version, path
    - **Optional Tools**: Status table with ✓/✗/—, version, path
    - **Recommendations**: Numbered list of actions to resolve missing/outdated tools
-3. Register `gdev doctor` command via Cobra in the devinit addon.
-4. Support `gdev doctor --json` for machine-readable output (JSON marshaling of all data).
-5. Support `gdev doctor --check` exit code mode: exit 0 if all required tools present, exit 1 if any missing.
+3. Register `gdev devenv doctor` command via Cobra in the devenv addon.
+4. Support `gdev devenv doctor --json` for machine-readable output (JSON marshaling of all data).
+5. Support `gdev devenv doctor --check` exit code mode: exit 0 if all required tools present, exit 1 if any missing.
 6. Color-code output: green ✓ for installed, red ✗ for missing required, yellow ! for missing optional.
 7. Include `gdev` version and build info in output header.
 
 **Acceptance Criteria:**
-- [ ] `gdev doctor` produces readable diagnostic on macOS, Linux, and Windows
+- [ ] `gdev devenv doctor` produces readable diagnostic on macOS, Linux, and Windows
 - [ ] Required tools with ✗ show install instructions for the detected OS
-- [ ] `gdev doctor --json` produces valid JSON
-- [ ] `gdev doctor --check` returns correct exit code
+- [ ] `gdev devenv doctor --json` produces valid JSON
+- [ ] `gdev devenv doctor --check` returns correct exit code
 - [ ] Report includes actionable fix commands (e.g., "Run: brew install direnv")
 - [ ] Color output works in terminals, gracefully degrades in pipes/CI
 
 **Research Citations:**
 - `artifacts/cross-platform-distribution-research.md § 6.4 Binary Architecture` — doctor/ package structure
-- `artifacts/cross-platform-distribution-research.md § 2. Self-Bootstrapping Installer Patterns` — `gdev doctor` in the first-run sequence
+- `artifacts/cross-platform-distribution-research.md § 2. Self-Bootstrapping Installer Patterns` — `gdev devenv doctor` in the first-run sequence
 - `artifacts/os-prerequisite-detection-research.md § Key Recommendations` — detection priority and fallback chain
 
 **Status:** Not Started
 
 ---
 
-### Unit 9.6: `gdev setup` Command — Interactive Prerequisite Installation
+### Unit 9.6: `gdev devenv setup` Command — Interactive Prerequisite Installation
 
-**Description:** Implement the `gdev setup` command that walks the developer through installing missing prerequisites detected by `gdev doctor`, using the package manager abstraction and privilege escalation layers.
+**Description:** Implement the `gdev devenv setup` command that walks the developer through installing missing prerequisites detected by `gdev devenv doctor`, using the package manager abstraction and privilege escalation layers.
 
-**Context:** `gdev setup` is the second step in the first-run sequence (`gdev doctor` → `gdev setup` → `gdev init`). It reads the health check results, presents missing tools, and offers to install them. On NixOS, it suggests declarative configuration. On native Windows without WSL2, it offers to install WSL2 first for Nix-dependent features. The command uses huh for TUI if interactive, or accepts `--yes` for unattended mode.
+**Context:** `gdev devenv setup` is the second step in the first-run sequence (`gdev devenv doctor` → `gdev devenv setup` → `gdev init`). It reads the health check results, presents missing tools, and offers to install them. On NixOS, it suggests declarative configuration. On native Windows without WSL2, it offers to install WSL2 first for Nix-dependent features. The command uses huh for TUI if interactive, or accepts `--yes` for unattended mode.
 
-**Desired Outcome:** A developer on any supported OS can run `gdev setup` and get all prerequisites installed with minimal friction.
+**Desired Outcome:** A developer on any supported OS can run `gdev devenv setup` and get all prerequisites installed with minimal friction.
 
 **Steps:**
 1. Create `internal/setup/` package with `installer.go`.
@@ -321,12 +321,12 @@ Phase 1 complete (shared types, addon scaffolding). Phase 6 partial (wizard infr
 5. Implement `--dry-run` flag: show what would be installed without executing.
 6. Handle NixOS specially: output Nix expressions for `environment.systemPackages` instead of running install commands.
 7. Shell integration step: after tool installation, offer to add direnv hook and shell completions to the detected RC file.
-8. Register `gdev setup` command via Cobra.
+8. Register `gdev devenv setup` command via Cobra.
 
 **Acceptance Criteria:**
-- [ ] `gdev setup` installs git, go, node, direnv on Debian via apt with a single sudo prompt
-- [ ] `gdev setup` installs tools via brew on macOS without sudo
-- [ ] `gdev setup` handles Windows winget/scoop/choco
+- [ ] `gdev devenv setup` installs git, go, node, direnv on Debian via apt with a single sudo prompt
+- [ ] `gdev devenv setup` installs tools via brew on macOS without sudo
+- [ ] `gdev devenv setup` handles Windows winget/scoop/choco
 - [ ] Nix installation uses Determinate Systems installer
 - [ ] Claude Code installed after node is confirmed present
 - [ ] `--yes` mode works without interaction
@@ -349,10 +349,10 @@ Phase 1 complete (shared types, addon scaffolding). Phase 6 partial (wizard infr
 ## Phase Completion Criteria
 
 - [ ] All six units pass acceptance criteria
-- [ ] `gdev doctor` produces correct diagnostics on macOS (Intel + Apple Silicon), Windows (native + WSL2), Ubuntu, Fedora, Arch, NixOS
-- [ ] `gdev setup --yes` installs all auto-installable prerequisites on a fresh Ubuntu system
-- [ ] `gdev setup` on NixOS produces declarative Nix configuration
-- [ ] `gdev setup` on native Windows detects WSL2 absence and offers installation
+- [ ] `gdev devenv doctor` produces correct diagnostics on macOS (Intel + Apple Silicon), Windows (native + WSL2), Ubuntu, Fedora, Arch, NixOS
+- [ ] `gdev devenv setup --yes` installs all auto-installable prerequisites on a fresh Ubuntu system
+- [ ] `gdev devenv setup` on NixOS produces declarative Nix configuration
+- [ ] `gdev devenv setup` on native Windows detects WSL2 absence and offers installation
 - [ ] Package name resolution is correct for all tool × package manager combinations
 - [ ] Single sudo prompt for all apt/dnf/pacman packages (batch elevation)
 - [ ] Shell completions installed for detected shell

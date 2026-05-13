@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/addons/devenv"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devenv"
 )
 
 func TestBuildAnswersFromFlags(t *testing.T) {

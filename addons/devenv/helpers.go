@@ -1,10 +1,11 @@
 package devenv
 
 import (
+	"os"
 	"strings"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 // toModuleConfig converts a LanguageChoice into an ecosystem.ModuleConfig.
@@ -28,4 +29,15 @@ func inputKeyFromURL(url string) string {
 		return parts[1]
 	}
 	return url
+}
+
+// isAccessible returns true when ACCESSIBLE or NO_COLOR env var is set.
+func isAccessible() bool {
+	if os.Getenv("ACCESSIBLE") != "" {
+		return true
+	}
+	if os.Getenv("NO_COLOR") != "" {
+		return true
+	}
+	return false
 }

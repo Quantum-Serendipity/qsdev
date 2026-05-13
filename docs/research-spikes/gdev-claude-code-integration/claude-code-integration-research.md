@@ -44,7 +44,7 @@ The `` !`command` `` syntax is a preprocessor -- it runs shell commands *before*
 
 ```markdown
 ## Current system state
-!`gdev doctor --json 2>/dev/null || echo '{"error": "gdev not installed"}'`
+!`gdev devenv doctor --json 2>/dev/null || echo '{"error": "gdev not installed"}'`
 
 ## Instructions
 Based on the system state above, recommend actions...
@@ -55,7 +55,7 @@ Multi-line variant uses fenced code blocks opened with `` ```! ``:
 ````markdown
 ## Environment
 ```!
-gdev doctor --json
+gdev devenv doctor --json
 gdev status --json
 git status --short
 ```
@@ -183,7 +183,7 @@ argument-hint: [--profile <name>] [--yes]
 ---
 
 ## Current project state
-!`gdev doctor --json 2>/dev/null || echo '{"installed": false}'`
+!`gdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
 
 ## Current directory
 !`ls -la`
@@ -201,7 +201,7 @@ Initialize this project with gdev. Based on the detected state above:
    - If $ARGUMENTS includes --yes or --profile, pass them through
    - Otherwise, use `gdev init --non-interactive` with detected ecosystems
    - If the user specified a profile (e.g., "set up for Python with full security"), map that to the right flags
-4. After init completes, run `gdev doctor` to verify everything is healthy.
+4. After init completes, run `gdev devenv doctor` to verify everything is healthy.
 5. Summarize what was created and any manual steps needed.
 
 If the user says something like "set up this repo for Python development with full security":
@@ -221,7 +221,7 @@ allowed-tools: Bash(gdev *) Read
 ---
 
 ## System health
-!`gdev doctor --json 2>/dev/null || echo '{"error": "gdev not found"}'`
+!`gdev devenv doctor --json 2>/dev/null || echo '{"error": "gdev not found"}'`
 
 ## Instructions
 
@@ -305,7 +305,7 @@ allowed-tools: Bash(gdev *) Read Grep Glob
 ---
 
 ## Project analysis
-!`gdev doctor --json 2>/dev/null || echo '{"installed": false}'`
+!`gdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
 
 ## Existing configuration files
 ```!
@@ -326,7 +326,7 @@ Onboard this existing project to gdev management:
    - What gdev would add/modify
 3. Ask the user to confirm before making changes
 4. Run: `gdev init --merge` to fill gaps without overwriting
-5. Run `gdev doctor` to verify the result
+5. Run `gdev devenv doctor` to verify the result
 6. Summarize what was added and what was preserved
 ```
 
@@ -365,7 +365,7 @@ argument-hint: [--format json|markdown|sarif]
 ---
 
 ## Current security posture
-!`gdev doctor --json 2>/dev/null`
+!`gdev devenv doctor --json 2>/dev/null`
 
 ## Instructions
 
@@ -408,7 +408,7 @@ Update gdev configuration:
    - Files preserved (user-modified)
    - New ecosystems detected
    - New tools available
-4. Run `gdev doctor` to verify health after update
+4. Run `gdev devenv doctor` to verify health after update
 ```
 
 ### 3.3 Design Rationale
@@ -417,7 +417,7 @@ Update gdev configuration:
 
 **Why allow Claude to invoke `gdev-doctor` and `gdev-status`**: These are read-only diagnostic operations. When Claude is troubleshooting a build failure or answering questions about the environment, it should be able to check health autonomously without the user needing to type `/gdev-doctor`.
 
-**Why dynamic context injection (`!`command``)**: By running `gdev doctor --json` and `gdev status --json` *before* Claude sees the skill content, Claude receives the actual project state as structured data. This is dramatically more efficient than having Claude run discovery commands one by one, and it ensures Claude has the full picture before it starts reasoning.
+**Why dynamic context injection (`!`command``)**: By running `gdev devenv doctor --json` and `gdev status --json` *before* Claude sees the skill content, Claude receives the actual project state as structured data. This is dramatically more efficient than having Claude run discovery commands one by one, and it ensures Claude has the full picture before it starts reasoning.
 
 **Why JSON output from gdev**: Structured output (via `--json` flags) gives Claude parseable data rather than human-formatted tables. This is more reliable and more token-efficient. All gdev commands should support `--json` output.
 
@@ -441,7 +441,7 @@ The devops-claude-skills pattern uses paired skills:
 - **Validator**: Runs a linter/checker on the output (hadolint, kubeval, tflint)
 - Generator automatically invokes validator on its output
 
-This is relevant for gdev because `gdev init` generates configs and `gdev doctor` validates them -- a natural generator/validator pair.
+This is relevant for gdev because `gdev init` generates configs and `gdev devenv doctor` validates them -- a natural generator/validator pair.
 
 ### 4.3 Pattern: Dynamic State Injection
 
@@ -530,12 +530,12 @@ Skills that only describe a CLI tool's capabilities without injecting live state
 ```markdown
 ## Development Environment (gdev)
 
-This project is managed by gdev. Run `gdev doctor` to check environment health.
+This project is managed by gdev. Run `gdev devenv doctor` to check environment health.
 
 ### Available commands
 - `gdev init` — Initialize or re-initialize project configuration
-- `gdev doctor` — Check system and project health
-- `gdev setup` — Install missing prerequisites
+- `gdev devenv doctor` — Check system and project health
+- `gdev devenv setup` — Install missing prerequisites
 - `gdev enable <tool>` — Enable a security/development tool
 - `gdev disable <tool>` — Disable a tool
 - `gdev status` — Show current configuration state
@@ -553,7 +553,7 @@ This project is managed by gdev. Run `gdev doctor` to check environment health.
 
 ### Security policy
 - Always use `gdev enable` to add security tools, never configure them manually
-- Run `gdev doctor` after any configuration changes
+- Run `gdev devenv doctor` after any configuration changes
 - Package installations go through gdev's security pipeline (age-gating, vuln scanning)
 ```
 
@@ -636,13 +636,13 @@ Where `.claude/gdev-reference.md` is a gdev-generated file with full command doc
 
 **Reversibility**: `gdev enable/disable` should be clean round-trips. Enabling and then disabling a tool should leave the project in its original state. This makes experimentation safe.
 
-**Explicit confirmation for system-level changes**: `gdev setup` installs system packages. Even though the user invoked `/gdev-setup`, the skill should confirm before installing:
+**Explicit confirmation for system-level changes**: `gdev devenv setup` installs system packages. Even though the user invoked `/gdev-setup`, the skill should confirm before installing:
 
 ```markdown
-1. Run: `gdev setup --dry-run`
+1. Run: `gdev devenv setup --dry-run`
 2. Show: "The following packages will be installed: ..."
 3. Ask: "Proceed? (This will use sudo to install system packages)"
-4. If confirmed: `gdev setup`
+4. If confirmed: `gdev devenv setup`
 ```
 
 ### 6.5 Enterprise Safety via Managed Settings
@@ -668,7 +668,7 @@ This hooks into Claude Code's PreToolUse system to validate all shell commands a
 
 ### 6.6 What Should Never Be Autonomous
 
-- Installing system packages (`gdev setup`)
+- Installing system packages (`gdev devenv setup`)
 - First-time initialization (`gdev init` on a fresh project)
 - Disabling security tools (`gdev disable` for security-related tools)
 - Generating compliance reports (creates artifacts with potential audit implications)
@@ -676,7 +676,7 @@ This hooks into Claude Code's PreToolUse system to validate all shell commands a
 
 ### 6.7 What Can Safely Be Autonomous
 
-- Health checks (`gdev doctor`)
+- Health checks (`gdev devenv doctor`)
 - Status queries (`gdev status`, `gdev list`)
 - Ecosystem detection (`gdev detect`)
 - Reading existing configuration files
@@ -799,7 +799,7 @@ gdev could integrate with Claude Code through multiple mechanisms. Here's why sk
 Skills using `!`gdev ...`` for dynamic context injection will fail if gdev isn't installed. The pattern handles this:
 
 ```markdown
-!`gdev doctor --json 2>/dev/null || echo '{"error": "gdev not installed"}'`
+!`gdev devenv doctor --json 2>/dev/null || echo '{"error": "gdev not installed"}'`
 ```
 
 The `|| echo` fallback ensures Claude always gets parseable output and can handle the missing-tool case gracefully.
@@ -818,7 +818,7 @@ re-run `gdev status --json` to get current state.
 Some gdev commands (e.g., `gdev report`) may produce large outputs. For dynamic context injection, use `--json` with `jq` to extract only what's needed:
 
 ```markdown
-!`gdev doctor --json 2>/dev/null | jq '{overall, checks: [.checks[] | select(.status != "pass")]}'`
+!`gdev devenv doctor --json 2>/dev/null | jq '{overall, checks: [.checks[] | select(.status != "pass")]}'`
 ```
 
 ### 9.4 Skill Description Budget Overflow
@@ -832,7 +832,7 @@ description: Run gdev health checks. Use when diagnosing dev environment problem
 Not:
 
 ```yaml
-description: This skill runs the gdev doctor command to perform a comprehensive health check of your development environment, including checking for missing prerequisites, configuration issues, security hardening gaps, and more.
+description: This skill runs the gdev devenv doctor command to perform a comprehensive health check of your development environment, including checking for missing prerequisites, configuration issues, security hardening gaps, and more.
 ```
 
 ### 9.5 Compaction Dropping Skills

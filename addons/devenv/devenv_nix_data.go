@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sort"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 // DevenvNixTemplateData holds all data required to render the devenv.nix template.

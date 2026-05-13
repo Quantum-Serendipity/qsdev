@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 	"gopkg.in/yaml.v3"
 )
 

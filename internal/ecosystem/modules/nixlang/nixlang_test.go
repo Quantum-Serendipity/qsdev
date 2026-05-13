@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/nixlang"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/nixlang"
 )
 
 // newModule returns a fresh Module for testing.

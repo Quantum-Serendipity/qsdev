@@ -315,7 +315,7 @@ Go's `init()` pattern means all modules must be imported somewhere (typically a 
 
 ### 56. EcosystemModule Interface Will Need Expansion for Phase 9
 
-Phase 9 (Cross-Platform System Detection) adds OS detection, prerequisite mapping, and `gdev doctor`/`gdev setup`. Ecosystem modules may need methods like:
+Phase 9 (Cross-Platform System Detection) adds OS detection, prerequisite mapping, and `gdev devenv doctor`/`gdev devenv setup`. Ecosystem modules may need methods like:
 - `Prerequisites() []ToolPrerequisite` — what system tools does this ecosystem need (e.g., Java needs JDK, Terraform needs terraform binary)
 - `DoctorChecks() []Check` — ecosystem-specific health checks
 

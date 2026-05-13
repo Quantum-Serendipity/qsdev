@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/terraform"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/terraform"
 )
 
 // Compile-time interface compliance check.

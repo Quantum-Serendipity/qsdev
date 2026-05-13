@@ -101,7 +101,7 @@ Phase 4 complete (Claude Code addon core generation — settings.json, CLAUDE.md
    claude plugin marketplace add https://github.com/KSEGIT/Version-Sentinel.git
    claude plugin install version-sentinel@version-sentinel-marketplace
    ```
-5. Check Version-Sentinel prerequisite availability (jq, curl, python3 >=3.11) during `gdev doctor` — add these to the prerequisite checks in Phase 9.
+5. Check Version-Sentinel prerequisite availability (jq, curl, python3 >=3.11) during `gdev devenv doctor` — add these to the prerequisite checks in Phase 9.
 6. Generate ecosystem-specific coverage notes in CLAUDE.md:
    - Covered: npm (package.json), pip (requirements.txt), pyproject.toml, Cargo.toml, .csproj/.fsproj/.vbproj
    - Not yet covered by Version-Sentinel: Go (go.mod), Maven (pom.xml), Gradle (build.gradle), Docker, Terraform, PHP (composer.json), Ruby (Gemfile)
@@ -115,7 +115,7 @@ Phase 4 complete (Claude Code addon core generation — settings.json, CLAUDE.md
 - [ ] Plugin installation command generated correctly
 - [ ] `.version-sentinel/ignore` file generated with private package patterns
 - [ ] CLAUDE.md includes Version-Sentinel coverage notes per detected ecosystem
-- [ ] Prerequisites (jq, curl, python3) flagged in `gdev doctor` when Version-Sentinel enabled
+- [ ] Prerequisites (jq, curl, python3) flagged in `gdev devenv doctor` when Version-Sentinel enabled
 - [ ] Non-default `window_hours` reflected in configuration
 - [ ] No hook conflicts with attach-guard or other PreToolUse hooks
 - [ ] Skip flag (`--version-sentinel=false`) works
@@ -156,7 +156,7 @@ Phase 4 complete (Claude Code addon core generation — settings.json, CLAUDE.md
    ```
 4. **Sub-agent mode**: Generate `.claude/agents/semble-search.md` — embed the standard agent definition from semble's repo (instructs Claude to use `semble search` and `semble find-related` CLI commands).
 5. Add `--include-text-files` flag to MCP args when project contains significant non-code files (infrastructure repos with YAML/Markdown, detected from ecosystem modules: Terraform, Helm, Ansible).
-6. Check semble prerequisite: `python3 --version` >= 3.10 and `uvx` available. Add to `gdev doctor` checks when semble is enabled.
+6. Check semble prerequisite: `python3 --version` >= 3.10 and `uvx` available. Add to `gdev devenv doctor` checks when semble is enabled.
 7. Support pre-indexing by passing project path as argument to MCP server:
    ```json
    "args": ["--from", "semble[mcp]", "semble", "/path/to/project"]
@@ -170,7 +170,7 @@ Phase 4 complete (Claude Code addon core generation — settings.json, CLAUDE.md
 - [ ] Sub-agent mode generates `.claude/agents/semble-search.md`
 - [ ] `--include-text-files` auto-enabled for infrastructure-heavy projects
 - [ ] `.mcp.json` merge preserves existing MCP server entries
-- [ ] Python/uvx prerequisite check integrated with `gdev doctor`
+- [ ] Python/uvx prerequisite check integrated with `gdev devenv doctor`
 - [ ] Mode selection works via flag and wizard
 - [ ] Skip flag (`--semble=false`) works
 - [ ] Unit tests pass for clean and merge scenarios

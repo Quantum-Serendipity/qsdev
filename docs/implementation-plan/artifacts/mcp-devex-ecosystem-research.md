@@ -531,7 +531,7 @@ CI/CD is already covered by the source control MCP servers (GitHub MCP handles A
 | **Type** | CLI tool / library |
 | **Language** | Python |
 | **Version** | 1.28.0 |
-| **Consulting relevance** | **Reference architecture, not a direct dependency.** gdev's `gdev doctor` command should implement similar patterns: repo-specific checks, guided fixes, diagnostic output. The check/fix pattern is proven at Sentry's scale. |
+| **Consulting relevance** | **Reference architecture, not a direct dependency.** gdev's `gdev devenv doctor` command should implement similar patterns: repo-specific checks, guided fixes, diagnostic output. The check/fix pattern is proven at Sentry's scale. |
 
 #### 12.1.2 dev-env-health-check
 

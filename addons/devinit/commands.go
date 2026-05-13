@@ -8,15 +8,15 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/addons/claudecode"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/addons/devenv"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/detect"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	_ "fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem/modules" // register all modules
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/generate"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/profile"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/state"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devenv"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/detect"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules" // register all modules
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/generate"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/profile"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 const (

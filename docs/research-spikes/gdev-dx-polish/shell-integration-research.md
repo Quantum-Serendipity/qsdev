@@ -66,15 +66,15 @@ devenv's `scripts` option (now superseded by tasks, but still available) can exp
 
 ```nix
 # In generated devenv.nix
-scripts.gcheck.exec = "gdev doctor";
+scripts.gcheck.exec = "gdev devenv doctor";
 scripts.gstatus.exec = "gdev status";
 ```
 
-But this is redundant -- `gdev doctor` and `gdev status` are already short commands. Adding aliases for 4-character savings is not worth the cognitive overhead of "wait, is `gcheck` a real command or an alias?"
+But this is redundant -- `gdev devenv doctor` and `gdev status` are already short commands. Adding aliases for 4-character savings is not worth the cognitive overhead of "wait, is `gcheck` a real command or an alias?"
 
 ### Recommendation
 
-**Do NOT include aliases.** The gdev command namespace is already clean (`gdev doctor`, `gdev status`, `gdev init`). Aliases add confusion without meaningful time savings. Developers who want aliases can create their own.
+**Do NOT include aliases.** The gdev command namespace is already clean (`gdev devenv doctor`, `gdev status`, `gdev init`). Aliases add confusion without meaningful time savings. Developers who want aliases can create their own.
 
 ## Quick-Info Commands
 
@@ -95,7 +95,7 @@ devenv: v2.1.0, shell healthy
 gdev: v1.2.0 (config current)
 ```
 
-This is `gdev doctor` without the checks -- just read cached state and display it. Subsecond response.
+This is `gdev devenv doctor` without the checks -- just read cached state and display it. Subsecond response.
 
 ### Recommendation
 
@@ -114,7 +114,7 @@ eval "$(gdev hook bash)"
 This would:
 1. Set `GDEV_PROJECT_NAME` on directory entry
 2. Display a one-line notification when entering a gdev-managed project
-3. Optionally run `gdev doctor --quick` on first entry (cached, subsecond)
+3. Optionally run `gdev devenv doctor --quick` on first entry (cached, subsecond)
 
 ### Analysis
 

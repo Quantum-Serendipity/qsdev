@@ -892,7 +892,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
    stdout '.envrc.'
 
    # Verify doctor now reports clean
-   exec gdev doctor --json
+   exec gdev devenv doctor --json
    json_path '.overall' 'pass'
 
    -- answers.yaml --
@@ -1196,7 +1196,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 - [ ] `gdev repair --dry-run` shows planned actions without writing any files
 - [ ] `gdev repair` NEVER auto-modifies devenv.nix (generates `.devenv.nix.new` instead)
 - [ ] Mandatory backup created before any file modification by repair
-- [ ] After repair, `gdev doctor` reports clean health
+- [ ] After repair, `gdev devenv doctor` reports clean health
 - [ ] `gdev info` displays correct project name, ecosystems, security profile, version
 - [ ] `gdev info --oneline` produces exactly one line of output
 - [ ] `gdev info --json` produces valid JSON with all required fields

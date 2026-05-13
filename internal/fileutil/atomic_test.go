@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
 )
 
 func TestWriteFileAtomic_CreatesFileWithCorrectContentAndPermissions(t *testing.T) {

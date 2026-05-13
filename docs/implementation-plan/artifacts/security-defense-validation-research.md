@@ -1643,10 +1643,10 @@ Based on the DevSecOps Security Test Pyramid model:
 
 #### Level 3: End-to-End Tests (Top)
 
-- **Full workflow simulation**: `gdev init` -> `gdev doctor` -> developer installs dependencies -> CI runs
+- **Full workflow simulation**: `gdev init` -> `gdev devenv doctor` -> developer installs dependencies -> CI runs
 - **Red team exercises**: Attempt to bypass each defense layer intentionally
 - **Chaos testing**: Remove/corrupt individual configs and verify other layers still protect
-- **For gdev**: Run the complete gdev setup in a clean VM/container and verify all defenses are active
+- **For gdev**: Run the complete gdev devenv setup in a clean VM/container and verify all defenses are active
 
 ### Recommended Test Distribution for gdev
 

@@ -1,7 +1,7 @@
 package profile
 
 import (
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 // EnvironmentVars returns the environment variables implied by this profile.

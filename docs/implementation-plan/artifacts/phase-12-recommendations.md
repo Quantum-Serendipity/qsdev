@@ -557,7 +557,7 @@ Units can proceed in parallel except:
 | **release-please** (Google changelog/release) | Node.js dependency. A Go CLI tool should not require Node.js for changelog generation. git-cliff is a Rust single binary that matches gdev's zero-prerequisite philosophy. |
 | **semantic-release** (changelog/release) | Node.js dependency, same reasoning as release-please. Also more opinionated about the release workflow than a consulting firm wants (different clients have different release processes). |
 | **Developer onboarding metrics** | No mature open-source tool exists for measuring time-to-first-commit. The concept is valuable but the implementation is organizational process, not tooling — track it via git log analysis and team retrospectives, not a gdev integration. Adding telemetry to a developer tool creates trust issues. |
-| **Configuration drift detection** | Nix/devenv already provides reproducible environments by design — if you use `devenv shell`, you get the declared environment. Drift detection is solving a problem that devenv's architecture prevents. The real drift risk is "developer bypasses devenv" which is a process problem, not a tool problem. `gdev doctor` (Phase 9) already validates the local environment state. |
+| **Configuration drift detection** | Nix/devenv already provides reproducible environments by design — if you use `devenv shell`, you get the declared environment. Drift detection is solving a problem that devenv's architecture prevents. The real drift risk is "developer bypasses devenv" which is a process problem, not a tool problem. `gdev devenv doctor` (Phase 9) already validates the local environment state. |
 | **Local service orchestration** (Docker Compose alternatives) | devenv 2.0 includes a native Rust process manager replacing process-compose, with dependency ordering, restart policies, and Linux capabilities. Adding a separate orchestration tool would conflict with devenv's built-in service management. |
 
 ### Security Hardening
@@ -577,7 +577,7 @@ Units can proceed in parallel except:
 |------|---------------------|
 | **SonarQube plugin** (Claude Code marketplace) | Requires a SonarQube server instance — operational overhead too high for the consulting firm's $0/mo default stack. Listed in Phase 4 as "configure when available" which is the right posture — reference but don't default-enable. |
 | **Aikido plugin** (Claude Code marketplace) | Commercial SaaS ($24/user/month). Would need per-client licensing. The firm's security stack (Semgrep + gitleaks + Grype + OSV Scanner) covers the same surface at $0. |
-| **Monitoring/observability for dev environment** | Developer environments don't need monitoring — they need to work. If they don't work, `gdev doctor` diagnoses the issue. Adding Prometheus/Grafana for dev environments is over-engineering a problem that doesn't exist at the consulting firm scale. |
+| **Monitoring/observability for dev environment** | Developer environments don't need monitoring — they need to work. If they don't work, `gdev devenv doctor` diagnoses the issue. Adding Prometheus/Grafana for dev environments is over-engineering a problem that doesn't exist at the consulting firm scale. |
 | **Endor Labs plugin** | Commercial SaaS with limited free tier. OSV Scanner + Socket.dev MCP cover supply chain scanning at $0. |
 
 ---

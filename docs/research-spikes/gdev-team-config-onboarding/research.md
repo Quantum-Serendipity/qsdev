@@ -14,7 +14,7 @@ This spike builds on prior research in `gdev-extension-design` (addon architectu
 
 - **Configuration Versioning and Drift** -- Complete. Designed three-axis versioning (binary, config schema, template), Terraform-style version constraints (`gdev_version`), incremental migration chain, and version ratchet strategy to prevent downgrades. See [config-versioning-drift-research.md](config-versioning-drift-research.md).
 
-- **Standards Enforcement in CI** -- Complete. Designed `gdev check` command with 5 check categories, 4 output formats (human, JSON, SARIF, JUnit), auto-fix mode for safe changes. Distinguished from `gdev doctor` (machine state) vs `gdev check` (project compliance). See [standards-enforcement-ci-research.md](standards-enforcement-ci-research.md).
+- **Standards Enforcement in CI** -- Complete. Designed `gdev check` command with 5 check categories, 4 output formats (human, JSON, SARIF, JUnit), auto-fix mode for safe changes. Distinguished from `gdev devenv doctor` (machine state) vs `gdev check` (project compliance). See [standards-enforcement-ci-research.md](standards-enforcement-ci-research.md).
 
 - **Prior Art Survey** -- Complete. Deep analysis of 7 tools (Nx, Yeoman, Copier, Projen, Dev Containers, mise, proto) plus cross-cutting pattern extraction. Identified 10 patterns, recommended adoption priorities. See [prior-art-survey-research.md](prior-art-survey-research.md).
 
@@ -43,7 +43,7 @@ Resolution: deep merge, later layers override earlier, with security level actin
 
 ### Onboarding: 3 Commands, 2 Minutes
 
-The clone-to-productive gap for a returning engineer should be: `git clone`, `cd project`, `gdev init` (detects `.gdev.yaml`, verifies state, does local setup), `devenv shell`. A detection engine determines one of four modes (Create/Join/Update/Repair) and adapts the UI accordingly. Machine-specific setup (`gdev setup`) runs once per machine, not per project.
+The clone-to-productive gap for a returning engineer should be: `git clone`, `cd project`, `gdev init` (detects `.gdev.yaml`, verifies state, does local setup), `devenv shell`. A detection engine determines one of four modes (Create/Join/Update/Repair) and adapts the UI accordingly. Machine-specific setup (`gdev devenv setup`) runs once per machine, not per project.
 
 ### Version Compatibility: Terraform Pattern
 
@@ -51,7 +51,7 @@ The clone-to-productive gap for a returning engineer should be: `git clone`, `cd
 
 ### CI Enforcement: `gdev check`
 
-A read-only validation command that verifies project compliance against org policy. Checks: binary compatibility, config integrity, required tools, generated file state, security hardening. Outputs human-readable, JSON, SARIF, or JUnit. Exit code 0 (pass) or 1 (fail). Auto-fix mode for safe additive changes. Complemented by `gdev doctor` (machine health) which serves a different purpose.
+A read-only validation command that verifies project compliance against org policy. Checks: binary compatibility, config integrity, required tools, generated file state, security hardening. Outputs human-readable, JSON, SARIF, or JUnit. Exit code 0 (pass) or 1 (fail). Auto-fix mode for safe additive changes. Complemented by `gdev devenv doctor` (machine health) which serves a different purpose.
 
 ### Consulting Lifecycle: Teardown, Archive, Evidence
 

@@ -471,8 +471,8 @@ No two tools write to the same *section* of a shared file. Each tool has a uniqu
 
 | Tool | Prerequisites | Behavior on Missing Prerequisite |
 |------|--------------|----------------------------------|
-| version-sentinel | python3 >=3.11, jq, curl | `gdev enable version-sentinel` fails with message listing missing prereqs; `gdev doctor` reports them |
-| semble | python3 >=3.10, uvx | `gdev enable semble` fails with message; `gdev doctor` reports |
+| version-sentinel | python3 >=3.11, jq, curl | `gdev enable version-sentinel` fails with message listing missing prereqs; `gdev devenv doctor` reports them |
+| semble | python3 >=3.10, uvx | `gdev enable semble` fails with message; `gdev devenv doctor` reports |
 | container-security | docker | `gdev enable container-security` warns (Docker detection drives default); may succeed for CI-only use |
 | secretspec | devenv >=2.0 | `gdev enable secretspec` warns if devenv version too old |
 | commitlint | Node.js (for commitlint binary) | `gdev enable commitlint` fails if no Node runtime |

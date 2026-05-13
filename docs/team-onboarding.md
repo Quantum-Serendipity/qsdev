@@ -47,7 +47,7 @@ Use the Go API to register organization-specific profiles in your gdev plugin:
 package main
 
 import (
-    "fastcat.org/go/gdev-secure-devenv-bootstrap/addons/devinit"
+    "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devinit"
 )
 
 func init() {
@@ -268,8 +268,8 @@ For organizations with many repositories, create a shared gdev plugin that regis
 package mygdev
 
 import (
-    "fastcat.org/go/gdev-secure-devenv-bootstrap/addons/devinit"
-    "fastcat.org/go/gdev-secure-devenv-bootstrap/internal/profile"
+    "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devinit"
+    "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/profile"
 )
 
 func init() {

@@ -186,19 +186,19 @@ gdev-check:
 - Whether devenv shell actually works (requires Nix evaluation)
 - Individual developer's local tool versions (only project config)
 
-### Relationship to `gdev doctor`
+### Relationship to `gdev devenv doctor`
 
-`gdev check` and `gdev doctor` serve different purposes:
+`gdev check` and `gdev devenv doctor` serve different purposes:
 
-| | `gdev check` | `gdev doctor` |
+| | `gdev check` | `gdev devenv doctor` |
 |---|---|---|
 | **Scope** | Project config compliance | Machine/system state |
 | **Runs in** | CI + local | Local only |
 | **Checks** | Standards, security, config state | Tool installation, versions, shell hooks |
-| **Modifies files** | Never | Never (but suggests `gdev setup`) |
+| **Modifies files** | Never | Never (but suggests `gdev devenv setup`) |
 | **Exit code** | 0 (pass) / 1 (fail) | 0 (healthy) / 1 (issues) |
 
-They complement each other: `gdev doctor` ensures the machine is ready; `gdev check` ensures the project is compliant.
+They complement each other: `gdev devenv doctor` ensures the machine is ready; `gdev check` ensures the project is compliant.
 
 ## Prior Art Comparison
 

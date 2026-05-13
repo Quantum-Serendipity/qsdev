@@ -31,7 +31,7 @@ Phase 1 complete (shared types in `pkg/types/`). Phase 12 complete (tool lifecyc
 
 The `gdev status` command fills this gap by following established patterns from `flutter doctor` (hierarchical checks with three-state indicators), `npm audit` (severity-threshold exit codes), and OpenSSF Scorecard (weighted scoring with per-check detail). The command must complete its local checks in under 1 second; network-dependent scans (vulnerability databases) are cached by default with `--scan` for fresh results.
 
-Phase 9 already defined `gdev doctor` for system-level diagnostics (OS, tools, package managers). `gdev status` is project-level — it reports on the security posture of the current project, not the system. They share the `internal/doctor/` package's check infrastructure but serve different audiences and answer different questions.
+Phase 9 already defined `gdev devenv doctor` for system-level diagnostics (OS, tools, package managers). `gdev status` is project-level — it reports on the security posture of the current project, not the system. They share the `internal/doctor/` package's check infrastructure but serve different audiences and answer different questions.
 
 **Desired Outcome:** A developer runs `gdev status` and instantly sees: overall score with letter grade, conformance status (baseline/enhanced PASS/FAIL), defense layer checklist with per-layer status, config health summary, and dependency vulnerability counts. Running `gdev status --verbose` expands every section with per-check detail and remediation hints. Running `gdev status --json` produces a complete `PostureReport` for CI consumption. Running `gdev status --audit-level high` exits non-zero if any high-or-above findings exist, gating CI builds.
 
@@ -173,7 +173,7 @@ Phase 9 already defined `gdev doctor` for system-level diagnostics (OS, tools, p
 - `research-spikes/gdev-health-reporting/compliance-posture-model-research.md § Data Model (Go Types)` -- PostureReport, AggregateScore, ConformanceResult struct definitions
 - `research-spikes/gdev-health-reporting/prior-art-research.md § Doctor Command Pattern` -- flutter doctor, brew doctor, rustup check UX analysis
 - `research-spikes/gdev-health-reporting/prior-art-research.md § Universal Patterns` -- JSON output, severity levels, exit codes, summary-then-detail, remediation hints
-- `phases/09-cross-platform-system-detection.md § Unit 9.5` -- `gdev doctor` design (system-level diagnostics, complementary to project-level `gdev status`)
+- `phases/09-cross-platform-system-detection.md § Unit 9.5` -- `gdev devenv doctor` design (system-level diagnostics, complementary to project-level `gdev status`)
 
 **Status:** Not Started
 

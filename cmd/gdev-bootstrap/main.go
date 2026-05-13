@@ -5,9 +5,9 @@ import (
 	"fastcat.org/go/gdev/cmd"
 	"fastcat.org/go/gdev/instance"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/addons/claudecode"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/addons/devenv"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/addons/devinit"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devenv"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devinit"
 )
 
 func main() {

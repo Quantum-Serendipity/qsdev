@@ -125,7 +125,7 @@ For gdev, testscript is ideal because each test can declare a project fixture as
    - After each test, copy coverage data to a shared directory for merging.
 6. Create initial test scripts:
    - `e2e/testdata/script/init-basic.txt` — `gdev init --answers-file answers.yaml` with minimal Go project answers, verify devenv.yaml, devenv.nix, .envrc generated with expected content.
-   - `e2e/testdata/script/doctor-basic.txt` — `gdev doctor` in a fresh directory, verify exit code and output format.
+   - `e2e/testdata/script/doctor-basic.txt` — `gdev devenv doctor` in a fresh directory, verify exit code and output format.
    - `e2e/testdata/script/version.txt` — `gdev version`, verify version string format.
    - `e2e/testdata/script/init-noninteractive.txt` — verify `GDEV_NON_INTERACTIVE=1` produces same output as `--non-interactive` flag.
    - `e2e/testdata/script/init-idempotent.txt` — run `gdev init` twice, verify second run detects existing files and handles merge strategy.
@@ -437,7 +437,7 @@ The golden file pattern — storing expected output in version-controlled files 
 
 **Description:** Set up test reporting (JUnit XML with PR annotations), coverage collection (unit + E2E merged), performance baselines, and the build tag strategy that separates test tiers.
 
-**Context:** With four test tiers (unit, integration, E2E, distro) running across 20+ matrix cells, test results need aggregation and clear reporting. Individual test failures in a matrix of 20 jobs are hard to find without PR annotations. Coverage must combine unit test coverage (trivial — `go test -cover`) with E2E coverage (non-trivial — requires the compiled binary to be instrumented). Performance regressions in `gdev doctor` or `gdev init` must be caught before they ship.
+**Context:** With four test tiers (unit, integration, E2E, distro) running across 20+ matrix cells, test results need aggregation and clear reporting. Individual test failures in a matrix of 20 jobs are hard to find without PR annotations. Coverage must combine unit test coverage (trivial — `go test -cover`) with E2E coverage (non-trivial — requires the compiled binary to be instrumented). Performance regressions in `gdev devenv doctor` or `gdev init` must be caught before they ship.
 
 Go 1.20 introduced coverage collection from compiled binaries via the `-cover` build flag and `GOCOVERDIR` environment variable. When a `-cover`-built binary exits, it writes coverage data to `GOCOVERDIR`. This enables collecting coverage from testscript E2E runs where the binary is invoked as an external process. Merging unit and E2E coverage via `gocovmerge` gives a true picture of what code is exercised.
 
@@ -468,7 +468,7 @@ Go 1.20 introduced coverage collection from compiled binaries via the `-cover` b
    - Generate HTML report: `go tool cover -html=merged-coverage.out -o coverage.html`.
    - Upload as artifact for inspection.
 6. Establish performance baselines:
-   - `gdev doctor` must complete in < 2 seconds on a clean system.
+   - `gdev devenv doctor` must complete in < 2 seconds on a clean system.
    - `gdev init --answers-file <path>` must complete in < 60 seconds (including detection + generation + file writes).
    - `gdev enable <tool>` and `gdev disable <tool>` must complete in < 2 seconds.
    - Write benchmarks: `func BenchmarkDoctor(b *testing.B)`, `func BenchmarkInit(b *testing.B)`, `func BenchmarkEnable(b *testing.B)`.

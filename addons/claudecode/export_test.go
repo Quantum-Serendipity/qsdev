@@ -1,6 +1,6 @@
 package claudecode
 
-import "fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+import "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 
 // ExportMCPServerConfig re-exports MCPServerConfig for convenience in tests.
 type ExportMCPServerConfig = MCPServerConfig

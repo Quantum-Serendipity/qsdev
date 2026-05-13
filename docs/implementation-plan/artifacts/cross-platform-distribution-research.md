@@ -662,25 +662,25 @@ func extractTemplate(name string, destPath string) error {
 Based on patterns from rustup, mise, and volta, here is the recommended first-run sequence for gdev:
 
 ```
-gdev doctor    # Diagnose what's missing
-gdev setup     # Interactive bootstrap (installs prerequisites)
-gdev init      # Scaffold a project's dev environment
+gdev devenv doctor    # Diagnose what's missing
+gdev devenv setup     # Interactive bootstrap (installs prerequisites)
+gdev init             # Scaffold a project's dev environment
 ```
 
-The `gdev doctor` command is critical infrastructure. It should:
+The `gdev devenv doctor` command is critical infrastructure. It should:
 1. Detect the OS, distro, and architecture
 2. Check for each prerequisite (git, nix, devenv, direnv, pre-commit, Claude Code)
 3. Report what's present, what's missing, and what version is installed
 4. Output actionable commands for fixing each issue
 5. Return a non-zero exit code if anything critical is missing
 
-The `gdev setup` command should:
-1. Run `gdev doctor` to identify gaps
+The `gdev devenv setup` command should:
+1. Run `gdev devenv doctor` to identify gaps
 2. Present a plan: "I will install X, Y, Z using [package manager]. Continue? [Y/n]"
 3. Handle privilege escalation (sudo) only when needed
 4. Install prerequisites in dependency order
 5. Configure shell integration (PATH, completions, direnv hooks)
-6. Run `gdev doctor` again to verify
+6. Run `gdev devenv doctor` again to verify
 
 ---
 
@@ -1024,7 +1024,7 @@ func RequestElevation(reason string) error {
 ### 4.2 Installation Dependency Graph
 
 ```
-gdev setup
+gdev devenv setup
 ├── git (package manager)
 ├── nix (Determinate Systems installer)
 │   └── devenv (nix profile install)
@@ -1044,7 +1044,7 @@ func installNix() error {
         return fmt.Errorf(
             "Nix is not available natively on Windows.\n" +
             "Options:\n" +
-            "  1. Use WSL2: wsl --install, then run gdev setup inside WSL\n" +
+            "  1. Use WSL2: wsl --install, then run gdev devenv setup inside WSL\n" +
             "  2. Use devcontainers with Nix pre-installed\n" +
             "  3. Skip Nix-based features (gdev will use native package managers)")
     }
@@ -1087,9 +1087,9 @@ For a consulting firm, the Windows story needs careful thought:
 - Detect the environment:
   - Running inside WSL2? Use Linux path.
   - Running on native Windows? Offer WSL2 or native-only mode.
-- `gdev doctor` reports which features are available in each mode
-- `gdev setup --wsl` explicitly targets WSL2
-- `gdev setup --native` explicitly targets native Windows
+- `gdev devenv doctor` reports which features are available in each mode
+- `gdev devenv setup --wsl` explicitly targets WSL2
+- `gdev devenv setup --native` explicitly targets native Windows
 
 ### 4.5 Multi-Runtime Management
 
@@ -1268,10 +1268,10 @@ Use the complete `.goreleaser.yaml` from Section 1.1 above. The GitHub Actions w
 gdev binary
 ├── cmd/gdev/main.go          # Entry point
 ├── internal/
-│   ├── doctor/                # System diagnostics (gdev doctor)
+│   ├── doctor/                # System diagnostics (gdev devenv doctor)
 │   │   ├── checks.go         # Individual prerequisite checks
 │   │   └── report.go         # Diagnostic output formatting
-│   ├── setup/                 # Bootstrap logic (gdev setup)
+│   ├── setup/                 # Bootstrap logic (gdev devenv setup)
 │   │   ├── installer.go      # Orchestrates prerequisite installation
 │   │   └── shell.go          # Shell integration (PATH, completions)
 │   ├── sysinfo/               # OS/distro/arch detection

@@ -1,8 +1,8 @@
 package devinit
 
 import (
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/answers"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/answers"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 // answersPath returns the full path to the devinit answers persistence file.

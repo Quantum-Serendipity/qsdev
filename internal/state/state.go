@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 // FileStatus describes the current on-disk state of a previously generated

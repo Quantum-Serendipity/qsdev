@@ -17,27 +17,27 @@ Phase 11's semble integration needs to know whether Python >= 3.10 is available 
 
 Unit 9.2's acceptance criteria focus on unit tests with mock exec. There are no integration tests that run `apt-get`, `brew`, or `pacman` on real systems. The CI workflow in Phase 10 (Unit 10.2) runs tests on a matrix of Linux/macOS/Windows but Phase 9 has no analogous CI integration test requirement. The package name registry (13 tools x 12 managers = 156 mappings) has especially high potential for incorrect mappings that unit tests will not catch — the Fedora `ShellCheck` capitalization, the Gentoo `dev-util/shellcheck` category prefix, and similar platform-specific quirks are verified only via table-driven mocks, never against real package manager output.
 
-**Recommendation:** Add an integration test requirement to Phase 9's completion criteria that runs `gdev doctor` on at least Ubuntu, macOS, and Windows in CI, validating that real package manager detection and real tool detection produce correct results.
+**Recommendation:** Add an integration test requirement to Phase 9's completion criteria that runs `gdev devenv doctor` on at least Ubuntu, macOS, and Windows in CI, validating that real package manager detection and real tool detection produce correct results.
 
-### 9-G3: `gdev doctor` CI/no-TTY output not specified (Medium)
+### 9-G3: `gdev devenv doctor` CI/no-TTY output not specified (Medium)
 
-Unit 9.5 specifies color-coded output with emoji (green check, red X, yellow exclamation). Step 6 says "Color output works in terminals, gracefully degrades in pipes/CI" but does not specify what the degraded output looks like. There is no acceptance criterion for no-TTY mode beyond `--json`. Developers will pipe `gdev doctor` to log files or use it in CI scripts. The degradation behavior needs specification:
+Unit 9.5 specifies color-coded output with emoji (green check, red X, yellow exclamation). Step 6 says "Color output works in terminals, gracefully degrades in pipes/CI" but does not specify what the degraded output looks like. There is no acceptance criterion for no-TTY mode beyond `--json`. Developers will pipe `gdev devenv doctor` to log files or use it in CI scripts. The degradation behavior needs specification:
 - Strip ANSI codes when stdout is not a TTY (`os.Stdout.Fd()` + `isatty`)
 - Replace Unicode symbols with ASCII alternatives (`[OK]`, `[FAIL]`, `[WARN]`)
 - Suppress progress spinners
 
 The `--check` exit code mode is specified but there is no `--quiet` flag for scripts that only want the exit code without output.
 
-### 9-G4: `gdev setup` partial failure recovery unspecified (High)
+### 9-G4: `gdev devenv setup` partial failure recovery unspecified (High)
 
-Unit 9.6 has no strategy for what happens when installation fails mid-way. Consider the scenario: `gdev setup --yes` on Ubuntu installs git and go successfully, then the Nix install (via Determinate Systems) fails partway. The acceptance criteria say "Post-install verification confirms all tools work" but there is no:
+Unit 9.6 has no strategy for what happens when installation fails mid-way. Consider the scenario: `gdev devenv setup --yes` on Ubuntu installs git and go successfully, then the Nix install (via Determinate Systems) fails partway. The acceptance criteria say "Post-install verification confirms all tools work" but there is no:
 - Rollback strategy (is there one? Or is it just "report what failed"?)
-- Re-entry safety (can the user re-run `gdev setup` and have it skip already-installed tools?)
+- Re-entry safety (can the user re-run `gdev devenv setup` and have it skip already-installed tools?)
 - State tracking of what was attempted vs what succeeded
 
 The re-entry question is partially answered by the "re-run checks to verify success" step, but this is at the end of the flow. If the Nix install fails, does the flow continue to attempt direnv, devenv, and Claude Code (which all depend on Nix)? The dependency graph (`nix -> devenv`, `node -> claude-code`) is acknowledged in Step 2f but there is no explicit error handling for "dependency failed, skip dependents."
 
-**Recommendation:** Add explicit acceptance criteria: (1) `gdev setup` is idempotent — re-running skips already-installed tools, (2) dependency chain failures skip dependent tools with clear error messages, (3) partial success produces a summary showing what was installed and what was skipped and why.
+**Recommendation:** Add explicit acceptance criteria: (1) `gdev devenv setup` is idempotent — re-running skips already-installed tools, (2) dependency chain failures skip dependent tools with clear error messages, (3) partial success produces a summary showing what was installed and what was skipped and why.
 
 ### 9-G5: NixOS declarative config output — format and completeness (Medium)
 
@@ -58,7 +58,7 @@ Phase 9 correctly identifies that Nix, devenv, and nix-direnv are unavailable on
 - The wizard (Phase 6) has a "Dev Environment" group with direnv toggle and git hooks. How does this render when direnv is unavailable?
 - Pre-commit hooks use prek (devenv) — what is the fallback on Windows without devenv?
 
-The plan says `gdev doctor` "reports which features are available" but does not specify how this feeds back into `gdev init`'s behavior. A native Windows developer running `gdev init --yes` should not get files that reference nonexistent tools.
+The plan says `gdev devenv doctor` "reports which features are available" but does not specify how this feeds back into `gdev init`'s behavior. A native Windows developer running `gdev init --yes` should not get files that reference nonexistent tools.
 
 **Recommendation:** Add an explicit "Windows native feature matrix" to Phase 9 or Phase 6, documenting which addons/features are available, degraded, or disabled. The wizard should suppress irrelevant form groups.
 
@@ -154,7 +154,7 @@ The Claude Code plugin marketplace is new and its API/CLI interface may change. 
 
 Looking at the Version-Sentinel hooks.json, the plugin uses `${CLAUDE_PLUGIN_ROOT}` environment variable — this is a Claude Code plugin runtime feature. If Claude Code changes how plugins are loaded, all hooks break.
 
-**Recommendation:** (1) Add a fallback path: manual hook wiring via `settings.json` entries that point to locally-cloned scripts, bypassing the marketplace entirely. (2) Pin the minimum Claude Code version that supports the plugin marketplace. (3) Add a check in `gdev doctor` that verifies the `claude` CLI supports the `plugin` subcommand before enabling Version-Sentinel in the wizard.
+**Recommendation:** (1) Add a fallback path: manual hook wiring via `settings.json` entries that point to locally-cloned scripts, bypassing the marketplace entirely. (2) Pin the minimum Claude Code version that supports the plugin marketplace. (3) Add a check in `gdev devenv doctor` that verifies the `claude` CLI supports the `plugin` subcommand before enabling Version-Sentinel in the wizard.
 
 ### 11-G3: semble's `uvx` availability — cross-platform gaps (High)
 
@@ -166,7 +166,7 @@ Unit 11.3 uses `uvx --from "semble[mcp]" semble` as the MCP command. `uvx` is th
 
 3. **Alternative execution:** semble can be installed via `pip install 'semble[mcp]'` and run as `python -m semble` or directly as `semble`. The plan only uses the `uvx` path. A fallback to `pip` installation would broaden compatibility.
 
-4. **Unit 9.4 does not check for `uvx`.** The prerequisite detection engine checks for `python3` but not `uvx` or `uv`. When semble is enabled in the wizard, `gdev doctor` should flag `uvx` as missing.
+4. **Unit 9.4 does not check for `uvx`.** The prerequisite detection engine checks for `python3` but not `uvx` or `uv`. When semble is enabled in the wizard, `gdev devenv doctor` should flag `uvx` as missing.
 
 **Recommendation:** (1) Add `uvx` / `uv` to the Unit 9.4 tool check registry as an optional check when semble is enabled. (2) Implement a fallback MCP config that uses `python -m semble` instead of `uvx` when uvx is not available. (3) Explicitly test the MCP config on Windows with PowerShell as the execution environment.
 
@@ -285,9 +285,9 @@ Unit 11.4's Step 1 says "Extend `WizardAnswers` struct (Phase 1, Unit 1.2)". Thi
 
 ### X-G4: Version-Sentinel prerequisites bleed into Phase 9 (Medium)
 
-Unit 11.2 Step 5 says "Check Version-Sentinel prerequisite availability (jq, curl, python3 >= 3.11) during `gdev doctor` — add these to the prerequisite checks in Phase 9." This means Phase 11's implementation modifies Phase 9's code.
+Unit 11.2 Step 5 says "Check Version-Sentinel prerequisite availability (jq, curl, python3 >= 3.11) during `gdev devenv doctor` — add these to the prerequisite checks in Phase 9." This means Phase 11's implementation modifies Phase 9's code.
 
-Similarly, Unit 11.3 Step 6 says "Add to `gdev doctor` checks when semble is enabled." This is another Phase 9 modification from Phase 11.
+Similarly, Unit 11.3 Step 6 says "Add to `gdev devenv doctor` checks when semble is enabled." This is another Phase 9 modification from Phase 11.
 
 These are not captured in Phase 9's units. Phase 9's Unit 9.4 lists `jq`, `curl`, and `python3` as optional/recommended checks, but not as conditionally-required based on Phase 11 tool enablement. The distinction matters: `python3 >= 3.11` is only required if Version-Sentinel is enabled, and `uvx` is only required if semble is enabled.
 
@@ -319,7 +319,7 @@ Phase 10 Unit 10.2 says to use the "complete configuration from research" — if
 | ID | Phase | Issue | Impact |
 |----|-------|-------|--------|
 | 9-G2 | 9 | Package manager abstraction has no integration tests | 156 package name mappings tested only via mocks; real-world failures will be invisible |
-| 9-G4 | 9 | `gdev setup` partial failure recovery unspecified | Developers stuck with half-installed environment and no clear way to resume |
+| 9-G4 | 9 | `gdev devenv setup` partial failure recovery unspecified | Developers stuck with half-installed environment and no clear way to resume |
 | 11-G2 | 11 | Version-Sentinel depends on unstable Claude Code plugin marketplace API | Plugin install command may break with any Claude Code update |
 | 11-G3 | 11 | semble depends on `uvx` which is not checked or widely installed | MCP server will fail to start on most systems without manual uvx installation |
 
@@ -328,7 +328,7 @@ Phase 10 Unit 10.2 says to use the "complete configuration from research" — if
 | ID | Phase | Issue | Impact |
 |----|-------|-------|--------|
 | 9-G1 | 9 | OSInfo missing fields for Phase 10-11 needs (install method, uvx) | Downstream phases will need to re-detect information OSInfo should have provided |
-| 9-G3 | 9 | `gdev doctor` no-TTY/CI output unspecified | CI and piped output will be garbled with ANSI codes |
+| 9-G3 | 9 | `gdev devenv doctor` no-TTY/CI output unspecified | CI and piped output will be garbled with ANSI codes |
 | 9-G5 | 9 | NixOS declarative config output underspecified | NixOS users get wrong or incomplete Nix expressions |
 | 9-G6 | 9 | Windows native feature matrix undefined | Windows developers get files referencing tools that do not exist |
 | 10-G1 | 10 | Tap/bucket repos not confirmed to exist | First GoReleaser release will fail if repos are missing |

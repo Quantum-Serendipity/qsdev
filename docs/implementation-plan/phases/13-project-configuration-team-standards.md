@@ -551,7 +551,7 @@ The detection engine builds on Phase 1's `DetectedProject` (language/service det
 
 **Context:** Join mode is the most common onboarding scenario for a consulting firm -- an engineer cloning an existing project that already has `.gdev.yaml` committed by another team member. The research established that Join mode should be near-silent: read the project config, check machine prerequisites, generate local-only files (`.gdev.local.yaml` template), and verify everything is consistent. No wizard questions are needed because the project config already captures all decisions. The critical path is: parse config -> check binary version -> verify/install prerequisites -> generate local files -> verify generated file state -> done.
 
-Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to `gdev setup` (Phase 9 bootstrap steps). Join mode checks prerequisites and offers to run `gdev setup` if anything is missing, but does not duplicate the installation logic.
+Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to `gdev devenv setup` (Phase 9 bootstrap steps). Join mode checks prerequisites and offers to run `gdev devenv setup` if anything is missing, but does not duplicate the installation logic.
 
 **Desired Outcome:** A returning engineer runs `git clone <url> && cd project && gdev init` and has a working environment after `devenv shell`. Total hands-on time under 2 minutes. Join mode is quiet when everything is already set up (idempotent re-run).
 
@@ -583,7 +583,7 @@ Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to
            for _, m := range missing {
                fmt.Printf("  - %s: %s\n", m.Name, m.InstallHint)
            }
-           if promptYN("Run gdev setup to install missing tools?") {
+           if promptYN("Run gdev devenv setup to install missing tools?") {
                if err := runSetup(missing); err != nil {
                    return fmt.Errorf("setup failed: %w", err)
                }
@@ -635,7 +635,7 @@ Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to
        Name        string
        CheckFunc   func() bool           // returns true if installed
        InstallHint string                 // human-readable install instruction
-       SetupStep   string                 // gdev setup step name, if available
+       SetupStep   string                 // gdev devenv setup step name, if available
        Required    bool                   // false = optional enhancement
    }
 
@@ -679,28 +679,28 @@ Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to
 7. Write integration tests:
    - Fresh clone with `.gdev.yaml` -> Join mode generates local template, reports ready.
    - Re-run on already-set-up project -> idempotent, no changes.
-   - Missing devenv -> offers `gdev setup`.
+   - Missing devenv -> offers `gdev devenv setup`.
    - Drifted settings.json -> warns but does not fix.
    - `--yes` mode -> auto-installs prerequisites without prompting.
 
 **Acceptance Criteria:**
 - [ ] Join mode reads `.gdev.yaml` and resolves full config without wizard prompts
 - [ ] Binary version checked against `gdev_version` constraint before proceeding
-- [ ] Missing prerequisites detected and `gdev setup` offered
+- [ ] Missing prerequisites detected and `gdev devenv setup` offered
 - [ ] `.gdev.local.yaml` template generated with ecosystem-relevant commented examples
 - [ ] `.gdev.local.yaml` added to `.gitignore` if not already present
 - [ ] Generated file state verified against expected output from config
 - [ ] Drift reported as warnings (not auto-fixed in Join mode)
 - [ ] Idempotent: re-running Join mode on an already-set-up project is a no-op
 - [ ] `--yes` mode works without prompts (for scripted onboarding)
-- [ ] Total Join mode execution time under 10 seconds (excluding `gdev setup` and `devenv shell`)
+- [ ] Total Join mode execution time under 10 seconds (excluding `gdev devenv setup` and `devenv shell`)
 - [ ] Clear summary output showing profile, languages, services, and next steps
 
 **Research Citations:**
 - `research-spikes/gdev-team-config-onboarding/developer-onboarding-research.md` -- Join mode scenario, 3-commands-2-minutes target, machine vs project setup distinction
 - `research-spikes/gdev-team-config-onboarding/team-config-sharing-research.md` -- `.gdev.local.yaml` template, resolution order
-- `phases/06-wizard-orchestration.md` -- bootstrap step registration (gdev setup integration)
-- `phases/09-cross-platform-system-detection.md` -- `gdev doctor`/`gdev setup` for prerequisite management
+- `phases/06-wizard-orchestration.md` -- bootstrap step registration (gdev devenv setup integration)
+- `phases/09-cross-platform-system-detection.md` -- `gdev devenv doctor`/`gdev devenv setup` for prerequisite management
 
 **Status:** Not Started
 
@@ -888,11 +888,11 @@ Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to
 
 **Description:** Implement `gdev check` as a read-only validation command that verifies project compliance against org policy. The command checks 5 categories (binary compatibility, config integrity, required tools, generated file state, security hardening), supports 4 output formats (human, JSON, SARIF, JUnit), and integrates with GitHub Actions annotations.
 
-**Context:** The standards enforcement research established `gdev check` as the CI enforcement point -- the one place where checks run consistently regardless of individual developer behavior. It complements `gdev doctor` (machine health) but focuses on project compliance. Generated configuration files can drift through manual edits, partial updates, version skew, or developers disabling pre-commit hooks. CI catches this drift before it reaches main.
+**Context:** The standards enforcement research established `gdev check` as the CI enforcement point -- the one place where checks run consistently regardless of individual developer behavior. It complements `gdev devenv doctor` (machine health) but focuses on project compliance. Generated configuration files can drift through manual edits, partial updates, version skew, or developers disabling pre-commit hooks. CI catches this drift before it reaches main.
 
 The command is strictly read-only: it never modifies files, making it safe for CI and auditing. An `--auto-fix` flag provides a separate mode that fixes safe additive issues (missing gitignore entries, missing section markers). An `--audit-level` flag controls the exit code threshold so teams can gradually tighten enforcement.
 
-**Code-Grounded Note:** No `--json` or machine-readable output exists on ANY current gdev command. This unit establishes the pattern for structured output across the CLI: a `--format` flag accepting `text|json|sarif|junit`, using `cmd.OutOrStdout()` for testability. Future commands (`gdev status`, `gdev doctor`) should adopt this same pattern. The `toolcheck.Detect()` function at `internal/toolcheck/toolcheck.go:11-40` already checks tool binary availability and can be reused directly for the "Required Tools" check category.
+**Code-Grounded Note:** No `--json` or machine-readable output exists on ANY current gdev command. This unit establishes the pattern for structured output across the CLI: a `--format` flag accepting `text|json|sarif|junit`, using `cmd.OutOrStdout()` for testability. Future commands (`gdev status`, `gdev devenv doctor`) should adopt this same pattern. The `toolcheck.Detect()` function at `internal/toolcheck/toolcheck.go:11-40` already checks tool binary availability and can be reused directly for the "Required Tools" check category.
 
 **Desired Outcome:** `gdev check` runs in CI (GitHub Actions and GitLab CI), produces structured output for code scanning dashboards, and fails the pipeline when the project does not meet org policy. Local runs show human-readable output with remediation suggestions.
 
@@ -1155,7 +1155,7 @@ The command is strictly read-only: it never modifies files, making it safe for C
 - [ ] devenv.nix existence-only check (no content validation for human-edited files)
 
 **Research Citations:**
-- `research-spikes/gdev-team-config-onboarding/standards-enforcement-ci-research.md` -- 5 check categories, output formats, auto-fix scope, `gdev check` vs `gdev doctor` distinction, CI integration examples
+- `research-spikes/gdev-team-config-onboarding/standards-enforcement-ci-research.md` -- 5 check categories, output formats, auto-fix scope, `gdev check` vs `gdev devenv doctor` distinction, CI integration examples
 - `research-spikes/gdev-team-config-onboarding/config-versioning-drift-research.md` -- file hash comparison, version skew detection
 - `research-spikes/gdev-extension-design/migration-strategy-design.md` -- hash-based modification detection
 
@@ -1447,7 +1447,7 @@ The compliance level determines concrete settings: age-gating thresholds, vulner
 
 ### Patterns to Establish
 
-- `--format text|json|sarif|junit` flag pattern on `gdev check` using `cmd.OutOrStdout()` -- first structured-output command; all future commands (`gdev status`, `gdev doctor`) should follow this pattern
+- `--format text|json|sarif|junit` flag pattern on `gdev check` using `cmd.OutOrStdout()` -- first structured-output command; all future commands (`gdev status`, `gdev devenv doctor`) should follow this pattern
 
 ---
 

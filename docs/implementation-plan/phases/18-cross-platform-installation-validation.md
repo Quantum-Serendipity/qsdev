@@ -2,7 +2,7 @@
 
 ## Goal
 
-Validate that gdev installs correctly and bootstraps on every supported platform: macOS (Intel + Apple Silicon), Windows (native + WSL2), and 12 Linux distro families. At the end of this phase, `gdev doctor` reports correct system info, `gdev setup --dry-run` identifies correct prerequisites, and install scripts work on all targets.
+Validate that gdev installs correctly and bootstraps on every supported platform: macOS (Intel + Apple Silicon), Windows (native + WSL2), and 12 Linux distro families. At the end of this phase, `gdev devenv doctor` reports correct system info, `gdev devenv setup --dry-run` identifies correct prerequisites, and install scripts work on all targets.
 
 ## Dependencies
 
@@ -11,8 +11,8 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 ## Phase Outputs
 
 - Validated install scripts on macOS (Intel + ARM), Windows (PowerShell), Linux (bash) across 24 OS configurations
-- Validated `gdev doctor` output for all 12 distro families + macOS + Windows
-- Validated `gdev setup --dry-run` prerequisite detection on all targets
+- Validated `gdev devenv doctor` output for all 12 distro families + macOS + Windows
+- Validated `gdev devenv setup --dry-run` prerequisite detection on all targets
 - Validated package manager installation (Homebrew tap, Scoop bucket, APT .deb, RPM)
 - Validated self-update mechanism
 - Validated shell completion installation (bash, zsh, fish, PowerShell, nushell)
@@ -93,16 +93,16 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 
 ---
 
-### Unit 18.2: `gdev doctor` Validation Across OS Matrix
+### Unit 18.2: `gdev devenv doctor` Validation Across OS Matrix
 
-**Description:** Test that `gdev doctor` produces correct diagnostics on every supported target, verifying OS, distro, version, architecture, kernel, shell, package manager, and tool detection are all accurate.
+**Description:** Test that `gdev devenv doctor` produces correct diagnostics on every supported target, verifying OS, distro, version, architecture, kernel, shell, package manager, and tool detection are all accurate.
 
-**Context:** Phase 9 implemented the OS detection engine (`DetectOS()` returning an `OSInfo` struct) and the `gdev doctor` command that reports system state. `gdev doctor` is the user's first diagnostic tool when something goes wrong — if it misreports the OS or fails to detect the package manager, all downstream suggestions will be wrong. The detection engine uses `/etc/os-release` parsing on Linux, `sw_vers` on macOS, and `runtime.GOOS` + registry queries on Windows. WSL2 detection checks for `/proc/sys/fs/binfmt_misc/WSLInterop` and `$WSL_DISTRO_NAME`. Container detection checks `/.dockerenv`, cgroup v2, and container environment variables. Every detection path must be validated against real OS instances — mocked unit tests are necessary but not sufficient.
+**Context:** Phase 9 implemented the OS detection engine (`DetectOS()` returning an `OSInfo` struct) and the `gdev devenv doctor` command that reports system state. `gdev devenv doctor` is the user's first diagnostic tool when something goes wrong — if it misreports the OS or fails to detect the package manager, all downstream suggestions will be wrong. The detection engine uses `/etc/os-release` parsing on Linux, `sw_vers` on macOS, and `runtime.GOOS` + registry queries on Windows. WSL2 detection checks for `/proc/sys/fs/binfmt_misc/WSLInterop` and `$WSL_DISTRO_NAME`. Container detection checks `/.dockerenv`, cgroup v2, and container environment variables. Every detection path must be validated against real OS instances — mocked unit tests are necessary but not sufficient.
 
-**Desired Outcome:** `gdev doctor` outputs correct system information on every target. `gdev doctor --json` produces valid, parseable JSON. `gdev doctor --check` returns appropriate exit codes based on tool availability. No target reports incorrect OS, distro, package manager, or architecture.
+**Desired Outcome:** `gdev devenv doctor` outputs correct system information on every target. `gdev devenv doctor --json` produces valid, parseable JSON. `gdev devenv doctor --check` returns appropriate exit codes based on tool availability. No target reports incorrect OS, distro, package manager, or architecture.
 
 **Steps:**
-1. Create golden-file test fixtures for each target OS containing expected `gdev doctor` output fields:
+1. Create golden-file test fixtures for each target OS containing expected `gdev devenv doctor` output fields:
    ```
    testdata/doctor/ubuntu-2404.golden.json
    testdata/doctor/fedora-41.golden.json
@@ -111,7 +111,7 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
    ...
    ```
    Each golden file specifies: OS, Distro, Version, Arch, Kernel (pattern match, not exact), Shell, PackageManager, and boolean flags (IsWSL2, IsContainer, IsAppleSilicon).
-2. On each target, run `gdev doctor --json` and validate against the golden file:
+2. On each target, run `gdev devenv doctor --json` and validate against the golden file:
    - **macOS ARM64**: OS=darwin, Arch=arm64, IsAppleSilicon=true, PackageManager=brew, HomebrewPrefix=/opt/homebrew
    - **macOS Intel**: OS=darwin, Arch=amd64, IsAppleSilicon=false, PackageManager=brew, HomebrewPrefix=/usr/local
    - **Ubuntu 24.04**: OS=linux, Distro=ubuntu, Version=24.04, PackageManager=apt
@@ -128,27 +128,27 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
    - **WSL2 Ubuntu**: OS=linux, Distro=ubuntu, IsWSL2=true, WSLDistro=Ubuntu
    - **WSL2 Fedora**: OS=linux, Distro=fedora, IsWSL2=true, WSLDistro=fedoraremix (or similar)
 3. Validate container detection in Docker containers:
-   - Run `gdev doctor --json` inside each Linux Docker container
+   - Run `gdev devenv doctor --json` inside each Linux Docker container
    - Verify IsContainer=true on all container targets
    - Verify IsContainer=false on macOS and Windows runners (full VMs, not containers)
-4. Validate tool detection by installing/removing specific tools and checking `gdev doctor` output:
+4. Validate tool detection by installing/removing specific tools and checking `gdev devenv doctor` output:
    - On Ubuntu 24.04: install git, go, node, curl, jq — verify all detected with correct versions
    - Remove shellcheck — verify doctor reports it missing
    - On macOS: verify nix, devenv, direnv detection (if installed)
    - On Windows: verify git, node, python3, claude detection
    - On NixOS: verify nix detected as package manager, `nix profile` or `environment.systemPackages` noted
-5. Validate `gdev doctor --check` exit codes:
+5. Validate `gdev devenv doctor --check` exit codes:
    - On a target with all required tools: verify exit code 0
    - On a target missing a required tool (e.g., remove git): verify exit code 1
    - Verify the specific missing tool is named in stderr output
-6. Validate `gdev doctor --json` JSON structure:
+6. Validate `gdev devenv doctor --json` JSON structure:
    - Parse output with `jq .` on Unix, `ConvertFrom-Json` on Windows — verify valid JSON
    - Verify all expected keys present (os, distro, version, arch, kernel, shell, packageManager, tools, flags)
    - Verify tool entries include name, version (or null), path (or null), installed (bool)
-7. Performance validation: time `gdev doctor` on each target, verify completion within 2 seconds. If any target exceeds 2 seconds, profile and document the bottleneck (likely slow tool version commands or network checks).
+7. Performance validation: time `gdev devenv doctor` on each target, verify completion within 2 seconds. If any target exceeds 2 seconds, profile and document the bottleneck (likely slow tool version commands or network checks).
 
 **Acceptance Criteria:**
-- [ ] `gdev doctor` reports correct OS on macOS (darwin), Windows (windows), all Linux distros (linux)
+- [ ] `gdev devenv doctor` reports correct OS on macOS (darwin), Windows (windows), all Linux distros (linux)
 - [ ] Distro correctly identified for all 12 Linux families (ubuntu, debian, fedora, rocky, arch, opensuse-tumbleweed, alpine, void, gentoo, nixos, plus WSL2 variants)
 - [ ] Package manager correctly detected: apt (Debian/Ubuntu), dnf (Fedora/Rocky), pacman (Arch), zypper (openSUSE), apk (Alpine), xbps (Void), emerge (Gentoo), nix (NixOS), brew (macOS), winget/scoop/choco (Windows)
 - [ ] Apple Silicon detection: IsAppleSilicon=true on ARM64 macOS, false on Intel macOS
@@ -156,9 +156,9 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 - [ ] WSL2 detection: IsWSL2=true and WSLDistro populated on WSL2 targets
 - [ ] Container detection: IsContainer=true inside Docker containers, false on bare metal/VM
 - [ ] Tool detection reports correct installed/missing status for git, go, node, npm, nix, devenv, direnv, claude, python3, curl, jq, shellcheck
-- [ ] `gdev doctor --json` produces valid JSON parseable by jq / ConvertFrom-Json on all platforms
-- [ ] `gdev doctor --check` returns 0 when all required tools present, 1 when missing
-- [ ] `gdev doctor` completes in < 2 seconds on all platforms
+- [ ] `gdev devenv doctor --json` produces valid JSON parseable by jq / ConvertFrom-Json on all platforms
+- [ ] `gdev devenv doctor --check` returns 0 when all required tools present, 1 when missing
+- [ ] `gdev devenv doctor` completes in < 2 seconds on all platforms
 
 **Research Citations:**
 - `artifacts/os-prerequisite-detection-research.md § 1. OS/Environment Detection Matrix` — detection strategies per OS family, /etc/os-release parsing, macOS sw_vers, Windows registry, WSL2 detection, container detection
@@ -171,13 +171,13 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 
 ---
 
-### Unit 18.3: `gdev setup` Validation (Dry-Run) Across Package Managers
+### Unit 18.3: `gdev devenv setup` Validation (Dry-Run) Across Package Managers
 
-**Description:** Test that `gdev setup --dry-run` correctly identifies missing prerequisites and proposes the right install commands with the correct package manager and package names for each target OS.
+**Description:** Test that `gdev devenv setup --dry-run` correctly identifies missing prerequisites and proposes the right install commands with the correct package manager and package names for each target OS.
 
-**Context:** Phase 9 implemented the package manager abstraction layer mapping each prerequisite tool to its correct package name per package manager (e.g., `go` is `golang` on apt, `go` on dnf/pacman/brew, `GoLang.Go` on winget, `dev-lang/go` on Gentoo). `gdev setup --dry-run` runs the detection engine, identifies missing tools, resolves the correct package names for the detected package manager, and prints the install commands that would be executed — without actually executing them. This is the critical pre-flight check: if the proposed commands are wrong, `gdev setup --yes` will fail or install the wrong packages. The package name resolution table spans 13 tools across 12+ package managers, creating 150+ resolution paths that must be individually validated.
+**Context:** Phase 9 implemented the package manager abstraction layer mapping each prerequisite tool to its correct package name per package manager (e.g., `go` is `golang` on apt, `go` on dnf/pacman/brew, `GoLang.Go` on winget, `dev-lang/go` on Gentoo). `gdev devenv setup --dry-run` runs the detection engine, identifies missing tools, resolves the correct package names for the detected package manager, and prints the install commands that would be executed — without actually executing them. This is the critical pre-flight check: if the proposed commands are wrong, `gdev devenv setup --yes` will fail or install the wrong packages. The package name resolution table spans 13 tools across 12+ package managers, creating 150+ resolution paths that must be individually validated.
 
-**Desired Outcome:** `gdev setup --dry-run` proposes syntactically correct install commands using the right package manager and the right package names on every target. Batch elevation groups all packages into a single sudo invocation. NixOS gets declarative `environment.systemPackages` instead of `nix profile install`. Windows without WSL2 gets a `wsl --install` proposal when Nix-dependent features are needed.
+**Desired Outcome:** `gdev devenv setup --dry-run` proposes syntactically correct install commands using the right package manager and the right package names on every target. Batch elevation groups all packages into a single sudo invocation. NixOS gets declarative `environment.systemPackages` instead of `nix profile install`. Windows without WSL2 gets a `wsl --install` proposal when Nix-dependent features are needed.
 
 **Steps:**
 1. Create test fixtures defining expected install commands per OS:
@@ -194,7 +194,7 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
    # Expected output:
    # sudo emerge dev-lang/go dev-util/shellcheck
    ```
-2. On each target, remove specific tools and run `gdev setup --dry-run`:
+2. On each target, remove specific tools and run `gdev devenv setup --dry-run`:
    - **Ubuntu 24.04**: Remove go, shellcheck → verify `sudo apt-get install -y golang shellcheck`
    - **Debian 12**: Remove go, jq → verify `sudo apt-get install -y golang jq`
    - **Fedora 41**: Remove go, shellcheck → verify `sudo dnf install -y golang ShellCheck`
@@ -216,18 +216,18 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
    - node listed before claude (claude code requires node/npm)
    - git listed before all others (nearly everything depends on git)
 5. Validate Windows WSL2 handling:
-   - On Windows without WSL2: when nix or devenv is needed, verify `gdev setup --dry-run` proposes `wsl --install` as a prerequisite step before nix installation
+   - On Windows without WSL2: when nix or devenv is needed, verify `gdev devenv setup --dry-run` proposes `wsl --install` as a prerequisite step before nix installation
    - On Windows with WSL2: verify nix installation proposed inside WSL2 context
 6. Validate NixOS declarative handling:
    - On NixOS: verify all proposals use `environment.systemPackages` pattern, not imperative `nix profile install`
    - Verify the output includes the appropriate Nix package attribute paths (e.g., `pkgs.go`, `pkgs.shellcheck`)
-7. Test `gdev setup --yes` in throwaway containers (not on persistent CI runners):
-   - On Ubuntu 24.04 container: remove go and shellcheck, run `gdev setup --yes`, verify both installed afterward
+7. Test `gdev devenv setup --yes` in throwaway containers (not on persistent CI runners):
+   - On Ubuntu 24.04 container: remove go and shellcheck, run `gdev devenv setup --yes`, verify both installed afterward
    - On Fedora 41 container: same test
    - On Alpine 3.20 container: same test
    - Verify exit code 0 when all installations succeed
    - Verify exit code non-zero when a package fails to install (simulate with a non-existent package name)
-8. Validate that `gdev setup --dry-run` on a system with all tools present:
+8. Validate that `gdev devenv setup --dry-run` on a system with all tools present:
    - Output indicates nothing to install
    - Exit code 0
 
@@ -239,8 +239,8 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 - [ ] NixOS proposes declarative `environment.systemPackages` instead of `nix profile install`
 - [ ] Windows proposes `wsl --install` when Nix needed but no WSL2 detected
 - [ ] Dependency ordering: nix before devenv, node before claude, git before everything
-- [ ] `gdev setup --yes` actually installs missing tools in container environments
-- [ ] `gdev setup --dry-run` on a fully-equipped system reports nothing to install (exit 0)
+- [ ] `gdev devenv setup --yes` actually installs missing tools in container environments
+- [ ] `gdev devenv setup --dry-run` on a fully-equipped system reports nothing to install (exit 0)
 - [ ] All setup tests complete within CI time budget
 
 **Research Citations:**
@@ -418,9 +418,9 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 
 - [ ] All five units pass acceptance criteria
 - [ ] Install script succeeds on all 24 OS configurations (14 Unix targets from Unit 18.1 + 1 Windows target + 9 package manager channel targets from Unit 18.4)
-- [ ] `gdev doctor` reports correct system info on macOS, Windows, all 12 Linux families
-- [ ] `gdev doctor --json` produces valid JSON on all platforms
-- [ ] `gdev setup --dry-run` proposes correct install commands per package manager
+- [ ] `gdev devenv doctor` reports correct system info on macOS, Windows, all 12 Linux families
+- [ ] `gdev devenv doctor --json` produces valid JSON on all platforms
+- [ ] `gdev devenv setup --dry-run` proposes correct install commands per package manager
 - [ ] Package name resolution correct for all tool x package manager combinations
 - [ ] Homebrew, Scoop, Chocolatey, winget, APT, RPM installs all verified
 - [ ] Self-update downloads, verifies, and replaces binary

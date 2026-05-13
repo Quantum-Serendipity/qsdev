@@ -6,7 +6,7 @@ Add targeted commands and integrations that make gdev feel like a complete, poli
 
 ## Dependencies
 
-Phase 3 complete (devenv addon — shell integration and env vars generate into devenv.nix). Phase 9 complete (system detection — repair builds on `gdev doctor` diagnostics). Phase 10 complete (distribution/self-update — `gdev update` reuses the self-update mechanism). Phase 12 complete (tool lifecycle — all new commands are lifecycle-managed where applicable). Phase 13 complete (project config — `gdev info` reads `.gdev.yaml` and `.gdev/state.yaml`). Phase 15 complete (health/status — `gdev repair` builds on drift detection from health checks).
+Phase 3 complete (devenv addon — shell integration and env vars generate into devenv.nix). Phase 9 complete (system detection — repair builds on `gdev devenv doctor` diagnostics). Phase 10 complete (distribution/self-update — `gdev update` reuses the self-update mechanism). Phase 12 complete (tool lifecycle — all new commands are lifecycle-managed where applicable). Phase 13 complete (project config — `gdev info` reads `.gdev.yaml` and `.gdev/state.yaml`). Phase 15 complete (health/status — `gdev repair` builds on drift detection from health checks).
 
 ## Phase Outputs
 
@@ -22,17 +22,17 @@ Phase 3 complete (devenv addon — shell integration and env vars generate into 
 
 ### Unit 16.1: gdev repair Command
 
-**Description:** Implement `gdev repair` as a conservative auto-fix companion to `gdev doctor` (Phase 9). It detects broken/drifted gdev-managed files and fixes them automatically where safe, with mandatory backup before any mutation. Covers four failure categories: Nix/devenv failures, generated config corruption, tool/package failures, and environment drift.
+**Description:** Implement `gdev repair` as a conservative auto-fix companion to `gdev devenv doctor` (Phase 9). It detects broken/drifted gdev-managed files and fixes them automatically where safe, with mandatory backup before any mutation. Covers four failure categories: Nix/devenv failures, generated config corruption, tool/package failures, and environment drift.
 
 **Code-Grounded Implementation Note:** The existing update infrastructure provides the foundation for repair. `FileUpdatePlan` at `addons/devinit/update.go:43-52` already has Path, Status, Strategy, Action, NewContent, OldContent, NewMode, and Reason fields. The `buildUpdatePlan()` function at `addons/devinit/update.go:180-262` already plans per-file actions (skip, overwrite, sidecar). `UpdateDevenvNix()` at `internal/update/nix_update.go:42-126` already handles the sidecar strategy for modified devenv.nix (generating `.new` + diff). Repair extends this by using the plan builder in a more aggressive mode — force regeneration of corrupted files while preserving truly user-modified ones. The existing plan builder's `Strategy` field (overwrite vs sidecar vs skip) maps directly to repair's conservative/force/reset modes.
 
-**Context:** `gdev doctor` (Phase 9/15) diagnoses environment health but is read-only. When it reports "pre-commit hooks outdated" or ".envrc modified from generated version," the developer must manually fix each issue. `gdev repair` closes the loop by automating the fixes that are unambiguously safe while refusing to touch files where auto-repair risks data loss.
+**Context:** `gdev devenv doctor` (Phase 9/15) diagnoses environment health but is read-only. When it reports "pre-commit hooks outdated" or ".envrc modified from generated version," the developer must manually fix each issue. `gdev repair` closes the loop by automating the fixes that are unambiguously safe while refusing to touch files where auto-repair risks data loss.
 
 The key design principle: **doctor is read-only, repair is write** — never mix diagnosis and modification in one command. Repair is conservative by default: machine-owned files with no user edits are regenerated; machine-owned files with user edits get a backup + `.new` file with diff; hooks are always safe to reinstall; devenv.nix is NEVER auto-modified (the plan establishes this invariant in Phase 8). The `--force` flag overrides the conservative default for machine-owned-with-additions files. The `--reset` flag is the nuclear option — regenerate everything from `.gdev.yaml`, backing up all originals.
 
 Repair leverages the SHA256 hash tracking from Phase 1/8 (`GeneratedState`) and the drift detection from Phase 15 health checks. Without hash tracking, corruption cannot be detected, so repair operates only on files tracked in `.gdev/state.yaml`.
 
-**Desired Outcome:** `gdev repair` fixes all issues that `gdev doctor` can identify, without destroying user customizations. After repair, `gdev doctor` reports clean health.
+**Desired Outcome:** `gdev repair` fixes all issues that `gdev devenv doctor` can identify, without destroying user customizations. After repair, `gdev devenv doctor` reports clean health.
 
 **Steps:**
 1. Create `internal/repair/` package with `Repairer` struct:
@@ -106,7 +106,7 @@ Repair leverages the SHA256 hash tracking from Phase 1/8 (`GeneratedState`) and 
    var repairCmd = &cobra.Command{
        Use:   "repair",
        Short: "Fix corrupted or drifted gdev-managed files",
-       Long:  "Detects and fixes issues identified by gdev doctor. Conservative by default: only fixes unambiguously safe issues. Use --force for aggressive repair, --reset to regenerate everything.",
+       Long:  "Detects and fixes issues identified by gdev devenv doctor. Conservative by default: only fixes unambiguously safe issues. Use --force for aggressive repair, --reset to regenerate everything.",
    }
    repairCmd.Flags().Bool("dry-run", false, "Preview what would be fixed without making changes")
    repairCmd.Flags().Bool("force", false, "Fix files even when user modifications detected (backup first)")
@@ -114,7 +114,7 @@ Repair leverages the SHA256 hash tracking from Phase 1/8 (`GeneratedState`) and 
    repairCmd.Flags().Bool("reset", false, "Regenerate all files from saved answers (nuclear option)")
    ```
 9. Implement exit codes: 0 = all issues fixed, 1 = some issues require manual action, 2 = repair failed.
-10. Wire repair results back into state tracking: after successful repair, update `GeneratedState` with new file hashes so subsequent `gdev doctor` runs show clean health.
+10. Wire repair results back into state tracking: after successful repair, update `GeneratedState` with new file hashes so subsequent `gdev devenv doctor` runs show clean health.
 
 **Acceptance Criteria:**
 - [ ] `gdev repair` fixes corrupted machine-owned files without user intervention
@@ -126,7 +126,7 @@ Repair leverages the SHA256 hash tracking from Phase 1/8 (`GeneratedState`) and 
 - [ ] `--reset` regenerates all files from saved answers with full backup
 - [ ] Pre-commit hooks are reinstalled when missing or outdated
 - [ ] `.gitignore` entries are appended when missing (existing entries preserved)
-- [ ] After repair, `gdev doctor` reports clean health for all repaired files
+- [ ] After repair, `gdev devenv doctor` reports clean health for all repaired files
 - [ ] Exit code 0 when all issues fixed, 1 when manual action needed, 2 on failure
 - [ ] `GeneratedState` updated with new hashes after successful repair
 
@@ -147,7 +147,7 @@ Repair leverages the SHA256 hash tracking from Phase 1/8 (`GeneratedState`) and 
 
 **Code-Grounded Implementation Note:** The data sources for `gdev info` already exist and are fast reads. Answers are at `.devinit/.gdev-init-answers.yaml` (loaded via `loadAnswers()` at `addons/devinit/answers.go:50-67`). Detection runs via `detect.Detect()` at `internal/detect/detect.go:12-83` but is not needed here — info reads cached results only. The state file provides last-run time via `GeneratedState.LastRun`. Both answers and state files are small YAML reads that complete well under 100ms.
 
-**Context:** `gdev doctor` (Phase 9/15) performs active health checks — evaluating devenv, verifying tool availability, checking file hashes. This is thorough but takes seconds. Developers frequently need a faster answer to "where am I? what's active?" — especially when switching between client projects. `gdev info` fills this gap by reading only `.gdev.yaml` and `.gdev/state.yaml`, producing instant output without evaluation.
+**Context:** `gdev devenv doctor` (Phase 9/15) performs active health checks — evaluating devenv, verifying tool availability, checking file hashes. This is thorough but takes seconds. Developers frequently need a faster answer to "where am I? what's active?" — especially when switching between client projects. `gdev info` fills this gap by reading only `.gdev.yaml` and `.gdev/state.yaml`, producing instant output without evaluation.
 
 This is the shell integration counterpart: when a developer enters a gdev-managed project, `gdev info --oneline` could power a prompt segment or an enterShell notification. The command is deliberately simple — no file scanning, no hash checking, no network requests. If files don't exist, it reports "not a gdev project" and exits.
 
@@ -200,7 +200,7 @@ This is the shell integration counterpart: when a developer enters a gdev-manage
 7. Implement relative time formatting for "last updated" field: "just now", "2 hours ago", "3 days ago", "2 weeks ago", "3 months ago". Use `time.Since()` with human-friendly bucketing.
 8. Handle edge cases:
    - Not in a gdev project: print "Not a gdev-managed project. Run `gdev init` to set up." and exit 1.
-   - `.gdev.yaml` exists but `.gdev/state.yaml` missing: print partial info with "(state unknown — run `gdev doctor`)" for missing fields.
+   - `.gdev.yaml` exists but `.gdev/state.yaml` missing: print partial info with "(state unknown — run `gdev devenv doctor`)" for missing fields.
    - Config version newer than binary version: add "(update available)" annotation.
 
 **Acceptance Criteria:**
@@ -509,7 +509,7 @@ Critically, `gdev update` does NOT update application dependencies (npm, pip, ca
 
 ### Unit 16.5: gdev teardown Command
 
-**Description:** Implement `gdev teardown` for clean project exit with three profiles (quick, default, compliance), user-modification preservation, interactive confirmation, and optional archive creation. Designed for consultants finishing client engagements who need to cleanly decommission a project's gdev setup.
+**Description:** Implement `gdev teardown` for clean project exit with three profiles (quick, default, compliance), user-modification preservation, interactive confirmation, and optional archive creation. Designed for consultants finishing client engagements who need to cleanly decommission a project's gdev devenv setup.
 
 **Code-Grounded Implementation Note:** The state file at `.devinit/.gdev-init-state.yaml` tracks all generated files via `GeneratedState.Files map[string]FileState`. The `state.CheckModified()` function at `internal/state/state.go:46-94` identifies which files have been user-modified (hash mismatch). Teardown uses these to determine safe-to-delete (unmodified, hash matches) vs warn-before-delete (modified, hash mismatch) files. The existing infrastructure means teardown does not need its own file-tracking mechanism — it reads the same state that repair and update already use.
 
@@ -1033,7 +1033,7 @@ The OTEL environment variable configuration is profile-driven and opt-in — con
 ## Phase Completion Criteria
 
 - [ ] All seven units pass acceptance criteria
-- [ ] `gdev repair` fixes all issues detectable by `gdev doctor` without destroying user customizations
+- [ ] `gdev repair` fixes all issues detectable by `gdev devenv doctor` without destroying user customizations
 - [ ] `gdev info` responds in under 100ms with correct project metadata
 - [ ] `gdev outdated` runs correct native commands for all detected ecosystems
 - [ ] `gdev update` coordinates self-update, config regeneration, and devenv input update with rollback on failure

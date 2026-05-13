@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 func writeTestFile(t *testing.T, dir, name, content string) string {

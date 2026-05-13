@@ -16,7 +16,7 @@ Context: gdev is a Go CLI that bootstraps secure development environments for a 
 
 - **Multi-Project Environment Switching** -- Complete. devenv 2.0 hook solves core switching. Genuine gaps: cross-project status view (`gdev projects`), SecretSpec credential management across client engagements. See [environment-switching-research.md](environment-switching-research.md).
 
-- **Error Recovery and Self-Healing** -- Complete. `gdev doctor` (read-only diagnostic) + `gdev repair` (conservative auto-fix) pattern. Four failure categories mapped with detection and recovery strategies. See [error-recovery-research.md](error-recovery-research.md).
+- **Error Recovery and Self-Healing** -- Complete. `gdev devenv doctor` (read-only diagnostic) + `gdev repair` (conservative auto-fix) pattern. Four failure categories mapped with detection and recovery strategies. See [error-recovery-research.md](error-recovery-research.md).
 
 - **Shell Integration and Ergonomics** -- Complete. Include: starship config generation (opt-in), gdev env vars in devenv.nix, `gdev info` quick-status, devenv enterShell notification. Exclude: aliases, separate gdev shell hook. See [shell-integration-research.md](shell-integration-research.md).
 
@@ -44,7 +44,7 @@ Features are ranked by friction-reduction value (how much developer pain they el
 
 | Feature | Value | Complexity | Where It Fits |
 |---------|-------|------------|---------------|
-| `gdev doctor` (diagnostic checks) | Very High | Medium | Phase 9 (already planned, expand scope) |
+| `gdev devenv doctor` (diagnostic checks) | Very High | Medium | Phase 9 (already planned, expand scope) |
 | `gdev repair` (conservative auto-fix) | Very High | Medium | Phase 9 companion |
 | PR template generation | High | Very Low | Phase 5 (file generation, one template) |
 | Branch naming enforcement | High | Low | Phase 5 (one more git hook) |
@@ -99,7 +99,7 @@ For any future proposed feature, apply three tests:
 A polished gdev is not one with more features. It is one where:
 
 - `gdev init` produces a complete, working environment in one command (already designed)
-- `gdev doctor` tells you when something is wrong (expand Phase 9)
+- `gdev devenv doctor` tells you when something is wrong (expand Phase 9)
 - `gdev repair` fixes it without manual intervention (new, companion to doctor)
 - `gdev info` tells you where you are and what's active (new, lightweight)
 - `gdev outdated` gives a cross-ecosystem freshness view (new, thin wrapper)

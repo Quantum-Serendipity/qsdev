@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"text/template"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 // CIWorkflowData holds data for rendering the security scan workflow template.

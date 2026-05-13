@@ -60,7 +60,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    ---
 
    ## Current project state
-   !`gdev doctor --json 2>/dev/null || echo '{"installed": false}'`
+   !`gdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
 
    ## Current directory
    !`ls -la`
@@ -80,7 +80,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
       - If $ARGUMENTS includes --yes or --profile, pass them through
       - Otherwise, use `gdev init --non-interactive` with detected ecosystems
       - If the user specified a profile (e.g., "set up for Python with full security"), map to flags
-   6. After init completes, run `gdev doctor --json` to verify everything is healthy.
+   6. After init completes, run `gdev devenv doctor --json` to verify everything is healthy.
    7. Summarize what was created and any manual steps needed.
 
    Natural language mappings:
@@ -99,7 +99,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    ---
 
    ## Project analysis
-   !`gdev doctor --json 2>/dev/null || echo '{"installed": false}'`
+   !`gdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
 
    ## Existing configuration files
    ```!
@@ -120,7 +120,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
       - What gdev would add/modify
    3. Ask the user to confirm before making changes.
    4. Run: `gdev init --merge --non-interactive`
-   5. Run `gdev doctor --json` to verify the result.
+   5. Run `gdev devenv doctor --json` to verify the result.
    6. Summarize what was added and what was preserved.
    ```
 
@@ -128,23 +128,23 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    ```yaml
    ---
    name: gdev-setup
-   description: Install missing prerequisites detected by gdev doctor. Requires user confirmation before installing system packages.
+   description: Install missing prerequisites detected by gdev devenv doctor. Requires user confirmation before installing system packages.
    disable-model-invocation: true
    allowed-tools: Bash(gdev *)
    ---
 
    ## Prerequisites check
-   !`gdev doctor --json 2>/dev/null | jq '{overall, checks: [.checks[] | select(.status != "pass")]}' || echo '{"error": "gdev not found"}'`
+   !`gdev devenv doctor --json 2>/dev/null | jq '{overall, checks: [.checks[] | select(.status != "pass")]}' || echo '{"error": "gdev not found"}'`
 
    ## Instructions
 
    Install missing prerequisites:
 
    1. Show the failing/warning checks from the status above.
-   2. Run: `gdev setup --dry-run` to show what would be installed.
+   2. Run: `gdev devenv setup --dry-run` to show what would be installed.
    3. Ask the user: "The following packages will be installed: [list]. This may require sudo. Proceed?"
-   4. If confirmed: `gdev setup`
-   5. Run `gdev doctor --json` to verify everything is healthy after installation.
+   4. If confirmed: `gdev devenv setup`
+   5. Run `gdev devenv doctor --json` to verify everything is healthy after installation.
    ```
 
 5. Implement `/gdev-enable` (user-only, side effects):
@@ -230,7 +230,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    4. Ask for confirmation.
    5. Run: `gdev init --update`
    6. Report what was updated, preserved, and newly detected.
-   7. Run `gdev doctor --json` to verify health after update.
+   7. Run `gdev devenv doctor --json` to verify health after update.
    ```
 
 8. Implement `gdev-doctor` (Claude-invocable, read-only):
@@ -242,7 +242,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    ---
 
    ## System health
-   !`gdev doctor --json 2>/dev/null || echo '{"error": "gdev not found"}'`
+   !`gdev devenv doctor --json 2>/dev/null || echo '{"error": "gdev not found"}'`
 
    ## Instructions
 
@@ -254,7 +254,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    4. If all checks pass, confirm the environment is healthy.
    5. Suggest `/gdev-setup` if prerequisites are missing.
 
-   If the user has made changes since this status was captured, re-run `gdev doctor --json` to get current state.
+   If the user has made changes since this status was captured, re-run `gdev devenv doctor --json` to get current state.
    ```
 
 9. Implement `gdev-status` (Claude-invocable, read-only):
@@ -1558,8 +1558,8 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    <!-- gdev:commands -->
    ## gdev Commands
    - `gdev init` — Initialize or re-initialize project
-   - `gdev doctor` — Check system and project health
-   - `gdev setup` — Install missing prerequisites
+   - `gdev devenv doctor` — Check system and project health
+   - `gdev devenv setup` — Install missing prerequisites
    - `gdev enable <tool>` — Enable a tool
    - `gdev disable <tool>` — Disable a tool
    - `gdev status` — Show configuration state
@@ -1569,7 +1569,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    ### Security Policy
    - Package installations go through gdev's security pipeline
    - Always use `gdev enable` to add tools, never configure manually
-   - Run `gdev doctor` after configuration changes
+   - Run `gdev devenv doctor` after configuration changes
    <!-- /gdev:commands -->
    ```
 

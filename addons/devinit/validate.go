@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/validation"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/validation"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 // Validation lists are sourced from the shared validation package.

@@ -69,11 +69,11 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for Go language support with supply-chain security hardening.
-func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
+func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
 	var b strings.Builder
 	b.WriteString("  languages.go = {\n")
 	b.WriteString("    enable = true;\n")
-	b.WriteString("    package = pkgs.go;\n")
+	fmt.Fprintf(&b, "    package = %s;\n", goVersionToNixPackage(config.Version))
 	b.WriteString("  };\n")
 	b.WriteString("\n")
 	b.WriteString("  # Enforce module-aware mode — prevents unvetted dependency additions\n")
@@ -204,6 +204,21 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 			Default:     "",
 		},
 	}
+}
+
+// goVersionToNixPackage maps a Go version string to the corresponding Nix package
+// attribute. For example, "1.24.1" maps to "pkgs.go_1_24". If the version is empty
+// or cannot be parsed into at least major.minor components, "pkgs.go" (latest) is returned.
+func goVersionToNixPackage(version string) string {
+	if version == "" {
+		return "pkgs.go"
+	}
+	// Extract major.minor (e.g. "1.24.1" -> "1.24", "1.23" -> "1.23")
+	parts := strings.SplitN(version, ".", 3)
+	if len(parts) < 2 {
+		return "pkgs.go"
+	}
+	return fmt.Sprintf("pkgs.go_%s_%s", parts[0], parts[1])
 }
 
 // fileExists reports whether a file at the given path exists and is not a directory.

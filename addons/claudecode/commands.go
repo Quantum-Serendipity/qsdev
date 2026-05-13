@@ -10,7 +10,9 @@ import (
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/detect"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
 	_ "fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem/modules" // register all modules
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/generate"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/merge"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/state"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
@@ -43,12 +45,13 @@ func claudeCmd() *cobra.Command {
 
 func initCmd() *cobra.Command {
 	var (
-		preset     string
-		skills     []string
-		mcpServers []string
-		yes        bool
-		force      bool
-		dryRun     bool
+		preset         string
+		skills         []string
+		mcpServers     []string
+		yes            bool
+		force          bool
+		dryRun         bool
+		noSafetyBlock  bool
 	)
 
 	cmd := &cobra.Command{
@@ -56,6 +59,11 @@ func initCmd() *cobra.Command {
 		Short: "Initialize Claude Code configuration for the project",
 		Long:  "Generate .claude/settings.json, CLAUDE.md, hooks, skills, and rules for the current project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Validate permission preset before any work.
+			if !contains(validPermissionPresets, preset) {
+				return fmt.Errorf("unknown permission preset %q; valid presets: %v", preset, validPermissionPresets)
+			}
+
 			projectRoot, err := os.Getwd()
 			if err != nil {
 				return fmt.Errorf("determining project root: %w", err)
@@ -73,12 +81,12 @@ func initCmd() *cobra.Command {
 			detected := detect.Detect(projectRoot)
 
 			// Build answers from flags.
-			answers := buildClaudeAnswersFromFlags(projectRoot, preset, skills, mcpServers, yes)
+			answers := buildClaudeAnswersFromFlags(projectRoot, preset, skills, mcpServers, yes, noSafetyBlock)
 			answers.Detected = detected
 
 			// Generate files.
 			registry := ecosystem.DefaultRegistry()
-			gen := NewClaudeCodeGenerator(registry, Config{})
+			gen := NewClaudeCodeGenerator(registry, addon.Config)
 			files, err := gen.Generate(answers)
 			if err != nil {
 				return fmt.Errorf("generating files: %w", err)
@@ -123,6 +131,7 @@ func initCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&yes, "yes", false, "Skip confirmation prompts")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing configuration")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing files")
+	cmd.Flags().BoolVar(&noSafetyBlock, "no-safety-block", false, "Disable the safety block hook")
 
 	return cmd
 }
@@ -152,24 +161,19 @@ func updateCmd() *cobra.Command {
 			// Refresh detection.
 			answers.Detected = detect.Detect(projectRoot)
 
-			// Check for modified files unless --force is set.
-			if !force {
-				stateFile := filepath.Join(projectRoot, statePath)
-				existingState, err := state.LoadStateFromFile(stateFile)
-				if err != nil {
-					return fmt.Errorf("loading state: %w", err)
-				}
-				modified := state.CheckModified(existingState, projectRoot)
-				for path, status := range modified {
-					if status.Status == types.Modified {
-						return fmt.Errorf("file %s has been modified; use --force to overwrite", path)
-					}
-				}
+			// Load stored state.
+			stateFile := filepath.Join(projectRoot, statePath)
+			existingState, err := state.LoadStateFromFile(stateFile)
+			if err != nil {
+				return fmt.Errorf("loading state: %w", err)
 			}
 
-			// Generate files.
+			// Check modification status of all stored files.
+			modStatus := state.CheckModified(existingState, projectRoot)
+
+			// Generate new files.
 			registry := ecosystem.DefaultRegistry()
-			gen := NewClaudeCodeGenerator(registry, Config{})
+			gen := NewClaudeCodeGenerator(registry, addon.Config)
 			files, err := gen.Generate(answers)
 			if err != nil {
 				return fmt.Errorf("generating files: %w", err)
@@ -182,25 +186,99 @@ func updateCmd() *cobra.Command {
 				return nil
 			}
 
-			// Write files to disk.
-			result, err := generate.WriteFiles(files, generate.PipelineOptions{
-				ProjectRoot: projectRoot,
-			})
-			if err != nil {
-				return fmt.Errorf("writing files: %w", err)
+			// Write files respecting merge strategies.
+			var writtenFiles []types.GeneratedFile
+			created, updated, skipped := 0, 0, 0
+
+			for _, f := range files {
+				absPath := filepath.Join(projectRoot, f.Path)
+				mode := f.Mode
+				if mode == 0 {
+					mode = 0o644
+				}
+
+				fs, inState := modStatus[f.Path]
+				if !inState {
+					// New file — create it.
+					if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
+						return fmt.Errorf("writing %s: %w", f.Path, err)
+					}
+					writtenFiles = append(writtenFiles, f)
+					created++
+					continue
+				}
+
+				switch fs.Status {
+				case types.Unmodified:
+					if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
+						return fmt.Errorf("writing %s: %w", f.Path, err)
+					}
+					writtenFiles = append(writtenFiles, f)
+					updated++
+
+				case types.Modified:
+					if force {
+						if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
+							return fmt.Errorf("writing %s: %w", f.Path, err)
+						}
+						writtenFiles = append(writtenFiles, f)
+						updated++
+					} else {
+						content, err := mergeFile(f, existingState, projectRoot)
+						if err != nil {
+							_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: merge failed for %s: %v (skipping)\n", f.Path, err)
+							skipped++
+							continue
+						}
+						if err := fileutil.WriteFileAtomic(absPath, content, mode); err != nil {
+							return fmt.Errorf("writing merged %s: %w", f.Path, err)
+						}
+						writtenFiles = append(writtenFiles, types.GeneratedFile{
+							Path: f.Path, Content: content, Mode: mode, Strategy: f.Strategy,
+						})
+						updated++
+					}
+
+				case types.Deleted:
+					if force {
+						if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
+							return fmt.Errorf("writing %s: %w", f.Path, err)
+						}
+						writtenFiles = append(writtenFiles, f)
+						created++
+					} else {
+						skipped++
+					}
+
+				default:
+					skipped++
+				}
 			}
 
-			// Save state and answers.
-			genState := state.RecordFiles(files)
-			stateFile := filepath.Join(projectRoot, statePath)
-			if err := state.SaveStateToFile(stateFile, genState); err != nil {
+			// Save updated state (merge new + old for skipped files).
+			newState := state.RecordFiles(writtenFiles)
+			for path, fs := range existingState.Files {
+				if _, written := newState.Files[path]; !written {
+					newState.Files[path] = fs
+				}
+			}
+			newState.TemplateVersion = ComputeTemplateVersion()
+			newState.SkillLibraryVersion = ComputeSkillLibraryVersion()
+			if err := state.SaveStateToFile(stateFile, newState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
 			}
 			if err := saveAnswers(projectRoot, answers); err != nil {
 				return fmt.Errorf("saving answers: %w", err)
 			}
 
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
+			// Print version diff summary if applicable.
+			vDiff := CompareVersions(existingState.TemplateVersion, existingState.SkillLibraryVersion)
+			if vDiff.NeedsUpdate() {
+				summary := BuildUpdateSummary(existingState, files, vDiff)
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), summary.String())
+			}
+
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Update complete: %d created, %d updated, %d skipped.\n", created, updated, skipped)
 			return nil
 		},
 	}
@@ -209,6 +287,33 @@ func updateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing files")
 
 	return cmd
+}
+
+// mergeFile applies the appropriate merge strategy for a modified file.
+func mergeFile(f types.GeneratedFile, storedState types.GeneratedState, projectRoot string) ([]byte, error) {
+	absPath := filepath.Join(projectRoot, f.Path)
+	theirs, err := os.ReadFile(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", f.Path, err)
+	}
+
+	switch f.Strategy {
+	case types.ThreeWayMerge:
+		var base []byte
+		if fs, ok := storedState.Files[f.Path]; ok {
+			base = fs.BaseContent
+		}
+		if f.Path == ".mcp.json" {
+			return merge.MergeMcpJson(base, theirs, f.Content)
+		}
+		return merge.MergeSettings(base, theirs, f.Content)
+	case types.SectionMarker:
+		return merge.SectionMarkers(theirs, f.Content)
+	case types.LibraryManaged:
+		return f.Content, nil
+	default:
+		return nil, fmt.Errorf("no merge implementation for strategy %s on %s", f.Strategy, f.Path)
+	}
 }
 
 func addSkillCmd() *cobra.Command {
@@ -254,31 +359,67 @@ func addSkillCmd() *cobra.Command {
 
 			// Generate files.
 			registry := ecosystem.DefaultRegistry()
-			gen := NewClaudeCodeGenerator(registry, Config{})
+			gen := NewClaudeCodeGenerator(registry, addon.Config)
 			files, err := gen.Generate(answers)
 			if err != nil {
 				return fmt.Errorf("generating files: %w", err)
 			}
 
-			// Write files to disk.
-			result, err := generate.WriteFiles(files, generate.PipelineOptions{
-				ProjectRoot: projectRoot,
-			})
+			// Load existing state to determine what changed.
+			stateFile := filepath.Join(projectRoot, statePath)
+			existingState, err := state.LoadStateFromFile(stateFile)
 			if err != nil {
-				return fmt.Errorf("writing files: %w", err)
+				return fmt.Errorf("loading state: %w", err)
 			}
 
-			// Save state and answers.
-			genState := state.RecordFiles(files)
-			stateFile := filepath.Join(projectRoot, statePath)
-			if err := state.SaveStateToFile(stateFile, genState); err != nil {
+			// Only write files that are new or whose content changed.
+			var writtenFiles []types.GeneratedFile
+			for _, f := range files {
+				absPath := filepath.Join(projectRoot, f.Path)
+				mode := f.Mode
+				if mode == 0 {
+					mode = 0o644
+				}
+
+				if fs, ok := existingState.Files[f.Path]; ok {
+					newHash := state.ComputeHash(f.Content)
+					if newHash == fs.Hash {
+						continue
+					}
+
+					// File content changed — check if user modified it.
+					diskStatus := state.CheckModified(existingState, projectRoot)
+					if ds, found := diskStatus[f.Path]; found && ds.Status == types.Modified {
+						merged, mergeErr := mergeFile(f, existingState, projectRoot)
+						if mergeErr != nil {
+							_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: merge failed for %s: %v (skipping)\n", f.Path, mergeErr)
+							continue
+						}
+						f.Content = merged
+					}
+				}
+
+				if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
+					return fmt.Errorf("writing %s: %w", f.Path, err)
+				}
+				writtenFiles = append(writtenFiles, f)
+			}
+
+			// Save state (merge new + existing for unchanged files).
+			newState := state.RecordFiles(writtenFiles)
+			for path, fs := range existingState.Files {
+				if _, written := newState.Files[path]; !written {
+					newState.Files[path] = fs
+				}
+			}
+			if err := state.SaveStateToFile(stateFile, newState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
 			}
 			if err := saveAnswers(projectRoot, answers); err != nil {
 				return fmt.Errorf("saving answers: %w", err)
 			}
 
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added skill %q.\n%s\n", skillName, result.Summary())
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added skill %q. %d file(s) updated.\n", skillName, len(writtenFiles))
 			return nil
 		},
 	}
@@ -301,6 +442,14 @@ func addHookCmd() *cobra.Command {
 				return fmt.Errorf("unknown hook preset %q; valid presets: %v", hookName, validHookPresets)
 			}
 
+			// Warn about presets that have no generated output yet.
+			switch hookName {
+			case "auto-format":
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Note: auto-format hook preset is not yet implemented. The setting will be saved but no hook files are generated.")
+			case "pre-commit":
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Note: pre-commit hook preset is managed by devenv, not Claude Code. Use 'gdev devenv init' with git hooks enabled.")
+			}
+
 			projectRoot, err := os.Getwd()
 			if err != nil {
 				return fmt.Errorf("determining project root: %w", err)
@@ -317,31 +466,66 @@ func addHookCmd() *cobra.Command {
 
 			// Generate files.
 			registry := ecosystem.DefaultRegistry()
-			gen := NewClaudeCodeGenerator(registry, Config{})
+			gen := NewClaudeCodeGenerator(registry, addon.Config)
 			files, err := gen.Generate(answers)
 			if err != nil {
 				return fmt.Errorf("generating files: %w", err)
 			}
 
-			// Write files to disk.
-			result, err := generate.WriteFiles(files, generate.PipelineOptions{
-				ProjectRoot: projectRoot,
-			})
+			// Load existing state to determine what changed.
+			stateFile := filepath.Join(projectRoot, statePath)
+			existingState, err := state.LoadStateFromFile(stateFile)
 			if err != nil {
-				return fmt.Errorf("writing files: %w", err)
+				return fmt.Errorf("loading state: %w", err)
 			}
 
-			// Save state and answers.
-			genState := state.RecordFiles(files)
-			stateFile := filepath.Join(projectRoot, statePath)
-			if err := state.SaveStateToFile(stateFile, genState); err != nil {
+			// Only write files that are new or whose content changed.
+			var writtenFiles []types.GeneratedFile
+			for _, f := range files {
+				absPath := filepath.Join(projectRoot, f.Path)
+				mode := f.Mode
+				if mode == 0 {
+					mode = 0o644
+				}
+
+				if fs, ok := existingState.Files[f.Path]; ok {
+					newHash := state.ComputeHash(f.Content)
+					if newHash == fs.Hash {
+						continue
+					}
+
+					diskStatus := state.CheckModified(existingState, projectRoot)
+					if ds, found := diskStatus[f.Path]; found && ds.Status == types.Modified {
+						merged, mergeErr := mergeFile(f, existingState, projectRoot)
+						if mergeErr != nil {
+							_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: merge failed for %s: %v (skipping)\n", f.Path, mergeErr)
+							continue
+						}
+						f.Content = merged
+					}
+				}
+
+				if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
+					return fmt.Errorf("writing %s: %w", f.Path, err)
+				}
+				writtenFiles = append(writtenFiles, f)
+			}
+
+			// Save state (merge new + existing for unchanged files).
+			newState := state.RecordFiles(writtenFiles)
+			for path, fs := range existingState.Files {
+				if _, written := newState.Files[path]; !written {
+					newState.Files[path] = fs
+				}
+			}
+			if err := state.SaveStateToFile(stateFile, newState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
 			}
 			if err := saveAnswers(projectRoot, answers); err != nil {
 				return fmt.Errorf("saving answers: %w", err)
 			}
 
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Enabled hook %q.\n%s\n", hookName, result.Summary())
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Enabled hook %q. %d file(s) updated.\n", hookName, len(writtenFiles))
 			return nil
 		},
 	}
@@ -393,7 +577,7 @@ func listSkillsCmd() *cobra.Command {
 }
 
 // buildClaudeAnswersFromFlags constructs a WizardAnswers from CLI flag values.
-func buildClaudeAnswersFromFlags(projectRoot, preset string, skills, mcpServers []string, yes bool) types.WizardAnswers {
+func buildClaudeAnswersFromFlags(projectRoot, preset string, skills, mcpServers []string, yes, noSafetyBlock bool) types.WizardAnswers {
 	answers := types.WizardAnswers{
 		ProjectRoot:     projectRoot,
 		ProjectName:     filepath.Base(projectRoot),
@@ -403,7 +587,7 @@ func buildClaudeAnswersFromFlags(projectRoot, preset string, skills, mcpServers 
 		MCPServers:      mcpServers,
 		Confirmed:       yes,
 		Hooks: types.HookChoices{
-			SafetyBlock: true,
+			SafetyBlock: !noSafetyBlock,
 		},
 	}
 

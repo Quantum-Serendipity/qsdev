@@ -251,7 +251,7 @@ func TestBuildClaudeAnswersFromFlags(t *testing.T) {
 	mcpServers := []string{"github"}
 	yes := true
 
-	answers := claudecode.ExportBuildClaudeAnswersFromFlags(projectRoot, preset, skills, mcpServers, yes)
+	answers := claudecode.ExportBuildClaudeAnswersFromFlags(projectRoot, preset, skills, mcpServers, yes, false)
 
 	if answers.ProjectRoot != projectRoot {
 		t.Errorf("ProjectRoot = %q, want %q", answers.ProjectRoot, projectRoot)
@@ -285,6 +285,28 @@ func TestBuildClaudeAnswersFromFlags(t *testing.T) {
 	}
 	if answers.MCPServers[0] != "github" {
 		t.Errorf("MCPServers[0] = %q, want %q", answers.MCPServers[0], "github")
+	}
+}
+
+func TestInvalidPermissionPresetRejected(t *testing.T) {
+	// Verify validPermissionPresets contains the expected values.
+	expectedPresets := []string{"minimal", "standard", "permissive", "custom"}
+	presets := claudecode.ExportValidPermissionPresets
+	if len(presets) != len(expectedPresets) {
+		t.Fatalf("validPermissionPresets has %d entries, want %d", len(presets), len(expectedPresets))
+	}
+	for _, expected := range expectedPresets {
+		if !claudecode.ExportContains(presets, expected) {
+			t.Errorf("validPermissionPresets missing expected value %q", expected)
+		}
+	}
+
+	// Verify the contains function correctly rejects invalid values.
+	invalidPresets := []string{"bogus", "", "STANDARD", "Minimal", "super-permissive"}
+	for _, invalid := range invalidPresets {
+		if claudecode.ExportContains(presets, invalid) {
+			t.Errorf("contains(validPermissionPresets, %q) = true, want false", invalid)
+		}
 	}
 }
 

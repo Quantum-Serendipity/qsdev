@@ -7,6 +7,7 @@ package java
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -381,16 +382,29 @@ func parseJavaVersion(projectRoot string) string {
 // detectKotlin checks for the presence of Kotlin in a project by looking for
 // .kt files and by scanning Gradle build files for the "kotlin" substring.
 func detectKotlin(projectRoot string) bool {
-	// Check for .kt files.
+	// Check for .kt files at project root.
 	matches, _ := filepath.Glob(filepath.Join(projectRoot, "*.kt"))
 	if len(matches) > 0 {
 		return true
 	}
 
-	// Also check in src/ subtree — common convention.
-	matches, _ = filepath.Glob(filepath.Join(projectRoot, "src", "**", "*.kt"))
-	if len(matches) > 0 {
-		return true
+	// Walk src/ subtree for .kt files.
+	srcDir := filepath.Join(projectRoot, "src")
+	if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
+		found := false
+		_ = filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil // skip unreadable dirs
+			}
+			if !d.IsDir() && strings.HasSuffix(d.Name(), ".kt") {
+				found = true
+				return filepath.SkipAll
+			}
+			return nil
+		})
+		if found {
+			return true
+		}
 	}
 
 	// Check Gradle build files for "kotlin" substring.

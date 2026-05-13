@@ -21,8 +21,8 @@ func TestGenerateEnvrc_DirenvEnabled(t *testing.T) {
 	if got.Mode != 0o644 {
 		t.Errorf("Mode = %o, want %o", got.Mode, 0o644)
 	}
-	if got.Strategy != types.Overwrite {
-		t.Errorf("Strategy = %v, want Overwrite", got.Strategy)
+	if got.Strategy != types.Skip {
+		t.Errorf("Strategy = %v, want Skip", got.Strategy)
 	}
 	if len(got.Content) == 0 {
 		t.Error("Content is empty")

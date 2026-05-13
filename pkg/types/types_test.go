@@ -437,6 +437,128 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 	})
 }
 
+func TestGeneratedStateZeroValueRoundTrip(t *testing.T) {
+	var original types.GeneratedState // zero value: nil Files map
+
+	// YAML round-trip
+	yamlData, err := yaml.Marshal(original)
+	if err != nil {
+		t.Fatalf("yaml.Marshal: %v", err)
+	}
+	var gotYAML types.GeneratedState
+	if err := yaml.Unmarshal(yamlData, &gotYAML); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	if gotYAML.Files != nil && len(gotYAML.Files) != 0 {
+		t.Errorf("YAML round-trip: Files should be nil or empty, got %v", gotYAML.Files)
+	}
+
+	// JSON round-trip
+	jsonData, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var gotJSON types.GeneratedState
+	if err := json.Unmarshal(jsonData, &gotJSON); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if gotJSON.Files != nil && len(gotJSON.Files) != 0 {
+		t.Errorf("JSON round-trip: Files should be nil or empty, got %v", gotJSON.Files)
+	}
+}
+
+func TestFileStateWithBaseContentRoundTrip(t *testing.T) {
+	original := types.GeneratedState{
+		TemplateVersion: "1.0.0",
+		Files: map[string]types.FileState{
+			"settings.json": {
+				Hash:        "sha256:abc123",
+				Strategy:    types.ThreeWayMerge,
+				Mode:        0644,
+				BaseContent: []byte(`{"permissions": {"allow": ["Read"]}}`),
+			},
+		},
+	}
+
+	data, err := yaml.Marshal(original)
+	if err != nil {
+		t.Fatalf("yaml.Marshal: %v", err)
+	}
+	var got types.GeneratedState
+	if err := yaml.Unmarshal(data, &got); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+
+	gotFS, ok := got.Files["settings.json"]
+	if !ok {
+		t.Fatal("missing file state for settings.json")
+	}
+	if string(gotFS.BaseContent) != string(original.Files["settings.json"].BaseContent) {
+		t.Errorf("BaseContent mismatch: got %q, want %q", gotFS.BaseContent, original.Files["settings.json"].BaseContent)
+	}
+	if gotFS.Hash != "sha256:abc123" {
+		t.Errorf("Hash mismatch: got %q, want %q", gotFS.Hash, "sha256:abc123")
+	}
+	if gotFS.Strategy != types.ThreeWayMerge {
+		t.Errorf("Strategy mismatch: got %v, want %v", gotFS.Strategy, types.ThreeWayMerge)
+	}
+}
+
+func TestServiceChoiceRoundTrip(t *testing.T) {
+	original := types.ServiceChoice{
+		Name:    "postgres",
+		Version: "16",
+		Settings: map[string]string{
+			"database": "mydb",
+			"port":     "5432",
+			"user":     "admin",
+		},
+	}
+
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var got types.ServiceChoice
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	if got.Name != original.Name {
+		t.Errorf("Name: got %q, want %q", got.Name, original.Name)
+	}
+	if got.Version != original.Version {
+		t.Errorf("Version: got %q, want %q", got.Version, original.Version)
+	}
+	if len(got.Settings) != len(original.Settings) {
+		t.Fatalf("Settings count: got %d, want %d", len(got.Settings), len(original.Settings))
+	}
+	for k, v := range original.Settings {
+		if got.Settings[k] != v {
+			t.Errorf("Settings[%q]: got %q, want %q", k, got.Settings[k], v)
+		}
+	}
+}
+
+func TestNewDetectedProject(t *testing.T) {
+	dp := types.NewDetectedProject()
+
+	if dp.Ecosystems == nil {
+		t.Fatal("NewDetectedProject().Ecosystems should be non-nil")
+	}
+
+	// Writing to the map should not panic.
+	dp.Ecosystems["go"] = true
+	dp.Ecosystems["python"] = true
+
+	if !dp.Ecosystems["go"] {
+		t.Error("expected Ecosystems[\"go\"] to be true after assignment")
+	}
+	if len(dp.Ecosystems) != 2 {
+		t.Errorf("expected 2 entries in Ecosystems, got %d", len(dp.Ecosystems))
+	}
+}
+
 func TestEnvVarsMapWithSpecialCharacters(t *testing.T) {
 	original := types.WizardAnswers{
 		EnvVars: map[string]string{

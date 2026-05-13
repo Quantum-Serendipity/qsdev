@@ -114,3 +114,10 @@ func TestModificationStatusJSONRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestModificationStatusNegativeValueString(t *testing.T) {
+	got := types.ModificationStatus(-1).String()
+	if got != "invalid" {
+		t.Errorf("ModificationStatus(-1).String() = %q, want %q", got, "invalid")
+	}
+}

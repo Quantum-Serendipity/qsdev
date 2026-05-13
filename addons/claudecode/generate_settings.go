@@ -179,7 +179,7 @@ var denyPipeToShell = []string{
 	`Bash(wget * | sh)`,
 }
 
-// denyShellWrapping blocks bash -c, sh -c, zsh -c wrapping of install commands.
+// denyShellWrapping blocks bash -c, sh -c, zsh -c, dash -c wrapping of install commands.
 var denyShellWrapping = []string{
 	`Bash(bash -c *npm install*)`,
 	`Bash(bash -c *pip install*)`,
@@ -195,6 +195,16 @@ var denyShellWrapping = []string{
 	`Bash(sh -c *nix-env*)`,
 	`Bash(zsh -c *npm install*)`,
 	`Bash(zsh -c *pip install*)`,
+	`Bash(zsh -c *cargo install*)`,
+	`Bash(zsh -c *go get*)`,
+	`Bash(zsh -c *gem install*)`,
+	`Bash(zsh -c *nix-env*)`,
+	`Bash(dash -c *npm install*)`,
+	`Bash(dash -c *pip install*)`,
+	`Bash(dash -c *cargo install*)`,
+	`Bash(dash -c *go get*)`,
+	`Bash(dash -c *gem install*)`,
+	`Bash(dash -c *nix-env*)`,
 }
 
 // denyEnvCommandPrefix blocks env and command prefix bypasses.
@@ -498,26 +508,42 @@ func buildSandbox(cfg Config) *SandboxConfig {
 	return sandbox
 }
 
-// buildHooks returns the hooks map when safety block hooks are enabled.
+// buildHooks returns the hooks map based on enabled hook presets.
 func buildHooks(answers types.WizardAnswers) map[string][]HookMatcher {
-	if !answers.Hooks.SafetyBlock {
-		return nil
-	}
-	return map[string][]HookMatcher{
-		"PreToolUse": {
-			{
-				Matcher: "Bash",
-				Hooks: []HookEntry{
-					{
-						Type:          "command",
-						Command:       `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/package-guard.py`,
-						Timeout:       30,
-						StatusMessage: "Checking package install safety...",
-					},
+	hooks := make(map[string][]HookMatcher)
+
+	if answers.Hooks.SafetyBlock {
+		hooks["PreToolUse"] = append(hooks["PreToolUse"], HookMatcher{
+			Matcher: "Bash",
+			Hooks: []HookEntry{
+				{
+					Type:          "command",
+					Command:       `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/package-guard.py`,
+					Timeout:       30,
+					StatusMessage: "Checking package install safety...",
 				},
 			},
-		},
+		})
 	}
+
+	if answers.Hooks.AuditLog {
+		hooks["PostToolUse"] = append(hooks["PostToolUse"], HookMatcher{
+			Matcher: "*",
+			Hooks: []HookEntry{
+				{
+					Type:          "command",
+					Command:       `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/audit-log.sh`,
+					Timeout:       5,
+					StatusMessage: "Logging tool action...",
+				},
+			},
+		})
+	}
+
+	if len(hooks) == 0 {
+		return nil
+	}
+	return hooks
 }
 
 // GenerateSettings produces a .claude/settings.json file from the wizard

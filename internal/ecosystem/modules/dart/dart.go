@@ -58,9 +58,12 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		confidence = ecosystem.ConfidenceCertain
 		evidence = append(evidence, "pubspec.yaml found")
 
-		// Detect Flutter by checking pubspec.yaml content.
+		// Detect Flutter by checking for "flutter:" as a top-level YAML key
+		// (at the start of a line with no indentation). A bare Contains would
+		// match comments and nested keys in unrelated contexts.
 		data, err := os.ReadFile(filepath.Join(projectRoot, "pubspec.yaml"))
-		if err == nil && strings.Contains(string(data), "flutter:") {
+		content := string(data)
+		if err == nil && (strings.HasPrefix(content, "flutter:") || strings.Contains(content, "\nflutter:")) {
 			extras["flutter"] = "true"
 			evidence = append(evidence, "Flutter dependency detected in pubspec.yaml")
 		} else {

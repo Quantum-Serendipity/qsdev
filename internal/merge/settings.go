@@ -3,7 +3,6 @@ package merge
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 )
 
 // settingsJSON mirrors the claudecode.SettingsJSON structure.
@@ -199,12 +198,3 @@ func findMatcher(matchers []hookMatcher, matcher string) (hookMatcher, bool) {
 	return hookMatcher{}, false
 }
 
-// sortedKeys returns the sorted keys of a map for deterministic iteration.
-func sortedKeys(m map[string]json.RawMessage) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}

@@ -1,0 +1,23 @@
+version: "2"
+
+linters:
+  default: standard
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+    rules:
+      - linters:
+          - errcheck
+        path: _test\.go
+      - linters:
+          - errcheck
+        text: "Error return value of `fmt\\.Fprint"
+      - linters:
+          - errcheck
+        text: "Error return value of `.+\\.Close` is not checked"
+      - linters:
+          - errcheck
+        text: "Error return value of `os\\.Remove"

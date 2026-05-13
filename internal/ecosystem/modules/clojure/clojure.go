@@ -7,12 +7,10 @@
 package clojure
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -20,9 +18,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("clojure: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Module implements ecosystem.EcosystemModule for the Clojure programming language.
@@ -41,8 +37,8 @@ func (m *Module) Tier() int { return 3 }
 // It determines the build tool and stores it in Extras["build_tool"].
 // tools-deps is preferred when both files are present.
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
-	hasDepsEdn := fileExists(filepath.Join(projectRoot, "deps.edn"))
-	hasProjectClj := fileExists(filepath.Join(projectRoot, "project.clj"))
+	hasDepsEdn := fileutil.FileExists(projectRoot, "deps.edn")
+	hasProjectClj := fileutil.FileExists(projectRoot, "project.clj")
 
 	if !hasDepsEdn && !hasProjectClj {
 		return ecosystem.DetectionResult{
@@ -199,11 +195,3 @@ func resolveBuildTool(config ecosystem.ModuleConfig) string {
 	return "tools-deps"
 }
 
-// fileExists reports whether a file at the given path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
-}

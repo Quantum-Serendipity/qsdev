@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -20,9 +21,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("ruby: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Module implements ecosystem.EcosystemModule for the Ruby programming language.
@@ -43,8 +42,8 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	gemfile := filepath.Join(projectRoot, "Gemfile")
 	gemfileLock := filepath.Join(projectRoot, "Gemfile.lock")
 
-	hasGemfile := fileExists(gemfile)
-	hasLock := fileExists(gemfileLock)
+	hasGemfile := fileutil.FileExists(gemfile)
+	hasLock := fileutil.FileExists(gemfileLock)
 
 	if !hasGemfile && !hasLock {
 		return ecosystem.DetectionResult{
@@ -204,15 +203,6 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 			Default:     "",
 		},
 	}
-}
-
-// fileExists reports whether a file at the given path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
 }
 
 // parseRubyVersion reads .ruby-version in projectRoot and returns the

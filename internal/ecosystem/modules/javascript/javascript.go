@@ -6,15 +6,14 @@ import (
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 )
 
 // Compile-time interface compliance check.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("javascript: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Module implements ecosystem.EcosystemModule for the JavaScript/TypeScript ecosystem.
@@ -35,7 +34,7 @@ func (m *Module) Tier() int { return 1 }
 // and checks for TypeScript via tsconfig.json.
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	pkgJSONPath := filepath.Join(projectRoot, "package.json")
-	if !fileExists(pkgJSONPath) {
+	if !fileutil.FileExists(pkgJSONPath) {
 		return ecosystem.DetectionResult{
 			Detected:   false,
 			Confidence: ecosystem.ConfidenceAbsent,
@@ -51,8 +50,8 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	// Determine Node.js version: .nvmrc takes priority over engines.node.
 	version := ""
 	nvmrcPath := filepath.Join(projectRoot, ".nvmrc")
-	if fileExists(nvmrcPath) {
-		version = readFirstLine(nvmrcPath)
+	if fileutil.FileExists(nvmrcPath) {
+		version = fileutil.ReadFirstLine(nvmrcPath)
 		if version != "" {
 			evidence = append(evidence, fmt.Sprintf("node version %s (from .nvmrc)", version))
 		}
@@ -67,7 +66,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	// Check for TypeScript.
 	extras := make(map[string]string)
 	tsconfigPath := filepath.Join(projectRoot, "tsconfig.json")
-	if fileExists(tsconfigPath) {
+	if fileutil.FileExists(tsconfigPath) {
 		extras["typescript"] = "true"
 		evidence = append(evidence, "tsconfig.json found")
 	}
@@ -87,16 +86,16 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 // detectPackageManager determines the package manager by inspecting lockfiles.
 // Priority: pnpm-lock.yaml > yarn.lock > bun.lock/bun.lockb > package-lock.json > npm (default).
 func detectPackageManager(projectRoot string) string {
-	if fileExists(filepath.Join(projectRoot, "pnpm-lock.yaml")) {
+	if fileutil.FileExists(filepath.Join(projectRoot, "pnpm-lock.yaml")) {
 		return "pnpm"
 	}
-	if fileExists(filepath.Join(projectRoot, "yarn.lock")) {
+	if fileutil.FileExists(filepath.Join(projectRoot, "yarn.lock")) {
 		return "yarn"
 	}
-	if fileExists(filepath.Join(projectRoot, "bun.lock")) || fileExists(filepath.Join(projectRoot, "bun.lockb")) {
+	if fileutil.FileExists(filepath.Join(projectRoot, "bun.lock")) || fileutil.FileExists(filepath.Join(projectRoot, "bun.lockb")) {
 		return "bun"
 	}
-	if fileExists(filepath.Join(projectRoot, "package-lock.json")) {
+	if fileutil.FileExists(filepath.Join(projectRoot, "package-lock.json")) {
 		return "npm"
 	}
 	return "npm"
@@ -214,7 +213,7 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 	var installCmd string
 	switch pm {
 	case "npm":
-		installCmd = "npm ci"
+		installCmd = "npm ci --ignore-scripts"
 	case "pnpm":
 		installCmd = "pnpm install --frozen-lockfile"
 	case "yarn":
@@ -222,7 +221,7 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 	case "bun":
 		installCmd = "bun install --frozen-lockfile"
 	default:
-		installCmd = "npm ci"
+		installCmd = "npm ci --ignore-scripts"
 	}
 
 	return []ecosystem.CICommand{

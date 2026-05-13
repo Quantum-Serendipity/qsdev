@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -22,9 +23,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("scala: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // scalaVersionRe matches a scalaVersion setting in build.sbt, with an optional
@@ -50,9 +49,9 @@ func (m *Module) Tier() int { return 2 }
 // directory. It extracts the Scala version from build.sbt and the sbt version
 // from project/build.properties.
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
-	hasBuildSbt := fileExists(filepath.Join(projectRoot, "build.sbt"))
-	hasBuildSc := fileExists(filepath.Join(projectRoot, "build.sc"))
-	hasProjectDir := dirExists(filepath.Join(projectRoot, "project"))
+	hasBuildSbt := fileutil.FileExists(projectRoot, "build.sbt")
+	hasBuildSc := fileutil.FileExists(projectRoot, "build.sc")
+	hasProjectDir := fileutil.DirExists(projectRoot, "project")
 
 	if !hasBuildSbt && !hasBuildSc && !hasProjectDir {
 		return ecosystem.DetectionResult{
@@ -277,18 +276,6 @@ func jdkPackage(version string) string {
 	default:
 		return "jdk21"
 	}
-}
-
-// fileExists reports whether a file at the given path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
-// dirExists reports whether the given path names an existing directory.
-func dirExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
 }
 
 // parseScalaVersion reads a build.sbt file and extracts the Scala version

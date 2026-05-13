@@ -4,40 +4,11 @@
 package javascript
 
 import (
-	"bufio"
 	"encoding/json"
 	"os"
 	"strconv"
 	"strings"
 )
-
-// fileExists reports whether a file at the given path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
-}
-
-// readFirstLine reads the first non-empty trimmed line from a file.
-// Returns an empty string if the file cannot be read or is empty.
-func readFirstLine(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close() //nolint:errcheck // best-effort read
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
-			return line
-		}
-	}
-	return ""
-}
 
 // nodeVersionFromPackageJSON extracts the Node.js version constraint from
 // the "engines.node" field in package.json at the given directory path.

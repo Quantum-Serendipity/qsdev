@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -22,9 +23,7 @@ var _ ecosystem.EcosystemModule = (*Module)(nil)
 type Module struct{}
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("rust: failed to register module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Name returns the canonical module identifier.
@@ -44,8 +43,8 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		},
 	}
 
-	hasCargoToml := fileExists(filepath.Join(projectRoot, "Cargo.toml"))
-	hasCargoLock := fileExists(filepath.Join(projectRoot, "Cargo.lock"))
+	hasCargoToml := fileutil.FileExists(projectRoot, "Cargo.toml")
+	hasCargoLock := fileutil.FileExists(projectRoot, "Cargo.lock")
 
 	if !hasCargoToml && !hasCargoLock {
 		return result
@@ -210,12 +209,6 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 //
 //	channel = "stable"
 var channelRegexp = regexp.MustCompile(`^\s*channel\s*=\s*"([^"]+)"`)
-
-// fileExists reports whether the given path names an existing regular file.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
 
 // parseToolchainChannel extracts the Rust toolchain channel from
 // rust-toolchain.toml (preferred) or the legacy rust-toolchain file.

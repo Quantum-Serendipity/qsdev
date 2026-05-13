@@ -6,11 +6,8 @@
 package elixir
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -18,9 +15,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("elixir: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Module implements ecosystem.EcosystemModule for the Elixir programming language.
@@ -37,8 +32,8 @@ func (m *Module) Tier() int { return 3 }
 
 // Detect scans projectRoot for mix.exs and mix.lock files.
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
-	hasMixExs := fileExists(filepath.Join(projectRoot, "mix.exs"))
-	hasMixLock := fileExists(filepath.Join(projectRoot, "mix.lock"))
+	hasMixExs := fileutil.FileExists(projectRoot, "mix.exs")
+	hasMixLock := fileutil.FileExists(projectRoot, "mix.lock")
 
 	if !hasMixExs && !hasMixLock {
 		return ecosystem.DetectionResult{
@@ -148,11 +143,3 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	return nil
 }
 
-// fileExists reports whether a file at the given path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
-}

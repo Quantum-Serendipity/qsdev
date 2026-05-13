@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -24,9 +25,7 @@ var _ ecosystem.EcosystemModule = (*Module)(nil)
 type Module struct{}
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("dotnet: failed to register module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Name returns the canonical module identifier.
@@ -73,7 +72,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	// Check for Directory.Build.props.
-	if fileExists(filepath.Join(projectRoot, "Directory.Build.props")) {
+	if fileutil.FileExists(projectRoot, "Directory.Build.props") {
 		result.Detected = true
 		result.Confidence = ecosystem.ConfidenceCertain
 		result.Evidence = append(result.Evidence, "Directory.Build.props")
@@ -199,14 +198,6 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 			Default: "8",
 		},
 	}
-}
-
-// --- helpers ---
-
-// fileExists reports whether the given path names an existing regular file.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }
 
 // globalJSONSchema represents the minimal structure of a global.json file.

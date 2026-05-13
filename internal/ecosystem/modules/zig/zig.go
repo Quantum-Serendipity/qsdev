@@ -14,11 +14,8 @@
 package zig
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -26,9 +23,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("zig: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Module implements ecosystem.EcosystemModule for the Zig programming language.
@@ -53,12 +48,12 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	)
 
 	// Certain indicators.
-	if fileExists(filepath.Join(projectRoot, "build.zig")) {
+	if fileutil.FileExists(projectRoot, "build.zig") {
 		evidence = append(evidence, "build.zig found")
 		confidence = ecosystem.ConfidenceCertain
 		detected = true
 	}
-	if fileExists(filepath.Join(projectRoot, "build.zig.zon")) {
+	if fileutil.FileExists(projectRoot, "build.zig.zon") {
 		evidence = append(evidence, "build.zig.zon found (dependency manifest with SHA256 hashes)")
 		confidence = ecosystem.ConfidenceCertain
 		detected = true
@@ -153,11 +148,3 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	return nil
 }
 
-// fileExists reports whether a file at the given path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
-}

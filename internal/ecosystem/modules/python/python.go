@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -21,9 +22,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("python: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // requiresPythonRe matches the requires-python line in pyproject.toml and
@@ -52,23 +51,23 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	var evidence []string
 
 	// Check indicators in order of confidence.
-	if fileExists(filepath.Join(projectRoot, "pyproject.toml")) {
+	if fileutil.FileExists(projectRoot, "pyproject.toml") {
 		confidence = ecosystem.ConfidenceCertain
 		evidence = append(evidence, "pyproject.toml found")
 	}
-	if fileExists(filepath.Join(projectRoot, "requirements.txt")) {
+	if fileutil.FileExists(projectRoot, "requirements.txt") {
 		if confidence < ecosystem.ConfidenceProbable {
 			confidence = ecosystem.ConfidenceProbable
 		}
 		evidence = append(evidence, "requirements.txt found")
 	}
-	if fileExists(filepath.Join(projectRoot, "setup.py")) {
+	if fileutil.FileExists(projectRoot, "setup.py") {
 		if confidence < ecosystem.ConfidenceProbable {
 			confidence = ecosystem.ConfidenceProbable
 		}
 		evidence = append(evidence, "setup.py found")
 	}
-	if fileExists(filepath.Join(projectRoot, "Pipfile")) {
+	if fileutil.FileExists(projectRoot, "Pipfile") {
 		if confidence < ecosystem.ConfidenceProbable {
 			confidence = ecosystem.ConfidenceProbable
 		}
@@ -84,17 +83,17 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 
 	// Determine package manager from lockfiles.
 	pm := "pip"
-	if fileExists(filepath.Join(projectRoot, "uv.lock")) {
+	if fileutil.FileExists(projectRoot, "uv.lock") {
 		pm = "uv"
 		evidence = append(evidence, "uv.lock found")
-	} else if fileExists(filepath.Join(projectRoot, "poetry.lock")) {
+	} else if fileutil.FileExists(projectRoot, "poetry.lock") {
 		pm = "poetry"
 		evidence = append(evidence, "poetry.lock found")
 	}
 
 	// Determine version: .python-version takes priority over pyproject.toml.
 	version := ""
-	if v := readFirstLine(filepath.Join(projectRoot, ".python-version")); v != "" {
+	if v := fileutil.ReadFirstLine(filepath.Join(projectRoot, ".python-version")); v != "" {
 		version = v
 		evidence = append(evidence, fmt.Sprintf("python version %s (from .python-version)", v))
 	} else if v := parseRequiresPython(filepath.Join(projectRoot, "pyproject.toml")); v != "" {
@@ -350,34 +349,6 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 			Default:     "true",
 		},
 	}
-}
-
-// fileExists reports whether a file at the given path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
-}
-
-// readFirstLine reads the first non-empty trimmed line from the file at path.
-// Returns an empty string if the file cannot be read or is empty.
-func readFirstLine(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close() //nolint:errcheck // best-effort read
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
-			return line
-		}
-	}
-	return ""
 }
 
 // parseRequiresPython reads pyproject.toml and extracts the Python version

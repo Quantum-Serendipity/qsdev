@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -21,9 +22,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("helm: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // chartVersionRe matches the "version: X.Y.Z" line in Chart.yaml.
@@ -48,7 +47,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	chartPath := filepath.Join(projectRoot, "Chart.yaml")
 	lockPath := filepath.Join(projectRoot, "Chart.lock")
 
-	if fileExists(chartPath) {
+	if fileutil.FileExists(chartPath) {
 		evidence := []string{"Chart.yaml found"}
 		version := parseChartVersion(chartPath)
 		if version != "" {
@@ -64,7 +63,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		}
 	}
 
-	if fileExists(lockPath) {
+	if fileutil.FileExists(lockPath) {
 		return ecosystem.DetectionResult{
 			Detected:   true,
 			Confidence: ecosystem.ConfidenceProbable,
@@ -165,14 +164,6 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 // WizardFields returns nil. Helm does not require additional wizard fields.
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return nil
-}
-
-// --- helpers ---
-
-// fileExists reports whether the given path names an existing regular file.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }
 
 // parseChartVersion reads Chart.yaml and extracts the version field using a

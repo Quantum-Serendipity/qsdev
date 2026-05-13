@@ -50,17 +50,33 @@ func SaveStateToFile(path string, state types.GeneratedState) error {
 		return fmt.Errorf("creating state directory %s: %w", dir, err)
 	}
 
-	// Atomic write: write to a temp file in the same directory, then rename.
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+	// Atomic write: create a temp file with a random suffix in the same
+	// directory (guarantees same filesystem for rename), write, then rename.
+	tmp, err := os.CreateTemp(dir, ".gdev-state-*")
+	if err != nil {
+		return fmt.Errorf("creating temp state file in %s: %w", dir, err)
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		// Clean up temp file on any failure path.
+		_ = os.Remove(tmpPath)
+	}()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
 		return fmt.Errorf("writing temp state file %s: %w", tmpPath, err)
 	}
-
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing temp state file %s: %w", tmpPath, err)
+	}
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		return fmt.Errorf("setting permissions on temp state file %s: %w", tmpPath, err)
+	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		// Clean up temp file on rename failure.
-		_ = os.Remove(tmpPath)
 		return fmt.Errorf("renaming temp state file to %s: %w", path, err)
 	}
 
+	// Rename succeeded — prevent deferred Remove from deleting the final file.
+	tmpPath = ""
 	return nil
 }

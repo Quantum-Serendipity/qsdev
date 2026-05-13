@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/addons/claudecode"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -147,7 +148,7 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 			Placeholder("e.g. 1.24").
 			Value(&fs.goVersion),
 	).WithHideFunc(func() bool {
-		return fs.quickChoice == "yes" || !containsStr(fs.selectedLanguages, "go")
+		return fs.quickChoice == "yes" || !ecosystem.ContainsStr(fs.selectedLanguages, "go")
 	})
 
 	jsVersionGroup := huh.NewGroup(
@@ -156,7 +157,7 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 			Placeholder("e.g. 22").
 			Value(&fs.jsVersion),
 	).WithHideFunc(func() bool {
-		return fs.quickChoice == "yes" || !containsStr(fs.selectedLanguages, "javascript")
+		return fs.quickChoice == "yes" || !ecosystem.ContainsStr(fs.selectedLanguages, "javascript")
 	})
 
 	pythonVersionGroup := huh.NewGroup(
@@ -165,7 +166,7 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 			Placeholder("e.g. 3.12").
 			Value(&fs.pythonVersion),
 	).WithHideFunc(func() bool {
-		return fs.quickChoice == "yes" || !containsStr(fs.selectedLanguages, "python")
+		return fs.quickChoice == "yes" || !ecosystem.ContainsStr(fs.selectedLanguages, "python")
 	})
 
 	// --- Group 3: Services ---
@@ -370,6 +371,9 @@ func mapFormToAnswers(fs *formState, projectRoot, projectName string, detected t
 	if fs.claudeCode {
 		answers.Skills = fs.skills
 		answers.MCPServers = fs.mcpServers
+	} else {
+		answers.Skills = nil
+		answers.MCPServers = nil
 	}
 
 	return answers

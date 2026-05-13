@@ -7,12 +7,11 @@
 package haskell
 
 import (
-	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -20,9 +19,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("haskell: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Module implements ecosystem.EcosystemModule for the Haskell programming language.
@@ -43,8 +40,8 @@ func (m *Module) Tier() int { return 3 }
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	cabalMatches, _ := filepath.Glob(filepath.Join(projectRoot, "*.cabal"))
 	hasCabal := len(cabalMatches) > 0
-	hasStackYaml := fileExists(filepath.Join(projectRoot, "stack.yaml"))
-	hasCabalProject := fileExists(filepath.Join(projectRoot, "cabal.project"))
+	hasStackYaml := fileutil.FileExists(projectRoot, "stack.yaml")
+	hasCabalProject := fileutil.FileExists(projectRoot, "cabal.project")
 
 	if !hasCabal && !hasStackYaml && !hasCabalProject {
 		return ecosystem.DetectionResult{
@@ -207,11 +204,3 @@ func resolveBuildTool(config ecosystem.ModuleConfig) string {
 	return "cabal"
 }
 
-// fileExists reports whether a file at the given path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
-}

@@ -253,7 +253,7 @@ func addServiceCmd() *cobra.Command {
 			serviceName := args[0]
 
 			// Validate service name.
-			if !contains(validServices, serviceName) {
+			if !ecosystem.ContainsStr(validServices, serviceName) {
 				return fmt.Errorf("unknown service %q; valid services: %v", serviceName, validServices)
 			}
 
@@ -269,21 +269,15 @@ func addServiceCmd() *cobra.Command {
 			}
 
 			// Check for duplicate (skip when --force is set).
-			if !force {
-				for _, svc := range answers.Services {
-					if svc.Name == serviceName {
-						return fmt.Errorf("service %q is already configured; use --force to overwrite", serviceName)
-					}
-				}
-			}
-
-			// Add service (avoid duplicates even with --force).
 			alreadyPresent := false
 			for _, svc := range answers.Services {
 				if svc.Name == serviceName {
 					alreadyPresent = true
 					break
 				}
+			}
+			if alreadyPresent && !force {
+				return fmt.Errorf("service %q is already configured; use --force to overwrite", serviceName)
 			}
 			if !alreadyPresent {
 				answers.Services = append(answers.Services, types.ServiceChoice{
@@ -351,7 +345,7 @@ func addLanguageCmd() *cobra.Command {
 			langName := args[0]
 
 			// Validate language name.
-			if !contains(validLanguages, langName) {
+			if !ecosystem.ContainsStr(validLanguages, langName) {
 				return fmt.Errorf("unknown language %q; valid languages: %v", langName, validLanguages)
 			}
 
@@ -367,21 +361,15 @@ func addLanguageCmd() *cobra.Command {
 			}
 
 			// Check for duplicate (skip when --force is set).
-			if !force {
-				for _, lang := range answers.Languages {
-					if lang.Name == langName {
-						return fmt.Errorf("language %q is already configured; use --force to overwrite", langName)
-					}
-				}
-			}
-
-			// Add language (avoid duplicates even with --force).
 			alreadyPresent := false
 			for _, lang := range answers.Languages {
 				if lang.Name == langName {
 					alreadyPresent = true
 					break
 				}
+			}
+			if alreadyPresent && !force {
+				return fmt.Errorf("language %q is already configured; use --force to overwrite", langName)
 			}
 			if !alreadyPresent {
 				answers.Languages = append(answers.Languages, types.LanguageChoice{
@@ -454,14 +442,4 @@ func buildAnswersFromFlags(projectRoot string, langs, services []string, direnv 
 	}
 
 	return answers
-}
-
-// contains checks whether a string slice includes the given value.
-func contains(slice []string, val string) bool {
-	for _, s := range slice {
-		if s == val {
-			return true
-		}
-	}
-	return false
 }

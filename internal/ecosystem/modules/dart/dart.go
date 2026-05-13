@@ -6,12 +6,12 @@
 package dart
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -19,9 +19,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	if err := ecosystem.DefaultRegistry().Register(&Module{}); err != nil {
-		panic(fmt.Sprintf("dart: failed to register ecosystem module: %v", err))
-	}
+	ecosystem.RegisterModule(&Module{})
 }
 
 // Module implements ecosystem.EcosystemModule for the Dart/Flutter ecosystem.
@@ -40,8 +38,8 @@ func (m *Module) Tier() int { return 3 }
 // If pubspec.yaml contains a "flutter:" section, Flutter is detected and
 // recorded in Extras["flutter"].
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
-	hasPubspec := fileExists(filepath.Join(projectRoot, "pubspec.yaml"))
-	hasPubspecLock := fileExists(filepath.Join(projectRoot, "pubspec.lock"))
+	hasPubspec := fileutil.FileExists(projectRoot, "pubspec.yaml")
+	hasPubspecLock := fileutil.FileExists(projectRoot, "pubspec.lock")
 
 	if !hasPubspec && !hasPubspecLock {
 		return ecosystem.DetectionResult{
@@ -182,11 +180,3 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
-// fileExists reports whether a file at the given path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
-}

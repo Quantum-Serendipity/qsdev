@@ -205,6 +205,29 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
+// VerificationCommands returns build/test/lint/format commands for Go projects.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{
+		Build:  []string{"go build ./..."},
+		Test:   []string{"go test ./..."},
+		Lint:   []string{"go vet ./...", "golangci-lint run"},
+		Format: []string{"gofmt -l ."},
+	}
+}
+
+// ManifestFiles returns manifest file metadata for Go projects.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{
+		{
+			Path:           "go.mod",
+			Ecosystem:      "go",
+			VSSupported:    false,
+			LockFile:       "go.sum",
+			LockFilePolicy: ecosystem.LockFilePolicyRecommended,
+		},
+	}
+}
+
 // goVersionToNixPackage maps a Go version string to the corresponding Nix package
 // attribute. For example, "1.24.1" maps to "pkgs.go_1_24". If the version is empty
 // or cannot be parsed into at least major.minor components, "pkgs.go" (latest) is returned.

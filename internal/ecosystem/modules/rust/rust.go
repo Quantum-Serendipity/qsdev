@@ -203,6 +203,29 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
+// VerificationCommands returns project verification commands for the Rust ecosystem.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{
+		Build:  []string{"cargo build"},
+		Test:   []string{"cargo test"},
+		Lint:   []string{"cargo clippy -- -D warnings"},
+		Format: []string{"cargo fmt -- --check"},
+	}
+}
+
+// ManifestFiles returns manifest file metadata for the Rust ecosystem.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{
+		{
+			Path:           "Cargo.toml",
+			Ecosystem:      "cargo",
+			VSSupported:    true,
+			LockFile:       "Cargo.lock",
+			LockFilePolicy: ecosystem.LockFilePolicyRecommended,
+		},
+	}
+}
+
 // --- helpers ---
 
 // channelRegexp matches the channel key in a TOML file, e.g.:

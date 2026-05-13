@@ -29,6 +29,15 @@ func goMock() *ecosystem.MockModule {
 		PackageManagersVal: []ecosystem.PackageManagerInfo{
 			{Name: "go modules"},
 		},
+		VerificationCommandsVal: ecosystem.VerificationCommands{
+			Build:  []string{"go build ./..."},
+			Test:   []string{"go test ./..."},
+			Lint:   []string{"go vet ./...", "golangci-lint run"},
+			Format: []string{"gofmt -l ."},
+		},
+		ManifestFilesVal: []ecosystem.ManifestFileInfo{
+			{Path: "go.mod", Ecosystem: "go", VSSupported: false, LockFile: "go.sum", LockFilePolicy: ecosystem.LockFilePolicyRecommended},
+		},
 	}
 }
 
@@ -39,6 +48,15 @@ func pythonMock() *ecosystem.MockModule {
 		TierVal:        1,
 		PackageManagersVal: []ecosystem.PackageManagerInfo{
 			{Name: "pip"},
+		},
+		VerificationCommandsVal: ecosystem.VerificationCommands{
+			Test:      []string{"python -m pytest"},
+			Lint:      []string{"ruff check ."},
+			TypeCheck: []string{"mypy ."},
+			Format:    []string{"ruff format --check ."},
+		},
+		ManifestFilesVal: []ecosystem.ManifestFileInfo{
+			{Path: "requirements.txt", Ecosystem: "pip", VSSupported: true, LockFilePolicy: ecosystem.LockFilePolicyNone},
 		},
 	}
 }
@@ -51,6 +69,15 @@ func jsMock() *ecosystem.MockModule {
 		PackageManagersVal: []ecosystem.PackageManagerInfo{
 			{Name: "npm"},
 		},
+		VerificationCommandsVal: ecosystem.VerificationCommands{
+			Build:  []string{"npm run build"},
+			Test:   []string{"npm test"},
+			Lint:   []string{"npm run lint"},
+			Format: []string{"prettier --check ."},
+		},
+		ManifestFilesVal: []ecosystem.ManifestFileInfo{
+			{Path: "package.json", Ecosystem: "npm", VSSupported: true, LockFile: "package-lock.json", LockFilePolicy: ecosystem.LockFilePolicyRequired},
+		},
 	}
 }
 
@@ -61,6 +88,15 @@ func rustMock() *ecosystem.MockModule {
 		TierVal:        1,
 		PackageManagersVal: []ecosystem.PackageManagerInfo{
 			{Name: "cargo"},
+		},
+		VerificationCommandsVal: ecosystem.VerificationCommands{
+			Build:  []string{"cargo build"},
+			Test:   []string{"cargo test"},
+			Lint:   []string{"cargo clippy -- -D warnings"},
+			Format: []string{"cargo fmt -- --check"},
+		},
+		ManifestFilesVal: []ecosystem.ManifestFileInfo{
+			{Path: "Cargo.toml", Ecosystem: "cargo", VSSupported: true, LockFile: "Cargo.lock", LockFilePolicy: ecosystem.LockFilePolicyRecommended},
 		},
 	}
 }

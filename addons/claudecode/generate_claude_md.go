@@ -20,28 +20,18 @@ type ClaudeMdTemplateData struct {
 	LintCommands       []string
 	HasSecurityHooks   bool
 	PackageManagers    []string // "npm", "pip", "cargo" for security section specifics
-}
 
-// languageCommands maps ecosystem canonical names to their default build, test,
-// and lint commands.
-var languageCommands = map[string]struct {
-	build []string
-	test  []string
-	lint  []string
-}{
-	"go":         {build: []string{"go build ./..."}, test: []string{"go test ./..."}, lint: []string{"golangci-lint run"}},
-	"javascript": {build: []string{"npm run build"}, test: []string{"npm test"}, lint: []string{"npm run lint"}},
-	"python":     {build: nil, test: []string{"python -m pytest"}, lint: []string{"ruff check ."}},
-	"rust":       {build: []string{"cargo build"}, test: []string{"cargo test"}, lint: []string{"cargo clippy"}},
-	"java":       {build: []string{"mvn compile"}, test: []string{"mvn test"}, lint: nil},
-	"dotnet":     {build: []string{"dotnet build"}, test: []string{"dotnet test"}, lint: nil},
-	"docker":     {build: []string{"docker build ."}, test: nil, lint: []string{"hadolint Dockerfile"}},
-	"terraform":  {build: nil, test: []string{"terraform validate"}, lint: []string{"terraform plan", "tflint"}},
+	PostmortemEnabled      bool
+	VersionSentinelEnabled bool
+	VersionSentinelCovered []string
+	VersionSentinelUncovered []string
+	SembleEnabled          bool
+	SembleMode             string
 }
 
 // BuildClaudeMdData assembles all template data from wizard answers and ecosystem
-// modules. It maps language choices to display names, derives default commands,
-// and collects package manager metadata.
+// modules. It maps language choices to display names, derives commands from
+// ecosystem module VerificationCommands, and collects package manager metadata.
 func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry) *ClaudeMdTemplateData {
 	data := &ClaudeMdTemplateData{
 		ProjectName:      answers.ProjectName,
@@ -52,24 +42,40 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 
 	for _, lang := range answers.Languages {
 		mod, ok := registry.ByName(lang.Name)
-		if ok {
-			data.Languages = append(data.Languages, mod.DisplayName())
-			for _, pm := range mod.PackageManagers() {
-				data.PackageManagers = append(data.PackageManagers, pm.Name)
-			}
+		if !ok {
+			continue
+		}
+		data.Languages = append(data.Languages, mod.DisplayName())
+		for _, pm := range mod.PackageManagers() {
+			data.PackageManagers = append(data.PackageManagers, pm.Name)
 		}
 
-		if cmds, exists := languageCommands[lang.Name]; exists {
-			buildCmds = append(buildCmds, cmds.build...)
-			testCmds = append(testCmds, cmds.test...)
-			lintCmds = append(lintCmds, cmds.lint...)
-		}
+		config := toModuleConfig(lang)
+		vc := mod.VerificationCommands(config)
+		buildCmds = append(buildCmds, vc.Build...)
+		testCmds = append(testCmds, vc.Test...)
+		lintCmds = append(lintCmds, vc.Lint...)
 	}
 
 	data.BuildCommands = dedup(buildCmds)
 	data.TestCommands = dedup(testCmds)
 	data.LintCommands = dedup(lintCmds)
 	data.PackageManagers = dedup(data.PackageManagers)
+
+	// Agent tools metadata for CLAUDE.md.
+	data.PostmortemEnabled = answers.AgentTools.PostmortemEnabled
+	data.SembleEnabled = answers.AgentTools.SembleEnabled
+	data.SembleMode = answers.AgentTools.SembleMode
+	if answers.AgentTools.VersionSentinel {
+		data.VersionSentinelEnabled = true
+		report := collectManifestCoverage(answers, registry)
+		for _, m := range report.Covered {
+			data.VersionSentinelCovered = append(data.VersionSentinelCovered, m.Path)
+		}
+		for _, m := range report.Uncovered {
+			data.VersionSentinelUncovered = append(data.VersionSentinelUncovered, m.Path)
+		}
+	}
 
 	// Generate a default description if none provided.
 	if data.ProjectName != "" && len(data.Languages) > 0 {

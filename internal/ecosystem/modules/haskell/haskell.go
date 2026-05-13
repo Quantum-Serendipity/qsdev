@@ -194,6 +194,19 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
+// VerificationCommands returns build and test commands for Haskell projects.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{
+		Build: []string{"cabal build"},
+		Test:  []string{"cabal test"},
+	}
+}
+
+// ManifestFiles returns the *.cabal manifest file for Haskell projects.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{Path: "*.cabal", Ecosystem: "cabal", LockFile: "cabal.project.freeze", LockFilePolicy: ecosystem.LockFilePolicyRecommended}}
+}
+
 // resolveBuildTool reads the build_tool from config.Extras, defaulting to "cabal".
 func resolveBuildTool(config ecosystem.ModuleConfig) string {
 	if config.Extras != nil {

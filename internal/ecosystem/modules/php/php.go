@@ -236,6 +236,19 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
+// VerificationCommands returns test and lint commands for PHP projects.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{
+		Test: []string{"composer test"},
+		Lint: []string{"composer run lint"},
+	}
+}
+
+// ManifestFiles returns the composer.json manifest file for PHP projects.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{Path: "composer.json", Ecosystem: "composer", LockFile: "composer.lock", LockFilePolicy: ecosystem.LockFilePolicyRequired}}
+}
+
 // phpPackage maps a version string to the corresponding Nix PHP package name.
 func phpPackage(version string) string {
 	switch version {

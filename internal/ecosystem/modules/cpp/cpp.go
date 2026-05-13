@@ -371,3 +371,17 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
+// VerificationCommands returns build and test commands for C/C++ projects
+// using CMake as the default build system.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{
+		Build: []string{"cmake --build build"},
+		Test:  []string{"ctest --test-dir build"},
+	}
+}
+
+// ManifestFiles returns the CMakeLists.txt manifest file for C/C++ projects.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{Path: "CMakeLists.txt", Ecosystem: "cmake", LockFilePolicy: ecosystem.LockFilePolicyNone}}
+}
+

@@ -166,6 +166,17 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	return nil
 }
 
+// VerificationCommands returns an empty set. Helm does not define standard
+// verification commands at the module level.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{}
+}
+
+// ManifestFiles returns nil. Helm does not use a traditional manifest file.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return nil
+}
+
 // parseChartVersion reads Chart.yaml and extracts the version field using a
 // simple line-based regex. Returns an empty string if the field is not found
 // or the file cannot be read.

@@ -180,3 +180,17 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
+// VerificationCommands returns test, lint, and format commands for Dart projects.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{
+		Test:   []string{"dart test"},
+		Lint:   []string{"dart analyze"},
+		Format: []string{"dart format --set-exit-if-changed ."},
+	}
+}
+
+// ManifestFiles returns the pubspec.yaml manifest file for Dart projects.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{Path: "pubspec.yaml", Ecosystem: "pub", LockFile: "pubspec.lock", LockFilePolicy: ecosystem.LockFilePolicyRequired}}
+}
+

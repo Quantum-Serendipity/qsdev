@@ -199,3 +199,14 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	return nil
 }
 
+// VerificationCommands returns an empty set. R does not define standard
+// verification commands at the module level.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{}
+}
+
+// ManifestFiles returns nil. R does not use a traditional manifest file.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return nil
+}
+

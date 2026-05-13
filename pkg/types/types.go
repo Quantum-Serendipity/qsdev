@@ -29,6 +29,17 @@ type WizardAnswers struct {
 	QuickChoice     string            `yaml:"quick_choice"     json:"quick_choice"`
 	Confirmed       bool              `yaml:"confirmed"        json:"confirmed"`
 	MergeMode       string            `yaml:"merge_mode"       json:"merge_mode"`
+	AgentTools      AgentToolsAnswers `yaml:"agent_tools"      json:"agent_tools"`
+}
+
+// AgentToolsAnswers holds AI agent tool selections from the wizard.
+type AgentToolsAnswers struct {
+	PostmortemEnabled    bool   `yaml:"postmortem_enabled"     json:"postmortem_enabled"`
+	VersionSentinel     bool   `yaml:"version_sentinel"       json:"version_sentinel"`
+	VersionSentinelHours int   `yaml:"version_sentinel_hours" json:"version_sentinel_hours"`
+	SembleEnabled       bool   `yaml:"semble_enabled"         json:"semble_enabled"`
+	SembleMode          string `yaml:"semble_mode"            json:"semble_mode"`
+	SembleTextFiles     bool   `yaml:"semble_text_files"      json:"semble_text_files"`
 }
 
 // LanguageChoice represents a user's selection of a programming language
@@ -189,4 +200,74 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 	if a.ClaudeCode && !a.Hooks.SafetyBlock && !a.Hooks.AutoFormat && !a.Hooks.PreCommit && !a.Hooks.AuditLog {
 		a.Hooks.SafetyBlock = true
 	}
+
+	// Default agent tools when Claude is enabled.
+	if a.ClaudeCode {
+		a.AgentTools.PostmortemEnabled = true
+		if a.AgentTools.VersionSentinelHours == 0 {
+			a.AgentTools.VersionSentinelHours = 24
+		}
+		if a.AgentTools.SembleMode == "" {
+			a.AgentTools.SembleMode = "mcp"
+		}
+		if hasVSSupportedLanguage(a.Languages) {
+			a.AgentTools.VersionSentinel = true
+		}
+		if pythonVersionAtLeast(detected.PythonVersion, 3, 10) {
+			a.AgentTools.SembleEnabled = true
+		}
+	}
+}
+
+func hasVSSupportedLanguage(langs []LanguageChoice) bool {
+	for _, l := range langs {
+		switch l.Name {
+		case "javascript", "python", "rust", "dotnet":
+			return true
+		}
+	}
+	return false
+}
+
+func pythonVersionAtLeast(version string, major, minor int) bool {
+	if version == "" {
+		return false
+	}
+	parts := splitVersion(version)
+	if len(parts) < 2 {
+		return false
+	}
+	if parts[0] > major {
+		return true
+	}
+	return parts[0] == major && parts[1] >= minor
+}
+
+func splitVersion(v string) []int {
+	var result []int
+	for _, part := range splitOnDot(v) {
+		n := 0
+		for _, c := range part {
+			if c >= '0' && c <= '9' {
+				n = n*10 + int(c-'0')
+			} else {
+				break
+			}
+		}
+		result = append(result, n)
+	}
+	return result
+}
+
+func splitOnDot(s string) []string {
+	var parts []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '.' {
+			parts = append(parts, s[start:i])
+			start = i + 1
+		}
+	}
+	parts = append(parts, s[start:])
+	return parts
 }

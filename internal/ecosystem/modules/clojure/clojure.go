@@ -185,6 +185,17 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
+// VerificationCommands returns an empty set. Clojure does not define standard
+// verification commands at the module level.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{}
+}
+
+// ManifestFiles returns nil. Clojure does not use a traditional manifest file.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return nil
+}
+
 // resolveBuildTool reads the build_tool from config.Extras, defaulting to "tools-deps".
 func resolveBuildTool(config ecosystem.ModuleConfig) string {
 	if config.Extras != nil {

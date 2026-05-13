@@ -205,6 +205,19 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
+// VerificationCommands returns test and lint commands for Ruby projects.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{
+		Test: []string{"bundle exec rspec"},
+		Lint: []string{"bundle exec rubocop"},
+	}
+}
+
+// ManifestFiles returns the Gemfile manifest file for Ruby projects.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{Path: "Gemfile", Ecosystem: "bundler", LockFile: "Gemfile.lock", LockFilePolicy: ecosystem.LockFilePolicyRequired}}
+}
+
 // parseRubyVersion reads .ruby-version in projectRoot and returns the
 // trimmed first line. Returns an empty string if the file does not exist
 // or cannot be read.

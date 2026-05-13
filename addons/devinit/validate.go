@@ -4,34 +4,17 @@ import (
 	"fmt"
 	"strings"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/validation"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
-// Validation constants — these mirror the lists in devenv/commands.go and
-// claudecode/commands.go but are defined here to avoid importing unexported
-// variables from those packages.
+// Validation lists are sourced from the shared validation package.
 var (
-	validLanguages = []string{
-		"go", "javascript", "python", "rust",
-		"java", "dotnet", "docker", "terraform",
-		"php", "ruby", "scala",
-		"cpp", "helm", "ansible", "shell",
-		"elixir", "dart", "swift", "haskell", "clojure", "bazel", "nix",
-		"perl", "r", "lua", "zig", "powershell",
-	}
-
-	validServices = []string{
-		"postgres", "redis", "mysql",
-		"mongodb", "elasticsearch", "rabbitmq",
-	}
-
-	validPermissionPresets = []string{
-		"minimal", "standard", "permissive", "custom",
-	}
-
-	validNodePkgMgrs   = []string{"npm", "pnpm", "yarn", "bun"}
-	validPythonPkgMgrs = []string{"pip", "uv", "poetry"}
+	validLanguages        = validation.Languages()
+	validServices         = validation.Services()
+	validPermissionPresets = validation.PermissionPresets()
+	validNodePkgMgrs      = validation.NodePackageManagers()
+	validPythonPkgMgrs    = validation.PythonPackageManagers()
 )
 
 // ValidateAnswers checks that all user-provided values are valid.
@@ -42,20 +25,20 @@ func ValidateAnswers(answers types.WizardAnswers) error {
 
 	// Validate language names.
 	for _, lang := range answers.Languages {
-		if !ecosystem.ContainsStr(validLanguages, lang.Name) {
+		if !validation.IsValidLanguage(lang.Name) {
 			errs = append(errs, fmt.Sprintf("unknown language %q; valid languages: %v", lang.Name, validLanguages))
 		}
 
 		// Validate node package manager if set.
 		if lang.Name == "javascript" && lang.PackageManager != "" {
-			if !ecosystem.ContainsStr(validNodePkgMgrs, lang.PackageManager) {
+			if !validation.IsValidNodePackageManager(lang.PackageManager) {
 				errs = append(errs, fmt.Sprintf("unknown node package manager %q; valid values: %v", lang.PackageManager, validNodePkgMgrs))
 			}
 		}
 
 		// Validate python package manager if set.
 		if lang.Name == "python" && lang.PackageManager != "" {
-			if !ecosystem.ContainsStr(validPythonPkgMgrs, lang.PackageManager) {
+			if !validation.IsValidPythonPackageManager(lang.PackageManager) {
 				errs = append(errs, fmt.Sprintf("unknown python package manager %q; valid values: %v", lang.PackageManager, validPythonPkgMgrs))
 			}
 		}
@@ -63,14 +46,14 @@ func ValidateAnswers(answers types.WizardAnswers) error {
 
 	// Validate service names.
 	for _, svc := range answers.Services {
-		if !ecosystem.ContainsStr(validServices, svc.Name) {
+		if !validation.IsValidService(svc.Name) {
 			errs = append(errs, fmt.Sprintf("unknown service %q; valid services: %v", svc.Name, validServices))
 		}
 	}
 
 	// Validate permission level.
 	if answers.PermissionLevel != "" {
-		if !ecosystem.ContainsStr(validPermissionPresets, answers.PermissionLevel) {
+		if !validation.IsValidPermissionPreset(answers.PermissionLevel) {
 			errs = append(errs, fmt.Sprintf("unknown permission preset %q; valid presets: %v", answers.PermissionLevel, validPermissionPresets))
 		}
 	}

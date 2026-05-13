@@ -13,6 +13,7 @@ import (
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/generate"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/profile"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/state"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/validation"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -21,27 +22,11 @@ const (
 	answersDir  = ".devenv"
 )
 
-// validServices is the set of supported development services.
-var validServices = []string{
-	"postgres",
-	"redis",
-	"mysql",
-	"mongodb",
-	"elasticsearch",
-	"rabbitmq",
-}
+// validServices references the canonical service list for shell completion.
+var validServices = validation.Services()
 
-// validLanguages is the set of supported language/platform ecosystem modules.
-var validLanguages = []string{
-	"go",
-	"javascript",
-	"python",
-	"rust",
-	"java",
-	"dotnet",
-	"docker",
-	"terraform",
-}
+// validLanguages references the canonical core language list for shell completion.
+var validLanguages = validation.CoreLanguages()
 
 func devenvCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -253,7 +238,7 @@ func addServiceCmd() *cobra.Command {
 			serviceName := args[0]
 
 			// Validate service name.
-			if !ecosystem.ContainsStr(validServices, serviceName) {
+			if !validation.IsValidService(serviceName) {
 				return fmt.Errorf("unknown service %q; valid services: %v", serviceName, validServices)
 			}
 
@@ -345,7 +330,7 @@ func addLanguageCmd() *cobra.Command {
 			langName := args[0]
 
 			// Validate language name.
-			if !ecosystem.ContainsStr(validLanguages, langName) {
+			if !validation.IsValidLanguage(langName) {
 				return fmt.Errorf("unknown language %q; valid languages: %v", langName, validLanguages)
 			}
 

@@ -35,6 +35,9 @@ var ExportAnswersPath = func(projectRoot string) string {
 	return answersPath(projectRoot)
 }
 
+// ExportDevenvCmd exposes devenvCmd for external tests.
+var ExportDevenvCmd = devenvCmd
+
 // ExportNewDevenvGenerator re-exports NewDevenvGenerator for test clarity.
 // (NewDevenvGenerator is already exported, but this pattern keeps the export
 // file consistent.)

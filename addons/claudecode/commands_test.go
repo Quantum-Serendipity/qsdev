@@ -310,6 +310,448 @@ func TestInvalidPermissionPresetRejected(t *testing.T) {
 	}
 }
 
+// chdir changes the working directory to dir and registers a cleanup to restore
+// the original directory when the test finishes.
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
+}
+
+func TestInitCmd_InvalidPreset(t *testing.T) {
+	tmpDir := t.TempDir()
+	chdir(t, tmpDir)
+
+	cmd := claudecode.ExportClaudeCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"init", "--permission-preset", "bogus", "--yes"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid permission preset")
+	}
+	if !strings.Contains(err.Error(), "unknown permission preset") {
+		t.Errorf("error should mention 'unknown permission preset', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error should include the bad preset name 'bogus', got: %v", err)
+	}
+}
+
+func TestInitCmd_ExistingSettings_NoForce(t *testing.T) {
+	tmpDir := t.TempDir()
+	chdir(t, tmpDir)
+
+	// Create existing .claude/settings.json.
+	claudeDir := filepath.Join(tmpDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(`{"existing": true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := claudecode.ExportClaudeCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"init", "--permission-preset", "standard", "--yes"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when settings.json exists without --force")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("error should mention 'already exists', got: %v", err)
+	}
+}
+
+func TestInitCmd_ExistingSettings_Force(t *testing.T) {
+	tmpDir := t.TempDir()
+	chdir(t, tmpDir)
+
+	// Create existing .claude/settings.json.
+	claudeDir := filepath.Join(tmpDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(`{"existing": true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := claudecode.ExportClaudeCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"init", "--permission-preset", "standard", "--yes", "--force"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init --force should succeed: %v", err)
+	}
+
+	// Verify settings.json was overwritten.
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("reading settings.json: %v", err)
+	}
+	if strings.Contains(string(data), `"existing"`) {
+		t.Error("settings.json should have been overwritten by --force")
+	}
+}
+
+func TestUpdateCmd_NoSavedAnswers(t *testing.T) {
+	tmpDir := t.TempDir()
+	chdir(t, tmpDir)
+
+	cmd := claudecode.ExportClaudeCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"update"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when no saved answers exist")
+	}
+	if !strings.Contains(err.Error(), "no saved answers") {
+		t.Errorf("error should mention 'no saved answers', got: %v", err)
+	}
+}
+
+func TestUpdateCmd_AfterInit(t *testing.T) {
+	tmpDir := t.TempDir()
+	chdir(t, tmpDir)
+
+	// First, init.
+	cmd := claudecode.ExportClaudeCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"init", "--yes", "--permission-preset", "standard"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+
+	// Now, update.
+	cmd2 := claudecode.ExportClaudeCmd()
+	var buf2 bytes.Buffer
+	cmd2.SetOut(&buf2)
+	cmd2.SetErr(&buf2)
+	cmd2.SetArgs([]string{"update", "--force"})
+
+	if err := cmd2.Execute(); err != nil {
+		t.Fatalf("update after init failed: %v", err)
+	}
+
+	output := buf2.String()
+	if !strings.Contains(output, "complete") {
+		t.Errorf("update output should confirm completion, got: %s", output)
+	}
+
+	// Verify files still exist after update.
+	settingsPath := filepath.Join(tmpDir, ".claude", "settings.json")
+	if _, err := os.Stat(settingsPath); err != nil {
+		t.Errorf("settings.json should still exist after update: %v", err)
+	}
+}
+
+func TestUpdateCmd_DryRun(t *testing.T) {
+	tmpDir := t.TempDir()
+	chdir(t, tmpDir)
+
+	// First, init.
+	cmd := claudecode.ExportClaudeCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"init", "--yes", "--permission-preset", "standard"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+
+	// Get mod time of settings.json before update.
+	settingsPath := filepath.Join(tmpDir, ".claude", "settings.json")
+	infoBefore, err := os.Stat(settingsPath)
+	if err != nil {
+		t.Fatalf("stat settings.json: %v", err)
+	}
+
+	// Run update with --dry-run.
+	cmd2 := claudecode.ExportClaudeCmd()
+	var buf2 bytes.Buffer
+	cmd2.SetOut(&buf2)
+	cmd2.SetErr(&buf2)
+	cmd2.SetArgs([]string{"update", "--dry-run"})
+
+	if err := cmd2.Execute(); err != nil {
+		t.Fatalf("update --dry-run failed: %v", err)
+	}
+
+	output := buf2.String()
+	if !strings.Contains(output, "settings.json") {
+		t.Error("dry-run output should mention settings.json")
+	}
+
+	// Verify file was NOT re-written.
+	infoAfter, err := os.Stat(settingsPath)
+	if err != nil {
+		t.Fatalf("stat settings.json after dry-run: %v", err)
+	}
+	if infoAfter.ModTime() != infoBefore.ModTime() {
+		t.Error("dry-run should not modify files on disk")
+	}
+}
+
+func TestAddSkillCmd_Duplicate(t *testing.T) {
+	tmpDir := t.TempDir()
+	chdir(t, tmpDir)
+
+	// First, init with a skill.
+	cmd := claudecode.ExportClaudeCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"init", "--yes", "--permission-preset", "standard", "--skills", "deploy"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+
+	// Try to add the same skill again.
+	cmd2 := claudecode.ExportClaudeCmd()
+	var buf2 bytes.Buffer
+	cmd2.SetOut(&buf2)
+	cmd2.SetErr(&buf2)
+	cmd2.SetArgs([]string{"add-skill", "deploy"})
+
+	err := cmd2.Execute()
+	if err == nil {
+		t.Fatal("expected error for duplicate skill")
+	}
+	if !strings.Contains(err.Error(), "already configured") {
+		t.Errorf("error should mention 'already configured', got: %v", err)
+	}
+}
+
+func TestAddHookCmd_Valid(t *testing.T) {
+	tmpDir := t.TempDir()
+	chdir(t, tmpDir)
+
+	// First, init.
+	cmd := claudecode.ExportClaudeCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"init", "--yes", "--permission-preset", "standard"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+
+	// Add hook.
+	cmd2 := claudecode.ExportClaudeCmd()
+	var buf2 bytes.Buffer
+	cmd2.SetOut(&buf2)
+	cmd2.SetErr(&buf2)
+	cmd2.SetArgs([]string{"add-hook", "audit-log"})
+
+	if err := cmd2.Execute(); err != nil {
+		t.Fatalf("add-hook audit-log failed: %v", err)
+	}
+
+	output := buf2.String()
+	if !strings.Contains(output, "audit-log") {
+		t.Errorf("output should mention enabled hook, got: %s", output)
+	}
+
+	// Verify answers now have audit-log enabled.
+	answers, err := claudecode.ExportLoadAnswers(tmpDir)
+	if err != nil {
+		t.Fatalf("loading answers: %v", err)
+	}
+	if !answers.Hooks.AuditLog {
+		t.Error("Hooks.AuditLog should be true after add-hook audit-log")
+	}
+}
+
+func TestAddHookCmd_Invalid(t *testing.T) {
+	tmpDir := t.TempDir()
+	chdir(t, tmpDir)
+
+	// First, init.
+	cmd := claudecode.ExportClaudeCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"init", "--yes", "--permission-preset", "standard"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+
+	// Try invalid hook.
+	cmd2 := claudecode.ExportClaudeCmd()
+	var buf2 bytes.Buffer
+	cmd2.SetOut(&buf2)
+	cmd2.SetErr(&buf2)
+	cmd2.SetArgs([]string{"add-hook", "nonexistent"})
+
+	err := cmd2.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid hook")
+	}
+	if !strings.Contains(err.Error(), "unknown hook preset") {
+		t.Errorf("error should mention 'unknown hook preset', got: %v", err)
+	}
+}
+
+func TestListSkillsCmd_ShowsInstalledStatus(t *testing.T) {
+	tmpDir := t.TempDir()
+	chdir(t, tmpDir)
+
+	// Init with a skill installed.
+	cmd := claudecode.ExportClaudeCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"init", "--yes", "--permission-preset", "standard", "--skills", "deploy"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+
+	// List skills.
+	cmd2 := claudecode.ExportClaudeCmd()
+	var buf2 bytes.Buffer
+	cmd2.SetOut(&buf2)
+	cmd2.SetErr(&buf2)
+	cmd2.SetArgs([]string{"list-skills"})
+
+	if err := cmd2.Execute(); err != nil {
+		t.Fatalf("list-skills failed: %v", err)
+	}
+
+	output := buf2.String()
+
+	// deploy should be marked as installed.
+	lines := strings.Split(output, "\n")
+	foundInstalled := false
+	for _, line := range lines {
+		if strings.Contains(line, "deploy") && strings.Contains(line, "(installed)") {
+			foundInstalled = true
+			break
+		}
+	}
+	if !foundInstalled {
+		t.Errorf("deploy skill should be marked as (installed) in output:\n%s", output)
+	}
+}
+
+func TestInitCmd_NoSafetyBlock(t *testing.T) {
+	tmpDir := t.TempDir()
+	chdir(t, tmpDir)
+
+	cmd := claudecode.ExportClaudeCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"init", "--yes", "--permission-preset", "standard", "--no-safety-block"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init with --no-safety-block failed: %v", err)
+	}
+
+	// Verify answers have safety block disabled.
+	answers, err := claudecode.ExportLoadAnswers(tmpDir)
+	if err != nil {
+		t.Fatalf("loading answers: %v", err)
+	}
+	if answers.Hooks.SafetyBlock {
+		t.Error("Hooks.SafetyBlock should be false when --no-safety-block is used")
+	}
+}
+
+func TestInitCmd_SavesStateAndAnswers(t *testing.T) {
+	tmpDir := t.TempDir()
+	chdir(t, tmpDir)
+
+	cmd := claudecode.ExportClaudeCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"init", "--yes", "--permission-preset", "standard"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+
+	// Verify state file.
+	stateFile := filepath.Join(tmpDir, ".claude", ".gdev-claude-state.yaml")
+	if _, err := os.Stat(stateFile); err != nil {
+		t.Errorf("state file not saved: %v", err)
+	}
+	stateData, err := os.ReadFile(stateFile)
+	if err != nil {
+		t.Fatalf("reading state file: %v", err)
+	}
+	if len(stateData) == 0 {
+		t.Error("state file should not be empty")
+	}
+
+	// Verify answers file.
+	answersFile := filepath.Join(tmpDir, ".claude", ".gdev-claude-answers.yaml")
+	if _, err := os.Stat(answersFile); err != nil {
+		t.Errorf("answers file not saved: %v", err)
+	}
+	answersData, err := os.ReadFile(answersFile)
+	if err != nil {
+		t.Fatalf("reading answers file: %v", err)
+	}
+	if len(answersData) == 0 {
+		t.Error("answers file should not be empty")
+	}
+}
+
+func TestInitCmd_DryRunNoFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	chdir(t, tmpDir)
+
+	cmd := claudecode.ExportClaudeCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"init", "--dry-run", "--yes", "--permission-preset", "standard"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init --dry-run failed: %v", err)
+	}
+
+	// Verify neither settings.json, state, nor answers were created.
+	for _, relPath := range []string{
+		".claude/settings.json",
+		".claude/.gdev-claude-state.yaml",
+		".claude/.gdev-claude-answers.yaml",
+		"CLAUDE.md",
+	} {
+		absPath := filepath.Join(tmpDir, relPath)
+		if _, err := os.Stat(absPath); err == nil {
+			t.Errorf("dry-run should not write %s", relPath)
+		}
+	}
+}
+
 func TestSaveLoadAnswers_RoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
 

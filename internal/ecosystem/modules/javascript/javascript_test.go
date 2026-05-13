@@ -163,9 +163,9 @@ func TestDetect_NvmrcVersion(t *testing.T) {
 	if !result.Detected {
 		t.Fatal("expected Detected=true")
 	}
-	// .nvmrc should take priority over engines.node
-	if result.SuggestedConfig.Version != "v20.11.0" {
-		t.Errorf("Version = %q, want %q (from .nvmrc)", result.SuggestedConfig.Version, "v20.11.0")
+	// .nvmrc should take priority over engines.node; "v" prefix is stripped.
+	if result.SuggestedConfig.Version != "20.11.0" {
+		t.Errorf("Version = %q, want %q (from .nvmrc, v prefix stripped)", result.SuggestedConfig.Version, "20.11.0")
 	}
 	assertEvidenceContains(t, result.Evidence, ".nvmrc")
 }

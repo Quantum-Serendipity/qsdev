@@ -3,15 +3,21 @@ package sysinfo
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 // createMockBinaries writes minimal executable scripts into dir for each
 // given tool name and returns the directory (which should be set as PATH).
+// On Windows, it creates .exe files so exec.LookPath can find them.
 func createMockBinaries(t *testing.T, dir string, names ...string) {
 	t.Helper()
 	for _, name := range names {
-		p := filepath.Join(dir, name)
+		filename := name
+		if runtime.GOOS == "windows" {
+			filename = name + ".exe"
+		}
+		p := filepath.Join(dir, filename)
 		if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o755); err != nil {
 			t.Fatalf("creating mock binary %s: %v", name, err)
 		}

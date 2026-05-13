@@ -93,7 +93,7 @@ func (v *NixValidator) Validate(content []byte) ValidationResult {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, v.nixPath, "--parse", "/dev/stdin")
+	cmd := exec.CommandContext(ctx, v.nixPath, "--parse", "-")
 	cmd.Stdin = bytes.NewReader(content)
 
 	output, err := cmd.CombinedOutput()
@@ -169,7 +169,7 @@ func (v *ShellValidator) Validate(content []byte) ValidationResult {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, v.bashPath, "-n", "/dev/stdin")
+	cmd := exec.CommandContext(ctx, v.bashPath, "-n")
 	cmd.Stdin = bytes.NewReader(content)
 
 	output, err := cmd.CombinedOutput()

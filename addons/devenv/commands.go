@@ -42,6 +42,7 @@ func devenvCmd() *cobra.Command {
 		addLanguageCmd(),
 		doctorCmd(),
 		setupCmd(),
+		changelogCmd(),
 	)
 
 	return cmd

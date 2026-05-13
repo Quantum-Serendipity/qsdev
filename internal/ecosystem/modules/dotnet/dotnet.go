@@ -434,3 +434,8 @@ func buildDirectoryBuildProps() []byte {
 
 	return buf.Bytes()
 }
+
+// SemgrepRuleSets returns Semgrep rule set identifiers relevant to C#/.NET projects.
+func (m *Module) SemgrepRuleSets() []string {
+	return []string{"p/csharp", "p/owasp-top-ten"}
+}

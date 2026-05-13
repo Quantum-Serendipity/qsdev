@@ -460,3 +460,8 @@ func detectKotlin(projectRoot string) bool {
 
 	return false
 }
+
+// SemgrepRuleSets returns Semgrep rule set identifiers relevant to Java/Kotlin projects.
+func (m *Module) SemgrepRuleSets() []string {
+	return []string{"p/java", "p/kotlin", "p/spring", "p/owasp-top-ten"}
+}

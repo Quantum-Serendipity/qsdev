@@ -17,8 +17,9 @@ import (
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.SecretDeclarer = (*Module)(nil)
 
 func init() {
 	ecosystem.RegisterModule(&Module{})
@@ -269,5 +270,22 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 // ManifestFiles returns manifest file metadata for the Docker ecosystem.
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	return nil
+}
+
+// SecretDeclarations returns the secrets required by a Docker project.
+func (m *Module) SecretDeclarations(_ ecosystem.ModuleConfig) []ecosystem.SecretDecl {
+	return []ecosystem.SecretDecl{
+		{
+			Name:        "DOCKER_REGISTRY_TOKEN",
+			Description: "Authentication token for private Docker registry",
+			Required:    true,
+			Source:      "docker",
+		},
+	}
+}
+
+// SemgrepRuleSets returns Semgrep rule set identifiers relevant to Docker projects.
+func (m *Module) SemgrepRuleSets() []string {
+	return []string{"p/dockerfile"}
 }
 

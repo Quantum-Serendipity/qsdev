@@ -65,19 +65,32 @@
 - Package managers in this project: {{ join ", " .PackageManagers }}.
 {{- end }}
 {{- if .HasSecurityHooks }}
+<!-- gdev:attach-guard -->
 - Safety-block hooks are enabled. Claude Code will be blocked from running destructive commands.
+<!-- /gdev:attach-guard -->
 {{- end }}
 {{- if .PostmortemEnabled }}
+<!-- gdev:agent-postmortem -->
 - Agent-postmortem skill is active. After every implementation, run the postmortem protocol to verify changes.
+<!-- /gdev:agent-postmortem -->
 {{- end }}
 {{- if .VersionSentinelEnabled }}
+<!-- gdev:version-sentinel -->
 - **Version-Sentinel** guards dependency changes in: {{ join ", " .VersionSentinelCovered }}.
 {{- if hasAny .VersionSentinelUncovered }}
 - Version-Sentinel does NOT cover: {{ join ", " .VersionSentinelUncovered }}. Review these manually.
 {{- end }}
+<!-- /gdev:version-sentinel -->
 {{- end }}
 {{- if .SembleEnabled }}
+<!-- gdev:semble -->
 - **Semble** semantic code search is available{{ if eq .SembleMode "mcp" }} via MCP server{{ else if eq .SembleMode "subagent" }} via the semble-search sub-agent{{ else if eq .SembleMode "both" }} via MCP server and sub-agent{{ end }}.
+<!-- /gdev:semble -->
+{{- end }}
+{{- if .TrailOfBitsEnabled }}
+<!-- gdev:trail-of-bits-skills -->
+- Security review skills from Trail of Bits methodology are installed in `.claude/skills/`.
+<!-- /gdev:trail-of-bits-skills -->
 {{- end }}
 - Prefer vendored or pinned dependencies over floating version ranges.
 - Review all dependency updates for supply chain risk before merging.

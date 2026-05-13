@@ -33,6 +33,7 @@ func RecordFiles(files []types.GeneratedFile) types.GeneratedState {
 			Hash:     ComputeHash(f.Content),
 			Strategy: f.Strategy,
 			Mode:     f.Mode,
+			Owner:    f.Owner,
 		}
 		if f.Strategy == types.ThreeWayMerge {
 			fs.BaseContent = f.Content

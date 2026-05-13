@@ -35,6 +35,12 @@ func initialize() error {
 	for name, p := range addon.Config.Profiles {
 		_ = profileRegistry.Register(name, p)
 	}
-	instance.AddCommands(initCmd())
+	instance.AddCommands(
+		initCmd(),
+		enableCmd(),
+		disableCmd(),
+		statusCmd(),
+		listCmd(),
+	)
 	return nil
 }

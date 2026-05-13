@@ -283,3 +283,8 @@ func parseLegacyToolchain(path string) string {
 	}
 	return channel
 }
+
+// SemgrepRuleSets returns Semgrep rule set identifiers relevant to Rust projects.
+func (m *Module) SemgrepRuleSets() []string {
+	return []string{"p/rust", "p/owasp-top-ten"}
+}

@@ -357,6 +357,84 @@ func TestGenerateMcpJson_SocketServer(t *testing.T) {
 	}
 }
 
+func TestGenerateMcpJson_Context7Server(t *testing.T) {
+	answers := types.WizardAnswers{
+		MCPServers: []string{"context7"},
+	}
+	cfg := claudecode.NewConfig()
+
+	gf, err := claudecode.GenerateMcpJson(answers, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gf == nil {
+		t.Fatal("expected non-nil GeneratedFile")
+	}
+
+	var mcp claudecode.McpJSON
+	if err := json.Unmarshal(gf.Content, &mcp); err != nil {
+		t.Fatalf("JSON unmarshal failed: %v\nContent:\n%s", err, string(gf.Content))
+	}
+
+	entry, ok := mcp.MCPServers["context7"]
+	if !ok {
+		t.Fatal("expected 'context7' key in mcpServers")
+	}
+	if entry.Command != "npx" {
+		t.Errorf("expected command 'npx', got %q", entry.Command)
+	}
+	if len(entry.Args) != 2 || entry.Args[0] != "-y" || entry.Args[1] != "@upstash/context7-mcp" {
+		t.Errorf("unexpected args: %v", entry.Args)
+	}
+	// context7 should have no env vars.
+	if len(entry.Env) != 0 {
+		t.Errorf("expected no env for context7 server, got %v", entry.Env)
+	}
+}
+
+func TestGenerateMcpJson_Context7AndGitHub(t *testing.T) {
+	answers := types.WizardAnswers{
+		MCPServers: []string{"context7", "github"},
+	}
+	cfg := claudecode.NewConfig()
+
+	gf, err := claudecode.GenerateMcpJson(answers, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gf == nil {
+		t.Fatal("expected non-nil GeneratedFile")
+	}
+
+	var mcp claudecode.McpJSON
+	if err := json.Unmarshal(gf.Content, &mcp); err != nil {
+		t.Fatalf("JSON unmarshal failed: %v\nContent:\n%s", err, string(gf.Content))
+	}
+
+	if _, ok := mcp.MCPServers["context7"]; !ok {
+		t.Error("expected 'context7' key in mcpServers")
+	}
+	if _, ok := mcp.MCPServers["github"]; !ok {
+		t.Error("expected 'github' key in mcpServers")
+	}
+	if len(mcp.MCPServers) != 2 {
+		t.Errorf("expected 2 entries, got %d", len(mcp.MCPServers))
+	}
+}
+
+func TestGenerateMcpJson_Context7InKnownServers(t *testing.T) {
+	// Verify that context7 is a known server by attempting to generate with it.
+	answers := types.WizardAnswers{
+		MCPServers: []string{"context7"},
+	}
+	cfg := claudecode.NewConfig()
+
+	_, err := claudecode.GenerateMcpJson(answers, cfg)
+	if err != nil {
+		t.Errorf("context7 should be a known server, but got error: %v", err)
+	}
+}
+
 // mcpKeys returns the keys of an MCPServerEntry map for diagnostic output.
 func mcpKeys(m map[string]claudecode.MCPServerEntry) []string {
 	result := make([]string, 0, len(m))

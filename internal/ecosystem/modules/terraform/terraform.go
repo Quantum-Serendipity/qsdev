@@ -15,8 +15,9 @@ import (
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.SecretDeclarer = (*Module)(nil)
 
 func init() {
 	ecosystem.RegisterModule(&Module{})
@@ -315,6 +316,24 @@ func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFil
 	}
 }
 
+// SecretDeclarations returns the secrets required by a Terraform/OpenTofu project.
+func (m *Module) SecretDeclarations(_ ecosystem.ModuleConfig) []ecosystem.SecretDecl {
+	return []ecosystem.SecretDecl{
+		{
+			Name:        "AWS_ACCESS_KEY_ID",
+			Description: "AWS access key for Terraform provider authentication",
+			Required:    true,
+			Source:      "terraform",
+		},
+		{
+			Name:        "AWS_SECRET_ACCESS_KEY",
+			Description: "AWS secret key for Terraform provider authentication",
+			Required:    true,
+			Source:      "terraform",
+		},
+	}
+}
+
 // --- helpers ---
 
 // resolveVariant extracts the variant from config extras, defaulting to "terraform".
@@ -333,5 +352,10 @@ func binaryName(variant string) string {
 		return "tofu"
 	}
 	return "terraform"
+}
+
+// SemgrepRuleSets returns Semgrep rule set identifiers relevant to Terraform projects.
+func (m *Module) SemgrepRuleSets() []string {
+	return []string{"p/terraform", "p/terraform-aws"}
 }
 

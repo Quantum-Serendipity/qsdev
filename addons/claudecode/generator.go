@@ -98,6 +98,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 			return nil, fmt.Errorf("generating postmortem skill: %w", err)
 		}
 		if postmortemFile != nil {
+			postmortemFile.Owner = "agent-postmortem"
 			files = append(files, *postmortemFile)
 		}
 	}
@@ -108,6 +109,9 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		if err != nil {
 			return nil, fmt.Errorf("generating version-sentinel config: %w", err)
 		}
+		for i := range vsFiles {
+			vsFiles[i].Owner = "version-sentinel"
+		}
 		files = append(files, vsFiles...)
 	}
 
@@ -116,6 +120,9 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		sembleFiles, err := generateSembleFiles(answers)
 		if err != nil {
 			return nil, fmt.Errorf("generating semble config: %w", err)
+		}
+		for i := range sembleFiles {
+			sembleFiles[i].Owner = "semble"
 		}
 		files = append(files, sembleFiles...)
 	}

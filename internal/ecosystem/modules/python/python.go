@@ -421,3 +421,8 @@ func parseRequiresPython(path string) string {
 	}
 	return ""
 }
+
+// SemgrepRuleSets returns Semgrep rule set identifiers relevant to Python projects.
+func (m *Module) SemgrepRuleSets() []string {
+	return []string{"p/python", "p/django", "p/flask", "p/owasp-top-ten"}
+}

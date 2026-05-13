@@ -343,3 +343,8 @@ func (m *Module) ManifestFiles(config ecosystem.ModuleConfig) []ecosystem.Manife
 	}
 	return []ecosystem.ManifestFileInfo{info}
 }
+
+// SemgrepRuleSets returns Semgrep rule set identifiers relevant to JavaScript/TypeScript projects.
+func (m *Module) SemgrepRuleSets() []string {
+	return []string{"p/typescript", "p/javascript", "p/react", "p/nextjs", "p/owasp-top-ten", "p/xss"}
+}

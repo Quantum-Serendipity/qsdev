@@ -30,6 +30,9 @@ type WizardAnswers struct {
 	Confirmed       bool              `yaml:"confirmed"        json:"confirmed"`
 	MergeMode       string            `yaml:"merge_mode"       json:"merge_mode"`
 	AgentTools      AgentToolsAnswers `yaml:"agent_tools"      json:"agent_tools"`
+	EnabledTools    map[string]bool   `yaml:"enabled_tools,omitempty" json:"enabled_tools,omitempty"`
+	CIPlatform      string            `yaml:"ci_platform,omitempty"   json:"ci_platform,omitempty"`
+	HookTier        string            `yaml:"hook_tier,omitempty"     json:"hook_tier,omitempty"`
 }
 
 // AgentToolsAnswers holds AI agent tool selections from the wizard.
@@ -116,6 +119,7 @@ type GeneratedFile struct {
 	Mode           os.FileMode   `yaml:"mode"            json:"mode"`
 	Strategy       MergeStrategy `yaml:"strategy"        json:"strategy"`
 	SkipValidation bool          `yaml:"skip_validation" json:"skip_validation"`
+	Owner          string        `yaml:"owner,omitempty" json:"owner,omitempty"`
 }
 
 // GeneratedState tracks what files were generated and their hashes,
@@ -125,6 +129,7 @@ type GeneratedState struct {
 	Files               map[string]FileState `yaml:"files"                 json:"files"`
 	TemplateVersion     string               `yaml:"template_version"      json:"template_version"`
 	SkillLibraryVersion string               `yaml:"skill_library_version" json:"skill_library_version"`
+	EnabledTools        map[string]bool      `yaml:"enabled_tools,omitempty" json:"enabled_tools,omitempty"`
 }
 
 // FileState tracks a single generated file's hash and merge strategy.
@@ -133,6 +138,7 @@ type FileState struct {
 	Strategy    MergeStrategy `yaml:"strategy"      json:"strategy"`
 	Mode        os.FileMode   `yaml:"mode"          json:"mode"`
 	BaseContent []byte        `yaml:"base_content,omitempty" json:"base_content,omitempty"`
+	Owner       string        `yaml:"owner,omitempty"        json:"owner,omitempty"`
 }
 
 // Generator is the interface that devenv and claudecode addons implement
@@ -216,6 +222,11 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 		if pythonVersionAtLeast(detected.PythonVersion, 3, 10) {
 			a.AgentTools.SembleEnabled = true
 		}
+	}
+
+	// Default MCP servers when Claude Code is enabled and none are configured.
+	if a.ClaudeCode && len(a.MCPServers) == 0 {
+		a.MCPServers = append(a.MCPServers, "context7", "github")
 	}
 }
 

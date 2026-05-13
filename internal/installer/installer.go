@@ -12,7 +12,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/toolcheck"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/toolcheck"
 )
 
 // ToolSpec declaratively describes a tool that can be installed.

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 // LanguageOption describes a single language entry for the wizard's

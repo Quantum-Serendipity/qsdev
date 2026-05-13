@@ -1,7 +1,7 @@
 package devinit
 
 import (
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 // ProfileToAnswers converts a project-type Profile into a fully populated

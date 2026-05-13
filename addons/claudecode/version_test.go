@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/addons/claudecode"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
 )
 
 func TestComputeTemplateVersion_Deterministic(t *testing.T) {

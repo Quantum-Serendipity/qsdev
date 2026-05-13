@@ -3,9 +3,9 @@ package claudecode_test
 import (
 	"testing"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/addons/claudecode"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/state"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 func TestBuildUpdateSummary_AllUpToDate(t *testing.T) {

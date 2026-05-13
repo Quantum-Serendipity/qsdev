@@ -3,7 +3,7 @@ package ecosystem_test
 import (
 	"testing"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
 )
 
 func TestAggregateDetections_Go(t *testing.T) {

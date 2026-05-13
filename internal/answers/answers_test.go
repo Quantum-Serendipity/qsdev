@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/answers"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/answers"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 func TestSaveAndLoad_RoundTrip(t *testing.T) {

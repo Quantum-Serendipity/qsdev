@@ -1,7 +1,7 @@
 package detect
 
 import (
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
 )
 
 // EnvironmentState captures existing configuration and tooling state

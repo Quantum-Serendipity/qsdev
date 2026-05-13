@@ -3,7 +3,7 @@ package devenv
 import (
 	"fastcat.org/go/gdev/addons/bootstrap"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/installer"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/installer"
 )
 
 const (

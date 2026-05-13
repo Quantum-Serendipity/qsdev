@@ -4,9 +4,9 @@
 package detect
 
 import (
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	_ "fastcat.org/go/gdev-secure-devenv-bootstrap/internal/ecosystem/modules"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 // Detect scans projectRoot for language markers, lockfiles, configuration

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 // MapDetectionToDefaults converts detection results into pre-populated

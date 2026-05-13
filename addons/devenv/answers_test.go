@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/addons/devenv"
-	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devenv"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 func TestSaveAndLoadAnswers_RoundTrip(t *testing.T) {

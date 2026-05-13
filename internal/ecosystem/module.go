@@ -1,6 +1,6 @@
 package ecosystem
 
-import "fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
+import "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 
 // EcosystemModule is the contract that every language/platform ecosystem
 // must implement. It drives detection, code generation, security policy,

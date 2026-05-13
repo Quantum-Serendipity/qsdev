@@ -3,6 +3,7 @@ package generate_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -112,8 +113,12 @@ func TestWriteFiles_DryRunWritesNothing(t *testing.T) {
 
 func TestWriteFiles_RejectsAbsolutePaths(t *testing.T) {
 	dir := t.TempDir()
+	absPath := "/etc/passwd"
+	if runtime.GOOS == "windows" {
+		absPath = `C:\Windows\System32\bad.txt`
+	}
 	files := []types.GeneratedFile{
-		{Path: "/etc/passwd", Content: []byte("bad"), Mode: 0644},
+		{Path: absPath, Content: []byte("bad"), Mode: 0644},
 	}
 
 	result, err := generate.WriteFiles(files, generate.PipelineOptions{

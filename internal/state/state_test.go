@@ -3,6 +3,7 @@ package state
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -163,6 +164,9 @@ func TestCheckModified_Deleted(t *testing.T) {
 }
 
 func TestCheckModified_PermissionChange(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not track Unix file permission bits")
+	}
 	dir := t.TempDir()
 	content := []byte("same content, different mode")
 	relPath := "script.sh"

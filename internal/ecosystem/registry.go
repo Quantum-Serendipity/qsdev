@@ -101,6 +101,16 @@ func (r *Registry) DetectAll(root string) *DetectionSummary {
 	}
 }
 
+// DetectWithEnvironment runs every registered module's Detect method against
+// root, detects environment state (devenv files, claude configs, git), and
+// returns a DetectionSummary with all fields populated.
+func (r *Registry) DetectWithEnvironment(root string) *DetectionSummary {
+	summary := r.DetectAll(root)
+	env := DetectEnvironment(root)
+	applyEnvironment(&summary.Project, env)
+	return summary
+}
+
 // Names returns the sorted list of all registered module names.
 func (r *Registry) Names() []string {
 	r.mu.RLock()

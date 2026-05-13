@@ -51,7 +51,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	version := ""
 	nvmrcPath := filepath.Join(projectRoot, ".nvmrc")
 	if fileutil.FileExists(nvmrcPath) {
-		version = fileutil.ReadFirstLine(nvmrcPath)
+		version = strings.TrimPrefix(fileutil.ReadFirstLine(nvmrcPath), "v")
 		if version != "" {
 			evidence = append(evidence, fmt.Sprintf("node version %s (from .nvmrc)", version))
 		}

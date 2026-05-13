@@ -326,10 +326,11 @@ func TestAggregateDetections_MultipleEcosystems(t *testing.T) {
 		t.Error("HasCargoToml should be false (rust not detected)")
 	}
 
-	if len(p.Ecosystems) != 3 {
-		t.Errorf("Ecosystems count = %d, want 3", len(p.Ecosystems))
+	// 4 entries: go, javascript, node (alias for javascript), docker
+	if len(p.Ecosystems) != 4 {
+		t.Errorf("Ecosystems count = %d, want 4", len(p.Ecosystems))
 	}
-	for _, name := range []string{"go", "javascript", "docker"} {
+	for _, name := range []string{"go", "javascript", "node", "docker"} {
 		if !p.Ecosystems[name] {
 			t.Errorf("Ecosystems[%s] should be true", name)
 		}

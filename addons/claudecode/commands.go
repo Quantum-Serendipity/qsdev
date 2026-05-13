@@ -14,6 +14,7 @@ import (
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/generate"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/merge"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/state"
+	"fastcat.org/go/gdev-secure-devenv-bootstrap/internal/validation"
 	"fastcat.org/go/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -22,8 +23,8 @@ const (
 	answersDir = ".claude"
 )
 
-var validPermissionPresets = []string{"minimal", "standard", "permissive", "custom"}
-var validHookPresets = []string{"auto-format", "safety-block", "pre-commit", "audit-log"}
+var validPermissionPresets = validation.PermissionPresets()
+var validHookPresets = validation.HookPresets()
 
 func claudeCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -60,7 +61,7 @@ func initCmd() *cobra.Command {
 		Long:  "Generate .claude/settings.json, CLAUDE.md, hooks, skills, and rules for the current project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Validate permission preset before any work.
-			if !contains(validPermissionPresets, preset) {
+			if !validation.IsValidPermissionPreset(preset) {
 				return fmt.Errorf("unknown permission preset %q; valid presets: %v", preset, validPermissionPresets)
 			}
 
@@ -438,7 +439,7 @@ func addHookCmd() *cobra.Command {
 			hookName := args[0]
 
 			// Validate hook name.
-			if !contains(validHookPresets, hookName) {
+			if !validation.IsValidHookPreset(hookName) {
 				return fmt.Errorf("unknown hook preset %q; valid presets: %v", hookName, validHookPresets)
 			}
 

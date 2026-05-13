@@ -166,6 +166,9 @@ func TestWriteFiles_RejectsPathTraversal(t *testing.T) {
 }
 
 func TestWriteFiles_DefaultModeIs0644(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not support Unix file permission bits")
+	}
 	dir := t.TempDir()
 	files := []types.GeneratedFile{
 		{Path: "default-mode.txt", Content: []byte("content"), Mode: 0},

@@ -234,9 +234,5 @@ func TestUseColorWithDumbTerm(t *testing.T) {
 func TestUseColorNonTerminal(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
 	t.Setenv("TERM", "xterm-256color")
-	// fd 0 in tests is typically not a terminal
-	if UseColor(0) {
-		// This is expected in test environments
-	}
-	// Just verify it doesn't panic
+	_ = UseColor(0)
 }

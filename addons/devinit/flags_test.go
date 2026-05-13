@@ -6,7 +6,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devinit"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
 func TestAnswersFromFlags_FullFlagSet(t *testing.T) {
@@ -422,5 +421,5 @@ func TestAnswersFromFlags_ReturnsWizardAnswers(t *testing.T) {
 		ClaudeCode:        true,
 		Direnv:            true,
 	}
-	var _ types.WizardAnswers = devinit.ExportAnswersFromFlags(opts, "/tmp/test")
+	_ = devinit.ExportAnswersFromFlags(opts, "/tmp/test")
 }

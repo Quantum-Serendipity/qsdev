@@ -1,6 +1,7 @@
 package pkgmanager
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/sysinfo"
@@ -140,7 +141,7 @@ func TestDetectPackageManagerNixOSMode(t *testing.T) {
 	}
 
 	// The NixOS Nix implementation should return an error on Install.
-	err := pm.Install(nil, "git")
+	err := pm.Install(context.TODO(), "git")
 	if err == nil {
 		t.Fatal("expected error for NixOS install")
 	}

@@ -449,7 +449,7 @@ func TestGeneratedStateZeroValueRoundTrip(t *testing.T) {
 	if err := yaml.Unmarshal(yamlData, &gotYAML); err != nil {
 		t.Fatalf("yaml.Unmarshal: %v", err)
 	}
-	if gotYAML.Files != nil && len(gotYAML.Files) != 0 {
+	if len(gotYAML.Files) != 0 {
 		t.Errorf("YAML round-trip: Files should be nil or empty, got %v", gotYAML.Files)
 	}
 
@@ -462,7 +462,7 @@ func TestGeneratedStateZeroValueRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(jsonData, &gotJSON); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	if gotJSON.Files != nil && len(gotJSON.Files) != 0 {
+	if len(gotJSON.Files) != 0 {
 		t.Errorf("JSON round-trip: Files should be nil or empty, got %v", gotJSON.Files)
 	}
 }

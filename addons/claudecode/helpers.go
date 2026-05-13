@@ -10,11 +10,6 @@ func toModuleConfig(lang types.LanguageChoice) ecosystem.ModuleConfig {
 	return ecosystem.ToModuleConfig(lang)
 }
 
-// extrasMap converts extras to a map[string]string via the shared helper.
-func extrasMap(extras []string) map[string]string {
-	return ecosystem.ExtrasMap(extras)
-}
-
 // contains checks whether a string slice includes the given value.
 func contains(slice []string, val string) bool {
 	return ecosystem.ContainsStr(slice, val)

@@ -154,13 +154,3 @@ func TestDevenvNixFragment(t *testing.T) {
 	}
 }
 
-// --- helpers ---
-
-func containsStr(ss []string, target string) bool {
-	for _, s := range ss {
-		if s == target {
-			return true
-		}
-	}
-	return false
-}

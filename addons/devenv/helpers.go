@@ -13,11 +13,6 @@ func toModuleConfig(lang types.LanguageChoice) ecosystem.ModuleConfig {
 	return ecosystem.ToModuleConfig(lang)
 }
 
-// extrasMap converts extras to a map[string]string via the shared helper.
-func extrasMap(extras []string) map[string]string {
-	return ecosystem.ExtrasMap(extras)
-}
-
 // inputKeyFromURL derives an input name from a Nix flake URL by extracting
 // the repository name. For example:
 //   - "github:NixOS/nixpkgs/nixos-25.11" → "nixpkgs"

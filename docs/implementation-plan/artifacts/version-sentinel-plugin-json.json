@@ -1,0 +1,35 @@
+{
+  "name": "version-sentinel",
+  "version": "0.2.1",
+  "description": "Hard-blocks dependency additions and version changes until Claude records a WebSearch-verified latest-version check.",
+  "author": {
+    "name": "Daniel Kiska",
+    "url": "https://github.com/KSEGIT"
+  },
+  "homepage": "https://github.com/KSEGIT/Version-Sentinel#readme",
+  "repository": "https://github.com/KSEGIT/Version-Sentinel",
+  "license": "MIT",
+  "keywords": [
+    "dependencies",
+    "packages",
+    "versions",
+    "guardrails",
+    "hooks"
+  ],
+  "userConfig": {
+    "disable": {
+      "type": "boolean",
+      "title": "Disable blocking",
+      "description": "If true, all version-sentinel hooks no-op (PreToolUse block, SessionStart prereq warning, PostToolUse auto-record). Equivalent to VS_DISABLE=1.",
+      "default": false
+    },
+    "window_hours": {
+      "type": "number",
+      "title": "Check freshness window (hours)",
+      "description": "How long a /vs-record entry stays fresh before the hook re-blocks.",
+      "default": 24,
+      "min": 1,
+      "max": 168
+    }
+  }
+}

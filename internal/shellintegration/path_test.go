@@ -79,6 +79,9 @@ func TestNormalizeShellName(t *testing.T) {
 		{"ZSH", "zsh"},
 		{"/usr/local/bin/Fish", "fish"},
 		{"pwsh", "pwsh"},
+		{`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, "powershell"},
+		{`C:\Program Files\PowerShell\7\pwsh.exe`, "pwsh"},
+		{"bash.exe", "bash"},
 	}
 
 	for _, tt := range tests {
@@ -272,23 +275,3 @@ func TestEnsurePath_CreatesParentDirs(t *testing.T) {
 	}
 }
 
-func TestParentDir(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"/home/user/.bashrc", "/home/user"},
-		{"/a/b/c", "/a/b"},
-		{"/file", "/"},
-		{"file", "."},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := parentDir(tt.input)
-			if got != tt.expected {
-				t.Errorf("parentDir(%q) = %q, want %q", tt.input, got, tt.expected)
-			}
-		})
-	}
-}

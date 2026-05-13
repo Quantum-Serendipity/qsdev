@@ -51,8 +51,13 @@ func DoUpdate(ctx context.Context, cfg Config, release *Release) error {
 		return fmt.Errorf("downloading update: %w", err)
 	}
 
-	// Create backup.
+	// Clean up stale backup from previous update (Windows can't delete running binaries).
 	backupPath := currentPath + ".bak"
+	if _, statErr := os.Stat(backupPath); statErr == nil {
+		os.Remove(backupPath)
+	}
+
+	// Create backup.
 	if err := os.Rename(currentPath, backupPath); err != nil {
 		return fmt.Errorf("creating backup: %w", err)
 	}

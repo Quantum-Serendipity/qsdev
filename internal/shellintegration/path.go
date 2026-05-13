@@ -5,6 +5,7 @@ package shellintegration
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"fastcat.org/go/gdev/addons/bootstrap/textedit"
@@ -37,7 +38,7 @@ func EnsurePath(dir string, shell string, rcFile string) error {
 	)
 
 	// Ensure parent directory exists (the RC file may not exist yet).
-	if err := os.MkdirAll(parentDir(rcFile), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(rcFile), 0o755); err != nil {
 		return fmt.Errorf("creating parent directory for %s: %w", rcFile, err)
 	}
 
@@ -60,26 +61,11 @@ func pathExportLine(dir string, shell string) string {
 	}
 }
 
-// normalizeShellName extracts the base shell name from a path or name, and
-// lowercases it for comparison.
 func normalizeShellName(shell string) string {
-	// Handle paths like /usr/bin/zsh -> zsh
 	name := shell
-	if idx := strings.LastIndex(shell, "/"); idx >= 0 {
-		name = shell[idx+1:]
+	if i := strings.LastIndexAny(shell, `/\`); i >= 0 {
+		name = shell[i+1:]
 	}
+	name = strings.TrimSuffix(name, ".exe")
 	return strings.ToLower(name)
-}
-
-// parentDir returns the parent directory of a file path. This is a simple
-// string operation that avoids importing path/filepath just for Dir().
-func parentDir(path string) string {
-	idx := strings.LastIndex(path, "/")
-	if idx < 0 {
-		return "."
-	}
-	if idx == 0 {
-		return "/"
-	}
-	return path[:idx]
 }

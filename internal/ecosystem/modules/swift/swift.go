@@ -159,3 +159,16 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	return nil
 }
 
+// VerificationCommands returns build and test commands for Swift projects.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{
+		Build: []string{"swift build"},
+		Test:  []string{"swift test"},
+	}
+}
+
+// ManifestFiles returns the Package.swift manifest file for Swift projects.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{Path: "Package.swift", Ecosystem: "spm", LockFile: "Package.resolved", LockFilePolicy: ecosystem.LockFilePolicyRecommended}}
+}
+

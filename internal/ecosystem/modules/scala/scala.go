@@ -264,6 +264,19 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
+// VerificationCommands returns build and test commands for Scala projects.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{
+		Build: []string{"sbt compile"},
+		Test:  []string{"sbt test"},
+	}
+}
+
+// ManifestFiles returns the build.sbt manifest file for Scala projects.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{Path: "build.sbt", Ecosystem: "sbt", LockFilePolicy: ecosystem.LockFilePolicyNone}}
+}
+
 // jdkPackage maps a version string to the corresponding Nix JDK package name.
 func jdkPackage(version string) string {
 	switch version {

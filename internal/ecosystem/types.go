@@ -200,3 +200,79 @@ type WizardOption struct {
 	Label string `yaml:"label" json:"label"`
 	Value string `yaml:"value" json:"value"`
 }
+
+// VerificationCommands holds the project verification commands for an ecosystem,
+// organized by category.
+type VerificationCommands struct {
+	Build     []string `yaml:"build,omitempty"      json:"build,omitempty"`
+	Test      []string `yaml:"test,omitempty"       json:"test,omitempty"`
+	Lint      []string `yaml:"lint,omitempty"       json:"lint,omitempty"`
+	TypeCheck []string `yaml:"type_check,omitempty" json:"type_check,omitempty"`
+	Format    []string `yaml:"format,omitempty"     json:"format,omitempty"`
+}
+
+// IsEmpty returns true when all command categories are empty.
+func (v VerificationCommands) IsEmpty() bool {
+	return len(v.Build) == 0 && len(v.Test) == 0 && len(v.Lint) == 0 &&
+		len(v.TypeCheck) == 0 && len(v.Format) == 0
+}
+
+// All returns a flattened slice of all verification commands across categories.
+func (v VerificationCommands) All() []string {
+	var all []string
+	all = append(all, v.Build...)
+	all = append(all, v.Test...)
+	all = append(all, v.Lint...)
+	all = append(all, v.TypeCheck...)
+	all = append(all, v.Format...)
+	return all
+}
+
+// ManifestFileInfo describes a dependency manifest file and its properties.
+type ManifestFileInfo struct {
+	Path           string         `yaml:"path"              json:"path"`
+	Ecosystem      string         `yaml:"ecosystem"         json:"ecosystem"`
+	VSSupported    bool           `yaml:"vs_supported"      json:"vs_supported"`
+	LockFile       string         `yaml:"lock_file"         json:"lock_file"`
+	LockFilePolicy LockFilePolicy `yaml:"lock_file_policy"  json:"lock_file_policy"`
+}
+
+// LockFilePolicy categorizes the lock file enforcement level for an ecosystem.
+type LockFilePolicy int
+
+const (
+	LockFilePolicyRequired    LockFilePolicy = iota // Lock file must be committed
+	LockFilePolicyRecommended                       // Lock file should be committed
+	LockFilePolicyNone                              // No lock file mechanism
+)
+
+var lockFilePolicyNames = [...]string{
+	LockFilePolicyRequired:    "required",
+	LockFilePolicyRecommended: "recommended",
+	LockFilePolicyNone:        "none",
+}
+
+func (p LockFilePolicy) String() string {
+	if int(p) < len(lockFilePolicyNames) {
+		return lockFilePolicyNames[p]
+	}
+	return "unknown"
+}
+
+func (p LockFilePolicy) MarshalText() ([]byte, error) {
+	s := p.String()
+	if s == "unknown" {
+		return nil, fmt.Errorf("cannot marshal unknown LockFilePolicy value %d", int(p))
+	}
+	return []byte(s), nil
+}
+
+func (p *LockFilePolicy) UnmarshalText(text []byte) error {
+	for i, name := range lockFilePolicyNames {
+		if name == string(text) {
+			*p = LockFilePolicy(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown lock file policy: %q", string(text))
+}

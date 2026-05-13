@@ -43,4 +43,14 @@ type EcosystemModule interface {
 
 	// WizardFields returns additional wizard form fields this ecosystem needs.
 	WizardFields() []WizardField
+
+	// VerificationCommands returns the build/test/lint/typecheck/format commands
+	// for this ecosystem. Used by agent-postmortem-skill to inject project-specific
+	// verification steps.
+	VerificationCommands(config ModuleConfig) VerificationCommands
+
+	// ManifestFiles returns metadata about dependency manifest and lock files
+	// for this ecosystem. Used by Version-Sentinel integration to determine
+	// which files can be guarded.
+	ManifestFiles(config ModuleConfig) []ManifestFileInfo
 }

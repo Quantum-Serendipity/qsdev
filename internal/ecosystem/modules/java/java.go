@@ -326,6 +326,55 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
+// VerificationCommands returns project verification commands for the JVM ecosystem.
+func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	bt := config.PackageManager
+	if bt == "" {
+		bt = "maven"
+	}
+	switch bt {
+	case "gradle":
+		return ecosystem.VerificationCommands{
+			Build: []string{"gradle build"},
+			Test:  []string{"gradle test"},
+		}
+	default:
+		return ecosystem.VerificationCommands{
+			Build: []string{"mvn compile"},
+			Test:  []string{"mvn test"},
+		}
+	}
+}
+
+// ManifestFiles returns manifest file metadata for the JVM ecosystem.
+func (m *Module) ManifestFiles(config ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	bt := config.PackageManager
+	if bt == "" {
+		bt = "maven"
+	}
+	switch bt {
+	case "gradle":
+		return []ecosystem.ManifestFileInfo{
+			{
+				Path:           "build.gradle",
+				Ecosystem:      "gradle",
+				VSSupported:    false,
+				LockFile:       "gradle.lockfile",
+				LockFilePolicy: ecosystem.LockFilePolicyRecommended,
+			},
+		}
+	default:
+		return []ecosystem.ManifestFileInfo{
+			{
+				Path:           "pom.xml",
+				Ecosystem:      "maven",
+				VSSupported:    false,
+				LockFilePolicy: ecosystem.LockFilePolicyNone,
+			},
+		}
+	}
+}
+
 // jdkPackage maps a version string to the corresponding Nix JDK package name.
 func jdkPackage(version string) string {
 	switch version {

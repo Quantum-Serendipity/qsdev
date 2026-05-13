@@ -143,3 +143,17 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	return nil
 }
 
+// VerificationCommands returns build, test, and format commands for Elixir projects.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{
+		Build:  []string{"mix compile"},
+		Test:   []string{"mix test"},
+		Format: []string{"mix format --check-formatted"},
+	}
+}
+
+// ManifestFiles returns the mix.exs manifest file for Elixir projects.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{Path: "mix.exs", Ecosystem: "hex", LockFile: "mix.lock", LockFilePolicy: ecosystem.LockFilePolicyRequired}}
+}
+

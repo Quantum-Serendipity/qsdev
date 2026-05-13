@@ -68,6 +68,13 @@ type InitOptions struct {
 	ClaudeHooks       []string
 	MCPServers        []string
 	ListProfiles      bool
+
+	// AI Agent Tools
+	AgentPostmortem      bool
+	AgentVersionSentinel bool
+	AgentSemble          bool
+	AgentSembleMode      string
+	AgentSembleTextFiles bool
 }
 
 // RegisterInitFlags registers all flags for the gdev init command.
@@ -109,6 +116,13 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.Flags().StringSliceVar(&opts.MCPServers, "mcp", nil, "MCP servers to configure (e.g. github,filesystem)")
 	cmd.Flags().BoolVar(&opts.ListProfiles, "list-profiles", false, "List available project-type profiles and exit")
 
+	// AI Agent Tools flags.
+	cmd.Flags().BoolVar(&opts.AgentPostmortem, "agent-postmortem", true, "Enable agent-postmortem verification skill")
+	cmd.Flags().BoolVar(&opts.AgentVersionSentinel, "agent-version-sentinel", true, "Enable Version-Sentinel dependency guardrails")
+	cmd.Flags().BoolVar(&opts.AgentSemble, "agent-semble", false, "Enable semble semantic search MCP server")
+	cmd.Flags().StringVar(&opts.AgentSembleMode, "agent-semble-mode", "mcp", "Semble mode: mcp, subagent, both")
+	cmd.Flags().BoolVar(&opts.AgentSembleTextFiles, "agent-semble-text-files", false, "Include text files in semble search index")
+
 	// Mark mutually exclusive flags.
 	cmd.MarkFlagsMutuallyExclusive("devenv-only", "claude-only")
 	cmd.MarkFlagsMutuallyExclusive("update", "lang")
@@ -133,6 +147,14 @@ func AnswersFromFlags(opts InitOptions, projectRoot string) types.WizardAnswers 
 		GitHooks:          opts.GitHooks,
 		ExtraPackages:     opts.Packages,
 		Confirmed:         opts.Yes,
+		AgentTools: types.AgentToolsAnswers{
+			PostmortemEnabled:    opts.AgentPostmortem,
+			VersionSentinel:     opts.AgentVersionSentinel,
+			VersionSentinelHours: 24,
+			SembleEnabled:       opts.AgentSemble,
+			SembleMode:          opts.AgentSembleMode,
+			SembleTextFiles:     opts.AgentSembleTextFiles,
+		},
 	}
 
 	// Build language set from explicit --lang flags.

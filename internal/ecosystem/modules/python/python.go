@@ -351,6 +351,58 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
+// VerificationCommands returns project verification commands for the Python ecosystem.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{
+		Test:      []string{"python -m pytest"},
+		Lint:      []string{"ruff check ."},
+		TypeCheck: []string{"mypy ."},
+		Format:    []string{"ruff format --check ."},
+	}
+}
+
+// ManifestFiles returns manifest file metadata for the Python ecosystem.
+func (m *Module) ManifestFiles(config ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	pm := config.PackageManager
+	if pm == "" {
+		pm = "pip"
+	}
+	var manifests []ecosystem.ManifestFileInfo
+	switch pm {
+	case "pip":
+		manifests = append(manifests, ecosystem.ManifestFileInfo{
+			Path:           "requirements.txt",
+			Ecosystem:      "pip",
+			VSSupported:    true,
+			LockFilePolicy: ecosystem.LockFilePolicyNone,
+		})
+	case "uv":
+		manifests = append(manifests, ecosystem.ManifestFileInfo{
+			Path:           "pyproject.toml",
+			Ecosystem:      "uv",
+			VSSupported:    true,
+			LockFile:       "uv.lock",
+			LockFilePolicy: ecosystem.LockFilePolicyRequired,
+		})
+	case "poetry":
+		manifests = append(manifests, ecosystem.ManifestFileInfo{
+			Path:           "pyproject.toml",
+			Ecosystem:      "poetry",
+			VSSupported:    true,
+			LockFile:       "poetry.lock",
+			LockFilePolicy: ecosystem.LockFilePolicyRequired,
+		})
+	default:
+		manifests = append(manifests, ecosystem.ManifestFileInfo{
+			Path:           "requirements.txt",
+			Ecosystem:      "pip",
+			VSSupported:    true,
+			LockFilePolicy: ecosystem.LockFilePolicyNone,
+		})
+	}
+	return manifests
+}
+
 // parseRequiresPython reads pyproject.toml and extracts the Python version
 // from the requires-python field. Returns an empty string if the field
 // is not found or the file cannot be read.

@@ -200,6 +200,28 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
+// VerificationCommands returns project verification commands for the .NET ecosystem.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{
+		Build:  []string{"dotnet build"},
+		Test:   []string{"dotnet test"},
+		Format: []string{"dotnet format --verify-no-changes"},
+	}
+}
+
+// ManifestFiles returns manifest file metadata for the .NET ecosystem.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{
+		{
+			Path:           "*.csproj",
+			Ecosystem:      "nuget",
+			VSSupported:    true,
+			LockFile:       "packages.lock.json",
+			LockFilePolicy: ecosystem.LockFilePolicyRecommended,
+		},
+	}
+}
+
 // globalJSONSchema represents the minimal structure of a global.json file.
 type globalJSONSchema struct {
 	SDK struct {

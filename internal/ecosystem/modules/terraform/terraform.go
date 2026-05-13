@@ -293,6 +293,28 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
+// VerificationCommands returns project verification commands for the Terraform/OpenTofu ecosystem.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{
+		Test:   []string{"terraform validate"},
+		Lint:   []string{"tflint"},
+		Format: []string{"terraform fmt -check"},
+	}
+}
+
+// ManifestFiles returns manifest file metadata for the Terraform/OpenTofu ecosystem.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{
+		{
+			Path:           "*.tf",
+			Ecosystem:      "terraform",
+			VSSupported:    false,
+			LockFile:       ".terraform.lock.hcl",
+			LockFilePolicy: ecosystem.LockFilePolicyRequired,
+		},
+	}
+}
+
 // --- helpers ---
 
 // resolveVariant extracts the variant from config extras, defaulting to "terraform".

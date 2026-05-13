@@ -298,3 +298,48 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 		},
 	}
 }
+
+// VerificationCommands returns project verification commands for the JavaScript/TypeScript ecosystem.
+func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	pm := config.PackageManager
+	if pm == "" {
+		pm = "npm"
+	}
+	vc := ecosystem.VerificationCommands{
+		Build:  []string{pm + " run build"},
+		Test:   []string{pm + " test"},
+		Lint:   []string{pm + " run lint"},
+		Format: []string{"prettier --check ."},
+	}
+	if pm == "bun" {
+		vc.Test = []string{"bun run test"}
+	}
+	return vc
+}
+
+// ManifestFiles returns manifest file metadata for the JavaScript/TypeScript ecosystem.
+func (m *Module) ManifestFiles(config ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	pm := config.PackageManager
+	if pm == "" {
+		pm = "npm"
+	}
+	info := ecosystem.ManifestFileInfo{
+		Path:           "package.json",
+		Ecosystem:      pm,
+		VSSupported:    true,
+		LockFilePolicy: ecosystem.LockFilePolicyRequired,
+	}
+	switch pm {
+	case "npm":
+		info.LockFile = "package-lock.json"
+	case "pnpm":
+		info.LockFile = "pnpm-lock.yaml"
+	case "yarn":
+		info.LockFile = "yarn.lock"
+	case "bun":
+		info.LockFile = "bun.lock"
+	default:
+		info.LockFile = "package-lock.json"
+	}
+	return []ecosystem.ManifestFileInfo{info}
+}

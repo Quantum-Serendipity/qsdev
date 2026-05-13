@@ -67,6 +67,18 @@
 {{- if .HasSecurityHooks }}
 - Safety-block hooks are enabled. Claude Code will be blocked from running destructive commands.
 {{- end }}
+{{- if .PostmortemEnabled }}
+- Agent-postmortem skill is active. After every implementation, run the postmortem protocol to verify changes.
+{{- end }}
+{{- if .VersionSentinelEnabled }}
+- **Version-Sentinel** guards dependency changes in: {{ join ", " .VersionSentinelCovered }}.
+{{- if hasAny .VersionSentinelUncovered }}
+- Version-Sentinel does NOT cover: {{ join ", " .VersionSentinelUncovered }}. Review these manually.
+{{- end }}
+{{- end }}
+{{- if .SembleEnabled }}
+- **Semble** semantic code search is available{{ if eq .SembleMode "mcp" }} via MCP server{{ else if eq .SembleMode "subagent" }} via the semble-search sub-agent{{ else if eq .SembleMode "both" }} via MCP server and sub-agent{{ end }}.
+{{- end }}
 - Prefer vendored or pinned dependencies over floating version ranges.
 - Review all dependency updates for supply chain risk before merging.
 

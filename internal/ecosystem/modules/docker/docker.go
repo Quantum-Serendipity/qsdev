@@ -258,3 +258,16 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
+// VerificationCommands returns project verification commands for the Docker ecosystem.
+func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	return ecosystem.VerificationCommands{
+		Build: []string{"docker build ."},
+		Lint:  []string{"hadolint Dockerfile"},
+	}
+}
+
+// ManifestFiles returns manifest file metadata for the Docker ecosystem.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return nil
+}
+

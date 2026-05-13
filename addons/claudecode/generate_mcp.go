@@ -45,6 +45,10 @@ var knownMCPServers = map[string]MCPServerEntry{
 		Args:    []string{"@anthropic-ai/mcp-socket"},
 		Env:     map[string]string{"SOCKET_SECURITY_API_KEY": "${SOCKET_SECURITY_API_KEY}"},
 	},
+	"semble": {
+		Command: "uvx",
+		Args:    []string{"--from", "semble[mcp]", "semble"},
+	},
 }
 
 // GenerateMcpJson produces a .mcp.json file from the wizard answers and addon
@@ -75,6 +79,12 @@ func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedF
 			Env:     srv.Env,
 		}
 		mcp.MCPServers[srv.Name] = entry
+	}
+
+	// Apply semble text-files flag if enabled.
+	if entry, ok := mcp.MCPServers["semble"]; ok && answers.AgentTools.SembleTextFiles {
+		entry.Args = append(append([]string{}, entry.Args...), "--include-text-files")
+		mcp.MCPServers["semble"] = entry
 	}
 
 	jsonBytes, err := json.MarshalIndent(mcp, "", "  ")

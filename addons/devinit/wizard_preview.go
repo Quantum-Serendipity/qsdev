@@ -46,6 +46,20 @@ func buildPlanPreview(fs *formState) string {
 		if len(fs.mcpServers) > 0 {
 			fmt.Fprintf(&b, "  .mcp.json             %s\n", strings.Join(fs.mcpServers, ", "))
 		}
+
+		var agentTools []string
+		if fs.agentPostmortem {
+			agentTools = append(agentTools, "postmortem")
+		}
+		if fs.agentVersionSentinel {
+			agentTools = append(agentTools, "version-sentinel")
+		}
+		if fs.agentSemble {
+			agentTools = append(agentTools, "semble ("+fs.agentSembleMode+")")
+		}
+		if len(agentTools) > 0 {
+			fmt.Fprintf(&b, "  AI agent tools        %s\n", strings.Join(agentTools, ", "))
+		}
 	}
 
 	return b.String()

@@ -30,6 +30,9 @@ func NewClaudeCodeGenerator(registry *ecosystem.Registry, cfg Config) *ClaudeCod
 //  4. .claude/skills/*.md   — selected skill files
 //  5. .claude/rules/*.md    — convention rule files based on languages
 //  6. .mcp.json             — MCP server configuration (when servers configured)
+//  7. .claude/skills/agent-postmortem/SKILL.md — postmortem verification skill
+//  8. Version-Sentinel config (.version-sentinel/ignore, recovery skill)
+//  9. Semble sub-agent (.claude/agents/semble-search.md)
 func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 	var files []types.GeneratedFile
 
@@ -72,6 +75,13 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 	}
 	files = append(files, ruleFiles...)
 
+	// 5b. Inject semble into MCP servers if enabled in MCP or both mode.
+	if answers.AgentTools.SembleEnabled && (answers.AgentTools.SembleMode == "mcp" || answers.AgentTools.SembleMode == "both" || answers.AgentTools.SembleMode == "") {
+		if !contains(answers.MCPServers, "semble") {
+			answers.MCPServers = append(answers.MCPServers, "semble")
+		}
+	}
+
 	// 6. MCP config (only when MCP servers are configured)
 	mcpFile, err := GenerateMcpJson(answers, g.cfg)
 	if err != nil {
@@ -79,6 +89,35 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 	}
 	if mcpFile != nil {
 		files = append(files, *mcpFile)
+	}
+
+	// 7. Agent postmortem skill
+	if answers.AgentTools.PostmortemEnabled {
+		postmortemFile, err := generatePostmortemSkill(answers, g.registry)
+		if err != nil {
+			return nil, fmt.Errorf("generating postmortem skill: %w", err)
+		}
+		if postmortemFile != nil {
+			files = append(files, *postmortemFile)
+		}
+	}
+
+	// 8. Version-Sentinel config
+	if answers.AgentTools.VersionSentinel {
+		vsFiles, err := generateVersionSentinelFiles(answers, g.registry)
+		if err != nil {
+			return nil, fmt.Errorf("generating version-sentinel config: %w", err)
+		}
+		files = append(files, vsFiles...)
+	}
+
+	// 9. Semble sub-agent (MCP handled in step 5b+6)
+	if answers.AgentTools.SembleEnabled && (answers.AgentTools.SembleMode == "subagent" || answers.AgentTools.SembleMode == "both") {
+		sembleFiles, err := generateSembleFiles(answers)
+		if err != nil {
+			return nil, fmt.Errorf("generating semble config: %w", err)
+		}
+		files = append(files, sembleFiles...)
 	}
 
 	return files, nil

@@ -8,10 +8,12 @@ import (
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devenv"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devinit"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/selfupdate"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
 )
 
 func main() {
-	instance.SetAppName("gdev-secure-bootstrap")
+	instance.SetAppName("qsdev")
 
 	bootstrap.Configure(
 		bootstrap.WithSteps(
@@ -33,5 +35,9 @@ func main() {
 		devinit.WithPlanPreview(true),
 	)
 
+	instance.AddCommands(selfupdate.Command())
+
+	updateCh := selfupdate.BackgroundCheck(version.Info().Version)
 	cmd.Main()
+	selfupdate.PrintNotice(updateCh)
 }

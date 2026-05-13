@@ -38,6 +38,15 @@ var ExportAnswersPath = func(projectRoot string) string {
 // ExportDevenvCmd exposes devenvCmd for external tests.
 var ExportDevenvCmd = devenvCmd
 
+// ExportCompletionCmd exposes completionCmd for external tests.
+var ExportCompletionCmd = completionCmd
+
+// ExportDetectShell exposes detectShell for external tests.
+var ExportDetectShell = detectShell
+
+// ExportDefaultRCFile exposes defaultRCFile for external tests.
+var ExportDefaultRCFile = defaultRCFile
+
 // ExportNewDevenvGenerator re-exports NewDevenvGenerator for test clarity.
 // (NewDevenvGenerator is already exported, but this pattern keeps the export
 // file consistent.)

@@ -1,6 +1,5 @@
 # Go
 .go/
-vendor/
 *.exe
 *.test
 *.out

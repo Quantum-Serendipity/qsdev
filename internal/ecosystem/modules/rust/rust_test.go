@@ -322,6 +322,73 @@ func TestSecurityConfigs_WithSccache(t *testing.T) {
 	}
 }
 
+func TestSecurityConfigs_RegistryProxy(t *testing.T) {
+	m := newModule()
+	proxy := "https://crates.corp.example.com"
+	config := ecosystem.ModuleConfig{
+		RegistryProxy: proxy,
+	}
+
+	files := m.SecurityConfigs(config)
+	if len(files) != 1 {
+		t.Fatalf("SecurityConfigs() returned %d files, want 1", len(files))
+	}
+
+	content := string(files[0].Content)
+	if !strings.Contains(content, "[source.crates-io]") {
+		t.Errorf("content missing [source.crates-io]:\n%s", content)
+	}
+	if !strings.Contains(content, `replace-with = "corporate-proxy"`) {
+		t.Errorf("content missing replace-with:\n%s", content)
+	}
+	if !strings.Contains(content, "[source.corporate-proxy]") {
+		t.Errorf("content missing [source.corporate-proxy]:\n%s", content)
+	}
+	if !strings.Contains(content, `registry = "`+proxy+`"`) {
+		t.Errorf("content missing registry URL:\n%s", content)
+	}
+	// Existing security settings must be preserved.
+	if !strings.Contains(content, "git-fetch-with-cli = true") {
+		t.Errorf("content missing git-fetch-with-cli when proxy is set:\n%s", content)
+	}
+}
+
+func TestSecurityConfigs_NoRegistryProxy(t *testing.T) {
+	m := newModule()
+	config := ecosystem.ModuleConfig{}
+
+	files := m.SecurityConfigs(config)
+	content := string(files[0].Content)
+	if strings.Contains(content, "[source.crates-io]") {
+		t.Errorf("content should not contain [source.crates-io] when proxy is empty:\n%s", content)
+	}
+	if strings.Contains(content, "corporate-proxy") {
+		t.Errorf("content should not contain corporate-proxy when proxy is empty:\n%s", content)
+	}
+}
+
+func TestSecurityConfigs_RegistryProxyWithSccache(t *testing.T) {
+	m := newModule()
+	proxy := "https://crates.corp.example.com"
+	config := ecosystem.ModuleConfig{
+		RegistryProxy: proxy,
+		Extras:        map[string]string{"build_cache": "sccache"},
+	}
+
+	files := m.SecurityConfigs(config)
+	content := string(files[0].Content)
+	// Both proxy and sccache settings must be present.
+	if !strings.Contains(content, "[source.corporate-proxy]") {
+		t.Errorf("content missing proxy config:\n%s", content)
+	}
+	if !strings.Contains(content, `rustc-wrapper = "sccache"`) {
+		t.Errorf("content missing sccache config:\n%s", content)
+	}
+	if !strings.Contains(content, "git-fetch-with-cli = true") {
+		t.Errorf("content missing git-fetch-with-cli:\n%s", content)
+	}
+}
+
 // --- PreCommitHooks tests ---
 
 func TestPreCommitHooks(t *testing.T) {

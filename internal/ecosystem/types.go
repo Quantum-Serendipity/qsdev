@@ -57,6 +57,7 @@ type ModuleConfig struct {
 	Version        string            `yaml:"version"         json:"version"`
 	PackageManager string            `yaml:"package_manager" json:"package_manager"`
 	Extras         map[string]string `yaml:"extras"          json:"extras"`
+	RegistryProxy  string            `yaml:"registry_proxy"  json:"registry_proxy"`
 }
 
 // DevenvInput represents a devenv.sh input (flake reference) to be added

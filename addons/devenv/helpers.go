@@ -13,6 +13,12 @@ func toModuleConfig(lang types.LanguageChoice) ecosystem.ModuleConfig {
 	return ecosystem.ToModuleConfig(lang)
 }
 
+// toModuleConfigWithProxy converts a LanguageChoice into a ModuleConfig with
+// the registry proxy URL resolved.
+func toModuleConfigWithProxy(lang types.LanguageChoice, infra types.InfraConfig) ecosystem.ModuleConfig {
+	return ecosystem.ToModuleConfigWithProxy(lang, infra)
+}
+
 // inputKeyFromURL derives an input name from a Nix flake URL by extracting
 // the repository name. For example:
 //   - "github:NixOS/nixpkgs/nixos-25.11" → "nixpkgs"

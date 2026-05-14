@@ -624,6 +624,105 @@ func TestSecurityConfigs_DirectoryBuildProps_XMLStructure(t *testing.T) {
 	}
 }
 
+// --- Registry proxy tests ---
+
+func TestSecurityConfigs_NugetConfig_RegistryProxy(t *testing.T) {
+	m := newModule()
+	proxy := "https://nuget.corp.example.com/v3/index.json"
+	files := m.SecurityConfigs(ecosystem.ModuleConfig{RegistryProxy: proxy})
+
+	var nugetConfig *types.GeneratedFile
+	for i := range files {
+		if files[i].Path == "nuget.config" {
+			nugetConfig = &files[i]
+			break
+		}
+	}
+	if nugetConfig == nil {
+		t.Fatal("no nuget.config in SecurityConfigs output")
+	}
+
+	content := string(nugetConfig.Content)
+	// Proxy source must be present.
+	if !strings.Contains(content, "corporate-proxy") {
+		t.Errorf("nuget.config missing corporate-proxy source when proxy is set\ncontent:\n%s", content)
+	}
+	if !strings.Contains(content, proxy) {
+		t.Errorf("nuget.config missing proxy URL\ncontent:\n%s", content)
+	}
+	// Existing security settings must be preserved.
+	if !strings.Contains(content, "signatureValidationMode") {
+		t.Error("nuget.config missing signatureValidationMode when proxy is set")
+	}
+	if !strings.Contains(content, `value="require"`) {
+		t.Error("nuget.config missing signatureValidationMode=require when proxy is set")
+	}
+	if !strings.Contains(content, "https://api.nuget.org/v3/index.json") {
+		t.Error("nuget.config missing nuget.org source when proxy is set")
+	}
+	if !strings.Contains(content, "audit-level") {
+		t.Error("nuget.config missing audit-level when proxy is set")
+	}
+}
+
+func TestSecurityConfigs_NugetConfig_NoRegistryProxy(t *testing.T) {
+	m := newModule()
+	files := m.SecurityConfigs(ecosystem.ModuleConfig{})
+
+	var nugetConfig *types.GeneratedFile
+	for i := range files {
+		if files[i].Path == "nuget.config" {
+			nugetConfig = &files[i]
+			break
+		}
+	}
+	if nugetConfig == nil {
+		t.Fatal("no nuget.config in SecurityConfigs output")
+	}
+
+	content := string(nugetConfig.Content)
+	if strings.Contains(content, "corporate-proxy") {
+		t.Errorf("nuget.config should not contain corporate-proxy when proxy is empty\ncontent:\n%s", content)
+	}
+}
+
+func TestSecurityConfigs_NugetConfig_RegistryProxyPreservesExisting(t *testing.T) {
+	m := newModule()
+	proxy := "https://nuget.corp.example.com/v3/index.json"
+	files := m.SecurityConfigs(ecosystem.ModuleConfig{RegistryProxy: proxy})
+
+	var nugetConfig *types.GeneratedFile
+	for i := range files {
+		if files[i].Path == "nuget.config" {
+			nugetConfig = &files[i]
+			break
+		}
+	}
+	if nugetConfig == nil {
+		t.Fatal("no nuget.config in SecurityConfigs output")
+	}
+
+	content := string(nugetConfig.Content)
+	// All existing elements must be present.
+	for _, s := range []string{
+		"signatureValidationMode",
+		"trustedSigners",
+		"0E5F38F57DC1BCC806D8494F4F90FBCEDD988B46760709CBEEC6F4219AA6157D",
+		"<clear>",
+		"audit-level",
+		"audit-mode",
+	} {
+		if !strings.Contains(content, s) {
+			t.Errorf("nuget.config missing %q when proxy is set\ncontent:\n%s", s, content)
+		}
+	}
+
+	// Verify it still parses as valid XML.
+	if err := xml.Unmarshal(nugetConfig.Content, new(interface{})); err != nil {
+		t.Errorf("nuget.config with proxy is not valid XML: %v", err)
+	}
+}
+
 // --- PreCommitHooks tests ---
 
 func TestPreCommitHooks(t *testing.T) {

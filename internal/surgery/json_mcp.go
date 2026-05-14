@@ -116,20 +116,20 @@ func marshalSorted(m map[string]json.RawMessage) (json.RawMessage, error) {
 	}
 	sort.Strings(keys)
 
-	ordered := make([]sortedEntry, 0, len(keys))
-	for _, k := range keys {
-		ordered = append(ordered, sortedEntry{Key: k, Value: m[k]})
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, k := range keys {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		keyJSON, err := json.Marshal(k)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(keyJSON)
+		buf.WriteByte(':')
+		buf.Write(m[k])
 	}
-
-	result := make(map[string]json.RawMessage, len(ordered))
-	for _, e := range ordered {
-		result[e.Key] = e.Value
-	}
-
-	return json.Marshal(result)
-}
-
-type sortedEntry struct {
-	Key   string
-	Value json.RawMessage
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
 }

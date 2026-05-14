@@ -496,6 +496,123 @@ func TestSecurityConfigs_GradlePropertiesContent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Registry proxy tests
+// ---------------------------------------------------------------------------
+
+func TestSecurityConfigs_Maven_RegistryProxy(t *testing.T) {
+	m := &java.Module{}
+	proxy := "https://maven.corp.example.com/repository/central/"
+	cfg := ecosystem.ModuleConfig{
+		RegistryProxy: proxy,
+		Extras:        map[string]string{"build_tool": "maven", "kotlin": "false"},
+	}
+	files := m.SecurityConfigs(cfg)
+
+	if len(files) != 1 {
+		t.Fatalf("SecurityConfigs() returned %d files, want 1", len(files))
+	}
+
+	content := string(files[0].Content)
+	// Mirror should point to the proxy.
+	assertContains(t, content, proxy)
+	assertContains(t, content, "corporate-proxy")
+	assertContains(t, content, "<mirrorOf>*</mirrorOf>")
+	// Existing security settings must be preserved.
+	assertContains(t, content, "checksumPolicy")
+	assertContains(t, content, "fail")
+	assertContains(t, content, "<enabled>false</enabled>")
+}
+
+func TestSecurityConfigs_Maven_NoRegistryProxy(t *testing.T) {
+	m := &java.Module{}
+	cfg := ecosystem.ModuleConfig{
+		Extras: map[string]string{"build_tool": "maven", "kotlin": "false"},
+	}
+	files := m.SecurityConfigs(cfg)
+	content := string(files[0].Content)
+
+	// Default mirror should point to Maven Central, not contain corporate-proxy.
+	assertNotContains(t, content, "corporate-proxy")
+	assertContains(t, content, "repo.maven.apache.org")
+}
+
+func TestSecurityConfigs_Gradle_RegistryProxy(t *testing.T) {
+	m := &java.Module{}
+	proxy := "https://maven.corp.example.com/repository/central/"
+	cfg := ecosystem.ModuleConfig{
+		RegistryProxy: proxy,
+		Extras:        map[string]string{"build_tool": "gradle", "kotlin": "false"},
+	}
+	files := m.SecurityConfigs(cfg)
+
+	// Should produce gradle.properties + init.gradle.
+	if len(files) != 2 {
+		t.Fatalf("SecurityConfigs() returned %d files, want 2", len(files))
+	}
+
+	paths := make(map[string]string)
+	for _, f := range files {
+		paths[f.Path] = string(f.Content)
+	}
+
+	initContent, ok := paths["init.gradle"]
+	if !ok {
+		t.Fatal("expected init.gradle in generated files")
+	}
+	assertContains(t, initContent, proxy)
+	assertContains(t, initContent, "allprojects")
+
+	// gradle.properties should still have existing settings.
+	gradleContent := paths["gradle.properties"]
+	assertContains(t, gradleContent, "dependencyLocking.lockMode=STRICT")
+}
+
+func TestSecurityConfigs_Gradle_NoRegistryProxy(t *testing.T) {
+	m := &java.Module{}
+	cfg := ecosystem.ModuleConfig{
+		Extras: map[string]string{"build_tool": "gradle", "kotlin": "false"},
+	}
+	files := m.SecurityConfigs(cfg)
+
+	// Should only produce gradle.properties (no init.gradle).
+	if len(files) != 1 {
+		t.Fatalf("SecurityConfigs() returned %d files, want 1", len(files))
+	}
+	if files[0].Path != "gradle.properties" {
+		t.Errorf("Path = %q, want %q", files[0].Path, "gradle.properties")
+	}
+}
+
+func TestSecurityConfigs_Both_RegistryProxy(t *testing.T) {
+	m := &java.Module{}
+	proxy := "https://maven.corp.example.com/repository/central/"
+	cfg := ecosystem.ModuleConfig{
+		RegistryProxy: proxy,
+		Extras:        map[string]string{"build_tool": "both", "kotlin": "false"},
+	}
+	files := m.SecurityConfigs(cfg)
+
+	// Should produce settings.xml, gradle.properties, and init.gradle.
+	if len(files) != 3 {
+		t.Fatalf("SecurityConfigs() returned %d files, want 3", len(files))
+	}
+
+	paths := make(map[string]bool)
+	for _, f := range files {
+		paths[f.Path] = true
+	}
+	if !paths[".mvn/settings.xml"] {
+		t.Error("expected .mvn/settings.xml in generated files")
+	}
+	if !paths["gradle.properties"] {
+		t.Error("expected gradle.properties in generated files")
+	}
+	if !paths["init.gradle"] {
+		t.Error("expected init.gradle in generated files")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // PreCommitHooks tests
 // ---------------------------------------------------------------------------
 

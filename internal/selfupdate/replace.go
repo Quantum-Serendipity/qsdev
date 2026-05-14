@@ -2,6 +2,7 @@ package selfupdate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -74,7 +75,7 @@ func DoUpdate(ctx context.Context, cfg Config, release *Release) error {
 		// Restore backup on verification failure.
 		_ = os.Remove(currentPath)
 		if restoreErr := os.Rename(backupPath, currentPath); restoreErr != nil {
-			return fmt.Errorf("verification failed (%w) and restore also failed: %v", err, restoreErr)
+			return fmt.Errorf("verification failed and restore also failed: %w", errors.Join(err, restoreErr))
 		}
 		return fmt.Errorf("new binary verification failed (restored previous version): %w", err)
 	}

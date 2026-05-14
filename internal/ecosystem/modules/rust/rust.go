@@ -103,6 +103,13 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 	content.WriteString("# credential helpers and SSH configuration.\n")
 	content.WriteString("git-fetch-with-cli = true\n")
 
+	if config.RegistryProxy != "" {
+		content.WriteString("\n[source.crates-io]\n")
+		content.WriteString("replace-with = \"corporate-proxy\"\n")
+		content.WriteString("\n[source.corporate-proxy]\n")
+		fmt.Fprintf(&content, "registry = \"%s\"\n", config.RegistryProxy)
+	}
+
 	if config.Extras != nil && config.Extras["build_cache"] == "sccache" {
 		content.WriteString("\n[build]\n")
 		content.WriteString("# Use sccache as the rustc wrapper for shared build caching.\n")

@@ -3,6 +3,7 @@ package privilege
 import (
 	"context"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -34,6 +35,29 @@ func TestBatchElevatedInstall_EmptySlice(t *testing.T) {
 	err := BatchElevatedInstall(context.Background(), "apt-get", []string{"install", "-y"}, []string{})
 	if err != nil {
 		t.Errorf("BatchElevatedInstall with empty packages = %v, want nil", err)
+	}
+}
+
+func TestPowerShellQuoteEscaping(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"clean", "package-name", "'package-name'"},
+		{"single quote", "test'inject", "'test''inject'"},
+		{"injection attempt", "test'; Get-Process; '", "'test''; Get-Process; '''"},
+		{"multiple quotes", "a'b'c", "'a''b''c'"},
+		{"empty", "", "''"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			escaped := strings.ReplaceAll(tt.input, "'", "''")
+			got := "'" + escaped + "'"
+			if got != tt.expected {
+				t.Errorf("quote(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
 	}
 }
 

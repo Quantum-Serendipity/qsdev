@@ -67,6 +67,18 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 
 		fullPath := filepath.Join(opts.ProjectRoot, file.Path)
 
+		// Verify the resolved path doesn't escape the project root via symlinks.
+		if dir := filepath.Dir(fullPath); dir != opts.ProjectRoot {
+			resolved, resolveErr := filepath.EvalSymlinks(dir)
+			if resolveErr == nil && !strings.HasPrefix(resolved+string(filepath.Separator), opts.ProjectRoot+string(filepath.Separator)) {
+				fr.Action = ActionFailed
+				fr.Error = fmt.Errorf("resolved path escapes project root: %q", file.Path)
+				result.Files = append(result.Files, fr)
+				result.Failed++
+				continue
+			}
+		}
+
 		// Determine action: created vs updated.
 		_, statErr := os.Stat(fullPath)
 		if statErr == nil {

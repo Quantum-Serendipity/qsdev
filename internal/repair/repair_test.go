@@ -465,3 +465,133 @@ func TestCopyState(t *testing.T) {
 		t.Error("original EnabledTools was mutated")
 	}
 }
+
+func TestRepair_DevenvNixProtected_WithForce(t *testing.T) {
+	root := t.TempDir()
+
+	relPath := "devenv.nix"
+	absPath := filepath.Join(root, relPath)
+	modifiedContent := []byte("# user modified devenv.nix")
+	if err := os.WriteFile(absPath, modifiedContent, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	genState := types.GeneratedState{
+		Files: map[string]types.FileState{
+			relPath: {
+				Hash:     state.ComputeHash([]byte("original devenv.nix")),
+				Strategy: types.Overwrite,
+				Mode:     0o644,
+			},
+		},
+	}
+
+	driftReport := &posture.DriftReport{
+		Categories: []posture.DriftCategory{
+			{
+				Name: "File Modification",
+				Findings: []posture.DriftFinding{
+					{
+						Subject:     relPath,
+						Description: "Machine-owned file modified",
+						Severity:    posture.DriftWarning,
+					},
+				},
+			},
+		},
+	}
+
+	freshFiles := map[string]types.GeneratedFile{
+		relPath: {
+			Path:     relPath,
+			Content:  []byte("fresh devenv.nix"),
+			Mode:     0o644,
+			Strategy: types.Overwrite,
+		},
+	}
+
+	result, _, err := Repair(root, RepairOptions{Force: true}, genState, freshFiles, driftReport)
+	if err != nil {
+		t.Fatalf("Repair: %v", err)
+	}
+
+	if len(result.Fixed) != 0 {
+		t.Errorf("got %d fixed, want 0 (devenv.nix should never be auto-modified)", len(result.Fixed))
+	}
+	if len(result.Skipped) != 1 {
+		t.Errorf("got %d skipped, want 1", len(result.Skipped))
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		t.Fatalf("reading file: %v", err)
+	}
+	if string(data) != string(modifiedContent) {
+		t.Errorf("devenv.nix was modified; content = %q, want %q", string(data), string(modifiedContent))
+	}
+}
+
+func TestRepair_DevenvNixProtected_WithReset(t *testing.T) {
+	root := t.TempDir()
+
+	relPath := "devenv.nix"
+	absPath := filepath.Join(root, relPath)
+	modifiedContent := []byte("# user modified devenv.nix")
+	if err := os.WriteFile(absPath, modifiedContent, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	genState := types.GeneratedState{
+		Files: map[string]types.FileState{
+			relPath: {
+				Hash:     state.ComputeHash([]byte("original devenv.nix")),
+				Strategy: types.Overwrite,
+				Mode:     0o644,
+			},
+		},
+	}
+
+	driftReport := &posture.DriftReport{
+		Categories: []posture.DriftCategory{
+			{
+				Name: "File Modification",
+				Findings: []posture.DriftFinding{
+					{
+						Subject:     relPath,
+						Description: "Machine-owned file modified",
+						Severity:    posture.DriftWarning,
+					},
+				},
+			},
+		},
+	}
+
+	freshFiles := map[string]types.GeneratedFile{
+		relPath: {
+			Path:     relPath,
+			Content:  []byte("fresh devenv.nix"),
+			Mode:     0o644,
+			Strategy: types.Overwrite,
+		},
+	}
+
+	result, _, err := Repair(root, RepairOptions{Reset: true}, genState, freshFiles, driftReport)
+	if err != nil {
+		t.Fatalf("Repair: %v", err)
+	}
+
+	if len(result.Fixed) != 0 {
+		t.Errorf("got %d fixed, want 0 (devenv.nix should never be auto-modified)", len(result.Fixed))
+	}
+	if len(result.Skipped) != 1 {
+		t.Errorf("got %d skipped, want 1", len(result.Skipped))
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		t.Fatalf("reading file: %v", err)
+	}
+	if string(data) != string(modifiedContent) {
+		t.Errorf("devenv.nix was modified; content = %q, want %q", string(data), string(modifiedContent))
+	}
+}

@@ -132,9 +132,17 @@ func deepMerge(base, overlay *types.GdevConfig) *types.GdevConfig {
 	// ClaudeCode.MCPServers: union.
 	result.ClaudeCode.MCPServers = mergeUnionStrings(base.ClaudeCode.MCPServers, overlay.ClaudeCode.MCPServers)
 
-	// Infrastructure: last-wins scalars.
+	// Infrastructure: last-wins scalars, map merge for overrides.
 	if overlay.Infrastructure.RegistryProxy != "" {
 		result.Infrastructure.RegistryProxy = overlay.Infrastructure.RegistryProxy
+	}
+	if len(overlay.Infrastructure.RegistryProxyOverrides) > 0 {
+		if result.Infrastructure.RegistryProxyOverrides == nil {
+			result.Infrastructure.RegistryProxyOverrides = make(map[string]string)
+		}
+		for k, v := range overlay.Infrastructure.RegistryProxyOverrides {
+			result.Infrastructure.RegistryProxyOverrides[k] = v
+		}
 	}
 	if overlay.Infrastructure.NixCache != "" {
 		result.Infrastructure.NixCache = overlay.Infrastructure.NixCache
@@ -312,8 +320,19 @@ func cloneGdevConfig(cfg *types.GdevConfig) *types.GdevConfig {
 			Enabled:         cloneBoolPtr(cfg.ClaudeCode.Enabled),
 			PermissionLevel: cfg.ClaudeCode.PermissionLevel,
 		},
-		Infrastructure: cfg.Infrastructure,
-		Git:            cfg.Git,
+		Infrastructure: types.InfraConfig{
+			RegistryProxy: cfg.Infrastructure.RegistryProxy,
+			NixCache:      cfg.Infrastructure.NixCache,
+			BuildCache:    cfg.Infrastructure.BuildCache,
+		},
+		Git: cfg.Git,
+	}
+
+	if len(cfg.Infrastructure.RegistryProxyOverrides) > 0 {
+		result.Infrastructure.RegistryProxyOverrides = make(map[string]string, len(cfg.Infrastructure.RegistryProxyOverrides))
+		for k, v := range cfg.Infrastructure.RegistryProxyOverrides {
+			result.Infrastructure.RegistryProxyOverrides[k] = v
+		}
 	}
 
 	// Clone Languages.

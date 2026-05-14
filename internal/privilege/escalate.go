@@ -20,14 +20,17 @@ func ElevatedExec(ctx context.Context, name string, args ...string) error {
 		return fmt.Errorf("no elevation tool available (sudo, doas, pkexec)")
 	}
 
-	// Special handling for PowerShell Start-Process on Windows
+	// Special handling for PowerShell Start-Process on Windows.
+	// Single quotes in PowerShell are escaped by doubling them.
 	if tool == "powershell" {
 		quoted := make([]string, len(args))
 		for i, a := range args {
-			quoted[i] = "'" + a + "'"
+			escaped := strings.ReplaceAll(a, "'", "''")
+			quoted[i] = "'" + escaped + "'"
 		}
+		escapedName := strings.ReplaceAll(name, "'", "''")
 		psCmd := fmt.Sprintf("Start-Process -Verb RunAs -Wait -FilePath '%s' -ArgumentList %s",
-			name, strings.Join(quoted, ","))
+			escapedName, strings.Join(quoted, ","))
 		c := exec.CommandContext(ctx, "powershell", "-NoProfile", "-Command", psCmd)
 		c.Stdin = os.Stdin
 		c.Stdout = os.Stdout

@@ -170,8 +170,8 @@ func TestSecurityConfigs(t *testing.T) {
 	if len(configs) != 1 {
 		t.Fatalf("SecurityConfigs() returned %d files, want 1", len(configs))
 	}
-	if configs[0].Path != "ansible.cfg" {
-		t.Errorf("SecurityConfigs()[0].Path = %q, want %q", configs[0].Path, "ansible.cfg")
+	if configs[0].Path != ".ansible-security.cfg" {
+		t.Errorf("SecurityConfigs()[0].Path = %q, want %q", configs[0].Path, ".ansible-security.cfg")
 	}
 }
 

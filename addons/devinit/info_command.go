@@ -43,7 +43,7 @@ func runInfo(cmd *cobra.Command, oneline, jsonOutput bool) error {
 	if err != nil {
 		if errors.Is(err, info.ErrNotGdevProject) {
 			fmt.Fprintln(cmd.ErrOrStderr(), "Not a gdev-managed project. Run 'gdev init' to set up.")
-			os.Exit(1)
+			return &ExitError{Code: 1}
 		}
 		return err
 	}

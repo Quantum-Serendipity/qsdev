@@ -141,7 +141,7 @@ func TestGenerateClaudeMd_MarkersPresent(t *testing.T) {
 	}
 }
 
-func TestGenerateClaudeMd_GoConventions(t *testing.T) {
+func TestGenerateClaudeMd_GoProject(t *testing.T) {
 	reg := newTestRegistry(t, goMock())
 	answers := types.WizardAnswers{
 		ProjectName: "myproject",
@@ -154,11 +154,9 @@ func TestGenerateClaudeMd_GoConventions(t *testing.T) {
 	}
 
 	content := string(got.Content)
-	requireContains(t, content, "### Go")
-	requireContains(t, content, "fmt.Errorf")
-	requireContains(t, content, "table-driven tests")
-	requireContains(t, content, "internal/")
-	requireContains(t, content, "context.Context")
+	requireContains(t, content, "go build")
+	requireContains(t, content, "gdev init")
+	requireContains(t, content, "gdev-reference.md")
 }
 
 func TestGenerateClaudeMd_MultiLanguage(t *testing.T) {
@@ -177,10 +175,9 @@ func TestGenerateClaudeMd_MultiLanguage(t *testing.T) {
 	}
 
 	content := string(got.Content)
-	requireContains(t, content, "### Go")
-	requireContains(t, content, "### Python")
-	requireContains(t, content, "type hints")
-	requireContains(t, content, "pathlib.Path")
+	requireContains(t, content, "go build")
+	requireContains(t, content, "pytest")
+	requireContains(t, content, "gdev Commands")
 }
 
 func TestGenerateClaudeMd_SecurityAlwaysPresent(t *testing.T) {
@@ -300,7 +297,7 @@ func TestGenerateClaudeMd_FileMetadata(t *testing.T) {
 	}
 }
 
-func TestGenerateClaudeMd_JavaScriptConventions(t *testing.T) {
+func TestGenerateClaudeMd_JavaScriptProject(t *testing.T) {
 	reg := newTestRegistry(t, jsMock())
 	answers := types.WizardAnswers{
 		ProjectName: "frontend",
@@ -313,12 +310,11 @@ func TestGenerateClaudeMd_JavaScriptConventions(t *testing.T) {
 	}
 
 	content := string(got.Content)
-	requireContains(t, content, "### JavaScript / TypeScript")
-	requireContains(t, content, "strict TypeScript")
-	requireContains(t, content, "unknown")
+	requireContains(t, content, "npm")
+	requireContains(t, content, "gdev Commands")
 }
 
-func TestGenerateClaudeMd_RustConventions(t *testing.T) {
+func TestGenerateClaudeMd_RustProject(t *testing.T) {
 	reg := newTestRegistry(t, rustMock())
 	answers := types.WizardAnswers{
 		ProjectName: "syslib",
@@ -331,10 +327,8 @@ func TestGenerateClaudeMd_RustConventions(t *testing.T) {
 	}
 
 	content := string(got.Content)
-	requireContains(t, content, "### Rust")
-	requireContains(t, content, "cargo clippy")
-	requireContains(t, content, "&str")
-	requireContains(t, content, "Debug")
+	requireContains(t, content, "cargo")
+	requireContains(t, content, "gdev Commands")
 }
 
 func TestGenerateClaudeMd_PackageManagersInSecurity(t *testing.T) {
@@ -389,4 +383,128 @@ func TestGenerateClaudeMd_DefaultDescription(t *testing.T) {
 	requireContains(t, data.ProjectDescription, "myapp")
 	requireContains(t, data.ProjectDescription, "Go")
 	requireContains(t, data.ProjectDescription, "Python")
+}
+
+func TestBuildClaudeMdData_GdevCommands(t *testing.T) {
+	reg := newTestRegistry(t, goMock())
+	answers := types.WizardAnswers{
+		ProjectName: "test",
+		Languages:   []types.LanguageChoice{{Name: "go"}},
+	}
+
+	data := claudecode.BuildClaudeMdData(answers, reg)
+
+	if len(data.GdevCommands) == 0 {
+		t.Fatal("expected GdevCommands to be populated")
+	}
+
+	cmdNames := make(map[string]bool)
+	for _, c := range data.GdevCommands {
+		cmdNames[c.Command] = true
+	}
+
+	for _, expected := range []string{"gdev init", "gdev devenv doctor", "gdev status", "gdev check"} {
+		if !cmdNames[expected] {
+			t.Errorf("expected command %q in GdevCommands", expected)
+		}
+	}
+}
+
+func TestGenerateClaudeMd_SectionMarkers(t *testing.T) {
+	reg := newTestRegistry(t, goMock())
+	answers := types.WizardAnswers{
+		ProjectName: "test",
+		Languages:   []types.LanguageChoice{{Name: "go"}},
+		Hooks:       types.HookChoices{SafetyBlock: true},
+		AgentTools: types.AgentToolsAnswers{
+			PostmortemEnabled: true,
+			VersionSentinel:   true,
+			SembleEnabled:     true,
+			SembleMode:        "mcp",
+		},
+		Skills: []string{"security-review"},
+	}
+
+	got, err := claudecode.GenerateClaudeMd(answers, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	content := string(got.Content)
+
+	markers := []string{
+		"gdev:attach-guard",
+		"gdev:agent-postmortem",
+		"gdev:version-sentinel",
+		"gdev:semble",
+		"gdev:trail-of-bits-skills",
+		"gdev:skills",
+		"gdev:commands",
+	}
+
+	for _, marker := range markers {
+		openTag := "<!-- " + marker + " -->"
+		closeTag := "<!-- /" + marker + " -->"
+		openCount := strings.Count(content, openTag)
+		closeCount := strings.Count(content, closeTag)
+		if openCount == 0 {
+			continue
+		}
+		if openCount != closeCount {
+			t.Errorf("unbalanced section marker %q: open=%d close=%d", marker, openCount, closeCount)
+		}
+	}
+}
+
+func TestGenerateClaudeMd_HasGdevReference(t *testing.T) {
+	reg := newTestRegistry(t, goMock())
+	answers := types.WizardAnswers{
+		ProjectName: "test",
+		Languages:   []types.LanguageChoice{{Name: "go"}},
+	}
+
+	got, err := claudecode.GenerateClaudeMd(answers, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	requireContains(t, string(got.Content), "@.claude/gdev-reference.md")
+}
+
+func TestGenerateClaudeMd_GdevCommandsSection(t *testing.T) {
+	reg := newTestRegistry(t, goMock())
+	answers := types.WizardAnswers{
+		ProjectName: "test",
+		Languages:   []types.LanguageChoice{{Name: "go"}},
+	}
+
+	got, err := claudecode.GenerateClaudeMd(answers, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	content := string(got.Content)
+	requireContains(t, content, "## gdev Commands")
+	requireContains(t, content, "<!-- gdev:commands -->")
+	requireContains(t, content, "<!-- /gdev:commands -->")
+	requireContains(t, content, "gdev init")
+	requireContains(t, content, "gdev check")
+}
+
+func TestGenerateClaudeMd_NoLanguageConventions(t *testing.T) {
+	reg := newTestRegistry(t, goMock())
+	answers := types.WizardAnswers{
+		ProjectName: "test",
+		Languages:   []types.LanguageChoice{{Name: "go"}},
+	}
+
+	got, err := claudecode.GenerateClaudeMd(answers, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	content := string(got.Content)
+	requireNotContains(t, content, "Language Conventions")
+	requireNotContains(t, content, "### Go")
+	requireNotContains(t, content, "fmt.Errorf")
 }

@@ -1,0 +1,41 @@
+skills:
+  - name: gdev-init
+    description: "Initialize gdev project configuration"
+    tags: [gdev, ops, setup]
+    user_only: true
+  - name: gdev-onboard
+    description: "Onboard existing project to gdev"
+    tags: [gdev, ops, onboarding]
+    user_only: true
+  - name: gdev-setup
+    description: "Install missing prerequisites"
+    tags: [gdev, ops, setup]
+    user_only: true
+  - name: gdev-enable
+    description: "Enable a tool in the project"
+    tags: [gdev, ops, lifecycle]
+    user_only: true
+  - name: gdev-disable
+    description: "Disable a tool from the project"
+    tags: [gdev, ops, lifecycle]
+    user_only: true
+  - name: gdev-update
+    description: "Update gdev-managed configuration"
+    tags: [gdev, ops, lifecycle]
+    user_only: true
+  - name: gdev-doctor
+    description: "Run gdev health diagnostics"
+    tags: [gdev, ops, diagnostic]
+    user_only: false
+  - name: gdev-status
+    description: "Show gdev configuration status"
+    tags: [gdev, ops, diagnostic]
+    user_only: false
+  - name: gdev-tools
+    description: "List available gdev tools"
+    tags: [gdev, ops, diagnostic]
+    user_only: false
+  - name: gdev-detect
+    description: "Detect project ecosystems"
+    tags: [gdev, ops, diagnostic]
+    user_only: false

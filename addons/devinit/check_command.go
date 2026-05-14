@@ -8,6 +8,7 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/check"
 	gdevconfig "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/config"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/toolreg"
@@ -80,6 +81,18 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 
 	// Required deny rules — the critical subset that should always be present.
 	ctx.RequiredDenyRules = criticalDenyRules()
+
+	// Deny rule conflict validation.
+	ctx.DenyRules = claudecode.AllBaseDenyRules()
+	builtinSkills := claudecode.BuiltinSkillDefinitions()
+	ctx.SkillOps = make([]check.SkillOps, len(builtinSkills))
+	for i, s := range builtinSkills {
+		ctx.SkillOps[i] = check.SkillOps{
+			Name:         s.Name,
+			AllowedTools: s.AllowedTools,
+		}
+	}
+	ctx.ExpectedConflictKeys = claudecode.ExpectedConflicts()
 
 	// Run all checks.
 	report := check.RunAllChecks(ctx)

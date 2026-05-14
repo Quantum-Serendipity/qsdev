@@ -17,7 +17,8 @@ const (
 	CategoryConfigIntegrity CheckCategory = "config_integrity"
 	CategoryRequiredTools  CheckCategory = "required_tools"
 	CategoryFileState      CheckCategory = "generated_file_state"
-	CategorySecurityHarden CheckCategory = "security_hardening"
+	CategorySecurityHarden  CheckCategory = "security_hardening"
+	CategoryDenyConflicts   CheckCategory = "deny_rule_conflicts"
 )
 
 // categoryDisplayName returns a human-friendly label.
@@ -33,6 +34,8 @@ func categoryDisplayName(c CheckCategory) string {
 		return "Generated File State"
 	case CategorySecurityHarden:
 		return "Security Hardening"
+	case CategoryDenyConflicts:
+		return "Deny Rule Conflicts"
 	default:
 		return string(c)
 	}
@@ -155,8 +158,11 @@ type CheckContext struct {
 	GdevConfig        *types.GdevConfig
 	ToolNames         []string
 	ProfileNames      []string
-	RequiredDenyRules []string
-	StateFile         string
+	RequiredDenyRules    []string
+	StateFile            string
+	DenyRules            []string
+	SkillOps             []SkillOps
+	ExpectedConflictKeys map[string]string
 }
 
 // CheckFailedError signals that checks failed at the given audit level.

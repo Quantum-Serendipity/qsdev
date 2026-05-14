@@ -1,7 +1,6 @@
 package devinit
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -257,70 +256,6 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Disabled %q.\n", tool.DisplayName)
-	return nil
-}
-
-// runStatus prints the enabled/disabled state of every registered tool.
-func runStatus(cmd *cobra.Command, opts statusOptions) error {
-	projectRoot, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("determining project root: %w", err)
-	}
-
-	registry := toolreg.DefaultRegistry()
-
-	answers, err := loadAnswersOrEmpty(projectRoot)
-	if err != nil {
-		return fmt.Errorf("loading answers: %w", err)
-	}
-	answers.ProjectRoot = projectRoot
-	toolreg.InferEnabledTools(&answers, registry)
-
-	tools := registry.All()
-
-	if opts.JSON {
-		return printStatusJSON(cmd, tools, answers.EnabledTools)
-	}
-
-	fmt.Fprintf(cmd.OutOrStdout(), "%-25s  %-15s  %s\n", "Tool", "Status", "Category")
-	fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("-", 65))
-
-	for _, t := range tools {
-		status := "disabled"
-		if answers.EnabledTools[t.Name] {
-			status = "enabled"
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "%-25s  %-15s  %s\n", t.Name, status, t.Category.DisplayName())
-	}
-	return nil
-}
-
-// printStatusJSON outputs tool status as a JSON array.
-func printStatusJSON(cmd *cobra.Command, tools []*toolreg.Tool, enabled map[string]bool) error {
-	type toolStatus struct {
-		Name        string `json:"name"`
-		DisplayName string `json:"display_name"`
-		Category    string `json:"category"`
-		Enabled     bool   `json:"enabled"`
-		Description string `json:"description"`
-	}
-
-	statuses := make([]toolStatus, 0, len(tools))
-	for _, t := range tools {
-		statuses = append(statuses, toolStatus{
-			Name:        t.Name,
-			DisplayName: t.DisplayName,
-			Category:    string(t.Category),
-			Enabled:     enabled[t.Name],
-			Description: t.Description,
-		})
-	}
-
-	data, err := json.MarshalIndent(statuses, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling status: %w", err)
-	}
-	fmt.Fprintln(cmd.OutOrStdout(), string(data))
 	return nil
 }
 

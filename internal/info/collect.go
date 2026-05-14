@@ -83,9 +83,7 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 
 	// From answers.
 	info.ClaudeCodeEnabled = answers.ClaudeCode
-	if info.ProjectName == "" {
-		info.ProjectName = answers.ProjectName
-	}
+	info.ProjectName = answers.ProjectName
 	if info.SecurityProfile == "" && answers.ComplianceLevel != "" {
 		info.SecurityProfile = answers.ComplianceLevel
 	}

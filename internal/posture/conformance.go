@@ -1,6 +1,10 @@
 package posture
 
-import "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+import (
+	"strings"
+
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+)
 
 // EvaluateConformance checks baseline and enhanced conformance.
 func EvaluateConformance(
@@ -10,7 +14,7 @@ func EvaluateConformance(
 	genState types.GeneratedState,
 ) ConformanceResult {
 	baselineChecks := evaluateBaseline(defense, deps, genState)
-	enhancedChecks := evaluateEnhanced(defense, deps, enabledTools)
+	enhancedChecks := evaluateEnhanced(defense, deps, enabledTools, genState)
 
 	baselinePass := true
 	for _, c := range baselineChecks {
@@ -118,6 +122,7 @@ func evaluateEnhanced(
 	defense DefenseCoverage,
 	deps DependencyHealth,
 	enabledTools map[string]bool,
+	genState types.GeneratedState,
 ) []ConformanceCheck {
 	var checks []ConformanceCheck
 
@@ -155,6 +160,19 @@ func evaluateEnhanced(
 		Name:   "age-gating-configured",
 		Pass:   ageGatingOK,
 		Reason: boolReason(ageGatingOK, "age-gating configured", "age-gating not configured"),
+	})
+
+	ciGenerated := false
+	for path := range genState.Files {
+		if strings.HasPrefix(path, ".github/workflows/") {
+			ciGenerated = true
+			break
+		}
+	}
+	checks = append(checks, ConformanceCheck{
+		Name:   "ci-workflows-generated",
+		Pass:   ciGenerated,
+		Reason: boolReason(ciGenerated, "CI workflows generated", "no CI workflows in generated state"),
 	})
 
 	return checks

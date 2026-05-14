@@ -1,6 +1,7 @@
 package surgery
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -267,4 +268,25 @@ func findSubstr(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestMarkdownInsertSection_Idempotent(t *testing.T) {
+	existing := []byte("<!-- END GENERATED SECTION -->\n")
+
+	result, err := MarkdownInsertSection(existing, "test-section", []byte("hello"))
+	if err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+
+	result, err = MarkdownInsertSection(result, "test-section", []byte("hello"))
+	if err != nil {
+		t.Fatalf("second insert: %v", err)
+	}
+
+	got := string(result)
+	marker := "<!-- gdev:test-section -->"
+	count := strings.Count(got, marker)
+	if count != 1 {
+		t.Errorf("expected exactly 1 instance of section marker, got %d\nfull output:\n%s", count, got)
+	}
 }

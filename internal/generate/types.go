@@ -1,6 +1,10 @@
 package generate
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+)
 
 // FileAction represents the outcome of processing a single generated file.
 type FileAction int
@@ -53,6 +57,24 @@ func (r WriteResult) Summary() string {
 // HasFailures returns true if any files failed to write.
 func (r WriteResult) HasFailures() bool {
 	return r.Failed > 0
+}
+
+// SuccessfulFiles filters the original generated files list down to only those
+// that were actually written to disk (ActionCreated or ActionUpdated).
+func (r WriteResult) SuccessfulFiles(allFiles []types.GeneratedFile) []types.GeneratedFile {
+	written := make(map[string]bool, r.Created+r.Updated)
+	for _, fr := range r.Files {
+		if fr.Action == ActionCreated || fr.Action == ActionUpdated {
+			written[fr.Path] = true
+		}
+	}
+	result := make([]types.GeneratedFile, 0, len(written))
+	for _, f := range allFiles {
+		if written[f.Path] {
+			result = append(result, f)
+		}
+	}
+	return result
 }
 
 // ValidationResult records the outcome of validating a single file's content.

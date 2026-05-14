@@ -36,6 +36,31 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	// 3. Convert config to answers using temporary bridge function.
 	answers := configToAnswersTemp(cfg, detected, projectRoot)
 
+	// 3b. If --answers-file is set, merge file answers over config answers.
+	if opts.AnswersFile != "" {
+		fileAnswers, err := LoadAnswersFile(opts.AnswersFile)
+		if err != nil {
+			return err
+		}
+		fileAnswers.ProjectRoot = projectRoot
+		fileAnswers.ProjectName = filepath.Base(projectRoot)
+
+		flagSet := NewFlagSet(cmd)
+		changed := flagSetToChangedMap(flagSet, cmd)
+		flagAnswers, err := AnswersFromFlags(opts, projectRoot)
+		if err != nil {
+			return err
+		}
+		answers = MergeFileWithFlags(fileAnswers, flagAnswers, changed)
+
+		if err := ValidateAnswersFileCompleteness(answers); err != nil {
+			return err
+		}
+
+		answers.Confirmed = true
+		answers.Detected = detected
+	}
+
 	// 4. Check prerequisites.
 	prereqs := CheckPrerequisites(cmd.Context())
 	if prereqs.HasMissing() {
@@ -105,12 +130,18 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		return fmt.Errorf("writing files: %w", err)
 	}
 
-	// 11. Record state with GdevVersion.
-	genState := state.RecordFiles(allFiles)
+	// 11. Record state with GdevVersion (only for successfully written files).
+	successfulFiles := result.SuccessfulFiles(allFiles)
+	genState := state.RecordFiles(successfulFiles)
 	genState.GdevVersion = version.Info().Version
 	stateFile := filepath.Join(projectRoot, statePath)
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
+	}
+
+	if result.HasFailures() {
+		return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); run gdev repair to recover",
+			result.Failed, len(successfulFiles))
 	}
 
 	// 12. Save answers.
@@ -193,7 +224,8 @@ func configToAnswersTemp(cfg *types.GdevConfig, detected types.DetectedProject, 
 		answers.ProjectTypeProfile = cfg.Profile
 	}
 
-	// Map infrastructure profile.
+	// Map infrastructure config.
+	answers.Infrastructure = cfg.Infrastructure
 	if cfg.Infrastructure.RegistryProxy != "" || cfg.Infrastructure.NixCache != "" || cfg.Infrastructure.BuildCache != "" {
 		answers.ProfileName = cfg.Profile
 	}

@@ -52,7 +52,7 @@ func MergeSettings(base, theirs, ours []byte) ([]byte, error) {
 		}
 	}
 	if len(theirs) == 0 {
-		return nil, fmt.Errorf("parsing theirs settings: unexpected end of JSON input")
+		return nil, fmt.Errorf("current settings.json is empty; cannot merge")
 	}
 	if err := json.Unmarshal(theirs, &theirsParsed); err != nil {
 		return nil, fmt.Errorf("parsing theirs settings: %w", err)

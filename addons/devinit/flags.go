@@ -1,7 +1,9 @@
 package devinit
 
 import (
+	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -9,6 +11,8 @@ import (
 
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
+
+var validEnvKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // FlagSet tracks which CLI flags were explicitly set by the user.
 type FlagSet struct {
@@ -76,6 +80,9 @@ type InitOptions struct {
 	AgentSembleMode      string
 	AgentSembleTextFiles bool
 
+	// Non-interactive
+	AnswersFile string
+
 	// Mode override
 	Mode string
 }
@@ -92,6 +99,9 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.Flags().BoolVar(&opts.DevenvOnly, "devenv-only", false, "Only generate devenv configuration (skip Claude Code)")
 	cmd.Flags().BoolVar(&opts.ClaudeOnly, "claude-only", false, "Only generate Claude Code configuration (skip devenv)")
 	cmd.Flags().StringVar(&opts.ProfileName, "profile", "", "Project-type profile name (e.g. go-web, ts-fullstack)")
+	cmd.Flags().StringVar(&opts.AnswersFile, "answers-file", "", "Load answers from a YAML file (use - for stdin)")
+
+	cmd.MarkFlagsMutuallyExclusive("answers-file", "update")
 
 	// Language-specific flags.
 	cmd.Flags().StringVar(&opts.GoVersion, "go-version", "", "Go version (e.g. 1.24)")
@@ -140,7 +150,7 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 // AnswersFromFlags converts flag values into WizardAnswers.
 // Language-specific version flags implicitly add their language if it is
 // not already present in the --lang list.
-func AnswersFromFlags(opts InitOptions, projectRoot string) types.WizardAnswers {
+func AnswersFromFlags(opts InitOptions, projectRoot string) (types.WizardAnswers, error) {
 	answers := types.WizardAnswers{
 		ProjectRoot:       projectRoot,
 		ProjectName:       filepath.Base(projectRoot),
@@ -231,9 +241,15 @@ func AnswersFromFlags(opts InitOptions, projectRoot string) types.WizardAnswers 
 	if len(opts.Env) > 0 {
 		answers.EnvVars = make(map[string]string, len(opts.Env))
 		for _, kv := range opts.Env {
-			if idx := strings.IndexByte(kv, '='); idx >= 0 {
-				answers.EnvVars[kv[:idx]] = kv[idx+1:]
+			idx := strings.IndexByte(kv, '=')
+			if idx < 0 {
+				continue
 			}
+			key := kv[:idx]
+			if !validEnvKey.MatchString(key) {
+				return answers, fmt.Errorf("invalid environment variable name %q: must match [A-Za-z_][A-Za-z0-9_]*", key)
+			}
+			answers.EnvVars[key] = kv[idx+1:]
 		}
 	}
 
@@ -252,5 +268,5 @@ func AnswersFromFlags(opts InitOptions, projectRoot string) types.WizardAnswers 
 		answers.ProjectTypeProfile = opts.ProfileName
 	}
 
-	return answers
+	return answers, nil
 }

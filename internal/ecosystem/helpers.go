@@ -38,6 +38,17 @@ func ToModuleConfig(lang types.LanguageChoice) ModuleConfig {
 	}
 }
 
+// ToModuleConfigWithProxy converts a LanguageChoice into a ModuleConfig with
+// the registry proxy URL resolved for the specific ecosystem.
+func ToModuleConfigWithProxy(lang types.LanguageChoice, infra types.InfraConfig) ModuleConfig {
+	cfg := ToModuleConfig(lang)
+	proxyKey := ProxyKeyForLanguage(lang.Name, lang.PackageManager)
+	if proxyKey != "" {
+		cfg.RegistryProxy = ResolveProxyURL(infra.RegistryProxy, infra.RegistryProxyOverrides, proxyKey)
+	}
+	return cfg
+}
+
 // ExtrasMap converts a []string of extras from LanguageChoice into a
 // map[string]string for ModuleConfig.Extras. Each string is either:
 //   - "key=value" → map[key] = value

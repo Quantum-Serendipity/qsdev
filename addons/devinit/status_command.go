@@ -113,8 +113,7 @@ func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptio
 	if err != nil {
 		if errors.Is(err, posture.ErrNotInitialized) {
 			fmt.Fprintln(cmd.ErrOrStderr(), "Project not initialized. Run 'gdev init' first.")
-			os.Exit(exitNotInitialized)
-			return nil // unreachable, but keeps the linter happy
+			return &ExitError{Code: exitNotInitialized}
 		}
 		return fmt.Errorf("assessing project posture: %w", err)
 	}
@@ -184,7 +183,7 @@ func resolveFormat(cmd *cobra.Command, opts postureStatusOptions) posture.Output
 // appropriate exit code if findings exceed the threshold.
 func exitForAudit(report *posture.PostureReport, auditLevel string) error {
 	if posture.ShouldExitNonZero(report, auditLevel) {
-		os.Exit(exitFindings)
+		return &ExitError{Code: exitFindings}
 	}
 	return nil
 }

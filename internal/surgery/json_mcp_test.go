@@ -335,3 +335,57 @@ func TestJSONAddMCPServer_PreservesOtherKeysOnRemoveLastServer(t *testing.T) {
 		t.Error("mcpServers key should be removed when empty")
 	}
 }
+
+func TestJSONAddMCPServer_DeterministicSortedOutput(t *testing.T) {
+	var content []byte
+	var err error
+
+	content, err = JSONAddMCPServer(content, "charlie", json.RawMessage(`{"command":"c"}`))
+	if err != nil {
+		t.Fatalf("adding charlie: %v", err)
+	}
+	content, err = JSONAddMCPServer(content, "alpha", json.RawMessage(`{"command":"a"}`))
+	if err != nil {
+		t.Fatalf("adding alpha: %v", err)
+	}
+	content, err = JSONAddMCPServer(content, "bravo", json.RawMessage(`{"command":"b"}`))
+	if err != nil {
+		t.Fatalf("adding bravo: %v", err)
+	}
+
+	got := string(content)
+
+	alphaIdx := strings.Index(got, `"alpha"`)
+	bravoIdx := strings.Index(got, `"bravo"`)
+	charlieIdx := strings.Index(got, `"charlie"`)
+
+	if alphaIdx == -1 || bravoIdx == -1 || charlieIdx == -1 {
+		t.Fatalf("expected all three servers in output, got:\n%s", got)
+	}
+
+	if alphaIdx >= bravoIdx || bravoIdx >= charlieIdx {
+		t.Errorf("expected alphabetical order (alpha < bravo < charlie), got positions alpha=%d bravo=%d charlie=%d\noutput:\n%s",
+			alphaIdx, bravoIdx, charlieIdx, got)
+	}
+
+	for i := 0; i < 20; i++ {
+		var repeat []byte
+		repeat, err = JSONAddMCPServer(nil, "charlie", json.RawMessage(`{"command":"c"}`))
+		if err != nil {
+			t.Fatalf("iteration %d charlie: %v", i, err)
+		}
+		repeat, err = JSONAddMCPServer(repeat, "alpha", json.RawMessage(`{"command":"a"}`))
+		if err != nil {
+			t.Fatalf("iteration %d alpha: %v", i, err)
+		}
+		repeat, err = JSONAddMCPServer(repeat, "bravo", json.RawMessage(`{"command":"b"}`))
+		if err != nil {
+			t.Fatalf("iteration %d bravo: %v", i, err)
+		}
+
+		if string(repeat) != got {
+			t.Errorf("iteration %d produced different output:\nexpected:\n%s\ngot:\n%s", i, got, string(repeat))
+			break
+		}
+	}
+}

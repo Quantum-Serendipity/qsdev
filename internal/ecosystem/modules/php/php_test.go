@@ -208,6 +208,62 @@ func TestSecurityConfigs(t *testing.T) {
 	}
 }
 
+func TestSecurityConfigs_RegistryProxy(t *testing.T) {
+	m := &php.Module{}
+	proxy := "https://packagist.corp.example.com"
+	configs := m.SecurityConfigs(ecosystem.ModuleConfig{
+		RegistryProxy: proxy,
+	})
+
+	if len(configs) != 1 {
+		t.Fatalf("SecurityConfigs() returned %d files, want 1", len(configs))
+	}
+
+	content := string(configs[0].Content)
+	// Proxy repository must be present.
+	if !strings.Contains(content, proxy) {
+		t.Errorf("composer-security.json missing proxy URL\ncontent:\n%s", content)
+	}
+	if !strings.Contains(content, "composer") {
+		t.Errorf("composer-security.json missing repository type\ncontent:\n%s", content)
+	}
+	if !strings.Contains(content, `"repositories"`) {
+		t.Errorf("composer-security.json missing repositories key\ncontent:\n%s", content)
+	}
+	// Existing security settings must be preserved.
+	if !strings.Contains(content, `"secure-http"`) {
+		t.Errorf("composer-security.json missing secure-http when proxy is set\ncontent:\n%s", content)
+	}
+	if !strings.Contains(content, `"preferred-install"`) {
+		t.Errorf("composer-security.json missing preferred-install when proxy is set\ncontent:\n%s", content)
+	}
+}
+
+func TestSecurityConfigs_NoRegistryProxy(t *testing.T) {
+	m := &php.Module{}
+	configs := m.SecurityConfigs(ecosystem.ModuleConfig{})
+
+	content := string(configs[0].Content)
+	if strings.Contains(content, `"repositories"`) {
+		t.Errorf("composer-security.json should not contain repositories when proxy is empty\ncontent:\n%s", content)
+	}
+}
+
+func TestSecurityConfigs_RegistryProxyPreservesExisting(t *testing.T) {
+	m := &php.Module{}
+	proxy := "https://packagist.corp.example.com"
+	configs := m.SecurityConfigs(ecosystem.ModuleConfig{
+		RegistryProxy: proxy,
+	})
+
+	content := string(configs[0].Content)
+	for _, s := range []string{`"secure-http"`, `"lock"`, `"audit"`, `"allow-plugins"`, `"preferred-install"`} {
+		if !strings.Contains(content, s) {
+			t.Errorf("composer-security.json missing %s when proxy is set\ncontent:\n%s", s, content)
+		}
+	}
+}
+
 func TestCICommands(t *testing.T) {
 	m := &php.Module{}
 	cmds := m.CICommands(ecosystem.ModuleConfig{})

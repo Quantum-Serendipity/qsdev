@@ -63,9 +63,10 @@ type ClaudeCodeConfig struct {
 
 // InfraConfig holds infrastructure settings (registry proxy, caches) in .gdev.yaml.
 type InfraConfig struct {
-	RegistryProxy string `yaml:"registry_proxy,omitempty"`
-	NixCache      string `yaml:"nix_cache,omitempty"`
-	BuildCache    string `yaml:"build_cache,omitempty"`
+	RegistryProxy          string            `yaml:"registry_proxy,omitempty"`
+	RegistryProxyOverrides map[string]string `yaml:"registry_proxy_overrides,omitempty"`
+	NixCache               string            `yaml:"nix_cache,omitempty"`
+	BuildCache             string            `yaml:"build_cache,omitempty"`
 }
 
 // GitConfig holds git workflow settings in .gdev.yaml.

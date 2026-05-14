@@ -159,10 +159,7 @@ func secretspecTool() Tool {
 		DisplayName: "Secret Specification",
 		Category:    CategoryDevEx,
 		Description: "Generates secretspec.toml declaring required secrets for services and ecosystem modules",
-		Default:     OnWhenDetected,
-		DetectFunc: func(d types.DetectedProject) bool {
-			return false
-		},
+		Default: OptIn,
 		OwnedFiles: []FileOwnership{
 			{Path: "secretspec.toml", Ownership: Exclusive},
 			{Path: "devenv.nix", Ownership: Shared, SectionID: "secretspec"},

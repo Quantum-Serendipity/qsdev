@@ -75,6 +75,15 @@ var (
 	// ExportValidateAnswers exposes ValidateAnswers for external tests.
 	ExportValidateAnswers = ValidateAnswers
 
+	// ExportLoadAnswersFile exposes LoadAnswersFile for external tests.
+	ExportLoadAnswersFile = LoadAnswersFile
+
+	// ExportLoadAnswersFromReader exposes LoadAnswersFromReader for external tests.
+	ExportLoadAnswersFromReader = LoadAnswersFromReader
+
+	// ExportValidateAnswersFileCompleteness exposes ValidateAnswersFileCompleteness for external tests.
+	ExportValidateAnswersFileCompleteness = ValidateAnswersFileCompleteness
+
 	// ExportRegisterInitFlags exposes RegisterInitFlags for external tests.
 	ExportRegisterInitFlags = RegisterInitFlags
 

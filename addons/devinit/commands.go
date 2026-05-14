@@ -117,7 +117,30 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	detected := detect.Detect(projectRoot)
 
 	// e. Build answers from flags.
-	answers := AnswersFromFlags(opts, projectRoot)
+	answers, err := AnswersFromFlags(opts, projectRoot)
+	if err != nil {
+		return err
+	}
+
+	// e2. If --answers-file is set, load from file and merge with CLI flag overrides.
+	if opts.AnswersFile != "" {
+		fileAnswers, err := LoadAnswersFile(opts.AnswersFile)
+		if err != nil {
+			return err
+		}
+		fileAnswers.ProjectRoot = projectRoot
+		fileAnswers.ProjectName = filepath.Base(projectRoot)
+
+		changed := flagSetToChangedMap(flagSet, cmd)
+		answers = MergeFileWithFlags(fileAnswers, answers, changed)
+
+		if err := ValidateAnswersFileCompleteness(answers); err != nil {
+			return err
+		}
+
+		answers.Confirmed = true
+		answers.Detected = detected
+	}
 
 	// f. If --profile set, load profile and merge.
 	if opts.ProfileName != "" {
@@ -213,12 +236,19 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		return fmt.Errorf("writing files: %w", err)
 	}
 
-	// p. Save state.
-	genState := state.RecordFiles(allFiles)
+	// p. Save state immediately after write, recording only successfully
+	// written files so partial writes leave a recoverable state.
+	successfulFiles := result.SuccessfulFiles(allFiles)
+	genState := state.RecordFiles(successfulFiles)
 	genState.GdevVersion = version.Info().Version
 	stateFile := filepath.Join(projectRoot, statePath)
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
+	}
+
+	if result.HasFailures() {
+		return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); run gdev repair to recover",
+			result.Failed, len(successfulFiles))
 	}
 
 	// q. Save unified answers.

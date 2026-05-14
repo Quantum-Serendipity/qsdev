@@ -233,9 +233,10 @@ func TestEvaluateConformance_EnhancedPass(t *testing.T) {
 	}
 	genState := types.GeneratedState{
 		Files: map[string]types.FileState{
-			"CLAUDE.md":                {},
-			".claude/settings.json":    {},
-			".pre-commit-config.yaml":  {},
+			"CLAUDE.md":                    {},
+			".claude/settings.json":        {},
+			".pre-commit-config.yaml":      {},
+			".github/workflows/ci.yml":     {},
 		},
 	}
 
@@ -397,8 +398,8 @@ func TestEvaluateConformance_BaselineCheckCount(t *testing.T) {
 	if len(result.Baseline.Checks) != 6 {
 		t.Errorf("baseline check count: got %d, want 6", len(result.Baseline.Checks))
 	}
-	if len(result.Enhanced.Checks) != 5 {
-		t.Errorf("enhanced check count: got %d, want 5", len(result.Enhanced.Checks))
+	if len(result.Enhanced.Checks) != 6 {
+		t.Errorf("enhanced check count: got %d, want 6", len(result.Enhanced.Checks))
 	}
 }
 
@@ -460,5 +461,104 @@ func TestEvaluateConformance_BaselineFail_NoSettingsJSON(t *testing.T) {
 
 	if result.Baseline.Pass {
 		t.Error("expected baseline to fail without settings.json")
+	}
+}
+
+func TestEvaluateConformance_EnhancedPass_CIWorkflows(t *testing.T) {
+	defense := DefenseCoverage{
+		Layers: []DefenseLayer{
+			{Name: "pretooluse-hooks", Weight: WeightCritical, Status: LayerEnabled},
+			{Name: "age-gating", Weight: WeightHigh, Status: LayerEnabled},
+			{Name: "install-script-blocking", Weight: WeightHigh, Status: LayerEnabled},
+			{Name: "lock-file-enforcement", Weight: WeightHigh, Status: LayerEnabled},
+			{Name: "vulnerability-scanning", Weight: WeightHigh, Status: LayerEnabled},
+			{Name: "nix-hardening", Weight: WeightMedium, Status: LayerEnabled},
+			{Name: "sast", Weight: WeightMedium, Status: LayerEnabled},
+			{Name: "secrets-scanning", Weight: WeightMedium, Status: LayerEnabled},
+			{Name: "container-security", Weight: WeightMedium, Status: LayerNotApplicable},
+			{Name: "license-compliance", Weight: WeightLow, Status: LayerEnabled},
+		},
+	}
+	deps := DependencyHealth{
+		Ecosystems: []EcosystemStatus{{Name: "go", Detected: true, LockFile: "valid"}},
+	}
+	enabledTools := map[string]bool{
+		"semgrep":            true,
+		"gitleaks":           true,
+		"license-compliance": true,
+	}
+	genState := types.GeneratedState{
+		Files: map[string]types.FileState{
+			"CLAUDE.md":                    {},
+			".claude/settings.json":        {},
+			".pre-commit-config.yaml":      {},
+			".github/workflows/ci.yml":     {},
+		},
+	}
+
+	result := EvaluateConformance(defense, deps, enabledTools, genState)
+
+	found := false
+	for _, c := range result.Enhanced.Checks {
+		if c.Name == "ci-workflows-generated" {
+			found = true
+			if !c.Pass {
+				t.Error("ci-workflows-generated should pass when workflow file exists")
+			}
+		}
+	}
+	if !found {
+		t.Error("ci-workflows-generated check not found in enhanced checks")
+	}
+}
+
+func TestEvaluateConformance_EnhancedFail_NoCIWorkflows(t *testing.T) {
+	defense := DefenseCoverage{
+		Layers: []DefenseLayer{
+			{Name: "pretooluse-hooks", Weight: WeightCritical, Status: LayerEnabled},
+			{Name: "age-gating", Weight: WeightHigh, Status: LayerEnabled},
+			{Name: "install-script-blocking", Weight: WeightHigh, Status: LayerEnabled},
+			{Name: "lock-file-enforcement", Weight: WeightHigh, Status: LayerEnabled},
+			{Name: "vulnerability-scanning", Weight: WeightHigh, Status: LayerEnabled},
+			{Name: "nix-hardening", Weight: WeightMedium, Status: LayerEnabled},
+			{Name: "sast", Weight: WeightMedium, Status: LayerEnabled},
+			{Name: "secrets-scanning", Weight: WeightMedium, Status: LayerEnabled},
+			{Name: "container-security", Weight: WeightMedium, Status: LayerNotApplicable},
+			{Name: "license-compliance", Weight: WeightLow, Status: LayerEnabled},
+		},
+	}
+	deps := DependencyHealth{
+		Ecosystems: []EcosystemStatus{{Name: "go", Detected: true, LockFile: "valid"}},
+	}
+	enabledTools := map[string]bool{
+		"semgrep":            true,
+		"gitleaks":           true,
+		"license-compliance": true,
+	}
+	genState := types.GeneratedState{
+		Files: map[string]types.FileState{
+			"CLAUDE.md":                {},
+			".claude/settings.json":    {},
+			".pre-commit-config.yaml":  {},
+		},
+	}
+
+	result := EvaluateConformance(defense, deps, enabledTools, genState)
+
+	found := false
+	for _, c := range result.Enhanced.Checks {
+		if c.Name == "ci-workflows-generated" {
+			found = true
+			if c.Pass {
+				t.Error("ci-workflows-generated should fail when no workflow files exist")
+			}
+		}
+	}
+	if !found {
+		t.Error("ci-workflows-generated check not found in enhanced checks")
+	}
+
+	if result.Enhanced.Pass {
+		t.Error("expected enhanced to fail without CI workflows")
 	}
 }

@@ -105,21 +105,36 @@ func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvIn
 }
 
 // SecurityConfigs returns a security-hardened Composer configuration file.
-func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {
-	securityConfig := struct {
-		Comment  string `json:"_comment"`
-		Requires string `json:"_requires"`
-		Config   struct {
+func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {
+	type composerRepo struct {
+		Type string `json:"type"`
+		URL  string `json:"url"`
+	}
+
+	type securityConfigType struct {
+		Comment      string         `json:"_comment"`
+		Requires     string         `json:"_requires"`
+		Repositories []composerRepo `json:"repositories,omitempty"`
+		Config       struct {
 			SecureHTTP       bool              `json:"secure-http"`
 			Lock             bool              `json:"lock"`
 			Audit            map[string]string `json:"audit"`
 			AllowPlugins     map[string]any    `json:"allow-plugins"`
 			PreferredInstall string            `json:"preferred-install"`
 		} `json:"config"`
-	}{
+	}
+
+	securityConfig := securityConfigType{
 		Comment:  "Security-hardened Composer configuration — merge into your composer.json config section.",
 		Requires: "Composer >= 2.9 for audit.block-insecure. Composer 2.9+ blocks known-vulnerable packages by default.",
 	}
+
+	if config.RegistryProxy != "" {
+		securityConfig.Repositories = []composerRepo{
+			{Type: "composer", URL: config.RegistryProxy},
+		}
+	}
+
 	securityConfig.Config.SecureHTTP = true
 	securityConfig.Config.Lock = true
 	securityConfig.Config.Audit = map[string]string{"abandoned": "fail"}
@@ -150,7 +165,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Name:          "phpcs",
 			Description:   "Run PHP_CodeSniffer to check coding standards",
 			Entry:         "phpcs",
-			Language:      "php",
+			Language:      "system",
 			Types:         []string{"php"},
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
@@ -161,7 +176,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Name:          "phpstan",
 			Description:   "Run PHPStan static analysis",
 			Entry:         "phpstan analyse",
-			Language:      "php",
+			Language:      "system",
 			Types:         []string{"php"},
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,

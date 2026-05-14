@@ -265,3 +265,25 @@ func TestNixInsertSection_MultipleSections(t *testing.T) {
 		t.Error("tool-b markers should be present")
 	}
 }
+
+func TestNixInsertSection_Idempotent(t *testing.T) {
+	existing := []byte("{ pkgs, ... }:\n{\n}\n")
+
+	result, err := NixInsertSection(existing, "test-section", []byte("# some nix code"))
+	if err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+
+	result, err = NixInsertSection(result, "test-section", []byte("# some nix code"))
+	if err != nil {
+		t.Fatalf("second insert: %v", err)
+	}
+
+	got := string(result)
+	if count := strings.Count(got, "# --- test-section ---"); count != 1 {
+		t.Errorf("expected 1 open marker, got %d\nfull output:\n%s", count, got)
+	}
+	if count := strings.Count(got, "# --- end test-section ---"); count != 1 {
+		t.Errorf("expected 1 end marker, got %d\nfull output:\n%s", count, got)
+	}
+}

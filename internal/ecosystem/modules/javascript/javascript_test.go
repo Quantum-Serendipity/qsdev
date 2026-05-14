@@ -511,6 +511,117 @@ func TestSecurityConfigs_DefaultsToNPM(t *testing.T) {
 	}
 }
 
+// --- Registry proxy tests ---
+
+func TestSecurityConfigs_NPM_RegistryProxy(t *testing.T) {
+	m := &javascript.Module{}
+	proxy := "https://npm.corp.example.com"
+	configs := m.SecurityConfigs(ecosystem.ModuleConfig{
+		PackageManager: "npm",
+		RegistryProxy:  proxy,
+	})
+
+	if len(configs) != 1 {
+		t.Fatalf("SecurityConfigs() returned %d configs, want 1", len(configs))
+	}
+
+	content := string(configs[0].Content)
+	// Proxy line must be present.
+	if !strings.Contains(content, "registry="+proxy) {
+		t.Errorf(".npmrc missing registry proxy line\ncontent:\n%s", content)
+	}
+	// Existing security settings must be preserved.
+	for _, s := range []string{"save-exact=true", "ignore-scripts=true", "min-release-age=3", "audit=true"} {
+		if !strings.Contains(content, s) {
+			t.Errorf(".npmrc missing existing security setting %q when proxy is set\ncontent:\n%s", s, content)
+		}
+	}
+}
+
+func TestSecurityConfigs_NPM_NoRegistryProxy(t *testing.T) {
+	m := &javascript.Module{}
+	configs := m.SecurityConfigs(ecosystem.ModuleConfig{PackageManager: "npm"})
+
+	content := string(configs[0].Content)
+	if strings.Contains(content, "registry=") {
+		t.Errorf(".npmrc should not contain registry= when proxy is empty\ncontent:\n%s", content)
+	}
+}
+
+func TestSecurityConfigs_PNPM_RegistryProxy(t *testing.T) {
+	m := &javascript.Module{}
+	proxy := "https://npm.corp.example.com"
+	configs := m.SecurityConfigs(ecosystem.ModuleConfig{
+		PackageManager: "pnpm",
+		RegistryProxy:  proxy,
+	})
+
+	if len(configs) != 1 {
+		t.Fatalf("SecurityConfigs() returned %d configs, want 1", len(configs))
+	}
+
+	content := string(configs[0].Content)
+	if !strings.Contains(content, "npmRegistryServer") {
+		t.Errorf("pnpm-workspace.yaml missing npmRegistryServer when proxy is set\ncontent:\n%s", content)
+	}
+	if !strings.Contains(content, proxy) {
+		t.Errorf("pnpm-workspace.yaml missing proxy URL\ncontent:\n%s", content)
+	}
+	// Existing security settings must be preserved.
+	for _, s := range []string{"strictDepBuilds", "minimumReleaseAge", "trustPolicy", "blockExoticSubdeps"} {
+		if !strings.Contains(content, s) {
+			t.Errorf("pnpm-workspace.yaml missing %q when proxy is set\ncontent:\n%s", s, content)
+		}
+	}
+}
+
+func TestSecurityConfigs_PNPM_NoRegistryProxy(t *testing.T) {
+	m := &javascript.Module{}
+	configs := m.SecurityConfigs(ecosystem.ModuleConfig{PackageManager: "pnpm"})
+
+	content := string(configs[0].Content)
+	if strings.Contains(content, "npmRegistryServer") {
+		t.Errorf("pnpm-workspace.yaml should not contain npmRegistryServer when proxy is empty\ncontent:\n%s", content)
+	}
+}
+
+func TestSecurityConfigs_Yarn_RegistryProxy(t *testing.T) {
+	m := &javascript.Module{}
+	proxy := "https://npm.corp.example.com"
+	configs := m.SecurityConfigs(ecosystem.ModuleConfig{
+		PackageManager: "yarn",
+		RegistryProxy:  proxy,
+	})
+
+	if len(configs) != 1 {
+		t.Fatalf("SecurityConfigs() returned %d configs, want 1", len(configs))
+	}
+
+	content := string(configs[0].Content)
+	if !strings.Contains(content, "npmRegistryServer") {
+		t.Errorf(".yarnrc.yml missing npmRegistryServer when proxy is set\ncontent:\n%s", content)
+	}
+	if !strings.Contains(content, proxy) {
+		t.Errorf(".yarnrc.yml missing proxy URL\ncontent:\n%s", content)
+	}
+	// Existing security settings must be preserved.
+	for _, s := range []string{"enableImmutableInstalls", "enableHardenedMode", "enableScripts", "npmMinimalAgeGate"} {
+		if !strings.Contains(content, s) {
+			t.Errorf(".yarnrc.yml missing %q when proxy is set\ncontent:\n%s", s, content)
+		}
+	}
+}
+
+func TestSecurityConfigs_Yarn_NoRegistryProxy(t *testing.T) {
+	m := &javascript.Module{}
+	configs := m.SecurityConfigs(ecosystem.ModuleConfig{PackageManager: "yarn"})
+
+	content := string(configs[0].Content)
+	if strings.Contains(content, "npmRegistryServer") {
+		t.Errorf(".yarnrc.yml should not contain npmRegistryServer when proxy is empty\ncontent:\n%s", content)
+	}
+}
+
 // --- PreCommitHooks tests ---
 
 func TestPreCommitHooks(t *testing.T) {

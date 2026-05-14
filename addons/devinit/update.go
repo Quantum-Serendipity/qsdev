@@ -394,10 +394,14 @@ func dispatchMerge(fp FileUpdatePlan, projectRoot string) ([]byte, error) {
 	switch fp.Strategy {
 	case types.ThreeWayMerge:
 		base := fp.OldContent
-		if fp.Path == ".mcp.json" {
+		switch {
+		case fp.Path == ".mcp.json" || strings.HasSuffix(fp.Path, ".mcp.json"):
 			return merge.MergeMcpJson(base, theirs, fp.NewContent)
+		case strings.HasSuffix(fp.Path, "settings.json"):
+			return merge.MergeSettings(base, theirs, fp.NewContent)
+		default:
+			return nil, fmt.Errorf("no three-way merge handler for %s; add one to dispatchMerge()", fp.Path)
 		}
-		return merge.MergeSettings(base, theirs, fp.NewContent)
 	case types.SectionMarker:
 		return merge.SectionMarkers(theirs, fp.NewContent)
 	default:

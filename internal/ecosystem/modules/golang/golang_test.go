@@ -179,6 +179,65 @@ func TestDevenvNixFragment_VersionMapping(t *testing.T) {
 	}
 }
 
+func TestDevenvNixFragment_RegistryProxy(t *testing.T) {
+	m := &golang.Module{}
+	proxy := "https://goproxy.corp.example.com"
+	fragment, err := m.DevenvNixFragment(ecosystem.ModuleConfig{
+		RegistryProxy: proxy,
+	})
+	if err != nil {
+		t.Fatalf("DevenvNixFragment() returned error: %v", err)
+	}
+
+	expected := `env.GOPROXY = "` + proxy + `,direct";`
+	if !strings.Contains(fragment, expected) {
+		t.Errorf("DevenvNixFragment() missing GOPROXY line\nwant: %s\ngot:\n%s", expected, fragment)
+	}
+	// Existing security settings must be preserved.
+	for _, s := range []string{"GOFLAGS", "GONOSUMCHECK", "GONOSUMDB"} {
+		if !strings.Contains(fragment, s) {
+			t.Errorf("DevenvNixFragment() missing %q when proxy is set\ngot:\n%s", s, fragment)
+		}
+	}
+}
+
+func TestDevenvNixFragment_NoRegistryProxy(t *testing.T) {
+	m := &golang.Module{}
+	fragment, err := m.DevenvNixFragment(ecosystem.ModuleConfig{})
+	if err != nil {
+		t.Fatalf("DevenvNixFragment() returned error: %v", err)
+	}
+
+	if strings.Contains(fragment, "GOPROXY") {
+		t.Errorf("DevenvNixFragment() should not contain GOPROXY when proxy is empty\ngot:\n%s", fragment)
+	}
+}
+
+func TestDevenvNixFragment_RegistryProxyPreservesExisting(t *testing.T) {
+	m := &golang.Module{}
+	proxy := "https://goproxy.corp.example.com"
+	fragment, err := m.DevenvNixFragment(ecosystem.ModuleConfig{
+		RegistryProxy: proxy,
+		Version:       "1.22",
+	})
+	if err != nil {
+		t.Fatalf("DevenvNixFragment() returned error: %v", err)
+	}
+
+	// All existing env vars must still be present.
+	for _, s := range []string{
+		`env.GOFLAGS = "-mod=readonly"`,
+		`env.GONOSUMCHECK = ""`,
+		`env.GONOSUMDB = ""`,
+		"languages.go",
+		"enable = true",
+	} {
+		if !strings.Contains(fragment, s) {
+			t.Errorf("DevenvNixFragment() missing %q when proxy is set\ngot:\n%s", s, fragment)
+		}
+	}
+}
+
 func TestDevenvYamlInputs(t *testing.T) {
 	m := &golang.Module{}
 	inputs := m.DevenvYamlInputs(ecosystem.ModuleConfig{})

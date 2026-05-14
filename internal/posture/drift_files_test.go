@@ -3,6 +3,7 @@ package posture
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
@@ -148,6 +149,9 @@ func TestDetectFileModification_EmptyState(t *testing.T) {
 }
 
 func TestDetectFileModification_UnreadableFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not enforce POSIX directory permissions")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("test requires non-root to enforce file permission denial")
 	}

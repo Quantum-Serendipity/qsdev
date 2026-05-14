@@ -43,6 +43,8 @@ func initialize() error {
 		listCmd(),
 		configCmd(),
 		checkCmd(),
+		evidenceCmd(),
+		teamReportCmd(),
 	)
 	return nil
 }

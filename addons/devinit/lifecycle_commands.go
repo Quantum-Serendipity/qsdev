@@ -50,28 +50,6 @@ the user, the command warns and exits unless --force is specified.`,
 	return cmd
 }
 
-// statusCmd creates the `gdev status` command.
-func statusCmd() *cobra.Command {
-	var opts statusOptions
-
-	cmd := &cobra.Command{
-		Use:   "status",
-		Short: "Show the status of all tools in the current project",
-		Long: `Display the enabled/disabled state of every registered tool.
-
-By default, output is a human-readable table. Use --json for
-machine-readable output.`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runStatus(cmd, opts)
-		},
-	}
-
-	cmd.Flags().BoolVar(&opts.JSON, "json", false, "Output status as JSON")
-
-	return cmd
-}
-
 // listCmd creates the `gdev list` command.
 func listCmd() *cobra.Command {
 	var opts listOptions
@@ -100,10 +78,6 @@ type enableOptions struct {
 
 type disableOptions struct {
 	Force bool
-}
-
-type statusOptions struct {
-	JSON bool
 }
 
 type listOptions struct {

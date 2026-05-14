@@ -105,6 +105,55 @@ type ExportFlagSet = FlagSet
 // ExportRunUpdate exposes runUpdate for external tests.
 var ExportRunUpdate = runUpdate
 
+// ExportRunCreate exposes runCreate for external tests.
+var ExportRunCreate = runCreate
+
+// ExportRunJoin exposes runJoin for external tests.
+var ExportRunJoin = runJoin
+
+// ExportRunRepair exposes runRepair for external tests.
+var ExportRunRepair = runRepair
+
+// ExportDetectOnboardingMode exposes DetectOnboardingMode for external tests.
+var ExportDetectOnboardingMode = DetectOnboardingMode
+
+// ExportOverrideMode exposes overrideMode for external tests.
+var ExportOverrideMode = overrideMode
+
+// ExportCheckPrerequisites exposes CheckPrerequisites for external tests.
+var ExportCheckPrerequisites = CheckPrerequisites
+
+// ExportEnsureGitignoreEntry exposes EnsureGitignoreEntry for external tests.
+var ExportEnsureGitignoreEntry = EnsureGitignoreEntry
+
+// ExportGenerateLocalConfigTemplate exposes GenerateLocalConfigTemplate for external tests.
+var ExportGenerateLocalConfigTemplate = GenerateLocalConfigTemplate
+
+// ExportConfigToAnswersTemp exposes configToAnswersTemp for external tests.
+var ExportConfigToAnswersTemp = configToAnswersTemp
+
+// ExportOnboardingMode re-exports OnboardingMode for external tests.
+type ExportOnboardingMode = OnboardingMode
+
+// ExportModeDetectionResult re-exports ModeDetectionResult for external tests.
+type ExportModeDetectionResult = ModeDetectionResult
+
+// ExportDriftReport re-exports DriftReport for external tests.
+type ExportDriftReport = DriftReport
+
+// ExportPrerequisiteStatus re-exports PrerequisiteStatus for external tests.
+type ExportPrerequisiteStatus = PrerequisiteStatus
+
+// ExportPrerequisiteResult re-exports PrerequisiteResult for external tests.
+type ExportPrerequisiteResult = PrerequisiteResult
+
+const (
+	ExportModeCreate = ModeCreate
+	ExportModeJoin   = ModeJoin
+	ExportModeUpdate = ModeUpdate
+	ExportModeRepair = ModeRepair
+)
+
 // ExportBuildUpdatePlan exposes buildUpdatePlan for external tests.
 var ExportBuildUpdatePlan = buildUpdatePlan
 
@@ -129,6 +178,9 @@ const (
 	// ExportUpdateActionSidecar exposes UpdateActionSidecar for external tests.
 	ExportUpdateActionSidecar = UpdateActionSidecar
 )
+
+// ExportCheckCmd exposes checkCmd for external tests.
+var ExportCheckCmd = checkCmd
 
 // ExportInitCmd exposes initCmd for external tests.
 var ExportInitCmd = initCmd

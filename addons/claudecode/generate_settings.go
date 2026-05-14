@@ -268,8 +268,12 @@ var denyDestructiveOps = []string{
 	`Read(./secrets/**)`,
 }
 
-// allBaseDenyRules concatenates all categorized deny rule slices into a single
-// comprehensive list. This is the full "fast catch" layer.
+// AllBaseDenyRules returns the full deny rule list. Exported for use by
+// the check command to verify deny rule coverage.
+func AllBaseDenyRules() []string {
+	return allBaseDenyRules()
+}
+
 func allBaseDenyRules() []string {
 	var rules []string
 	rules = append(rules, denyJSPackageManagers...)

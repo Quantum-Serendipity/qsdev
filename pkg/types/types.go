@@ -33,6 +33,8 @@ type WizardAnswers struct {
 	EnabledTools    map[string]bool   `yaml:"enabled_tools,omitempty" json:"enabled_tools,omitempty"`
 	CIPlatform      string            `yaml:"ci_platform,omitempty"   json:"ci_platform,omitempty"`
 	HookTier        string            `yaml:"hook_tier,omitempty"     json:"hook_tier,omitempty"`
+	ConfigVersion   int               `yaml:"config_version,omitempty"   json:"config_version,omitempty"`
+	ComplianceLevel string            `yaml:"compliance_level,omitempty"  json:"compliance_level,omitempty"`
 }
 
 // AgentToolsAnswers holds AI agent tool selections from the wizard.
@@ -126,6 +128,7 @@ type GeneratedFile struct {
 // enabling modification detection on subsequent runs.
 type GeneratedState struct {
 	LastRun             time.Time            `yaml:"last_run"              json:"last_run"`
+	GdevVersion         string               `yaml:"gdev_version,omitempty" json:"gdev_version,omitempty"`
 	Files               map[string]FileState `yaml:"files"                 json:"files"`
 	TemplateVersion     string               `yaml:"template_version"      json:"template_version"`
 	SkillLibraryVersion string               `yaml:"skill_library_version" json:"skill_library_version"`

@@ -17,8 +17,10 @@ import (
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/merge"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/profile"
+	gdevconfig "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/config"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/update"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -83,6 +85,13 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	// 4. Check modification status of all stored files.
 	modStatus := state.CheckModified(existingState, projectRoot)
 
+	// 4b. Version ratchet check — warn if current binary is older than last run.
+	if !opts.Force {
+		if ratchet := gdevconfig.CheckVersionRatchet(version.Info().Version, existingState.GdevVersion); ratchet != nil {
+			return ratchet
+		}
+	}
+
 	// 5. Generate new files from both generators using saved answers.
 	registry := ecosystem.DefaultRegistry()
 	var allFiles []types.GeneratedFile
@@ -133,6 +142,7 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	// 11. Save updated state.
 	// Merge: new state for written files + old state for skipped files.
 	newState := state.RecordFiles(writtenFiles)
+	newState.GdevVersion = version.Info().Version
 	// Preserve state entries for files we didn't touch.
 	for path, fs := range existingState.Files {
 		if _, written := newState.Files[path]; !written {

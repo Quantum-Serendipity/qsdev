@@ -22,3 +22,21 @@ func GenerateVersionSentinelFiles(answers types.WizardAnswers, registry *ecosyst
 func GenerateSembleFiles(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 	return generateSembleFiles(answers)
 }
+
+// DeployOperationSkills is an exported wrapper around deployOperationSkills
+// for use by the tool lifecycle system.
+func DeployOperationSkills(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
+	return deployOperationSkills(answers)
+}
+
+// DeployAgents is an exported wrapper around deployAgents
+// for use by the tool lifecycle system.
+func DeployAgents(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
+	return deployAgents(answers)
+}
+
+// DeployWorkflowSkills is an exported wrapper around deployWorkflowSkills
+// for use by the tool lifecycle system.
+func DeployWorkflowSkills(answers types.WizardAnswers, registry *ecosystem.Registry) ([]types.GeneratedFile, error) {
+	return deployWorkflowSkills(answers, registry)
+}

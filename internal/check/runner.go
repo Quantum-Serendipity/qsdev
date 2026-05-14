@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// RunAllChecks executes all 5 check categories and builds a report.
+// RunAllChecks executes all check categories and builds a report.
 func RunAllChecks(ctx CheckContext) *CheckReport {
 	var results []CheckResult
 
@@ -14,6 +14,7 @@ func RunAllChecks(ctx CheckContext) *CheckReport {
 	results = append(results, CheckRequiredTools(ctx)...)
 	results = append(results, CheckFileState(ctx)...)
 	results = append(results, CheckSecurityHardening(ctx)...)
+	results = append(results, CheckDenyRuleConflicts(ctx)...)
 
 	return BuildReport(results, ctx.BinaryVersion, projectName(ctx))
 }

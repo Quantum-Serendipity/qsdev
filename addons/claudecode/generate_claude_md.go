@@ -9,25 +9,57 @@ import (
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
+// SkillSummary describes a skill for inclusion in CLAUDE.md.
+type SkillSummary struct {
+	Name        string
+	Description string
+	Category    string
+}
+
+// AgentSummary describes a consulting agent for inclusion in CLAUDE.md.
+type AgentSummary struct {
+	Name        string
+	Description string
+}
+
+// CommandSummary describes a gdev CLI command for inclusion in CLAUDE.md.
+type CommandSummary struct {
+	Command     string
+	Description string
+}
+
+// TaskSummary describes a devenv task for inclusion in CLAUDE.md.
+type TaskSummary struct {
+	Name     string
+	Commands []string
+}
+
 // ClaudeMdTemplateData holds all data required to render the CLAUDE.md template.
 type ClaudeMdTemplateData struct {
 	ProjectName        string
 	ProjectDescription string
 	ArchitectureNotes  string
-	Languages          []string // Display names: "Go", "JavaScript/TypeScript", etc.
+	Languages          []string
 	BuildCommands      []string
 	TestCommands       []string
 	LintCommands       []string
 	HasSecurityHooks   bool
-	PackageManagers    []string // "npm", "pip", "cargo" for security section specifics
+	PackageManagers    []string
 
-	PostmortemEnabled      bool
-	VersionSentinelEnabled bool
-	VersionSentinelCovered []string
+	PostmortemEnabled        bool
+	VersionSentinelEnabled   bool
+	VersionSentinelCovered   []string
 	VersionSentinelUncovered []string
-	SembleEnabled          bool
-	SembleMode             string
-	TrailOfBitsEnabled     bool
+	SembleEnabled            bool
+	SembleMode               string
+	TrailOfBitsEnabled       bool
+
+	AvailableSkills  []SkillSummary
+	AvailableAgents  []AgentSummary
+	GdevCommands     []CommandSummary
+	DevenvTasks      []TaskSummary
+	ModelSize        string
+	HasGdevReference bool
 }
 
 // BuildClaudeMdData assembles all template data from wizard answers and ecosystem
@@ -87,6 +119,74 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 	} else {
 		data.ProjectDescription = "Development environment managed by gdev."
 	}
+
+	// Skills from gdev-ops manifest.
+	opsManifest, _ := loadGdevOpsManifest()
+	if opsManifest != nil {
+		for _, s := range opsManifest.Skills {
+			if answers.EnabledTools == nil || answers.EnabledTools[s.Name] {
+				data.AvailableSkills = append(data.AvailableSkills, SkillSummary{
+					Name: "/" + s.Name, Description: s.Description, Category: "gdev-operations",
+				})
+			}
+		}
+	}
+
+	// Skills from consulting manifest.
+	consultingManifest, _ := loadConsultingSkillManifest()
+	if consultingManifest != nil {
+		for _, s := range consultingManifest.Skills {
+			toolKey := "consulting-workflow-" + s.Name
+			if answers.EnabledTools != nil && answers.EnabledTools[toolKey] {
+				data.AvailableSkills = append(data.AvailableSkills, SkillSummary{
+					Name: "/" + s.Name, Description: s.Description, Category: "consulting-workflows",
+				})
+			}
+		}
+	}
+
+	// Agents from manifest.
+	agentManifest, _ := loadAgentManifest()
+	if agentManifest != nil {
+		for _, a := range agentManifest.Agents {
+			toolKey := "consulting-agent-" + a.Name
+			if answers.EnabledTools != nil && answers.EnabledTools[toolKey] {
+				data.AvailableAgents = append(data.AvailableAgents, AgentSummary{
+					Name: "@" + a.Name, Description: a.Description,
+				})
+			}
+		}
+	}
+
+	// Static gdev commands.
+	data.GdevCommands = []CommandSummary{
+		{Command: "gdev init", Description: "Initialize or re-initialize project"},
+		{Command: "gdev devenv doctor", Description: "Check system and project health"},
+		{Command: "gdev devenv setup", Description: "Install missing prerequisites"},
+		{Command: "gdev enable <tool>", Description: "Enable a tool"},
+		{Command: "gdev disable <tool>", Description: "Disable a tool"},
+		{Command: "gdev status", Description: "Show configuration state"},
+		{Command: "gdev list", Description: "Show available tools"},
+		{Command: "gdev check", Description: "Validate configuration for CI"},
+	}
+
+	// Devenv tasks from verification commands.
+	if len(buildCmds) > 0 {
+		data.DevenvTasks = append(data.DevenvTasks, TaskSummary{Name: "build", Commands: dedup(buildCmds)})
+	}
+	if len(testCmds) > 0 {
+		data.DevenvTasks = append(data.DevenvTasks, TaskSummary{Name: "test", Commands: dedup(testCmds)})
+	}
+	if len(lintCmds) > 0 {
+		data.DevenvTasks = append(data.DevenvTasks, TaskSummary{Name: "lint", Commands: dedup(lintCmds)})
+	}
+
+	// Model size for template rendering.
+	data.ModelSize = ResolveModelSize(answers.ModelSize)
+	if data.ModelSize == ModelSonnet && answers.ModelSize == "" {
+		data.ModelSize = ModelOpus
+	}
+	data.HasGdevReference = true
 
 	return data
 }

@@ -1,0 +1,29 @@
+agents:
+  - name: security-reviewer
+    description: "Security-focused code review with OWASP methodology"
+    tags: [security, review]
+    read_only: true
+  - name: codebase-explorer
+    description: "Rapid codebase architecture exploration"
+    tags: [exploration, onboarding]
+    read_only: true
+  - name: test-gap-analyzer
+    description: "Identify untested code paths and coverage gaps"
+    tags: [testing, coverage]
+    read_only: true
+  - name: onboarding-guide
+    description: "Interactive codebase mentoring for new engineers"
+    tags: [onboarding, documentation]
+    read_only: true
+  - name: migration-planner
+    description: "Framework upgrade risk assessment and migration planning"
+    tags: [migration, planning]
+    read_only: true
+  - name: handoff-doc-generator
+    description: "Client handoff documentation synthesis"
+    tags: [documentation, handoff]
+    read_only: false
+  - name: incident-debugger
+    description: "Systematic incident debugging with hypothesis testing"
+    tags: [debugging, incident]
+    read_only: true

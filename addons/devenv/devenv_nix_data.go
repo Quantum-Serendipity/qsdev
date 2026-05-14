@@ -21,6 +21,7 @@ type DevenvNixTemplateData struct {
 	CustomHooks       []CustomHookData      // Ecosystem hooks needing full attribute sets.
 	EnterShell        string                // Shell script body for enterShell.
 	EnterTest         string                // Test script body for enterTest.
+	Tasks             []ecosystem.TaskDefinition // Development task definitions from ecosystem modules.
 }
 
 // LanguageFragment holds a pre-rendered Nix code block from an ecosystem module.
@@ -144,6 +145,23 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	// 8. Shell scripts.
 	data.EnterShell = buildEnterShellScript()
 	data.EnterTest = buildEnterTestScript()
+
+	// 9. Task definitions from ecosystem modules.
+	var modules []ecosystem.EcosystemModule
+	configForFunc := func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
+		for _, lang := range answers.Languages {
+			if lang.Name == mod.Name() {
+				return toModuleConfig(lang)
+			}
+		}
+		return ecosystem.ModuleConfig{}
+	}
+	for _, lang := range answers.Languages {
+		if mod, ok := registry.ByName(lang.Name); ok {
+			modules = append(modules, mod)
+		}
+	}
+	data.Tasks = ecosystem.AggregateTaskDefinitions(modules, configForFunc, answers.EnabledTools)
 
 	// Sort built-in hooks for deterministic output.
 	sort.Strings(data.BuiltInHooks)

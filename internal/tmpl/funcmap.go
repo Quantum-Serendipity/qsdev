@@ -4,6 +4,7 @@ package tmpl
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -210,9 +211,17 @@ func default_(defaultVal, val any) any {
 	return val
 }
 
-// hasAny returns true if the slice has at least one element.
-func hasAny(items []string) bool {
-	return len(items) > 0
+// hasAny returns true if the given value is a non-empty slice.
+// It accepts any slice type via reflect.
+func hasAny(items any) bool {
+	if items == nil {
+		return false
+	}
+	v := reflect.ValueOf(items)
+	if v.Kind() == reflect.Slice {
+		return v.Len() > 0
+	}
+	return false
 }
 
 // comment prefixes each line of text with the given prefix and a space.

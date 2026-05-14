@@ -13,65 +13,61 @@
 {{ end }}
 {{ if hasAny .BuildCommands }}
 
-## Build Commands
+## Build & Test
 
 ```bash
 {{ range .BuildCommands -}}
 {{ . }}
 {{ end -}}
-```
-{{ end }}
-{{ if hasAny .TestCommands }}
-
-## Test Commands
-
-```bash
 {{ range .TestCommands -}}
 {{ . }}
 {{ end -}}
-```
-{{ end }}
-{{ if hasAny .LintCommands }}
-
-## Lint Commands
-
-```bash
 {{ range .LintCommands -}}
 {{ . }}
 {{ end -}}
 ```
 {{ end }}
-{{ if hasAny .Languages }}
-
-## Language Conventions
-{{ range .Languages }}
-{{ if eq (lower .) "go" }}{{ template "conventions/go.md" }}{{ end -}}
-{{ if eq (lower .) "javascript/typescript" }}{{ template "conventions/javascript.md" }}{{ end -}}
-{{ if eq (lower .) "python" }}{{ template "conventions/python.md" }}{{ end -}}
-{{ if eq (lower .) "rust" }}{{ template "conventions/rust.md" }}{{ end -}}
-{{ if eq (lower .) "java/kotlin (jvm)" }}{{ template "conventions/java.md" }}{{ end -}}
-{{ if eq (lower .) "c#/.net" }}{{ template "conventions/dotnet.md" }}{{ end -}}
-{{ if eq (lower .) "docker / containerfiles" }}{{ template "conventions/docker.md" }}{{ end -}}
-{{ if eq (lower .) "terraform/opentofu" }}{{ template "conventions/terraform.md" }}{{ end -}}
+{{ if hasAny .AvailableSkills }}
+<!-- gdev:skills -->
+## Available Skills
+{{ range .AvailableSkills }}{{ if eq $.ModelSize "opus" }}- `{{ .Name }}` — {{ .Description }}
+{{ else }}- `{{ .Name }}`
+{{ end }}{{ end }}<!-- /gdev:skills -->
 {{ end }}
+{{ if hasAny .AvailableAgents }}
+<!-- gdev:agents -->
+## Available Agents
+{{ range .AvailableAgents }}{{ if eq $.ModelSize "opus" }}- `{{ .Name }}` — {{ .Description }}
+{{ else }}- `{{ .Name }}`
+{{ end }}{{ end }}<!-- /gdev:agents -->
+{{ end }}
+<!-- gdev:commands -->
+## gdev Commands
+{{ range .GdevCommands }}- `{{ .Command }}` — {{ .Description }}
+{{ end }}<!-- /gdev:commands -->
+{{ if hasAny .DevenvTasks }}
+<!-- gdev:tasks -->
+## Development Tasks
+{{ range .DevenvTasks }}- `gdev-{{ .Name }}` — {{ join ", " .Commands }}
+{{ end }}<!-- /gdev:tasks -->
 {{ end }}
 
 ## Security
 
 - All packages are managed through devenv.nix — do not run raw install commands outside the Nix shell.
 - Never commit secrets, tokens, or credentials. The pre-commit hook `ripsecrets` blocks accidental leaks.
-- Lock files must always be committed. Never delete or regenerate lock files without review.
+- Lock files must always be committed.
 {{- if hasAny .PackageManagers }}
-- Package managers in this project: {{ join ", " .PackageManagers }}.
+- Package managers: {{ join ", " .PackageManagers }}.
 {{- end }}
 {{- if .HasSecurityHooks }}
 <!-- gdev:attach-guard -->
-- Safety-block hooks are enabled. Claude Code will be blocked from running destructive commands.
+- Safety-block hooks are enabled.
 <!-- /gdev:attach-guard -->
 {{- end }}
 {{- if .PostmortemEnabled }}
 <!-- gdev:agent-postmortem -->
-- Agent-postmortem skill is active. After every implementation, run the postmortem protocol to verify changes.
+- Agent-postmortem skill is active.
 <!-- /gdev:agent-postmortem -->
 {{- end }}
 {{- if .VersionSentinelEnabled }}
@@ -84,17 +80,18 @@
 {{- end }}
 {{- if .SembleEnabled }}
 <!-- gdev:semble -->
-- **Semble** semantic code search is available{{ if eq .SembleMode "mcp" }} via MCP server{{ else if eq .SembleMode "subagent" }} via the semble-search sub-agent{{ else if eq .SembleMode "both" }} via MCP server and sub-agent{{ end }}.
+- **Semble** semantic search available.
 <!-- /gdev:semble -->
 {{- end }}
 {{- if .TrailOfBitsEnabled }}
 <!-- gdev:trail-of-bits-skills -->
-- Security review skills from Trail of Bits methodology are installed in `.claude/skills/`.
+- Security review skills installed.
 <!-- /gdev:trail-of-bits-skills -->
 {{- end }}
-- Prefer vendored or pinned dependencies over floating version ranges.
-- Review all dependency updates for supply chain risk before merging.
-
+- Prefer vendored or pinned dependencies.
+{{ if .HasGdevReference }}
+@.claude/gdev-reference.md
+{{ end }}
 <!-- END GENERATED SECTION -->
 
 ## Custom Instructions

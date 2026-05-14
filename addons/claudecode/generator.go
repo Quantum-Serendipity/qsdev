@@ -127,5 +127,35 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		files = append(files, sembleFiles...)
 	}
 
+	// 10. gdev operation skills
+	gdevOpsFiles, err := deployOperationSkills(answers)
+	if err != nil {
+		return nil, fmt.Errorf("generating gdev-ops skills: %w", err)
+	}
+	files = append(files, gdevOpsFiles...)
+
+	// 11. Consulting workflow agents
+	agentFiles, err := deployAgents(answers)
+	if err != nil {
+		return nil, fmt.Errorf("generating consulting agents: %w", err)
+	}
+	files = append(files, agentFiles...)
+
+	// 12. Consulting workflow skills
+	workflowFiles, err := deployWorkflowSkills(answers, g.registry)
+	if err != nil {
+		return nil, fmt.Errorf("generating workflow skills: %w", err)
+	}
+	files = append(files, workflowFiles...)
+
+	// 13. gdev reference doc
+	refFile, err := GenerateGdevReference(answers, g.registry)
+	if err != nil {
+		return nil, fmt.Errorf("generating gdev reference: %w", err)
+	}
+	if refFile != nil {
+		files = append(files, *refFile)
+	}
+
 	return files, nil
 }

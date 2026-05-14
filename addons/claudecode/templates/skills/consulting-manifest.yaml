@@ -1,0 +1,25 @@
+skills:
+  - name: review-pr
+    description: "Comprehensive PR review with security, performance, and quality analysis"
+    tags: [review, quality]
+  - name: add-tests
+    description: "Analyze coverage gaps and generate tests following project patterns"
+    tags: [testing, quality]
+  - name: upgrade-dep
+    description: "Plan and execute dependency upgrades with verification"
+    tags: [dependencies, maintenance]
+  - name: onboard-me
+    description: "Systematic codebase onboarding via exploration agent"
+    tags: [onboarding, documentation]
+  - name: write-adr
+    description: "Generate Architecture Decision Records in MADR format"
+    tags: [documentation, architecture]
+  - name: incident-debug
+    description: "Systematic incident debugging with hypothesis testing"
+    tags: [debugging, incident]
+  - name: migration-plan
+    description: "Phased migration planning with risk assessment"
+    tags: [migration, planning]
+  - name: handoff-doc
+    description: "Client handoff documentation synthesis"
+    tags: [documentation, handoff]

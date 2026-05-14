@@ -55,3 +55,17 @@ type ExportUpdateSummary = UpdateSummary
 
 // ExportContains exposes the contains helper for external tests.
 var ExportContains = contains
+
+var ExportLoadGdevOpsManifest    = loadGdevOpsManifest
+var ExportDeployOperationSkills  = deployOperationSkills
+var ExportLoadAgentManifest      = loadAgentManifest
+var ExportDeployAgents           = deployAgents
+var ExportLoadConsultingSkillManifest = loadConsultingSkillManifest
+var ExportDeployWorkflowSkills   = deployWorkflowSkills
+
+type ExportGdevOpsManifest       = GdevOpsManifest
+type ExportGdevOpsEntry          = GdevOpsEntry
+type ExportAgentManifest         = AgentManifest
+type ExportAgentEntry            = AgentEntry
+type ExportConsultingSkillManifest = ConsultingSkillManifest
+type ExportConsultingSkillEntry  = ConsultingSkillEntry

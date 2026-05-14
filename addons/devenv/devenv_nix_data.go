@@ -3,8 +3,11 @@ package devenv
 import (
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -64,8 +67,26 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data.Packages = append(data.Packages, answers.ExtraPackages...)
 
 	// 2. Environment variables: always include the security-hardened flag.
-	data.EnvVars = make(map[string]string, len(answers.EnvVars)+1)
+	data.EnvVars = make(map[string]string, len(answers.EnvVars)+6)
 	data.EnvVars["DEVENV_SECURITY_HARDENED"] = "true"
+
+	// gdev context environment variables.
+	projectName := answers.ProjectName
+	if projectName == "" {
+		projectName = "unknown"
+	}
+	data.EnvVars["GDEV_PROJECT_NAME"] = projectName
+
+	securityProfile := answers.ComplianceLevel
+	if securityProfile == "" {
+		securityProfile = "standard"
+	}
+	data.EnvVars["GDEV_SECURITY_PROFILE"] = securityProfile
+
+	data.EnvVars["GDEV_VERSION"] = version.Info().Version
+	data.EnvVars["GDEV_ECOSYSTEMS"] = buildEcosystemsList(answers)
+	data.EnvVars["GDEV_TOOL_COUNT"] = strconv.Itoa(countEnabledTools(answers))
+
 	for k, v := range answers.EnvVars {
 		data.EnvVars[k] = v
 	}
@@ -167,4 +188,30 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	sort.Strings(data.BuiltInHooks)
 
 	return data, nil
+}
+
+// buildEcosystemsList returns a sorted, comma-separated list of selected
+// ecosystem names. Returns "none" when no languages are selected.
+func buildEcosystemsList(answers types.WizardAnswers) string {
+	if len(answers.Languages) == 0 {
+		return "none"
+	}
+	names := make([]string, 0, len(answers.Languages))
+	for _, lang := range answers.Languages {
+		names = append(names, lang.Name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ",")
+}
+
+// countEnabledTools returns the number of tools that are explicitly enabled
+// in the wizard answers.
+func countEnabledTools(answers types.WizardAnswers) int {
+	count := 0
+	for _, enabled := range answers.EnabledTools {
+		if enabled {
+			count++
+		}
+	}
+	return count
 }

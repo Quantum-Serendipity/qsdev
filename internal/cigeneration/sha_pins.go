@@ -85,4 +85,10 @@ var (
 		SHA:   "a0d3e11e71effa3e3a6b47e60f4ff66e7f2e60e9",
 		Tag:   "v1.0.0",
 	}
+	ActionLabeler = ActionRef{
+		Owner: "actions",
+		Repo:  "labeler",
+		SHA:   "8558fd74291d67161a8a78ce36a881fa63b766a9",
+		Tag:   "v5.0.0",
+	}
 )

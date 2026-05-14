@@ -15,6 +15,7 @@ import (
 	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules" // register all modules
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/generate"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/profile"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/repair"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
@@ -244,21 +245,12 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	return nil
 }
 
-// runRepair prints a drift report and suggests a remediation command.
-// Full repair logic will be implemented in a future unit.
-func runRepair(cmd *cobra.Command, opts InitOptions, projectRoot string, result *ModeDetectionResult) error {
-	if result.DriftReport != nil {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Drift report:")
-		for _, f := range result.DriftReport.Modified {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  modified: %s\n", f)
-		}
-		for _, f := range result.DriftReport.Deleted {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  deleted:  %s\n", f)
-		}
-		_, _ = fmt.Fprintln(cmd.OutOrStdout())
-	}
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "To regenerate all files, run: gdev init --mode create --force")
-	return nil
+// runRepair delegates to the full repair command logic.
+func runRepair(cmd *cobra.Command, opts InitOptions, _ string, _ *ModeDetectionResult) error {
+	return runRepairCommand(cmd, repair.RepairOptions{
+		Force:  opts.Force,
+		DryRun: opts.DryRun,
+	})
 }
 
 // listProfiles prints all available project-type profiles and returns.

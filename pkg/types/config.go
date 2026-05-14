@@ -20,6 +20,7 @@ type GdevConfig struct {
 	ClaudeCode     ClaudeCodeConfig `yaml:"claude_code,omitempty"`
 	Infrastructure InfraConfig      `yaml:"infrastructure,omitempty"`
 	Client         *ClientConfig    `yaml:"client,omitempty"`
+	Git            GitConfig        `yaml:"git,omitempty"`
 }
 
 // LanguageConfig specifies a language/platform ecosystem in .gdev.yaml.
@@ -65,6 +66,11 @@ type InfraConfig struct {
 	RegistryProxy string `yaml:"registry_proxy,omitempty"`
 	NixCache      string `yaml:"nix_cache,omitempty"`
 	BuildCache    string `yaml:"build_cache,omitempty"`
+}
+
+// GitConfig holds git workflow settings in .gdev.yaml.
+type GitConfig struct {
+	BranchPattern string `yaml:"branch_pattern,omitempty"`
 }
 
 // ClientConfig holds client-specific constraints in .gdev.yaml.

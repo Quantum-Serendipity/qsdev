@@ -45,6 +45,11 @@ func initialize() error {
 		checkCmd(),
 		evidenceCmd(),
 		teamReportCmd(),
+		repairCmd(),
+		infoCmd(),
+		outdatedCmd(),
+		updateCmd(),
+		teardownCmd(),
 	)
 	return nil
 }

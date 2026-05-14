@@ -143,6 +143,11 @@ func deepMerge(base, overlay *types.GdevConfig) *types.GdevConfig {
 		result.Infrastructure.BuildCache = overlay.Infrastructure.BuildCache
 	}
 
+	// Git: last-wins scalar.
+	if overlay.Git.BranchPattern != "" {
+		result.Git.BranchPattern = overlay.Git.BranchPattern
+	}
+
 	// Client: NOT merged, only from project config.
 	// The overlay's Client is used directly if present.
 	if overlay.Client != nil {
@@ -308,6 +313,7 @@ func cloneGdevConfig(cfg *types.GdevConfig) *types.GdevConfig {
 			PermissionLevel: cfg.ClaudeCode.PermissionLevel,
 		},
 		Infrastructure: cfg.Infrastructure,
+		Git:            cfg.Git,
 	}
 
 	// Clone Languages.

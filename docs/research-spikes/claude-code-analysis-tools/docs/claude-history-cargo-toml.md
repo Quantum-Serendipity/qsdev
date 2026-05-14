@@ -1,0 +1,40 @@
+<!-- Source: https://raw.githubusercontent.com/raine/claude-history/main/Cargo.toml -->
+<!-- Retrieved: 2026-03-26 -->
+
+# claude-history Cargo.toml
+
+```toml
+[package]
+name = "claude-history"
+version = "0.1.49"
+edition = "2024"
+description = "Fuzzy-search Claude Code conversation history from the terminal."
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/raine/claude-history"
+homepage = "https://github.com/raine/claude-history"
+keywords = ["claude", "claude-code", "fzf", "cli", "history"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+colored = "3.0"
+clap = { version = "4.5", features = ["derive"] }
+chrono = "0.4"
+thiserror = "2.0"
+toml = "0.9"
+home = "0.5"
+rayon = "1.10"
+ratatui = "0.30"
+crossterm = "0.29"
+textwrap = "0.16"
+pulldown-cmark = "0.13"
+unicode-width = "0.2"
+arboard = "3.4"
+syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
+terminal-light = "1.0"
+tempfile = "3"
+indicatif = "0.17"
+```

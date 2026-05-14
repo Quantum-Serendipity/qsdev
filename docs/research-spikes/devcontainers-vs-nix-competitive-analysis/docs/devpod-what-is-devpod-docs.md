@@ -1,0 +1,22 @@
+# DevPod — What is DevPod? (Official Documentation)
+- **Source**: https://devpod.sh/docs/what-is-devpod (fetched from raw GitHub: https://raw.githubusercontent.com/loft-sh/devpod/main/docs/pages/what-is-devpod.mdx)
+- **Retrieved**: 2026-03-20
+
+DevPod is a tool used to create reproducible developer environments. Each developer environment runs in a separate container and is specified through a devcontainer.json. DevPod providers can create these containers on the local computer, any reachable remote machine, or in a public or private cloud. It's also possible to extend DevPod and write your own custom providers.
+
+You can think of DevPod as the glue connecting your local IDE to a machine you want to use for development. So depending on your project's requirements, you can create a workspace locally on the computer, a powerful cloud machine, or a spare remote computer. Within DevPod, every workspace is managed the same way, which also makes it easy to switch between workspaces that might be hosted somewhere else.
+
+## Why DevPod?
+
+DevPod reuses the open DevContainer standard (https://containers.dev/) to create a consistent developer experience no matter what backend you want to use.
+
+Compared to hosted services such as Github Codespaces, JetBrains Spaces or Google Cloud Workstations, DevPod has the following advantages:
+
+* **Cost savings**: DevPod is usually around 5-10 times cheaper than existing services with comparable feature sets, because it uses bare virtual machines and shuts down unused virtual machines automatically.
+* **No vendor lock-in**: Choose whatever cloud provider suits you best, be it the cheapest one or the most powerful, DevPod supports all cloud providers. If you are tired of using a provider, change it with a single command.
+* **Local development**: You get the same developer experience also locally, so you don't need to rely on a cloud provider at all.
+* **Cross IDE support**: VS Code and the full JetBrains suite is supported, all others can be connected through simple SSH.
+* **Client-only**: No need to install a server backend, DevPod runs solely on your computer.
+* **Open-Source**: DevPod is 100% open-source and extensible. A provider doesn't exist? Just create your own.
+* **Rich feature set**: DevPod already supports prebuilds, auto inactivity shutdown, git & docker credentials sync and many more features to come.
+* **Desktop App**: DevPod comes with an easy-to-use desktop application that abstracts all the complexity away. If you want to build your own integration, DevPod offers a feature-rich CLI as well.

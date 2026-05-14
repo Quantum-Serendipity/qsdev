@@ -1,0 +1,24 @@
+# DevPod — How It Works (Official Documentation)
+- **Source**: https://devpod.sh/docs/how-it-works/overview (fetched from raw GitHub: https://raw.githubusercontent.com/loft-sh/devpod/main/docs/pages/how-it-works/overview.mdx)
+- **Retrieved**: 2026-03-20
+
+Devpod provides the ability to provision workspaces on any infrastructure. It does so by wrapping your conventional CLI tools such as kubectl, docker, gcloud etc to deploy your development environment and set up everything required to run the dev container. While creating the workspace DevPod deploys an agent to the machine running the container as well as to the container itself to provide useful functions such as port forwarding, credential forwarding and log streaming. Doing so it provides a control plane across your development environment.
+
+## Client-Agent Architecture
+
+Devpod uses a client-agent architecture, where the client deploys its own agent to host various servers, such as a gRPC server or SSH server. In this regard the system is not unlike a browser-server architecture where the front end is deployed and executed on a remote host. There are several improvements this brings to our specific context:
+
+- There can be no conflict of versions between client and server, since you install only one version of the client
+- There is no infrastructure to manage for users
+
+To simplify debugging, DevPod connects your local shell with the agent's STDIO so you can see what's happening locally and in the container at all times.
+
+## Tunnel Mechanism
+
+Devpod establishes a connection to the workspace using a vendor specific API. This vendor specific communication channel is referred to as the "tunnel". When you run a `devpod up` command, DevPod selects a provider based on your context and starts your devcontainer. If using a machine provider, DevPod will check if it should create a VM first. Once the devcontainer is running DevPod deploys an agent to the container. The way in which DevPod communicates with the workspace depends on the provider, this is known as the "tunnel". For AWS this could be instance connect, kubernetes uses the kubernetes control plane (kubectl), this connection is secured based on this tunnel.
+
+## SSH Server
+
+The DevPod agent starts a SSH server using the STDIO of the secure tunnel in order for your local DevPod CLI/UI to forward ports over the SSH connection. Once this is done DevPod starts your local IDE and connects it to the devcontainer via SSH.
+
+If your developer environment requires any port forwarding, then your IDE or an SSH connection must be running. That's because devpod needs the SSH server running on the agent to perform the forwarding, which is deployed when starting the IDE or SSH session.

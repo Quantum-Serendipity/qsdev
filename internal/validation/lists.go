@@ -38,6 +38,12 @@ var hookPresets = []string{
 	"auto-format", "safety-block", "pre-commit", "audit-log",
 }
 
+// securityLevels is the set of valid security posture levels.
+var securityLevels = []string{"baseline", "enhanced", "strict"}
+
+// dataClassifications is the set of valid data classification labels.
+var dataClassifications = []string{"public", "internal", "confidential"}
+
 // nodePackageManagers is the set of valid Node.js package manager names.
 var nodePackageManagers = []string{"npm", "pnpm", "yarn", "bun"}
 
@@ -70,6 +76,12 @@ func NodePackageManagers() []string { return copyStrings(nodePackageManagers) }
 // PythonPackageManagers returns valid Python package manager names.
 func PythonPackageManagers() []string { return copyStrings(pythonPackageManagers) }
 
+// SecurityLevels returns all valid security posture levels.
+func SecurityLevels() []string { return copyStrings(securityLevels) }
+
+// DataClassifications returns all valid data classification labels.
+func DataClassifications() []string { return copyStrings(dataClassifications) }
+
 // ---------------------------------------------------------------------------
 // Membership checks
 // ---------------------------------------------------------------------------
@@ -94,6 +106,12 @@ func IsValidNodePackageManager(pm string) bool { return containsStr(nodePackageM
 
 // IsValidPythonPackageManager checks if pm is a valid Python package manager.
 func IsValidPythonPackageManager(pm string) bool { return containsStr(pythonPackageManagers, pm) }
+
+// IsValidSecurityLevel checks if level is a valid security posture level.
+func IsValidSecurityLevel(level string) bool { return containsStr(securityLevels, level) }
+
+// IsValidDataClassification checks if dc is a valid data classification label.
+func IsValidDataClassification(dc string) bool { return containsStr(dataClassifications, dc) }
 
 // ---------------------------------------------------------------------------
 // Helpers

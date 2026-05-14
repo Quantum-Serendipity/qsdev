@@ -16,6 +16,7 @@ import (
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/generate"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/profile"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
+	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
 )
 
@@ -44,7 +45,7 @@ project-type profiles, and writes all files atomically.`,
 					DryRun: opts.DryRun,
 				})
 			}
-			return runInit(cmd, opts)
+			return runInitWithModeDetection(cmd, opts)
 		},
 	}
 
@@ -53,18 +54,61 @@ project-type profiles, and writes all files atomically.`,
 	return cmd
 }
 
-func runInit(cmd *cobra.Command, opts InitOptions) error {
+// runInitWithModeDetection auto-detects the onboarding mode and dispatches
+// to the appropriate handler (create, join, update, repair).
+func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 	// a. Get project root.
 	projectRoot, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("determining project root: %w", err)
 	}
 
-	// b. Handle --list-profiles.
+	// b. Handle --list-profiles early return.
 	if opts.ListProfiles {
 		return listProfiles(cmd)
 	}
 
+	// c. Detect or override mode.
+	var result *ModeDetectionResult
+	if opts.Mode != "" {
+		result, err = overrideMode(opts.Mode, projectRoot)
+		if err != nil {
+			return err
+		}
+	} else {
+		result, err = DetectOnboardingMode(projectRoot)
+		if err != nil {
+			return fmt.Errorf("detecting onboarding mode: %w", err)
+		}
+	}
+
+	// d. Print explanation.
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s\n", result.Mode, result.Explanation)
+
+	// e. Dispatch to appropriate handler.
+	switch result.Mode {
+	case ModeCreate:
+		return runCreate(cmd, opts, projectRoot)
+	case ModeJoin:
+		if result.AlreadySetUp {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Project is already set up.")
+			return nil
+		}
+		return runJoin(cmd, opts, projectRoot)
+	case ModeUpdate:
+		return runUpdate(cmd, UpdateOptions{
+			Force:  opts.Force,
+			DryRun: opts.DryRun,
+		})
+	case ModeRepair:
+		return runRepair(cmd, opts, projectRoot, result)
+	default:
+		return fmt.Errorf("unexpected onboarding mode: %s", result.Mode)
+	}
+}
+
+// runCreate is the original init flow for creating a project from scratch.
+func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	// c. Build FlagSet to track which flags were explicitly set.
 	flagSet := NewFlagSet(cmd)
 
@@ -170,6 +214,7 @@ func runInit(cmd *cobra.Command, opts InitOptions) error {
 
 	// p. Save state.
 	genState := state.RecordFiles(allFiles)
+	genState.GdevVersion = version.Info().Version
 	stateFile := filepath.Join(projectRoot, statePath)
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
@@ -196,6 +241,23 @@ func runInit(cmd *cobra.Command, opts InitOptions) error {
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
 	_, _ = fmt.Fprint(cmd.OutOrStdout(), postGenerationMessage(answers, devenvGenerated, claudeGenerated))
 
+	return nil
+}
+
+// runRepair prints a drift report and suggests a remediation command.
+// Full repair logic will be implemented in a future unit.
+func runRepair(cmd *cobra.Command, opts InitOptions, projectRoot string, result *ModeDetectionResult) error {
+	if result.DriftReport != nil {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Drift report:")
+		for _, f := range result.DriftReport.Modified {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  modified: %s\n", f)
+		}
+		for _, f := range result.DriftReport.Deleted {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  deleted:  %s\n", f)
+		}
+		_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	}
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "To regenerate all files, run: gdev init --mode create --force")
 	return nil
 }
 

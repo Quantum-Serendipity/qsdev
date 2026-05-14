@@ -1,5 +1,7 @@
 github.com/MakeNowJust/heredoc v1.0.0 h1:cXCdzVdstXyiTqTvfqk9SDHpKNjxuom+DOlyEeQ4pzQ=
 github.com/MakeNowJust/heredoc v1.0.0/go.mod h1:mG5amYoWBHf8vpLOuehzbGGw0EHxpZZ6lCpQ4fNJ8LE=
+github.com/Masterminds/semver/v3 v3.5.0 h1:kQceYJfbupGfZOKZQg0kou0DgAKhzDg2NZPAwZ/2OOE=
+github.com/Masterminds/semver/v3 v3.5.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
 github.com/Quantum-Serendipity/gdev v0.0.0-20260513164954-05f35cda9052 h1:uzCJtbl9jbuZC1k/C7crQhQ+HIoqTmzzFsRlgdJbKIw=
 github.com/Quantum-Serendipity/gdev v0.0.0-20260513164954-05f35cda9052/go.mod h1:DVLMSkDuQk/hpuR/SQXc6C4j2pFL2ZQDKF2iutISGXQ=
 github.com/atotto/clipboard v0.1.4 h1:EH0zSVneZPSuFR11BlR9YppQTVDbh5+16AmcJi4g1z4=

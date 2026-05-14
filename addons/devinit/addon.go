@@ -41,6 +41,8 @@ func initialize() error {
 		disableCmd(),
 		statusCmd(),
 		listCmd(),
+		configCmd(),
+		checkCmd(),
 	)
 	return nil
 }

@@ -75,6 +75,9 @@ type InitOptions struct {
 	AgentSemble          bool
 	AgentSembleMode      string
 	AgentSembleTextFiles bool
+
+	// Mode override
+	Mode string
 }
 
 // RegisterInitFlags registers all flags for the gdev init command.
@@ -123,11 +126,15 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.Flags().StringVar(&opts.AgentSembleMode, "agent-semble-mode", "mcp", "Semble mode: mcp, subagent, both")
 	cmd.Flags().BoolVar(&opts.AgentSembleTextFiles, "agent-semble-text-files", false, "Include text files in semble search index")
 
+	// Mode override flag.
+	cmd.Flags().StringVar(&opts.Mode, "mode", "", "Override auto-detected mode: create, join, update, repair")
+
 	// Mark mutually exclusive flags.
 	cmd.MarkFlagsMutuallyExclusive("devenv-only", "claude-only")
 	cmd.MarkFlagsMutuallyExclusive("update", "lang")
 	cmd.MarkFlagsMutuallyExclusive("update", "service")
 	cmd.MarkFlagsMutuallyExclusive("update", "profile")
+	cmd.MarkFlagsMutuallyExclusive("mode", "update")
 }
 
 // AnswersFromFlags converts flag values into WizardAnswers.

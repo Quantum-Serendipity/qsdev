@@ -15,7 +15,7 @@ type ExitError struct {
 }
 
 func (e *ExitError) Error() string {
-	return fmt.Sprintf("exit code %d", e.Code)
+	return ""
 }
 
 func (e *ExitError) ExitCode() int {

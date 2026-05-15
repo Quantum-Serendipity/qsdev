@@ -18,6 +18,8 @@ type cachedCheck struct {
 	CheckedAt time.Time `json:"checked_at"`
 	Version   string    `json:"version,omitempty"`
 	URL       string    `json:"url,omitempty"`
+	Owner     string    `json:"owner,omitempty"`
+	Repo      string    `json:"repo,omitempty"`
 }
 
 // githubRelease is the subset of the GitHub API release response we need.
@@ -67,6 +69,11 @@ func CheckForUpdate(cfg Config, currentVersion string) (*Release, error) {
 	// Check cache first.
 	cached, err := loadCache(cfg)
 	if err == nil && cached != nil {
+		if cached.Owner != cfg.GitHubOwner || cached.Repo != cfg.GitHubRepo {
+			cached = nil // stale cache from different repo
+		}
+	}
+	if err == nil && cached != nil {
 		if time.Since(cached.CheckedAt) < cfg.CheckInterval {
 			// We checked recently. Only return a release if the cached
 			// version is newer than current.
@@ -91,6 +98,8 @@ func CheckForUpdate(cfg Config, currentVersion string) (*Release, error) {
 		CheckedAt: time.Now(),
 		Version:   release.Version,
 		URL:       release.URL,
+		Owner:     cfg.GitHubOwner,
+		Repo:      cfg.GitHubRepo,
 	})
 
 	// Compare versions.

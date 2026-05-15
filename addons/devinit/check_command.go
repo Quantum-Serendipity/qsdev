@@ -61,7 +61,7 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	}
 
 	// Parse .qsdev.yaml if present.
-	cfg, err := qsdevconfig.ParseQsdevConfig(projectRoot)
+	cfg, err := qsdevconfig.ParseQsdevConfig(filepath.Join(projectRoot, ".qsdev.yaml"))
 	if err != nil {
 		// Log warning but continue — config_integrity checks will report the issue.
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not parse .qsdev.yaml: %v\n", err)

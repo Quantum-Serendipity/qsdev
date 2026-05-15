@@ -2,6 +2,7 @@ package devinit
 
 import (
 	"fastcat.org/go/gdev/addons"
+	gdevcmd "fastcat.org/go/gdev/cmd"
 	"fastcat.org/go/gdev/instance"
 
 	_ "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
@@ -35,13 +36,13 @@ func initialize() error {
 	for name, p := range addon.Config.Profiles {
 		_ = profileRegistry.Register(name, p)
 	}
+	gdevcmd.AddConfigCommandBuilder(configShowCmd, migrateCmd)
 	instance.AddCommands(
 		initCmd(),
 		enableCmd(),
 		disableCmd(),
 		statusCmd(),
 		listCmd(),
-		configCmd(),
 		checkCmd(),
 		evidenceCmd(),
 		teamReportCmd(),

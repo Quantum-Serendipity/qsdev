@@ -59,6 +59,17 @@ func (r WriteResult) HasFailures() bool {
 	return r.Failed > 0
 }
 
+// FailedFiles returns the FileResult entries for files that failed to write.
+func (r WriteResult) FailedFiles() []FileResult {
+	var failed []FileResult
+	for _, fr := range r.Files {
+		if fr.Action == ActionFailed {
+			failed = append(failed, fr)
+		}
+	}
+	return failed
+}
+
 // SuccessfulFiles filters the original generated files list down to only those
 // that were actually written to disk (ActionCreated or ActionUpdated).
 func (r WriteResult) SuccessfulFiles(allFiles []types.GeneratedFile) []types.GeneratedFile {

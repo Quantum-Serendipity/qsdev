@@ -6,29 +6,29 @@ Add encrypted per-client profiles using sops+age. This is the strongest consulti
 
 ## Dependencies
 
-Phase 6 complete (wizard orchestration, huh forms, phase registration). Phase 13 complete (`.gdev.yaml` schema, `ClientConfig` struct, three-layer resolution engine, `gdev check` CI command).
+Phase 6 complete (wizard orchestration, huh forms, phase registration). Phase 13 complete (`.qsdev.yaml` schema, `ClientConfig` struct, three-layer resolution engine, `qsdev check` CI command).
 
 ## Phase Outputs
 
-- Age keypair generation in `gdev setup` with `~/.qsdev/.sops.yaml` auto-configuration
-- `ClientProfile` Go struct versioned independently of `.gdev.yaml`
-- Full CRUD command group: `gdev profile create/list/edit/delete`
+- Age keypair generation in `qsdev setup` with `~/.qsdev/.sops.yaml` auto-configuration
+- `ClientProfile` Go struct versioned independently of `.qsdev.yaml`
+- Full CRUD command group: `qsdev profile create/list/edit/delete`
 - Init-time profile selection wizard group with Join mode integration
 - `secretspec.toml` generation from profile `SecretRef` entries (gitignored)
-- Non-secret value baking into `.gdev.yaml` `client` block for Join mode
-- Compliance enforcement in `gdev check` (non-suppressible critical violations)
+- Non-secret value baking into `.qsdev.yaml` `client` block for Join mode
+- Compliance enforcement in `qsdev check` (non-suppressible critical violations)
 
 ---
 
-### Unit 30.1: Age Key Generation in `gdev setup`
+### Unit 30.1: Age Key Generation in `qsdev setup`
 
-**Description:** Extend `gdev setup` to generate an age keypair at `~/.qsdev/keys/age.key`, create the `~/.qsdev/.sops.yaml` configuration referencing that key, and add health checks to `gdev doctor`.
+**Description:** Extend `qsdev setup` to generate an age keypair at `~/.qsdev/keys/age.key`, create the `~/.qsdev/.sops.yaml` configuration referencing that key, and add health checks to `qsdev doctor`.
 
-**Context:** sops+age is the encryption stack for client profiles. sops is the secrets management tool (handles file encryption/decryption with multiple backend support); age is the underlying asymmetric encryption primitive. The keypair is user-level: one keypair per developer machine, used to decrypt all of that developer's client profiles. The public key is embedded in `.sops.yaml` (checked in per-client profile, not into the project repo) and referenced by sops when encrypting new profiles. sops and age are installed by `gdev setup --tools` (Phase 27), so they are available before this unit runs.
+**Context:** sops+age is the encryption stack for client profiles. sops is the secrets management tool (handles file encryption/decryption with multiple backend support); age is the underlying asymmetric encryption primitive. The keypair is user-level: one keypair per developer machine, used to decrypt all of that developer's client profiles. The public key is embedded in `.sops.yaml` (checked in per-client profile, not into the project repo) and referenced by sops when encrypting new profiles. sops and age are installed by `qsdev setup --tools` (Phase 27), so they are available before this unit runs.
 
 The `~/.qsdev/` directory is distinct from `~/.local/share/gdev/docs/` (documentation store) and from `.devinit/` (per-project state). It is the global QSS developer identity directory, intended to survive project rotations.
 
-**Desired Outcome:** Running `gdev setup` on a new machine generates an age keypair and configures sops for the developer's identity. `gdev doctor` catches missing, wrong-permission, or misconfigured keys before the developer tries to create a profile and gets a cryptic error.
+**Desired Outcome:** Running `qsdev setup` on a new machine generates an age keypair and configures sops for the developer's identity. `qsdev doctor` catches missing, wrong-permission, or misconfigured keys before the developer tries to create a profile and gets a cryptic error.
 
 **Steps:**
 1. Define the key storage paths as constants in `internal/profile/paths.go`:
@@ -99,7 +99,7 @@ The `~/.qsdev/` directory is distinct from `~/.local/share/gdev/docs/` (document
    }
    ```
 4. Implement the idempotency guard: `GenerateAgeKey` checks if `keyPath` already exists and returns nil without regenerating. Log a message: "Age key already exists at {path}, skipping generation."
-5. Wire key generation into the Phase 27 `gdev setup --tools` step sequence. Add as a named step after sops and age are installed:
+5. Wire key generation into the Phase 27 `qsdev setup --tools` step sequence. Add as a named step after sops and age are installed:
    ```go
    // In internal/setup/steps.go
    Step{
@@ -114,7 +114,7 @@ The `~/.qsdev/` directory is distinct from `~/.local/share/gdev/docs/` (document
        },
    },
    ```
-6. Implement `gdev doctor` health checks for the age key (add to the Phase 9 doctor check suite):
+6. Implement `qsdev doctor` health checks for the age key (add to the Phase 9 doctor check suite):
    ```go
    func checkAgeKey() []DoctorCheck {
        return []DoctorCheck{
@@ -182,11 +182,11 @@ The `~/.qsdev/` directory is distinct from `~/.local/share/gdev/docs/` (document
    - Doctor check `sops-config-pubkey` fails when `.sops.yaml` references a different key.
 
 **Acceptance Criteria:**
-- [ ] `gdev setup` generates age keypair at `~/.qsdev/keys/age.key` (private) and `~/.qsdev/keys/age.pub` (public)
+- [ ] `qsdev setup` generates age keypair at `~/.qsdev/keys/age.key` (private) and `~/.qsdev/keys/age.pub` (public)
 - [ ] Private key permissions set to 0600
 - [ ] `~/.qsdev/.sops.yaml` auto-created with local public key reference and `path_regexp` scoped to `~/.qsdev/clients/`
 - [ ] Key generation is idempotent: does not regenerate if key already exists
-- [ ] `gdev doctor` checks: key exists, permissions are 0600, `.sops.yaml` references correct public key
+- [ ] `qsdev doctor` checks: key exists, permissions are 0600, `.sops.yaml` references correct public key
 - [ ] sops and age must be installed (Phase 27) before this step runs; clear error if missing
 - [ ] `~/.qsdev/` directory created with 0700 permissions if it does not exist
 
@@ -199,9 +199,9 @@ The `~/.qsdev/` directory is distinct from `~/.local/share/gdev/docs/` (document
 
 ### Unit 30.2: ClientProfile Go Struct & Schema
 
-**Description:** Define the `ClientProfile` Go struct with five configuration domains, implement `SecretRef` for provider-based secret references (not literal values), add sops encrypt/decrypt wrappers, and establish schema versioning with a migration chain independent of `.gdev.yaml`.
+**Description:** Define the `ClientProfile` Go struct with five configuration domains, implement `SecretRef` for provider-based secret references (not literal values), add sops encrypt/decrypt wrappers, and establish schema versioning with a migration chain independent of `.qsdev.yaml`.
 
-**Context:** `ClientProfile` is versioned independently of `.gdev.yaml` because client profiles are personal developer artifacts (stored in `~/.qsdev/`), not project artifacts. A project's `.gdev.yaml` can reference a client profile by name (via the `client.name` field), but the profile itself lives outside the repo. The profile holds both non-secret configuration (which cloud project to use, git identity email) and secret references (SecretRef structs pointing to a keyring entry, 1Password item, or `.env` file). SecretRef stores the reference path — never the actual secret value.
+**Context:** `ClientProfile` is versioned independently of `.qsdev.yaml` because client profiles are personal developer artifacts (stored in `~/.qsdev/`), not project artifacts. A project's `.qsdev.yaml` can reference a client profile by name (via the `client.name` field), but the profile itself lives outside the repo. The profile holds both non-secret configuration (which cloud project to use, git identity email) and secret references (SecretRef structs pointing to a keyring entry, 1Password item, or `.env` file). SecretRef stores the reference path — never the actual secret value.
 
 The profile YAML is always sops+age encrypted at rest. The `Decrypt()` wrapper shells out to the `sops` binary (already installed by Phase 27), which handles age decryption transparently. This avoids reimplementing sops decryption logic in Go.
 
@@ -213,7 +213,7 @@ The profile YAML is always sops+age encrypted at rest. The `Decrypt()` wrapper s
    // ClientProfile represents encrypted per-client configuration for a QSS developer.
    // Stored at ~/.qsdev/clients/<name>.yaml, always sops+age encrypted.
    type ClientProfile struct {
-       // Schema version (integer). Separate from .gdev.yaml version.
+       // Schema version (integer). Separate from .qsdev.yaml version.
        Version int `yaml:"version" validate:"required,min=1"`
 
        // Human-readable client name (e.g., "acme-corp", "startup-inc").
@@ -404,14 +404,14 @@ The profile YAML is always sops+age encrypted at rest. The `Decrypt()` wrapper s
 
 ### Unit 30.3: Profile CRUD Commands
 
-**Description:** Implement the `gdev profile` subcommand group with create, list, edit, and delete commands. All commands require the age key to exist and produce clear errors if it is missing.
+**Description:** Implement the `qsdev profile` subcommand group with create, list, edit, and delete commands. All commands require the age key to exist and produce clear errors if it is missing.
 
-**Context:** The CRUD commands manage the encrypted profile YAML files at `~/.qsdev/clients/`. Create runs an interactive wizard collecting all five domain values and encrypts the result. Edit decrypts to a temp file, opens `$EDITOR`, and re-encrypts on save — the temp file is cleaned up with a deferred `os.Remove` to handle panics and early returns. Delete confirms before removing. The non-interactive path for all commands supports automation (CI profile setup, `gdev setup` scripts).
+**Context:** The CRUD commands manage the encrypted profile YAML files at `~/.qsdev/clients/`. Create runs an interactive wizard collecting all five domain values and encrypts the result. Edit decrypts to a temp file, opens `$EDITOR`, and re-encrypts on save — the temp file is cleaned up with a deferred `os.Remove` to handle panics and early returns. Delete confirms before removing. The non-interactive path for all commands supports automation (CI profile setup, `qsdev setup` scripts).
 
-**Desired Outcome:** A consultant can run `gdev profile create acme-corp` and answer prompts to build their encrypted client profile. The profile is immediately usable for `gdev init --client-profile acme-corp`. Editing is natural (opens in `$EDITOR`, familiar for developers who use git commit messages).
+**Desired Outcome:** A consultant can run `qsdev profile create acme-corp` and answer prompts to build their encrypted client profile. The profile is immediately usable for `qsdev init --client-profile acme-corp`. Editing is natural (opens in `$EDITOR`, familiar for developers who use git commit messages).
 
 **Steps:**
-1. Implement the `gdev profile` command group in `cmd/profile.go`:
+1. Implement the `qsdev profile` command group in `cmd/profile.go`:
    ```go
    var profileCmd = &cobra.Command{
        Use:   "profile",
@@ -435,14 +435,14 @@ The profile YAML is always sops+age encrypted at rest. The `Decrypt()` wrapper s
        if !fileExists(expandHome(AgeKeyPath)) {
            return fmt.Errorf(
                "Age key not found at %s.\n"+
-               "Run `gdev setup` to generate your encryption key.",
+               "Run `qsdev setup` to generate your encryption key.",
                expandHome(AgeKeyPath),
            )
        }
        return nil
    }
    ```
-3. Implement `gdev profile create <name>`:
+3. Implement `qsdev profile create <name>`:
    - Validate name is kebab-case.
    - Check that `~/.qsdev/clients/<name>.yaml` does not already exist (error with `--overwrite` suggestion if it does).
    - Run the wizard using Phase 6 `huh` forms, collecting all five domain values:
@@ -468,7 +468,7 @@ The profile YAML is always sops+age encrypted at rest. The `Decrypt()` wrapper s
      ```
    - Encrypt and write to `~/.qsdev/clients/<name>.yaml`.
    - Print: "Profile 'acme-corp' created at ~/.qsdev/clients/acme-corp.yaml"
-4. Implement `gdev profile list`:
+4. Implement `qsdev profile list`:
    - Read all `.yaml` files from `~/.qsdev/clients/`.
    - Decrypt each to extract `name`, `compliance`, and `cloud` summary (just the non-secret metadata, specifically NOT the Secrets domain).
    - Display as a table:
@@ -478,7 +478,7 @@ The profile YAML is always sops+age encrypted at rest. The `Decrypt()` wrapper s
      startup-inc   baseline     gcp:startup-project     2026-04-15
      ```
    - If decryption fails for a file: show `[decrypt failed]` in the cloud column with the filename, continue listing others.
-5. Implement `gdev profile edit <name>`:
+5. Implement `qsdev profile edit <name>`:
    ```go
    func runProfileEdit(name string) error {
        profilePath := expandHome(filepath.Join(ClientProfilesDir, name+".yaml"))
@@ -526,14 +526,14 @@ The profile YAML is always sops+age encrypted at rest. The `Decrypt()` wrapper s
        return EncryptFromFile(tmpPath, profilePath)
    }
    ```
-6. Implement `gdev profile delete <name>`:
+6. Implement `qsdev profile delete <name>`:
    - Confirm: "Delete profile 'acme-corp'? This cannot be undone. [y/N]"
    - On confirmation: `os.Remove(profilePath)`.
    - Print: "Profile 'acme-corp' deleted."
    - `--yes` flag skips confirmation.
-   - Check no project currently references this profile: scan for `.gdev.yaml` files in `~/` (one level deep) that have `client.name: acme-corp`. Warn but do not block deletion.
+   - Check no project currently references this profile: scan for `.qsdev.yaml` files in `~/` (one level deep) that have `client.name: acme-corp`. Warn but do not block deletion.
 7. Implement non-interactive create via flags:
-   - `gdev profile create acme-corp --cloud.aws-profile=acme-prod --git.email=me@acme.com --compliance=enhanced --yes`
+   - `qsdev profile create acme-corp --cloud.aws-profile=acme-prod --git.email=me@acme.com --compliance=enhanced --yes`
    - All five domain values available as flags; `--yes` skips confirmation prompts.
 8. Write integration tests:
    - Create profile → list → decrypt and verify fields (round-trip).
@@ -544,14 +544,14 @@ The profile YAML is always sops+age encrypted at rest. The `Decrypt()` wrapper s
    - Age key missing: all commands fail with setup instruction.
 
 **Acceptance Criteria:**
-- [ ] `gdev profile create <name>` runs interactive wizard and encrypts result with sops+age
-- [ ] `gdev profile list` shows all profiles with name, compliance, cloud summary, last modified date
-- [ ] `gdev profile list` handles decrypt failures gracefully (shows `[decrypt failed]`, continues)
-- [ ] `gdev profile edit <name>` decrypts to temp file, opens `$EDITOR`, re-encrypts on save
+- [ ] `qsdev profile create <name>` runs interactive wizard and encrypts result with sops+age
+- [ ] `qsdev profile list` shows all profiles with name, compliance, cloud summary, last modified date
+- [ ] `qsdev profile list` handles decrypt failures gracefully (shows `[decrypt failed]`, continues)
+- [ ] `qsdev profile edit <name>` decrypts to temp file, opens `$EDITOR`, re-encrypts on save
 - [ ] Temp file cleaned up via `defer os.Remove` regardless of edit outcome
 - [ ] Edited profile validated before re-encryption (YAML validity + struct validation)
-- [ ] `gdev profile delete <name>` confirms before deletion (skip with `--yes`)
-- [ ] All commands require age key to exist (clear error with `gdev setup` instruction if missing)
+- [ ] `qsdev profile delete <name>` confirms before deletion (skip with `--yes`)
+- [ ] All commands require age key to exist (clear error with `qsdev setup` instruction if missing)
 - [ ] Non-interactive create: all five domains settable via flags with `--yes`
 - [ ] Create with existing name errors without `--overwrite` flag
 
@@ -564,13 +564,13 @@ The profile YAML is always sops+age encrypted at rest. The `Decrypt()` wrapper s
 
 ### Unit 30.4: Init-Time Profile Selection Wizard
 
-**Description:** Add a profile selection wizard group to `gdev init` that appears when profiles exist in `~/.qsdev/clients/`. Selecting a profile decrypts it in memory, pre-populates wizard answers with non-secret values, and generates `secretspec.toml` entries for secrets.
+**Description:** Add a profile selection wizard group to `qsdev init` that appears when profiles exist in `~/.qsdev/clients/`. Selecting a profile decrypts it in memory, pre-populates wizard answers with non-secret values, and generates `secretspec.toml` entries for secrets.
 
 **Context:** The profile selection wizard group sits between the "create or join" detection and the language/service selection in the Phase 6 wizard. It only appears when profiles exist, keeping the quick path clean for developers who have not set up profiles. Selecting a profile does not skip the wizard — it pre-populates answers that the developer can then modify. This follows the same pattern as the Phase 13 Join mode (read config, then let the developer override).
 
-The `gdev init --client-profile <name> --yes` path is fully non-interactive: decrypt profile, pre-populate all wizard answers from profile values, skip the wizard, generate all files. This supports automated project bootstrapping in CI or onboarding scripts.
+The `qsdev init --client-profile <name> --yes` path is fully non-interactive: decrypt profile, pre-populate all wizard answers from profile values, skip the wizard, generate all files. This supports automated project bootstrapping in CI or onboarding scripts.
 
-**Desired Outcome:** A consultant switching between clients runs `gdev init --client-profile acme-corp` and gets a correctly-configured project environment (AWS profile, git identity, registry, compliance level) in one command. In the interactive wizard, selecting a profile pre-fills the form so they only need to confirm or adjust.
+**Desired Outcome:** A consultant switching between clients runs `qsdev init --client-profile acme-corp` and gets a correctly-configured project environment (AWS profile, git identity, registry, compliance level) in one command. In the interactive wizard, selecting a profile pre-fills the form so they only need to confirm or adjust.
 
 **Steps:**
 1. Implement the profile selection wizard group as a Phase 6 `WizardGroup`:
@@ -648,9 +648,9 @@ The `gdev init --client-profile <name> --yes` path is fully non-interactive: dec
        return Decrypt(path)
    }
    ```
-   The decrypted profile lives in memory only, for the duration of the `gdev init` run. It is not written to disk outside of the signing-and-baking steps (Units 30.5 and 30.6).
-5. Store the baked profile reference in `.gdev.yaml` (see Unit 30.6) immediately after wizard completion so that subsequent Join mode runs know which profile was used.
-6. Implement `gdev init --client-profile <name>` flag for non-interactive use:
+   The decrypted profile lives in memory only, for the duration of the `qsdev init` run. It is not written to disk outside of the signing-and-baking steps (Units 30.5 and 30.6).
+5. Store the baked profile reference in `.qsdev.yaml` (see Unit 30.6) immediately after wizard completion so that subsequent Join mode runs know which profile was used.
+6. Implement `qsdev init --client-profile <name>` flag for non-interactive use:
    ```go
    var clientProfileFlag string
    initCmd.Flags().StringVar(&clientProfileFlag, "client-profile", "", "Client profile name from ~/.qsdev/clients/")
@@ -658,11 +658,11 @@ The `gdev init --client-profile <name> --yes` path is fully non-interactive: dec
    When `--client-profile` is set along with `--yes`:
    - Decrypt the profile.
    - Apply to `WizardAnswers`.
-   - Run `gdev init` non-interactively using those answers.
-7. Add a profile hash to `.gdev.yaml` `client` block for change detection:
+   - Run `qsdev init` non-interactively using those answers.
+7. Add a profile hash to `.qsdev.yaml` `client` block for change detection:
    ```go
    // The bakedProfileHash is SHA-256 of the non-secret fields that were baked.
-   // Used by `gdev init --update` to detect when the profile has changed.
+   // Used by `qsdev init --update` to detect when the profile has changed.
    type ClientConfigBaked struct {
        Name             string `yaml:"name"`
        BakedHash        string `yaml:"baked_hash"`
@@ -674,7 +674,7 @@ The `gdev init --client-profile <name> --yes` path is fully non-interactive: dec
    - `buildProfileSelectionGroup` returns a group with N+1 options (one per profile + "no profile").
    - `applyProfileToWizardAnswers` with a full profile pre-populates all non-secret fields.
    - `applyProfileToWizardAnswers` sets `HasClientSecrets = true` when profile has secrets.
-   - `gdev init --client-profile acme-corp --yes` runs without prompts (integration test).
+   - `qsdev init --client-profile acme-corp --yes` runs without prompts (integration test).
    - Profile hash matches expected value for a known profile state.
 
 **Acceptance Criteria:**
@@ -683,8 +683,8 @@ The `gdev init --client-profile <name> --yes` path is fully non-interactive: dec
 - [ ] Selecting a profile decrypts it in memory and pre-populates wizard answers with non-secret values
 - [ ] Decrypted profile is held in memory only — not written to any temp file during wizard
 - [ ] Profile metadata (name, compliance, cloud summary) shown in selection options without full decrypt
-- [ ] `gdev init --client-profile <name> --yes` is fully non-interactive
-- [ ] Profile name and baked hash stored in `.gdev.yaml` `client` block after init
+- [ ] `qsdev init --client-profile <name> --yes` is fully non-interactive
+- [ ] Profile name and baked hash stored in `.qsdev.yaml` `client` block after init
 - [ ] `HasClientSecrets` flag set when profile has secrets (triggers secretspec.toml generation in Unit 30.5)
 
 **Research Citations:**
@@ -702,7 +702,7 @@ The `gdev init --client-profile <name> --yes` path is fully non-interactive: dec
 
 The `secretspec.toml` file is always gitignored. If it were accidentally committed, it would only expose the location of secrets (a 1Password item path or keyring service name), not the secrets themselves — but the gitignore prevents even this.
 
-**Desired Outcome:** After `gdev init --client-profile acme-corp`, the project contains a `secretspec.toml` with all client-specific secret references. A developer entering `devenv shell` gets the secrets injected as environment variables (via devenv 2.0 SecretSpec integration) without any manual setup.
+**Desired Outcome:** After `qsdev init --client-profile acme-corp`, the project contains a `secretspec.toml` with all client-specific secret references. A developer entering `devenv shell` gets the secrets injected as environment variables (via devenv 2.0 SecretSpec integration) without any manual setup.
 
 **Steps:**
 1. Define the SecretSpec output format in `internal/profile/secretspec.go`:
@@ -775,7 +775,7 @@ The `secretspec.toml` file is always gitignored. If it were accidentally committ
 
        sb.WriteString("# secretspec.toml — Secret provider references\n")
        sb.WriteString("# This file contains NO secrets — only references to secret providers.\n")
-       sb.WriteString("# Generated by: gdev init --client-profile " + profileName + "\n")
+       sb.WriteString("# Generated by: qsdev init --client-profile " + profileName + "\n")
        sb.WriteString("# DO NOT commit this file. It is gitignored by gdev.\n\n")
 
        // Sort keys for deterministic output
@@ -797,7 +797,7 @@ The `secretspec.toml` file is always gitignored. If it were accidentally committ
        return sb.String(), nil
    }
    ```
-4. Integrate `secretspec.toml` generation into the `gdev init` flow: after applying profile to wizard answers (Unit 30.4), if `HasClientSecrets` is true, call `RenderSecretSpec` and write the output to `secretspec.toml` in the project root.
+4. Integrate `secretspec.toml` generation into the `qsdev init` flow: after applying profile to wizard answers (Unit 30.4), if `HasClientSecrets` is true, call `RenderSecretSpec` and write the output to `secretspec.toml` in the project root.
 5. Add `secretspec.toml` to `.gitignore` (using the Phase 12 section marker pattern):
    ```go
    func ensureSecretSpecGitignore(projectRoot string) error {
@@ -824,7 +824,7 @@ The `secretspec.toml` file is always gitignored. If it were accidentally committ
 **Acceptance Criteria:**
 - [ ] `RenderSecretSpec` maps all four `SecretRef` provider types to correct SecretSpec format
 - [ ] Output header comment: "This file contains NO secrets — only references to secret providers"
-- [ ] `secretspec.toml` written to project root by `gdev init` when profile has secrets
+- [ ] `secretspec.toml` written to project root by `qsdev init` when profile has secrets
 - [ ] `secretspec.toml` always added to `.gitignore` (Phase 12 section marker pattern)
 - [ ] Output is deterministic: same profile → same `secretspec.toml` content
 - [ ] `toEnvVarName` converts logical names to `UPPER_SNAKE_CASE` env var names
@@ -841,19 +841,19 @@ The `secretspec.toml` file is always gitignored. If it were accidentally committ
 
 ### Unit 30.6: Non-Secret Value Baking
 
-**Description:** Write non-secret profile values (AWS profile name, GCP project, compliance level, registry endpoints) to the `.gdev.yaml` `client` block so that Join mode works without the encrypted profile file, and new developers can reproduce the client configuration from git alone.
+**Description:** Write non-secret profile values (AWS profile name, GCP project, compliance level, registry endpoints) to the `.qsdev.yaml` `client` block so that Join mode works without the encrypted profile file, and new developers can reproduce the client configuration from git alone.
 
-**Context:** The encrypted profile file at `~/.qsdev/clients/<name>.yaml` is per-developer-machine and is never committed to git. However, many client configuration values are not secrets: the AWS profile name is a configuration identifier (not an access key), the compliance level is a project requirement, the registry URL is an endpoint (not credentials). These values are baked into `.gdev.yaml` so they travel with the project repo. A new developer joining the project `git clone`s and runs `gdev init` — Join mode reads the `client` block from `.gdev.yaml`, applies the non-secret values, and generates `secretspec.toml` with the same secret references (which the new developer must resolve against their own credentials).
+**Context:** The encrypted profile file at `~/.qsdev/clients/<name>.yaml` is per-developer-machine and is never committed to git. However, many client configuration values are not secrets: the AWS profile name is a configuration identifier (not an access key), the compliance level is a project requirement, the registry URL is an endpoint (not credentials). These values are baked into `.qsdev.yaml` so they travel with the project repo. A new developer joining the project `git clone`s and runs `qsdev init` — Join mode reads the `client` block from `.qsdev.yaml`, applies the non-secret values, and generates `secretspec.toml` with the same secret references (which the new developer must resolve against their own credentials).
 
-The separation of concerns is clear: `.gdev.yaml` carries non-secret client configuration; `~/.qsdev/clients/<name>.yaml` carries secret references (also not the secrets themselves, but the pointers to where to find them).
+The separation of concerns is clear: `.qsdev.yaml` carries non-secret client configuration; `~/.qsdev/clients/<name>.yaml` carries secret references (also not the secrets themselves, but the pointers to where to find them).
 
-**Desired Outcome:** A project set up with `gdev init --client-profile acme-corp` produces a `.gdev.yaml` with a `client` block that any developer can use for Join mode. New developers do not need the encrypted profile file — they only need their own credentials matching the `secretspec.toml` references.
+**Desired Outcome:** A project set up with `qsdev init --client-profile acme-corp` produces a `.qsdev.yaml` with a `client` block that any developer can use for Join mode. New developers do not need the encrypted profile file — they only need their own credentials matching the `secretspec.toml` references.
 
 **Steps:**
-1. Define the `ClientConfigBaked` struct that goes into `.gdev.yaml`:
+1. Define the `ClientConfigBaked` struct that goes into `.qsdev.yaml`:
    ```go
    // ClientConfigBaked is the non-secret projection of a ClientProfile.
-   // Written to .gdev.yaml client block. Safe to commit.
+   // Written to .qsdev.yaml client block. Safe to commit.
    type ClientConfigBaked struct {
        Name              string          `yaml:"name"`
        Compliance        ComplianceLevel `yaml:"compliance,omitempty"`
@@ -892,7 +892,7 @@ The separation of concerns is clear: `.gdev.yaml` carries non-secret client conf
        return baked
    }
    ```
-3. Integrate baking into the `gdev init` flow: after wizard completion with a profile selected, call `BakeProfile` and write the result to the `.gdev.yaml` `client` block.
+3. Integrate baking into the `qsdev init` flow: after wizard completion with a profile selected, call `BakeProfile` and write the result to the `.qsdev.yaml` `client` block.
 4. Implement Join mode baked-value application in Unit 13.4's `runJoinMode`:
    ```go
    func applyBakedClientConfig(baked *ClientConfigBaked, answers *WizardAnswers) {
@@ -911,8 +911,8 @@ The separation of concerns is clear: `.gdev.yaml` carries non-secret client conf
        // ...other non-secret fields
    }
    ```
-5. Generate `secretspec.toml` from the baked `SecretRefs` in Join mode: a new developer running `gdev init` on a project with a `client` block gets a `secretspec.toml` generated from the baked `SecretRefs`. They must supply their own credentials for the referenced providers.
-6. Implement `gdev init --update` re-baking: when `--update` is passed and a client profile is present, decrypt the current profile, re-bake, and update the `.gdev.yaml` `client` block if the baked hash has changed.
+5. Generate `secretspec.toml` from the baked `SecretRefs` in Join mode: a new developer running `qsdev init` on a project with a `client` block gets a `secretspec.toml` generated from the baked `SecretRefs`. They must supply their own credentials for the referenced providers.
+6. Implement `qsdev init --update` re-baking: when `--update` is passed and a client profile is present, decrypt the current profile, re-bake, and update the `.qsdev.yaml` `client` block if the baked hash has changed.
 7. Implement baked hash computation as a SHA-256 of the deterministically-serialized non-secret values (excluding `BakedHash` itself):
    ```go
    func computeBakedHash(baked *ClientConfigBaked) string {
@@ -931,17 +931,17 @@ The separation of concerns is clear: `.gdev.yaml` carries non-secret client conf
    - `computeBakedHash` changes when any non-secret field changes.
    - Join mode on a project with `client` block applies baked values to `WizardAnswers`.
    - Join mode generates `secretspec.toml` from baked `SecretRefs`.
-   - `gdev init --update` re-bakes and updates `.gdev.yaml` when profile changes.
+   - `qsdev init --update` re-bakes and updates `.qsdev.yaml` when profile changes.
 
 **Acceptance Criteria:**
 - [ ] `BakeProfile` produces `ClientConfigBaked` with all non-secret fields from the profile
 - [ ] `SecretRefs` (provider references, not actual secrets) included in baked values
-- [ ] Baked values written to `.gdev.yaml` `client` block by `gdev init`
+- [ ] Baked values written to `.qsdev.yaml` `client` block by `qsdev init`
 - [ ] `BakedHash` computed as SHA-256 of non-secret fields for change detection
-- [ ] Join mode reads `client` block from `.gdev.yaml` and applies non-secret values without the profile file
+- [ ] Join mode reads `client` block from `.qsdev.yaml` and applies non-secret values without the profile file
 - [ ] Join mode generates `secretspec.toml` from baked `SecretRefs`
-- [ ] `gdev init --update` re-bakes from current profile when profile changes (baked hash differs)
-- [ ] New developers can reproduce client configuration from `.gdev.yaml` alone (no profile file needed)
+- [ ] `qsdev init --update` re-bakes from current profile when profile changes (baked hash differs)
+- [ ] New developers can reproduce client configuration from `.qsdev.yaml` alone (no profile file needed)
 
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/client-profile-research.md` — non-secret baking design, Join mode without profile file scenario, baked hash change detection
@@ -950,15 +950,15 @@ The separation of concerns is clear: `.gdev.yaml` carries non-secret client conf
 
 ---
 
-### Unit 30.7: Profile Compliance Enforcement in `gdev check`
+### Unit 30.7: Profile Compliance Enforcement in `qsdev check`
 
-**Description:** Add compliance enforcement checks to `gdev check` that validate security settings against the client profile's compliance level. Critical compliance violations are non-suppressible: they cannot be bypassed with `--audit-level none` or `--auto-fix`.
+**Description:** Add compliance enforcement checks to `qsdev check` that validate security settings against the client profile's compliance level. Critical compliance violations are non-suppressible: they cannot be bypassed with `--audit-level none` or `--auto-fix`.
 
-**Context:** Phase 13's `gdev check` has five check categories. This unit adds compliance enforcement as a sixth category (or extends Category 5 Security Hardening) using the client profile's declared compliance level as the reference point. The key distinction from Phase 13's compliance level checks: those check that the project meets the level's general requirements; this unit checks that the project has not been specifically configured to violate the client profile's declared restrictions — particularly MCP server blocklists and security level floors.
+**Context:** Phase 13's `qsdev check` has five check categories. This unit adds compliance enforcement as a sixth category (or extends Category 5 Security Hardening) using the client profile's declared compliance level as the reference point. The key distinction from Phase 13's compliance level checks: those check that the project meets the level's general requirements; this unit checks that the project has not been specifically configured to violate the client profile's declared restrictions — particularly MCP server blocklists and security level floors.
 
 The non-suppressible behavior is intentional: if a client profile declares `compliance: strict` with `blocked_mcp_servers: ["slack-mcp"]`, no developer should be able to suppress that check, even locally. The check exists to protect client data, not just to enforce preferences.
 
-**Desired Outcome:** `gdev check` catches cases where a developer has manually overridden security settings below the client profile's declared compliance level. Critical violations (blocked MCP server added to `.mcp.json`, security level manually lowered) produce exit code 1 even when `--audit-level none` is passed.
+**Desired Outcome:** `qsdev check` catches cases where a developer has manually overridden security settings below the client profile's declared compliance level. Critical violations (blocked MCP server added to `.mcp.json`, security level manually lowered) produce exit code 1 even when `--audit-level none` is passed.
 
 **Steps:**
 1. Add a new check category for client profile compliance:
@@ -995,7 +995,7 @@ The non-suppressible behavior is intentional: if a client profile declares `comp
                    "Security level %q is below client compliance requirement %q",
                    resolved.Config.Security.Level, string(baked.Compliance),
                ),
-               Remediation: "Remove the security.level override from .gdev.local.yaml or .gdev.yaml",
+               Remediation: "Remove the security.level override from .qsdev.local.yaml or .qsdev.yaml",
            })
        }
 
@@ -1041,15 +1041,15 @@ The non-suppressible behavior is intentional: if a client profile declares `comp
    ```
    CRITICAL [non-suppressible] client_compliance/compliance_level_floor
      Security level "baseline" is below client compliance requirement "enhanced"
-     Remediation: Remove the security.level override from .gdev.local.yaml or .gdev.yaml
+     Remediation: Remove the security.level override from .qsdev.local.yaml or .qsdev.yaml
    ```
 7. Update the SARIF and JUnit output formats to include the `suppressible` field in their respective result structures.
-8. Wire `checkClientCompliance` into the `gdev check` command execution after the existing five categories:
+8. Wire `checkClientCompliance` into the `qsdev check` command execution after the existing five categories:
    ```go
    allResults = append(allResults, checkClientCompliance(projectRoot, cfg)...)
    ```
 9. Write unit tests:
-   - `checkClientCompliance` returns empty when no `client` block in `.gdev.yaml`.
+   - `checkClientCompliance` returns empty when no `client` block in `.qsdev.yaml`.
    - Security level lowered below compliance floor: `SeverityCritical`, `Suppressible: false`.
    - `shouldFail` returns true for non-suppressible critical even when `auditLevel == "none"`.
    - `shouldFail` returns false for suppressible critical when `auditLevel == "none"`.
@@ -1058,7 +1058,7 @@ The non-suppressible behavior is intentional: if a client profile declares `comp
    - SARIF output includes `suppressible` field.
 
 **Acceptance Criteria:**
-- [ ] `checkClientCompliance` added as a sixth check category in `gdev check`
+- [ ] `checkClientCompliance` added as a sixth check category in `qsdev check`
 - [ ] Compliance level floor enforcement: security level below client requirement produces `SeverityCritical` non-suppressible finding
 - [ ] `shouldFail` returns true for non-suppressible critical findings regardless of `--audit-level` flag value
 - [ ] `shouldFail` returns true for `--audit-level none` only if non-suppressible critical findings exist
@@ -1066,11 +1066,11 @@ The non-suppressible behavior is intentional: if a client profile declares `comp
 - [ ] Missing required pre-commit hook: `SeverityHigh`, suppressible
 - [ ] Non-suppressible findings labeled `[non-suppressible]` in human-readable output
 - [ ] Human, JSON, SARIF, and JUnit output formats all include `suppressible` field
-- [ ] Check skipped when no `client` block in `.gdev.yaml` (no false positives for non-client projects)
+- [ ] Check skipped when no `client` block in `.qsdev.yaml` (no false positives for non-client projects)
 
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/client-profile-research.md` — compliance enforcement design, non-suppressible violation rationale
-- `phases/13-project-configuration-team-standards.md § Unit 13.6` — `gdev check` command structure, `CheckResult` type, `shouldFail` function, existing five categories
+- `phases/13-project-configuration-team-standards.md § Unit 13.6` — `qsdev check` command structure, `CheckResult` type, `shouldFail` function, existing five categories
 - `phases/13-project-configuration-team-standards.md § Unit 13.7` — compliance level-to-hook mapping, `ComplianceLevels` map
 
 **Status:** Not Started
@@ -1084,10 +1084,10 @@ The non-suppressible behavior is intentional: if a client profile declares `comp
 | Phase | Dependency |
 |-------|-----------|
 | Phase 6 | `huh` form library, wizard phase registration, `WizardAnswers` struct — profile selection group integrated here |
-| Phase 9 | `gdev doctor` check suite — age key health checks added here |
+| Phase 9 | `qsdev doctor` check suite — age key health checks added here |
 | Phase 12 | `.gitignore` section marker pattern — used for `secretspec.toml` gitignore entry |
-| Phase 13 | `ClientConfig` in `.gdev.yaml`, `gdev check` command and `CheckResult` type, `shouldFail` function, compliance level mapping |
-| Phase 27 | `gdev setup --tools` step registration — age key generation step added here; sops and age must be installed first |
+| Phase 13 | `ClientConfig` in `.qsdev.yaml`, `qsdev check` command and `CheckResult` type, `shouldFail` function, compliance level mapping |
+| Phase 27 | `qsdev setup --tools` step registration — age key generation step added here; sops and age must be installed first |
 
 ### External Tools Required
 
@@ -1097,7 +1097,7 @@ The non-suppressible behavior is intentional: if a client profile declares `comp
 | `age-keygen` | `pkgs.age` | Generate Ed25519 keypair |
 | `age` | `pkgs.age` | Runtime age encryption (used by sops) |
 
-All three are added to `gdev setup --tools` by Phase 27. This phase assumes they are present before Unit 30.1 runs.
+All three are added to `qsdev setup --tools` by Phase 27. This phase assumes they are present before Unit 30.1 runs.
 
 ### New Go Dependencies
 
@@ -1107,12 +1107,12 @@ None. sops and age are called via `exec.Command` (same pattern as Phase 13's sem
 
 - `~/.qsdev/` as the global QSS developer identity directory (separate from `~/.local/share/gdev/docs/` for documentation data and `.devinit/` for per-project state)
 - `Suppressible: bool` field on `CheckResult` — extends the Phase 13 check result type; non-suppressible findings always exit 1 regardless of `--audit-level`
-- `BakeProfile` + `applyBakedClientConfig` pattern: encrypted profile at `~/.qsdev/` provides values at init time; baked values in `.gdev.yaml` provide them at Join time — no profile file required for team members
+- `BakeProfile` + `applyBakedClientConfig` pattern: encrypted profile at `~/.qsdev/` provides values at init time; baked values in `.qsdev.yaml` provide them at Join time — no profile file required for team members
 
 ### Security Properties
 
-- Age private key never leaves `~/.qsdev/keys/age.key` (never committed, never in memory longer than a single `gdev profile` command invocation)
-- `SecretRef` structs contain only provider paths, never literal secret values — safe to bake into `.gdev.yaml` and commit
+- Age private key never leaves `~/.qsdev/keys/age.key` (never committed, never in memory longer than a single `qsdev profile` command invocation)
+- `SecretRef` structs contain only provider paths, never literal secret values — safe to bake into `.qsdev.yaml` and commit
 - `secretspec.toml` contains only provider references, never literal secrets — gitignored as defense-in-depth (even if committed, only leaks pointer locations)
 - sops encryption uses the standard sops YAML encryption format, meaning profiles are recoverable with any standard sops installation and the age key
 
@@ -1121,12 +1121,12 @@ None. sops and age are called via `exec.Command` (same pattern as Phase 13's sem
 ## Phase Completion Criteria
 
 - [ ] All seven units pass acceptance criteria
-- [ ] End-to-end: `gdev setup` → `gdev profile create acme-corp` → `gdev init --client-profile acme-corp` → `.gdev.yaml` has `client` block, `secretspec.toml` is gitignored, devenv nix has SecretSpec enabled
-- [ ] Join mode: `git clone` + `gdev init` (no profile file) reads baked `client` block and generates `secretspec.toml` from baked `SecretRefs`
+- [ ] End-to-end: `qsdev setup` → `qsdev profile create acme-corp` → `qsdev init --client-profile acme-corp` → `.qsdev.yaml` has `client` block, `secretspec.toml` is gitignored, devenv nix has SecretSpec enabled
+- [ ] Join mode: `git clone` + `qsdev init` (no profile file) reads baked `client` block and generates `secretspec.toml` from baked `SecretRefs`
 - [ ] Encrypt → decrypt round-trip is lossless for all five `ClientProfile` domains
-- [ ] `gdev doctor` reports all four age key health checks (existence, permissions, sops config, pubkey reference)
-- [ ] `gdev check` non-suppressible violation: `--audit-level none` still exits 1 when compliance level is below client requirement
-- [ ] `gdev profile list` shows all profiles with metadata; handles decrypt failures gracefully
-- [ ] `gdev profile edit` temp file always cleaned up (defer pattern verified by test with simulated panic)
+- [ ] `qsdev doctor` reports all four age key health checks (existence, permissions, sops config, pubkey reference)
+- [ ] `qsdev check` non-suppressible violation: `--audit-level none` still exits 1 when compliance level is below client requirement
+- [ ] `qsdev profile list` shows all profiles with metadata; handles decrypt failures gracefully
+- [ ] `qsdev profile edit` temp file always cleaned up (defer pattern verified by test with simulated panic)
 - [ ] `secretspec.toml` added to `.gitignore` by both Create and Join mode
-- [ ] All non-secret fields from profile appear in `.gdev.yaml` `client` block and are readable without decryption
+- [ ] All non-secret fields from profile appear in `.qsdev.yaml` `client` block and are readable without decryption

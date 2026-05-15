@@ -22,11 +22,11 @@ Phase 1 complete (shared types, `EcosystemModule` interface, detection engine, t
 
 ### Unit 26.1: Git Platform CLI Module
 
-**Description:** Implement the Git Platform CLI detection module. Detects `gh`, `glab`, and `git-lfs` from project structure and git remote configuration, adds them to devenv.nix packages, and generates CLAUDE.md sections with platform-specific commands. Also catalogs optional TUI and productivity tools available via `gdev enable`.
+**Description:** Implement the Git Platform CLI detection module. Detects `gh`, `glab`, and `git-lfs` from project structure and git remote configuration, adds them to devenv.nix packages, and generates CLAUDE.md sections with platform-specific commands. Also catalogs optional TUI and productivity tools available via `qsdev enable`.
 
 **Context:** GitHub CLI (`gh`) is practically essential for GitHub-hosted projects — it enables PR creation, CI debugging, release management, and API queries from the terminal. GitLab CLI (`glab`) mirrors `gh` for GitLab projects, which are common in enterprise consulting engagements. `git-lfs` is non-negotiable: LFS repos simply do not work without it, and the detection signal (`.gitattributes` containing `filter=lfs`) is unambiguous. The research notes that `gh` and the GitHub MCP server are complementary — gh is the human developer's tool for PR workflow while the MCP server is the AI agent's tool. Both can coexist.
 
-Bitbucket CLI is explicitly skipped: no stable nixpkgs package exists and the authentication model is in flux (app passwords deprecated September 2025, gone June 2026). The `delta` diff pager and `lazygit` TUI are catalog-only (not auto-detected): they are personal preference tools surfaced via `gdev enable delta` and `gdev enable lazygit`.
+Bitbucket CLI is explicitly skipped: no stable nixpkgs package exists and the authentication model is in flux (app passwords deprecated September 2025, gone June 2026). The `delta` diff pager and `lazygit` TUI are catalog-only (not auto-detected): they are personal preference tools surfaced via `qsdev enable delta` and `qsdev enable lazygit`.
 
 **Code-Grounded Note:** `gh` and `glab` require authentication (`gh auth login`, `glab auth login`) which is interactive and cannot be automated. The module adds these binaries to devenv.nix packages and generates auth instructions in CLAUDE.md — it does not attempt to configure auth. The `git-lfs` package requires a one-time `git lfs install` call after installation; this should be added to devenv.nix's `enterShell` hook.
 
@@ -108,25 +108,25 @@ Bitbucket CLI is explicitly skipped: no stable nixpkgs package exists and the au
    - No deny rules
    - CLAUDE.md note on token handling: "Never commit GITHUB_TOKEN or GITLAB_TOKEN — use CI secrets or SecretSpec"
 
-5. Add catalog entries for opt-in tools (no auto-detection, available via `gdev enable`):
+5. Add catalog entries for opt-in tools (no auto-detection, available via `qsdev enable`):
    ```go
    var GitPlatformCatalog = []CatalogTool{
        {
            Name:        "lazygit",
            NixPackage:  "lazygit",
            Description: "Terminal UI for git — staging, rebasing, branch management",
-           EnableCmd:   "gdev enable lazygit",
+           EnableCmd:   "qsdev enable lazygit",
        },
        {
            Name:        "delta",
            NixPackage:  "delta",
            Description: "Syntax-highlighted diff pager for git log/diff/show",
-           EnableCmd:   "gdev enable delta",
+           EnableCmd:   "qsdev enable delta",
            PostInstall: "Adds pager config to .gitconfig fragment in enterShell",
        },
    }
    ```
-   - These appear in `gdev list --category git` output but are never auto-added to devenv.nix
+   - These appear in `qsdev list --category git` output but are never auto-added to devenv.nix
 
 6. Write unit tests:
    - `.github/` present → `gh` detected
@@ -147,7 +147,7 @@ Bitbucket CLI is explicitly skipped: no stable nixpkgs package exists and the au
 - [ ] Detected tools added to devenv.nix packages list
 - [ ] `git lfs install --local` added to enterShell hook when git-lfs detected (idempotent with `|| true`)
 - [ ] CLAUDE.md section generated with platform-specific PR/MR/pipeline commands
-- [ ] `lazygit` and `delta` registered as catalog tools (available via `gdev enable`, not auto-detected)
+- [ ] `lazygit` and `delta` registered as catalog tools (available via `qsdev enable`, not auto-detected)
 - [ ] Bitbucket CLI explicitly skipped — no detection, no catalog entry, no packages
 - [ ] Unit tests cover detection logic, generated packages, enterShell hook, and CLAUDE.md content
 
@@ -411,7 +411,7 @@ Bruno is the open-source Postman replacement and its Git-native storage (`.bru` 
            Name:        "httpie",
            NixPackage:  "httpie",
            Description: "Human-friendly CLI HTTP client with colorized output",
-           EnableCmd:   "gdev enable httpie",
+           EnableCmd:   "qsdev enable httpie",
        },
    }
    ```

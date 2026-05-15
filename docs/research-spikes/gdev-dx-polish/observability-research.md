@@ -75,13 +75,13 @@ Claude Code has `/usage` (aliases: `/cost`, `/stats`) that shows session cost, p
 Concrete implementation:
 - gdev's `claudecode` addon should generate the OTEL environment variables in `.envrc` or `devenv.nix` when a profile includes telemetry configuration
 - The profile specifies the collector endpoint, service name, and which signals to enable
-- `gdev init --profile consulting-with-otel` sets it up; plain `gdev init` does not
+- `qsdev init --profile consulting-with-otel` sets it up; plain `qsdev init` does not
 - gdev should NOT ship or manage the collector infrastructure (Prometheus/Grafana/etc.) -- that is orthogonal infrastructure
 - Generate a `starship.toml` or env var that indicates OTEL is active (visual confirmation)
 
 **Estimated value: medium for consulting firms with client billing, low for individual developers.**
 
-The right abstraction is: gdev configures the Claude Code side (env vars), the firm operates the collector side (infrastructure). gdev bridges the gap by making the env var configuration automatic and profile-driven rather than manual.
+The right abstraction is: qsdev configures the Claude Code side (env vars), the firm operates the collector side (infrastructure). gdev bridges the gap by making the env var configuration automatic and profile-driven rather than manual.
 
 ## Depth Checklist
 

@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/evidence"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/internal/evidence"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
 )
 
 func evidenceCmd() *cobra.Command {
@@ -23,12 +23,12 @@ func evidenceCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "evidence",
-		Short: "Generate compliance evidence report mapping gdev controls to a framework",
-		Long: `Generate a compliance evidence report that maps gdev's defense-in-depth
+		Short: "Generate compliance evidence report mapping qsdev controls to a framework",
+		Long: `Generate a compliance evidence report that maps qsdev's defense-in-depth
 layers to controls in a compliance framework (SOC2, HIPAA, ASVS, etc.).
 
 The report shows which framework controls are addressed, partially addressed,
-or not addressed by the current gdev configuration. Output is available in
+or not addressed by the current qsdev configuration. Output is available in
 JSON or Markdown format.
 
 Use --list-frameworks to see available compliance frameworks.
@@ -143,7 +143,7 @@ func buildMinimalPostureReport(projectRoot, projectName string) *posture.Posture
 	return &posture.PostureReport{
 		SchemaVersion: posture.SchemaVersion,
 		GeneratedAt:   time.Now().UTC(),
-		GdevVersion:   version.Info().Version,
+		QsdevVersion:   version.Info().Version,
 		ProjectPath:   projectRoot,
 		ProjectName:   projectName,
 		Defense: posture.DefenseCoverage{

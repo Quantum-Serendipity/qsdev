@@ -2,10 +2,10 @@
 
 ## Problem
 
-After `gdev init` generates config files, multiple forms of drift can occur:
+After `qsdev init` generates config files, multiple forms of drift can occur:
 1. Someone manually edits a machine-owned file (accidental or intentional)
-2. gdev releases a new version with updated defaults, but the project hasn't run `gdev update`
-3. New tools become available that didn't exist when `gdev init` was run
+2. gdev releases a new version with updated defaults, but the project hasn't run `qsdev update`
+3. New tools become available that didn't exist when `qsdev init` was run
 4. Pre-commit hooks are uninstalled or corrupted
 5. Lock files become stale relative to their source manifests
 
@@ -45,7 +45,7 @@ State file: .gdev/state.yaml
 - `unknown`: file exists but no stored hash (generated before hash tracking)
 
 **Severity:**
-- Machine-owned modified without `gdev update` -> warning (someone broke config)
+- Machine-owned modified without `qsdev update` -> warning (someone broke config)
 - Human-edited with intact section markers -> info (expected)
 - Human-edited with missing section markers -> warning (generated sections may be lost)
 - Missing file -> error (defense may be inactive)
@@ -65,9 +65,9 @@ Changes in 1.2.0:
 
 **Implementation:**
 - gdev binary embeds a changelog of config-affecting changes per version
-- On `gdev status`, compare project's `gdev_version` against binary version
+- On `qsdev status`, compare project's `gdev_version` against binary version
 - Report new tools available, updated defaults, deprecated settings
-- Suggest `gdev update` with preview of changes
+- Suggest `qsdev update` with preview of changes
 
 ### Category 3: Tool Availability Drift
 
@@ -82,7 +82,7 @@ Available tools not enabled:
 ```
 
 **Implementation:**
-- Detection engine re-runs on `gdev status` to check for new project files
+- Detection engine re-runs on `qsdev status` to check for new project files
 - Tool registry knows which tools are applicable per ecosystem
 - Delta between "applicable tools" and "enabled tools" is the availability drift
 
@@ -101,7 +101,7 @@ CLAUDE.md section markers:
 **Implementation:**
 - Parse files for expected marker pairs
 - Report missing/broken markers
-- Suggest `gdev update --repair-markers` to restore
+- Suggest `qsdev update --repair-markers` to restore
 
 ### Category 5: Lock File Drift
 
@@ -142,10 +142,10 @@ Pre-commit hooks status:
 
 ### When Drift Detection Runs
 
-1. **`gdev status`** (always): Full drift scan, results included in posture report
-2. **`gdev update --dry-run`** (on demand): Show what `gdev update` would change
+1. **`qsdev status`** (always): Full drift scan, results included in posture report
+2. **`qsdev update --dry-run`** (on demand): Show what `qsdev update` would change
 3. **Shell hook** (optional): Lightweight check on `cd` into project directory
-4. **CI** (automated): `gdev status --json` captures drift state as artifact
+4. **CI** (automated): `qsdev status --json` captures drift state as artifact
 
 ### Detection Performance
 
@@ -221,42 +221,42 @@ ecosystems_detected:
 
 | Drift Type | Auto-Fix |
 |------------|----------|
-| Machine-owned file modified | `gdev update` regenerates |
-| Section markers missing | `gdev update --repair-markers` restores |
-| Pre-commit hooks uninstalled | `gdev hooks install` reinstalls |
+| Machine-owned file modified | `qsdev update` regenerates |
+| Section markers missing | `qsdev update --repair-markers` restores |
+| Pre-commit hooks uninstalled | `qsdev hooks install` reinstalls |
 | Lock file stale | `npm install` / `go mod tidy` / etc. |
-| New tools available | `gdev enable <tool>` |
+| New tools available | `qsdev enable <tool>` |
 
 ### Manual-Fix Required
 
 | Drift Type | Action |
 |------------|--------|
-| Human-edited file conflicts | `gdev update` shows diff, user merges |
-| Version drift with breaking changes | `gdev update` with migration guide |
+| Human-edited file conflicts | `qsdev update` shows diff, user merges |
+| Version drift with breaking changes | `qsdev update` with migration guide |
 | Missing lock file for new ecosystem | User must run package manager install |
 | Corrupt lock file | User must regenerate from manifest |
 
-### `gdev update` Command
+### `qsdev update` Command
 
 ```
-gdev update                    # Interactive update with diff preview
-gdev update --dry-run          # Show what would change
-gdev update --yes              # Auto-apply all changes
-gdev update --repair-markers   # Restore section markers only
-gdev update --force            # Overwrite everything including human-edited files
+qsdev update                    # Interactive update with diff preview
+qsdev update --dry-run          # Show what would change
+qsdev update --yes              # Auto-apply all changes
+qsdev update --repair-markers   # Restore section markers only
+qsdev update --force            # Overwrite everything including human-edited files
 ```
 
 ## Comparison to Infrastructure Drift Detection
 
-**Terraform drift:** Compares state file against actual cloud resources. Analogous to gdev comparing state.yaml against actual files. Terraform can auto-remediate via `terraform apply`; gdev can auto-remediate via `gdev update`.
+**Terraform drift:** Compares state file against actual cloud resources. Analogous to gdev comparing state.yaml against actual files. Terraform can auto-remediate via `terraform apply`; gdev can auto-remediate via `qsdev update`.
 
-**Kubernetes drift:** Controllers continuously reconcile desired vs actual state. gdev's model is on-demand (run `gdev status`) rather than continuous, which is appropriate for file-based config.
+**Kubernetes drift:** Controllers continuously reconcile desired vs actual state. gdev's model is on-demand (run `qsdev status`) rather than continuous, which is appropriate for file-based config.
 
 **Key difference:** Infrastructure drift detection operates on remote resources. gdev operates entirely locally on files in the working directory, making it fast and offline-capable.
 
 ## Tradeoffs
 
-**State file as source of truth:** If `.gdev/state.yaml` is lost or corrupted, drift detection breaks. The state file should be committed to git so it's version-controlled alongside the configs. If missing, `gdev status` should offer to rebuild it via `gdev init --rebuild-state`.
+**State file as source of truth:** If `.gdev/state.yaml` is lost or corrupted, drift detection breaks. The state file should be committed to git so it's version-controlled alongside the configs. If missing, `qsdev status` should offer to rebuild it via `qsdev init --rebuild-state`.
 
 **False positives on human-edited files:** Flagging modifications to devenv.nix or CLAUDE.md as "drift" is wrong -- they're supposed to be edited. The category system (machine-owned vs human-edited) prevents this, but users need to understand the distinction.
 

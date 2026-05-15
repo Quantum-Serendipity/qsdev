@@ -26,7 +26,7 @@ Phase 1 complete (EcosystemModule interface, detection engine, template engine, 
 
 **Context:** kubectl is nearly universal for K8s-using projects. The critical challenge is kubeconfig management: the default `~/.kube/config` merges all cluster credentials, so consulting engineers working across multiple clients risk operating on the wrong cluster. gdev's solution is per-project `KUBECONFIG` in devenv.nix pointing to a client-specific file path. kubectl has a version skew policy — the client must be within +/-1 minor version of the cluster API server — so devenv.nix pins a specific version. k9s and stern are included at Tier 1 because their consulting daily-use value is very high: k9s replaces kubectl for interactive exploration, and stern provides multi-pod log tailing essential for debugging across replicas.
 
-**Desired Outcome:** When K8s indicator files are detected, `gdev init` generates a devenv.nix fragment with kubectl (version-pinnable per wizard input), kubectx, k9s, stern, kustomize (when `kustomization.yaml` present), and per-project `KUBECONFIG` that does not point to `~/.kube/config`.
+**Desired Outcome:** When K8s indicator files are detected, `qsdev init` generates a devenv.nix fragment with kubectl (version-pinnable per wizard input), kubectx, k9s, stern, kustomize (when `kustomization.yaml` present), and per-project `KUBECONFIG` that does not point to `~/.kube/config`.
 
 **Steps:**
 1. Implement `Detect(projectRoot string) (DetectionResult, error)`:
@@ -79,8 +79,8 @@ Phase 1 complete (EcosystemModule interface, detection engine, template engine, 
 - [ ] kustomize included conditionally only when `kustomization.yaml` detected
 - [ ] Per-project `KUBECONFIG` set with a TODO placeholder path — never `~/.kube/config`
 - [ ] kubectl version pin comment present (and version-specific package used when wizard provides version)
-- [ ] `gdev doctor` warns when `KUBECONFIG` equals `~/.kube/config`
-- [ ] `gdev doctor` cluster connectivity check has 5-second timeout
+- [ ] `qsdev doctor` warns when `KUBECONFIG` equals `~/.kube/config`
+- [ ] `qsdev doctor` cluster connectivity check has 5-second timeout
 
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/cloud-k8s-tooling-research.md` § 2.1 kubectl — version skew policy, kubeconfig management, auth plugins, consulting best practices
@@ -100,7 +100,7 @@ Phase 1 complete (EcosystemModule interface, detection engine, template engine, 
 
 **Context:** K8s development tools automate the build-push-deploy inner loop for local K8s development. They are project-specific and opinionated: a project uses Skaffold OR Tilt OR DevSpace, rarely more than one. Detection is straightforward (each has a unique config file) but these tools must never be default-installed since they impose workflow opinions. Telepresence is different: it intercepts traffic from a remote cluster to a local machine for debugging and requires a cluster agent to be installed — it must never be auto-detected. Garden is excluded because it is not in Nixpkgs. This is Tier 2: install when the specific config file is detected.
 
-**Desired Outcome:** When a K8s development tool config file is present, `gdev init` includes exactly that tool's Nixpkgs package in the devenv.nix fragment, with no cross-installation of competing tools. Telepresence is available only when explicitly requested in the wizard or `.gdev.yaml`.
+**Desired Outcome:** When a K8s development tool config file is present, `qsdev init` includes exactly that tool's Nixpkgs package in the devenv.nix fragment, with no cross-installation of competing tools. Telepresence is available only when explicitly requested in the wizard or `.qsdev.yaml`.
 
 **Steps:**
 1. Implement `Detect(projectRoot string) (DetectionResult, error)`:
@@ -159,19 +159,19 @@ Phase 1 complete (EcosystemModule interface, detection engine, template engine, 
 
 **Context:** K8s security tools are valuable but niche — most projects do not run them locally. kubescape is the most comprehensive single tool (260+ controls spanning NSA-CISA, MITRE ATT&CK, and CIS frameworks; CNCF Incubating status). kube-linter is fast static analysis designed for pre-commit/CI gates on K8s YAML and Helm charts. kube-bench specifically targets CIS Kubernetes Benchmark compliance by inspecting cluster component configuration (requires cluster access). polaris validates resource configs against best practices. The recommended default is kubescape (breadth) + kube-linter (speed for CI gates). This module does NOT auto-detect — it activates via explicit enablement, a security profile, or the presence of kubescape/kube-linter config files.
 
-**Desired Outcome:** When K8s security scanning is enabled, `gdev init` includes kubescape and kube-linter in devenv.nix with a pre-commit hook that lints K8s YAML on change. CI scanning commands are documented in CLAUDE.md. kube-bench and polaris are available as an extended set for CIS compliance scenarios.
+**Desired Outcome:** When K8s security scanning is enabled, `qsdev init` includes kubescape and kube-linter in devenv.nix with a pre-commit hook that lints K8s YAML on change. CI scanning commands are documented in CLAUDE.md. kube-bench and polaris are available as an extended set for CIS compliance scenarios.
 
 **Steps:**
 1. Implement `Detect(projectRoot string) (DetectionResult, error)`:
    - This module does NOT auto-detect from standard K8s files — it activates only via:
-     - Explicit wizard selection during `gdev init`
-     - `.gdev.yaml` setting: `kubernetes.security_scanning = true`
+     - Explicit wizard selection during `qsdev init`
+     - `.qsdev.yaml` setting: `kubernetes.security_scanning = true`
      - Profile activation: consulting security profile or compliance level `"strict"` (Phase 13, Unit 13.7)
      - Exception: auto-activate when `.kubescape/` directory or `.kube-linter.yaml` file already exists
    - Return `Detected: false` unless one of the above conditions is met
 2. Implement `DevenvNixFragment() string`:
    - Default set: `pkgs.kubescape`, `pkgs.kube-linter`
-   - Extended set (when CIS compliance enabled in `.gdev.yaml` or wizard selects it): add `pkgs.kube-bench`, `pkgs.polaris`
+   - Extended set (when CIS compliance enabled in `.qsdev.yaml` or wizard selects it): add `pkgs.kube-bench`, `pkgs.polaris`
    - Add comment: `# kubescape and kube-bench require cluster access for runtime scanning (kubescape scan, kube-bench run)`
 3. Implement `SecurityConfigs() []GeneratedFile`:
    - Generate `.kube-linter.yaml`:
@@ -232,7 +232,7 @@ Phase 1 complete (EcosystemModule interface, detection engine, template engine, 
 
 **Context:** Helm is a K8s package manager and the most common K8s deployment tool in consulting. The key Nix-specific challenge is Helm plugin management: installing Helm plugins via `helm plugin install` would download binaries at runtime, breaking the reproducibility guarantee. The Nix-idiomatic solution is `pkgs.wrapHelm pkgs.kubernetes-helm { plugins = [ ... ]; }`, which bundles plugins into the Nix store alongside Helm. helm-secrets (secret management via Helm hooks) and helm-diff (preview `helm upgrade` changes) are recommended defaults for consulting projects. helmfile is a separate binary detected by its own config file.
 
-**Desired Outcome:** When Helm indicator files are detected, `gdev init` generates a devenv.nix fragment that installs Helm via `wrapHelm` with helm-secrets and helm-diff as Nix-managed plugins, plus helmfile when `helmfile.yaml` is present. No `helm plugin install` calls appear in any generated file.
+**Desired Outcome:** When Helm indicator files are detected, `qsdev init` generates a devenv.nix fragment that installs Helm via `wrapHelm` with helm-secrets and helm-diff as Nix-managed plugins, plus helmfile when `helmfile.yaml` is present. No `helm plugin install` calls appear in any generated file.
 
 **Steps:**
 1. Implement `Detect(projectRoot string) (DetectionResult, error)`:
@@ -280,7 +280,7 @@ Phase 1 complete (EcosystemModule interface, detection engine, template engine, 
 - [ ] No `helm plugin install` command appears in any generated file (reproducibility guarantee)
 - [ ] `helmfile` package included when `helmfile.yaml` detected, absent otherwise
 - [ ] `helm lint` pre-commit hook generated for chart directories
-- [ ] `gdev doctor` verifies helm-secrets and helm-diff are present in `helm plugin list`
+- [ ] `qsdev doctor` verifies helm-secrets and helm-diff are present in `helm plugin list`
 
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/cloud-k8s-tooling-research.md` § 2.3 Helm v3 — wrapHelm pattern, plugin management, helmfile
@@ -386,11 +386,11 @@ The three cases are distinct:
 
 ### Unit 24.6: KUBECONFIG Isolation & Doctor Checks
 
-**Description:** Implement `KubeconfigTemplate`, the helper that generates per-project `KUBECONFIG` paths and validates that the shared `~/.kube/config` is never used. Extend `gdev doctor` with K8s-specific checks: KUBECONFIG path validation, current-context match, and cluster connectivity.
+**Description:** Implement `KubeconfigTemplate`, the helper that generates per-project `KUBECONFIG` paths and validates that the shared `~/.kube/config` is never used. Extend `qsdev doctor` with K8s-specific checks: KUBECONFIG path validation, current-context match, and cluster connectivity.
 
 **Context:** The `~/.kube/config` file is the default kubeconfig path and merges credentials for every cluster a user has ever accessed. In consulting, an engineer's `~/.kube/config` may contain credentials for a dozen different client clusters. Running `kubectl apply -f manifests/` against the wrong context is a serious operational risk. The gdev solution is per-project `KUBECONFIG` isolation: devenv.nix sets `KUBECONFIG` to a project-specific path (`$HOME/.kube/client-name-config`), so direnv ensures the correct kubeconfig is always active inside the project shell. Doctor checks verify this invariant is maintained.
 
-**Desired Outcome:** All K8s module devenv.nix fragments use `KubeconfigTemplate` for KUBECONFIG generation. `gdev doctor --category k8s` warns on shared kubeconfig usage, validates the expected context name is active, and checks cluster connectivity with a 5-second timeout.
+**Desired Outcome:** All K8s module devenv.nix fragments use `KubeconfigTemplate` for KUBECONFIG generation. `qsdev doctor --category k8s` warns on shared kubeconfig usage, validates the expected context name is active, and checks cluster connectivity with a 5-second timeout.
 
 **Steps:**
 1. Implement `KubeconfigTemplate` in `internal/k8s/kubeconfig.go`:
@@ -429,9 +429,9 @@ The three cases are distinct:
    - `kubeconfig-not-shared`: check `KUBECONFIG` env var does not equal `~/.kube/config` — warning-level, instant
    - `kubeconfig-file-exists`: check `KUBECONFIG` path points to an existing file — instant
    - `kubectl-context`: run `kubectl config current-context` — instant, no network
-   - `context-match`: when `.gdev.yaml` has `kubernetes.expected_context` set, compare against current context — instant
+   - `context-match`: when `.qsdev.yaml` has `kubernetes.expected_context` set, compare against current context — instant
    - `cluster-connectivity`: `kubectl cluster-info` with 5s timeout — network-dependent
-6. Integrate with `gdev doctor --category k8s` (extend Phase 15 doctor infrastructure):
+6. Integrate with `qsdev doctor --category k8s` (extend Phase 15 doctor infrastructure):
    - Register all five K8s checks under category `"k8s"`
    - K8s checks only run when K8s module is active for the current project
 7. Write unit tests:
@@ -440,7 +440,7 @@ The three cases are distinct:
    - `SuggestKubeconfigPath("acme")` returns `"$HOME/.kube/acme-config"` or similar
    - Multi-kubeconfig: colon-separated path validated element-by-element
    - Doctor check `kubeconfig-not-shared` fires warning when `KUBECONFIG` is the shared default
-   - Doctor check `context-match` passes when `.gdev.yaml` expected_context matches actual context
+   - Doctor check `context-match` passes when `.qsdev.yaml` expected_context matches actual context
    - Doctor check `cluster-connectivity` returns timeout after 5s
 
 **Acceptance Criteria:**
@@ -448,7 +448,7 @@ The three cases are distinct:
 - [ ] `KubeconfigTemplate.Validate()` accepts project-specific paths
 - [ ] Multi-kubeconfig (colon-separated paths) supported and validated per-path
 - [ ] `SuggestKubeconfigPath` produces a project-name-derived default path suggestion
-- [ ] `gdev doctor --category k8s` includes five checks: not-shared, file-exists, context, context-match, connectivity
+- [ ] `qsdev doctor --category k8s` includes five checks: not-shared, file-exists, context, context-match, connectivity
 - [ ] `kubeconfig-not-shared` is a warning-level finding (not a blocking failure)
 - [ ] Cluster connectivity check enforces 5-second timeout
 
@@ -518,7 +518,7 @@ The three cases are distinct:
      kubescape scan framework nsa --local k8s/               # NSA-CISA framework
      ```
      ```
-   - Replace TODO values with `.gdev.yaml` settings when available (`kubernetes.cluster_name`, `kubernetes.default_namespace`, `kubernetes.expected_context`)
+   - Replace TODO values with `.qsdev.yaml` settings when available (`kubernetes.cluster_name`, `kubernetes.default_namespace`, `kubernetes.expected_context`)
 2. Implement `devenv task k8s:status` task:
    - Add to the `devenv.tasks` block in devenv.nix:
      ```nix
@@ -549,7 +549,7 @@ The three cases are distinct:
      ```
    - Add a comment block in CLAUDE.md explaining the deny rules: "Claude Code will not execute destructive K8s operations (delete namespace, drain, helm uninstall) autonomously. Instruct the engineer to run these manually."
 4. Implement production context detection for deny rules:
-   - Read `.gdev.yaml` for `kubernetes.production_context_patterns` (list of glob patterns, default: `["*-prod-*", "*-production-*", "*-prd-*"]`)
+   - Read `.qsdev.yaml` for `kubernetes.production_context_patterns` (list of glob patterns, default: `["*-prod-*", "*-production-*", "*-prd-*"]`)
    - When a deny rule is context-specific (only block in production), generate a wrapper that checks `kubectl config current-context` against the patterns
    - For simplicity in Phase 23 scope: apply deny rules unconditionally (always deny destructive ops); context-aware rules are a future enhancement
 5. Implement per-tool documentation sections in CLAUDE.md:
@@ -638,4 +638,4 @@ Unit 24.5 (Cloud-Auth Plugin Coordination) has a hard dependency on Phase 23 com
 - [ ] Cloud-auth coordination: `kubelogin` present in Azure fragment when Azure+K8s active
 - [ ] Deny rules for destructive K8s operations present in settings.json when K8s active
 - [ ] `devenv task k8s:status` runs without error when cluster is reachable
-- [ ] `gdev doctor --category k8s` completes within 30 seconds even when cluster unreachable (timeouts enforced)
+- [ ] `qsdev doctor --category k8s` completes within 30 seconds even when cluster unreachable (timeouts enforced)

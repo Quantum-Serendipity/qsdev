@@ -3,7 +3,7 @@ package teamreport
 import (
 	"time"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 )
 
 // TeamReport is the top-level aggregation of security posture across
@@ -37,7 +37,7 @@ type ProjectSummary struct {
 	Score       posture.AggregateScore     `json:"score"`
 	Conformance posture.ConformanceResult  `json:"conformance"`
 	VulnTotals  posture.VulnSeverityCounts `json:"vulnTotals"`
-	GdevVersion string                     `json:"gdevVersion"`
+	QsdevVersion string                     `json:"qsdevVersion"`
 	LastScan    time.Time                  `json:"lastScan"`
 	Stale       bool                       `json:"stale,omitempty"`
 }
@@ -88,5 +88,5 @@ type AggregateOptions struct {
 	HistoryFile   string  `json:"historyFile,omitempty"`
 	IncludeTrends bool    `json:"includeTrends,omitempty"`
 	Threshold     float64 `json:"threshold,omitempty"`
-	GdevVersion   string  `json:"gdevVersion,omitempty"`
+	QsdevVersion   string  `json:"qsdevVersion,omitempty"`
 }

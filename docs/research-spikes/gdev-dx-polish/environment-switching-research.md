@@ -40,9 +40,9 @@ direnv remains supported for "in-place environment modification without a subshe
 
 **Mitigation in devenv 2.0**: Incremental evaluation cache returns cached results in milliseconds when nothing has changed. First activation is still slow, but subsequent activations are near-instant.
 
-**What gdev can do**: Nothing beyond ensuring the generated devenv.nix is well-structured (minimal unnecessary dependencies). The caching is devenv's responsibility. However, gdev could generate a `gdev warmup` command that pre-evaluates all project environments in parallel (background).
+**What gdev can do**: Nothing beyond ensuring the generated devenv.nix is well-structured (minimal unnecessary dependencies). The caching is devenv's responsibility. However, gdev could generate a `qsdev warmup` command that pre-evaluates all project environments in parallel (background).
 
-**Recommendation: Consider `gdev warmup` for pre-caching**, but it is low priority. The real fix is devenv's caching, which is already good.
+**Recommendation: Consider `qsdev warmup` for pre-caching**, but it is low priority. The real fix is devenv's caching, which is already good.
 
 ### Gap 2: Environment Variable Conflicts
 
@@ -64,7 +64,7 @@ direnv remains supported for "in-place environment modification without a subshe
 
 **Mitigation**: `nix store gc` cleans unused paths. `nix-collect-garbage -d` removes old generations. devenv's caching reduces rebuilds.
 
-**What gdev can do**: Include `nix store gc` as a documented maintenance task. A `gdev gc` alias would add convenience but minimal value.
+**What gdev can do**: Include `nix store gc` as a documented maintenance task. A `qsdev gc` alias would add convenience but minimal value.
 
 **Recommendation: Document, don't build.** The Nix store GC is a well-understood operation.
 
@@ -74,12 +74,12 @@ direnv remains supported for "in-place environment modification without a subshe
 
 **Impact**: Medium for consultants juggling many engagements.
 
-**What gdev can do**: A `gdev projects` command that scans for directories containing gdev-managed configs (`.gdev.yaml` or similar marker file) and reports status:
+**What gdev can do**: A `qsdev projects` command that scans for directories containing gdev-managed configs (`.qsdev.yaml` or similar marker file) and reports status:
 - Project name, path, last activated
 - devenv health (valid config? packages cached?)
-- gdev config version (outdated? needs update?)
+- qsdev config version (outdated? needs update?)
 
-**Recommendation: Include in a future `gdev status` / `gdev projects` command.** This overlaps with the gdev-health-reporting spike but is specifically about the multi-project view. Low implementation cost, high utility for consultants.
+**Recommendation: Include in a future `qsdev status` / `qsdev projects` command.** This overlaps with the gdev-health-reporting spike but is specifically about the multi-project view. Low implementation cost, high utility for consultants.
 
 ### Gap 5: Credential Management Across Projects
 
@@ -97,10 +97,10 @@ direnv remains supported for "in-place environment modification without a subshe
 
 | Gap | Severity | gdev Action | Priority |
 |-----|----------|-------------|----------|
-| First-activation latency | Medium | `gdev warmup` (optional) | Low |
+| First-activation latency | Medium | `qsdev warmup` (optional) | Low |
 | Env var conflicts | Critical | Document anti-pattern | Low (already solved by devenv) |
 | Nix store disk usage | Low | Document GC | Low |
-| Cross-project status view | Medium | `gdev projects` command | Medium |
+| Cross-project status view | Medium | `qsdev projects` command | Medium |
 | Credential switching | High | Generate SecretSpec config | High |
 
 **Key finding: devenv 2.0 already solves multi-project switching well.** The gaps are at the edges (cross-project visibility, credential management) rather than in the core activation/deactivation flow.

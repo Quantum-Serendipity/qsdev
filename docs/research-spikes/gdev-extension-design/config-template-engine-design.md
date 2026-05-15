@@ -2,7 +2,7 @@
 
 ## Problem
 
-The gdev init wizard collects answers and must produce 7+ files in 4 different formats: Nix code, YAML, JSON, and Markdown. Each format has different constraints, and a unified approach to generation ensures consistency, testability, and maintainability.
+The qsdev init wizard collects answers and must produce 7+ files in 4 different formats: Nix code, YAML, JSON, and Markdown. Each format has different constraints, and a unified approach to generation ensures consistency, testability, and maintainability.
 
 ## Generation Strategy Per Format
 

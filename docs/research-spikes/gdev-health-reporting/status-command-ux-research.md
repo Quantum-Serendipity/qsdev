@@ -2,7 +2,7 @@
 
 ## Problem
 
-Design the terminal UX for `gdev status` -- the command a consulting engineer runs to instantly assess a project's security posture. Must work for both quick glances (is everything green?) and detailed investigation (what exactly is wrong and how do I fix it?).
+Design the terminal UX for `qsdev status` -- the command a consulting engineer runs to instantly assess a project's security posture. Must work for both quick glances (is everything green?) and detailed investigation (what exactly is wrong and how do I fix it?).
 
 ## Prior Art UX Patterns
 
@@ -51,12 +51,12 @@ Check scores:
 
 **Strengths:** Table format for many checks. Score per check. Aggregate headline.
 
-## Proposed `gdev status` Command Design
+## Proposed `qsdev status` Command Design
 
 ### Default Output (Quick Scan)
 
 ```
-gdev status — Project Security Posture
+qsdev status — Project Security Posture
 
   Score: 82/100 (B+)
   Conformance: baseline PASS, enhanced FAIL
@@ -83,8 +83,8 @@ gdev status — Project Security Posture
     Lock files: 3/3 valid
     Last scan: 2h ago
 
-  Run 'gdev status --verbose' for details.
-  Run 'gdev status --fix' for auto-remediation suggestions.
+  Run 'qsdev status --verbose' for details.
+  Run 'qsdev status --fix' for auto-remediation suggestions.
 ```
 
 ### Design Decisions
@@ -103,7 +103,7 @@ gdev status — Project Security Posture
 
 **Remediation hints:** Inline for simple cases ("Available, not enabled"). `--fix` mode for detailed suggestions. Never bury the fix.
 
-### Verbose Output (`gdev status --verbose`)
+### Verbose Output (`qsdev status --verbose`)
 
 Expands each section with full detail:
 
@@ -122,33 +122,33 @@ Expands each section with full detail:
         Disabled rules:
           - npm-install-global (disabled by user in settings.json)
           - pip-install-editable (disabled by user in settings.json)
-        Fix: Review disabled rules with 'gdev claudecode rules'
+        Fix: Review disabled rules with 'qsdev claudecode rules'
 ```
 
 ### Subcommands and Flags
 
 ```
-gdev status                    # Quick posture summary (default)
-gdev status --verbose          # Full detail on every check
-gdev status --json             # Machine-readable JSON (PostureReport)
-gdev status --sarif            # SARIF 2.1.0 output
-gdev status --format badge     # Shields.io endpoint JSON
-gdev status --fix              # Show remediation commands
-gdev status --audit-level high # Exit non-zero if high+ findings
-gdev status --scan             # Run fresh vulnerability scans (slow)
-gdev status --quiet            # Score and grade only, no detail
-gdev status defense            # Defense coverage section only
-gdev status config             # Config health section only
-gdev status deps               # Dependency health section only
-gdev status tools              # Tool inventory (enabled/available/disabled)
+qsdev status                    # Quick posture summary (default)
+qsdev status --verbose          # Full detail on every check
+qsdev status --json             # Machine-readable JSON (PostureReport)
+qsdev status --sarif            # SARIF 2.1.0 output
+qsdev status --format badge     # Shields.io endpoint JSON
+qsdev status --fix              # Show remediation commands
+qsdev status --audit-level high # Exit non-zero if high+ findings
+qsdev status --scan             # Run fresh vulnerability scans (slow)
+qsdev status --quiet            # Score and grade only, no detail
+qsdev status defense            # Defense coverage section only
+qsdev status config             # Config health section only
+qsdev status deps               # Dependency health section only
+qsdev status tools              # Tool inventory (enabled/available/disabled)
 ```
 
-### `gdev status tools` — Tool Inventory
+### `qsdev status tools` — Tool Inventory
 
 Specific view for "what's available and what's enabled":
 
 ```
-gdev status tools
+qsdev status tools
 
   Enabled Tools (12/16)
     Security:
@@ -157,7 +157,7 @@ gdev status tools
       [✓] ripsecrets       Pre-commit secrets, hook only
       [✓] attach-guard     Package guardrails, .claude/hooks/package-guard.py
       [ ] container-sec    Grype/Syft/Cosign — not detected (no Dockerfile)
-      [ ] license-scan     ScanCode — opt-in, run 'gdev enable license-compliance'
+      [ ] license-scan     ScanCode — opt-in, run 'qsdev enable license-compliance'
 
     AI Agent:
       [✓] agent-postmortem Verification skill
@@ -169,7 +169,7 @@ gdev status tools
     Workflow:
       [✓] commitlint       Commit message linting
       [✓] changelog        git-cliff changelog generation
-      [ ] secretspec        Dev secrets management — run 'gdev enable secretspec'
+      [ ] secretspec        Dev secrets management — run 'qsdev enable secretspec'
 ```
 
 ### Color Coding Strategy
@@ -196,9 +196,9 @@ The `--audit-level` flag accepts: `none` (always 0), `critical`, `high`, `modera
 For CI:
 ```yaml
 # GitHub Actions example
-- run: gdev status --json > posture.json
-- run: gdev status --audit-level high  # Fails build if high+ vulns
-- run: gdev status --sarif > results.sarif
+- run: qsdev status --json > posture.json
+- run: qsdev status --audit-level high  # Fails build if high+ vulns
+- run: qsdev status --sarif > results.sarif
 - uses: github/codeql-action/upload-sarif@v3
   with:
     sarif_file: results.sarif
@@ -235,15 +235,15 @@ Following the npm pattern of graduated disclosure:
 
 **Opinionated defaults vs configurability:** The grade scale (A/B/C/D/F) and weight assignments are opinionated. Making everything configurable creates analysis paralysis. Recommendation: ship strong defaults, allow override via `.gdev-policy.yaml`, but don't make it a first-run question.
 
-**Remediation detail:** `gdev status --fix` vs embedding fixes in default output. Default output should hint ("run 'gdev enable X'") but not overwhelm. `--fix` mode generates a script-like sequence of commands.
+**Remediation detail:** `qsdev status --fix` vs embedding fixes in default output. Default output should hint ("run 'qsdev enable X'") but not overwhelm. `--fix` mode generates a script-like sequence of commands.
 
 ## Comparison to Alternatives
 
 **vs `flutter doctor`:** Similar check-based approach, but gdev adds scoring (flutter doctor is pure pass/fail). gdev's defense layers are more granular than flutter's 5-6 categories.
 
-**vs `npm audit`:** npm audit is vuln-only. gdev status covers a broader surface (defenses + config + vulns). npm audit's severity threshold pattern directly adopted.
+**vs `npm audit`:** npm audit is vuln-only. qsdev status covers a broader surface (defenses + config + vulns). npm audit's severity threshold pattern directly adopted.
 
-**vs Scorecard:** Scorecard is repo-external (analyzes from outside). gdev status is project-internal (knows its own config state). This gives gdev much richer config-health insight but no supply-chain perspective.
+**vs Scorecard:** Scorecard is repo-external (analyzes from outside). qsdev status is project-internal (knows its own config state). This gives gdev much richer config-health insight but no supply-chain perspective.
 
 ## Depth Checklist
 

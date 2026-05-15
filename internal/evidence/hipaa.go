@@ -1,7 +1,7 @@
 package evidence
 
 // HIPAAFramework returns the HIPAA Security Rule compliance framework definition
-// with 5 controls from 45 CFR 164.312 mapped to gdev's defense-in-depth layers.
+// with 5 controls from 45 CFR 164.312 mapped to qsdev's defense-in-depth layers.
 func HIPAAFramework() Framework {
 	return Framework{
 		ID:          "hipaa",

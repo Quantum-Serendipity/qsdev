@@ -99,7 +99,7 @@ If gdev ever supports non-devenv environments (e.g., Docker-only, bare metal), t
 
 3. **Document the pattern**: Show developers how to add custom tasks in devenv.nix, how lifecycle hooks work, and how to list/run tasks.
 
-4. **Consider `gdev run <task>`** as a thin wrapper around `devenv tasks run` -- same functionality, consistent CLI surface.
+4. **Consider `qsdev run <task>`** as a thin wrapper around `devenv tasks run` -- same functionality, consistent CLI surface.
 
 ## Depth Checklist
 

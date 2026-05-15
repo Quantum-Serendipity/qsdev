@@ -214,7 +214,7 @@ This is a natural extension of the Phase 2 language ecosystem detection that alr
 
 ### 3.1 Current State
 
-gdev configures 5 MCP servers: Context7, GitHub, Socket.dev, semble, PostgreSQL.
+qsdev configures 5 MCP servers: Context7, GitHub, Socket.dev, semble, PostgreSQL.
 
 The critical constraint (per multiple 2026 sources): **the practical ceiling is 40 active tools across all servers**. Each MCP server exposes 5-15 tools. More than ~6 servers degrades agent accuracy as the LLM struggles with tool selection. Each server's tool descriptions add 4-6K input tokens per request.
 
@@ -295,7 +295,7 @@ Linear MCP is equally mature but relevant only for teams using Linear (more comm
 | **GitLab CI** | Yes, official (GitLab) | Stable | GitLab API access | Medium for GitLab projects | **Optional addon** |
 | **Azure DevOps** | Yes, official (Microsoft) | Actively developed | Directory-based auth | Medium for ADO projects | Optional addon |
 
-**Assessment**: GitHub Actions debugging is already covered by the GitHub MCP server that gdev configures. GitLab CI MCP is worth offering as an optional addon for projects on GitLab. Azure DevOps MCP is relevant for Microsoft-stack consulting engagements.
+**Assessment**: GitHub Actions debugging is already covered by the GitHub MCP server that qsdev configures. GitLab CI MCP is worth offering as an optional addon for projects on GitLab. Azure DevOps MCP is relevant for Microsoft-stack consulting engagements.
 
 **Recommendation**: GitLab MCP as optional addon when `.gitlab-ci.yml` is detected. Azure DevOps as optional addon. No new server needed for GitHub Actions.
 
@@ -368,7 +368,7 @@ With 5 current servers exposing roughly 40-60 tools, gdev is already near the pr
 1. **Never enable more than ~6 servers simultaneously by default.** The 5 current defaults plus one detected database server is the maximum auto-enabled set.
 2. **Use per-project MCP configuration.** Servers like Terraform, Sentry, Atlassian should be configured in `.claude/settings.local.json` at the project level, not globally.
 3. **Profile-based server bundles.** gdev could offer MCP "profiles" (e.g., `mcp-aws-stack`, `mcp-observability`, `mcp-enterprise-pm`) that enable/disable coherent server groups.
-4. **Provide `gdev mcp add/remove/list` commands.** Engineers should be able to manage their MCP server set without editing JSON files directly.
+4. **Provide `qsdev mcp add/remove/list` commands.** Engineers should be able to manage their MCP server set without editing JSON files directly.
 
 ---
 

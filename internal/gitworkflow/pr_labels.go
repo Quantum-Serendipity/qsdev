@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/cigeneration"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/cigeneration"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // GenerateLabelerConfig produces the GitHub Actions labeler configuration

@@ -81,12 +81,12 @@ The `testscript` package (`github.com/rogpeppe/go-internal/testscript`) is the m
 **Example gdev test script** (`testdata/script/init_basic.txt`):
 
 ```
-# Test basic gdev init with defaults
+# Test basic qsdev init with defaults
 env GDEV_NON_INTERACTIVE=1
 env HOME=$WORK/home
 mkdir home
 
-exec gdev init --answers-file answers.yaml
+exec qsdev init --answers-file answers.yaml
 stdout 'Project initialized successfully'
 ! stderr .
 
@@ -102,8 +102,8 @@ grep '"nix.enableLanguageServer"' .vscode/settings.json
 grep 'language = "go"' .devinit/devenv.nix
 
 # Verify state file
-exists .devinit/.gdev-init-state.yaml
-grep 'devenv.nix' .devinit/.gdev-init-state.yaml
+exists .devinit/.qsdev-init-state.yaml
+grep 'devenv.nix' .devinit/.qsdev-init-state.yaml
 
 -- answers.yaml --
 project_name: myproject
@@ -191,7 +191,7 @@ err := cmd.Run()
 **testscript**: Use `stdin file` before `exec`:
 ```
 stdin wizard-answers.txt
-exec gdev init
+exec qsdev init
 ```
 
 **os/exec**:
@@ -216,11 +216,11 @@ if exitErr, ok := err.(*exec.ExitError); ok {
 
 ### Tests Requiring Root/Admin
 
-For package installation tests (e.g., `gdev devenv setup` running `apt-get install`):
+For package installation tests (e.g., `qsdev devenv setup` running `apt-get install`):
 
 1. **Skip in normal test runs**: Use build tags or conditions
    ```
-   [exec:sudo] [linux] exec sudo gdev devenv setup
+   [exec:sudo] [linux] exec sudo qsdev devenv setup
    ```
 2. **Run in CI containers**: Docker containers where the test user is root
 3. **Mock the package manager**: For unit tests, inject a mock `PackageManager` interface
@@ -359,7 +359,7 @@ func yamlHasCmd(ts *testscript.TestScript, neg bool, args []string) {
 
 Usage in test scripts:
 ```
-yaml_has .devinit/.gdev-init-state.yaml files.devenv.nix
+yaml_has .devinit/.qsdev-init-state.yaml files.devenv.nix
 json_path .vscode/settings.json nix.enableLanguageServer true
 grep 'languages.go.enable' .devinit/devenv.nix
 ```
@@ -737,8 +737,8 @@ setup() {
 ### State File Structure
 
 gdev tracks state in two YAML files:
-- `.devinit/.gdev-init-state.yaml` -- file hashes, ownership, timestamps
-- `.devinit/.gdev-init-answers.yaml` -- wizard answers for re-runs
+- `.devinit/.qsdev-init-state.yaml` -- file hashes, ownership, timestamps
+- `.devinit/.qsdev-init-answers.yaml` -- wizard answers for re-runs
 
 ### State Assertion Helpers
 
@@ -761,7 +761,7 @@ type FileState struct {
 
 func loadState(t *testing.T, dir string) StateFile {
     t.Helper()
-    data, err := os.ReadFile(filepath.Join(dir, ".devinit/.gdev-init-state.yaml"))
+    data, err := os.ReadFile(filepath.Join(dir, ".devinit/.qsdev-init-state.yaml"))
     require.NoError(t, err)
     var state StateFile
     require.NoError(t, yaml.Unmarshal(data, &state))
@@ -848,18 +848,18 @@ func TestStateRoundTrip(t *testing.T) {
 
 ```
 # Test state after init
-exec gdev init --answers-file answers.yaml
-yaml_has .devinit/.gdev-init-state.yaml files.devenv.nix
-yaml_has .devinit/.gdev-init-state.yaml version
+exec qsdev init --answers-file answers.yaml
+yaml_has .devinit/.qsdev-init-state.yaml files.devenv.nix
+yaml_has .devinit/.qsdev-init-state.yaml version
 
 # Modify a file and verify detection
 cp modified-settings.json .vscode/settings.json
-exec gdev status
+exec qsdev status
 stdout 'modified.*settings.json'
 
 # Re-init preserves user changes
-exec gdev init --answers-file answers.yaml
-yaml_has .devinit/.gdev-init-state.yaml files.settings.json.owner user
+exec qsdev init --answers-file answers.yaml
+yaml_has .devinit/.qsdev-init-state.yaml files.settings.json.owner user
 ```
 
 ---
@@ -1083,7 +1083,7 @@ func TestInitGeneratesCorrectEnvrc(t *testing.T) {
 
 In testscript, use built-in conditions:
 ```
-exec gdev init --answers-file answers.yaml
+exec qsdev init --answers-file answers.yaml
 exists .envrc
 grep 'use devenv' .envrc
 [darwin] grep 'HOMEBREW_PREFIX' .envrc
@@ -1230,7 +1230,7 @@ func TestDetectDistro(t *testing.T) {
 
 ### Wall-Clock Assertions in E2E Tests
 
-For `gdev init` (target: <60s) and `gdev devenv doctor` (target: <2s):
+For `qsdev init` (target: <60s) and `qsdev devenv doctor` (target: <2s):
 
 ```go
 func TestInitPerformance(t *testing.T) {
@@ -1245,11 +1245,11 @@ func TestInitPerformance(t *testing.T) {
 
     // Hard failure threshold
     assert.Less(t, elapsed, 60*time.Second,
-        "gdev init took %s, exceeding 60s limit", elapsed)
+        "qsdev init took %s, exceeding 60s limit", elapsed)
 
     // Warning threshold (for trending)
     if elapsed > 30*time.Second {
-        t.Logf("WARNING: gdev init took %s (>30s warning threshold)", elapsed)
+        t.Logf("WARNING: qsdev init took %s (>30s warning threshold)", elapsed)
     }
 }
 
@@ -1263,7 +1263,7 @@ func TestDoctorPerformance(t *testing.T) {
     elapsed := time.Since(start)
 
     assert.Less(t, elapsed, 2*time.Second,
-        "gdev devenv doctor took %s, exceeding 2s limit", elapsed)
+        "qsdev devenv doctor took %s, exceeding 2s limit", elapsed)
 }
 ```
 
@@ -1364,10 +1364,10 @@ go build -cover -o gdev .
 **Run E2E tests with coverage collection**:
 ```bash
 mkdir -p coverdata
-GOCOVERDIR=coverdata ./gdev init --answers-file test-answers.yaml
-GOCOVERDIR=coverdata ./gdev devenv doctor
-GOCOVERDIR=coverdata ./gdev enable precommit
-GOCOVERDIR=coverdata ./gdev status
+GOCOVERDIR=coverdata ./qsdev init --answers-file test-answers.yaml
+GOCOVERDIR=coverdata ./qsdev devenv doctor
+GOCOVERDIR=coverdata ./qsdev enable precommit
+GOCOVERDIR=coverdata ./qsdev status
 ```
 
 **Integrate with testscript**: Set `GOCOVERDIR` in the Setup function:
@@ -1648,7 +1648,7 @@ gdev/
 ### The 80/20 Implementation Order
 
 **Phase 1 -- Foundation (highest ROI, do first)**:
-1. Add `--non-interactive` flag and `--answers-file` flag to `gdev init`
+1. Add `--non-interactive` flag and `--answers-file` flag to `qsdev init`
 2. Set up `testscript` runner with 3-5 basic E2E scripts
 3. Add custom testscript commands: `yaml_has`, `json_path`, `grep` (built-in)
 4. Unit tests for detector, generator, and state packages

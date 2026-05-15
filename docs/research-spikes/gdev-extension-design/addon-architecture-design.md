@@ -23,7 +23,7 @@ addons/
 
 **Why a `devinit` orchestration addon:**
 - The combined init wizard (project type → languages → services → dev tools → AI config) spans both addons
-- `devinit` provides `gdev init` command that runs a unified huh wizard, then delegates to devenv and claudecode for file generation
+- `devinit` provides `qsdev init` command that runs a unified huh wizard, then delegates to devenv and claudecode for file generation
 - Without devinit, teams that want both addons would need to run two separate wizards
 - devinit is optional — teams can use devenv and claudecode independently via their own commands
 
@@ -64,14 +64,14 @@ func main() {
 |----------------|--------|------------|---------|
 | Addon registration | ✅ | ✅ | ✅ |
 | Config keys | ✅ (languages, services, direnv) | ✅ (permissions, skills, hooks) | ✅ (last-used profile) |
-| CLI commands | `gdev devenv init/update/add-*` | `gdev claude init/update/add-*` | `gdev init` |
+| CLI commands | `qsdev devenv init/update/add-*` | `qsdev claude init/update/add-*` | `qsdev init` |
 | Bootstrap steps | devenv setup steps | claude code setup steps | combined wizard step |
 | Context entries | DevenvConfig (shared state) | ClaudeConfig (shared state) | — |
 
 ### Data Flow
 
 ```
-User runs: gdev init
+User runs: qsdev init
     │
     ▼
 devinit addon's init command
@@ -95,7 +95,7 @@ devinit addon's init command
     │   └── Update .gitignore
     │
     └── Phase 4: Post-generation
-        ├── Save answers to gdev config (for re-run)
+        ├── Save answers to qsdev config (for re-run)
         ├── Print summary of generated files
         └── Suggest next steps ("run devenv shell to activate")
 ```
@@ -140,19 +140,19 @@ devinit:
 ### Command Hierarchy
 
 ```
-gdev init                      # devinit: combined wizard
-gdev init --yes                # devinit: accept defaults
-gdev init --profile go-web     # devinit: use named profile
+qsdev init                      # devinit: combined wizard
+qsdev init --yes                # devinit: accept defaults
+qsdev init --profile go-web     # devinit: use named profile
 
-gdev devenv init               # devenv: standalone wizard
-gdev devenv update             # devenv: re-generate from config
-gdev devenv add-service redis  # devenv: add service post-init
-gdev devenv add-language rust  # devenv: add language post-init
+qsdev devenv init               # devenv: standalone wizard
+qsdev devenv update             # devenv: re-generate from config
+qsdev devenv add-service redis  # devenv: add service post-init
+qsdev devenv add-language rust  # devenv: add language post-init
 
-gdev claude init               # claudecode: standalone wizard
-gdev claude update             # claudecode: re-generate from config
-gdev claude add-skill deploy   # claudecode: add skill from library
-gdev claude add-hook format    # claudecode: add standard hook
+qsdev claude init               # claudecode: standalone wizard
+qsdev claude update             # claudecode: re-generate from config
+qsdev claude add-skill deploy   # claudecode: add skill from library
+qsdev claude add-hook format    # claudecode: add standard hook
 ```
 
 ### Inter-Addon Communication
@@ -197,11 +197,11 @@ devinit.Configure(
 )
 ```
 
-Usage: `gdev init --profile go-web` skips the wizard entirely.
+Usage: `qsdev init --profile go-web` skips the wizard entirely.
 
 ### Bootstrap Integration
 
-When used via `gdev bootstrap` (full system setup), the addons register steps in the bootstrap plan:
+When used via `qsdev bootstrap` (full system setup), the addons register steps in the bootstrap plan:
 
 ```go
 // devenv addon registers:

@@ -130,7 +130,7 @@ type GeneratedFile struct {
 // enabling modification detection on subsequent runs.
 type GeneratedState struct {
 	LastRun             time.Time            `yaml:"last_run"              json:"last_run"`
-	GdevVersion         string               `yaml:"gdev_version,omitempty" json:"gdev_version,omitempty"`
+	QsdevVersion         string               `yaml:"qsdev_version,omitempty" json:"qsdev_version,omitempty"`
 	Files               map[string]FileState `yaml:"files"                 json:"files"`
 	TemplateVersion     string               `yaml:"template_version"      json:"template_version"`
 	SkillLibraryVersion string               `yaml:"skill_library_version" json:"skill_library_version"`

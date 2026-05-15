@@ -17,11 +17,11 @@ Phases 1 and 2 complete (shared types, template engine, generation pipeline, eco
 - Curated rule library: language-specific convention rules + `security-rules.md` with package installation policies
 - .mcp.json generation with Socket.dev MCP, plus optional SonarQube/Aikido marketplace plugins
 - Managed settings template for enterprise deployment (`/etc/claude-code/managed-settings.json`)
-- Five CLI commands: `gdev claude init`, `update`, `add-skill`, `add-hook`, `list-skills`
+- Five CLI commands: `qsdev claude init`, `update`, `add-skill`, `add-hook`, `list-skills`
 - Embedded skill library with manifest and 6+ standard skills
 - Embedded rule library with language-specific convention files
 - .mcp.json generation via struct marshaling
-- Five CLI commands: `gdev claude init`, `update`, `add-skill`, `add-hook`, `list-skills`
+- Five CLI commands: `qsdev claude init`, `update`, `add-skill`, `add-hook`, `list-skills`
 
 ---
 
@@ -194,7 +194,7 @@ Phases 1 and 2 complete (shared types, template engine, generation pipeline, eco
 
 ### Unit 3.6: Claude Code CLI Commands
 
-**Description:** Register the five claudecode CLI commands: `gdev claude init`, `update`, `add-skill`, `add-hook`, `list-skills`.
+**Description:** Register the five claudecode CLI commands: `qsdev claude init`, `update`, `add-skill`, `add-hook`, `list-skills`.
 
 **Context:** Mirrors the devenv command structure for standalone use. The `init` command runs the wizard or accepts flags. `add-skill` and `list-skills` interact with the embedded + remote skill library.
 
@@ -202,24 +202,24 @@ Phases 1 and 2 complete (shared types, template engine, generation pipeline, eco
 
 **Steps:**
 1. Create `addons/claudecode/commands.go` — register parent `claude` command and five sub-commands.
-2. `gdev claude init` — run wizard or accept flags, generate all files.
-3. `gdev claude update` — load saved config, regenerate.
-4. `gdev claude add-skill <name>` — add skill from library, deploy to `.claude/skills/`.
-5. `gdev claude add-hook <type>` — add hook preset (auto-format, safety-block, pre-commit, audit-log).
-6. `gdev claude list-skills` — list available skills with installed status.
+2. `qsdev claude init` — run wizard or accept flags, generate all files.
+3. `qsdev claude update` — load saved config, regenerate.
+4. `qsdev claude add-skill <name>` — add skill from library, deploy to `.claude/skills/`.
+5. `qsdev claude add-hook <type>` — add hook preset (auto-format, safety-block, pre-commit, audit-log).
+6. `qsdev claude list-skills` — list available skills with installed status.
 7. All commands: support `--yes`, `--force`, `--dry-run`.
 
 **Acceptance Criteria:**
-- [ ] `gdev claude init --permission-preset standard --yes` generates files without wizard
-- [ ] `gdev claude update` regenerates from saved config
-- [ ] `gdev claude add-skill deploy` deploys skill file
-- [ ] `gdev claude add-hook safety-block` adds hook to settings.json
-- [ ] `gdev claude list-skills` shows available and installed skills
+- [ ] `qsdev claude init --permission-preset standard --yes` generates files without wizard
+- [ ] `qsdev claude update` regenerates from saved config
+- [ ] `qsdev claude add-skill deploy` deploys skill file
+- [ ] `qsdev claude add-hook safety-block` adds hook to settings.json
+- [ ] `qsdev claude list-skills` shows available and installed skills
 - [ ] All commands support `--dry-run`
 
 **Research Citations:**
 - `research-spikes/gdev-extension-design/claude-code-addon-design.md § Commands` — five command definitions
-- `research-spikes/gdev-extension-design/addon-architecture-design.md § Command Hierarchy` — `gdev claude *` structure
+- `research-spikes/gdev-extension-design/addon-architecture-design.md § Command Hierarchy` — `qsdev claude *` structure
 
 **Status:** Not Started
 
@@ -228,7 +228,7 @@ Phases 1 and 2 complete (shared types, template engine, generation pipeline, eco
 ## Phase Completion Criteria
 
 - [ ] All six units pass acceptance criteria
-- [ ] `gdev claude init --permission-preset standard --skills deploy,security-review --yes` produces valid settings.json + CLAUDE.md + skills + hook
+- [ ] `qsdev claude init --permission-preset standard --skills deploy,security-review --yes` produces valid settings.json + CLAUDE.md + skills + hook
 - [ ] Generated settings.json contains appropriate deny rules for detected package managers
 - [ ] Generated CLAUDE.md has section markers and language-specific conventions
 - [ ] PreToolUse hook script is deployed and referenced in settings.json

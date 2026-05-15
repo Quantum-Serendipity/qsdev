@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 )
 
 func TestExecute_RemoveExclusiveFiles(t *testing.T) {
@@ -41,7 +41,7 @@ func TestExecute_RemoveExclusiveFiles(t *testing.T) {
 
 func TestExecute_CleanSharedFiles(t *testing.T) {
 	dir := t.TempDir()
-	content := []byte("# Project\n<!-- gdev:test-tool -->\ngenerated stuff\n<!-- /gdev:test-tool -->\n\nUser content\n")
+	content := []byte("# Project\n<!-- qsdev:test-tool -->\ngenerated stuff\n<!-- /qsdev:test-tool -->\n\nUser content\n")
 	mdPath := filepath.Join(dir, "README.md")
 	if err := os.WriteFile(mdPath, content, 0o644); err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestExecute_CleanSharedFiles(t *testing.T) {
 
 	plan := &TeardownPlan{
 		Clean: []FileAction{
-			{Path: "README.md", Reason: "remove gdev sections"},
+			{Path: "README.md", Reason: "remove qsdev sections"},
 		},
 	}
 
@@ -78,8 +78,8 @@ func TestExecute_CleanSharedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if contains(updated, "<!-- gdev:test-tool -->") {
-		t.Errorf("expected gdev section markers to be removed from README.md")
+	if contains(updated, "<!-- qsdev:test-tool -->") {
+		t.Errorf("expected qsdev section markers to be removed from README.md")
 	}
 	if !contains(updated, "User content") {
 		t.Errorf("expected user content to be preserved in README.md")

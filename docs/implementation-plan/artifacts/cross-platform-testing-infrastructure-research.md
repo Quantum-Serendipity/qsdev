@@ -231,10 +231,10 @@ jobs:
         run: |
           # Container-appropriate install test
           ./scripts/install.sh
-      - name: Run gdev devenv doctor
-        run: gdev devenv doctor
-      - name: Run gdev devenv setup (dry-run)
-        run: gdev devenv setup --dry-run
+      - name: Run qsdev devenv doctor
+        run: qsdev devenv doctor
+      - name: Run qsdev devenv setup (dry-run)
+        run: qsdev devenv setup --dry-run
 ```
 
 **Tier 3 -- Extended matrix (nightly/release only):** WSL2, NixOS, derivative distros, edge cases.
@@ -253,7 +253,7 @@ jobs:
         shell: wsl-bash {0}
         run: |
           ./scripts/install.sh
-          gdev devenv doctor
+          qsdev devenv doctor
 
   nixos-test:
     runs-on: ubuntu-latest
@@ -265,7 +265,7 @@ jobs:
         run: |
           # NixOS-specific testing
           ./scripts/install.sh
-          gdev devenv doctor
+          qsdev devenv doctor
 
   derivative-distros:
     runs-on: ubuntu-latest
@@ -280,7 +280,7 @@ jobs:
       image: ${{ matrix.container }}
     steps:
       - uses: actions/checkout@v4
-      - run: ./scripts/install.sh && gdev devenv doctor
+      - run: ./scripts/install.sh && qsdev devenv doctor
 ```
 
 ### 2.3 Cost Estimate (Private Repository)
@@ -328,8 +328,8 @@ Self-hosted runners only needed for:
 | Package installation (apt install git, etc.) | YES | Full package management works |
 | PATH manipulation | YES | Works normally |
 | Environment variable detection | YES | Works normally |
-| `gdev devenv doctor` (system diagnostics) | MOSTLY | Kernel info comes from host |
-| `gdev devenv setup --dry-run` | YES | Detection works, actual install depends on feature |
+| `qsdev devenv doctor` (system diagnostics) | MOSTLY | Kernel info comes from host |
+| `qsdev devenv setup --dry-run` | YES | Detection works, actual install depends on feature |
 | Shell detection ($SHELL) | PARTIAL | Default shell is `sh`, not user's shell |
 | Shell RC file modification (.bashrc/.zshrc) | PARTIAL | Files exist but no interactive login context |
 | direnv integration | PARTIAL | Can install, but hook activation needs shell RC |
@@ -354,12 +354,12 @@ CMD ["/usr/sbin/init"]
 
 Workaround: Test RC file modification by writing, then sourcing, then verifying:
 ```bash
-gdev devenv setup  # writes to .bashrc
+qsdev devenv setup  # writes to .bashrc
 source ~/.bashrc
 # Verify direnv hook is present, PATH changes took effect, etc.
 ```
 
-**Interactive wizards:** `gdev init` has an interactive wizard. Containers don't have a TTY by default.
+**Interactive wizards:** `qsdev init` has an interactive wizard. Containers don't have a TTY by default.
 
 Workaround: Use `docker run -it` or test the non-interactive/flag-driven mode.
 
@@ -537,7 +537,7 @@ Mitigation: Cache downloaded binaries with `actions/cache` keyed on version:
 - uses: actions/cache@v4
   with:
     path: /tmp/gdev-download-cache
-    key: gdev-${{ env.GDEV_VERSION }}-${{ matrix.os }}
+    key: gdev-${{ env.QSDEV_VERSION }}-${{ matrix.os }}
 ```
 
 **Strategy B: Local HTTP Server (Recommended for Unit/Integration)**
@@ -574,7 +574,7 @@ steps:
     run: |
       cp gdev /usr/local/bin/gdev
       chmod +x /usr/local/bin/gdev
-      gdev devenv doctor
+      qsdev devenv doctor
 ```
 
 ### 6.3 Recommended Hybrid Approach
@@ -583,7 +583,7 @@ steps:
 |-----------|-----------------|
 | Install script E2E (nightly) | Real GitHub downloads |
 | Install script unit tests | Go httptest mock server |
-| gdev devenv doctor / setup / init | Pre-staged binary (no download) |
+| qsdev devenv doctor / setup / init | Pre-staged binary (no download) |
 | Container matrix tests | Pre-staged binary |
 | Release validation | Real GitHub downloads (mandatory) |
 
@@ -628,8 +628,8 @@ GitHub runners come with these pre-installed. To test bare-Mac scenarios:
 - name: Test gdev on bare Mac
   run: |
     ./scripts/install.sh
-    gdev devenv doctor  # Should detect missing Homebrew
-    gdev devenv setup   # Should offer to install Homebrew
+    qsdev devenv doctor  # Should detect missing Homebrew
+    qsdev devenv setup   # Should offer to install Homebrew
 ```
 
 ### 7.4 macOS VM Alternatives
@@ -683,7 +683,7 @@ GitHub runners come with these pre-installed. To test bare-Mac scenarios:
 
     # Verify installation
     gdev --version
-    gdev devenv doctor
+    qsdev devenv doctor
 ```
 
 Test scenarios to cover:
@@ -714,7 +714,7 @@ jobs:
           # Verify WSL2 detection
           cat /proc/version  # Should contain "microsoft" or "WSL"
           ./scripts/install.sh
-          gdev devenv doctor  # Should detect WSL2 environment
+          qsdev devenv doctor  # Should detect WSL2 environment
 
   wsl2-fedora:
     runs-on: windows-2025
@@ -724,7 +724,7 @@ jobs:
           distribution: Fedora
           wsl-version: 2
       - shell: wsl-bash {0}
-        run: ./scripts/install.sh && gdev devenv doctor
+        run: ./scripts/install.sh && qsdev devenv doctor
 ```
 
 **Supported WSL distros via setup-wsl:** Ubuntu (16.04-24.04), Debian (11-13), Alpine (3.17-3.23), openSUSE Leap 15.2, Kali Linux, Fedora.
@@ -766,7 +766,7 @@ Windows Terminal (`wt.exe`) is available on the Windows runners. gdev can detect
 
 ### 8.6 Recommended Windows Testing Strategy
 
-1. **Every PR:** `windows-2025` -- PowerShell install script, `gdev devenv doctor`, `gdev devenv setup --dry-run`
+1. **Every PR:** `windows-2025` -- PowerShell install script, `qsdev devenv doctor`, `qsdev devenv setup --dry-run`
 2. **Nightly:** WSL2 with Ubuntu + Fedora, Scoop install, Chocolatey install, winget install
 3. **Release:** All package manager installs, Windows ARM64 (`windows-11-arm`)
 
@@ -829,7 +829,7 @@ func TestDoctorDetectsOS(t *testing.T) {
 Using testscript for golden-file testing:
 ```
 # testdata/script/doctor_linux.txt
-exec gdev devenv doctor --json
+exec qsdev devenv doctor --json
 stdout '"os":"linux"'
 stdout '"package_manager":'
 ! stderr .
@@ -999,7 +999,7 @@ jobs:
       - run: |
           chmod +x gdev-binaries/gdev-linux-amd64
           cp gdev-binaries/gdev-linux-amd64 /usr/local/bin/gdev
-          gdev devenv doctor
+          qsdev devenv doctor
 ```
 
 **2. Use `fail-fast: false`:**

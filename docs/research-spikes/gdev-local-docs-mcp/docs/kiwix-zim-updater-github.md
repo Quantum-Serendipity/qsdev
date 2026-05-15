@@ -27,5 +27,5 @@ Extracts date information from standard Kiwix filenames. When newer versions fou
 - ZIM files follow a predictable naming convention suitable for automation
 - download.kiwix.org directory listings can be parsed for update detection
 - Checksum verification is available for downloaded files
-- `gdev outdated` could implement similar filename-based version comparison
-- `gdev update` could automate the download-verify-replace cycle
+- `qsdev outdated` could implement similar filename-based version comparison
+- `qsdev update` could automate the download-verify-replace cycle

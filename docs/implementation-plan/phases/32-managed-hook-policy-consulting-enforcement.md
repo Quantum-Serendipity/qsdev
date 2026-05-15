@@ -6,13 +6,13 @@ Deploy six production-ready consulting hook configurations with a 3-tier deploym
 
 ## Dependencies
 
-Phase 4 complete (Claude Code addon — settings.json generation, hook deployment infrastructure, section markers, `.claude/` directory structure). Phase 13 complete (`.gdev.yaml` config resolution, compliance levels, client profiles). Phase 15 complete (health/status reporting — SOC 2 compliance docs reference session log paths from this phase). Phase 30 complete (client profile activation — `gdev client activate` sets `GDEV_CLIENT_PROFILE` environment variable consumed by the isolation hook).
+Phase 4 complete (Claude Code addon — settings.json generation, hook deployment infrastructure, section markers, `.claude/` directory structure). Phase 13 complete (`.qsdev.yaml` config resolution, compliance levels, client profiles). Phase 15 complete (health/status reporting — SOC 2 compliance docs reference session log paths from this phase). Phase 30 complete (client profile activation — `qsdev client activate` sets `GDEV_CLIENT_PROFILE` environment variable consumed by the isolation hook).
 
 ## Phase Outputs
 
 - 6 hook scripts in `internal/claudecode/hooks/` (embedded via `embed.FS`)
-- 3-tier deployment via `gdev enable hooks` / `gdev disable hooks`
-- `gdev doctor` checks for Claude Code version regression range (v2.0.27-v2.0.31)
+- 3-tier deployment via `qsdev enable hooks` / `qsdev disable hooks`
+- `qsdev doctor` checks for Claude Code version regression range (v2.0.27-v2.0.31)
 - Hook deployment matrix: managed-policy tier (credential scan, destructive prevention, SOC 2 log, client isolation), user tier (cost alerting), project tier (test enforcement)
 - Append-only JSONL audit trail at `~/.qsdev/audit/sessions/<date>/<session-id>.jsonl`
 
@@ -438,7 +438,7 @@ This hook is deployed at the **user tier** (personal preference), not managed-po
    input_price_per_million: 3
    output_price_per_million: 15
    ```
-   - Generate this file on `gdev enable hooks` if it does not exist.
+   - Generate this file on `qsdev enable hooks` if it does not exist.
 
 4. Define the hook configurations:
    ```go
@@ -459,7 +459,7 @@ This hook is deployed at the **user tier** (personal preference), not managed-po
    }
    ```
 
-5. Implement `gdev cost summary` as a bonus command in `cmd/cost.go`:
+5. Implement `qsdev cost summary` as a bonus command in `cmd/cost.go`:
    - Reads `~/.qsdev/cost-log.jsonl`.
    - Groups sessions by calendar month.
    - Prints summary: sessions count, total tokens, estimated cost per month.
@@ -471,7 +471,7 @@ This hook is deployed at the **user tier** (personal preference), not managed-po
    - Stop hook writes a valid JSONL entry to `cost-log.jsonl`.
    - Stop hook cleans up session state.
    - Missing `cost-config.yaml` uses defaults (no error).
-   - `gdev cost summary` aggregates log entries by month.
+   - `qsdev cost summary` aggregates log entries by month.
 
 **Acceptance Criteria:**
 - [ ] PostToolUse hook accumulates token usage in a per-session state file at `~/.qsdev/cost-state.json`
@@ -480,8 +480,8 @@ This hook is deployed at the **user tier** (personal preference), not managed-po
 - [ ] Hook never blocks (always exits 0) — advisory only
 - [ ] Stop hook appends a JSONL record to `~/.qsdev/cost-log.jsonl` at session end
 - [ ] Session state cleaned up after Stop hook fires
-- [ ] `~/.qsdev/cost-config.yaml` controls threshold and per-token pricing (generated on `gdev enable hooks`)
-- [ ] `gdev cost summary` reads log and shows per-month cost breakdown
+- [ ] `~/.qsdev/cost-config.yaml` controls threshold and per-token pricing (generated on `qsdev enable hooks`)
+- [ ] `qsdev cost summary` reads log and shows per-month cost breakdown
 - [ ] Deployed at user tier (`~/.claude/settings.json`), not managed-policy tier
 
 **Research Citations:**
@@ -635,9 +635,9 @@ The four events form a complete session lifecycle: SessionStart captures the env
    ```
 
 5. Generate SOC 2 control mapping documentation:
-   - The Phase 15 health/compliance report (`gdev status --compliance`) should reference the audit log path.
+   - The Phase 15 health/compliance report (`qsdev status --compliance`) should reference the audit log path.
    - In the generated compliance docs for `strict` compliance level: add a section mapping the audit log to CC6.1 (logical access controls) and CC7.2 (system monitoring and alerting).
-   - `gdev audit summary` command: reads session logs for a date range, reports total sessions, tools used, file paths touched (no contents).
+   - `qsdev audit summary` command: reads session logs for a date range, reports total sessions, tools used, file paths touched (no contents).
 
 6. Write unit tests:
    - SessionStart event writes correct record schema.
@@ -761,7 +761,7 @@ The hook only fires when devenv tasks are defined — it checks for `devenv task
    }
    ```
    - Project-tier hooks are written to `.claude/settings.json` (not `~/.claude/settings.json`).
-   - `gdev enable hooks` writes this hook to the project `.claude/settings.json` using section markers from Phase 4 shared-file surgery.
+   - `qsdev enable hooks` writes this hook to the project `.claude/settings.json` using section markers from Phase 4 shared-file surgery.
 
 3. Implement task detection:
    - `devenv tasks` lists all defined tasks; parse for `lint` and `test` entries.
@@ -820,11 +820,11 @@ The hook only fires when devenv tasks are defined — it checks for `devenv task
 
 **Context:** Consulting developers routinely switch between client projects, each with its own cloud credentials and git identity. The most common cross-client contamination pattern: developer finishes work for Client A, opens a new Claude Code session for Client B without switching credentials, and AI tool uses the wrong AWS account. This is a compliance failure that is difficult to detect after the fact. The isolation hook catches it at session open.
 
-The hook is warning-only (not blocking) because the developer may intentionally be working across clients in a migration or handoff scenario. Blocking would be too aggressive; warning is sufficient. The hook only fires when a client profile is active (i.e., `GDEV_CLIENT_PROFILE` is set by Phase 30's `gdev client activate`). Projects without active client profiles skip all checks.
+The hook is warning-only (not blocking) because the developer may intentionally be working across clients in a migration or handoff scenario. Blocking would be too aggressive; warning is sufficient. The hook only fires when a client profile is active (i.e., `GDEV_CLIENT_PROFILE` is set by Phase 30's `qsdev client activate`). Projects without active client profiles skip all checks.
 
 The `SessionStart` bug (#10373, documented) means this hook may not fire for all sessions. The PreToolUse fallback writes a "first tool use" isolation check that fires on the first Bash/Write/Edit use, ensuring at minimum one isolation check per session.
 
-**Desired Outcome:** When a developer opens a Claude Code session in a Client B project while still authenticated to Client A's AWS account, the session start prints a warning identifying the mismatch and suggesting `gdev client activate ClientB`.
+**Desired Outcome:** When a developer opens a Claude Code session in a Client B project while still authenticated to Client A's AWS account, the session start prints a warning identifying the mismatch and suggesting `qsdev client activate ClientB`.
 
 **Steps:**
 
@@ -920,7 +920,7 @@ The `SessionStart` bug (#10373, documented) means this hook may not fire for all
 
 4. Document the SessionStart bug:
    - In the generated CLAUDE.md hook documentation: add a note about #10373 and explain the PreToolUse fallback.
-   - In `gdev doctor` output: check if Claude Code version is in the affected range and flag it.
+   - In `qsdev doctor` output: check if Claude Code version is in the affected range and flag it.
 
 5. Implement `GDEV_SKIP_ISOLATION_CHECK=1` bypass:
    - Both the SessionStart and PreToolUse scripts check this env var at the start.
@@ -943,7 +943,7 @@ The `SessionStart` bug (#10373, documented) means this hook may not fire for all
 - [ ] PreToolUse fallback fires on first Bash/Write/Edit use when SessionStart did not fire (#10373 workaround)
 - [ ] PreToolUse fallback runs at most once per session (flag file prevents repeated checks)
 - [ ] `GDEV_SKIP_ISOLATION_CHECK=1` suppresses all checks
-- [ ] Warning message names the mismatched check and suggests `gdev client activate <name>`
+- [ ] Warning message names the mismatched check and suggests `qsdev client activate <name>`
 - [ ] SessionStart bug (#10373) documented in generated CLAUDE.md hook section
 - [ ] Deployed at managed-policy tier (`~/.claude/settings.json`)
 
@@ -956,15 +956,15 @@ The `SessionStart` bug (#10373, documented) means this hook may not fire for all
 
 ### Unit 32.7: Hook Deployment & Claude Code Version Pinning
 
-**Description:** Implement the 3-tier hook deployment system — managed-policy, user-level, and project-level — via `gdev enable hooks` and `gdev disable hooks`. Implement Claude Code version regression detection in `gdev doctor`: warn if the installed Claude Code version falls in the documented regression range (v2.0.27-v2.0.31) where hooks had documented breakage.
+**Description:** Implement the 3-tier hook deployment system — managed-policy, user-level, and project-level — via `qsdev enable hooks` and `qsdev disable hooks`. Implement Claude Code version regression detection in `qsdev doctor`: warn if the installed Claude Code version falls in the documented regression range (v2.0.27-v2.0.31) where hooks had documented breakage.
 
-**Context:** The 3-tier deployment model ensures each hook reaches the right scope without redundancy. Managed-policy hooks (credential scanning, destructive prevention, SOC 2 logging, client isolation) must apply across all client projects and are therefore written to `~/.claude/settings.json`. User-level hooks (cost alerting) are also in `~/.claude/settings.json` but in a separate section, so they can be toggled independently. Project-level hooks (test enforcement) go in `.claude/settings.json` in the repo — they travel with the project and apply to all developers who run `gdev enable hooks` in that repo.
+**Context:** The 3-tier deployment model ensures each hook reaches the right scope without redundancy. Managed-policy hooks (credential scanning, destructive prevention, SOC 2 logging, client isolation) must apply across all client projects and are therefore written to `~/.claude/settings.json`. User-level hooks (cost alerting) are also in `~/.claude/settings.json` but in a separate section, so they can be toggled independently. Project-level hooks (test enforcement) go in `.claude/settings.json` in the repo — they travel with the project and apply to all developers who run `qsdev enable hooks` in that repo.
 
-The Phase 4 shared-file surgery infrastructure (section markers, safe append/remove) is the foundation for all hook deployment. `gdev enable hooks` adds gdev-managed sections; `gdev disable hooks` removes only gdev-managed sections, leaving any user-added hooks untouched.
+The Phase 4 shared-file surgery infrastructure (section markers, safe append/remove) is the foundation for all hook deployment. `qsdev enable hooks` adds gdev-managed sections; `qsdev disable hooks` removes only gdev-managed sections, leaving any user-added hooks untouched.
 
-Claude Code version pinning is a production requirement: versions v2.0.27-v2.0.31 had documented hook breakage (hooks silently not firing), affecting all hook-dependent security enforcement. `gdev doctor` checks the installed version and warns before developers discover the problem through a security incident.
+Claude Code version pinning is a production requirement: versions v2.0.27-v2.0.31 had documented hook breakage (hooks silently not firing), affecting all hook-dependent security enforcement. `qsdev doctor` checks the installed version and warns before developers discover the problem through a security incident.
 
-**Desired Outcome:** `gdev enable hooks` deploys all applicable hooks to the correct settings.json files based on the current profile and project. `gdev disable hooks` cleanly removes them. `gdev doctor` catches the broken Claude Code version range before it causes a missed security event.
+**Desired Outcome:** `qsdev enable hooks` deploys all applicable hooks to the correct settings.json files based on the current profile and project. `qsdev disable hooks` cleanly removes them. `qsdev doctor` catches the broken Claude Code version range before it causes a missed security event.
 
 **Steps:**
 
@@ -994,7 +994,7 @@ Claude Code version pinning is a production requirement: versions v2.0.27-v2.0.3
        // Tier determines which settings.json file receives this hook.
        Tier DeploymentTier
 
-       // Description is shown in `gdev status hooks`.
+       // Description is shown in `qsdev status hooks`.
        Description string
    }
 
@@ -1052,7 +1052,7 @@ Claude Code version pinning is a production requirement: versions v2.0.27-v2.0.3
    }
    ```
 
-3. Implement `gdev enable hooks` in `cmd/enable.go`:
+3. Implement `qsdev enable hooks` in `cmd/enable.go`:
    ```go
    func enableHooks(cmd *cobra.Command, args []string) error {
        // Step 1: Install hook scripts to ~/.qsdev/hooks/
@@ -1110,13 +1110,13 @@ Claude Code version pinning is a production requirement: versions v2.0.27-v2.0.3
    - Expand `~` to absolute home directory path.
    - If a hook with the same ID is already present in the section: replace (idempotent).
 
-5. Implement `gdev disable hooks`:
+5. Implement `qsdev disable hooks`:
    - Remove the `[gdev-managed-policy]` and `[gdev-user]` sections from `~/.claude/settings.json` using Phase 4's section removal.
    - Remove the `[gdev-project]` section from `.claude/settings.json` if present.
    - Do NOT remove hooks outside gdev-managed sections (user-added hooks are untouched).
    - Print a summary of what was removed.
 
-6. Implement Claude Code version regression detection in `gdev doctor`:
+6. Implement Claude Code version regression detection in `qsdev doctor`:
    ```go
    // checkClaudeCodeVersion checks for the documented hook regression range.
    func checkClaudeCodeVersion() *DoctorFinding {
@@ -1160,32 +1160,32 @@ Claude Code version pinning is a production requirement: versions v2.0.27-v2.0.3
    }
    ```
 
-7. Implement `gdev status hooks` (or `gdev enable hooks --status`):
+7. Implement `qsdev status hooks` (or `qsdev enable hooks --status`):
    - List all gdev-managed hooks across all three tiers.
    - For each hook: show ID, type, tier, and whether the hook script exists at the expected path.
    - Flags missing scripts (hook registered in settings.json but script absent — common after gdev upgrades).
 
 8. Write integration tests:
-   - `gdev enable hooks` creates `~/.qsdev/hooks/` with executable scripts.
-   - `gdev enable hooks` adds correct sections to `~/.claude/settings.json`.
-   - `gdev enable hooks` is idempotent (re-run does not duplicate hooks).
-   - `gdev disable hooks` removes gdev sections but not user-added hooks.
-   - `gdev doctor` detects Claude Code in regression range.
-   - `gdev doctor` passes when Claude Code is outside regression range.
-   - `gdev status hooks` shows correct installed/missing status.
+   - `qsdev enable hooks` creates `~/.qsdev/hooks/` with executable scripts.
+   - `qsdev enable hooks` adds correct sections to `~/.claude/settings.json`.
+   - `qsdev enable hooks` is idempotent (re-run does not duplicate hooks).
+   - `qsdev disable hooks` removes gdev sections but not user-added hooks.
+   - `qsdev doctor` detects Claude Code in regression range.
+   - `qsdev doctor` passes when Claude Code is outside regression range.
+   - `qsdev status hooks` shows correct installed/missing status.
 
 **Acceptance Criteria:**
-- [ ] `gdev enable hooks` installs all hook scripts to `~/.qsdev/hooks/` with executable permissions
+- [ ] `qsdev enable hooks` installs all hook scripts to `~/.qsdev/hooks/` with executable permissions
 - [ ] Managed-policy hooks deployed to `~/.claude/settings.json` in `[gdev-managed-policy]` section
 - [ ] User hooks deployed to `~/.claude/settings.json` in `[gdev-user]` section
 - [ ] Project hooks deployed to `.claude/settings.json` in `[gdev-project]` section
-- [ ] `gdev enable hooks` is idempotent (re-run replaces, does not duplicate)
-- [ ] `gdev disable hooks` removes only gdev-managed sections; user-added hooks are preserved
-- [ ] `gdev doctor` warns when Claude Code version is in documented regression range v2.0.27-v2.0.31
-- [ ] `gdev doctor` check identifies the upgrade command (`npm update -g @anthropic-ai/claude-code`)
-- [ ] `gdev status hooks` shows per-hook installed/missing status across all three tiers
+- [ ] `qsdev enable hooks` is idempotent (re-run replaces, does not duplicate)
+- [ ] `qsdev disable hooks` removes only gdev-managed sections; user-added hooks are preserved
+- [ ] `qsdev doctor` warns when Claude Code version is in documented regression range v2.0.27-v2.0.31
+- [ ] `qsdev doctor` check identifies the upgrade command (`npm update -g @anthropic-ai/claude-code`)
+- [ ] `qsdev status hooks` shows per-hook installed/missing status across all three tiers
 - [ ] Hook script paths use absolute paths (not `~`) in deployed `settings.json`
-- [ ] `~/.qsdev/cost-config.yaml` generated with defaults on first `gdev enable hooks`
+- [ ] `~/.qsdev/cost-config.yaml` generated with defaults on first `qsdev enable hooks`
 
 **Research Citations:**
 - `research-spikes/claude-code-hooks-in-practice/consulting-hooks-research.md` — 3-tier deployment model, Claude Code version regression range (v2.0.27-v2.0.31), hooks format in settings.json, section marker approach
@@ -1207,7 +1207,7 @@ Claude Code version pinning is a production requirement: versions v2.0.27-v2.0.3
 
 ### Hook Script Locations
 
-All hook scripts are embedded in the gdev binary via `embed.FS` at `internal/claudecode/hooks/`, and installed to `~/.qsdev/hooks/` on `gdev enable hooks`. The `~/.qsdev/hooks/` directory is the runtime execution location.
+All hook scripts are embedded in the gdev binary via `embed.FS` at `internal/claudecode/hooks/`, and installed to `~/.qsdev/hooks/` on `qsdev enable hooks`. The `~/.qsdev/hooks/` directory is the runtime execution location.
 
 ### Claude Code Hook Format (settings.json)
 
@@ -1251,7 +1251,7 @@ Only `command` type is used across all hooks in this phase. `prompt` and `agent`
 | Issue | Impact | Mitigation |
 |-------|--------|-----------|
 | SessionStart bug (#10373) | SessionStart hooks do not fire for new conversations in some versions | PreToolUse fallback in client-isolation and audit-log hooks; synthetic SessionStart record written on first PreToolUse |
-| Claude Code version regression v2.0.27-v2.0.31 | Hooks silently do not fire | `gdev doctor` warns and provides upgrade command |
+| Claude Code version regression v2.0.27-v2.0.31 | Hooks silently do not fire | `qsdev doctor` warns and provides upgrade command |
 
 ### New Packages
 
@@ -1263,12 +1263,12 @@ Only `command` type is used across all hooks in this phase. `prompt` and `agent`
 
 | Command | Notes |
 |---------|-------|
-| `gdev enable hooks` | Deploys all hooks across 3 tiers |
-| `gdev disable hooks` | Removes gdev-managed hooks, preserves user hooks |
-| `gdev status hooks` | Shows per-hook installed/missing status |
-| `gdev cost summary` | Reads `~/.qsdev/cost-log.jsonl`, shows monthly breakdown |
-| `gdev audit summary` | Reads session audit logs, produces timeline summary |
-| `gdev doctor` | Extended with Claude Code version regression check |
+| `qsdev enable hooks` | Deploys all hooks across 3 tiers |
+| `qsdev disable hooks` | Removes gdev-managed hooks, preserves user hooks |
+| `qsdev status hooks` | Shows per-hook installed/missing status |
+| `qsdev cost summary` | Reads `~/.qsdev/cost-log.jsonl`, shows monthly breakdown |
+| `qsdev audit summary` | Reads session audit logs, produces timeline summary |
+| `qsdev doctor` | Extended with Claude Code version regression check |
 
 ---
 
@@ -1282,9 +1282,9 @@ Only `command` type is used across all hooks in this phase. `prompt` and `agent`
 - [ ] SOC 2 audit log writes metadata-only JSONL across all 4 event types; never logs content
 - [ ] Test enforcement hook runs devenv tasks at session end, warns on failure, never blocks
 - [ ] Client isolation hook warns on credential/identity mismatch; no-op when no client profile active
-- [ ] `gdev enable hooks` deploys correct hooks to correct tier settings.json files
-- [ ] `gdev disable hooks` removes only gdev-managed sections
-- [ ] `gdev doctor` detects and warns on Claude Code v2.0.27-v2.0.31 regression range
+- [ ] `qsdev enable hooks` deploys correct hooks to correct tier settings.json files
+- [ ] `qsdev disable hooks` removes only gdev-managed sections
+- [ ] `qsdev doctor` detects and warns on Claude Code v2.0.27-v2.0.31 regression range
 - [ ] All hooks are `command` type (no `prompt`/`agent`); none block legitimate operations
 - [ ] `# gdev-allow-destructive` and `# gdev-allow-credential` bypass comments documented in CLAUDE.md
 - [ ] Known SessionStart bug (#10373) documented and mitigated via PreToolUse fallback

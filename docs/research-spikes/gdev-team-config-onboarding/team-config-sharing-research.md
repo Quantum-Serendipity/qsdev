@@ -137,12 +137,12 @@ devinit.Configure(
 
 **Why compile-time:** Org defaults rarely change (quarterly at most). They represent non-negotiable security baseline. Embedding them means they work offline, cannot be bypassed by deleting a file, and are version-locked to the binary.
 
-### Layer 2: Project Config (`.gdev.yaml` in Repo)
+### Layer 2: Project Config (`.qsdev.yaml` in Repo)
 
 A project-level config file checked into git that overrides org defaults. This is the file-in-repo pattern (Pattern 1) adapted for gdev.
 
 ```yaml
-# .gdev.yaml
+# .qsdev.yaml
 version: 1
 gdev_version: ">= 0.15.0"
 
@@ -179,7 +179,7 @@ client:
   registry_proxy: https://nexus.acme-corp.internal
 ```
 
-**Why file-in-repo:** Project config must travel with the repo. New team members clone the repo and get the project's gdev configuration automatically. Git provides versioning and review.
+**Why file-in-repo:** Project config must travel with the repo. New team members clone the repo and get the project's qsdev configuration automatically. Git provides versioning and review.
 
 **Key fields:**
 - `version`: Config schema version (integer, for migration)
@@ -188,12 +188,12 @@ client:
 - `overrides`: Per-field overrides to the profile
 - `client`: Client-specific settings (compliance level, registry proxy, etc.)
 
-### Layer 3: Local Overrides (`.gdev.local.yaml`, gitignored)
+### Layer 3: Local Overrides (`.qsdev.local.yaml`, gitignored)
 
 Developer-specific overrides that are not committed to git.
 
 ```yaml
-# .gdev.local.yaml (gitignored)
+# .qsdev.local.yaml (gitignored)
 overrides:
   extra_packages:
     - neovim
@@ -208,9 +208,9 @@ overrides:
 
 ```
 Org Defaults (compiled) 
-  -> Profile (compiled, selected by .gdev.yaml)
-    -> .gdev.yaml overrides (project repo)
-      -> .gdev.local.yaml overrides (local, gitignored)
+  -> Profile (compiled, selected by .qsdev.yaml)
+    -> .qsdev.yaml overrides (project repo)
+      -> .qsdev.local.yaml overrides (local, gitignored)
 ```
 
 Deep merge at each layer. Later layers override earlier ones. Arrays use union semantics for additive fields (permissions.allow, extra_packages) and replacement semantics for selective fields (languages, services).
@@ -220,8 +220,8 @@ Deep merge at each layer. Later layers override earlier ones. Arrays use union s
 | Feature | gdev Model | Closest Prior Art |
 |---------|-----------|------------------|
 | Org defaults in binary | Compiled profiles | Nx workspace presets |
-| Project config in repo | `.gdev.yaml` | mise `.mise.toml`, proto `.prototools` |
-| Local overrides | `.gdev.local.yaml` | mise `.mise.local.toml` |
+| Project config in repo | `.qsdev.yaml` | mise `.mise.toml`, proto `.prototools` |
+| Local overrides | `.qsdev.local.yaml` | mise `.mise.local.toml` |
 | Version constraint | `gdev_version` field | Terraform `required_version` |
 | Config schema version | `version` field | JSON schema versioning best practice |
 | Profile selection | `profile` field | Renovate `extends` |

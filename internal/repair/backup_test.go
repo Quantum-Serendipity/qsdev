@@ -37,7 +37,7 @@ func TestCreateBackup_CreatesFile(t *testing.T) {
 		t.Errorf("backup content = %q, want %q", string(data), string(content))
 	}
 
-	// Verify backup path is under .gdev/backups.
+	// Verify backup path is under .qsdev/backups.
 	dir := backupDir(root)
 	if !strings.HasPrefix(backupPath, dir) {
 		t.Errorf("backup path %q not under %q", backupPath, dir)
@@ -200,7 +200,7 @@ func TestPruneBackups_IgnoresUnrelatedFiles(t *testing.T) {
 
 func TestBackupDir(t *testing.T) {
 	got := backupDir("/project")
-	want := filepath.Join("/project", ".gdev", "backups")
+	want := filepath.Join("/project", ".qsdev", "backups")
 	if got != want {
 		t.Errorf("backupDir = %q, want %q", got, want)
 	}

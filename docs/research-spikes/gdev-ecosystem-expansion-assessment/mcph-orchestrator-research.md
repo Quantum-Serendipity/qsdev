@@ -60,7 +60,7 @@ Credential injection happens at spawn time from encrypted cloud storage. Missing
 | Feature | gdev Unit 3.5.1 (Our Design) | mcph |
 |---------|------|------|
 | **Server registry/catalog** | Go struct registry, compile-time, 14 hardcoded definitions with rich metadata | Cloud-hosted registry on mcp.hosting, unlimited entries, minimal metadata |
-| **Server lifecycle** | Build-time: generates static `.mcp.json` during `gdev init` | Runtime: spawns/kills servers on demand via meta-tools |
+| **Server lifecycle** | Build-time: generates static `.mcp.json` during `qsdev init` | Runtime: spawns/kills servers on demand via meta-tools |
 | **Config composition** | Generates `.mcp.json` as a file artifact | Replaces `.mcp.json` entirely -- mcph IS the only entry |
 | **Tool budget tracking** | Explicit 40-tool ceiling with `CanEnable()` checks | Implicit via `MCPH_SERVER_CAP` (default 6 concurrent) and context cost estimates |
 | **Auth/credential management** | SecretSpec integration (keyring, env, 1Password) | Cloud-encrypted credentials on mcp.hosting + heuristic stderr detection |
@@ -74,7 +74,7 @@ Credential injection happens at spawn time from encrypted cloud storage. Missing
 
 ### 3.1 Key Architectural Difference
 
-**gdev operates at build time**: `gdev init` scans a project, detects signals, runs a wizard, and generates static configuration files. The output is a `.mcp.json` that Claude Code reads directly. gdev is not running when Claude Code is working.
+**gdev operates at build time**: `qsdev init` scans a project, detects signals, runs a wizard, and generates static configuration files. The output is a `.mcp.json` that Claude Code reads directly. gdev is not running when Claude Code is working.
 
 **mcph operates at runtime**: It IS the MCP server that Claude Code talks to. It interposes itself between the AI client and all upstream servers, routing calls dynamically. It must be running for any MCP server to work.
 
@@ -113,9 +113,9 @@ HTTP targets run all 85 transport-applicable tests; stdio targets run ~75.
 - Run compliance tests against each MCP server in the registry during CI
 - Gate server additions on minimum compliance grade
 - Generate compliance badges for the server catalog
-- Use the programmatic API to integrate compliance checking into `gdev mcp check`
+- Use the programmatic API to integrate compliance checking into `qsdev mcp check`
 
-**Limitation**: The compliance suite tests MCP protocol compliance, not the correctness of gdev's `.mcp.json` generation. It validates "does this server speak MCP correctly?" not "did gdev configure this server correctly?"
+**Limitation**: The compliance suite tests MCP protocol compliance, not the correctness of gdev's `.mcp.json` generation. It validates "does this server speak MCP correctly?" not "did qsdev configure this server correctly?"
 
 ### 4.4 Integration Path
 
@@ -127,7 +127,7 @@ npx @yawlabs/mcp-compliance test npx @hashicorp/terraform-mcp-server --strict --
 npx @yawlabs/mcp-compliance test npx @hashicorp/terraform-mcp-server --format json
 ```
 
-Could be integrated into `gdev mcp check` as an optional deep validation: "Does the configured server actually work and speak compliant MCP?"
+Could be integrated into `qsdev mcp check` as an optional deep validation: "Does the configured server actually work and speak compliant MCP?"
 
 ---
 
@@ -241,7 +241,7 @@ The 47 releases in 5 weeks signal rapid iteration that could include breaking ch
 
 1. **Runtime health monitoring**: mcph tracks per-server call counts, errors, and latency. Our design generates static config with no runtime awareness.
 2. **Intelligent routing**: BM25 + semantic ranking to load only relevant servers. Our design loads all enabled servers statically.
-3. **Dynamic server management**: Load/unload servers mid-session. Our design requires re-running `gdev init` or `gdev enable/disable`.
+3. **Dynamic server management**: Load/unload servers mid-session. Our design requires re-running `qsdev init` or `qsdev enable/disable`.
 4. **Multi-device sync**: One config propagates to all clients. Our design is per-project.
 5. **Compliance grading**: A-F grades from 88-test suite. Our design has no automated compliance checking.
 6. **Context cost estimation**: Token cost per server surfaced in discovery. Our design tracks tool counts but not token costs.
@@ -255,7 +255,7 @@ The 47 releases in 5 weeks signal rapid iteration that could include breaking ch
 5. **SecretSpec integration**: Credentials flow through keyring, env, or 1Password. mcph uses cloud-encrypted storage (vendor lock-in).
 6. **Offline operation**: Static file generation works without internet. mcph requires connectivity.
 7. **Go integration**: Native Go struct registry integrates directly with gdev's codebase. mcph is TypeScript.
-8. **Wizard-driven setup**: Interactive prompts during `gdev init` for detect-and-offer servers. mcph relies on the AI client itself for server management via meta-tools.
+8. **Wizard-driven setup**: Interactive prompts during `qsdev init` for detect-and-offer servers. mcph relies on the AI client itself for server management via meta-tools.
 
 ### 8.3 Net Assessment
 
@@ -277,7 +277,7 @@ If mcph matures significantly (1.0+, community adoption, proper licensing, offli
 ### 9.2 Cherry-Pick: Compliance Suite
 
 - **Adopt `@yawlabs/mcp-compliance` (MIT licensed) for gdev's test infrastructure.** Use it in Phase 17 (Test Infrastructure Framework) to validate MCP server configurations.
-- Integration point: `gdev mcp check --compliance` runs the compliance suite against each enabled server and reports grades.
+- Integration point: `qsdev mcp check --compliance` runs the compliance suite against each enabled server and reports grades.
 - CI integration: GitHub Action `YawLabs/mcp-compliance@v0` for testing MCP servers in gdev's own CI pipeline.
 - This is low-risk: MIT licensed, runs as a standalone CLI, no cloud dependency.
 

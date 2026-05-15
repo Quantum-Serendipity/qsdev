@@ -30,7 +30,7 @@ Compared skills to MCP servers, hooks, CLAUDE.md, and deny rules. Skills are the
 - See: [claude-code-integration-research.md](claude-code-integration-research.md) Section 8
 
 ## Open Questions
-- Should gdev ship as a Claude Code plugin (installable via `/plugin marketplace add`) in addition to embedding skills during `gdev init`?
+- Should gdev ship as a Claude Code plugin (installable via `/plugin marketplace add`) in addition to embedding skills during `qsdev init`?
 - How should gdev skills interact with the existing claudecode addon's hooks and deny rules?
 - Should there be a `/gdev-wizard` skill that provides an interactive chat-based alternative to the huh form wizard?
 
@@ -40,10 +40,10 @@ Skills are the correct primary integration mechanism for exposing gdev to Claude
 
 The key design decisions:
 1. **Skills, not commands**: Use `.claude/skills/` directory structure for supporting files, frontmatter control, and auto-invocation
-2. **Dynamic context injection**: Every skill pre-captures `gdev devenv doctor --json` / `gdev status --json` so Claude reasons from actual state
+2. **Dynamic context injection**: Every skill pre-captures `qsdev devenv doctor --json` / `qsdev status --json` so Claude reasons from actual state
 3. **User-only for side effects**: Init, enable, disable, update require explicit `/gdev-*` invocation
 4. **Claude-invocable for diagnostics**: Doctor, status, list are safe for autonomous use
 5. **JSON output contract**: All gdev commands must support `--json` for reliable machine parsing
-6. **Embed in binary**: Skills embedded via Go's embed.FS, deployed by the claudecode addon during `gdev init`
+6. **Embed in binary**: Skills embedded via Go's embed.FS, deployed by the claudecode addon during `qsdev init`
 7. **Section markers in CLAUDE.md**: Safe updates without clobbering user content
 8. **5-layer safety**: From skill invocation control to enterprise managed settings

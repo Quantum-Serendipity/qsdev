@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
 )
 
 // detectPlatform populates Linux-specific fields in info by reading

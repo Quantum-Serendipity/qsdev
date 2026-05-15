@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
 )
 
 // Compile-time interface compliance check.

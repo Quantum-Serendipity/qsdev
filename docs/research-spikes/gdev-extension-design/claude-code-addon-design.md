@@ -74,12 +74,12 @@ func Configure(opts ...Option) {
 func initialize() error {
     // Register CLI commands
     instance.AddCommands(
-        claudeCmd(),      // parent: `gdev claude`
-        initCmd(),        // `gdev claude init`
-        updateCmd(),      // `gdev claude update`
-        addSkillCmd(),    // `gdev claude add-skill <name>`
-        addHookCmd(),     // `gdev claude add-hook <type>`
-        listSkillsCmd(),  // `gdev claude list-skills`
+        claudeCmd(),      // parent: `qsdev claude`
+        initCmd(),        // `qsdev claude init`
+        updateCmd(),      // `qsdev claude update`
+        addSkillCmd(),    // `qsdev claude add-skill <name>`
+        addHookCmd(),     // `qsdev claude add-hook <type>`
+        listSkillsCmd(),  // `qsdev claude list-skills`
     )
 
     // Register bootstrap steps
@@ -213,7 +213,7 @@ func init() {
 }
 ```
 
-The addon registers a single top-level config key `claudecode` in gdev's YAML config. All wizard answers persist under this key, enabling `gdev claude update` to regenerate files from saved config without re-running the wizard.
+The addon registers a single top-level config key `claudecode` in gdev's YAML config. All wizard answers persist under this key, enabling `qsdev claude update` to regenerate files from saved config without re-running the wizard.
 
 ---
 
@@ -908,9 +908,9 @@ func appendGitignore(projectRoot string) error {
 
 All wizard answers persist to gdev's YAML config under the `claudecode` key. This enables:
 
-- `gdev claude update` -- regenerate all files from saved config
-- `gdev claude init` -- re-run wizard with previous answers as defaults
-- CI/headless mode -- read config from checked-in gdev config
+- `qsdev claude update` -- regenerate all files from saved config
+- `qsdev claude init` -- re-run wizard with previous answers as defaults
+- CI/headless mode -- read config from checked-in qsdev config
 
 **Example saved config (`~/.config/gdev.yaml`):**
 
@@ -958,7 +958,7 @@ claudecode:
 
 ## 7. CLI Commands
 
-### `gdev claude init`
+### `qsdev claude init`
 
 Runs the full wizard outside of bootstrap. This is for projects that already have gdev set up but want to add Claude Code config.
 
@@ -1003,7 +1003,7 @@ func initCmd() *cobra.Command {
 }
 ```
 
-### `gdev claude update`
+### `qsdev claude update`
 
 Regenerates all files from saved config. No wizard. Useful after editing the gdev YAML config directly or after a template update.
 
@@ -1015,7 +1015,7 @@ func updateCmd() *cobra.Command {
         RunE: func(cmd *cobra.Command, args []string) error {
             cfg := config.Get[Config](configKey)
             if cfg.IsEmpty() {
-                return fmt.Errorf("no saved Claude Code config found; run 'gdev claude init' first")
+                return fmt.Errorf("no saved Claude Code config found; run 'qsdev claude init' first")
             }
             return generateAll(&cfg, ".")
         },
@@ -1023,7 +1023,7 @@ func updateCmd() *cobra.Command {
 }
 ```
 
-### `gdev claude add-skill <name>`
+### `qsdev claude add-skill <name>`
 
 Adds a single skill from the library without re-running the full wizard.
 
@@ -1047,7 +1047,7 @@ func addSkillCmd() *cobra.Command {
             // Verify skill exists in library
             available := loadAvailableSkills(cfg.SkillLibrarySource)
             if !available.Has(skillName) {
-                return fmt.Errorf("skill %q not found; run 'gdev claude list-skills' to see available", skillName)
+                return fmt.Errorf("skill %q not found; run 'qsdev claude list-skills' to see available", skillName)
             }
 
             // Install it
@@ -1065,7 +1065,7 @@ func addSkillCmd() *cobra.Command {
 }
 ```
 
-### `gdev claude add-hook <type>`
+### `qsdev claude add-hook <type>`
 
 Adds a hook preset to the settings.json.
 
@@ -1107,7 +1107,7 @@ func addHookCmd() *cobra.Command {
 }
 ```
 
-### `gdev claude list-skills`
+### `qsdev claude list-skills`
 
 Lists available skills from the embedded library and any configured remote source.
 
@@ -1181,7 +1181,7 @@ func addNonInteractiveFlags(cmd *cobra.Command) {
 
 ```bash
 # Fully non-interactive with explicit choices
-gdev claude init --yes \
+qsdev claude init --yes \
     --languages=Go \
     --build-cmd="go build ./..." \
     --test-cmd="go test ./..." \
@@ -1191,10 +1191,10 @@ gdev claude init --yes \
     --no-mcp
 
 # Accept all detected defaults
-gdev claude init --yes
+qsdev claude init --yes
 
 # Override just one thing, defaults for the rest
-gdev claude init --yes --permission-preset=permissive
+qsdev claude init --yes --permission-preset=permissive
 ```
 
 ---
@@ -1207,7 +1207,7 @@ The team skill library supports two sources, checked in priority order:
 
 1. **Embedded skills** -- Compiled into the gdev binary via `//go:embed`. These are the default library and ship with every addon release. Updated when the addon binary is rebuilt.
 
-2. **Remote git repository** -- Configured via `skill_library_source` in gdev config or `--skill-source` flag. The addon clones/pulls the repo to a local cache (`~/.cache/gdev/skill-library/`) and reads skill files from it. This is how teams maintain their own skills.
+2. **Remote git repository** -- Configured via `skill_library_source` in qsdev config or `--skill-source` flag. The addon clones/pulls the repo to a local cache (`~/.cache/gdev/skill-library/`) and reads skill files from it. This is how teams maintain their own skills.
 
 ### Remote Library Structure
 
@@ -1302,7 +1302,7 @@ func (r *RemoteLibrary) Sync() error {
 }
 ```
 
-The cache is refreshed on `gdev claude init`, `gdev claude add-skill`, and `gdev claude list-skills`. A `--offline` flag skips the sync for air-gapped environments.
+The cache is refreshed on `qsdev claude init`, `qsdev claude add-skill`, and `qsdev claude list-skills`. A `--offline` flag skips the sync for air-gapped environments.
 
 ---
 
@@ -1310,7 +1310,7 @@ The cache is refreshed on `gdev claude init`, `gdev claude add-skill`, and `gdev
 
 ### Generated CLAUDE.md for a Go Web Service
 
-This is what `gdev claude init` produces for a Go project using Gin, sqlc, and PostgreSQL with the `standard` permission preset:
+This is what `qsdev claude init` produces for a Go project using Gin, sqlc, and PostgreSQL with the `standard` permission preset:
 
 ```markdown
 # CLAUDE.md
@@ -1473,7 +1473,7 @@ For projects with existing configuration, the plan shows merge operations:
 
 ## 12. Merge and Update Strategy
 
-The `gdev claude update` command regenerates config from saved state. For files that may have been hand-edited, the addon uses different strategies per file type:
+The `qsdev claude update` command regenerates config from saved state. For files that may have been hand-edited, the addon uses different strategies per file type:
 
 | File | Update strategy | Rationale |
 |------|----------------|-----------|
@@ -1484,7 +1484,7 @@ The `gdev claude update` command regenerates config from saved state. For files 
 | `.mcp.json` | Merge: add new servers, update existing, leave manual additions | Structured JSON; manual entries should survive |
 | `.gitignore` | Append-only: add missing patterns, never remove | Safe -- only adds lines |
 
-The three-way merge for `settings.json` works by comparing the "last generated" state (stored as a hash in gdev config) against the current file to detect manual edits, then applying the new generated state on top.
+The three-way merge for `settings.json` works by comparing the "last generated" state (stored as a hash in qsdev config) against the current file to detect manual edits, then applying the new generated state on top.
 
 ```go
 type GeneratedFileState struct {
@@ -1657,7 +1657,7 @@ The `claudecode` addon integrates with other gdev addons during the customizatio
 
 ### With `bootstrap`
 
-The primary integration. All wizard steps register as bootstrap steps, so `gdev bootstrap` includes Claude Code setup alongside other addon setup (Docker, K3s, database, etc.).
+The primary integration. All wizard steps register as bootstrap steps, so `qsdev bootstrap` includes Claude Code setup alongside other addon setup (Docker, K3s, database, etc.).
 
 ### With `golang` / `nodejs`
 
@@ -1769,8 +1769,8 @@ These items need resolution during implementation:
 
 2. **Hook command portability** -- Hook commands like `gofmt -w $CLAUDE_FILE_PATH` assume the tool is on PATH. Should the addon verify tool availability during generation, or just document the requirement?
 
-3. **Skill versioning** -- When a remote skill library updates a skill that's already installed in a project, should `gdev claude update` overwrite the local copy? The current design says yes (team library is source of truth), but some teams may want to pin skill versions per project.
+3. **Skill versioning** -- When a remote skill library updates a skill that's already installed in a project, should `qsdev claude update` overwrite the local copy? The current design says yes (team library is source of truth), but some teams may want to pin skill versions per project.
 
 4. **Multi-project monorepo support** -- A monorepo with Go backend and TypeScript frontend may need different CLAUDE.md sections or path-scoped rules. The current design detects all languages at root level. Path-scoped rules partially address this, but a `--subdir` flag or monorepo-aware detection may be needed.
 
-5. **Managed settings integration** -- The addon currently targets project-level config only. Should it also support generating managed settings (for IT/security teams) via a separate command like `gdev claude managed-settings`?
+5. **Managed settings integration** -- The addon currently targets project-level config only. Should it also support generating managed settings (for IT/security teams) via a separate command like `qsdev claude managed-settings`?

@@ -2,9 +2,9 @@
 
 ## Overview
 
-This document specifies implementation units for expanding gdev's MCP server configuration beyond the current 5-server baseline (Context7, GitHub, Socket.dev, semble, PostgreSQL). It amends Phase 4 (Unit 3.5: .mcp.json generation) and Phase 12 (Unit 12.8: MCP Server Curation) of the gdev-secure-devenv-bootstrap implementation plan.
+This document specifies implementation units for expanding gdev's MCP server configuration beyond the current 5-server baseline (Context7, GitHub, Socket.dev, semble, PostgreSQL). It amends Phase 4 (Unit 3.5: .mcp.json generation) and Phase 12 (Unit 12.8: MCP Server Curation) of the qsdev implementation plan.
 
-The design adds 9 new MCP servers organized into a three-tier auto-configuration policy, enforces a 40-tool ceiling, introduces a security model matching risk to automation level, and integrates with the Phase 12 lifecycle management system (`gdev enable`/`gdev disable`).
+The design adds 9 new MCP servers organized into a three-tier auto-configuration policy, enforces a 40-tool ceiling, introduces a security model matching risk to automation level, and integrates with the Phase 12 lifecycle management system (`qsdev enable`/`qsdev disable`).
 
 ## Three-Tier Auto-Configuration Policy
 
@@ -12,7 +12,7 @@ The design adds 9 new MCP servers organized into a three-tier auto-configuration
 |------|----------|---------|
 | **Auto-detect** | Configure automatically when project signals present. Low risk, read-only. | MySQL MCP, SQLite MCP |
 | **Detect-and-offer** | Wizard prompt when signals detected. Medium risk, requires opt-in. | Terraform MCP, Sentry MCP |
-| **Optional catalog** | Explicit `gdev enable mcp-<name>` only. Shown in `gdev list --category ai-agent`. | Atlassian, Linear, Slack, Datadog, Grafana, GitLab, AWS, Azure |
+| **Optional catalog** | Explicit `qsdev enable mcp-<name>` only. Shown in `qsdev list --category ai-agent`. | Atlassian, Linear, Slack, Datadog, Grafana, GitLab, AWS, Azure |
 
 ## Security Model
 
@@ -20,17 +20,17 @@ The design adds 9 new MCP servers organized into a three-tier auto-configuration
 |------|-----------|--------------|------------------|----------|
 | Low | DB read-only access | Connection string from devenv services | Auto-configure | MySQL, SQLite, PostgreSQL |
 | Medium | Reads project data (tickets, errors) | API key / OAuth token via SecretSpec | Detect-and-offer (wizard prompt) | Terraform, Sentry |
-| High | Can take actions (cloud ops, messaging) | OAuth + explicit credential setup | Explicit `gdev enable` only | Atlassian, Linear, Slack, Datadog, Grafana |
+| High | Can take actions (cloud ops, messaging) | OAuth + explicit credential setup | Explicit `qsdev enable` only | Atlassian, Linear, Slack, Datadog, Grafana |
 
 ## 40-Tool Ceiling Enforcement
 
 Each MCP server exposes 5-15 tools. With 5 current servers at ~8 tools average, the baseline is ~40 tools — already at ceiling. New servers must displace or coexist within this budget.
 
 **Enforcement mechanism:**
-- `.devinit/.gdev-init-answers.yaml` tracks enabled MCP servers per-project
-- `gdev enable mcp-<name>` checks current tool count before enabling; warns if total would exceed 40
-- `gdev mcp list` shows active servers with tool counts and total
-- `gdev mcp check` validates the current configuration against the ceiling
+- `.devinit/.qsdev-init-answers.yaml` tracks enabled MCP servers per-project
+- `qsdev enable mcp-<name>` checks current tool count before enabling; warns if total would exceed 40
+- `qsdev mcp list` shows active servers with tool counts and total
+- `qsdev mcp check` validates the current configuration against the ceiling
 - Database MCP servers are mutually exclusive with each other in the auto-detect tier (only the detected DB type is enabled, never all three simultaneously)
 
 ---
@@ -287,7 +287,7 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
        DetectFunc       func(*DetectedProject) bool
        McpEntry         func(answers) McpServerEntry  // Returns the .mcp.json block
        RequiredSecrets  []SecretDecl        // Credentials needed
-       Description      string              // One-line for `gdev mcp list`
+       Description      string              // One-line for `qsdev mcp list`
        DocSection       string              // CLAUDE.md documentation paragraph
    }
    ```
@@ -313,7 +313,7 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/api-db-mcp-research.md § 3.4` — 40-tool ceiling, 3-6 server sweet spot
 - `research-spikes/gdev-ecosystem-expansion-assessment/docs/mcp-servers-claude-code-cursor-2026.md` — per-server tool counts, 4-6K tokens per server
-- `implementation-plans/gdev-secure-devenv-bootstrap/phases/04-claude-code-addon-core-generation.md § Unit 3.5` — existing .mcp.json generation
+- `implementation-plans/qsdev/phases/04-claude-code-addon-core-generation.md § Unit 3.5` — existing .mcp.json generation
 
 **Status:** Not Started
 
@@ -325,7 +325,7 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
 
 **Context:** PostgreSQL MCP is already auto-configured when `services.postgres.enable = true` is detected. MySQL and SQLite fill the remaining database gaps. MySQL is one of the 6 planned devenv services — its absence from the MCP set is the single biggest gap in the current configuration. SQLite is ubiquitous in local development and testing. Both are read-only by default, matching the Low security tier.
 
-**Desired Outcome:** When `gdev init` detects MySQL/MariaDB as a devenv service or docker-compose service, the MySQL MCP server appears in .mcp.json with connection credentials from the service configuration. When `*.sqlite` or `*.db` files are detected, the SQLite MCP server appears with the detected file path.
+**Desired Outcome:** When `qsdev init` detects MySQL/MariaDB as a devenv service or docker-compose service, the MySQL MCP server appears in .mcp.json with connection credentials from the service configuration. When `*.sqlite` or `*.db` files are detected, the SQLite MCP server appears with the detected file path.
 
 **Steps:**
 1. Implement MySQL detection heuristic:
@@ -358,7 +358,7 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
 - `research-spikes/gdev-ecosystem-expansion-assessment/api-db-mcp-research.md § 3.2 Database MCP Servers` — MySQL and SQLite assessment
 - `research-spikes/gdev-ecosystem-expansion-assessment/docs/mcp-official-servers-github.md` — SQLite as archived reference server
 - `research-spikes/gdev-ecosystem-expansion-assessment/docs/mcp-servers-claude-code-cursor-2026.md` — SQLite tool description
-- `implementation-plans/gdev-secure-devenv-bootstrap/phases/04-claude-code-addon-core-generation.md § Unit 3.5` — existing PostgreSQL MCP pattern
+- `implementation-plans/qsdev/phases/04-claude-code-addon-core-generation.md § Unit 3.5` — existing PostgreSQL MCP pattern
 
 **Status:** Not Started
 
@@ -417,13 +417,13 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
 
 ---
 
-### Unit 12.8.1: MCP Lifecycle Commands (`gdev mcp list`, `gdev enable/disable mcp-*`)
+### Unit 12.8.1: MCP Lifecycle Commands (`qsdev mcp list`, `qsdev enable/disable mcp-*`)
 
-**Description:** Implement MCP-specific lifecycle commands that integrate with the Phase 12 tool lifecycle system (Unit 12.1), providing `gdev mcp list` for server status overview and wiring each MCP server as an individually toggleable tool via `gdev enable mcp-<name>` / `gdev disable mcp-<name>`.
+**Description:** Implement MCP-specific lifecycle commands that integrate with the Phase 12 tool lifecycle system (Unit 12.1), providing `qsdev mcp list` for server status overview and wiring each MCP server as an individually toggleable tool via `qsdev enable mcp-<name>` / `qsdev disable mcp-<name>`.
 
-**Context:** Unit 12.1 defines the generic tool lifecycle system (`gdev enable`/`gdev disable`). MCP servers need specialized handling because: (a) they share a single file (.mcp.json) rather than having dedicated config files, (b) tool budget enforcement requires MCP-specific logic, and (c) engineers need a focused view of MCP servers separate from the full tool list. The `gdev mcp list` command is the primary interface for understanding what's active and how much tool budget remains.
+**Context:** Unit 12.1 defines the generic tool lifecycle system (`qsdev enable`/`qsdev disable`). MCP servers need specialized handling because: (a) they share a single file (.mcp.json) rather than having dedicated config files, (b) tool budget enforcement requires MCP-specific logic, and (c) engineers need a focused view of MCP servers separate from the full tool list. The `qsdev mcp list` command is the primary interface for understanding what's active and how much tool budget remains.
 
-**Desired Outcome:** `gdev mcp list` shows all available MCP servers with enabled/disabled state, tool count, and remaining budget. `gdev enable mcp-terraform` adds the server to .mcp.json. `gdev disable mcp-terraform` removes it. The tool budget is always visible.
+**Desired Outcome:** `qsdev mcp list` shows all available MCP servers with enabled/disabled state, tool count, and remaining budget. `qsdev enable mcp-terraform` adds the server to .mcp.json. `qsdev disable mcp-terraform` removes it. The tool budget is always visible.
 
 **Steps:**
 1. Register each of the 9 new MCP servers as lifecycle-managed tools (per Unit 12.1 `Tool` struct):
@@ -431,7 +431,7 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
    - Category: `ai-agent`
    - OwnedFiles: shared ownership of `.mcp.json` (keyed by server name) + exclusive ownership of CLAUDE.md section
    - Default policy: matches ConfigPolicy (AutoDetect → `OnWhenDetected`, DetectAndOffer → `OnWhenDetected` with wizard gate, OptionalCatalog → `OptIn`)
-2. Implement `gdev mcp list` command:
+2. Implement `qsdev mcp list` command:
    ```
    MCP Servers                          Status      Tools  Security
    ─────────────────────────────────────────────────────────────────
@@ -452,43 +452,43 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
    ─────────────────────────────────────────────────────────────────
    Active: 5 servers, ~36 tools (budget: 40)
    ```
-3. Support `gdev mcp list --json` for machine-readable output.
+3. Support `qsdev mcp list --json` for machine-readable output.
 4. Implement `.mcp.json` shared-file surgery in the lifecycle system:
    - Parse existing `.mcp.json`, add/remove server key, marshal back.
    - Preserve non-gdev entries (user-added servers not in the registry).
-5. Wire `gdev enable mcp-<name>`:
+5. Wire `qsdev enable mcp-<name>`:
    - Check `CanEnable()` — fail with budget warning if over ceiling.
    - For Medium/High security tiers: prompt for credentials (or accept via `--env KEY=VALUE` flags).
    - Add server entry to .mcp.json.
    - Add CLAUDE.md documentation section.
    - Add SecretSpec declarations if applicable.
    - Print summary: "Enabled Terraform MCP (10 tools). Active: 6 servers, ~46 tools. WARNING: exceeds 40-tool ceiling."
-6. Wire `gdev disable mcp-<name>`:
+6. Wire `qsdev disable mcp-<name>`:
    - Remove server entry from .mcp.json.
    - Remove CLAUDE.md documentation section.
    - Remove SecretSpec declarations.
    - Print summary: "Disabled Terraform MCP. Active: 5 servers, ~36 tools."
-7. Implement `gdev mcp check`:
+7. Implement `qsdev mcp check`:
    - Validate all enabled servers have required credentials configured.
    - Report tool budget status.
    - Flag servers with missing credentials.
 
 **Acceptance Criteria:**
-- [ ] `gdev mcp list` shows all 14 servers with correct status, tool counts, and security tiers
-- [ ] `gdev mcp list` shows total active tools and budget remaining
-- [ ] `gdev mcp list --json` produces machine-readable output
-- [ ] `gdev enable mcp-terraform` adds server to .mcp.json with correct config
-- [ ] `gdev disable mcp-terraform` removes server from .mcp.json
+- [ ] `qsdev mcp list` shows all 14 servers with correct status, tool counts, and security tiers
+- [ ] `qsdev mcp list` shows total active tools and budget remaining
+- [ ] `qsdev mcp list --json` produces machine-readable output
+- [ ] `qsdev enable mcp-terraform` adds server to .mcp.json with correct config
+- [ ] `qsdev disable mcp-terraform` removes server from .mcp.json
 - [ ] Enable fails with clear message when tool budget would be exceeded
 - [ ] Enable prompts for credentials for Medium/High tier servers
 - [ ] Non-gdev .mcp.json entries preserved during enable/disable
 - [ ] CLAUDE.md sections added/removed with enable/disable
-- [ ] `gdev mcp check` reports credential and budget status
+- [ ] `qsdev mcp check` reports credential and budget status
 
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/api-db-mcp-research.md § 3.3-3.4` — expansion recommendations, tool ceiling
-- `implementation-plans/gdev-secure-devenv-bootstrap/phases/12-extended-integrations-lifecycle.md § Unit 12.1` — tool lifecycle management system
-- `implementation-plans/gdev-secure-devenv-bootstrap/phases/12-extended-integrations-lifecycle.md § Unit 12.8` — MCP server curation
+- `implementation-plans/qsdev/phases/12-extended-integrations-lifecycle.md § Unit 12.1` — tool lifecycle management system
+- `implementation-plans/qsdev/phases/12-extended-integrations-lifecycle.md § Unit 12.8` — MCP server curation
 
 **Status:** Not Started
 
@@ -496,11 +496,11 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
 
 ### Unit 12.8.2: Optional Catalog — Ticketing MCP Servers (Atlassian, Linear)
 
-**Description:** Implement Atlassian (Jira/Confluence) and Linear MCP servers as optional catalog entries, accessible only via explicit `gdev enable mcp-atlassian` or `gdev enable mcp-linear`. Include credential setup flow, security documentation, and CLAUDE.md integration.
+**Description:** Implement Atlassian (Jira/Confluence) and Linear MCP servers as optional catalog entries, accessible only via explicit `qsdev enable mcp-atlassian` or `qsdev enable mcp-linear`. Include credential setup flow, security documentation, and CLAUDE.md integration.
 
 **Context:** Atlassian MCP is the highest-value expansion candidate for a consulting organization. Engineers spend significant time context-switching between Jira and their IDE. Being able to query issues, read Confluence pages, and update ticket status from Claude Code eliminates this friction. Linear serves the same role for teams on Linear. Both are High security tier — they access project management data and can take actions (create/update issues). They must never be auto-enabled.
 
-**Desired Outcome:** `gdev enable mcp-atlassian` walks the engineer through Atlassian site URL configuration, adds the server to .mcp.json, and documents available capabilities in CLAUDE.md. The same for Linear. Both are invisible during `gdev init` unless explicitly selected in the customize path.
+**Desired Outcome:** `qsdev enable mcp-atlassian` walks the engineer through Atlassian site URL configuration, adds the server to .mcp.json, and documents available capabilities in CLAUDE.md. The same for Linear. Both are invisible during `qsdev init` unless explicitly selected in the customize path.
 
 **Steps:**
 1. Register `mcp-atlassian` in MCP server registry:
@@ -515,14 +515,14 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
    - ToolCount: 10
    - RequiredSecrets: `LINEAR_API_KEY` (optional — OAuth preferred)
    - Remote MCP transport (URL-based, not stdio).
-3. Implement `gdev enable mcp-atlassian` flow:
+3. Implement `qsdev enable mcp-atlassian` flow:
    a. Prompt for Atlassian site URL (e.g., `https://mycompany.atlassian.net`).
    b. Validate URL format.
    c. Check tool budget via `CanEnable()`.
    d. Add .mcp.json entry with site URL in env.
    e. Add CLAUDE.md section: "Atlassian MCP provides access to Jira issues and Confluence pages. It respects your existing Jira permissions — you can only see what your Atlassian account can access. Available operations: search issues, read issue details, create issues, update status, read Confluence pages."
    f. Print security notice: "Atlassian MCP will have the same access as your Atlassian account. OAuth consent will be requested on first use."
-4. Implement `gdev enable mcp-linear` flow:
+4. Implement `qsdev enable mcp-linear` flow:
    a. Check tool budget.
    b. Add .mcp.json entry with remote URL transport.
    c. Add CLAUDE.md section documenting Linear MCP capabilities.
@@ -531,14 +531,14 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
 6. Implement credential validation where possible (Atlassian URL format, Linear API key format).
 
 **Acceptance Criteria:**
-- [ ] `gdev enable mcp-atlassian` prompts for site URL and configures .mcp.json
-- [ ] `gdev enable mcp-linear` configures remote MCP URL in .mcp.json
-- [ ] Neither server appears during `gdev init` quick path
+- [ ] `qsdev enable mcp-atlassian` prompts for site URL and configures .mcp.json
+- [ ] `qsdev enable mcp-linear` configures remote MCP URL in .mcp.json
+- [ ] Neither server appears during `qsdev init` quick path
 - [ ] Both available in wizard customize path under "Project Management" section
 - [ ] CLAUDE.md sections clearly document what the AI agent can access
 - [ ] Security notices printed during enable
-- [ ] `gdev disable mcp-atlassian` cleanly removes all artifacts
-- [ ] `gdev disable mcp-linear` cleanly removes all artifacts
+- [ ] `qsdev disable mcp-atlassian` cleanly removes all artifacts
+- [ ] `qsdev disable mcp-linear` cleanly removes all artifacts
 - [ ] Tool budget enforced
 
 **Research Citations:**
@@ -556,7 +556,7 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
 
 **Context:** Slack MCP enables searching messages, reading channel history, and posting messages. It is the most security-sensitive optional server because it provides AI agent access to team communications — conversations that may contain sensitive project information, client discussions, or personnel matters. The value proposition is clear (catching up on project context without manual Slack trawling), but the risk requires explicit acknowledgment.
 
-**Desired Outcome:** `gdev enable mcp-slack` walks through setup with clear security warnings, configures the server, and documents what the AI agent can access. The security notice is unavoidable — not skippable with `--yes`.
+**Desired Outcome:** `qsdev enable mcp-slack` walks through setup with clear security warnings, configures the server, and documents what the AI agent can access. The security notice is unavoidable — not skippable with `--yes`.
 
 **Steps:**
 1. Register `mcp-slack` in MCP server registry:
@@ -564,7 +564,7 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
    - SecurityTier: `High`
    - ToolCount: 12
    - RequiredSecrets: `SLACK_TEAM_ID`, `SLACK_BOT_TOKEN`
-2. Implement `gdev enable mcp-slack` flow:
+2. Implement `qsdev enable mcp-slack` flow:
    a. Display security warning (not skippable):
       ```
       ⚠ Slack MCP gives Claude Code access to your team's Slack workspace.
@@ -586,11 +586,11 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
 4. Document Slack app creation process in CLAUDE.md section (link to Slack API docs, required scopes).
 
 **Acceptance Criteria:**
-- [ ] `gdev enable mcp-slack` shows unavoidable security warning
+- [ ] `qsdev enable mcp-slack` shows unavoidable security warning
 - [ ] Security warning cannot be skipped with `--yes` (requires explicit confirmation)
 - [ ] Slack credentials stored via SecretSpec, never in .mcp.json plaintext
 - [ ] CLAUDE.md section documents what the AI agent can access
-- [ ] `gdev disable mcp-slack` cleanly removes all artifacts
+- [ ] `qsdev disable mcp-slack` cleanly removes all artifacts
 - [ ] Tool budget enforced
 
 **Research Citations:**
@@ -607,7 +607,7 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
 
 **Context:** Datadog and Grafana are the two dominant observability platforms in consulting engagements. Both went GA in early 2026 with mature MCP servers. They enable workflows like "find the error spike in Datadog, correlate with recent deployments, fix the code" without leaving Claude Code. Unlike Sentry (detect-and-offer), these are client infrastructure choices that gdev cannot detect — they require explicit enable.
 
-**Desired Outcome:** `gdev enable mcp-datadog` and `gdev enable mcp-grafana` configure their respective servers with credential prompts. Both support the observability debugging workflow documented in CLAUDE.md.
+**Desired Outcome:** `qsdev enable mcp-datadog` and `qsdev enable mcp-grafana` configure their respective servers with credential prompts. Both support the observability debugging workflow documented in CLAUDE.md.
 
 **Steps:**
 1. Register `mcp-datadog` in MCP server registry:
@@ -620,13 +620,13 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
    - SecurityTier: `High`
    - ToolCount: 10
    - RequiredSecrets: `GRAFANA_URL`, `GRAFANA_API_KEY`
-3. Implement `gdev enable mcp-datadog` flow:
+3. Implement `qsdev enable mcp-datadog` flow:
    a. Prompt for Datadog API key, app key, and site (default `datadoghq.com`).
    b. Check tool budget.
    c. Add .mcp.json entry.
    d. Add SecretSpec declarations.
    e. Add CLAUDE.md section documenting Datadog MCP use cases: onboarding, infrastructure optimization, incident root cause analysis.
-4. Implement `gdev enable mcp-grafana` flow:
+4. Implement `qsdev enable mcp-grafana` flow:
    a. Prompt for Grafana URL and API key (service account token with viewer role).
    b. Check tool budget.
    c. Add .mcp.json entry.
@@ -636,12 +636,12 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
 6. Note: if Sentry (Unit 3.5.3) is also enabled, warn about observability tool budget — 3 observability servers would add ~30 tools.
 
 **Acceptance Criteria:**
-- [ ] `gdev enable mcp-datadog` prompts for credentials and configures .mcp.json
-- [ ] `gdev enable mcp-grafana` prompts for credentials and configures .mcp.json
+- [ ] `qsdev enable mcp-datadog` prompts for credentials and configures .mcp.json
+- [ ] `qsdev enable mcp-grafana` prompts for credentials and configures .mcp.json
 - [ ] SecretSpec declarations generated for all credentials
 - [ ] CLAUDE.md sections document each server's use cases
 - [ ] Warning when enabling multiple observability servers (Sentry + Datadog + Grafana)
-- [ ] `gdev disable` cleanly removes all artifacts for each
+- [ ] `qsdev disable` cleanly removes all artifacts for each
 - [ ] Tool budget enforced
 - [ ] Both available in wizard customize path
 
@@ -667,7 +667,7 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
    a. Collect always-on servers (Context7, GitHub).
    b. Collect auto-detected servers whose `DetectFunc` returns true (Socket.dev for JS/Python/Rust/Go, PostgreSQL/MySQL/SQLite for detected databases, semble for Python >=3.10).
    c. Collect detect-and-offer servers where wizard answer is "yes" (Terraform, Sentry).
-   d. Collect optional catalog servers where `gdev enable` has been called (Atlassian, Linear, Slack, Datadog, Grafana).
+   d. Collect optional catalog servers where `qsdev enable` has been called (Atlassian, Linear, Slack, Datadog, Grafana).
    e. Validate total tool count — emit warning in generated CLAUDE.md if over soft ceiling.
 2. For each enabled server, call `McpEntry(answers)` to get the typed entry, handling:
    - Servers with env vars: populate from wizard answers, SecretSpec, or leave placeholder.
@@ -691,7 +691,7 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
 - [ ] Generated JSON passes `json.Unmarshal` validation
 
 **Research Citations:**
-- `implementation-plans/gdev-secure-devenv-bootstrap/phases/04-claude-code-addon-core-generation.md § Unit 3.5` — original .mcp.json generation design
+- `implementation-plans/qsdev/phases/04-claude-code-addon-core-generation.md § Unit 3.5` — original .mcp.json generation design
 - `research-spikes/gdev-ecosystem-expansion-assessment/api-db-mcp-research.md § 3.3` — expansion recommendations with tier assignments
 - `research-spikes/gdev-ecosystem-expansion-assessment/api-db-mcp-research.md § 3.4` — per-project configuration, profile-based bundles
 
@@ -705,7 +705,7 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
 
 **Context:** MCP servers span from zero-auth (Context7, SQLite) to OAuth-protected (Atlassian, Linear) to API-key-authenticated (Datadog, Grafana, Sentry). The security model must be transparent — engineers should understand exactly what data each server exposes to the AI agent. Credential hygiene is critical: API keys in .mcp.json would be committed to git. SecretSpec integration ensures credentials are resolved at runtime from secure providers (keyring, env vars, 1Password).
 
-**Desired Outcome:** Every MCP server's CLAUDE.md section includes a security notice. All credentials flow through SecretSpec or environment variable references — never plaintext in committed files. `gdev mcp check` validates credential hygiene.
+**Desired Outcome:** Every MCP server's CLAUDE.md section includes a security notice. All credentials flow through SecretSpec or environment variable references — never plaintext in committed files. `qsdev mcp check` validates credential hygiene.
 
 **Steps:**
 1. Define per-server security documentation templates:
@@ -716,9 +716,9 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
 3. Implement credential hygiene for .mcp.json:
    - Low tier (MySQL): env vars reference SecretSpec-managed values or devenv service defaults.
    - Medium tier (Terraform, Sentry): env vars reference SecretSpec entries; empty string placeholder in .mcp.json.
-   - High tier: env vars reference SecretSpec entries; `gdev mcp check` warns if values are empty.
+   - High tier: env vars reference SecretSpec entries; `qsdev mcp check` warns if values are empty.
 4. Add `.mcp.json` to `.gitignore` recommendation when High-tier servers are enabled (or use `.mcp.json.local` pattern).
-5. Implement `gdev mcp check` credential validation:
+5. Implement `qsdev mcp check` credential validation:
    - For each enabled server with required credentials, check SecretSpec resolution.
    - Report: "mcp-datadog: DD_API_KEY ✓, DD_APP_KEY ✗ (not configured)"
    - Exit code 1 if any required credentials are missing.
@@ -729,14 +729,14 @@ These units amend Phase 4 (Unit 3.5) and Phase 12 (Unit 12.8) of the existing pl
 - [ ] Security notices are tier-appropriate (low/medium/high language)
 - [ ] No plaintext credentials in .mcp.json committed to git
 - [ ] SecretSpec declarations generated for all credential-requiring servers
-- [ ] `gdev mcp check` validates credential configuration
+- [ ] `qsdev mcp check` validates credential configuration
 - [ ] Pre-commit hook warns on plaintext credentials in .mcp.json
 - [ ] `.gitignore` recommendation when High-tier servers enabled
 - [ ] Credential validation supports `--ci` mode (strict, non-interactive)
 
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/api-db-mcp-research.md § 4.3` — security gradient model
-- `implementation-plans/gdev-secure-devenv-bootstrap/phases/12-extended-integrations-lifecycle.md § Unit 12.6` — SecretSpec integration design
+- `implementation-plans/qsdev/phases/12-extended-integrations-lifecycle.md § Unit 12.6` — SecretSpec integration design
 - `research-spikes/gdev-ecosystem-expansion-assessment/docs/slack-mcp-server-official.md` — partner OAuth security model
 - `research-spikes/gdev-ecosystem-expansion-assessment/docs/linear-mcp-server-official.md` — OAuth 2.1 + API key auth options
 

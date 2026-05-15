@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/teardown"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/teardown"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 )
 
 func teardownCmd() *cobra.Command {
@@ -24,13 +24,13 @@ func teardownCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "teardown",
-		Short: "Remove gdev configuration from the current project",
-		Long: `Remove gdev-managed files and configuration from the project.
+		Short: "Remove qsdev configuration from the current project",
+		Long: `Remove qsdev-managed files and configuration from the project.
 
 Three profiles control the scope of removal:
 
   Default:    Remove state directories and unmodified generated files.
-              Shared files are surgically cleaned (gdev sections removed).
+              Shared files are surgically cleaned (qsdev sections removed).
               Modified files are preserved with warnings.
 
   --quick:    Remove state directories only (.devinit/).

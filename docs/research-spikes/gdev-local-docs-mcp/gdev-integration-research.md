@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-Local documentation MCP servers integrate cleanly into the gdev-secure-devenv-bootstrap implementation plan as a new tool category within the existing tool lifecycle system (Phase 12). The recommended deployment path uses devenv's native `claude.code.mcpServers` configuration to generate `.mcp.json` entries, with Nix-managed Python environments for openzim-mcp and man-mcp-server, and Nix-managed Node.js for a DevDocs MCP server. Documentation data (ZIM files, DevDocs JSON) lives in `~/.local/share/gdev/docs/` with Nix hash-pinned downloads for supply chain integrity. The devenv ecosystem already has first-class MCP server support (devenv 2.0's `claude.code.mcpServers` options), and two Nix flake projects (mcps.nix, mcp-servers-nix) provide patterns for declarative MCP server packaging that gdev should follow.
+Local documentation MCP servers integrate cleanly into the qsdev implementation plan as a new tool category within the existing tool lifecycle system (Phase 12). The recommended deployment path uses devenv's native `claude.code.mcpServers` configuration to generate `.mcp.json` entries, with Nix-managed Python environments for openzim-mcp and man-mcp-server, and Nix-managed Node.js for a DevDocs MCP server. Documentation data (ZIM files, DevDocs JSON) lives in `~/.local/share/gdev/docs/` with Nix hash-pinned downloads for supply chain integrity. The devenv ecosystem already has first-class MCP server support (devenv 2.0's `claude.code.mcpServers` options), and two Nix flake projects (mcps.nix, mcp-servers-nix) provide patterns for declarative MCP server packaging that gdev should follow.
 
 ---
 
@@ -13,7 +13,7 @@ Local documentation MCP servers integrate cleanly into the gdev-secure-devenv-bo
 Local documentation MCP servers fit as **additional tools within the Phase 12 tool lifecycle system**, not a separate phase. The reasoning:
 
 **Phase 12 is the right home** because:
-- Phase 12 already implements `gdev enable/disable <tool>` with shared-file surgery for `.mcp.json`, `CLAUDE.md`, `devenv.nix`, and `settings.json` — exactly the files doc MCP servers need to modify
+- Phase 12 already implements `qsdev enable/disable <tool>` with shared-file surgery for `.mcp.json`, `CLAUDE.md`, `devenv.nix`, and `settings.json` — exactly the files doc MCP servers need to modify
 - Phase 12 already integrates Context7 MCP as a lifecycle-managed tool (Unit 12.9 in the plan)
 - The tool registry pattern (`Tool` struct with `Name`, `Category`, `Default`, `DetectFunc`, `OwnedFiles`) applies directly to doc MCP servers
 - The `FileOwnership` system with `Exclusive` and `Shared` ownership types handles both dedicated config files and `.mcp.json` entries
@@ -28,12 +28,12 @@ Local documentation MCP servers fit as **additional tools within the Phase 12 to
 
 | Dependency | Phase | What's Needed |
 |-----------|-------|---------------|
-| Tool lifecycle system | Phase 12 (Unit 12.1) | `gdev enable/disable` commands, file ownership registry, shared-file surgery |
+| Tool lifecycle system | Phase 12 (Unit 12.1) | `qsdev enable/disable` commands, file ownership registry, shared-file surgery |
 | `.mcp.json` generation | Phase 4 (Unit 3.6) | Base `.mcp.json` struct marshaling infrastructure |
 | Wizard infrastructure | Phase 6 | Tool selection form groups, detection engine |
 | devenv addon | Phase 3 | `devenv.nix` generation with `claude.code.mcpServers` |
 | Profile system | Phase 6 / Phase 13 | Profile-driven doc set selection |
-| `gdev outdated`/`gdev update` | Phase 16 | Doc update integration |
+| `qsdev outdated`/`qsdev update` | Phase 16 | Doc update integration |
 
 ### Proposed Units (added to Phase 12)
 
@@ -189,7 +189,7 @@ This is the web fallback — labeled in CLAUDE.md as lower-trust than local sour
 
 ### .mcp.json Merge Strategy
 
-Documentation MCP servers contribute entries to `.mcp.json` as `Shared` ownership (tool contributes server key). On `gdev enable local-docs-zim`, the entry is added via JSON parse/insert/marshal. On `gdev disable local-docs-zim`, the entry is removed. This follows the identical pattern used for semble, context7, and github-mcp in the existing plan.
+Documentation MCP servers contribute entries to `.mcp.json` as `Shared` ownership (tool contributes server key). On `qsdev enable local-docs-zim`, the entry is added via JSON parse/insert/marshal. On `qsdev disable local-docs-zim`, the entry is removed. This follows the identical pattern used for semble, context7, and github-mcp in the existing plan.
 
 ---
 
@@ -428,7 +428,7 @@ The wizard's detection engine maps project files to recommended documentation se
 │ Available disk: 142 GB                                       │
 │                                                              │
 │ Note: Documentation is downloaded on first use.              │
-│ Run `gdev docs update` to refresh.                           │
+│ Run `qsdev docs update` to refresh.                           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -499,10 +499,10 @@ docs:
 
 ### 5.3 Custom Profiles (Team-Specified)
 
-Teams add documentation corpus specifications to `.gdev.yaml`:
+Teams add documentation corpus specifications to `.qsdev.yaml`:
 
 ```yaml
-# .gdev.yaml (project-level, committed to git)
+# .qsdev.yaml (project-level, committed to git)
 docs:
   devdocs:
     sets:
@@ -519,7 +519,7 @@ docs:
   context7: false  # Air-gapped environment, no web fallback
 ```
 
-The three-layer config resolution applies: binary defaults (consulting-default) -> `.gdev.yaml` (project) -> `.gdev.local.yaml` (developer). A developer can disable ZIM files locally without affecting the team configuration.
+The three-layer config resolution applies: binary defaults (consulting-default) -> `.qsdev.yaml` (project) -> `.qsdev.local.yaml` (developer). A developer can disable ZIM files locally without affecting the team configuration.
 
 ---
 
@@ -603,7 +603,7 @@ Tool{
 
 ### 6.2 What Files Are Modified
 
-**`gdev enable local-docs-zim`:**
+**`qsdev enable local-docs-zim`:**
 
 | File | Ownership | Operation |
 |------|-----------|-----------|
@@ -611,7 +611,7 @@ Tool{
 | `devenv.nix` | Shared | Add `# --- local-docs-zim ---` section: openzim-mcp install in enterShell |
 | `CLAUDE.md` | Shared | Add `<!-- gdev:local-docs-zim -->` section: usage docs, content scope, trust level |
 
-**`gdev enable local-docs-devdocs`:**
+**`qsdev enable local-docs-devdocs`:**
 
 | File | Ownership | Operation |
 |------|-----------|-----------|
@@ -619,14 +619,14 @@ Tool{
 | `devenv.nix` | Shared | Add `# --- local-docs-devdocs ---` section: Node.js dependency |
 | `CLAUDE.md` | Shared | Add `<!-- gdev:local-docs-devdocs -->` section: available doc sets, search tips |
 
-**`gdev enable man-pages`:**
+**`qsdev enable man-pages`:**
 
 | File | Ownership | Operation |
 |------|-----------|-----------|
 | `.mcp.json` | Shared | Add `"man-pages"` server entry |
 | `CLAUDE.md` | Shared | Add `<!-- gdev:man-pages -->` section: available sections, search syntax |
 
-**`gdev disable local-docs-zim`:**
+**`qsdev disable local-docs-zim`:**
 
 | File | Operation | Notes |
 |------|-----------|-------|
@@ -638,10 +638,10 @@ Tool{
 
 **Not on enable — lazy on first use.** Rationale:
 
-- `gdev enable local-docs-zim` should be fast (modify config files, done)
-- Downloading 4+ GB of ZIM files during `gdev enable` would block the terminal
+- `qsdev enable local-docs-zim` should be fast (modify config files, done)
+- Downloading 4+ GB of ZIM files during `qsdev enable` would block the terminal
 - The MCP server handles missing ZIM files gracefully (returns empty results, not errors)
-- First actual Claude Code query to the server triggers a user-visible "no documentation found" response, which naturally prompts running `gdev docs download`
+- First actual Claude Code query to the server triggers a user-visible "no documentation found" response, which naturally prompts running `qsdev docs download`
 
 **Explicit download command:**
 
@@ -656,13 +656,13 @@ This separates "configure" from "download" — configuration is instant and reve
 
 ### 6.4 Cleanup on Disable
 
-**Keep cached data.** Removing 4 GB of ZIM files on `gdev disable` would be destructive and potentially slow. Instead:
+**Keep cached data.** Removing 4 GB of ZIM files on `qsdev disable` would be destructive and potentially slow. Instead:
 
-- `gdev disable local-docs-zim` removes configuration only (fast, reversible)
-- `gdev docs clean` removes downloaded data (explicit, destructive)
-- `gdev docs clean --zim` removes only ZIM files
-- `gdev docs clean --devdocs` removes only DevDocs data
-- `gdev docs clean --all` removes everything
+- `qsdev disable local-docs-zim` removes configuration only (fast, reversible)
+- `qsdev docs clean` removes downloaded data (explicit, destructive)
+- `qsdev docs clean --zim` removes only ZIM files
+- `qsdev docs clean --devdocs` removes only DevDocs data
+- `qsdev docs clean --all` removes everything
 
 This follows the pattern of Docker image management: `docker rm` removes containers (fast), `docker rmi` removes images (separate, explicit).
 
@@ -701,16 +701,16 @@ For Nix-pinned ZIM files, updating means updating the hash in the Nix derivation
 
 ### 7.2 DevDocs Updates
 
-DevDocs data is updated when the Docker image is rebuilt (roughly monthly). For the direct-file approach, `gdev docs update --devdocs` would:
+DevDocs data is updated when the Docker image is rebuilt (roughly monthly). For the direct-file approach, `qsdev docs update --devdocs` would:
 
 1. Check devdocs.io or the Docker image registry for newer versions
 2. Download updated JSON files for installed doc sets
 3. Verify checksums against gdev's manifest
 4. Replace old files atomically
 
-### 7.3 Integration with `gdev outdated` / `gdev update`
+### 7.3 Integration with `qsdev outdated` / `qsdev update`
 
-Phase 16 defines `gdev outdated` and `gdev update` for coordinated updates across all gdev-managed tools. Documentation freshness integrates naturally:
+Phase 16 defines `qsdev outdated` and `qsdev update` for coordinated updates across all gdev-managed tools. Documentation freshness integrates naturally:
 
 ```bash
 gdev outdated
@@ -725,7 +725,7 @@ gdev outdated
 #   react           18.2.0 → 18.3.1 (Renovate PR #42 pending)
 ```
 
-`gdev update` with `--docs` flag triggers documentation updates alongside tool updates.
+`qsdev update` with `--docs` flag triggers documentation updates alongside tool updates.
 
 ### 7.4 Update Cadence Recommendations
 
@@ -743,9 +743,9 @@ gdev outdated
 For Nix-pinned ZIM downloads, hash updates require one of:
 1. **gdev binary update** — new release includes updated hashes in embedded manifest
 2. **External manifest** — gdev fetches a manifest from a gdev-maintained URL with current hashes (adds network dependency)
-3. **User-triggered rehash** — `gdev docs update` downloads new file, computes hash, updates local Nix expression
+3. **User-triggered rehash** — `qsdev docs update` downloads new file, computes hash, updates local Nix expression
 
-Option 3 is most practical: the local `manifest.json` stores current hashes, and `gdev docs update` refreshes both the files and the hashes. The Nix derivation reads hashes from the manifest rather than hardcoding them.
+Option 3 is most practical: the local `manifest.json` stores current hashes, and `qsdev docs update` refreshes both the files and the hashes. The Nix derivation reads hashes from the manifest rather than hardcoding them.
 
 ---
 
@@ -847,7 +847,7 @@ Query it for programming questions, system administration, and software engineer
 
 **Available sites:** Unix & Linux, Server Fault, Software Engineering, DevOps
 **Trust level:** Community-generated content (lower trust than official documentation)
-**Freshness:** Updated monthly. Run `gdev docs outdated` to check.
+**Freshness:** Updated monthly. Run `qsdev docs outdated` to check.
 
 When answering questions, prefer official documentation (DevDocs) for API reference
 and Stack Exchange for troubleshooting, debugging, and "how do I..." questions.
@@ -861,7 +861,7 @@ Use it for language/framework API lookups before falling back to web search.
 
 **Available doc sets:** TypeScript 5.5, Node.js 22, React 18, Python 3.12, Go
 **Trust level:** Official upstream documentation (high trust)
-**Freshness:** Run `gdev docs outdated` to check for updates.
+**Freshness:** Run `qsdev docs outdated` to check for updates.
 
 Prefer local DevDocs over web fetches for API reference. The documentation is
 curated from official sources and sanitized (scripts/styles removed).

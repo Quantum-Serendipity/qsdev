@@ -1,7 +1,7 @@
 package evidence
 
 // ASVSFramework returns the OWASP Application Security Verification Standard
-// framework definition with 6 controls mapped to gdev's defense-in-depth layers.
+// framework definition with 6 controls mapped to qsdev's defense-in-depth layers.
 func ASVSFramework() Framework {
 	return Framework{
 		ID:          "asvs",
@@ -56,7 +56,7 @@ func asvsControls() []ControlDefinition {
 			Desc:     "Verify that the application does not include unused packages, frameworks, or libraries that are not necessary for its operation.",
 			Category: "Malicious Code",
 			Layers:   []LayerMapping{},
-			NotApplicableReason: "Unused dependency detection requires language-specific dead-code analysis beyond the scope of gdev's supply chain security layers. Recommend using language-specific tools (e.g., depcheck for Node.js, go mod tidy for Go).",
+			NotApplicableReason: "Unused dependency detection requires language-specific dead-code analysis beyond the scope of qsdev's supply chain security layers. Recommend using language-specific tools (e.g., depcheck for Node.js, go mod tidy for Go).",
 		},
 		{
 			ID:       "14.2.1",

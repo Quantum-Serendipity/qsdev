@@ -8,7 +8,7 @@ import (
 
 func TestRenderSARIF_ValidStructure(t *testing.T) {
 	report := &PostureReport{
-		GdevVersion: "1.0.0",
+		QsdevVersion: "1.0.0",
 		Defense: DefenseCoverage{
 			Layers: []DefenseLayer{
 				{Name: "sast", Status: LayerEnabled, Weight: WeightMedium},
@@ -50,8 +50,8 @@ func TestRenderSARIF_ValidStructure(t *testing.T) {
 	}
 
 	// Verify tool name.
-	if log.Runs[0].Tool.Driver.Name != "gdev" {
-		t.Errorf("tool name = %q, want %q", log.Runs[0].Tool.Driver.Name, "gdev")
+	if log.Runs[0].Tool.Driver.Name != "qsdev" {
+		t.Errorf("tool name = %q, want %q", log.Runs[0].Tool.Driver.Name, "qsdev")
 	}
 
 	// Verify tool version.
@@ -67,7 +67,7 @@ func TestRenderSARIF_ValidStructure(t *testing.T) {
 
 func TestRenderSARIF_AllRulesPresent(t *testing.T) {
 	report := &PostureReport{
-		GdevVersion: "1.0.0",
+		QsdevVersion: "1.0.0",
 		Defense:     DefenseCoverage{Layers: []DefenseLayer{}},
 		Config:      ConfigHealth{Files: []ConfigFileInfo{}},
 		Dependencies: DependencyHealth{
@@ -95,11 +95,11 @@ func TestRenderSARIF_AllRulesPresent(t *testing.T) {
 	}
 
 	expectedRules := []string{
-		"gdev/defense-disabled", "gdev/defense-partial",
-		"gdev/config-missing", "gdev/config-outdated", "gdev/config-modified",
-		"gdev/vuln-critical", "gdev/vuln-high",
-		"gdev/lockfile-missing", "gdev/lockfile-stale",
-		"gdev/hooks-not-installed", "gdev/markers-broken", "gdev/tool-unavailable",
+		"qsdev/defense-disabled", "qsdev/defense-partial",
+		"qsdev/config-missing", "qsdev/config-outdated", "qsdev/config-modified",
+		"qsdev/vuln-critical", "qsdev/vuln-high",
+		"qsdev/lockfile-missing", "qsdev/lockfile-stale",
+		"qsdev/hooks-not-installed", "qsdev/markers-broken", "qsdev/tool-unavailable",
 	}
 
 	ruleIDs := make(map[string]bool)
@@ -116,7 +116,7 @@ func TestRenderSARIF_AllRulesPresent(t *testing.T) {
 
 func TestRenderSARIF_DisabledDefenseEmitsResult(t *testing.T) {
 	report := &PostureReport{
-		GdevVersion: "1.0.0",
+		QsdevVersion: "1.0.0",
 		Defense: DefenseCoverage{
 			Layers: []DefenseLayer{
 				{Name: "sast", Status: LayerDisabled, Weight: WeightMedium, Reason: "semgrep not enabled"},
@@ -142,7 +142,7 @@ func TestRenderSARIF_DisabledDefenseEmitsResult(t *testing.T) {
 
 	found := false
 	for _, r := range log.Runs[0].Results {
-		if r.RuleID == "gdev/defense-disabled" {
+		if r.RuleID == "qsdev/defense-disabled" {
 			found = true
 			if r.Level != "warning" {
 				t.Errorf("expected level 'warning', got %q", r.Level)
@@ -153,13 +153,13 @@ func TestRenderSARIF_DisabledDefenseEmitsResult(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("expected a gdev/defense-disabled result for disabled sast layer")
+		t.Error("expected a qsdev/defense-disabled result for disabled sast layer")
 	}
 }
 
 func TestRenderSARIF_NotApplicableNoResult(t *testing.T) {
 	report := &PostureReport{
-		GdevVersion: "1.0.0",
+		QsdevVersion: "1.0.0",
 		Defense: DefenseCoverage{
 			Layers: []DefenseLayer{
 				{Name: "container-security", Status: LayerNotApplicable, Weight: WeightMedium},
@@ -192,7 +192,7 @@ func TestRenderSARIF_NotApplicableNoResult(t *testing.T) {
 
 func TestRenderSARIF_EmptyReport(t *testing.T) {
 	report := &PostureReport{
-		GdevVersion:  "1.0.0",
+		QsdevVersion:  "1.0.0",
 		Defense:      DefenseCoverage{Layers: []DefenseLayer{}},
 		Config:       ConfigHealth{Files: []ConfigFileInfo{}},
 		Dependencies: DependencyHealth{},
@@ -219,7 +219,7 @@ func TestRenderSARIF_EmptyReport(t *testing.T) {
 
 func TestRenderSARIF_VulnResults(t *testing.T) {
 	report := &PostureReport{
-		GdevVersion: "1.0.0",
+		QsdevVersion: "1.0.0",
 		Defense:     DefenseCoverage{Layers: []DefenseLayer{}},
 		Config:      ConfigHealth{Files: []ConfigFileInfo{}},
 		Dependencies: DependencyHealth{
@@ -244,13 +244,13 @@ func TestRenderSARIF_VulnResults(t *testing.T) {
 	critFound := false
 	highFound := false
 	for _, r := range log.Runs[0].Results {
-		if r.RuleID == "gdev/vuln-critical" {
+		if r.RuleID == "qsdev/vuln-critical" {
 			critFound = true
 			if r.Level != "error" {
 				t.Errorf("vuln-critical level = %q, want %q", r.Level, "error")
 			}
 		}
-		if r.RuleID == "gdev/vuln-high" {
+		if r.RuleID == "qsdev/vuln-high" {
 			highFound = true
 			if r.Level != "warning" {
 				t.Errorf("vuln-high level = %q, want %q", r.Level, "warning")
@@ -258,16 +258,16 @@ func TestRenderSARIF_VulnResults(t *testing.T) {
 		}
 	}
 	if !critFound {
-		t.Error("expected gdev/vuln-critical result")
+		t.Error("expected qsdev/vuln-critical result")
 	}
 	if !highFound {
-		t.Error("expected gdev/vuln-high result")
+		t.Error("expected qsdev/vuln-high result")
 	}
 }
 
 func TestRenderSARIF_PartialDefenseEmitsResult(t *testing.T) {
 	report := &PostureReport{
-		GdevVersion: "1.0.0",
+		QsdevVersion: "1.0.0",
 		Defense: DefenseCoverage{
 			Layers: []DefenseLayer{
 				{Name: "secrets-scanning", Status: LayerPartial, Weight: WeightMedium, Score: 5, Reason: "only gitleaks"},
@@ -293,18 +293,18 @@ func TestRenderSARIF_PartialDefenseEmitsResult(t *testing.T) {
 
 	found := false
 	for _, r := range log.Runs[0].Results {
-		if r.RuleID == "gdev/defense-partial" {
+		if r.RuleID == "qsdev/defense-partial" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected gdev/defense-partial result for partial layer")
+		t.Error("expected qsdev/defense-partial result for partial layer")
 	}
 }
 
 func TestRenderSARIF_DriftFindings(t *testing.T) {
 	report := &PostureReport{
-		GdevVersion: "1.0.0",
+		QsdevVersion: "1.0.0",
 		Defense:     DefenseCoverage{Layers: []DefenseLayer{}},
 		Config:      ConfigHealth{Files: []ConfigFileInfo{}},
 		Dependencies: DependencyHealth{},
@@ -344,13 +344,13 @@ func TestRenderSARIF_DriftFindings(t *testing.T) {
 		ruleIDCounts[r.RuleID]++
 	}
 
-	if ruleIDCounts["gdev/lockfile-missing"] != 1 {
-		t.Errorf("expected 1 lockfile-missing result, got %d", ruleIDCounts["gdev/lockfile-missing"])
+	if ruleIDCounts["qsdev/lockfile-missing"] != 1 {
+		t.Errorf("expected 1 lockfile-missing result, got %d", ruleIDCounts["qsdev/lockfile-missing"])
 	}
-	if ruleIDCounts["gdev/lockfile-stale"] != 1 {
-		t.Errorf("expected 1 lockfile-stale result, got %d", ruleIDCounts["gdev/lockfile-stale"])
+	if ruleIDCounts["qsdev/lockfile-stale"] != 1 {
+		t.Errorf("expected 1 lockfile-stale result, got %d", ruleIDCounts["qsdev/lockfile-stale"])
 	}
-	if ruleIDCounts["gdev/tool-unavailable"] != 1 {
-		t.Errorf("expected 1 tool-unavailable result, got %d", ruleIDCounts["gdev/tool-unavailable"])
+	if ruleIDCounts["qsdev/tool-unavailable"] != 1 {
+		t.Errorf("expected 1 tool-unavailable result, got %d", ruleIDCounts["qsdev/tool-unavailable"])
 	}
 }

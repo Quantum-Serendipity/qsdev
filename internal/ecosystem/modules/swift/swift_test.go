@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/swift"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/swift"
 )
 
 // newModule returns a fresh Module for testing.

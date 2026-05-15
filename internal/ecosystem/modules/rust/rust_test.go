@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/rust"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/rust"
 )
 
 // newModule returns a fresh Module for testing.

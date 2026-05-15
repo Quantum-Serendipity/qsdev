@@ -1,14 +1,14 @@
 // Package elixir implements the Elixir (Mix) ecosystem module for
-// gdev-secure-devenv-bootstrap. It detects Elixir projects by scanning for
+// qsdev. It detects Elixir projects by scanning for
 // mix.exs and mix.lock, generates devenv.nix fragments with Elixir language
 // support, and provides pre-commit hooks, CI commands, deny rules, and package
 // manager metadata for the Elixir toolchain.
 package elixir
 
 import (
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.

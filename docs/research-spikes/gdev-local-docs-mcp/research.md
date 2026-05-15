@@ -2,7 +2,7 @@
 
 ## Overview
 
-Deep dive from first principles into the utility of using or creating MCP servers that integrate with DevDocs and Kiwix (or similar self-hosted Stack Overflow alternatives), providing Claude Code with skills to query local documentation sources first, with automatic failover to regular web search/fetch when local results are insufficient. The primary motivations are: (1) reducing prompt injection surface by avoiding untrusted web content, (2) avoiding bot blocks and rate limits on documentation sites, and (3) improving research reliability and speed. This spike is part of the gdev-secure-devenv-bootstrap implementation plan's security and Claude Code integration story.
+Deep dive from first principles into the utility of using or creating MCP servers that integrate with DevDocs and Kiwix (or similar self-hosted Stack Overflow alternatives), providing Claude Code with skills to query local documentation sources first, with automatic failover to regular web search/fetch when local results are insufficient. The primary motivations are: (1) reducing prompt injection surface by avoiding untrusted web content, (2) avoiding bot blocks and rate limits on documentation sites, and (3) improving research reliability and speed. This spike is part of the qsdev implementation plan's security and Claude Code integration story.
 
 ## Topics
 
@@ -29,7 +29,7 @@ Deep dive from first principles into the utility of using or creating MCP server
 ### gdev Integration: Deployment, Packaging, Configuration, and Lifecycle
 - **Status**: Complete
 - **Report**: [gdev-integration-research.md](gdev-integration-research.md)
-- **Summary**: Local documentation MCP servers integrate into the gdev implementation plan as additional tools within Phase 12's tool lifecycle system (proposed Units 12.10-12.14). The preferred deployment path uses devenv 2.0's native `claude.code.mcpServers` configuration to generate `.mcp.json`, with Nix-managed Python environments for openzim-mcp and man-mcp-server. Documentation data (ZIM files 4-5 GB, DevDocs JSON per-language) lives in `~/.local/share/gdev/docs/` with Nix hash-pinned downloads for supply chain integrity. Two community Nix flake projects (mcps.nix, mcp-servers-nix) validate the declarative MCP packaging pattern gdev should follow. The wizard auto-detects documentation needs from project files, shows per-option disk costs, defaults to lightweight options (man-pages, DevDocs for detected languages), and makes ZIM files opt-in due to size. Tool lifecycle follows the established `gdev enable/disable` pattern with section markers in shared files, lazy data download (not on enable), and explicit `gdev docs clean` for data removal. Updates use filename-based version comparison for ZIM files and integrate with `gdev outdated`/`gdev update`.
+- **Summary**: Local documentation MCP servers integrate into the gdev implementation plan as additional tools within Phase 12's tool lifecycle system (proposed Units 12.10-12.14). The preferred deployment path uses devenv 2.0's native `claude.code.mcpServers` configuration to generate `.mcp.json`, with Nix-managed Python environments for openzim-mcp and man-mcp-server. Documentation data (ZIM files 4-5 GB, DevDocs JSON per-language) lives in `~/.local/share/gdev/docs/` with Nix hash-pinned downloads for supply chain integrity. Two community Nix flake projects (mcps.nix, mcp-servers-nix) validate the declarative MCP packaging pattern gdev should follow. The wizard auto-detects documentation needs from project files, shows per-option disk costs, defaults to lightweight options (man-pages, DevDocs for detected languages), and makes ZIM files opt-in due to size. Tool lifecycle follows the established `qsdev enable/disable` pattern with section markers in shared files, lazy data download (not on enable), and explicit `qsdev docs clean` for data removal. Updates use filename-based version comparison for ZIM files and integrate with `qsdev outdated`/`qsdev update`.
 
 ### Failover Architecture: Local-First with Web Fallback
 - **Status**: Complete
@@ -51,7 +51,7 @@ Deep dive from first principles into the utility of using or creating MCP server
 - Can sotoki build tag-filtered Stack Overflow subsets to reduce the 74 GB to something practical?
 - ~~How to Nix-package openzim-mcp with its python-libzim native dependency?~~ **Answered**: Use `uv tool install` in devenv enterShell; PyPI wheels bundle native libzim, avoiding fragile nixpkgs libzim.
 - ~~How to combine ZIM-based Q&A search with DevDocs API documentation in a unified interface?~~ **Answered**: Skill-level routing via SKILL.md priority ordering. Claude queries the appropriate source based on query type (API docs -> DevDocs, troubleshooting -> ZIM, system commands -> man pages). No unified interface needed; Claude's contextual reasoning handles source selection.
-- ~~What is the ZIM file update cadence and can it be automated?~~ **Answered**: 2-3 month cadence for smaller SE sites. Automated via filename year-month comparison against download.kiwix.org directory listings. `gdev docs outdated`/`gdev docs update` commands handle the cycle.
+- ~~What is the ZIM file update cadence and can it be automated?~~ **Answered**: 2-3 month cadence for smaller SE sites. Automated via filename year-month comparison against download.kiwix.org directory listings. `qsdev docs outdated`/`qsdev docs update` commands handle the cycle.
 - Should gdev adopt madhan-g-p/DevDocs-MCP directly or build a custom DevDocs MCP? Findings from DevDocs deep dive suggest building a lightweight TypeScript MCP that reads DevDocs JSON files directly (following jiegec model) with version-pinning logic from madhan. The data format is simple enough that a custom server is low effort.
 - ~~How should the multi-source routing/orchestration layer work?~~ **Answered**: Skill-level routing via a Claude Code skill (`.claude/skills/lookup-docs/SKILL.md`) that encodes priority ordering, source tagging, and degradation rules. No meta-MCP server needed initially. See `failover-architecture-research.md`.
 - No documentation MCP server sanitizes content for embedded prompt injection -- is this a tractable problem or an inherent MCP limitation?
@@ -81,7 +81,7 @@ No new MCP protocol features, proxy servers, or custom routing infrastructure is
 
 ### Recommended architecture
 
-**Local tier (always available, ~5 GB):** DevDocs JSON for detected project languages + man-mcp-server + MCP-NixOS (if NixOS detected). Installed by `gdev enable docs` with lazy download.
+**Local tier (always available, ~5 GB):** DevDocs JSON for detected project languages + man-mcp-server + MCP-NixOS (if NixOS detected). Installed by `qsdev enable docs` with lazy download.
 
 **Enterprise tier (on-demand, ~100 GB via cloud mount):** Full Stack Overflow ZIM + complete DevDocs + curated SE sites, hosted in any cloud via Terraform. BlobFuse2 (Azure) or rclone (everything else) mounts cloud storage as local paths — openzim-mcp and DevDocs MCP see local files. Developer authenticates once via `az login` / `aws sso login` / `gcloud auth login`; DefaultAzureCredential or equivalent picks up the token automatically.
 

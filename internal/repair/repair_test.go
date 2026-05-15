@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestRepair_NilReport(t *testing.T) {
@@ -367,7 +367,7 @@ func TestRepair_SkippedActions(t *testing.T) {
 			{
 				Name: "Version Drift",
 				Findings: []posture.DriftFinding{
-					{Subject: "gdev version", Description: "Version mismatch", Severity: posture.DriftInfo},
+					{Subject: "qsdev version", Description: "Version mismatch", Severity: posture.DriftInfo},
 				},
 			},
 			{
@@ -441,7 +441,7 @@ func TestRepair_StateIsolation(t *testing.T) {
 
 func TestCopyState(t *testing.T) {
 	original := types.GeneratedState{
-		GdevVersion: "1.0.0",
+		QsdevVersion: "1.0.0",
 		Files: map[string]types.FileState{
 			"a.txt": {Hash: "sha256:aaa"},
 			"b.txt": {Hash: "sha256:bbb"},

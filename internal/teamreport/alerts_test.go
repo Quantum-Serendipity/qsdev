@@ -106,21 +106,21 @@ func TestAlertScoreDropModerate(t *testing.T) {
 func TestAlertOutdatedGdev(t *testing.T) {
 	now := time.Now().UTC()
 	projects := []ProjectSummary{
-		projectSummaryHelper("old-gdev", 80, true, true, 0, 0, "v1.0.0", now),
+		projectSummaryHelper("old-qsdev", 80, true, true, 0, 0, "v1.0.0", now),
 	}
 
-	alerts := generateAlerts(projects, AggregateOptions{GdevVersion: "v1.5.0"}, nil)
+	alerts := generateAlerts(projects, AggregateOptions{QsdevVersion: "v1.5.0"}, nil)
 
 	var found bool
 	for _, a := range alerts {
-		if a.Project == "old-gdev" && a.Severity == SeverityMedium {
+		if a.Project == "old-qsdev" && a.Severity == SeverityMedium {
 			found = true
 			break
 		}
 	}
 
 	if !found {
-		t.Error("expected medium alert for outdated gdev version")
+		t.Error("expected medium alert for outdated qsdev version")
 	}
 }
 
@@ -133,7 +133,7 @@ func TestAlertStale(t *testing.T) {
 			Score: makeScore(80),
 			Conformance: makeConformance(true, true),
 			VulnTotals:  makeVulns(0, 0),
-			GdevVersion: "v1.0.0",
+			QsdevVersion: "v1.0.0",
 			LastScan:    staleTime,
 		},
 	}
@@ -159,7 +159,7 @@ func TestNoAlerts(t *testing.T) {
 		projectSummaryHelper("healthy", 95, true, true, 0, 0, "v1.0.0", now),
 	}
 
-	alerts := generateAlerts(projects, AggregateOptions{GdevVersion: "v1.0.0"}, nil)
+	alerts := generateAlerts(projects, AggregateOptions{QsdevVersion: "v1.0.0"}, nil)
 
 	if len(alerts) != 0 {
 		t.Errorf("expected no alerts for healthy project, got %d: %+v", len(alerts), alerts)

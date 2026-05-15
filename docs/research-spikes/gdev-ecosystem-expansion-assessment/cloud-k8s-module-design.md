@@ -6,7 +6,7 @@ This document defines implementation units for two new gdev ecosystem module cat
 
 The cloud and kubernetes modules differ from language ecosystem modules in one critical way: the hard problem is not installation but **credential management and multi-client isolation**. Every tool listed here is available in Nixpkgs. The value gdev adds is per-project environment variable isolation that prevents cross-client credential leakage — the single biggest consulting productivity and safety win.
 
-**Design constraint**: gdev installs tools and provides scaffolding but does NOT manage credentials. Credentials are per-engineer, per-client, and governed by client security policies. gdev sets non-secret environment variables (`AWS_PROFILE`, `KUBECONFIG`, `CLOUDSDK_ACTIVE_CONFIG_NAME`) and provides `gdev doctor` checks to verify auth status.
+**Design constraint**: gdev installs tools and provides scaffolding but does NOT manage credentials. Credentials are per-engineer, per-client, and governed by client security policies. gdev sets non-secret environment variables (`AWS_PROFILE`, `KUBECONFIG`, `CLOUDSDK_ACTIVE_CONFIG_NAME`) and provides `qsdev doctor` checks to verify auth status.
 
 ## Dependencies
 
@@ -20,11 +20,11 @@ The cloud and kubernetes modules differ from language ecosystem modules in one c
 
 ### Unit 2.9: AWS Module (Tier 1)
 
-**Description:** Detect AWS usage, install `awscli2` and optional credential helpers (aws-vault, saml2aws), set per-project `AWS_PROFILE` isolation, and provide `gdev doctor` auth verification.
+**Description:** Detect AWS usage, install `awscli2` and optional credential helpers (aws-vault, saml2aws), set per-project `AWS_PROFILE` isolation, and provide `qsdev doctor` auth verification.
 
 **Context:** AWS is the most common cloud provider in enterprise consulting. The CLI itself is straightforward (`awscli2` in Nixpkgs), but consulting engineers routinely manage credentials for multiple client AWS accounts. The critical gdev value-add is per-project `AWS_PROFILE` in devenv.nix, which prevents accidental cross-client operations (e.g., running `terraform apply` against the wrong account). Credential helpers like aws-vault store credentials in OS keychains rather than plaintext `~/.aws/credentials` — on NixOS/Linux, the `pass` or `file` backend is used since there is no macOS Keychain. Detection must handle both direct AWS file indicators and Terraform provider blocks.
 
-**Desired Outcome:** When AWS usage is detected in a project, `gdev init` generates a devenv.nix fragment with `awscli2`, optional credential helper packages, per-project `AWS_PROFILE` environment variable, and a `gdev doctor` check that runs `aws sts get-caller-identity`.
+**Desired Outcome:** When AWS usage is detected in a project, `qsdev init` generates a devenv.nix fragment with `awscli2`, optional credential helper packages, per-project `AWS_PROFILE` environment variable, and a `qsdev doctor` check that runs `aws sts get-caller-identity`.
 
 **Steps:**
 1. Implement `Detect`: check for indicator files in priority order:
@@ -58,7 +58,7 @@ The cloud and kubernetes modules differ from language ecosystem modules in one c
 - [ ] devenv.nix fragment includes `awscli2` and per-project `AWS_PROFILE` placeholder
 - [ ] aws-vault included conditionally with `pass` backend note for Linux
 - [ ] saml2aws included only when SAML indicators detected
-- [ ] `gdev doctor` check runs `aws sts get-caller-identity` and reports pass/fail
+- [ ] `qsdev doctor` check runs `aws sts get-caller-identity` and reports pass/fail
 - [ ] No credential values are ever written to generated files
 
 **Research Citations:**
@@ -73,11 +73,11 @@ The cloud and kubernetes modules differ from language ecosystem modules in one c
 
 ### Unit 2.10: GCP Module (Tier 1)
 
-**Description:** Detect GCP usage, install `google-cloud-sdk` with optional `gke-gcloud-auth-plugin`, set per-project `CLOUDSDK_ACTIVE_CONFIG_NAME` isolation, and provide `gdev doctor` auth verification.
+**Description:** Detect GCP usage, install `google-cloud-sdk` with optional `gke-gcloud-auth-plugin`, set per-project `CLOUDSDK_ACTIVE_CONFIG_NAME` isolation, and provide `qsdev doctor` auth verification.
 
 **Context:** GCP is the second most common cloud provider in enterprise consulting. The `google-cloud-sdk` Nixpkgs package includes `gcloud`, `gsutil`, and `bq`. Additional components like `gke-gcloud-auth-plugin` (required for GKE cluster auth) need to be added via `google-cloud-sdk.withExtraComponents` in Nix or installed separately. GCP uses named configurations (`gcloud config configurations`) for multi-project isolation — the `CLOUDSDK_ACTIVE_CONFIG_NAME` environment variable selects the active configuration, analogous to `AWS_PROFILE`. No third-party credential helpers are needed; `gcloud auth login` and `gcloud auth application-default login` handle all auth patterns natively.
 
-**Desired Outcome:** When GCP usage is detected in a project, `gdev init` generates a devenv.nix fragment with `google-cloud-sdk` (plus GKE auth plugin when K8s co-detected), per-project `CLOUDSDK_ACTIVE_CONFIG_NAME`, and a `gdev doctor` check that verifies active auth.
+**Desired Outcome:** When GCP usage is detected in a project, `qsdev init` generates a devenv.nix fragment with `google-cloud-sdk` (plus GKE auth plugin when K8s co-detected), per-project `CLOUDSDK_ACTIVE_CONFIG_NAME`, and a `qsdev doctor` check that verifies active auth.
 
 **Steps:**
 1. Implement `Detect`: check for indicator files:
@@ -107,7 +107,7 @@ The cloud and kubernetes modules differ from language ecosystem modules in one c
 - [ ] Detects GCP from Terraform provider blocks, App Engine, Cloud Build, and Firebase files
 - [ ] devenv.nix fragment includes `google-cloud-sdk` with GKE auth plugin when K8s co-detected
 - [ ] Per-project `CLOUDSDK_ACTIVE_CONFIG_NAME` set in devenv.nix env
-- [ ] `gdev doctor` check verifies auth via `gcloud auth print-access-token`
+- [ ] `qsdev doctor` check verifies auth via `gcloud auth print-access-token`
 - [ ] ADC pattern documented; `GOOGLE_APPLICATION_CREDENTIALS` explicitly NOT set
 
 **Research Citations:**
@@ -120,11 +120,11 @@ The cloud and kubernetes modules differ from language ecosystem modules in one c
 
 ### Unit 2.11: Azure Module (Tier 1)
 
-**Description:** Detect Azure usage, install `azure-cli` (and optionally `azd`), set per-project `ARM_SUBSCRIPTION_ID` isolation, and provide `gdev doctor` auth verification.
+**Description:** Detect Azure usage, install `azure-cli` (and optionally `azd`), set per-project `ARM_SUBSCRIPTION_ID` isolation, and provide `qsdev doctor` auth verification.
 
 **Context:** Azure is the third Tier 1 cloud provider, especially common in enterprise and government consulting. Two CLIs exist: `az` (general-purpose, `azure-cli` in Nixpkgs) and `azd` (Azure Developer CLI, higher-level workflow tool — not separately packaged in Nixpkgs but ships with azure-cli or installed separately). Azure uses subscription-based isolation; `ARM_SUBSCRIPTION_ID` and `ARM_TENANT_ID` are the Terraform-standard env vars for per-project scoping. Unlike AWS and GCP, Azure has no named-configuration system in the CLI — subscription selection is via `az account set`. For K8s (AKS), the `kubelogin` package provides Azure AD auth.
 
-**Desired Outcome:** When Azure usage is detected in a project, `gdev init` generates a devenv.nix fragment with `azure-cli`, per-project ARM env vars, and a `gdev doctor` check that verifies login status.
+**Desired Outcome:** When Azure usage is detected in a project, `qsdev init` generates a devenv.nix fragment with `azure-cli`, per-project ARM env vars, and a `qsdev doctor` check that verifies login status.
 
 **Steps:**
 1. Implement `Detect`: check for indicator files:
@@ -154,7 +154,7 @@ The cloud and kubernetes modules differ from language ecosystem modules in one c
 - [ ] Detects Azure from Terraform provider blocks, Azure Pipelines, Bicep, and azd files
 - [ ] devenv.nix fragment includes `azure-cli` and per-project `ARM_SUBSCRIPTION_ID`
 - [ ] kubelogin included when K8s + Azure co-detected (AKS)
-- [ ] `gdev doctor` check verifies login via `az account show` and validates active subscription
+- [ ] `qsdev doctor` check verifies login via `az account show` and validates active subscription
 - [ ] `ARM_CLIENT_SECRET` explicitly excluded from all generated files
 
 **Research Citations:**
@@ -171,7 +171,7 @@ The cloud and kubernetes modules differ from language ecosystem modules in one c
 
 **Context:** These platforms are project-specific rather than universally needed. Unlike Tier 1 cloud providers, they are typically used by a single project and do not require multi-client credential isolation patterns. Each has a simple detection heuristic (one or two config files) and a single CLI package. They are Tier 3 because they appear on a minority of consulting engagements — mostly startup and indie clients. All packages are available in Nixpkgs. This unit is a single module that handles multiple platforms via a sub-detection pattern, rather than five separate modules.
 
-**Desired Outcome:** When any Tier 3 platform indicator file is detected, `gdev init` includes the corresponding CLI in the devenv.nix fragment with appropriate auth reminder comments.
+**Desired Outcome:** When any Tier 3 platform indicator file is detected, `qsdev init` includes the corresponding CLI in the devenv.nix fragment with appropriate auth reminder comments.
 
 **Steps:**
 1. Implement `Detect` as a multi-platform detector with sub-heuristics:
@@ -197,7 +197,7 @@ The cloud and kubernetes modules differ from language ecosystem modules in one c
 **Acceptance Criteria:**
 - [ ] Detects each platform from its indicator files independently
 - [ ] Only detected platforms are included in devenv.nix (no blanket installation)
-- [ ] Each platform has a `gdev doctor` auth check
+- [ ] Each platform has a `qsdev doctor` auth check
 - [ ] Multiple platforms can be detected simultaneously in the same project
 - [ ] Auth reminder comments are platform-specific
 
@@ -213,7 +213,7 @@ The cloud and kubernetes modules differ from language ecosystem modules in one c
 
 **Description:** Implement shared detection, environment variable isolation, and doctor check infrastructure that all cloud provider modules (2.9-2.12) depend on.
 
-**Context:** All cloud provider modules share common patterns: Terraform provider block parsing for detection, per-project environment variable isolation in devenv.nix, and `gdev doctor` auth verification. Rather than duplicating this logic across four modules, this unit extracts shared infrastructure. The Terraform module (2.8) already parses `*.tf` files — the cloud modules need to hook into that parser to extract `required_providers` blocks. Environment variable isolation is the single biggest consulting value-add: setting `AWS_PROFILE`, `KUBECONFIG`, `CLOUDSDK_ACTIVE_CONFIG_NAME` per-project in devenv.nix prevents accidental cross-client operations. The doctor check infrastructure provides a standardized pattern for "run command, check exit code, report pass/fail with actionable fix message."
+**Context:** All cloud provider modules share common patterns: Terraform provider block parsing for detection, per-project environment variable isolation in devenv.nix, and `qsdev doctor` auth verification. Rather than duplicating this logic across four modules, this unit extracts shared infrastructure. The Terraform module (2.8) already parses `*.tf` files — the cloud modules need to hook into that parser to extract `required_providers` blocks. Environment variable isolation is the single biggest consulting value-add: setting `AWS_PROFILE`, `KUBECONFIG`, `CLOUDSDK_ACTIVE_CONFIG_NAME` per-project in devenv.nix prevents accidental cross-client operations. The doctor check infrastructure provides a standardized pattern for "run command, check exit code, report pass/fail with actionable fix message."
 
 **Desired Outcome:** A shared cloud module infrastructure package exists that cloud provider modules compose over, providing Terraform provider detection, env var template helpers, and doctor check registration.
 
@@ -257,11 +257,11 @@ The cloud and kubernetes modules differ from language ecosystem modules in one c
 
 ### Unit 2.14: Kubernetes Core Module (Tier 1)
 
-**Description:** Detect Kubernetes usage, install core tooling (`kubectl`, `kubectx`/`kubens`, `k9s`, `stern`, `kustomize`), enforce per-project `KUBECONFIG` isolation, and provide `gdev doctor` cluster connectivity checks.
+**Description:** Detect Kubernetes usage, install core tooling (`kubectl`, `kubectx`/`kubens`, `k9s`, `stern`, `kustomize`), enforce per-project `KUBECONFIG` isolation, and provide `qsdev doctor` cluster connectivity checks.
 
 **Context:** kubectl is nearly universal for K8s-using clients. The critical challenge is kubeconfig management: the default `~/.kube/config` file merges all cluster credentials, meaning consulting engineers working with multiple clients risk running commands against the wrong cluster. The gdev solution is per-project `KUBECONFIG` in devenv.nix, pointing to a client-specific kubeconfig file (e.g., `~/.kube/clienta-config`). kubectl has a version skew policy — client must be within +/-1 minor version of the cluster API server — so devenv.nix pins a specific version. k9s and stern are included at Tier 1 because they provide very high daily-use value: k9s replaces kubectl for interactive cluster exploration, and stern provides multi-pod log tailing essential for debugging.
 
-**Desired Outcome:** When K8s indicator files are detected, `gdev init` generates a devenv.nix fragment with kubectl (version-pinnable), kubectx, k9s, stern, kustomize (when kustomization.yaml present), per-project `KUBECONFIG`, and `gdev doctor` checks for cluster connectivity.
+**Desired Outcome:** When K8s indicator files are detected, `qsdev init` generates a devenv.nix fragment with kubectl (version-pinnable), kubectx, k9s, stern, kustomize (when kustomization.yaml present), per-project `KUBECONFIG`, and `qsdev doctor` checks for cluster connectivity.
 
 **Steps:**
 1. Implement `Detect`: check for indicator files (any match triggers the module):
@@ -302,8 +302,8 @@ The cloud and kubernetes modules differ from language ecosystem modules in one c
 - [ ] devenv.nix fragment includes kubectl, kubectx, k9s, and stern
 - [ ] kustomize included conditionally only when kustomization.yaml detected
 - [ ] Per-project `KUBECONFIG` set with TODO placeholder path (not `~/.kube/config`)
-- [ ] `gdev doctor` warns when `KUBECONFIG` points to shared `~/.kube/config`
-- [ ] `gdev doctor` cluster connectivity check has 5s timeout
+- [ ] `qsdev doctor` warns when `KUBECONFIG` points to shared `~/.kube/config`
+- [ ] `qsdev doctor` cluster connectivity check has 5s timeout
 - [ ] Version pin comment present for kubectl
 - [ ] Cloud-provider auth plugins noted when co-detected with AWS/GCP/Azure
 
@@ -324,14 +324,14 @@ The cloud and kubernetes modules differ from language ecosystem modules in one c
 
 **Context:** K8s development tools automate the build-push-deploy inner loop for local K8s development. They are project-specific and opinionated — a project uses Skaffold OR Tilt OR DevSpace, rarely more than one. Detection is straightforward (each has a unique config file), but these tools should never be default-installed since they impose workflow opinions. Telepresence is a different category entirely: it intercepts traffic from a remote cluster to a local machine for debugging. Garden is excluded because it is not in Nixpkgs. This module is Tier 2: install when specific config file detected.
 
-**Desired Outcome:** When a K8s development tool config file is detected, `gdev init` includes exactly that tool in the devenv.nix fragment, with no cross-installation of competing tools.
+**Desired Outcome:** When a K8s development tool config file is detected, `qsdev init` includes exactly that tool in the devenv.nix fragment, with no cross-installation of competing tools.
 
 **Steps:**
 1. Implement `Detect` with mutually exclusive sub-heuristics:
    - **Skaffold**: `skaffold.yaml`
    - **Tilt**: `Tiltfile`
    - **DevSpace**: `devspace.yaml`
-   - **Telepresence**: no config file detection — include only when explicitly enabled in wizard or `.gdev.yaml`
+   - **Telepresence**: no config file detection — include only when explicitly enabled in wizard or `.qsdev.yaml`
    - If multiple config files exist (unlikely but possible), include all detected tools without conflict
 2. Implement `DevenvNixFragment` — per-detected-tool:
    - Skaffold: `pkgs.skaffold`
@@ -367,14 +367,14 @@ The cloud and kubernetes modules differ from language ecosystem modules in one c
 
 **Description:** Provide optional K8s security scanning tools (kubescape, kube-linter, kube-bench, polaris) that activate when explicitly enabled or when a cloud security profile is active.
 
-**Context:** K8s security tools are valuable but niche — most projects do not run them locally. kubescape is the most comprehensive single tool (260+ controls, NSA-CISA/MITRE ATT&CK/CIS frameworks, CNCF Incubating). kube-linter is fast static analysis designed for pre-commit/CI gates on K8s YAML and Helm charts. kube-bench focuses specifically on CIS Kubernetes Benchmark compliance (cluster component config). polaris validates resource configs against best practices. These tools overlap with each other and with the Terraform/IaC security scanning from Unit 2.8 — the recommended default is kubescape (breadth) + kube-linter (speed for CI). This module is Tier 3: available when explicitly enabled via wizard, `.gdev.yaml`, or a security-focused profile.
+**Context:** K8s security tools are valuable but niche — most projects do not run them locally. kubescape is the most comprehensive single tool (260+ controls, NSA-CISA/MITRE ATT&CK/CIS frameworks, CNCF Incubating). kube-linter is fast static analysis designed for pre-commit/CI gates on K8s YAML and Helm charts. kube-bench focuses specifically on CIS Kubernetes Benchmark compliance (cluster component config). polaris validates resource configs against best practices. These tools overlap with each other and with the Terraform/IaC security scanning from Unit 2.8 — the recommended default is kubescape (breadth) + kube-linter (speed for CI). This module is Tier 3: available when explicitly enabled via wizard, `.qsdev.yaml`, or a security-focused profile.
 
-**Desired Outcome:** When K8s security scanning is enabled (not auto-detected), `gdev init` includes kubescape and kube-linter in devenv.nix with pre-commit hooks for manifest validation and CI scanning commands.
+**Desired Outcome:** When K8s security scanning is enabled (not auto-detected), `qsdev init` includes kubescape and kube-linter in devenv.nix with pre-commit hooks for manifest validation and CI scanning commands.
 
 **Steps:**
 1. Implement `Detect`: this module does NOT auto-detect — it activates via:
-   - Explicit wizard selection during `gdev init`
-   - `.gdev.yaml` setting: `kubernetes.security = true`
+   - Explicit wizard selection during `qsdev init`
+   - `.qsdev.yaml` setting: `kubernetes.security = true`
    - Profile activation: consulting security profile or compliance profile
    - Exception: if `kubescape` or `kube-linter` config files detected (`.kubescape/`, `.kube-linter.yaml`), auto-enable
 2. Implement `DevenvNixFragment`:
@@ -443,7 +443,7 @@ The cloud and kubernetes modules differ from language ecosystem modules in one c
 5. Implement version matching helper:
    - Pattern for kubectl version pinning in devenv.nix: `pkgs.kubectl_1_28` (Nixpkgs provides version-specific packages)
    - Document the version skew policy (+/-1 minor) in generated comments
-   - `gdev doctor` check: compare `kubectl version --client` against `kubectl version --short` server version when cluster is reachable
+   - `qsdev doctor` check: compare `kubectl version --client` against `kubectl version --short` server version when cluster is reachable
 
 **Acceptance Criteria:**
 - [ ] Unified K8s file detector returns granular detection categories
@@ -473,7 +473,7 @@ The following criteria extend the existing Phase 2 completion criteria to cover 
 - [ ] Terraform provider block parsing shared between Terraform module (2.8) and cloud modules (2.9-2.11)
 - [ ] K8s core module detects all K8s indicator file patterns
 - [ ] Per-project `KUBECONFIG` isolation enforced — never defaults to `~/.kube/config`
-- [ ] `gdev doctor` checks cover auth status for all 3 Tier 1 cloud providers + K8s cluster connectivity
+- [ ] `qsdev doctor` checks cover auth status for all 3 Tier 1 cloud providers + K8s cluster connectivity
 - [ ] Doctor checks have 5s timeout and graceful degradation when CLI binaries absent
 - [ ] K8s development tools (Skaffold, Tilt, DevSpace) installed only on config file detection
 - [ ] K8s security tools (kubescape, kube-linter) installed only on explicit enablement

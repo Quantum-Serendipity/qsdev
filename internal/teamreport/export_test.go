@@ -3,18 +3,18 @@ package teamreport
 import (
 	"time"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 )
 
 // Test helpers shared across test files.
 
-func projectSummaryHelper(name string, score float64, baselinePass, enhancedPass bool, critVulns, highVulns int, gdevVersion string, lastScan time.Time) ProjectSummary {
+func projectSummaryHelper(name string, score float64, baselinePass, enhancedPass bool, critVulns, highVulns int, qsdevVersion string, lastScan time.Time) ProjectSummary {
 	return ProjectSummary{
 		Name:        name,
 		Score:       makeScore(score),
 		Conformance: makeConformance(baselinePass, enhancedPass),
 		VulnTotals:  makeVulns(critVulns, highVulns),
-		GdevVersion: gdevVersion,
+		QsdevVersion: qsdevVersion,
 		LastScan:    lastScan,
 	}
 }

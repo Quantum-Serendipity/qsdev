@@ -24,7 +24,7 @@ Analysis date: 2026-05-12. Covers Phase 4 (Claude Code Addon), Phase 5 (Security
 
 **GAP-4.2a: Ecosystem module deny rules interface gap.** Phase 4 Unit 3.1 Step 3 says "Integrate deny rules from `reference-deny-rules.md`" but the Phase 1 ecosystem module interface (Unit 1.7) already defines `DenyRules(config ModuleConfig) []string` on every ecosystem module. The correct approach should be to aggregate deny rules from all detected ecosystem modules via the registry, not import from a static reference document. Unit 3.1 needs a step: "Query `ModuleRegistry.DetectedModules()` and aggregate `DenyRules()` from each."
 
-**GAP-4.2b: Managed settings template has no delivery mechanism.** Unit 3.1 mentions generating a managed settings template for `/etc/claude-code/managed-settings.json`, but this requires root access and is a system-level concern. There is no unit in any phase that addresses how this file gets deployed. Phase 9 (Cross-Platform System Detection) handles OS-level operations but does not reference managed settings deployment. Phase 10 (Distribution) also does not address this. The gap is: who deploys the managed settings file, and is it part of `gdev devenv setup` or a separate admin workflow?
+**GAP-4.2b: Managed settings template has no delivery mechanism.** Unit 3.1 mentions generating a managed settings template for `/etc/claude-code/managed-settings.json`, but this requires root access and is a system-level concern. There is no unit in any phase that addresses how this file gets deployed. Phase 9 (Cross-Platform System Detection) handles OS-level operations but does not reference managed settings deployment. Phase 10 (Distribution) also does not address this. The gap is: who deploys the managed settings file, and is it part of `qsdev devenv setup` or a separate admin workflow?
 
 **GAP-4.2c: Trail of Bits skills not embedded as dependencies.** Unit 3.4 Step 1 lists standard skills (`deploy.md`, `review-pr.md`, etc.) but Step 6 mentions "Trail of Bits security skills" in Phase Outputs without defining which Trail of Bits skills are embedded vs. referenced. The ecosystem research (Section 5.1) identifies `supply-chain-risk-auditor`, `differential-review`, `insecure-defaults` as the target skills, and the plan overview (line 16) confirms these three. But the unit steps never describe how these are obtained (download? embed from ToB repo? license implications?) or how they interact with the manifest.yaml. Trail of Bits skills are under MIT/CC license (per the ecosystem research) but Unit 3.4 should explicitly state the acquisition mechanism.
 
@@ -36,7 +36,7 @@ Analysis date: 2026-05-12. Covers Phase 4 (Claude Code Addon), Phase 5 (Security
 
 **GAP-4.3b: No security-guidance plugin configuration.** The ecosystem research (Section 1.1) identifies Anthropic's official `security-guidance` plugin as a good baseline for code quality. The plan overview mentions it in the ecosystem table. But no unit generates its installation or configuration.
 
-**GAP-4.3c: No settings.json merge-on-update unit.** Unit 3.1 sets `ThreeWayMerge` as the merge strategy for settings.json, and Unit 3.6 implements `gdev claude update`. But no unit implements the actual three-way merge logic for settings.json. Phase 8 (Migration) handles merge strategies generically, but settings.json has unique challenges: the deny rules list should be unioned (not replaced), user-added allow rules should be preserved, and hooks should be merged by event type. This specific merge logic belongs in Phase 4 or as a Phase 4 prerequisite from Phase 1.
+**GAP-4.3c: No settings.json merge-on-update unit.** Unit 3.1 sets `ThreeWayMerge` as the merge strategy for settings.json, and Unit 3.6 implements `qsdev claude update`. But no unit implements the actual three-way merge logic for settings.json. Phase 8 (Migration) handles merge strategies generically, but settings.json has unique challenges: the deny rules list should be unioned (not replaced), user-added allow rules should be preserved, and hooks should be merged by event type. This specific merge logic belongs in Phase 4 or as a Phase 4 prerequisite from Phase 1.
 
 ### 4.4 Security Review
 
@@ -54,7 +54,7 @@ Analysis date: 2026-05-12. Covers Phase 4 (Claude Code Addon), Phase 5 (Security
 
 **GAP-4.5b: Unit 3.4 does not test manifest.yaml schema.** The manifest YAML is created but never validated against a schema. "manifest.yaml is valid" needs to be specified: valid YAML AND contains required fields (name, description, tags, applicable languages) for every skill entry.
 
-**GAP-4.5c: Unit 3.6 missing error handling tests.** No acceptance criterion tests `gdev claude init` failure modes: invalid `--permission-preset` value, conflicting flags, missing project root, or generation pipeline errors.
+**GAP-4.5c: Unit 3.6 missing error handling tests.** No acceptance criterion tests `qsdev claude init` failure modes: invalid `--permission-preset` value, conflicting flags, missing project root, or generation pipeline errors.
 
 ---
 
@@ -162,7 +162,7 @@ Analysis date: 2026-05-12. Covers Phase 4 (Claude Code Addon), Phase 5 (Security
 
 **GAP-6.5b: No profile validation.** If a team defines a profile referencing a Tier 3 ecosystem module (e.g., Elixir) before Phase 7 ships those modules, the profile would fail at generation time. No unit validates that a profile's requirements are satisfiable by the currently available ecosystem modules.
 
-**GAP-6.5c: Profile versioning absent.** Profiles compiled into the binary will change between gdev versions. If a team saves their config with `gdev init --profile go-web` using gdev v1.0, then updates to gdev v1.1 which changes the `go-web` profile, `gdev init --update` would regenerate with the new profile defaults rather than the originally-selected ones. The saved `GeneratedState` from Phase 1 Unit 1.6 records file hashes but not the profile version used.
+**GAP-6.5c: Profile versioning absent.** Profiles compiled into the binary will change between gdev versions. If a team saves their config with `qsdev init --profile go-web` using gdev v1.0, then updates to gdev v1.1 which changes the `go-web` profile, `qsdev init --update` would regenerate with the new profile defaults rather than the originally-selected ones. The saved `GeneratedState` from Phase 1 Unit 1.6 records file hashes but not the profile version used.
 
 ### 6.6 Forward Compatibility Issues
 
@@ -213,7 +213,7 @@ Unit 5.2 Group 6 is "Plan Preview" showing files that will be generated. Unit 5.
 
 ### CP-7: Infrastructure Profiles Are Split Across Two Incompatible Systems
 
-Phase 1 Unit 1.8 defines `InfraProfile` (registry, cache, scanning, SBOM). Phase 6 Unit 5.4 defines `ProfileRegistry` with language-oriented profiles (`go-web`, `ts-fullstack`). These are separate systems with no integration. The plan overview's `gdev init --profile consulting-default --yes` (line 62) implies a single unified profile system, but the implementation splits profiles into infra profiles and language profiles. Either `Profile` should embed `InfraProfile`, or the profile system needs a composition model (e.g., `gdev init --profile go-web --infra-profile consulting-default`).
+Phase 1 Unit 1.8 defines `InfraProfile` (registry, cache, scanning, SBOM). Phase 6 Unit 5.4 defines `ProfileRegistry` with language-oriented profiles (`go-web`, `ts-fullstack`). These are separate systems with no integration. The plan overview's `qsdev init --profile consulting-default --yes` (line 62) implies a single unified profile system, but the implementation splits profiles into infra profiles and language profiles. Either `Profile` should embed `InfraProfile`, or the profile system needs a composition model (e.g., `qsdev init --profile go-web --infra-profile consulting-default`).
 
 ---
 

@@ -4,7 +4,7 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/generate"
+	"github.com/Quantum-Serendipity/qsdev/internal/generate"
 )
 
 func TestYAMLValidator_Valid(t *testing.T) {

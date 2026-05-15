@@ -3,7 +3,7 @@ package claudecode
 import (
 	"fastcat.org/go/gdev/addons/bootstrap"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/installer"
+	"github.com/Quantum-Serendipity/qsdev/internal/installer"
 )
 
 // StepNameInstallClaude is the name of the bootstrap step that installs Claude Code.

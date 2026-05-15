@@ -2,7 +2,7 @@
 
 ## Goal
 
-Validate that gdev installs correctly and bootstraps on every supported platform: macOS (Intel + Apple Silicon), Windows (native + WSL2), and 12 Linux distro families. At the end of this phase, `gdev devenv doctor` reports correct system info, `gdev devenv setup --dry-run` identifies correct prerequisites, and install scripts work on all targets.
+Validate that gdev installs correctly and bootstraps on every supported platform: macOS (Intel + Apple Silicon), Windows (native + WSL2), and 12 Linux distro families. At the end of this phase, `qsdev devenv doctor` reports correct system info, `qsdev devenv setup --dry-run` identifies correct prerequisites, and install scripts work on all targets.
 
 ## Dependencies
 
@@ -11,8 +11,8 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 ## Phase Outputs
 
 - Validated install scripts on macOS (Intel + ARM), Windows (PowerShell), Linux (bash) across 24 OS configurations
-- Validated `gdev devenv doctor` output for all 12 distro families + macOS + Windows
-- Validated `gdev devenv setup --dry-run` prerequisite detection on all targets
+- Validated `qsdev devenv doctor` output for all 12 distro families + macOS + Windows
+- Validated `qsdev devenv setup --dry-run` prerequisite detection on all targets
 - Validated package manager installation (Homebrew tap, Scoop bucket, APT .deb, RPM)
 - Validated self-update mechanism
 - Validated shell completion installation (bash, zsh, fish, PowerShell, nushell)
@@ -25,13 +25,13 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 
 **Context:** Phase 10 produced install.sh (bash, for macOS + Linux) and install.ps1 (PowerShell, for Windows). These scripts detect the OS and architecture, download the correct binary, verify its SHA256 checksum, install to a default or custom location, and update the user's PATH. They are the primary distribution channel (Tier 4 in the distribution research) — most users will encounter gdev for the first time via `curl -fsSL https://get.gdev.dev | sh`. Any failure here is a first-impression killer. Phase 17 provides the CI matrix infrastructure (GitHub Actions runners, Docker containers, Incus VMs) to test these scripts at scale. This unit runs the install scripts against every target OS and validates the full install lifecycle including idempotent re-install and version pinning.
 
-**Desired Outcome:** install.sh succeeds on all 14 Unix targets (macOS ARM64, macOS Intel, 12 Linux distros). install.ps1 succeeds on Windows Server 2025. Every target confirms: binary in correct path, PATH updated, `gdev --version` outputs the expected version, SHA256 tampering is detected and rejected.
+**Desired Outcome:** install.sh succeeds on all 14 Unix targets (macOS ARM64, macOS Intel, 12 Linux distros). install.ps1 succeeds on Windows Server 2025. Every target confirms: binary in correct path, PATH updated, `qsdev --version` outputs the expected version, SHA256 tampering is detected and rejected.
 
 **Steps:**
 1. Create test harness script (`test/install-validation.sh`) that wraps install.sh execution with pre/post assertions:
    - Pre: record PATH, verify no prior gdev installation
    - Execute: run install.sh
-   - Post: verify binary exists at `~/.gdev/bin/gdev`, PATH includes `~/.gdev/bin/`, `gdev --version` exits 0 and outputs expected version string
+   - Post: verify binary exists at `~/.gdev/bin/gdev`, PATH includes `~/.gdev/bin/`, `qsdev --version` exits 0 and outputs expected version string
 2. Run install.sh on macOS targets:
    - `macos-15` (Apple Silicon ARM64) — GitHub Actions runner
    - `macos-15-large` or `macos-13` (Intel x86_64) — GitHub Actions runner
@@ -51,15 +51,15 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 5. Run install.ps1 on Windows Server 2025 (`windows-2025` GitHub Actions runner):
    - Verify binary at `$env:LOCALAPPDATA\gdev\bin\gdev.exe`
    - Verify User PATH updated (not System PATH — no admin required)
-   - Verify `gdev --version` succeeds in both PowerShell and cmd.exe
+   - Verify `qsdev --version` succeeds in both PowerShell and cmd.exe
 6. Test SHA256 integrity verification on 3 representative targets (macOS ARM64, Ubuntu 24.04, Windows 2025):
    - Download binary and checksum file
    - Tamper with checksum (modify one character)
    - Run install script — verify it exits non-zero with clear error message
    - Tamper with binary (append a byte) but leave checksum intact — verify rejection
 7. Test version pinning on 3 representative targets:
-   - `GDEV_VERSION=1.0.0 curl -fsSL https://get.gdev.dev | sh` — verify installs 1.0.0, not latest
-   - `$env:GDEV_VERSION = "1.0.0"; irm https://get.gdev.dev/windows | iex` — same on Windows
+   - `QSDEV_VERSION=1.0.0 curl -fsSL https://get.gdev.dev | sh` — verify installs 1.0.0, not latest
+   - `$env:QSDEV_VERSION = "1.0.0"; irm https://get.gdev.dev/windows | iex` — same on Windows
 8. Test install directory override on 3 representative targets:
    - `GDEV_INSTALL_DIR=/opt/gdev curl -fsSL https://get.gdev.dev | sh` — verify binary at `/opt/gdev/bin/gdev`
    - `$env:GDEV_INSTALL_DIR = "C:\tools\gdev"; irm ... | iex` — verify binary at custom Windows path
@@ -75,7 +75,7 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 - [ ] install.ps1 exits 0 on Windows Server 2025
 - [ ] Binary lands in correct default location on every target (`~/.gdev/bin/gdev` on Unix, `$env:LOCALAPPDATA\gdev\bin\gdev.exe` on Windows)
 - [ ] PATH updated in correct shell RC file on every target
-- [ ] `gdev --version` outputs expected version on every target
+- [ ] `qsdev --version` outputs expected version on every target
 - [ ] SHA256 tampering detected and rejected with clear error message
 - [ ] Version pinning installs the specified version, not latest
 - [ ] Install directory override places binary at custom path
@@ -93,16 +93,16 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 
 ---
 
-### Unit 18.2: `gdev devenv doctor` Validation Across OS Matrix
+### Unit 18.2: `qsdev devenv doctor` Validation Across OS Matrix
 
-**Description:** Test that `gdev devenv doctor` produces correct diagnostics on every supported target, verifying OS, distro, version, architecture, kernel, shell, package manager, and tool detection are all accurate.
+**Description:** Test that `qsdev devenv doctor` produces correct diagnostics on every supported target, verifying OS, distro, version, architecture, kernel, shell, package manager, and tool detection are all accurate.
 
-**Context:** Phase 9 implemented the OS detection engine (`DetectOS()` returning an `OSInfo` struct) and the `gdev devenv doctor` command that reports system state. `gdev devenv doctor` is the user's first diagnostic tool when something goes wrong — if it misreports the OS or fails to detect the package manager, all downstream suggestions will be wrong. The detection engine uses `/etc/os-release` parsing on Linux, `sw_vers` on macOS, and `runtime.GOOS` + registry queries on Windows. WSL2 detection checks for `/proc/sys/fs/binfmt_misc/WSLInterop` and `$WSL_DISTRO_NAME`. Container detection checks `/.dockerenv`, cgroup v2, and container environment variables. Every detection path must be validated against real OS instances — mocked unit tests are necessary but not sufficient.
+**Context:** Phase 9 implemented the OS detection engine (`DetectOS()` returning an `OSInfo` struct) and the `qsdev devenv doctor` command that reports system state. `qsdev devenv doctor` is the user's first diagnostic tool when something goes wrong — if it misreports the OS or fails to detect the package manager, all downstream suggestions will be wrong. The detection engine uses `/etc/os-release` parsing on Linux, `sw_vers` on macOS, and `runtime.GOOS` + registry queries on Windows. WSL2 detection checks for `/proc/sys/fs/binfmt_misc/WSLInterop` and `$WSL_DISTRO_NAME`. Container detection checks `/.dockerenv`, cgroup v2, and container environment variables. Every detection path must be validated against real OS instances — mocked unit tests are necessary but not sufficient.
 
-**Desired Outcome:** `gdev devenv doctor` outputs correct system information on every target. `gdev devenv doctor --json` produces valid, parseable JSON. `gdev devenv doctor --check` returns appropriate exit codes based on tool availability. No target reports incorrect OS, distro, package manager, or architecture.
+**Desired Outcome:** `qsdev devenv doctor` outputs correct system information on every target. `qsdev devenv doctor --json` produces valid, parseable JSON. `qsdev devenv doctor --check` returns appropriate exit codes based on tool availability. No target reports incorrect OS, distro, package manager, or architecture.
 
 **Steps:**
-1. Create golden-file test fixtures for each target OS containing expected `gdev devenv doctor` output fields:
+1. Create golden-file test fixtures for each target OS containing expected `qsdev devenv doctor` output fields:
    ```
    testdata/doctor/ubuntu-2404.golden.json
    testdata/doctor/fedora-41.golden.json
@@ -111,7 +111,7 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
    ...
    ```
    Each golden file specifies: OS, Distro, Version, Arch, Kernel (pattern match, not exact), Shell, PackageManager, and boolean flags (IsWSL2, IsContainer, IsAppleSilicon).
-2. On each target, run `gdev devenv doctor --json` and validate against the golden file:
+2. On each target, run `qsdev devenv doctor --json` and validate against the golden file:
    - **macOS ARM64**: OS=darwin, Arch=arm64, IsAppleSilicon=true, PackageManager=brew, HomebrewPrefix=/opt/homebrew
    - **macOS Intel**: OS=darwin, Arch=amd64, IsAppleSilicon=false, PackageManager=brew, HomebrewPrefix=/usr/local
    - **Ubuntu 24.04**: OS=linux, Distro=ubuntu, Version=24.04, PackageManager=apt
@@ -128,27 +128,27 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
    - **WSL2 Ubuntu**: OS=linux, Distro=ubuntu, IsWSL2=true, WSLDistro=Ubuntu
    - **WSL2 Fedora**: OS=linux, Distro=fedora, IsWSL2=true, WSLDistro=fedoraremix (or similar)
 3. Validate container detection in Docker containers:
-   - Run `gdev devenv doctor --json` inside each Linux Docker container
+   - Run `qsdev devenv doctor --json` inside each Linux Docker container
    - Verify IsContainer=true on all container targets
    - Verify IsContainer=false on macOS and Windows runners (full VMs, not containers)
-4. Validate tool detection by installing/removing specific tools and checking `gdev devenv doctor` output:
+4. Validate tool detection by installing/removing specific tools and checking `qsdev devenv doctor` output:
    - On Ubuntu 24.04: install git, go, node, curl, jq — verify all detected with correct versions
    - Remove shellcheck — verify doctor reports it missing
    - On macOS: verify nix, devenv, direnv detection (if installed)
    - On Windows: verify git, node, python3, claude detection
    - On NixOS: verify nix detected as package manager, `nix profile` or `environment.systemPackages` noted
-5. Validate `gdev devenv doctor --check` exit codes:
+5. Validate `qsdev devenv doctor --check` exit codes:
    - On a target with all required tools: verify exit code 0
    - On a target missing a required tool (e.g., remove git): verify exit code 1
    - Verify the specific missing tool is named in stderr output
-6. Validate `gdev devenv doctor --json` JSON structure:
+6. Validate `qsdev devenv doctor --json` JSON structure:
    - Parse output with `jq .` on Unix, `ConvertFrom-Json` on Windows — verify valid JSON
    - Verify all expected keys present (os, distro, version, arch, kernel, shell, packageManager, tools, flags)
    - Verify tool entries include name, version (or null), path (or null), installed (bool)
-7. Performance validation: time `gdev devenv doctor` on each target, verify completion within 2 seconds. If any target exceeds 2 seconds, profile and document the bottleneck (likely slow tool version commands or network checks).
+7. Performance validation: time `qsdev devenv doctor` on each target, verify completion within 2 seconds. If any target exceeds 2 seconds, profile and document the bottleneck (likely slow tool version commands or network checks).
 
 **Acceptance Criteria:**
-- [ ] `gdev devenv doctor` reports correct OS on macOS (darwin), Windows (windows), all Linux distros (linux)
+- [ ] `qsdev devenv doctor` reports correct OS on macOS (darwin), Windows (windows), all Linux distros (linux)
 - [ ] Distro correctly identified for all 12 Linux families (ubuntu, debian, fedora, rocky, arch, opensuse-tumbleweed, alpine, void, gentoo, nixos, plus WSL2 variants)
 - [ ] Package manager correctly detected: apt (Debian/Ubuntu), dnf (Fedora/Rocky), pacman (Arch), zypper (openSUSE), apk (Alpine), xbps (Void), emerge (Gentoo), nix (NixOS), brew (macOS), winget/scoop/choco (Windows)
 - [ ] Apple Silicon detection: IsAppleSilicon=true on ARM64 macOS, false on Intel macOS
@@ -156,9 +156,9 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 - [ ] WSL2 detection: IsWSL2=true and WSLDistro populated on WSL2 targets
 - [ ] Container detection: IsContainer=true inside Docker containers, false on bare metal/VM
 - [ ] Tool detection reports correct installed/missing status for git, go, node, npm, nix, devenv, direnv, claude, python3, curl, jq, shellcheck
-- [ ] `gdev devenv doctor --json` produces valid JSON parseable by jq / ConvertFrom-Json on all platforms
-- [ ] `gdev devenv doctor --check` returns 0 when all required tools present, 1 when missing
-- [ ] `gdev devenv doctor` completes in < 2 seconds on all platforms
+- [ ] `qsdev devenv doctor --json` produces valid JSON parseable by jq / ConvertFrom-Json on all platforms
+- [ ] `qsdev devenv doctor --check` returns 0 when all required tools present, 1 when missing
+- [ ] `qsdev devenv doctor` completes in < 2 seconds on all platforms
 
 **Research Citations:**
 - `artifacts/os-prerequisite-detection-research.md § 1. OS/Environment Detection Matrix` — detection strategies per OS family, /etc/os-release parsing, macOS sw_vers, Windows registry, WSL2 detection, container detection
@@ -171,13 +171,13 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 
 ---
 
-### Unit 18.3: `gdev devenv setup` Validation (Dry-Run) Across Package Managers
+### Unit 18.3: `qsdev devenv setup` Validation (Dry-Run) Across Package Managers
 
-**Description:** Test that `gdev devenv setup --dry-run` correctly identifies missing prerequisites and proposes the right install commands with the correct package manager and package names for each target OS.
+**Description:** Test that `qsdev devenv setup --dry-run` correctly identifies missing prerequisites and proposes the right install commands with the correct package manager and package names for each target OS.
 
-**Context:** Phase 9 implemented the package manager abstraction layer mapping each prerequisite tool to its correct package name per package manager (e.g., `go` is `golang` on apt, `go` on dnf/pacman/brew, `GoLang.Go` on winget, `dev-lang/go` on Gentoo). `gdev devenv setup --dry-run` runs the detection engine, identifies missing tools, resolves the correct package names for the detected package manager, and prints the install commands that would be executed — without actually executing them. This is the critical pre-flight check: if the proposed commands are wrong, `gdev devenv setup --yes` will fail or install the wrong packages. The package name resolution table spans 13 tools across 12+ package managers, creating 150+ resolution paths that must be individually validated.
+**Context:** Phase 9 implemented the package manager abstraction layer mapping each prerequisite tool to its correct package name per package manager (e.g., `go` is `golang` on apt, `go` on dnf/pacman/brew, `GoLang.Go` on winget, `dev-lang/go` on Gentoo). `qsdev devenv setup --dry-run` runs the detection engine, identifies missing tools, resolves the correct package names for the detected package manager, and prints the install commands that would be executed — without actually executing them. This is the critical pre-flight check: if the proposed commands are wrong, `qsdev devenv setup --yes` will fail or install the wrong packages. The package name resolution table spans 13 tools across 12+ package managers, creating 150+ resolution paths that must be individually validated.
 
-**Desired Outcome:** `gdev devenv setup --dry-run` proposes syntactically correct install commands using the right package manager and the right package names on every target. Batch elevation groups all packages into a single sudo invocation. NixOS gets declarative `environment.systemPackages` instead of `nix profile install`. Windows without WSL2 gets a `wsl --install` proposal when Nix-dependent features are needed.
+**Desired Outcome:** `qsdev devenv setup --dry-run` proposes syntactically correct install commands using the right package manager and the right package names on every target. Batch elevation groups all packages into a single sudo invocation. NixOS gets declarative `environment.systemPackages` instead of `nix profile install`. Windows without WSL2 gets a `wsl --install` proposal when Nix-dependent features are needed.
 
 **Steps:**
 1. Create test fixtures defining expected install commands per OS:
@@ -194,7 +194,7 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
    # Expected output:
    # sudo emerge dev-lang/go dev-util/shellcheck
    ```
-2. On each target, remove specific tools and run `gdev devenv setup --dry-run`:
+2. On each target, remove specific tools and run `qsdev devenv setup --dry-run`:
    - **Ubuntu 24.04**: Remove go, shellcheck → verify `sudo apt-get install -y golang shellcheck`
    - **Debian 12**: Remove go, jq → verify `sudo apt-get install -y golang jq`
    - **Fedora 41**: Remove go, shellcheck → verify `sudo dnf install -y golang ShellCheck`
@@ -216,18 +216,18 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
    - node listed before claude (claude code requires node/npm)
    - git listed before all others (nearly everything depends on git)
 5. Validate Windows WSL2 handling:
-   - On Windows without WSL2: when nix or devenv is needed, verify `gdev devenv setup --dry-run` proposes `wsl --install` as a prerequisite step before nix installation
+   - On Windows without WSL2: when nix or devenv is needed, verify `qsdev devenv setup --dry-run` proposes `wsl --install` as a prerequisite step before nix installation
    - On Windows with WSL2: verify nix installation proposed inside WSL2 context
 6. Validate NixOS declarative handling:
    - On NixOS: verify all proposals use `environment.systemPackages` pattern, not imperative `nix profile install`
    - Verify the output includes the appropriate Nix package attribute paths (e.g., `pkgs.go`, `pkgs.shellcheck`)
-7. Test `gdev devenv setup --yes` in throwaway containers (not on persistent CI runners):
-   - On Ubuntu 24.04 container: remove go and shellcheck, run `gdev devenv setup --yes`, verify both installed afterward
+7. Test `qsdev devenv setup --yes` in throwaway containers (not on persistent CI runners):
+   - On Ubuntu 24.04 container: remove go and shellcheck, run `qsdev devenv setup --yes`, verify both installed afterward
    - On Fedora 41 container: same test
    - On Alpine 3.20 container: same test
    - Verify exit code 0 when all installations succeed
    - Verify exit code non-zero when a package fails to install (simulate with a non-existent package name)
-8. Validate that `gdev devenv setup --dry-run` on a system with all tools present:
+8. Validate that `qsdev devenv setup --dry-run` on a system with all tools present:
    - Output indicates nothing to install
    - Exit code 0
 
@@ -239,8 +239,8 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 - [ ] NixOS proposes declarative `environment.systemPackages` instead of `nix profile install`
 - [ ] Windows proposes `wsl --install` when Nix needed but no WSL2 detected
 - [ ] Dependency ordering: nix before devenv, node before claude, git before everything
-- [ ] `gdev devenv setup --yes` actually installs missing tools in container environments
-- [ ] `gdev devenv setup --dry-run` on a fully-equipped system reports nothing to install (exit 0)
+- [ ] `qsdev devenv setup --yes` actually installs missing tools in container environments
+- [ ] `qsdev devenv setup --dry-run` on a fully-equipped system reports nothing to install (exit 0)
 - [ ] All setup tests complete within CI time budget
 
 **Research Citations:**
@@ -266,7 +266,7 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 1. **Homebrew tap on macOS ARM64** (`macos-15` runner):
    - `brew tap quantum-serendipity/tap`
    - `brew install quantum-serendipity/tap/gdev`
-   - Verify `gdev --version` outputs expected version
+   - Verify `qsdev --version` outputs expected version
    - Verify shell completions installed: `$(brew --prefix)/share/zsh/site-functions/_gdev` exists
    - Verify bash completion: `$(brew --prefix)/etc/bash_completion.d/gdev` exists
    - `brew uninstall gdev` — verify clean removal
@@ -277,21 +277,21 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 3. **Scoop bucket on Windows** (`windows-2025` runner):
    - `scoop bucket add gdev https://github.com/quantum-serendipity/scoop-gdev`
    - `scoop install gdev`
-   - Verify `gdev --version` in PowerShell
+   - Verify `qsdev --version` in PowerShell
    - Verify shim created at `~/scoop/shims/gdev.exe`
    - `scoop uninstall gdev` — verify clean removal
 4. **Chocolatey on Windows** (`windows-2025` runner — Chocolatey pre-installed):
    - `choco install gdev -y --source="path/to/nupkg"` (test against local package, not public repo)
-   - Verify `gdev --version`
+   - Verify `qsdev --version`
    - Verify installed to `C:\ProgramData\chocolatey\bin\gdev.exe` (or shimmed equivalent)
    - `choco uninstall gdev -y` — verify clean removal
 5. **winget on Windows** (`windows-2025` runner — winget available on Server 2025):
    - `winget install --id QuantumSerendipity.gdev --source winget` (or local manifest)
-   - Verify `gdev --version`
+   - Verify `qsdev --version`
    - `winget uninstall --id QuantumSerendipity.gdev` — verify clean removal
 6. **APT .deb on Ubuntu 24.04** (Docker container):
    - `sudo dpkg -i gdev_*.deb`
-   - Verify `gdev --version`
+   - Verify `qsdev --version`
    - Verify binary at `/usr/bin/gdev` or `/usr/local/bin/gdev`
    - Verify bash completion: `/usr/share/bash-completion/completions/gdev` exists
    - Verify zsh completion: `/usr/share/zsh/vendor-completions/_gdev` exists
@@ -301,7 +301,7 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
    - Same as Ubuntu to verify cross-Debian compatibility
 8. **RPM on Fedora 41** (Docker container):
    - `sudo rpm -i gdev-*.rpm`
-   - Verify `gdev --version`
+   - Verify `qsdev --version`
    - Verify bash completion: `/usr/share/bash-completion/completions/gdev` exists
    - Verify zsh completion: `/usr/share/zsh/site-functions/_gdev` exists
    - `sudo rpm -e gdev` — verify clean removal
@@ -318,7 +318,7 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 - [ ] `winget install` succeeds on Windows Server 2025
 - [ ] `dpkg -i gdev_*.deb` succeeds on Ubuntu 24.04 and Debian 12
 - [ ] `rpm -i gdev-*.rpm` succeeds on Fedora 41 and Rocky 9
-- [ ] Every channel: `gdev --version` outputs correct version
+- [ ] Every channel: `qsdev --version` outputs correct version
 - [ ] Shell completions installed to system paths by .deb and .rpm packages
 - [ ] Shell completions installed by Homebrew formula
 - [ ] Clean uninstall works for every package manager (no orphaned files)
@@ -335,73 +335,73 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 
 ### Unit 18.5: Self-Update & Shell Completion Validation
 
-**Description:** Test the self-update mechanism and shell completion installation across platforms, verifying that `gdev self-update` downloads, verifies, and replaces the binary; that rollback works on failure; and that `gdev completion install` correctly configures completions for bash, zsh, fish, PowerShell, and nushell.
+**Description:** Test the self-update mechanism and shell completion installation across platforms, verifying that `qsdev self-update` downloads, verifies, and replaces the binary; that rollback works on failure; and that `qsdev completion install` correctly configures completions for bash, zsh, fish, PowerShell, and nushell.
 
-**Context:** Phase 10 implemented `gdev self-update` (downloads latest release, verifies SHA256, atomically replaces the binary) and `gdev completion` (generates and installs shell completion scripts). Self-update is safety-critical: a failed update must not leave the user with a corrupted or missing binary. The rollback mechanism copies the current binary to a temp location before replacement and restores it if the download or verification fails. Shell completions must be installed to the correct RC file or directory for the detected shell, and running `gdev completion install` twice must not duplicate entries. Nushell support is included as it's increasingly popular among the NixOS/developer audience that gdev targets.
+**Context:** Phase 10 implemented `qsdev self-update` (downloads latest release, verifies SHA256, atomically replaces the binary) and `qsdev completion` (generates and installs shell completion scripts). Self-update is safety-critical: a failed update must not leave the user with a corrupted or missing binary. The rollback mechanism copies the current binary to a temp location before replacement and restores it if the download or verification fails. Shell completions must be installed to the correct RC file or directory for the detected shell, and running `qsdev completion install` twice must not duplicate entries. Nushell support is included as it's increasingly popular among the NixOS/developer audience that gdev targets.
 
 **Desired Outcome:** Self-update works reliably on all platforms, rolls back on failure, and supports version pinning for downgrades. Shell completions install correctly for all five supported shells and are idempotent.
 
 **Steps:**
 1. **Self-update — latest version** (test on macOS ARM64, Ubuntu 24.04, Windows 2025):
    - Install an older version of gdev (e.g., via version-pinned install script)
-   - Run `gdev self-update`
-   - Verify binary replaced: `gdev --version` reports newer version
+   - Run `qsdev self-update`
+   - Verify binary replaced: `qsdev --version` reports newer version
    - Verify SHA256 of the new binary matches published checksum
    - Verify old version no longer on disk (atomic replacement, not side-by-side)
 2. **Self-update — specific version (rollback/downgrade)** (test on 3 representative targets):
    - Install current version
-   - Run `gdev self-update --version 1.0.0`
-   - Verify `gdev --version` reports 1.0.0
+   - Run `qsdev self-update --version 1.0.0`
+   - Verify `qsdev --version` reports 1.0.0
    - This validates that users can pin to a known-good version
 3. **Self-update — suppression via environment variable** (test on 1 target):
    - Set `GDEV_NO_UPDATE_CHECK=1`
-   - Run `gdev self-update`
+   - Run `qsdev self-update`
    - Verify the command exits early with a message (not silently) or is blocked entirely
    - Verify no network requests made (can verify via proxy/mock or by disconnecting network)
 4. **Self-update — failed download rollback** (test on macOS ARM64, Ubuntu 24.04, Windows 2025):
    - Record current binary hash
    - Simulate download failure: set `GDEV_UPDATE_URL` to a non-existent URL (or use a mock server returning 500)
-   - Run `gdev self-update`
+   - Run `qsdev self-update`
    - Verify exit code non-zero with clear error message
-   - Verify original binary is still functional: `gdev --version` works and hash matches pre-update hash
+   - Verify original binary is still functional: `qsdev --version` works and hash matches pre-update hash
 5. **Self-update — corrupted download rollback** (test on 1 target):
    - Mock the download to return an invalid binary (e.g., truncated file)
-   - Run `gdev self-update`
+   - Run `qsdev self-update`
    - Verify SHA256 verification catches the corruption
    - Verify rollback restores the original binary
 6. **Shell completion — generation** (test on Ubuntu 24.04 with all shells available):
-   - `gdev completion bash` → verify output is a valid bash completion script (contains `_gdev` function or `complete -F` / `complete -C`)
-   - `gdev completion zsh` → verify output starts with `#compdef gdev` or contains appropriate zsh completion syntax
-   - `gdev completion fish` → verify output contains `complete -c gdev` directives
-   - `gdev completion powershell` → verify output contains `Register-ArgumentCompleter` (test on Windows runner)
-   - `gdev completion nushell` → verify output contains nushell `extern` or `def` completion syntax
+   - `qsdev completion bash` → verify output is a valid bash completion script (contains `_gdev` function or `complete -F` / `complete -C`)
+   - `qsdev completion zsh` → verify output starts with `#compdef gdev` or contains appropriate zsh completion syntax
+   - `qsdev completion fish` → verify output contains `complete -c gdev` directives
+   - `qsdev completion powershell` → verify output contains `Register-ArgumentCompleter` (test on Windows runner)
+   - `qsdev completion nushell` → verify output contains nushell `extern` or `def` completion syntax
 7. **Shell completion — install** (test on Ubuntu 24.04 for bash/zsh/fish, Windows for PowerShell):
-   - **bash**: Run `gdev completion install` in a bash shell → verify `~/.bashrc` contains gdev completion source line
-   - **zsh**: Run `gdev completion install` in a zsh shell → verify `~/.zshrc` contains gdev completion source line or file placed in fpath directory
-   - **fish**: Run `gdev completion install` → verify `~/.config/fish/completions/gdev.fish` exists with valid content
-   - **PowerShell**: Run `gdev completion install` → verify `$PROFILE` contains gdev completion registration
-   - **nushell**: Run `gdev completion install` → verify `~/.config/nushell/config.nu` or equivalent updated (if nushell is available in test environment; skip with documented reason if not)
+   - **bash**: Run `qsdev completion install` in a bash shell → verify `~/.bashrc` contains gdev completion source line
+   - **zsh**: Run `qsdev completion install` in a zsh shell → verify `~/.zshrc` contains gdev completion source line or file placed in fpath directory
+   - **fish**: Run `qsdev completion install` → verify `~/.config/fish/completions/gdev.fish` exists with valid content
+   - **PowerShell**: Run `qsdev completion install` → verify `$PROFILE` contains gdev completion registration
+   - **nushell**: Run `qsdev completion install` → verify `~/.config/nushell/config.nu` or equivalent updated (if nushell is available in test environment; skip with documented reason if not)
 8. **Shell completion — idempotency** (test on 3 shells):
-   - Run `gdev completion install` twice for bash, zsh, and fish
+   - Run `qsdev completion install` twice for bash, zsh, and fish
    - Verify the RC file / completion file does not contain duplicate entries
    - Count occurrences of the gdev completion line — must be exactly 1
 9. **Shell completion — detection** (test on Ubuntu with multiple shells installed):
-   - Verify `gdev completion install` auto-detects the current shell (via `$SHELL` or parent process)
+   - Verify `qsdev completion install` auto-detects the current shell (via `$SHELL` or parent process)
    - If `$SHELL` is zsh, verify zsh completion path is used without requiring `--shell zsh` flag
 
 **Acceptance Criteria:**
-- [ ] `gdev self-update` downloads, verifies SHA256, and replaces binary on macOS, Linux, and Windows
-- [ ] `gdev self-update --version 1.0.0` installs the specified version (for rollback/pinning)
+- [ ] `qsdev self-update` downloads, verifies SHA256, and replaces binary on macOS, Linux, and Windows
+- [ ] `qsdev self-update --version 1.0.0` installs the specified version (for rollback/pinning)
 - [ ] `GDEV_NO_UPDATE_CHECK=1` suppresses self-update
 - [ ] Failed download triggers rollback — original binary restored and functional
 - [ ] Corrupted download caught by SHA256 verification — original binary restored
-- [ ] `gdev completion bash` outputs valid bash completion script
-- [ ] `gdev completion zsh` outputs valid zsh completion script
-- [ ] `gdev completion fish` outputs valid fish completion script
-- [ ] `gdev completion powershell` outputs valid PowerShell completion script
-- [ ] `gdev completion nushell` outputs valid nushell completion script
-- [ ] `gdev completion install` modifies the correct RC file for the detected shell (bash->~/.bashrc, zsh->~/.zshrc, fish->~/.config/fish/completions/gdev.fish, PowerShell->$PROFILE)
-- [ ] Running `gdev completion install` twice does not duplicate entries
+- [ ] `qsdev completion bash` outputs valid bash completion script
+- [ ] `qsdev completion zsh` outputs valid zsh completion script
+- [ ] `qsdev completion fish` outputs valid fish completion script
+- [ ] `qsdev completion powershell` outputs valid PowerShell completion script
+- [ ] `qsdev completion nushell` outputs valid nushell completion script
+- [ ] `qsdev completion install` modifies the correct RC file for the detected shell (bash->~/.bashrc, zsh->~/.zshrc, fish->~/.config/fish/completions/gdev.fish, PowerShell->$PROFILE)
+- [ ] Running `qsdev completion install` twice does not duplicate entries
 - [ ] All self-update and completion tests pass within CI time budget
 
 **Research Citations:**
@@ -418,9 +418,9 @@ Phase 17 complete (CI pipeline, test frameworks). Phase 9 complete (OS detection
 
 - [ ] All five units pass acceptance criteria
 - [ ] Install script succeeds on all 24 OS configurations (14 Unix targets from Unit 18.1 + 1 Windows target + 9 package manager channel targets from Unit 18.4)
-- [ ] `gdev devenv doctor` reports correct system info on macOS, Windows, all 12 Linux families
-- [ ] `gdev devenv doctor --json` produces valid JSON on all platforms
-- [ ] `gdev devenv setup --dry-run` proposes correct install commands per package manager
+- [ ] `qsdev devenv doctor` reports correct system info on macOS, Windows, all 12 Linux families
+- [ ] `qsdev devenv doctor --json` produces valid JSON on all platforms
+- [ ] `qsdev devenv setup --dry-run` proposes correct install commands per package manager
 - [ ] Package name resolution correct for all tool x package manager combinations
 - [ ] Homebrew, Scoop, Chocolatey, winget, APT, RPM installs all verified
 - [ ] Self-update downloads, verifies, and replaces binary

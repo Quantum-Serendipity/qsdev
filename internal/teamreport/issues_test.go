@@ -18,7 +18,7 @@ func TestIssueTitleWithDelta(t *testing.T) {
 
 	title := buildIssueTitle(p, history)
 
-	if !strings.Contains(title, "[gdev] Security posture degraded: myproject") {
+	if !strings.Contains(title, "[qsdev] Security posture degraded: myproject") {
 		t.Errorf("unexpected title format: %s", title)
 	}
 
@@ -36,7 +36,7 @@ func TestIssueTitleWithoutDelta(t *testing.T) {
 
 	title := buildIssueTitle(p, nil)
 
-	if !strings.Contains(title, "[gdev] Security posture degraded: myproject (65/100)") {
+	if !strings.Contains(title, "[qsdev] Security posture degraded: myproject (65/100)") {
 		t.Errorf("unexpected title format: %s", title)
 	}
 
@@ -116,7 +116,7 @@ func TestGenerateIssuesOnlyCriticalAndHigh(t *testing.T) {
 		Alerts: []PostureAlert{
 			{Project: "critical-proj", Severity: SeverityCritical, Message: "Critical vulns", Action: "Fix"},
 			{Project: "critical-proj", Severity: SeverityHigh, Message: "Baseline fail", Action: "Fix baseline"},
-			{Project: "medium-only", Severity: SeverityMedium, Message: "Outdated gdev", Action: "Update"},
+			{Project: "medium-only", Severity: SeverityMedium, Message: "Outdated qsdev", Action: "Update"},
 		},
 	}
 
@@ -188,7 +188,7 @@ func TestIssueLabels(t *testing.T) {
 		if l == "security" {
 			hasSecurityLabel = true
 		}
-		if l == "gdev-posture" {
+		if l == "qsdev-posture" {
 			hasPostureLabel = true
 		}
 	}
@@ -197,6 +197,6 @@ func TestIssueLabels(t *testing.T) {
 		t.Error("expected 'security' label")
 	}
 	if !hasPostureLabel {
-		t.Error("expected 'gdev-posture' label")
+		t.Error("expected 'qsdev-posture' label")
 	}
 }

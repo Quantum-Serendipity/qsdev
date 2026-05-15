@@ -12,7 +12,7 @@
   - Completed: 2026-05-12
   - Notes: Per-format strategy: text/template + Nix helper funcs for .nix, yaml.Marshal for .yaml, json.MarshalIndent for .json, text/template for .md, embed.FS copy for skills/rules. Unified GeneratedFile pipeline with atomic writes and post-generation validation. See config-template-engine-design.md.
 
-- [x] **Re-runnability and migration strategy** — How `gdev init` handles existing projects: merging generated config with user customizations, versioning team standards, update workflows.
+- [x] **Re-runnability and migration strategy** — How `qsdev init` handles existing projects: merging generated config with user customizations, versioning team standards, update workflows.
   - Outcome: success
   - Completed: 2026-05-12
   - Notes: SHA256 hash tracking for change detection. Per-file strategies: regenerate machine-owned, section markers for CLAUDE.md, three-way merge for settings.json, library versioning for skills. See migration-strategy-design.md.

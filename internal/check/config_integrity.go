@@ -1,22 +1,22 @@
 package check
 
 import (
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/config"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/validation"
+	"github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 )
 
-// CheckConfigIntegrity verifies that .gdev.yaml exists, parses correctly,
+// CheckConfigIntegrity verifies that .qsdev.yaml exists, parses correctly,
 // and has valid profile, language, and service names.
 func CheckConfigIntegrity(ctx CheckContext) []CheckResult {
-	if ctx.GdevConfig == nil {
+	if ctx.QsdevConfig == nil {
 		return []CheckResult{
 			{
 				Category:    CategoryConfigIntegrity,
 				Name:        "config_exists",
 				Status:      StatusFail,
 				Severity:    SeverityCritical,
-				Message:     ".gdev.yaml not found",
-				Remediation: "Run 'gdev init' to create a project configuration",
+				Message:     ".qsdev.yaml not found",
+				Remediation: "Run 'qsdev init' to create a project configuration",
 			},
 		}
 	}
@@ -29,15 +29,15 @@ func CheckConfigIntegrity(ctx CheckContext) []CheckResult {
 		Name:     "config_exists",
 		Status:   StatusPass,
 		Severity: SeverityInfo,
-		Message:  ".gdev.yaml found and parsed successfully",
+		Message:  ".qsdev.yaml found and parsed successfully",
 	})
 
-	// Validate using config.ValidateGdevConfig.
+	// Validate using config.ValidateQsdevConfig.
 	opts := config.ValidateOptions{
 		ProfileNames: ctx.ProfileNames,
 		ToolNames:    ctx.ToolNames,
 	}
-	if errs := config.ValidateGdevConfig(ctx.GdevConfig, opts); len(errs) > 0 {
+	if errs := config.ValidateQsdevConfig(ctx.QsdevConfig, opts); len(errs) > 0 {
 		for _, ve := range errs {
 			results = append(results, CheckResult{
 				Category:    CategoryConfigIntegrity,
@@ -45,20 +45,20 @@ func CheckConfigIntegrity(ctx CheckContext) []CheckResult {
 				Status:      StatusFail,
 				Severity:    SeverityHigh,
 				Message:     ve.Error(),
-				Remediation: "Fix the configuration in .gdev.yaml",
+				Remediation: "Fix the configuration in .qsdev.yaml",
 			})
 		}
 	}
 
 	// Additional explicit checks for language names.
 	allLangsValid := true
-	for _, lang := range ctx.GdevConfig.Languages {
+	for _, lang := range ctx.QsdevConfig.Languages {
 		if !validation.IsValidLanguage(lang.Name) {
 			allLangsValid = false
-			// Already reported by ValidateGdevConfig above.
+			// Already reported by ValidateQsdevConfig above.
 		}
 	}
-	if allLangsValid && len(ctx.GdevConfig.Languages) > 0 {
+	if allLangsValid && len(ctx.QsdevConfig.Languages) > 0 {
 		results = append(results, CheckResult{
 			Category: CategoryConfigIntegrity,
 			Name:     "languages_valid",
@@ -70,12 +70,12 @@ func CheckConfigIntegrity(ctx CheckContext) []CheckResult {
 
 	// Check service names.
 	allSvcsValid := true
-	for _, svc := range ctx.GdevConfig.Services {
+	for _, svc := range ctx.QsdevConfig.Services {
 		if !validation.IsValidService(svc.Name) {
 			allSvcsValid = false
 		}
 	}
-	if allSvcsValid && len(ctx.GdevConfig.Services) > 0 {
+	if allSvcsValid && len(ctx.QsdevConfig.Services) > 0 {
 		results = append(results, CheckResult{
 			Category: CategoryConfigIntegrity,
 			Name:     "services_valid",
@@ -86,10 +86,10 @@ func CheckConfigIntegrity(ctx CheckContext) []CheckResult {
 	}
 
 	// Check profile name.
-	if ctx.GdevConfig.Profile != "" && ctx.ProfileNames != nil {
+	if ctx.QsdevConfig.Profile != "" && ctx.ProfileNames != nil {
 		found := false
 		for _, p := range ctx.ProfileNames {
-			if p == ctx.GdevConfig.Profile {
+			if p == ctx.QsdevConfig.Profile {
 				found = true
 				break
 			}
@@ -100,10 +100,10 @@ func CheckConfigIntegrity(ctx CheckContext) []CheckResult {
 				Name:     "profile_valid",
 				Status:   StatusPass,
 				Severity: SeverityInfo,
-				Message:  "Profile " + ctx.GdevConfig.Profile + " is valid",
+				Message:  "Profile " + ctx.QsdevConfig.Profile + " is valid",
 			})
 		}
-		// If not found, ValidateGdevConfig already reported it.
+		// If not found, ValidateQsdevConfig already reported it.
 	}
 
 	return results

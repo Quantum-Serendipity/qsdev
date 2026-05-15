@@ -1,5 +1,5 @@
 // Package sectools provides security tool configuration generators for the
-// gdev-secure-devenv-bootstrap system. Each generator produces a GeneratedFile
+// qsdev system. Each generator produces a GeneratedFile
 // ready for the file-writing pipeline.
 package sectools
 
@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // defaultSemgrepExcludes lists paths excluded from Semgrep scanning.

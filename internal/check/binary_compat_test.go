@@ -3,15 +3,15 @@ package check
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestCheckBinaryCompatibility_VersionSatisfied(t *testing.T) {
 	ctx := CheckContext{
 		BinaryVersion: "1.5.0",
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Version: 1,
-			GdevVersion:   ">=1.0.0",
+			QsdevVersion:   ">=1.0.0",
 		},
 	}
 
@@ -19,14 +19,14 @@ func TestCheckBinaryCompatibility_VersionSatisfied(t *testing.T) {
 
 	var versionResult *CheckResult
 	for i := range results {
-		if results[i].Name == "gdev_version_constraint" {
+		if results[i].Name == "qsdev_version_constraint" {
 			versionResult = &results[i]
 			break
 		}
 	}
 
 	if versionResult == nil {
-		t.Fatal("expected gdev_version_constraint result")
+		t.Fatal("expected qsdev_version_constraint result")
 	}
 	if versionResult.Status != StatusPass {
 		t.Errorf("Status = %s, want %s; Message: %s", versionResult.Status, StatusPass, versionResult.Message)
@@ -36,9 +36,9 @@ func TestCheckBinaryCompatibility_VersionSatisfied(t *testing.T) {
 func TestCheckBinaryCompatibility_VersionNotSatisfied(t *testing.T) {
 	ctx := CheckContext{
 		BinaryVersion: "0.9.0",
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Version: 1,
-			GdevVersion:   ">=1.0.0",
+			QsdevVersion:   ">=1.0.0",
 		},
 	}
 
@@ -46,14 +46,14 @@ func TestCheckBinaryCompatibility_VersionNotSatisfied(t *testing.T) {
 
 	var versionResult *CheckResult
 	for i := range results {
-		if results[i].Name == "gdev_version_constraint" {
+		if results[i].Name == "qsdev_version_constraint" {
 			versionResult = &results[i]
 			break
 		}
 	}
 
 	if versionResult == nil {
-		t.Fatal("expected gdev_version_constraint result")
+		t.Fatal("expected qsdev_version_constraint result")
 	}
 	if versionResult.Status != StatusFail {
 		t.Errorf("Status = %s, want %s", versionResult.Status, StatusFail)
@@ -66,7 +66,7 @@ func TestCheckBinaryCompatibility_VersionNotSatisfied(t *testing.T) {
 func TestCheckBinaryCompatibility_NoConstraint(t *testing.T) {
 	ctx := CheckContext{
 		BinaryVersion: "1.0.0",
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Version: 1,
 		},
 	}
@@ -75,14 +75,14 @@ func TestCheckBinaryCompatibility_NoConstraint(t *testing.T) {
 
 	var versionResult *CheckResult
 	for i := range results {
-		if results[i].Name == "gdev_version_constraint" {
+		if results[i].Name == "qsdev_version_constraint" {
 			versionResult = &results[i]
 			break
 		}
 	}
 
 	if versionResult == nil {
-		t.Fatal("expected gdev_version_constraint result")
+		t.Fatal("expected qsdev_version_constraint result")
 	}
 	if versionResult.Status != StatusPass {
 		t.Errorf("Status = %s, want %s", versionResult.Status, StatusPass)
@@ -110,7 +110,7 @@ func TestCheckBinaryCompatibility_NoConfig(t *testing.T) {
 func TestCheckBinaryCompatibility_UnsupportedSchemaVersion(t *testing.T) {
 	ctx := CheckContext{
 		BinaryVersion: "1.0.0",
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Version: 99,
 		},
 	}
@@ -139,7 +139,7 @@ func TestCheckBinaryCompatibility_UnsupportedSchemaVersion(t *testing.T) {
 func TestCheckBinaryCompatibility_SupportedSchemaVersion(t *testing.T) {
 	ctx := CheckContext{
 		BinaryVersion: "1.0.0",
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Version: 1,
 		},
 	}
@@ -165,9 +165,9 @@ func TestCheckBinaryCompatibility_SupportedSchemaVersion(t *testing.T) {
 func TestCheckBinaryCompatibility_DevVersion(t *testing.T) {
 	ctx := CheckContext{
 		BinaryVersion: "dev",
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Version: 1,
-			GdevVersion:   ">=99.0.0",
+			QsdevVersion:   ">=99.0.0",
 		},
 	}
 
@@ -175,14 +175,14 @@ func TestCheckBinaryCompatibility_DevVersion(t *testing.T) {
 
 	var versionResult *CheckResult
 	for i := range results {
-		if results[i].Name == "gdev_version_constraint" {
+		if results[i].Name == "qsdev_version_constraint" {
 			versionResult = &results[i]
 			break
 		}
 	}
 
 	if versionResult == nil {
-		t.Fatal("expected gdev_version_constraint result")
+		t.Fatal("expected qsdev_version_constraint result")
 	}
 	// "dev" version always passes constraints.
 	if versionResult.Status != StatusPass {

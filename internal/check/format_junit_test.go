@@ -98,7 +98,7 @@ func TestFormatJUnit_FailuresHaveFailureElement(t *testing.T) {
 				Status:      StatusFail,
 				Severity:    SeverityCritical,
 				Message:     "version mismatch",
-				Remediation: "update gdev",
+				Remediation: "update qsdev",
 			},
 		},
 		Summary: CheckSummary{Total: 1, Fail: 1},

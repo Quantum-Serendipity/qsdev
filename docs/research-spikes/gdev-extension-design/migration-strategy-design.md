@@ -2,7 +2,7 @@
 
 ## Problem
 
-`gdev init` generates config files. Users and teams customize those files. Later, team standards evolve and `gdev init` or `gdev update` needs to update the generated config without destroying customizations. This document defines the strategy per file type.
+`qsdev init` generates config files. Users and teams customize those files. Later, team standards evolve and `qsdev init` or `qsdev update` needs to update the generated config without destroying customizations. This document defines the strategy per file type.
 
 ## Core Principle: Track What We Generated
 
@@ -66,7 +66,7 @@ The hash is SHA256 of the file content at generation time. On update, comparing 
 
 **Why no auto-merge:** Nix is a functional language. Merging Nix expressions requires understanding semantics, not just syntax. A user might reorganize `let` bindings, add conditionals, or define custom modules. There's no general Nix merge algorithm.
 
-**Escape hatch:** `gdev devenv update --force` overwrites regardless, for when the user wants to start fresh.
+**Escape hatch:** `qsdev devenv update --force` overwrites regardless, for when the user wants to start fresh.
 
 ### .envrc — Machine-Owned, Idempotent
 
@@ -185,9 +185,9 @@ Same strategy as skills. Library-managed rules get updated; user-created rules p
 ## Update Command Workflow
 
 ```
-gdev init --update        (or gdev devenv update / gdev claude update)
+qsdev init --update        (or qsdev devenv update / qsdev claude update)
     │
-    ├── Read stored GeneratedState from gdev config
+    ├── Read stored GeneratedState from qsdev config
     ├── Read current files from disk
     ├── Compute hashes
     │
@@ -211,14 +211,14 @@ gdev init --update        (or gdev devenv update / gdev claude update)
 When team standards evolve (new permissions, updated skills, changed conventions), the update flow is:
 
 1. Team updates the gdev binary with new addon defaults/templates
-2. Developer runs `gdev init --update` (or it's part of `gdev bootstrap`)
+2. Developer runs `qsdev init --update` (or it's part of `qsdev bootstrap`)
 3. The merge strategy handles the rest:
    - New permissions → added to union
    - Updated skills → overwritten from library
    - Changed CLAUDE.md template → updated within markers
    - New services/tools → not added automatically (requires re-running wizard)
 
-**Forcing a full re-wizard:** `gdev init --reconfigure` clears stored answers and re-runs the wizard from scratch, using detection to pre-populate.
+**Forcing a full re-wizard:** `qsdev init --reconfigure` clears stored answers and re-runs the wizard from scratch, using detection to pre-populate.
 
 ## Edge Cases
 

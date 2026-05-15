@@ -21,21 +21,21 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 
 ### Unit 22.1: Configuration & Onboarding Validation
 
-**Description:** Validate `.gdev.yaml` parsing, three-layer configuration resolution, four onboarding modes (Create/Join/Update/Repair), config version constraints, and `gdev check` accuracy using testscript E2E scenarios. Each scenario creates a realistic project state and verifies gdev responds correctly to valid, invalid, and edge-case configurations.
+**Description:** Validate `.qsdev.yaml` parsing, three-layer configuration resolution, four onboarding modes (Create/Join/Update/Repair), config version constraints, and `qsdev check` accuracy using testscript E2E scenarios. Each scenario creates a realistic project state and verifies gdev responds correctly to valid, invalid, and edge-case configurations.
 
-**Context:** Phase 13 introduced the most complex configuration machinery in the system: a YAML schema with nested structs, a three-layer deep-merge engine with security floor enforcement, four onboarding modes with automatic detection, semver constraint parsing, and a 5-category CI enforcement command. These features interact in subtle ways — a malformed `.gdev.yaml` should produce clear errors, local overrides must not lower security below the project floor, and mode detection must be deterministic based on project state. Unit tests in Phase 13 cover individual functions; this phase tests the full flow through the compiled binary with real file I/O, real YAML parsing, and real mode routing.
+**Context:** Phase 13 introduced the most complex configuration machinery in the system: a YAML schema with nested structs, a three-layer deep-merge engine with security floor enforcement, four onboarding modes with automatic detection, semver constraint parsing, and a 5-category CI enforcement command. These features interact in subtle ways — a malformed `.qsdev.yaml` should produce clear errors, local overrides must not lower security below the project floor, and mode detection must be deterministic based on project state. Unit tests in Phase 13 cover individual functions; this phase tests the full flow through the compiled binary with real file I/O, real YAML parsing, and real mode routing.
 
-**Desired Outcome:** A test suite that catches regressions in config parsing, merge semantics, mode detection, version constraint enforcement, and `gdev check` accuracy. Every onboarding mode is exercised with a self-contained testscript scenario including fixture files.
+**Desired Outcome:** A test suite that catches regressions in config parsing, merge semantics, mode detection, version constraint enforcement, and `qsdev check` accuracy. Every onboarding mode is exercised with a self-contained testscript scenario including fixture files.
 
 **Steps:**
 1. Create `e2e/testdata/script/config/` directory for configuration test scripts.
-2. Write `valid-config-parse.txtar` — test valid `.gdev.yaml` parsing:
+2. Write `valid-config-parse.txtar` — test valid `.qsdev.yaml` parsing:
    ```
-   # Valid .gdev.yaml parses without error
-   exec gdev check --format json
+   # Valid .qsdev.yaml parses without error
+   exec qsdev check --format json
    stdout '"status":"pass"'
 
-   -- .gdev.yaml --
+   -- .qsdev.yaml --
    version: 1
    gdev_version: ">= 0.15.0"
    profile: consulting-default
@@ -48,65 +48,65 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 3. Write `invalid-config.txtar` — test error messages for malformed configs:
    ```
    # Missing version field produces clear error
-   ! exec gdev check
+   ! exec qsdev check
    stderr 'must include a `version` field'
 
-   -- .gdev.yaml --
+   -- .qsdev.yaml --
    profile: consulting-default
    ```
 4. Write `unknown-version.txtar` — test future config version handling:
    ```
    # Unknown config version produces upgrade error
-   ! exec gdev check
+   ! exec qsdev check
    stderr 'gdev self-update'
    stderr 'version 99'
 
-   -- .gdev.yaml --
+   -- .qsdev.yaml --
    version: 99
    ```
 5. Write `three-layer-merge.txtar` — test merge correctness with all layers present:
    ```
    # Three-layer merge: org defaults overridden by project, then local
-   exec gdev init --non-interactive --verbose
-   stdout 'security.level = "enhanced" (from project:.gdev.yaml'
+   exec qsdev init --non-interactive --verbose
+   stdout 'security.level = "enhanced" (from project:.qsdev.yaml'
 
-   exec gdev check --format json
+   exec qsdev check --format json
    json_path '.checks' '.name=="config_integrity"' '.status' 'pass'
 
-   -- .gdev.yaml --
+   -- .qsdev.yaml --
    version: 1
    security:
      level: enhanced
-   -- .gdev.local.yaml --
+   -- .qsdev.local.yaml --
    extra_packages:
      - neovim
    ```
 6. Write `security-floor.txtar` — verify local overrides cannot lower security below project level:
    ```
    # Security floor enforcement: local cannot lower security level
-   exec gdev init --non-interactive --verbose
+   exec qsdev init --non-interactive --verbose
    stdout 'floor enforced'
    ! stdout 'security.level = "baseline"'
 
-   exec gdev check --format json
+   exec qsdev check --format json
    json_path '.checks' '.name=="security_hardening"' '.status' 'pass'
 
-   -- .gdev.yaml --
+   -- .qsdev.yaml --
    version: 1
    security:
      level: enhanced
      age_gating: true
-   -- .gdev.local.yaml --
+   -- .qsdev.local.yaml --
    security:
      level: baseline
      age_gating: false
    ```
-7. Write `mode-create.txtar` — verify Create mode on empty project (no `.gdev.yaml`):
+7. Write `mode-create.txtar` — verify Create mode on empty project (no `.qsdev.yaml`):
    ```
-   # Create mode: no .gdev.yaml triggers full wizard
-   exec gdev init --non-interactive --answers-file answers.yaml
-   stdout 'No .gdev.yaml found'
-   exists .gdev.yaml
+   # Create mode: no .qsdev.yaml triggers full wizard
+   exec qsdev init --non-interactive --answers-file answers.yaml
+   stdout 'No .qsdev.yaml found'
+   exists .qsdev.yaml
    exists devenv.nix
    exists devenv.yaml
 
@@ -115,15 +115,15 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
    profile: consulting-default
    quick_mode: true
    ```
-8. Write `mode-join.txtar` — verify Join mode on project with existing `.gdev.yaml`:
+8. Write `mode-join.txtar` — verify Join mode on project with existing `.qsdev.yaml`:
    ```
-   # Join mode: .gdev.yaml exists, no state dir
-   exec gdev init --non-interactive
+   # Join mode: .qsdev.yaml exists, no state dir
+   exec qsdev init --non-interactive
    stdout 'Join mode'
    stdout 'Setting up as new team member'
-   exists .gdev.local.yaml
+   exists .qsdev.local.yaml
 
-   -- .gdev.yaml --
+   -- .qsdev.yaml --
    version: 1
    profile: consulting-default
    languages:
@@ -132,28 +132,28 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 9. Write `mode-update.txtar` — verify Update mode when binary version is newer than last run:
    ```
    # Update mode: state dir exists, version mismatch
-   exec gdev init --non-interactive
+   exec qsdev init --non-interactive
    stdout 'Template updates available'
 
-   -- .gdev.yaml --
+   -- .qsdev.yaml --
    version: 1
    languages:
      - name: go
-   -- .devinit/.gdev-init-state.yaml --
+   -- .devinit/.qsdev-init-state.yaml --
    gdev_version: "0.1.0"
    files: {}
    ```
 10. Write `mode-repair.txtar` — verify Repair mode when files have drifted:
     ```
     # Repair mode: generated files have drifted
-    exec gdev init --non-interactive
+    exec qsdev init --non-interactive
     stdout 'drifted from expected state'
 
-    -- .gdev.yaml --
+    -- .qsdev.yaml --
     version: 1
     languages:
       - name: go
-    -- .devinit/.gdev-init-state.yaml --
+    -- .devinit/.qsdev-init-state.yaml --
     gdev_version: "0.16.0"
     files:
       devenv.yaml:
@@ -165,19 +165,19 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 11. Write `gdev-version-constraint.txtar` — verify `gdev_version` enforcement rejects incompatible binary:
     ```
     # gdev_version constraint rejects incompatible binary
-    ! exec gdev check
+    ! exec qsdev check
     stderr 'gdev version mismatch'
     stderr 'gdev self-update'
 
-    -- .gdev.yaml --
+    -- .qsdev.yaml --
     version: 1
     gdev_version: ">= 99.0.0"
     ```
-12. Write `gdev-check-accuracy.txtar` — verify `gdev check` with known-good and known-bad states:
+12. Write `gdev-check-accuracy.txtar` — verify `qsdev check` with known-good and known-bad states:
     ```
-    # gdev check passes on well-configured project
-    exec gdev init --non-interactive --answers-file answers.yaml
-    exec gdev check --format json
+    # qsdev check passes on well-configured project
+    exec qsdev init --non-interactive --answers-file answers.yaml
+    exec qsdev check --format json
     json_path '.summary.fail' '0'
 
     -- answers.yaml --
@@ -188,12 +188,12 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 13. Write `profile-inheritance.txtar` — verify org -> profile -> project -> local chain:
     ```
     # Profile inheritance chain resolves correctly
-    exec gdev init --non-interactive --verbose
+    exec qsdev init --non-interactive --verbose
     stdout 'profile:consulting-default'
-    exec gdev check --format json
+    exec qsdev check --format json
     json_path '.checks' '.name=="required_tools"' '.status' 'pass'
 
-    -- .gdev.yaml --
+    -- .qsdev.yaml --
     version: 1
     profile: consulting-default
     tools:
@@ -202,27 +202,27 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
     ```
 
 **Acceptance Criteria:**
-- [ ] Valid `.gdev.yaml` parses without error and `gdev check` passes
+- [ ] Valid `.qsdev.yaml` parses without error and `qsdev check` passes
 - [ ] Missing `version` field produces clear, actionable error message
-- [ ] Unknown config version produces error with `gdev self-update` instructions
+- [ ] Unknown config version produces error with `qsdev self-update` instructions
 - [ ] Unknown YAML fields are silently ignored (forward compatibility verified)
 - [ ] Three-layer merge correctness verified: binary defaults < project config < local overrides
 - [ ] Security floor enforcement verified: local config cannot lower security level below project setting
 - [ ] Security floor enforcement verified: local config cannot disable security features (age_gating, script_blocking) that project enables
-- [ ] Create mode detected and runs wizard when no `.gdev.yaml` exists
-- [ ] Join mode detected when `.gdev.yaml` exists but no local state directory
+- [ ] Create mode detected and runs wizard when no `.qsdev.yaml` exists
+- [ ] Join mode detected when `.qsdev.yaml` exists but no local state directory
 - [ ] Update mode detected when gdev binary version is newer than last run
 - [ ] Repair mode detected when generated files have drifted from expected hashes
 - [ ] `gdev_version` constraint rejects incompatible binary with actionable error
-- [ ] `gdev check` passes on a well-configured project and fails on a misconfigured one
+- [ ] `qsdev check` passes on a well-configured project and fails on a misconfigured one
 - [ ] Profile inheritance chain (org -> profile -> project -> local) resolves correctly
 
 **Research Citations:**
-- `phases/13-project-configuration-team-standards.md § Unit 13.1` — `.gdev.yaml` schema, parsing, validation
+- `phases/13-project-configuration-team-standards.md § Unit 13.1` — `.qsdev.yaml` schema, parsing, validation
 - `phases/13-project-configuration-team-standards.md § Unit 13.2` — three-layer resolution, security floor enforcement
 - `phases/13-project-configuration-team-standards.md § Unit 13.3` — onboarding mode detection and routing
 - `phases/13-project-configuration-team-standards.md § Unit 13.5` — `gdev_version` constraint, semver parsing
-- `phases/13-project-configuration-team-standards.md § Unit 13.6` — `gdev check` command, 5 check categories
+- `phases/13-project-configuration-team-standards.md § Unit 13.6` — `qsdev check` command, 5 check categories
 - `phases/13-project-configuration-team-standards.md § Unit 13.7` — profile inheritance, compliance levels
 
 **Status:** Not Started
@@ -233,7 +233,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 
 **Description:** Validate that all generated skill and agent files are well-formed, correctly configured, and functional. Test YAML frontmatter parsing, `disable-model-invocation` correctness, dynamic context injection output, context budget compliance, and Claude Code's ability to discover and load all skills and agents.
 
-**Context:** Phase 14 deploys 10 gdev operation skills, 7 consulting agents, and 8+ consulting skills — 25+ files that Claude Code parses at startup. A single YAML syntax error in any file breaks skill discovery. The `disable-model-invocation` flag is the primary safety mechanism preventing Claude from autonomously running side-effect operations — a missing flag means Claude could silently run `gdev init` or `gdev enable` without user intent. Dynamic context injection (`` !`command` ``) must produce valid output both when gdev is installed and when it is not (the `|| echo` fallback). Context budget management ensures CLAUDE.md stays under the 5% target for both Sonnet (200K) and Opus (1M) context windows. These are not functional tests of skill execution — they are structural validation tests ensuring the generated files meet their format contract.
+**Context:** Phase 14 deploys 10 gdev operation skills, 7 consulting agents, and 8+ consulting skills — 25+ files that Claude Code parses at startup. A single YAML syntax error in any file breaks skill discovery. The `disable-model-invocation` flag is the primary safety mechanism preventing Claude from autonomously running side-effect operations — a missing flag means Claude could silently run `qsdev init` or `qsdev enable` without user intent. Dynamic context injection (`` !`command` ``) must produce valid output both when gdev is installed and when it is not (the `|| echo` fallback). Context budget management ensures CLAUDE.md stays under the 5% target for both Sonnet (200K) and Opus (1M) context windows. These are not functional tests of skill execution — they are structural validation tests ensuring the generated files meet their format contract.
 
 **Desired Outcome:** A regression suite that catches malformed skill files, missing safety flags, broken dynamic context injection, and context budget overruns before they reach developers.
 
@@ -242,7 +242,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 2. Write `gdev-skill-parse.txtar` — verify all 10 gdev operation skill files parse correctly:
    ```
    # All gdev operation skill files have valid YAML frontmatter
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
    exec find .claude/skills/gdev-* -name SKILL.md
 
    # Verify each skill file exists and has valid frontmatter
@@ -269,7 +269,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 3. Write `agent-file-parse.txtar` — verify all 7 consulting agent files parse correctly:
    ```
    # All consulting agent files have valid YAML frontmatter
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    exists .claude/agents/security-reviewer.md
    exists .claude/agents/codebase-explorer.md
@@ -292,7 +292,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 4. Write `consulting-skill-parse.txtar` — verify all 8+ consulting skill files parse correctly:
    ```
    # All consulting workflow skill files have valid YAML frontmatter
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    exists .claude/skills/review-pr/SKILL.md
    exists .claude/skills/add-tests/SKILL.md
@@ -311,7 +311,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 5. Write `user-only-skills.txtar` — verify user-only skills have `disable-model-invocation: true`:
    ```
    # Side-effect skills must have disable-model-invocation: true
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    # User-only gdev operations (side effects)
    exec grep 'disable-model-invocation: true' .claude/skills/gdev-init/SKILL.md
@@ -339,7 +339,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 6. Write `claude-invocable-skills.txtar` — verify Claude-invocable skills do NOT have `disable-model-invocation`:
    ```
    # Read-only diagnostic skills must NOT have disable-model-invocation
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    ! exec grep 'disable-model-invocation' .claude/skills/gdev-doctor/SKILL.md
    ! exec grep 'disable-model-invocation' .claude/skills/gdev-status/SKILL.md
@@ -355,7 +355,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
    ```
    # Dynamic context injection fallbacks work when gdev commands fail
    # The !`command` preprocessor should produce valid output even without a running gdev
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    # Verify all skill files contain || echo fallback patterns
    exec grep -l '|| echo' .claude/skills/gdev-init/SKILL.md
@@ -372,8 +372,8 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 8. Write `context-budget-sonnet.txtar` — verify context budget for Sonnet (200K) target:
    ```
    # Context budget: Sonnet target stays under 5% (10K tokens ~= 40K chars)
-   exec gdev init --non-interactive --answers-file answers.yaml
-   exec gdev check --context-budget --format json
+   exec qsdev init --non-interactive --answers-file answers.yaml
+   exec qsdev check --context-budget --format json
    json_path '.budgetPct' '<5.0'
    json_path '.claudeMDLines' '<=50'
 
@@ -386,8 +386,8 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 9. Write `context-budget-opus.txtar` — verify context budget for Opus (1M) target:
    ```
    # Context budget: Opus target stays under 5% (50K tokens ~= 200K chars)
-   exec gdev init --non-interactive --answers-file answers.yaml
-   exec gdev check --context-budget --format json
+   exec qsdev init --non-interactive --answers-file answers.yaml
+   exec qsdev check --context-budget --format json
    json_path '.budgetPct' '<5.0'
    json_path '.claudeMDLines' '<=100'
 
@@ -400,10 +400,10 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 10. Write `skill-description-length.txtar` — verify all skill descriptions are within budget:
     ```
     # All skill descriptions must be <= 200 characters
-    exec gdev init --non-interactive --answers-file answers.yaml
+    exec qsdev init --non-interactive --answers-file answers.yaml
 
     # Extract description fields and verify length
-    exec gdev check --context-budget --format json
+    exec qsdev check --context-budget --format json
     json_path '.skillDescChars' '<=3600'
 
     -- answers.yaml --
@@ -415,7 +415,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
     ```
     [claude-cli]
     # Claude Code discovers all gdev-deployed skills
-    exec gdev init --non-interactive --answers-file answers.yaml
+    exec qsdev init --non-interactive --answers-file answers.yaml
     exec claude --print-skills 2>&1
     stdout 'gdev-init'
     stdout 'gdev-doctor'
@@ -468,10 +468,10 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 2. Write `positive-controls.txtar` — verify dangerous operations are correctly blocked:
    ```
    # Positive controls: dangerous operations must be blocked by deny rules
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    # Extract deny rules from settings.json
-   exec gdev check --deny-rules --format json
+   exec qsdev check --deny-rules --format json
    json_path '.denyRules' 'contains' 'Bash(npm install *)'
    json_path '.denyRules' 'contains' 'Bash(pip install *)'
    json_path '.denyRules' 'contains' 'Bash(cargo install *)'
@@ -488,10 +488,10 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 3. Write `negative-controls.txtar` — verify legitimate operations are NOT blocked:
    ```
    # Negative controls: build/test/lint operations must NOT be blocked
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    # Run conflict validator and verify zero unexpected conflicts
-   exec gdev check --deny-rules --format json
+   exec qsdev check --deny-rules --format json
    json_path '.unexpectedConflicts' '0'
 
    # Verify specific legitimate operations are not in deny rules
@@ -515,10 +515,10 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 4. Write `conflict-matrix-all-ecosystems.txtar` — test all 48+ deny rules against build/test/lint commands from all 27 ecosystems:
    ```
    # Full conflict matrix: all deny rules against all ecosystem commands
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    # Run the comprehensive conflict matrix test
-   exec gdev check --deny-rules --verbose --format json
+   exec qsdev check --deny-rules --verbose --format json
 
    # Verify matrix dimensions
    json_path '.matrixSize.denyRules' '>=48'
@@ -539,14 +539,14 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
    ```
    # Overly broad deny rule detection: Bash(npm *) would block npm test
    # Inject a bad deny rule and verify it's caught
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    # Manually add an overly broad rule to settings.json
    exec jq '.permissions.deny += ["Bash(npm *)"]' .claude/settings.json > /tmp/bad-settings.json
    cp /tmp/bad-settings.json .claude/settings.json
 
    # Verify the conflict is detected
-   ! exec gdev check --deny-rules
+   ! exec qsdev check --deny-rules
    stderr 'conflict'
    stderr 'Bash(npm *)'
    stderr 'Bash(npm test'
@@ -559,8 +559,8 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 6. Write `expected-conflicts-documented.txtar` — verify expected conflicts (e.g., `/upgrade-dep`) are documented and filtered:
    ```
    # Expected conflict: /upgrade-dep needs install commands through guardrail hook
-   exec gdev init --non-interactive --answers-file answers.yaml
-   exec gdev check --deny-rules --format json
+   exec qsdev init --non-interactive --answers-file answers.yaml
+   exec qsdev check --deny-rules --format json
 
    # /upgrade-dep conflict with npm install is expected (works through PreToolUse hook)
    json_path '.expectedConflicts' 'contains' 'upgrade-dep'
@@ -574,10 +574,10 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 7. Write `deny-rule-regression.txtar` — the master regression test that runs on every skill or deny rule change:
    ```
    # Regression suite: full deny rule × skill operation validation
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    # Validate all deny rules
-   exec gdev check --deny-rules --format json --output deny-report.json
+   exec qsdev check --deny-rules --format json --output deny-report.json
 
    # Verify report is complete
    json_path deny-report.json '.totalRulesTested' '>=48'
@@ -597,7 +597,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 - [ ] Overly broad deny rules (`Bash(npm *)`) detected when injected into settings.json
 - [ ] Expected conflicts (e.g., `/upgrade-dep` with `npm install`) documented and filtered from failures
 - [ ] Expected conflict explanations reference the PreToolUse guardrail hook mechanism
-- [ ] `gdev check --deny-rules` reports zero unexpected conflicts with default configuration
+- [ ] `qsdev check --deny-rules` reports zero unexpected conflicts with default configuration
 - [ ] Adding a new deny rule that blocks a skill operation fails the regression test
 - [ ] Adding a new skill with operations that conflict with deny rules fails the regression test
 - [ ] Deny-wins-over-allow rule verified (allow rules do not override deny rules)
@@ -614,9 +614,9 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 
 ### Unit 22.4: Health & Compliance Reporting Validation
 
-**Description:** Validate `gdev status` output correctness across scenarios, scoring accuracy for known-state projects, conformance label accuracy, drift detection sensitivity and specificity, `gdev evidence` output compliance, and badge generation format correctness.
+**Description:** Validate `qsdev status` output correctness across scenarios, scoring accuracy for known-state projects, conformance label accuracy, drift detection sensitivity and specificity, `qsdev evidence` output compliance, and badge generation format correctness.
 
-**Context:** Phase 15 implements the most user-visible reporting system: `gdev status` with progressive disclosure, a three-layer scoring engine, six-category drift detection, SARIF 2.1.0 output for GitHub Code Scanning, and shields.io badge generation. Scoring errors directly mislead developers about their security posture — a project incorrectly scored 90/100 when it should be 60/100 gives false confidence. Drift detection must be sensitive enough to catch real issues (section markers removed, deny rules deleted) without false-positiving on legitimate changes (user-edited devenv.nix). SARIF output must pass schema validation or GitHub Code Scanning will silently reject it. Badge JSON must conform to shields.io's endpoint protocol or badges will display "invalid."
+**Context:** Phase 15 implements the most user-visible reporting system: `qsdev status` with progressive disclosure, a three-layer scoring engine, six-category drift detection, SARIF 2.1.0 output for GitHub Code Scanning, and shields.io badge generation. Scoring errors directly mislead developers about their security posture — a project incorrectly scored 90/100 when it should be 60/100 gives false confidence. Drift detection must be sensitive enough to catch real issues (section markers removed, deny rules deleted) without false-positiving on legitimate changes (user-edited devenv.nix). SARIF output must pass schema validation or GitHub Code Scanning will silently reject it. Badge JSON must conform to shields.io's endpoint protocol or badges will display "invalid."
 
 **Desired Outcome:** A test suite that proves scoring determinism, conformance accuracy at boundary conditions, drift detection precision (true positive rate) and recall (true negative rate), SARIF schema compliance, and badge format correctness.
 
@@ -624,9 +624,9 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 1. Create `e2e/testdata/script/health/` directory for health reporting tests.
 2. Write `status-all-enabled.txtar` — verify output when all tools are enabled:
    ```
-   # gdev status: all tools enabled produces correct output
-   exec gdev init --non-interactive --answers-file answers.yaml
-   exec gdev status --json > status.json
+   # qsdev status: all tools enabled produces correct output
+   exec qsdev init --non-interactive --answers-file answers.yaml
+   exec qsdev status --json > status.json
 
    # Score should be high when all defenses enabled
    json_path status.json '.score.total' '>=80'
@@ -642,9 +642,9 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
    ```
 3. Write `status-none-enabled.txtar` — verify output when no optional tools are enabled:
    ```
-   # gdev status: minimal tools produces low score
-   exec gdev init --non-interactive --answers-file answers.yaml
-   exec gdev status --json > status.json
+   # qsdev status: minimal tools produces low score
+   exec qsdev init --non-interactive --answers-file answers.yaml
+   exec qsdev status --json > status.json
 
    # Score should be lower with minimal defenses
    json_path status.json '.score.defense' '<80'
@@ -656,11 +656,11 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
    ```
 4. Write `status-mixed.txtar` — verify mixed tool state produces proportional scoring:
    ```
-   # gdev status: partial tools produce proportional score
-   exec gdev init --non-interactive --answers-file answers.yaml
-   exec gdev enable semgrep
-   exec gdev enable gitleaks
-   exec gdev status --json > status.json
+   # qsdev status: partial tools produce proportional score
+   exec qsdev init --non-interactive --answers-file answers.yaml
+   exec qsdev enable semgrep
+   exec qsdev enable gitleaks
+   exec qsdev status --json > status.json
 
    # Defense score should reflect enabled/disabled ratio
    json_path status.json '.defense.layers' 'some' '.status=="enabled"'
@@ -674,9 +674,9 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 5. Write `scoring-determinism.txtar` — verify identical inputs produce identical scores:
    ```
    # Scoring determinism: same state produces same score
-   exec gdev init --non-interactive --answers-file answers.yaml
-   exec gdev status --json > status1.json
-   exec gdev status --json > status2.json
+   exec qsdev init --non-interactive --answers-file answers.yaml
+   exec qsdev status --json > status1.json
+   exec qsdev status --json > status2.json
 
    # Scores must be identical (ignore timestamps)
    json_path status1.json '.score.total' 'equals' json_path:status2.json:'.score.total'
@@ -690,8 +690,8 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 6. Write `conformance-baseline.txtar` — verify baseline PASS requires specific checks:
    ```
    # Conformance: baseline PASS requires lock files, pre-commit hooks, no critical vulns
-   exec gdev init --non-interactive --answers-file answers.yaml
-   exec gdev status --json > status.json
+   exec qsdev init --non-interactive --answers-file answers.yaml
+   exec qsdev status --json > status.json
 
    json_path status.json '.conformance.baseline.pass' 'true'
    json_path status.json '.conformance.baseline.checks' 'all' '.pass==true'
@@ -710,12 +710,12 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 7. Write `drift-detection-sensitivity.txtar` — verify drift detection detects modified files:
    ```
    # Drift detection: detects modified machine-owned files
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    # Modify a machine-owned file
    exec sh -c 'echo "extra content" >> .envrc'
 
-   exec gdev status --json > status.json
+   exec qsdev status --json > status.json
    json_path status.json '.drift.totalFindings' '>=1'
    json_path status.json '.drift.categories' 'some' '.name=="file-modification"'
 
@@ -727,12 +727,12 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 8. Write `drift-detection-specificity.txtar` — verify drift detection ignores unrelated changes:
    ```
    # Drift detection: does not flag user-edited files as drift
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    # Modify a user-owned file (should not trigger drift warning)
    exec sh -c 'echo "// my custom code" >> main.go'
 
-   exec gdev status --json > status.json
+   exec qsdev status --json > status.json
    # User-owned files should not appear in drift findings
    ! json_path status.json '.drift.categories' 'some' '.findings' 'some' '.subject=="main.go"'
 
@@ -748,7 +748,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 9. Write `drift-six-categories.txtar` — verify all 6 drift categories with positive and negative controls:
    ```
    # Drift detection: all 6 categories tested
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    # Category 1: File modification — modify .envrc
    exec sh -c 'echo "modified" >> .envrc'
@@ -759,7 +759,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
    # Category 5: Lock file drift — touch go.mod to make it newer than go.sum
    exec touch go.mod
 
-   exec gdev status --json > status.json
+   exec qsdev status --json > status.json
 
    # Verify findings from modified categories
    json_path status.json '.drift.categories' 'some' '.name=="file-modification"'
@@ -777,10 +777,10 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 
    -- go.sum --
    ```
-10. Write `evidence-json-schema.txtar` — verify `gdev evidence` JSON schema compliance:
+10. Write `evidence-json-schema.txtar` — verify `qsdev evidence` JSON schema compliance:
     ```
     # gdev evidence: JSON output matches EvidenceReport schema
-    exec gdev init --non-interactive --answers-file answers.yaml
+    exec qsdev init --non-interactive --answers-file answers.yaml
     exec gdev evidence --framework soc2 --format json > evidence.json
 
     # Verify schema fields
@@ -797,9 +797,9 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
     ```
 11. Write `sarif-compliance.txtar` — verify SARIF 2.1.0 output is valid:
     ```
-    # gdev status --sarif: produces valid SARIF 2.1.0
-    exec gdev init --non-interactive --answers-file answers.yaml
-    exec gdev status --sarif > posture.sarif
+    # qsdev status --sarif: produces valid SARIF 2.1.0
+    exec qsdev init --non-interactive --answers-file answers.yaml
+    exec qsdev status --sarif > posture.sarif
 
     # Verify SARIF structure
     json_path posture.sarif '.version' '2.1.0'
@@ -816,21 +816,21 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 12. Write `badge-generation.txtar` — verify shields.io badge JSON format:
     ```
     # Badge generation: shields.io JSON format compliance
-    exec gdev init --non-interactive --answers-file answers.yaml
+    exec qsdev init --non-interactive --answers-file answers.yaml
 
     # Score badge
-    exec gdev status --format badge > badge-score.json
+    exec qsdev status --format badge > badge-score.json
     json_path badge-score.json '.schemaVersion' '1'
     json_path badge-score.json '.label' 'contains' 'gdev'
     json_path badge-score.json '.message' 'matches' '[0-9]+/100'
     json_path badge-score.json '.color' 'matches' '^(brightgreen|green|yellow|orange|red)$'
 
     # Conformance badge
-    exec gdev status --format badge --badge-type conformance > badge-conf.json
+    exec qsdev status --format badge --badge-type conformance > badge-conf.json
     json_path badge-conf.json '.message' 'matches' '^(PASS|FAIL)$'
 
     # Defense badge
-    exec gdev status --format badge --badge-type defense > badge-def.json
+    exec qsdev status --format badge --badge-type defense > badge-def.json
     json_path badge-def.json '.message' 'matches' '[0-9]+/[0-9]+ enabled'
 
     -- answers.yaml --
@@ -840,7 +840,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
     ```
 
 **Acceptance Criteria:**
-- [ ] `gdev status --json` output correctness verified across 3 scenarios: all tools, no tools, mixed
+- [ ] `qsdev status --json` output correctness verified across 3 scenarios: all tools, no tools, mixed
 - [ ] Scoring determinism verified: identical inputs produce identical scores
 - [ ] Baseline conformance PASS requires: lock files present, pre-commit hooks installed, no critical vulns, deny rules present, high-weight defenses enabled
 - [ ] Enhanced conformance requires: baseline + SAST + secrets scanning + license compliance
@@ -848,16 +848,16 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 - [ ] Drift detection specificity verified: user-owned file changes NOT flagged as drift
 - [ ] All 6 drift categories tested with positive controls (triggering detection) and negative controls (no false positives)
 - [ ] Drift detection completes in <100ms (performance assertion)
-- [ ] `gdev evidence --framework soc2` output matches `EvidenceReport` JSON schema
-- [ ] `gdev status --sarif` produces valid SARIF 2.1.0 (version field, `$schema`, `runs`, `tool.driver`)
-- [ ] `gdev status --format badge` produces shields.io-compatible JSON (score, conformance, defense variants)
+- [ ] `qsdev evidence --framework soc2` output matches `EvidenceReport` JSON schema
+- [ ] `qsdev status --sarif` produces valid SARIF 2.1.0 (version field, `$schema`, `runs`, `tool.driver`)
+- [ ] `qsdev status --format badge` produces shields.io-compatible JSON (score, conformance, defense variants)
 - [ ] Badge color mapping verified: score 90+ = brightgreen, 80-89 = green, 70-79 = yellow, 60-69 = orange, <60 = red
 
 **Research Citations:**
-- `phases/15-health-status-compliance-reporting.md § Unit 15.1` — `gdev status` command, progressive disclosure, exit codes
+- `phases/15-health-status-compliance-reporting.md § Unit 15.1` — `qsdev status` command, progressive disclosure, exit codes
 - `phases/15-health-status-compliance-reporting.md § Unit 15.2` — scoring engine, conformance tracks, grade boundaries
 - `phases/15-health-status-compliance-reporting.md § Unit 15.3` — six-category drift detection, <100ms performance target
-- `phases/15-health-status-compliance-reporting.md § Unit 15.4` — `gdev evidence` command, compliance framework mapping
+- `phases/15-health-status-compliance-reporting.md § Unit 15.4` — `qsdev evidence` command, compliance framework mapping
 - `phases/15-health-status-compliance-reporting.md § Unit 15.5` — SARIF 2.1.0, badges, JSON schema versioning
 
 **Status:** Not Started
@@ -866,9 +866,9 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 
 ### Unit 22.5: Developer Experience Command Validation
 
-**Description:** Validate all Phase 16 developer experience commands: `gdev repair` (recovery from 4 failure categories, `--dry-run`, backup creation, devenv.nix invariant), `gdev info` (output accuracy, `--oneline`, `--json`, <100ms performance), `gdev outdated` (correct ecosystem commands invoked, exit code semantics, `--ecosystem` filter), `gdev update` (three-stage coordination, `--dry-run`, rollback, partial update flags), and `gdev teardown` (3 profiles, user-modified file preservation, archive creation).
+**Description:** Validate all Phase 16 developer experience commands: `qsdev repair` (recovery from 4 failure categories, `--dry-run`, backup creation, devenv.nix invariant), `qsdev info` (output accuracy, `--oneline`, `--json`, <100ms performance), `qsdev outdated` (correct ecosystem commands invoked, exit code semantics, `--ecosystem` filter), `qsdev update` (three-stage coordination, `--dry-run`, rollback, partial update flags), and `qsdev teardown` (3 profiles, user-modified file preservation, archive creation).
 
-**Context:** Phase 16 commands are the "last mile" that makes gdev feel polished. Each command has specific behavioral contracts: `gdev repair` must never modify devenv.nix, `gdev info` must respond in under 100ms, `gdev outdated` must handle per-ecosystem exit code semantics (npm exit 1 means "outdated found" not "error"), `gdev update` must roll back on failure, and `gdev teardown` must never silently delete user-modified files. These contracts are easy to break during refactoring — E2E tests enforce them.
+**Context:** Phase 16 commands are the "last mile" that makes gdev feel polished. Each command has specific behavioral contracts: `qsdev repair` must never modify devenv.nix, `qsdev info` must respond in under 100ms, `qsdev outdated` must handle per-ecosystem exit code semantics (npm exit 1 means "outdated found" not "error"), `qsdev update` must roll back on failure, and `qsdev teardown` must never silently delete user-modified files. These contracts are easy to break during refactoring — E2E tests enforce them.
 
 **Desired Outcome:** Every developer experience command tested for its core behavioral contracts, edge cases, and failure modes. The test suite catches regressions in repair safety, info performance, outdated semantics, update rollback, and teardown preservation.
 
@@ -876,14 +876,14 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 1. Create `e2e/testdata/script/dx/` directory for developer experience tests.
 2. Write `repair-corrupted-file.txtar` — verify repair recovers corrupted machine-owned files:
    ```
-   # gdev repair: recovers corrupted machine-owned files
-   exec gdev init --non-interactive --answers-file answers.yaml
+   # qsdev repair: recovers corrupted machine-owned files
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    # Corrupt a machine-owned file
    exec sh -c 'echo "corrupted" > .envrc'
 
    # Repair should fix it
-   exec gdev repair
+   exec qsdev repair
    stdout 'fix'
    stdout '.envrc'
 
@@ -892,7 +892,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
    stdout '.envrc.'
 
    # Verify doctor now reports clean
-   exec gdev devenv doctor --json
+   exec qsdev devenv doctor --json
    json_path '.overall' 'pass'
 
    -- answers.yaml --
@@ -902,15 +902,15 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
    ```
 3. Write `repair-dry-run.txtar` — verify `--dry-run` does not modify files:
    ```
-   # gdev repair --dry-run: shows plan without writing files
-   exec gdev init --non-interactive --answers-file answers.yaml
+   # qsdev repair --dry-run: shows plan without writing files
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    # Corrupt a file
    exec sh -c 'echo "corrupted" > .envrc'
    exec cp .envrc .envrc.before
 
    # Dry run should not modify anything
-   exec gdev repair --dry-run
+   exec qsdev repair --dry-run
    stdout 'Would fix'
    stdout '.envrc'
 
@@ -924,14 +924,14 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
    ```
 4. Write `repair-devenv-nix-invariant.txtar` — verify devenv.nix is NEVER auto-modified:
    ```
-   # gdev repair: devenv.nix is NEVER auto-modified
-   exec gdev init --non-interactive --answers-file answers.yaml
+   # qsdev repair: devenv.nix is NEVER auto-modified
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    # Note devenv.nix content
    exec cp devenv.nix devenv.nix.before
 
    # Even with --force, devenv.nix should not be modified
-   exec gdev repair --force
+   exec qsdev repair --force
    cmp devenv.nix devenv.nix.before
 
    # Should generate .devenv.nix.new instead
@@ -945,14 +945,14 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
    ```
 5. Write `repair-backup-creation.txtar` — verify mandatory backup before any mutation:
    ```
-   # gdev repair: backup created before any file modification
-   exec gdev init --non-interactive --answers-file answers.yaml
+   # qsdev repair: backup created before any file modification
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    # Corrupt multiple files
    exec sh -c 'echo "bad" > .envrc'
    exec sh -c 'echo "bad" > devenv.yaml'
 
-   exec gdev repair
+   exec qsdev repair
    # Verify backups exist for each repaired file
    exec find .gdev/backups -type f
    stdout '.envrc'
@@ -963,10 +963,10 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
    profile: consulting-default
    quick_mode: true
    ```
-6. Write `info-output-accuracy.txtar` — verify `gdev info` output correctness:
+6. Write `info-output-accuracy.txtar` — verify `qsdev info` output correctness:
    ```
    # gdev info: output matches project state
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    exec gdev info
    stdout 'Ecosystems:.*Go'
@@ -980,7 +980,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 7. Write `info-oneline.txtar` — verify `--oneline` format:
    ```
    # gdev info --oneline: single-line output
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    exec gdev info --oneline
    # Output should be exactly one line
@@ -995,7 +995,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 8. Write `info-json.txtar` — verify `--json` format:
    ```
    # gdev info --json: valid JSON output
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    exec gdev info --json > info.json
    json_path info.json '.project_name' 'exists'
@@ -1011,7 +1011,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 9. Write `info-performance.txtar` — verify <100ms response:
    ```
    # gdev info: responds in under 100ms
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
    # Time the command (reads only cached state, no evaluation)
    exec sh -c 'start=$(date +%s%N); gdev info > /dev/null; end=$(date +%s%N); echo $(( (end - start) / 1000000 ))'
@@ -1026,7 +1026,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
     ```
     [go-available]
     # gdev outdated: invokes correct per-ecosystem command
-    exec gdev init --non-interactive --answers-file answers.yaml
+    exec qsdev init --non-interactive --answers-file answers.yaml
 
     # Should run go list -m -u all for Go projects
     exec gdev outdated 2>&1
@@ -1047,7 +1047,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
     ```
     [go-available]
     # gdev outdated --ecosystem: runs only specified ecosystem
-    exec gdev init --non-interactive --answers-file answers.yaml
+    exec qsdev init --non-interactive --answers-file answers.yaml
 
     exec gdev outdated --ecosystem go 2>&1
     stdout '=== go ==='
@@ -1069,10 +1069,10 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
     ```
 12. Write `update-dry-run.txtar` — verify `--dry-run` preview:
     ```
-    # gdev update --dry-run: preview without applying changes
-    exec gdev init --non-interactive --answers-file answers.yaml
+    # qsdev update --dry-run: preview without applying changes
+    exec qsdev init --non-interactive --answers-file answers.yaml
 
-    exec gdev update --dry-run
+    exec qsdev update --dry-run
     stdout '[1/3]'
     stdout '[2/3]'
     stdout '[3/3]'
@@ -1084,11 +1084,11 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
     ```
 13. Write `update-partial-flags.txtar` — verify `--self-only`, `--configs-only`, `--deps-only`:
     ```
-    # gdev update: partial update flags
-    exec gdev init --non-interactive --answers-file answers.yaml
+    # qsdev update: partial update flags
+    exec qsdev init --non-interactive --answers-file answers.yaml
 
     # --configs-only should only run stage 2
-    exec gdev update --configs-only --dry-run
+    exec qsdev update --configs-only --dry-run
     ! stdout '[1/3]'
     stdout '[2/3]'
     ! stdout '[3/3]'
@@ -1100,15 +1100,15 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
     ```
 14. Write `update-rollback-on-failure.txtar` — verify failed config regeneration rolls back:
     ```
-    # gdev update: rolls back on config regeneration failure
-    exec gdev init --non-interactive --answers-file answers.yaml
+    # qsdev update: rolls back on config regeneration failure
+    exec qsdev init --non-interactive --answers-file answers.yaml
 
     # Save current state
     exec cp .envrc .envrc.before
 
     # Corrupt the saved answers to force a generation failure
-    exec sh -c 'echo "invalid: {{{{" > .gdev.yaml'
-    ! exec gdev update --configs-only
+    exec sh -c 'echo "invalid: {{{{" > .qsdev.yaml'
+    ! exec qsdev update --configs-only
 
     # Files should be rolled back to pre-update state
     cmp .envrc .envrc.before
@@ -1121,7 +1121,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 15. Write `teardown-quick.txtar` — verify quick profile removes only state:
     ```
     # gdev teardown --quick: removes only .gdev/ state directory
-    exec gdev init --non-interactive --answers-file answers.yaml
+    exec qsdev init --non-interactive --answers-file answers.yaml
     exists .gdev
     exists .envrc
     exists devenv.yaml
@@ -1140,7 +1140,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 16. Write `teardown-default.txtar` — verify default profile preserves user-modified files:
     ```
     # gdev teardown: preserves user-modified files
-    exec gdev init --non-interactive --answers-file answers.yaml
+    exec qsdev init --non-interactive --answers-file answers.yaml
 
     # Modify a generated file (simulating user customization)
     exec sh -c 'echo "# my custom rule" >> .semgrep.yml'
@@ -1160,7 +1160,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 17. Write `teardown-compliance.txtar` — verify compliance profile generates evidence and archive:
     ```
     # gdev teardown --compliance: evidence report + archive
-    exec gdev init --non-interactive --answers-file answers.yaml
+    exec qsdev init --non-interactive --answers-file answers.yaml
 
     exec gdev teardown --compliance --force
     # Evidence report should be generated before teardown
@@ -1175,7 +1175,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 18. Write `teardown-user-modified-preserved.txtar` — verify user-modified files are never silently deleted:
     ```
     # gdev teardown: user-modified files NEVER silently deleted
-    exec gdev init --non-interactive --answers-file answers.yaml
+    exec qsdev init --non-interactive --answers-file answers.yaml
 
     # Modify devenv.nix (user-edited file)
     exec sh -c 'echo "# my custom configuration" >> devenv.nix'
@@ -1192,32 +1192,32 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
     ```
 
 **Acceptance Criteria:**
-- [ ] `gdev repair` recovers corrupted machine-owned files and creates backups in `.gdev/backups/`
-- [ ] `gdev repair --dry-run` shows planned actions without writing any files
-- [ ] `gdev repair` NEVER auto-modifies devenv.nix (generates `.devenv.nix.new` instead)
+- [ ] `qsdev repair` recovers corrupted machine-owned files and creates backups in `.gdev/backups/`
+- [ ] `qsdev repair --dry-run` shows planned actions without writing any files
+- [ ] `qsdev repair` NEVER auto-modifies devenv.nix (generates `.devenv.nix.new` instead)
 - [ ] Mandatory backup created before any file modification by repair
-- [ ] After repair, `gdev devenv doctor` reports clean health
-- [ ] `gdev info` displays correct project name, ecosystems, security profile, version
-- [ ] `gdev info --oneline` produces exactly one line of output
-- [ ] `gdev info --json` produces valid JSON with all required fields
-- [ ] `gdev info` responds in under 100ms (reads only cached YAML files)
-- [ ] `gdev outdated` invokes correct native command per detected ecosystem
-- [ ] `gdev outdated --ecosystem` runs only the specified ecosystem's command
-- [ ] `gdev outdated` exit code semantics: 0 when up-to-date, 1 when outdated found
-- [ ] `gdev update --dry-run` previews all three stages without applying changes
-- [ ] `gdev update --configs-only` runs only config regeneration stage
-- [ ] `gdev update` rolls back config files on regeneration failure
-- [ ] `gdev teardown --quick` removes only `.gdev/` state directory, preserves all generated configs
-- [ ] `gdev teardown` (default) removes unmodified files, preserves user-modified files
-- [ ] `gdev teardown --compliance` generates evidence report before removal
+- [ ] After repair, `qsdev devenv doctor` reports clean health
+- [ ] `qsdev info` displays correct project name, ecosystems, security profile, version
+- [ ] `qsdev info --oneline` produces exactly one line of output
+- [ ] `qsdev info --json` produces valid JSON with all required fields
+- [ ] `qsdev info` responds in under 100ms (reads only cached YAML files)
+- [ ] `qsdev outdated` invokes correct native command per detected ecosystem
+- [ ] `qsdev outdated --ecosystem` runs only the specified ecosystem's command
+- [ ] `qsdev outdated` exit code semantics: 0 when up-to-date, 1 when outdated found
+- [ ] `qsdev update --dry-run` previews all three stages without applying changes
+- [ ] `qsdev update --configs-only` runs only config regeneration stage
+- [ ] `qsdev update` rolls back config files on regeneration failure
+- [ ] `qsdev teardown --quick` removes only `.gdev/` state directory, preserves all generated configs
+- [ ] `qsdev teardown` (default) removes unmodified files, preserves user-modified files
+- [ ] `qsdev teardown --compliance` generates evidence report before removal
 - [ ] User-modified files are NEVER silently deleted by teardown (hash comparison enforced)
 
 **Research Citations:**
-- `phases/16-developer-experience-polish.md § Unit 16.1` — `gdev repair`, 4 failure categories, devenv.nix invariant, backup strategy
-- `phases/16-developer-experience-polish.md § Unit 16.2` — `gdev info`, <100ms target, `--oneline`, `--json`
-- `phases/16-developer-experience-polish.md § Unit 16.3` — `gdev outdated`, thin wrapper, per-ecosystem exit code semantics
-- `phases/16-developer-experience-polish.md § Unit 16.4` — `gdev update`, three-stage coordination, rollback, partial flags
-- `phases/16-developer-experience-polish.md § Unit 16.5` — `gdev teardown`, 3 profiles, user-modification preservation
+- `phases/16-developer-experience-polish.md § Unit 16.1` — `qsdev repair`, 4 failure categories, devenv.nix invariant, backup strategy
+- `phases/16-developer-experience-polish.md § Unit 16.2` — `qsdev info`, <100ms target, `--oneline`, `--json`
+- `phases/16-developer-experience-polish.md § Unit 16.3` — `qsdev outdated`, thin wrapper, per-ecosystem exit code semantics
+- `phases/16-developer-experience-polish.md § Unit 16.4` — `qsdev update`, three-stage coordination, rollback, partial flags
+- `phases/16-developer-experience-polish.md § Unit 16.5` — `qsdev teardown`, 3 profiles, user-modification preservation
 
 **Status:** Not Started
 
@@ -1225,9 +1225,9 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 
 ### Unit 22.6: Team Workflow & Integration Validation
 
-**Description:** Validate team-level features: CI aggregation pipeline for multi-project posture reporting, git workflow file generation (PR templates, branch naming hooks), profile inheritance chains (org -> client -> project), client profile switching, multi-project `gdev check` in CI, Starship config generation, and `enterShell` notification content.
+**Description:** Validate team-level features: CI aggregation pipeline for multi-project posture reporting, git workflow file generation (PR templates, branch naming hooks), profile inheritance chains (org -> client -> project), client profile switching, multi-project `qsdev check` in CI, Starship config generation, and `enterShell` notification content.
 
-**Context:** Phases 13-16 introduce features that only manifest at team or organizational scale: the CI aggregation pipeline collects posture reports from multiple repos, profile inheritance lets org-level defaults flow through client overlays to project config, and git workflow tools generate ecosystem-aware PR templates and branch naming hooks. These features are harder to test than single-project commands because they involve multi-project coordination, profile layering, and CI pipeline simulation. The `gdev team-report` command aggregates JSON posture reports — testing it requires generating multiple reports and feeding them through the aggregation engine.
+**Context:** Phases 13-16 introduce features that only manifest at team or organizational scale: the CI aggregation pipeline collects posture reports from multiple repos, profile inheritance lets org-level defaults flow through client overlays to project config, and git workflow tools generate ecosystem-aware PR templates and branch naming hooks. These features are harder to test than single-project commands because they involve multi-project coordination, profile layering, and CI pipeline simulation. The `qsdev team-report` command aggregates JSON posture reports — testing it requires generating multiple reports and feeding them through the aggregation engine.
 
 **Desired Outcome:** A test suite that validates multi-project aggregation, profile inheritance correctness, git workflow generation, and shell integration — the features that make gdev work for a consulting firm managing multiple client projects.
 
@@ -1245,7 +1245,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
    cp project-b-posture.json reports/project-b/posture.json
    cp project-c-posture.json reports/project-c/posture.json
 
-   exec gdev team-report --input-dir reports/ --format md > dashboard.md
+   exec qsdev team-report --input-dir reports/ --format md > dashboard.md
 
    # Verify dashboard content
    exec grep 'project-a' dashboard.md
@@ -1288,7 +1288,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
    mkdir reports/alpha
    cp posture.json reports/alpha/posture.json
 
-   exec gdev team-report --input-dir reports/ --format json > team.json
+   exec qsdev team-report --input-dir reports/ --format json > team.json
 
    json_path team.json '.schemaVersion' '1.0.0'
    json_path team.json '.summary.projectCount' '1'
@@ -1308,7 +1308,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 4. Write `git-pr-template.txtar` — verify PR template content varies by ecosystem:
    ```
    # PR template: ecosystem-aware content
-   exec gdev init --non-interactive --answers-file answers-go.yaml
+   exec qsdev init --non-interactive --answers-file answers-go.yaml
    exists .github/pull_request_template.md
    exec grep 'linter passes' .github/pull_request_template.md
    exec grep 'Security Checklist' .github/pull_request_template.md
@@ -1321,7 +1321,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 5. Write `git-pr-template-multi-ecosystem.txtar` — verify multi-ecosystem PR template:
    ```
    # PR template: multi-ecosystem gets combined checklists
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
    exists .github/pull_request_template.md
 
    # Go-specific checks
@@ -1337,7 +1337,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 6. Write `git-branch-naming.txtar` — verify branch naming hook validation:
    ```
    # Branch naming hook: rejects non-conforming names, allows standard branches
-   exec gdev init --non-interactive --answers-file answers.yaml
+   exec qsdev init --non-interactive --answers-file answers.yaml
    exec git init .
    exec git add .
    exec git commit -m "initial"
@@ -1360,14 +1360,14 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 7. Write `profile-inheritance-chain.txtar` — verify org -> client -> project chain:
    ```
    # Profile inheritance: org -> client -> project overrides layer correctly
-   exec gdev init --non-interactive --verbose
+   exec qsdev init --non-interactive --verbose
    stdout 'profile:consulting-default'
 
-   exec gdev status --json > status.json
+   exec qsdev status --json > status.json
    # Client security level should override profile default
    json_path status.json '.score.defense' '>=0'
 
-   -- .gdev.yaml --
+   -- .qsdev.yaml --
    version: 1
    profile: consulting-default
    client:
@@ -1378,20 +1378,20 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 8. Write `client-profile-switching.txtar` — verify switching client profiles within same repo:
    ```
    # Client profile switching: different clients produce different configs
-   exec gdev init --non-interactive
-   exec gdev status --json > status-strict.json
+   exec qsdev init --non-interactive
+   exec qsdev status --json > status-strict.json
 
    # Switch to a less restrictive client
-   cp .gdev-baseline.yaml .gdev.yaml
-   exec gdev init --non-interactive
-   exec gdev status --json > status-baseline.json
+   cp .gdev-baseline.yaml .qsdev.yaml
+   exec qsdev init --non-interactive
+   exec qsdev status --json > status-baseline.json
 
    # Strict client should have higher defense score
    # (can't directly compare in testscript, but verify both produce valid output)
    json_path status-strict.json '.score.total' '>=0'
    json_path status-baseline.json '.score.total' '>=0'
 
-   -- .gdev.yaml --
+   -- .qsdev.yaml --
    version: 1
    profile: enterprise
    client:
@@ -1405,14 +1405,14 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
      name: poc-client
      security_level: baseline
    ```
-9. Write `multi-project-ci-check.txtar` — verify `gdev check` works in CI matrix context:
+9. Write `multi-project-ci-check.txtar` — verify `qsdev check` works in CI matrix context:
    ```
-   # Multi-project gdev check: CI matrix simulation
-   exec gdev init --non-interactive --answers-file answers.yaml
+   # Multi-project qsdev check: CI matrix simulation
+   exec qsdev init --non-interactive --answers-file answers.yaml
 
-   # Run gdev check with CI-appropriate flags
+   # Run qsdev check with CI-appropriate flags
    env CI=true
-   exec gdev check --format json --audit-level medium > check-result.json
+   exec qsdev check --format json --audit-level medium > check-result.json
 
    json_path check-result.json '.summary.total' '>=1'
    json_path check-result.json '.version' 'exists'
@@ -1431,13 +1431,13 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 10. Write `starship-config.txtar` — verify Starship config generation when opt-in enabled:
     ```
     # Starship integration: config generated when enabled
-    exec gdev init --non-interactive --answers-file answers.yaml
-    exec gdev enable starship-integration
+    exec qsdev init --non-interactive --answers-file answers.yaml
+    exec qsdev enable starship-integration
 
     exists .starship.toml
     exec grep 'custom.gdev' .starship.toml
-    exec grep 'GDEV_PROJECT_NAME' .starship.toml
-    exec grep 'GDEV_SECURITY_PROFILE' .starship.toml
+    exec grep 'QSDEV_PROJECT_NAME' .starship.toml
+    exec grep 'QSDEV_SECURITY_PROFILE' .starship.toml
 
     -- answers.yaml --
     ecosystems: [go]
@@ -1447,16 +1447,16 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 11. Write `entershell-notification.txtar` — verify enterShell notification content in devenv.nix:
     ```
     # enterShell: notification content generated in devenv.nix
-    exec gdev init --non-interactive --answers-file answers.yaml
+    exec qsdev init --non-interactive --answers-file answers.yaml
 
     # Verify enterShell contains gdev notification
     exec grep 'enterShell' devenv.nix
-    exec grep 'GDEV_ECOSYSTEMS' devenv.nix
-    exec grep 'GDEV_SECURITY_PROFILE' devenv.nix
+    exec grep 'QSDEV_ECOSYSTEMS' devenv.nix
+    exec grep 'QSDEV_SECURITY_PROFILE' devenv.nix
 
     # Verify gdev env vars are set
-    exec grep 'GDEV_PROJECT_NAME' devenv.nix
-    exec grep 'GDEV_VERSION' devenv.nix
+    exec grep 'QSDEV_PROJECT_NAME' devenv.nix
+    exec grep 'QSDEV_VERSION' devenv.nix
 
     -- answers.yaml --
     ecosystems: [go]
@@ -1471,7 +1471,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
     cp p1.json reports/p1/posture.json
     cp p2.json reports/p2/posture.json
 
-    exec gdev team-report --input-dir reports/ --format md > dashboard.md
+    exec qsdev team-report --input-dir reports/ --format md > dashboard.md
 
     # Verify all dashboard sections
     exec grep '## Overview' dashboard.md
@@ -1502,18 +1502,18 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 **Acceptance Criteria:**
 - [ ] CI aggregation pipeline collects multiple posture JSONs and produces markdown dashboard
 - [ ] Dashboard includes overview table, project scores, and attention-required section
-- [ ] `gdev team-report --format json` produces valid JSON with summary statistics
+- [ ] `qsdev team-report --format json` produces valid JSON with summary statistics
 - [ ] PR template generated with ecosystem-appropriate content (Go checks for Go, TS checks for TS)
 - [ ] Multi-ecosystem project gets combined checklist items in PR template
 - [ ] Branch naming hook rejects non-conforming names and allows main/master/develop
 - [ ] Profile inheritance chain (org -> client -> project) resolves correctly with client overrides
 - [ ] Client profile switching produces different security configurations
-- [ ] `gdev check` works in CI context (`CI=true` env var) with JSON output
-- [ ] Multi-project `gdev check` in CI matrix produces valid per-project reports
-- [ ] `gdev enable starship-integration` generates `.starship.toml` with gdev custom modules
-- [ ] Starship config references `GDEV_PROJECT_NAME` and `GDEV_SECURITY_PROFILE` env vars
+- [ ] `qsdev check` works in CI context (`CI=true` env var) with JSON output
+- [ ] Multi-project `qsdev check` in CI matrix produces valid per-project reports
+- [ ] `qsdev enable starship-integration` generates `.starship.toml` with gdev custom modules
+- [ ] Starship config references `QSDEV_PROJECT_NAME` and `QSDEV_SECURITY_PROFILE` env vars
 - [ ] `enterShell` notification content generated in devenv.nix with gdev context
-- [ ] gdev environment variables (`GDEV_PROJECT_NAME`, `GDEV_VERSION`, etc.) set in devenv.nix
+- [ ] gdev environment variables (`QSDEV_PROJECT_NAME`, `QSDEV_VERSION`, etc.) set in devenv.nix
 
 **Research Citations:**
 - `phases/15-health-status-compliance-reporting.md § Unit 15.6` — team aggregation pipeline, markdown dashboard, scope file
@@ -1528,7 +1528,7 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 ## Phase Completion Criteria
 
 - [ ] All six units pass acceptance criteria
-- [ ] Configuration round-trip verified: write `.gdev.yaml` -> parse -> resolve -> generate -> `gdev check` passes
+- [ ] Configuration round-trip verified: write `.qsdev.yaml` -> parse -> resolve -> generate -> `qsdev check` passes
 - [ ] All 4 onboarding modes tested: Create (no config), Join (config exists, no state), Update (version mismatch), Repair (drifted files)
 - [ ] All 25+ skill and agent files parse without error and have correct `disable-model-invocation` settings
 - [ ] Deny rule conflict matrix tests zero unexpected conflicts with all 48+ rules against all ecosystem commands
@@ -1537,10 +1537,10 @@ Phase 17 complete (test infrastructure framework — testscript E2E framework, c
 - [ ] All 6 drift detection categories have positive and negative control tests
 - [ ] SARIF 2.1.0 output passes schema validation
 - [ ] shields.io badge JSON produces valid endpoint responses for all 3 variants
-- [ ] `gdev repair` never modifies devenv.nix and always creates backups
-- [ ] `gdev info` responds in under 100ms
-- [ ] `gdev teardown` never silently deletes user-modified files
-- [ ] `gdev update` rolls back on failure
+- [ ] `qsdev repair` never modifies devenv.nix and always creates backups
+- [ ] `qsdev info` responds in under 100ms
+- [ ] `qsdev teardown` never silently deletes user-modified files
+- [ ] `qsdev update` rolls back on failure
 - [ ] Multi-project team aggregation produces correct markdown dashboard
 - [ ] Profile inheritance chain resolves correctly through org -> client -> project -> local layers
 - [ ] All tests run successfully in the Phase 17 CI pipeline (quick-validation and nightly matrix)

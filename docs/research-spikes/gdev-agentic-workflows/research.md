@@ -18,7 +18,7 @@ Builds on two completed sibling spikes:
 
 - **Context Management** — Complete. Five-layer context architecture: minimal always-on CLAUDE.md (50-100 lines), conditional `.claude/rules/` with `paths:` frontmatter, on-demand skill loading, isolated agent context, and zero-cost external hooks/settings. 5% context budget target for generated config. Model-aware generation (Sonnet 200k vs Opus 1M). Anti-patterns: kitchen sink CLAUDE.md, verbose skill descriptions, auto-invoking all skills. See [context-management-research.md](context-management-research.md).
 
-- **Guardrail-Workflow Integration** — Complete. The core tension: deny rules must not block test/build operations that skills need. Solution: precision-scoped deny rules targeting specific dangerous operations (not broad tool categories), explicit allow rules for workflow operations, agent tool restrictions as stronger guarantees, and conflict detection tests in gdev init/update. Recommended approach: `/upgrade-dep` works *with* guardrail hooks (hook validates package), not around them. See [guardrail-integration-research.md](guardrail-integration-research.md).
+- **Guardrail-Workflow Integration** — Complete. The core tension: deny rules must not block test/build operations that skills need. Solution: precision-scoped deny rules targeting specific dangerous operations (not broad tool categories), explicit allow rules for workflow operations, agent tool restrictions as stronger guarantees, and conflict detection tests in qsdev init/update. Recommended approach: `/upgrade-dep` works *with* guardrail hooks (hook validates package), not around them. See [guardrail-integration-research.md](guardrail-integration-research.md).
 
 - **Prior Art Survey** — Complete. 12 sources from 6 projects: Trail of Bits skills (35+ plugins, marketplace distribution, security-focused), Trail of Bits claude-code-config (opinionated team defaults, anti-rationalization hook, custom commands), Security Phoenix (graduated security tiers, 12-role pipeline, hook integration), awesome-claude-code-toolkit (taxonomy of 135 agents), cursor rules (decomposition patterns for multi-file architecture), community best practices (context management, three-tier orchestration, skill design). See [prior-art-research.md](prior-art-research.md).
 
@@ -45,7 +45,7 @@ gdev can provide a comprehensive agentic workflow library through Claude Code's 
 
 2. **Five-Layer Context Architecture**: Always-on CLAUDE.md (50-100 lines) → conditional rules with `paths:` → on-demand skills → isolated agents → external hooks/settings. Generated config stays under 5% of context budget.
 
-3. **Precision Guardrails**: Deny rules target specific dangerous operations (`npm install *`), not broad categories (`npm *`). Explicit allow rules for workflow operations (`npm test *`, `git *`). Conflict detection tests validate guardrail-workflow compatibility at `gdev init` time.
+3. **Precision Guardrails**: Deny rules target specific dangerous operations (`npm install *`), not broad categories (`npm *`). Explicit allow rules for workflow operations (`npm test *`, `git *`). Conflict detection tests validate guardrail-workflow compatibility at `qsdev init` time.
 
 4. **Consulting Differentiation**: Onboarding-first library, compliance profiles, handoff documentation pipeline, two-tier skills (user-level + project-level), graduated cost tiers, zero-friction wizard quick-path.
 

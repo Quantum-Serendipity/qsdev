@@ -36,7 +36,7 @@ func detectHookDrift(projectDir string, enabledTools map[string]bool) DriftCateg
 				Severity:    DriftWarning,
 				Subject:     "pre-commit",
 				Description: "Git pre-commit hook is not installed",
-				Remediation: "Run gdev update to install the pre-commit hook",
+				Remediation: "Run qsdev update to install the pre-commit hook",
 			})
 		}
 	} else if runtime.GOOS != "windows" {
@@ -62,7 +62,7 @@ func detectHookDrift(projectDir string, enabledTools map[string]bool) DriftCateg
 					Severity:    DriftWarning,
 					Subject:     "commit-msg",
 					Description: "Commitlint is enabled but the commit-msg hook is not installed",
-					Remediation: "Run gdev update to install the commit-msg hook",
+					Remediation: "Run qsdev update to install the commit-msg hook",
 				})
 			}
 		}

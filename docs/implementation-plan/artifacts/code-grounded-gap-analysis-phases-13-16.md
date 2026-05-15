@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary
 
-Six analysis passes across the entire gdev-secure-devenv-bootstrap codebase (82 first-party Go source files, ~40K lines) identified **10 findings that validate plan assumptions**, **13 findings that require adjustments**, and **0 findings that fully invalidate assumptions**. The codebase is well-structured with clean extension points; most gaps are additions rather than conflicts.
+Six analysis passes across the entire qsdev codebase (82 first-party Go source files, ~40K lines) identified **10 findings that validate plan assumptions**, **13 findings that require adjustments**, and **0 findings that fully invalidate assumptions**. The codebase is well-structured with clean extension points; most gaps are additions rather than conflicts.
 
 The most impactful adjustments are: (1) the section marker system supports only one pair per file, not named multi-section markers; (2) the EcosystemModule interface lacks `VerificationCommands()` assumed by Phase 14; (3) the state directory is `.devinit/` not `.gdev/`; and (4) no semver library exists in go.mod.
 
@@ -58,7 +58,7 @@ The most impactful adjustments are: (1) the section marker system supports only 
 ### 2.9 WizardAnswers Flows Cleanly Through the System
 - **File:** `pkg/types/types.go:8-32` -- `WizardAnswers` struct with 19 fields
 - **Flow:** `commands.go:56` -> `AnswersFromFlags` -> `RunWizard` -> `gen.Generate(answers)` -> `state.RecordFiles`
-- **Impact:** Phase 13 layers `.gdev.yaml` resolution on top; the resolved config maps into WizardAnswers for generation
+- **Impact:** Phase 13 layers `.qsdev.yaml` resolution on top; the resolved config maps into WizardAnswers for generation
 
 ### 2.10 Embedded Skills + Rules Library
 - **File:** `addons/claudecode/templates.go:1-4` -- `//go:embed all:templates` directive
@@ -76,15 +76,15 @@ The most impactful adjustments are: (1) the section marker system supports only 
 **Plan assumes:** `.gdev/` state directory (e.g., `.gdev/state.yaml`, `.gdev/cache/`)
 
 **Code uses:**
-- `addons/devinit/commands.go:23`: `statePath = ".devinit/.gdev-init-state.yaml"`
-- `addons/devinit/commands.go:24-25`: `answersDir = ".devinit"`, `answersFileName = ".gdev-init-answers.yaml"`
+- `addons/devinit/commands.go:23`: `statePath = ".devinit/.qsdev-init-state.yaml"`
+- `addons/devinit/commands.go:24-25`: `answersDir = ".devinit"`, `answersFileName = ".qsdev-init-answers.yaml"`
 - Per-addon state: `devenv.SaveAnswers()` writes to `.devenv/`, `claudecode.SaveAnswers()` writes to `.claude/`
 
-**Recommendation:** Phase 13 introduces `.gdev.yaml` as the NEW public-facing project config (this is correct and distinct from the internal state). For internal state, either:
+**Recommendation:** Phase 13 introduces `.qsdev.yaml` as the NEW public-facing project config (this is correct and distinct from the internal state). For internal state, either:
 - (a) Migrate state to `.gdev/state.yaml` in Phase 13 as a breaking change (cleaner long-term), OR
-- (b) Keep `.devinit/` for backward compat and have Phase 15 `gdev status` aggregate from all three locations
+- (b) Keep `.devinit/` for backward compat and have Phase 15 `qsdev status` aggregate from all three locations
 
-Option (a) is strongly recommended. Add a migration step in Phase 13: detect `.devinit/.gdev-init-state.yaml` and move to `.gdev/state.yaml`.
+Option (a) is strongly recommended. Add a migration step in Phase 13: detect `.devinit/.qsdev-init-state.yaml` and move to `.gdev/state.yaml`.
 
 ---
 
@@ -101,7 +101,7 @@ Option (a) is strongly recommended. Add a migration step in Phase 13: detect `.d
 1. **Extend `SectionMarkers()` to support named sections** -- add a `SectionMarkersNamed(existing, newGenerated, sectionID string)` variant that finds `<!-- gdev:X -->` / `<!-- /gdev:X -->` pairs. This enables Phase 14's multi-section CLAUDE.md.
 2. **Keep single generated section with subsections inside it** (simpler, lower risk) -- all gdev content stays between the existing `BEGIN/END GENERATED SECTION` markers, with subsection headers (not markers) for skills/agents/tasks/commands inside the generated block.
 
-Option 1 is the correct path given Phase 12's planned `gdev enable/disable` needs to surgically update individual sections.
+Option 1 is the correct path given Phase 12's planned `qsdev enable/disable` needs to surgically update individual sections.
 
 ---
 
@@ -190,7 +190,7 @@ This is a Phase 12 prerequisite. Phase 15 drift detection uses `Category` to dec
 
 **Code at `addons/claudecode/generate_skills.go:60-77`:** Skills are deployed as plain `.md` files from `embed.FS` with `Strategy: types.LibraryManaged`
 
-**Validation:** This is correct. The `` !`command` `` syntax is a Claude Code runtime feature -- Claude Code preprocesses skill files at invocation time. Skills deployed as static markdown with `!` syntax will work natively without any Go-side template processing. New gdev operation skills with `!`gdev devenv doctor --json`` will work as-is.
+**Validation:** This is correct. The `` !`command` `` syntax is a Claude Code runtime feature -- Claude Code preprocesses skill files at invocation time. Skills deployed as static markdown with `!` syntax will work natively without any Go-side template processing. New gdev operation skills with `!`qsdev devenv doctor --json`` will work as-is.
 
 **No adjustment needed.**
 
@@ -198,7 +198,7 @@ This is a Phase 12 prerequisite. Phase 15 drift detection uses `Category` to dec
 
 ### 3.8 No --json Output Pattern Exists (Phase 15-16)
 
-**Plan assumes:** `gdev status --json`, `gdev status --sarif`, `gdev check --format json`
+**Plan assumes:** `qsdev status --json`, `qsdev status --sarif`, `qsdev check --format json`
 
 **Code:** No existing command has `--json` or `--format` support. All output goes through `fmt.Fprintf` to `cmd.OutOrStdout()`.
 
@@ -258,7 +258,7 @@ type Profile struct {
 - No `ComplianceLevel` or `SecurityLevel` field
 - `InfraProfile` at `internal/profile/types.go:94-105` also has no compliance level (it has Scanning, SBOM, Updates -- the building blocks, but no single "level" field)
 
-**Recommendation:** Phase 13 adds a new config layer (`.gdev.yaml` `GdevConfig` struct) ABOVE the existing Profile system. The compliance level maps to concrete settings via `complianceLevelToConfig()` (as the plan describes). The existing `Profile` struct does not need a compliance level field -- that goes on `GdevConfig.Security.Level` and `ClientConfig.SecurityLevel`. Resolution merges the compliance level's concrete settings into the resolved config.
+**Recommendation:** Phase 13 adds a new config layer (`.qsdev.yaml` `GdevConfig` struct) ABOVE the existing Profile system. The compliance level maps to concrete settings via `complianceLevelToConfig()` (as the plan describes). The existing `Profile` struct does not need a compliance level field -- that goes on `GdevConfig.Security.Level` and `ClientConfig.SecurityLevel`. Resolution merges the compliance level's concrete settings into the resolved config.
 
 ---
 
@@ -289,32 +289,32 @@ Phase 16's gdev environment notification and any tool-contributed enterShell con
 **Plan assumes:** Single state source for status reporting
 
 **Code writes state to 3 locations:**
-- `addons/devinit/commands.go:173-175`: `.devinit/.gdev-init-state.yaml` (master state)
+- `addons/devinit/commands.go:173-175`: `.devinit/.qsdev-init-state.yaml` (master state)
 - `addons/devinit/commands.go:184-186`: `devenv.SaveAnswers()` to `.devenv/.gdev-state.yaml`
 - `addons/devinit/commands.go:187-189`: `claudecode.SaveAnswers()` to `.claude/.gdev-claude-state.yaml`
 
-The master state at `.devinit/.gdev-init-state.yaml` contains ALL generated files from both addons (computed at line 172: `state.RecordFiles(allFiles)`). The per-addon saves are ANSWERS files, not state files.
+The master state at `.devinit/.qsdev-init-state.yaml` contains ALL generated files from both addons (computed at line 172: `state.RecordFiles(allFiles)`). The per-addon saves are ANSWERS files, not state files.
 
-**Recommendation:** Phase 15 `gdev status` should load the master state from the single canonical location (`.devinit/.gdev-init-state.yaml` or migrated `.gdev/state.yaml`). The per-addon answer files are inputs, not state. Add `state.LoadAllStates(projectRoot)` that knows the canonical state path. If Phase 13 migrates to `.gdev/state.yaml`, this is simplified.
+**Recommendation:** Phase 15 `qsdev status` should load the master state from the single canonical location (`.devinit/.qsdev-init-state.yaml` or migrated `.gdev/state.yaml`). The per-addon answer files are inputs, not state. Add `state.LoadAllStates(projectRoot)` that knows the canonical state path. If Phase 13 migrates to `.gdev/state.yaml`, this is simplified.
 
 ---
 
 ### 3.13 Command Registration for New Commands (Phases 13-16)
 
-**Current top-level commands:** `gdev init`, `gdev devenv`, `gdev claude` (via `cmd.Main()` from the gdev framework)
+**Current top-level commands:** `qsdev init`, `qsdev devenv`, `qsdev claude` (via `cmd.Main()` from the gdev framework)
 
-**New commands needed:** `gdev check`, `gdev status`, `gdev info`, `gdev repair`, `gdev outdated`, `gdev update`, `gdev teardown`, `gdev evidence`, `gdev team-report`
+**New commands needed:** `qsdev check`, `qsdev status`, `qsdev info`, `qsdev repair`, `qsdev outdated`, `qsdev update`, `qsdev teardown`, `qsdev evidence`, `qsdev team-report`
 
 **Code at `cmd/gdev-bootstrap/main.go`:** Shows `bootstrap.Configure()` + per-addon `Configure()` pattern. Each addon registers its own Cobra commands.
 
 **Recommendation:** Create a new addon package (`addons/lifecycle/`) for Phase 13-16 commands:
 - `addons/lifecycle/addon.go` -- registration
-- `addons/lifecycle/cmd_check.go` -- gdev check
-- `addons/lifecycle/cmd_status.go` -- gdev status
+- `addons/lifecycle/cmd_check.go` -- qsdev check
+- `addons/lifecycle/cmd_status.go` -- qsdev status
 - `addons/lifecycle/cmd_info.go` -- gdev info
-- `addons/lifecycle/cmd_repair.go` -- gdev repair
+- `addons/lifecycle/cmd_repair.go` -- qsdev repair
 - `addons/lifecycle/cmd_outdated.go` -- gdev outdated
-- `addons/lifecycle/cmd_update.go` -- gdev update
+- `addons/lifecycle/cmd_update.go` -- qsdev update
 - `addons/lifecycle/cmd_teardown.go` -- gdev teardown
 - `addons/lifecycle/cmd_evidence.go` -- gdev evidence
 
@@ -344,12 +344,12 @@ This keeps `devinit` focused on the init/wizard flow. `main.go` adds `lifecycle.
 
 | Unit | Status | Key Adjustment |
 |------|--------|---------------|
-| **13.1** .gdev.yaml Schema & Parser | Needs Adjustment | New file/package; state directory migration from `.devinit/` to `.gdev/` |
+| **13.1** .qsdev.yaml Schema & Parser | Needs Adjustment | New file/package; state directory migration from `.devinit/` to `.gdev/` |
 | **13.2** Configuration Resolution Engine | Needs Adjustment | Profiles lack compliance level; resolution must bridge old Profile to new GdevConfig |
 | **13.3** Onboarding Mode Detection | Needs Adjustment | Only 2 of 4 modes exist; DetectExistingConfig must return ModeRecommendation |
 | **13.4** Join Mode Implementation | Needs Adjustment | Entirely new execution branch |
 | **13.5** gdev_version Constraint | Needs Adjustment | No semver library in go.mod; add `Masterminds/semver/v3` |
-| **13.6** gdev check Command | Validated | Follows existing Cobra pattern; add `internal/check/` package |
+| **13.6** qsdev check Command | Validated | Follows existing Cobra pattern; add `internal/check/` package |
 | **13.7** Client Profiles & Compliance | Needs Adjustment | Compliance levels are new; existing Profile struct needs no changes (GdevConfig layer) |
 | **14.1** gdev Operation Skills | Validated | Extends existing `deploySkills()` with 10 more SKILL.md files |
 | **14.2** Consulting Workflow Agents | Validated | New `.claude/agents/` directory via embed.FS; same deploy pattern |
@@ -358,16 +358,16 @@ This keeps `devinit` focused on the init/wizard flow. `main.go` adds `lifecycle.
 | **14.5** Deny Rule Conflict Validation | Validated | New test matrix; no architectural conflict |
 | **14.6** devenv Task Definitions | Needs Adjustment | `VerificationCommands()` doesn't exist on interface; use `languageCommands` map as seed |
 | **14.7** CLAUDE.md Section Enhancement | Needs Adjustment | Single marker pair -> must add named section support to merge package |
-| **15.1** gdev status Command | Needs Adjustment | No --json pattern exists; establish `internal/output/` format package |
+| **15.1** qsdev status Command | Needs Adjustment | No --json pattern exists; establish `internal/output/` format package |
 | **15.2** Compliance Posture Scoring | Validated | New `internal/posture/` package; reads existing state/registry |
 | **15.3** Drift Detection Engine | Validated | Builds on `state.CheckModified()`; extends with 6 categories |
 | **15.4** gdev evidence Command | Validated | New command; reads existing PostureReport |
 | **15.5** Machine-Readable Output & Badges | Needs Adjustment | Establish --format flag pattern for reuse across commands |
 | **15.6** Team Aggregation Pipeline | Validated | New command; consumes JSON output from 15.5 |
-| **16.1** gdev repair | Needs Adjustment | Needs state directory consistency (Finding 3.1) + FileState.Owner (Finding 3.4) |
+| **16.1** qsdev repair | Needs Adjustment | Needs state directory consistency (Finding 3.1) + FileState.Owner (Finding 3.4) |
 | **16.2** gdev info | Validated | Simple YAML reader; no conflicts |
 | **16.3** gdev outdated | Validated | Thin wrapper; no conflicts |
-| **16.4** gdev update | Validated | Composes existing `runUpdate()` (Phase 8) + self-update + devenv update |
+| **16.4** qsdev update | Validated | Composes existing `runUpdate()` (Phase 8) + self-update + devenv update |
 | **16.5** gdev teardown | Needs Adjustment | Needs FileState.Owner/Category for file classification |
 | **16.6** Git Workflow Automation | Validated | New lifecycle-managed tools; follows existing pattern |
 | **16.7** Shell & Environment Integration | Needs Adjustment | enterShell is hardcoded (Finding 3.11) |
@@ -391,7 +391,7 @@ Phase 12 (tool lifecycle) is the critical prerequisite because:
 4. **13.3** (mode detection) -- uses 13.2's resolved config + 13.5's version check
 5. **13.4** (join mode) -- new branch using 13.3's routing
 6. **13.7** (compliance levels) -- enriches 13.2's resolution
-7. **13.6** (gdev check) -- uses everything above
+7. **13.6** (qsdev check) -- uses everything above
 
 State directory migration (`.devinit/` -> `.gdev/`) should happen as the FIRST task in Phase 13.1.
 
@@ -405,7 +405,7 @@ State directory migration (`.devinit/` -> `.gdev/`) should happen as the FIRST t
 7. **14.5** (deny rule conflicts) -- validates 14.1-14.3 against settings.json
 
 ### Then Phase 15 (Health & Status)
-1. **15.1** (gdev status + --format pattern) -- establishes output infrastructure
+1. **15.1** (qsdev status + --format pattern) -- establishes output infrastructure
 2. **15.3** (drift detection) -- feeds into 15.2's scoring
 3. **15.2** (scoring engine) -- consumes drift + defense + deps
 4. **15.5** (JSON/SARIF/badge rendering) -- serializes 15.2's output
@@ -415,8 +415,8 @@ State directory migration (`.devinit/` -> `.gdev/`) should happen as the FIRST t
 ### Finally Phase 16 (DX Polish)
 1. **16.2** (gdev info) -- lightest, validates state reading
 2. **16.3** (gdev outdated) -- thin wrapper, no dependencies
-3. **16.1** (gdev repair) -- needs drift detection from Phase 15
-4. **16.4** (gdev update) -- coordinates existing update flow
+3. **16.1** (qsdev repair) -- needs drift detection from Phase 15
+4. **16.4** (qsdev update) -- coordinates existing update flow
 5. **16.5** (gdev teardown) -- needs FileState.Owner from Phase 12
 6. **16.6** (git workflow) -- independent lifecycle tools
 7. **16.7** (shell/env integration) -- needs enterShell refactor

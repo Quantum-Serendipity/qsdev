@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/toolreg"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func testRegistry() *toolreg.Registry {
@@ -130,7 +130,7 @@ func TestClassifyFiles_Deleted(t *testing.T) {
 
 func TestClassifyFiles_SharedSectionIDs(t *testing.T) {
 	dir := t.TempDir()
-	content := []byte("# Shared content\n<!-- gdev:test-tool -->\nstuff\n<!-- /gdev:test-tool -->\n")
+	content := []byte("# Shared content\n<!-- qsdev:test-tool -->\nstuff\n<!-- /qsdev:test-tool -->\n")
 	absPath := filepath.Join(dir, "shared.md")
 	if err := os.WriteFile(absPath, content, 0o644); err != nil {
 		t.Fatal(err)

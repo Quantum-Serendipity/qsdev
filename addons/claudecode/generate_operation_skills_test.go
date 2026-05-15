@@ -4,18 +4,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // ---------------------------------------------------------------------------
-// loadGdevOpsManifest tests
+// loadQsdevOpsManifest tests
 // ---------------------------------------------------------------------------
 
-func TestLoadGdevOpsManifest_Valid(t *testing.T) {
-	manifest, err := claudecode.ExportLoadGdevOpsManifest()
+func TestLoadQsdevOpsManifest_Valid(t *testing.T) {
+	manifest, err := claudecode.ExportLoadQsdevOpsManifest()
 	if err != nil {
-		t.Fatalf("loadGdevOpsManifest returned error: %v", err)
+		t.Fatalf("loadQsdevOpsManifest returned error: %v", err)
 	}
 
 	if len(manifest.Skills) != 10 {
@@ -35,10 +35,10 @@ func TestLoadGdevOpsManifest_Valid(t *testing.T) {
 	}
 }
 
-func TestLoadGdevOpsManifest_AllFilesExist(t *testing.T) {
-	manifest, err := claudecode.ExportLoadGdevOpsManifest()
+func TestLoadQsdevOpsManifest_AllFilesExist(t *testing.T) {
+	manifest, err := claudecode.ExportLoadQsdevOpsManifest()
 	if err != nil {
-		t.Fatalf("loadGdevOpsManifest returned error: %v", err)
+		t.Fatalf("loadQsdevOpsManifest returned error: %v", err)
 	}
 
 	// Deploy all skills (nil EnabledTools = deploy all) to verify embedded files exist.
@@ -85,8 +85,8 @@ func TestDeployOperationSkills_DeploysAll(t *testing.T) {
 func TestDeployOperationSkills_RespectsEnabledTools(t *testing.T) {
 	answers := types.WizardAnswers{
 		EnabledTools: map[string]bool{
-			"gdev-init":   true,
-			"gdev-doctor": true,
+			"qsdev-init":   true,
+			"qsdev-doctor": true,
 			// All others implicitly false or absent.
 		},
 	}
@@ -104,11 +104,11 @@ func TestDeployOperationSkills_RespectsEnabledTools(t *testing.T) {
 	for _, f := range files {
 		paths[f.Path] = true
 	}
-	if !paths[".claude/skills/gdev-init/SKILL.md"] {
-		t.Error("missing gdev-init skill")
+	if !paths[".claude/skills/qsdev-init/SKILL.md"] {
+		t.Error("missing qsdev-init skill")
 	}
-	if !paths[".claude/skills/gdev-doctor/SKILL.md"] {
-		t.Error("missing gdev-doctor skill")
+	if !paths[".claude/skills/qsdev-doctor/SKILL.md"] {
+		t.Error("missing qsdev-doctor skill")
 	}
 }
 
@@ -127,9 +127,9 @@ func TestDeployOperationSkills_ContentNotEmpty(t *testing.T) {
 }
 
 func TestDeployOperationSkills_UserOnlySkills(t *testing.T) {
-	manifest, err := claudecode.ExportLoadGdevOpsManifest()
+	manifest, err := claudecode.ExportLoadQsdevOpsManifest()
 	if err != nil {
-		t.Fatalf("loadGdevOpsManifest returned error: %v", err)
+		t.Fatalf("loadQsdevOpsManifest returned error: %v", err)
 	}
 
 	answers := types.WizardAnswers{}
@@ -175,8 +175,8 @@ func TestDeployOperationSkills_AllowedTools(t *testing.T) {
 
 	for _, f := range files {
 		content := string(f.Content)
-		if !strings.Contains(content, "Bash(gdev *)") {
-			t.Errorf("skill file %q should have 'allowed-tools' containing 'Bash(gdev *)'", f.Path)
+		if !strings.Contains(content, "Bash(qsdev *)") {
+			t.Errorf("skill file %q should have 'allowed-tools' containing 'Bash(qsdev *)'", f.Path)
 		}
 	}
 }
@@ -189,8 +189,8 @@ func TestDeployOperationSkills_FileMetadata(t *testing.T) {
 	}
 
 	for _, f := range files {
-		if !strings.HasPrefix(f.Path, ".claude/skills/gdev-") {
-			t.Errorf("path %q does not start with .claude/skills/gdev-", f.Path)
+		if !strings.HasPrefix(f.Path, ".claude/skills/qsdev-") {
+			t.Errorf("path %q does not start with .claude/skills/qsdev-", f.Path)
 		}
 		if !strings.HasSuffix(f.Path, "/SKILL.md") {
 			t.Errorf("path %q does not end with /SKILL.md", f.Path)
@@ -207,23 +207,23 @@ func TestDeployOperationSkills_FileMetadata(t *testing.T) {
 	}
 }
 
-func TestAvailableGdevOpsSkillNames(t *testing.T) {
-	names := claudecode.AvailableGdevOpsSkillNames()
+func TestAvailableQsdevOpsSkillNames(t *testing.T) {
+	names := claudecode.AvailableQsdevOpsSkillNames()
 	if len(names) != 10 {
-		t.Errorf("expected 10 gdev-ops skill names, got %d", len(names))
+		t.Errorf("expected 10 qsdev-ops skill names, got %d", len(names))
 	}
 
 	expected := map[string]bool{
-		"gdev-init":    true,
-		"gdev-onboard": true,
-		"gdev-setup":   true,
-		"gdev-enable":  true,
-		"gdev-disable": true,
-		"gdev-update":  true,
-		"gdev-doctor":  true,
-		"gdev-status":  true,
-		"gdev-tools":   true,
-		"gdev-detect":  true,
+		"qsdev-init":    true,
+		"qsdev-onboard": true,
+		"qsdev-setup":   true,
+		"qsdev-enable":  true,
+		"qsdev-disable": true,
+		"qsdev-update":  true,
+		"qsdev-doctor":  true,
+		"qsdev-status":  true,
+		"qsdev-tools":   true,
+		"qsdev-detect":  true,
 	}
 
 	for _, name := range names {

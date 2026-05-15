@@ -3,8 +3,8 @@ package toolreg
 import (
 	"fmt"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/shellenv"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/shellenv"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func init() {
@@ -26,7 +26,7 @@ func starshipIntegrationTool() Tool {
 		Name:        "starship-integration",
 		DisplayName: "Starship Prompt Integration",
 		Category:    CategoryDevEx,
-		Description: "Starship prompt configuration with gdev project name, security profile, and tool count segments",
+		Description: "Starship prompt configuration with qsdev project name, security profile, and tool count segments",
 		Default:     OptIn,
 		OwnedFiles: []FileOwnership{
 			{Path: ".starship.toml", Ownership: Exclusive},

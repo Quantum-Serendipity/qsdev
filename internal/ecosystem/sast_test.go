@@ -3,17 +3,17 @@ package ecosystem_test
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
 
 	// Import all Tier 1 modules to ensure they are registered.
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/docker"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/dotnet"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/golang"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/java"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/javascript"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/python"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/rust"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/terraform"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/docker"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/dotnet"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/golang"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/java"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/javascript"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/python"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/rust"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/terraform"
 )
 
 func TestTier1ModulesImplementSASTModule(t *testing.T) {

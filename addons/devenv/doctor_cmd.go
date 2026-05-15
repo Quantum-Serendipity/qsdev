@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/doctor"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/sysinfo"
+	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
+	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 )
 
 func doctorCmd() *cobra.Command {

@@ -1,5 +1,5 @@
 // Package nixlang implements the Nix ecosystem module for
-// gdev-secure-devenv-bootstrap. It detects Nix projects by scanning for
+// qsdev. It detects Nix projects by scanning for
 // flake.nix, flake.lock, default.nix, and shell.nix, generates devenv.nix
 // fragments with Nix language support, and provides pre-commit hooks (statix,
 // deadnix, nixfmt), CI commands, deny rules, and package manager metadata for
@@ -7,9 +7,9 @@
 package nixlang
 
 import (
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.

@@ -168,7 +168,7 @@ gdev's posture data must be consumable by CI pipelines, compliance dashboards, G
         "ruleId": "gdev/defense-disabled",
         "level": "warning",
         "message": {
-          "text": "Defense layer 'container-security' is disabled. No Dockerfile detected. Enable with: gdev enable container-security"
+          "text": "Defense layer 'container-security' is disabled. No Dockerfile detected. Enable with: qsdev enable container-security"
         },
         "locations": [{
           "physicalLocation": {
@@ -214,7 +214,7 @@ Relevant ASVS v5.0 chapters:
 - Chapter 14: Configuration (maps to: nix-hardening, config health, lock file enforcement)
 - Chapter 1: Architecture (maps to: defense-in-depth design documentation)
 
-**Implementation:** A `gdev status --compliance asvs` mode could generate a mapping document showing which ASVS requirements are addressed by which gdev defense layers. This is a report for auditors, not a machine-to-machine format.
+**Implementation:** A `qsdev status --compliance asvs` mode could generate a mapping document showing which ASVS requirements are addressed by which gdev defense layers. This is a report for auditors, not a machine-to-machine format.
 
 ```
 OWASP ASVS v5.0 Coverage Report
@@ -252,9 +252,9 @@ Color mapping:
 - `red`: 0-44 (F range)
 
 **Delivery options:**
-1. `gdev status --format badge > badge.json` -- Static file committed to repo, served via raw GitHub URL
+1. `qsdev status --format badge > badge.json` -- Static file committed to repo, served via raw GitHub URL
 2. CI job generates badge JSON as artifact, served via GitHub Pages or similar
-3. Self-hosted endpoint that runs `gdev status --format badge` on demand (for dynamic badges)
+3. Self-hosted endpoint that runs `qsdev status --format badge` on demand (for dynamic badges)
 
 ### JUnit XML (Optional)
 

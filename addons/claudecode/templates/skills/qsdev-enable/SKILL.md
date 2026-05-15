@@ -1,19 +1,19 @@
 ---
-name: gdev-enable
-description: Enable a tool in the gdev project configuration.
+name: qsdev-enable
+description: Enable a tool in the qsdev project configuration.
 disable-model-invocation: true
-allowed-tools: Bash(gdev *) Read Grep Glob
+allowed-tools: Bash(qsdev *) Read Grep Glob
 arguments:
   - tool
 ---
 
-# gdev enable
+# qsdev enable
 
 ## Current Environment
 
-!`gdev status --json 2>/dev/null || echo '{"tools": {}}'`
+!`qsdev status --json 2>/dev/null || echo '{"tools": {}}'`
 
-!`gdev list --json 2>/dev/null || echo '{"available": []}'`
+!`qsdev list --json 2>/dev/null || echo '{"available": []}'`
 
 ## Instructions
 
@@ -23,8 +23,8 @@ arguments:
 
 3. **Check availability**: Verify the tool exists in the available tools list. If not found, report the error and list similar tool names.
 
-4. **Enable the tool**: Run `gdev enable $tool` where `$tool` is the tool name provided or selected.
+4. **Enable the tool**: Run `qsdev enable $tool` where `$tool` is the tool name provided or selected.
 
-5. **Verify**: Run `gdev status --json` to confirm the tool is now enabled. Check for any warnings.
+5. **Verify**: Run `qsdev status --json` to confirm the tool is now enabled. Check for any warnings.
 
 6. **Report changes**: Summarize what was enabled and any files that were created or modified as a result.

@@ -12,11 +12,11 @@ import (
 
 // backupDir returns the path to the backup directory within a project.
 func backupDir(projectRoot string) string {
-	return filepath.Join(projectRoot, ".gdev", "backups")
+	return filepath.Join(projectRoot, ".qsdev", "backups")
 }
 
 // createBackup copies the file at projectRoot/relPath to
-// .gdev/backups/<basename>.<20060102T150405>.bak. It creates the backup
+// .qsdev/backups/<basename>.<20060102T150405>.bak. It creates the backup
 // directory if it does not exist. Returns the full backup path.
 func createBackup(projectRoot, relPath string) (string, error) {
 	srcPath := filepath.Join(projectRoot, relPath)

@@ -3,76 +3,76 @@ package toolreg
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-var gdevOpsSkillNames = []string{
-	"gdev-init",
-	"gdev-onboard",
-	"gdev-setup",
-	"gdev-enable",
-	"gdev-disable",
-	"gdev-update",
-	"gdev-doctor",
-	"gdev-status",
-	"gdev-tools",
-	"gdev-detect",
+var qsdevOpsSkillNames = []string{
+	"qsdev-init",
+	"qsdev-onboard",
+	"qsdev-setup",
+	"qsdev-enable",
+	"qsdev-disable",
+	"qsdev-update",
+	"qsdev-doctor",
+	"qsdev-status",
+	"qsdev-tools",
+	"qsdev-detect",
 }
 
-func TestGdevOpsToolsRegistered(t *testing.T) {
+func TestQsdevOpsToolsRegistered(t *testing.T) {
 	reg := DefaultRegistry()
 
-	for _, name := range gdevOpsSkillNames {
+	for _, name := range qsdevOpsSkillNames {
 		tool, ok := reg.ByName(name)
 		if !ok {
-			t.Errorf("gdev-ops tool %q not found in DefaultRegistry", name)
+			t.Errorf("qsdev-ops tool %q not found in DefaultRegistry", name)
 			continue
 		}
 		if tool.DisplayName == "" {
-			t.Errorf("gdev-ops tool %q has empty DisplayName", name)
+			t.Errorf("qsdev-ops tool %q has empty DisplayName", name)
 		}
 		if tool.Description == "" {
-			t.Errorf("gdev-ops tool %q has empty Description", name)
+			t.Errorf("qsdev-ops tool %q has empty Description", name)
 		}
 		if tool.Category != CategoryAIAgent {
-			t.Errorf("gdev-ops tool %q has category %q, want %q", name, tool.Category, CategoryAIAgent)
+			t.Errorf("qsdev-ops tool %q has category %q, want %q", name, tool.Category, CategoryAIAgent)
 		}
 		if len(tool.OwnedFiles) == 0 {
-			t.Errorf("gdev-ops tool %q has no OwnedFiles", name)
+			t.Errorf("qsdev-ops tool %q has no OwnedFiles", name)
 		}
 	}
 }
 
-func TestGdevOpsToolsAlwaysOn(t *testing.T) {
+func TestQsdevOpsToolsAlwaysOn(t *testing.T) {
 	reg := DefaultRegistry()
 
-	for _, name := range gdevOpsSkillNames {
+	for _, name := range qsdevOpsSkillNames {
 		tool, ok := reg.ByName(name)
 		if !ok {
-			t.Errorf("gdev-ops tool %q not found in DefaultRegistry", name)
+			t.Errorf("qsdev-ops tool %q not found in DefaultRegistry", name)
 			continue
 		}
 		if tool.Default != AlwaysOn {
-			t.Errorf("gdev-ops tool %q has Default %v, want AlwaysOn", name, tool.Default)
+			t.Errorf("qsdev-ops tool %q has Default %v, want AlwaysOn", name, tool.Default)
 		}
 	}
 }
 
-func TestGdevOpsToolEnableDisable(t *testing.T) {
+func TestQsdevOpsToolEnableDisable(t *testing.T) {
 	reg := DefaultRegistry()
 
-	for _, name := range gdevOpsSkillNames {
+	for _, name := range qsdevOpsSkillNames {
 		t.Run(name, func(t *testing.T) {
 			tool, ok := reg.ByName(name)
 			if !ok {
-				t.Fatalf("gdev-ops tool %q not found in DefaultRegistry", name)
+				t.Fatalf("qsdev-ops tool %q not found in DefaultRegistry", name)
 			}
 
 			if tool.EnableFunc == nil {
-				t.Fatalf("gdev-ops tool %q has nil EnableFunc", name)
+				t.Fatalf("qsdev-ops tool %q has nil EnableFunc", name)
 			}
 			if tool.DisableFunc == nil {
-				t.Fatalf("gdev-ops tool %q has nil DisableFunc", name)
+				t.Fatalf("qsdev-ops tool %q has nil DisableFunc", name)
 			}
 
 			// Test enable.
@@ -93,13 +93,13 @@ func TestGdevOpsToolEnableDisable(t *testing.T) {
 	}
 }
 
-func TestGdevOpsToolEnableFunc_NilMap(t *testing.T) {
+func TestQsdevOpsToolEnableFunc_NilMap(t *testing.T) {
 	reg := DefaultRegistry()
 
 	// Verify EnableFunc initializes the map when nil.
-	tool, ok := reg.ByName("gdev-init")
+	tool, ok := reg.ByName("qsdev-init")
 	if !ok {
-		t.Fatal("gdev-init not found in DefaultRegistry")
+		t.Fatal("qsdev-init not found in DefaultRegistry")
 	}
 
 	answers := &types.WizardAnswers{}
@@ -107,18 +107,18 @@ func TestGdevOpsToolEnableFunc_NilMap(t *testing.T) {
 	if answers.EnabledTools == nil {
 		t.Fatal("EnableFunc should initialize EnabledTools map when nil")
 	}
-	if !answers.EnabledTools["gdev-init"] {
-		t.Error("EnableFunc should set gdev-init to true")
+	if !answers.EnabledTools["qsdev-init"] {
+		t.Error("EnableFunc should set qsdev-init to true")
 	}
 }
 
-func TestGdevOpsToolDisableFunc_NilMap(t *testing.T) {
+func TestQsdevOpsToolDisableFunc_NilMap(t *testing.T) {
 	reg := DefaultRegistry()
 
 	// Verify DisableFunc initializes the map when nil.
-	tool, ok := reg.ByName("gdev-init")
+	tool, ok := reg.ByName("qsdev-init")
 	if !ok {
-		t.Fatal("gdev-init not found in DefaultRegistry")
+		t.Fatal("qsdev-init not found in DefaultRegistry")
 	}
 
 	answers := &types.WizardAnswers{}
@@ -126,18 +126,18 @@ func TestGdevOpsToolDisableFunc_NilMap(t *testing.T) {
 	if answers.EnabledTools == nil {
 		t.Fatal("DisableFunc should initialize EnabledTools map when nil")
 	}
-	if answers.EnabledTools["gdev-init"] {
-		t.Error("DisableFunc should set gdev-init to false")
+	if answers.EnabledTools["qsdev-init"] {
+		t.Error("DisableFunc should set qsdev-init to false")
 	}
 }
 
-func TestGdevOpsToolOwnedFiles(t *testing.T) {
+func TestQsdevOpsToolOwnedFiles(t *testing.T) {
 	reg := DefaultRegistry()
 
-	for _, name := range gdevOpsSkillNames {
+	for _, name := range qsdevOpsSkillNames {
 		tool, ok := reg.ByName(name)
 		if !ok {
-			t.Errorf("gdev-ops tool %q not found", name)
+			t.Errorf("qsdev-ops tool %q not found", name)
 			continue
 		}
 

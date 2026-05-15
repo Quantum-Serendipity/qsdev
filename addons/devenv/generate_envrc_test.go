@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devenv"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestGenerateEnvrc_DirenvEnabled(t *testing.T) {

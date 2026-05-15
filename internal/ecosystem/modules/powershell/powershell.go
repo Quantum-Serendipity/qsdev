@@ -1,5 +1,5 @@
 // Package powershell implements the PowerShell ecosystem module for
-// gdev-secure-devenv-bootstrap. It detects PowerShell projects by scanning for
+// qsdev. It detects PowerShell projects by scanning for
 // requirements.psd1 and PowerShell script files, generates devenv.nix fragments
 // with the PowerShell package, and provides CI commands, deny rules, and package
 // manager metadata for the PowerShell toolchain.
@@ -16,9 +16,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.

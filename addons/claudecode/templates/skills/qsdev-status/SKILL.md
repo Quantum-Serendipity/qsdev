@@ -1,14 +1,14 @@
 ---
-name: gdev-status
-description: Show gdev configuration status including enabled tools, ecosystems, and security posture.
-allowed-tools: Bash(gdev *) Read Grep Glob
+name: qsdev-status
+description: Show qsdev configuration status including enabled tools, ecosystems, and security posture.
+allowed-tools: Bash(qsdev *) Read Grep Glob
 ---
 
-# gdev status
+# qsdev status
 
 ## Current Environment
 
-!`gdev status --json 2>/dev/null || echo '{"tools": {}}'`
+!`qsdev status --json 2>/dev/null || echo '{"tools": {}}'`
 
 ## Instructions
 

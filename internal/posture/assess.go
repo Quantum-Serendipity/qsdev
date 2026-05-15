@@ -7,17 +7,17 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
 )
 
 // ErrNotInitialized is returned when Assess is called on a project that has
-// not been initialized with gdev init (no state files or .gdev.yaml found).
-var ErrNotInitialized = errors.New("project not initialized: run 'gdev init' first")
+// not been initialized with qsdev init (no state files or .qsdev.yaml found).
+var ErrNotInitialized = errors.New("project not initialized: run 'qsdev init' first")
 
 // Assess performs a security posture assessment of the project at projectPath.
 // It loads all state files, checks that the project is initialized, and
 // assembles a PostureReport. Returns ErrNotInitialized if no state files or
-// .gdev.yaml exist.
+// .qsdev.yaml exist.
 func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 	// Validate that the project path exists.
 	info, err := os.Stat(projectPath)
@@ -31,15 +31,15 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 	// Load all state files.
 	merged := LoadAllStates(projectPath)
 
-	// Check for .gdev.yaml as an alternative initialization indicator.
-	gdevYAMLExists := false
-	if _, err := os.Stat(filepath.Join(projectPath, ".gdev.yaml")); err == nil {
-		gdevYAMLExists = true
+	// Check for .qsdev.yaml as an alternative initialization indicator.
+	qsdevYAMLExists := false
+	if _, err := os.Stat(filepath.Join(projectPath, ".qsdev.yaml")); err == nil {
+		qsdevYAMLExists = true
 	}
 
-	// If no state files were loaded and no .gdev.yaml exists, the project
+	// If no state files were loaded and no .qsdev.yaml exists, the project
 	// is not initialized.
-	if !merged.HasAnyState() && !gdevYAMLExists {
+	if !merged.HasAnyState() && !qsdevYAMLExists {
 		return nil, ErrNotInitialized
 	}
 
@@ -48,15 +48,15 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 
 	// Get version info.
 	buildInfo := version.Info()
-	gdevVersion := buildInfo.Version
-	if merged.GdevVersion != "" {
-		gdevVersion = merged.GdevVersion
+	qsdevVersion := buildInfo.Version
+	if merged.QsdevVersion != "" {
+		qsdevVersion = merged.QsdevVersion
 	}
 
 	report := &PostureReport{
 		SchemaVersion: SchemaVersion,
 		GeneratedAt:   time.Now().UTC(),
-		GdevVersion:   gdevVersion,
+		QsdevVersion:   qsdevVersion,
 		ProjectPath:   projectPath,
 		ProjectName:   projectName,
 		Score: AggregateScore{
@@ -97,7 +97,7 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 				Severity:    DriftWarning,
 				Subject:     loadErr.Path,
 				Description: fmt.Sprintf("Failed to load state file: %s", loadErr.Err),
-				Remediation: "Re-run 'gdev init' to regenerate state files.",
+				Remediation: "Re-run 'qsdev init' to regenerate state files.",
 				AutoFixable: true,
 			},
 		)

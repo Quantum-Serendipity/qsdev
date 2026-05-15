@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 )
 
 func TestRenderMarkdown_ContainsFrameworkName(t *testing.T) {
@@ -194,7 +194,7 @@ func testEvidenceReport() *EvidenceReport {
 	return &EvidenceReport{
 		SchemaVersion: "1.0.0",
 		GeneratedAt:   time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC),
-		GdevVersion:   "0.1.0",
+		QsdevVersion:   "0.1.0",
 		ProjectName:   "test-project",
 		Framework:     "Test Framework",
 		FrameworkVer:  "1.0",
@@ -237,7 +237,7 @@ func testEvidenceReport() *EvidenceReport {
 		Posture: &posture.PostureReport{
 			SchemaVersion: "1.0.0",
 			GeneratedAt:   time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC),
-			GdevVersion:   "0.1.0",
+			QsdevVersion:   "0.1.0",
 			ProjectName:   "test-project",
 		},
 	}

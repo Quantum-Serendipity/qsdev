@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/sysinfo"
+	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 )
 
 func TestBuildReport(t *testing.T) {
@@ -33,8 +33,8 @@ func TestBuildReport(t *testing.T) {
 
 	r := BuildReport(osInfo, checks, "0.1.0")
 
-	if r.GdevVersion != "0.1.0" {
-		t.Errorf("GdevVersion = %q, want %q", r.GdevVersion, "0.1.0")
+	if r.QsdevVersion != "0.1.0" {
+		t.Errorf("QsdevVersion = %q, want %q", r.QsdevVersion, "0.1.0")
 	}
 	if r.System.OS != "Linux" {
 		t.Errorf("System.OS = %q, want %q", r.System.OS, "Linux")
@@ -80,7 +80,7 @@ func TestBuildReportAllPresent(t *testing.T) {
 
 func TestFormatReportNoColor(t *testing.T) {
 	r := &Report{
-		GdevVersion: "0.1.0",
+		QsdevVersion: "0.1.0",
 		System: SystemInfo{
 			OS:         "Linux",
 			PrettyName: "NixOS 24.11",
@@ -112,7 +112,7 @@ func TestFormatReportNoColor(t *testing.T) {
 	output := buf.String()
 
 	// Check key sections are present
-	if !strings.Contains(output, "gdev doctor v0.1.0") {
+	if !strings.Contains(output, "qsdev doctor v0.1.0") {
 		t.Error("missing header")
 	}
 	if !strings.Contains(output, "Linux (NixOS 24.11)") {
@@ -140,7 +140,7 @@ func TestFormatReportNoColor(t *testing.T) {
 
 func TestFormatReportWithColor(t *testing.T) {
 	r := &Report{
-		GdevVersion: "0.1.0",
+		QsdevVersion: "0.1.0",
 		System: SystemInfo{
 			OS:   "Linux",
 			Arch: "amd64",
@@ -165,7 +165,7 @@ func TestFormatReportWithColor(t *testing.T) {
 
 func TestReportJSONRoundTrip(t *testing.T) {
 	original := &Report{
-		GdevVersion: "0.1.0",
+		QsdevVersion: "0.1.0",
 		Timestamp:   "2024-01-15T10:30:00Z",
 		System: SystemInfo{
 			OS:     "Linux",
@@ -198,8 +198,8 @@ func TestReportJSONRoundTrip(t *testing.T) {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
 
-	if decoded.GdevVersion != original.GdevVersion {
-		t.Errorf("GdevVersion mismatch: %q vs %q", decoded.GdevVersion, original.GdevVersion)
+	if decoded.QsdevVersion != original.QsdevVersion {
+		t.Errorf("QsdevVersion mismatch: %q vs %q", decoded.QsdevVersion, original.QsdevVersion)
 	}
 	if decoded.System.Distro != original.System.Distro {
 		t.Errorf("Distro mismatch: %q vs %q", decoded.System.Distro, original.System.Distro)

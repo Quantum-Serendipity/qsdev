@@ -1,7 +1,7 @@
 package evidence
 
 // SOC2Framework returns the SOC2 Type II compliance framework definition
-// with 8 controls mapped to gdev's defense-in-depth layers.
+// with 8 controls mapped to qsdev's defense-in-depth layers.
 func SOC2Framework() Framework {
 	return Framework{
 		ID:          "soc2",

@@ -4,15 +4,15 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Standard state file locations relative to the project root.
 var stateFilePaths = [3]string{
-	".devinit/.gdev-init-state.yaml",
-	".devenv/.gdev-state.yaml",
-	".claude/.gdev-claude-state.yaml",
+	".devinit/.qsdev-init-state.yaml",
+	".devenv/.qsdev-state.yaml",
+	".claude/.qsdev-claude-state.yaml",
 }
 
 // MergedState holds the unified view of all three addon state files.
@@ -20,8 +20,8 @@ type MergedState struct {
 	// Files is the merged map of all tracked files across all state files.
 	Files map[string]types.FileState
 
-	// GdevVersion is the most recent gdev version found across state files.
-	GdevVersion string
+	// QsdevVersion is the most recent qsdev version found across state files.
+	QsdevVersion string
 
 	// EnabledTools is the merged map of tool enablement flags.
 	EnabledTools map[string]bool
@@ -45,7 +45,7 @@ func (e StateLoadError) Error() string {
 }
 
 // HasAnyState returns true if at least one state file was successfully loaded
-// and contained data (non-empty Files map or non-empty GdevVersion).
+// and contained data (non-empty Files map or non-empty QsdevVersion).
 func (m *MergedState) HasAnyState() bool {
 	return len(m.Sources) > 0
 }
@@ -56,7 +56,7 @@ func (m *MergedState) HasAnyState() bool {
 // files are recorded as errors but do not prevent other files from loading.
 //
 // Files maps are merged with later entries overriding earlier ones when keys
-// collide. The GdevVersion is taken from the most recently loaded state that
+// collide. The QsdevVersion is taken from the most recently loaded state that
 // has one set. EnabledTools are merged with later entries winning on conflict.
 func LoadAllStates(projectRoot string) *MergedState {
 	merged := &MergedState{
@@ -77,7 +77,7 @@ func LoadAllStates(projectRoot string) *MergedState {
 
 		// A zero-value state with empty Files means the file didn't exist.
 		// Only count it as a source if it had real content.
-		if len(st.Files) == 0 && st.GdevVersion == "" && len(st.EnabledTools) == 0 && st.LastRun.IsZero() {
+		if len(st.Files) == 0 && st.QsdevVersion == "" && len(st.EnabledTools) == 0 && st.LastRun.IsZero() {
 			continue
 		}
 
@@ -87,8 +87,8 @@ func LoadAllStates(projectRoot string) *MergedState {
 			merged.Files[k] = v
 		}
 
-		if st.GdevVersion != "" {
-			merged.GdevVersion = st.GdevVersion
+		if st.QsdevVersion != "" {
+			merged.QsdevVersion = st.QsdevVersion
 		}
 
 		for k, v := range st.EnabledTools {

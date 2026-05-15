@@ -1,6 +1,6 @@
 .PHONY: build build-all test lint vet clean completions
 
-MODULE  := github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap
+MODULE  := github.com/Quantum-Serendipity/qsdev
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo none)
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)

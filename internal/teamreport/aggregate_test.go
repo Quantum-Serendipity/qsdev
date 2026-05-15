@@ -7,14 +7,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 )
 
-func makeReport(name string, score float64, baselinePass, enhancedPass bool, critVulns, highVulns int, gdevVersion string, generatedAt time.Time) *posture.PostureReport {
+func makeReport(name string, score float64, baselinePass, enhancedPass bool, critVulns, highVulns int, qsdevVersion string, generatedAt time.Time) *posture.PostureReport {
 	return &posture.PostureReport{
 		SchemaVersion: posture.SchemaVersion,
 		GeneratedAt:   generatedAt,
-		GdevVersion:   gdevVersion,
+		QsdevVersion:   qsdevVersion,
 		ProjectName:   name,
 		Score: posture.AggregateScore{
 			Total:     score,
@@ -198,7 +198,7 @@ func TestAggregateOutdatedGdev(t *testing.T) {
 	}
 
 	result, err := Aggregate(reports, AggregateOptions{
-		GdevVersion: "v1.5.0",
+		QsdevVersion: "v1.5.0",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

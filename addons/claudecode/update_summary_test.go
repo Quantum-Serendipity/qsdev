@@ -3,9 +3,9 @@ package claudecode_test
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestBuildUpdateSummary_AllUpToDate(t *testing.T) {

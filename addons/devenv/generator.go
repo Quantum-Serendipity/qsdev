@@ -3,9 +3,9 @@ package devenv
 import (
 	"fmt"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/profile"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/profile"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface check.

@@ -358,7 +358,7 @@ This maps to create-next-app's pattern of showing the selected configuration bef
 ### Recommended UX Pattern: Opinionated Menu with Escape Hatches
 
 ```
-$ gdev init
+$ qsdev init
 
   Welcome to gdev! Let's set up your development environment.
 
@@ -371,7 +371,7 @@ $ gdev init
   │  ○ No, customize
   │
   └ Creating devenv.nix, CLAUDE.md, .claude/settings.json...
-     Done! Run `gdev start` to begin.
+     Done! Run `qsdev start` to begin.
 ```
 
 For the "customize" path:
@@ -432,7 +432,7 @@ gdev bootstrap step
 Every wizard question must have a CLI flag equivalent:
 
 ```bash
-gdev init --lang=go --go-version=1.22 --services=postgres \
+qsdev init --lang=go --go-version=1.22 --services=postgres \
           --claude-code --no-precommit --yes
 ```
 
@@ -444,7 +444,7 @@ This maps to gdev bootstrap's existing headless mode support.
 2. **Defaults should be the right answer** — If you detect a Go project, default to Go enabled. If `.git` exists, default git init to off.
 3. **Group related questions** — Languages together, services together, dev tools together. One group per wizard page.
 4. **Show what you'll do before doing it** — Plan preview before file generation.
-5. **Make it re-runnable** — `gdev init` on an existing project should detect existing config and offer to update/merge, not overwrite.
+5. **Make it re-runnable** — `qsdev init` on an existing project should detect existing config and offer to update/merge, not overwrite.
 6. **Keep the wizard under 30 seconds** — If the happy path takes longer, you're asking too much.
 
 ---

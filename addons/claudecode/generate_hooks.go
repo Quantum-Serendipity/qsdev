@@ -3,7 +3,7 @@ package claudecode
 import (
 	"fmt"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // GenerateHookFiles returns GeneratedFile entries for all enabled hook presets.

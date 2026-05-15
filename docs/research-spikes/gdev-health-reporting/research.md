@@ -2,7 +2,7 @@
 
 ## Overview
 
-Research into project health and compliance reporting capabilities for gdev -- a Go CLI that bootstraps secure development environments with 27 language ecosystems, 16+ toggleable security tools, and 10 defense layers. Investigated what a `gdev report` / `gdev status` command should look like, how to present compliance posture for a consulting firm managing multiple client projects, machine-readable output formats (JSON/SARIF/OWASP ASVS), configuration drift detection, team-level aggregation across repos, prior art from DevSecOps tools, and security posture badge generation.
+Research into project health and compliance reporting capabilities for gdev -- a Go CLI that bootstraps secure development environments with 27 language ecosystems, 16+ toggleable security tools, and 10 defense layers. Investigated what a `qsdev report` / `qsdev status` command should look like, how to present compliance posture for a consulting firm managing multiple client projects, machine-readable output formats (JSON/SARIF/OWASP ASVS), configuration drift detection, team-level aggregation across repos, prior art from DevSecOps tools, and security posture badge generation.
 
 ## Topics
 
@@ -10,7 +10,7 @@ Research into project health and compliance reporting capabilities for gdev -- a
 
 - **Compliance Posture Model** -- Complete. Three-layer assessment model: defense coverage (weighted scoring like Scorecard), configuration health (hash-based drift detection), and dependency health (vulnerability counts per ecosystem). Dual-track evaluation: numeric score (0-100 with letter grades) AND conformance labels (baseline/enhanced PASS/FAIL). Full Go type definitions. See [compliance-posture-model-research.md](compliance-posture-model-research.md).
 
-- **Status Command UX** -- Complete. Terminal output design following flutter doctor pattern (hierarchical checks with three-state indicators). Progressive disclosure from `--quiet` through default summary to `--verbose` detail. Subcommands for focused views (`gdev status tools`, `gdev status defense`). Performance model: fast path (< 1s, local only) vs slow path (5-30s, network scan). See [status-command-ux-research.md](status-command-ux-research.md).
+- **Status Command UX** -- Complete. Terminal output design following flutter doctor pattern (hierarchical checks with three-state indicators). Progressive disclosure from `--quiet` through default summary to `--verbose` detail. Subcommands for focused views (`qsdev status tools`, `qsdev status defense`). Performance model: fast path (< 1s, local only) vs slow path (5-30s, network scan). See [status-command-ux-research.md](status-command-ux-research.md).
 
 - **Machine-Readable Output Formats** -- Complete. JSON as canonical format (versioned schema from day one), SARIF 2.1.0 for GitHub Code Scanning (maps discrete findings, not aggregate scores), shields.io badge JSON, JUnit XML for CI test infrastructure. Consumer matrix mapping formats to use cases. ASVS alignment for audit evidence. See [machine-readable-output-research.md](machine-readable-output-research.md).
 
@@ -23,10 +23,10 @@ Research into project health and compliance reporting capabilities for gdev -- a
 ## Open Questions
 
 - Should the scoring weights (defense 40%, config 30%, deps 30%) be configurable per-profile, or hardcoded with escape hatch?
-- How should `gdev status` handle the first run before any tools are enabled (all zeros vs "not initialized" state)?
-- Should vulnerability scan results be cached in `.gdev/cache/` (gitignored) or regenerated on every `gdev status --scan`?
+- How should `qsdev status` handle the first run before any tools are enabled (all zeros vs "not initialized" state)?
+- Should vulnerability scan results be cached in `.gdev/cache/` (gitignored) or regenerated on every `qsdev status --scan`?
 - Is JUnit output worth building, or does SARIF cover the CI integration need sufficiently?
-- Should `gdev team-report` be a separate binary/command or a subcommand of gdev?
+- Should `qsdev team-report` be a separate binary/command or a subcommand of gdev?
 
 ## Conclusions
 
@@ -39,9 +39,9 @@ gdev's health reporting should assess three independent dimensions:
 
 This produces both a **numeric score** (0-100 with letter grade) for quick assessment and **conformance labels** (baseline PASS/FAIL, enhanced PASS/FAIL) for binary compliance checks. The dual-track model follows Scorecard v6's evolution from pure numeric scoring to conformance evaluation.
 
-### Command Design: `gdev status`
+### Command Design: `qsdev status`
 
-The primary interface is `gdev status` with progressive disclosure:
+The primary interface is `qsdev status` with progressive disclosure:
 - Default: colored summary with section scores, defense layer checklist, config health, vulnerability counts
 - `--verbose`: per-check detail with remediation hints
 - `--json`: complete PostureReport for CI/dashboards

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/scala"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/scala"
 )
 
 // newModule returns a fresh Module for testing.
@@ -207,8 +207,8 @@ func TestSecurityConfigs(t *testing.T) {
 	if len(files) != 1 {
 		t.Fatalf("SecurityConfigs() returned %d files, want 1", len(files))
 	}
-	if files[0].Path != ".gdev/sbt-security-plugins.sbt" {
-		t.Errorf("Path = %q, want %q", files[0].Path, ".gdev/sbt-security-plugins.sbt")
+	if files[0].Path != ".qsdev/sbt-security-plugins.sbt" {
+		t.Errorf("Path = %q, want %q", files[0].Path, ".qsdev/sbt-security-plugins.sbt")
 	}
 }
 

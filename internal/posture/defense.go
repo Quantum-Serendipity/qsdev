@@ -3,7 +3,7 @@ package posture
 import (
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // DefenseLayerNames lists the canonical names of all 10 defense layers.

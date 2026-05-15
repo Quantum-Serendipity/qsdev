@@ -6,7 +6,7 @@ Package gdev as a single downloadable binary/installer for every major platform,
 
 ## Dependencies
 
-Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection, package manager abstraction, `gdev devenv doctor`, `gdev devenv setup`).
+Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection, package manager abstraction, `qsdev devenv doctor`, `qsdev devenv setup`).
 
 ## Phase Outputs
 
@@ -17,8 +17,8 @@ Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection,
 - APT (.deb) and RPM (.rpm) packages via nFPM
 - GitHub Actions release pipeline triggered on tag push
 - Shell completion generation and installation (bash, zsh, fish, PowerShell)
-- `gdev self-update` command
-- `gdev version` command with build metadata
+- `qsdev self-update` command
+- `qsdev version` command with build metadata
 - Embedded assets (templates, skills, completions) via `embed.FS`
 
 ---
@@ -41,7 +41,7 @@ Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection,
        builtBy = "manual"
    )
    ```
-2. Create `cmd/gdev/version.go` — register `gdev version` command displaying version, commit, date, GOOS, GOARCH, Go version.
+2. Create `cmd/gdev/version.go` — register `qsdev version` command displaying version, commit, date, GOOS, GOARCH, Go version.
 3. Organize `embed.FS` declarations:
    - `addons/devenv/templates/` — devenv.nix, devenv.yaml, .envrc templates
    - `addons/claudecode/templates/` — settings.json, CLAUDE.md templates
@@ -54,7 +54,7 @@ Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection,
 
 **Acceptance Criteria:**
 - [ ] `CGO_ENABLED=0 go build` succeeds for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
-- [ ] Binary reports injected version via `gdev version`
+- [ ] Binary reports injected version via `qsdev version`
 - [ ] `embed.FS` templates accessible at runtime
 - [ ] Binary is static (no dynamic library dependencies — verify with `ldd` on Linux)
 - [ ] Binary size is reasonable (<50MB with all embedded assets)
@@ -99,7 +99,7 @@ Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection,
    - Run GoReleaser in snapshot mode (`--snapshot --skip=publish`)
 4. Create Homebrew tap repo skeleton (`Quantum-Serendipity/homebrew-tap`) — GoReleaser auto-updates the formula.
 5. Create Scoop bucket repo skeleton (`Quantum-Serendipity/scoop-bucket`) — GoReleaser auto-updates the manifest.
-6. Add Cobra shell completion generation to the build: `gdev completion bash/zsh/fish/powershell` commands that GoReleaser includes in packages.
+6. Add Cobra shell completion generation to the build: `qsdev completion bash/zsh/fish/powershell` commands that GoReleaser includes in packages.
 
 **Acceptance Criteria:**
 - [ ] `goreleaser release --snapshot --clean` produces binaries for all 5 targets
@@ -130,12 +130,12 @@ Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection,
 **Steps:**
 1. Create `scripts/install.sh` (bash):
    - Detect OS (`uname -s`) and arch (`uname -m`), map to GOOS/GOARCH naming
-   - Construct download URL from GitHub Releases (latest or pinned version via `GDEV_VERSION` env var)
+   - Construct download URL from GitHub Releases (latest or pinned version via `QSDEV_VERSION` env var)
    - Download binary archive and checksums.txt
    - Verify SHA256 (`sha256sum` or `shasum -a 256`)
    - Extract to `~/.gdev/bin/` (user-local, no sudo needed)
    - Add `~/.gdev/bin` to PATH in detected shell RC file (bash/zsh/fish)
-   - Print success message with next steps (`gdev devenv doctor`, `gdev devenv setup`)
+   - Print success message with next steps (`qsdev devenv doctor`, `qsdev devenv setup`)
    - Error handling: fail on any step, clean up partial downloads
 2. Create `scripts/install.ps1` (PowerShell):
    - Detect arch (`[System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture`)
@@ -145,7 +145,7 @@ Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection,
    - Add to user PATH via `[Environment]::SetEnvironmentVariable`
    - Print success message
 3. Host scripts at a short URL (GitHub Pages on a `get.gdev.dev` subdomain, or raw GitHub URL).
-4. Support version pinning: `GDEV_VERSION=1.2.3 curl ... | sh` installs a specific version.
+4. Support version pinning: `QSDEV_VERSION=1.2.3 curl ... | sh` installs a specific version.
 5. Support install directory override: `GDEV_INSTALL_DIR=/custom/path curl ... | sh`.
 6. Test scripts in CI (download from snapshot release, verify install on Ubuntu, macOS, Windows).
 
@@ -170,16 +170,16 @@ Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection,
 
 ### Unit 10.4: Self-Update Mechanism
 
-**Description:** Implement `gdev self-update` for in-place binary update and a periodic update check that notifies without blocking.
+**Description:** Implement `qsdev self-update` for in-place binary update and a periodic update check that notifies without blocking.
 
-**Context:** Once installed, gdev needs to stay current. `gdev self-update` downloads the latest release, verifies checksums, and replaces the running binary. A background update check runs periodically (default: weekly, configurable) and prints a non-blocking notice if a newer version exists. Self-update re-uses the install script logic internally: detect platform, download correct binary, verify, replace.
+**Context:** Once installed, gdev needs to stay current. `qsdev self-update` downloads the latest release, verifies checksums, and replaces the running binary. A background update check runs periodically (default: weekly, configurable) and prints a non-blocking notice if a newer version exists. Self-update re-uses the install script logic internally: detect platform, download correct binary, verify, replace.
 
-**Desired Outcome:** `gdev self-update` updates to latest, and `gdev` commands show a one-line notice when outdated.
+**Desired Outcome:** `qsdev self-update` updates to latest, and `gdev` commands show a one-line notice when outdated.
 
 **Steps:**
 1. Create `internal/selfupdate/` package with `update.go`.
 2. Implement `CheckForUpdate(currentVersion string) (*Release, error)`:
-   - Query `https://api.github.com/repos/Quantum-Serendipity/gdev-secure-devenv-bootstrap/releases/latest`
+   - Query `https://api.github.com/repos/Quantum-Serendipity/qsdev/releases/latest`
    - Compare semver (using `golang.org/x/mod/semver` or equivalent)
    - Cache the check result to `~/.gdev/update-check.json` with timestamp
    - Only check if last check was > configured interval ago
@@ -188,18 +188,18 @@ Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection,
    - Download checksums.txt and verify SHA256
    - Replace current binary (rename current → backup, write new, remove backup on success, restore backup on failure)
    - Print changelog summary (from GitHub Release body)
-4. Register `gdev self-update` command.
+4. Register `qsdev self-update` command.
 5. Add update check to root command's `PersistentPreRun` — runs async, only prints if update available, never blocks, respects `GDEV_NO_UPDATE_CHECK=1`.
 6. Support `--force` flag to skip version comparison and reinstall current version.
 7. Support `--version <version>` to install a specific version (for rollback).
 
 **Acceptance Criteria:**
-- [ ] `gdev self-update` downloads and replaces binary successfully
+- [ ] `qsdev self-update` downloads and replaces binary successfully
 - [ ] SHA256 verification prevents installing corrupted updates
 - [ ] Failed update restores previous binary (rollback on failure)
 - [ ] Update check is non-blocking and respects interval setting
 - [ ] `GDEV_NO_UPDATE_CHECK=1` suppresses check entirely
-- [ ] `gdev self-update --version 1.0.0` installs specific version
+- [ ] `qsdev self-update --version 1.0.0` installs specific version
 - [ ] Update check cache prevents excessive API calls
 
 **Research Citations:**
@@ -217,11 +217,11 @@ Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection,
 
 **Context:** Cobra generates shell completions automatically from the command tree. Completions need to be installed in the right location per shell and platform. On macOS with Homebrew, completions go to `$(brew --prefix)/share/zsh/site-functions/`. On Linux, system-wide paths differ by distro. For user-local install, completions go alongside the binary. PATH integration must be idempotent — don't add duplicate entries.
 
-**Desired Outcome:** After install, `gdev <tab>` completes commands and flags on all supported shells.
+**Desired Outcome:** After install, `qsdev <tab>` completes commands and flags on all supported shells.
 
 **Steps:**
-1. Implement Cobra completion commands: `gdev completion bash`, `gdev completion zsh`, `gdev completion fish`, `gdev completion powershell`.
-2. Implement `gdev completion install` — auto-detect shell and install completion to the correct location:
+1. Implement Cobra completion commands: `qsdev completion bash`, `qsdev completion zsh`, `qsdev completion fish`, `qsdev completion powershell`.
+2. Implement `qsdev completion install` — auto-detect shell and install completion to the correct location:
    - bash: `~/.gdev/completions/gdev.bash`, source from `~/.bashrc`
    - zsh: `~/.gdev/completions/_gdev`, add `~/.gdev/completions` to fpath in `~/.zshrc`
    - fish: `~/.config/fish/completions/gdev.fish` (fish auto-loads from this directory)
@@ -232,11 +232,11 @@ Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection,
    - Idempotent: check if PATH entry already exists before adding
    - Platform-specific: use `$PROFILE` for PowerShell, `[Environment]::SetEnvironmentVariable` for Windows system PATH
 4. Include pre-generated completions in `embed.FS` for the nFPM packages (installed to system completion directories).
-5. Wire completion install into `gdev devenv setup` flow (Unit 9.6).
+5. Wire completion install into `qsdev devenv setup` flow (Unit 9.6).
 
 **Acceptance Criteria:**
-- [ ] `gdev completion bash` outputs valid bash completion script
-- [ ] `gdev completion install` installs to correct location for detected shell
+- [ ] `qsdev completion bash` outputs valid bash completion script
+- [ ] `qsdev completion install` installs to correct location for detected shell
 - [ ] Fish completions auto-load without sourcing (correct directory)
 - [ ] PowerShell completions work in both pwsh and powershell.exe
 - [ ] PATH addition is idempotent (running twice doesn't duplicate)
@@ -255,8 +255,8 @@ Phase 1 complete (Go module, addon scaffolding). Phase 9 complete (OS detection,
 - [ ] All five units pass acceptance criteria
 - [ ] `goreleaser release --snapshot --clean` produces binaries for all platforms
 - [ ] Install script works on fresh Ubuntu, macOS, and Windows environments
-- [ ] `gdev version` shows correct version, commit, OS, arch
-- [ ] `gdev self-update` updates binary and verifies checksums
+- [ ] `qsdev version` shows correct version, commit, OS, arch
+- [ ] `qsdev self-update` updates binary and verifies checksums
 - [ ] Shell completions work for bash, zsh, fish on macOS and Linux
 - [ ] `brew install quantum-serendipity/tap/gdev` works (Homebrew tap)
 - [ ] `scoop install gdev` works (Scoop bucket)

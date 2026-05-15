@@ -3,7 +3,7 @@ package config
 import (
 	"fmt"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Migration describes a single schema migration step from one version to another.

@@ -6,38 +6,38 @@ Add a lightweight observability sidecar and privacy-safe session analytics. The 
 
 ## Dependencies
 
-Phase 12 complete (tool lifecycle management, `gdev enable/disable` machinery, file ownership registry). Phase 16 complete (developer experience polish — `gdev status`, shell integration, enterShell hooks, OTEL env var pattern from Unit 16.7).
+Phase 12 complete (tool lifecycle management, `qsdev enable/disable` machinery, file ownership registry). Phase 16 complete (developer experience polish — `qsdev status`, shell integration, enterShell hooks, OTEL env var pattern from Unit 16.7).
 
 ## Phase Outputs
 
-- `gdev enable observability` command deploying `grafana/otel-lgtm` Docker container
+- `qsdev enable observability` command deploying `grafana/otel-lgtm` Docker container
 - `docker-compose.observability.yml` generated in project root
-- `gdev observability` subcommand group (up/down/status/logs)
+- `qsdev observability` subcommand group (up/down/status/logs)
 - OTEL env var generation in devenv.nix when observability is enabled
-- `gdev enable ccusage` and `gdev cost` command wrapper
+- `qsdev enable ccusage` and `qsdev cost` command wrapper
 - Metadata-only analytics event engine collecting session/cost/hook metrics only
-- `gdev analytics report` and `gdev analytics export` commands
-- Session replay export via `gdev session export <session-id>` (opt-in)
+- `qsdev analytics report` and `qsdev analytics export` commands
+- Session replay export via `qsdev session export <session-id>` (opt-in)
 - Pre-configured Grafana dashboard for Claude Code analytics when OTel sidecar is active
 
 ---
 
 ### Unit 33.1: OTel Sidecar Deployment
 
-**Description:** Implement `gdev enable observability` to deploy the `grafana/otel-lgtm` Docker container as a project-scoped observability sidecar. The container provides Grafana (port 3000), OTLP gRPC (port 4317), and OTLP HTTP (port 4318) with zero configuration. Generate `docker-compose.observability.yml` in the project root and wire auto-start into devenv's `enterShell` hook.
+**Description:** Implement `qsdev enable observability` to deploy the `grafana/otel-lgtm` Docker container as a project-scoped observability sidecar. The container provides Grafana (port 3000), OTLP gRPC (port 4317), and OTLP HTTP (port 4318) with zero configuration. Generate `docker-compose.observability.yml` in the project root and wire auto-start into devenv's `enterShell` hook.
 
 **Context:** The observability sidecar research established that Grafana, Loki, Tempo, and Prometheus are not available as native devenv.sh services — they require Docker. The `grafana/otel-lgtm` all-in-one image (`github.com/grafana/docker-otel-lgtm`) bundles the entire LGTM stack (Loki + Grafana + Tempo + Mimir/Prometheus) plus an OpenTelemetry Collector into a single container with zero configuration required. A developer runs one command, and a complete local observability stack is available. This replaces what would otherwise be a four-container docker-compose setup with preconfigured dashboards. The image exposes three ports: 3000 (Grafana UI), 4317 (OTLP gRPC), and 4318 (OTLP HTTP). Data persistence is provided via a named Docker volume, preserving Grafana dashboards and collected data across container restarts.
 
-The `gdev enable observability` pattern follows the existing tool lifecycle system from Phase 12 (Unit 12.1): it registers the sidecar as a managed tool, generates files with section markers, and provides the standard `gdev observability up/down/status/logs` subcommand group. The generated `docker-compose.observability.yml` is machine-owned (exclusive ownership), tracked in `.gdev/state.yaml`, and regenerated on `gdev init --update`.
+The `qsdev enable observability` pattern follows the existing tool lifecycle system from Phase 12 (Unit 12.1): it registers the sidecar as a managed tool, generates files with section markers, and provides the standard `qsdev observability up/down/status/logs` subcommand group. The generated `docker-compose.observability.yml` is machine-owned (exclusive ownership), tracked in `.gdev/state.yaml`, and regenerated on `qsdev init --update`.
 
 Auto-start via `enterShell` uses Phase 16's existing shell integration hook (Unit 16.7 enterShell pattern): the generated `devenv.nix` block runs `docker compose -f docker-compose.observability.yml up -d --quiet-pull` on shell entry when observability is enabled.
 
-**Desired Outcome:** `gdev enable observability` generates `docker-compose.observability.yml`, adds an `enterShell` hook to `devenv.nix` that starts the container on shell entry, and registers four subcommands. After `devenv shell`, Grafana is available at `http://localhost:3000` (admin/admin) with no manual configuration.
+**Desired Outcome:** `qsdev enable observability` generates `docker-compose.observability.yml`, adds an `enterShell` hook to `devenv.nix` that starts the container on shell entry, and registers four subcommands. After `devenv shell`, Grafana is available at `http://localhost:3000` (admin/admin) with no manual configuration.
 
 **Steps:**
 1. Create `templates/observability/docker-compose.observability.yml.tmpl`:
    ```yaml
-   # Generated by gdev — do not edit. Run: gdev enable observability
+   # Generated by gdev — do not edit. Run: qsdev enable observability
    # Observability sidecar: Grafana + Prometheus + Loki + Tempo via grafana/otel-lgtm
    services:
      observability:
@@ -69,7 +69,7 @@ Auto-start via `enterShell` uses Phase 16's existing shell integration hook (Uni
    - `OTLPGRPCPort int` — default 4317
    - `OTLPHTTPPort int` — default 4318
    - `AutoStart bool` — default true (start on `devenv shell` entry)
-3. Implement `gdev enable observability`:
+3. Implement `qsdev enable observability`:
    - Register `observability` in the tool registry with `FileOwnership: Exclusive` for `docker-compose.observability.yml`.
    - Generate `docker-compose.observability.yml` from the template.
    - Add `docker-compose.observability.yml` to `.gitignore` if the team has opted to keep the file local (default: commit it — it is useful to share with the team).
@@ -85,7 +85,7 @@ Auto-start via `enterShell` uses Phase 16's existing shell integration hook (Uni
      '';
      # --- end gdev:observability ---
      ```
-4. Implement the `gdev observability` subcommand group:
+4. Implement the `qsdev observability` subcommand group:
    ```go
    var observabilityCmd = &cobra.Command{
        Use:   "observability",
@@ -133,31 +133,31 @@ Auto-start via `enterShell` uses Phase 16's existing shell integration hook (Uni
    - Run `docker compose -f docker-compose.observability.yml logs -f --tail 50`.
    - Support `--lines N` flag to set tail count.
 9. Register `observabilityCmd` under the root `gdev` command.
-10. Add `observability` to `gdev disable` handling: removes `docker-compose.observability.yml` and the enterShell hook from devenv.nix.
+10. Add `observability` to `qsdev disable` handling: removes `docker-compose.observability.yml` and the enterShell hook from devenv.nix.
 11. Write unit tests:
     - Template renders correctly with default config values.
     - Template renders with custom port overrides.
-    - `gdev enable observability` file ownership registered in state.
-    - `gdev disable observability` removes generated file from state tracking.
+    - `qsdev enable observability` file ownership registered in state.
+    - `qsdev disable observability` removes generated file from state tracking.
     - Status returns `Not deployed` when file is missing.
 
 **Acceptance Criteria:**
-- [ ] `gdev enable observability` generates `docker-compose.observability.yml` with correct `grafana/otel-lgtm` image reference
+- [ ] `qsdev enable observability` generates `docker-compose.observability.yml` with correct `grafana/otel-lgtm` image reference
 - [ ] `docker-compose.observability.yml` is tracked in `.gdev/state.yaml` with `Exclusive` file ownership
 - [ ] `devenv shell` entry auto-starts the container when `AutoStart` is true
-- [ ] `gdev observability up` starts the container and waits for health check
-- [ ] `gdev observability down` stops the container
-- [ ] `gdev observability status` reports container state and whether Grafana port is reachable
-- [ ] `gdev observability logs` tails the container logs
-- [ ] `gdev disable observability` removes the generated file and the enterShell hook from devenv.nix
+- [ ] `qsdev observability up` starts the container and waits for health check
+- [ ] `qsdev observability down` stops the container
+- [ ] `qsdev observability status` reports container state and whether Grafana port is reachable
+- [ ] `qsdev observability logs` tails the container logs
+- [ ] `qsdev disable observability` removes the generated file and the enterShell hook from devenv.nix
 - [ ] Missing Docker installation produces a clear error with install instructions
 - [ ] Image version is pinned (not `latest`) in the generated compose file
 
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/dev-services-observability-research.md § 4` — observability architecture decision: Docker sidecar via `grafana/otel-lgtm`, not native devenv service; ports 3000/4317/4318
-- `research-spikes/gdev-ecosystem-expansion-assessment/service-observability-design.md § Part B` — unit design for `gdev enable observability`, compose template, enterShell auto-start pattern
+- `research-spikes/gdev-ecosystem-expansion-assessment/service-observability-design.md § Part B` — unit design for `qsdev enable observability`, compose template, enterShell auto-start pattern
 - `research-spikes/gdev-ecosystem-expansion-assessment/docs/grafana-docker-otel-lgtm.md` — image documentation: ports, volume mounts, environment variables, health check endpoint
-- `phases/12-extended-integrations-lifecycle.md § Unit 12.1` — tool lifecycle system, `gdev enable/disable`, file ownership registry
+- `phases/12-extended-integrations-lifecycle.md § Unit 12.1` — tool lifecycle system, `qsdev enable/disable`, file ownership registry
 
 **Status:** Not Started
 
@@ -167,7 +167,7 @@ Auto-start via `enterShell` uses Phase 16's existing shell integration hook (Uni
 
 **Description:** Generate OpenTelemetry standard environment variables into devenv.nix when observability is enabled. These env vars configure any OTel-instrumented application to export telemetry to the local sidecar automatically, with no application code changes required.
 
-**Context:** OpenTelemetry's environment variable specification is the standard configuration mechanism — every OTel SDK (Go, Python, Node.js, Java, Rust) reads `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, and `OTEL_RESOURCE_ATTRIBUTES` from the environment. When a developer opens their devenv shell, these vars are already set, meaning any OTel-instrumented application they run exports to the local Grafana instance without configuration. The service name comes from `.gdev.yaml`'s project name field (Phase 13 Unit 13.1). The `service.version` resource attribute uses the current git SHA for correlation between traces and code versions.
+**Context:** OpenTelemetry's environment variable specification is the standard configuration mechanism — every OTel SDK (Go, Python, Node.js, Java, Rust) reads `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, and `OTEL_RESOURCE_ATTRIBUTES` from the environment. When a developer opens their devenv shell, these vars are already set, meaning any OTel-instrumented application they run exports to the local Grafana instance without configuration. The service name comes from `.qsdev.yaml`'s project name field (Phase 13 Unit 13.1). The `service.version` resource attribute uses the current git SHA for correlation between traces and code versions.
 
 The env vars are injected into devenv.nix's gdev-owned section, following the same pattern as other env vars generated by Phase 3 (database URLs, service addresses). When observability is disabled, no env vars are generated and no container is started.
 
@@ -190,7 +190,7 @@ The env vars are injected into devenv.nix's gdev-owned section, following the sa
    - At generation time, check if `.git` exists.
    - If yes: run `git rev-parse --short HEAD` and embed the result as `service.version=<sha>`.
    - If no (not a git repo): omit `service.version` from `OTEL_RESOURCE_ATTRIBUTES`.
-   - The SHA is embedded at generation time, not at shell entry — it reflects the environment at `gdev init` time, not at each shell open.
+   - The SHA is embedded at generation time, not at shell entry — it reflects the environment at `qsdev init` time, not at each shell open.
 3. Add conditional generation to the devenv addon:
    ```go
    func generateDevenvNix(answers *WizardAnswers, state *GeneratedState) (string, error) {
@@ -212,8 +212,8 @@ The env vars are injected into devenv.nix's gdev-owned section, following the sa
    - `OTEL_EXPORTER_OTLP_PROTOCOL` — OTel spec: `grpc`, `http/protobuf`, or `http/json`
    - `OTEL_SERVICE_NAME` — OTel spec: service name string
    - `OTEL_RESOURCE_ATTRIBUTES` — OTel spec: comma-separated key=value pairs
-5. Wire to `gdev init --update`: when observability is re-enabled after a git SHA change, regenerate the env vars with the new SHA. Add a note in the update summary if the SHA changed.
-6. Add `gdev observability status` output to report whether OTEL env vars are active in the current shell:
+5. Wire to `qsdev init --update`: when observability is re-enabled after a git SHA change, regenerate the env vars with the new SHA. Add a note in the update summary if the SHA changed.
+6. Add `qsdev observability status` output to report whether OTEL env vars are active in the current shell:
    ```
    OTEL env vars: set (service=myapp, endpoint=http://localhost:4317)
    ```
@@ -226,13 +226,13 @@ The env vars are injected into devenv.nix's gdev-owned section, following the sa
 
 **Acceptance Criteria:**
 - [ ] `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, and `OTEL_RESOURCE_ATTRIBUTES` generated in devenv.nix when observability is enabled
-- [ ] `OTEL_SERVICE_NAME` is set to the project name from `.gdev.yaml`
+- [ ] `OTEL_SERVICE_NAME` is set to the project name from `.qsdev.yaml`
 - [ ] `OTEL_RESOURCE_ATTRIBUTES` includes `deployment.environment=dev`
 - [ ] `service.version` resource attribute set to short git SHA when in a git repository
 - [ ] `service.version` omitted when project is not a git repository
 - [ ] Env vars are inside gdev-owned section markers so they can be regenerated
 - [ ] No OTEL env vars generated when observability is disabled
-- [ ] `gdev observability status` reports whether OTEL env vars are active
+- [ ] `qsdev observability status` reports whether OTEL env vars are active
 
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/service-observability-design.md § Part B` — OTEL env var list, port references, git SHA injection pattern
@@ -244,21 +244,21 @@ The env vars are injected into devenv.nix's gdev-owned section, following the sa
 
 ### Unit 33.3: ccusage Integration
 
-**Description:** Integrate ccusage as the default cost visibility tool via `gdev enable ccusage`. Provide a `gdev cost` thin wrapper command. Target the three-second demo moment: `npx ccusage` shows Claude Code spend instantly.
+**Description:** Integrate ccusage as the default cost visibility tool via `qsdev enable ccusage`. Provide a `qsdev cost` thin wrapper command. Target the three-second demo moment: `npx ccusage` shows Claude Code spend instantly.
 
 **Context:** ccusage (12K GitHub stars as of May 2026) reads Claude Code's local JSONL session files and surfaces spend by project, date range, and model — without any remote calls or API keys. It is the leading cost visibility tool for Claude Code. The consulting adoption research identified cost visibility as a primary concern for consulting firms billing clients for AI-assisted work, and ccusage's zero-friction install path (`npx ccusage`) makes it the right first tool for the 4-tier adoption sequence. The "3-second demo" — running `npx ccusage` and immediately seeing spend — is the adoption moment described in the CoP presentation design research.
 
-The `gdev enable ccusage` command adds ccusage to the devenv packages list so it is available as a Nix binary inside the devenv shell. The `gdev cost` wrapper runs ccusage with sensible defaults tuned for consulting use.
+The `qsdev enable ccusage` command adds ccusage to the devenv packages list so it is available as a Nix binary inside the devenv shell. The `qsdev cost` wrapper runs ccusage with sensible defaults tuned for consulting use.
 
-**Desired Outcome:** `gdev enable ccusage` adds ccusage to devenv packages. `gdev cost` provides a thin wrapper with consulting-sensible defaults. `gdev cost --json` provides machine-readable output for CI dashboards and the analytics engine (Unit 33.4).
+**Desired Outcome:** `qsdev enable ccusage` adds ccusage to devenv packages. `qsdev cost` provides a thin wrapper with consulting-sensible defaults. `qsdev cost --json` provides machine-readable output for CI dashboards and the analytics engine (Unit 33.4).
 
 **Steps:**
-1. Implement `gdev enable ccusage`:
+1. Implement `qsdev enable ccusage`:
    - Add `pkgs.ccusage` to devenv.nix's `packages` list in the gdev-owned section.
    - Register ccusage in `.gdev/state.yaml` as a managed tool.
    - When ccusage is not in nixpkgs: use `pkgs.nodePackages.ccusage` or fall back to a wrapper that invokes `npx ccusage` (ccusage is an npm package).
    - Print install confirmation: `ccusage added to devenv packages. Run: gdev cost`.
-2. Implement the `gdev cost` command:
+2. Implement the `qsdev cost` command:
    ```go
    var costCmd = &cobra.Command{
        Use:   "cost",
@@ -287,7 +287,7 @@ The `gdev enable ccusage` command adds ccusage to the devenv packages list so it
        ccuBin, err := resolveCcusageBin()
        if err != nil {
            return fmt.Errorf(
-               "ccusage not found. Run: gdev enable ccusage\n"+
+               "ccusage not found. Run: qsdev enable ccusage\n"+
                "Or for a one-off check: npx ccusage",
            )
        }
@@ -295,7 +295,7 @@ The `gdev enable ccusage` command adds ccusage to the devenv packages list so it
        return runPassthrough(ccuBin, ccArgs, os.Stdout, os.Stderr)
    }
    ```
-3. Add flags to `gdev cost`:
+3. Add flags to `qsdev cost`:
    - `--json`: machine-readable JSON output (passes `--json` to ccusage).
    - `--since <date>`: filter to sessions since a date (passes through to ccusage).
    - `--project <name>`: filter to a specific project (passes through to ccusage).
@@ -305,23 +305,23 @@ The `gdev enable ccusage` command adds ccusage to the devenv packages list so it
    - If not found, attempt `npx --yes ccusage --version` as a capability check.
    - If `npx` available, return a wrapper that invokes `npx ccusage`.
    - If neither available, return an error with install instructions.
-5. Add `gdev cost` to `gdev status` output when observability or ccusage is enabled:
+5. Add `qsdev cost` to `qsdev status` output when observability or ccusage is enabled:
    - Brief spend summary line (current month, today).
-6. Add `ccusage` to the `gdev enable` help text and to `gdev init --list-features`.
+6. Add `ccusage` to the `qsdev enable` help text and to `qsdev init --list-features`.
 7. Write unit tests:
-   - `gdev enable ccusage` adds pkgs entry to devenv.nix.
-   - `gdev cost` passes `--json` flag through to ccusage.
+   - `qsdev enable ccusage` adds pkgs entry to devenv.nix.
+   - `qsdev cost` passes `--json` flag through to ccusage.
    - `resolveCcusageBin` falls back to npx when binary not on PATH.
    - Missing ccusage and missing npx produces actionable error.
 
 **Acceptance Criteria:**
-- [ ] `gdev enable ccusage` adds ccusage to devenv packages list in devenv.nix
-- [ ] `gdev cost` runs ccusage with defaults tuned for consulting use
-- [ ] `gdev cost --json` outputs machine-readable JSON
-- [ ] `gdev cost --since <date>` and `--project <name>` flags pass through to ccusage
-- [ ] `gdev cost` falls back to `npx ccusage` when the binary is not in devenv
-- [ ] Missing ccusage and missing npx produces error with `gdev enable ccusage` install instruction
-- [ ] `gdev disable ccusage` removes the package from devenv.nix
+- [ ] `qsdev enable ccusage` adds ccusage to devenv packages list in devenv.nix
+- [ ] `qsdev cost` runs ccusage with defaults tuned for consulting use
+- [ ] `qsdev cost --json` outputs machine-readable JSON
+- [ ] `qsdev cost --since <date>` and `--project <name>` flags pass through to ccusage
+- [ ] `qsdev cost` falls back to `npx ccusage` when the binary is not in devenv
+- [ ] Missing ccusage and missing npx produces error with `qsdev enable ccusage` install instruction
+- [ ] `qsdev disable ccusage` removes the package from devenv.nix
 
 **Research Citations:**
 - `research-spikes/claude-tools-consulting-adoption/consulting-tool-selection-research.md` — ccusage in 4-tier deployment, zero-risk individual tool, consulting cost visibility
@@ -453,7 +453,7 @@ The engine reads Phase 32's SOC 2 logging hook output as its primary input sourc
    - Opt-in via `~/.qsdev/config.yaml`: `analytics.developer_id: <alias>`.
    - Developer ID is a user-chosen alias string, not email or real name.
    - When set, include in events. When unset, field is absent from all events.
-7. Implement `gdev enable analytics` / `gdev disable analytics`:
+7. Implement `qsdev enable analytics` / `qsdev disable analytics`:
    - `enable`: installs the Stop hook to `~/.claude/settings.json`, creates `~/.qsdev/analytics/` directory.
    - `disable`: removes the hook entry, leaves existing JSONL files.
 8. Write unit tests:
@@ -474,8 +474,8 @@ The engine reads Phase 32's SOC 2 logging hook output as its primary input sourc
 - [ ] Developer ID is opt-in, absent by default
 - [ ] JSONL written to `~/.qsdev/analytics/events-<date>.jsonl` with daily rotation
 - [ ] OTel log output emitted when `OTEL_EXPORTER_OTLP_ENDPOINT` is set
-- [ ] `gdev enable analytics` installs the Stop hook
-- [ ] `gdev disable analytics` removes the hook without deleting existing JSONL files
+- [ ] `qsdev enable analytics` installs the Stop hook
+- [ ] `qsdev disable analytics` removes the hook without deleting existing JSONL files
 
 **Research Citations:**
 - `research-spikes/claude-tools-consulting-adoption/consulting-tool-selection-research.md` — team analytics gap, metadata-only design sketch, why Rudel/Mantra are not recommended for consulting
@@ -488,7 +488,7 @@ The engine reads Phase 32's SOC 2 logging hook output as its primary input sourc
 
 ### Unit 33.5: Team Analytics Dashboard
 
-**Description:** Implement `gdev analytics report` to generate a local markdown report from analytics JSONL, `gdev analytics export` for JSON/OTel export, and a pre-configured Grafana dashboard for Claude Code analytics when the OTel sidecar is active.
+**Description:** Implement `qsdev analytics report` to generate a local markdown report from analytics JSONL, `qsdev analytics export` for JSON/OTel export, and a pre-configured Grafana dashboard for Claude Code analytics when the OTel sidecar is active.
 
 **Context:** Team analytics data is only valuable if it surfaces actionable insights. The analytics report command reads the JSONL files written by Unit 33.4's Stop hook and produces per-developer and per-project summaries: sessions/day, average duration, cost/developer/week, tool adoption rates, and hook block rates. These metrics answer the questions a consulting engineering manager actually asks: "Are we getting value from Claude Code? Which projects are using it most? Where are the hook blocks coming from?"
 
@@ -496,10 +496,10 @@ Team aggregation uses a CI artifact approach: each developer's anonymized metric
 
 When the OTel sidecar (Unit 33.1) is active, the analytics events are also emitted to Loki (as structured logs), enabling the pre-configured Grafana dashboard to show time-series views of session activity, cost trends, and hook outcomes.
 
-**Desired Outcome:** `gdev analytics report` produces an actionable markdown report in under 2 seconds from local JSONL data. The Grafana dashboard is pre-configured and visible at `http://localhost:3000` when the OTel sidecar is running.
+**Desired Outcome:** `qsdev analytics report` produces an actionable markdown report in under 2 seconds from local JSONL data. The Grafana dashboard is pre-configured and visible at `http://localhost:3000` when the OTel sidecar is running.
 
 **Steps:**
-1. Implement `gdev analytics report`:
+1. Implement `qsdev analytics report`:
    ```go
    var analyticsReportCmd = &cobra.Command{
        Use:   "report",
@@ -544,22 +544,22 @@ When the OTel sidecar (Unit 33.1) is active, the analytics events are also emitt
    | Hook | Allow | Block | Block rate |
    ...
    ```
-3. Implement `gdev analytics export`:
+3. Implement `qsdev analytics export`:
    - `--format json`: JSON array of all raw events (passes through privacy validation).
    - `--format aggregated`: JSON with pre-aggregated metrics (for Grafana/external dashboards).
    - `--since <date>` and `--until <date>` range filters.
    - `--project <hash>` filter for single-project export.
 4. Implement team aggregation via CI artifacts:
-   - `gdev analytics export --format aggregated --output analytics-<developer_id>.json`
+   - `qsdev analytics export --format aggregated --output analytics-<developer_id>.json`
    - CI step collects per-developer aggregated JSON files as artifacts.
-   - Aggregation job: `gdev analytics aggregate --inputs artifacts/*.json --output team-report.md`
-   - `gdev analytics aggregate` merges aggregated JSON, de-duplicates session IDs, computes team totals.
+   - Aggregation job: `qsdev analytics aggregate --inputs artifacts/*.json --output team-report.md`
+   - `qsdev analytics aggregate` merges aggregated JSON, de-duplicates session IDs, computes team totals.
 5. Implement the pre-configured Grafana dashboard:
    - Generate `grafana-dashboards/claude-analytics.json` in the observability compose volume when both observability and analytics are enabled.
    - Dashboard panels: sessions/day (time series), cost/week (bar chart), tool use distribution (pie), hook block rate (gauge), top projects by cost (table).
    - The Grafana provisioning directory is set in the compose file: `GF_PATHS_PROVISIONING=/etc/grafana/provisioning`.
    - Dashboard JSON uses Loki as data source (analytics events emitted as Loki log records by the Stop hook when OTel is active).
-6. Implement `gdev analytics clean`:
+6. Implement `qsdev analytics clean`:
    - Delete JSONL files older than N days (default 90).
    - `--older-than <days>` flag.
    - Prints count of files deleted and space freed.
@@ -571,14 +571,14 @@ When the OTel sidecar (Unit 33.1) is active, the analytics events are also emitt
    - Aggregate command merges two mock developer exports without double-counting shared session IDs.
 
 **Acceptance Criteria:**
-- [ ] `gdev analytics report` produces a markdown report with sessions/day, cost/week, tool adoption, hook block rate
+- [ ] `qsdev analytics report` produces a markdown report with sessions/day, cost/week, tool adoption, hook block rate
 - [ ] Report reads from `~/.qsdev/analytics/events-*.jsonl` and runs in under 2 seconds
-- [ ] `gdev analytics export --format json` outputs raw events as valid JSON
-- [ ] `gdev analytics export --format aggregated` outputs pre-aggregated metrics
-- [ ] `gdev analytics aggregate` merges per-developer exports into a team report
+- [ ] `qsdev analytics export --format json` outputs raw events as valid JSON
+- [ ] `qsdev analytics export --format aggregated` outputs pre-aggregated metrics
+- [ ] `qsdev analytics aggregate` merges per-developer exports into a team report
 - [ ] Pre-configured Grafana dashboard provisioned when both observability and analytics are enabled
 - [ ] Dashboard panels cover: sessions/day, cost/week, tool adoption, hook block rate
-- [ ] `gdev analytics clean --older-than 90` deletes old JSONL files
+- [ ] `qsdev analytics clean --older-than 90` deletes old JSONL files
 - [ ] All export operations re-validate events against the privacy schema before output
 
 **Research Citations:**
@@ -592,16 +592,16 @@ When the OTel sidecar (Unit 33.1) is active, the analytics events are also emitt
 
 ### Unit 33.6: Session Replay Export (Opt-in)
 
-**Description:** Implement `gdev session export <session-id>` to generate a self-contained HTML replay of a Claude Code session. Opt-in only, never automatic. Credential patterns are redacted before export. Output is a single HTML file viewable in any browser with no external dependencies.
+**Description:** Implement `qsdev session export <session-id>` to generate a self-contained HTML replay of a Claude Code session. Opt-in only, never automatic. Credential patterns are redacted before export. Output is a single HTML file viewable in any browser with no external dependencies.
 
-**Context:** Session replay is a knowledge transfer tool for consulting teams: "here's how I debugged the authentication issue on the Jenkins pipeline" can be communicated as a standalone HTML file rather than a verbal explanation. The consulting adoption research ranked session replay (claude-replay, 573 stars) as the second adoption tier after cost visibility tools, specifically for cross-consultant knowledge transfer. The privacy analysis established that session replay is safe for consulting with credential redaction configured — the concern is accidental secret exposure in the JSONL session files. `gdev session export` bakes credential redaction into the export path so it is not an optional step users can skip.
+**Context:** Session replay is a knowledge transfer tool for consulting teams: "here's how I debugged the authentication issue on the Jenkins pipeline" can be communicated as a standalone HTML file rather than a verbal explanation. The consulting adoption research ranked session replay (claude-replay, 573 stars) as the second adoption tier after cost visibility tools, specifically for cross-consultant knowledge transfer. The privacy analysis established that session replay is safe for consulting with credential redaction configured — the concern is accidental secret exposure in the JSONL session files. `qsdev session export` bakes credential redaction into the export path so it is not an optional step users can skip.
 
 The approach reads Claude Code's local JSONL session files (at `~/.claude/projects/<project-hash>/`) and renders them as static HTML. No server, no remote calls, no external JavaScript CDN dependencies — the HTML file is self-contained so it can be shared via email or committed to a private repository as documentation.
 
-**Desired Outcome:** `gdev session export <session-id>` produces a single redacted HTML file that can be shared with another consultant to replay the session. Secret patterns are automatically redacted. The export is explicit — it never happens automatically.
+**Desired Outcome:** `qsdev session export <session-id>` produces a single redacted HTML file that can be shared with another consultant to replay the session. Secret patterns are automatically redacted. The export is explicit — it never happens automatically.
 
 **Steps:**
-1. Implement `gdev session export` command:
+1. Implement `qsdev session export` command:
    ```go
    var sessionExportCmd = &cobra.Command{
        Use:   "export <session-id>",
@@ -613,7 +613,7 @@ The approach reads Claude Code's local JSONL session files (at `~/.claude/projec
 2. Implement session file location:
    - Claude Code stores session JSONL at `~/.claude/projects/<project-hash>/<session-id>.jsonl`.
    - If `<session-id>` is a partial prefix, resolve to the first matching session.
-   - `gdev session list` subcommand: lists available sessions for the current project with date, duration, and first user message (first 80 chars, redacted).
+   - `qsdev session list` subcommand: lists available sessions for the current project with date, duration, and first user message (first 80 chars, redacted).
 3. Implement credential redaction using the same pattern as Phase 32.2 (secret scanning):
    - Patterns to redact: AWS key IDs (`AKIA[A-Z0-9]{16}`), private key blocks, bearer tokens (`Bearer [A-Za-z0-9._-]{20,}`), generic secrets (`(?i)(secret|password|token|api.key)\s*[:=]\s*[^\s]{8,}`).
    - Replacement: `[REDACTED:<pattern-type>]`.
@@ -628,7 +628,7 @@ The approach reads Claude Code's local JSONL session files (at `~/.claude/projec
    - No JavaScript required for viewing (pure HTML/CSS).
 5. Add `--output <file>` flag (default: `<session-id>-replay.html` in current directory).
 6. Add `--no-redact` flag with a prominent warning: "This will include all content including potential secrets. Use only for sessions you have verified contain no credentials." This flag requires explicit confirmation.
-7. Implement `gdev session list`:
+7. Implement `qsdev session list`:
    ```
    $ gdev session list
    SESSION ID          DATE        DURATION  FIRST MESSAGE
@@ -641,18 +641,18 @@ The approach reads Claude Code's local JSONL session files (at `~/.claude/projec
    - Redaction count reported correctly.
    - HTML output is well-formed HTML5 (basic structure check).
    - Tool use blocks rendered as `<details>` elements.
-   - Missing session ID produces clear error with `gdev session list` suggestion.
+   - Missing session ID produces clear error with `qsdev session list` suggestion.
 
 **Acceptance Criteria:**
-- [ ] `gdev session export <id>` produces a single self-contained HTML file
+- [ ] `qsdev session export <id>` produces a single self-contained HTML file
 - [ ] Credential patterns (AWS keys, bearer tokens, private keys, secret= patterns) are redacted before export
 - [ ] Redaction count printed to stdout so the user knows redaction occurred
 - [ ] HTML output has no external dependencies (CDN, external stylesheets)
 - [ ] Tool use blocks rendered as collapsible sections
-- [ ] Export never happens automatically — only on explicit `gdev session export` invocation
-- [ ] `gdev session list` shows available sessions for the current project
+- [ ] Export never happens automatically — only on explicit `qsdev session export` invocation
+- [ ] `qsdev session list` shows available sessions for the current project
 - [ ] `--no-redact` flag requires explicit confirmation warning about credential risk
-- [ ] Missing session ID produces error with `gdev session list` suggestion
+- [ ] Missing session ID produces error with `qsdev session list` suggestion
 
 **Research Citations:**
 - `research-spikes/claude-tools-consulting-adoption/consulting-tool-selection-research.md` — session replay as second adoption tier, knowledge transfer use case, claude-replay (573 stars) as reference implementation
@@ -665,10 +665,10 @@ The approach reads Claude Code's local JSONL session files (at `~/.claude/projec
 ## Phase Completion Criteria
 
 - [ ] All six units pass acceptance criteria
-- [ ] `gdev enable observability && devenv shell` starts Grafana at `http://localhost:3000` with a working health check
+- [ ] `qsdev enable observability && devenv shell` starts Grafana at `http://localhost:3000` with a working health check
 - [ ] OTEL env vars are present in devenv shell and a simple OTel-instrumented app exports traces to the local Grafana instance
-- [ ] `gdev cost` shows Claude Code spend in under 3 seconds
+- [ ] `qsdev cost` shows Claude Code spend in under 3 seconds
 - [ ] Analytics engine collects a session-end event with correct token counts and project hash; schema validation rejects a synthetic event with a 300-character string field
-- [ ] `gdev analytics report` produces a markdown report from 30 days of mock JSONL data in under 2 seconds
-- [ ] `gdev session export` produces a self-contained HTML file with credential patterns redacted
+- [ ] `qsdev analytics report` produces a markdown report from 30 days of mock JSONL data in under 2 seconds
+- [ ] `qsdev session export` produces a self-contained HTML file with credential patterns redacted
 - [ ] No analytics event contains source code, prompt text, or file contents — verified by reviewing schema field definitions and validator implementation

@@ -4,7 +4,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 	"gopkg.in/yaml.v3"
 )
 
@@ -66,7 +66,7 @@ func (p *InfraProfile) generateDependabotYML() types.GeneratedFile {
 
 	// Prepend a comment header.
 	var buf strings.Builder
-	buf.WriteString("# Managed by gdev-secure-devenv-bootstrap. Do not edit.\n")
+	buf.WriteString("# Managed by qsdev. Do not edit.\n")
 	buf.Write(data)
 
 	return types.GeneratedFile{

@@ -2,7 +2,7 @@
 
 ## Research Question
 
-What happens when a new engineer joins a project that already has gdev configuration? How do we minimize the clone-to-productive gap while maintaining security compliance?
+What happens when a new engineer joins a project that already has qsdev configuration? How do we minimize the clone-to-productive gap while maintaining security compliance?
 
 ## The Clone-to-Productive Gap
 
@@ -15,25 +15,25 @@ The "clone-to-productive" gap is the time between `git clone` and a developer be
 
 For a consulting firm where engineers rotate across client projects, this gap is experienced repeatedly -- not just at hiring. Every project transition is an onboarding event.
 
-## Scenario Analysis: `gdev init` on an Existing Project
+## Scenario Analysis: `qsdev init` on an Existing Project
 
-### Scenario 1: New Engineer, Existing Project with `.gdev.yaml`
+### Scenario 1: New Engineer, Existing Project with `.qsdev.yaml`
 
 The optimal flow for minimum friction:
 
 ```
 1. git clone <project-url>             # ~10 seconds
 2. cd <project>
-3. gdev init                           # Detects .gdev.yaml, enters "join" mode
-   -> Reads .gdev.yaml
+3. qsdev init                           # Detects .qsdev.yaml, enters "join" mode
+   -> Reads .qsdev.yaml
    -> Checks gdev binary version compatibility
    -> Detects what's already configured (devenv.nix, .claude/, etc.)
    -> Identifies what needs local setup:
       - Install devenv.sh if missing
       - Install direnv if missing  
       - Install claude CLI if missing
-   -> Offers to install missing tools via gdev devenv setup
-   -> Generates local-only files (.gdev.local.yaml template)
+   -> Offers to install missing tools via qsdev devenv setup
+   -> Generates local-only files (.qsdev.local.yaml template)
    -> Activates devenv shell
 4. devenv shell                        # Working environment
 ```
@@ -42,14 +42,14 @@ The optimal flow for minimum friction:
 
 ### Key Detection Logic
 
-When `gdev init` runs in a directory with existing config, it must distinguish:
+When `qsdev init` runs in a directory with existing config, it must distinguish:
 
 | What to Detect | How | Action |
 |---|---|---|
-| `.gdev.yaml` exists | File existence check | Enter "join" mode (not "create" mode) |
-| Generated files present (devenv.nix, .claude/) | File existence + hash check against `.gdev.yaml` config | Skip generation, verify state |
-| Generated files match expected state | SHA256 comparison against what `.gdev.yaml` would produce | Report drift if mismatched |
-| Local tools installed (devenv, direnv, claude) | `which` / PATH check | Offer `gdev devenv setup` for missing |
+| `.qsdev.yaml` exists | File existence check | Enter "join" mode (not "create" mode) |
+| Generated files present (devenv.nix, .claude/) | File existence + hash check against `.qsdev.yaml` config | Skip generation, verify state |
+| Generated files match expected state | SHA256 comparison against what `.qsdev.yaml` would produce | Report drift if mismatched |
+| Local tools installed (devenv, direnv, claude) | `which` / PATH check | Offer `qsdev devenv setup` for missing |
 | devenv shell activated | `DEVENV_ROOT` env var check | Skip activation prompt |
 | Trust not established (mise model) | Check if project path is trusted | Prompt for trust on first run |
 
@@ -58,11 +58,11 @@ When `gdev init` runs in a directory with existing config, it must distinguish:
 Engineer pulls latest gdev binary, runs on an existing project:
 
 ```
-$ gdev init
+$ qsdev init
   gdev v0.16.0 | project config version: 1 | compatible: yes
   
   Checking project state...
-  ✓ .gdev.yaml present (profile: go-web-service)
+  ✓ .qsdev.yaml present (profile: go-web-service)
   ✓ devenv.nix present (matches expected state)
   ✓ .claude/settings.json present (3 user modifications detected)
   ✓ All tools installed
@@ -72,16 +72,16 @@ $ gdev init
   - Claude Code deny rules updated (12 new patterns)
   - skills/security-review.md updated to v2.1
   
-  Run `gdev init --update` to apply updates.
+  Run `qsdev init --update` to apply updates.
 ```
 
 ### Scenario 3: Existing Engineer, Outdated gdev Version
 
 ```
-$ gdev init
+$ qsdev init
   ⚠ gdev version mismatch
   Your version:    v0.14.2
-  Required:        >= 0.15.0 (from .gdev.yaml gdev_version)
+  Required:        >= 0.15.0 (from .qsdev.yaml gdev_version)
   
   This project requires a newer gdev. Update with:
     gdev self-update
@@ -89,13 +89,13 @@ $ gdev init
   Or override with --skip-version-check (not recommended)
 ```
 
-### Scenario 4: Brownfield Project (No .gdev.yaml Yet)
+### Scenario 4: Brownfield Project (No .qsdev.yaml Yet)
 
-An existing project without gdev configuration. This is the standard `gdev init` wizard flow:
+An existing project without qsdev configuration. This is the standard `qsdev init` wizard flow:
 
 ```
-$ gdev init
-  No .gdev.yaml found. Let's set up this project.
+$ qsdev init
+  No .qsdev.yaml found. Let's set up this project.
   
   Detected: Go project (go.mod), TypeScript (package.json)
   Existing configs: .eslintrc.js, tsconfig.json, Dockerfile
@@ -105,7 +105,7 @@ $ gdev init
     ○ No, let me customize
 ```
 
-After the wizard, `gdev init` generates `.gdev.yaml` plus all output files. The `.gdev.yaml` is committed to git so the next team member gets Scenario 1.
+After the wizard, `qsdev init` generates `.qsdev.yaml` plus all output files. The `.qsdev.yaml` is committed to git so the next team member gets Scenario 1.
 
 ## Machine-Specific vs Project-Specific Setup
 
@@ -113,7 +113,7 @@ Critical distinction for the onboarding flow:
 
 ### Project-Specific (Already in Git)
 These files are generated once by the first engineer, committed, and shared:
-- `.gdev.yaml` -- project configuration
+- `.qsdev.yaml` -- project configuration
 - `devenv.yaml` -- devenv inputs and settings
 - `devenv.nix` -- development environment definition
 - `.envrc` -- direnv activation
@@ -133,15 +133,15 @@ These must happen on each developer's machine:
 - Install claude CLI
 - Run `devenv shell` to download Nix derivations
 - Trust the project directory (mise-style trust model)
-- Generate `.gdev.local.yaml` from template
+- Generate `.qsdev.local.yaml` from template
 - Authenticate to any MCP servers (GitHub token, etc.)
 
-### The `gdev devenv setup` Command
+### The `qsdev devenv setup` Command
 
-For machine-specific setup, `gdev devenv setup` (run once per machine, not per project) handles:
+For machine-specific setup, `qsdev devenv setup` (run once per machine, not per project) handles:
 
 ```
-$ gdev devenv setup
+$ qsdev devenv setup
   Checking system prerequisites...
   
   ✓ Nix package manager (v2.28.0)
@@ -171,7 +171,7 @@ $ gdev devenv setup
 | Step | Command | Time | Notes |
 |------|---------|------|-------|
 | 1 | `git clone <url> && cd <project>` | 10-30s | Network dependent |
-| 2 | `gdev init` | 5-10s | Detects .gdev.yaml, verifies state, reports any drift |
+| 2 | `qsdev init` | 5-10s | Detects .qsdev.yaml, verifies state, reports any drift |
 | 3 | `devenv shell` | 30-120s | First run downloads Nix derivations (cached after) |
 | **Total** | **3 commands** | **~2 minutes** | Subsequent runs: <10s |
 
@@ -180,9 +180,9 @@ $ gdev devenv setup
 | Step | Command | Time | Notes |
 |------|---------|------|-------|
 | 1 | `curl -fsSL https://get.myxdev.dev \| sh` | 30-60s | Installs gdev binary |
-| 2 | `gdev devenv setup` | 2-5 min | Installs devenv, direnv, claude, shell hooks |
+| 2 | `qsdev devenv setup` | 2-5 min | Installs devenv, direnv, claude, shell hooks |
 | 3 | `git clone <url> && cd <project>` | 10-30s | |
-| 4 | `gdev init` | 5-10s | |
+| 4 | `qsdev init` | 5-10s | |
 | 5 | `devenv shell` | 30-120s | First Nix download |
 | **Total** | **5 commands** | **~5 minutes** | One-time machine setup |
 
@@ -221,10 +221,10 @@ type ProjectState struct {
 
 type OnboardingMode int
 const (
-    ModeCreate  OnboardingMode = iota  // No .gdev.yaml, run full wizard
-    ModeJoin                           // .gdev.yaml exists, verify + local setup
-    ModeUpdate                         // .gdev.yaml exists, gdev version newer
-    ModeRepair                         // .gdev.yaml exists, generated files drifted
+    ModeCreate  OnboardingMode = iota  // No .qsdev.yaml, run full wizard
+    ModeJoin                           // .qsdev.yaml exists, verify + local setup
+    ModeUpdate                         // .qsdev.yaml exists, gdev version newer
+    ModeRepair                         // .qsdev.yaml exists, generated files drifted
 )
 ```
 
@@ -237,17 +237,17 @@ The detection engine determines the mode, then the UI adapts:
 
 ## Edge Cases and Failure Modes
 
-1. **Nix download fails (no internet):** If Nix derivations are not cached, `devenv shell` fails. Mitigation: `gdev init` warns if Nix cache is empty and suggests pre-populating.
+1. **Nix download fails (no internet):** If Nix derivations are not cached, `devenv shell` fails. Mitigation: `qsdev init` warns if Nix cache is empty and suggests pre-populating.
 
-2. **Trust prompt fatigue:** If every project requires trusting, engineers may blindly trust everything. Mitigation: `gdev devenv setup` can pre-trust the company's project directory (like mise's `trusted_config_paths`).
+2. **Trust prompt fatigue:** If every project requires trusting, engineers may blindly trust everything. Mitigation: `qsdev devenv setup` can pre-trust the company's project directory (like mise's `trusted_config_paths`).
 
-3. **Version skew in team:** One engineer has gdev v0.16, another v0.14. The `.gdev.yaml` `gdev_version` constraint catches this, but the error must be actionable (include `gdev self-update` command).
+3. **Version skew in team:** One engineer has gdev v0.16, another v0.14. The `.qsdev.yaml` `gdev_version` constraint catches this, but the error must be actionable (include `qsdev self-update` command).
 
-4. **Partial state:** Engineer starts `gdev init`, interrupts mid-generation. Mitigation: Atomic write pipeline (from existing config-template-engine design) ensures no partial files. Either all files are written or none.
+4. **Partial state:** Engineer starts `qsdev init`, interrupts mid-generation. Mitigation: Atomic write pipeline (from existing config-template-engine design) ensures no partial files. Either all files are written or none.
 
-5. **Conflicting existing config:** Project has a hand-written `devenv.nix` that predates gdev. Detection engine must not clobber it. Mitigation: `gdev init` in create mode shows the plan preview and lists conflicts before writing anything.
+5. **Conflicting existing config:** Project has a hand-written `devenv.nix` that predates gdev. Detection engine must not clobber it. Mitigation: `qsdev init` in create mode shows the plan preview and lists conflicts before writing anything.
 
-6. **Multiple gdev versions on PATH:** Engineers on different projects needing different gdev versions. Mitigation: Project-level `.gdev.yaml` `gdev_version` constraint detects this. Unlike mise/proto (which manage their own versions), gdev relies on `gdev self-update` being backward-compatible.
+6. **Multiple gdev versions on PATH:** Engineers on different projects needing different gdev versions. Mitigation: Project-level `.qsdev.yaml` `gdev_version` constraint detects this. Unlike mise/proto (which manage their own versions), gdev relies on `qsdev self-update` being backward-compatible.
 
 ## Depth Checklist
 

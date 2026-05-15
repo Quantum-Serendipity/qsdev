@@ -2,7 +2,7 @@
 
 ## Goal
 
-Implement the 8 highest-priority ecosystem modules that a software engineering consulting firm encounters on the majority of engagements. Each module implements the `EcosystemModule` interface from Phase 1, providing detection, devenv.nix templates, security hardening configs, pre-commit hooks, deny rules, and CI commands. At the end of this phase, `gdev init` can generate security-hardened environments for the core ecosystems.
+Implement the 8 highest-priority ecosystem modules that a software engineering consulting firm encounters on the majority of engagements. Each module implements the `EcosystemModule` interface from Phase 1, providing detection, devenv.nix templates, security hardening configs, pre-commit hooks, deny rules, and CI commands. At the end of this phase, `qsdev init` can generate security-hardened environments for the core ecosystems.
 
 ## Dependencies
 

@@ -7,17 +7,17 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/toolreg"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // State file paths to load (same as posture.stateFilePaths).
 var allStatePaths = [3]string{
-	".devinit/.gdev-init-state.yaml",
-	".devenv/.gdev-state.yaml",
-	".claude/.gdev-claude-state.yaml",
+	".devinit/.qsdev-init-state.yaml",
+	".devenv/.qsdev-state.yaml",
+	".claude/.qsdev-claude-state.yaml",
 }
 
 // Teardown orchestrates the full teardown operation: load state, classify
@@ -82,7 +82,7 @@ func Teardown(
 			if err != nil {
 				fmt.Fprintf(w, "Warning: could not marshal posture report: %v\n", err)
 			} else {
-				reportPath = filepath.Join(opts.ProjectRoot, ".gdev-posture-final.json")
+				reportPath = filepath.Join(opts.ProjectRoot, ".qsdev-posture-final.json")
 				if err := os.WriteFile(reportPath, reportJSON, 0o644); err != nil {
 					fmt.Fprintf(w, "Warning: could not write posture report: %v\n", err)
 					reportPath = ""
@@ -121,8 +121,8 @@ func loadAndMergeStates(projectRoot string) types.GeneratedState {
 		for k, v := range st.Files {
 			merged.Files[k] = v
 		}
-		if st.GdevVersion != "" {
-			merged.GdevVersion = st.GdevVersion
+		if st.QsdevVersion != "" {
+			merged.QsdevVersion = st.QsdevVersion
 		}
 	}
 

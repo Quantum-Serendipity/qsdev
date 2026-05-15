@@ -2,7 +2,7 @@
 
 ## Goal
 
-Implement the devinit addon's unified wizard using charmbracelet/huh, the profile system, detection pre-population, plan preview, merge mode for existing projects, and non-interactive/CI flag mapping. At the end of this phase, `gdev init` provides a complete guided setup experience from detection through generation.
+Implement the devinit addon's unified wizard using charmbracelet/huh, the profile system, detection pre-population, plan preview, merge mode for existing projects, and non-interactive/CI flag mapping. At the end of this phase, `qsdev init` provides a complete guided setup experience from detection through generation.
 
 ## Dependencies
 
@@ -10,7 +10,7 @@ Phases 2 and 3 complete (devenv and claudecode generation). Phase 4 desirable bu
 
 ## Phase Outputs
 
-- Unified `gdev init` command orchestrating both addons
+- Unified `qsdev init` command orchestrating both addons
 - huh-based wizard with quick path (1 question) and customize (5 form groups)
 - Detection engine pre-populating wizard answers
 - Profile system with named presets (go-web, ts-fullstack, python-data, etc.)
@@ -23,28 +23,28 @@ Phases 2 and 3 complete (devenv and claudecode generation). Phase 4 desirable bu
 
 ### Unit 5.1: devinit Addon Scaffolding & Command Hierarchy
 
-**Description:** Wire the devinit addon's command hierarchy: `gdev init` as the primary entry point, orchestrating devenv and claudecode generation.
+**Description:** Wire the devinit addon's command hierarchy: `qsdev init` as the primary entry point, orchestrating devenv and claudecode generation.
 
-**Context:** devinit is the orchestration addon. It imports devenv and claudecode, runs the unified wizard, and dispatches generation to each addon. The command hierarchy places `gdev init` at top level, not under a subcommand.
+**Context:** devinit is the orchestration addon. It imports devenv and claudecode, runs the unified wizard, and dispatches generation to each addon. The command hierarchy places `qsdev init` at top level, not under a subcommand.
 
-**Desired Outcome:** `gdev init` runs the full wizard → generation → post-generation pipeline, calling into devenv and claudecode addons.
+**Desired Outcome:** `qsdev init` runs the full wizard → generation → post-generation pipeline, calling into devenv and claudecode addons.
 
 **Steps:**
-1. Register `gdev init` command in devinit addon.
+1. Register `qsdev init` command in devinit addon.
 2. Implement orchestration flow: detect → wizard → generate (devenv) → generate (claudecode) → generate (security configs) → write all → report.
-3. Support `gdev init --devenv-only` and `gdev init --claude-only` for partial generation.
-4. Support `gdev init --yes` (accept all defaults), `gdev init --profile <name>` (use preset).
+3. Support `qsdev init --devenv-only` and `qsdev init --claude-only` for partial generation.
+4. Support `qsdev init --yes` (accept all defaults), `qsdev init --profile <name>` (use preset).
 5. Post-generation: print summary of generated files and next steps.
 
 **Acceptance Criteria:**
-- [ ] `gdev init` runs full pipeline
-- [ ] `gdev init --devenv-only` skips Claude Code generation
-- [ ] `gdev init --claude-only` skips devenv generation
-- [ ] `gdev init --yes` accepts defaults without wizard
+- [ ] `qsdev init` runs full pipeline
+- [ ] `qsdev init --devenv-only` skips Claude Code generation
+- [ ] `qsdev init --claude-only` skips devenv generation
+- [ ] `qsdev init --yes` accepts defaults without wizard
 - [ ] Post-generation summary lists all files with actions
 
 **Research Citations:**
-- `research-spikes/gdev-extension-design/addon-architecture-design.md § Command Hierarchy` — `gdev init` at top level
+- `research-spikes/gdev-extension-design/addon-architecture-design.md § Command Hierarchy` — `qsdev init` at top level
 - `research-spikes/gdev-extension-design/addon-architecture-design.md § Inter-Addon Communication` — direct function calls
 
 **Status:** Not Started
@@ -93,7 +93,7 @@ Phases 2 and 3 complete (devenv and claudecode generation). Phase 4 desirable bu
 
 **Description:** Wire the detection engine (Phase 1, Unit 1.3) into the wizard to pre-populate answers from existing project files.
 
-**Context:** When a user runs `gdev init` in a Go project with a package.json, the wizard should pre-select both Go and TypeScript with detected versions. When existing devenv.nix or CLAUDE.md exists, offer merge mode.
+**Context:** When a user runs `qsdev init` in a Go project with a package.json, the wizard should pre-select both Go and TypeScript with detected versions. When existing devenv.nix or CLAUDE.md exists, offer merge mode.
 
 **Desired Outcome:** Detection results automatically populate wizard defaults, reducing questions to confirmation rather than input.
 
@@ -120,7 +120,7 @@ Phases 2 and 3 complete (devenv and claudecode generation). Phase 4 desirable bu
 
 ### Unit 5.4: Profile System
 
-**Description:** Implement named profiles that encode complete wizard answers for common project types, enabling `gdev init --profile go-web --yes` for zero-question setup.
+**Description:** Implement named profiles that encode complete wizard answers for common project types, enabling `qsdev init --profile go-web --yes` for zero-question setup.
 
 **Context:** Profiles are team-defined presets compiled into the binary. They map a profile name to a complete `WizardAnswers` struct. The wizard can also save the current answers as a new profile.
 
@@ -130,15 +130,15 @@ Phases 2 and 3 complete (devenv and claudecode generation). Phase 4 desirable bu
 1. Define built-in profiles: `go-web` (Go + PostgreSQL + Redis + standard Claude), `ts-fullstack` (TypeScript + pnpm + PostgreSQL + standard Claude), `python-data` (Python + uv + minimal Claude), `rust-cli` (Rust + minimal Claude).
 2. Implement `ProfileRegistry` with `Get(name) (Profile, error)` and `List() []ProfileSummary`.
 3. Support team-configured profiles via `devinit.Configure(devinit.WithProfile(name, profile))` in main.go.
-4. `gdev init --profile <name>` → load profile → skip wizard → generate.
-5. `gdev init --profile <name>` with additional flags → profile as base, flags as overrides.
+4. `qsdev init --profile <name>` → load profile → skip wizard → generate.
+5. `qsdev init --profile <name>` with additional flags → profile as base, flags as overrides.
 
 **Acceptance Criteria:**
-- [ ] `gdev init --profile go-web --yes` generates complete Go web project config with zero questions
-- [ ] `gdev init --profile go-web --service mongodb` uses profile but adds MongoDB
+- [ ] `qsdev init --profile go-web --yes` generates complete Go web project config with zero questions
+- [ ] `qsdev init --profile go-web --service mongodb` uses profile but adds MongoDB
 - [ ] Built-in profiles cover Go, TypeScript, Python, Rust
 - [ ] Team-configured profiles register via `Configure()`
-- [ ] `gdev init --list-profiles` shows available profiles with descriptions
+- [ ] `qsdev init --list-profiles` shows available profiles with descriptions
 
 **Research Citations:**
 - `research-spikes/gdev-extension-design/addon-architecture-design.md § Profile System` — profile configuration
@@ -165,10 +165,10 @@ Phases 2 and 3 complete (devenv and claudecode generation). Phase 4 desirable bu
 6. Document all flags in command help text.
 
 **Acceptance Criteria:**
-- [ ] Full non-interactive initialization: `gdev init --lang go --go-version 1.24 --service postgres --direnv --claude-code --claude-permissions standard --yes`
-- [ ] Partial flags + wizard: `gdev init --lang go` opens wizard with Go pre-selected
+- [ ] Full non-interactive initialization: `qsdev init --lang go --go-version 1.24 --service postgres --direnv --claude-code --claude-permissions standard --yes`
+- [ ] Partial flags + wizard: `qsdev init --lang go` opens wizard with Go pre-selected
 - [ ] `--yes` fills remaining from defaults
-- [ ] All flags documented in `gdev init --help`
+- [ ] All flags documented in `qsdev init --help`
 - [ ] Flag names match design spec
 
 **Research Citations:**
@@ -182,9 +182,9 @@ Phases 2 and 3 complete (devenv and claudecode generation). Phase 4 desirable bu
 
 ### Unit 5.6: Bootstrap Step Registration
 
-**Description:** Register bootstrap steps for system tool installation (devenv, direnv, claude) that teams can include in their `gdev bootstrap` flow.
+**Description:** Register bootstrap steps for system tool installation (devenv, direnv, claude) that teams can include in their `qsdev bootstrap` flow.
 
-**Context:** Bootstrap steps are separate from `gdev init` — they install system-level tools, not project config. Teams opt-in via `bootstrap.Configure(bootstrap.WithSteps(...))`. Steps use gdev's existing bootstrap infrastructure with huh forms, skip handlers, and headless mode.
+**Context:** Bootstrap steps are separate from `qsdev init` — they install system-level tools, not project config. Teams opt-in via `bootstrap.Configure(bootstrap.WithSteps(...))`. Steps use gdev's existing bootstrap infrastructure with huh forms, skip handlers, and headless mode.
 
 **Desired Outcome:** Optional bootstrap steps that install devenv, direnv, and Claude Code when missing.
 
@@ -213,8 +213,8 @@ Phases 2 and 3 complete (devenv and claudecode generation). Phase 4 desirable bu
 ## Phase Completion Criteria
 
 - [ ] All six units pass acceptance criteria
-- [ ] `gdev init` in a Go project: detects Go, offers quick path, generates all files in <60s
-- [ ] `gdev init --profile go-web --yes` generates complete config with zero questions
-- [ ] `gdev init --lang go --service postgres --claude-code --yes` works fully non-interactive
+- [ ] `qsdev init` in a Go project: detects Go, offers quick path, generates all files in <60s
+- [ ] `qsdev init --profile go-web --yes` generates complete config with zero questions
+- [ ] `qsdev init --lang go --service postgres --claude-code --yes` works fully non-interactive
 - [ ] Merge mode works when existing config detected
 - [ ] Bootstrap steps install missing tools

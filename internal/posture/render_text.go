@@ -97,7 +97,7 @@ func renderDefault(report *PostureReport, w io.Writer, opts RenderOptions) error
 	}
 
 	// Footer hint
-	fmt.Fprintf(w, "Run 'gdev status --verbose' for details or 'gdev status --fix' for remediation commands.\n")
+	fmt.Fprintf(w, "Run 'qsdev status --verbose' for details or 'qsdev status --fix' for remediation commands.\n")
 	return nil
 }
 
@@ -111,8 +111,8 @@ func renderVerbose(report *PostureReport, w io.Writer, opts RenderOptions) error
 	fmt.Fprintf(w, "Score: %d/100 (%s)  Defense: %.0f%%  Config: %.0f%%  Deps: %.0f%%\n",
 		int(math.Round(report.Score.Total)), report.Score.Grade,
 		report.Score.Defense, report.Score.Config, report.Score.DepHealth)
-	fmt.Fprintf(w, "Schema: %s  Generated: %s  gdev: %s\n",
-		report.SchemaVersion, report.GeneratedAt.Format("2006-01-02 15:04:05 UTC"), report.GdevVersion)
+	fmt.Fprintf(w, "Schema: %s  Generated: %s  qsdev: %s\n",
+		report.SchemaVersion, report.GeneratedAt.Format("2006-01-02 15:04:05 UTC"), report.QsdevVersion)
 	fmt.Fprintln(w)
 
 	// Conformance (detailed)
@@ -222,7 +222,7 @@ func renderFix(report *PostureReport, w io.Writer) error {
 		}
 	}
 
-	// If conformance baseline fails, suggest gdev init.
+	// If conformance baseline fails, suggest qsdev init.
 	if !report.Conformance.Baseline.Pass {
 		for _, c := range report.Conformance.Baseline.Checks {
 			if c.Pass {
@@ -246,15 +246,15 @@ func conformanceRemediation(checkName string) string {
 	case "lock-files-present":
 		return "Run your package manager's install/lock command to generate lock files"
 	case "no-critical-vulns":
-		return "Run gdev check --scan to identify and remediate critical vulnerabilities"
+		return "Run qsdev check --scan to identify and remediate critical vulnerabilities"
 	case "claude-md-present":
-		return "Run gdev init to generate CLAUDE.md"
+		return "Run qsdev init to generate CLAUDE.md"
 	case "settings-json-present":
-		return "Run gdev init to generate .claude/settings.json"
+		return "Run qsdev init to generate .claude/settings.json"
 	case "high-weight-layers-enabled":
-		return "Run gdev enable attach-guard to enable critical defense layers"
+		return "Run qsdev enable attach-guard to enable critical defense layers"
 	case "pre-commit-hooks":
-		return "Run gdev init to configure pre-commit hooks"
+		return "Run qsdev init to configure pre-commit hooks"
 	default:
 		return ""
 	}

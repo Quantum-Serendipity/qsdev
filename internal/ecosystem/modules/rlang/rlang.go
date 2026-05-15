@@ -1,5 +1,5 @@
 // Package rlang implements the R (renv) ecosystem module for
-// gdev-secure-devenv-bootstrap. It detects R projects by scanning for
+// qsdev. It detects R projects by scanning for
 // DESCRIPTION, renv.lock, .Rprofile, and R/Rmd source files, generates
 // devenv.nix fragments with R language support, and provides CI commands
 // and package manager metadata for the R toolchain.
@@ -14,9 +14,9 @@ package rlang
 import (
 	"path/filepath"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.

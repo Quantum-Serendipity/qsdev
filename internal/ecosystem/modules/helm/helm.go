@@ -1,4 +1,4 @@
-// Package helm implements the Helm ecosystem module for gdev-secure-devenv-bootstrap.
+// Package helm implements the Helm ecosystem module for qsdev.
 // It detects Helm chart projects by scanning for Chart.yaml and Chart.lock,
 // then generates devenv.nix fragments with helm and kubeconform packages,
 // pre-commit hooks for helm lint, deny rules, and CI commands for a hardened
@@ -13,9 +13,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.

@@ -1,5 +1,5 @@
 // Package lua implements the Lua (LuaRocks/Lux) ecosystem module for
-// gdev-secure-devenv-bootstrap. It detects Lua projects by scanning for
+// qsdev. It detects Lua projects by scanning for
 // rockspec files, lux.toml, and .luarocks/ directories, generates devenv.nix
 // fragments with Lua language support, and provides pre-commit hooks, CI
 // commands, deny rules, and package manager metadata for the Lua toolchain.
@@ -14,9 +14,9 @@ package lua
 import (
 	"path/filepath"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.

@@ -1,18 +1,18 @@
 package claudecode
 
 import (
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/answers"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/answers"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-const answersFileName = ".gdev-claude-answers.yaml"
+const answersFileName = ".qsdev-claude-answers.yaml"
 
 // answersPath returns the full path to the answers persistence file.
 func answersPath(projectRoot string) string {
 	return answers.FilePath(projectRoot, ".claude", answersFileName)
 }
 
-// saveAnswers persists the wizard answers to .claude/.gdev-claude-answers.yaml.
+// saveAnswers persists the wizard answers to .claude/.qsdev-claude-answers.yaml.
 func saveAnswers(projectRoot string, a types.WizardAnswers) error {
 	return answers.SaveToDir(projectRoot, ".claude", answersFileName, a)
 }
@@ -24,7 +24,7 @@ func SaveAnswers(projectRoot string, a types.WizardAnswers) error {
 }
 
 // loadAnswers reads and unmarshals saved wizard answers from
-// .claude/.gdev-claude-answers.yaml. It returns an error if the file does not exist.
+// .claude/.qsdev-claude-answers.yaml. It returns an error if the file does not exist.
 func loadAnswers(projectRoot string) (types.WizardAnswers, error) {
 	return answers.LoadFromDir(projectRoot, ".claude", answersFileName, "claude")
 }

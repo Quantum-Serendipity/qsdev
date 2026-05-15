@@ -15,8 +15,8 @@ Context management is the critical constraint for gdev's generated configuration
 | Skill descriptions | Session start | Combined text of all skill descriptions (1% of context budget) | Direct: gdev writes descriptions |
 | Skill full content | On invocation | Full SKILL.md content, stays until compaction | Direct: gdev writes skills |
 | Agent definitions | Not loaded to context (metadata only) | Description only for auto-delegation | Direct: gdev writes agents |
-| MCP tool names | Session start | Tool names, schemas deferred | Indirect: gdev configures MCP |
-| Hooks | Never (external) | Zero unless hook returns output | Direct: gdev configures hooks |
+| MCP tool names | Session start | Tool names, schemas deferred | Indirect: qsdev configures MCP |
+| Hooks | Never (external) | Zero unless hook returns output | Direct: qsdev configures hooks |
 | settings.json | Never (parsed by harness) | Zero | Direct: gdev generates this |
 
 ### Token Budget Targets

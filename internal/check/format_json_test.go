@@ -57,7 +57,7 @@ func TestFormatJSON_Roundtrip(t *testing.T) {
 				Severity:    SeverityHigh,
 				Message:     "config error",
 				Remediation: "fix it",
-				FilePath:    ".gdev.yaml",
+				FilePath:    ".qsdev.yaml",
 			},
 			{
 				Category: CategorySecurityHarden,

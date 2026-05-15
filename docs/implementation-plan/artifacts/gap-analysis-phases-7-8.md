@@ -167,7 +167,7 @@ Both the devenv addon and the claudecode addon can write to the same files:
 
 - **`.gitignore`**: devenv needs entries (`.devenv*`, `.direnv/`), Claude Code might need entries (`.claude/`, agent artifacts). Neither Phase 3, Phase 4, nor Phase 8 describes who owns `.gitignore` or how entries from multiple addons are merged.
 - **`.pre-commit-config.yaml`**: If the user has an existing pre-commit config, and both devenv (hooks) and claudecode (hook scripts) need entries, how are they merged?
-- **`devenv.nix`**: The devenv addon generates this, but ecosystem modules from Phase 7 contribute fragments. The composition model is described in Phase 3, but Phase 8's update strategy for `devenv.nix` treats it as a single file. What if one ecosystem module is added to a project between `gdev init` runs? The `.devenv.nix.new` diff would show the new ecosystem's fragment, but the user would need to manually merge it — fine for small changes, confusing for large ones.
+- **`devenv.nix`**: The devenv addon generates this, but ecosystem modules from Phase 7 contribute fragments. The composition model is described in Phase 3, but Phase 8's update strategy for `devenv.nix` treats it as a single file. What if one ecosystem module is added to a project between `qsdev init` runs? The `.devenv.nix.new` diff would show the new ecosystem's fragment, but the user would need to manually merge it — fine for small changes, confusing for large ones.
 
 **Recommendation**: Define a `.gitignore` merge strategy (section markers or append-only with dedup). Clarify ownership for shared files.
 
@@ -194,22 +194,22 @@ Looking at Phase 1 Unit 1.2, `MergeStrategy` has: `Overwrite`, `Append`, `Merge`
 - `.hadolint.yaml`, `Chart.yaml` (YAML): three-way merge on the parsed tree.
 - `.cargo/config.toml`, `bunfig.toml`, `.bazelrc` (TOML/custom): hash-based overwrite or section markers.
 
-### 13. `gdev init --update` Behavior Undefined for New Ecosystem Addition
+### 13. `qsdev init --update` Behavior Undefined for New Ecosystem Addition
 
 What happens when:
-1. User runs `gdev init` selecting Go.
+1. User runs `qsdev init` selecting Go.
 2. User adds a `package.json` to the project.
-3. User runs `gdev init --update`.
+3. User runs `qsdev init --update`.
 
 Does `--update` re-run detection and add JavaScript/TypeScript configs? Or does it only regenerate from the saved `WizardAnswers`?
 
 Phase 8 Unit 6.1 says: "reads stored `GeneratedState`" and "load saved config." This implies `--update` regenerates from the original wizard answers, NOT from fresh detection. But the Steps section says "load saved config -> load GeneratedState -> generate new files" — the "generate new files" could mean "from current config" or "from fresh detection."
 
-If `--update` doesn't re-detect, users must run `gdev init` again (full wizard) to add ecosystems. But `gdev init` on an existing project triggers merge mode (Phase 6 Unit 5.3). The interaction between "full init on existing project" and "--update" is not clearly distinguished.
+If `--update` doesn't re-detect, users must run `qsdev init` again (full wizard) to add ecosystems. But `qsdev init` on an existing project triggers merge mode (Phase 6 Unit 5.3). The interaction between "full init on existing project" and "--update" is not clearly distinguished.
 
 **Recommendation**: Define two distinct paths:
-- `gdev init --update`: Regenerate from saved config with current templates (propagate team standards, no detection).
-- `gdev init`: Full init flow — re-detect, re-wizard, handle existing files via merge.
+- `qsdev init --update`: Regenerate from saved config with current templates (propagate team standards, no detection).
+- `qsdev init`: Full init flow — re-detect, re-wizard, handle existing files via merge.
 - Document the distinction clearly.
 
 ### 14. Team Standards Versioning Lacks Rollback
@@ -218,11 +218,11 @@ Unit 6.5 (Phase 8) describes propagating template version bumps. But there is no
 
 - What if a new template introduces a bug in generated configs?
 - What if a team needs to pin to a specific template version while investigating an issue?
-- What if `--update` applies changes and something breaks — can the user `gdev init --rollback`?
+- What if `--update` applies changes and something breaks — can the user `qsdev init --rollback`?
 
 The GeneratedState stores template versions, but there's no "previous state" for comparison or revert.
 
-**Recommendation**: At minimum, `gdev init --update` should generate a backup of changed files before overwriting (e.g., `settings.json.bak` or `.gdev/backups/<timestamp>/`). Ideally, since this is a git-tracked project, the recommendation should be "commit before running `gdev init --update`" — but this should be enforced or warned, not just documented.
+**Recommendation**: At minimum, `qsdev init --update` should generate a backup of changed files before overwriting (e.g., `settings.json.bak` or `.gdev/backups/<timestamp>/`). Ideally, since this is a git-tracked project, the recommendation should be "commit before running `qsdev init --update`" — but this should be enforced or warned, not just documented.
 
 ### 15. Integration Tests Are Underspecified
 
@@ -230,7 +230,7 @@ Unit 6.6 (Phase 8) defines 8 integration tests. But:
 
 - **No Tier 2-4 ecosystem tests.** All tests reference Go, TypeScript, or generic files. None test PHP, Ruby, C/C++, or any Tier 2-4 ecosystem from Phase 7. Phase 8 depends on Phases 2-5 but not Phase 7 — yet the integration tests should cover the full ecosystem matrix.
 - **No multi-ecosystem conflict test.** What happens when Go + Python + Rust are all detected? Do their devenv.nix fragments compose correctly? Do deny rules accumulate without duplicates?
-- **No performance test.** The plan states `gdev init` should complete in <60 seconds (Design Principle 3). The tests should verify this.
+- **No performance test.** The plan states `qsdev init` should complete in <60 seconds (Design Principle 3). The tests should verify this.
 - **No error path tests.** What if detection finds a corrupt `package.json`? What if the template engine fails for one ecosystem but succeeds for others?
 - **No cross-platform test.** Phase 9 introduces cross-platform support. Integration tests need to at least mock different OS environments.
 - **Fixture management is undefined.** The tests "create temp directories with fixture files" but there's no shared fixture library or test helper.
@@ -242,7 +242,7 @@ Unit 6.6 (Phase 8) defines 8 integration tests. But:
 Unit 6.7 (Phase 8) lists documentation targets but is missing:
 
 - **Per-ecosystem documentation.** Each ecosystem module generates security configs with specific settings. Users need to understand what each setting does and how to customize it. The unit says "Configuration reference covers all generated files" but doesn't describe how this scales to 27 ecosystems.
-- **Troubleshooting guide.** What if `devenv shell` fails after `gdev init`? What if a pre-commit hook fails? What if age-gating blocks a legitimate package?
+- **Troubleshooting guide.** What if `devenv shell` fails after `qsdev init`? What if a pre-commit hook fails? What if age-gating blocks a legitimate package?
 - **Escape hatches.** How to disable specific security settings without disabling the whole security layer. How to allowlist a package that triggers age-gating.
 - **Man pages.** The plan mentions "single binary, zero prerequisites" but no man page generation is described. GoReleaser can generate man pages from cobra commands.
 - **Generated inline documentation.** Phase 2 requires "inline comments explaining security purpose" in generated configs. Phase 7 doesn't mention this requirement for Tier 2-4 modules. Phase 8 doesn't verify it in integration tests.
@@ -323,7 +323,7 @@ The pre-check approach is simplest and safest.
 7. **Add deny rules and CI commands** to all Tier 2 ecosystem descriptions. (Finding 8)
 8. **Add missing security features** from the artifact to Phase 7 module descriptions. (Finding 7)
 9. **Define ecosystem conflict resolution.** (Finding 17)
-10. **Clarify `gdev init --update` vs fresh `gdev init`** semantics. (Finding 13)
+10. **Clarify `qsdev init --update` vs fresh `qsdev init`** semantics. (Finding 13)
 11. **Add devenv.yaml merge strategy.** (Finding 19)
 12. **Define multi-addon file conflict handling** (.gitignore, etc.). (Finding 11)
 
@@ -334,6 +334,6 @@ The pre-check approach is simplest and safest.
 15. **Expand integration tests** in Phase 8 to cover Tier 2 ecosystems, multi-ecosystem, errors, and performance. (Finding 15)
 16. **Add documentation for troubleshooting, escape hatches, and per-ecosystem config reference.** (Finding 16)
 17. **Address partial update failures.** (Finding 20)
-18. **Add rollback or backup mechanism** to `gdev init --update`. (Finding 14)
+18. **Add rollback or backup mechanism** to `qsdev init --update`. (Finding 14)
 19. **Clarify Tier 4 labeling** — "Reference Docs Only" doesn't match the actual implementation. (Finding 18)
 20. **Handle EcosystemModule interface gaps** for Bazel (override semantics) and Docker/Bazel/PowerShell (packages-only devenv.nix pattern). (Finding 3)

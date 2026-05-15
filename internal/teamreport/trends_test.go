@@ -118,7 +118,7 @@ func TestPrune90Days(t *testing.T) {
 }
 
 func TestLoadNonexistentHistory(t *testing.T) {
-	store, err := LoadHistory("/tmp/nonexistent-history-file-gdev-test.json")
+	store, err := LoadHistory("/tmp/nonexistent-history-file-qsdev-test.json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

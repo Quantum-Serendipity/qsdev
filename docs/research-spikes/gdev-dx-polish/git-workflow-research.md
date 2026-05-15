@@ -32,14 +32,14 @@ Before identifying gaps, acknowledge what's covered:
 
 **Problem**: Every project needs a PR template but nobody creates one from scratch. The content should be ecosystem-aware (security checklist for security-hardened projects, test coverage for tested projects).
 
-**Solution**: `gdev init` generates `.github/pull_request_template.md` with sections:
+**Solution**: `qsdev init` generates `.github/pull_request_template.md` with sections:
 - Summary (what changed and why)
 - Type of change (feature/fix/refactor/etc.)
 - Testing checklist (auto-populated based on detected test frameworks)
 - Security checklist (when security hardening is enabled)
 - Reviewer notes
 
-**Recommendation: Include.** This is a static file generated once during `gdev init`. Zero ongoing maintenance cost, immediate value. Already fits naturally into the file generation pipeline.
+**Recommendation: Include.** This is a static file generated once during `qsdev init`. Zero ongoing maintenance cost, immediate value. Already fits naturally into the file generation pipeline.
 
 ### 3. Commit Message Ticket Extraction
 

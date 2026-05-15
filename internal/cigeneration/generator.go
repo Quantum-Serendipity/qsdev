@@ -3,7 +3,7 @@ package cigeneration
 import (
 	"fmt"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Generator produces CI workflow files for a specific platform.

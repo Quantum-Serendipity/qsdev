@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 	"gopkg.in/yaml.v3"
 )
 
@@ -15,15 +15,15 @@ func TestLoadAllStates_AllPresent(t *testing.T) {
 
 	// Create all three state files with distinct content.
 	states := map[string]types.GeneratedState{
-		".devinit/.gdev-init-state.yaml": {
-			GdevVersion: "1.0.0",
+		".devinit/.qsdev-init-state.yaml": {
+			QsdevVersion: "1.0.0",
 			LastRun:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 			Files: map[string]types.FileState{
 				"devenv.nix": {Hash: "abc123"},
 			},
 		},
-		".devenv/.gdev-state.yaml": {
-			GdevVersion: "1.1.0",
+		".devenv/.qsdev-state.yaml": {
+			QsdevVersion: "1.1.0",
 			LastRun:     time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC),
 			Files: map[string]types.FileState{
 				".envrc":    {Hash: "def456"},
@@ -33,8 +33,8 @@ func TestLoadAllStates_AllPresent(t *testing.T) {
 				"golangci-lint": true,
 			},
 		},
-		".claude/.gdev-claude-state.yaml": {
-			GdevVersion: "1.2.0",
+		".claude/.qsdev-claude-state.yaml": {
+			QsdevVersion: "1.2.0",
 			LastRun:     time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC),
 			Files: map[string]types.FileState{
 				".claude/settings.json": {Hash: "jkl012"},
@@ -62,9 +62,9 @@ func TestLoadAllStates_AllPresent(t *testing.T) {
 		t.Fatalf("expected 0 errors, got %d: %v", len(merged.Errors), merged.Errors)
 	}
 
-	// GdevVersion should be from the last loaded file.
-	if merged.GdevVersion != "1.2.0" {
-		t.Errorf("GdevVersion = %q, want %q", merged.GdevVersion, "1.2.0")
+	// QsdevVersion should be from the last loaded file.
+	if merged.QsdevVersion != "1.2.0" {
+		t.Errorf("QsdevVersion = %q, want %q", merged.QsdevVersion, "1.2.0")
 	}
 
 	// Files should be merged with later entries winning.
@@ -98,15 +98,15 @@ func TestLoadAllStates_OneMissing(t *testing.T) {
 	root := t.TempDir()
 
 	// Only create devinit and devenv state files — claude is missing.
-	writeState(t, root, ".devinit/.gdev-init-state.yaml", types.GeneratedState{
-		GdevVersion: "1.0.0",
+	writeState(t, root, ".devinit/.qsdev-init-state.yaml", types.GeneratedState{
+		QsdevVersion: "1.0.0",
 		LastRun:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 		Files: map[string]types.FileState{
 			"devenv.nix": {Hash: "aaa"},
 		},
 	})
-	writeState(t, root, ".devenv/.gdev-state.yaml", types.GeneratedState{
-		GdevVersion: "1.0.0",
+	writeState(t, root, ".devenv/.qsdev-state.yaml", types.GeneratedState{
+		QsdevVersion: "1.0.0",
 		LastRun:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 		Files: map[string]types.FileState{
 			".envrc": {Hash: "bbb"},
@@ -133,8 +133,8 @@ func TestLoadAllStates_OneCorrupt(t *testing.T) {
 	root := t.TempDir()
 
 	// Create a valid state file.
-	writeState(t, root, ".devinit/.gdev-init-state.yaml", types.GeneratedState{
-		GdevVersion: "1.0.0",
+	writeState(t, root, ".devinit/.qsdev-init-state.yaml", types.GeneratedState{
+		QsdevVersion: "1.0.0",
 		LastRun:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 		Files: map[string]types.FileState{
 			"devenv.nix": {Hash: "valid"},
@@ -146,7 +146,7 @@ func TestLoadAllStates_OneCorrupt(t *testing.T) {
 	if err := os.MkdirAll(corruptPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(corruptPath, ".gdev-state.yaml"), []byte("{{not: valid: yaml: ["), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(corruptPath, ".qsdev-state.yaml"), []byte("{{not: valid: yaml: ["), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -162,8 +162,8 @@ func TestLoadAllStates_OneCorrupt(t *testing.T) {
 		t.Fatalf("expected 1 error, got %d", len(merged.Errors))
 	}
 	loadErr := merged.Errors[0]
-	if loadErr.Path != ".devenv/.gdev-state.yaml" {
-		t.Errorf("error path = %q, want %q", loadErr.Path, ".devenv/.gdev-state.yaml")
+	if loadErr.Path != ".devenv/.qsdev-state.yaml" {
+		t.Errorf("error path = %q, want %q", loadErr.Path, ".devenv/.qsdev-state.yaml")
 	}
 
 	// The error message from StateLoadError should include the path.
@@ -196,8 +196,8 @@ func TestLoadAllStates_NonePresent(t *testing.T) {
 	if len(merged.Files) != 0 {
 		t.Errorf("expected 0 files, got %d", len(merged.Files))
 	}
-	if merged.GdevVersion != "" {
-		t.Errorf("GdevVersion = %q, want empty", merged.GdevVersion)
+	if merged.QsdevVersion != "" {
+		t.Errorf("QsdevVersion = %q, want empty", merged.QsdevVersion)
 	}
 	if merged.HasAnyState() {
 		t.Error("HasAnyState() should be false when no state files exist")

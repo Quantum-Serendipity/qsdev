@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document defines implementation units for the client profile system in gdev. The system enables consulting engineers to maintain encrypted per-client configuration profiles (`~/.qsdev/clients/<name>.yaml`), select a profile during `gdev init` to pre-populate cloud config, git identity, registry endpoints, and secret references, and manage profiles via `gdev profile` CRUD commands.
+This document defines implementation units for the client profile system in gdev. The system enables consulting engineers to maintain encrypted per-client configuration profiles (`~/.qsdev/clients/<name>.yaml`), select a profile during `qsdev init` to pre-populate cloud config, git identity, registry endpoints, and secret references, and manage profiles via `qsdev profile` CRUD commands.
 
 Units amend two existing phases:
 - **Phase 6** (Wizard & Orchestration) — units 6.7-6.10: age key management, profile CRUD, init-time profile selection, non-interactive profile mode
@@ -10,11 +10,11 @@ Units amend two existing phases:
 
 ## Design Decisions
 
-**Init-time only, no runtime switching.** Profiles are applied at `gdev init` time. Non-secret values are baked into `.gdev.yaml`. Secret values generate `secretspec.toml` entries for devenv runtime resolution. To change profiles, re-run `gdev init --profile <name>`. This was decided in the addon architecture fit assessment: init-time profile selection is orchestration, which is devinit's job.
+**Init-time only, no runtime switching.** Profiles are applied at `qsdev init` time. Non-secret values are baked into `.qsdev.yaml`. Secret values generate `secretspec.toml` entries for devenv runtime resolution. To change profiles, re-run `qsdev init --profile <name>`. This was decided in the addon architecture fit assessment: init-time profile selection is orchestration, which is devinit's job.
 
-**Two-layer secret handling.** Profile YAML is sops+age encrypted at rest in `~/.qsdev/clients/`. At `gdev init` time, the profile is decrypted in memory. Non-secret values (aws_profile name, git email, registry URLs) are written to `.gdev.yaml`. Secret values (API keys, tokens) are never written to any checked-in file; instead, they generate `secretspec.toml` entries that resolve at devenv shell entry via the configured provider (keyring, 1password, dotenv, env).
+**Two-layer secret handling.** Profile YAML is sops+age encrypted at rest in `~/.qsdev/clients/`. At `qsdev init` time, the profile is decrypted in memory. Non-secret values (aws_profile name, git email, registry URLs) are written to `.qsdev.yaml`. Secret values (API keys, tokens) are never written to any checked-in file; instead, they generate `secretspec.toml` entries that resolve at devenv shell entry via the configured provider (keyring, 1password, dotenv, env).
 
-**sops+age, not GPG.** Age is simpler than GPG (no keyring daemon, no key server, no trust model). sops supports age natively. The age keypair lives at `~/.qsdev/keys/age.key` and is generated during `gdev setup` if not present.
+**sops+age, not GPG.** Age is simpler than GPG (no keyring daemon, no key server, no trust model). sops supports age natively. The age keypair lives at `~/.qsdev/keys/age.key` and is generated during `qsdev setup` if not present.
 
 ---
 
@@ -22,11 +22,11 @@ Units amend two existing phases:
 
 ### Unit 6.7: Age Key Management in gdev setup
 
-**Description:** Generate and manage an age keypair in `~/.qsdev/keys/` as part of the `gdev setup` bootstrap flow, with prerequisite checking for sops and age binaries.
+**Description:** Generate and manage an age keypair in `~/.qsdev/keys/` as part of the `qsdev setup` bootstrap flow, with prerequisite checking for sops and age binaries.
 
-**Context:** Client profiles are sops+age encrypted at rest. Before any profile operations can work, the engineer needs an age keypair. This fits naturally into `gdev setup` (Phase 9 bootstrap steps), which already handles system-level tool installation. The keypair is generated once per machine and reused across all profile operations. The public key is printed on generation so the engineer can share it with team leads who manage shared profile templates. If sops or age binaries are not found, the bootstrap step warns with installation instructions rather than silently failing.
+**Context:** Client profiles are sops+age encrypted at rest. Before any profile operations can work, the engineer needs an age keypair. This fits naturally into `qsdev setup` (Phase 9 bootstrap steps), which already handles system-level tool installation. The keypair is generated once per machine and reused across all profile operations. The public key is printed on generation so the engineer can share it with team leads who manage shared profile templates. If sops or age binaries are not found, the bootstrap step warns with installation instructions rather than silently failing.
 
-**Desired Outcome:** After `gdev setup`, `~/.qsdev/keys/age.key` exists containing a valid age keypair, and the public key is displayed for the engineer to record.
+**Desired Outcome:** After `qsdev setup`, `~/.qsdev/keys/age.key` exists containing a valid age keypair, and the public key is displayed for the engineer to record.
 
 **Steps:**
 1. Add a new bootstrap step `SetupAgeKeyStep()` registered in the devinit addon's bootstrap step list.
@@ -44,7 +44,7 @@ Units amend two existing phases:
 8. Print guidance: "Save your public key. Team leads need it to share encrypted profile templates with you."
 
 **Acceptance Criteria:**
-- [ ] `gdev setup` generates `~/.qsdev/keys/age.key` with `0600` permissions when no key exists
+- [ ] `qsdev setup` generates `~/.qsdev/keys/age.key` with `0600` permissions when no key exists
 - [ ] `~/.qsdev/keys/` directory created with `0700` permissions
 - [ ] Step is idempotent: re-running when key exists skips generation, prints existing public key
 - [ ] Missing `age` binary produces clear installation instructions and skips step without error
@@ -63,18 +63,18 @@ Units amend two existing phases:
 
 ### Unit 6.8: Profile CRUD Commands
 
-**Description:** Implement `gdev profile create|list|edit|delete` commands for managing sops+age encrypted client profile YAML files in `~/.qsdev/clients/`.
+**Description:** Implement `qsdev profile create|list|edit|delete` commands for managing sops+age encrypted client profile YAML files in `~/.qsdev/clients/`.
 
-**Context:** Engineers need to create, inspect, modify, and remove client profiles without manually running sops commands. `gdev profile create <name>` opens `$EDITOR` with a YAML template pre-populated with the profile schema, then sops-encrypts the result on save. `gdev profile edit <name>` runs `sops edit` to decrypt-in-editor-encrypt in one operation. `gdev profile list` shows available profiles with summary metadata (client name, compliance level, cloud provider). `gdev profile delete <name>` removes the encrypted file after confirmation. All commands check for sops/age prerequisites before proceeding.
+**Context:** Engineers need to create, inspect, modify, and remove client profiles without manually running sops commands. `qsdev profile create <name>` opens `$EDITOR` with a YAML template pre-populated with the profile schema, then sops-encrypts the result on save. `qsdev profile edit <name>` runs `sops edit` to decrypt-in-editor-encrypt in one operation. `qsdev profile list` shows available profiles with summary metadata (client name, compliance level, cloud provider). `qsdev profile delete <name>` removes the encrypted file after confirmation. All commands check for sops/age prerequisites before proceeding.
 
-**Desired Outcome:** Engineers can manage the full lifecycle of client profiles through `gdev profile` subcommands without directly invoking sops.
+**Desired Outcome:** Engineers can manage the full lifecycle of client profiles through `qsdev profile` subcommands without directly invoking sops.
 
 **Steps:**
-1. Register `gdev profile` command group with subcommands: `create`, `list`, `edit`, `delete`.
-2. Implement prerequisite gate: all profile commands check for `sops` and `age` binaries and `~/.qsdev/keys/age.key` existence. If missing, print actionable message ("Run `gdev setup` to generate your age keypair") and exit with error.
-3. Implement `gdev profile create <name>`:
+1. Register `qsdev profile` command group with subcommands: `create`, `list`, `edit`, `delete`.
+2. Implement prerequisite gate: all profile commands check for `sops` and `age` binaries and `~/.qsdev/keys/age.key` existence. If missing, print actionable message ("Run `qsdev setup` to generate your age keypair") and exit with error.
+3. Implement `qsdev profile create <name>`:
    - Validate `<name>` is kebab-case, alphanumeric with hyphens only.
-   - Check `~/.qsdev/clients/<name>.yaml` does not already exist. If it does, error with "Profile '<name>' already exists. Use `gdev profile edit <name>` to modify."
+   - Check `~/.qsdev/clients/<name>.yaml` does not already exist. If it does, error with "Profile '<name>' already exists. Use `qsdev profile edit <name>` to modify."
    - Write a temporary plaintext YAML file with the full profile template (all fields with comments explaining each):
      ```yaml
      # Client Profile: <name>
@@ -120,7 +120,7 @@ Units amend two existing phases:
    - Encrypt the validated YAML with sops: `sops encrypt --age <public-key> <temp-file> > ~/.qsdev/clients/<name>.yaml`.
    - Remove the temporary plaintext file.
    - Print confirmation: "Profile '<name>' created and encrypted."
-4. Implement `gdev profile list`:
+4. Implement `qsdev profile list`:
    - Glob `~/.qsdev/clients/*.yaml`.
    - For each file, decrypt in memory via `sops decrypt`, parse YAML, extract summary fields (client name from filename, compliance level, cloud providers configured, git email).
    - Display as a table:
@@ -130,39 +130,39 @@ Units amend two existing phases:
      initech       strict      aws         colin@highspring.com
      personal      baseline    -           colin@gmail.com
      ```
-   - If no profiles exist, print "No client profiles found. Create one with `gdev profile create <name>`."
-5. Implement `gdev profile edit <name>`:
+   - If no profiles exist, print "No client profiles found. Create one with `qsdev profile create <name>`."
+5. Implement `qsdev profile edit <name>`:
    - Verify `~/.qsdev/clients/<name>.yaml` exists. If not, error with suggestion to create.
    - Run `sops edit ~/.qsdev/clients/<name>.yaml` which handles decrypt-edit-encrypt atomically.
    - After sops exits, decrypt and validate the updated YAML. If validation fails, warn but do not block (sops already saved the encrypted file).
-6. Implement `gdev profile delete <name>`:
+6. Implement `qsdev profile delete <name>`:
    - Verify the file exists.
    - Prompt for confirmation: "Delete client profile '<name>'? This cannot be undone. [y/N]"
    - With `--yes` flag, skip confirmation.
    - Remove `~/.qsdev/clients/<name>.yaml`.
    - Print confirmation.
 7. Handle edge cases:
-   - `~/.qsdev/clients/` directory does not exist: create it on first `gdev profile create`.
+   - `~/.qsdev/clients/` directory does not exist: create it on first `qsdev profile create`.
    - Editor exits with non-zero: treat as abort, do not encrypt.
    - sops decrypt fails (wrong key, corrupted file): print clear error with troubleshooting steps.
    - Multiple age recipients: support `--recipient <age-pubkey>` flag on create for shared profiles.
 
 **Acceptance Criteria:**
-- [ ] `gdev profile create acme-corp` opens editor with full template, encrypts on save
-- [ ] `gdev profile create` fails gracefully when sops/age not installed, with `gdev setup` hint
-- [ ] `gdev profile create` fails gracefully when age key not generated, with `gdev setup` hint
-- [ ] `gdev profile create` rejects non-kebab-case names with clear error
-- [ ] `gdev profile create` for an existing profile name errors with edit suggestion
-- [ ] `gdev profile list` shows table of all profiles with summary metadata
-- [ ] `gdev profile list` with no profiles shows helpful create hint
-- [ ] `gdev profile edit acme-corp` invokes `sops edit` for atomic decrypt-edit-encrypt
-- [ ] `gdev profile delete acme-corp` requires confirmation (skippable with `--yes`)
+- [ ] `qsdev profile create acme-corp` opens editor with full template, encrypts on save
+- [ ] `qsdev profile create` fails gracefully when sops/age not installed, with `qsdev setup` hint
+- [ ] `qsdev profile create` fails gracefully when age key not generated, with `qsdev setup` hint
+- [ ] `qsdev profile create` rejects non-kebab-case names with clear error
+- [ ] `qsdev profile create` for an existing profile name errors with edit suggestion
+- [ ] `qsdev profile list` shows table of all profiles with summary metadata
+- [ ] `qsdev profile list` with no profiles shows helpful create hint
+- [ ] `qsdev profile edit acme-corp` invokes `sops edit` for atomic decrypt-edit-encrypt
+- [ ] `qsdev profile delete acme-corp` requires confirmation (skippable with `--yes`)
 - [ ] Temporary plaintext file removed after encryption (never left on disk)
 - [ ] Editor abort (non-zero exit) cancels profile creation without leaving artifacts
 - [ ] Invalid YAML after editor save offers re-edit or abort
 
 **Research Citations:**
-- `research-spikes/gdev-ecosystem-expansion-assessment/rejected-features-consulting-ops-research.md § 2.2 Client Environment Isolation` — profile YAML schema, `gdev switch` concept (evolved to init-time selection)
+- `research-spikes/gdev-ecosystem-expansion-assessment/rejected-features-consulting-ops-research.md § 2.2 Client Environment Isolation` — profile YAML schema, `qsdev switch` concept (evolved to init-time selection)
 - `research-spikes/gdev-ecosystem-expansion-assessment/addon-architecture-fit-research.md § devinit Addon Expansions` — sops+age encrypted profiles, profile CRUD in devinit
 
 **Status:** Not Started
@@ -171,18 +171,18 @@ Units amend two existing phases:
 
 ### Unit 6.9: Init-Time Profile Selection in Wizard
 
-**Description:** Extend the `gdev init` wizard (Unit 5.2) with a profile selection step that lists available client profiles from `~/.qsdev/clients/` and integrates the selected profile's values into the wizard answers.
+**Description:** Extend the `qsdev init` wizard (Unit 5.2) with a profile selection step that lists available client profiles from `~/.qsdev/clients/` and integrates the selected profile's values into the wizard answers.
 
-**Context:** During `gdev init`, before the ecosystem detection and language selection steps, the wizard should offer client profile selection. This is a new wizard group inserted between the quick-path question (Group 1) and the languages group (Group 2). If profiles exist, the wizard shows them as selectable options plus "None (skip)" and "Create new profile". If no profiles exist, this group is hidden entirely. The selected profile pre-populates downstream wizard answers: cloud config, git identity, registry endpoints, compliance level, and secret references. The engineer can still customize these in subsequent wizard groups. Profile selection happens before detection so that profile-specific registries and compliance levels influence the generation pipeline.
+**Context:** During `qsdev init`, before the ecosystem detection and language selection steps, the wizard should offer client profile selection. This is a new wizard group inserted between the quick-path question (Group 1) and the languages group (Group 2). If profiles exist, the wizard shows them as selectable options plus "None (skip)" and "Create new profile". If no profiles exist, this group is hidden entirely. The selected profile pre-populates downstream wizard answers: cloud config, git identity, registry endpoints, compliance level, and secret references. The engineer can still customize these in subsequent wizard groups. Profile selection happens before detection so that profile-specific registries and compliance levels influence the generation pipeline.
 
-**Desired Outcome:** `gdev init` in a project shows available client profiles, and selecting one pre-populates wizard answers with the profile's non-secret values and queues secret references for SecretSpec generation.
+**Desired Outcome:** `qsdev init` in a project shows available client profiles, and selecting one pre-populates wizard answers with the profile's non-secret values and queues secret references for SecretSpec generation.
 
 **Steps:**
 1. Add a new wizard form group (Group 1.5, between quick selection and languages) using `huh.NewGroup()`:
    - Title: "Client Profile"
    - Show only when `~/.qsdev/clients/` contains at least one `.yaml` file.
    - Hide via `WithHideFunc` when quick path is selected AND a `--profile` flag was provided.
-   - Options: list of profile names from `gdev profile list` logic + "None (skip client profile)" + "Create new (opens profile editor)".
+   - Options: list of profile names from `qsdev profile list` logic + "None (skip client profile)" + "Create new (opens profile editor)".
 2. On profile selection, decrypt the selected profile in memory via `sops decrypt`.
 3. Map profile fields to `WizardAnswers`:
    - `cloud.aws_profile` -> set `AWS_PROFILE` in devenv env vars
@@ -195,8 +195,8 @@ Units amend two existing phases:
    - `registries.nix_cache` -> set substituters in devenv.nix
    - `compliance` -> set `security.level` in resolved config
    - `secrets` -> queue for SecretSpec generation (Unit 13.9)
-4. Store the selected profile name in `WizardAnswers` so it persists to `.gdev.yaml` as `client.name`.
-5. If "Create new" is selected, invoke `gdev profile create` flow inline (open editor, encrypt, then re-read the new profile).
+4. Store the selected profile name in `WizardAnswers` so it persists to `.qsdev.yaml` as `client.name`.
+5. If "Create new" is selected, invoke `qsdev profile create` flow inline (open editor, encrypt, then re-read the new profile).
 6. If "None" is selected, skip all profile-related pre-population. Downstream wizard groups show their normal defaults.
 7. Pre-populated values from the profile appear as defaults in subsequent wizard groups. The engineer can override any value.
 8. Display a summary of what the profile provides before proceeding to customization groups:
@@ -235,14 +235,14 @@ Units amend two existing phases:
 
 ### Unit 6.10: Non-Interactive Profile Mode
 
-**Description:** Implement `gdev init --profile <client-name> --yes` for fully non-interactive project initialization using a client profile, supporting CI and scripted setup workflows.
+**Description:** Implement `qsdev init --profile <client-name> --yes` for fully non-interactive project initialization using a client profile, supporting CI and scripted setup workflows.
 
-**Context:** The existing non-interactive mode (Unit 5.5) maps wizard fields to CLI flags. Client profiles add a new dimension: `--profile <name>` selects a client profile that provides cloud config, git identity, registries, compliance level, and secret references. Combined with `--yes`, this enables zero-question project setup: `gdev init --profile acme-corp --lang go --service postgres --yes`. The `--profile` flag is distinct from the existing `--profile` for project type profiles (go-web, ts-fullstack); the client profile flag uses `--client-profile` or reuses `--profile` with disambiguation logic. For clarity, this unit uses `--client-profile` to avoid collision with the existing project-type `--profile` flag.
+**Context:** The existing non-interactive mode (Unit 5.5) maps wizard fields to CLI flags. Client profiles add a new dimension: `--profile <name>` selects a client profile that provides cloud config, git identity, registries, compliance level, and secret references. Combined with `--yes`, this enables zero-question project setup: `qsdev init --profile acme-corp --lang go --service postgres --yes`. The `--profile` flag is distinct from the existing `--profile` for project type profiles (go-web, ts-fullstack); the client profile flag uses `--client-profile` or reuses `--profile` with disambiguation logic. For clarity, this unit uses `--client-profile` to avoid collision with the existing project-type `--profile` flag.
 
-**Desired Outcome:** `gdev init --client-profile acme-corp --yes` initializes a project with all values from the acme-corp client profile and defaults for any unspecified fields, with zero interactive prompts.
+**Desired Outcome:** `qsdev init --client-profile acme-corp --yes` initializes a project with all values from the acme-corp client profile and defaults for any unspecified fields, with zero interactive prompts.
 
 **Steps:**
-1. Add `--client-profile <name>` flag to `gdev init` command.
+1. Add `--client-profile <name>` flag to `qsdev init` command.
 2. When `--client-profile` is specified:
    - Verify the profile exists in `~/.qsdev/clients/`.
    - Decrypt and parse the profile.
@@ -257,24 +257,24 @@ Units amend two existing phases:
    - Run wizard for confirmation/customization of remaining fields.
 5. Error handling:
    - `--client-profile nonexistent` with `--yes`: exit with error and list available profiles.
-   - `--client-profile` when sops/age not available: exit with error and `gdev setup` hint.
-   - `--client-profile` when age key not present: exit with error and `gdev setup` hint.
-6. Support combining both profile types: `gdev init --profile go-web --client-profile acme-corp --yes` uses go-web as project type template and acme-corp for client-specific config.
-7. Log the profile used in `.devinit/.gdev-init-answers.yaml` so `gdev init` in Join mode knows which profile was originally selected.
+   - `--client-profile` when sops/age not available: exit with error and `qsdev setup` hint.
+   - `--client-profile` when age key not present: exit with error and `qsdev setup` hint.
+6. Support combining both profile types: `qsdev init --profile go-web --client-profile acme-corp --yes` uses go-web as project type template and acme-corp for client-specific config.
+7. Log the profile used in `.devinit/.qsdev-init-answers.yaml` so `qsdev init` in Join mode knows which profile was originally selected.
 
 **Acceptance Criteria:**
-- [ ] `gdev init --client-profile acme-corp --yes` produces complete project config with zero prompts
-- [ ] `gdev init --client-profile acme-corp` pre-populates wizard with profile values
+- [ ] `qsdev init --client-profile acme-corp --yes` produces complete project config with zero prompts
+- [ ] `qsdev init --client-profile acme-corp` pre-populates wizard with profile values
 - [ ] `--client-profile` combined with `--lang`/`--service` flags: explicit flags override profile values
 - [ ] `--client-profile` combined with `--profile` (project type): both applied, client profile for identity/cloud, project profile for ecosystem
 - [ ] Nonexistent profile name with `--yes` exits with error listing available profiles
-- [ ] Missing sops/age prerequisites produce actionable error with `gdev setup` hint
+- [ ] Missing sops/age prerequisites produce actionable error with `qsdev setup` hint
 - [ ] Profile selection recorded in internal state for Join mode awareness
 - [ ] All generated files respect the profile's compliance level as security floor
 
 **Research Citations:**
 - `phases/06-wizard-orchestration.md § Unit 5.5` — non-interactive flag mapping pattern, `answersFromFlags` approach
-- `research-spikes/gdev-ecosystem-expansion-assessment/addon-architecture-fit-research.md § Client profiles` — `gdev init --profile <client>` design
+- `research-spikes/gdev-ecosystem-expansion-assessment/addon-architecture-fit-research.md § Client profiles` — `qsdev init --profile <client>` design
 - `research-spikes/gdev-ecosystem-expansion-assessment/rejected-features-consulting-ops-research.md § 2.2` — bundled client switching concept
 
 **Status:** Not Started
@@ -287,7 +287,7 @@ Units amend two existing phases:
 
 **Description:** Define the canonical YAML schema for client profile files (`~/.qsdev/clients/<name>.yaml`), the Go struct types with YAML and validation tags, and the sops+age encryption/decryption wrapper functions.
 
-**Context:** Client profiles are the bridge between a consulting engineer's per-client credentials and gdev's project configuration system. The profile schema must cover five domains: cloud provider config, git identity, registry endpoints, compliance level, and secret references. The schema is versioned independently of `.gdev.yaml` (profiles evolve on a different cadence than project config). All profiles are sops+age encrypted at rest; the encryption layer provides `Encrypt(plaintext, recipients) -> ciphertext` and `Decrypt(path) -> plaintext` functions that wrap sops CLI invocations. The decryption function uses the age key at `~/.qsdev/keys/age.key` (or `SOPS_AGE_KEY_FILE` env var).
+**Context:** Client profiles are the bridge between a consulting engineer's per-client credentials and gdev's project configuration system. The profile schema must cover five domains: cloud provider config, git identity, registry endpoints, compliance level, and secret references. The schema is versioned independently of `.qsdev.yaml` (profiles evolve on a different cadence than project config). All profiles are sops+age encrypted at rest; the encryption layer provides `Encrypt(plaintext, recipients) -> ciphertext` and `Decrypt(path) -> plaintext` functions that wrap sops CLI invocations. The decryption function uses the age key at `~/.qsdev/keys/age.key` (or `SOPS_AGE_KEY_FILE` env var).
 
 **Desired Outcome:** A fully typed, validated profile schema with encryption/decryption wrappers that other units can import, and clear separation between secret and non-secret fields in the type system.
 
@@ -295,7 +295,7 @@ Units amend two existing phases:
 1. Define the `ClientProfile` struct in `pkg/types/client_profile.go`:
    ```go
    type ClientProfile struct {
-       // Schema version for profile format (independent of .gdev.yaml version).
+       // Schema version for profile format (independent of .qsdev.yaml version).
        Version int `yaml:"version" validate:"required,min=1"`
 
        // Cloud provider configuration (non-secret: profile/project names only).
@@ -402,7 +402,7 @@ Units amend two existing phases:
 
 **Acceptance Criteria:**
 - [ ] `ClientProfile` struct covers all five domains: cloud, git, registries, compliance, secrets
-- [ ] Schema version field enables future profile format evolution independent of `.gdev.yaml`
+- [ ] Schema version field enables future profile format evolution independent of `.qsdev.yaml`
 - [ ] `ParseClientProfile` validates all fields with clear error messages
 - [ ] Secret references typed by provider with per-provider config validation
 - [ ] `Decrypt` wrapper uses `~/.qsdev/keys/age.key` and provides user-facing error messages
@@ -410,12 +410,12 @@ Units amend two existing phases:
 - [ ] Temporary plaintext files cleaned up on both success and error paths
 - [ ] Encrypted output files have `0600` permissions
 - [ ] `EnsurePrerequisites` checks sops binary, age binary, and age key existence
-- [ ] Profile schema version independent of `.gdev.yaml` config version
+- [ ] Profile schema version independent of `.qsdev.yaml` config version
 
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/rejected-features-consulting-ops-research.md § 2.2 Client Environment Isolation` — profile fields: aws_profile, git identity, ssh_key, env_vars
 - `research-spikes/gdev-ecosystem-expansion-assessment/addon-architecture-fit-research.md § devinit Addon Expansions` — sops+age encryption, two-layer (sops at rest, SecretSpec at runtime)
-- `phases/13-project-configuration-team-standards.md § Unit 13.1` — `ClientConfig` struct in `.gdev.yaml` (profile data flows into this)
+- `phases/13-project-configuration-team-standards.md § Unit 13.1` — `ClientConfig` struct in `.qsdev.yaml` (profile data flows into this)
 
 **Status:** Not Started
 
@@ -425,9 +425,9 @@ Units amend two existing phases:
 
 **Description:** Implement the mapping from client profile secret references to `secretspec.toml` entries, generating a per-project SecretSpec configuration file that resolves secrets at devenv shell entry time.
 
-**Context:** Client profiles contain secret references (not secrets) — instructions for SecretSpec on where to find each secret at runtime. During `gdev init`, when a profile with secrets is selected, gdev generates a `secretspec.toml` file in the project root (gitignored) that maps each secret name to a SecretSpec provider entry. At devenv shell entry, SecretSpec reads `secretspec.toml` and resolves each entry from the configured provider (keyring, 1password, dotenv, or env). This means the secret value only exists in memory during the devenv session — it never touches disk in plaintext, never appears in `.gdev.yaml`, `devenv.nix`, or any committed file. The `secretspec.toml` itself contains no secrets — only provider references (e.g., "look up 'npm-token' in the system keyring under service 'npm-registry'").
+**Context:** Client profiles contain secret references (not secrets) — instructions for SecretSpec on where to find each secret at runtime. During `qsdev init`, when a profile with secrets is selected, gdev generates a `secretspec.toml` file in the project root (gitignored) that maps each secret name to a SecretSpec provider entry. At devenv shell entry, SecretSpec reads `secretspec.toml` and resolves each entry from the configured provider (keyring, 1password, dotenv, or env). This means the secret value only exists in memory during the devenv session — it never touches disk in plaintext, never appears in `.qsdev.yaml`, `devenv.nix`, or any committed file. The `secretspec.toml` itself contains no secrets — only provider references (e.g., "look up 'npm-token' in the system keyring under service 'npm-registry'").
 
-**Desired Outcome:** `gdev init` with a client profile that has secret references produces a `secretspec.toml` that SecretSpec can resolve, and `devenv shell` makes the secrets available as environment variables.
+**Desired Outcome:** `qsdev init` with a client profile that has secret references produces a `secretspec.toml` that SecretSpec can resolve, and `devenv shell` makes the secrets available as environment variables.
 
 **Steps:**
 1. Define the SecretSpec TOML generation types in `internal/secretspec/generate.go`:
@@ -460,10 +460,10 @@ Units amend two existing phases:
    - Write to `<projectRoot>/secretspec.toml`.
    - Add a header comment:
      ```toml
-     # Generated by gdev init from client profile.
+     # Generated by qsdev init from client profile.
      # This file is gitignored. It contains NO secrets — only references
      # to where SecretSpec should find them at devenv shell entry.
-     # Re-generate with: gdev init --client-profile <name>
+     # Re-generate with: qsdev init --client-profile <name>
      ```
 4. Implement `MergeSecretSpec(existing *SecretSpecConfig, new *SecretSpecConfig) *SecretSpecConfig`:
    - If `secretspec.toml` already exists, merge rather than overwrite.
@@ -485,7 +485,7 @@ Units amend two existing phases:
    }
    ```
    - Custom mappings can be specified in the profile's secret config with an `env_var` key.
-7. Wire into the `gdev init` pipeline:
+7. Wire into the `qsdev init` pipeline:
    - After profile selection (Unit 6.9) and wizard completion, if the resolved profile has secrets, call `GenerateSecretSpec`.
    - Include `secretspec.toml` in the plan preview (Unit 5.2 Group 6) so the engineer sees what will be generated.
    - In the post-generation summary, list generated SecretSpec entries and remind the engineer to populate their secrets in the configured provider.
@@ -514,19 +514,19 @@ Units amend two existing phases:
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/addon-architecture-fit-research.md § devinit Addon Expansions` — "Secret values generate SecretSpec entries resolved at devenv runtime via provider (keyring/1Password/env)"
 - `research-spikes/gdev-ecosystem-expansion-assessment/rejected-features-consulting-ops-research.md § 2.2` — credential tools integration (aws-vault, Granted) as provider model
-- `phases/13-project-configuration-team-standards.md § Unit 13.1` — `ClientConfig` schema, `.gdev.yaml` client block
+- `phases/13-project-configuration-team-standards.md § Unit 13.1` — `ClientConfig` schema, `.qsdev.yaml` client block
 
 **Status:** Not Started
 
 ---
 
-### Unit 13.10: Baked Config Propagation to .gdev.yaml
+### Unit 13.10: Baked Config Propagation to .qsdev.yaml
 
-**Description:** Implement the logic that extracts non-secret values from a selected client profile and writes them into `.gdev.yaml` as the `client` block, propagating cloud config, git identity, registry endpoints, and compliance level into the committed project configuration.
+**Description:** Implement the logic that extracts non-secret values from a selected client profile and writes them into `.qsdev.yaml` as the `client` block, propagating cloud config, git identity, registry endpoints, and compliance level into the committed project configuration.
 
-**Context:** When a client profile is selected during `gdev init`, its non-secret values become part of the project's `.gdev.yaml` so that other team members who `gdev init` (Join mode) get the same cloud provider, git identity, registry, and compliance settings without needing the original encrypted profile. This is the "baking" step: profile data is flattened into `.gdev.yaml` fields. Secret references are NOT baked — they go to `secretspec.toml` (Unit 13.9). The baked values use the existing `ClientConfig` struct from Unit 13.1. After baking, the profile name is recorded so `gdev init --update` can detect when the profile has changed and offer to re-bake.
+**Context:** When a client profile is selected during `qsdev init`, its non-secret values become part of the project's `.qsdev.yaml` so that other team members who `qsdev init` (Join mode) get the same cloud provider, git identity, registry, and compliance settings without needing the original encrypted profile. This is the "baking" step: profile data is flattened into `.qsdev.yaml` fields. Secret references are NOT baked — they go to `secretspec.toml` (Unit 13.9). The baked values use the existing `ClientConfig` struct from Unit 13.1. After baking, the profile name is recorded so `qsdev init --update` can detect when the profile has changed and offer to re-bake.
 
-**Desired Outcome:** Selecting a client profile during `gdev init` writes non-secret values to `.gdev.yaml` `client` block, and team members in Join mode receive these values without needing the encrypted profile.
+**Desired Outcome:** Selecting a client profile during `qsdev init` writes non-secret values to `.qsdev.yaml` `client` block, and team members in Join mode receive these values without needing the encrypted profile.
 
 **Steps:**
 1. Implement `BakeProfileToConfig(profile *ClientProfile, profileName string) *ClientConfig`:
@@ -569,34 +569,34 @@ Units amend two existing phases:
      - `user_email` -> `git.user.email` in devenv enterShell hook
      - `signing_key` -> `git.user.signingkey` in devenv enterShell hook
    - Generate the enterShell git config lines only if values are non-empty.
-4. Wire baking into the `gdev init` generation pipeline:
+4. Wire baking into the `qsdev init` generation pipeline:
    - After wizard completion, if a client profile was selected:
      a. Call `BakeProfileToConfig` -> set `GdevConfig.Client`.
      b. Call `BakeProfileToEnvVars` -> merge into `WizardAnswers.ExtraEnvVars`.
      c. Call `BakeProfileToGitConfig` -> merge into devenv generation context.
-   - The baked `ClientConfig` is included when writing `.gdev.yaml`.
+   - The baked `ClientConfig` is included when writing `.qsdev.yaml`.
 5. Implement profile change detection for Update mode:
-   - Store the profile name and a hash of the baked values in `.devinit/.gdev-init-state.yaml`.
-   - On `gdev init` in Update mode, if the profile name matches but the hash differs (profile was edited), offer to re-bake.
-   - On `gdev init` in Update mode, if a different profile is specified via `--client-profile`, confirm the switch and re-bake.
+   - Store the profile name and a hash of the baked values in `.devinit/.qsdev-init-state.yaml`.
+   - On `qsdev init` in Update mode, if the profile name matches but the hash differs (profile was edited), offer to re-bake.
+   - On `qsdev init` in Update mode, if a different profile is specified via `--client-profile`, confirm the switch and re-bake.
 6. Handle partial profiles:
    - A profile with only `cloud.aws_profile` and no other fields produces a `ClientConfig` with just the name, plus `AWS_PROFILE` env var. No registry, git, or compliance values are baked.
-   - Missing fields produce no output (not empty strings in `.gdev.yaml`).
+   - Missing fields produce no output (not empty strings in `.qsdev.yaml`).
 7. Write unit tests:
    - Full profile bakes all fields to `ClientConfig`, env vars, and git config.
    - Partial profile (cloud only) bakes only cloud env vars.
    - Empty profile produces `ClientConfig` with only the name.
    - Re-bake after profile edit detects hash change.
    - Profile switch (different name) triggers re-bake with confirmation.
-   - Baked values in `.gdev.yaml` are readable by Join mode without the encrypted profile.
+   - Baked values in `.qsdev.yaml` are readable by Join mode without the encrypted profile.
 
 **Acceptance Criteria:**
-- [ ] Non-secret profile values written to `.gdev.yaml` `client` block
+- [ ] Non-secret profile values written to `.qsdev.yaml` `client` block
 - [ ] Cloud config baked as environment variables in devenv.nix generation
 - [ ] Git identity baked as enterShell git config hooks
 - [ ] Registry endpoints baked as `ClientConfig` fields for downstream generation
 - [ ] Compliance level baked as `SecurityLevel` in `ClientConfig`
-- [ ] Secret references excluded from `.gdev.yaml` (only in `secretspec.toml`)
+- [ ] Secret references excluded from `.qsdev.yaml` (only in `secretspec.toml`)
 - [ ] Profile name and baked-values hash stored in state for change detection
 - [ ] Update mode detects profile edits via hash comparison and offers re-bake
 - [ ] Profile switch (`--client-profile` with different name) triggers re-bake with confirmation
@@ -605,20 +605,20 @@ Units amend two existing phases:
 
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/addon-architecture-fit-research.md § devinit Addon Expansions` — "Non-secret values (aws_profile name, git email, registry URLs) baked into project config"
-- `phases/13-project-configuration-team-standards.md § Unit 13.1` — `ClientConfig` struct definition, `.gdev.yaml` schema
+- `phases/13-project-configuration-team-standards.md § Unit 13.1` — `ClientConfig` struct definition, `.qsdev.yaml` schema
 - `phases/13-project-configuration-team-standards.md § Unit 13.3` — onboarding mode detection, Update mode re-bake trigger
 
 **Status:** Not Started
 
 ---
 
-### Unit 13.11: Profile-Aware Compliance Enforcement in gdev check
+### Unit 13.11: Profile-Aware Compliance Enforcement in qsdev check
 
-**Description:** Extend `gdev check` (Unit 13.6) to validate that the project's configuration satisfies the compliance requirements declared by the baked client profile, including security level floor checks, required tool presence, and MCP server policy enforcement.
+**Description:** Extend `qsdev check` (Unit 13.6) to validate that the project's configuration satisfies the compliance requirements declared by the baked client profile, including security level floor checks, required tool presence, and MCP server policy enforcement.
 
-**Context:** When a client profile specifies `compliance: strict`, the baked `ClientConfig.SecurityLevel` in `.gdev.yaml` becomes the compliance floor for `gdev check`. Unit 13.7 already defines compliance level mappings (baseline/enhanced/strict) to concrete settings (age-gating threshold, required hooks, SBOM policy, etc.). This unit adds profile-specific checks on top: verifying that the baked compliance level matches the profile's declared level (detecting tampering), that profile-specific registry endpoints are configured, and that cloud provider env vars are set. These checks belong in the "config integrity" and "security hardening" categories of `gdev check`.
+**Context:** When a client profile specifies `compliance: strict`, the baked `ClientConfig.SecurityLevel` in `.qsdev.yaml` becomes the compliance floor for `qsdev check`. Unit 13.7 already defines compliance level mappings (baseline/enhanced/strict) to concrete settings (age-gating threshold, required hooks, SBOM policy, etc.). This unit adds profile-specific checks on top: verifying that the baked compliance level matches the profile's declared level (detecting tampering), that profile-specific registry endpoints are configured, and that cloud provider env vars are set. These checks belong in the "config integrity" and "security hardening" categories of `qsdev check`.
 
-**Desired Outcome:** `gdev check` on a project with a baked client profile verifies that the project meets the client's compliance requirements, catching manual downgrades of security level or removal of required configurations.
+**Desired Outcome:** `qsdev check` on a project with a baked client profile verifies that the project meets the client's compliance requirements, catching manual downgrades of security level or removal of required configurations.
 
 **Steps:**
 1. Add profile-aware checks to the "config integrity" category:
@@ -638,7 +638,7 @@ Units amend two existing phases:
                Status:      "fail",
                Severity:    SeverityHigh,
                Message:     "Client block present but name is empty",
-               Remediation: "Set client.name in .gdev.yaml or re-run gdev init --client-profile <name>",
+               Remediation: "Set client.name in .qsdev.yaml or re-run qsdev init --client-profile <name>",
            })
        }
 
@@ -674,13 +674,13 @@ Units amend two existing phases:
    - Verify git identity configuration matches the baked values.
    - These are "warn" severity (not "fail") because the baked values might have been intentionally overridden.
 5. Implement `--check-profile` flag for targeted profile compliance check:
-   - `gdev check --check-profile` runs only profile-related checks (useful for quick validation after profile edit/re-bake).
-   - Without the flag, profile checks run as part of the normal `gdev check` suite.
+   - `qsdev check --check-profile` runs only profile-related checks (useful for quick validation after profile edit/re-bake).
+   - Without the flag, profile checks run as part of the normal `qsdev check` suite.
 6. Add remediation suggestions specific to profile issues:
-   - "Security level lowered below client requirement" -> "Re-run `gdev init --client-profile <name>` to re-apply profile compliance level"
-   - "Required pre-commit hook missing" -> "Run `gdev enable <hook>` or add to tools.enabled in .gdev.yaml"
+   - "Security level lowered below client requirement" -> "Re-run `qsdev init --client-profile <name>` to re-apply profile compliance level"
+   - "Required pre-commit hook missing" -> "Run `qsdev enable <hook>` or add to tools.enabled in .qsdev.yaml"
    - "MCP server not in client allowlist" -> "Remove the server from claude_code.mcp_servers or update the client profile"
-7. Wire profile checks into the existing `gdev check` pipeline (Unit 13.6):
+7. Wire profile checks into the existing `qsdev check` pipeline (Unit 13.6):
    - Profile checks run after security hardening checks.
    - Profile check failures at "critical" severity block the pipeline regardless of `--audit-level`.
 8. Write unit tests:
@@ -693,21 +693,21 @@ Units amend two existing phases:
    - Project with no client block skips all profile checks.
 
 **Acceptance Criteria:**
-- [ ] `gdev check` validates client compliance level has not been manually lowered
-- [ ] `gdev check` validates required pre-commit hooks for the compliance level are present
-- [ ] `gdev check` validates SBOM policy matches compliance level requirement
-- [ ] `gdev check` validates Claude Code permission level does not exceed compliance maximum
-- [ ] `gdev check` validates blocked MCP servers are not configured
-- [ ] `gdev check` validates allowed MCP server policy is respected
-- [ ] `gdev check` warns (not fails) when baked env vars or git config differ from expected
-- [ ] `gdev check` validates registry endpoints match baked profile values
+- [ ] `qsdev check` validates client compliance level has not been manually lowered
+- [ ] `qsdev check` validates required pre-commit hooks for the compliance level are present
+- [ ] `qsdev check` validates SBOM policy matches compliance level requirement
+- [ ] `qsdev check` validates Claude Code permission level does not exceed compliance maximum
+- [ ] `qsdev check` validates blocked MCP servers are not configured
+- [ ] `qsdev check` validates allowed MCP server policy is respected
+- [ ] `qsdev check` warns (not fails) when baked env vars or git config differ from expected
+- [ ] `qsdev check` validates registry endpoints match baked profile values
 - [ ] `--check-profile` flag runs only profile-related checks
-- [ ] Remediation suggestions reference `gdev init --client-profile` for re-bake
+- [ ] Remediation suggestions reference `qsdev init --client-profile` for re-bake
 - [ ] Project with no client block skips all profile checks cleanly
 - [ ] Profile compliance violations at critical severity are not suppressible by `--audit-level`
 
 **Research Citations:**
-- `phases/13-project-configuration-team-standards.md § Unit 13.6` — `gdev check` structure, check categories, output formats
+- `phases/13-project-configuration-team-standards.md § Unit 13.6` — `qsdev check` structure, check categories, output formats
 - `phases/13-project-configuration-team-standards.md § Unit 13.7` — compliance level mappings, security floor enforcement
 - `research-spikes/gdev-ecosystem-expansion-assessment/addon-architecture-fit-research.md § Risk Assessment` — "Client profiles become an identity management system" risk mitigation via strict scope
 
@@ -728,7 +728,7 @@ Phase 13:
   13.8 (Profile Schema & sops Layer) — independent, can parallel with 6.7
     ├─> 13.9 (SecretSpec Integration) — requires schema types
     └─> 13.10 (Baked Config Propagation) — requires schema types
-        └─> 13.11 (Profile Compliance Enforcement) — requires baked config in .gdev.yaml
+        └─> 13.11 (Profile Compliance Enforcement) — requires baked config in .qsdev.yaml
 
 Cross-phase:
   6.8 (Profile CRUD) depends on 13.8 (Profile Schema)
@@ -740,8 +740,8 @@ Cross-phase:
 
 These hold across all units:
 
-1. **Profile YAML is always sops-encrypted on disk.** Plaintext only exists in memory during `gdev init` decryption and in `$EDITOR` during `gdev profile create/edit` (sops handles the editor lifecycle).
-2. **No plaintext secrets in committed files.** `.gdev.yaml`, `devenv.nix`, and all generated files contain only non-secret values. Secret references in `secretspec.toml` point to providers, not values.
+1. **Profile YAML is always sops-encrypted on disk.** Plaintext only exists in memory during `qsdev init` decryption and in `$EDITOR` during `qsdev profile create/edit` (sops handles the editor lifecycle).
+2. **No plaintext secrets in committed files.** `.qsdev.yaml`, `devenv.nix`, and all generated files contain only non-secret values. Secret references in `secretspec.toml` point to providers, not values.
 3. **Secret values exist in memory only during devenv shell sessions.** SecretSpec resolves from provider at shell entry, sets env vars for the session, and they are gone when the shell exits.
 4. **Age private key never leaves `~/.qsdev/keys/`.** File permissions `0600`, directory permissions `0700`.
 5. **Temporary plaintext files are always cleaned up.** Profile creation uses defer-based cleanup. Editor abort does not leave plaintext artifacts.

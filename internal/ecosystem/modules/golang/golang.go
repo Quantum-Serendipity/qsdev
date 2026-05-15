@@ -1,4 +1,4 @@
-// Package golang implements the Go ecosystem module for gdev-secure-devenv-bootstrap.
+// Package golang implements the Go ecosystem module for qsdev.
 // It detects Go projects by scanning for go.mod, generates devenv.nix fragments
 // with security-hardened environment variables, and provides pre-commit hooks,
 // CI commands, deny rules, and wizard fields for the Go toolchain.
@@ -12,9 +12,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.

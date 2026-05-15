@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devinit"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/addons/devinit"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestValidateAnswers_Valid(t *testing.T) {

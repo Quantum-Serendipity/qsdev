@@ -122,7 +122,7 @@
 - [x] **Learning Opportunities + Orient plugin evaluation** — Deep evaluation of DrCatHicks skill plugins for consulting skill-building
   - Outcome: success
   - Completed: 2026-05-14
-  - Notes: SKILL.md format compatible, zero deps. Deploy via gdev enable. Orient strongest for Join mode onboarding. Exclude auto hook. Report: learning-opportunities-research.md
+  - Notes: SKILL.md format compatible, zero deps. Deploy via qsdev enable. Orient strongest for Join mode onboarding. Exclude auto hook. Report: learning-opportunities-research.md
 
 - [x] **mcph MCP orchestrator evaluation** — Evaluate Yaw Labs' mcph as potential replacement for custom MCP registry
   - Outcome: success (do not adopt)

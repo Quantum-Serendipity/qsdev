@@ -20,19 +20,19 @@ var lockFileMapping = map[string][]string{
 // CheckSecurityHardening verifies security-related file presence for
 // detected ecosystems.
 func CheckSecurityHardening(ctx CheckContext) []CheckResult {
-	if ctx.GdevConfig == nil {
+	if ctx.QsdevConfig == nil {
 		return []CheckResult{
 			{
 				Category: CategorySecurityHarden,
 				Name:     "security_hardening",
 				Status:   StatusSkip,
 				Severity: SeverityInfo,
-				Message:  "No .gdev.yaml found; skipping security hardening checks",
+				Message:  "No .qsdev.yaml found; skipping security hardening checks",
 			},
 		}
 	}
 
-	if len(ctx.GdevConfig.Languages) == 0 {
+	if len(ctx.QsdevConfig.Languages) == 0 {
 		return []CheckResult{
 			{
 				Category: CategorySecurityHarden,
@@ -47,7 +47,7 @@ func CheckSecurityHardening(ctx CheckContext) []CheckResult {
 	var results []CheckResult
 
 	// Check lock files for each language.
-	for _, lang := range ctx.GdevConfig.Languages {
+	for _, lang := range ctx.QsdevConfig.Languages {
 		lockFiles, ok := lockFileMapping[lang.Name]
 		if !ok {
 			continue
@@ -103,7 +103,7 @@ func CheckSecurityHardening(ctx CheckContext) []CheckResult {
 
 func checkJSHardening(ctx CheckContext) []CheckResult {
 	hasJS := false
-	for _, lang := range ctx.GdevConfig.Languages {
+	for _, lang := range ctx.QsdevConfig.Languages {
 		if lang.Name == "javascript" {
 			hasJS = true
 			break
@@ -140,7 +140,7 @@ func checkJSHardening(ctx CheckContext) []CheckResult {
 
 func checkPythonHardening(ctx CheckContext) []CheckResult {
 	hasPython := false
-	for _, lang := range ctx.GdevConfig.Languages {
+	for _, lang := range ctx.QsdevConfig.Languages {
 		if lang.Name == "python" {
 			hasPython = true
 			break

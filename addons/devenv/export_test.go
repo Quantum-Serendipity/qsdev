@@ -1,8 +1,8 @@
 package devenv
 
 import (
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // ExportServiceToTemplateData exposes serviceToTemplateData for external tests.

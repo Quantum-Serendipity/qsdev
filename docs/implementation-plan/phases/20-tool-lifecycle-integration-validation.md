@@ -6,7 +6,7 @@ Validate that the tool lifecycle management system (Phase 12) works correctly: e
 
 ## Dependencies
 
-Phase 17 complete (test infrastructure). Phase 12 complete (lifecycle system, all tool registrations). Phase 4 complete (Claude Code addon). Phase 11 desirable (AI agent tools). Phases 13-16 complete (project configuration, agentic skills, health/status reporting, developer experience polish — for testing `gdev check`, `gdev status`, `gdev repair`, `gdev info`, `gdev outdated`, `gdev update`, and `gdev teardown` commands). Phase 14 skills and Phase 15 reporting should be covered by lifecycle testing.
+Phase 17 complete (test infrastructure). Phase 12 complete (lifecycle system, all tool registrations). Phase 4 complete (Claude Code addon). Phase 11 desirable (AI agent tools). Phases 13-16 complete (project configuration, agentic skills, health/status reporting, developer experience polish — for testing `qsdev check`, `qsdev status`, `qsdev repair`, `qsdev info`, `qsdev outdated`, `qsdev update`, and `qsdev teardown` commands). Phase 14 skills and Phase 15 reporting should be covered by lifecycle testing.
 
 ## Phase Outputs
 
@@ -31,12 +31,12 @@ Phase 17 complete (test infrastructure). Phase 12 complete (lifecycle system, al
 
 **Steps:**
 1. Create `lifecycle_test.go` with the parameterized `testToolRoundTrip(t *testing.T, toolName string)` helper. The helper performs:
-   a. Fresh project setup: `gdev init --yes`, then `gdev disable <tool>` if the tool is default-on.
-   b. **Enable**: `gdev enable <tool>` → assert exit 0.
-   c. **Verify enabled state**: all exclusive files exist at expected paths (per tool's `OwnedFiles` registry), all shared file sections present (grep for `# --- <tool> ---` in devenv.nix, `<!-- gdev:<tool> -->` in CLAUDE.md, server key in .mcp.json, hook entry in pre-commit config), state file records ownership for all files, `gdev status` shows tool as enabled.
-   d. **Disable**: `gdev disable <tool>` → assert exit 0.
-   e. **Verify disabled state**: all exclusive files deleted, all shared file sections removed, shared files still valid (Nix eval for devenv.nix, JSON parse for settings.json and .mcp.json, YAML parse for pre-commit config), state file no longer references the tool, `gdev status` shows disabled.
-   f. **Re-enable**: `gdev enable <tool>` → assert all files recreated identically to step (c).
+   a. Fresh project setup: `qsdev init --yes`, then `qsdev disable <tool>` if the tool is default-on.
+   b. **Enable**: `qsdev enable <tool>` → assert exit 0.
+   c. **Verify enabled state**: all exclusive files exist at expected paths (per tool's `OwnedFiles` registry), all shared file sections present (grep for `# --- <tool> ---` in devenv.nix, `<!-- gdev:<tool> -->` in CLAUDE.md, server key in .mcp.json, hook entry in pre-commit config), state file records ownership for all files, `qsdev status` shows tool as enabled.
+   d. **Disable**: `qsdev disable <tool>` → assert exit 0.
+   e. **Verify disabled state**: all exclusive files deleted, all shared file sections removed, shared files still valid (Nix eval for devenv.nix, JSON parse for settings.json and .mcp.json, YAML parse for pre-commit config), state file no longer references the tool, `qsdev status` shows disabled.
+   f. **Re-enable**: `qsdev enable <tool>` → assert all files recreated identically to step (c).
    g. **Rapid toggle**: enable → disable → enable → disable → verify project state is clean, no orphaned markers, no empty section blocks (e.g., no `# --- semgrep ---\n# --- end semgrep ---` with nothing between).
 2. Create one Go test function per tool, each calling the parameterized helper:
    - `TestToolLifecycle_Semgrep(t *testing.T)`
@@ -64,7 +64,7 @@ Phase 17 complete (test infrastructure). Phase 12 complete (lifecycle system, al
    - `assertSectionPresent(t, path, toolName)` / `assertSectionAbsent(t, path, toolName)`
    - `assertJSONKeyPresent(t, path, key)` / `assertJSONKeyAbsent(t, path, key)`
    - `assertHookPresent(t, path, hookName)` / `assertHookAbsent(t, path, hookName)`
-   - `assertToolStatus(t, toolName, enabled bool)` — parses `gdev status --json`
+   - `assertToolStatus(t, toolName, enabled bool)` — parses `qsdev status --json`
    - `hashFile(path) string` — SHA256 for identity comparison
    - `setupTestProject(t) string` — creates temp dir with multi-ecosystem fixture (Go + TS + Docker)
 5. Tool-specific verification details per tool's file inventory (from research artifact § 1.2):
@@ -91,7 +91,7 @@ Phase 17 complete (test infrastructure). Phase 12 complete (lifecycle system, al
 - [ ] After re-enable: files identical to first enable (hash comparison)
 - [ ] Rapid toggle (4 operations) leaves project in clean never-enabled state
 - [ ] Shared files parse successfully after every state transition (Nix eval, JSON parse, YAML parse)
-- [ ] `gdev status` accurately reflects tool state after every operation
+- [ ] `qsdev status` accurately reflects tool state after every operation
 - [ ] State file consistent with actual file system state after every operation
 - [ ] Directory cleanup works correctly for tools with nested exclusive files (.cosign/, .version-sentinel/, .claude/agents/, .claude/skills/agent-postmortem/)
 
@@ -148,31 +148,31 @@ Phase 17 complete (test infrastructure). Phase 12 complete (lifecycle system, al
 
 **Description:** Verify that repeated operations produce identical results and that the state file remains consistent with the actual file system through all lifecycle transitions.
 
-**Context:** Idempotency is a safety invariant: running the same command twice must not corrupt state or duplicate content. This is especially important because users will re-run commands when unsure if they succeeded, CI pipelines may retry on transient failures, and `gdev init --yes` may be run on an already-initialized project. State consistency ensures the state file (`.devinit/.gdev-init-state.yaml`) accurately reflects what was generated and what's on disk — divergence between state and reality leads to orphaned artifacts or missed cleanup.
+**Context:** Idempotency is a safety invariant: running the same command twice must not corrupt state or duplicate content. This is especially important because users will re-run commands when unsure if they succeeded, CI pipelines may retry on transient failures, and `qsdev init --yes` may be run on an already-initialized project. State consistency ensures the state file (`.devinit/.qsdev-init-state.yaml`) accurately reflects what was generated and what's on disk — divergence between state and reality leads to orphaned artifacts or missed cleanup.
 
 **Desired Outcome:** Every idempotency scenario produces identical file state. The state file is always consistent with the file system: every generated file has a state entry, every state entry has a corresponding file, and all hashes match.
 
 **Steps:**
-1. **Enable already-enabled tool (F1)**: enable semgrep (already default-on after init), run `gdev enable semgrep` again. Assert: exit 0, informational message "semgrep is already enabled", all file hashes unchanged, state file unchanged.
-2. **Disable already-disabled tool (F2)**: ensure semgrep is disabled, run `gdev disable semgrep` again. Assert: exit 0, message "semgrep is already disabled", no file changes.
-3. **Double enable in succession (F3)**: `gdev enable semgrep` → record all file hashes → `gdev enable semgrep` → assert all hashes identical, no duplicate sections in any shared file (e.g., no two `# --- semgrep ---` blocks in devenv.nix, no two `<!-- gdev:semgrep -->` blocks in CLAUDE.md).
-4. **Init then enable default-on tool (F4)**: `gdev init --yes` (semgrep enabled as AlwaysOn) → record state → `gdev enable semgrep` → assert no-op, state unchanged. Verify init's enabled state is recognized by the enable command.
-5. **Init --yes twice (F5)**: `gdev init --yes` → record all file hashes → `gdev init --yes` → assert files identical, no duplicated sections in any shared file, state file consistent.
+1. **Enable already-enabled tool (F1)**: enable semgrep (already default-on after init), run `qsdev enable semgrep` again. Assert: exit 0, informational message "semgrep is already enabled", all file hashes unchanged, state file unchanged.
+2. **Disable already-disabled tool (F2)**: ensure semgrep is disabled, run `qsdev disable semgrep` again. Assert: exit 0, message "semgrep is already disabled", no file changes.
+3. **Double enable in succession (F3)**: `qsdev enable semgrep` → record all file hashes → `qsdev enable semgrep` → assert all hashes identical, no duplicate sections in any shared file (e.g., no two `# --- semgrep ---` blocks in devenv.nix, no two `<!-- gdev:semgrep -->` blocks in CLAUDE.md).
+4. **Init then enable default-on tool (F4)**: `qsdev init --yes` (semgrep enabled as AlwaysOn) → record state → `qsdev enable semgrep` → assert no-op, state unchanged. Verify init's enabled state is recognized by the enable command.
+5. **Init --yes twice (F5)**: `qsdev init --yes` → record all file hashes → `qsdev init --yes` → assert files identical, no duplicated sections in any shared file, state file consistent.
 6. **State consistency validation**: after each scenario above, run a state audit:
    a. Every generated file recorded in state has a corresponding file on disk.
    b. Every gdev-owned file on disk has a corresponding state entry.
    c. All hash values in state match actual file content (SHA256).
    d. File ownership in state matches tool registry expectations.
-7. **State round-trip with user modification**: `gdev init --yes` → user modifies a shared file (add content outside markers) → `gdev init --yes` again → verify user-modified content preserved, tool sections regenerated correctly, state hashes updated to reflect new file content.
+7. **State round-trip with user modification**: `qsdev init --yes` → user modifies a shared file (add content outside markers) → `qsdev init --yes` again → verify user-modified content preserved, tool sections regenerated correctly, state hashes updated to reflect new file content.
 
 **Acceptance Criteria:**
 - [ ] Enable on already-enabled tool: exit 0, no-op, files unchanged
 - [ ] Disable on already-disabled tool: exit 0, no-op
 - [ ] Double enable produces no duplicate sections in any shared file
-- [ ] `gdev init --yes` then `gdev enable <default-on-tool>`: recognized as no-op
-- [ ] `gdev init --yes` run twice: files identical, no duplicated content
+- [ ] `qsdev init --yes` then `qsdev enable <default-on-tool>`: recognized as no-op
+- [ ] `qsdev init --yes` run twice: files identical, no duplicated content
 - [ ] State file always consistent: every file entry maps to a real file, every real gdev file has a state entry, all hashes match
-- [ ] User modifications outside markers survive `gdev init --yes` re-runs
+- [ ] User modifications outside markers survive `qsdev init --yes` re-runs
 
 **Research Citations:**
 - `artifacts/tool-lifecycle-conflict-matrix-research.md § 3. Category F: Idempotency Testing`
@@ -194,7 +194,7 @@ Phase 17 complete (test infrastructure). Phase 12 complete (lifecycle system, al
 1. **Pre-commit hook ordering (G1)**: enable ripsecrets, then gitleaks, then semgrep (in any order). Assert hook order in pre-commit config is always ripsecrets → gitleaks → semgrep regardless of enable sequence. Then disable gitleaks and re-enable it. Assert order is still ripsecrets → gitleaks → semgrep. Hook ordering is deterministic by tier/priority, not insertion-order-dependent.
 2. **Container security multi-package removal (G2)**: enable container-security. Assert devenv.nix `# --- container-security ---` section contains all 3 packages (grype, syft, cosign). Disable container-security. Assert all 3 packages removed (not just first, not just last). Assert devenv.nix valid Nix.
 3. **changelog + commitlint soft dependency (G3)**: enable changelog. Assert informational message suggesting commitlint. Assert changelog works without commitlint (cliff.toml created, CI step present, no error). Enable commitlint. Assert both tools' files present, no conflicts. Disable commitlint. Assert commitlint files removed, changelog still functional (cliff.toml present, CI step present), no error or warning about missing commitlint.
-4. **All MCP servers coexistence (G4)**: enable all 4 MCP tools (context7, github-mcp, socket-dev-mcp, semble). Assert .mcp.json valid JSON with 4 entries under `mcpServers`, no duplicate keys, each server has correct command/args. `gdev status` shows 4 MCP servers.
+4. **All MCP servers coexistence (G4)**: enable all 4 MCP tools (context7, github-mcp, socket-dev-mcp, semble). Assert .mcp.json valid JSON with 4 entries under `mcpServers`, no duplicate keys, each server has correct command/args. `qsdev status` shows 4 MCP servers.
 5. **attach-guard + version-sentinel hook coexistence (G5)**: enable both. Assert settings.json has hooks from both tools with distinct matchers (attach-guard: Bash command matcher for package installs; version-sentinel: Edit/Write/MultiEdit matcher for manifest edits). No duplicate hook entries. Disable attach-guard. Assert only version-sentinel hooks remain. Assert settings.json still valid JSON.
 6. **Full-surface tool enable/disable (G6)**: semgrep touches 4 shared file types (devenv.nix, CLAUDE.md, pre-commit, CI). Enable semgrep. Verify sections present in all 4 files. Disable semgrep. Verify all 4 files cleaned. Verify all 4 files still valid.
 7. **CI workflow regeneration consistency (G7)**: enable semgrep + gitleaks → record CI workflow hash (A). Disable gitleaks → re-enable gitleaks → record CI workflow hash (B). Assert A == B. Same set of enabled tools must produce byte-identical workflow output (deterministic regeneration).
@@ -221,30 +221,30 @@ Phase 17 complete (test infrastructure). Phase 12 complete (lifecycle system, al
 
 **Description:** Verify that the wizard correctly drives tool selection for both quick-path and customize-path flows, that re-running the wizard preserves manual tool state changes, and that error cases (missing prerequisites, conflicts, unmet detection conditions) produce clean failures with no partial state.
 
-**Context:** The wizard is the primary entry point for most users. Quick-path applies smart defaults (AlwaysOn + detected OnWhenDetected), customize-path allows individual toggles, and `gdev init --yes` is the non-interactive equivalent. Error handling must be atomic — a failed `gdev enable` must leave zero partial files and an unchanged state file — because partial state is worse than a clean failure (the user would need to manually clean up artifacts the system doesn't know about).
+**Context:** The wizard is the primary entry point for most users. Quick-path applies smart defaults (AlwaysOn + detected OnWhenDetected), customize-path allows individual toggles, and `qsdev init --yes` is the non-interactive equivalent. Error handling must be atomic — a failed `qsdev enable` must leave zero partial files and an unchanged state file — because partial state is worse than a clean failure (the user would need to manually clean up artifacts the system doesn't know about).
 
 **Desired Outcome:** Wizard produces correct tool selections for all default policies. Error cases fail cleanly with actionable messages and no side effects.
 
 **Steps:**
-1. **Quick path defaults (H1)**: set up a Go + TypeScript + Docker project with Python 3.11 available. Run `gdev init` (quick path, accept defaults). Assert:
+1. **Quick path defaults (H1)**: set up a Go + TypeScript + Docker project with Python 3.11 available. Run `qsdev init` (quick path, accept defaults). Assert:
    - AlwaysOn tools enabled: semgrep, gitleaks, attach-guard, agent-postmortem, version-sentinel, context7, github-mcp, trail-of-bits-skills, ripsecrets
    - OnWhenDetected tools enabled based on detection: container-security (Docker detected), semble (Python >=3.10), socket-dev-mcp (Go + TS detected), secretspec (only if services detected)
    - OptIn tools disabled: license-compliance, commitlint, changelog
    - All enabled tools' files generated correctly.
-2. **Customize path toggles (H2)**: run `gdev init` in customize mode. Toggle: disable semgrep, enable license-compliance, enable changelog. Assert: semgrep files NOT generated, license-compliance files generated (.scancode.yml, .license-exceptions.yml, CLAUDE.md section), changelog files generated (cliff.toml, devenv.nix section, CLAUDE.md section, CI step), CI workflow has license-compliance + changelog steps but NOT semgrep step.
-3. **Re-run wizard preserves manual changes (H3)**: `gdev init --yes` (defaults), then `gdev disable semgrep` (manual change). Run `gdev init --update` (or re-run wizard). Assert: semgrep remains disabled (user's explicit disable preserved in saved answers), all other tools unchanged, no duplicate sections in any shared file.
-4. **gdev init --yes flag behavior (H4)**: fresh project with Go + Docker detected, Python 3.11 available. Run `gdev init --yes`. Assert: all AlwaysOn enabled, container-security enabled (Docker), semble enabled (Python >=3.10), version-sentinel enabled (Python >=3.11 + supported ecosystems), socket-dev-mcp enabled (Go), license-compliance DISABLED (OptIn), commitlint DISABLED (OptIn), changelog DISABLED (OptIn).
-5. **Missing prerequisite — version-sentinel (C1a)**: system without python3 >=3.11. Run `gdev enable version-sentinel`. Assert: non-zero exit code, error message names specific missing prerequisite(s), no partial files created (atomic: all or none), state file unchanged, `gdev status` still shows version-sentinel as Disabled.
-6. **Missing prerequisite — semble (C1b)**: system without python3 >=3.10. Run `gdev enable semble`. Assert: non-zero exit code, error message mentions Python >=3.10 requirement, no .mcp.json entry created, no agent file created, state unchanged.
-7. **Unmet detection condition (C2)**: project with no Dockerfile or docker-compose.yml. Run `gdev enable container-security`. Assert: succeeds (explicit enable overrides detection default). May print warning "no Docker ecosystem detected, container-security may not be useful" but does not block. All container-security files created.
-8. **Conflicting tools (C3)**: using synthetic test fixtures with explicit `Conflicts` declarations (no current tools conflict, but the mechanism must work). Enable tool-A, then attempt `gdev enable tool-B` where tool-B.Conflicts includes tool-A. Assert: non-zero exit code, error message "Cannot enable tool-B: conflicts with currently enabled tool-A", tool-B not enabled, no files created.
-9. **Missing prerequisite — commitlint (C1c)**: system without Node.js. Run `gdev enable commitlint`. Assert: warning or error about missing Node.js, clean failure.
+2. **Customize path toggles (H2)**: run `qsdev init` in customize mode. Toggle: disable semgrep, enable license-compliance, enable changelog. Assert: semgrep files NOT generated, license-compliance files generated (.scancode.yml, .license-exceptions.yml, CLAUDE.md section), changelog files generated (cliff.toml, devenv.nix section, CLAUDE.md section, CI step), CI workflow has license-compliance + changelog steps but NOT semgrep step.
+3. **Re-run wizard preserves manual changes (H3)**: `qsdev init --yes` (defaults), then `qsdev disable semgrep` (manual change). Run `qsdev init --update` (or re-run wizard). Assert: semgrep remains disabled (user's explicit disable preserved in saved answers), all other tools unchanged, no duplicate sections in any shared file.
+4. **qsdev init --yes flag behavior (H4)**: fresh project with Go + Docker detected, Python 3.11 available. Run `qsdev init --yes`. Assert: all AlwaysOn enabled, container-security enabled (Docker), semble enabled (Python >=3.10), version-sentinel enabled (Python >=3.11 + supported ecosystems), socket-dev-mcp enabled (Go), license-compliance DISABLED (OptIn), commitlint DISABLED (OptIn), changelog DISABLED (OptIn).
+5. **Missing prerequisite — version-sentinel (C1a)**: system without python3 >=3.11. Run `qsdev enable version-sentinel`. Assert: non-zero exit code, error message names specific missing prerequisite(s), no partial files created (atomic: all or none), state file unchanged, `qsdev status` still shows version-sentinel as Disabled.
+6. **Missing prerequisite — semble (C1b)**: system without python3 >=3.10. Run `qsdev enable semble`. Assert: non-zero exit code, error message mentions Python >=3.10 requirement, no .mcp.json entry created, no agent file created, state unchanged.
+7. **Unmet detection condition (C2)**: project with no Dockerfile or docker-compose.yml. Run `qsdev enable container-security`. Assert: succeeds (explicit enable overrides detection default). May print warning "no Docker ecosystem detected, container-security may not be useful" but does not block. All container-security files created.
+8. **Conflicting tools (C3)**: using synthetic test fixtures with explicit `Conflicts` declarations (no current tools conflict, but the mechanism must work). Enable tool-A, then attempt `qsdev enable tool-B` where tool-B.Conflicts includes tool-A. Assert: non-zero exit code, error message "Cannot enable tool-B: conflicts with currently enabled tool-A", tool-B not enabled, no files created.
+9. **Missing prerequisite — commitlint (C1c)**: system without Node.js. Run `qsdev enable commitlint`. Assert: warning or error about missing Node.js, clean failure.
 
 **Acceptance Criteria:**
 - [ ] Quick path produces correct default tool set based on AlwaysOn/OnWhenDetected/OptIn policies
 - [ ] Customize path toggles drive generation accurately (disabled tools produce no files, enabled tools produce all files)
 - [ ] Re-run wizard preserves manual enable/disable changes from saved answers
-- [ ] `gdev init --yes` applies smart defaults correctly for detected project type
+- [ ] `qsdev init --yes` applies smart defaults correctly for detected project type
 - [ ] Missing prerequisite: clean failure, non-zero exit, no partial files, state unchanged
 - [ ] Missing prerequisite error messages name the specific missing dependency
 - [ ] Explicit enable overrides unmet detection condition (user intent respected)
@@ -264,18 +264,18 @@ Phase 17 complete (test infrastructure). Phase 12 complete (lifecycle system, al
 
 **Description:** Verify that the lifecycle system handles legacy projects (pre-lifecycle gdev output), collisions with manually created configs, and user modifications to generated files — especially the critical invariant that user content outside section markers is always preserved.
 
-**Context:** Real projects will encounter three messy scenarios the lifecycle system must handle gracefully: (1) legacy projects bootstrapped by older gdev versions that have no section markers or ownership metadata, (2) projects where the user manually created a config file before gdev adopted the tool, and (3) users who modified generated files (adding custom rules, adjusting settings). The user-content-preservation invariant is the most critical: if `gdev disable` ever deletes user content that was outside markers, trust in the tool is destroyed.
+**Context:** Real projects will encounter three messy scenarios the lifecycle system must handle gracefully: (1) legacy projects bootstrapped by older gdev versions that have no section markers or ownership metadata, (2) projects where the user manually created a config file before gdev adopted the tool, and (3) users who modified generated files (adding custom rules, adjusting settings). The user-content-preservation invariant is the most critical: if `qsdev disable` ever deletes user content that was outside markers, trust in the tool is destroyed.
 
-**Desired Outcome:** Legacy projects can adopt lifecycle management without re-running `gdev init`. Manual config collisions are detected and require explicit user intent to overwrite. User content outside markers survives all lifecycle operations.
+**Desired Outcome:** Legacy projects can adopt lifecycle management without re-running `qsdev init`. Manual config collisions are detected and require explicit user intent to overwrite. User content outside markers survives all lifecycle operations.
 
 **Steps:**
-1. **Legacy project first lifecycle operation (I1)**: set up a project with pre-lifecycle gdev output (devenv.nix without section markers, CLAUDE.md with `<!-- BEGIN GENERATED SECTION -->` but no tool markers, settings.json with hooks but no ownership metadata). Run `gdev enable semgrep`. Assert: semgrep section markers added for new content, legacy unmarked content treated as core/untouchable, state file created with ownership for new content. Run `gdev disable semgrep`. Assert: semgrep section removed, legacy content preserved. Design decision: only mark newly-added content (do not retroactively wrap existing content in markers — retroactive marking is fragile).
-2. **Manual config collision (I2)**: user has manually created `.semgrep.yml` before gdev. Run `gdev enable semgrep`. Assert: error "`.semgrep.yml` already exists and is not gdev-managed. Use `--force` to overwrite". No file overwritten, no partial state. Run with `--force`: assert original file replaced, warning about replacement printed, state updated.
-3. **User-created .mcp.json merge (I3)**: user-created `.mcp.json` with `{"mcpServers": {"my-server": {...}}}`. Run `gdev enable context7`. Assert: .mcp.json now has both "my-server" and "context7", "my-server" entry byte-identical to original. Run `gdev disable context7`. Assert: .mcp.json has only "my-server", "context7" removed.
-4. **Modified exclusive file on disable (D1)**: enable semgrep, edit `.semgrep.yml` (add a custom rule), run `gdev disable semgrep`. Assert: warning printed about modified file ("`.semgrep.yml` has been modified since generation"), file still deleted (disable proceeds with warning in non-interactive mode), state updated.
-5. **Modified shared file section on disable (D2)**: enable semgrep, edit content inside `# --- semgrep ---` markers in devenv.nix, run `gdev disable semgrep`. Assert: warning about modification, entire section between markers removed regardless of user edits within markers (markers are the contract boundary — anything between markers is tool-owned).
-6. **User content outside markers preserved (D3)**: enable semgrep (adds section to devenv.nix), add custom content to devenv.nix OUTSIDE of any tool section markers, run `gdev disable semgrep`. Assert: custom content still present, semgrep section removed, devenv.nix still valid Nix. **This is the critical invariant.**
-7. **Non-gdev MCP server preserved (D4)**: `.mcp.json` has user-added `"my-custom-server"`. Run `gdev enable context7` then `gdev enable semble` then `gdev disable context7` then `gdev disable semble`. Assert: "my-custom-server" untouched through all 4 operations. Edge case: if all gdev servers removed but user server exists, .mcp.json preserved with only user entry.
+1. **Legacy project first lifecycle operation (I1)**: set up a project with pre-lifecycle gdev output (devenv.nix without section markers, CLAUDE.md with `<!-- BEGIN GENERATED SECTION -->` but no tool markers, settings.json with hooks but no ownership metadata). Run `qsdev enable semgrep`. Assert: semgrep section markers added for new content, legacy unmarked content treated as core/untouchable, state file created with ownership for new content. Run `qsdev disable semgrep`. Assert: semgrep section removed, legacy content preserved. Design decision: only mark newly-added content (do not retroactively wrap existing content in markers — retroactive marking is fragile).
+2. **Manual config collision (I2)**: user has manually created `.semgrep.yml` before gdev. Run `qsdev enable semgrep`. Assert: error "`.semgrep.yml` already exists and is not gdev-managed. Use `--force` to overwrite". No file overwritten, no partial state. Run with `--force`: assert original file replaced, warning about replacement printed, state updated.
+3. **User-created .mcp.json merge (I3)**: user-created `.mcp.json` with `{"mcpServers": {"my-server": {...}}}`. Run `qsdev enable context7`. Assert: .mcp.json now has both "my-server" and "context7", "my-server" entry byte-identical to original. Run `qsdev disable context7`. Assert: .mcp.json has only "my-server", "context7" removed.
+4. **Modified exclusive file on disable (D1)**: enable semgrep, edit `.semgrep.yml` (add a custom rule), run `qsdev disable semgrep`. Assert: warning printed about modified file ("`.semgrep.yml` has been modified since generation"), file still deleted (disable proceeds with warning in non-interactive mode), state updated.
+5. **Modified shared file section on disable (D2)**: enable semgrep, edit content inside `# --- semgrep ---` markers in devenv.nix, run `qsdev disable semgrep`. Assert: warning about modification, entire section between markers removed regardless of user edits within markers (markers are the contract boundary — anything between markers is tool-owned).
+6. **User content outside markers preserved (D3)**: enable semgrep (adds section to devenv.nix), add custom content to devenv.nix OUTSIDE of any tool section markers, run `qsdev disable semgrep`. Assert: custom content still present, semgrep section removed, devenv.nix still valid Nix. **This is the critical invariant.**
+7. **Non-gdev MCP server preserved (D4)**: `.mcp.json` has user-added `"my-custom-server"`. Run `qsdev enable context7` then `qsdev enable semble` then `qsdev disable context7` then `qsdev disable semble`. Assert: "my-custom-server" untouched through all 4 operations. Edge case: if all gdev servers removed but user server exists, .mcp.json preserved with only user entry.
 
 **Acceptance Criteria:**
 - [ ] Legacy project: first lifecycle operation adds markers for new content without disrupting existing unmarked content
@@ -308,6 +308,6 @@ Phase 17 complete (test infrastructure). Phase 12 complete (lifecycle system, al
 - [ ] All 3 migration scenarios pass
 - [ ] User modifications outside markers preserved through all operations
 - [ ] Error messages for missing prerequisites and conflicts are actionable
-- [ ] `gdev enable/disable` complete in < 2 seconds each
+- [ ] `qsdev enable/disable` complete in < 2 seconds each
 - [ ] State file consistent after all test sequences
 - [ ] Total: 80+ test scenarios passing

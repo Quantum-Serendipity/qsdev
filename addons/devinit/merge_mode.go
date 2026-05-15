@@ -1,7 +1,7 @@
 package devinit
 
 import (
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // ExistingConfig summarises which configuration files already exist in the

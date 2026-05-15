@@ -6,7 +6,7 @@ Make gdev self-operating through Claude Code by deploying a library of skills an
 
 ## Dependencies
 
-Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deployment, skill/rule library, .mcp.json generation). Phase 11 complete (AI agent tooling — agent-postmortem, Version-Sentinel, semble, per-ecosystem verification commands). Phase 12 complete (tool lifecycle — `gdev enable/disable/status/list`, section markers, shared-file surgery). Phase 13 complete (project config — detection engine, profile system, non-interactive mode).
+Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deployment, skill/rule library, .mcp.json generation). Phase 11 complete (AI agent tooling — agent-postmortem, Version-Sentinel, semble, per-ecosystem verification commands). Phase 12 complete (tool lifecycle — `qsdev enable/disable/status/list`, section markers, shared-file surgery). Phase 13 complete (project config — detection engine, profile system, non-interactive mode).
 
 ## Phase Outputs
 
@@ -30,7 +30,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 
 **Code-Grounded Notes:** 6 skills already exist in `addons/claudecode/templates/skills/` (deploy, review-pr, security-review, generate-tests, refactor, db-migration), deployed via `deploySkills()` at `addons/claudecode/generate_skills.go:42-78`. The skill manifest at `templates/skills/manifest.yaml` must be extended with the 10 new operation skills. IMPORTANT: `` !`command` `` syntax is a Claude Code runtime feature — skills can use this syntax directly in deployed markdown files and Claude Code will preprocess them at invocation time. No gdev-side templating is needed for dynamic context injection; the raw `` !`command` `` strings are written verbatim into the SKILL.md files.
 
-**Desired Outcome:** After `gdev init`, developers find 10 gdev skills in `.claude/skills/`. Typing `/gdev-doctor` runs health checks with analysis. Claude can autonomously invoke `gdev-doctor`, `gdev-status`, `gdev-tools`, and `gdev-detect` when troubleshooting. Side-effect operations (`/gdev-init`, `/gdev-onboard`, `/gdev-setup`, `/gdev-enable`, `/gdev-disable`, `/gdev-update`) require explicit user invocation via slash command.
+**Desired Outcome:** After `qsdev init`, developers find 10 gdev skills in `.claude/skills/`. Typing `/gdev-doctor` runs health checks with analysis. Claude can autonomously invoke `gdev-doctor`, `gdev-status`, `gdev-tools`, and `gdev-detect` when troubleshooting. Side-effect operations (`/gdev-init`, `/gdev-onboard`, `/gdev-setup`, `/gdev-enable`, `/gdev-disable`, `/gdev-update`) require explicit user invocation via slash command.
 
 **Steps:**
 
@@ -60,13 +60,13 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    ---
 
    ## Current project state
-   !`gdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
+   !`qsdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
 
    ## Current directory
    !`ls -la`
 
    ## Detected ecosystems
-   !`gdev detect --json 2>/dev/null || echo '{"ecosystems": []}'`
+   !`qsdev detect --json 2>/dev/null || echo '{"ecosystems": []}'`
 
    ## Instructions
 
@@ -74,19 +74,19 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 
    1. If gdev is not installed, tell the user to install it first and stop.
    2. If ecosystems are detected, confirm the detection with the user.
-   3. First run `gdev init --dry-run --json` and show the user what files would be created/modified.
+   3. First run `qsdev init --dry-run --json` and show the user what files would be created/modified.
    4. Ask for confirmation before proceeding.
-   5. Run `gdev init` with appropriate flags:
+   5. Run `qsdev init` with appropriate flags:
       - If $ARGUMENTS includes --yes or --profile, pass them through
-      - Otherwise, use `gdev init --non-interactive` with detected ecosystems
+      - Otherwise, use `qsdev init --non-interactive` with detected ecosystems
       - If the user specified a profile (e.g., "set up for Python with full security"), map to flags
-   6. After init completes, run `gdev devenv doctor --json` to verify everything is healthy.
+   6. After init completes, run `qsdev devenv doctor --json` to verify everything is healthy.
    7. Summarize what was created and any manual steps needed.
 
    Natural language mappings:
-   - "set up this repo for Python development" → `gdev init --ecosystem python --non-interactive`
-   - "initialize for TypeScript with full security" → `gdev init --ecosystem javascript-typescript --profile security-full --non-interactive`
-   - "bootstrap this Go project" → `gdev init --ecosystem go --non-interactive`
+   - "set up this repo for Python development" → `qsdev init --ecosystem python --non-interactive`
+   - "initialize for TypeScript with full security" → `qsdev init --ecosystem javascript-typescript --profile security-full --non-interactive`
+   - "bootstrap this Go project" → `qsdev init --ecosystem go --non-interactive`
    ```
 
 3. Implement `/gdev-onboard` (user-only, side effects):
@@ -99,7 +99,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    ---
 
    ## Project analysis
-   !`gdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
+   !`qsdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
 
    ## Existing configuration files
    ```!
@@ -107,7 +107,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    ```
 
    ## Detected ecosystems
-   !`gdev detect --json 2>/dev/null || echo '{"ecosystems": []}'`
+   !`qsdev detect --json 2>/dev/null || echo '{"ecosystems": []}'`
 
    ## Instructions
 
@@ -119,8 +119,8 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
       - What's missing or could be improved
       - What gdev would add/modify
    3. Ask the user to confirm before making changes.
-   4. Run: `gdev init --merge --non-interactive`
-   5. Run `gdev devenv doctor --json` to verify the result.
+   4. Run: `qsdev init --merge --non-interactive`
+   5. Run `qsdev devenv doctor --json` to verify the result.
    6. Summarize what was added and what was preserved.
    ```
 
@@ -128,23 +128,23 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    ```yaml
    ---
    name: gdev-setup
-   description: Install missing prerequisites detected by gdev devenv doctor. Requires user confirmation before installing system packages.
+   description: Install missing prerequisites detected by qsdev devenv doctor. Requires user confirmation before installing system packages.
    disable-model-invocation: true
    allowed-tools: Bash(gdev *)
    ---
 
    ## Prerequisites check
-   !`gdev devenv doctor --json 2>/dev/null | jq '{overall, checks: [.checks[] | select(.status != "pass")]}' || echo '{"error": "gdev not found"}'`
+   !`qsdev devenv doctor --json 2>/dev/null | jq '{overall, checks: [.checks[] | select(.status != "pass")]}' || echo '{"error": "gdev not found"}'`
 
    ## Instructions
 
    Install missing prerequisites:
 
    1. Show the failing/warning checks from the status above.
-   2. Run: `gdev devenv setup --dry-run` to show what would be installed.
+   2. Run: `qsdev devenv setup --dry-run` to show what would be installed.
    3. Ask the user: "The following packages will be installed: [list]. This may require sudo. Proceed?"
-   4. If confirmed: `gdev devenv setup`
-   5. Run `gdev devenv doctor --json` to verify everything is healthy after installation.
+   4. If confirmed: `qsdev devenv setup`
+   5. Run `qsdev devenv doctor --json` to verify everything is healthy after installation.
    ```
 
 5. Implement `/gdev-enable` (user-only, side effects):
@@ -159,10 +159,10 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    ---
 
    ## Currently enabled tools
-   !`gdev status --json 2>/dev/null || echo '{"tools": []}'`
+   !`qsdev status --json 2>/dev/null || echo '{"tools": []}'`
 
    ## Available tools
-   !`gdev list --json 2>/dev/null || echo '{"available": []}'`
+   !`qsdev list --json 2>/dev/null || echo '{"available": []}'`
 
    ## Instructions
 
@@ -170,8 +170,8 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 
    1. Check if $tool is already enabled (from status above).
    2. Check if $tool is in the available list.
-   3. If valid, run: `gdev enable $tool`
-   4. Verify with: `gdev status --json`
+   3. If valid, run: `qsdev enable $tool`
+   4. Verify with: `qsdev status --json`
    5. Report what changed (files modified, configs updated).
    6. Note any additional setup steps the user needs to take.
 
@@ -190,15 +190,15 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    ---
 
    ## Currently enabled tools
-   !`gdev status --json 2>/dev/null || echo '{"tools": []}'`
+   !`qsdev status --json 2>/dev/null || echo '{"tools": []}'`
 
    ## Instructions
 
    Disable the tool: $tool
 
    1. Check if $tool is currently enabled.
-   2. If enabled, run: `gdev disable $tool`
-   3. Verify with: `gdev status --json`
+   2. If enabled, run: `qsdev disable $tool`
+   3. Verify with: `qsdev status --json`
    4. Report what changed (files removed, configs cleaned up).
    5. Note if any other tools depended on the disabled tool.
 
@@ -215,22 +215,22 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    ---
 
    ## Current state
-   !`gdev status --json 2>/dev/null`
+   !`qsdev status --json 2>/dev/null`
 
    ## Recent changes
    !`git diff --name-only HEAD~5 2>/dev/null || echo "Not a git repo or no recent commits"`
 
    ## Instructions
 
-   Update gdev configuration:
+   Update qsdev configuration:
 
-   1. Show what has changed since last gdev update.
-   2. Run: `gdev init --update --dry-run --json` to preview changes.
+   1. Show what has changed since last qsdev update.
+   2. Run: `qsdev init --update --dry-run --json` to preview changes.
    3. Show the user what would be updated.
    4. Ask for confirmation.
-   5. Run: `gdev init --update`
+   5. Run: `qsdev init --update`
    6. Report what was updated, preserved, and newly detected.
-   7. Run `gdev devenv doctor --json` to verify health after update.
+   7. Run `qsdev devenv doctor --json` to verify health after update.
    ```
 
 8. Implement `gdev-doctor` (Claude-invocable, read-only):
@@ -242,7 +242,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    ---
 
    ## System health
-   !`gdev devenv doctor --json 2>/dev/null || echo '{"error": "gdev not found"}'`
+   !`qsdev devenv doctor --json 2>/dev/null || echo '{"error": "gdev not found"}'`
 
    ## Instructions
 
@@ -254,23 +254,23 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    4. If all checks pass, confirm the environment is healthy.
    5. Suggest `/gdev-setup` if prerequisites are missing.
 
-   If the user has made changes since this status was captured, re-run `gdev devenv doctor --json` to get current state.
+   If the user has made changes since this status was captured, re-run `qsdev devenv doctor --json` to get current state.
    ```
 
 9. Implement `gdev-status` (Claude-invocable, read-only):
    ```yaml
    ---
    name: gdev-status
-   description: Show current gdev configuration status. Lists enabled tools, detected ecosystems, security posture. Use when asked about development environment state.
+   description: Show current qsdev configuration status. Lists enabled tools, detected ecosystems, security posture. Use when asked about development environment state.
    allowed-tools: Bash(gdev *) Read
    ---
 
    ## Current status
-   !`gdev status --json 2>/dev/null || echo '{"error": "gdev not found"}'`
+   !`qsdev status --json 2>/dev/null || echo '{"error": "gdev not found"}'`
 
    ## Instructions
 
-   Present the gdev status clearly:
+   Present the qsdev status clearly:
    - Enabled tools and their health
    - Detected ecosystems
    - Security posture summary
@@ -288,7 +288,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
     ---
 
     ## Available tools
-    !`gdev list --json 2>/dev/null || echo '{"available": []}'`
+    !`qsdev list --json 2>/dev/null || echo '{"available": []}'`
 
     ## Instructions
 
@@ -311,7 +311,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
     ---
 
     ## Detected ecosystems
-    !`gdev detect --json 2>/dev/null || echo '{"ecosystems": []}'`
+    !`qsdev detect --json 2>/dev/null || echo '{"ecosystems": []}'`
 
     ## Instructions
 
@@ -321,7 +321,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
     - Frameworks detected
     - Recommended gdev ecosystem modules
 
-    If detection seems wrong, suggest the user check specific files or use `gdev init --ecosystem <name>` to override.
+    If detection seems wrong, suggest the user check specific files or use `qsdev init --ecosystem <name>` to override.
     ```
 
 12. Register all 10 skills in the tool registry (Phase 12 lifecycle system) with category `gdev-operations`. User-only skills get `disable-model-invocation: true`. Claude-invocable skills have no such restriction.
@@ -335,14 +335,14 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 **Acceptance Criteria:**
 - [ ] 6 user-only skills deploy to `.claude/skills/gdev-{init,onboard,setup,enable,disable,update}/SKILL.md` with `disable-model-invocation: true`
 - [ ] 4 Claude-invocable skills deploy to `.claude/skills/gdev-{doctor,status,tools,detect}/SKILL.md` without `disable-model-invocation`
-- [ ] All skills use `` !`gdev <cmd> --json` `` dynamic context injection with `|| echo` fallbacks
+- [ ] All skills use `` !`qsdev <cmd> --json` `` dynamic context injection with `|| echo` fallbacks
 - [ ] All skills use `allowed-tools: Bash(gdev *)` to scope tool access
 - [ ] `/gdev-init` shows dry-run preview before executing
 - [ ] `/gdev-setup` confirms before installing system packages
 - [ ] Claude can autonomously invoke `gdev-doctor` when troubleshooting build failures
 - [ ] Skills are registered in the tool lifecycle registry (individually toggleable)
 - [ ] Skill files are embedded via `embed.FS` and versioned with gdev binary
-- [ ] `gdev init --update` replaces skill files with current version
+- [ ] `qsdev init --update` replaces skill files with current version
 
 **Research Citations:**
 - `research-spikes/gdev-claude-code-integration/claude-code-integration-research.md § 1-2` — SKILL.md format, frontmatter fields, dynamic context injection syntax
@@ -364,7 +364,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 
 **Code-Grounded Notes:** ZERO agent infrastructure currently exists in the codebase. There are no `.claude/agents/` templates, no agent manifest file, and no deployment function. This unit must create the entire agent deployment pipeline from scratch, modeled on the existing skill deployment in `generate_skills.go`. Specifically: create `addons/claudecode/templates/agents/` with a `manifest.yaml`, create a `deployAgents()` function analogous to `deploySkills()`, and wire it into the addon's Init/Update paths. Agent files should use the LibraryManaged merge strategy (always overwritten on update), matching how skills are currently handled.
 
-**Desired Outcome:** After `gdev init`, developers find 7 agents in `.claude/agents/`. Claude can delegate to these agents when the task matches (e.g., "review this PR for security issues" auto-delegates to `security-reviewer`). Each agent produces structured output suitable for client deliverables or team handoff.
+**Desired Outcome:** After `qsdev init`, developers find 7 agents in `.claude/agents/`. Claude can delegate to these agents when the task matches (e.g., "review this PR for security issues" auto-delegates to `security-reviewer`). Each agent produces structured output suitable for client deliverables or team handoff.
 
 **Steps:**
 
@@ -725,8 +725,8 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 - [ ] Agent descriptions are concise and keyword-rich for accurate auto-delegation
 - [ ] No agent attempts to spawn subagents (architectural constraint documented)
 - [ ] All agents produce structured output suitable for client deliverables
-- [ ] Agents are registered in the tool lifecycle registry (individually toggleable via `gdev enable/disable`)
-- [ ] `gdev disable security-reviewer` removes the agent file cleanly
+- [ ] Agents are registered in the tool lifecycle registry (individually toggleable via `qsdev enable/disable`)
+- [ ] `qsdev disable security-reviewer` removes the agent file cleanly
 
 **Research Citations:**
 - `research-spikes/gdev-agentic-workflows/agent-files-research.md § 1` — agent file format, 15 frontmatter fields, priority ordering
@@ -746,7 +746,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 
 **Context:** Skills (`.claude/skills/<name>/SKILL.md`) are repeatable procedures that run in the main conversation context with `disable-model-invocation: true` to require explicit user invocation. Unlike agents (isolated context, analysis focus), skills share context with the main conversation and orchestrate multi-step workflows with side effects. The research spike `gdev-agentic-workflows` produced complete skill definitions with per-ecosystem verification commands drawn from the `EcosystemModule.VerificationCommands()` interface (Phase 11 Unit 11.5). The consulting differentiation research identified onboarding, handoff documentation, and time-aware design as key differentiators.
 
-**Desired Outcome:** After `gdev init`, developers have 8+ consulting workflow skills available via `/slash-command`. Each skill produces structured, client-deliverable output with built-in verification steps. Skills use per-ecosystem verification commands appropriate to the detected project type.
+**Desired Outcome:** After `qsdev init`, developers have 8+ consulting workflow skills available via `/slash-command`. Each skill produces structured, client-deliverable output with built-in verification steps. Skills use per-ecosystem verification commands appropriate to the detected project type.
 
 **Steps:**
 
@@ -1117,7 +1117,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    $ARGUMENTS
    ```
 
-10. Template skill verification commands per ecosystem. During `gdev init`, the claudecode addon reads `EcosystemModule.VerificationCommands()` and injects the appropriate build/test/lint commands into skill templates where `{{verification_test_cmd}}` placeholders appear. For example:
+10. Template skill verification commands per ecosystem. During `qsdev init`, the claudecode addon reads `EcosystemModule.VerificationCommands()` and injects the appropriate build/test/lint commands into skill templates where `{{verification_test_cmd}}` placeholders appear. For example:
     - Go project: `go test ./...`
     - Node project: `npm test`
     - Python project: `pytest`
@@ -1136,8 +1136,8 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 - [ ] `/upgrade-dep` works with guardrail hooks (hook validates package, doesn't bypass)
 - [ ] `/onboard-me` delegates to `codebase-explorer` agent via `context: fork` + `agent: codebase-explorer`
 - [ ] `/handoff-doc` delegates to `handoff-doc-generator` agent
-- [ ] Per-ecosystem verification commands injected during `gdev init` based on detected ecosystems
-- [ ] All skills are individually toggleable via `gdev enable/disable`
+- [ ] Per-ecosystem verification commands injected during `qsdev init` based on detected ecosystems
+- [ ] All skills are individually toggleable via `qsdev enable/disable`
 
 **Research Citations:**
 - `research-spikes/gdev-agentic-workflows/workflow-skills-catalog-research.md` — complete skill definitions for all 7 categories (review, testing, documentation, incident, onboarding, migration, refactoring)
@@ -1158,7 +1158,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 
 **Code-Grounded Notes:** The current CLAUDE.md template is 77 lines (`templates/claude-md.tmpl`). With language conventions (~15-17 lines each for up to 8 languages), a typical project generates ~200-300 lines. This is within the 5% budget for both Sonnet (200K context window → ~350 lines at 5%) and Opus (1M context window → ~1,750 lines at 5%). Current section markers are a SINGLE pair: `<!-- BEGIN GENERATED SECTION -->` / `<!-- END GENERATED SECTION -->`. The merge function `merge.SectionMarkers()` at `internal/merge/section.go:24-76` handles only ONE section. Phase 14 must either: (a) extend SectionMarkers to support multiple named sections, OR (b) keep a single generated section with structured subsections inside it. Approach (b) is recommended as simpler — add `<!-- gdev:skills -->` etc. as NESTED markers within the existing generated section, with a new `merge.NamedSections()` function that operates within the generated block.
 
-**Desired Outcome:** `gdev init` generates context-efficient configuration. CLAUDE.md is 50-100 lines of concise reference. Ecosystem-specific rules load lazily via `paths:` frontmatter. Skill descriptions are keyword-rich and under 200 characters each. `gdev check` validates the context budget. Model selection in the wizard adjusts generation.
+**Desired Outcome:** `qsdev init` generates context-efficient configuration. CLAUDE.md is 50-100 lines of concise reference. Ecosystem-specific rules load lazily via `paths:` frontmatter. Skill descriptions are keyword-rich and under 200 characters each. `qsdev check` validates the context budget. Model selection in the wizard adjusts generation.
 
 **Steps:**
 
@@ -1208,9 +1208,9 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    ```
    Where `.claude/gdev-reference.md` is a gdev-generated file with full command docs, tool status, and project-specific information. Loaded by `@`-import, not inline in CLAUDE.md.
 
-8. Add `gdev check --context-budget` subcommand: scans generated files, calculates `ContextBudget`, reports per-component breakdown, warns if over 5%.
+8. Add `qsdev check --context-budget` subcommand: scans generated files, calculates `ContextBudget`, reports per-component breakdown, warns if over 5%.
 
-9. Wire budget validation into `gdev init` and `gdev update`: after generation, validate budget and warn if exceeded.
+9. Wire budget validation into `qsdev init` and `qsdev update`: after generation, validate budget and warn if exceeded.
 
 10. Write unit tests: verify Sonnet CLAUDE.md is <=50 lines, Opus <=100 lines. Verify all skill descriptions are <=200 chars. Verify rules files have `paths:` frontmatter (except security rules). Verify budget calculation is accurate.
 
@@ -1221,11 +1221,11 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 - [ ] Security rules load unconditionally (no `paths:` frontmatter) and are <=30 lines
 - [ ] Each skill description is <=200 characters and keyword-rich
 - [ ] Total generated config is <5% of target model context window
-- [ ] `gdev check --context-budget` reports per-component breakdown
+- [ ] `qsdev check --context-budget` reports per-component breakdown
 - [ ] Model selection in wizard adjusts generation (Sonnet vs Opus)
 - [ ] Sonnet config disables model-invocation on consulting skills (reduces description budget)
 - [ ] `@`-import pattern used for detailed gdev reference doc (not inline in CLAUDE.md)
-- [ ] Budget validation runs automatically during `gdev init` and `gdev update`
+- [ ] Budget validation runs automatically during `qsdev init` and `qsdev update`
 
 **Research Citations:**
 - `research-spikes/gdev-agentic-workflows/context-management-research.md § 1` — token budget analysis, 5% target, Sonnet 10K chars / Opus 50K chars
@@ -1241,13 +1241,13 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 
 ### Unit 14.5: Deny Rule Conflict Validation
 
-**Description:** Implement a test matrix validating that generated deny rules don't block operations required by generated skills. Deny rules must block `npm install *`, `pip install *`, etc. but NOT `npm test`, `npm run build`, etc. The validation runs during `gdev init`, `gdev update`, and `gdev check` to catch conflicts before they cause runtime failures.
+**Description:** Implement a test matrix validating that generated deny rules don't block operations required by generated skills. Deny rules must block `npm install *`, `pip install *`, etc. but NOT `npm test`, `npm run build`, etc. The validation runs during `qsdev init`, `qsdev update`, and `qsdev check` to catch conflicts before they cause runtime failures.
 
 **Context:** The core tension identified in the guardrails research: security deny rules and workflow skills share the same tool namespace. A deny rule `Bash(npm install *)` correctly blocks unauthorized package installs, but `Bash(npm *)` would also block `npm test` — breaking the `/review-pr` and `/add-tests` skills that need to run tests. The research established a precision-scoping principle: deny rules target specific dangerous operations, not broad tool categories. The conflict detection test from `guardrail-integration-research.md § 4` provides the Go implementation pattern. Additionally, skills that invoke package managers (like `/upgrade-dep`) should work WITH guardrail hooks (the hook validates the package being installed), not bypass them.
 
 **Code-Grounded Notes:** Deny rules are defined as string slices in `addons/claudecode/generate_settings.go:54-291` across 13 categories (~120 rules total). The `allBaseDenyRules()` function concatenates all categories. `collectEcosystemDenyRules()` pulls additional rules from module `DenyRules()` methods. There is NO existing conflict detection code — Phase 14 builds it entirely from scratch. Rules use patterns like `Bash(npm install *)`, `Read(./.env)`. The pattern matching logic for detecting conflicts (glob-style matching of deny rules against skill allowed-tools) must be purpose-built.
 
-**Desired Outcome:** `gdev init` validates all deny rule × skill operation combinations and fails with clear diagnostics if conflicts exist. A regression test suite prevents future deny rules from blocking legitimate skill operations. `gdev check --deny-rules` is available as a standalone validation command.
+**Desired Outcome:** `qsdev init` validates all deny rule × skill operation combinations and fails with clear diagnostics if conflicts exist. A regression test suite prevents future deny rules from blocking legitimate skill operations. `qsdev check --deny-rules` is available as a standalone validation command.
 
 **Steps:**
 
@@ -1323,7 +1323,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    }
    ```
 
-5. Implement `gdev check --deny-rules` command:
+5. Implement `qsdev check --deny-rules` command:
    - Load current deny rules from generated settings.json
    - Load skill operations from all generated SKILL.md files
    - Run `ValidateDenyRuleConflicts()`
@@ -1331,7 +1331,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    - Report unexpected conflicts with clear diagnostics
    - Exit 1 if unexpected conflicts found
 
-6. Wire validation into `gdev init` and `gdev update`: after generating settings.json and skills, run conflict validation. Fail with clear message if unexpected conflicts detected.
+6. Wire validation into `qsdev init` and `qsdev update`: after generating settings.json and skills, run conflict validation. Fail with clear message if unexpected conflicts detected.
 
 7. Generate a conflict test file at `.claude/tests/deny-rule-conflicts_test.go` (or equivalent) that can be run independently as a regression check.
 
@@ -1348,9 +1348,9 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 - [ ] `ValidateDenyRuleConflicts()` correctly identifies when a deny rule would block a skill operation
 - [ ] `Bash(npm install *)` does NOT conflict with `Bash(npm test *)`, `Bash(npm run *)`, `Bash(npm audit *)`
 - [ ] `Bash(npm *)` DOES conflict with test commands (overly-broad deny rule detected)
-- [ ] `gdev check --deny-rules` reports zero unexpected conflicts with current configuration
+- [ ] `qsdev check --deny-rules` reports zero unexpected conflicts with current configuration
 - [ ] `/upgrade-dep` expected conflict documented: works with guardrail hook, not around it
-- [ ] Conflict validation runs automatically during `gdev init` and `gdev update`
+- [ ] Conflict validation runs automatically during `qsdev init` and `qsdev update`
 - [ ] Adding a new deny rule that blocks a skill operation fails the check with clear diagnostics
 - [ ] Adding a new skill with operations that conflict with deny rules fails the check
 - [ ] Regression test suite prevents future deny rule regressions
@@ -1468,7 +1468,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 
 7. Handle tool-contributed tasks: enabled tools (Semgrep, Gitleaks) contribute to the `security-scan` task. When a tool is enabled/disabled via lifecycle (Phase 12), tasks are regenerated.
 
-8. Wire into lifecycle system: task section in devenv.nix is a shared-file section. `gdev enable/disable` triggers task regeneration.
+8. Wire into lifecycle system: task section in devenv.nix is a shared-file section. `qsdev enable/disable` triggers task regeneration.
 
 9. Write unit tests: verify single-ecosystem task generation, multi-ecosystem aggregation, tool-contributed tasks, empty task filtering (don't generate `typecheck` if no ecosystem provides type-check commands).
 
@@ -1479,8 +1479,8 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 - [ ] Polyglot project (Go + TypeScript) gets combined tasks with both ecosystems' commands
 - [ ] CLAUDE.md `<!-- gdev:tasks -->` section lists all tasks with their commands
 - [ ] Tasks use devenv 2.0's task system (`devenv.tasks` in devenv.nix)
-- [ ] `gdev enable semgrep` adds Semgrep to the `security-scan` task
-- [ ] `gdev disable semgrep` removes Semgrep from the `security-scan` task
+- [ ] `qsdev enable semgrep` adds Semgrep to the `security-scan` task
+- [ ] `qsdev disable semgrep` removes Semgrep from the `security-scan` task
 - [ ] Empty tasks are not generated (no `typecheck` task if no type checker detected)
 - [ ] CI workflows use the same commands as devenv tasks (single source of truth)
 
@@ -1503,7 +1503,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 
 **Code-Grounded Notes:** The template data struct `ClaudeMdTemplateData` at `addons/claudecode/generate_claude_md.go:13-23` currently has: ProjectName, ProjectDescription, ArchitectureNotes, Languages, BuildCommands, TestCommands, LintCommands, HasSecurityHooks, PackageManagers. New fields needed for Phase 14: AvailableSkills, AvailableAgents, GdevCommands, DevenvTasks. The template at `templates/claude-md.tmpl` uses conditional rendering with `{{ if hasAny .Languages }}` — this pattern extends naturally to the new fields (e.g., `{{ if hasAny .AvailableSkills }}`). No new template functions are needed, just new data fields and corresponding template blocks.
 
-**Desired Outcome:** CLAUDE.md contains a compact, well-organized reference to all gdev capabilities. Developers and Claude can quickly see what skills, agents, commands, and tasks are available. Content stays within the model-aware context budget. `gdev enable/disable` correctly adds/removes sections.
+**Desired Outcome:** CLAUDE.md contains a compact, well-organized reference to all gdev capabilities. Developers and Claude can quickly see what skills, agents, commands, and tasks are available. Content stays within the model-aware context budget. `qsdev enable/disable` correctly adds/removes sections.
 
 **Steps:**
 
@@ -1557,19 +1557,19 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    ```markdown
    <!-- gdev:commands -->
    ## gdev Commands
-   - `gdev init` — Initialize or re-initialize project
-   - `gdev devenv doctor` — Check system and project health
-   - `gdev devenv setup` — Install missing prerequisites
-   - `gdev enable <tool>` — Enable a tool
-   - `gdev disable <tool>` — Disable a tool
-   - `gdev status` — Show configuration state
-   - `gdev list` — Show available tools
-   - `gdev check` — Validate configuration
+   - `qsdev init` — Initialize or re-initialize project
+   - `qsdev devenv doctor` — Check system and project health
+   - `qsdev devenv setup` — Install missing prerequisites
+   - `qsdev enable <tool>` — Enable a tool
+   - `qsdev disable <tool>` — Disable a tool
+   - `qsdev status` — Show configuration state
+   - `qsdev list` — Show available tools
+   - `qsdev check` — Validate configuration
 
    ### Security Policy
    - Package installations go through gdev's security pipeline
-   - Always use `gdev enable` to add tools, never configure manually
-   - Run `gdev devenv doctor` after configuration changes
+   - Always use `qsdev enable` to add tools, never configure manually
+   - Run `qsdev devenv doctor` after configuration changes
    <!-- /gdev:commands -->
    ```
 
@@ -1610,7 +1610,7 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
    - **Sonnet (200K)**: Skills section shows names only (no descriptions). Agents section shows names only. Commands section included. Tasks section included. Total ~50 lines.
    - **Opus (1M)**: Skills section with one-line descriptions. Agents section with one-line descriptions. Commands with security policy. Tasks with full command detail. Total ~100 lines.
 
-10. Wire section markers into lifecycle system: `gdev enable/disable` for skills and agents updates the corresponding section. When a skill/agent is disabled, its entry is removed from the directory section. When re-enabled, it's added back.
+10. Wire section markers into lifecycle system: `qsdev enable/disable` for skills and agents updates the corresponding section. When a skill/agent is disabled, its entry is removed from the directory section. When re-enabled, it's added back.
 
 11. Write unit tests: verify section markers are balanced (every `<!-- gdev:X -->` has `<!-- /gdev:X -->`). Verify Sonnet version <=50 lines. Verify Opus version <=100 lines. Verify lifecycle enable/disable correctly updates sections.
 
@@ -1625,8 +1625,8 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 - [ ] `.claude/gdev-reference.md` generated with full reference content
 - [ ] Sonnet CLAUDE.md is <=50 lines total
 - [ ] Opus CLAUDE.md is <=100 lines total
-- [ ] `gdev enable/disable <skill|agent>` updates the corresponding directory section
-- [ ] User content outside of section markers is preserved on `gdev init --update`
+- [ ] `qsdev enable/disable <skill|agent>` updates the corresponding directory section
+- [ ] User content outside of section markers is preserved on `qsdev init --update`
 - [ ] Per-ecosystem build/test/lint commands injected from detected ecosystems
 
 **Research Citations:**
@@ -1644,19 +1644,19 @@ Phase 4 complete (Claude Code addon — settings.json, CLAUDE.md, hook deploymen
 ## Phase Completion Criteria
 
 - [ ] All seven units pass acceptance criteria
-- [ ] 10 gdev operation skills deploy correctly during `gdev init`
-- [ ] 7 consulting workflow agents deploy correctly during `gdev init`
-- [ ] 8 consulting workflow skills deploy correctly during `gdev init`
+- [ ] 10 gdev operation skills deploy correctly during `qsdev init`
+- [ ] 7 consulting workflow agents deploy correctly during `qsdev init`
+- [ ] 8 consulting workflow skills deploy correctly during `qsdev init`
 - [ ] User-only skills cannot be auto-invoked by Claude (verified with `disable-model-invocation: true`)
 - [ ] Claude can autonomously invoke `gdev-doctor`, `gdev-status`, `gdev-tools`, `gdev-detect`
 - [ ] `/gdev-init` with dynamic context injection correctly captures and presents system state
 - [ ] `/review-pr` successfully gathers PR context via `gh` and produces structured review
 - [ ] `/onboard-me` delegates to `codebase-explorer` agent and produces onboarding doc
 - [ ] Context budget stays under 5% of target model for both Sonnet and Opus
-- [ ] `gdev check --deny-rules` reports zero unexpected conflicts
+- [ ] `qsdev check --deny-rules` reports zero unexpected conflicts
 - [ ] `devenv task test` runs correct test commands for detected ecosystems
 - [ ] CLAUDE.md has all section markers and stays within line count limits
-- [ ] `gdev enable/disable` correctly updates skill/agent directory sections in CLAUDE.md
+- [ ] `qsdev enable/disable` correctly updates skill/agent directory sections in CLAUDE.md
 - [ ] All skills and agents are individually toggleable via tool lifecycle system
-- [ ] `gdev init --update` replaces skills/agents with current gdev version
+- [ ] `qsdev init --update` replaces skills/agents with current gdev version
 - [ ] Full enable → disable → re-enable cycle works for all skills and agents

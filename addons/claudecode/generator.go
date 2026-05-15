@@ -3,8 +3,8 @@ package claudecode
 import (
 	"fmt"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface check.
@@ -127,12 +127,12 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		files = append(files, sembleFiles...)
 	}
 
-	// 10. gdev operation skills
-	gdevOpsFiles, err := deployOperationSkills(answers)
+	// 10. qsdev operation skills
+	qsdevOpsFiles, err := deployOperationSkills(answers)
 	if err != nil {
-		return nil, fmt.Errorf("generating gdev-ops skills: %w", err)
+		return nil, fmt.Errorf("generating qsdev-ops skills: %w", err)
 	}
-	files = append(files, gdevOpsFiles...)
+	files = append(files, qsdevOpsFiles...)
 
 	// 11. Consulting workflow agents
 	agentFiles, err := deployAgents(answers)
@@ -148,10 +148,10 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 	}
 	files = append(files, workflowFiles...)
 
-	// 13. gdev reference doc
-	refFile, err := GenerateGdevReference(answers, g.registry)
+	// 13. qsdev reference doc
+	refFile, err := GenerateQsdevReference(answers, g.registry)
 	if err != nil {
-		return nil, fmt.Errorf("generating gdev reference: %w", err)
+		return nil, fmt.Errorf("generating qsdev reference: %w", err)
 	}
 	if refFile != nil {
 		files = append(files, *refFile)

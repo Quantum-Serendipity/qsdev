@@ -1,4 +1,4 @@
-// Package shell implements the Bash/Shell ecosystem module for gdev-secure-devenv-bootstrap.
+// Package shell implements the Bash/Shell ecosystem module for qsdev.
 // It detects shell script projects by scanning for *.sh files in the project root,
 // scripts/ directories, and .envrc files, then generates devenv.nix fragments with
 // shellcheck and shfmt packages, pre-commit hooks, deny rules against pipe-to-shell
@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.

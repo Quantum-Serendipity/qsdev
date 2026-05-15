@@ -8,23 +8,23 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devenv"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/detect"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules" // register all modules
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/generate"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/profile"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/repair"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/detect"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules" // register all modules
+	"github.com/Quantum-Serendipity/qsdev/internal/generate"
+	"github.com/Quantum-Serendipity/qsdev/internal/profile"
+	"github.com/Quantum-Serendipity/qsdev/internal/repair"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 const (
-	statePath       = ".devinit/.gdev-init-state.yaml"
+	statePath       = ".devinit/.qsdev-init-state.yaml"
 	answersDir      = ".devinit"
-	answersFileName = ".gdev-init-answers.yaml"
+	answersFileName = ".qsdev-init-answers.yaml"
 )
 
 func initCmd() *cobra.Command {
@@ -240,7 +240,7 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	// written files so partial writes leave a recoverable state.
 	successfulFiles := result.SuccessfulFiles(allFiles)
 	genState := state.RecordFiles(successfulFiles)
-	genState.GdevVersion = version.Info().Version
+	genState.QsdevVersion = version.Info().Version
 	stateFile := filepath.Join(projectRoot, statePath)
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
@@ -251,7 +251,7 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		for _, ff := range result.FailedFiles() {
 			fmt.Fprintf(&details, "\n  - %s: %v", ff.Path, ff.Error)
 		}
-		return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); run gdev repair to recover%s",
+		return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); run qsdev repair to recover%s",
 			result.Failed, len(successfulFiles), details.String())
 	}
 

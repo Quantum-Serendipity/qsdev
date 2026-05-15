@@ -1,17 +1,17 @@
 package types
 
-// Schema version constants for .gdev.yaml configuration files.
+// Schema version constants for .qsdev.yaml configuration files.
 const (
 	ConfigVersionMin     = 1
 	ConfigVersionMax     = 1
 	ConfigVersionCurrent = 1
 )
 
-// GdevConfig represents the parsed contents of a .gdev.yaml file.
+// QsdevConfig represents the parsed contents of a .qsdev.yaml file.
 // It is the declarative project configuration that drives devinit behavior.
-type GdevConfig struct {
+type QsdevConfig struct {
 	Version        int              `yaml:"version"`
-	GdevVersion    string           `yaml:"gdev_version,omitempty"`
+	QsdevVersion    string           `yaml:"qsdev_version,omitempty"`
 	Profile        string           `yaml:"profile,omitempty"`
 	Languages      []LanguageConfig `yaml:"languages,omitempty"`
 	Services       []ServiceConfig  `yaml:"services,omitempty"`
@@ -23,21 +23,21 @@ type GdevConfig struct {
 	Git            GitConfig        `yaml:"git,omitempty"`
 }
 
-// LanguageConfig specifies a language/platform ecosystem in .gdev.yaml.
+// LanguageConfig specifies a language/platform ecosystem in .qsdev.yaml.
 type LanguageConfig struct {
 	Name           string `yaml:"name"`
 	Version        string `yaml:"version,omitempty"`
 	PackageManager string `yaml:"package_manager,omitempty"`
 }
 
-// ServiceConfig specifies a development service (database, cache, etc.) in .gdev.yaml.
+// ServiceConfig specifies a development service (database, cache, etc.) in .qsdev.yaml.
 type ServiceConfig struct {
 	Name    string            `yaml:"name"`
 	Version string            `yaml:"version,omitempty"`
 	Options map[string]string `yaml:"options,omitempty"`
 }
 
-// SecurityConfig holds security posture settings in .gdev.yaml.
+// SecurityConfig holds security posture settings in .qsdev.yaml.
 type SecurityConfig struct {
 	Level          string `yaml:"level,omitempty"`
 	AgeGating      *bool  `yaml:"age_gating,omitempty"`
@@ -46,14 +46,14 @@ type SecurityConfig struct {
 	VulnScanning   *bool  `yaml:"vuln_scanning,omitempty"`
 }
 
-// ToolsConfig controls which optional tools are enabled/disabled in .gdev.yaml.
+// ToolsConfig controls which optional tools are enabled/disabled in .qsdev.yaml.
 type ToolsConfig struct {
 	Enabled  []string                  `yaml:"enabled,omitempty"`
 	Disabled []string                  `yaml:"disabled,omitempty"`
 	Config   map[string]map[string]any `yaml:"config,omitempty"`
 }
 
-// ClaudeCodeConfig holds Claude Code agent settings in .gdev.yaml.
+// ClaudeCodeConfig holds Claude Code agent settings in .qsdev.yaml.
 type ClaudeCodeConfig struct {
 	Enabled         *bool    `yaml:"enabled,omitempty"`
 	PermissionLevel string   `yaml:"permission_level,omitempty"`
@@ -61,7 +61,7 @@ type ClaudeCodeConfig struct {
 	MCPServers      []string `yaml:"mcp_servers,omitempty"`
 }
 
-// InfraConfig holds infrastructure settings (registry proxy, caches) in .gdev.yaml.
+// InfraConfig holds infrastructure settings (registry proxy, caches) in .qsdev.yaml.
 type InfraConfig struct {
 	RegistryProxy          string            `yaml:"registry_proxy,omitempty"`
 	RegistryProxyOverrides map[string]string `yaml:"registry_proxy_overrides,omitempty"`
@@ -69,12 +69,12 @@ type InfraConfig struct {
 	BuildCache             string            `yaml:"build_cache,omitempty"`
 }
 
-// GitConfig holds git workflow settings in .gdev.yaml.
+// GitConfig holds git workflow settings in .qsdev.yaml.
 type GitConfig struct {
 	BranchPattern string `yaml:"branch_pattern,omitempty"`
 }
 
-// ClientConfig holds client-specific constraints in .gdev.yaml.
+// ClientConfig holds client-specific constraints in .qsdev.yaml.
 type ClientConfig struct {
 	Name               string   `yaml:"name"`
 	Compliance         []string `yaml:"compliance,omitempty"`

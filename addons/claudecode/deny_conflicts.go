@@ -81,17 +81,17 @@ func FilterExpectedConflicts(conflicts []DenyRuleConflict) []DenyRuleConflict {
 // This is a static registry derived from the skill YAML frontmatter allowed-tools fields.
 func BuiltinSkillDefinitions() []SkillDefinition {
 	return []SkillDefinition{
-		// gdev operation skills (14.1)
-		{Name: "gdev-init", AllowedTools: []string{"Bash(gdev *)"}},
-		{Name: "gdev-onboard", AllowedTools: []string{"Bash(gdev *)"}},
-		{Name: "gdev-setup", AllowedTools: []string{"Bash(gdev *)"}},
-		{Name: "gdev-enable", AllowedTools: []string{"Bash(gdev *)"}},
-		{Name: "gdev-disable", AllowedTools: []string{"Bash(gdev *)"}},
-		{Name: "gdev-update", AllowedTools: []string{"Bash(gdev *)"}},
-		{Name: "gdev-doctor", AllowedTools: []string{"Bash(gdev *)"}},
-		{Name: "gdev-status", AllowedTools: []string{"Bash(gdev *)"}},
-		{Name: "gdev-tools", AllowedTools: []string{"Bash(gdev *)"}},
-		{Name: "gdev-detect", AllowedTools: []string{"Bash(gdev *)"}},
+		// qsdev operation skills (14.1)
+		{Name: "qsdev-init", AllowedTools: []string{"Bash(qsdev *)"}},
+		{Name: "qsdev-onboard", AllowedTools: []string{"Bash(qsdev *)"}},
+		{Name: "qsdev-setup", AllowedTools: []string{"Bash(qsdev *)"}},
+		{Name: "qsdev-enable", AllowedTools: []string{"Bash(qsdev *)"}},
+		{Name: "qsdev-disable", AllowedTools: []string{"Bash(qsdev *)"}},
+		{Name: "qsdev-update", AllowedTools: []string{"Bash(qsdev *)"}},
+		{Name: "qsdev-doctor", AllowedTools: []string{"Bash(qsdev *)"}},
+		{Name: "qsdev-status", AllowedTools: []string{"Bash(qsdev *)"}},
+		{Name: "qsdev-tools", AllowedTools: []string{"Bash(qsdev *)"}},
+		{Name: "qsdev-detect", AllowedTools: []string{"Bash(qsdev *)"}},
 		// consulting workflow skills (14.3)
 		{Name: "review-pr", AllowedTools: []string{"Bash(git *)", "Bash(gh *)"}},
 		{Name: "add-tests", AllowedTools: []string{"Bash(npm test *)", "Bash(go test *)", "Bash(pytest *)", "Bash(cargo test *)"}},

@@ -6,14 +6,14 @@ Apply research-backed agentic quality patterns to gdev's generated configuration
 
 ## Dependencies
 
-Phase 13 complete (project configuration — `.gdev.yaml` project name, Join mode, onboarding modes). Phase 14 complete (Claude Code integration and agentic skills — skill deployment infrastructure, `gdev claude init`, existing skill manifest and `deploySkills()` function).
+Phase 13 complete (project configuration — `.qsdev.yaml` project name, Join mode, onboarding modes). Phase 14 complete (Claude Code integration and agentic skills — skill deployment infrastructure, `qsdev claude init`, existing skill manifest and `deploySkills()` function).
 
 ## Phase Outputs
 
-- `learning-opportunities` skill deployed via `gdev enable learning-opportunities`
-- `orient` skill deployed via `gdev enable orient`
+- `learning-opportunities` skill deployed via `qsdev enable learning-opportunities`
+- `orient` skill deployed via `qsdev enable orient`
 - Project clarity CLAUDE.md template section (with consulting and Copier integration)
-- `repo-map` skill deployed via `gdev enable repo-map`
+- `repo-map` skill deployed via `qsdev enable repo-map`
 - Pre-edit validation hook for Edit/Write tools
 - Calm directive audit pass across all gdev-generated templates and rule files
 - Time-to-first-environment benchmarking at `~/.qsdev/benchmarks/`
@@ -22,7 +22,7 @@ Phase 13 complete (project configuration — `.gdev.yaml` project name, Join mod
 
 ### Unit 34.1: learning-opportunities Skill Integration
 
-**Description:** Integrate the `learning-opportunities` skill from DrCatHicks/learning-opportunities (1,530 stars, CC-BY-4.0) as an opt-in skill deployed via `gdev enable learning-opportunities`. The skill offers research-grounded learning exercises after architectural work to counter the fluency illusion — the consulting-specific risk that AI-accelerated output generates code without building genuine developer understanding.
+**Description:** Integrate the `learning-opportunities` skill from DrCatHicks/learning-opportunities (1,530 stars, CC-BY-4.0) as an opt-in skill deployed via `qsdev enable learning-opportunities`. The skill offers research-grounded learning exercises after architectural work to counter the fluency illusion — the consulting-specific risk that AI-accelerated output generates code without building genuine developer understanding.
 
 **Context:** The learning opportunities evaluation established that the skill is a strong fit for consulting: it directly addresses the "fluency illusion" problem (engineers producing AI-accelerated output without understanding unfamiliar client codebases), is properly licensed CC-BY-4.0, has zero runtime dependencies, and is deployed as a standard SKILL.md file compatible with gdev's existing skill infrastructure. The skill has no `disable-model-invocation` flag, which means Claude can autonomously invoke it — intentionally, so it proactively offers exercises after architectural work without requiring explicit invocation.
 
@@ -30,7 +30,7 @@ The 6 exercise types are grounded in published learning science: generation effe
 
 gdev deploys the skill by embedding the SKILL.md and `resources/` files in its Go binary via the existing `internal/claudecode/skills/` embedded filesystem, following the identical pattern used for Phase 14's existing skill library. The `deploySkills()` function at `addons/claudecode/generate_skills.go:42-78` already handles recursive directory copying.
 
-**Desired Outcome:** `gdev enable learning-opportunities` copies the SKILL.md and resources/ into `.claude/skills/learning-opportunities/` with correct attribution. Claude autonomously offers exercises after architectural work. The skill respects the 2-exercise-per-session limit and stops after the first decline.
+**Desired Outcome:** `qsdev enable learning-opportunities` copies the SKILL.md and resources/ into `.claude/skills/learning-opportunities/` with correct attribution. Claude autonomously offers exercises after architectural work. The skill respects the 2-exercise-per-session limit and stops after the first decline.
 
 **Steps:**
 1. Obtain and embed the skill files:
@@ -42,7 +42,7 @@ gdev deploys the skill by embedding the SKILL.md and `resources/` files in its G
      ```yaml
      # Learning Opportunities skill by Dr. Cat Hicks (CC-BY-4.0)
      # Source: https://github.com/DrCatHicks/learning-opportunities
-     # Deployed by gdev — do not edit. Run: gdev enable learning-opportunities
+     # Deployed by gdev — do not edit. Run: qsdev enable learning-opportunities
      ```
 2. Add `learning-opportunities` to the skill manifest at `templates/skills/manifest.yaml`:
    ```yaml
@@ -53,7 +53,7 @@ gdev deploys the skill by embedding the SKILL.md and `resources/` files in its G
      author: "DrCatHicks"
      license: "CC-BY-4.0"
    ```
-3. Implement `gdev enable learning-opportunities`:
+3. Implement `qsdev enable learning-opportunities`:
    - Register the skill in the tool registry (Phase 12 lifecycle system).
    - Call `deploySkill("learning-opportunities")` which copies the embedded SKILL.md and resources/ into `.claude/skills/learning-opportunities/` using the existing `deploySkills()` infrastructure.
    - Print confirmation: `learning-opportunities skill deployed to .claude/skills/learning-opportunities/`.
@@ -62,28 +62,28 @@ gdev deploys the skill by embedding the SKILL.md and `resources/` files in its G
    - This is a CLAUDE.md-style instruction prepended to the embedded SKILL.md.
    - This customization must survive skill updates (keep as a separate prepend, not inline edit).
 5. Wire into Join mode suggestion (Phase 13 Unit 13.4):
-   - After Join mode completes successfully, if learning-opportunities is enabled in `.gdev.yaml`, print:
+   - After Join mode completes successfully, if learning-opportunities is enabled in `.qsdev.yaml`, print:
      ```
      After exploring the codebase, run /orient to generate orientation.md,
      then /learning-opportunities orient for a guided onboarding tour.
      ```
-6. Implement `gdev disable learning-opportunities`:
+6. Implement `qsdev disable learning-opportunities`:
    - Remove `.claude/skills/learning-opportunities/` directory.
    - Remove entry from skill manifest state tracking.
 7. Write unit tests:
-   - `gdev enable learning-opportunities` creates `.claude/skills/learning-opportunities/SKILL.md`.
+   - `qsdev enable learning-opportunities` creates `.claude/skills/learning-opportunities/SKILL.md`.
    - Attribution header present in deployed SKILL.md.
    - `resources/PRINCIPLES.md` deployed alongside SKILL.md.
-   - `gdev disable learning-opportunities` removes the directory.
+   - `qsdev disable learning-opportunities` removes the directory.
    - Re-enabling after disable recreates files correctly.
 
 **Acceptance Criteria:**
-- [ ] `gdev enable learning-opportunities` deploys SKILL.md and `resources/PRINCIPLES.md` to `.claude/skills/learning-opportunities/`
+- [ ] `qsdev enable learning-opportunities` deploys SKILL.md and `resources/PRINCIPLES.md` to `.claude/skills/learning-opportunities/`
 - [ ] Attribution comment present in deployed SKILL.md: author, license, source URL
 - [ ] Session limit (maximum 2 exercises, stop after first decline) present as instruction in deployed SKILL.md header
 - [ ] `disable-model-invocation` is NOT set — Claude can autonomously offer exercises
-- [ ] Skill appears in `gdev info` when enabled
-- [ ] `gdev disable learning-opportunities` removes the skill directory
+- [ ] Skill appears in `qsdev info` when enabled
+- [ ] `qsdev disable learning-opportunities` removes the skill directory
 - [ ] CC-BY-4.0 license attribution present in gdev's own documentation
 
 **Research Citations:**
@@ -97,15 +97,15 @@ gdev deploys the skill by embedding the SKILL.md and `resources/` files in its G
 
 ### Unit 34.2: orient Codebase Exploration Skill
 
-**Description:** Integrate the `orient` skill from DrCatHicks/learning-opportunities (CC-BY-4.0, author Dr. Michael Mullarkey) as an opt-in skill deployed via `gdev enable orient`. Orient generates a `resources/orientation.md` file by performing a structured 6-step codebase exploration, producing a teaching scaffold that accelerates onboarding in unfamiliar client codebases.
+**Description:** Integrate the `orient` skill from DrCatHicks/learning-opportunities (CC-BY-4.0, author Dr. Michael Mullarkey) as an opt-in skill deployed via `qsdev enable orient`. Orient generates a `resources/orientation.md` file by performing a structured 6-step codebase exploration, producing a teaching scaffold that accelerates onboarding in unfamiliar client codebases.
 
 **Context:** The learning opportunities evaluation identified orient as "the strongest fit for consulting" among the three plugins in the DrCatHicks ecosystem. The consulting scenario it directly addresses: an engineer clones a client codebase they have never seen before and must be productive within hours, not weeks. Orient generates a structured orientation document — purpose statement, primary languages, pipeline stages, key files, core concepts, gotchas, and suggested exercises — by performing a methodical sampling of the codebase following program comprehension research (Spinellis 2003, Hermans 2021, Storey et al. 2006).
 
 Orient has `disable-model-invocation: true`, meaning Claude will NOT invoke it autonomously — the developer must run `/orient` explicitly. This is correct: generating orientation.md involves significant file reading and should be a deliberate action, not a background task. The orientation.md file it produces becomes a persistent resource used by the learning-opportunities skill's `orient` argument.
 
-gdev adds a post-Join-mode suggestion linking orient to the Join mode workflow: after `gdev init` in Join mode, the summary prints a prompt to run `/orient` as the next step.
+gdev adds a post-Join-mode suggestion linking orient to the Join mode workflow: after `qsdev init` in Join mode, the summary prints a prompt to run `/orient` as the next step.
 
-**Desired Outcome:** `gdev enable orient` deploys the orient skill. Running `/orient` inside Claude Code generates `resources/orientation.md` with a structured codebase overview. Post-Join-mode output mentions `gdev orient` as the next step when the skill is enabled.
+**Desired Outcome:** `qsdev enable orient` deploys the orient skill. Running `/orient` inside Claude Code generates `resources/orientation.md` with a structured codebase overview. Post-Join-mode output mentions `qsdev orient` as the next step when the skill is enabled.
 
 **Steps:**
 1. Obtain and embed the skill files:
@@ -117,7 +117,7 @@ gdev adds a post-Join-mode suggestion linking orient to the Join mode workflow: 
      ```yaml
      # Orient skill by Dr. Michael Mullarkey (CC-BY-4.0)
      # Source: https://github.com/DrCatHicks/learning-opportunities
-     # Deployed by gdev — do not edit. Run: gdev enable orient
+     # Deployed by gdev — do not edit. Run: qsdev enable orient
      ```
 2. Add `orient` to the skill manifest at `templates/skills/manifest.yaml`:
    ```yaml
@@ -129,11 +129,11 @@ gdev adds a post-Join-mode suggestion linking orient to the Join mode workflow: 
      license: "CC-BY-4.0"
      invocation: "/orient"
    ```
-3. Implement `gdev enable orient`:
+3. Implement `qsdev enable orient`:
    - Register in tool registry.
    - Deploy SKILL.md and resources/ to `.claude/skills/orient/`.
    - Print: `orient skill deployed. Run /orient inside Claude Code to generate resources/orientation.md`.
-4. Implement `gdev orient` as a convenience alias for instructing the developer:
+4. Implement `qsdev orient` as a convenience alias for instructing the developer:
    ```go
    var orientCmd = &cobra.Command{
        Use:   "orient",
@@ -143,7 +143,7 @@ gdev adds a post-Join-mode suggestion linking orient to the Join mode workflow: 
 
    func runOrient(cmd *cobra.Command, args []string) error {
        if !skillIsDeployed("orient") {
-           fmt.Println("orient skill not deployed. Run: gdev enable orient")
+           fmt.Println("orient skill not deployed. Run: qsdev enable orient")
            return nil
        }
        fmt.Println("Run /orient inside Claude Code to generate resources/orientation.md")
@@ -151,7 +151,7 @@ gdev adds a post-Join-mode suggestion linking orient to the Join mode workflow: 
        return nil
    }
    ```
-   - Note: `gdev orient` itself cannot invoke Claude Code — it only informs the user. The actual invocation is `/orient` inside a Claude Code session.
+   - Note: `qsdev orient` itself cannot invoke Claude Code — it only informs the user. The actual invocation is `/orient` inside a Claude Code session.
 5. Wire orient suggestion into Phase 13 Join mode completion output (Unit 13.4):
    - If orient skill is deployed, add to the Join mode completion summary:
      ```
@@ -160,24 +160,24 @@ gdev adds a post-Join-mode suggestion linking orient to the Join mode workflow: 
        2. /orient               — generate orientation.md (run inside Claude Code)
        3. /learning-opportunities orient — guided onboarding exercises
      ```
-6. Implement `gdev disable orient`:
+6. Implement `qsdev disable orient`:
    - Remove `.claude/skills/orient/` directory.
    - Remove entry from skill manifest state tracking.
 7. Write unit tests:
-   - `gdev enable orient` creates `.claude/skills/orient/SKILL.md`.
+   - `qsdev enable orient` creates `.claude/skills/orient/SKILL.md`.
    - Attribution comment present in deployed SKILL.md.
    - `resources/orient-bibliography.md` deployed alongside SKILL.md.
    - `disable-model-invocation: true` is present in the deployed SKILL.md frontmatter.
    - Join mode completion output includes orient suggestion when skill is deployed.
-   - `gdev disable orient` removes the directory.
+   - `qsdev disable orient` removes the directory.
 
 **Acceptance Criteria:**
-- [ ] `gdev enable orient` deploys SKILL.md and `resources/orient-bibliography.md` to `.claude/skills/orient/`
+- [ ] `qsdev enable orient` deploys SKILL.md and `resources/orient-bibliography.md` to `.claude/skills/orient/`
 - [ ] Attribution comment present: author (Dr. Michael Mullarkey), license (CC-BY-4.0), source URL
 - [ ] `disable-model-invocation: true` preserved in deployed SKILL.md frontmatter
 - [ ] `allowed-tools: Read, Glob, Grep, Bash, Write` preserved (no web access)
 - [ ] Join mode completion output mentions `/orient` as next step when skill is deployed
-- [ ] `gdev disable orient` removes the skill directory
+- [ ] `qsdev disable orient` removes the skill directory
 - [ ] CC-BY-4.0 license attribution present in gdev's own documentation
 
 **Research Citations:**
@@ -191,13 +191,13 @@ gdev adds a post-Join-mode suggestion linking orient to the Join mode workflow: 
 
 ### Unit 34.3: Project Clarity Template for CLAUDE.md
 
-**Description:** Add a "Project Context" section to the CLAUDE.md template with fields for purpose, stakeholders, success criteria, exclusions, and a consulting-specific block covering client name, engagement type, compliance level, and handoff date. Wire to Copier (Phase 31) questionnaire so the section is populated during `gdev init`. Wire to client profile (Phase 30) when available.
+**Description:** Add a "Project Context" section to the CLAUDE.md template with fields for purpose, stakeholders, success criteria, exclusions, and a consulting-specific block covering client name, engagement type, compliance level, and handoff date. Wire to Copier (Phase 31) questionnaire so the section is populated during `qsdev init`. Wire to client profile (Phase 30) when available.
 
 **Context:** The agentic workflow research established that CLAUDE.md functions as the system prompt for Claude Code, and that system prompt quality is a primary quality lever: a well-structured CLAUDE.md with explicit success criteria and project context produces measurably better output than a sparse one. The "write prompts like contracts" principle from the prompt engineering research directly translates to the Project Context section — explicit purpose, success criteria, and exclusions give Claude a contract to work against rather than an open-ended mandate.
 
 The consulting-specific block captures the information that changes with every engagement: client, type of work (greenfield vs brownfield vs assessment), compliance constraints, and handoff date. These fields prevent Claude from making recommendations appropriate for a greenfield startup project when working on a brownfield HIPAA-constrained client system. The Copier integration (Phase 31) allows `copier.yaml` questionnaire answers to populate these fields during `copier copy`, so they are filled in rather than left as placeholder text for the developer to edit.
 
-**Desired Outcome:** The generated CLAUDE.md contains a Project Context section populated during `gdev init` (wizard) or `copier copy` (Copier flow). The section is in the user-editable area, outside gdev section markers, so it is not overwritten by `gdev init --update`. The consulting block is included only when the project profile is `consulting-default` or `enterprise`.
+**Desired Outcome:** The generated CLAUDE.md contains a Project Context section populated during `qsdev init` (wizard) or `copier copy` (Copier flow). The section is in the user-editable area, outside gdev section markers, so it is not overwritten by `qsdev init --update`. The consulting block is included only when the project profile is `consulting-default` or `enterprise`.
 
 **Steps:**
 1. Define the Project Context template block (user-editable, outside gdev markers):
@@ -231,7 +231,7 @@ The consulting-specific block captures the information that changes with every e
 3. Implement placement logic in the CLAUDE.md generator:
    - Project Context section is inserted BEFORE the first gdev section marker.
    - It uses a comment marker so it can be detected but not overwritten: `<!-- gdev:project-context (user-editable) -->` on the line before.
-   - On `gdev init --update`: presence of the marker means this section is NEVER regenerated (idempotent — only generate on first Create or Join mode).
+   - On `qsdev init --update`: presence of the marker means this section is NEVER regenerated (idempotent — only generate on first Create or Join mode).
 4. Wire to wizard:
    - Add `ProjectContext` struct to `WizardAnswers`:
      ```go
@@ -287,7 +287,7 @@ The consulting-specific block captures the information that changes with every e
 7. Write unit tests:
    - Project Context section generated in CLAUDE.md on first Create mode run.
    - Section uses `<!-- gdev:project-context (user-editable) -->` marker.
-   - `gdev init --update` does NOT regenerate the section (idempotent).
+   - `qsdev init --update` does NOT regenerate the section (idempotent).
    - Consulting block included when profile is `consulting-default`.
    - Consulting block omitted when profile is `startup-fast`.
    - Copier template contains correct questions for consulting fields.
@@ -296,7 +296,7 @@ The consulting-specific block captures the information that changes with every e
 - [ ] Generated CLAUDE.md contains a Project Context section with Purpose, Stakeholders, Success Criteria, Exclusions, Technical Constraints
 - [ ] Consulting Context block included when profile is `consulting-default` or `enterprise`
 - [ ] Consulting Context block omitted when profile is `startup-fast` or non-consulting profiles
-- [ ] Project Context section uses a user-editable marker that prevents overwrite by `gdev init --update`
+- [ ] Project Context section uses a user-editable marker that prevents overwrite by `qsdev init --update`
 - [ ] Wizard populates Project Context fields during Create mode
 - [ ] Consulting fields (client name, engagement type, compliance level, handoff date) shown only in wizard when consulting profile is selected
 - [ ] Copier template (`copier.yaml`) contains corresponding questions for all Project Context fields
@@ -321,7 +321,7 @@ The implementation uses a two-step approach. The shell command preprocessor (`re
 
 The tree-sitter implementation uses the `tree-sitter` CLI (available in nixpkgs) plus per-language grammar packages. The shell script handles the common case (Go, TypeScript/JavaScript, Python, Rust) and gracefully degrades for unsupported languages (outputs a basic directory tree instead).
 
-**Desired Outcome:** `gdev enable repo-map` deploys the skill and the shell preprocessor. Running `/repo-map` inside Claude Code injects a ranked symbol list of the codebase's most important symbols into the conversation, fitting in approximately 1,000 tokens.
+**Desired Outcome:** `qsdev enable repo-map` deploys the skill and the shell preprocessor. Running `/repo-map` inside Claude Code injects a ranked symbol list of the codebase's most important symbols into the conversation, fitting in approximately 1,000 tokens.
 
 **Steps:**
 1. Create `internal/claudecode/skills/repo-map/SKILL.md`:
@@ -399,23 +399,23 @@ The tree-sitter implementation uses the `tree-sitter` CLI (available in nixpkgs)
 4. Add tree-sitter to devenv packages when repo-map is enabled:
    - In devenv.nix generated section: `pkgs.tree-sitter` added to packages.
    - The shell script degrades gracefully if tree-sitter is not available (directory fallback).
-5. Implement `gdev enable repo-map`:
+5. Implement `qsdev enable repo-map`:
    - Deploy SKILL.md and `repo-map.sh` to `.claude/skills/repo-map/`.
    - Make `repo-map.sh` executable: `os.Chmod(".claude/skills/repo-map/repo-map.sh", 0o755)`.
    - Add `pkgs.tree-sitter` to devenv.nix packages section.
-6. Implement `gdev disable repo-map`:
+6. Implement `qsdev disable repo-map`:
    - Remove `.claude/skills/repo-map/` directory.
    - Remove `pkgs.tree-sitter` from devenv.nix (Phase 12 section marker editing).
 7. Write unit tests:
-   - `gdev enable repo-map` creates `.claude/skills/repo-map/SKILL.md` and `repo-map.sh`.
+   - `qsdev enable repo-map` creates `.claude/skills/repo-map/SKILL.md` and `repo-map.sh`.
    - `repo-map.sh` is executable after deployment.
    - `disable-model-invocation: true` present in deployed SKILL.md frontmatter.
    - tree-sitter added to devenv.nix packages.
    - Script gracefully falls back to directory listing when tree-sitter binary absent.
-   - `gdev disable repo-map` removes both files and the tree-sitter package.
+   - `qsdev disable repo-map` removes both files and the tree-sitter package.
 
 **Acceptance Criteria:**
-- [ ] `gdev enable repo-map` deploys SKILL.md and `repo-map.sh` to `.claude/skills/repo-map/`
+- [ ] `qsdev enable repo-map` deploys SKILL.md and `repo-map.sh` to `.claude/skills/repo-map/`
 - [ ] `repo-map.sh` is executable (mode 0755) after deployment
 - [ ] `disable-model-invocation: true` present in deployed SKILL.md frontmatter
 - [ ] Script supports Go, TypeScript, Python, and Rust symbol extraction
@@ -423,7 +423,7 @@ The tree-sitter implementation uses the `tree-sitter` CLI (available in nixpkgs)
 - [ ] Symbol output capped at 80 symbols to target ~1K token output
 - [ ] Each symbol entry shows file path and reference count
 - [ ] `pkgs.tree-sitter` added to devenv.nix when repo-map is enabled
-- [ ] `gdev disable repo-map` removes the skill directory and tree-sitter package
+- [ ] `qsdev disable repo-map` removes the skill directory and tree-sitter package
 
 **Research Citations:**
 - `research-spikes/agentic-workflow-state-of-art/memory-context-management-research.md` — tree-sitter repo map as highest-impact codebase understanding addition, Aider's AST + PageRank approach
@@ -526,12 +526,12 @@ Advisory mode (default) surfaces lint errors as a warning in Claude's context �
 3. Wire `GDEV_LINT_MODE` env var generation into devenv.nix when pre-edit validation is enabled:
    - Default: `GDEV_LINT_MODE=advisory` (do not add to devenv.nix — advisory is the hook default).
    - Blocking mode: add `env.GDEV_LINT_MODE = "blocking";` to devenv.nix gdev-owned section.
-4. Implement `gdev enable pre-edit-validation`:
+4. Implement `qsdev enable pre-edit-validation`:
    - Deploy `pre-edit-validate.sh` to `.claude/hooks/pre-edit-validate.sh`.
    - Register in `settings.json` PreToolUse hooks (use Phase 14 shared-file surgery for `settings.json`).
    - Make hook script executable.
-   - Print: `Pre-edit validation enabled (advisory mode). To enforce blocking, add pre_edit_validation.mode: blocking to .gdev.yaml`.
-5. Implement blocking mode configuration in `.gdev.yaml`:
+   - Print: `Pre-edit validation enabled (advisory mode). To enforce blocking, add pre_edit_validation.mode: blocking to .qsdev.yaml`.
+5. Implement blocking mode configuration in `.qsdev.yaml`:
    ```yaml
    tools:
      config:
@@ -539,7 +539,7 @@ Advisory mode (default) surfaces lint errors as a warning in Claude's context �
          mode: blocking  # default: advisory
    ```
    - The config resolution engine (Phase 13) reads this and sets `GDEV_LINT_MODE` accordingly.
-6. Implement `gdev disable pre-edit-validation`:
+6. Implement `qsdev disable pre-edit-validation`:
    - Remove `pre-edit-validate.sh`.
    - Remove hook entry from `settings.json`.
    - Remove `GDEV_LINT_MODE` env var from devenv.nix (if blocking mode was set).
@@ -556,12 +556,12 @@ Advisory mode (default) surfaces lint errors as a warning in Claude's context �
 - [ ] PreToolUse hook registered for Edit and Write tools in `settings.json`
 - [ ] Hook runs per-file linter in under 200ms (180ms timeout enforced by the script)
 - [ ] Advisory mode (default): lint errors surfaced as `hookSpecificOutput`, edit proceeds
-- [ ] Blocking mode (opt-in via `.gdev.yaml`): lint errors block the edit with structured reason
+- [ ] Blocking mode (opt-in via `.qsdev.yaml`): lint errors block the edit with structured reason
 - [ ] Linter selection by file extension: ESLint (TS/JS), ruff (Python), golangci-lint (Go)
 - [ ] Hook exits cleanly (no output, no blocking) when linter binary is not installed
 - [ ] Hook exits cleanly for new files (Write to a path that does not yet exist)
-- [ ] `gdev enable pre-edit-validation` deploys the hook and registers it in `settings.json`
-- [ ] `gdev disable pre-edit-validation` removes the hook from `settings.json`
+- [ ] `qsdev enable pre-edit-validation` deploys the hook and registers it in `settings.json`
+- [ ] `qsdev disable pre-edit-validation` removes the hook from `settings.json`
 
 **Research Citations:**
 - `research-spikes/agentic-workflow-state-of-art/tool-use-patterns-research.md § Pre-Edit Validation` — SWE-agent's pre-edit validation as highest-impact tool improvement, validate-before-write pattern
@@ -603,7 +603,7 @@ The audit scope is: all `.tmpl` files in `templates/claudecode/` and `templates/
    - For each file in the audit list, apply the replacement table.
    - Acronyms exempt from ALL-CAPS rule: `URL`, `API`, `SQL`, `JWT`, `SDK`, `CLI`, `CI`, `CD`, `MCP`, `OTel`, `YAML`, `JSON`, `HTTP`, `HTTPS`, `EOF`, `SBOM`.
    - Preserve examples that quote third-party tools using their canonical casing.
-4. Implement a lint check that can be run as part of `gdev check`:
+4. Implement a lint check that can be run as part of `qsdev check`:
    ```go
    func checkCalmDirectives(templateDir string) []CheckResult {
        results := []CheckResult{}
@@ -680,15 +680,15 @@ The audit scope is: all `.tmpl` files in `templates/claudecode/` and `templates/
 
 ### Unit 34.7: Time-to-First-Environment Benchmarking
 
-**Description:** Instrument `gdev init` to measure and record timing at four checkpoints: detection, wizard, generation, and devenv build. Store results at `~/.qsdev/benchmarks/<project-hash>.jsonl`. Surface timing via `gdev info --timing` and `gdev status --verbose`. The "$8,000-$17,000 per new hire" ROI anchor from consulting ROI research becomes actionable when teams can measure their actual environment setup time before and after gdev adoption.
+**Description:** Instrument `qsdev init` to measure and record timing at four checkpoints: detection, wizard, generation, and devenv build. Store results at `~/.qsdev/benchmarks/<project-hash>.jsonl`. Surface timing via `qsdev info --timing` and `qsdev status --verbose`. The "$8,000-$17,000 per new hire" ROI anchor from consulting ROI research becomes actionable when teams can measure their actual environment setup time before and after gdev adoption.
 
 **Context:** The consulting tooling adoption ROI research established that environment setup time is the most mechanically actionable component of onboarding cost — it is front-loaded, blocking, and fully automatable. The research modeled conservative savings of $12,000-$70,000 per consultant per year, anchored on environment setup dropping from 2-5 days to under an hour. But these numbers are estimates. The only way to make an internal ROI case is with measured before/after data. Time-to-first-environment benchmarking is the instrument for collecting that data.
 
-The four measurement points correspond to the distinct phases of `gdev init`: detection (language/service detection, mode selection), wizard (user interaction time, wizard form navigation), generation (template rendering, file writing), and devenv build (first `devenv shell` including Nix derivation evaluation and package fetching). Each phase has different characteristics: detection and generation are milliseconds, wizard is human-scale (seconds to minutes), devenv build is the longest (seconds to minutes depending on cache state).
+The four measurement points correspond to the distinct phases of `qsdev init`: detection (language/service detection, mode selection), wizard (user interaction time, wizard form navigation), generation (template rendering, file writing), and devenv build (first `devenv shell` including Nix derivation evaluation and package fetching). Each phase has different characteristics: detection and generation are milliseconds, wizard is human-scale (seconds to minutes), devenv build is the longest (seconds to minutes depending on cache state).
 
 Storing benchmarks per project-hash allows tracking improvement over time as templates improve, caches warm, and the devenv.nix becomes more accurate (reducing rebuild time from ecosystem changes).
 
-**Desired Outcome:** After every `gdev init` run, a benchmark JSONL entry is written to `~/.qsdev/benchmarks/`. `gdev info --timing` shows the last init timing breakdown. After 3+ runs, `gdev info --timing` shows a trend line (improving/stable/degrading).
+**Desired Outcome:** After every `qsdev init` run, a benchmark JSONL entry is written to `~/.qsdev/benchmarks/`. `qsdev info --timing` shows the last init timing breakdown. After 3+ runs, `qsdev info --timing` shows a trend line (improving/stable/degrading).
 
 **Steps:**
 1. Define the benchmark event type:
@@ -705,7 +705,7 @@ Storing benchmarks per project-hash allows tracking improvement over time as tem
        ProfileName string `json:"profile_name,omitempty"`
    }
    ```
-2. Implement the timing instrumentation in `gdev init`:
+2. Implement the timing instrumentation in `qsdev init`:
    ```go
    type InitTimer struct {
        phases map[string]time.Time
@@ -761,7 +761,7 @@ Storing benchmarks per project-hash allows tracking improvement over time as tem
    - Write each event as a JSONL line to `~/.qsdev/benchmarks/<project-hash>.jsonl`.
    - Also write a `total` event with the sum of all phase durations.
    - Create the `~/.qsdev/benchmarks/` directory if it does not exist.
-5. Implement `gdev info --timing`:
+5. Implement `qsdev info --timing`:
    - Read `~/.qsdev/benchmarks/<project-hash>.jsonl`.
    - Show last 3 runs with a phase breakdown table:
      ```
@@ -774,28 +774,28 @@ Storing benchmarks per project-hash allows tracking improvement over time as tem
      Total           6m52s     7m13s     improving
      ```
    - Trend: improving (>10% faster), degrading (>10% slower), stable.
-6. Implement `gdev status --verbose` timing summary:
-   - One-line summary in `gdev status --verbose`: `Last init: 6m52s (devenv 4m22s, cached)`.
-7. Implement `gdev benchmarks` subcommand:
-   - `gdev benchmarks`: shows timing history for the current project (all runs in the JSONL).
-   - `gdev benchmarks --all`: shows aggregate timing across all projects.
-   - `gdev benchmarks export`: outputs the raw JSONL for sharing with the team.
+6. Implement `qsdev status --verbose` timing summary:
+   - One-line summary in `qsdev status --verbose`: `Last init: 6m52s (devenv 4m22s, cached)`.
+7. Implement `qsdev benchmarks` subcommand:
+   - `qsdev benchmarks`: shows timing history for the current project (all runs in the JSONL).
+   - `qsdev benchmarks --all`: shows aggregate timing across all projects.
+   - `qsdev benchmarks export`: outputs the raw JSONL for sharing with the team.
 8. Write unit tests:
    - `InitTimer.Start/End` records duration correctly.
    - `WriteBenchmark` creates JSONL file with correct event structure.
    - Trend calculation: three improving runs returns "improving".
    - Trend calculation: mixed runs returns "stable".
-   - `gdev benchmarks export` outputs valid JSONL.
+   - `qsdev benchmarks export` outputs valid JSONL.
 
 **Acceptance Criteria:**
-- [ ] `gdev init` records timing events for detection, wizard, generation, and devenv_build phases
-- [ ] Benchmark JSONL written to `~/.qsdev/benchmarks/<project-hash>.jsonl` after every `gdev init`
+- [ ] `qsdev init` records timing events for detection, wizard, generation, and devenv_build phases
+- [ ] Benchmark JSONL written to `~/.qsdev/benchmarks/<project-hash>.jsonl` after every `qsdev init`
 - [ ] Each event includes: timestamp, project hash, gdev version, mode, phase, duration in milliseconds
-- [ ] `gdev info --timing` shows last 3 runs with phase breakdown and trend (improving/stable/degrading)
-- [ ] `gdev status --verbose` includes a one-line timing summary
+- [ ] `qsdev info --timing` shows last 3 runs with phase breakdown and trend (improving/stable/degrading)
+- [ ] `qsdev status --verbose` includes a one-line timing summary
 - [ ] Trend calculation: improving = >10% faster than 3-run average, degrading = >10% slower
-- [ ] `gdev benchmarks` shows full timing history for current project
-- [ ] `gdev benchmarks export` outputs the raw JSONL
+- [ ] `qsdev benchmarks` shows full timing history for current project
+- [ ] `qsdev benchmarks export` outputs the raw JSONL
 
 **Research Citations:**
 - `research-spikes/consulting-tooling-adoption-roi/onboarding-costs-research.md` — "$8,000-$17,000 per new hire" environment setup cost, 2-5 days manual vs under 1 hour automated, Spotify/Shopify case studies
@@ -843,12 +843,12 @@ Unit 34.5's PreToolUse hook follows the same registration pattern as Phase 22's 
 ## Phase Completion Criteria
 
 - [ ] All seven units pass acceptance criteria
-- [ ] `gdev enable learning-opportunities` deploys correctly with CC-BY-4.0 attribution
-- [ ] `gdev enable orient` deploys correctly with `disable-model-invocation: true` preserved
+- [ ] `qsdev enable learning-opportunities` deploys correctly with CC-BY-4.0 attribution
+- [ ] `qsdev enable orient` deploys correctly with `disable-model-invocation: true` preserved
 - [ ] Project Context section appears in generated CLAUDE.md with consulting block conditionally included
-- [ ] `gdev enable repo-map` deploys SKILL.md and executable repo-map.sh
+- [ ] `qsdev enable repo-map` deploys SKILL.md and executable repo-map.sh
 - [ ] Pre-edit validation hook runs in under 200ms on a representative TypeScript file with ESLint available
 - [ ] All production templates pass the `checkCalmDirectives` lint with zero prohibited patterns
-- [ ] `gdev info --timing` shows a phase breakdown after running `gdev init` in Create mode
+- [ ] `qsdev info --timing` shows a phase breakdown after running `qsdev init` in Create mode
 - [ ] Generated CLAUDE.md contains zero instances of `CRITICAL:`, `IMPORTANT:`, `NEVER`, `MUST`, `DO NOT`, or `!!!`
 - [ ] Third-party CC-BY-4.0 skill files (learning-opportunities, orient) are deployed unmodified except for the attribution header comment

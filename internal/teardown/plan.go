@@ -1,11 +1,11 @@
 package teardown
 
-import "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/toolreg"
+import "github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 
 // State file paths that are removed as part of the default teardown.
 var stateFiles = []string{
-	".devenv/.gdev-state.yaml",
-	".claude/.gdev-claude-state.yaml",
+	".devenv/.qsdev-state.yaml",
+	".claude/.qsdev-claude-state.yaml",
 }
 
 // BuildPlan creates a TeardownPlan from classified files and options.
@@ -37,13 +37,13 @@ func BuildPlan(classified []ClassifiedFile, opts TeardownOptions) *TeardownPlan 
 			} else {
 				plan.Remove = append(plan.Remove, FileAction{
 					Path:   cf.Path,
-					Reason: "exclusively owned by gdev",
+					Reason: "exclusively owned by qsdev",
 				})
 			}
 		case toolreg.Shared:
 			plan.Clean = append(plan.Clean, FileAction{
 				Path:   cf.Path,
-				Reason: "surgically remove gdev sections",
+				Reason: "surgically remove qsdev sections",
 			})
 		}
 	}
@@ -52,7 +52,7 @@ func BuildPlan(classified []ClassifiedFile, opts TeardownOptions) *TeardownPlan 
 	for _, sf := range stateFiles {
 		plan.Remove = append(plan.Remove, FileAction{
 			Path:   sf,
-			Reason: "gdev state file",
+			Reason: "qsdev state file",
 		})
 	}
 

@@ -22,7 +22,7 @@ The architecture has three layers, each addressing different threat tiers:
 **Layer 2: MCP Server Startup (runtime hash verification)**
 - **When**: MCP server process starts (or content files change on disk)
 - **What happens**:
-  1. Read Minisign public key from gdev configuration
+  1. Read Minisign public key from qsdev configuration
   2. Verify `.minisig` signature against each content file
   3. If verification fails: refuse to serve content, log error, report to gdev health system
 - **What it protects against**: Post-download filesystem tampering, corrupted content on disk, accidental overwrites
@@ -99,7 +99,7 @@ This model means gdev's signature attests **"we downloaded this from the legitim
 - One Ed25519 key pair for gdev
 - Private key in CI secrets (GitHub Actions secret or equivalent)
 - Public key hardcoded in gdev's Nix flake (single string, e.g., `RWQ...`)
-- Key rotation: generate new key, publish new public key in gdev update, sign content with both keys during transition period
+- Key rotation: generate new key, publish new public key in qsdev update, sign content with both keys during transition period
 
 **Signature format:**
 - Detached `.minisig` files alongside content (e.g., `mdn-web-docs-2026-04.zim.minisig`)

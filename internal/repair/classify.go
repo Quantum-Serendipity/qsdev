@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // classifyFindings maps drift findings from a posture DriftReport into
@@ -163,7 +163,7 @@ func classifyVersionDrift(f posture.DriftFinding) RepairAction {
 	return RepairAction{
 		File:        f.Subject,
 		Category:    CategoryEnvDrift,
-		Description: "Run 'gdev update' to update configs",
+		Description: "Run 'qsdev update' to update configs",
 		ActionType:  ActionSkip,
 		AutoFixable: false,
 	}

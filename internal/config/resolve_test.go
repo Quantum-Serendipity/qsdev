@@ -3,11 +3,11 @@ package config
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestResolveConfig_OrgDefaultsOnly(t *testing.T) {
-	org := DefaultGdevConfig()
+	org := DefaultQsdevConfig()
 	result, err := ResolveConfig(org, nil, nil, nil, false)
 	if err != nil {
 		t.Fatal(err)
@@ -18,8 +18,8 @@ func TestResolveConfig_OrgDefaultsOnly(t *testing.T) {
 }
 
 func TestResolveConfig_ProfileOverridesOrg(t *testing.T) {
-	org := DefaultGdevConfig()
-	profile := &types.GdevConfig{
+	org := DefaultQsdevConfig()
+	profile := &types.QsdevConfig{
 		Security: types.SecurityConfig{Level: "strict"},
 	}
 	result, err := ResolveConfig(org, profile, nil, nil, false)
@@ -32,11 +32,11 @@ func TestResolveConfig_ProfileOverridesOrg(t *testing.T) {
 }
 
 func TestResolveConfig_ProjectOverridesProfile(t *testing.T) {
-	org := DefaultGdevConfig()
-	profile := &types.GdevConfig{
+	org := DefaultQsdevConfig()
+	profile := &types.QsdevConfig{
 		Security: types.SecurityConfig{Level: "strict"},
 	}
-	project := &types.GdevConfig{
+	project := &types.QsdevConfig{
 		Security: types.SecurityConfig{Level: "enhanced"},
 	}
 	result, err := ResolveConfig(org, profile, project, nil, false)
@@ -53,8 +53,8 @@ func TestResolveConfig_ProjectOverridesProfile(t *testing.T) {
 }
 
 func TestResolveConfig_LocalOverridesProject(t *testing.T) {
-	org := DefaultGdevConfig()
-	project := &types.GdevConfig{
+	org := DefaultQsdevConfig()
+	project := &types.QsdevConfig{
 		ClaudeCode: types.ClaudeCodeConfig{
 			PermissionLevel: "standard",
 		},
@@ -74,11 +74,11 @@ func TestResolveConfig_LocalOverridesProject(t *testing.T) {
 }
 
 func TestResolveConfig_AllFiveLayers(t *testing.T) {
-	org := DefaultGdevConfig()
-	profile := &types.GdevConfig{
+	org := DefaultQsdevConfig()
+	profile := &types.QsdevConfig{
 		Tools: types.ToolsConfig{Enabled: []string{"gitleaks"}},
 	}
-	project := &types.GdevConfig{
+	project := &types.QsdevConfig{
 		Languages: []types.LanguageConfig{{Name: "go", Version: "1.22"}},
 		Tools:     types.ToolsConfig{Enabled: []string{"semgrep"}},
 	}
@@ -125,10 +125,10 @@ func TestResolveConfig_NilLayers(t *testing.T) {
 }
 
 func TestResolveConfig_LanguagesReplacement(t *testing.T) {
-	org := &types.GdevConfig{
+	org := &types.QsdevConfig{
 		Languages: []types.LanguageConfig{{Name: "go"}},
 	}
-	project := &types.GdevConfig{
+	project := &types.QsdevConfig{
 		Languages: []types.LanguageConfig{{Name: "python"}},
 	}
 	result, err := ResolveConfig(org, nil, project, nil, false)
@@ -141,10 +141,10 @@ func TestResolveConfig_LanguagesReplacement(t *testing.T) {
 }
 
 func TestResolveConfig_ServicesReplacement(t *testing.T) {
-	org := &types.GdevConfig{
+	org := &types.QsdevConfig{
 		Services: []types.ServiceConfig{{Name: "postgres"}},
 	}
-	project := &types.GdevConfig{
+	project := &types.QsdevConfig{
 		Services: []types.ServiceConfig{{Name: "redis"}},
 	}
 	result, err := ResolveConfig(org, nil, project, nil, false)
@@ -157,10 +157,10 @@ func TestResolveConfig_ServicesReplacement(t *testing.T) {
 }
 
 func TestResolveConfig_ToolsEnabledUnion(t *testing.T) {
-	org := &types.GdevConfig{
+	org := &types.QsdevConfig{
 		Tools: types.ToolsConfig{Enabled: []string{"a", "b"}},
 	}
-	project := &types.GdevConfig{
+	project := &types.QsdevConfig{
 		Tools: types.ToolsConfig{Enabled: []string{"b", "c"}},
 	}
 	result, err := ResolveConfig(org, nil, project, nil, false)
@@ -180,10 +180,10 @@ func TestResolveConfig_ToolsEnabledUnion(t *testing.T) {
 }
 
 func TestResolveConfig_ToolsDisabledUnion(t *testing.T) {
-	org := &types.GdevConfig{
+	org := &types.QsdevConfig{
 		Tools: types.ToolsConfig{Disabled: []string{"x"}},
 	}
-	project := &types.GdevConfig{
+	project := &types.QsdevConfig{
 		Tools: types.ToolsConfig{Disabled: []string{"y"}},
 	}
 	result, err := ResolveConfig(org, nil, project, nil, false)
@@ -197,14 +197,14 @@ func TestResolveConfig_ToolsDisabledUnion(t *testing.T) {
 }
 
 func TestResolveConfig_ToolsConfigDeepMerge(t *testing.T) {
-	org := &types.GdevConfig{
+	org := &types.QsdevConfig{
 		Tools: types.ToolsConfig{
 			Config: map[string]map[string]any{
 				"sentinel": {"hours": 24},
 			},
 		},
 	}
-	project := &types.GdevConfig{
+	project := &types.QsdevConfig{
 		Tools: types.ToolsConfig{
 			Config: map[string]map[string]any{
 				"sentinel": {"mode": "strict"},
@@ -229,12 +229,12 @@ func TestResolveConfig_ToolsConfigDeepMerge(t *testing.T) {
 }
 
 func TestResolveConfig_MCPServersUnion(t *testing.T) {
-	org := &types.GdevConfig{
+	org := &types.QsdevConfig{
 		ClaudeCode: types.ClaudeCodeConfig{
 			MCPServers: []string{"context7"},
 		},
 	}
-	project := &types.GdevConfig{
+	project := &types.QsdevConfig{
 		ClaudeCode: types.ClaudeCodeConfig{
 			MCPServers: []string{"github"},
 		},
@@ -254,12 +254,12 @@ func TestResolveConfig_MCPServersUnion(t *testing.T) {
 }
 
 func TestResolveConfig_SkillsUnion(t *testing.T) {
-	org := &types.GdevConfig{
+	org := &types.QsdevConfig{
 		ClaudeCode: types.ClaudeCodeConfig{
 			Skills: []string{"deploy"},
 		},
 	}
-	project := &types.GdevConfig{
+	project := &types.QsdevConfig{
 		ClaudeCode: types.ClaudeCodeConfig{
 			Skills: []string{"security-review"},
 		},
@@ -275,8 +275,8 @@ func TestResolveConfig_SkillsUnion(t *testing.T) {
 }
 
 func TestResolveConfig_SecurityFloorCannotLowerLevel(t *testing.T) {
-	org := DefaultGdevConfig()
-	project := &types.GdevConfig{
+	org := DefaultQsdevConfig()
+	project := &types.QsdevConfig{
 		Security: types.SecurityConfig{Level: "strict"},
 	}
 	local := &LocalConfig{
@@ -296,8 +296,8 @@ func TestResolveConfig_SecurityFloorCannotLowerLevel(t *testing.T) {
 }
 
 func TestResolveConfig_SecurityFloorCanRaiseLevel(t *testing.T) {
-	org := DefaultGdevConfig()
-	project := &types.GdevConfig{
+	org := DefaultQsdevConfig()
+	project := &types.QsdevConfig{
 		Security: types.SecurityConfig{Level: "baseline"},
 	}
 	local := &LocalConfig{
@@ -314,8 +314,8 @@ func TestResolveConfig_SecurityFloorCanRaiseLevel(t *testing.T) {
 }
 
 func TestResolveConfig_SecurityFloorCannotDisableAgeGating(t *testing.T) {
-	org := DefaultGdevConfig()
-	project := &types.GdevConfig{
+	org := DefaultQsdevConfig()
+	project := &types.QsdevConfig{
 		Security: types.SecurityConfig{AgeGating: boolP(true)},
 	}
 	local := &LocalConfig{
@@ -341,8 +341,8 @@ func TestResolveConfig_SecurityFloorCannotDisableAgeGating(t *testing.T) {
 }
 
 func TestResolveConfig_SecurityFloorCanEnableAgeGating(t *testing.T) {
-	org := &types.GdevConfig{}
-	project := &types.GdevConfig{
+	org := &types.QsdevConfig{}
+	project := &types.QsdevConfig{
 		Security: types.SecurityConfig{AgeGating: boolP(false)},
 	}
 	local := &LocalConfig{
@@ -360,8 +360,8 @@ func TestResolveConfig_SecurityFloorCanEnableAgeGating(t *testing.T) {
 }
 
 func TestResolveConfig_ClientSecurityLevelOverridesProjectFloor(t *testing.T) {
-	org := DefaultGdevConfig()
-	project := &types.GdevConfig{
+	org := DefaultQsdevConfig()
+	project := &types.QsdevConfig{
 		Security: types.SecurityConfig{Level: "baseline"},
 		Client: &types.ClientConfig{
 			Name:          "acme",
@@ -382,12 +382,12 @@ func TestResolveConfig_ClientSecurityLevelOverridesProjectFloor(t *testing.T) {
 }
 
 func TestResolveConfig_ClientBlockedMCPPersists(t *testing.T) {
-	org := &types.GdevConfig{
+	org := &types.QsdevConfig{
 		ClaudeCode: types.ClaudeCodeConfig{
 			MCPServers: []string{"context7", "github", "evil-server"},
 		},
 	}
-	project := &types.GdevConfig{
+	project := &types.QsdevConfig{
 		Client: &types.ClientConfig{
 			Name:       "acme",
 			BlockedMCP: []string{"evil-server"},
@@ -405,12 +405,12 @@ func TestResolveConfig_ClientBlockedMCPPersists(t *testing.T) {
 }
 
 func TestResolveConfig_ClientBlockedMCPWildcard(t *testing.T) {
-	org := &types.GdevConfig{
+	org := &types.QsdevConfig{
 		ClaudeCode: types.ClaudeCodeConfig{
 			MCPServers: []string{"context7", "github", "custom"},
 		},
 	}
-	project := &types.GdevConfig{
+	project := &types.QsdevConfig{
 		Client: &types.ClientConfig{
 			Name:       "acme",
 			BlockedMCP: []string{"*"},
@@ -428,8 +428,8 @@ func TestResolveConfig_ClientBlockedMCPWildcard(t *testing.T) {
 }
 
 func TestResolveConfig_ViolationsRecorded(t *testing.T) {
-	org := DefaultGdevConfig()
-	project := &types.GdevConfig{
+	org := DefaultQsdevConfig()
+	project := &types.QsdevConfig{
 		Security: types.SecurityConfig{
 			Level:     "strict",
 			AgeGating: boolP(true),
@@ -452,13 +452,13 @@ func TestResolveConfig_ViolationsRecorded(t *testing.T) {
 
 func TestResolveConfig_PointerBoolNilVsFalse(t *testing.T) {
 	// nil means inherit, false means explicitly disabled.
-	org := &types.GdevConfig{
+	org := &types.QsdevConfig{
 		Security: types.SecurityConfig{
 			AgeGating: boolP(true),
 		},
 	}
 	// Project does not set age_gating (nil = inherit from org).
-	project := &types.GdevConfig{}
+	project := &types.QsdevConfig{}
 
 	result, err := ResolveConfig(org, nil, project, nil, false)
 	if err != nil {
@@ -469,7 +469,7 @@ func TestResolveConfig_PointerBoolNilVsFalse(t *testing.T) {
 	}
 
 	// Now project explicitly sets false.
-	project2 := &types.GdevConfig{
+	project2 := &types.QsdevConfig{
 		Security: types.SecurityConfig{AgeGating: boolP(false)},
 	}
 	result2, err := ResolveConfig(org, nil, project2, nil, false)

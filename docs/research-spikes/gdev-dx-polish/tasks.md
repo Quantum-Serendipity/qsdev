@@ -27,10 +27,10 @@
   - Completed: 2026-05-12
   - Notes: devenv 2.0 hook solves core switching. Gaps: cross-project status view (gdev projects), SecretSpec credential management. See environment-switching-research.md
 
-- [x] **Error recovery and self-healing** — What happens when things break? gdev repair/fix command, broken devenv shell recovery, corrupted config recovery.
+- [x] **Error recovery and self-healing** — What happens when things break? qsdev repair/fix command, broken devenv shell recovery, corrupted config recovery.
   - Outcome: success
   - Completed: 2026-05-12
-  - Notes: gdev devenv doctor (diagnostic) + gdev repair (auto-fix) design. 4 failure categories, conservative-by-default repair. See error-recovery-research.md
+  - Notes: qsdev devenv doctor (diagnostic) + qsdev repair (auto-fix) design. 4 failure categories, conservative-by-default repair. See error-recovery-research.md
 
 - [x] **Shell integration and ergonomics** — Making gdev pleasant to use: aliases/abbreviations, status bar integration (starship), quick-info commands.
   - Outcome: success
@@ -40,7 +40,7 @@
 - [x] **Dependency freshness and update workflow** — Beyond Renovate: gdev outdated to check all deps, coordinated updates, breaking change detection.
   - Outcome: success
   - Completed: 2026-05-12
-  - Notes: Include thin gdev outdated wrapper and gdev update (self+configs+devenv). Exclude unified analysis and breaking change detection. See dependency-freshness-research.md
+  - Notes: Include thin gdev outdated wrapper and qsdev update (self+configs+devenv). Exclude unified analysis and breaking change detection. See dependency-freshness-research.md
 
 - [x] **What NOT to include** — Features that would bloat the tool or duplicate existing capabilities.
   - Outcome: success

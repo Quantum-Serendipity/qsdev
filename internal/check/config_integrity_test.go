@@ -3,12 +3,12 @@ package check
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestCheckConfigIntegrity_ValidConfig(t *testing.T) {
 	ctx := CheckContext{
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Version: 1,
 			Languages: []types.LanguageConfig{
 				{Name: "go", Version: "1.24"},
@@ -50,7 +50,7 @@ func TestCheckConfigIntegrity_ValidConfig(t *testing.T) {
 
 func TestCheckConfigIntegrity_InvalidLanguage(t *testing.T) {
 	ctx := CheckContext{
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Version: 1,
 			Languages: []types.LanguageConfig{
 				{Name: "cobol"},
@@ -91,7 +91,7 @@ func TestCheckConfigIntegrity_NoConfig(t *testing.T) {
 
 func TestCheckConfigIntegrity_InvalidProfile(t *testing.T) {
 	ctx := CheckContext{
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Version: 1,
 			Profile:       "unknown-profile",
 		},
@@ -115,7 +115,7 @@ func TestCheckConfigIntegrity_InvalidProfile(t *testing.T) {
 
 func TestCheckConfigIntegrity_InvalidService(t *testing.T) {
 	ctx := CheckContext{
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Version: 1,
 			Services: []types.ServiceConfig{
 				{Name: "oracle"},

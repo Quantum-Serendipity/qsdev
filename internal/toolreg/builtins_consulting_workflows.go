@@ -1,6 +1,6 @@
 package toolreg
 
-import "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+import "github.com/Quantum-Serendipity/qsdev/pkg/types"
 
 // consultingWorkflowNames lists all consulting workflow skill names in
 // a stable order.

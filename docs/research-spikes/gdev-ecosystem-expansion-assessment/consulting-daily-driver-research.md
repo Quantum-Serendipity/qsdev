@@ -39,7 +39,7 @@ Consulting firms face a unique challenge: engineers rotate between client engage
 
 ### gdev Integration Opportunity
 
-**High value.** A `gdev cloud` addon or profiles within the devenv addon could:
+**High value.** A `qsdev cloud` addon or profiles within the devenv addon could:
 - Install all three major cloud CLIs plus credential helpers
 - Template `~/.aws/config` with SSO profiles per engagement
 - Configure `gcloud` named configurations per client
@@ -114,7 +114,7 @@ mise (ThoughtWorks Radar Adopt) and devenv.sh solve overlapping problems: both m
 
 ### gdev Integration Opportunity
 
-**High value.** These are the "muscle memory" tools that senior engineers expect to exist. A `gdev devtools` profile or extension to the devenv addon could:
+**High value.** These are the "muscle memory" tools that senior engineers expect to exist. A `qsdev devtools` profile or extension to the devenv addon could:
 - Install a curated "modern coreutils" bundle (ripgrep, fd, bat, eza, fzf, jq, yq, delta, zoxide, tldr)
 - Configure shell integrations (fzf keybindings, zoxide init, bat as MANPAGER)
 - Set git config for delta as pager
@@ -452,7 +452,7 @@ gdev explicitly rejected "IDE config beyond Claude Code" (Rejected Feature #6). 
 ### gdev Integration Opportunity
 
 **Low value for direct IDE configuration.** The explicit rejection stands. However:
-- EditorConfig generation could fit in `gdev init`
+- EditorConfig generation could fit in `qsdev init`
 - Extension recommendation files are low-controversy
 - Dev Containers and devenv.sh serve the same purpose; gdev should position devenv.sh as the superior alternative
 

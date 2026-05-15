@@ -3,30 +3,30 @@ package check
 import (
 	"fmt"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/config"
 )
 
 // supportedSchemaVersions lists the schema versions this binary understands.
 var supportedSchemaVersions = []string{"1"}
 
-// CheckBinaryCompatibility verifies that the gdev binary version satisfies
-// the constraint in .gdev.yaml and that the config schema version is supported.
+// CheckBinaryCompatibility verifies that the qsdev binary version satisfies
+// the constraint in .qsdev.yaml and that the config schema version is supported.
 func CheckBinaryCompatibility(ctx CheckContext) []CheckResult {
-	if ctx.GdevConfig == nil {
+	if ctx.QsdevConfig == nil {
 		return []CheckResult{
 			{
 				Category: CategoryBinaryCompat,
-				Name:     "gdev_version_constraint",
+				Name:     "qsdev_version_constraint",
 				Status:   StatusSkip,
 				Severity: SeverityInfo,
-				Message:  "No .gdev.yaml found",
+				Message:  "No .qsdev.yaml found",
 			},
 		}
 	}
 
 	var results []CheckResult
 
-	// Check gdev_version constraint.
+	// Check qsdev_version constraint.
 	results = append(results, checkVersionConstraint(ctx)...)
 
 	// Check schema version.
@@ -36,12 +36,12 @@ func CheckBinaryCompatibility(ctx CheckContext) []CheckResult {
 }
 
 func checkVersionConstraint(ctx CheckContext) []CheckResult {
-	constraint := ctx.GdevConfig.GdevVersion
+	constraint := ctx.QsdevConfig.QsdevVersion
 	if constraint == "" {
 		return []CheckResult{
 			{
 				Category: CategoryBinaryCompat,
-				Name:     "gdev_version_constraint",
+				Name:     "qsdev_version_constraint",
 				Status:   StatusPass,
 				Severity: SeverityInfo,
 				Message:  "No version constraint specified",
@@ -54,11 +54,11 @@ func checkVersionConstraint(ctx CheckContext) []CheckResult {
 		return []CheckResult{
 			{
 				Category:    CategoryBinaryCompat,
-				Name:        "gdev_version_constraint",
+				Name:        "qsdev_version_constraint",
 				Status:      StatusFail,
 				Severity:    SeverityCritical,
 				Message:     err.Error(),
-				Remediation: "Update gdev to a version satisfying " + constraint,
+				Remediation: "Update qsdev to a version satisfying " + constraint,
 			},
 		}
 	}
@@ -66,7 +66,7 @@ func checkVersionConstraint(ctx CheckContext) []CheckResult {
 	return []CheckResult{
 		{
 			Category: CategoryBinaryCompat,
-			Name:     "gdev_version_constraint",
+			Name:     "qsdev_version_constraint",
 			Status:   StatusPass,
 			Severity: SeverityInfo,
 			Message:  "Binary version " + ctx.BinaryVersion + " satisfies " + constraint,
@@ -75,7 +75,7 @@ func checkVersionConstraint(ctx CheckContext) []CheckResult {
 }
 
 func checkSchemaVersion(ctx CheckContext) []CheckResult {
-	sv := ctx.GdevConfig.Version
+	sv := ctx.QsdevConfig.Version
 	if sv == 0 {
 		return []CheckResult{
 			{
@@ -83,8 +83,8 @@ func checkSchemaVersion(ctx CheckContext) []CheckResult {
 				Name:        "config_schema_version",
 				Status:      StatusWarn,
 				Severity:    SeverityMedium,
-				Message:     "No version specified in .gdev.yaml",
-				Remediation: "Add 'version: 1' to .gdev.yaml",
+				Message:     "No version specified in .qsdev.yaml",
+				Remediation: "Add 'version: 1' to .qsdev.yaml",
 			},
 		}
 	}
@@ -111,7 +111,7 @@ func checkSchemaVersion(ctx CheckContext) []CheckResult {
 			Status:      StatusFail,
 			Severity:    SeverityCritical,
 			Message:     fmt.Sprintf("Schema version %d is not supported by this binary", sv),
-			Remediation: "Update gdev or change schema_version to a supported version",
+			Remediation: "Update qsdev or change schema_version to a supported version",
 		},
 	}
 }

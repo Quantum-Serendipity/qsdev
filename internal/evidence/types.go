@@ -3,15 +3,15 @@ package evidence
 import (
 	"time"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 )
 
 // EvidenceReport is the top-level compliance evidence report that maps
-// a compliance framework's controls to gdev's defense-in-depth layers.
+// a compliance framework's controls to qsdev's defense-in-depth layers.
 type EvidenceReport struct {
 	SchemaVersion string                 `json:"schemaVersion"`
 	GeneratedAt   time.Time              `json:"generatedAt"`
-	GdevVersion   string                 `json:"gdevVersion"`
+	QsdevVersion   string                 `json:"qsdevVersion"`
 	ProjectName   string                 `json:"projectName"`
 	Framework     string                 `json:"framework"`
 	FrameworkVer  string                 `json:"frameworkVersion"`
@@ -31,7 +31,7 @@ type EvidenceSummary struct {
 	CoveragePercent  float64 `json:"coveragePercent"`
 }
 
-// ControlStatus represents how well a control is addressed by gdev.
+// ControlStatus represents how well a control is addressed by qsdev.
 type ControlStatus string
 
 const (
@@ -41,7 +41,7 @@ const (
 	StatusNotApplicable ControlStatus = "not-applicable"
 )
 
-// ControlMapping maps a single compliance control to gdev defense layers
+// ControlMapping maps a single compliance control to qsdev defense layers
 // and supporting artifacts.
 type ControlMapping struct {
 	ControlID   string             `json:"controlId"`
@@ -49,12 +49,12 @@ type ControlMapping struct {
 	ControlDesc string             `json:"controlDesc"`
 	Category    string             `json:"category"`
 	Status      ControlStatus      `json:"status"`
-	GdevLayers  []LayerEvidence    `json:"gdevLayers"`
+	GdevLayers  []LayerEvidence    `json:"qsdevLayers"`
 	Artifacts   []EvidenceArtifact `json:"artifacts"`
 	Notes       string             `json:"notes,omitempty"`
 }
 
-// LayerEvidence describes how a single gdev defense layer relates to a control.
+// LayerEvidence describes how a single qsdev defense layer relates to a control.
 type LayerEvidence struct {
 	LayerName   string `json:"layerName"`
 	Status      string `json:"status"`

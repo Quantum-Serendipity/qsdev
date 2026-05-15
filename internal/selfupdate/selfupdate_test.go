@@ -10,8 +10,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.GitHubOwner != "Quantum-Serendipity" {
 		t.Errorf("GitHubOwner = %q, want %q", cfg.GitHubOwner, "Quantum-Serendipity")
 	}
-	if cfg.GitHubRepo != "gdev-secure-devenv-bootstrap" {
-		t.Errorf("GitHubRepo = %q, want %q", cfg.GitHubRepo, "gdev-secure-devenv-bootstrap")
+	if cfg.GitHubRepo != "qsdev" {
+		t.Errorf("GitHubRepo = %q, want %q", cfg.GitHubRepo, "qsdev")
 	}
 	if cfg.BinaryName != "qsdev" {
 		t.Errorf("BinaryName = %q, want %q", cfg.BinaryName, "qsdev")

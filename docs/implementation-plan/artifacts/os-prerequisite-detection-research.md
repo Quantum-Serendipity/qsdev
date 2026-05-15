@@ -844,7 +844,7 @@ gdev completion powershell >> $PROFILE
 | PowerShell | Appended to `$PROFILE` | Auto-loaded on shell start |
 | nushell | Not natively supported by Cobra | Would need custom implementation or `carapace` bridge |
 
-**Recommendation:** Generate completions during `gdev init` and install them to the user-level directory for the detected shell. Avoid system-wide installation (requires root).
+**Recommendation:** Generate completions during `qsdev init` and install them to the user-level directory for the detected shell. Avoid system-wide installation (requires root).
 
 ### 3.4 Sourcing Environment Files
 

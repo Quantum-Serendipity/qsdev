@@ -340,7 +340,7 @@ Suggests: `commitlint` (non-blocking recommendation)
 
 #### ci-workflows (Infrastructure, Virtual — Always enabled)
 
-This is a virtual/meta-tool that is always enabled and does not appear in `gdev enable`/`gdev disable`. It owns the CI workflow files exclusively but regenerates them based on the full set of currently enabled tools.
+This is a virtual/meta-tool that is always enabled and does not appear in `qsdev enable`/`qsdev disable`. It owns the CI workflow files exclusively but regenerates them based on the full set of currently enabled tools.
 
 | File | Ownership | Operation |
 |------|-----------|-----------|
@@ -465,17 +465,17 @@ No two tools write to the same *section* of a shared file. Each tool has a uniqu
 
 #### .mcp.json performance
 - Having all 4 MCP servers enabled simultaneously is valid but pushes toward the "3-6 is sweet spot, >10 degrades performance" guideline. 4 servers is well within the recommended range.
-- **No conflict**, but `gdev status` should display total active MCP server count.
+- **No conflict**, but `qsdev status` should display total active MCP server count.
 
 ### 2.3 Ordering Dependencies (Prerequisites)
 
 | Tool | Prerequisites | Behavior on Missing Prerequisite |
 |------|--------------|----------------------------------|
-| version-sentinel | python3 >=3.11, jq, curl | `gdev enable version-sentinel` fails with message listing missing prereqs; `gdev devenv doctor` reports them |
-| semble | python3 >=3.10, uvx | `gdev enable semble` fails with message; `gdev devenv doctor` reports |
-| container-security | docker | `gdev enable container-security` warns (Docker detection drives default); may succeed for CI-only use |
-| secretspec | devenv >=2.0 | `gdev enable secretspec` warns if devenv version too old |
-| commitlint | Node.js (for commitlint binary) | `gdev enable commitlint` fails if no Node runtime |
+| version-sentinel | python3 >=3.11, jq, curl | `qsdev enable version-sentinel` fails with message listing missing prereqs; `qsdev devenv doctor` reports them |
+| semble | python3 >=3.10, uvx | `qsdev enable semble` fails with message; `qsdev devenv doctor` reports |
+| container-security | docker | `qsdev enable container-security` warns (Docker detection drives default); may succeed for CI-only use |
+| secretspec | devenv >=2.0 | `qsdev enable secretspec` warns if devenv version too old |
+| commitlint | Node.js (for commitlint binary) | `qsdev enable commitlint` fails if no Node runtime |
 
 No tool has a prerequisite on *another gdev tool*. The prerequisite chain is entirely about system-level tooling availability.
 
@@ -483,7 +483,7 @@ No tool has a prerequisite on *another gdev tool*. The prerequisite chain is ent
 
 | Tool | Suggests | Nature of Suggestion |
 |------|---------|---------------------|
-| changelog | commitlint | "For best results, enable conventional commit enforcement: `gdev enable commitlint`" — printed as info message, not a blocker |
+| changelog | commitlint | "For best results, enable conventional commit enforcement: `qsdev enable commitlint`" — printed as info message, not a blocker |
 
 This is the only cross-tool suggestion in the registry. changelog works without commitlint (falls back to simple commit list), but produces better output with structured commits.
 
@@ -505,19 +505,19 @@ For **each** of the 15+ tools, run this test sequence:
 
 ```
 Test: A1-{tool_name}
-Setup: Fresh project (gdev init --yes, then gdev disable {tool} if it was default-on)
+Setup: Fresh project (qsdev init --yes, then qsdev disable {tool} if it was default-on)
 Steps:
-  1. gdev enable {tool_name}
+  1. qsdev enable {tool_name}
   2. Assert: All exclusive files exist at expected paths
   3. Assert: All shared file sections present (grep markers/keys)
   4. Assert: State file records file ownership for all files
-  5. Assert: gdev status shows {tool_name} as Enabled
-  6. gdev disable {tool_name}
+  5. Assert: qsdev status shows {tool_name} as Enabled
+  6. qsdev disable {tool_name}
   7. Assert: All exclusive files deleted
   8. Assert: All shared file sections removed (grep markers/keys absent)
   9. Assert: Shared files still valid (parse test: Nix eval, JSON parse, YAML parse)
   10. Assert: State file no longer references {tool_name} ownership
-  11. Assert: gdev status shows {tool_name} as Disabled
+  11. Assert: qsdev status shows {tool_name} as Disabled
 Expected: Clean round-trip with no orphaned artifacts
 ```
 
@@ -529,7 +529,7 @@ Run for: semgrep, gitleaks, container-security, license-compliance, attach-guard
 Test: A2-{tool_name}
 Setup: Complete A1 (tool is now disabled)
 Steps:
-  1. gdev enable {tool_name}
+  1. qsdev enable {tool_name}
   2. Assert: All files recreated identically to A1 step 2-4
   3. Assert: Shared file sections present and correctly positioned
   4. Assert: State file updated
@@ -541,10 +541,10 @@ Expected: Re-enable produces identical result to first enable
 ```
 Test: A3-{tool_name}
 Steps:
-  1. gdev enable {tool_name}
-  2. gdev disable {tool_name}
-  3. gdev enable {tool_name}
-  4. gdev disable {tool_name}
+  1. qsdev enable {tool_name}
+  2. qsdev disable {tool_name}
+  3. qsdev enable {tool_name}
+  4. qsdev disable {tool_name}
   5. Assert: Project state identical to never-enabled state
   6. Assert: No orphaned section markers in any shared file
   7. Assert: No empty sections (e.g., `# --- semgrep ---\n# --- end semgrep ---` with nothing between)
@@ -557,13 +557,13 @@ Expected: 4 toggles leave project clean
 
 ```
 Test: B1-cascading-disable
-Setup: gdev init --yes (all AlwaysOn + detected OnWhenDetected tools enabled)
+Setup: qsdev init --yes (all AlwaysOn + detected OnWhenDetected tools enabled)
 Steps:
   1. Record enabled tool set (expected: semgrep, gitleaks, attach-guard, agent-postmortem,
      version-sentinel, context7, github-mcp, trail-of-bits-skills, ripsecrets,
      plus detected: container-security, semble, socket-dev-mcp, secretspec)
   2. For each enabled tool (in reverse priority order):
-     a. gdev disable {tool}
+     a. qsdev disable {tool}
      b. Assert: That tool's artifacts removed
      c. Assert: All other tools' artifacts still intact
      d. Assert: All shared files still valid (parse test)
@@ -582,7 +582,7 @@ Expected: Sequential disable leaves clean project with only core framework files
 Test: B2-enable-all
 Setup: Fresh project, all tools disabled
 Steps:
-  1. For each tool: gdev enable {tool}
+  1. For each tool: qsdev enable {tool}
   2. Assert: devenv.nix valid Nix with all 5 tool sections
   3. Assert: .mcp.json valid JSON with 4 server entries
   4. Assert: settings.json valid JSON with attach-guard + version-sentinel hooks
@@ -600,12 +600,12 @@ Expected: All tools coexist without file corruption
 Test: C1-missing-prereq-version-sentinel
 Setup: System without python3 >=3.11 or jq
 Steps:
-  1. gdev enable version-sentinel
+  1. qsdev enable version-sentinel
   2. Assert: Command returns non-zero exit code
   3. Assert: Error message names specific missing prerequisite(s)
   4. Assert: No partial files created (atomic: either all files or none)
   5. Assert: State file unchanged
-  6. Assert: gdev status still shows version-sentinel as Disabled
+  6. Assert: qsdev status still shows version-sentinel as Disabled
 Expected: Clean failure, no side effects
 ```
 
@@ -613,7 +613,7 @@ Expected: Clean failure, no side effects
 Test: C1-missing-prereq-semble
 Setup: System without python3 >=3.10
 Steps:
-  1. gdev enable semble
+  1. qsdev enable semble
   2. Assert: Command returns non-zero exit code
   3. Assert: Error message mentions Python >=3.10 requirement
   4. Assert: No .mcp.json entry created, no agent file created
@@ -624,7 +624,7 @@ Expected: Clean failure
 Test: C1-missing-prereq-commitlint
 Setup: System without Node.js
 Steps:
-  1. gdev enable commitlint
+  1. qsdev enable commitlint
   2. Assert: Warning or error about missing Node.js
 Expected: At minimum a clear warning
 ```
@@ -635,7 +635,7 @@ Expected: At minimum a clear warning
 Test: C2-container-no-docker
 Setup: Project with no Dockerfile or docker-compose.yml
 Steps:
-  1. gdev enable container-security
+  1. qsdev enable container-security
   2. Assert: Succeeds (explicit enable overrides detection default)
   3. OR Assert: Warning "no Docker ecosystem detected, container-security may not be useful"
 Expected: Explicit enable is allowed even when auto-detection wouldn't trigger it. User intent is respected.
@@ -647,8 +647,8 @@ Expected: Explicit enable is allowed even when auto-detection wouldn't trigger i
 Test: C3-conflict-declaration
 Setup: Two tools with explicit Conflicts declarations
 Steps:
-  1. gdev enable tool-A
-  2. gdev enable tool-B (where tool-B.Conflicts includes tool-A)
+  1. qsdev enable tool-A
+  2. qsdev enable tool-B (where tool-B.Conflicts includes tool-A)
   3. Assert: Command returns non-zero exit code
   4. Assert: Error message: "Cannot enable tool-B: conflicts with currently enabled tool-A"
   5. Assert: tool-B not enabled, no files created
@@ -663,10 +663,10 @@ Note: No current tools conflict, so this test validates the conflict-checking me
 
 ```
 Test: D1-modified-exclusive
-Setup: gdev enable semgrep
+Setup: qsdev enable semgrep
 Steps:
   1. Edit .semgrep.yml: add a custom rule
-  2. gdev disable semgrep
+  2. qsdev disable semgrep
   3. Assert: Warning printed: ".semgrep.yml has been modified since generation"
   4. Assert: File IS deleted (disable still proceeds, but warns)
   5. OR Assert: Prompt for confirmation before deleting modified file
@@ -678,10 +678,10 @@ Decision needed: Should disable prompt for confirmation on modified exclusive fi
 
 ```
 Test: D2-modified-shared-section
-Setup: gdev enable semgrep
+Setup: qsdev enable semgrep
 Steps:
   1. Edit devenv.nix: modify content inside `# --- semgrep ---` markers
-  2. gdev disable semgrep
+  2. qsdev disable semgrep
   3. Assert: Warning about modification
   4. Assert: Entire section between markers removed (regardless of user edits within markers)
 Expected: Section markers are the contract boundary. Anything between markers is tool-owned.
@@ -691,10 +691,10 @@ Expected: Section markers are the contract boundary. Anything between markers is
 
 ```
 Test: D3-user-content-preserved
-Setup: gdev enable semgrep (adds section to devenv.nix)
+Setup: qsdev enable semgrep (adds section to devenv.nix)
 Steps:
   1. Add custom content to devenv.nix OUTSIDE of any tool section markers
-  2. gdev disable semgrep
+  2. qsdev disable semgrep
   3. Assert: Custom content still present
   4. Assert: semgrep section removed
   5. Assert: devenv.nix still valid Nix
@@ -707,9 +707,9 @@ Expected: User content outside markers is always preserved. This is the critical
 Test: D4-preserve-user-mcp
 Setup: .mcp.json exists with user-added server: `"my-custom-server": {...}`
 Steps:
-  1. gdev enable context7
+  1. qsdev enable context7
   2. Assert: .mcp.json has both "my-custom-server" and "context7"
-  3. gdev disable context7
+  3. qsdev disable context7
   4. Assert: .mcp.json still has "my-custom-server"
   5. Assert: "context7" removed
 Expected: Non-gdev entries in .mcp.json preserved through all operations
@@ -820,9 +820,9 @@ Expected: Minimal CI workflow with only Harden-Runner + ecosystem-level scanning
 
 ```
 Test: F1-enable-idempotent
-Setup: gdev enable semgrep (semgrep now enabled)
+Setup: qsdev enable semgrep (semgrep now enabled)
 Steps:
-  1. gdev enable semgrep
+  1. qsdev enable semgrep
   2. Assert: Exit code 0 (success, not error)
   3. Assert: Message like "semgrep is already enabled" (informational, not warning)
   4. Assert: All files unchanged (hash comparison)
@@ -834,9 +834,9 @@ Expected: No-op, no error
 
 ```
 Test: F2-disable-idempotent
-Setup: gdev disable semgrep (semgrep now disabled)
+Setup: qsdev disable semgrep (semgrep now disabled)
 Steps:
-  1. gdev disable semgrep
+  1. qsdev disable semgrep
   2. Assert: Exit code 0
   3. Assert: Message like "semgrep is already disabled"
   4. Assert: No file changes
@@ -848,9 +848,9 @@ Expected: No-op, no error
 ```
 Test: F3-double-enable
 Steps:
-  1. gdev enable semgrep
+  1. qsdev enable semgrep
   2. Record all file hashes
-  3. gdev enable semgrep
+  3. qsdev enable semgrep
   4. Assert: All file hashes identical to step 2
   5. Assert: No duplicate sections in shared files (e.g., no two `# --- semgrep ---` blocks in devenv.nix)
 Expected: Second enable is a pure no-op
@@ -861,9 +861,9 @@ Expected: Second enable is a pure no-op
 ```
 Test: F4-init-then-enable
 Steps:
-  1. gdev init --yes (semgrep enabled by default as AlwaysOn)
+  1. qsdev init --yes (semgrep enabled by default as AlwaysOn)
   2. Record state
-  3. gdev enable semgrep
+  3. qsdev enable semgrep
   4. Assert: No-op
   5. Assert: State unchanged
 Expected: Enable recognizes tool is already enabled via init
@@ -874,9 +874,9 @@ Expected: Enable recognizes tool is already enabled via init
 ```
 Test: F5-init-yes-idempotent
 Steps:
-  1. gdev init --yes
+  1. qsdev init --yes
   2. Record all file hashes
-  3. gdev init --yes (re-run)
+  3. qsdev init --yes (re-run)
   4. Assert: All files identical (or properly merged if update mode)
 Expected: Re-running init doesn't duplicate sections or corrupt shared files
 ```
@@ -888,14 +888,14 @@ Expected: Re-running init doesn't duplicate sections or corrupt shared files
 ```
 Test: G1-hook-order
 Steps:
-  1. gdev enable ripsecrets
-  2. gdev enable gitleaks
-  3. gdev enable semgrep
+  1. qsdev enable ripsecrets
+  2. qsdev enable gitleaks
+  3. qsdev enable semgrep
   4. Read .pre-commit-config.yaml / devenv hooks config
   5. Assert: Hook order is ripsecrets → gitleaks → semgrep
   6. Now disable gitleaks and re-enable:
-  7. gdev disable gitleaks
-  8. gdev enable gitleaks
+  7. qsdev disable gitleaks
+  8. qsdev enable gitleaks
   9. Assert: Hook order is STILL ripsecrets → gitleaks → semgrep (order preserved regardless of enable sequence)
 Expected: Hook ordering is deterministic, not insertion-order-dependent. Tools define their tier/priority, and the hook generation sorts accordingly.
 ```
@@ -905,9 +905,9 @@ Expected: Hook ordering is deterministic, not insertion-order-dependent. Tools d
 ```
 Test: G2-container-security-packages
 Steps:
-  1. gdev enable container-security
+  1. qsdev enable container-security
   2. Assert: devenv.nix `# --- container-security ---` section contains grype, syft, cosign (3 packages)
-  3. gdev disable container-security
+  3. qsdev disable container-security
   4. Assert: All 3 packages removed (not just first, not just last)
   5. Assert: devenv.nix valid Nix
 Expected: Composite tool removes all its contributed packages, not a subset
@@ -918,12 +918,12 @@ Expected: Composite tool removes all its contributed packages, not a subset
 ```
 Test: G3-changelog-commitlint
 Steps:
-  1. gdev enable changelog
+  1. qsdev enable changelog
   2. Assert: Info message suggesting commitlint enablement
   3. Assert: changelog works without commitlint (no error, no broken dependency)
-  4. gdev enable commitlint
+  4. qsdev enable commitlint
   5. Assert: Both tools' files present, no conflicts
-  6. gdev disable commitlint
+  6. qsdev disable commitlint
   7. Assert: commitlint files removed
   8. Assert: changelog still functional (cliff.toml still present, CI step still present)
   9. Assert: No error or warning about missing commitlint (it's a suggestion, not a dependency)
@@ -935,15 +935,15 @@ Expected: Soft dependency doesn't create hard coupling
 ```
 Test: G4-all-mcp
 Steps:
-  1. gdev enable context7
-  2. gdev enable github-mcp
-  3. gdev enable socket-dev-mcp
-  4. gdev enable semble
+  1. qsdev enable context7
+  2. qsdev enable github-mcp
+  3. qsdev enable socket-dev-mcp
+  4. qsdev enable semble
   5. Assert: .mcp.json is valid JSON
   6. Assert: 4 server entries under "mcpServers"
   7. Assert: No duplicate keys
   8. Assert: Each server has correct command/args
-  9. gdev status → Assert: Shows 4 MCP servers
+  9. qsdev status → Assert: Shows 4 MCP servers
 Expected: All MCP servers coexist in well-formed JSON
 ```
 
@@ -952,13 +952,13 @@ Expected: All MCP servers coexist in well-formed JSON
 ```
 Test: G5-dual-hooks
 Steps:
-  1. gdev enable attach-guard
-  2. gdev enable version-sentinel
+  1. qsdev enable attach-guard
+  2. qsdev enable version-sentinel
   3. Assert: settings.json has hooks from both tools
   4. Assert: No duplicate hook entries
   5. Assert: Each tool's hooks have distinct matchers
   6. Simulate: npm install command → both hooks should fire
-  7. gdev disable attach-guard
+  7. qsdev disable attach-guard
   8. Assert: Only version-sentinel hooks remain
   9. Assert: settings.json valid JSON
 Expected: Independent hook sets that don't interfere
@@ -970,12 +970,12 @@ Expected: Independent hook sets that don't interfere
 Test: G6-full-surface-tool
 Tool: semgrep (touches devenv.nix, CLAUDE.md, pre-commit, CI)
 Steps:
-  1. gdev enable semgrep
+  1. qsdev enable semgrep
   2. Assert: Section present in devenv.nix
   3. Assert: Section present in CLAUDE.md
   4. Assert: Hook present in pre-commit config
   5. Assert: Step present in CI workflow
-  6. gdev disable semgrep
+  6. qsdev disable semgrep
   7. Assert: All 4 shared files cleaned
   8. Assert: All 4 shared files still valid
 Expected: Tool with maximum shared-file surface area enables/disables cleanly across all files
@@ -986,11 +986,11 @@ Expected: Tool with maximum shared-file surface area enables/disables cleanly ac
 ```
 Test: G7-ci-regen-consistency
 Steps:
-  1. gdev enable semgrep
-  2. gdev enable gitleaks
+  1. qsdev enable semgrep
+  2. qsdev enable gitleaks
   3. Record CI workflow hash (workflow-A)
-  4. gdev disable gitleaks
-  5. gdev enable gitleaks
+  4. qsdev disable gitleaks
+  5. qsdev enable gitleaks
   6. Record CI workflow hash (workflow-B)
   7. Assert: workflow-A == workflow-B (same set of enabled tools → same workflow)
 Expected: CI regeneration is deterministic — same inputs produce same output
@@ -1004,7 +1004,7 @@ Expected: CI regeneration is deterministic — same inputs produce same output
 Test: H1-quick-path
 Setup: Fresh Go + TypeScript + Docker project
 Steps:
-  1. gdev init (quick path — accept defaults)
+  1. qsdev init (quick path — accept defaults)
   2. Assert: AlwaysOn tools enabled: semgrep, gitleaks, attach-guard, agent-postmortem,
      version-sentinel, context7, github-mcp, trail-of-bits-skills, ripsecrets
   3. Assert: OnWhenDetected tools enabled based on detection:
@@ -1022,7 +1022,7 @@ Expected: Smart defaults produce correct tool set
 ```
 Test: H2-customize
 Steps:
-  1. gdev init (customize path)
+  1. qsdev init (customize path)
   2. Toggle: disable semgrep, enable license-compliance, enable changelog
   3. Assert: semgrep files NOT generated
   4. Assert: license-compliance files generated (.scancode.yml, .license-exceptions.yml, CLAUDE.md section)
@@ -1035,23 +1035,23 @@ Expected: Wizard choices correctly drive generation
 
 ```
 Test: H3-wizard-rerun
-Setup: gdev init --yes (defaults)
+Setup: qsdev init --yes (defaults)
 Steps:
-  1. gdev disable semgrep (manual change after init)
-  2. gdev init --update (or re-run wizard)
+  1. qsdev disable semgrep (manual change after init)
+  2. qsdev init --update (or re-run wizard)
   3. Assert: semgrep remains disabled (user's explicit disable is preserved)
   4. Assert: All other tools unchanged
   5. Assert: No duplicate sections in any shared file
 Expected: --update respects current enable/disable state from saved answers
 ```
 
-#### H4. gdev init --yes flag behavior
+#### H4. qsdev init --yes flag behavior
 
 ```
 Test: H4-init-yes
 Setup: Fresh project (Go + Docker detected, Python 3.11 available)
 Steps:
-  1. gdev init --yes
+  1. qsdev init --yes
   2. Assert: All AlwaysOn enabled
   3. Assert: container-security enabled (Docker detected)
   4. Assert: semble enabled (Python >=3.10 detected)
@@ -1074,12 +1074,12 @@ Setup: Project bootstrapped by older gdev without lifecycle system.
   - CLAUDE.md exists but has no tool section markers (only `<!-- BEGIN GENERATED SECTION -->`)
   - settings.json exists with hooks but no tool ownership metadata
 Steps:
-  1. gdev enable semgrep
+  1. qsdev enable semgrep
   2. Assert: Section markers retroactively added to devenv.nix for existing content
      (OR: semgrep section added alongside unmarked legacy content)
   3. Assert: CLAUDE.md gets `<!-- gdev:semgrep -->` section within the generated section
   4. Assert: State file created/updated with file ownership
-  5. gdev disable semgrep
+  5. qsdev disable semgrep
   6. Assert: semgrep section removed
   7. Assert: Legacy unmarked content preserved
 Expected: First lifecycle operation initializes tracking without disrupting existing content.
@@ -1093,7 +1093,7 @@ Design decision needed: Does the first lifecycle operation retroactively wrap ex
 Test: I2-manual-config-collision
 Setup: User manually created .semgrep.yml before gdev
 Steps:
-  1. gdev enable semgrep
+  1. qsdev enable semgrep
   2. Assert: One of:
      a. Error: ".semgrep.yml already exists and is not gdev-managed. Use --force to overwrite"
      b. Merge: Existing config preserved, gdev additions merged
@@ -1112,10 +1112,10 @@ Recommendation: Option (a) — error with --force flag. This is the safest defau
 Test: I3-manual-mcp
 Setup: User-created .mcp.json with `{"mcpServers": {"my-server": {...}}}`
 Steps:
-  1. gdev enable context7
+  1. qsdev enable context7
   2. Assert: .mcp.json now has both "my-server" and "context7"
   3. Assert: "my-server" entry unchanged
-  4. gdev disable context7
+  4. qsdev disable context7
   5. Assert: .mcp.json has only "my-server"
 Expected: Shared file merge preserves non-gdev content. This is the JSON parse/modify strategy working correctly.
 ```
@@ -1128,23 +1128,23 @@ Expected: Shared file merge preserves non-gdev content. This is the JSON parse/m
 
 | Edge Case | Scenario | Expected Behavior |
 |-----------|---------|-------------------|
-| **Read-only file** | `.semgrep.yml` set to read-only by user | `gdev disable semgrep` fails with clear error: "Cannot delete .semgrep.yml: permission denied" |
+| **Read-only file** | `.semgrep.yml` set to read-only by user | `qsdev disable semgrep` fails with clear error: "Cannot delete .semgrep.yml: permission denied" |
 | **Symlinked file** | `devenv.nix` is a symlink to a shared template | Shared file surgery must follow symlink and edit actual file. Or error: "devenv.nix is a symlink; lifecycle operations require a regular file" |
-| **Missing shared file** | `gdev enable gitleaks` but devenv.nix doesn't exist (devenv addon not run) | Create devenv.nix with only the gitleaks section, or error: "devenv.nix not found — run gdev init first" |
-| **Concurrent modification** | Two terminals run `gdev enable` simultaneously | File lock or last-write-wins. Recommendation: advisory lockfile `.devinit/.gdev.lock` |
+| **Missing shared file** | `qsdev enable gitleaks` but devenv.nix doesn't exist (devenv addon not run) | Create devenv.nix with only the gitleaks section, or error: "devenv.nix not found — run qsdev init first" |
+| **Concurrent modification** | Two terminals run `qsdev enable` simultaneously | File lock or last-write-wins. Recommendation: advisory lockfile `.devinit/.gdev.lock` |
 | **Disk full** | Enable operation runs out of space mid-write | Atomic write strategy (write to temp, rename) prevents partial files. But shared file edits are in-place — need transaction-like behavior |
-| **.cosign/ directory** | `gdev disable container-security` removes `.cosign/policy.yaml` | Remove file. Remove `.cosign/` directory only if empty (user may have added other cosign files) |
-| **.claude/agents/ directory** | `gdev disable semble` removes `semble-search.md` | Remove file. Remove `.claude/agents/` only if empty |
-| **.claude/skills/agent-postmortem/ directory** | `gdev disable agent-postmortem` removes `SKILL.md` | Remove file. Remove directory only if empty (user may have added companion files) |
-| **.version-sentinel/ directory** | `gdev disable version-sentinel` removes `ignore` file | Remove file. Remove directory only if empty |
+| **.cosign/ directory** | `qsdev disable container-security` removes `.cosign/policy.yaml` | Remove file. Remove `.cosign/` directory only if empty (user may have added other cosign files) |
+| **.claude/agents/ directory** | `qsdev disable semble` removes `semble-search.md` | Remove file. Remove `.claude/agents/` only if empty |
+| **.claude/skills/agent-postmortem/ directory** | `qsdev disable agent-postmortem` removes `SKILL.md` | Remove file. Remove directory only if empty (user may have added companion files) |
+| **.version-sentinel/ directory** | `qsdev disable version-sentinel` removes `ignore` file | Remove file. Remove directory only if empty |
 
 ### 4.2 Parsing Edge Cases
 
 | Edge Case | Scenario | Expected Behavior |
 |-----------|---------|-------------------|
 | **Malformed devenv.nix** | User introduced Nix syntax error | Section marker removal still works (line-based, not AST-based). Warn: "devenv.nix may contain syntax errors" |
-| **Malformed JSON** | settings.json or .mcp.json has invalid JSON | `gdev enable` fails: "Cannot parse settings.json: [error]. Fix JSON syntax and retry" |
-| **Missing section markers** | devenv.nix has gdev content but markers were deleted | Content is treated as user-owned. New enable adds a NEW section; old content orphaned. Warn on next `gdev status` |
+| **Malformed JSON** | settings.json or .mcp.json has invalid JSON | `qsdev enable` fails: "Cannot parse settings.json: [error]. Fix JSON syntax and retry" |
+| **Missing section markers** | devenv.nix has gdev content but markers were deleted | Content is treated as user-owned. New enable adds a NEW section; old content orphaned. Warn on next `qsdev status` |
 | **Overlapping markers** | `<!-- gdev:semgrep -->` without closing tag | Error on enable/disable: "Malformed section marker in CLAUDE.md for semgrep: missing closing tag" |
 | **Nested markers** | `<!-- gdev:semgrep -->` inside `<!-- gdev:gitleaks -->` block | Should never happen (sections are siblings, not nested). If detected, error rather than corrupt |
 | **BOM/encoding** | File has UTF-8 BOM or non-UTF-8 encoding | Preserve encoding. Read/write with same encoding. Test with BOM files |
@@ -1155,11 +1155,11 @@ Expected: Shared file merge preserves non-gdev content. This is the JSON parse/m
 
 | Edge Case | Scenario | Expected Behavior |
 |-----------|---------|-------------------|
-| **State file deleted** | User deletes `.devinit/.gdev-init-state.yaml` | `gdev enable/disable` either: (a) reconstructs state from file system heuristics, or (b) errors: "State file missing — run gdev init to re-establish state" |
-| **State file stale** | State says semgrep enabled but .semgrep.yml missing (user deleted it) | `gdev status` shows warning: "semgrep: enabled but .semgrep.yml missing" `gdev disable semgrep` succeeds (cleans up remaining shared-file sections) |
-| **Answers file mismatch** | `.gdev-init-answers.yaml` says semgrep=true but state says disabled | Answers file is source of truth for "should be enabled"; state file tracks "what was generated". If mismatch: `gdev init --update` reconciles |
-| **Orphaned sections** | State file has no record of semgrep but `# --- semgrep ---` exists in devenv.nix | `gdev status` could detect orphaned sections and warn. `gdev enable semgrep` should recognize existing section and update rather than create duplicate |
-| **File changed but not by tool** | Hash mismatch on a shared file due to manual formatting (whitespace changes) | `gdev disable` should still remove tool sections. Warn about hash mismatch but proceed |
+| **State file deleted** | User deletes `.devinit/.qsdev-init-state.yaml` | `qsdev enable/disable` either: (a) reconstructs state from file system heuristics, or (b) errors: "State file missing — run qsdev init to re-establish state" |
+| **State file stale** | State says semgrep enabled but .semgrep.yml missing (user deleted it) | `qsdev status` shows warning: "semgrep: enabled but .semgrep.yml missing" `qsdev disable semgrep` succeeds (cleans up remaining shared-file sections) |
+| **Answers file mismatch** | `.qsdev-init-answers.yaml` says semgrep=true but state says disabled | Answers file is source of truth for "should be enabled"; state file tracks "what was generated". If mismatch: `qsdev init --update` reconciles |
+| **Orphaned sections** | State file has no record of semgrep but `# --- semgrep ---` exists in devenv.nix | `qsdev status` could detect orphaned sections and warn. `qsdev enable semgrep` should recognize existing section and update rather than create duplicate |
+| **File changed but not by tool** | Hash mismatch on a shared file due to manual formatting (whitespace changes) | `qsdev disable` should still remove tool sections. Warn about hash mismatch but proceed |
 
 ### 4.4 Nix-Specific Concerns for devenv.nix
 
@@ -1255,10 +1255,10 @@ Tool markers must be INSIDE core markers. The hierarchy is:
 
 | Metric | Target | Test Method |
 |--------|--------|-------------|
-| `gdev enable <tool>` | <2 seconds | Wall-clock time measurement |
-| `gdev disable <tool>` | <2 seconds | Wall-clock time measurement |
-| `gdev status` | <1 second | Wall-clock time measurement |
-| `gdev list` | <1 second | Wall-clock time measurement |
+| `qsdev enable <tool>` | <2 seconds | Wall-clock time measurement |
+| `qsdev disable <tool>` | <2 seconds | Wall-clock time measurement |
+| `qsdev status` | <1 second | Wall-clock time measurement |
+| `qsdev list` | <1 second | Wall-clock time measurement |
 | CI workflow regeneration | <1 second | Included in enable/disable time |
 | Shared file surgery (JSON) | <100ms | No full-file rewrite if section unchanged |
 | Shared file surgery (section markers) | <100ms | Line-based scan + removal |
@@ -1359,7 +1359,7 @@ func TestNonGdevMCPPreserved(t *testing.T)
 // assertJSONKeyAbsent(t, path, key) — JSON object lacks key
 // assertHookPresent(t, path, hookName) — pre-commit hook entry exists
 // assertHookAbsent(t, path, hookName) — pre-commit hook entry absent
-// assertToolStatus(t, toolName, enabled bool) — gdev status reports correct state
+// assertToolStatus(t, toolName, enabled bool) — qsdev status reports correct state
 // hashFile(path) string — SHA256 for comparison
 // setupTestProject(t) string — creates temp dir with test fixture, returns path
 ```

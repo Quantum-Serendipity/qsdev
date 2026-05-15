@@ -58,7 +58,7 @@ func formatSARIF(report *CheckReport, w io.Writer) error {
 			{
 				Tool: sarifTool{
 					Driver: sarifDriver{
-						Name:    "gdev",
+						Name:    "qsdev",
 						Version: report.Version,
 					},
 				},

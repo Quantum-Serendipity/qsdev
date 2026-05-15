@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestClaudeCmd_HasSubcommands(t *testing.T) {
@@ -123,13 +123,13 @@ func TestInitCmd_WritesFiles(t *testing.T) {
 	}
 
 	// Verify answers were saved.
-	answersFile := filepath.Join(tmpDir, ".claude", ".gdev-claude-answers.yaml")
+	answersFile := filepath.Join(tmpDir, ".claude", ".qsdev-claude-answers.yaml")
 	if _, err := os.Stat(answersFile); err != nil {
 		t.Errorf("answers file not saved: %v", err)
 	}
 
 	// Verify state was saved.
-	stateFile := filepath.Join(tmpDir, ".claude", ".gdev-claude-state.yaml")
+	stateFile := filepath.Join(tmpDir, ".claude", ".qsdev-claude-state.yaml")
 	if _, err := os.Stat(stateFile); err != nil {
 		t.Errorf("state file not saved: %v", err)
 	}
@@ -698,7 +698,7 @@ func TestInitCmd_SavesStateAndAnswers(t *testing.T) {
 	}
 
 	// Verify state file.
-	stateFile := filepath.Join(tmpDir, ".claude", ".gdev-claude-state.yaml")
+	stateFile := filepath.Join(tmpDir, ".claude", ".qsdev-claude-state.yaml")
 	if _, err := os.Stat(stateFile); err != nil {
 		t.Errorf("state file not saved: %v", err)
 	}
@@ -711,7 +711,7 @@ func TestInitCmd_SavesStateAndAnswers(t *testing.T) {
 	}
 
 	// Verify answers file.
-	answersFile := filepath.Join(tmpDir, ".claude", ".gdev-claude-answers.yaml")
+	answersFile := filepath.Join(tmpDir, ".claude", ".qsdev-claude-answers.yaml")
 	if _, err := os.Stat(answersFile); err != nil {
 		t.Errorf("answers file not saved: %v", err)
 	}
@@ -741,8 +741,8 @@ func TestInitCmd_DryRunNoFiles(t *testing.T) {
 	// Verify neither settings.json, state, nor answers were created.
 	for _, relPath := range []string{
 		".claude/settings.json",
-		".claude/.gdev-claude-state.yaml",
-		".claude/.gdev-claude-answers.yaml",
+		".claude/.qsdev-claude-state.yaml",
+		".claude/.qsdev-claude-answers.yaml",
 		"CLAUDE.md",
 	} {
 		absPath := filepath.Join(tmpDir, relPath)

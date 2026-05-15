@@ -1,14 +1,14 @@
 ---
-name: gdev-doctor
-description: Run gdev health diagnostics and analyze results.
-allowed-tools: Bash(gdev *) Read Grep Glob
+name: qsdev-doctor
+description: Run qsdev health diagnostics and analyze results.
+allowed-tools: Bash(qsdev *) Read Grep Glob
 ---
 
-# gdev doctor
+# qsdev doctor
 
 ## Current Environment
 
-!`gdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
+!`qsdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
 
 ## Instructions
 
@@ -24,4 +24,4 @@ allowed-tools: Bash(gdev *) Read Grep Glob
    - Critical issues that block development
    - Warnings that should be addressed
 
-4. **Suggest next steps**: If there are failing checks, suggest running `/gdev-setup` to automatically resolve them. If everything passes, confirm the environment is healthy.
+4. **Suggest next steps**: If there are failing checks, suggest running `/qsdev-setup` to automatically resolve them. If everything passes, confirm the environment is healthy.

@@ -12,7 +12,7 @@
   - Completed: 2026-05-12
   - Notes: Surveyed 6 patterns across 10+ tools. Recommends three-layer hierarchy. See team-config-sharing-research.md.
 
-- [x] **Developer onboarding workflow** -- What happens when a new engineer runs `gdev init` on an existing project? Detection vs local setup, clone-to-productive gap measurement, UX audit.
+- [x] **Developer onboarding workflow** -- What happens when a new engineer runs `qsdev init` on an existing project? Detection vs local setup, clone-to-productive gap measurement, UX audit.
   - Outcome: success
   - Completed: 2026-05-12
   - Notes: Designed four onboarding modes with detection engine. Target: 3 commands, 2 minutes. See developer-onboarding-research.md.
@@ -22,10 +22,10 @@
   - Completed: 2026-05-12
   - Notes: Three-axis versioning, Terraform-style constraints, migration chain, ratchet strategy. See config-versioning-drift-research.md.
 
-- [x] **Standards enforcement in CI** -- `gdev check`/`gdev validate` command design. Verify required tools, config state, security hardening, pre-commit hooks.
+- [x] **Standards enforcement in CI** -- `qsdev check`/`qsdev validate` command design. Verify required tools, config state, security hardening, pre-commit hooks.
   - Outcome: success
   - Completed: 2026-05-12
-  - Notes: gdev check with 5 categories, 4 output formats, auto-fix mode. See standards-enforcement-ci-research.md.
+  - Notes: qsdev check with 5 categories, 4 output formats, auto-fix mode. See standards-enforcement-ci-research.md.
 
 - [x] **Prior art survey** -- Deep comparison of Nx generators, Yeoman, Copier, devcontainer features, mise, proto for team-level developer tooling patterns.
   - Outcome: success

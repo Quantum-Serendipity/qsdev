@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestCheckSecurityHardening_LockFilePresent(t *testing.T) {
@@ -18,7 +18,7 @@ func TestCheckSecurityHardening_LockFilePresent(t *testing.T) {
 
 	ctx := CheckContext{
 		ProjectRoot: dir,
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Languages: []types.LanguageConfig{
 				{Name: "go"},
 			},
@@ -44,7 +44,7 @@ func TestCheckSecurityHardening_LockFileMissing(t *testing.T) {
 
 	ctx := CheckContext{
 		ProjectRoot: dir,
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Languages: []types.LanguageConfig{
 				{Name: "go"},
 			},
@@ -78,7 +78,7 @@ func TestCheckSecurityHardening_NpmrcPresent(t *testing.T) {
 
 	ctx := CheckContext{
 		ProjectRoot: dir,
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Languages: []types.LanguageConfig{
 				{Name: "javascript"},
 			},
@@ -113,7 +113,7 @@ func TestCheckSecurityHardening_NpmrcMissing(t *testing.T) {
 
 	ctx := CheckContext{
 		ProjectRoot: dir,
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Languages: []types.LanguageConfig{
 				{Name: "javascript"},
 			},
@@ -151,7 +151,7 @@ func TestCheckSecurityHardening_PythonConfigPresent(t *testing.T) {
 
 	ctx := CheckContext{
 		ProjectRoot: dir,
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Languages: []types.LanguageConfig{
 				{Name: "python"},
 			},
@@ -191,7 +191,7 @@ func TestCheckSecurityHardening_NoConfig(t *testing.T) {
 
 func TestCheckSecurityHardening_NoLanguages(t *testing.T) {
 	ctx := CheckContext{
-		GdevConfig: &types.GdevConfig{},
+		QsdevConfig: &types.QsdevConfig{},
 	}
 
 	results := CheckSecurityHardening(ctx)
@@ -214,7 +214,7 @@ func TestCheckSecurityHardening_MultipleLanguages(t *testing.T) {
 
 	ctx := CheckContext{
 		ProjectRoot: dir,
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Languages: []types.LanguageConfig{
 				{Name: "go"},
 				{Name: "javascript"},

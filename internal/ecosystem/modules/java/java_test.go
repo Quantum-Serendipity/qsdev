@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/java"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/java"
 )
 
 // Compile-time interface compliance check.
@@ -491,7 +491,7 @@ func TestSecurityConfigs_GradlePropertiesContent(t *testing.T) {
 	assertContains(t, content, "dependencyLocking.lockMode=STRICT")
 	assertContains(t, content, "systemProp.org.gradle.dependency.verification=strict")
 	// Should have comment header.
-	assertContains(t, content, "gdev-secure-devenv-bootstrap")
+	assertContains(t, content, "qsdev")
 	assertContains(t, content, "Gradle >= 6.1")
 }
 

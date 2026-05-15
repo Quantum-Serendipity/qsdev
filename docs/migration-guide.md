@@ -1,10 +1,10 @@
 # Migration Guide
 
-This guide covers adding gdev-secure-devenv-bootstrap to projects with existing configuration files. It addresses four scenarios and provides step-by-step instructions for each.
+This guide covers adding qsdev to projects with existing configuration files. It addresses four scenarios and provides step-by-step instructions for each.
 
 ## Pre-Migration Checklist
 
-Before running `gdev init`, verify:
+Before running `qsdev init`, verify:
 
 1. Your project is a git repository with no uncommitted changes (`git status` is clean).
 2. gdev, devenv.sh, and Nix with flakes are installed.
@@ -22,13 +22,13 @@ The simplest case. No `devenv.nix`, `devenv.yaml`, `.claude/`, or `.envrc` exist
 
 ```bash
 cd my-project
-gdev init --yes
+qsdev init --yes
 ```
 
 The tool auto-detects languages from marker files (e.g., `go.mod`, `package.json`, `Cargo.toml`) and generates all configuration. Review with `--dry-run` first if you want to preview:
 
 ```bash
-gdev init --dry-run
+qsdev init --dry-run
 ```
 
 ## Scenario 2: Existing devenv Configuration
@@ -37,7 +37,7 @@ Your project already has `devenv.nix` and/or `devenv.yaml`.
 
 ### Detection
 
-`gdev init` detects existing devenv files and refuses to proceed:
+`qsdev init` detects existing devenv files and refuses to proceed:
 
 ```
 Error: existing configuration found (devenv.nix, devenv.yaml); use --force to overwrite
@@ -48,7 +48,7 @@ Error: existing configuration found (devenv.nix, devenv.yaml); use --force to ov
 If your existing `devenv.nix` is minimal or auto-generated:
 
 ```bash
-gdev init --force --yes
+qsdev init --force --yes
 ```
 
 This overwrites all devenv files. Your old `devenv.nix` is replaced with the security-hardened version.
@@ -58,7 +58,7 @@ This overwrites all devenv files. Your old `devenv.nix` is replaced with the sec
 If you want to keep your existing devenv setup and only add Claude Code configuration:
 
 ```bash
-gdev init --claude-only --yes
+qsdev init --claude-only --yes
 ```
 
 This generates `.claude/settings.json`, `CLAUDE.md`, hooks, skills, and rules without touching devenv files.
@@ -70,7 +70,7 @@ If your `devenv.nix` has significant customizations you want to preserve:
 1. Generate the new configuration alongside your existing one:
 
    ```bash
-   gdev init --force --dry-run > /tmp/gdev-preview.txt
+   qsdev init --force --dry-run > /tmp/gdev-preview.txt
    ```
 
 2. Review the preview to understand what would be generated.
@@ -78,7 +78,7 @@ If your `devenv.nix` has significant customizations you want to preserve:
 3. Run the generation:
 
    ```bash
-   gdev init --force --yes
+   qsdev init --force --yes
    ```
 
 4. Use git to selectively merge:
@@ -88,15 +88,15 @@ If your `devenv.nix` has significant customizations you want to preserve:
    git checkout -p devenv.nix   # interactively restore sections you want to keep
    ```
 
-5. After merging, run `gdev init --update` to save state for the final version:
+5. After merging, run `qsdev init --update` to save state for the final version:
 
    ```bash
-   gdev init --update --force
+   qsdev init --update --force
    ```
 
 ### Preserving Custom Nix Expressions
 
-The generated `devenv.nix` uses the `manual-merge` strategy. On subsequent updates via `gdev init --update`, if you have modified `devenv.nix`, a `devenv.nix.new` sidecar file will be created instead of overwriting your changes. You will see a diff and can merge manually.
+The generated `devenv.nix` uses the `manual-merge` strategy. On subsequent updates via `qsdev init --update`, if you have modified `devenv.nix`, a `devenv.nix.new` sidecar file will be created instead of overwriting your changes. You will see a diff and can merge manually.
 
 ## Scenario 3: Existing Claude Code Configuration
 
@@ -104,7 +104,7 @@ Your project already has `.claude/settings.json`, `CLAUDE.md`, or `.mcp.json`.
 
 ### Detection
 
-`gdev init` detects existing Claude Code files:
+`qsdev init` detects existing Claude Code files:
 
 ```
 Error: existing configuration found (.claude/settings.json, CLAUDE.md); use --force to overwrite
@@ -115,7 +115,7 @@ Error: existing configuration found (.claude/settings.json, CLAUDE.md); use --fo
 If your existing Claude Code configuration is ad-hoc:
 
 ```bash
-gdev init --force --yes
+qsdev init --force --yes
 ```
 
 ### Option B: devenv Only
@@ -123,7 +123,7 @@ gdev init --force --yes
 If you want to keep your existing Claude Code setup and only add devenv:
 
 ```bash
-gdev init --devenv-only --yes
+qsdev init --devenv-only --yes
 ```
 
 ### Option C: Merge Existing Settings
@@ -133,12 +133,12 @@ The generated `.claude/settings.json` uses the `three-way-merge` strategy. To ad
 1. Run with `--force` to generate the initial configuration:
 
    ```bash
-   gdev init --force --yes
+   qsdev init --force --yes
    ```
 
 2. Add back your custom allow/deny rules by editing `.claude/settings.json`.
 
-3. Run `gdev init --update` to save state. Future updates will three-way merge, preserving your additions.
+3. Run `qsdev init --update` to save state. Future updates will three-way merge, preserving your additions.
 
 ### Preserving Custom MCP Servers
 
@@ -159,7 +159,7 @@ To add a custom server after initial setup:
 }
 ```
 
-This entry will survive future `gdev init --update` runs.
+This entry will survive future `qsdev init --update` runs.
 
 ## Scenario 4: Both devenv and Claude Code Exist
 
@@ -170,13 +170,13 @@ Your project has configuration from both systems.
 1. **Preview** what gdev would generate:
 
    ```bash
-   gdev init --dry-run
+   qsdev init --dry-run
    ```
 
 2. **Choose your strategy** based on how much customization you have:
-   - Minimal customization: `gdev init --force --yes`
-   - Heavy devenv customization: `gdev init --claude-only --yes` first, then manually port devenv security settings
-   - Heavy Claude Code customization: `gdev init --devenv-only --yes` first, then merge Claude settings
+   - Minimal customization: `qsdev init --force --yes`
+   - Heavy devenv customization: `qsdev init --claude-only --yes` first, then manually port devenv security settings
+   - Heavy Claude Code customization: `qsdev init --devenv-only --yes` first, then merge Claude settings
 
 3. **Validate** after migration:
 
@@ -231,7 +231,7 @@ direnv allow        # if using direnv
 devenv shell        # manual activation
 ```
 
-No additional `gdev init` is needed for team members -- the committed files configure their environment.
+No additional `qsdev init` is needed for team members -- the committed files configure their environment.
 
 ## Common Issues
 
@@ -245,16 +245,16 @@ You have an existing Claude Code setup. See Scenario 3 above. Use `--force` to o
 
 ### `devenv-only` and `claude-only` cannot be used together
 
-These flags are mutually exclusive. Use `gdev init` without either flag to generate both, or run them separately:
+These flags are mutually exclusive. Use `qsdev init` without either flag to generate both, or run them separately:
 
 ```bash
-gdev init --devenv-only --yes
-gdev init --claude-only --yes
+qsdev init --devenv-only --yes
+qsdev init --claude-only --yes
 ```
 
 ### `update` cannot be combined with `lang`, `service`, or `profile`
 
-The `--update` flag regenerates from saved answers. To change languages or services, edit the saved answers file at `.devinit/.gdev-init-answers.yaml` and then run `--update`, or run a fresh `gdev init --force` with the new flags.
+The `--update` flag regenerates from saved answers. To change languages or services, edit the saved answers file at `.devinit/.qsdev-init-answers.yaml` and then run `--update`, or run a fresh `qsdev init --force` with the new flags.
 
 ### Pre-commit hooks fail after migration
 

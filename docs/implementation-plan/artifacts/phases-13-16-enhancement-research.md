@@ -1,6 +1,6 @@
 # Phases 13-16 Enhancement Research Synthesis
 
-Research synthesis from 5 parallel investigation spikes into implementation-ready recommendations for 4 new gdev phases. This artifact is the primary research reference for anyone implementing Phases 13-16 of the gdev-secure-devenv-bootstrap plan.
+Research synthesis from 5 parallel investigation spikes into implementation-ready recommendations for 4 new gdev phases. This artifact is the primary research reference for anyone implementing Phases 13-16 of the qsdev plan.
 
 ---
 
@@ -10,13 +10,13 @@ Five focused research spikes investigated the design space for extending gdev be
 
 The research yields four new phases:
 
-- **Phase 13: Project Configuration & Team Standards** -- Three-layer configuration hierarchy (binary defaults, project config, local overrides), four onboarding modes, Terraform-style version constraints, CI enforcement via `gdev check`, and client-specific compliance profiles.
+- **Phase 13: Project Configuration & Team Standards** -- Three-layer configuration hierarchy (binary defaults, project config, local overrides), four onboarding modes, Terraform-style version constraints, CI enforcement via `qsdev check`, and client-specific compliance profiles.
 
 - **Phase 14: Claude Code Integration & Agentic Skills** -- 10 gdev operation skills (6 user-only, 4 Claude-invocable), 7 consulting agents, 8+ consulting skills, five-layer context architecture, precision-scoped guardrail integration, and a five-layer safety model.
 
 - **Phase 15: Health, Status & Compliance** -- Scorecard-inspired three-layer posture scoring (0-100, A-F grades), conformance labels (baseline/enhanced PASS/FAIL), six-category drift detection completing in under 100ms, machine-readable output (JSON versioned, SARIF, shields.io badge), and team aggregation via CI artifacts.
 
-- **Phase 16: Developer Experience Polish** -- `gdev repair` (conservative self-healing), `gdev info` (lightweight status), `gdev outdated` (cross-ecosystem freshness), `gdev update` (coordinated infrastructure updates), `gdev teardown` (clean project exit with 3 profiles), git workflow automation (PR templates, branch naming, ticket extraction, PR labels), and shell integration (starship config, gdev env vars, enterShell notification).
+- **Phase 16: Developer Experience Polish** -- `qsdev repair` (conservative self-healing), `qsdev info` (lightweight status), `qsdev outdated` (cross-ecosystem freshness), `qsdev update` (coordinated infrastructure updates), `qsdev teardown` (clean project exit with 3 profiles), git workflow automation (PR templates, branch naming, ticket extraction, PR labels), and shell integration (starship config, gdev env vars, enterShell notification).
 
 ---
 
@@ -54,13 +54,13 @@ The central design decision for Phase 13. Six configuration sharing patterns wer
 - Updated quarterly via binary releases
 - Closest prior art: Nx workspace presets
 
-**Layer 2: Project Config (`.gdev.yaml` in repo)**
+**Layer 2: Project Config (`.qsdev.yaml` in repo)**
 - Profile selection, language/service overrides, client-specific settings, gdev version constraint
 - Travels with the repo via git, provides the team standard
 - Key fields: `version` (config schema integer), `gdev_version` (semver constraint), `profile` (named profile), `overrides` (per-field), `client` (client-specific settings)
 - Closest prior art: mise `.mise.toml`, proto `.prototools`
 
-**Layer 3: Local Overrides (`.gdev.local.yaml`, gitignored)**
+**Layer 3: Local Overrides (`.qsdev.local.yaml`, gitignored)**
 - Developer-specific preferences: extra packages, editor tools, permission levels
 - Never committed to git
 - Closest prior art: mise `.mise.local.toml`
@@ -69,16 +69,16 @@ The central design decision for Phase 13. Six configuration sharing patterns wer
 
 ### 3.2 Four Onboarding Modes
 
-A detection engine determines the appropriate mode when `gdev init` runs:
+A detection engine determines the appropriate mode when `qsdev init` runs:
 
 | Mode | Trigger | Behavior |
 |------|---------|----------|
-| **Create** | No `.gdev.yaml` found | Full wizard (quick path or customize) |
-| **Join** | `.gdev.yaml` exists, fresh clone | Minimal prompts, verify state, local setup only |
-| **Update** | `.gdev.yaml` exists, newer gdev version | Show changes since last version, offer `--update` |
-| **Repair** | `.gdev.yaml` exists, generated files drifted | Show drifted files, offer to fix |
+| **Create** | No `.qsdev.yaml` found | Full wizard (quick path or customize) |
+| **Join** | `.qsdev.yaml` exists, fresh clone | Minimal prompts, verify state, local setup only |
+| **Update** | `.qsdev.yaml` exists, newer gdev version | Show changes since last version, offer `--update` |
+| **Repair** | `.qsdev.yaml` exists, generated files drifted | Show drifted files, offer to fix |
 
-**Target**: 3 commands (`git clone`, `cd`, `gdev init`), under 2 minutes for returning engineers. Machine-specific setup (`gdev devenv setup`) runs once per machine, not per project. The detection engine distinguishes machine-specific setup (devenv, direnv, claude CLI installation) from project-specific setup (already in git).
+**Target**: 3 commands (`git clone`, `cd`, `qsdev init`), under 2 minutes for returning engineers. Machine-specific setup (`qsdev devenv setup`) runs once per machine, not per project. The detection engine distinguishes machine-specific setup (devenv, direnv, claude CLI installation) from project-specific setup (already in git).
 
 **Edge cases addressed**: Nix download failures (offline), trust prompt fatigue (pre-trust company directories), version skew in team (actionable errors), partial state from interrupted init (atomic write pipeline), conflicting existing config (plan preview before writing).
 
@@ -87,32 +87,32 @@ A detection engine determines the appropriate mode when `gdev init` runs:
 Three independent version axes that can drift:
 
 1. **Binary version** -- the gdev binary itself (e.g., v0.15.0)
-2. **Config schema version** -- the `.gdev.yaml` format version (integer: 1, 2, 3)
+2. **Config schema version** -- the `.qsdev.yaml` format version (integer: 1, 2, 3)
 3. **Template version** -- templates used to generate output files (tied to binary version)
 
-`.gdev.yaml` includes `gdev_version: ">= 0.15.0"` checked before any operation. Config schema migrations chain incrementally (v1 -> v2 -> v3, never v1 -> v3 directly). Support window: current version + 2 previous versions.
+`.qsdev.yaml` includes `gdev_version: ">= 0.15.0"` checked before any operation. Config schema migrations chain incrementally (v1 -> v2 -> v3, never v1 -> v3 directly). Support window: current version + 2 previous versions.
 
-**Version ratchet strategy**: Newer gdev versions can update generated files; older versions refuse to downgrade files produced by newer versions. This prevents an engineer with an older binary from overwriting improvements made by a teammate with a newer binary. `gdev init --update --bump-version` updates the constraint to signal the team.
+**Version ratchet strategy**: Newer gdev versions can update generated files; older versions refuse to downgrade files produced by newer versions. This prevents an engineer with an older binary from overwriting improvements made by a teammate with a newer binary. `qsdev init --update --bump-version` updates the constraint to signal the team.
 
-### 3.4 `gdev check` CI Enforcement
+### 3.4 `qsdev check` CI Enforcement
 
 A read-only validation command for CI pipelines that verifies project compliance against org policy. Five check categories:
 
-1. **Binary compatibility** -- gdev version meets `.gdev.yaml` constraint
-2. **Config integrity** -- `.gdev.yaml` parses correctly, profile exists, schema version supported
+1. **Binary compatibility** -- gdev version meets `.qsdev.yaml` constraint
+2. **Config integrity** -- `.qsdev.yaml` parses correctly, profile exists, schema version supported
 3. **Required tools** -- Org policy mandates certain tools are enabled
 4. **Generated file state** -- Machine-owned files match expected output; human-edited files checked for required content (deny rules, section markers)
 5. **Security hardening** -- Per-ecosystem security configs present and correct
 
 **Output formats**: Human-readable (default), JSON, SARIF 2.1.0 (for GitHub Security tab), JUnit XML (for Jenkins/GitLab CI). Exit codes: 0 (pass), 1 (fail), 2 (gdev error).
 
-**Auto-fix mode** (`gdev check --fix`): Applies deterministic fixes for safe issues (missing deny rules, missing pre-commit hooks, missing .gitignore entries). Does NOT auto-fix config structure changes, explicitly disabled security settings, or CI workflow changes.
+**Auto-fix mode** (`qsdev check --fix`): Applies deterministic fixes for safe issues (missing deny rules, missing pre-commit hooks, missing .gitignore entries). Does NOT auto-fix config structure changes, explicitly disabled security settings, or CI workflow changes.
 
-**Distinguished from `gdev devenv doctor`**: `gdev check` validates project config compliance (runs in CI); `gdev devenv doctor` validates machine/system state (runs locally). They complement each other.
+**Distinguished from `qsdev devenv doctor`**: `qsdev check` validates project config compliance (runs in CI); `qsdev devenv doctor` validates machine/system state (runs locally). They complement each other.
 
 ### 3.5 Client-Specific Profiles with Compliance Levels
 
-The `.gdev.yaml` `client` block encodes client-specific configuration with compliance level mapping:
+The `.qsdev.yaml` `client` block encodes client-specific configuration with compliance level mapping:
 
 | Setting | Baseline | Enhanced (SOC2) | Strict (HIPAA/FedRAMP) |
 |---------|----------|-----------------|----------------------|
@@ -126,9 +126,9 @@ The `.gdev.yaml` `client` block encodes client-specific configuration with compl
 
 Client profiles compose with language/project profiles via the resolution order: Org Defaults -> Client Profile -> Project Profile -> Project Overrides -> Local Overrides. **The client security level is a floor** -- no lower layer can reduce it.
 
-**Teardown profiles**: `--quick` (POC/spike, no archive), default (normal engagement end, archive + token revocation), `--compliance` (regulated client, archive + evidence report required). Archives preserve `.gdev.yaml`, state, last compliance report, tool versions, and devenv lock for re-engagement months later.
+**Teardown profiles**: `--quick` (POC/spike, no archive), default (normal engagement end, archive + token revocation), `--compliance` (regulated client, archive + evidence report required). Archives preserve `.qsdev.yaml`, state, last compliance report, tool versions, and devenv lock for re-engagement months later.
 
-**Compliance evidence**: `gdev evidence` generates machine-readable reports mapping gdev's security controls to compliance frameworks (SOC2 controls, HIPAA safeguards). Evidence is integrity-verified via gdev binary version hash, not cryptographically signed.
+**Compliance evidence**: `qsdev evidence` generates machine-readable reports mapping gdev's security controls to compliance frameworks (SOC2 controls, HIPAA safeguards). Evidence is integrity-verified via gdev binary version hash, not cryptographically signed.
 
 ### 3.6 Prior Art Analysis
 
@@ -136,7 +136,7 @@ Six configuration sharing patterns analyzed:
 
 | Pattern | Exemplars | Applicable to gdev |
 |---------|-----------|-------------------|
-| File-in-repo | EditorConfig, mise, proto | Yes -- Layer 2 (`.gdev.yaml`) |
+| File-in-repo | EditorConfig, mise, proto | Yes -- Layer 2 (`.qsdev.yaml`) |
 | Shareable config packages | ESLint, Prettier | No -- requires package registry, gdev is a compiled binary |
 | Preset repository | Renovate | Possible future extension via `extends` field |
 | Template + update | Copier, Projen | Partially -- gdev's migration strategy draws from Copier's three-way merge |
@@ -171,7 +171,7 @@ The `` !`command` `` syntax is a preprocessor that runs shell commands before sk
 
 ```markdown
 ## Current system state
-!`gdev devenv doctor --json 2>/dev/null || echo '{"error": "gdev not installed"}'`
+!`qsdev devenv doctor --json 2>/dev/null || echo '{"error": "gdev not installed"}'`
 ```
 
 This is the strongest CLI wrapper pattern identified in the ecosystem (from the GitHub PR summary skill pattern). It gives Claude actual project state before reasoning begins, which is dramatically more efficient than having Claude run discovery commands one by one.
@@ -274,7 +274,7 @@ Bash(pip *)    -- blocks pip list, pip show
 Bash(cargo *)  -- blocks cargo test, cargo build, cargo clippy
 ```
 
-A conflict detection test validates guardrail-workflow compatibility at `gdev init` and `gdev update` time:
+A conflict detection test validates guardrail-workflow compatibility at `qsdev init` and `qsdev update` time:
 
 ```go
 func TestGuardrailWorkflowCompatibility(config Config) []Conflict {
@@ -396,7 +396,7 @@ Drift detection builds on gdev's existing SHA256 hash tracking from the migratio
 
 **Recommended architecture**: CI artifact aggregation (no new infrastructure).
 
-Each project's CI pipeline generates `gdev status --json > posture.json` as a build artifact. A separate aggregation job collects artifacts across repos and generates the team report. This follows the scorecard-monitor pattern.
+Each project's CI pipeline generates `qsdev status --json > posture.json` as a build artifact. A separate aggregation job collects artifacts across repos and generates the team report. This follows the scorecard-monitor pattern.
 
 **Team report outputs**:
 - Markdown summary dashboard with project score table, conformance rates, total vulnerability counts, trend tracking, attention-required alerts
@@ -423,12 +423,12 @@ Each project's CI pipeline generates `gdev status --json > posture.json` as a bu
 
 **Source spike**: `gdev-dx-polish`
 
-### 6.1 `gdev repair` (Conservative Self-Healing)
+### 6.1 `qsdev repair` (Conservative Self-Healing)
 
-A companion to `gdev devenv doctor` (read-only diagnostic):
+A companion to `qsdev devenv doctor` (read-only diagnostic):
 
-- `gdev devenv doctor` diagnoses (never modifies files)
-- `gdev repair` fixes what can be safely fixed automatically
+- `qsdev devenv doctor` diagnoses (never modifies files)
+- `qsdev repair` fixes what can be safely fixed automatically
 
 **Auto-fix rules**:
 - Machine-owned files with no user edits detected: regenerate
@@ -442,7 +442,7 @@ A companion to `gdev devenv doctor` (read-only diagnostic):
 
 Four failure categories mapped with detection and recovery strategies: Nix/devenv failures, generated config corruption, tool/package failures, and environment drift.
 
-### 6.2 `gdev info` (Lightweight Status)
+### 6.2 `qsdev info` (Lightweight Status)
 
 Subsecond response, no evaluation or checks -- just reads cached state and displays it:
 
@@ -455,9 +455,9 @@ devenv: v2.1.0, shell healthy
 gdev: v1.2.0 (config current)
 ```
 
-Useful for "where am I? what's active?" without the overhead of `gdev status` (which runs health checks).
+Useful for "where am I? what's active?" without the overhead of `qsdev status` (which runs health checks).
 
-### 6.3 `gdev outdated` (Cross-Ecosystem Freshness)
+### 6.3 `qsdev outdated` (Cross-Ecosystem Freshness)
 
 A thin wrapper, not a full aggregator. For each detected ecosystem:
 1. Run the native outdated command (`npm outdated`, `pip list --outdated`, `go list -m -u all`, etc.)
@@ -466,16 +466,16 @@ A thin wrapper, not a full aggregator. For each detected ecosystem:
 
 Does NOT parse/normalize output formats, provide a unified table, track versions itself, or duplicate Renovate's analysis. This is ~50 lines of Go per ecosystem. The value is "one command to check everything" without the complexity of a "unified dependency analysis platform."
 
-### 6.4 `gdev update` (Coordinated Updates)
+### 6.4 `qsdev update` (Coordinated Updates)
 
 Coordinates gdev's own managed artifacts in 3 steps:
 1. Check for gdev binary updates (self-update)
 2. Regenerate configs for new version (devenv.nix, settings.json, etc.)
 3. Update devenv inputs (`devenv update`)
 
-Step 4 (application dependencies: npm, pip, cargo) is explicitly excluded -- that is Renovate's domain. `gdev update` is the "keep gdev infrastructure current" command, not a general-purpose dependency updater.
+Step 4 (application dependencies: npm, pip, cargo) is explicitly excluded -- that is Renovate's domain. `qsdev update` is the "keep gdev infrastructure current" command, not a general-purpose dependency updater.
 
-### 6.5 `gdev teardown` (Clean Exit with 3 Profiles)
+### 6.5 `qsdev teardown` (Clean Exit with 3 Profiles)
 
 | Profile | When | Archive | Nix GC | Token Revocation | Evidence |
 |---------|------|---------|--------|-----------------|---------|
@@ -485,7 +485,7 @@ Step 4 (application dependencies: npm, pip, cargo) is explicitly excluded -- tha
 
 Teardown actions: archive config, remove devenv environment (Nix store GC), revoke MCP tokens, remove from trusted paths, generate teardown evidence (optional). Does NOT delete the git repository, revoke cloud credentials, or clear browser state.
 
-Archives preserve `.gdev.yaml`, internal state, last compliance report, tool versions, and devenv.lock for re-engagement. Re-engagement workflow: `git clone`, `cd`, `gdev init` detects archive and offers restore + migration.
+Archives preserve `.qsdev.yaml`, internal state, last compliance report, tool versions, and devenv.lock for re-engagement. Re-engagement workflow: `git clone`, `cd`, `qsdev init` detects archive and offers restore + migration.
 
 ### 6.6 Git Workflow Automation
 
@@ -508,7 +508,7 @@ Four features to include, two to exclude:
 
 **Include**:
 - **Starship config generation** (opt-in) -- Generate `starship.toml` with gdev project context via devenv's native `starship.enable`
-- **gdev env vars in devenv.nix** -- `GDEV_PROJECT_NAME`, `GDEV_SECURITY_PROFILE`, `GDEV_VERSION`, `GDEV_ECOSYSTEMS` (enables any prompt tool, not just starship)
+- **gdev env vars in devenv.nix** -- `QSDEV_PROJECT_NAME`, `QSDEV_SECURITY_PROFILE`, `QSDEV_VERSION`, `QSDEV_ECOSYSTEMS` (enables any prompt tool, not just starship)
 - **devenv enterShell notification** -- One-line "gdev project: acme-frontend" on shell entry via devenv's enterShell task
 
 **Exclude**:
@@ -562,7 +562,7 @@ The configuration hierarchy (binary -> project -> local) draws from mise/proto f
 
 ### 8.2 Skills Over Commands
 
-Skills (`.claude/skills/*/SKILL.md`) replace the legacy command format (`.claude/commands/*.md`). Skills support directory structure for supporting files, full frontmatter control, auto-invocation by Claude, and live change detection. They also match gdev's `embed.FS` pattern -- skills are embedded in the binary and deployed during `gdev init`.
+Skills (`.claude/skills/*/SKILL.md`) replace the legacy command format (`.claude/commands/*.md`). Skills support directory structure for supporting files, full frontmatter control, auto-invocation by Claude, and live change detection. They also match gdev's `embed.FS` pattern -- skills are embedded in the binary and deployed during `qsdev init`.
 
 ### 8.3 Context Budget Management
 
@@ -577,7 +577,7 @@ Model-aware generation adjusts the configuration for Sonnet (200k, tight budget)
 
 ### 8.4 Conservative Repair
 
-`gdev repair` follows strict rules: never touch `devenv.nix` (human-edited, too variable), always backup before overwriting, only auto-fix unambiguously safe changes, require `--force` for aggressive repair. This prevents the tool from destroying user customizations, which would erode trust and cause engineers to avoid using it.
+`qsdev repair` follows strict rules: never touch `devenv.nix` (human-edited, too variable), always backup before overwriting, only auto-fix unambiguously safe changes, require `--force` for aggressive repair. This prevents the tool from destroying user customizations, which would erode trust and cause engineers to avoid using it.
 
 ### 8.5 Compliance Evidence Without New Infrastructure
 
@@ -597,7 +597,7 @@ Agents accumulate persistent memory across sessions (useful for consulting, wher
 
 ### 8.8 Precision Guardrails Over Broad Restrictions
 
-Deny rules target specific dangerous operations (`npm install *`), not broad tool categories (`npm *`). This ensures that workflow skills (`npm test *`, `cargo build *`) are not blocked by security guardrails. A conflict detection test validates compatibility at `gdev init`/`gdev update` time.
+Deny rules target specific dangerous operations (`npm install *`), not broad tool categories (`npm *`). This ensures that workflow skills (`npm test *`, `cargo build *`) are not blocked by security guardrails. A conflict detection test validates compatibility at `qsdev init`/`qsdev update` time.
 
 ### 8.9 JSON Schema Versioned From Day One
 
@@ -613,14 +613,14 @@ Following Scorecard v6's evolution: numeric scores (0-100, A-F) provide nuanced 
 
 ### Phase 13 (Configuration & Team Standards)
 
-- **Remote config extension**: Should `.gdev.yaml` support an `extends` field referencing a remote config repo (like Renovate's preset repos)? This would allow cross-repo standardization without recompiling the binary, but adds network dependency and complexity.
+- **Remote config extension**: Should `.qsdev.yaml` support an `extends` field referencing a remote config repo (like Renovate's preset repos)? This would allow cross-repo standardization without recompiling the binary, but adds network dependency and complexity.
 - **Monorepo support**: How should gdev handle monorepo scenarios where subdirectories need different configurations? The current design operates at the project root only.
 - **Cryptographic signing**: Should compliance evidence reports be cryptographically signed for non-repudiation, or is integrity verification (hash-based) sufficient?
 - **Profile distribution**: What is the right mechanism for distributing new profiles without requiring a full binary rebuild? Approaches: WASM plugins, HTTPS-fetched profile registry, or accept that binary updates are the distribution channel.
 
 ### Phase 14 (Claude Code Integration & Agentic Skills)
 
-- **Plugin marketplace**: Should gdev ship as a Claude Code plugin (installable via `/plugin marketplace add`) in addition to embedding skills during `gdev init`?
+- **Plugin marketplace**: Should gdev ship as a Claude Code plugin (installable via `/plugin marketplace add`) in addition to embedding skills during `qsdev init`?
 - **Existing addon interaction**: How should gdev skills interact with the existing claudecode addon's hooks and deny rules?
 - **Interactive wizard skill**: Should there be a `/gdev-wizard` skill providing an interactive chat-based alternative to the huh form wizard?
 - **Skill versioning**: How should gdev version its embedded skill library for updates? (embed.FS copies vs git-based remote library)
@@ -632,16 +632,16 @@ Following Scorecard v6's evolution: numeric scores (0-100, A-F) provide nuanced 
 ### Phase 15 (Health, Status & Compliance)
 
 - **Scoring weight configurability**: Should the scoring weights (defense 40%, config 30%, deps 30%) be configurable per-profile, or hardcoded with escape hatch?
-- **First-run state**: How should `gdev status` handle the first run before any tools are enabled (all zeros vs "not initialized" state)?
-- **Vulnerability scan caching**: Should scan results be cached in `.gdev/cache/` (gitignored) or regenerated on every `gdev status --scan`?
+- **First-run state**: How should `qsdev status` handle the first run before any tools are enabled (all zeros vs "not initialized" state)?
+- **Vulnerability scan caching**: Should scan results be cached in `.gdev/cache/` (gitignored) or regenerated on every `qsdev status --scan`?
 - **JUnit value**: Is JUnit output worth building, or does SARIF cover the CI integration need sufficiently?
-- **Team report command**: Should `gdev team-report` be a separate binary/command or a subcommand of gdev?
+- **Team report command**: Should `qsdev team-report` be a separate binary/command or a subcommand of gdev?
 
 ### Phase 16 (DX Polish)
 
-- **Project discovery**: Should `gdev projects` scan a configurable list of directories or discover projects automatically? (Auto-discovery could be slow on large filesystems.)
+- **Project discovery**: Should `qsdev projects` scan a configurable list of directories or discover projects automatically? (Auto-discovery could be slow on large filesystems.)
 - **OTEL collector recommendation**: Should gdev's OTEL profile include a recommended free-tier collector (Grafana Cloud free) or only support self-hosted?
-- **Repair and tool lifecycle**: How does `gdev repair` interact with the tool lifecycle system (`gdev enable/disable`)? Should repair reinstall disabled tools?
+- **Repair and tool lifecycle**: How does `qsdev repair` interact with the tool lifecycle system (`qsdev enable/disable`)? Should repair reinstall disabled tools?
 
 ---
 

@@ -227,7 +227,7 @@ func TestEvalCheckExpression_Whitespace(t *testing.T) {
 }
 
 func TestLoadPolicyFile_NotFound(t *testing.T) {
-	pf, err := LoadPolicyFile("/nonexistent/path/.gdev-policy.yaml")
+	pf, err := LoadPolicyFile("/nonexistent/path/.qsdev-policy.yaml")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestLoadPolicyFile_NotFound(t *testing.T) {
 
 func TestLoadPolicyFile_ValidYAML(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".gdev-policy.yaml")
+	path := filepath.Join(dir, ".qsdev-policy.yaml")
 
 	content := `conformance:
   custom:
@@ -273,7 +273,7 @@ func TestLoadPolicyFile_ValidYAML(t *testing.T) {
 
 func TestLoadPolicyFile_InvalidYAML(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".gdev-policy.yaml")
+	path := filepath.Join(dir, ".qsdev-policy.yaml")
 
 	if err := os.WriteFile(path, []byte("conformance:\n  custom:\n    - :\n  ][broken"), 0644); err != nil {
 		t.Fatal(err)
@@ -287,7 +287,7 @@ func TestLoadPolicyFile_InvalidYAML(t *testing.T) {
 
 func TestLoadPolicyFile_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".gdev-policy.yaml")
+	path := filepath.Join(dir, ".qsdev-policy.yaml")
 
 	if err := os.WriteFile(path, []byte(""), 0644); err != nil {
 		t.Fatal(err)

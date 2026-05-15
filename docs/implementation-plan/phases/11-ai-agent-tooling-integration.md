@@ -2,7 +2,7 @@
 
 ## Goal
 
-Integrate three AI agent enhancement tools — agent-postmortem-skill (task verification), Version-Sentinel (dependency version guardrails), and semble (semantic code search) — into the gdev addon ecosystem. The Claude Code addon generates configuration that deploys, configures, and optionally customizes these tools per-project. The wizard exposes opt-in/opt-out for each tool. At the end of this phase, `gdev init` can deploy a complete AI agent toolkit alongside the security hardening from earlier phases.
+Integrate three AI agent enhancement tools — agent-postmortem-skill (task verification), Version-Sentinel (dependency version guardrails), and semble (semantic code search) — into the gdev addon ecosystem. The Claude Code addon generates configuration that deploys, configures, and optionally customizes these tools per-project. The wizard exposes opt-in/opt-out for each tool. At the end of this phase, `qsdev init` can deploy a complete AI agent toolkit alongside the security hardening from earlier phases.
 
 ## Dependencies
 
@@ -25,7 +25,7 @@ Phase 4 complete (Claude Code addon core generation — settings.json, CLAUDE.md
 
 **Context:** The agent-postmortem-skill is a prompt-based verification protocol (3.6KB SKILL.md) that prevents AI agents from claiming "done" without evidence. It's MIT-licensed and integrates by placing `SKILL.md` in `.claude/skills/agent-postmortem/`. The base skill is static, but gdev adds value by injecting project-specific verification commands based on detected ecosystems. A Go project gets `go build ./...` and `go test ./...`; a Node project gets `npm test` and `npm run lint`; a Rust project gets `cargo build` and `cargo test`. This makes the postmortem skill immediately useful without manual configuration.
 
-**Desired Outcome:** `gdev init` generates a customized agent-postmortem SKILL.md with verification commands matching the detected project type.
+**Desired Outcome:** `qsdev init` generates a customized agent-postmortem SKILL.md with verification commands matching the detected project type.
 
 **Steps:**
 1. Embed the base agent-postmortem SKILL.md in `addons/claudecode/skills/agent-postmortem/SKILL.md` via `embed.FS`.
@@ -53,7 +53,7 @@ Phase 4 complete (Claude Code addon core generation — settings.json, CLAUDE.md
    - Docker: `hadolint Dockerfile`, `docker build .`
    - Terraform: `terraform validate`, `terraform plan`
 6. Template the SKILL.md to inject detected verification commands into the "Required verification commands" section. Keep the base skill structure unchanged — only customize the verification command list.
-7. Generate the file at `.claude/skills/agent-postmortem/SKILL.md` during `gdev init`.
+7. Generate the file at `.claude/skills/agent-postmortem/SKILL.md` during `qsdev init`.
 8. Support `MergeStrategy: Overwrite` for machine-managed file (regenerated on update).
 9. Write unit tests verifying template output for Go, Node, and multi-ecosystem projects.
 
@@ -81,7 +81,7 @@ Phase 4 complete (Claude Code addon core generation — settings.json, CLAUDE.md
 
 **Context:** Version-Sentinel is a Claude Code plugin (MIT, v0.2.1) that uses PreToolUse hooks to intercept manifest edits and package install commands, blocking them if no fresh version verification exists. It supports npm, pip, pyproject.toml, Cargo.toml, and .csproj — covering 5 of gdev's 8 Tier 1 ecosystems. The plugin installs via the Claude Code plugin marketplace. gdev's integration generates the install command, configures `window_hours` and the ignore file, and ensures prerequisites (bash, jq, curl, python3 >=3.11) are present.
 
-**Desired Outcome:** `gdev init` with Version-Sentinel enabled generates plugin installation instructions and per-project configuration.
+**Desired Outcome:** `qsdev init` with Version-Sentinel enabled generates plugin installation instructions and per-project configuration.
 
 **Steps:**
 1. Create `internal/agenttools/versionsentinel.go` with `GenerateVersionSentinelConfig(ecosystems []EcosystemModule, config VSConfig) []GeneratedFile`.
@@ -101,12 +101,12 @@ Phase 4 complete (Claude Code addon core generation — settings.json, CLAUDE.md
    claude plugin marketplace add https://github.com/KSEGIT/Version-Sentinel.git
    claude plugin install version-sentinel@version-sentinel-marketplace
    ```
-5. Check Version-Sentinel prerequisite availability (jq, curl, python3 >=3.11) during `gdev devenv doctor` — add these to the prerequisite checks in Phase 9.
+5. Check Version-Sentinel prerequisite availability (jq, curl, python3 >=3.11) during `qsdev devenv doctor` — add these to the prerequisite checks in Phase 9.
 6. Generate ecosystem-specific coverage notes in CLAUDE.md:
    - Covered: npm (package.json), pip (requirements.txt), pyproject.toml, Cargo.toml, .csproj/.fsproj/.vbproj
    - Not yet covered by Version-Sentinel: Go (go.mod), Maven (pom.xml), Gradle (build.gradle), Docker, Terraform, PHP (composer.json), Ruby (Gemfile)
    - For uncovered ecosystems: note that manual version verification is needed
-7. Support `gdev init --version-sentinel=false` to skip.
+7. Support `qsdev init --version-sentinel=false` to skip.
 8. Add VS_WINDOW_HOURS to generated environment or plugin config when non-default.
 9. Handle interaction with attach-guard and other PreToolUse hooks — Version-Sentinel uses different matchers (Edit|Write|MultiEdit for manifests, Bash for install commands) so hooks don't conflict.
 10. Write unit tests verifying generated ignore file and CLAUDE.md sections.
@@ -115,7 +115,7 @@ Phase 4 complete (Claude Code addon core generation — settings.json, CLAUDE.md
 - [ ] Plugin installation command generated correctly
 - [ ] `.version-sentinel/ignore` file generated with private package patterns
 - [ ] CLAUDE.md includes Version-Sentinel coverage notes per detected ecosystem
-- [ ] Prerequisites (jq, curl, python3) flagged in `gdev devenv doctor` when Version-Sentinel enabled
+- [ ] Prerequisites (jq, curl, python3) flagged in `qsdev devenv doctor` when Version-Sentinel enabled
 - [ ] Non-default `window_hours` reflected in configuration
 - [ ] No hook conflicts with attach-guard or other PreToolUse hooks
 - [ ] Skip flag (`--version-sentinel=false`) works
@@ -138,7 +138,7 @@ Phase 4 complete (Claude Code addon core generation — settings.json, CLAUDE.md
 
 **Context:** Semble is a code search library for AI agents (MIT, v0.1.7, 798 stars) that uses tree-sitter AST chunking + hybrid semantic/BM25 search. It runs as an MCP server or Claude Code sub-agent. Integration is lightweight: either add an MCP server config entry or write a `.claude/agents/semble-search.md` file. Semble requires Python >=3.10 and `uvx` (or pip) for installation. The MCP server auto-indexes the project directory and watches for file changes.
 
-**Desired Outcome:** `gdev init` with semble enabled configures either MCP server mode or sub-agent mode for semantic code search.
+**Desired Outcome:** `qsdev init` with semble enabled configures either MCP server mode or sub-agent mode for semantic code search.
 
 **Steps:**
 1. Create `internal/agenttools/semble.go` with `GenerateSembleConfig(mode SembleMode, projectRoot string) []GeneratedFile`.
@@ -156,13 +156,13 @@ Phase 4 complete (Claude Code addon core generation — settings.json, CLAUDE.md
    ```
 4. **Sub-agent mode**: Generate `.claude/agents/semble-search.md` — embed the standard agent definition from semble's repo (instructs Claude to use `semble search` and `semble find-related` CLI commands).
 5. Add `--include-text-files` flag to MCP args when project contains significant non-code files (infrastructure repos with YAML/Markdown, detected from ecosystem modules: Terraform, Helm, Ansible).
-6. Check semble prerequisite: `python3 --version` >= 3.10 and `uvx` available. Add to `gdev devenv doctor` checks when semble is enabled.
+6. Check semble prerequisite: `python3 --version` >= 3.10 and `uvx` available. Add to `qsdev devenv doctor` checks when semble is enabled.
 7. Support pre-indexing by passing project path as argument to MCP server:
    ```json
    "args": ["--from", "semble[mcp]", "semble", "/path/to/project"]
    ```
 8. Handle `.mcp.json` merge strategy — if file exists, merge the `semble` entry into existing servers rather than overwriting. Use `MergeStrategy: ThreeWayMerge` for .mcp.json.
-9. Support `gdev init --semble=false` and `gdev init --semble-mode=mcp|subagent|both` flags.
+9. Support `qsdev init --semble=false` and `qsdev init --semble-mode=mcp|subagent|both` flags.
 10. Write unit tests verifying .mcp.json generation and merge for both clean and existing configs.
 
 **Acceptance Criteria:**
@@ -170,7 +170,7 @@ Phase 4 complete (Claude Code addon core generation — settings.json, CLAUDE.md
 - [ ] Sub-agent mode generates `.claude/agents/semble-search.md`
 - [ ] `--include-text-files` auto-enabled for infrastructure-heavy projects
 - [ ] `.mcp.json` merge preserves existing MCP server entries
-- [ ] Python/uvx prerequisite check integrated with `gdev devenv doctor`
+- [ ] Python/uvx prerequisite check integrated with `qsdev devenv doctor`
 - [ ] Mode selection works via flag and wizard
 - [ ] Skip flag (`--semble=false`) works
 - [ ] Unit tests pass for clean and merge scenarios
@@ -298,12 +298,12 @@ Phase 4 complete (Claude Code addon core generation — settings.json, CLAUDE.md
 ## Phase Completion Criteria
 
 - [ ] All five units pass acceptance criteria
-- [ ] `gdev init` in a Go project generates agent-postmortem skill with Go verification commands
-- [ ] `gdev init` in a Node project generates Version-Sentinel config with npm support noted
-- [ ] `gdev init` generates semble MCP config that Claude Code can connect to
+- [ ] `qsdev init` in a Go project generates agent-postmortem skill with Go verification commands
+- [ ] `qsdev init` in a Node project generates Version-Sentinel config with npm support noted
+- [ ] `qsdev init` generates semble MCP config that Claude Code can connect to
 - [ ] Wizard shows AI agent tools with correct smart defaults per detected project
-- [ ] `gdev init --yes` deploys all three tools with defaults on a supported project
-- [ ] `gdev init --postmortem=false --version-sentinel=false --semble=false` skips all three
+- [ ] `qsdev init --yes` deploys all three tools with defaults on a supported project
+- [ ] `qsdev init --postmortem=false --version-sentinel=false --semble=false` skips all three
 - [ ] Multi-ecosystem project (Go + TypeScript + Rust) gets combined verification commands and accurate VS coverage report
 - [ ] No hook conflicts between Version-Sentinel, attach-guard, and other PreToolUse hooks
 - [ ] Generated CLAUDE.md sections document which AI agent tools are active and their coverage

@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/shellintegration"
+	"github.com/Quantum-Serendipity/qsdev/internal/shellintegration"
 )
 
 const binaryName = "qsdev"

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // ProfileSummary describes a built-in infrastructure profile.
@@ -15,7 +15,7 @@ type ProfileSummary struct {
 }
 
 // builtInProfiles contains the pre-defined infrastructure profiles.
-var builtInProfiles = map[string]*types.GdevConfig{
+var builtInProfiles = map[string]*types.QsdevConfig{
 	"consulting-default": consultingDefaultProfile(),
 	"startup-fast":       startupFastProfile(),
 	"enterprise":         enterpriseProfile(),
@@ -28,10 +28,10 @@ var builtInDescriptions = map[string]string{
 	"enterprise":         "Strict security with all security tools; restricted Claude Code; audit logging enabled",
 }
 
-func consultingDefaultProfile() *types.GdevConfig {
+func consultingDefaultProfile() *types.QsdevConfig {
 	t := true
 	enabled := true
-	return &types.GdevConfig{
+	return &types.QsdevConfig{
 		Security: types.SecurityConfig{
 			Level:          "enhanced",
 			AgeGating:      &t,
@@ -50,10 +50,10 @@ func consultingDefaultProfile() *types.GdevConfig {
 	}
 }
 
-func startupFastProfile() *types.GdevConfig {
+func startupFastProfile() *types.QsdevConfig {
 	t := true
 	enabled := true
-	return &types.GdevConfig{
+	return &types.QsdevConfig{
 		Security: types.SecurityConfig{
 			Level:          "baseline",
 			AgeGating:      &t,
@@ -71,10 +71,10 @@ func startupFastProfile() *types.GdevConfig {
 	}
 }
 
-func enterpriseProfile() *types.GdevConfig {
+func enterpriseProfile() *types.QsdevConfig {
 	t := true
 	enabled := true
-	return &types.GdevConfig{
+	return &types.QsdevConfig{
 		Security: types.SecurityConfig{
 			Level:          "strict",
 			AgeGating:      &t,
@@ -92,9 +92,9 @@ func enterpriseProfile() *types.GdevConfig {
 	}
 }
 
-// GetBuiltInProfile returns the GdevConfig for a named built-in profile.
+// GetBuiltInProfile returns the QsdevConfig for a named built-in profile.
 // Returns an error listing available profiles if the name is not found.
-func GetBuiltInProfile(name string) (*types.GdevConfig, error) {
+func GetBuiltInProfile(name string) (*types.QsdevConfig, error) {
 	cfg, ok := builtInProfiles[name]
 	if !ok {
 		available := make([]string, 0, len(builtInProfiles))
@@ -122,9 +122,9 @@ func ListBuiltInProfiles() []ProfileSummary {
 	return result
 }
 
-// OrgDefaults returns the organization-wide default GdevConfig.
-// This is a convenience re-export of DefaultGdevConfig for clarity in
+// OrgDefaults returns the organization-wide default QsdevConfig.
+// This is a convenience re-export of DefaultQsdevConfig for clarity in
 // the resolution chain.
-func OrgDefaults() *types.GdevConfig {
-	return DefaultGdevConfig()
+func OrgDefaults() *types.QsdevConfig {
+	return DefaultQsdevConfig()
 }

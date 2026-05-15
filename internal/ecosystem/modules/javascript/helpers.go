@@ -1,5 +1,5 @@
 // Package javascript implements the JavaScript/TypeScript ecosystem module
-// for gdev-secure-devenv-bootstrap. It detects Node.js projects, determines
+// for qsdev. It detects Node.js projects, determines
 // the package manager in use, and generates security-hardened configurations.
 package javascript
 

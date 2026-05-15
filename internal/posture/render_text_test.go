@@ -106,7 +106,7 @@ func TestRenderText_DefaultContainsSections(t *testing.T) {
 	}
 
 	// Should contain footer hint.
-	if !strings.Contains(output, "gdev status --verbose") {
+	if !strings.Contains(output, "qsdev status --verbose") {
 		t.Error("missing footer hint about --verbose")
 	}
 }
@@ -131,7 +131,7 @@ func TestRenderText_FixModeOnlyRemediation(t *testing.T) {
 							Severity:    DriftWarning,
 							Subject:     "test.yml",
 							Description: "File was modified",
-							Remediation: "Run gdev update to regenerate this file",
+							Remediation: "Run qsdev update to regenerate this file",
 						},
 						{
 							Severity:    DriftInfo,
@@ -162,12 +162,12 @@ func TestRenderText_FixModeOnlyRemediation(t *testing.T) {
 	}
 
 	// Should contain the drift remediation.
-	if !strings.Contains(output, "Run gdev update to regenerate this file") {
+	if !strings.Contains(output, "Run qsdev update to regenerate this file") {
 		t.Error("missing drift remediation")
 	}
 
 	// Should contain the conformance remediation.
-	if !strings.Contains(output, "Run gdev init to generate CLAUDE.md") {
+	if !strings.Contains(output, "Run qsdev init to generate CLAUDE.md") {
 		t.Error("missing conformance remediation for claude-md-present")
 	}
 
@@ -191,9 +191,9 @@ func TestRenderText_FixModeDeduplicatesRemediations(t *testing.T) {
 				{
 					Name: "cat",
 					Findings: []DriftFinding{
-						{Remediation: "Run gdev update"},
-						{Remediation: "Run gdev update"}, // duplicate
-						{Remediation: "Run gdev init"},
+						{Remediation: "Run qsdev update"},
+						{Remediation: "Run qsdev update"}, // duplicate
+						{Remediation: "Run qsdev init"},
 					},
 				},
 			},
@@ -237,7 +237,7 @@ func TestRenderText_FixModeNoRemediations(t *testing.T) {
 func TestRenderText_VerboseContainsDetails(t *testing.T) {
 	report := &PostureReport{
 		SchemaVersion: SchemaVersion,
-		GdevVersion:   "1.0.0",
+		QsdevVersion:   "1.0.0",
 		ProjectName:   "verbose-test",
 		ProjectPath:   "/tmp/test",
 		Score:         AggregateScore{Total: 85, Grade: "B", Defense: 90, Config: 80, DepHealth: 75},
@@ -279,7 +279,7 @@ func TestRenderText_VerboseContainsDetails(t *testing.T) {
 				{
 					Name: "test",
 					Findings: []DriftFinding{
-						{Severity: DriftWarning, Subject: "test.yml", Description: "modified", Remediation: "Run gdev update"},
+						{Severity: DriftWarning, Subject: "test.yml", Description: "modified", Remediation: "Run qsdev update"},
 					},
 				},
 			},
@@ -312,7 +312,7 @@ func TestRenderText_VerboseContainsDetails(t *testing.T) {
 		"current",
 		"machine-owned",
 		"Drift: 1 finding(s)",
-		"Fix: Run gdev update",
+		"Fix: Run qsdev update",
 		"semgrep",
 	}
 

@@ -220,13 +220,13 @@ type VulnSeverityCounts struct {
 
 ## Consulting Engineer User Stories
 
-1. **"Show me the quick picture"** -> `gdev status` prints colored summary with score and grade
-2. **"What's wrong?"** -> `gdev status --verbose` shows per-layer detail with remediation hints
-3. **"Is CI going to pass?"** -> `gdev status --audit-level high` exits non-zero if high+ findings
-4. **"Generate audit evidence"** -> `gdev status --format json > posture.json` for compliance records
-5. **"What can I enable?"** -> `gdev status` shows available-but-disabled tools
-6. **"Did someone break the config?"** -> `gdev status` flags modified machine-owned files
-7. **"Update the badge"** -> `gdev status --format badge` generates shields.io-compatible JSON
+1. **"Show me the quick picture"** -> `qsdev status` prints colored summary with score and grade
+2. **"What's wrong?"** -> `qsdev status --verbose` shows per-layer detail with remediation hints
+3. **"Is CI going to pass?"** -> `qsdev status --audit-level high` exits non-zero if high+ findings
+4. **"Generate audit evidence"** -> `qsdev status --format json > posture.json` for compliance records
+5. **"What can I enable?"** -> `qsdev status` shows available-but-disabled tools
+6. **"Did someone break the config?"** -> `qsdev status` flags modified machine-owned files
+7. **"Update the badge"** -> `qsdev status --format badge` generates shields.io-compatible JSON
 
 ## Tradeoffs and Limitations
 
@@ -234,7 +234,7 @@ type VulnSeverityCounts struct {
 
 **False sense of security:** A score of 90/100 doesn't mean "secure" -- it means "gdev's managed defenses are mostly enabled." Supply chain attacks, zero-days, and logic bugs are outside gdev's scope. The report should include a disclaimer.
 
-**Scan freshness:** Dependency health depends on vulnerability databases being queried. `gdev status` can't run npm audit, cargo audit, and govulncheck on every invocation (too slow). Options: cache results, show last-scan time, offer `gdev status --scan` for fresh results.
+**Scan freshness:** Dependency health depends on vulnerability databases being queried. `qsdev status` can't run npm audit, cargo audit, and govulncheck on every invocation (too slow). Options: cache results, show last-scan time, offer `qsdev status --scan` for fresh results.
 
 **Offline capability:** Some checks (vulnerability scanning) require network access. The posture model should degrade gracefully -- show defense and config layers even when dependency health can't be assessed.
 

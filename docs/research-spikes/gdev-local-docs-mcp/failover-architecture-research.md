@@ -323,9 +323,9 @@ back to web search.
 
 **Mitigation**: gdev's update mechanism should:
 1. Track installed doc versions vs project dependency versions
-2. Flag mismatches during `gdev status` or similar health checks
-3. Offer `gdev docs update` to refresh specific doc sets
-4. The skill can inject version info via `!` preprocessor: `` !`gdev docs versions` ``
+2. Flag mismatches during `qsdev status` or similar health checks
+3. Offer `qsdev docs update` to refresh specific doc sets
+4. The skill can inject version info via `!` preprocessor: `` !`qsdev docs versions` ``
 
 ### 4.2 Library Not in Local Corpus
 
@@ -343,7 +343,7 @@ back to web search.
 **Skill-level instruction**:
 ```
 If a library is not in the local DevDocs corpus, suggest that the user
-add it to their gdev documentation profile: `gdev docs add <library>`
+add it to their gdev documentation profile: `qsdev docs add <library>`
 ```
 
 ### 4.3 Air-Gapped Environment (Web Fallback Unavailable)
@@ -397,7 +397,7 @@ If local sources provide conflicting information:
 - Claude sees the tool as unavailable and moves to the next source
 - Unlike a meta-MCP server, other sources remain fully functional
 
-**Recovery**: User runs `/mcp` to see status, then `gdev docs health` to diagnose and restart the crashed server.
+**Recovery**: User runs `/mcp` to see status, then `qsdev docs health` to diagnose and restart the crashed server.
 
 ---
 
@@ -468,7 +468,7 @@ As surveyed in Section 1.2, no existing MCP aggregation project implements prior
 │  │  - Priority ordering instructions        │   │
 │  │  - Source tagging rules                  │   │
 │  │  - Degradation behavior                  │   │
-│  │  - Dynamic context: !`gdev docs status`  │   │
+│  │  - Dynamic context: !`qsdev docs status`  │   │
 │  └──────────────────────────────────────────┘   │
 │                      │                           │
 │          (Claude's tool selection)               │
@@ -581,7 +581,7 @@ allowed-tools: >
 
 ### Available Local Documentation
 
-!`gdev docs status --json 2>/dev/null || echo '{"status": "gdev not available"}'`
+!`qsdev docs status --json 2>/dev/null || echo '{"status": "gdev not available"}'`
 
 ### Priority Order
 
@@ -635,7 +635,7 @@ Tag every piece of documentation with its source:
 The skill uses Claude Code's `!` preprocessor to inject live status information:
 
 ```
-!`gdev docs status --json`
+!`qsdev docs status --json`
 ```
 
 This could output:
@@ -682,7 +682,7 @@ carries lower prompt injection risk than web-fetched content.
 If skill-level routing proves insufficient, the architecture supports incremental migration:
 
 1. **Phase 1 (current recommendation)**: Skill-level routing with separate MCP servers
-2. **Phase 2 (if needed)**: Add telemetry to `gdev docs` CLI to track local hit rates, web fallback frequency, source usage patterns
+2. **Phase 2 (if needed)**: Add telemetry to `qsdev docs` CLI to track local hit rates, web fallback frequency, source usage patterns
 3. **Phase 3 (if needed)**: Build a lightweight TypeScript MCP server that wraps DevDocs JSON + web fallback, replacing the DevDocs MCP + WebSearch combination with a single smarter tool
 4. **Phase 4 (if needed)**: Full meta-MCP server with CRAG-style scoring, combining all local sources behind one interface
 

@@ -3,7 +3,7 @@ package ecosystem_test
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
 )
 
 // mockSecretDeclarer implements both EcosystemModule and SecretDeclarer.

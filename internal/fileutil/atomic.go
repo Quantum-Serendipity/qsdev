@@ -16,7 +16,7 @@ func WriteFileAtomic(path string, content []byte, mode os.FileMode) error {
 		return fmt.Errorf("create parent directories for %s: %w", path, err)
 	}
 
-	tmp, err := os.CreateTemp(dir, ".gdev-tmp-")
+	tmp, err := os.CreateTemp(dir, ".qsdev-tmp-")
 	if err != nil {
 		return fmt.Errorf("create temp file in %s: %w", dir, err)
 	}

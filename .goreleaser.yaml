@@ -20,10 +20,10 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version.version={{.Version}}
-      - -X github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version.commit={{.Commit}}
-      - -X github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version.date={{.CommitDate}}
-      - -X github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version.builtBy=goreleaser
+      - -X github.com/Quantum-Serendipity/qsdev/internal/version.version={{.Version}}
+      - -X github.com/Quantum-Serendipity/qsdev/internal/version.commit={{.Commit}}
+      - -X github.com/Quantum-Serendipity/qsdev/internal/version.date={{.CommitDate}}
+      - -X github.com/Quantum-Serendipity/qsdev/internal/version.builtBy=goreleaser
     mod_timestamp: "{{ .CommitTimestamp }}"
     goos:
       - linux
@@ -78,7 +78,7 @@ changelog:
 release:
   github:
     owner: Quantum-Serendipity
-    name: gdev-secure-devenv-bootstrap
+    name: qsdev
   prerelease: auto
   draft: false
   name_template: "v{{ .Version }}"
@@ -88,7 +88,7 @@ nfpms:
     package_name: qsdev
     file_name_template: "{{ .ConventionalFileName }}"
     vendor: Quantum Serendipity Software
-    homepage: https://github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap
+    homepage: https://github.com/Quantum-Serendipity/qsdev
     maintainer: "Quantum Serendipity Software <colin.rushton@quantumserendipitysoftware.com>"
     description: "Secure developer environment bootstrapping tool"
     formats:
@@ -124,7 +124,7 @@ brews:
       name: homebrew-tap
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    homepage: https://github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap
+    homepage: https://github.com/Quantum-Serendipity/qsdev
     description: "Secure developer environment bootstrapping tool"
     install: |
       bin.install "qsdev"
@@ -134,7 +134,7 @@ brews:
 
 scoops:
   - name: qsdev
-    homepage: https://github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap
+    homepage: https://github.com/Quantum-Serendipity/qsdev
     description: "Secure developer environment bootstrapping tool"
     repository:
       owner: Quantum-Serendipity

@@ -1,7 +1,7 @@
 package detect
 
 import (
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
 )
 
 // EnvironmentState captures existing configuration and tooling state

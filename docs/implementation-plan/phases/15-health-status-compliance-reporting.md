@@ -2,38 +2,38 @@
 
 ## Goal
 
-Implement a comprehensive project health and compliance reporting system that lets developers instantly assess their project's security posture, detect configuration drift, generate compliance evidence for client audits, and produce team-level dashboards across multiple projects. The primary interface is `gdev status` with progressive disclosure (quiet through verbose through JSON), backed by a three-layer compliance posture model, a six-category drift detection engine, machine-readable output (versioned JSON schema, SARIF 2.1.0), badge generation, and a CI-artifact-based team aggregation pipeline.
+Implement a comprehensive project health and compliance reporting system that lets developers instantly assess their project's security posture, detect configuration drift, generate compliance evidence for client audits, and produce team-level dashboards across multiple projects. The primary interface is `qsdev status` with progressive disclosure (quiet through verbose through JSON), backed by a three-layer compliance posture model, a six-category drift detection engine, machine-readable output (versioned JSON schema, SARIF 2.1.0), badge generation, and a CI-artifact-based team aggregation pipeline.
 
 ## Dependencies
 
-Phase 1 complete (shared types in `pkg/types/`). Phase 12 complete (tool lifecycle management — the tool registry is the data source for defense coverage and tool inventory reporting). Phase 13 complete (project config — `.gdev.yaml` supplies conformance level definitions and policy overrides). Phase 14 complete (skills — the `gdev-status` skill invokes this reporting system).
+Phase 1 complete (shared types in `pkg/types/`). Phase 12 complete (tool lifecycle management — the tool registry is the data source for defense coverage and tool inventory reporting). Phase 13 complete (project config — `.qsdev.yaml` supplies conformance level definitions and policy overrides). Phase 14 complete (skills — the `gdev-status` skill invokes this reporting system).
 
 ## Phase Outputs
 
-- `gdev status` command with progressive disclosure: `--quiet` (exit code only), default (hierarchical checkmarks), `--verbose` (per-check detail), `--json` (machine-readable)
+- `qsdev status` command with progressive disclosure: `--quiet` (exit code only), default (hierarchical checkmarks), `--verbose` (per-check detail), `--json` (machine-readable)
 - Three-layer compliance posture scoring: defense coverage (40%), configuration health (30%), dependency health (30%)
 - 0-100 numeric score with A-F letter grades and conformance labels (baseline/enhanced PASS/FAIL)
 - Six-category drift detection engine (all local, <100ms total)
-- `gdev evidence` command for compliance evidence generation (SOC2/HIPAA control mapping)
+- `qsdev evidence` command for compliance evidence generation (SOC2/HIPAA control mapping)
 - Machine-readable output: versioned JSON schema, SARIF 2.1.0 for GitHub Code Scanning, shields.io badge JSON
 - Badge generation (score, conformance, defense count variants)
 - Team-level CI artifact aggregation pipeline with markdown dashboard and auto-generated GitHub issues
 
 ---
 
-### Unit 15.1: `gdev status` Command & Progressive Disclosure
+### Unit 15.1: `qsdev status` Command & Progressive Disclosure
 
-**Description:** Implement the `gdev status` command as the primary developer interface for project health assessment. The command uses progressive disclosure to serve both quick-glance ("is everything green?") and detailed investigation ("what exactly is wrong and how do I fix it?") use cases, with subcommands for focused views and exit codes for CI gate integration.
+**Description:** Implement the `qsdev status` command as the primary developer interface for project health assessment. The command uses progressive disclosure to serve both quick-glance ("is everything green?") and detailed investigation ("what exactly is wrong and how do I fix it?") use cases, with subcommands for focused views and exit codes for CI gate integration.
 
-**Code-Grounded Implementation Note:** No existing gdev command produces `--json` output. This unit establishes the `--json` output format pattern that all subsequent commands will follow. The state tracking infrastructure already exists: `state.CheckModified()` at `internal/state/state.go:46-94` performs hash-based comparison, and `state.LoadStateFromFile()` at `internal/state/persistence.go:13-40` loads YAML state. However, state is currently split across three files: `.devinit/.gdev-init-state.yaml`, `.devenv/.gdev-state.yaml`, `.claude/.gdev-claude-state.yaml`. This phase requires a `LoadAllStates()` aggregation function that unifies these three sources into a single posture view before scoring can proceed.
+**Code-Grounded Implementation Note:** No existing gdev command produces `--json` output. This unit establishes the `--json` output format pattern that all subsequent commands will follow. The state tracking infrastructure already exists: `state.CheckModified()` at `internal/state/state.go:46-94` performs hash-based comparison, and `state.LoadStateFromFile()` at `internal/state/persistence.go:13-40` loads YAML state. However, state is currently split across three files: `.devinit/.qsdev-init-state.yaml`, `.devenv/.gdev-state.yaml`, `.claude/.gdev-claude-state.yaml`. This phase requires a `LoadAllStates()` aggregation function that unifies these three sources into a single posture view before scoring can proceed.
 
 **Context:** Currently, a developer managing a gdev-bootstrapped project has no way to answer "is my security posture intact?" without manually checking each generated file, each defense layer, and each ecosystem's vulnerability status. The tool lifecycle system (Phase 12) tracks enabled/disabled tools, the state file tracks generated file hashes, and ecosystem modules know about lock files and vulnerability scanners — but nothing aggregates these signals into a single view.
 
-The `gdev status` command fills this gap by following established patterns from `flutter doctor` (hierarchical checks with three-state indicators), `npm audit` (severity-threshold exit codes), and OpenSSF Scorecard (weighted scoring with per-check detail). The command must complete its local checks in under 1 second; network-dependent scans (vulnerability databases) are cached by default with `--scan` for fresh results.
+The `qsdev status` command fills this gap by following established patterns from `flutter doctor` (hierarchical checks with three-state indicators), `npm audit` (severity-threshold exit codes), and OpenSSF Scorecard (weighted scoring with per-check detail). The command must complete its local checks in under 1 second; network-dependent scans (vulnerability databases) are cached by default with `--scan` for fresh results.
 
-Phase 9 already defined `gdev devenv doctor` for system-level diagnostics (OS, tools, package managers). `gdev status` is project-level — it reports on the security posture of the current project, not the system. They share the `internal/doctor/` package's check infrastructure but serve different audiences and answer different questions.
+Phase 9 already defined `qsdev devenv doctor` for system-level diagnostics (OS, tools, package managers). `qsdev status` is project-level — it reports on the security posture of the current project, not the system. They share the `internal/doctor/` package's check infrastructure but serve different audiences and answer different questions.
 
-**Desired Outcome:** A developer runs `gdev status` and instantly sees: overall score with letter grade, conformance status (baseline/enhanced PASS/FAIL), defense layer checklist with per-layer status, config health summary, and dependency vulnerability counts. Running `gdev status --verbose` expands every section with per-check detail and remediation hints. Running `gdev status --json` produces a complete `PostureReport` for CI consumption. Running `gdev status --audit-level high` exits non-zero if any high-or-above findings exist, gating CI builds.
+**Desired Outcome:** A developer runs `qsdev status` and instantly sees: overall score with letter grade, conformance status (baseline/enhanced PASS/FAIL), defense layer checklist with per-layer status, config health summary, and dependency vulnerability counts. Running `qsdev status --verbose` expands every section with per-check detail and remediation hints. Running `qsdev status --json` produces a complete `PostureReport` for CI consumption. Running `qsdev status --audit-level high` exits non-zero if any high-or-above findings exist, gating CI builds.
 
 **Steps:**
 
@@ -81,27 +81,27 @@ Phase 9 already defined `gdev devenv doctor` for system-level diagnostics (OS, t
        CacheTTL     time.Duration // default 24h, auto-scan if cache older
    }
    ```
-   The function reads the tool registry (Phase 12), state file (`.gdev/state.yaml`), project config (`.gdev.yaml`), runs drift detection, collects ecosystem health, computes scores, evaluates conformance, and assembles the `PostureReport`.
+   The function reads the tool registry (Phase 12), state file (`.gdev/state.yaml`), project config (`.qsdev.yaml`), runs drift detection, collects ecosystem health, computes scores, evaluates conformance, and assembles the `PostureReport`.
 
-5. Register `gdev status` as a Cobra command in the devinit addon with the following flag set:
+5. Register `qsdev status` as a Cobra command in the devinit addon with the following flag set:
    ```
-   gdev status                        # Default: colored summary
-   gdev status --verbose              # Full detail per check with remediation
-   gdev status --quiet                # Score and grade only (one line)
-   gdev status --json                 # Complete PostureReport JSON
-   gdev status --sarif                # SARIF 2.1.0 findings
-   gdev status --format badge         # shields.io endpoint JSON
-   gdev status --fix                  # Remediation commands only
-   gdev status --scan                 # Run fresh vulnerability scans
-   gdev status --audit-level <level>  # Exit code gate: none|info|low|moderate|high|critical
-   gdev status defense                # Defense coverage section only
-   gdev status config                 # Config health section only
-   gdev status deps                   # Dependency health section only
-   gdev status tools                  # Tool inventory view
+   qsdev status                        # Default: colored summary
+   qsdev status --verbose              # Full detail per check with remediation
+   qsdev status --quiet                # Score and grade only (one line)
+   qsdev status --json                 # Complete PostureReport JSON
+   qsdev status --sarif                # SARIF 2.1.0 findings
+   qsdev status --format badge         # shields.io endpoint JSON
+   qsdev status --fix                  # Remediation commands only
+   qsdev status --scan                 # Run fresh vulnerability scans
+   qsdev status --audit-level <level>  # Exit code gate: none|info|low|moderate|high|critical
+   qsdev status defense                # Defense coverage section only
+   qsdev status config                 # Config health section only
+   qsdev status deps                   # Dependency health section only
+   qsdev status tools                  # Tool inventory view
    ```
 
 6. Implement the default text renderer in `internal/posture/render_text.go`:
-   - Header: `gdev status -- Project Security Posture`
+   - Header: `qsdev status -- Project Security Posture`
    - Score line: `Score: 82/100 (B+)` in bold
    - Conformance line: `Conformance: baseline PASS, enhanced FAIL`
    - Defense Coverage section: hierarchical list with indicators:
@@ -111,9 +111,9 @@ Phase 9 already defined `gdev devenv doctor` for system-level diagnostics (OS, t
      - `[✗]` (red) = misconfigured, broken, or critical issue
    - Config Health section: file count summary, outdated/missing flagged
    - Dependency Health section: vulnerability counts by severity, lock file status, last scan time
-   - Footer: `Run 'gdev status --verbose' for details.`
+   - Footer: `Run 'qsdev status --verbose' for details.`
 
-7. Implement `--verbose` rendering: expand each defense layer with per-ecosystem detail, expand each config file with hash status and version, expand each ecosystem with individual vulnerability advisories. Include inline remediation hints (e.g., "Fix: Run `gdev enable container-security`").
+7. Implement `--verbose` rendering: expand each defense layer with per-ecosystem detail, expand each config file with hash status and version, expand each ecosystem with individual vulnerability advisories. Include inline remediation hints (e.g., "Fix: Run `qsdev enable container-security`").
 
 8. Implement `--quiet` rendering: single line output `82/100 B+` suitable for scripting and badge generators. Exit code reflects audit-level threshold.
 
@@ -132,7 +132,7 @@ Phase 9 already defined `gdev devenv doctor` for system-level diagnostics (OS, t
     ```
     The `--audit-level` flag maps severity strings to the posture model: `critical` = any critical vulns, `high` = any high+ vulns or baseline conformance FAIL, `moderate` = any moderate+ vulns, `low` = any findings, `info` = any informational findings, `none` = always exit 0, `any` = alias for `info`.
 
-11. Implement the `tools` subcommand view (`gdev status tools`): show all tools from the Phase 12 tool registry grouped by category (security, ai-agent, devex, infrastructure), with enabled/disabled/not-applicable status, one-line description, and config file path. Include "run `gdev enable <tool>`" hints for available-but-disabled tools.
+11. Implement the `tools` subcommand view (`qsdev status tools`): show all tools from the Phase 12 tool registry grouped by category (security, ai-agent, devex, infrastructure), with enabled/disabled/not-applicable status, one-line description, and config file path. Include "run `qsdev enable <tool>`" hints for available-but-disabled tools.
 
 12. Implement caching for dependency health results:
     - Store scan results in `.gdev/cache/vuln-scan.json` (gitignored).
@@ -142,9 +142,9 @@ Phase 9 already defined `gdev devenv doctor` for system-level diagnostics (OS, t
     - If offline (scan fails), display cached results with staleness warning.
 
 13. Handle edge cases:
-    - **First run before any tools enabled:** Display "not initialized" state with `gdev init` suggestion, exit 2.
+    - **First run before any tools enabled:** Display "not initialized" state with `qsdev init` suggestion, exit 2.
     - **Partially initialized project:** Show available data, mark missing sections as "unknown."
-    - **Corrupt state file:** Attempt graceful degradation, warn about corruption, suggest `gdev init --rebuild-state`.
+    - **Corrupt state file:** Attempt graceful degradation, warn about corruption, suggest `qsdev init --rebuild-state`.
     - **CI environment detection:** When `CI=true`, default to `--json` output behavior (no colors, structured output).
 
 14. Write unit tests for:
@@ -156,15 +156,15 @@ Phase 9 already defined `gdev devenv doctor` for system-level diagnostics (OS, t
     - Subcommand routing (`defense`, `config`, `deps`, `tools`).
 
 **Acceptance Criteria:**
-- [ ] `gdev status` displays colored hierarchical summary completing in <1s for local checks
-- [ ] `gdev status --verbose` shows per-check detail with remediation hints for every failing check
-- [ ] `gdev status --quiet` outputs single-line score suitable for scripting
-- [ ] `gdev status --json` produces valid JSON matching the `PostureReport` schema
-- [ ] `gdev status --audit-level high` exits 1 when high-severity findings exist, 0 otherwise
-- [ ] `gdev status defense` shows only the defense coverage section
-- [ ] `gdev status tools` shows tool inventory grouped by category with enable/disable hints
-- [ ] `NO_COLOR=1 gdev status` produces output with no ANSI escape codes
-- [ ] `gdev status` exits 2 when run outside a gdev-initialized project
+- [ ] `qsdev status` displays colored hierarchical summary completing in <1s for local checks
+- [ ] `qsdev status --verbose` shows per-check detail with remediation hints for every failing check
+- [ ] `qsdev status --quiet` outputs single-line score suitable for scripting
+- [ ] `qsdev status --json` produces valid JSON matching the `PostureReport` schema
+- [ ] `qsdev status --audit-level high` exits 1 when high-severity findings exist, 0 otherwise
+- [ ] `qsdev status defense` shows only the defense coverage section
+- [ ] `qsdev status tools` shows tool inventory grouped by category with enable/disable hints
+- [ ] `NO_COLOR=1 qsdev status` produces output with no ANSI escape codes
+- [ ] `qsdev status` exits 2 when run outside a gdev-initialized project
 - [ ] Cached vulnerability results displayed with staleness timestamp; `--scan` forces refresh
 - [ ] Performance: defense + config checks complete in <500ms, full report (with cached deps) in <1s
 
@@ -173,7 +173,7 @@ Phase 9 already defined `gdev devenv doctor` for system-level diagnostics (OS, t
 - `research-spikes/gdev-health-reporting/compliance-posture-model-research.md § Data Model (Go Types)` -- PostureReport, AggregateScore, ConformanceResult struct definitions
 - `research-spikes/gdev-health-reporting/prior-art-research.md § Doctor Command Pattern` -- flutter doctor, brew doctor, rustup check UX analysis
 - `research-spikes/gdev-health-reporting/prior-art-research.md § Universal Patterns` -- JSON output, severity levels, exit codes, summary-then-detail, remediation hints
-- `phases/09-cross-platform-system-detection.md § Unit 9.5` -- `gdev devenv doctor` design (system-level diagnostics, complementary to project-level `gdev status`)
+- `phases/09-cross-platform-system-detection.md § Unit 9.5` -- `qsdev devenv doctor` design (system-level diagnostics, complementary to project-level `qsdev status`)
 
 **Status:** Not Started
 
@@ -413,13 +413,13 @@ A critical design principle from the research: scoring must distinguish "disable
 
 **Code-Grounded Implementation Note:** SHA-256 hash-based drift detection ALREADY exists via `state.CheckModified()` at `internal/state/state.go:46-94`, which returns `map[string]FileStatus`. The `FileStatus` struct at `internal/state/state.go:14-20` contains Path, Status (a `ModificationStatus` enum), Error, StoredHash, and CurrentHash fields. This fully covers file modification drift (Category 1 below). The remaining 5 categories (version drift, tool availability, section markers, lock files, pre-commit hooks) are new implementation. For devenv.nix specifically: markers are informal comments (not formal delimiters) — use hash-only detection for devenv.nix, NOT section marker checking. The `toolcheck.Detect()` function is already available for tool availability checking (Category 3).
 
-**Context:** After `gdev init` generates config files, multiple forms of drift can occur: someone manually edits a machine-owned file, gdev releases a new version with updated defaults, new tools become available, pre-commit hooks get uninstalled, lock files become stale, or section markers get accidentally deleted during editing. The migration strategy design (from the gdev-extension-design spike) established SHA256 hash tracking in `.gdev/state.yaml` as the foundation — this unit builds the full detection engine on top of that foundation.
+**Context:** After `qsdev init` generates config files, multiple forms of drift can occur: someone manually edits a machine-owned file, gdev releases a new version with updated defaults, new tools become available, pre-commit hooks get uninstalled, lock files become stale, or section markers get accidentally deleted during editing. The migration strategy design (from the gdev-extension-design spike) established SHA256 hash tracking in `.gdev/state.yaml` as the foundation — this unit builds the full detection engine on top of that foundation.
 
-Drift detection is the mechanism that makes the compliance posture score meaningful over time. Without it, a project could score 90/100 at `gdev init` and silently degrade to 50/100 as configs are modified, tools are uninstalled, and dependencies accumulate vulnerabilities. The drift engine transforms a point-in-time snapshot into ongoing posture monitoring.
+Drift detection is the mechanism that makes the compliance posture score meaningful over time. Without it, a project could score 90/100 at `qsdev init` and silently degrade to 50/100 as configs are modified, tools are uninstalled, and dependencies accumulate vulnerabilities. The drift engine transforms a point-in-time snapshot into ongoing posture monitoring.
 
-All six categories are deliberately local-only operations — no network calls, no database queries, no external services. This means drift detection works offline, in air-gapped environments, and completes fast enough to run on every `gdev status` invocation without caching.
+All six categories are deliberately local-only operations — no network calls, no database queries, no external services. This means drift detection works offline, in air-gapped environments, and completes fast enough to run on every `qsdev status` invocation without caching.
 
-**Desired Outcome:** `gdev status` includes a drift report identifying every deviation from the last-known-good state. Each drift finding has a category, severity, description, and remediation suggestion. The drift report feeds into the config health score (Unit 15.2) and the SARIF output (Unit 15.5).
+**Desired Outcome:** `qsdev status` includes a drift report identifying every deviation from the last-known-good state. Each drift finding has a category, severity, description, and remediation suggestion. The drift report feeds into the config health score (Unit 15.2) and the SARIF output (Unit 15.5).
 
 **Steps:**
 
@@ -443,7 +443,7 @@ All six categories are deliberately local-only operations — no network calls, 
        Description string `json:"description"` // human-readable description
        Expected    string `json:"expected,omitempty"` // expected value/hash
        Actual      string `json:"actual,omitempty"`   // actual value/hash
-       Remediation string `json:"remediation,omitempty"` // "Run: gdev update"
+       Remediation string `json:"remediation,omitempty"` // "Run: qsdev update"
        AutoFixable bool   `json:"autoFixable"` // can gdev fix this automatically?
    }
    ```
@@ -453,11 +453,11 @@ All six categories are deliberately local-only operations — no network calls, 
    - Compute current SHA256 hash for each tracked file.
    - Compare current hash against stored hash.
    - Severity assignment by file category:
-     - Machine-owned file modified: `warning` (unexpected modification, auto-fixable via `gdev update`).
+     - Machine-owned file modified: `warning` (unexpected modification, auto-fixable via `qsdev update`).
      - Human-edited file with intact section markers: `info` (expected modification).
      - Human-edited file with missing/broken section markers: `warning` (generated sections may be lost).
      - Tracked file missing entirely: `error` (defense may be inactive).
-     - File exists but no stored hash (pre-hash-tracking): `info` with suggestion to run `gdev init --rebuild-state`.
+     - File exists but no stored hash (pre-hash-tracking): `info` with suggestion to run `qsdev init --rebuild-state`.
    - Performance: one `os.ReadFile` + `sha256.Sum256` per file. For a typical project with 10-15 tracked files, <10ms total.
 
 3. Implement **Category 2: Version Drift** in `internal/posture/drift_version.go`:
@@ -465,14 +465,14 @@ All six categories are deliberately local-only operations — no network calls, 
    - Compare against the running gdev binary's embedded version.
    - If versions differ, report `info` severity with the version delta.
    - Embed a per-version config-change manifest in the gdev binary so the report can say "Changes in v1.2.0: new defense layer (license-compliance), updated Semgrep rules, new pre-commit hook (ripsecrets)."
-   - Suggest `gdev update` with preview.
+   - Suggest `qsdev update` with preview.
    - Performance: string comparison, <1ms.
 
 4. Implement **Category 3: Tool Availability Drift** in `internal/posture/drift_tools.go`:
    - Read enabled tools from `.gdev/state.yaml`.
    - For each enabled tool, check that its binary is available on `$PATH` via `exec.LookPath`.
-   - Report `warning` for tools that are enabled in gdev config but whose binaries are missing (e.g., user removed Semgrep from their Nix profile).
-   - Also check for newly available tools: re-run detection heuristics and compare against enabled set. Report `info` for tools that are now applicable but weren't when `gdev init` ran (e.g., Dockerfile added since initialization → container-security now applicable).
+   - Report `warning` for tools that are enabled in qsdev config but whose binaries are missing (e.g., user removed Semgrep from their Nix profile).
+   - Also check for newly available tools: re-run detection heuristics and compare against enabled set. Report `info` for tools that are now applicable but weren't when `qsdev init` ran (e.g., Dockerfile added since initialization → container-security now applicable).
    - Performance: one `exec.LookPath` per enabled tool. For 16 tools, <50ms total.
 
 5. Implement **Category 4: Section Marker Integrity** in `internal/posture/drift_markers.go`:
@@ -484,7 +484,7 @@ All six categories are deliberately local-only operations — no network calls, 
      - Closing marker present but opening marker missing.
      - Expected marker pair absent entirely (tool enabled but markers removed).
    - Report `info` for markers present and well-formed.
-   - Suggest `gdev update --repair-markers` for auto-fix.
+   - Suggest `qsdev update --repair-markers` for auto-fix.
    - Performance: one file read + regex scan per tracked human-edited file. <10ms.
 
 6. Implement **Category 5: Lock File Drift** in `internal/posture/drift_lockfiles.go`:
@@ -502,7 +502,7 @@ All six categories are deliberately local-only operations — no network calls, 
    - Verify the hook file references the expected runner (`prek` for devenv 1.11+, `pre-commit` for older).
    - Compare configured hooks (from `.pre-commit-config.yaml` or devenv hook config) against what's expected for enabled tools.
    - Check `.git/hooks/commit-msg` exists if commitlint is enabled.
-   - Severity: hooks not installed = `warning` (auto-fixable via `gdev hooks install`), hook runner mismatch = `info`, configured hooks missing = `warning`.
+   - Severity: hooks not installed = `warning` (auto-fixable via `qsdev hooks install`), hook runner mismatch = `info`, configured hooks missing = `warning`.
    - Performance: 2-3 file existence checks + one file read. <20ms.
 
 8. Implement the drift engine orchestrator:
@@ -603,17 +603,17 @@ All six categories are deliberately local-only operations — no network calls, 
 
 ---
 
-### Unit 15.4: `gdev evidence` Command & Compliance Evidence Generation
+### Unit 15.4: `qsdev evidence` Command & Compliance Evidence Generation
 
-**Description:** Implement the `gdev evidence` command that generates compliance evidence reports mapping gdev's defense layers and tool configurations to specific regulatory control frameworks (SOC2 Trust Service Criteria, HIPAA Security Rule), producing machine-readable evidence artifacts suitable for client audit submissions.
+**Description:** Implement the `qsdev evidence` command that generates compliance evidence reports mapping gdev's defense layers and tool configurations to specific regulatory control frameworks (SOC2 Trust Service Criteria, HIPAA Security Rule), producing machine-readable evidence artifacts suitable for client audit submissions.
 
-**Context:** A consulting firm managing client projects needs to demonstrate security controls during audits. Currently, this requires manually documenting which security tools are in place, what they do, and how they map to compliance requirements. The `gdev evidence` command automates this by introspecting the project's posture report and generating control mapping documents.
+**Context:** A consulting firm managing client projects needs to demonstrate security controls during audits. Currently, this requires manually documenting which security tools are in place, what they do, and how they map to compliance requirements. The `qsdev evidence` command automates this by introspecting the project's posture report and generating control mapping documents.
 
-This is distinct from `gdev status` (which answers "how healthy is my project?") — `gdev evidence` answers "what controls can I demonstrate for an auditor?" The evidence command consumes the same `PostureReport` data but reshapes it through the lens of specific compliance frameworks.
+This is distinct from `qsdev status` (which answers "how healthy is my project?") — `qsdev evidence` answers "what controls can I demonstrate for an auditor?" The evidence command consumes the same `PostureReport` data but reshapes it through the lens of specific compliance frameworks.
 
 The ASVS mapping from the machine-readable output research provides the pattern: gdev defense layers map to specific compliance controls, and the posture data provides evidence that those controls are active. The evidence report includes: control identifier, control description, gdev defense layer(s) that address it, current status, and supporting evidence (tool configs, scan results, timestamps).
 
-**Desired Outcome:** `gdev evidence --framework soc2` generates a JSON report mapping gdev's defenses to SOC2 Trust Service Criteria, with each mapping including the current posture status as evidence. `gdev evidence --framework soc2 --format markdown` produces a human-readable report suitable for inclusion in audit documentation.
+**Desired Outcome:** `qsdev evidence --framework soc2` generates a JSON report mapping gdev's defenses to SOC2 Trust Service Criteria, with each mapping including the current posture status as evidence. `qsdev evidence --framework soc2 --format markdown` produces a human-readable report suitable for inclusion in audit documentation.
 
 **Steps:**
 
@@ -689,7 +689,7 @@ The ASVS mapping from the machine-readable output research provides the pattern:
    - **14.2 (Dependency Security):** vulnerability-scanning, sast, container-security.
    - **1.14 (Configuration):** nix-hardening, drift detection, config health.
 
-5. Register `gdev evidence` as a Cobra command:
+5. Register `qsdev evidence` as a Cobra command:
    ```
    gdev evidence --framework soc2               # SOC2 evidence, JSON output
    gdev evidence --framework hipaa              # HIPAA evidence, JSON output
@@ -739,14 +739,14 @@ The ASVS mapping from the machine-readable output research provides the pattern:
    - Framework selection: `--framework invalid` produces clear error.
 
 **Acceptance Criteria:**
-- [ ] `gdev evidence --framework soc2` produces valid JSON with control mappings
+- [ ] `qsdev evidence --framework soc2` produces valid JSON with control mappings
 - [ ] Each SOC2 control mapping includes specific gdev defense layers with current status
 - [ ] Evidence artifacts include file hashes and timestamps for audit trail
-- [ ] `gdev evidence --framework soc2 --format md` produces readable markdown
+- [ ] `qsdev evidence --framework soc2 --format md` produces readable markdown
 - [ ] HIPAA mapping correctly marks network/authentication controls as N/A
 - [ ] ASVS mapping covers Chapter 10 (Malicious Code) and Chapter 14 (Configuration)
 - [ ] Evidence summary shows coverage percentage (addressed / total applicable)
-- [ ] `gdev evidence --list-frameworks` shows available frameworks
+- [ ] `qsdev evidence --list-frameworks` shows available frameworks
 - [ ] Disclaimer included in all output formats
 - [ ] Evidence report includes the full PostureReport as supporting data
 
@@ -763,11 +763,11 @@ The ASVS mapping from the machine-readable output research provides the pattern:
 
 **Description:** Implement the machine-readable output pipeline: versioned JSON schema, SARIF 2.1.0 for GitHub Code Scanning integration, and shields.io-compatible badge JSON generation with multiple badge variants.
 
-**Code-Grounded Implementation Note:** The three-state-file problem affects this unit. Badge generation and JSON output need to aggregate state from `.devinit/.gdev-init-state.yaml`, `.devenv/.gdev-state.yaml`, and `.claude/.gdev-claude-state.yaml`. The `LoadAllStates()` aggregation function introduced in Unit 15.1 is a prerequisite here — all renderers consume the unified `PostureReport` which draws from all three state sources.
+**Code-Grounded Implementation Note:** The three-state-file problem affects this unit. Badge generation and JSON output need to aggregate state from `.devinit/.qsdev-init-state.yaml`, `.devenv/.gdev-state.yaml`, and `.claude/.gdev-claude-state.yaml`. The `LoadAllStates()` aggregation function introduced in Unit 15.1 is a prerequisite here — all renderers consume the unified `PostureReport` which draws from all three state sources.
 
 **Context:** The PostureReport struct (Unit 15.1) is the canonical data model. This unit implements the serialization layer that transforms it into formats consumed by CI pipelines (JSON), security platforms (SARIF), and visual indicators (badges). Three lessons from prior art drive the design: (1) version the JSON schema from day one — cargo-audit's unstable JSON broke downstream tools; (2) never paywall machine-readable output — Safety CLI's JSON-behind-API-key blocks automation; (3) SARIF maps discrete findings, not aggregate scores — use SARIF for individual drift/vulnerability findings, JSON for the full posture.
 
-**Desired Outcome:** `gdev status --json` produces schema-versioned JSON that downstream tools can parse reliably across gdev versions. `gdev status --sarif` produces valid SARIF 2.1.0 that GitHub Code Scanning accepts. `gdev status --format badge` produces shields.io-compatible JSON. CI workflows can generate, upload, and consume all three formats.
+**Desired Outcome:** `qsdev status --json` produces schema-versioned JSON that downstream tools can parse reliably across gdev versions. `qsdev status --sarif` produces valid SARIF 2.1.0 that GitHub Code Scanning accepts. `qsdev status --format badge` produces shields.io-compatible JSON. CI workflows can generate, upload, and consume all three formats.
 
 **Steps:**
 
@@ -908,13 +908,13 @@ The ASVS mapping from the machine-readable output research provides the pattern:
 
 10. Support `--format badge --badge-type <variant>` flag and `--all-badges --output-dir <dir>` for generating all variants at once:
     ```
-    gdev status --format badge                               # Score badge (default)
-    gdev status --format badge --badge-type conformance      # Baseline conformance
-    gdev status --format badge --badge-type defense          # Defense coverage
-    gdev status --format badge --all-badges --output-dir .gdev/badges/  # All at once
+    qsdev status --format badge                               # Score badge (default)
+    qsdev status --format badge --badge-type conformance      # Baseline conformance
+    qsdev status --format badge --badge-type defense          # Defense coverage
+    qsdev status --format badge --all-badges --output-dir .gdev/badges/  # All at once
     ```
 
-11. Wire the output format selection into the `gdev status` command from Unit 15.1. The `--json`, `--sarif`, and `--format badge` flags are mutually exclusive — only one output format per invocation (except `--all-badges`).
+11. Wire the output format selection into the `qsdev status` command from Unit 15.1. The `--json`, `--sarif`, and `--format badge` flags are mutually exclusive — only one output format per invocation (except `--all-badges`).
 
 12. Write tests:
     - JSON: round-trip marshal/unmarshal, verify `schemaVersion` always present.
@@ -923,13 +923,13 @@ The ASVS mapping from the machine-readable output research provides the pattern:
     - Schema versioning: verify the `SchemaVersion` constant matches expected value.
 
 **Acceptance Criteria:**
-- [ ] `gdev status --json` produces JSON with `schemaVersion` field at top level
+- [ ] `qsdev status --json` produces JSON with `schemaVersion` field at top level
 - [ ] JSON output is deterministic (same report always produces identical JSON, ignoring timestamps)
-- [ ] `gdev status --sarif` produces valid SARIF 2.1.0 that passes schema validation
+- [ ] `qsdev status --sarif` produces valid SARIF 2.1.0 that passes schema validation
 - [ ] SARIF maps disabled defenses, config drift, and vulnerabilities as discrete findings
 - [ ] SARIF does NOT include aggregate scores (scores don't belong in SARIF)
 - [ ] SARIF includes `informationUri` and `helpUri` for each rule
-- [ ] `gdev status --format badge` produces shields.io-compatible JSON
+- [ ] `qsdev status --format badge` produces shields.io-compatible JSON
 - [ ] Badge color mapping: score 90+ = brightgreen, 80-89 = green, 70-79 = yellow, 60-69 = orange, <60 = red
 - [ ] Conformance badge shows PASS (brightgreen) or FAIL (red)
 - [ ] Defense badge shows count (e.g., "8/10 enabled")
@@ -952,11 +952,11 @@ The ASVS mapping from the machine-readable output research provides the pattern:
 
 **Context:** A consulting firm managing 10-50 client projects needs organizational visibility into security posture. The research evaluated three architecture options: CI artifact aggregation (recommended), git-based collection (scorecard-monitor pattern), and push-based webhook (DefectDojo pattern). CI artifact aggregation was selected because it requires no new infrastructure, uses existing GitHub Actions, and scales to the firm's project count.
 
-The pipeline works in two stages. Stage 1: each project's CI generates `gdev status --json > posture.json` and uploads it as a build artifact (per-project, already handled by Unit 15.1/15.5 JSON output). Stage 2: a central aggregation repository runs a scheduled workflow that collects posture artifacts from all tracked repos via `gh run download`, aggregates them, generates a markdown dashboard, and optionally creates GitHub issues for degraded projects.
+The pipeline works in two stages. Stage 1: each project's CI generates `qsdev status --json > posture.json` and uploads it as a build artifact (per-project, already handled by Unit 15.1/15.5 JSON output). Stage 2: a central aggregation repository runs a scheduled workflow that collects posture artifacts from all tracked repos via `gh run download`, aggregates them, generates a markdown dashboard, and optionally creates GitHub issues for degraded projects.
 
-This unit implements Stage 2 — the aggregation logic, dashboard generation, issue creation, and the CI workflow template that ties it together. The `gdev team-report` command handles the aggregation locally; the generated GitHub Actions workflow automates it.
+This unit implements Stage 2 — the aggregation logic, dashboard generation, issue creation, and the CI workflow template that ties it together. The `qsdev team-report` command handles the aggregation locally; the generated GitHub Actions workflow automates it.
 
-**Desired Outcome:** An engineering lead runs `gdev team-report --input-dir reports/` against a directory of per-project posture JSONs and gets a markdown dashboard showing all projects' scores, conformance status, vulnerability counts, and trend data. A generated GitHub Actions workflow automates this on a weekly schedule, creating issues when projects degrade.
+**Desired Outcome:** An engineering lead runs `qsdev team-report --input-dir reports/` against a directory of per-project posture JSONs and gets a markdown dashboard showing all projects' scores, conformance status, vulnerability counts, and trend data. A generated GitHub Actions workflow automates this on a weekly schedule, creating issues when projects degrade.
 
 **Steps:**
 
@@ -1029,7 +1029,7 @@ This unit implements Stage 2 — the aggregation logic, dashboard generation, is
    - **Critical alert:** Any project with critical vulnerabilities.
    - **High alert:** Baseline conformance FAIL, or score dropped >10 points from previous report.
    - **Medium alert:** Score dropped >5 points, or project running outdated gdev version (>2 minor versions behind).
-   - Alerts include remediation actions: "Run `gdev update` in project X", "Run `npm audit fix` in project Y."
+   - Alerts include remediation actions: "Run `qsdev update` in project X", "Run `npm audit fix` in project Y."
 
 4. Implement trend tracking in `internal/teamreport/trends.go`:
    - Store historical data in a JSON file (`team-posture-history.json`) committed to the aggregation repo.
@@ -1108,16 +1108,16 @@ This unit implements Stage 2 — the aggregation logic, dashboard generation, is
    Issue title format: `[gdev] Security posture degraded: <project> (<score>/100, <delta>)`.
    Issue body includes: score comparison table, specific findings, recommended actions, labels `security` and `gdev-posture`.
 
-7. Register `gdev team-report` as a Cobra command:
+7. Register `qsdev team-report` as a Cobra command:
    ```
-   gdev team-report --input-dir reports/          # Aggregate from directory of posture JSONs
-   gdev team-report --scope scope.json            # Use scope file listing repos to collect from
-   gdev team-report --format md                   # Markdown output (default)
-   gdev team-report --format json                 # JSON output
-   gdev team-report --threshold 75                # Alert on projects below this score
-   gdev team-report --trend                       # Include trend data from history file
-   gdev team-report --create-issues               # Create GitHub issues for alerts (requires gh CLI)
-   gdev team-report --history-file history.json   # Path to trend history file
+   qsdev team-report --input-dir reports/          # Aggregate from directory of posture JSONs
+   qsdev team-report --scope scope.json            # Use scope file listing repos to collect from
+   qsdev team-report --format md                   # Markdown output (default)
+   qsdev team-report --format json                 # JSON output
+   qsdev team-report --threshold 75                # Alert on projects below this score
+   qsdev team-report --trend                       # Include trend data from history file
+   qsdev team-report --create-issues               # Create GitHub issues for alerts (requires gh CLI)
+   qsdev team-report --history-file history.json   # Path to trend history file
    ```
 
 8. Implement scope file support for CI-based collection:
@@ -1132,7 +1132,7 @@ This unit implements Stage 2 — the aggregation logic, dashboard generation, is
    ```
    When `--scope` is provided, the command uses `gh run download` to collect the latest `gdev-posture` artifact from each listed repo, then aggregates.
 
-9. Generate a GitHub Actions workflow template via `gdev team-report --generate-workflow`:
+9. Generate a GitHub Actions workflow template via `qsdev team-report --generate-workflow`:
    ```yaml
    # .github/workflows/team-posture.yml
    name: Team Security Posture
@@ -1162,11 +1162,11 @@ This unit implements Stage 2 — the aggregation logic, dashboard generation, is
                gh run download --repo "$repo" --name gdev-posture -D "reports/$(basename $repo)" || echo "No artifact for $repo"
              done < scope.txt
          - name: Aggregate
-           run: gdev team-report --input-dir reports/ --trend --history-file team-posture-history.json > team-posture.md
+           run: qsdev team-report --input-dir reports/ --trend --history-file team-posture-history.json > team-posture.md
          - name: Create issues for degraded projects
            env:
              GH_TOKEN: ${{ secrets.POSTURE_PAT }}
-           run: gdev team-report --input-dir reports/ --create-issues --threshold 70
+           run: qsdev team-report --input-dir reports/ --create-issues --threshold 70
          - name: Commit dashboard
            run: |
              git add team-posture.md team-posture-history.json
@@ -1179,7 +1179,7 @@ This unit implements Stage 2 — the aggregation logic, dashboard generation, is
     ```yaml
     # Add to each project's CI workflow
     - name: Generate security posture
-      run: gdev status --json > posture.json
+      run: qsdev status --json > posture.json
     - name: Upload posture artifact
       uses: actions/upload-artifact@<sha-pinned>
       with:
@@ -1187,9 +1187,9 @@ This unit implements Stage 2 — the aggregation logic, dashboard generation, is
         path: posture.json
         retention-days: 90
     - name: Update badge
-      run: gdev status --format badge > .gdev/badge.json
+      run: qsdev status --format badge > .gdev/badge.json
     - name: CI gate
-      run: gdev status --audit-level high
+      run: qsdev status --audit-level high
     ```
 
 11. Handle scaling considerations:
@@ -1208,7 +1208,7 @@ This unit implements Stage 2 — the aggregation logic, dashboard generation, is
     - Empty input: verify graceful handling when no reports are found.
 
 **Acceptance Criteria:**
-- [ ] `gdev team-report --input-dir reports/` aggregates multiple posture JSONs into a summary
+- [ ] `qsdev team-report --input-dir reports/` aggregates multiple posture JSONs into a summary
 - [ ] Markdown dashboard includes overview table, project scores, attention-required section, and trend data
 - [ ] Projects sorted by score ascending in attention section (worst first)
 - [ ] Alert generation fires for baseline FAIL and score drops >10 points
@@ -1234,15 +1234,15 @@ This unit implements Stage 2 — the aggregation logic, dashboard generation, is
 ## Phase Completion Criteria
 
 - [ ] All six units pass acceptance criteria
-- [ ] `gdev status` displays correct posture for a project with 8/10 defenses enabled, 2 high vulns, 1 outdated config
-- [ ] `gdev status --json | jq .score.total` returns a numeric value matching the terminal display
-- [ ] `gdev status --sarif` accepted by GitHub Code Scanning (validated against SARIF 2.1.0 schema)
-- [ ] `gdev status --audit-level high` correctly gates CI builds (exit 1 when high vulns present, exit 0 otherwise)
-- [ ] `gdev status --format badge` generates shields.io-compatible JSON with correct color for the score range
+- [ ] `qsdev status` displays correct posture for a project with 8/10 defenses enabled, 2 high vulns, 1 outdated config
+- [ ] `qsdev status --json | jq .score.total` returns a numeric value matching the terminal display
+- [ ] `qsdev status --sarif` accepted by GitHub Code Scanning (validated against SARIF 2.1.0 schema)
+- [ ] `qsdev status --audit-level high` correctly gates CI builds (exit 1 when high vulns present, exit 0 otherwise)
+- [ ] `qsdev status --format badge` generates shields.io-compatible JSON with correct color for the score range
 - [ ] Drift detection identifies all 6 categories and completes in <100ms
-- [ ] `gdev evidence --framework soc2` maps defense layers to SOC2 controls with current status
-- [ ] `gdev team-report` aggregates 10+ project posture JSONs into readable markdown dashboard
-- [ ] Score is deterministic: running `gdev status` twice with no changes produces identical scores
+- [ ] `qsdev evidence --framework soc2` maps defense layers to SOC2 controls with current status
+- [ ] `qsdev team-report` aggregates 10+ project posture JSONs into readable markdown dashboard
+- [ ] Score is deterministic: running `qsdev status` twice with no changes produces identical scores
 - [ ] All output formats handle edge cases: uninitialized project (exit 2), zero defenses, no ecosystems
-- [ ] Performance: `gdev status` completes in <1s for local checks, <5s with `--scan`
+- [ ] Performance: `qsdev status` completes in <1s for local checks, <5s with `--scan`
 - [ ] JSON schema version is "1.0.0" and documented in source

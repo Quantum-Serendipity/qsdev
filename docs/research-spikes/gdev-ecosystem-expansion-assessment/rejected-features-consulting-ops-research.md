@@ -31,7 +31,7 @@ devenv 2.0 (released March 2026) significantly exceeded the capabilities assumed
 
 This is not a toy task runner -- it has feature parity with Taskfile and exceeds just on every dimension except YAML syntax simplicity. The only tool that arguably offers more is mise (which combines version management + env vars + tasks), but devenv already handles all three of those concerns for gdev.
 
-**What gdev should do**: Generate ecosystem-specific devenv task definitions (e.g., `go:build`, `npm:test`, `rust:lint`) as part of the devenv addon. Consider `gdev run <task>` as a thin wrapper around `devenv tasks run`.
+**What gdev should do**: Generate ecosystem-specific devenv task definitions (e.g., `go:build`, `npm:test`, `rust:lint`) as part of the devenv addon. Consider `qsdev run <task>` as a thin wrapper around `devenv tasks run`.
 
 **Competing tools**: mise tasks, just, Taskfile, make. None add value over devenv tasks in a devenv-based environment.
 
@@ -96,17 +96,17 @@ Copier (not Cookiecutter) is the right tool because it uniquely supports **templ
 
 The integration would be:
 1. gdev includes Copier in devenv packages
-2. Firm maintains Copier templates in a Git repo (project structure, CI workflows, security config, gdev config)
-3. `gdev init --from <template-url>` wraps `copier copy` for new projects
-4. `gdev update --template` wraps `copier update` for existing projects
-5. gdev's own generated files (.gdev.yaml, devenv.nix, CLAUDE.md) become part of the Copier template
+2. Firm maintains Copier templates in a Git repo (project structure, CI workflows, security config, qsdev config)
+3. `qsdev init --from <template-url>` wraps `copier copy` for new projects
+4. `qsdev update --template` wraps `copier update` for existing projects
+5. gdev's own generated files (.qsdev.yaml, devenv.nix, CLAUDE.md) become part of the Copier template
 
 This passes all three tests:
 - Purpose-built tool exists (Copier) -- gdev wraps, doesn't reimplement
 - File generation only -- Copier generates files, gdev orchestrates
-- Compounds with existing features -- templates include gdev config, security policies, CI workflows
+- Compounds with existing features -- templates include qsdev config, security policies, CI workflows
 
-**Minimal integration**: Include Copier in devenv packages. Add `gdev init --from` flag. Medium effort, high value for consulting standardization.
+**Minimal integration**: Include Copier in devenv packages. Add `qsdev init --from` flag. Medium effort, high value for consulting standardization.
 
 **Competing tools**: Cookiecutter (no update support), Yeoman (Node.js, complex), structkit (newer, unproven).
 
@@ -126,7 +126,7 @@ The rejection of comprehensive IDE configuration remains correct -- gdev cannot 
 
 Both are file generation (test 2) and compound with gdev's ecosystem detection (test 3). gdev already knows the project's language ecosystems; generating appropriate editorconfig rules and extension recommendations is trivial.
 
-**Minimal integration**: Generate `.editorconfig` with ecosystem-appropriate rules. Generate `.vscode/extensions.json` with relevant extensions (ESLint for JS/TS, rust-analyzer for Rust, etc.). Both opt-in via `.gdev.yaml` config.
+**Minimal integration**: Generate `.editorconfig` with ecosystem-appropriate rules. Generate `.vscode/extensions.json` with relevant extensions (ESLint for JS/TS, rust-analyzer for Rust, etc.). Both opt-in via `.qsdev.yaml` config.
 
 **What NOT to do**: Do not generate `.vscode/settings.json` (too opinionated), `.idea/` (JetBrains-specific), or any editor-specific keybindings/themes.
 
@@ -150,7 +150,7 @@ The key distinction from the rejected "OTEL infrastructure" is:
 
 This is file generation (test 2) and compounds with the existing OTEL env var generation (test 3).
 
-**Minimal integration**: Add an "observability" service template to gdev's devenv addon that can be enabled via `.gdev.yaml`. The template enables the OTEL Collector service with a sensible default config. Teams opt in; it is not default.
+**Minimal integration**: Add an "observability" service template to gdev's devenv addon that can be enabled via `.qsdev.yaml`. The template enables the OTEL Collector service with a sensible default config. Teams opt in; it is not default.
 
 **Competing tools**: claude-code-otel (Docker Compose stack), Docker Desktop's built-in OTEL.
 
@@ -178,7 +178,7 @@ However, note that gdev should include `gh` and `glab` in devenv packages (Categ
 
 **Original rejection**: OSV.dev, GitHub Advisory Database, NVD exist. OSV Scanner already integrated.
 
-**Updated assessment**: **KEEP REJECTED.** No change. Maintaining a vulnerability database requires a dedicated security team. OSV Scanner consumes these databases; gdev configures OSV Scanner.
+**Updated assessment**: **KEEP REJECTED.** No change. Maintaining a vulnerability database requires a dedicated security team. OSV Scanner consumes these databases; qsdev configures OSV Scanner.
 
 ---
 
@@ -267,7 +267,7 @@ Adding semantic-release would introduce a Node.js runtime dependency and a heavy
 
 **The gap**: These patterns are all manually configured today. No existing tool bundles cloud creds + git identity + SSH key + VPN + time tracking into a single switchable profile.
 
-**gdev integration assessment**: This is a **strong gdev opportunity**. A "client profile" in `.gdev.local.yaml` that bundles:
+**gdev integration assessment**: This is a **strong gdev opportunity**. A "client profile" in `.qsdev.local.yaml` that bundles:
 
 ```yaml
 clients:
@@ -287,7 +287,7 @@ clients:
       OTEL_SERVICE_NAME: acme-platform
 ```
 
-`gdev switch acme-corp` would:
+`qsdev switch acme-corp` would:
 1. Set `AWS_PROFILE=acme-prod` (and optionally run `aws-vault exec`)
 2. Set git user.name, user.email, signing key for the current shell
 3. Set environment variables
@@ -308,7 +308,7 @@ This passes the three tests:
 
 ### 2.4 Multi-Tenant Environment Switching
 
-**Assessment**: This is the same concern as "Client Environment Isolation" (2.2 above). The `gdev switch <client>` command is the answer.
+**Assessment**: This is the same concern as "Client Environment Isolation" (2.2 above). The `qsdev switch <client>` command is the answer.
 
 **Additional consideration**: The shell prompt (Starship) should display the active client profile to prevent "wrong client" mistakes. This is a common consulting failure mode -- pushing to the wrong AWS account or committing with the wrong git identity.
 
@@ -345,14 +345,14 @@ gdev's write-adr skill (Phase 14) handles Architecture Decision Records, which i
 | Tool Category | gdev Concern? | Recommendation | Effort |
 |---------------|---------------|----------------|--------|
 | Time tracking CLIs | Marginal | Include vendor CLI in devenv packages | Small |
-| Client environment isolation | **Yes** | Client profiles with `gdev switch` | Medium |
+| Client environment isolation | **Yes** | Client profiles with `qsdev switch` | Medium |
 | Engagement lifecycle | Covered | Copier templates + Phase 15 evidence | N/A |
 | Multi-tenant switching | **Yes** | Same as client profiles | N/A |
 | AI cost tracking | Covered | OTEL resource attributes per client | N/A |
 | Compliance/audit | Mostly covered | Phase 15 + external platforms | Small |
 | Knowledge management | No | write-adr skill sufficient | N/A |
 
-**Key finding**: The single most impactful consulting-specific addition is **client profiles** (`gdev switch <client>`). Everything else is either already covered or out of scope.
+**Key finding**: The single most impactful consulting-specific addition is **client profiles** (`qsdev switch <client>`). Everything else is either already covered or out of scope.
 
 ---
 
@@ -384,7 +384,7 @@ devenv.sh pins exact tool versions via Nix. Does this fully replace runtime vers
 
 **The compatibility question**: For projects that a consulting engineer inherits from a client (which may use `.nvmrc`, `.tool-versions`, or `.python-version`), devenv can still work -- these files are human-readable and the versions can be mapped to Nix packages. But there is no automatic consumption of these files.
 
-**The transition question**: Engineers coming from mise/asdf/nvm will have muscle memory for those tools. devenv's Nix-based approach has a steeper learning curve. However, gdev abstracts away the Nix complexity -- engineers run `gdev init` and get a working environment without writing Nix.
+**The transition question**: Engineers coming from mise/asdf/nvm will have muscle memory for those tools. devenv's Nix-based approach has a steeper learning curve. However, gdev abstracts away the Nix complexity -- engineers run `qsdev init` and get a working environment without writing Nix.
 
 ### Recommendation
 

@@ -1,14 +1,14 @@
 ---
-name: gdev-tools
-description: List all available gdev tools organized by category with enabled/disabled state.
-allowed-tools: Bash(gdev *) Read Grep Glob
+name: qsdev-tools
+description: List all available qsdev tools organized by category with enabled/disabled state.
+allowed-tools: Bash(qsdev *) Read Grep Glob
 ---
 
-# gdev tools
+# qsdev tools
 
 ## Current Environment
 
-!`gdev list --json 2>/dev/null || echo '{"available": []}'`
+!`qsdev list --json 2>/dev/null || echo '{"available": []}'`
 
 ## Instructions
 
@@ -26,4 +26,4 @@ allowed-tools: Bash(gdev *) Read Grep Glob
 
 3. **Provide descriptions**: Include a brief description of what each tool does.
 
-4. **Enable instructions**: For disabled tools the user might want to enable, mention they can use `/gdev-enable <tool-name>` to activate them.
+4. **Enable instructions**: For disabled tools the user might want to enable, mention they can use `/qsdev-enable <tool-name>` to activate them.

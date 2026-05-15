@@ -17,7 +17,7 @@ This report covers three gap categories from the coverage matrix: **Category G (
 - **How commonly needed**: Practically essential for any GitHub-hosted project. Claude Code's GitHub MCP server provides AI-assisted GitHub access, but `gh` is the human developer's primary tool for PR creation, CI debugging, code review, and release management. The two are complementary, not competing.
 - **Configuration beyond install**: `gh auth login` (interactive or token-based). Supports multiple authenticated instances. Extensions ecosystem (`gh extension install`). Config stored in `~/.config/gh/`.
 - **Detection heuristic**: `.github/` directory, or `git remote -v` showing `github.com`. Either signals a GitHub-hosted project.
-- **Recommendation**: **Should install and configure.** gh is the strongest candidate in this entire category. gdev already configures a GitHub MCP server, which means it already assumes GitHub hosting for some projects. Installing gh and running `gh auth status` as part of `gdev doctor` is a natural extension. Detection: if `.github/` exists or remote points to github.com, add `gh` to devenv.nix packages and prompt for auth if not already authenticated.
+- **Recommendation**: **Should install and configure.** gh is the strongest candidate in this entire category. gdev already configures a GitHub MCP server, which means it already assumes GitHub hosting for some projects. Installing gh and running `gh auth status` as part of `qsdev doctor` is a natural extension. Detection: if `.github/` exists or remote points to github.com, add `gh` to devenv.nix packages and prompt for auth if not already authenticated.
 
 #### glab (GitLab CLI)
 
@@ -54,7 +54,7 @@ This report covers three gap categories from the coverage matrix: **Category G (
 | tig | `tig` | Lightweight ncurses viewer for git history, blame, diffs | Moderate. Focused on viewing, not editing. Lighter than lazygit. | **Optional.** Good complement to lazygit (viewer vs. manager). |
 | gitui | `gitui` | Rust-based terminal UI, similar to lazygit | Moderate. Faster than lazygit in benchmarks but smaller community. | **Skip.** Overlaps with lazygit. Pick one TUI. |
 
-**Recommendation**: Offer lazygit as an opt-in via `gdev enable lazygit` or include in a "git productivity" bundle. Do not auto-install — TUI preference is personal.
+**Recommendation**: Offer lazygit as an opt-in via `qsdev enable lazygit` or include in a "git productivity" bundle. Do not auto-install — TUI preference is personal.
 
 ### 1.4 Git Productivity Tools
 
@@ -78,7 +78,7 @@ This report covers three gap categories from the coverage matrix: **Category G (
 - `git-crypt` — when `.git-crypt/` exists
 - `git-secret` — when `.gitsecret/` exists
 
-**Tier 3 — Opt-in via `gdev enable`:**
+**Tier 3 — Opt-in via `qsdev enable`:**
 - `lazygit` — personal preference TUI
 - `delta` — diff improvement (could argue for Tier 2 since it's non-invasive)
 - `tig` — lightweight git viewer
@@ -289,9 +289,9 @@ This is already partially achieved by devenv ecosystem modules — they add lang
 Based on the analysis, the IDE config rejection should be **narrowed, not reversed**. The rejection is correct for comprehensive IDE configuration (themes, keybindings, UI layout, debug configs). It should be relaxed for:
 
 **Always generate (non-controversial):**
-- `.editorconfig` — Editor-agnostic, universally supported, handles mechanical formatting only. Should be part of `gdev init` output alongside `devenv.nix`. Properties to include: root=true, charset=utf-8, end_of_line=lf, insert_final_newline=true, trim_trailing_whitespace=true, plus language-specific indent rules based on detected ecosystems.
+- `.editorconfig` — Editor-agnostic, universally supported, handles mechanical formatting only. Should be part of `qsdev init` output alongside `devenv.nix`. Properties to include: root=true, charset=utf-8, end_of_line=lf, insert_final_newline=true, trim_trailing_whitespace=true, plus language-specific indent rules based on detected ecosystems.
 
-**Generate on opt-in (`gdev enable vscode`):**
+**Generate on opt-in (`qsdev enable vscode`):**
 - `.vscode/extensions.json` — Recommended extensions based on detected ecosystems. Maps ecosystem to extensions: TypeScript -> `dbaeumer.vscode-eslint` + `esbenp.prettier-vscode`, Python -> `ms-python.python` + `charliermarsh.ruff`, Rust -> `rust-lang.rust-analyzer`, Go -> `golang.go`, etc.
 - `.vscode/settings.json` — Limited to formatter and linter configuration matching the project's toolchain. formatOnSave=true, default formatter per language, linter settings matching pre-commit config.
 
@@ -306,16 +306,16 @@ Based on the analysis, the IDE config rejection should be **narrowed, not revers
 - JetBrains `.idea/` settings (too complex, too variable).
 - Neovim `init.lua` or Helix `config.toml` (deeply personal).
 
-### 3.9 Proposed `gdev enable vscode` Flow
+### 3.9 Proposed `qsdev enable vscode` Flow
 
 1. Detect language ecosystems already identified by gdev
 2. Map ecosystems to VS Code extensions (maintained lookup table)
 3. Generate `.vscode/extensions.json` with recommendations + comments explaining each
 4. Generate `.vscode/settings.json` with only: formatOnSave, default formatter per language, linter settings
-5. Add `.vscode/` to detection for `gdev doctor` ("VS Code workspace config is present/outdated")
-6. `gdev update` regenerates if ecosystems change
+5. Add `.vscode/` to detection for `qsdev doctor` ("VS Code workspace config is present/outdated")
+6. `qsdev update` regenerates if ecosystems change
 
-This follows gdev's existing pattern: detect -> generate -> maintain. The key safeguard is opt-in — `gdev enable vscode` is explicit user intent.
+This follows gdev's existing pattern: detect -> generate -> maintain. The key safeguard is opt-in — `qsdev enable vscode` is explicit user intent.
 
 ---
 
@@ -348,25 +348,25 @@ No new addon is needed. The detection and generation patterns mirror what gdev a
 | `hugo.toml` or Hugo markers | `hugo` |
 | `.markdownlint.json` / `.markdownlint.yml` | `markdownlint-cli` |
 | (always) | `.editorconfig` generation |
-| `gdev enable vscode` | `.vscode/extensions.json`, `.vscode/settings.json` |
+| `qsdev enable vscode` | `.vscode/extensions.json`, `.vscode/settings.json` |
 
 ### 4.3 Priority Ranking
 
 1. **gh** — Highest impact single tool. Most projects are GitHub-hosted. Enables PR workflows, CI debugging, code review from terminal.
-2. **`.editorconfig` generation** — Zero-controversy, universal benefit. Should be part of initial `gdev init`.
+2. **`.editorconfig` generation** — Zero-controversy, universal benefit. Should be part of initial `qsdev init`.
 3. **git-lfs auto-detection** — Repos with LFS won't work without it. Binary detection, binary fix.
 4. **Documentation tool detection** (mkdocs, mdbook, mermaid) — Natural extension of ecosystem detection.
 5. **glab** — Same value as gh for GitLab projects.
-6. **`gdev enable vscode`** — Opt-in, high value for VS Code users (dominant editor).
+6. **`qsdev enable vscode`** — Opt-in, high value for VS Code users (dominant editor).
 7. **delta** — Nice-to-have productivity improvement. Opt-in.
 8. **lazygit** — Nice-to-have TUI. Opt-in.
 9. **LSP servers in devenv.nix** — Benefits all editor users. Low effort, high leverage.
 
 ### 4.4 Open Questions
 
-- Should `gh` authentication be part of `gdev setup` or handled separately? (`gh auth login` is interactive and requires a browser.)
+- Should `gh` authentication be part of `qsdev setup` or handled separately? (`gh auth login` is interactive and requires a browser.)
 - Should `.editorconfig` be generated with ecosystem-specific indent rules (e.g., 2-space for JS/TS, 4-space for Python, tabs for Go) or stick to universal defaults?
-- For `gdev enable vscode`, should there be a `gdev enable jetbrains` equivalent, or is JetBrains config too complex?
+- For `qsdev enable vscode`, should there be a `qsdev enable jetbrains` equivalent, or is JetBrains config too complex?
 - Should delta configuration go in `devenv.nix` enterShell (project-scoped) or be a user-level recommendation?
 - How does devenv.sh's `.devcontainer.json` generation interact with gdev's potential `.vscode/` generation? Are they complementary or competing?
 

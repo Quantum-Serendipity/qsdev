@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestGenerateStarshipToml(t *testing.T) {
@@ -33,15 +33,15 @@ func TestGenerateStarshipToml(t *testing.T) {
 		t.Fatal("generated content is empty")
 	}
 
-	// Verify custom.gdev sections are present.
-	for _, section := range []string{"[custom.gdev]", "[custom.gdev_security]", "[custom.gdev_tools]"} {
+	// Verify custom.qsdev sections are present.
+	for _, section := range []string{"[custom.qsdev]", "[custom.qsdev_security]", "[custom.qsdev_tools]"} {
 		if !strings.Contains(content, section) {
 			t.Errorf("content does not contain section %q", section)
 		}
 	}
 
-	// Verify references to gdev environment variables.
-	for _, envVar := range []string{"GDEV_PROJECT_NAME", "GDEV_SECURITY_PROFILE", "GDEV_TOOL_COUNT"} {
+	// Verify references to qsdev environment variables.
+	for _, envVar := range []string{"QSDEV_PROJECT_NAME", "QSDEV_SECURITY_PROFILE", "QSDEV_TOOL_COUNT"} {
 		if !strings.Contains(content, envVar) {
 			t.Errorf("content does not reference %q", envVar)
 		}
@@ -60,8 +60,8 @@ func TestGenerateStarshipToml_ContainsDescriptions(t *testing.T) {
 
 	// Each section should have a description.
 	descriptions := []string{
-		"Active gdev project",
-		"gdev security profile",
+		"Active qsdev project",
+		"qsdev security profile",
 		"Active tool count",
 	}
 	for _, desc := range descriptions {

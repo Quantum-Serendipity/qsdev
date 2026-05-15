@@ -53,11 +53,11 @@ gdev's stack already includes: devenv (env management), Nix (package management)
 
 ### 5. Project Scaffolding / Code Generation
 
-**Why it's proposed**: "gdev init detects project type -- why not also scaffold a new project?"
+**Why it's proposed**: "qsdev init detects project type -- why not also scaffold a new project?"
 
 **Why reject**: `create-react-app`, `cargo init`, `go mod init`, `dotnet new`, `mix phx.new` -- every ecosystem has its own scaffolding tool with ecosystem-specific best practices. gdev adding project scaffolding means maintaining 27+ project templates that drift from upstream best practices.
 
-**What to do instead**: gdev init works on EXISTING projects. For new projects, use the ecosystem's scaffolding tool first, then `gdev init`.
+**What to do instead**: qsdev init works on EXISTING projects. For new projects, use the ecosystem's scaffolding tool first, then `qsdev init`.
 
 ### 6. IDE/Editor Configuration Beyond Claude Code
 
@@ -69,7 +69,7 @@ gdev's stack already includes: devenv (env management), Nix (package management)
 
 ### 7. Full OTEL Infrastructure (Collector + Storage + Dashboards)
 
-**Why it's proposed**: "gdev enables OTEL for Claude Code, why not ship the whole monitoring stack?"
+**Why it's proposed**: "qsdev enables OTEL for Claude Code, why not ship the whole monitoring stack?"
 
 **Why reject**: Running Prometheus + Loki + Grafana is infrastructure operations, not development environment configuration. It requires Docker or Kubernetes, persistent storage, and ongoing maintenance. claude-code-otel exists for teams that want the full stack.
 

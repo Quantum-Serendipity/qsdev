@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // newTestRegistry creates a registry and registers the given mock modules.
@@ -155,8 +155,8 @@ func TestGenerateClaudeMd_GoProject(t *testing.T) {
 
 	content := string(got.Content)
 	requireContains(t, content, "go build")
-	requireContains(t, content, "gdev init")
-	requireContains(t, content, "gdev-reference.md")
+	requireContains(t, content, "qsdev init")
+	requireContains(t, content, "qsdev-reference.md")
 }
 
 func TestGenerateClaudeMd_MultiLanguage(t *testing.T) {
@@ -177,7 +177,7 @@ func TestGenerateClaudeMd_MultiLanguage(t *testing.T) {
 	content := string(got.Content)
 	requireContains(t, content, "go build")
 	requireContains(t, content, "pytest")
-	requireContains(t, content, "gdev Commands")
+	requireContains(t, content, "qsdev Commands")
 }
 
 func TestGenerateClaudeMd_SecurityAlwaysPresent(t *testing.T) {
@@ -311,7 +311,7 @@ func TestGenerateClaudeMd_JavaScriptProject(t *testing.T) {
 
 	content := string(got.Content)
 	requireContains(t, content, "npm")
-	requireContains(t, content, "gdev Commands")
+	requireContains(t, content, "qsdev Commands")
 }
 
 func TestGenerateClaudeMd_RustProject(t *testing.T) {
@@ -328,7 +328,7 @@ func TestGenerateClaudeMd_RustProject(t *testing.T) {
 
 	content := string(got.Content)
 	requireContains(t, content, "cargo")
-	requireContains(t, content, "gdev Commands")
+	requireContains(t, content, "qsdev Commands")
 }
 
 func TestGenerateClaudeMd_PackageManagersInSecurity(t *testing.T) {
@@ -403,7 +403,7 @@ func TestBuildClaudeMdData_GdevCommands(t *testing.T) {
 		cmdNames[c.Command] = true
 	}
 
-	for _, expected := range []string{"gdev init", "gdev devenv doctor", "gdev status", "gdev check"} {
+	for _, expected := range []string{"qsdev init", "qsdev devenv doctor", "qsdev status", "qsdev check"} {
 		if !cmdNames[expected] {
 			t.Errorf("expected command %q in GdevCommands", expected)
 		}
@@ -433,13 +433,13 @@ func TestGenerateClaudeMd_SectionMarkers(t *testing.T) {
 	content := string(got.Content)
 
 	markers := []string{
-		"gdev:attach-guard",
-		"gdev:agent-postmortem",
-		"gdev:version-sentinel",
-		"gdev:semble",
-		"gdev:trail-of-bits-skills",
-		"gdev:skills",
-		"gdev:commands",
+		"qsdev:attach-guard",
+		"qsdev:agent-postmortem",
+		"qsdev:version-sentinel",
+		"qsdev:semble",
+		"qsdev:trail-of-bits-skills",
+		"qsdev:skills",
+		"qsdev:commands",
 	}
 
 	for _, marker := range markers {
@@ -468,10 +468,10 @@ func TestGenerateClaudeMd_HasGdevReference(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	requireContains(t, string(got.Content), "@.claude/gdev-reference.md")
+	requireContains(t, string(got.Content), "@.claude/qsdev-reference.md")
 }
 
-func TestGenerateClaudeMd_GdevCommandsSection(t *testing.T) {
+func TestGenerateClaudeMd_QsdevCommandsSection(t *testing.T) {
 	reg := newTestRegistry(t, goMock())
 	answers := types.WizardAnswers{
 		ProjectName: "test",
@@ -484,11 +484,11 @@ func TestGenerateClaudeMd_GdevCommandsSection(t *testing.T) {
 	}
 
 	content := string(got.Content)
-	requireContains(t, content, "## gdev Commands")
-	requireContains(t, content, "<!-- gdev:commands -->")
-	requireContains(t, content, "<!-- /gdev:commands -->")
-	requireContains(t, content, "gdev init")
-	requireContains(t, content, "gdev check")
+	requireContains(t, content, "## qsdev Commands")
+	requireContains(t, content, "<!-- qsdev:commands -->")
+	requireContains(t, content, "<!-- /qsdev:commands -->")
+	requireContains(t, content, "qsdev init")
+	requireContains(t, content, "qsdev check")
 }
 
 func TestGenerateClaudeMd_NoLanguageConventions(t *testing.T) {

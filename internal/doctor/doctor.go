@@ -1,13 +1,13 @@
 // Package doctor provides tool prerequisite detection, version checking,
-// and formatted reporting for the "gdev doctor" command.
+// and formatted reporting for the "qsdev doctor" command.
 package doctor
 
 import (
 	"context"
 	"sync"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/sysinfo"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/toolcheck"
+	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolcheck"
 )
 
 // RunAllChecks runs all 15 tool checks in parallel and returns the results.

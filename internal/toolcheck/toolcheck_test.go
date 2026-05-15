@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/toolcheck"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolcheck"
 )
 
 func TestDetect_ExistingTool(t *testing.T) {

@@ -36,7 +36,7 @@ Phase 12 extends gdev with high-leverage integrations across four areas: securit
 - **License:** Apache-2.0
 - **What it does:** Scans container images and filesystems for known vulnerabilities using NVD, GitHub Advisories, and distro-specific databases, with composite risk scoring via EPSS and KEV.
 - **Why it matters:** The March 2026 Trivy supply chain compromise (malicious releases, poisoned Docker images, suspended vuln DB updates) makes Grype the necessary primary scanner — it provides EPSS-based prioritization that Trivy lacked even before the compromise.
-- **Integration approach:** gdev generates a CI workflow step (`grype <image>:<tag> --fail-on high`), configures Grype alongside Syft in the SBOM pipeline (`syft <image> -o cyclonedx-json | grype`), and adds Docker ecosystem module support for local image scanning via `gdev docker scan`. Generated Dockerfiles include a `# Scan: grype` comment with the exact scan command.
+- **Integration approach:** gdev generates a CI workflow step (`grype <image>:<tag> --fail-on high`), configures Grype alongside Syft in the SBOM pipeline (`syft <image> -o cyclonedx-json | grype`), and adds Docker ecosystem module support for local image scanning via `qsdev docker scan`. Generated Dockerfiles include a `# Scan: grype` comment with the exact scan command.
 - **Maturity:** Stable. 9.3K+ GitHub stars, Apache-2.0, maintained by Anchore alongside Syft. Actively updated vulnerability database (unlike Trivy post-compromise).
 - **Priority:** Must-have
 
@@ -97,7 +97,7 @@ Phase 12 extends gdev with high-leverage integrations across four areas: securit
 - **URL:** N/A — this is a gdev-native capability, not a third-party tool
 - **License:** N/A
 - **What it does:** Generates CI workflow files (`.github/workflows/security.yml` and `.gitlab-ci.yml`) that enforce all security policies configured by gdev, using SHA-pinned action references.
-- **Why it matters:** Security controls that only exist locally are worthless — CI is the enforcement backstop, and a consulting firm needs generated CI workflows that match the local security config exactly, preventing drift between "what gdev configured" and "what CI enforces."
+- **Why it matters:** Security controls that only exist locally are worthless — CI is the enforcement backstop, and a consulting firm needs generated CI workflows that match the local security config exactly, preventing drift between "what qsdev configured" and "what CI enforces."
 - **Integration approach:** gdev generates workflows that compose steps from detected ecosystems: frozen-install commands, vulnerability scanning (OSV Scanner + Grype), secret scanning (gitleaks), SAST (Semgrep), license compliance (ScanCode — weekly schedule), SBOM generation (Syft), container signing (cosign), and the Claude Code Security Review GitHub Action. All actions SHA-pinned per GitHub's 2026 security recommendations. Supports both GitHub Actions and GitLab CI as generation targets (selected via wizard or `--ci-platform` flag). Harden-Runner included in audit mode.
 - **Maturity:** The generated workflows use only stable, well-maintained actions. This is a code generation capability, not a dependency.
 - **Priority:** Must-have
@@ -146,7 +146,7 @@ Phase 12 extends gdev with high-leverage integrations across four areas: securit
 
 **Context:** Semgrep CE provides single-file SAST with 3,000+ community rules. The free AppSec Platform tier extends this to cross-file analysis for teams <=10 contributors. Each ecosystem maps to specific Semgrep rule sets (e.g., Go maps to `p/golang` + `p/owasp-top-ten`, TypeScript to `p/typescript` + `p/react` + `p/owasp-top-ten`). The `.semgrep.yml` config aggregates rule sets from all detected ecosystems.
 
-**Desired Outcome:** `gdev init` generates a project-appropriate Semgrep configuration, a pre-commit hook for fast local SAST, and a CI workflow step for comprehensive scanning.
+**Desired Outcome:** `qsdev init` generates a project-appropriate Semgrep configuration, a pre-commit hook for fast local SAST, and a CI workflow step for comprehensive scanning.
 
 **Steps:**
 1. Add `SemgrepRuleSets() []string` method to `EcosystemModule` interface (or supplementary `SASTModule` interface).
@@ -238,7 +238,7 @@ Phase 12 extends gdev with high-leverage integrations across four areas: securit
 3. Generate CI workflow steps with correct ordering: build -> scan -> sign -> push.
 4. Configure Grype's vulnerability database update in CI (auto-updates on each run).
 5. Generate `.grype.yaml` for local scanning: failure threshold, ignored CVEs list.
-6. Add `gdev docker scan <image>` command that runs the Syft+Grype pipeline locally.
+6. Add `qsdev docker scan <image>` command that runs the Syft+Grype pipeline locally.
 7. Include Trivy compromise warning in generated security documentation as real-world trust model example.
 8. Configure cosign policy file (`.cosign/policy.yaml`) with keyless verification settings.
 
@@ -279,7 +279,7 @@ Phase 12 extends gdev with high-leverage integrations across four areas: securit
    - Policy evaluation step that fails if blocked licenses detected
    - Summary output for PR comment or Slack notification
 3. Add `scancode-toolkit` to devenv.nix packages (Python-based, installed via pip/uvx in devenv).
-4. Generate `gdev license check` command that runs ScanCode locally with the same policy.
+4. Generate `qsdev license check` command that runs ScanCode locally with the same policy.
 5. Support license exception file (`.license-exceptions.yml`) for known acceptable exceptions with justification.
 6. Document in CLAUDE.md: how to handle license policy violations, how to request exceptions.
 
@@ -305,7 +305,7 @@ Phase 12 extends gdev with high-leverage integrations across four areas: securit
 
 **Context:** Phase 3 (Unit 2.3) generates devenv.nix service sub-templates for PostgreSQL, Redis, etc. These services need credentials. Phase 5 configures environment variable management. SecretSpec (shipped with devenv 2.0) provides the native bridge — it declares what secrets exist and lets each environment provide them differently. This unit connects the service detection to secret declaration.
 
-**Desired Outcome:** `gdev init` generates a `secretspec.toml` declaring all development secrets, with auto-generation for local-only secrets and provider configuration for shared secrets.
+**Desired Outcome:** `qsdev init` generates a `secretspec.toml` declaring all development secrets, with auto-generation for local-only secrets and provider configuration for shared secrets.
 
 **Steps:**
 1. Add `SecretDeclarations() []SecretDecl` method to ecosystem modules and service templates.
@@ -346,7 +346,7 @@ Phase 12 extends gdev with high-leverage integrations across four areas: securit
 
 **Context:** Phase 5 (Unit 4.4) generated a basic security scanning workflow. Phase 12 adds Semgrep, gitleaks, Grype/Syft/cosign, ScanCode, Claude Code Security Review, and Harden-Runner. These need to compose into a single coherent CI pipeline per project. The generation engine must produce SHA-pinned action references (per GitHub's 2026 security recommendations) and support both GitHub Actions and GitLab CI.
 
-**Desired Outcome:** `gdev init` generates ready-to-use CI workflow files that enforce all configured security policies with zero manual workflow authoring.
+**Desired Outcome:** `qsdev init` generates ready-to-use CI workflow files that enforce all configured security policies with zero manual workflow authoring.
 
 **Steps:**
 1. Create `internal/cigeneration/` package with `Generator` interface supporting GitHub Actions and GitLab CI.
@@ -388,7 +388,7 @@ Phase 12 extends gdev with high-leverage integrations across four areas: securit
 
 ### Unit 12.7: MCP Server Curation and Default Configuration
 
-**Description:** Define the default and opt-in MCP server set that gdev configures in `.mcp.json`, with smart defaults based on detected project type and infrastructure profile.
+**Description:** Define the default and opt-in MCP server set that qsdev configures in `.mcp.json`, with smart defaults based on detected project type and infrastructure profile.
 
 **Context:** Phase 4 (Unit 3.5) generated basic `.mcp.json` with placeholder MCP servers. Phase 11 added semble. This unit curates the complete MCP server set with an opinionated default configuration. The research consensus is 3-6 servers as the sweet spot — more than 10 slows agents without proportional benefit.
 
@@ -483,7 +483,7 @@ Phase 12 extends gdev with high-leverage integrations across four areas: securit
 
 **Context:** This is a developer experience enhancement that standardizes release processes across client projects. git-cliff is a Rust single binary (no Node/Python dependency, consistent with gdev's single-binary philosophy) that generates changelogs from conventional commits with customizable templates.
 
-**Desired Outcome:** Projects using conventional commits get automated changelog generation in CI and a local `gdev changelog` command.
+**Desired Outcome:** Projects using conventional commits get automated changelog generation in CI and a local `qsdev changelog` command.
 
 **Steps:**
 1. Add `git-cliff` to devenv.nix packages.
@@ -492,7 +492,7 @@ Phase 12 extends gdev with high-leverage integrations across four areas: securit
    - Include breaking changes section
    - Link commits to GitHub/GitLab issues
    - Configurable via infrastructure profile (different clients may want different formats)
-3. Add `gdev changelog` command (thin wrapper around `git-cliff`).
+3. Add `qsdev changelog` command (thin wrapper around `git-cliff`).
 4. Generate CI workflow step for release automation:
    - On tag push: run `git-cliff --latest -o CHANGELOG.md`
    - Optionally create GitHub Release with changelog body
@@ -501,7 +501,7 @@ Phase 12 extends gdev with high-leverage integrations across four areas: securit
 
 **Acceptance Criteria:**
 - [ ] `cliff.toml` generated with firm's standard format
-- [ ] `gdev changelog` produces valid CHANGELOG.md
+- [ ] `qsdev changelog` produces valid CHANGELOG.md
 - [ ] CI workflow generates changelog on tag push
 - [ ] Configuration is client-customizable via profile
 - [ ] Works without conventional commits (falls back to simple commit list)
@@ -557,7 +557,7 @@ Units can proceed in parallel except:
 | **release-please** (Google changelog/release) | Node.js dependency. A Go CLI tool should not require Node.js for changelog generation. git-cliff is a Rust single binary that matches gdev's zero-prerequisite philosophy. |
 | **semantic-release** (changelog/release) | Node.js dependency, same reasoning as release-please. Also more opinionated about the release workflow than a consulting firm wants (different clients have different release processes). |
 | **Developer onboarding metrics** | No mature open-source tool exists for measuring time-to-first-commit. The concept is valuable but the implementation is organizational process, not tooling — track it via git log analysis and team retrospectives, not a gdev integration. Adding telemetry to a developer tool creates trust issues. |
-| **Configuration drift detection** | Nix/devenv already provides reproducible environments by design — if you use `devenv shell`, you get the declared environment. Drift detection is solving a problem that devenv's architecture prevents. The real drift risk is "developer bypasses devenv" which is a process problem, not a tool problem. `gdev devenv doctor` (Phase 9) already validates the local environment state. |
+| **Configuration drift detection** | Nix/devenv already provides reproducible environments by design — if you use `devenv shell`, you get the declared environment. Drift detection is solving a problem that devenv's architecture prevents. The real drift risk is "developer bypasses devenv" which is a process problem, not a tool problem. `qsdev devenv doctor` (Phase 9) already validates the local environment state. |
 | **Local service orchestration** (Docker Compose alternatives) | devenv 2.0 includes a native Rust process manager replacing process-compose, with dependency ordering, restart policies, and Linux capabilities. Adding a separate orchestration tool would conflict with devenv's built-in service management. |
 
 ### Security Hardening
@@ -577,7 +577,7 @@ Units can proceed in parallel except:
 |------|---------------------|
 | **SonarQube plugin** (Claude Code marketplace) | Requires a SonarQube server instance — operational overhead too high for the consulting firm's $0/mo default stack. Listed in Phase 4 as "configure when available" which is the right posture — reference but don't default-enable. |
 | **Aikido plugin** (Claude Code marketplace) | Commercial SaaS ($24/user/month). Would need per-client licensing. The firm's security stack (Semgrep + gitleaks + Grype + OSV Scanner) covers the same surface at $0. |
-| **Monitoring/observability for dev environment** | Developer environments don't need monitoring — they need to work. If they don't work, `gdev devenv doctor` diagnoses the issue. Adding Prometheus/Grafana for dev environments is over-engineering a problem that doesn't exist at the consulting firm scale. |
+| **Monitoring/observability for dev environment** | Developer environments don't need monitoring — they need to work. If they don't work, `qsdev devenv doctor` diagnoses the issue. Adding Prometheus/Grafana for dev environments is over-engineering a problem that doesn't exist at the consulting firm scale. |
 | **Endor Labs plugin** | Commercial SaaS with limited free tier. OSV Scanner + Socket.dev MCP cover supply chain scanning at $0. |
 
 ---

@@ -3,14 +3,14 @@ package config
 import (
 	"path/filepath"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// ConfigToAnswers maps a GdevConfig to WizardAnswers for downstream generators.
+// ConfigToAnswers maps a QsdevConfig to WizardAnswers for downstream generators.
 // It converts config-level types (LanguageConfig, ServiceConfig) into their
 // wizard equivalents (LanguageChoice, ServiceChoice) and sets reasonable
 // defaults for fields that don't have config equivalents.
-func ConfigToAnswers(cfg *types.GdevConfig, detected types.DetectedProject, projectRoot string) types.WizardAnswers {
+func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, projectRoot string) types.WizardAnswers {
 	answers := types.WizardAnswers{
 		ProjectRoot: projectRoot,
 		ProjectName: filepath.Base(projectRoot),
@@ -74,12 +74,12 @@ func ConfigToAnswers(cfg *types.GdevConfig, detected types.DetectedProject, proj
 	return answers
 }
 
-// securityToHookChoices maps a GdevConfig's security settings to HookChoices.
+// securityToHookChoices maps a QsdevConfig's security settings to HookChoices.
 // The mapping is based on compliance level:
 //   - baseline: safety-block
 //   - enhanced: safety-block + pre-commit
 //   - strict: safety-block + pre-commit + audit-log + auto-format
-func securityToHookChoices(cfg *types.GdevConfig) types.HookChoices {
+func securityToHookChoices(cfg *types.QsdevConfig) types.HookChoices {
 	hc := types.HookChoices{
 		SafetyBlock: true, // Always on.
 	}

@@ -16,7 +16,7 @@ One bootstrap step = one huh Form with multiple Groups. This gives us:
 - Conditional fields via huh's dynamic functions
 - Theming and accessibility from huh
 
-### The `gdev init` Wizard Flow
+### The `qsdev init` Wizard Flow
 
 #### Quick Path (1 question, <5 seconds)
 
@@ -260,7 +260,7 @@ Every wizard question maps to a CLI flag. The form is never shown when flags pro
 
 ```bash
 # Full non-interactive
-gdev init \
+qsdev init \
     --lang go --go-version 1.22 \
     --lang typescript --ts-version 22 \
     --service postgres --service redis \
@@ -272,10 +272,10 @@ gdev init \
     --yes
 
 # Profile shortcut (equivalent to above)
-gdev init --profile go-web --yes
+qsdev init --profile go-web --yes
 
 # Partial flags + interactive for the rest
-gdev init --lang go --service postgres
+qsdev init --lang go --service postgres
 # → wizard opens but pre-fills Go and PostgreSQL, asks remaining questions
 ```
 
@@ -307,7 +307,7 @@ func (c *initCommand) Run(cmd *cobra.Command, args []string) error {
 
 ### gdev Bootstrap Step Integration
 
-When running `gdev bootstrap` (full system setup), the init wizard is NOT automatically included — bootstrap handles system-level tool installation, not per-project config. But teams can add an init step:
+When running `qsdev bootstrap` (full system setup), the init wizard is NOT automatically included — bootstrap handles system-level tool installation, not per-project config. But teams can add an init step:
 
 ```go
 // In the team's main.go, optionally:
@@ -321,8 +321,8 @@ bootstrap.Configure(
 ```
 
 The normal workflow is:
-1. `gdev bootstrap` → installs system tools (devenv, claude, direnv)
-2. `cd my-project && gdev init` → configures project environment
+1. `qsdev bootstrap` → installs system tools (devenv, claude, direnv)
+2. `cd my-project && qsdev init` → configures project environment
 
 ### Detection Engine
 

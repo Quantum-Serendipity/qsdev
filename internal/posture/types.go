@@ -33,7 +33,7 @@ const (
 type PostureReport struct {
 	SchemaVersion string            `json:"schemaVersion"`
 	GeneratedAt   time.Time         `json:"generatedAt"`
-	GdevVersion   string            `json:"gdevVersion"`
+	QsdevVersion   string            `json:"qsdevVersion"`
 	ProjectPath   string            `json:"projectPath"`
 	ProjectName   string            `json:"projectName"`
 	Score         AggregateScore    `json:"score"`

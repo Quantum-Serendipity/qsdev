@@ -2,7 +2,7 @@
 
 ## Research Question
 
-What development services beyond PostgreSQL/Redis/MySQL/MongoDB/Elasticsearch/RabbitMQ should gdev provide, and should it offer a local observability stack? gdev uses devenv.sh (Nix-based) to manage developer environments via `gdev devenv add-service <name>`.
+What development services beyond PostgreSQL/Redis/MySQL/MongoDB/Elasticsearch/RabbitMQ should gdev provide, and should it offer a local observability stack? gdev uses devenv.sh (Nix-based) to manage developer environments via `qsdev devenv add-service <name>`.
 
 ## 1. devenv.sh Native Service Catalog
 
@@ -296,15 +296,15 @@ env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:4318";
 
 **The original rejection of "OTEL infrastructure" remains correct for Claude Code monitoring.** The firm should run that centrally.
 
-**However, `gdev enable observability` for application development is a different proposition.** Here is the recommended approach:
+**However, `qsdev enable observability` for application development is a different proposition.** Here is the recommended approach:
 
 1. **Do NOT create a devenv.nix service template** for observability. The stack (Grafana + Loki + Tempo + Prometheus + OTEL Collector) exceeds what devenv services handle well — Grafana, Loki, and Tempo are not native devenv services.
 
-2. **DO offer `gdev enable observability` as a Docker-based sidecar.** This would:
+2. **DO offer `qsdev enable observability` as a Docker-based sidecar.** This would:
    - Pull and run `grafana/otel-lgtm` as a Docker container
    - Inject `OTEL_EXPORTER_OTLP_ENDPOINT` into devenv.nix env vars
    - Add `OTEL_SERVICE_NAME` based on project name
-   - Add a `gdev observability up/down/status` command
+   - Add a `qsdev observability up/down/status` command
    - Generate a `docker-compose.observability.yml` for projects that prefer Compose
 
 3. **This is NOT the same as the rejected "OTEL infrastructure"** because:
@@ -476,15 +476,15 @@ Already planned: PostgreSQL, Redis, MySQL/MariaDB, MongoDB, Elasticsearch, Rabbi
 ### Special: Observability (Docker sidecar, not devenv service)
 | Component | Mechanism |
 |-----------|-----------|
-| `gdev enable observability` | Docker-based grafana/otel-lgtm |
+| `qsdev enable observability` | Docker-based grafana/otel-lgtm |
 | OTEL env vars | Injected into devenv.nix automatically |
-| `gdev observability up/down` | Container lifecycle management |
+| `qsdev observability up/down` | Container lifecycle management |
 
 ---
 
 ## 10. Detection Heuristics Summary
 
-For the `gdev devenv init` wizard to auto-suggest services, each service needs detection heuristics. The strongest signals:
+For the `qsdev devenv init` wizard to auto-suggest services, each service needs detection heuristics. The strongest signals:
 
 | Signal Source | Services Detected |
 |--------------|-------------------|

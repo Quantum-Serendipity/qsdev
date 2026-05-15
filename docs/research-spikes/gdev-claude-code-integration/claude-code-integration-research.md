@@ -44,7 +44,7 @@ The `` !`command` `` syntax is a preprocessor -- it runs shell commands *before*
 
 ```markdown
 ## Current system state
-!`gdev devenv doctor --json 2>/dev/null || echo '{"error": "gdev not installed"}'`
+!`qsdev devenv doctor --json 2>/dev/null || echo '{"error": "gdev not installed"}'`
 
 ## Instructions
 Based on the system state above, recommend actions...
@@ -55,8 +55,8 @@ Multi-line variant uses fenced code blocks opened with `` ```! ``:
 ````markdown
 ## Environment
 ```!
-gdev devenv doctor --json
-gdev status --json
+qsdev devenv doctor --json
+qsdev status --json
 git status --short
 ```
 ````
@@ -148,7 +148,7 @@ Commands and skills are functionally merged. A file at `.claude/commands/deploy.
 
 ### 2.3 Recommendation for gdev
 
-**Use skills, not commands.** gdev skills benefit from supporting files (ecosystem reference docs, validation scripts, template files). The directory structure also matches gdev's embed.FS pattern -- skills can be embedded in the gdev binary and extracted to `.claude/skills/` during `gdev init`.
+**Use skills, not commands.** gdev skills benefit from supporting files (ecosystem reference docs, validation scripts, template files). The directory structure also matches gdev's embed.FS pattern -- skills can be embedded in the gdev binary and extracted to `.claude/skills/` during `qsdev init`.
 
 ---
 
@@ -183,13 +183,13 @@ argument-hint: [--profile <name>] [--yes]
 ---
 
 ## Current project state
-!`gdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
+!`qsdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
 
 ## Current directory
 !`ls -la`
 
 ## Detected ecosystems
-!`gdev detect --json 2>/dev/null || echo '{"ecosystems": []}'`
+!`qsdev detect --json 2>/dev/null || echo '{"ecosystems": []}'`
 
 ## Instructions
 
@@ -197,18 +197,18 @@ Initialize this project with gdev. Based on the detected state above:
 
 1. If gdev is not installed, tell the user to install it first and stop.
 2. If ecosystems are detected, confirm the detection with the user.
-3. Run `gdev init` with appropriate flags:
+3. Run `qsdev init` with appropriate flags:
    - If $ARGUMENTS includes --yes or --profile, pass them through
-   - Otherwise, use `gdev init --non-interactive` with detected ecosystems
+   - Otherwise, use `qsdev init --non-interactive` with detected ecosystems
    - If the user specified a profile (e.g., "set up for Python with full security"), map that to the right flags
-4. After init completes, run `gdev devenv doctor` to verify everything is healthy.
+4. After init completes, run `qsdev devenv doctor` to verify everything is healthy.
 5. Summarize what was created and any manual steps needed.
 
 If the user says something like "set up this repo for Python development with full security":
-- Run: `gdev init --ecosystem python --profile security-full --non-interactive`
+- Run: `qsdev init --ecosystem python --profile security-full --non-interactive`
 
 If they say "initialize for a TypeScript/Node project":
-- Run: `gdev init --ecosystem javascript-typescript --non-interactive`
+- Run: `qsdev init --ecosystem javascript-typescript --non-interactive`
 ```
 
 #### `/gdev-doctor` -- Health Check
@@ -221,7 +221,7 @@ allowed-tools: Bash(gdev *) Read
 ---
 
 ## System health
-!`gdev devenv doctor --json 2>/dev/null || echo '{"error": "gdev not found"}'`
+!`qsdev devenv doctor --json 2>/dev/null || echo '{"error": "gdev not found"}'`
 
 ## Instructions
 
@@ -248,10 +248,10 @@ argument-hint: <tool-name>
 ---
 
 ## Currently enabled tools
-!`gdev status --json 2>/dev/null || echo '{"tools": []}'`
+!`qsdev status --json 2>/dev/null || echo '{"tools": []}'`
 
 ## Available tools
-!`gdev list --json 2>/dev/null || echo '{"available": []}'`
+!`qsdev list --json 2>/dev/null || echo '{"available": []}'`
 
 ## Instructions
 
@@ -259,8 +259,8 @@ Enable the tool: $ARGUMENTS
 
 1. Check if the tool is already enabled (from status above)
 2. Check if it's in the available list
-3. If valid, run: `gdev enable $ARGUMENTS`
-4. Verify with: `gdev status $ARGUMENTS`
+3. If valid, run: `qsdev enable $ARGUMENTS`
+4. Verify with: `qsdev status $ARGUMENTS`
 5. Report what changed (files modified, configs updated)
 6. Note any additional setup steps the user needs to take
 
@@ -279,15 +279,15 @@ argument-hint: <tool-name>
 ---
 
 ## Currently enabled tools
-!`gdev status --json 2>/dev/null || echo '{"tools": []}'`
+!`qsdev status --json 2>/dev/null || echo '{"tools": []}'`
 
 ## Instructions
 
 Disable the tool: $ARGUMENTS
 
 1. Check if the tool is currently enabled
-2. If enabled, run: `gdev disable $ARGUMENTS`
-3. Verify with: `gdev status`
+2. If enabled, run: `qsdev disable $ARGUMENTS`
+3. Verify with: `qsdev status`
 4. Report what changed (files modified, configs cleaned up)
 5. Note if any other tools depended on the disabled tool
 
@@ -305,7 +305,7 @@ allowed-tools: Bash(gdev *) Read Grep Glob
 ---
 
 ## Project analysis
-!`gdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
+!`qsdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
 
 ## Existing configuration files
 ```!
@@ -313,7 +313,7 @@ ls -la .envrc devenv.yaml devenv.nix .pre-commit-config.yaml .claude/settings.js
 ```
 
 ## Detected ecosystems
-!`gdev detect --json 2>/dev/null || echo '{"ecosystems": []}'`
+!`qsdev detect --json 2>/dev/null || echo '{"ecosystems": []}'`
 
 ## Instructions
 
@@ -325,8 +325,8 @@ Onboard this existing project to gdev management:
    - What's missing or could be improved
    - What gdev would add/modify
 3. Ask the user to confirm before making changes
-4. Run: `gdev init --merge` to fill gaps without overwriting
-5. Run `gdev devenv doctor` to verify the result
+4. Run: `qsdev init --merge` to fill gaps without overwriting
+5. Run `qsdev devenv doctor` to verify the result
 6. Summarize what was added and what was preserved
 ```
 
@@ -335,16 +335,16 @@ Onboard this existing project to gdev management:
 ```yaml
 ---
 name: gdev-status
-description: Show the current gdev configuration status. Lists enabled tools, detected ecosystems, security posture, and configuration health. Use when the user asks about their development environment state or when troubleshooting.
+description: Show the current qsdev configuration status. Lists enabled tools, detected ecosystems, security posture, and configuration health. Use when the user asks about their development environment state or when troubleshooting.
 allowed-tools: Bash(gdev *) Read
 ---
 
 ## Current status
-!`gdev status --json 2>/dev/null || echo '{"error": "gdev not found"}'`
+!`qsdev status --json 2>/dev/null || echo '{"error": "gdev not found"}'`
 
 ## Instructions
 
-Present the gdev status clearly:
+Present the qsdev status clearly:
 - Enabled tools and their health
 - Detected ecosystems
 - Security posture summary
@@ -365,13 +365,13 @@ argument-hint: [--format json|markdown|sarif]
 ---
 
 ## Current security posture
-!`gdev devenv doctor --json 2>/dev/null`
+!`qsdev devenv doctor --json 2>/dev/null`
 
 ## Instructions
 
 Generate a compliance report:
 
-1. Run: `gdev report $ARGUMENTS`
+1. Run: `qsdev report $ARGUMENTS`
 2. Read the generated report
 3. Summarize key findings:
    - Overall compliance score
@@ -392,32 +392,32 @@ allowed-tools: Bash(gdev *) Read Grep
 ---
 
 ## Current state
-!`gdev status --json 2>/dev/null`
+!`qsdev status --json 2>/dev/null`
 
 ## Recent changes
 !`git diff --name-only HEAD~5 2>/dev/null || echo "Not a git repo or no recent commits"`
 
 ## Instructions
 
-Update gdev configuration:
+Update qsdev configuration:
 
-1. Show what has changed since last gdev update
-2. Run: `gdev init --update`
+1. Show what has changed since last qsdev update
+2. Run: `qsdev init --update`
 3. Report what was updated:
    - Files regenerated
    - Files preserved (user-modified)
    - New ecosystems detected
    - New tools available
-4. Run `gdev devenv doctor` to verify health after update
+4. Run `qsdev devenv doctor` to verify health after update
 ```
 
 ### 3.3 Design Rationale
 
-**Why `disable-model-invocation: true` for most operations**: gdev operations modify configuration files, install packages, or generate artifacts. These are side effects that the user should explicitly request. Claude should not autonomously run `gdev init` because a conversation topic seems related to project setup.
+**Why `disable-model-invocation: true` for most operations**: gdev operations modify configuration files, install packages, or generate artifacts. These are side effects that the user should explicitly request. Claude should not autonomously run `qsdev init` because a conversation topic seems related to project setup.
 
 **Why allow Claude to invoke `gdev-doctor` and `gdev-status`**: These are read-only diagnostic operations. When Claude is troubleshooting a build failure or answering questions about the environment, it should be able to check health autonomously without the user needing to type `/gdev-doctor`.
 
-**Why dynamic context injection (`!`command``)**: By running `gdev devenv doctor --json` and `gdev status --json` *before* Claude sees the skill content, Claude receives the actual project state as structured data. This is dramatically more efficient than having Claude run discovery commands one by one, and it ensures Claude has the full picture before it starts reasoning.
+**Why dynamic context injection (`!`command``)**: By running `qsdev devenv doctor --json` and `qsdev status --json` *before* Claude sees the skill content, Claude receives the actual project state as structured data. This is dramatically more efficient than having Claude run discovery commands one by one, and it ensures Claude has the full picture before it starts reasoning.
 
 **Why JSON output from gdev**: Structured output (via `--json` flags) gives Claude parseable data rather than human-formatted tables. This is more reliable and more token-efficient. All gdev commands should support `--json` output.
 
@@ -441,7 +441,7 @@ The devops-claude-skills pattern uses paired skills:
 - **Validator**: Runs a linter/checker on the output (hadolint, kubeval, tflint)
 - Generator automatically invokes validator on its output
 
-This is relevant for gdev because `gdev init` generates configs and `gdev devenv doctor` validates them -- a natural generator/validator pair.
+This is relevant for gdev because `qsdev init` generates configs and `qsdev devenv doctor` validates them -- a natural generator/validator pair.
 
 ### 4.3 Pattern: Dynamic State Injection
 
@@ -530,16 +530,16 @@ Skills that only describe a CLI tool's capabilities without injecting live state
 ```markdown
 ## Development Environment (gdev)
 
-This project is managed by gdev. Run `gdev devenv doctor` to check environment health.
+This project is managed by gdev. Run `qsdev devenv doctor` to check environment health.
 
 ### Available commands
-- `gdev init` — Initialize or re-initialize project configuration
-- `gdev devenv doctor` — Check system and project health
-- `gdev devenv setup` — Install missing prerequisites
-- `gdev enable <tool>` — Enable a security/development tool
-- `gdev disable <tool>` — Disable a tool
-- `gdev status` — Show current configuration state
-- `gdev list` — Show available tools
+- `qsdev init` — Initialize or re-initialize project configuration
+- `qsdev devenv doctor` — Check system and project health
+- `qsdev devenv setup` — Install missing prerequisites
+- `qsdev enable <tool>` — Enable a security/development tool
+- `qsdev disable <tool>` — Disable a tool
+- `qsdev status` — Show current configuration state
+- `qsdev list` — Show available tools
 
 ### Skills available
 - `/gdev-init` — Full project initialization workflow
@@ -552,14 +552,14 @@ This project is managed by gdev. Run `gdev devenv doctor` to check environment h
 - `/gdev-update` — Update configs after changes
 
 ### Security policy
-- Always use `gdev enable` to add security tools, never configure them manually
-- Run `gdev devenv doctor` after any configuration changes
+- Always use `qsdev enable` to add security tools, never configure them manually
+- Run `qsdev devenv doctor` after any configuration changes
 - Package installations go through gdev's security pipeline (age-gating, vuln scanning)
 ```
 
 ### 5.3 Section Markers for Safe Updates
 
-gdev should own a specific section in CLAUDE.md using markers, so `gdev init --update` can update it without clobbering user content:
+gdev should own a specific section in CLAUDE.md using markers, so `qsdev init --update` can update it without clobbering user content:
 
 ```markdown
 <!-- gdev:start -->
@@ -626,23 +626,23 @@ Where `.claude/gdev-reference.md` is a gdev-generated file with full command doc
 **Dry-run before execute**: For init and update operations, skills should first run with `--dry-run` and show the user what would change before executing:
 
 ```markdown
-1. Run: `gdev init --dry-run --json`
+1. Run: `qsdev init --dry-run --json`
 2. Show the user what files would be created/modified
 3. Ask for confirmation
-4. Run: `gdev init` (actual execution)
+4. Run: `qsdev init` (actual execution)
 ```
 
-**Idempotency**: gdev operations should be idempotent. Running `gdev init` on an already-initialized project should be safe (detect existing state, skip what's already done). This reduces the risk of accidental re-runs.
+**Idempotency**: gdev operations should be idempotent. Running `qsdev init` on an already-initialized project should be safe (detect existing state, skip what's already done). This reduces the risk of accidental re-runs.
 
-**Reversibility**: `gdev enable/disable` should be clean round-trips. Enabling and then disabling a tool should leave the project in its original state. This makes experimentation safe.
+**Reversibility**: `qsdev enable/disable` should be clean round-trips. Enabling and then disabling a tool should leave the project in its original state. This makes experimentation safe.
 
-**Explicit confirmation for system-level changes**: `gdev devenv setup` installs system packages. Even though the user invoked `/gdev-setup`, the skill should confirm before installing:
+**Explicit confirmation for system-level changes**: `qsdev devenv setup` installs system packages. Even though the user invoked `/gdev-setup`, the skill should confirm before installing:
 
 ```markdown
-1. Run: `gdev devenv setup --dry-run`
+1. Run: `qsdev devenv setup --dry-run`
 2. Show: "The following packages will be installed: ..."
 3. Ask: "Proceed? (This will use sudo to install system packages)"
-4. If confirmed: `gdev devenv setup`
+4. If confirmed: `qsdev devenv setup`
 ```
 
 ### 6.5 Enterprise Safety via Managed Settings
@@ -668,17 +668,17 @@ This hooks into Claude Code's PreToolUse system to validate all shell commands a
 
 ### 6.6 What Should Never Be Autonomous
 
-- Installing system packages (`gdev devenv setup`)
-- First-time initialization (`gdev init` on a fresh project)
-- Disabling security tools (`gdev disable` for security-related tools)
+- Installing system packages (`qsdev devenv setup`)
+- First-time initialization (`qsdev init` on a fresh project)
+- Disabling security tools (`qsdev disable` for security-related tools)
 - Generating compliance reports (creates artifacts with potential audit implications)
 - Modifying managed/enterprise settings
 
 ### 6.7 What Can Safely Be Autonomous
 
-- Health checks (`gdev devenv doctor`)
-- Status queries (`gdev status`, `gdev list`)
-- Ecosystem detection (`gdev detect`)
+- Health checks (`qsdev devenv doctor`)
+- Status queries (`qsdev status`, `qsdev list`)
+- Ecosystem detection (`qsdev detect`)
 - Reading existing configuration files
 - Suggesting remediation steps (without executing them)
 
@@ -688,7 +688,7 @@ This hooks into Claude Code's PreToolUse system to validate all shell commands a
 
 ### 7.1 Embedding Skills in gdev Binary
 
-gdev should embed skill files via Go's `embed.FS` and extract them during `gdev init`:
+gdev should embed skill files via Go's `embed.FS` and extract them during `qsdev init`:
 
 ```go
 //go:embed skills/*
@@ -796,10 +796,10 @@ gdev could integrate with Claude Code through multiple mechanisms. Here's why sk
 
 ### 9.1 gdev Not Installed
 
-Skills using `!`gdev ...`` for dynamic context injection will fail if gdev isn't installed. The pattern handles this:
+Skills using `!`qsdev ...`` for dynamic context injection will fail if gdev isn't installed. The pattern handles this:
 
 ```markdown
-!`gdev devenv doctor --json 2>/dev/null || echo '{"error": "gdev not installed"}'`
+!`qsdev devenv doctor --json 2>/dev/null || echo '{"error": "gdev not installed"}'`
 ```
 
 The `|| echo` fallback ensures Claude always gets parseable output and can handle the missing-tool case gracefully.
@@ -810,15 +810,15 @@ Dynamic context is injected once when the skill is invoked. If the user makes ch
 
 ```markdown
 If the user has made changes since the status was captured above, 
-re-run `gdev status --json` to get current state.
+re-run `qsdev status --json` to get current state.
 ```
 
 ### 9.3 Long gdev Output Filling Context
 
-Some gdev commands (e.g., `gdev report`) may produce large outputs. For dynamic context injection, use `--json` with `jq` to extract only what's needed:
+Some gdev commands (e.g., `qsdev report`) may produce large outputs. For dynamic context injection, use `--json` with `jq` to extract only what's needed:
 
 ```markdown
-!`gdev devenv doctor --json 2>/dev/null | jq '{overall, checks: [.checks[] | select(.status != "pass")]}'`
+!`qsdev devenv doctor --json 2>/dev/null | jq '{overall, checks: [.checks[] | select(.status != "pass")]}'`
 ```
 
 ### 9.4 Skill Description Budget Overflow
@@ -832,7 +832,7 @@ description: Run gdev health checks. Use when diagnosing dev environment problem
 Not:
 
 ```yaml
-description: This skill runs the gdev devenv doctor command to perform a comprehensive health check of your development environment, including checking for missing prerequisites, configuration issues, security hardening gaps, and more.
+description: This skill runs the qsdev devenv doctor command to perform a comprehensive health check of your development environment, including checking for missing prerequisites, configuration issues, security hardening gaps, and more.
 ```
 
 ### 9.5 Compaction Dropping Skills

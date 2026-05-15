@@ -103,13 +103,13 @@ func TestBuiltinSkillDefinitions_NotEmpty(t *testing.T) {
 	}
 }
 
-func TestBuiltinSkillDefinitions_GdevOpsUseGdevBash(t *testing.T) {
+func TestBuiltinSkillDefinitions_QsdevOpsUseGdevBash(t *testing.T) {
 	skills := BuiltinSkillDefinitions()
 
-	gdevSkills := []string{
-		"gdev-init", "gdev-onboard", "gdev-setup", "gdev-enable",
-		"gdev-disable", "gdev-update", "gdev-doctor", "gdev-status",
-		"gdev-tools", "gdev-detect",
+	qsdevSkills := []string{
+		"qsdev-init", "qsdev-onboard", "qsdev-setup", "qsdev-enable",
+		"qsdev-disable", "qsdev-update", "qsdev-doctor", "qsdev-status",
+		"qsdev-tools", "qsdev-detect",
 	}
 
 	skillMap := make(map[string]SkillDefinition)
@@ -117,14 +117,14 @@ func TestBuiltinSkillDefinitions_GdevOpsUseGdevBash(t *testing.T) {
 		skillMap[s.Name] = s
 	}
 
-	for _, name := range gdevSkills {
+	for _, name := range qsdevSkills {
 		s, ok := skillMap[name]
 		if !ok {
 			t.Errorf("expected skill %q to exist", name)
 			continue
 		}
-		if len(s.AllowedTools) != 1 || s.AllowedTools[0] != "Bash(gdev *)" {
-			t.Errorf("skill %q AllowedTools = %v, want [Bash(gdev *)]", name, s.AllowedTools)
+		if len(s.AllowedTools) != 1 || s.AllowedTools[0] != "Bash(qsdev *)" {
+			t.Errorf("skill %q AllowedTools = %v, want [Bash(qsdev *)]", name, s.AllowedTools)
 		}
 	}
 }

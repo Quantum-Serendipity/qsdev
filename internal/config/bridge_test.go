@@ -3,11 +3,11 @@ package config
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestConfigToAnswers_LanguageMapping(t *testing.T) {
-	cfg := &types.GdevConfig{
+	cfg := &types.QsdevConfig{
 		Languages: []types.LanguageConfig{
 			{Name: "go", Version: "1.22"},
 			{Name: "javascript", Version: "20", PackageManager: "pnpm"},
@@ -28,7 +28,7 @@ func TestConfigToAnswers_LanguageMapping(t *testing.T) {
 }
 
 func TestConfigToAnswers_ServiceMapping(t *testing.T) {
-	cfg := &types.GdevConfig{
+	cfg := &types.QsdevConfig{
 		Services: []types.ServiceConfig{
 			{Name: "postgres", Version: "16", Options: map[string]string{"port": "5433"}},
 		},
@@ -49,7 +49,7 @@ func TestConfigToAnswers_ServiceMapping(t *testing.T) {
 
 func TestConfigToAnswers_ClaudeCodeFields(t *testing.T) {
 	enabled := true
-	cfg := &types.GdevConfig{
+	cfg := &types.QsdevConfig{
 		ClaudeCode: types.ClaudeCodeConfig{
 			Enabled:         &enabled,
 			PermissionLevel: "standard",
@@ -75,7 +75,7 @@ func TestConfigToAnswers_ClaudeCodeFields(t *testing.T) {
 }
 
 func TestConfigToAnswers_ToolEnablement(t *testing.T) {
-	cfg := &types.GdevConfig{
+	cfg := &types.QsdevConfig{
 		Tools: types.ToolsConfig{
 			Enabled:  []string{"gitleaks", "semgrep"},
 			Disabled: []string{"changelog"},
@@ -99,7 +99,7 @@ func TestConfigToAnswers_ToolEnablement(t *testing.T) {
 }
 
 func TestConfigToAnswers_ComplianceLevelPropagated(t *testing.T) {
-	cfg := &types.GdevConfig{
+	cfg := &types.QsdevConfig{
 		Security: types.SecurityConfig{Level: "strict"},
 	}
 
@@ -115,7 +115,7 @@ func TestConfigToAnswers_DetectedProjectSet(t *testing.T) {
 		HasGoMod:       true,
 		HasPackageJSON: true,
 	}
-	cfg := &types.GdevConfig{}
+	cfg := &types.QsdevConfig{}
 
 	answers := ConfigToAnswers(cfg, detected, "/tmp/myproject")
 
@@ -128,7 +128,7 @@ func TestConfigToAnswers_DetectedProjectSet(t *testing.T) {
 }
 
 func TestConfigToAnswers_ProjectRootAndName(t *testing.T) {
-	cfg := &types.GdevConfig{}
+	cfg := &types.QsdevConfig{}
 
 	answers := ConfigToAnswers(cfg, types.DetectedProject{}, "/home/user/projects/myapp")
 

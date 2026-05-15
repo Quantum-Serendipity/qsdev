@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 )
 
 const (
@@ -16,7 +16,7 @@ const (
 	exitNotInitialized = 2
 )
 
-// statusCmd creates the `gdev status` command with full posture assessment,
+// statusCmd creates the `qsdev status` command with full posture assessment,
 // machine-readable output support, and CI-aware defaults.
 func statusCmd() *cobra.Command {
 	var (
@@ -112,7 +112,7 @@ func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptio
 	})
 	if err != nil {
 		if errors.Is(err, posture.ErrNotInitialized) {
-			fmt.Fprintln(cmd.ErrOrStderr(), "Project not initialized. Run 'gdev init' first.")
+			fmt.Fprintln(cmd.ErrOrStderr(), "Project not initialized. Run 'qsdev init' first.")
 			return &ExitError{Code: exitNotInitialized}
 		}
 		return fmt.Errorf("assessing project posture: %w", err)

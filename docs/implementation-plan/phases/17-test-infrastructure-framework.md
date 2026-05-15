@@ -16,7 +16,7 @@ Phase 1 complete (Go module). Phase 10 desirable (install scripts and GoReleaser
 - testscript-based E2E framework with custom commands (`yaml_has`, `json_path`, `nix_valid`)
 - BATS test suite for bash install script
 - Pester test suite for PowerShell install script
-- `--non-interactive` flag and `--answers-file` support for `gdev init`
+- `--non-interactive` flag and `--answers-file` support for `qsdev init`
 - Golden file infrastructure for generated content
 - Coverage collection from compiled binary (Go 1.20+ `-cover` build flag + `GOCOVERDIR`)
 - gotestsum for test reporting (JUnit XML)
@@ -88,7 +88,7 @@ GitHub Actions provides native runners for macOS ARM64 (`macos-15`), macOS Intel
 
 **Context:** The `testscript` package (`github.com/rogpeppe/go-internal/testscript`) is the same engine behind the Go project's own 900+ script tests. It provides a txtar-based DSL for writing E2E tests as human-readable scripts — each test is an isolated scenario with its own temp directory, environment, and file tree. The framework supports custom commands (extending the DSL), custom conditions (platform/tool predicates), and golden file comparison via `cmp`. This is the industry-standard approach for Go CLI testing — HashiCorp, CUE, and the Go toolchain itself all use it.
 
-For gdev, testscript is ideal because each test can declare a project fixture as an embedded txtar archive, run `gdev init --answers-file answers.yaml`, and then verify every generated file with `cmp`, `yaml_has`, `json_path`, or `nix_valid`.
+For gdev, testscript is ideal because each test can declare a project fixture as an embedded txtar archive, run `qsdev init --answers-file answers.yaml`, and then verify every generated file with `cmp`, `yaml_has`, `json_path`, or `nix_valid`.
 
 **Desired Outcome:** A working testscript E2E framework with 3-5 initial test scripts demonstrating the pattern, custom verification commands, and platform condition predicates.
 
@@ -104,7 +104,7 @@ For gdev, testscript is ideal because each test can declare a project fixture as
    - `nix_valid <file>` — run `nix-instantiate --parse <file>` or equivalent syntax check. Skip if `nix` is not available (gated on `[exec:nix]` condition).
    - `file_hash <file> <expected_sha256>` — compute SHA256 of file and compare against expected hash. For verifying embedded assets are correctly extracted.
    - `section_present <file> <marker>` — assert that a section marker pair exists in the file (e.g., `<!-- gdev:semgrep -->` ... `<!-- /gdev:semgrep -->` in CLAUDE.md, or `# --- semgrep ---` ... `# --- end semgrep ---` in devenv.nix).
-   - `section_absent <file> <marker>` — assert that a section marker pair does NOT exist in the file. Used to verify `gdev disable` cleanup.
+   - `section_absent <file> <marker>` — assert that a section marker pair does NOT exist in the file. Used to verify `qsdev disable` cleanup.
 3. Implement platform condition predicates:
    - `has_apt` — true if `apt-get` is in PATH (Debian/Ubuntu containers).
    - `has_brew` — true if `brew` is in PATH (macOS runners).
@@ -124,11 +124,11 @@ For gdev, testscript is ideal because each test can declare a project fixture as
    - Set `GOCOVERDIR=$WORK/.coverdir` in test environment.
    - After each test, copy coverage data to a shared directory for merging.
 6. Create initial test scripts:
-   - `e2e/testdata/script/init-basic.txt` — `gdev init --answers-file answers.yaml` with minimal Go project answers, verify devenv.yaml, devenv.nix, .envrc generated with expected content.
-   - `e2e/testdata/script/doctor-basic.txt` — `gdev devenv doctor` in a fresh directory, verify exit code and output format.
-   - `e2e/testdata/script/version.txt` — `gdev version`, verify version string format.
+   - `e2e/testdata/script/init-basic.txt` — `qsdev init --answers-file answers.yaml` with minimal Go project answers, verify devenv.yaml, devenv.nix, .envrc generated with expected content.
+   - `e2e/testdata/script/doctor-basic.txt` — `qsdev devenv doctor` in a fresh directory, verify exit code and output format.
+   - `e2e/testdata/script/version.txt` — `qsdev version`, verify version string format.
    - `e2e/testdata/script/init-noninteractive.txt` — verify `GDEV_NON_INTERACTIVE=1` produces same output as `--non-interactive` flag.
-   - `e2e/testdata/script/init-idempotent.txt` — run `gdev init` twice, verify second run detects existing files and handles merge strategy.
+   - `e2e/testdata/script/init-idempotent.txt` — run `qsdev init` twice, verify second run detects existing files and handles merge strategy.
 
 **Acceptance Criteria:**
 - [ ] `go test ./e2e/...` runs all testscript files in `testdata/script/`
@@ -153,18 +153,18 @@ For gdev, testscript is ideal because each test can declare a project fixture as
 
 ### Unit 17.3: Non-Interactive Mode & Answers File
 
-**Description:** Implement `--non-interactive` flag and `--answers-file <path>` for `gdev init` to enable automated testing without TUI interaction.
+**Description:** Implement `--non-interactive` flag and `--answers-file <path>` for `qsdev init` to enable automated testing without TUI interaction.
 
-**Context:** This is the single most important testing enabler. Every E2E test, every CI run, and every scripted validation depends on being able to run `gdev init` without a human operating the TUI wizard. Without this, testscript tests cannot exercise the init workflow, the CI pipeline cannot validate generated output, and golden file comparison is impossible.
+**Context:** This is the single most important testing enabler. Every E2E test, every CI run, and every scripted validation depends on being able to run `qsdev init` without a human operating the TUI wizard. Without this, testscript tests cannot exercise the init workflow, the CI pipeline cannot validate generated output, and golden file comparison is impossible.
 
 The design provides three levels of non-interactive control: (1) `--non-interactive` flag or `GDEV_NON_INTERACTIVE=1` env var skips the TUI and uses defaults, (2) `--answers-file <path>` reads wizard answers from a YAML file and exercises the same config logic as the TUI but without interaction, (3) auto-detection of non-interactive terminals via `os.Stdin.Fd()` (e.g., piped input, `CI=true` environments).
 
 The answers file format mirrors the wizard's question structure — each key corresponds to a wizard prompt, and the value is what the user would have selected. This means answers files are self-documenting and can serve as both test fixtures and documentation of gdev's configuration surface.
 
-**Desired Outcome:** `gdev init --answers-file go-defaults.yaml` produces identical output to a human clicking through the TUI with the same choices, enabling deterministic E2E testing.
+**Desired Outcome:** `qsdev init --answers-file go-defaults.yaml` produces identical output to a human clicking through the TUI with the same choices, enabling deterministic E2E testing.
 
 **Steps:**
-1. Add `--non-interactive` flag to `gdev init` command:
+1. Add `--non-interactive` flag to `qsdev init` command:
    - Boolean flag, default false.
    - When set, skip all TUI prompts and use detection-based defaults.
    - Wire into `GDEV_NON_INTERACTIVE` env var (flag takes precedence).
@@ -173,14 +173,14 @@ The answers file format mirrors the wizard's question structure — each key cor
    - Check `term.IsTerminal(int(os.Stdin.Fd()))` from `golang.org/x/term`.
    - When stdin is not a terminal AND `--non-interactive` is not explicitly set, auto-enable non-interactive mode with a log message explaining why.
    - When stdin IS a terminal and `--non-interactive` is set, respect the flag (user explicitly wants non-interactive).
-3. Add `--answers-file <path>` flag to `gdev init` command:
+3. Add `--answers-file <path>` flag to `qsdev init` command:
    - Path to a YAML file containing wizard answers.
    - Implies `--non-interactive` (no TUI prompts even if answers are incomplete).
    - Missing answers fall back to detection-based defaults.
    - Extra answers (for tools not detected) are applied anyway — this allows testing tool combinations not naturally detected.
 4. Define answers file schema:
    ```yaml
-   # gdev init answers file
+   # qsdev init answers file
    project_name: my-project
    ecosystems: [go, docker]
    profile: consulting-default
@@ -210,13 +210,13 @@ The answers file format mirrors the wizard's question structure — each key cor
    - `testdata/answers/minimal.yaml` — bare minimum: single ecosystem, no optional tools.
    - `testdata/answers/all-tools.yaml` — every optional tool enabled, for maximum coverage testing.
    - `testdata/answers/multi-ecosystem.yaml` — Go + Python + Docker + Terraform, testing ecosystem composition.
-8. Add validation: `gdev init --answers-file <path> --dry-run` previews what would be generated without writing files. Useful for CI validation of answers files themselves.
+8. Add validation: `qsdev init --answers-file <path> --dry-run` previews what would be generated without writing files. Useful for CI validation of answers files themselves.
 
 **Acceptance Criteria:**
-- [ ] `gdev init --non-interactive` completes without any TUI prompts
-- [ ] `gdev init --answers-file go-defaults.yaml` produces correct Go project output
-- [ ] `GDEV_NON_INTERACTIVE=1 gdev init` behaves identically to `--non-interactive` flag
-- [ ] `CI=true gdev init` auto-enables non-interactive mode
+- [ ] `qsdev init --non-interactive` completes without any TUI prompts
+- [ ] `qsdev init --answers-file go-defaults.yaml` produces correct Go project output
+- [ ] `GDEV_NON_INTERACTIVE=1 qsdev init` behaves identically to `--non-interactive` flag
+- [ ] `CI=true qsdev init` auto-enables non-interactive mode
 - [ ] Non-terminal stdin auto-detected and triggers non-interactive mode
 - [ ] Answers file with unknown keys produces a clear error
 - [ ] Missing answers fall back to detection-based defaults
@@ -261,7 +261,7 @@ BATS is the standard test framework for bash scripts — it is used by Homebrew,
    - **PATH update — bash**: verify `.bashrc` gets `export PATH="$HOME/.local/bin:$PATH"` if not already present. Verify idempotent (no duplicate entries on re-run).
    - **PATH update — zsh**: verify `.zshrc` gets the same treatment.
    - **PATH update — fish**: verify `~/.config/fish/conf.d/gdev.fish` gets `set -gx PATH $HOME/.local/bin $PATH`.
-   - **Version pinning**: set `GDEV_VERSION=1.2.3` env var, verify download URL uses pinned version instead of latest.
+   - **Version pinning**: set `QSDEV_VERSION=1.2.3` env var, verify download URL uses pinned version instead of latest.
    - **Idempotent re-install**: run install twice, verify second run detects existing binary and handles upgrade cleanly.
    - **Failure modes**: unreachable download URL (mock curl to fail), missing checksum file, insufficient permissions.
 4. Mock external commands for unit tests:
@@ -396,7 +396,7 @@ The golden file pattern — storing expected output in version-controlled files 
    - `test-fixtures/os-release/mint-22` — Linux Mint 22.
    - Embed via `//go:embed os-release/*` in detector test files.
 4. Create state file assertion helpers in `internal/testutil/`:
-   - `LoadState(t *testing.T, dir string) *GeneratedState` — load `.devinit/.gdev-init-state.yaml` from a test directory.
+   - `LoadState(t *testing.T, dir string) *GeneratedState` — load `.devinit/.qsdev-init-state.yaml` from a test directory.
    - `AssertStateHasFile(t *testing.T, state *GeneratedState, path string)` — verify a file is tracked in state.
    - `AssertStateHashMatches(t *testing.T, state *GeneratedState, path string)` — verify the on-disk file's SHA256 matches the state-tracked hash.
    - `AssertStateFileOwner(t *testing.T, state *GeneratedState, path string, owner string)` — verify file ownership (for lifecycle management testing in Phase 12).
@@ -437,7 +437,7 @@ The golden file pattern — storing expected output in version-controlled files 
 
 **Description:** Set up test reporting (JUnit XML with PR annotations), coverage collection (unit + E2E merged), performance baselines, and the build tag strategy that separates test tiers.
 
-**Context:** With four test tiers (unit, integration, E2E, distro) running across 20+ matrix cells, test results need aggregation and clear reporting. Individual test failures in a matrix of 20 jobs are hard to find without PR annotations. Coverage must combine unit test coverage (trivial — `go test -cover`) with E2E coverage (non-trivial — requires the compiled binary to be instrumented). Performance regressions in `gdev devenv doctor` or `gdev init` must be caught before they ship.
+**Context:** With four test tiers (unit, integration, E2E, distro) running across 20+ matrix cells, test results need aggregation and clear reporting. Individual test failures in a matrix of 20 jobs are hard to find without PR annotations. Coverage must combine unit test coverage (trivial — `go test -cover`) with E2E coverage (non-trivial — requires the compiled binary to be instrumented). Performance regressions in `qsdev devenv doctor` or `qsdev init` must be caught before they ship.
 
 Go 1.20 introduced coverage collection from compiled binaries via the `-cover` build flag and `GOCOVERDIR` environment variable. When a `-cover`-built binary exits, it writes coverage data to `GOCOVERDIR`. This enables collecting coverage from testscript E2E runs where the binary is invoked as an external process. Merging unit and E2E coverage via `gocovmerge` gives a true picture of what code is exercised.
 
@@ -468,9 +468,9 @@ Go 1.20 introduced coverage collection from compiled binaries via the `-cover` b
    - Generate HTML report: `go tool cover -html=merged-coverage.out -o coverage.html`.
    - Upload as artifact for inspection.
 6. Establish performance baselines:
-   - `gdev devenv doctor` must complete in < 2 seconds on a clean system.
-   - `gdev init --answers-file <path>` must complete in < 60 seconds (including detection + generation + file writes).
-   - `gdev enable <tool>` and `gdev disable <tool>` must complete in < 2 seconds.
+   - `qsdev devenv doctor` must complete in < 2 seconds on a clean system.
+   - `qsdev init --answers-file <path>` must complete in < 60 seconds (including detection + generation + file writes).
+   - `qsdev enable <tool>` and `qsdev disable <tool>` must complete in < 2 seconds.
    - Write benchmarks: `func BenchmarkDoctor(b *testing.B)`, `func BenchmarkInit(b *testing.B)`, `func BenchmarkEnable(b *testing.B)`.
    - Store baseline results in `testdata/benchstat-baseline.txt`.
 7. Set up benchstat for regression detection:
@@ -516,7 +516,7 @@ Go 1.20 introduced coverage collection from compiled binaries via the `-cover` b
 - [ ] testscript framework runs at least 3 E2E test scripts successfully
 - [ ] BATS tests pass for install.sh on Ubuntu, macOS
 - [ ] Pester tests pass for install.ps1 on Windows
-- [ ] `gdev init --answers-file <path>` produces correct output without TUI
+- [ ] `qsdev init --answers-file <path>` produces correct output without TUI
 - [ ] Coverage collected from E2E runs via `GOCOVERDIR`
 - [ ] Golden file update workflow works (`go test -update ./...`)
 - [ ] Build-once-test-many artifact pipeline works across matrix jobs

@@ -1,5 +1,5 @@
 // Package perl implements the Perl (CPAN/Carton) ecosystem module for
-// gdev-secure-devenv-bootstrap. It detects Perl projects by scanning for
+// qsdev. It detects Perl projects by scanning for
 // cpanfile, Makefile.PL, Build.PL, and cpanfile.snapshot, generates devenv.nix
 // fragments with Perl language support, and provides pre-commit hooks, CI
 // commands, deny rules, and package manager metadata for the Perl toolchain.
@@ -11,9 +11,9 @@
 package perl
 
 import (
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.

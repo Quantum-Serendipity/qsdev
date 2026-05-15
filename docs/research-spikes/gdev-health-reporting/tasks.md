@@ -12,7 +12,7 @@
   - Completed: 2026-05-12
   - Notes: 9 source docs saved to docs/. See [prior-art-research.md](prior-art-research.md).
 
-- [x] **Status/report command UX patterns** -- Designed `gdev status` terminal output with flutter doctor pattern, progressive disclosure, and performance model.
+- [x] **Status/report command UX patterns** -- Designed `qsdev status` terminal output with flutter doctor pattern, progressive disclosure, and performance model.
   - Outcome: success
   - Completed: 2026-05-12
   - Notes: Full terminal mockups, CLI flag inventory, CI examples. See [status-command-ux-research.md](status-command-ux-research.md).
@@ -45,7 +45,7 @@
 ## Phase 2: Synthesis & Design
 
 ### Pending
-- [ ] **Design: `gdev status` command specification** -- Full command design with subcommands, flags, output formats, and integration points
+- [ ] **Design: `qsdev status` command specification** -- Full command design with subcommands, flags, output formats, and integration points
   - Priority: high
   - Estimate: large
   - Depends: All Phase 1 tasks

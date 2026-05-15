@@ -7,18 +7,18 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/detect"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules" // register all modules
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/generate"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/profile"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/validation"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/detect"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules" // register all modules
+	"github.com/Quantum-Serendipity/qsdev/internal/generate"
+	"github.com/Quantum-Serendipity/qsdev/internal/profile"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 const (
-	statePath   = ".devenv/.gdev-state.yaml"
+	statePath   = ".devenv/.qsdev-state.yaml"
 	answersDir  = ".devenv"
 )
 

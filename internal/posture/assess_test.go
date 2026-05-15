@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 	"gopkg.in/yaml.v3"
 )
 
 func TestAssess_UninitializedProject(t *testing.T) {
-	// An empty temp directory with no state files or .gdev.yaml.
+	// An empty temp directory with no state files or .qsdev.yaml.
 	root := t.TempDir()
 
 	_, err := Assess(root, AssessOptions{})
@@ -27,9 +27,9 @@ func TestAssess_UninitializedProject(t *testing.T) {
 func TestAssess_WithGdevYAML(t *testing.T) {
 	root := t.TempDir()
 
-	// Create .gdev.yaml to indicate the project is initialized.
-	gdevYAML := filepath.Join(root, ".gdev.yaml")
-	if err := os.WriteFile(gdevYAML, []byte("version: 1\n"), 0o644); err != nil {
+	// Create .qsdev.yaml to indicate the project is initialized.
+	qsdevYAML := filepath.Join(root, ".qsdev.yaml")
+	if err := os.WriteFile(qsdevYAML, []byte("version: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -57,7 +57,7 @@ func TestAssess_WithStateFiles(t *testing.T) {
 
 	// Create a state file.
 	st := types.GeneratedState{
-		GdevVersion: "2.0.0",
+		QsdevVersion: "2.0.0",
 		LastRun:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
 		Files: map[string]types.FileState{
 			"devenv.nix": {Hash: "abc123"},
@@ -71,7 +71,7 @@ func TestAssess_WithStateFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".gdev-init-state.yaml"), data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev-init-state.yaml"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -80,8 +80,8 @@ func TestAssess_WithStateFiles(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if report.GdevVersion != "2.0.0" {
-		t.Errorf("GdevVersion = %q, want %q", report.GdevVersion, "2.0.0")
+	if report.QsdevVersion != "2.0.0" {
+		t.Errorf("QsdevVersion = %q, want %q", report.QsdevVersion, "2.0.0")
 	}
 }
 
@@ -108,8 +108,8 @@ func TestAssess_FileNotDirectory(t *testing.T) {
 func TestAssess_EmptySlicesNotNil(t *testing.T) {
 	root := t.TempDir()
 
-	// Create .gdev.yaml.
-	if err := os.WriteFile(filepath.Join(root, ".gdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+	// Create .qsdev.yaml.
+	if err := os.WriteFile(filepath.Join(root, ".qsdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -151,8 +151,8 @@ func TestAssess_EmptySlicesNotNil(t *testing.T) {
 func TestAssess_CorruptStateRecordedAsDrift(t *testing.T) {
 	root := t.TempDir()
 
-	// Create .gdev.yaml so project is considered initialized.
-	if err := os.WriteFile(filepath.Join(root, ".gdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+	// Create .qsdev.yaml so project is considered initialized.
+	if err := os.WriteFile(filepath.Join(root, ".qsdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -161,7 +161,7 @@ func TestAssess_CorruptStateRecordedAsDrift(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".gdev-state.yaml"), []byte("{{corrupt"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev-state.yaml"), []byte("{{corrupt"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/installer"
+	"github.com/Quantum-Serendipity/qsdev/internal/installer"
 )
 
 // testSpec returns a ToolSpec that references fake binaries so tests

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/sysinfo"
+	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 )
 
 func TestRunAllChecksReturns15Results(t *testing.T) {

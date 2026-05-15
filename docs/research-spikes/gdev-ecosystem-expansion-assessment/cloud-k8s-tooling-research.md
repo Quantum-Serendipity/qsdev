@@ -456,8 +456,8 @@ Rationale:
 **What gdev SHOULD do**:
 1. Install the CLI tools declaratively
 2. Install credential helpers (aws-vault, saml2aws) based on project detection
-3. Provide a `gdev doctor` check that verifies auth is configured (e.g., `aws sts get-caller-identity` succeeds)
-4. Provide a `gdev init` template that generates skeleton AWS/GCP/Azure profile configs with TODO comments
+3. Provide a `qsdev doctor` check that verifies auth is configured (e.g., `aws sts get-caller-identity` succeeds)
+4. Provide a `qsdev init` template that generates skeleton AWS/GCP/Azure profile configs with TODO comments
 5. Set environment variables that don't contain secrets (e.g., `AWS_DEFAULT_REGION`, `KUBECONFIG` path)
 6. Display active cloud context in shell prompt (which AWS profile, which K8s context)
 
@@ -501,7 +501,7 @@ The core challenge for consulting engineers: switching between Client A's AWS ac
 
 Many client K8s clusters and cloud accounts require VPN access. gdev should be aware that:
 - kubectl commands may fail if VPN is not connected
-- `gdev doctor` could check connectivity to known cluster API endpoints
+- `qsdev doctor` could check connectivity to known cluster API endpoints
 - Cloud CLI auth flows may require specific DNS resolution (client SSO portals)
 
 ### 4.3 Onboarding Velocity
@@ -509,7 +509,7 @@ Many client K8s clusters and cloud accounts require VPN access. gdev should be a
 For consulting, onboarding speed to a new client project is paramount. The ideal flow:
 1. `git clone client-project`
 2. `cd client-project && gdev setup` (devenv activates, all tools installed)
-3. `gdev doctor` reports what auth is still needed
+3. `qsdev doctor` reports what auth is still needed
 4. Engineer configures auth manually (one-time)
 5. All subsequent `cd client-project` activations have correct tools and context
 
@@ -587,7 +587,7 @@ Some enterprise clients use HashiCorp Vault for credential management:
 
 ### 6.1 Module Architecture
 
-Cloud/K8s tooling should be implemented as **two new gdev devenv module categories**:
+Cloud/K8s tooling should be implemented as **two new qsdev devenv module categories**:
 
 1. **`cloud` module**: AWS, GCP, Azure, platform CLIs + credential helpers
 2. **`kubernetes` module**: kubectl, context tools, development tools, security tools, observability
@@ -607,7 +607,7 @@ gdev should enhance the shell prompt to show:
 For kubectl specifically, version should match the target cluster version (within +/-1 minor). gdev could:
 - Allow explicit version pin in devenv.nix: `kubernetes.kubectlVersion = "1.28"`
 - Default to latest stable if not pinned
-- Warn on version skew via `gdev doctor`
+- Warn on version skew via `qsdev doctor`
 
 ### 6.4 Credential Security Hooks
 

@@ -2,7 +2,7 @@
 
 ## Research Question
 
-How should `gdev check` or `gdev validate` work to verify that a project meets team standards, security hardening is intact, and required tools are properly configured?
+How should `qsdev check` or `qsdev validate` work to verify that a project meets team standards, security hardening is intact, and required tools are properly configured?
 
 ## The Problem
 
@@ -15,28 +15,28 @@ Generated configuration files can drift from expected state through:
 
 CI is the enforcement point -- the one place where checks run consistently regardless of individual developer behavior.
 
-## Command Design: `gdev check`
+## Command Design: `qsdev check`
 
 ### Scope
 
-`gdev check` validates the project's gdev configuration against the expected state. It is a read-only command that never modifies files.
+`qsdev check` validates the project's qsdev configuration against the expected state. It is a read-only command that never modifies files.
 
 ```
-$ gdev check
-  gdev check v0.16.0 | project: acme-widget-service
+$ qsdev check
+  qsdev check v0.16.0 | project: acme-widget-service
 
   Binary Compatibility
   ✓ gdev version 0.16.0 satisfies >= 0.15.0
 
   Config Integrity
-  ✓ .gdev.yaml present and valid (schema version 2)
-  ✓ .gdev.yaml profile "go-web-service" recognized
+  ✓ .qsdev.yaml present and valid (schema version 2)
+  ✓ .qsdev.yaml profile "go-web-service" recognized
 
   Required Tools
   ✓ devenv.sh enabled
   ✓ Claude Code enabled
   ✓ pre-commit hooks enabled (ripsecrets, gitleaks, semgrep)
-  ✗ age_gating: disabled in .gdev.yaml (required by org policy)
+  ✗ age_gating: disabled in .qsdev.yaml (required by org policy)
 
   Generated File State
   ✓ devenv.yaml matches expected state
@@ -57,15 +57,15 @@ $ gdev check
   - age_gating disabled -- required by org security policy
   
   Warning:
-  - deny rule missing in settings.json -- run `gdev init --update` to fix
+  - deny rule missing in settings.json -- run `qsdev init --update` to fix
   
   Exit code: 1
 ```
 
 ### Check Categories
 
-1. **Binary compatibility** -- gdev version meets `.gdev.yaml` constraint
-2. **Config integrity** -- `.gdev.yaml` parses correctly, profile exists, schema version supported
+1. **Binary compatibility** -- gdev version meets `.qsdev.yaml` constraint
+2. **Config integrity** -- `.qsdev.yaml` parses correctly, profile exists, schema version supported
 3. **Required tools** -- Org policy mandates certain tools are enabled (security hardening, pre-commit hooks, Claude Code)
 4. **Generated file state** -- Machine-owned files match expected output; human-edited files checked for required content (deny rules in settings.json, section markers in CLAUDE.md)
 5. **Security hardening** -- Per-ecosystem security configs present and correct (age-gating, install script blocking, lock file enforcement, vulnerability scanning)
@@ -95,15 +95,15 @@ Following Unix convention and CI best practices:
 |-----------|---------|-----------|
 | 0 | All checks pass | Pipeline continues |
 | 1 | One or more checks failed | Pipeline fails |
-| 2 | gdev check itself errored (can't read config, etc.) | Pipeline fails |
+| 2 | qsdev check itself errored (can't read config, etc.) | Pipeline fails |
 
 ### Output Formats
 
 ```
-gdev check                    # Human-readable (default)
-gdev check --format json      # Machine-readable JSON
-gdev check --format sarif     # SARIF for GitHub Security tab
-gdev check --format junit     # JUnit XML for CI test reporting
+qsdev check                    # Human-readable (default)
+qsdev check --format json      # Machine-readable JSON
+qsdev check --format sarif     # SARIF for GitHub Security tab
+qsdev check --format junit     # JUnit XML for CI test reporting
 ```
 
 JSON output example:
@@ -118,8 +118,8 @@ JSON output example:
       "name": "age_gating",
       "status": "fail",
       "severity": "critical",
-      "message": "Package age-gating is disabled in .gdev.yaml",
-      "remediation": "Set security.age_gating: true in .gdev.yaml"
+      "message": "Package age-gating is disabled in .qsdev.yaml",
+      "remediation": "Set security.age_gating: true in .qsdev.yaml"
     }
   ],
   "summary": {
@@ -147,8 +147,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install gdev
         run: curl -fsSL https://get.myxdev.dev | sh
-      - name: Run gdev check
-        run: gdev check --format sarif > gdev-check.sarif
+      - name: Run qsdev check
+        run: qsdev check --format sarif > gdev-check.sarif
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
         with:
@@ -162,7 +162,7 @@ gdev-check:
   stage: validate
   script:
     - curl -fsSL https://get.myxdev.dev | sh
-    - gdev check --format junit > gdev-check.xml
+    - qsdev check --format junit > gdev-check.xml
   artifacts:
     reports:
       junit: gdev-check.xml
@@ -186,19 +186,19 @@ gdev-check:
 - Whether devenv shell actually works (requires Nix evaluation)
 - Individual developer's local tool versions (only project config)
 
-### Relationship to `gdev devenv doctor`
+### Relationship to `qsdev devenv doctor`
 
-`gdev check` and `gdev devenv doctor` serve different purposes:
+`qsdev check` and `qsdev devenv doctor` serve different purposes:
 
-| | `gdev check` | `gdev devenv doctor` |
+| | `qsdev check` | `qsdev devenv doctor` |
 |---|---|---|
 | **Scope** | Project config compliance | Machine/system state |
 | **Runs in** | CI + local | Local only |
 | **Checks** | Standards, security, config state | Tool installation, versions, shell hooks |
-| **Modifies files** | Never | Never (but suggests `gdev devenv setup`) |
+| **Modifies files** | Never | Never (but suggests `qsdev devenv setup`) |
 | **Exit code** | 0 (pass) / 1 (fail) | 0 (healthy) / 1 (issues) |
 
-They complement each other: `gdev devenv doctor` ensures the machine is ready; `gdev check` ensures the project is compliant.
+They complement each other: `qsdev devenv doctor` ensures the machine is ready; `qsdev check` ensures the project is compliant.
 
 ## Prior Art Comparison
 
@@ -210,16 +210,16 @@ They complement each other: `gdev devenv doctor` ensures the machine is ready; `
 | Nx | `nx lint` | Workspace constraints | Human |
 | OpenSSF Scorecard | `scorecard --repo` | Supply chain security posture | Human + JSON + SARIF |
 | npm audit | `npm audit` | Dependency vulnerabilities | Human + JSON |
-| gdev (proposed) | `gdev check` | Config compliance + security hardening | Human + JSON + SARIF + JUnit |
+| gdev (proposed) | `qsdev check` | Config compliance + security hardening | Human + JSON + SARIF + JUnit |
 
-gdev's `gdev check` is closest to OpenSSF Scorecard in philosophy -- it evaluates security posture rather than just config syntax -- but focused on the project's gdev-managed configuration rather than the entire supply chain.
+gdev's `qsdev check` is closest to OpenSSF Scorecard in philosophy -- it evaluates security posture rather than just config syntax -- but focused on the project's gdev-managed configuration rather than the entire supply chain.
 
 ## Auto-Fix Mode
 
 For issues that have deterministic fixes:
 
 ```
-$ gdev check --fix
+$ qsdev check --fix
   ✗ .claude/settings.json: deny rule "Bash(pip install *)" missing
     → Added deny rule. Settings.json updated.
   

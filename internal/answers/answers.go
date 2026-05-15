@@ -1,5 +1,5 @@
 // Package answers provides shared YAML persistence for wizard answers
-// across all gdev addons. Each addon delegates to SaveToDir/LoadFromDir
+// across all qsdev addons. Each addon delegates to SaveToDir/LoadFromDir
 // with its own directory and filename.
 package answers
 
@@ -11,13 +11,13 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // SaveToDir persists wizard answers to a YAML file atomically.
 // dir is the subdirectory relative to projectRoot (e.g., ".devenv", ".claude").
-// filename is the base name (e.g., ".gdev-answers.yaml").
+// filename is the base name (e.g., ".qsdev-answers.yaml").
 func SaveToDir(projectRoot, dir, filename string, answers types.WizardAnswers) error {
 	data, err := yaml.Marshal(&answers)
 	if err != nil {
@@ -40,7 +40,7 @@ func LoadFromDir(projectRoot, dir, filename, cmdName string) (types.WizardAnswer
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return types.WizardAnswers{}, fmt.Errorf("no saved answers found at %s: run 'gdev %s init' first", path, cmdName)
+			return types.WizardAnswers{}, fmt.Errorf("no saved answers found at %s: run 'qsdev %s init' first", path, cmdName)
 		}
 		return types.WizardAnswers{}, fmt.Errorf("reading answers file: %w", err)
 	}

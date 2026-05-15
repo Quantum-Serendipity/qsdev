@@ -46,7 +46,7 @@ BlobFuse2 is a FUSE virtual filesystem driver that translates Linux file operati
 - Downloads the **entire file** from Blob Storage into a local cache directory before making it available
 - Subsequent reads operate on the local cache until eviction or invalidation
 - Cache location, size, and retention policies are configurable
-- Can **preload** entire containers at mount time — perfect for downloading ZIM files on first `gdev setup`
+- Can **preload** entire containers at mount time — perfect for downloading ZIM files on first `qsdev setup`
 - After caching, performance equals local SSD (zero network latency for reads)
 
 **Block Cache Mode (alternative for very large files)**:
@@ -104,7 +104,7 @@ The Azure Identity library's `DefaultAzureCredential` provides a unified authent
 6. **AzurePowerShellCredential** — PowerShell login
 7. **AzureDeveloperCliCredential** — `azd auth login`
 
-For developer machines, the flow is: developer runs `az login` once (or `gdev auth` which wraps it), and all subsequent Azure SDK calls automatically use the cached token. Token refresh is automatic.
+For developer machines, the flow is: developer runs `az login` once (or `qsdev auth` which wraps it), and all subsequent Azure SDK calls automatically use the cached token. Token refresh is automatic.
 
 ### 2.2 Authentication Flows for Different Scenarios
 
@@ -166,7 +166,7 @@ azstorage:
   # mode: azcli
 ```
 
-Mount command (would be wrapped by `gdev setup`):
+Mount command (would be wrapped by `qsdev setup`):
 ```bash
 blobfuse2 mount ~/.local/share/gdev/azure-docs \
   --config-file ~/.config/gdev/blobfuse-config.yaml
@@ -721,18 +721,18 @@ DevDocs data changes infrequently (monthly Docker image updates). Recommended ca
 
 ## 7. End-to-End Developer Experience
 
-### 7.1 Initial Setup (`gdev setup`)
+### 7.1 Initial Setup (`qsdev setup`)
 
 ```
-1. Developer runs `gdev setup`
+1. Developer runs `qsdev setup`
 2. gdev detects Azure profile, runs `az login` if not authenticated
 3. gdev applies Terraform module (creates storage account, RBAC, etc.)
-4. gdev configures BlobFuse2:
+4. qsdev configures BlobFuse2:
    a. Writes blobfuse config to ~/.config/gdev/blobfuse.yaml
    b. Creates mount point at ~/.local/share/gdev/azure-docs
    c. Mounts via systemd user service (auto-mount on login)
 5. gdev downloads "core docs" locally (~5 GB curated ZIM files)
-6. gdev configures MCP servers in .mcp.json:
+6. qsdev configures MCP servers in .mcp.json:
    - openzim-mcp pointing to BlobFuse2 mount + local ZIM dir
    - devdocs-mcp pointing to BlobFuse2 mount devdocs path
 7. Developer starts Claude Code — documentation available immediately
@@ -753,7 +753,7 @@ DevDocs data changes infrequently (monthly Docker image updates). Recommended ca
 - **Azure CLI access token**: Expires after ~1 hour, auto-refreshed by Azure CLI
 - **Azure CLI refresh token**: Expires after ~90 days of inactivity
 - **If refresh token expires**: BlobFuse2 mount fails silently on new file access; cached files still work
-- **gdev health check**: `gdev status` should verify `az account show` succeeds and warn if re-auth needed
+- **gdev health check**: `qsdev status` should verify `az account show` succeeds and warn if re-auth needed
 - **Graceful degradation**: MCP servers fall back to locally-cached ZIM files if mount is unavailable
 
 ### 7.4 Offline Behavior

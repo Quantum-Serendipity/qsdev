@@ -52,7 +52,7 @@ What patterns and lessons can gdev learn from existing tools that manage team-le
 
 **Configuration sharing model:** Three-tier hierarchy: Organization Base -> Team Override -> Project Specific. Custom features published to registries. Pre-built images for faster startup.
 
-**Key lesson for gdev:** The three-tier hierarchy (org -> team -> project) validates gdev's proposed three-layer config model (compiled defaults -> .gdev.yaml -> .gdev.local.yaml). Dev containers prove that reducing onboarding to "open in container" is achievable. gdev's target of 3 commands is competitive with dev containers' 1-command setup, with the advantage of not requiring Docker.
+**Key lesson for gdev:** The three-tier hierarchy (org -> team -> project) validates gdev's proposed three-layer config model (compiled defaults -> .qsdev.yaml -> .qsdev.local.yaml). Dev containers prove that reducing onboarding to "open in container" is achievable. gdev's target of 3 commands is competitive with dev containers' 1-command setup, with the advantage of not requiring Docker.
 
 **Limitation:** Requires Docker/container runtime. Cold start times can be long. Not all tools work well inside containers (GPU access, hardware debugging, etc.).
 
@@ -62,7 +62,7 @@ What patterns and lessons can gdev learn from existing tools that manage team-le
 
 **Configuration sharing model:** `.mise.toml` (committed to git) defines project tool versions and tasks. `.mise.local.toml` (gitignored) for local overrides. Shell activation (`mise activate`) automatically picks up config when entering a project directory. Trust mechanism prevents untrusted configs from auto-activating.
 
-**Key lesson for gdev:** mise's `.mise.toml` + `.mise.local.toml` split is exactly the pattern gdev should use for `.gdev.yaml` + `.gdev.local.yaml`. The trust mechanism is important for security: when an engineer clones a new project, gdev should prompt before auto-applying any configuration that could execute code (shell hooks, pre-commit scripts). The `trusted_config_paths` setting for pre-trusting org directories is a UX win.
+**Key lesson for gdev:** mise's `.mise.toml` + `.mise.local.toml` split is exactly the pattern gdev should use for `.qsdev.yaml` + `.qsdev.local.yaml`. The trust mechanism is important for security: when an engineer clones a new project, gdev should prompt before auto-applying any configuration that could execute code (shell hooks, pre-commit scripts). The `trusted_config_paths` setting for pre-trusting org directories is a UX win.
 
 **Onboarding flow:** `git clone` -> `cd project` -> `mise trust` (once) -> `mise install` -> tools are available. Four commands, but `mise trust` is the speed bump.
 
@@ -74,7 +74,7 @@ What patterns and lessons can gdev learn from existing tools that manage team-le
 
 **Configuration sharing model:** `.prototools` files at three levels (local, user, global) with four resolution modes. Deep merge with current directory taking highest precedence. Environment-specific configs via `PROTO_ENV`. Notable: proto itself can be pinned in the config (`proto = "0.38.0"`).
 
-**Key lesson for gdev:** proto's resolution modes (local, global, upwards, upwards-global) show that different commands need different config scopes. gdev should consider whether `gdev check` (CI) should use only project-level config, while `gdev init` should merge all layers. proto's self-pinning pattern (`proto = "0.38.0"`) is equivalent to gdev's `gdev_version` constraint.
+**Key lesson for gdev:** proto's resolution modes (local, global, upwards, upwards-global) show that different commands need different config scopes. gdev should consider whether `qsdev check` (CI) should use only project-level config, while `qsdev init` should merge all layers. proto's self-pinning pattern (`proto = "0.38.0"`) is equivalent to gdev's `gdev_version` constraint.
 
 **Limitation:** WASM plugin architecture is powerful but complex. Smaller ecosystem than mise.
 
@@ -91,7 +91,7 @@ This is the dominant pattern. A committed config file provides the team standard
 | mise | `.mise.toml` | `.mise.local.toml` |
 | proto | `.prototools` | (user-level in home dir) |
 | Rails | `config/database.yml` | `config/database.yml.local` |
-| gdev (proposed) | `.gdev.yaml` | `.gdev.local.yaml` |
+| gdev (proposed) | `.qsdev.yaml` | `.qsdev.local.yaml` |
 
 ### Pattern: Hierarchical Resolution
 
@@ -99,7 +99,7 @@ This is the dominant pattern. A committed config file provides the team standard
 
 Configuration resolves by walking up the directory tree, merging files. Closer files override further ones.
 
-**gdev adaptation:** gdev's three-layer hierarchy (compiled -> .gdev.yaml -> .gdev.local.yaml) is a simplified version. True hierarchical resolution (walking up directories) is unnecessary because gdev operates at the project root, not per-file.
+**gdev adaptation:** gdev's three-layer hierarchy (compiled -> .qsdev.yaml -> .qsdev.local.yaml) is a simplified version. True hierarchical resolution (walking up directories) is unnecessary because gdev operates at the project root, not per-file.
 
 ### Pattern: Version Constraint in Config
 
@@ -107,7 +107,7 @@ Configuration resolves by walking up the directory tree, merging files. Closer f
 
 The config file declares what version of the tool it's compatible with.
 
-**gdev adaptation:** `gdev_version: ">= 0.15.0"` in `.gdev.yaml`. Checked before any operation.
+**gdev adaptation:** `gdev_version: ">= 0.15.0"` in `.qsdev.yaml`. Checked before any operation.
 
 ### Pattern: Extends/Inherits from Named Presets
 
@@ -115,7 +115,7 @@ The config file declares what version of the tool it's compatible with.
 
 A project config references a named base config and overrides specific fields.
 
-**gdev adaptation:** `profile: go-web-service` in `.gdev.yaml` references a compiled profile. Unlike Renovate (which resolves presets from repos) or ESLint (which resolves from npm), gdev resolves from compiled-in profiles. This is simpler but means new profiles require a binary update.
+**gdev adaptation:** `profile: go-web-service` in `.qsdev.yaml` references a compiled profile. Unlike Renovate (which resolves presets from repos) or ESLint (which resolves from npm), gdev resolves from compiled-in profiles. This is simpler but means new profiles require a binary update.
 
 ### Pattern: Machine-Owned vs Human-Edited File Categories
 
@@ -129,14 +129,14 @@ Different merge strategies for different file types.
 
 | Pattern | Source | gdev Adoption | Priority |
 |---------|--------|---------------|----------|
-| Committed config + gitignored overrides | mise, proto | `.gdev.yaml` + `.gdev.local.yaml` | Must have |
+| Committed config + gitignored overrides | mise, proto | `.qsdev.yaml` + `.qsdev.local.yaml` | Must have |
 | Version constraint in config | Terraform, proto | `gdev_version` field | Must have |
 | Config schema versioning | JSON best practices | `version` field + migration chain | Must have |
 | Profile/preset selection | Renovate, ESLint | `profile` field referencing compiled profiles | Must have |
 | Trust mechanism | mise | Prompt before first use on untrusted project | Should have |
 | Three-way merge for updates | Copier | Already designed in migration strategy | Already planned |
 | Machine-owned vs human-edited | Projen, Copier | Already designed in migration strategy | Already planned |
-| CI validation command | OpenSSF Scorecard | `gdev check` with SARIF output | Must have |
+| CI validation command | OpenSSF Scorecard | `qsdev check` with SARIF output | Must have |
 | Hierarchical dir resolution | EditorConfig, Biome | Not needed (gdev operates at project root) | N/A |
 | Package-based config sharing | ESLint, Nx | Not needed (profiles compiled into binary) | N/A |
 

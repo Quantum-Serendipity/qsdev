@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devinit"
+	"github.com/Quantum-Serendipity/qsdev/addons/devinit"
 )
 
 func TestBuildPlanPreview_BasicDevenv(t *testing.T) {

@@ -438,7 +438,7 @@ download_and_install() {
 
 # --- Main ---
 main() {
-  local version="${GDEV_VERSION:-$(get_latest_version)}"
+  local version="${QSDEV_VERSION:-$(get_latest_version)}"
   local os
   os=$(detect_os)
   local arch
@@ -478,7 +478,7 @@ function Get-LatestVersion {
 }
 
 function Install-Gdev {
-    $version = if ($env:GDEV_VERSION) { $env:GDEV_VERSION } else { Get-LatestVersion }
+    $version = if ($env:QSDEV_VERSION) { $env:QSDEV_VERSION } else { Get-LatestVersion }
     $arch = if ([Environment]::Is64BitOperatingSystem) { "x86_64" } else { "i386" }
     $filename = "${GithubRepo}_${version}_Windows_${arch}.zip"
     $url = "https://github.com/$GithubOrg/$GithubRepo/releases/download/v$version/$filename"
@@ -645,11 +645,11 @@ func extractTemplate(name string, destPath string) error {
 ```
 
 **What to embed in gdev:**
-- Default configuration templates (`.gdev.yaml` scaffolding)
+- Default configuration templates (`.qsdev.yaml` scaffolding)
 - Shell completion scripts (bash, zsh, fish)
 - Pre-commit hook configurations
 - Devenv/flake templates for new projects
-- Skill/recipe definitions for the `gdev init` workflow
+- Skill/recipe definitions for the `qsdev init` workflow
 
 **Trade-offs:**
 - Every embedded file increases binary size directly (1:1 ratio)
@@ -662,25 +662,25 @@ func extractTemplate(name string, destPath string) error {
 Based on patterns from rustup, mise, and volta, here is the recommended first-run sequence for gdev:
 
 ```
-gdev devenv doctor    # Diagnose what's missing
-gdev devenv setup     # Interactive bootstrap (installs prerequisites)
-gdev init             # Scaffold a project's dev environment
+qsdev devenv doctor    # Diagnose what's missing
+qsdev devenv setup     # Interactive bootstrap (installs prerequisites)
+qsdev init             # Scaffold a project's dev environment
 ```
 
-The `gdev devenv doctor` command is critical infrastructure. It should:
+The `qsdev devenv doctor` command is critical infrastructure. It should:
 1. Detect the OS, distro, and architecture
 2. Check for each prerequisite (git, nix, devenv, direnv, pre-commit, Claude Code)
 3. Report what's present, what's missing, and what version is installed
 4. Output actionable commands for fixing each issue
 5. Return a non-zero exit code if anything critical is missing
 
-The `gdev devenv setup` command should:
-1. Run `gdev devenv doctor` to identify gaps
+The `qsdev devenv setup` command should:
+1. Run `qsdev devenv doctor` to identify gaps
 2. Present a plan: "I will install X, Y, Z using [package manager]. Continue? [Y/n]"
 3. Handle privilege escalation (sudo) only when needed
 4. Install prerequisites in dependency order
 5. Configure shell integration (PATH, completions, direnv hooks)
-6. Run `gdev devenv doctor` again to verify
+6. Run `qsdev devenv doctor` again to verify
 
 ---
 
@@ -1024,7 +1024,7 @@ func RequestElevation(reason string) error {
 ### 4.2 Installation Dependency Graph
 
 ```
-gdev devenv setup
+qsdev devenv setup
 ├── git (package manager)
 ├── nix (Determinate Systems installer)
 │   └── devenv (nix profile install)
@@ -1044,7 +1044,7 @@ func installNix() error {
         return fmt.Errorf(
             "Nix is not available natively on Windows.\n" +
             "Options:\n" +
-            "  1. Use WSL2: wsl --install, then run gdev devenv setup inside WSL\n" +
+            "  1. Use WSL2: wsl --install, then run qsdev devenv setup inside WSL\n" +
             "  2. Use devcontainers with Nix pre-installed\n" +
             "  3. Skip Nix-based features (gdev will use native package managers)")
     }
@@ -1087,9 +1087,9 @@ For a consulting firm, the Windows story needs careful thought:
 - Detect the environment:
   - Running inside WSL2? Use Linux path.
   - Running on native Windows? Offer WSL2 or native-only mode.
-- `gdev devenv doctor` reports which features are available in each mode
-- `gdev devenv setup --wsl` explicitly targets WSL2
-- `gdev devenv setup --native` explicitly targets native Windows
+- `qsdev devenv doctor` reports which features are available in each mode
+- `qsdev devenv setup --wsl` explicitly targets WSL2
+- `qsdev devenv setup --native` explicitly targets native Windows
 
 ### 4.5 Multi-Runtime Management
 
@@ -1268,10 +1268,10 @@ Use the complete `.goreleaser.yaml` from Section 1.1 above. The GitHub Actions w
 gdev binary
 ├── cmd/gdev/main.go          # Entry point
 ├── internal/
-│   ├── doctor/                # System diagnostics (gdev devenv doctor)
+│   ├── doctor/                # System diagnostics (qsdev devenv doctor)
 │   │   ├── checks.go         # Individual prerequisite checks
 │   │   └── report.go         # Diagnostic output formatting
-│   ├── setup/                 # Bootstrap logic (gdev devenv setup)
+│   ├── setup/                 # Bootstrap logic (qsdev devenv setup)
 │   │   ├── installer.go      # Orchestrates prerequisite installation
 │   │   └── shell.go          # Shell integration (PATH, completions)
 │   ├── sysinfo/               # OS/distro/arch detection
@@ -1294,7 +1294,7 @@ gdev binary
 ├── templates/                 # Embedded via embed.FS
 │   ├── devenv.nix.tmpl
 │   ├── .envrc.tmpl
-│   ├── .gdev.yaml.tmpl
+│   ├── .qsdev.yaml.tmpl
 │   └── .pre-commit-config.yaml.tmpl
 └── completions/               # Embedded shell completions
     ├── gdev.bash
@@ -1328,7 +1328,7 @@ func CheckForUpdate(currentVersion string) (*Release, error) {
 }
 ```
 
-On update detection, gdev should print a notice but not auto-update. The user runs `gdev self-update` to actually update, which re-runs the install script logic (download, verify, replace binary).
+On update detection, gdev should print a notice but not auto-update. The user runs `qsdev self-update` to actually update, which re-runs the install script logic (download, verify, replace binary).
 
 ### 6.6 Key Design Decisions Summary
 
@@ -1345,7 +1345,7 @@ On update detection, gdev should print a notice but not auto-update. The user ru
 | Package manager abstraction | Custom interface with per-manager implementations | Full control, tested, no dependency |
 | Nix on Windows | WSL2 path | Nix does not run natively on Windows |
 | Runtime management | Delegate to mise (primary) or devenv (Nix users) | Solved problem, do not reimplement |
-| Self-update | Check GitHub Releases, manual `gdev self-update` | Non-intrusive, user-controlled |
+| Self-update | Check GitHub Releases, manual `qsdev self-update` | Non-intrusive, user-controlled |
 | Windows strategy | Hybrid: detect WSL2, offer WSL or native mode | Maximum flexibility |
 
 ---

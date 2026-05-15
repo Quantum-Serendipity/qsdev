@@ -91,7 +91,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Generate badge
-        run: gdev status --format badge > .gdev/badge.json
+        run: qsdev status --format badge > .gdev/badge.json
       - name: Commit badge
         run: |
           git config user.name "gdev-bot"
@@ -135,7 +135,7 @@ README usage:
 
 ### Method 3: CLI-Generated SVG (Offline)
 
-`gdev status --format svg` generates an SVG badge file directly, without relying on shields.io:
+`qsdev status --format svg` generates an SVG badge file directly, without relying on shields.io:
 
 ```go
 func generateBadgeSVG(label, message, color string) string {
@@ -168,18 +168,18 @@ A project might display several badges:
 [![gdev defenses](https://img.shields.io/endpoint?url=...defense-badge.json)](...)
 ```
 
-`gdev status --format badge` generates the primary score badge. Additional badge variants:
+`qsdev status --format badge` generates the primary score badge. Additional badge variants:
 
 ```
-gdev status --format badge                    # Score badge (default)
-gdev status --format badge --badge-type conformance  # Baseline conformance
-gdev status --format badge --badge-type defense      # Defense coverage
-gdev status --format badge --badge-type vulns        # Vulnerability count
+qsdev status --format badge                    # Score badge (default)
+qsdev status --format badge --badge-type conformance  # Baseline conformance
+qsdev status --format badge --badge-type defense      # Defense coverage
+qsdev status --format badge --badge-type vulns        # Vulnerability count
 ```
 
 Or generate all at once:
 ```
-gdev status --format badge --all-badges --output-dir .gdev/badges/
+qsdev status --format badge --all-badges --output-dir .gdev/badges/
 ```
 
 ## Integration with Team Reporting

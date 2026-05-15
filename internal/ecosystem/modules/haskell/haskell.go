@@ -1,5 +1,5 @@
 // Package haskell implements the Haskell ecosystem module for
-// gdev-secure-devenv-bootstrap. It detects Haskell projects by scanning for
+// qsdev. It detects Haskell projects by scanning for
 // *.cabal, stack.yaml, and cabal.project files, generates devenv.nix fragments
 // with optional Stack support, and provides pre-commit hooks, CI commands,
 // deny rules, wizard fields, and package manager metadata for the Haskell
@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.

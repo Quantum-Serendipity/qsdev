@@ -1,5 +1,5 @@
 // Package dart implements the Dart/Flutter ecosystem module for
-// gdev-secure-devenv-bootstrap. It detects Dart and Flutter projects by
+// qsdev. It detects Dart and Flutter projects by
 // scanning for pubspec.yaml and pubspec.lock, generates devenv.nix fragments
 // with optional Flutter support, and provides pre-commit hooks, CI commands,
 // deny rules, and wizard fields for the Dart toolchain.
@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.

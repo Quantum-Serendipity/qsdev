@@ -42,9 +42,9 @@ What ideas, concepts, implementations, libraries, utilities, or features from th
 #### 1d. Centralized MCP Config Syncing
 **Concept**: "One config for every MCP server" synced across clients and machines.
 
-**gdev relevance**: LOW-MEDIUM. gdev's three-layer config (binary → project → local) handles per-project MCP config. Team-level sync is partially addressed by `.gdev.yaml` in shared repos. Full cross-machine sync (like mcp.hosting provides) is a SaaS concern, not a CLI tool concern.
+**gdev relevance**: LOW-MEDIUM. gdev's three-layer config (binary → project → local) handles per-project MCP config. Team-level sync is partially addressed by `.qsdev.yaml` in shared repos. Full cross-machine sync (like mcp.hosting provides) is a SaaS concern, not a CLI tool concern.
 
-**Recommendation**: Note as a future consideration. If gdev's team config (Phase 13) includes shared MCP server definitions in `.gdev.yaml`, that provides 80% of the value without requiring a sync service.
+**Recommendation**: Note as a future consideration. If gdev's team config (Phase 13) includes shared MCP server definitions in `.qsdev.yaml`, that provides 80% of the value without requiring a sync service.
 
 **Implementation fit**: Already covered by Phase 13 team config. No new work needed.
 
@@ -61,14 +61,14 @@ What ideas, concepts, implementations, libraries, utilities, or features from th
 
 **gdev relevance**: HIGH. A consulting firm has a direct business interest in engineers who genuinely understand what they build, not just engineers who produce AI-accelerated output. The five learning science risks (generation effect, fluency illusion, spacing effect, metacognition gap, testing deficit) are amplified in consulting where engineers frequently work on unfamiliar codebases.
 
-**Recommendation**: Include `learning-opportunities` as an optional skill in gdev's claudecode addon skill library. Deploy via `gdev enable learning-opportunities`. This is a ready-made, research-backed, CC-BY-4.0 licensed skill that requires no custom development — just curation and deployment.
+**Recommendation**: Include `learning-opportunities` as an optional skill in gdev's claudecode addon skill library. Deploy via `qsdev enable learning-opportunities`. This is a ready-made, research-backed, CC-BY-4.0 licensed skill that requires no custom development — just curation and deployment.
 
 **Implementation fit**: Phase 4 (claudecode addon skill library) or Phase 14 (agentic skills). Add as opt-in skill alongside existing Trail of Bits security skills. Could be default-enabled for junior engineers via client profile compliance levels.
 
 #### 2b. Orient — Repository Orientation Generator (STRONG CANDIDATE)
 **Concept**: Companion plugin that generates orientation lessons for unfamiliar codebases using codebase sampling strategies.
 
-**gdev relevance**: HIGH. Consulting engineers onboard to unfamiliar client codebases regularly. This directly addresses the "Join" onboarding mode (Phase 13, Unit 13.4). When an engineer runs `gdev init` in Join mode on an existing repo, `orient` could automatically generate an orientation lesson.
+**gdev relevance**: HIGH. Consulting engineers onboard to unfamiliar client codebases regularly. This directly addresses the "Join" onboarding mode (Phase 13, Unit 13.4). When an engineer runs `qsdev init` in Join mode on an existing repo, `orient` could automatically generate an orientation lesson.
 
 **Recommendation**: Include `orient` as an optional skill, potentially auto-triggered during Join mode onboarding. Research the actual implementation quality before committing.
 
@@ -79,7 +79,7 @@ What ideas, concepts, implementations, libraries, utilities, or features from th
 
 **gdev relevance**: MEDIUM. Fits gdev's hook deployment infrastructure. However, post-commit hooks that interrupt flow may face resistance from experienced engineers. Better as opt-in.
 
-**Recommendation**: Include as an optional hook via `gdev enable learning-hooks`. Do not make default.
+**Recommendation**: Include as an optional hook via `qsdev enable learning-hooks`. Do not make default.
 
 **Implementation fit**: Phase 4 (hook deployment) — optional post-commit hook.
 
@@ -121,10 +121,10 @@ What ideas, concepts, implementations, libraries, utilities, or features from th
 
 **Implementation fit**: Design principle — add to plan.md Design Principles or gdev's generated CLAUDE.md conventions.
 
-#### 3b. Project Clarity Questions in gdev init
+#### 3b. Project Clarity Questions in qsdev init
 **Concept**: "What problem am I solving? Whose problem is it? What does concrete success look like? What am I willing to exclude?"
 
-**gdev relevance**: MEDIUM. These questions could be codified in gdev's project initialization. When creating a new project (`gdev init` in Create mode), gdev could prompt for or generate a "project clarity" section in CLAUDE.md or README that forces articulation of purpose.
+**gdev relevance**: MEDIUM. These questions could be codified in gdev's project initialization. When creating a new project (`qsdev init` in Create mode), gdev could prompt for or generate a "project clarity" section in CLAUDE.md or README that forces articulation of purpose.
 
 **Recommendation**: Add a `## Project Context` section to generated CLAUDE.md that includes these clarity questions as prompts for the engineer to fill in. This gives Claude Code project context and forces the engineer to think clearly about purpose.
 

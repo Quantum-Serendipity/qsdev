@@ -25,25 +25,25 @@ A starship.toml that shows project-relevant context:
 ```toml
 # gdev-managed starship config
 [custom.gdev]
-command = "echo $GDEV_PROJECT_NAME"
-when = "test -n \"$GDEV_PROJECT_NAME\""
+command = "echo $QSDEV_PROJECT_NAME"
+when = "test -n \"$QSDEV_PROJECT_NAME\""
 format = "[$output]($style) "
 style = "bold cyan"
 description = "Active gdev project"
 
 [custom.gdev_security]
 command = "echo '🛡'"
-when = "test -n \"$GDEV_SECURITY_PROFILE\""
+when = "test -n \"$QSDEV_SECURITY_PROFILE\""
 format = "[$output]($style) "
 style = "green"
 description = "Security hardening active"
 ```
 
 The key env vars gdev would set in devenv.nix:
-- `GDEV_PROJECT_NAME` -- detected project name
-- `GDEV_SECURITY_PROFILE` -- active security profile (if any)
-- `GDEV_VERSION` -- gdev config version
-- `GDEV_ECOSYSTEMS` -- comma-separated detected ecosystems
+- `QSDEV_PROJECT_NAME` -- detected project name
+- `QSDEV_SECURITY_PROFILE` -- active security profile (if any)
+- `QSDEV_VERSION` -- qsdev config version
+- `QSDEV_ECOSYSTEMS` -- comma-separated detected ecosystems
 
 This lets any prompt tool (not just starship) display gdev context.
 
@@ -66,23 +66,23 @@ devenv's `scripts` option (now superseded by tasks, but still available) can exp
 
 ```nix
 # In generated devenv.nix
-scripts.gcheck.exec = "gdev devenv doctor";
-scripts.gstatus.exec = "gdev status";
+scripts.gcheck.exec = "qsdev devenv doctor";
+scripts.gstatus.exec = "qsdev status";
 ```
 
-But this is redundant -- `gdev devenv doctor` and `gdev status` are already short commands. Adding aliases for 4-character savings is not worth the cognitive overhead of "wait, is `gcheck` a real command or an alias?"
+But this is redundant -- `qsdev devenv doctor` and `qsdev status` are already short commands. Adding aliases for 4-character savings is not worth the cognitive overhead of "wait, is `gcheck` a real command or an alias?"
 
 ### Recommendation
 
-**Do NOT include aliases.** The gdev command namespace is already clean (`gdev devenv doctor`, `gdev status`, `gdev init`). Aliases add confusion without meaningful time savings. Developers who want aliases can create their own.
+**Do NOT include aliases.** The gdev command namespace is already clean (`qsdev devenv doctor`, `qsdev status`, `qsdev init`). Aliases add confusion without meaningful time savings. Developers who want aliases can create their own.
 
 ## Quick-Info Commands
 
-### `gdev status` (Already in gdev-health-reporting spike)
+### `qsdev status` (Already in gdev-health-reporting spike)
 
 Shows what tools are active, what ecosystem is detected, config health. This is covered by the sibling spike.
 
-### `gdev info` (Lightweight Alternative)
+### `qsdev info` (Lightweight Alternative)
 
 For developers who want a quick glance without the full health report:
 
@@ -95,11 +95,11 @@ devenv: v2.1.0, shell healthy
 gdev: v1.2.0 (config current)
 ```
 
-This is `gdev devenv doctor` without the checks -- just read cached state and display it. Subsecond response.
+This is `qsdev devenv doctor` without the checks -- just read cached state and display it. Subsecond response.
 
 ### Recommendation
 
-**Include `gdev info` as a lightweight status command.** It reads the gdev config file and displays current state. No evaluation, no checks, instant response. Useful for "where am I? what's active?"
+**Include `qsdev info` as a lightweight status command.** It reads the qsdev config file and displays current state. No evaluation, no checks, instant response. Useful for "where am I? what's active?"
 
 ## Shell Hook for Environment Awareness
 
@@ -112,9 +112,9 @@ eval "$(gdev hook bash)"
 ```
 
 This would:
-1. Set `GDEV_PROJECT_NAME` on directory entry
+1. Set `QSDEV_PROJECT_NAME` on directory entry
 2. Display a one-line notification when entering a gdev-managed project
-3. Optionally run `gdev devenv doctor --quick` on first entry (cached, subsecond)
+3. Optionally run `qsdev devenv doctor --quick` on first entry (cached, subsecond)
 
 ### Analysis
 
@@ -135,7 +135,7 @@ This duplicates devenv's hook functionality. devenv already activates on `cd`, s
 | Starship config generation | **Include (opt-in)** | Low cost, devenv has native support |
 | gdev env vars in devenv.nix | **Include** | Enables any prompt tool, not just starship |
 | Aliases/abbreviations | **Exclude** | Personal preference, cognitive overhead |
-| `gdev info` quick-status | **Include** | Subsecond response, instant context |
+| `qsdev info` quick-status | **Include** | Subsecond response, instant context |
 | gdev shell hook | **Exclude** | Duplicates devenv hook, creates conflicts |
 | devenv enterShell notification | **Include** | One-line "gdev project: acme-frontend" on shell entry |
 

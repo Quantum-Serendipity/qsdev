@@ -30,7 +30,7 @@
 - [x] **Guardrail-workflow integration** — How agentic workflows interact with security guardrails (deny rules, hooks, permissions) without blocking legitimate operations
   - Outcome: success
   - Completed: 2026-05-12
-  - Notes: Precision-scoped deny rules (target specific dangerous ops, not broad tool categories). Conflict detection test for gdev init/update. Recommended approach C for /upgrade-dep: work with guardrails, not around them. See guardrail-integration-research.md.
+  - Notes: Precision-scoped deny rules (target specific dangerous ops, not broad tool categories). Conflict detection test for qsdev init/update. Recommended approach C for /upgrade-dep: work with guardrails, not around them. See guardrail-integration-research.md.
 
 - [x] **Prior art survey** — Research Trail of Bits claude-code skills, Security Phoenix patterns, Claude Code starter kits, best practices repos, and .cursorrules cross-pollination
   - Outcome: success

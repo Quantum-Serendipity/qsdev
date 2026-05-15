@@ -269,7 +269,7 @@ func TestGuardrailWorkflowCompatibility(config Config) []Conflict {
 }
 ```
 
-This validation runs during `gdev init` and `gdev update` to catch conflicts before they cause runtime failures.
+This validation runs during `qsdev init` and `qsdev update` to catch conflicts before they cause runtime failures.
 
 ## 5. Managed Settings for Enterprise
 

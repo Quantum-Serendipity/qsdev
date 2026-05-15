@@ -490,7 +490,7 @@ lockfile-enforcement-test:
 
 ### Overview
 
-gdev configures OSV Scanner, Grype, Socket.dev, and Semgrep for vulnerability detection.
+qsdev configures OSV Scanner, Grype, Socket.dev, and Semgrep for vulnerability detection.
 
 ### Known-Vulnerable Package Versions (Safe Test Fixtures)
 
@@ -1180,7 +1180,7 @@ semgrep-test:
 
 ### Overview
 
-gdev configures Gitleaks as a pre-commit hook and CI scanner, detecting 150+ secret patterns.
+qsdev configures Gitleaks as a pre-commit hook and CI scanner, detecting 150+ secret patterns.
 
 ### Safe Test Artifacts
 
@@ -1643,10 +1643,10 @@ Based on the DevSecOps Security Test Pyramid model:
 
 #### Level 3: End-to-End Tests (Top)
 
-- **Full workflow simulation**: `gdev init` -> `gdev devenv doctor` -> developer installs dependencies -> CI runs
+- **Full workflow simulation**: `qsdev init` -> `qsdev devenv doctor` -> developer installs dependencies -> CI runs
 - **Red team exercises**: Attempt to bypass each defense layer intentionally
 - **Chaos testing**: Remove/corrupt individual configs and verify other layers still protect
-- **For gdev**: Run the complete gdev devenv setup in a clean VM/container and verify all defenses are active
+- **For gdev**: Run the complete qsdev devenv setup in a clean VM/container and verify all defenses are active
 
 ### Recommended Test Distribution for gdev
 
@@ -1654,7 +1654,7 @@ Based on the DevSecOps Security Test Pyramid model:
 |-------|----------|--------------|---------|
 | Unit tests (60%) | Config generation, pattern matching, hook exit codes | Every commit | Test that `.npmrc` output contains `ignore-scripts=true` |
 | Integration tests (30%) | Real package managers + generated configs | Every PR | `npm install` with generated `.npmrc` blocks install scripts |
-| E2E tests (10%) | Full `gdev init` + all defenses | Nightly/weekly | Fresh container, `gdev init`, attempt all bypass vectors |
+| E2E tests (10%) | Full `qsdev init` + all defenses | Nightly/weekly | Fresh container, `qsdev init`, attempt all bypass vectors |
 
 ---
 

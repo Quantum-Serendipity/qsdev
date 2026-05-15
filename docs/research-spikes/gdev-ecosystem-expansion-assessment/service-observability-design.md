@@ -4,7 +4,7 @@
 
 Design implementation units for two plan amendments:
 - **Part A** — Expand Phase 3 service sub-templates with Kafka (Tier 1) and four Tier 2 services (MinIO, Mailpit, Keycloak, NATS)
-- **Part B** — Add an observability sidecar to Phase 12 via `gdev enable observability`
+- **Part B** — Add an observability sidecar to Phase 12 via `qsdev enable observability`
 
 All units follow the existing unit format from their respective phases.
 
@@ -21,7 +21,7 @@ All units follow the existing unit format from their respective phases.
 | `docs/devenv-nats-config.md` | JetStream persistence, monitoring endpoint, clustering, authorization |
 | `docs/grafana-docker-otel-lgtm.md` | Ports 3000/4317/4318, all-in-one container, OTLP defaults, data persistence volume |
 | `phases/03-devenv-addon-core-generation.md § Unit 2.3` | Existing service sub-template pattern (postgres/redis/mysql/mongodb/elasticsearch/rabbitmq) |
-| `phases/12-extended-integrations-lifecycle.md § Unit 12.1` | Tool lifecycle system (`gdev enable/disable`), file ownership, shared-file surgery |
+| `phases/12-extended-integrations-lifecycle.md § Unit 12.1` | Tool lifecycle system (`qsdev enable/disable`), file ownership, shared-file surgery |
 
 ---
 
@@ -39,7 +39,7 @@ Unit 2.3's existing scope (PostgreSQL, Redis, MySQL, MongoDB, Elasticsearch, Rab
 
 **Context:** Kafka is the second most common message broker after RabbitMQ in consulting engagements. devenv.sh has excellent native Kafka support with KRaft mode as default (no Zookeeper dependency), Kafka Connect built-in, and comprehensive broker settings. KRaft mode eliminates the operational complexity of Zookeeper, making Kafka viable as a local dev service with devenv. The devenv module handles log directory formatting, listener configuration, and JVM options automatically. This is a Tier 1 service — it should be offered alongside the existing six in the wizard's service selection form group.
 
-**Desired Outcome:** `gdev devenv add-service kafka` generates a valid Kafka service block in devenv.nix with KRaft mode, sensible defaults, and `KAFKA_BOOTSTRAP_SERVERS` environment variable.
+**Desired Outcome:** `qsdev devenv add-service kafka` generates a valid Kafka service block in devenv.nix with KRaft mode, sensible defaults, and `KAFKA_BOOTSTRAP_SERVERS` environment variable.
 
 **Steps:**
 1. Create `templates/services/kafka.nix.tmpl` with the following template:
@@ -104,7 +104,7 @@ Unit 2.3's existing scope (PostgreSQL, Redis, MySQL, MongoDB, Elasticsearch, Rab
 
 **Context:** MinIO is the most commonly needed infrastructure service beyond databases and message brokers. Any project using S3 for file storage benefits from local S3 emulation, and MinIO is more accessible than LocalStack for pure S3 needs. devenv.sh has excellent MinIO support including auto-bucket creation, the MinIO client (mc), afterStart hooks for permission setup, and a web console UI. This is a Tier 2 (detect-and-offer) service — the wizard offers it when S3 usage is detected in the project, or when the user explicitly selects it in the customize path.
 
-**Desired Outcome:** `gdev devenv add-service minio` generates a valid MinIO service block in devenv.nix with default bucket, credentials, and standard S3-compatible environment variables.
+**Desired Outcome:** `qsdev devenv add-service minio` generates a valid MinIO service block in devenv.nix with default bucket, credentials, and standard S3-compatible environment variables.
 
 **Steps:**
 1. Create `templates/services/minio.nix.tmpl`:
@@ -172,7 +172,7 @@ Unit 2.3's existing scope (PostgreSQL, Redis, MySQL, MongoDB, Elasticsearch, Rab
 
 **Context:** Nearly every web application sends email (password resets, notifications, onboarding flows). Mailpit is the modern replacement for MailHog — it catches all outbound SMTP and displays it in a web UI. devenv.sh support is simple: enable, configure SMTP and UI listen addresses, done. Configuration complexity is minimal, making this a low-effort, high-value template. This is Tier 2 (detect-and-offer) — the wizard offers it when SMTP configuration is detected in the project.
 
-**Desired Outcome:** `gdev devenv add-service mailpit` generates a valid Mailpit service block in devenv.nix with standard SMTP environment variables.
+**Desired Outcome:** `qsdev devenv add-service mailpit` generates a valid Mailpit service block in devenv.nix with standard SMTP environment variables.
 
 **Steps:**
 1. Create `templates/services/mailpit.nix.tmpl`:
@@ -229,7 +229,7 @@ Unit 2.3's existing scope (PostgreSQL, Redis, MySQL, MongoDB, Elasticsearch, Rab
 
 **Context:** Keycloak is the premier self-hosted identity platform. It has the most sophisticated devenv.sh service module — realm import/export, plugin support, dev database modes (in-memory or file-backed, no external DB), and full settings passthrough. Healthcare, government, and enterprise consulting engagements often require it. Many teams need a local Keycloak to develop and test OIDC/OAuth flows. This is Tier 2 (detect-and-offer) — the wizard offers it when Keycloak or OIDC configuration is detected.
 
-**Desired Outcome:** `gdev devenv add-service keycloak` generates a valid Keycloak service block in devenv.nix with dev-file database mode, realm import from an existing JSON file if present, and standard OIDC environment variables.
+**Desired Outcome:** `qsdev devenv add-service keycloak` generates a valid Keycloak service block in devenv.nix with dev-file database mode, realm import from an existing JSON file if present, and standard OIDC environment variables.
 
 **Steps:**
 1. Create `templates/services/keycloak.nix.tmpl`:
@@ -296,7 +296,7 @@ Unit 2.3's existing scope (PostgreSQL, Redis, MySQL, MongoDB, Elasticsearch, Rab
 
 **Context:** NATS is a lightweight, high-performance messaging system growing in cloud-native and Kubernetes ecosystems. It offers a simpler alternative to Kafka without JVM overhead. devenv.sh has good NATS support with JetStream for persistence, a built-in monitoring endpoint, authorization, and clustering. Configuration complexity is low — just enable, optionally enable JetStream. This is Tier 2 (detect-and-offer) — the wizard offers it when NATS client libraries are detected in the project.
 
-**Desired Outcome:** `gdev devenv add-service nats` generates a valid NATS service block in devenv.nix with optional JetStream and monitoring, and exposes `NATS_URL`.
+**Desired Outcome:** `qsdev devenv add-service nats` generates a valid NATS service block in devenv.nix with optional JetStream and monitoring, and exposes `NATS_URL`.
 
 **Steps:**
 1. Create `templates/services/nats.nix.tmpl`:
@@ -377,7 +377,7 @@ Unit 2.3's existing scope (PostgreSQL, Redis, MySQL, MongoDB, Elasticsearch, Rab
    - **Message Brokers**: RabbitMQ, Kafka, NATS
    - **Infrastructure**: MinIO, Keycloak
    - **Development Tools**: Mailpit
-6. Add `--service` flag expansion to support all new services: `gdev devenv init --service kafka --service minio`.
+6. Add `--service` flag expansion to support all new services: `qsdev devenv init --service kafka --service minio`.
 7. Write integration tests: project with `docker-compose.yml` containing postgres + kafka + minio images triggers correct detection; project with `package.json` containing `kafkajs` + `@aws-sdk/client-s3` triggers Kafka + MinIO detection.
 
 **Acceptance Criteria:**
@@ -401,7 +401,7 @@ Unit 2.3's existing scope (PostgreSQL, Redis, MySQL, MongoDB, Elasticsearch, Rab
 
 ## Part B: Observability Sidecar (Phase 12 Amendment)
 
-These units add observability as a lifecycle-managed tool in Phase 12, using the `gdev enable/disable` system from Unit 12.1. The observability stack runs as a Docker container (`grafana/otel-lgtm`), not as native devenv services — because Grafana, Loki, and Tempo are not available as devenv.sh service modules.
+These units add observability as a lifecycle-managed tool in Phase 12, using the `qsdev enable/disable` system from Unit 12.1. The observability stack runs as a Docker container (`grafana/otel-lgtm`), not as native devenv services — because Grafana, Loki, and Tempo are not available as devenv.sh service modules.
 
 This is architecturally distinct from the service templates in Part A: those are devenv.nix native services managed by `devenv up`. The observability sidecar is a Docker container with its own lifecycle, managed through the Phase 12 tool lifecycle system.
 
@@ -413,9 +413,9 @@ This is architecturally distinct from the service templates in Part A: those are
 
 **Context:** The gdev-dx-polish spike rejected "OTEL infrastructure" for Claude Code session monitoring — a correct rejection. However, application development observability is a different use case: engineers building instrumented microservices need local trace/metric/log backends to develop against. `grafana/otel-lgtm` bundles the OpenTelemetry Collector, Prometheus, Tempo, Loki, Pyroscope, and Grafana into a single Docker image purpose-built for dev/demo/test environments. This is the observability equivalent of running PostgreSQL locally.
 
-The tool integrates via the Phase 12 lifecycle system (`gdev enable observability` / `gdev disable observability`). It contributes: OTEL environment variables to devenv.nix (shared file), a Docker management script to devenv scripts (shared file), and an exclusive Docker Compose override file for teams preferring Compose.
+The tool integrates via the Phase 12 lifecycle system (`qsdev enable observability` / `qsdev disable observability`). It contributes: OTEL environment variables to devenv.nix (shared file), a Docker management script to devenv scripts (shared file), and an exclusive Docker Compose override file for teams preferring Compose.
 
-**Desired Outcome:** `gdev enable observability` adds OTEL environment variables to devenv.nix, creates Docker container management scripts, and enables a local Grafana dashboard at `http://localhost:3000`.
+**Desired Outcome:** `qsdev enable observability` adds OTEL environment variables to devenv.nix, creates Docker container management scripts, and enables a local Grafana dashboard at `http://localhost:3000`.
 
 **Steps:**
 1. Register `observability` in the tool registry:
@@ -520,13 +520,13 @@ The tool integrates via the Phase 12 lifecycle system (`gdev enable observabilit
 7. Write unit tests: verify OTEL env vars render correctly, verify Docker script template, verify Docker Compose YAML is valid, verify detection from OTEL SDK packages.
 
 **Acceptance Criteria:**
-- [ ] `gdev enable observability` adds OTEL env vars to devenv.nix, creates Docker scripts, generates docker-compose.observability.yml
-- [ ] `gdev disable observability` removes all observability artifacts cleanly (OTEL env vars, scripts, compose file, CLAUDE.md section)
+- [ ] `qsdev enable observability` adds OTEL env vars to devenv.nix, creates Docker scripts, generates docker-compose.observability.yml
+- [ ] `qsdev disable observability` removes all observability artifacts cleanly (OTEL env vars, scripts, compose file, CLAUDE.md section)
 - [ ] OTEL env vars use standard OpenTelemetry SDK variable names (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, etc.)
 - [ ] `OTEL_EXPORTER_OTLP_ENDPOINT` points to `http://localhost:4318` (HTTP/protobuf, the widest-compatibility default)
 - [ ] Docker container uses persistent volume under `DEVENV_STATE` for data retention across restarts
 - [ ] Detection heuristics trigger for OTEL SDK dependencies in Node, Go, Python, Java, Rust, .NET
-- [ ] Docker prerequisite check: `gdev enable observability` fails cleanly with guidance if Docker is not available
+- [ ] Docker prerequisite check: `qsdev enable observability` fails cleanly with guidance if Docker is not available
 - [ ] Grafana accessible at `http://localhost:3000` with pre-configured OTEL data sources (built into the image)
 
 **Research Citations:**
@@ -599,29 +599,29 @@ The lifecycle hook uses devenv's `enterShell` for start and a trap-based approac
 
 ### Unit 12.14: Observability CLI Commands & Wizard Integration
 
-**Description:** Add `gdev observability up/down/status/logs` commands as thin wrappers around the Docker container lifecycle, and integrate observability into the wizard and detection flow.
+**Description:** Add `qsdev observability up/down/status/logs` commands as thin wrappers around the Docker container lifecycle, and integrate observability into the wizard and detection flow.
 
-**Context:** While Units 12.12-12.13 provide devenv-integrated scripts (`observability-up/down/status`), developers may want to manage the observability stack outside of a devenv shell — before entering it, or from a different terminal. `gdev observability *` commands provide this capability. These commands work regardless of whether the user is in a devenv shell, making them useful for troubleshooting and ad-hoc usage.
+**Context:** While Units 12.12-12.13 provide devenv-integrated scripts (`observability-up/down/status`), developers may want to manage the observability stack outside of a devenv shell — before entering it, or from a different terminal. `qsdev observability *` commands provide this capability. These commands work regardless of whether the user is in a devenv shell, making them useful for troubleshooting and ad-hoc usage.
 
 The wizard integration uses the tool lifecycle's detect-and-offer pattern: when OTEL SDK dependencies are found, the wizard suggests "Would you like a local observability backend?" with a brief explanation.
 
-**Desired Outcome:** `gdev observability up` starts the stack from any terminal. `gdev observability status` shows health. The wizard offers observability when OTEL SDKs are detected.
+**Desired Outcome:** `qsdev observability up` starts the stack from any terminal. `qsdev observability status` shows health. The wizard offers observability when OTEL SDKs are detected.
 
 **Steps:**
-1. Register `gdev observability` command group with four sub-commands:
-   - `gdev observability up` — Start the `grafana/otel-lgtm` container (equivalent to `observability-up` script but works outside devenv shell).
-   - `gdev observability down` — Stop and remove the container.
-   - `gdev observability status` — Show container state, port mappings, uptime, and Grafana URL.
-   - `gdev observability logs` — Tail Docker container logs (`docker logs -f gdev-observability`).
-2. Commands read port configuration from `.devinit/.gdev-init-answers.yaml` (the saved answers file) so they use the correct ports even if customized.
-3. `gdev observability up` should:
+1. Register `qsdev observability` command group with four sub-commands:
+   - `qsdev observability up` — Start the `grafana/otel-lgtm` container (equivalent to `observability-up` script but works outside devenv shell).
+   - `qsdev observability down` — Stop and remove the container.
+   - `qsdev observability status` — Show container state, port mappings, uptime, and Grafana URL.
+   - `qsdev observability logs` — Tail Docker container logs (`docker logs -f gdev-observability`).
+2. Commands read port configuration from `.devinit/.qsdev-init-answers.yaml` (the saved answers file) so they use the correct ports even if customized.
+3. `qsdev observability up` should:
    - Check Docker availability, fail with install guidance if missing.
    - Check if container already running, print status and exit if so.
    - Pull image if not cached (`docker pull grafana/otel-lgtm:latest` with progress).
    - Start container with correct port mappings and volume mount.
    - Wait for Grafana to be healthy (HTTP check on port 3000, up to 30s timeout).
    - Print summary: Grafana URL, OTLP endpoints, default credentials.
-4. `gdev observability status` should show:
+4. `qsdev observability status` should show:
    - Container state (running/stopped/not found)
    - Port mappings
    - Uptime
@@ -631,23 +631,23 @@ The wizard integration uses the tool lifecycle's detect-and-offer pattern: when 
    - When `detectOTELUsage()` returns true, show an info panel: "OTEL SDK detected in your project. gdev can provide a local observability backend (Grafana + traces + metrics + logs) via Docker."
    - Follow with a toggle: "Enable local observability stack?" (default: yes when detected)
    - On the customize path, always show observability in the "Infrastructure" tools section.
-6. Add `gdev enable observability` / `gdev disable observability` aliases that delegate to the tool lifecycle system (Unit 12.1). These are the primary enable/disable path; the `gdev observability` commands are for runtime management of an already-enabled tool.
-7. Write tests: `gdev observability status` with no container returns "not found", `gdev observability up` with mock Docker validates correct flags, wizard integration shows observability when OTEL detected.
+6. Add `qsdev enable observability` / `qsdev disable observability` aliases that delegate to the tool lifecycle system (Unit 12.1). These are the primary enable/disable path; the `qsdev observability` commands are for runtime management of an already-enabled tool.
+7. Write tests: `qsdev observability status` with no container returns "not found", `qsdev observability up` with mock Docker validates correct flags, wizard integration shows observability when OTEL detected.
 
 **Acceptance Criteria:**
-- [ ] `gdev observability up` starts container and waits for health check
-- [ ] `gdev observability down` stops and removes container cleanly
-- [ ] `gdev observability status` shows container state and endpoints
-- [ ] `gdev observability logs` tails container logs
+- [ ] `qsdev observability up` starts container and waits for health check
+- [ ] `qsdev observability down` stops and removes container cleanly
+- [ ] `qsdev observability status` shows container state and endpoints
+- [ ] `qsdev observability logs` tails container logs
 - [ ] Commands work outside devenv shell (read config from saved answers)
 - [ ] Wizard offers observability when OTEL SDK deps detected, with clear explanation
-- [ ] `gdev enable/disable observability` properly delegates to lifecycle system
+- [ ] `qsdev enable/disable observability` properly delegates to lifecycle system
 - [ ] Docker not-installed error includes platform-specific install guidance
 
 **Research Citations:**
-- `research-spikes/gdev-ecosystem-expansion-assessment/dev-services-observability-research.md § 4` — `gdev observability up/down/status` command design
+- `research-spikes/gdev-ecosystem-expansion-assessment/dev-services-observability-research.md § 4` — `qsdev observability up/down/status` command design
 - `research-spikes/gdev-ecosystem-expansion-assessment/docs/grafana-docker-otel-lgtm.md` — health check endpoints, default credentials
-- `phases/12-extended-integrations-lifecycle.md § Unit 12.1` — tool lifecycle system (`gdev enable/disable`)
+- `phases/12-extended-integrations-lifecycle.md § Unit 12.1` — tool lifecycle system (`qsdev enable/disable`)
 - `research-spikes/gdev-extension-design/wizard-flow-integration-design.md` — detect-and-offer wizard pattern
 
 **Status:** Not Started
@@ -673,12 +673,12 @@ The wizard integration uses the tool lifecycle's detect-and-offer pattern: when 
 |------|-------|-----------|
 | 12.12 | Observability Tool Registration & OTEL Env Var Generation | Lifecycle tool, devenv.nix env vars, Docker scripts, Compose file |
 | 12.13 | Observability Container Lifecycle Integration | enterShell auto-start, port conflict detection |
-| 12.14 | Observability CLI Commands & Wizard Integration | `gdev observability up/down/status/logs`, wizard detect-and-offer |
+| 12.14 | Observability CLI Commands & Wizard Integration | `qsdev observability up/down/status/logs`, wizard detect-and-offer |
 
 ### Phase 3 Updated Completion Criteria
 
 Add to existing Phase 3 completion criteria:
-- [ ] `gdev devenv add-service kafka` produces valid Kafka block with KRaft mode
+- [ ] `qsdev devenv add-service kafka` produces valid Kafka block with KRaft mode
 - [ ] All five new service templates pass `nix-instantiate --parse`
 - [ ] Tier 2 services detected and offered when project signals present
 - [ ] Service form groups organized into Databases / Message Brokers / Infrastructure / Development Tools
@@ -687,9 +687,9 @@ Add to existing Phase 3 completion criteria:
 ### Phase 12 Updated Completion Criteria
 
 Add to existing Phase 12 completion criteria:
-- [ ] `gdev enable observability` generates OTEL env vars, Docker scripts, Compose file
-- [ ] `gdev disable observability` removes all observability artifacts cleanly
-- [ ] `gdev observability up` starts grafana/otel-lgtm container with health check
+- [ ] `qsdev enable observability` generates OTEL env vars, Docker scripts, Compose file
+- [ ] `qsdev disable observability` removes all observability artifacts cleanly
+- [ ] `qsdev observability up` starts grafana/otel-lgtm container with health check
 - [ ] OTEL SDK detection triggers wizard offer across all supported ecosystems
 - [ ] Port conflict detection prevents collisions with project services
 - [ ] Observability container data persists across restarts via volume mount

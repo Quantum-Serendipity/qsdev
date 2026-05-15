@@ -1,7 +1,7 @@
 package evidence
 
 import (
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 )
 
 // DeriveControlMapping determines the status of a control mapping based on
@@ -32,7 +32,7 @@ func DeriveControlMapping(def ControlDefinition, layers []posture.DefenseLayer) 
 			cm.Notes = def.NotApplicableReason
 		} else {
 			cm.Status = StatusNotAddressed
-			cm.Notes = "No gdev defense layers are directly mapped to this control. Consider artifact-based evidence from external monitoring or logging systems."
+			cm.Notes = "No qsdev defense layers are directly mapped to this control. Consider artifact-based evidence from external monitoring or logging systems."
 		}
 		return cm
 	}

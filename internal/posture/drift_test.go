@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestDetectDrift_Aggregation(t *testing.T) {
@@ -17,14 +17,14 @@ func TestDetectDrift_Aggregation(t *testing.T) {
 
 	// Create CLAUDE.md with markers for semgrep.
 	writeFile(t, filepath.Join(dir, "CLAUDE.md"),
-		"# CLAUDE\n<!-- gdev:semgrep -->\nSemgrep section\n<!-- /gdev:semgrep -->\n")
+		"# CLAUDE\n<!-- qsdev:semgrep -->\nSemgrep section\n<!-- /qsdev:semgrep -->\n")
 
 	// Create a generated file that matches its hash.
 	content := []byte("hello world\n")
 	writeFile(t, filepath.Join(dir, "test.txt"), string(content))
 
 	genState := types.GeneratedState{
-		GdevVersion: "dev", // Matches the default version.
+		QsdevVersion: "dev", // Matches the default version.
 		Files: map[string]types.FileState{
 			"test.txt": {
 				Hash:     state.ComputeHash(content),
@@ -102,7 +102,7 @@ func BenchmarkDetectDrift(b *testing.B) {
 	writeFile(b, filepath.Join(dir, "CLAUDE.md"), "# CLAUDE\n")
 
 	genState := types.GeneratedState{
-		GdevVersion: "dev",
+		QsdevVersion: "dev",
 		Files:       map[string]types.FileState{},
 	}
 	enabledTools := map[string]bool{"semgrep": true}

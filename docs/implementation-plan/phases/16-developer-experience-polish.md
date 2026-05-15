@@ -2,37 +2,37 @@
 
 ## Goal
 
-Add targeted commands and integrations that make gdev feel like a complete, polished developer platform: self-healing (`gdev repair`), quick project info (`gdev info`), dependency freshness (`gdev outdated`), coordinated updates (`gdev update`), clean project exit (`gdev teardown`), git workflow automation, and shell integration. These are the "last mile" features that turn a useful tool into one developers love. Every feature follows gdev's core pattern: generate one more file, add one more diagnostic, or thin-wrap one more ecosystem command.
+Add targeted commands and integrations that make gdev feel like a complete, polished developer platform: self-healing (`qsdev repair`), quick project info (`qsdev info`), dependency freshness (`qsdev outdated`), coordinated updates (`qsdev update`), clean project exit (`qsdev teardown`), git workflow automation, and shell integration. These are the "last mile" features that turn a useful tool into one developers love. Every feature follows gdev's core pattern: generate one more file, add one more diagnostic, or thin-wrap one more ecosystem command.
 
 ## Dependencies
 
-Phase 3 complete (devenv addon — shell integration and env vars generate into devenv.nix). Phase 9 complete (system detection — repair builds on `gdev devenv doctor` diagnostics). Phase 10 complete (distribution/self-update — `gdev update` reuses the self-update mechanism). Phase 12 complete (tool lifecycle — all new commands are lifecycle-managed where applicable). Phase 13 complete (project config — `gdev info` reads `.gdev.yaml` and `.gdev/state.yaml`). Phase 15 complete (health/status — `gdev repair` builds on drift detection from health checks).
+Phase 3 complete (devenv addon — shell integration and env vars generate into devenv.nix). Phase 9 complete (system detection — repair builds on `qsdev devenv doctor` diagnostics). Phase 10 complete (distribution/self-update — `qsdev update` reuses the self-update mechanism). Phase 12 complete (tool lifecycle — all new commands are lifecycle-managed where applicable). Phase 13 complete (project config — `qsdev info` reads `.qsdev.yaml` and `.gdev/state.yaml`). Phase 15 complete (health/status — `qsdev repair` builds on drift detection from health checks).
 
 ## Phase Outputs
 
-- `gdev repair` command for conservative self-healing of corrupted/drifted configs
-- `gdev info` lightweight project status command with one-line and JSON modes
-- `gdev outdated` cross-ecosystem dependency freshness checker (thin wrapper)
-- `gdev update` coordinated update command (binary + configs + devenv inputs)
-- `gdev teardown` clean project exit with three profiles (quick/default/compliance)
+- `qsdev repair` command for conservative self-healing of corrupted/drifted configs
+- `qsdev info` lightweight project status command with one-line and JSON modes
+- `qsdev outdated` cross-ecosystem dependency freshness checker (thin wrapper)
+- `qsdev update` coordinated update command (binary + configs + devenv inputs)
+- `qsdev teardown` clean project exit with three profiles (quick/default/compliance)
 - Git workflow automation (PR templates, branch naming hooks, commit ticket extraction, automated PR labels)
 - Shell and environment integration (Starship prompt, gdev env vars, enterShell notifications, OTEL env vars)
 
 ---
 
-### Unit 16.1: gdev repair Command
+### Unit 16.1: qsdev repair Command
 
-**Description:** Implement `gdev repair` as a conservative auto-fix companion to `gdev devenv doctor` (Phase 9). It detects broken/drifted gdev-managed files and fixes them automatically where safe, with mandatory backup before any mutation. Covers four failure categories: Nix/devenv failures, generated config corruption, tool/package failures, and environment drift.
+**Description:** Implement `qsdev repair` as a conservative auto-fix companion to `qsdev devenv doctor` (Phase 9). It detects broken/drifted gdev-managed files and fixes them automatically where safe, with mandatory backup before any mutation. Covers four failure categories: Nix/devenv failures, generated config corruption, tool/package failures, and environment drift.
 
 **Code-Grounded Implementation Note:** The existing update infrastructure provides the foundation for repair. `FileUpdatePlan` at `addons/devinit/update.go:43-52` already has Path, Status, Strategy, Action, NewContent, OldContent, NewMode, and Reason fields. The `buildUpdatePlan()` function at `addons/devinit/update.go:180-262` already plans per-file actions (skip, overwrite, sidecar). `UpdateDevenvNix()` at `internal/update/nix_update.go:42-126` already handles the sidecar strategy for modified devenv.nix (generating `.new` + diff). Repair extends this by using the plan builder in a more aggressive mode — force regeneration of corrupted files while preserving truly user-modified ones. The existing plan builder's `Strategy` field (overwrite vs sidecar vs skip) maps directly to repair's conservative/force/reset modes.
 
-**Context:** `gdev devenv doctor` (Phase 9/15) diagnoses environment health but is read-only. When it reports "pre-commit hooks outdated" or ".envrc modified from generated version," the developer must manually fix each issue. `gdev repair` closes the loop by automating the fixes that are unambiguously safe while refusing to touch files where auto-repair risks data loss.
+**Context:** `qsdev devenv doctor` (Phase 9/15) diagnoses environment health but is read-only. When it reports "pre-commit hooks outdated" or ".envrc modified from generated version," the developer must manually fix each issue. `qsdev repair` closes the loop by automating the fixes that are unambiguously safe while refusing to touch files where auto-repair risks data loss.
 
-The key design principle: **doctor is read-only, repair is write** — never mix diagnosis and modification in one command. Repair is conservative by default: machine-owned files with no user edits are regenerated; machine-owned files with user edits get a backup + `.new` file with diff; hooks are always safe to reinstall; devenv.nix is NEVER auto-modified (the plan establishes this invariant in Phase 8). The `--force` flag overrides the conservative default for machine-owned-with-additions files. The `--reset` flag is the nuclear option — regenerate everything from `.gdev.yaml`, backing up all originals.
+The key design principle: **doctor is read-only, repair is write** — never mix diagnosis and modification in one command. Repair is conservative by default: machine-owned files with no user edits are regenerated; machine-owned files with user edits get a backup + `.new` file with diff; hooks are always safe to reinstall; devenv.nix is NEVER auto-modified (the plan establishes this invariant in Phase 8). The `--force` flag overrides the conservative default for machine-owned-with-additions files. The `--reset` flag is the nuclear option — regenerate everything from `.qsdev.yaml`, backing up all originals.
 
 Repair leverages the SHA256 hash tracking from Phase 1/8 (`GeneratedState`) and the drift detection from Phase 15 health checks. Without hash tracking, corruption cannot be detected, so repair operates only on files tracked in `.gdev/state.yaml`.
 
-**Desired Outcome:** `gdev repair` fixes all issues that `gdev devenv doctor` can identify, without destroying user customizations. After repair, `gdev devenv doctor` reports clean health.
+**Desired Outcome:** `qsdev repair` fixes all issues that `qsdev devenv doctor` can identify, without destroying user customizations. After repair, `qsdev devenv doctor` reports clean health.
 
 **Steps:**
 1. Create `internal/repair/` package with `Repairer` struct:
@@ -60,10 +60,10 @@ Repair leverages the SHA256 hash tracking from Phase 1/8 (`GeneratedState`) and 
    }
    ```
 2. Implement failure category detection by reusing Phase 15 drift checks:
-   - **Category 1 — Nix/devenv failures**: Check `devenv info` exit code. If devenv.nix fails evaluation, repair cannot auto-fix (never touch devenv.nix) — log as skipped with message "devenv.nix evaluation failed; review manually or run `gdev repair --reset` to regenerate from saved answers."
+   - **Category 1 — Nix/devenv failures**: Check `devenv info` exit code. If devenv.nix fails evaluation, repair cannot auto-fix (never touch devenv.nix) — log as skipped with message "devenv.nix evaluation failed; review manually or run `qsdev repair --reset` to regenerate from saved answers."
    - **Category 2 — Generated config corruption**: For each tracked file in `GeneratedState`, compute current SHA256. If hash mismatches AND file ownership is `Exclusive`, regenerate from saved answers. If `Shared`, check section markers — if markers intact, regenerate only gdev-owned sections; if markers damaged, backup + regenerate with `--force`.
    - **Category 3 — Tool/package failures**: Check pre-commit hook installation (`ls .git/hooks/pre-commit`), verify hook content matches expected. Check `.gitignore` for required entries. Reinstall hooks via `prek install` or equivalent.
-   - **Category 4 — Environment drift**: Compare gdev version in `.gdev.yaml` against running binary version. If config is older, suggest `gdev update` instead of repair. Detect new ecosystems (package.json appeared in a Go project) — suggest `gdev init` to add.
+   - **Category 4 — Environment drift**: Compare gdev version in `.qsdev.yaml` against running binary version. If config is older, suggest `qsdev update` instead of repair. Detect new ecosystems (package.json appeared in a Go project) — suggest `qsdev init` to add.
 3. Implement backup strategy: before any file mutation, copy original to `.gdev/backups/<filename>.<timestamp>.bak`. Keep last 5 backups per file, prune older ones.
    ```go
    func (r *Repairer) backup(filePath string) (string, error) {
@@ -82,7 +82,7 @@ Repair leverages the SHA256 hash tracking from Phase 1/8 (`GeneratedState`) and 
    - **`.gitignore` entries**: Check for required entries (`.devenv/`, `.gdev/`, etc.). Append missing entries without removing existing ones.
 5. Implement `--dry-run` flag: run all detection and categorization but print what WOULD be fixed without writing any files:
    ```
-   $ gdev repair --dry-run
+   $ qsdev repair --dry-run
    Would fix:
      [fix] .envrc — regenerate (unmodified, hash mismatch with current templates)
      [fix] .git/hooks/pre-commit — reinstall hooks
@@ -90,7 +90,7 @@ Repair leverages the SHA256 hash tracking from Phase 1/8 (`GeneratedState`) and 
      [skip] devenv.nix — never auto-modified (review .devenv.nix.new manually)
    ```
 6. Implement `--file <path>` flag for targeted single-file repair. Validates path is a gdev-tracked file.
-7. Implement `--reset` flag: regenerate ALL gdev-managed files from `.gdev.yaml` saved answers. Backup every original. This is the nuclear option for "something is deeply broken and I want to start fresh without re-running the wizard."
+7. Implement `--reset` flag: regenerate ALL gdev-managed files from `.qsdev.yaml` saved answers. Backup every original. This is the nuclear option for "something is deeply broken and I want to start fresh without re-running the wizard."
    ```go
    func (r *Repairer) resetAll() (*RepairResult, error) {
        // Backup everything
@@ -101,12 +101,12 @@ Repair leverages the SHA256 hash tracking from Phase 1/8 (`GeneratedState`) and 
        return r.regenerateAll(r.Answers)
    }
    ```
-8. Register `gdev repair` command with Cobra:
+8. Register `qsdev repair` command with Cobra:
    ```go
    var repairCmd = &cobra.Command{
        Use:   "repair",
        Short: "Fix corrupted or drifted gdev-managed files",
-       Long:  "Detects and fixes issues identified by gdev devenv doctor. Conservative by default: only fixes unambiguously safe issues. Use --force for aggressive repair, --reset to regenerate everything.",
+       Long:  "Detects and fixes issues identified by qsdev devenv doctor. Conservative by default: only fixes unambiguously safe issues. Use --force for aggressive repair, --reset to regenerate everything.",
    }
    repairCmd.Flags().Bool("dry-run", false, "Preview what would be fixed without making changes")
    repairCmd.Flags().Bool("force", false, "Fix files even when user modifications detected (backup first)")
@@ -114,10 +114,10 @@ Repair leverages the SHA256 hash tracking from Phase 1/8 (`GeneratedState`) and 
    repairCmd.Flags().Bool("reset", false, "Regenerate all files from saved answers (nuclear option)")
    ```
 9. Implement exit codes: 0 = all issues fixed, 1 = some issues require manual action, 2 = repair failed.
-10. Wire repair results back into state tracking: after successful repair, update `GeneratedState` with new file hashes so subsequent `gdev devenv doctor` runs show clean health.
+10. Wire repair results back into state tracking: after successful repair, update `GeneratedState` with new file hashes so subsequent `qsdev devenv doctor` runs show clean health.
 
 **Acceptance Criteria:**
-- [ ] `gdev repair` fixes corrupted machine-owned files without user intervention
+- [ ] `qsdev repair` fixes corrupted machine-owned files without user intervention
 - [ ] Mandatory backup created before any file is modified (verify `.gdev/backups/` populated)
 - [ ] User-modified files are NOT overwritten without `--force` flag
 - [ ] devenv.nix is NEVER auto-modified — always generates `.devenv.nix.new` + diff
@@ -126,7 +126,7 @@ Repair leverages the SHA256 hash tracking from Phase 1/8 (`GeneratedState`) and 
 - [ ] `--reset` regenerates all files from saved answers with full backup
 - [ ] Pre-commit hooks are reinstalled when missing or outdated
 - [ ] `.gitignore` entries are appended when missing (existing entries preserved)
-- [ ] After repair, `gdev devenv doctor` reports clean health for all repaired files
+- [ ] After repair, `qsdev devenv doctor` reports clean health for all repaired files
 - [ ] Exit code 0 when all issues fixed, 1 when manual action needed, 2 on failure
 - [ ] `GeneratedState` updated with new hashes after successful repair
 
@@ -143,15 +143,15 @@ Repair leverages the SHA256 hash tracking from Phase 1/8 (`GeneratedState`) and 
 
 ### Unit 16.2: gdev info Command
 
-**Description:** Implement `gdev info` as a lightweight, instant project status command that reads only cached state files (no evaluation, no network, no scanning). Provides a one-screen summary, a single-line mode for scripting, and JSON output for machine consumption.
+**Description:** Implement `qsdev info` as a lightweight, instant project status command that reads only cached state files (no evaluation, no network, no scanning). Provides a one-screen summary, a single-line mode for scripting, and JSON output for machine consumption.
 
-**Code-Grounded Implementation Note:** The data sources for `gdev info` already exist and are fast reads. Answers are at `.devinit/.gdev-init-answers.yaml` (loaded via `loadAnswers()` at `addons/devinit/answers.go:50-67`). Detection runs via `detect.Detect()` at `internal/detect/detect.go:12-83` but is not needed here — info reads cached results only. The state file provides last-run time via `GeneratedState.LastRun`. Both answers and state files are small YAML reads that complete well under 100ms.
+**Code-Grounded Implementation Note:** The data sources for `qsdev info` already exist and are fast reads. Answers are at `.devinit/.qsdev-init-answers.yaml` (loaded via `loadAnswers()` at `addons/devinit/answers.go:50-67`). Detection runs via `detect.Detect()` at `internal/detect/detect.go:12-83` but is not needed here — info reads cached results only. The state file provides last-run time via `GeneratedState.LastRun`. Both answers and state files are small YAML reads that complete well under 100ms.
 
-**Context:** `gdev devenv doctor` (Phase 9/15) performs active health checks — evaluating devenv, verifying tool availability, checking file hashes. This is thorough but takes seconds. Developers frequently need a faster answer to "where am I? what's active?" — especially when switching between client projects. `gdev info` fills this gap by reading only `.gdev.yaml` and `.gdev/state.yaml`, producing instant output without evaluation.
+**Context:** `qsdev devenv doctor` (Phase 9/15) performs active health checks — evaluating devenv, verifying tool availability, checking file hashes. This is thorough but takes seconds. Developers frequently need a faster answer to "where am I? what's active?" — especially when switching between client projects. `qsdev info` fills this gap by reading only `.qsdev.yaml` and `.gdev/state.yaml`, producing instant output without evaluation.
 
-This is the shell integration counterpart: when a developer enters a gdev-managed project, `gdev info --oneline` could power a prompt segment or an enterShell notification. The command is deliberately simple — no file scanning, no hash checking, no network requests. If files don't exist, it reports "not a gdev project" and exits.
+This is the shell integration counterpart: when a developer enters a gdev-managed project, `qsdev info --oneline` could power a prompt segment or an enterShell notification. The command is deliberately simple — no file scanning, no hash checking, no network requests. If files don't exist, it reports "not a gdev project" and exits.
 
-**Desired Outcome:** `gdev info` responds in under 100ms with project name, detected ecosystems, security level, gdev version, and last updated date. Subsecond response even on cold start.
+**Desired Outcome:** `qsdev info` responds in under 100ms with project name, detected ecosystems, security level, gdev version, and last updated date. Subsecond response even on cold start.
 
 **Steps:**
 1. Create `internal/info/` package with `Info` struct:
@@ -166,7 +166,7 @@ This is the shell integration counterpart: when a developer enters a gdev-manage
        LastUpdated     string   `json:"last_updated"`
    }
    ```
-2. Implement `ReadProjectInfo()` — reads `.gdev.yaml` for project config and `.gdev/state.yaml` for state metadata. No file scanning, no evaluation. If neither file exists, return `ErrNotGdevProject`.
+2. Implement `ReadProjectInfo()` — reads `.qsdev.yaml` for project config and `.gdev/state.yaml` for state metadata. No file scanning, no evaluation. If neither file exists, return `ErrNotGdevProject`.
 3. Implement default (multi-line) output format:
    ```
    $ gdev info
@@ -187,7 +187,7 @@ This is the shell integration counterpart: when a developer enters a gdev-manage
    $ gdev info --json
    {"project_name":"acme-frontend","ecosystems":["typescript","docker"],...}
    ```
-6. Register `gdev info` command with Cobra:
+6. Register `qsdev info` command with Cobra:
    ```go
    var infoCmd = &cobra.Command{
        Use:   "info",
@@ -199,12 +199,12 @@ This is the shell integration counterpart: when a developer enters a gdev-manage
    ```
 7. Implement relative time formatting for "last updated" field: "just now", "2 hours ago", "3 days ago", "2 weeks ago", "3 months ago". Use `time.Since()` with human-friendly bucketing.
 8. Handle edge cases:
-   - Not in a gdev project: print "Not a gdev-managed project. Run `gdev init` to set up." and exit 1.
-   - `.gdev.yaml` exists but `.gdev/state.yaml` missing: print partial info with "(state unknown — run `gdev devenv doctor`)" for missing fields.
+   - Not in a gdev project: print "Not a gdev-managed project. Run `qsdev init` to set up." and exit 1.
+   - `.qsdev.yaml` exists but `.gdev/state.yaml` missing: print partial info with "(state unknown — run `qsdev devenv doctor`)" for missing fields.
    - Config version newer than binary version: add "(update available)" annotation.
 
 **Acceptance Criteria:**
-- [ ] `gdev info` displays project name, ecosystems, tool count, security profile, version, and last updated
+- [ ] `qsdev info` displays project name, ecosystems, tool count, security profile, version, and last updated
 - [ ] Response time under 100ms (reads only two YAML files, no evaluation)
 - [ ] `--oneline` produces single-line output suitable for shell prompt integration
 - [ ] `--json` produces valid JSON with all fields
@@ -214,8 +214,8 @@ This is the shell integration counterpart: when a developer enters a gdev-manage
 - [ ] Version mismatch between binary and config annotated with "(update available)"
 
 **Research Citations:**
-- `research-spikes/gdev-dx-polish/shell-integration-research.md § Quick-Info Commands` — `gdev info` design, output mockup, subsecond response requirement
-- `research-spikes/gdev-dx-polish/shell-integration-research.md § Summary` — include `gdev info` as lightweight status command
+- `research-spikes/gdev-dx-polish/shell-integration-research.md § Quick-Info Commands` — `qsdev info` design, output mockup, subsecond response requirement
+- `research-spikes/gdev-dx-polish/shell-integration-research.md § Summary` — include `qsdev info` as lightweight status command
 - `research-spikes/gdev-dx-polish/environment-switching-research.md § Gap 4` — cross-project status visibility for consultants
 
 **Status:** Not Started
@@ -224,19 +224,19 @@ This is the shell integration counterpart: when a developer enters a gdev-manage
 
 ### Unit 16.3: gdev outdated Command
 
-**Description:** Implement `gdev outdated` as a thin wrapper that runs each detected ecosystem's native outdated command sequentially, printing results with ecosystem headers and returning a non-zero exit code if any ecosystem reports outdated packages.
+**Description:** Implement `qsdev outdated` as a thin wrapper that runs each detected ecosystem's native outdated command sequentially, printing results with ecosystem headers and returning a non-zero exit code if any ecosystem reports outdated packages.
 
-**Context:** Every package manager has its own outdated command (`npm outdated`, `pip list --outdated`, `go list -m -u all`, etc.), but no tool runs ALL of them across a polyglot project. A TypeScript + Python + Docker project requires three separate commands with three different output formats. `gdev outdated` fills the polyglot gap by iterating detected ecosystems and running each native command, providing a single "are any of my dependencies outdated?" answer.
+**Context:** Every package manager has its own outdated command (`npm outdated`, `pip list --outdated`, `go list -m -u all`, etc.), but no tool runs ALL of them across a polyglot project. A TypeScript + Python + Docker project requires three separate commands with three different output formats. `qsdev outdated` fills the polyglot gap by iterating detected ecosystems and running each native command, providing a single "are any of my dependencies outdated?" answer.
 
-This is deliberately a thin wrapper, not a unified analysis platform. It does NOT parse or normalize output formats, track versions, or duplicate Renovate's analysis. The value is "one command to check everything" — approximately 50 lines of Go per ecosystem (detect, exec, print, check exit code). Renovate handles the CI-side continuous monitoring; `gdev outdated` handles the interactive developer question.
+This is deliberately a thin wrapper, not a unified analysis platform. It does NOT parse or normalize output formats, track versions, or duplicate Renovate's analysis. The value is "one command to check everything" — approximately 50 lines of Go per ecosystem (detect, exec, print, check exit code). Renovate handles the CI-side continuous monitoring; `qsdev outdated` handles the interactive developer question.
 
-**Desired Outcome:** `gdev outdated` runs all applicable ecosystem outdated commands and reports results with clear ecosystem separation. Exit code 0 if everything is current, 1 if any outdated packages found.
+**Desired Outcome:** `qsdev outdated` runs all applicable ecosystem outdated commands and reports results with clear ecosystem separation. Exit code 0 if everything is current, 1 if any outdated packages found.
 
 **Steps:**
 1. Create `internal/outdated/` package with `Checker` struct:
    ```go
    type Checker struct {
-       Ecosystems []string // detected ecosystems from .gdev.yaml
+       Ecosystems []string // detected ecosystems from .qsdev.yaml
        Filter     string   // --ecosystem flag value, empty = all
    }
 
@@ -312,7 +312,7 @@ This is deliberately a thin wrapper, not a unified analysis platform. It does NO
    Package    Current  Wanted  Latest
    lodash     4.17.20  4.17.21 4.17.21
    ```
-6. Register `gdev outdated` command with Cobra:
+6. Register `qsdev outdated` command with Cobra:
    ```go
    var outdatedCmd = &cobra.Command{
        Use:   "outdated",
@@ -321,10 +321,10 @@ This is deliberately a thin wrapper, not a unified analysis platform. It does NO
    }
    outdatedCmd.Flags().String("ecosystem", "", "Check only a specific ecosystem (e.g., npm, pip, go)")
    ```
-7. Handle the case where no ecosystems are detected: print "No ecosystems detected. Run `gdev init` to configure." and exit 0.
+7. Handle the case where no ecosystems are detected: print "No ecosystems detected. Run `qsdev init` to configure." and exit 0.
 
 **Acceptance Criteria:**
-- [ ] `gdev outdated` runs the correct native command for each detected ecosystem
+- [ ] `qsdev outdated` runs the correct native command for each detected ecosystem
 - [ ] Output includes ecosystem headers (`=== npm ===`) for clear separation
 - [ ] Ecosystems with missing binary are skipped with a warning (not a hard error)
 - [ ] Exit code 0 when all dependencies up-to-date, 1 when outdated packages found
@@ -344,17 +344,17 @@ This is deliberately a thin wrapper, not a unified analysis platform. It does NO
 
 ---
 
-### Unit 16.4: gdev update Command
+### Unit 16.4: qsdev update Command
 
-**Description:** Implement `gdev update` as a coordinated three-stage update command: (1) self-update the gdev binary, (2) regenerate configs from saved answers with new templates, (3) update devenv flake inputs. Supports partial updates via flags and includes preview/rollback capabilities.
+**Description:** Implement `qsdev update` as a coordinated three-stage update command: (1) self-update the gdev binary, (2) regenerate configs from saved answers with new templates, (3) update devenv flake inputs. Supports partial updates via flags and includes preview/rollback capabilities.
 
-**Code-Grounded Implementation Note:** `gdev init --update` already exists and does most of what this unit describes for Stage 2. The `runUpdate()` function at `addons/devinit/update.go:60-178` orchestrates: load answers, refresh detection, load state, check modifications, generate new files, build plan, execute plan, save state. Phase 16 adds three things on top: (1) make `gdev update` a top-level command that delegates to `runUpdate()` for Stage 2, (2) add a self-update stage (Stage 1) before config regeneration, (3) add `devenv update` for flake inputs (Stage 3). The existing `runUpdate()` handles steps 2-9 of the update flow — this unit wraps it with the self-update preamble and devenv postamble.
+**Code-Grounded Implementation Note:** `qsdev init --update` already exists and does most of what this unit describes for Stage 2. The `runUpdate()` function at `addons/devinit/update.go:60-178` orchestrates: load answers, refresh detection, load state, check modifications, generate new files, build plan, execute plan, save state. Phase 16 adds three things on top: (1) make `qsdev update` a top-level command that delegates to `runUpdate()` for Stage 2, (2) add a self-update stage (Stage 1) before config regeneration, (3) add `devenv update` for flake inputs (Stage 3). The existing `runUpdate()` handles steps 2-9 of the update flow — this unit wraps it with the self-update preamble and devenv postamble.
 
-**Context:** When gdev itself is updated, three separate operations need to happen: the binary updates (Phase 10 self-update), generated configs need regeneration with new templates (Phase 8 update workflow), and devenv inputs need refreshing (`devenv update`). Today these are three separate commands (`gdev self-update`, `gdev init --update`, `devenv update`). `gdev update` coordinates all three into a single safe operation with stage-level granularity.
+**Context:** When gdev itself is updated, three separate operations need to happen: the binary updates (Phase 10 self-update), generated configs need regeneration with new templates (Phase 8 update workflow), and devenv inputs need refreshing (`devenv update`). Today these are three separate commands (`qsdev self-update`, `qsdev init --update`, `devenv update`). `qsdev update` coordinates all three into a single safe operation with stage-level granularity.
 
-Critically, `gdev update` does NOT update application dependencies (npm, pip, cargo packages). Application dependency updates are Renovate's domain and dangerous for unattended execution. The `gdev update` scope is strictly gdev infrastructure: the binary, the generated configs, and the Nix/devenv inputs.
+Critically, `qsdev update` does NOT update application dependencies (npm, pip, cargo packages). Application dependency updates are Renovate's domain and dangerous for unattended execution. The `qsdev update` scope is strictly gdev infrastructure: the binary, the generated configs, and the Nix/devenv inputs.
 
-**Desired Outcome:** `gdev update` brings all gdev-managed infrastructure current in one command. Failed stages roll back cleanly. Partial update flags allow updating only what's needed.
+**Desired Outcome:** `qsdev update` brings all gdev-managed infrastructure current in one command. Failed stages roll back cleanly. Partial update flags allow updating only what's needed.
 
 **Steps:**
 1. Create `internal/update/` package with `Updater` struct:
@@ -402,7 +402,7 @@ Critically, `gdev update` does NOT update application dependencies (npm, pip, ca
        return &StageResult{Stage: "self-update", Status: "updated", Details: release.Version}, nil
    }
    ```
-3. Implement Stage 2 — Config regeneration: reuse `gdev init --update` workflow from Phase 8 (Unit 6.1). Load saved answers from `.gdev.yaml`, regenerate files with current templates, apply merge strategies (three-way for JSON, section markers for CLAUDE.md, `.new` + diff for devenv.nix). Track which files changed for the summary.
+3. Implement Stage 2 — Config regeneration: reuse `qsdev init --update` workflow from Phase 8 (Unit 6.1). Load saved answers from `.qsdev.yaml`, regenerate files with current templates, apply merge strategies (three-way for JSON, section markers for CLAUDE.md, `.new` + diff for devenv.nix). Track which files changed for the summary.
    ```go
    func (u *Updater) configUpdate() (*StageResult, error) {
        fmt.Println("[2/3] Regenerating configs with latest templates...")
@@ -450,9 +450,9 @@ Critically, `gdev update` does NOT update application dependencies (npm, pip, ca
 5. Implement rollback on failure: if Stage 2 (config regeneration) fails, restore backed-up files. If Stage 3 fails, the devenv.lock can be restored from git (`git checkout devenv.lock`). Stage 1 failure uses the self-update rollback from Phase 10 (backup binary restore).
 6. Implement `--dry-run` flag: check for available updates and show diffs for config changes without applying anything:
    ```
-   $ gdev update --dry-run
+   $ qsdev update --dry-run
    [1/3] Self-update: v0.16.2 → v0.17.0 available
-         New features: gdev repair, gdev info, 3 new tool integrations
+         New features: qsdev repair, gdev info, 3 new tool integrations
    [2/3] Config regeneration: 3 files would change
          settings.json: 2 new deny rules added
          CLAUDE.md: security section updated
@@ -460,17 +460,17 @@ Critically, `gdev update` does NOT update application dependencies (npm, pip, ca
    [3/3] devenv inputs: run 'devenv update' to check (not checked in dry-run)
    ```
 7. Implement partial update flags:
-   - `--self-only`: run only Stage 1 (equivalent to `gdev self-update`)
-   - `--configs-only`: run only Stage 2 (equivalent to `gdev init --update`)
+   - `--self-only`: run only Stage 1 (equivalent to `qsdev self-update`)
+   - `--configs-only`: run only Stage 2 (equivalent to `qsdev init --update`)
    - `--deps-only`: run only Stage 3 (equivalent to `devenv update`)
 8. Implement version bump notification: after self-update, if the new version has notable changes, print a summary sourced from the GitHub Release body:
    ```
    gdev v0.16.2 → v0.17.0
-   ├── 3 new tools available (gdev list --category new)
+   ├── 3 new tools available (qsdev list --category new)
    ├── 2 template updates (will apply in config regeneration)
    └── 1 deprecation (ripsecrets standalone — now bundled with gitleaks)
    ```
-9. Register `gdev update` command with Cobra:
+9. Register `qsdev update` command with Cobra:
    ```go
    var updateCmd = &cobra.Command{
        Use:   "update",
@@ -482,10 +482,10 @@ Critically, `gdev update` does NOT update application dependencies (npm, pip, ca
    updateCmd.Flags().Bool("configs-only", false, "Regenerate only gdev-managed config files")
    updateCmd.Flags().Bool("deps-only", false, "Update only devenv flake inputs")
    ```
-10. Ensure `gdev update` is idempotent: running twice in a row should report "up-to-date" for all stages on the second run.
+10. Ensure `qsdev update` is idempotent: running twice in a row should report "up-to-date" for all stages on the second run.
 
 **Acceptance Criteria:**
-- [ ] `gdev update` runs all three stages in order: self-update, config regeneration, devenv inputs
+- [ ] `qsdev update` runs all three stages in order: self-update, config regeneration, devenv inputs
 - [ ] Stage 1 reuses Phase 10 self-update with SHA256 verification
 - [ ] Stage 2 reuses Phase 8 update workflow with merge strategies (three-way, section markers, `.new` + diff)
 - [ ] Stage 3 runs `devenv update` and reports which inputs changed
@@ -494,12 +494,12 @@ Critically, `gdev update` does NOT update application dependencies (npm, pip, ca
 - [ ] Failed config regeneration rolls back to backed-up files
 - [ ] Failed self-update restores previous binary
 - [ ] Version bump notification shows notable changes from release notes
-- [ ] Running `gdev update` twice is idempotent (second run reports up-to-date)
+- [ ] Running `qsdev update` twice is idempotent (second run reports up-to-date)
 - [ ] Application dependencies are explicitly NOT updated (documented in help text)
 
 **Research Citations:**
 - `research-spikes/gdev-dx-polish/dependency-freshness-research.md § Coordinated Updates` — three-stage update design, stages 1-3 only (no app deps)
-- `research-spikes/gdev-dx-polish/dependency-freshness-research.md § Analysis` — "include `gdev update` for steps 1-3 only"
+- `research-spikes/gdev-dx-polish/dependency-freshness-research.md § Analysis` — "include `qsdev update` for steps 1-3 only"
 - `phases/10-distribution-self-bootstrapping.md § Unit 10.4` — self-update mechanism, `CheckForUpdate`, `DoUpdate`, rollback
 - `phases/08-migration-update-polish.md § Unit 6.1` — update command, modification detection, merge strategies
 
@@ -509,15 +509,15 @@ Critically, `gdev update` does NOT update application dependencies (npm, pip, ca
 
 ### Unit 16.5: gdev teardown Command
 
-**Description:** Implement `gdev teardown` for clean project exit with three profiles (quick, default, compliance), user-modification preservation, interactive confirmation, and optional archive creation. Designed for consultants finishing client engagements who need to cleanly decommission a project's gdev devenv setup.
+**Description:** Implement `qsdev teardown` for clean project exit with three profiles (quick, default, compliance), user-modification preservation, interactive confirmation, and optional archive creation. Designed for consultants finishing client engagements who need to cleanly decommission a project's qsdev devenv setup.
 
-**Code-Grounded Implementation Note:** The state file at `.devinit/.gdev-init-state.yaml` tracks all generated files via `GeneratedState.Files map[string]FileState`. The `state.CheckModified()` function at `internal/state/state.go:46-94` identifies which files have been user-modified (hash mismatch). Teardown uses these to determine safe-to-delete (unmodified, hash matches) vs warn-before-delete (modified, hash mismatch) files. The existing infrastructure means teardown does not need its own file-tracking mechanism — it reads the same state that repair and update already use.
+**Code-Grounded Implementation Note:** The state file at `.devinit/.qsdev-init-state.yaml` tracks all generated files via `GeneratedState.Files map[string]FileState`. The `state.CheckModified()` function at `internal/state/state.go:46-94` identifies which files have been user-modified (hash mismatch). Teardown uses these to determine safe-to-delete (unmodified, hash matches) vs warn-before-delete (modified, hash mismatch) files. The existing infrastructure means teardown does not need its own file-tracking mechanism — it reads the same state that repair and update already use.
 
 **Context:** When a consulting engagement ends or a developer leaves a project, gdev-generated artifacts need cleanup. Without a teardown command, developers must manually identify and remove generated files — `.envrc`, `.pre-commit-config.yaml`, settings.json entries, CLAUDE.md sections, `.gdev/` state directory, etc. This is error-prone: leaving stale configs behind causes confusion for future developers; accidentally deleting user-customized files loses work.
 
 The teardown command respects the same file ownership and hash tracking used by repair and update. Files that the developer has modified (hash mismatch) are flagged and preserved by default — the developer explicitly decides whether to keep or remove them. For compliance-sensitive engagements, teardown generates an evidence report (reusing Phase 15 health reporting) before removing anything, creating an audit trail.
 
-**Desired Outcome:** `gdev teardown` cleanly removes gdev from a project while preserving user work, with profile-appropriate behavior for casual exit, standard exit, and compliance-mandated exit.
+**Desired Outcome:** `qsdev teardown` cleanly removes gdev from a project while preserving user work, with profile-appropriate behavior for casual exit, standard exit, and compliance-mandated exit.
 
 **Steps:**
 1. Create `internal/teardown/` package with `Teardown` struct:
@@ -549,9 +549,9 @@ The teardown command respects the same file ownership and hash tracking used by 
    }
    ```
 2. Implement profile behaviors:
-   - **Quick** (`gdev teardown --quick`): Remove `.gdev/` state directory only. Leave all generated configs in place. Use case: "I want to stop using gdev tooling but keep the configs it generated."
-   - **Default** (`gdev teardown`): Remove `.gdev/` state directory. Remove generated-and-unmodified files (hash match). Warn about user-modified files and list them. Do NOT remove user-modified files without explicit confirmation.
-   - **Compliance** (`gdev teardown --compliance`): Generate Phase 15 evidence report to `.gdev/teardown-report-<date>.json`. Then execute default teardown. Archive `.gdev.yaml` to `.gdev-archive/` for re-engagement. Use case: "Engagement over, need audit trail."
+   - **Quick** (`qsdev teardown --quick`): Remove `.gdev/` state directory only. Leave all generated configs in place. Use case: "I want to stop using gdev tooling but keep the configs it generated."
+   - **Default** (`qsdev teardown`): Remove `.gdev/` state directory. Remove generated-and-unmodified files (hash match). Warn about user-modified files and list them. Do NOT remove user-modified files without explicit confirmation.
+   - **Compliance** (`qsdev teardown --compliance`): Generate Phase 15 evidence report to `.gdev/teardown-report-<date>.json`. Then execute default teardown. Archive `.qsdev.yaml` to `.gdev-archive/` for re-engagement. Use case: "Engagement over, need audit trail."
 3. Implement file classification using `GeneratedState` hashes:
    ```go
    func (t *Teardown) classifyFiles() (*TeardownPlan, error) {
@@ -626,13 +626,13 @@ The teardown command respects the same file ownership and hash tracking used by 
        }
    }
    ```
-7. Implement `--archive` flag: create `.gdev-archive.tar.gz` containing `.gdev.yaml`, `.gdev/state.yaml`, and all generated configs before removal. Enables re-engagement — `gdev init --from-archive .gdev-archive.tar.gz` could restore the setup later.
+7. Implement `--archive` flag: create `.gdev-archive.tar.gz` containing `.qsdev.yaml`, `.gdev/state.yaml`, and all generated configs before removal. Enables re-engagement — `qsdev init --from-archive .gdev-archive.tar.gz` could restore the setup later.
    ```go
    func (t *Teardown) createArchive(plan *TeardownPlan) error {
        archivePath := fmt.Sprintf(".gdev-archive-%s.tar.gz",
            time.Now().Format("20060102"))
-       // Include .gdev.yaml, .gdev/state.yaml, all generated files
-       files := []string{".gdev.yaml", ".gdev/state.yaml"}
+       // Include .qsdev.yaml, .gdev/state.yaml, all generated files
+       files := []string{".qsdev.yaml", ".gdev/state.yaml"}
        for _, f := range plan.Remove {
            files = append(files, f.Path)
        }
@@ -648,7 +648,7 @@ The teardown command respects the same file ownership and hash tracking used by 
        return writeJSON(reportPath, report)
    }
    ```
-9. Register `gdev teardown` command with Cobra:
+9. Register `qsdev teardown` command with Cobra:
    ```go
    var teardownCmd = &cobra.Command{
        Use:   "teardown",
@@ -663,9 +663,9 @@ The teardown command respects the same file ownership and hash tracking used by 
 10. Post-teardown cleanup: after removing files, check if any gdev-generated directories are now empty (`.github/`, `.claude/skills/`) and remove them if so. Do NOT remove directories that contain non-gdev files.
 
 **Acceptance Criteria:**
-- [ ] `gdev teardown --quick` removes only `.gdev/` state directory, all generated configs preserved
-- [ ] `gdev teardown` (default) removes unmodified generated files, preserves user-modified files
-- [ ] `gdev teardown --compliance` generates evidence report, then executes default teardown, archives `.gdev.yaml`
+- [ ] `qsdev teardown --quick` removes only `.gdev/` state directory, all generated configs preserved
+- [ ] `qsdev teardown` (default) removes unmodified generated files, preserves user-modified files
+- [ ] `qsdev teardown --compliance` generates evidence report, then executes default teardown, archives `.qsdev.yaml`
 - [ ] User-modified files are NEVER silently deleted (hash comparison required)
 - [ ] Shared files cleaned surgically — only gdev-owned sections/keys removed, user additions preserved
 - [ ] Interactive confirmation shows full plan before any deletion
@@ -690,7 +690,7 @@ The teardown command respects the same file ownership and hash tracking used by 
 
 **Context:** gdev already generates pre-commit hooks (Phase 5), commitlint (Phase 12), and git-cliff (Phase 12). This unit fills the remaining git workflow gaps identified in research: PR templates that include the right checklists for detected ecosystems, branch naming enforcement to prevent garbage branch names, auto-extraction of ticket IDs from branch names into commit messages, and automated PR labels based on file paths and commit types.
 
-Every artifact generated by this unit is lifecycle-managed through the Phase 12 tool registry. `gdev enable pr-templates` adds the PR template; `gdev disable pr-templates` removes it. This allows teams to adopt individual git workflow features without taking all of them.
+Every artifact generated by this unit is lifecycle-managed through the Phase 12 tool registry. `qsdev enable pr-templates` adds the PR template; `qsdev disable pr-templates` removes it. This allows teams to adopt individual git workflow features without taking all of them.
 
 **Desired Outcome:** A new gdev project gets ecosystem-appropriate PR templates, branch naming enforcement, and PR labeling with zero manual configuration. Each feature is individually toggleable.
 
@@ -765,9 +765,9 @@ Every artifact generated by this unit is lifecycle-managed through the Phase 12 
        return b.String()
    }
    ```
-3. Implement branch naming enforcement as a devenv git hook. Default pattern: `^(feat|fix|chore|docs|refactor|test|ci)/[a-z0-9._-]+$`. Pattern is configurable via `.gdev.yaml`:
+3. Implement branch naming enforcement as a devenv git hook. Default pattern: `^(feat|fix|chore|docs|refactor|test|ci)/[a-z0-9._-]+$`. Pattern is configurable via `.qsdev.yaml`:
    ```yaml
-   # .gdev.yaml
+   # .qsdev.yaml
    git:
      branch_pattern: "^(feat|fix|chore|docs|refactor|test|ci)/[A-Z]+-[0-9]+-[a-z0-9-]+$"
    ```
@@ -845,22 +845,22 @@ Every artifact generated by this unit is lifecycle-managed through the Phase 12 
            with:
              repo-token: "${{ secrets.GITHUB_TOKEN }}"
    ```
-6. Wire all four tools into the Phase 12 lifecycle system so `gdev enable/disable` works for each.
+6. Wire all four tools into the Phase 12 lifecycle system so `qsdev enable/disable` works for each.
 7. Add wizard integration: the customize path shows git workflow options. Quick path uses defaults (pr-templates and branch-naming on, commit-ticket off, pr-labels on).
 
 **Acceptance Criteria:**
 - [ ] PR template generated with ecosystem-appropriate checklists (security section only when hardening enabled)
 - [ ] Multi-ecosystem project (Go + TypeScript) gets combined checklist items
 - [ ] Branch naming hook rejects non-conforming branch names on push, allows main/master/develop
-- [ ] Branch naming pattern configurable via `.gdev.yaml`
+- [ ] Branch naming pattern configurable via `.qsdev.yaml`
 - [ ] Commit ticket extraction prepends `[TICKET-123]` to commit messages from branch name
 - [ ] Commit ticket extraction skips merge commits and amends
 - [ ] PR labeler config generated with ecosystem-appropriate file path mappings
 - [ ] PR labeler workflow uses SHA-pinned actions
-- [ ] `gdev enable pr-templates` / `gdev disable pr-templates` cleanly adds/removes template
-- [ ] `gdev enable branch-naming` / `gdev disable branch-naming` cleanly adds/removes hook
-- [ ] `gdev enable commit-ticket` / `gdev disable commit-ticket` cleanly adds/removes hook
-- [ ] `gdev enable pr-labels` / `gdev disable pr-labels` cleanly adds/removes labeler config and workflow
+- [ ] `qsdev enable pr-templates` / `qsdev disable pr-templates` cleanly adds/removes template
+- [ ] `qsdev enable branch-naming` / `qsdev disable branch-naming` cleanly adds/removes hook
+- [ ] `qsdev enable commit-ticket` / `qsdev disable commit-ticket` cleanly adds/removes hook
+- [ ] `qsdev enable pr-labels` / `qsdev disable pr-labels` cleanly adds/removes labeler config and workflow
 
 **Research Citations:**
 - `research-spikes/gdev-dx-polish/git-workflow-research.md § Gap Analysis` — four features to include (branch naming, PR templates, commit ticket, PR labels), two to exclude (merge queue, release automation)
@@ -878,7 +878,7 @@ Every artifact generated by this unit is lifecycle-managed through the Phase 12 
 
 **Description:** Implement shell and environment integrations that make gdev context visible during daily development: Starship prompt segment generation, gdev environment variables in devenv.nix, enterShell notification, and OTEL environment variable configuration. All integrations are generated into devenv.nix (no separate shell scripts or hooks).
 
-**Code-Grounded Implementation Note:** The `enterShell` content is currently hardcoded in `addons/devenv/security_defaults.go` via `buildEnterShellScript()`. It currently outputs: banner, pre-commit hook check, clean env check, and ripsecrets check. Phase 16 needs to make this extensible — convert from the current hardcoded string concatenation to a template or builder pattern that accepts additional notification lines from other tools/features. The `DEVENV_SECURITY_HARDENED = "true"` env var is set at `addons/devenv/devenv_nix_data.go:67` — new gdev env vars (`GDEV_PROJECT_NAME`, `GDEV_SECURITY_PROFILE`, etc.) follow the same pattern of being generated into the devenv.nix env block.
+**Code-Grounded Implementation Note:** The `enterShell` content is currently hardcoded in `addons/devenv/security_defaults.go` via `buildEnterShellScript()`. It currently outputs: banner, pre-commit hook check, clean env check, and ripsecrets check. Phase 16 needs to make this extensible — convert from the current hardcoded string concatenation to a template or builder pattern that accepts additional notification lines from other tools/features. The `DEVENV_SECURITY_HARDENED = "true"` env var is set at `addons/devenv/devenv_nix_data.go:67` — new gdev env vars (`QSDEV_PROJECT_NAME`, `QSDEV_SECURITY_PROFILE`, etc.) follow the same pattern of being generated into the devenv.nix env block.
 
 **Context:** Developers switching between client projects need environmental awareness — "which project am I in? what security level? what tools are active?" — without running a command. The research concluded that gdev should NOT add its own shell hook (this duplicates devenv's activation lifecycle and creates ordering conflicts). Instead, all shell integration goes through devenv.nix: environment variables are set unconditionally (useful for any tool), Starship config is opt-in, and the enterShell task provides a one-line notification on shell entry.
 
@@ -890,22 +890,22 @@ The OTEL environment variable configuration is profile-driven and opt-in — con
 1. Implement gdev environment variable generation in the devenv.nix template. These are set unconditionally for all gdev projects — they power the Starship segment, enterShell notification, and any external tooling:
    ```nix
    # --- gdev-env ---
-   env.GDEV_PROJECT_NAME = "acme-frontend";
-   env.GDEV_SECURITY_PROFILE = "enhanced";
-   env.GDEV_VERSION = "0.16.2";
-   env.GDEV_ECOSYSTEMS = "typescript,docker";
+   env.QSDEV_PROJECT_NAME = "acme-frontend";
+   env.QSDEV_SECURITY_PROFILE = "enhanced";
+   env.QSDEV_VERSION = "0.16.2";
+   env.QSDEV_ECOSYSTEMS = "typescript,docker";
    # --- end gdev-env ---
    ```
-   Values are populated from `.gdev.yaml` at generation time. The template function reads `ProjectName`, `SecurityProfile`, the gdev binary version, and the comma-joined ecosystem list.
+   Values are populated from `.qsdev.yaml` at generation time. The template function reads `ProjectName`, `SecurityProfile`, the gdev binary version, and the comma-joined ecosystem list.
 2. Implement enterShell notification as a devenv.nix task — a brief one-line message on shell entry showing project context:
    ```nix
    # --- gdev-entershell ---
    enterShell = ''
-     echo "gdev: $GDEV_ECOSYSTEMS | $GDEV_SECURITY_PROFILE security | $(gdev info --oneline 2>/dev/null || echo 'run gdev info')"
+     echo "gdev: $QSDEV_ECOSYSTEMS | $QSDEV_SECURITY_PROFILE security | $(gdev info --oneline 2>/dev/null || echo 'run gdev info')"
    '';
    # --- end gdev-entershell ---
    ```
-   The notification is deliberately minimal — one line, no color codes (terminals vary), no blocking commands. It uses the env vars set above, so it adds zero latency (no file reads, no subprocesses beyond the optional `gdev info --oneline` which itself reads only cached state).
+   The notification is deliberately minimal — one line, no color codes (terminals vary), no blocking commands. It uses the env vars set above, so it adds zero latency (no file reads, no subprocesses beyond the optional `qsdev info --oneline` which itself reads only cached state).
 3. Register Starship config generation as an opt-in tool in the lifecycle registry:
    ```go
    Tool{
@@ -935,35 +935,35 @@ The OTEL environment variable configuration is profile-driven and opt-in — con
    # Extend your existing starship.toml or use this standalone
 
    [custom.gdev]
-   command = "echo $GDEV_PROJECT_NAME"
-   when = 'test -n "$GDEV_PROJECT_NAME"'
+   command = "echo $QSDEV_PROJECT_NAME"
+   when = 'test -n "$QSDEV_PROJECT_NAME"'
    format = "[$output]($style) "
    style = "bold cyan"
    description = "Active gdev project"
 
    [custom.gdev_security]
    command = '''
-     case "$GDEV_SECURITY_PROFILE" in
+     case "$QSDEV_SECURITY_PROFILE" in
        enhanced) echo "enhanced" ;;
        strict)   echo "strict" ;;
        *)        echo "standard" ;;
      esac
    '''
-   when = 'test -n "$GDEV_SECURITY_PROFILE"'
+   when = 'test -n "$QSDEV_SECURITY_PROFILE"'
    format = "[$output]($style) "
    style = "green"
    description = "gdev security profile"
 
    [custom.gdev_tools]
-   command = "echo ${GDEV_TOOL_COUNT:-?}"
-   when = 'test -n "$GDEV_PROJECT_NAME"'
+   command = "echo ${QSDEV_TOOL_COUNT:-?}"
+   when = 'test -n "$QSDEV_PROJECT_NAME"'
    format = "[$output tools]($style) "
    style = "dimmed white"
    description = "Active tool count"
    ```
-5. Add `GDEV_TOOL_COUNT` to the env var block — computed from the tool registry at generation time:
+5. Add `QSDEV_TOOL_COUNT` to the env var block — computed from the tool registry at generation time:
    ```nix
-   env.GDEV_TOOL_COUNT = "12"; # count of enabled tools
+   env.QSDEV_TOOL_COUNT = "12"; # count of enabled tools
    ```
 6. Implement OTEL environment variable configuration as a profile-driven, opt-in tool:
    ```go
@@ -1005,15 +1005,15 @@ The OTEL environment variable configuration is profile-driven and opt-in — con
    The gdev notification is always the LAST line in enterShell so it appears after any tool setup messages.
 
 **Acceptance Criteria:**
-- [ ] `GDEV_PROJECT_NAME`, `GDEV_SECURITY_PROFILE`, `GDEV_VERSION`, `GDEV_ECOSYSTEMS`, `GDEV_TOOL_COUNT` set in devenv.nix for all gdev projects
-- [ ] Environment variables available in devenv shell (verify with `echo $GDEV_PROJECT_NAME`)
+- [ ] `QSDEV_PROJECT_NAME`, `QSDEV_SECURITY_PROFILE`, `QSDEV_VERSION`, `QSDEV_ECOSYSTEMS`, `QSDEV_TOOL_COUNT` set in devenv.nix for all gdev projects
+- [ ] Environment variables available in devenv shell (verify with `echo $QSDEV_PROJECT_NAME`)
 - [ ] enterShell prints one-line gdev notification when entering devenv shell
 - [ ] enterShell notification is non-blocking and adds minimal latency (<50ms)
-- [ ] `gdev enable starship-integration` generates `.starship.toml` and enables devenv starship module
-- [ ] `gdev disable starship-integration` removes `.starship.toml` and starship devenv.nix section
+- [ ] `qsdev enable starship-integration` generates `.starship.toml` and enables devenv starship module
+- [ ] `qsdev disable starship-integration` removes `.starship.toml` and starship devenv.nix section
 - [ ] Starship custom modules display project name, security profile, and tool count
-- [ ] `gdev enable otel-config` generates OTEL env vars from infrastructure profile
-- [ ] `gdev disable otel-config` removes OTEL env vars from devenv.nix
+- [ ] `qsdev enable otel-config` generates OTEL env vars from infrastructure profile
+- [ ] `qsdev disable otel-config` removes OTEL env vars from devenv.nix
 - [ ] OTEL config only available when infrastructure profile provides collector endpoint
 - [ ] No separate gdev shell hook — all integration goes through devenv.nix
 - [ ] Multiple enterShell contributions from different tools compose correctly (concatenated)
@@ -1033,15 +1033,15 @@ The OTEL environment variable configuration is profile-driven and opt-in — con
 ## Phase Completion Criteria
 
 - [ ] All seven units pass acceptance criteria
-- [ ] `gdev repair` fixes all issues detectable by `gdev devenv doctor` without destroying user customizations
-- [ ] `gdev info` responds in under 100ms with correct project metadata
-- [ ] `gdev outdated` runs correct native commands for all detected ecosystems
-- [ ] `gdev update` coordinates self-update, config regeneration, and devenv input update with rollback on failure
-- [ ] `gdev teardown` cleanly removes gdev artifacts in all three profiles without deleting user-modified files
+- [ ] `qsdev repair` fixes all issues detectable by `qsdev devenv doctor` without destroying user customizations
+- [ ] `qsdev info` responds in under 100ms with correct project metadata
+- [ ] `qsdev outdated` runs correct native commands for all detected ecosystems
+- [ ] `qsdev update` coordinates self-update, config regeneration, and devenv input update with rollback on failure
+- [ ] `qsdev teardown` cleanly removes gdev artifacts in all three profiles without deleting user-modified files
 - [ ] Git workflow tools (PR templates, branch naming, commit tickets, PR labels) are individually lifecycle-manageable
 - [ ] Shell integration (env vars, enterShell, Starship, OTEL) generates correctly into devenv.nix
-- [ ] All new commands appear in `gdev --help` with descriptive help text
-- [ ] All new lifecycle-managed tools appear in `gdev list` with correct categories
-- [ ] Running `gdev init` on a fresh project generates default git workflow and shell integration
-- [ ] `gdev enable/disable` works for all Phase 16 lifecycle-managed tools (starship-integration, otel-config, pr-templates, branch-naming, commit-ticket, pr-labels)
+- [ ] All new commands appear in `qsdev --help` with descriptive help text
+- [ ] All new lifecycle-managed tools appear in `qsdev list` with correct categories
+- [ ] Running `qsdev init` on a fresh project generates default git workflow and shell integration
+- [ ] `qsdev enable/disable` works for all Phase 16 lifecycle-managed tools (starship-integration, otel-config, pr-templates, branch-naming, commit-ticket, pr-labels)
 - [ ] No feature duplicates existing tooling (devenv tasks, Renovate, existing ecosystem commands)

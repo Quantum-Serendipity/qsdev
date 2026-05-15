@@ -3,7 +3,7 @@ package devenv
 import (
 	"fmt"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // serviceToTemplateData converts a ServiceChoice from wizard answers into a

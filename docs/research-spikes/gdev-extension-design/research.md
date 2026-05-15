@@ -34,14 +34,14 @@ Deep investigation and analysis of [gdev](https://github.com/fastcat/gdev) to un
 
 - What's the right team skill library format and hosting model? (manifest.yaml + git repo? Go embed? Both?)
 - How should profiles be shared across a team? (compiled into binary? External config repo?)
-- Should there be a `gdev lint` command that validates generated config against team standards?
+- Should there be a `qsdev lint` command that validates generated config against team standards?
 - How to handle devenv.nix in monorepos with shared base + per-service overrides?
 
 ## Conclusions
 
 gdev's addon architecture is well-suited for building developer environment configuration extensions. The framework's two-phase lifecycle (customization → lockdown), type-safe generics, and existing bootstrap step system provide all the infrastructure needed — no framework modifications required.
 
-**Architecture decision:** Three separate addons — `devenv` (devenv.sh environment management), `claudecode` (Claude Code AI assistant configuration), and `devinit` (orchestration with unified `gdev init` wizard). This follows gdev's established pattern of one addon per concern and allows teams to adopt either tool independently.
+**Architecture decision:** Three separate addons — `devenv` (devenv.sh environment management), `claudecode` (Claude Code AI assistant configuration), and `devinit` (orchestration with unified `qsdev init` wizard). This follows gdev's established pattern of one addon per concern and allows teams to adopt either tool independently.
 
 **Wizard UX:** The "opinionated menu with escape hatches" pattern using charmbracelet/huh. Quick path accepts sensible defaults in one question (<5 seconds); customize path walks 5 form groups (~30 seconds). Every question maps to a CLI flag for CI/non-interactive use. A detection engine pre-populates answers from existing project files (go.mod, package.json, etc.).
 

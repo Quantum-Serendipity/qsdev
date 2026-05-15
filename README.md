@@ -1,6 +1,6 @@
-# gdev-secure-devenv-bootstrap
+# qsdev
 
-Three gdev addons (`devenv`, `claudecode`, `devinit`) that generate a fully configured, security-hardened development environment from a single command. Covers 27 language/platform ecosystems with defense-in-depth against supply chain attacks, including age-gating, lockfile enforcement, vulnerability scanning, and Claude Code guardrails.
+Three qsdev addons (`devenv`, `claudecode`, `devinit`) that generate a fully configured, security-hardened development environment from a single command. Covers 27 language/platform ecosystems with defense-in-depth against supply chain attacks, including age-gating, lockfile enforcement, vulnerability scanning, and Claude Code guardrails.
 
 ## Quick Start
 
@@ -16,7 +16,7 @@ Three gdev addons (`devenv`, `claudecode`, `devinit`) that generate a fully conf
 Auto-detect languages, accept all defaults, generate everything:
 
 ```bash
-cd my-project && gdev init --yes
+cd my-project && qsdev init --yes
 ```
 
 ### With a Profile
@@ -24,13 +24,13 @@ cd my-project && gdev init --yes
 Apply a preconfigured project-type profile:
 
 ```bash
-gdev init --profile go-web --yes
+qsdev init --profile go-web --yes
 ```
 
 ### Fully Custom
 
 ```bash
-gdev init \
+qsdev init \
   --lang go,javascript \
   --service postgres \
   --claude-permissions standard \
@@ -41,7 +41,7 @@ gdev init \
 
 ## Command Reference
 
-### `gdev init`
+### `qsdev init`
 
 The unified orchestrator command. Runs detection, wizard, and both generators.
 
@@ -101,7 +101,7 @@ Language-specific flags implicitly add their language to the `--lang` list if no
 - `--devenv-only` and `--claude-only` cannot be used together
 - `--update` cannot be combined with `--lang`, `--service`, or `--profile`
 
-### `gdev devenv`
+### `qsdev devenv`
 
 Manage devenv.sh configuration independently.
 
@@ -112,7 +112,7 @@ Manage devenv.sh configuration independently.
 | `add-service <name>` | Add a service (`postgres`, `redis`, `mysql`, `mongodb`, `elasticsearch`, `rabbitmq`) |
 | `add-language <name>` | Add a language ecosystem module to the devenv configuration |
 
-### `gdev claude`
+### `qsdev claude`
 
 Manage Claude Code configuration independently.
 
@@ -126,7 +126,7 @@ Manage Claude Code configuration independently.
 
 ## Project-Type Profiles
 
-Pre-configured bundles for common project archetypes. Use `gdev init --list-profiles` to see all available profiles.
+Pre-configured bundles for common project archetypes. Use `qsdev init --list-profiles` to see all available profiles.
 
 | Profile | Languages | Services | Permission Level | Skills |
 |---------|-----------|----------|-----------------|--------|
@@ -187,12 +187,12 @@ For the full threat model and architectural details, see [docs/security-architec
 After initial setup, regenerate configuration to pick up template and skill library upgrades:
 
 ```bash
-gdev init --update
+qsdev init --update
 ```
 
 The update process:
 
-1. Loads saved answers from `.devinit/.gdev-init-answers.yaml`
+1. Loads saved answers from `.devinit/.qsdev-init-answers.yaml`
 2. Re-runs project detection to pick up new files
 3. Compares each generated file against stored state to detect user modifications
 4. Applies the appropriate merge strategy per file (see [docs/configuration-reference.md](docs/configuration-reference.md)):
@@ -208,4 +208,4 @@ Use `--dry-run` to preview what would change before applying, or `--force` to ov
 - [Team Onboarding Guide](docs/team-onboarding.md) -- Choosing profiles, configuring policies, rolling out to a team
 - [Security Architecture](docs/security-architecture.md) -- Threat model, defense layers, permission model, known limitations
 - [Configuration Reference](docs/configuration-reference.md) -- Every generated file, its merge strategy, and its contents
-- [Migration Guide](docs/migration-guide.md) -- Adding gdev to existing projects with pre-existing configuration
+- [Migration Guide](docs/migration-guide.md) -- Adding qsdev to existing projects with pre-existing configuration

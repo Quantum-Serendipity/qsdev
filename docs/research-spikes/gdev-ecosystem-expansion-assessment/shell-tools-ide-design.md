@@ -1,12 +1,12 @@
 # Shell/Workstation, IDE Config & Tool Detection Module Design
 
-Implementation unit designs for three expansion categories amending Phases 7, 8, and 10 of the gdev-secure-devenv-bootstrap plan. These units add personal workstation configuration, IDE config generation, and non-language ecosystem detection modules.
+Implementation unit designs for three expansion categories amending Phases 7, 8, and 10 of the qsdev plan. These units add personal workstation configuration, IDE config generation, and non-language ecosystem detection modules.
 
 ---
 
 ## Part A: Shell/Workstation Configuration (Phase 10 Amendment)
 
-Phase 10 currently covers distribution and self-bootstrapping. These units add `gdev setup --shell` as a personal workstation configuration mode that manages shell fragments in `~/.qsdev/shell/`. This is distinct from per-project devenv — these are personal tools installed system-wide via Nix profile.
+Phase 10 currently covers distribution and self-bootstrapping. These units add `qsdev setup --shell` as a personal workstation configuration mode that manages shell fragments in `~/.qsdev/shell/`. This is distinct from per-project devenv — these are personal tools installed system-wide via Nix profile.
 
 ---
 
@@ -14,9 +14,9 @@ Phase 10 currently covers distribution and self-bootstrapping. These units add `
 
 **Description:** Implement the `~/.qsdev/shell/` fragment directory structure and the `init.sh` entry point that engineers source from their shell RC file.
 
-**Context:** gdev's existing `gdev setup` command (Phase 9) installs system prerequisites. `gdev setup --shell` extends this to personal developer tooling. The key design constraint is non-destructive operation: gdev never modifies `~/.bashrc`, `~/.zshrc`, or `~/.config/fish/config.fish` directly. Instead, it generates shell fragments in `~/.qsdev/shell/` and prints instructions for the engineer to add a single source line. The fragment architecture allows gdev to regenerate any fragment without risking user customizations. Shell detection uses `$SHELL` and `basename` to determine bash/zsh/fish, generating appropriately formatted fragments for the detected shell.
+**Context:** gdev's existing `qsdev setup` command (Phase 9) installs system prerequisites. `qsdev setup --shell` extends this to personal developer tooling. The key design constraint is non-destructive operation: gdev never modifies `~/.bashrc`, `~/.zshrc`, or `~/.config/fish/config.fish` directly. Instead, it generates shell fragments in `~/.qsdev/shell/` and prints instructions for the engineer to add a single source line. The fragment architecture allows gdev to regenerate any fragment without risking user customizations. Shell detection uses `$SHELL` and `basename` to determine bash/zsh/fish, generating appropriately formatted fragments for the detected shell.
 
-**Desired Outcome:** `gdev setup --shell` creates `~/.qsdev/shell/` with an `init.sh` (or `init.fish`) that sources all fragments, and prints a one-liner the engineer pastes into their RC file. Re-running the command regenerates fragments idempotently without requiring the engineer to re-add the source line.
+**Desired Outcome:** `qsdev setup --shell` creates `~/.qsdev/shell/` with an `init.sh` (or `init.fish`) that sources all fragments, and prints a one-liner the engineer pastes into their RC file. Re-running the command regenerates fragments idempotently without requiring the engineer to re-add the source line.
 
 **Steps:**
 1. Detect current shell from `$SHELL` environment variable. Support bash, zsh, fish. Fall back to bash if unrecognized.
@@ -41,7 +41,7 @@ Phase 10 currently covers distribution and self-bootstrapping. These units add `
 - [ ] Prints correct source instruction per detected shell
 - [ ] Detects existing source line and skips instruction
 - [ ] State file tracks setup metadata for idempotency
-- [ ] Re-running `gdev setup --shell` is idempotent
+- [ ] Re-running `qsdev setup --shell` is idempotent
 
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/consulting-daily-driver-research.md § 2. Developer Productivity CLI Tools` — modern coreutils list, shell integration requirements
@@ -58,7 +58,7 @@ Phase 10 currently covers distribution and self-bootstrapping. These units add `
 
 **Context:** Per-project devenv tools only exist inside `devenv shell`. Personal productivity tools (ripgrep, fd, bat, etc.) should be available everywhere — in the home directory, in repos without devenv, in system administration tasks. Nix profile installs packages to `~/.nix-profile/` which is on PATH for all shells. This is the correct layer for personal tools, distinct from devenv (per-project) and NixOS system packages (per-machine). The package list is curated from the consulting-daily-driver research: these are the tools senior engineers expect on any workstation.
 
-**Desired Outcome:** After `gdev setup --shell`, all curated coreutils are available in any terminal session without entering a devenv shell. Packages already installed are skipped.
+**Desired Outcome:** After `qsdev setup --shell`, all curated coreutils are available in any terminal session without entering a devenv shell. Packages already installed are skipped.
 
 **Steps:**
 1. Define the curated package list (nixpkgs attribute names):
@@ -86,7 +86,7 @@ Phase 10 currently covers distribution and self-bootstrapping. These units add `
 - [ ] Failed installs do not block remaining packages
 - [ ] `--dry-run` shows planned actions without executing
 - [ ] Packages are available outside devenv shells (in any terminal)
-- [ ] State file records which packages gdev installed (for future `gdev setup --shell --remove`)
+- [ ] State file records which packages gdev installed (for future `qsdev setup --shell --remove`)
 
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/consulting-daily-driver-research.md § 2. Developer Productivity CLI Tools` — tool catalog with nixpkgs names, commonality assessment
@@ -163,7 +163,7 @@ Phase 10 currently covers distribution and self-bootstrapping. These units add `
 
 **Context:** Starship is a cross-shell prompt that reads a single `starship.toml` config file. It already supports modules for git, language versions, cloud profiles, and custom commands. A gdev-aware Starship config adds value by showing: whether the engineer is inside a devenv shell, which ecosystems are active, and the current cloud profile (AWS/GCP/Azure). This transforms the prompt from a generic display into a consulting-context-aware dashboard. Starship was included in the Nix profile install (Unit 10.7).
 
-**Desired Outcome:** After `gdev setup --shell`, the engineer's prompt shows git status, language versions, cloud context, and gdev devenv status via Starship.
+**Desired Outcome:** After `qsdev setup --shell`, the engineer's prompt shows git status, language versions, cloud context, and qsdev devenv status via Starship.
 
 **Steps:**
 1. Generate `~/.qsdev/shell/starship.toml`:
@@ -174,7 +174,7 @@ Phase 10 currently covers distribution and self-bootstrapping. These units add `
      ```toml
      [custom.gdev]
      command = "echo '⚙'"
-     when = "test -f .gdev.yaml"
+     when = "test -f .qsdev.yaml"
      description = "gdev-managed project"
      style = "bold cyan"
      ```
@@ -207,17 +207,17 @@ Phase 10 currently covers distribution and self-bootstrapping. These units add `
 
 ## Part B: IDE Config Generation (Phase 8 Amendment)
 
-Phase 8 currently covers migration, update, and polish. These units add `.editorconfig` generation to `gdev init` and `.vscode/extensions.json` generation to `gdev enable vscode`, both using the existing atomic write pipeline and hash tracking.
+Phase 8 currently covers migration, update, and polish. These units add `.editorconfig` generation to `qsdev init` and `.vscode/extensions.json` generation to `qsdev enable vscode`, both using the existing atomic write pipeline and hash tracking.
 
 ---
 
 ### Unit 8.8: EditorConfig Generation
 
-**Description:** Generate a `.editorconfig` file as part of `gdev init` output, with ecosystem-aware formatting rules derived from detected language modules.
+**Description:** Generate a `.editorconfig` file as part of `qsdev init` output, with ecosystem-aware formatting rules derived from detected language modules.
 
-**Context:** EditorConfig is universally supported (natively by JetBrains, Visual Studio; via near-universal extension in VS Code) and handles only mechanical formatting: indent style, line endings, charset, trailing whitespace. The git-docs-ide research confirmed this is Level 1 (Safe) on the IDE config risk spectrum — near-zero harm, universal benefit. It eliminates mixed-indentation commits and inconsistent line endings, which are especially costly on cross-platform consulting teams. The file is editor-agnostic, making it appropriate for `gdev init` (not gated behind an editor-specific enable command). Rules are derived from the detected ecosystem modules: Go uses tabs, Python uses 4-space indentation, JS/TS uses 2-space by default (configurable).
+**Context:** EditorConfig is universally supported (natively by JetBrains, Visual Studio; via near-universal extension in VS Code) and handles only mechanical formatting: indent style, line endings, charset, trailing whitespace. The git-docs-ide research confirmed this is Level 1 (Safe) on the IDE config risk spectrum — near-zero harm, universal benefit. It eliminates mixed-indentation commits and inconsistent line endings, which are especially costly on cross-platform consulting teams. The file is editor-agnostic, making it appropriate for `qsdev init` (not gated behind an editor-specific enable command). Rules are derived from the detected ecosystem modules: Go uses tabs, Python uses 4-space indentation, JS/TS uses 2-space by default (configurable).
 
-**Desired Outcome:** Every `gdev init` run produces a `.editorconfig` with project-appropriate formatting rules. The file is tracked by gdev's hash system and updated via `gdev init --update`.
+**Desired Outcome:** Every `qsdev init` run produces a `.editorconfig` with project-appropriate formatting rules. The file is tracked by gdev's hash system and updated via `qsdev init --update`.
 
 **Steps:**
 1. Add `.editorconfig` to the file generation pipeline in the devenv addon (alongside devenv.nix, devenv.yaml, .envrc).
@@ -244,11 +244,11 @@ Phase 8 currently covers migration, update, and polish. These units add `.editor
    - Makefile: `[Makefile]` with `indent_style = tab`
    - Markdown: `[*.md]` with `trim_trailing_whitespace = false` (trailing spaces are significant in Markdown)
 4. Track the generated `.editorconfig` via the existing GeneratedState hash system.
-5. On `gdev init --update`: if unmodified, regenerate. If modified, show diff (same strategy as other generated files).
+5. On `qsdev init --update`: if unmodified, regenerate. If modified, show diff (same strategy as other generated files).
 6. On ecosystem changes (new module detected on update), add the corresponding section.
 
 **Acceptance Criteria:**
-- [ ] `.editorconfig` generated on every `gdev init`
+- [ ] `.editorconfig` generated on every `qsdev init`
 - [ ] Base section uses UTF-8, LF, final newline, trim whitespace, 2-space default
 - [ ] Go section uses tabs
 - [ ] Python/Rust/Java/C# sections use 4-space
@@ -270,11 +270,11 @@ Phase 8 currently covers migration, update, and polish. These units add `.editor
 
 ### Unit 8.9: VS Code Extensions Recommendation Generation
 
-**Description:** Implement `gdev enable vscode` to generate `.vscode/extensions.json` with ecosystem-detected extension recommendations.
+**Description:** Implement `qsdev enable vscode` to generate `.vscode/extensions.json` with ecosystem-detected extension recommendations.
 
-**Context:** The git-docs-ide research confirmed that `.vscode/extensions.json` is Level 2 (Safe) on the IDE config risk spectrum: it creates recommendations, not requirements. VS Code shows a notification banner; the developer can install all, install selectively, or dismiss entirely. This is gated behind `gdev enable vscode` (explicit opt-in) per the "never generate editor-specific config without asking" principle. The extension mapping is a maintained lookup table: each detected ecosystem maps to a set of VS Code extension IDs. The file follows gdev's existing tool lifecycle (`gdev enable/disable`) from Phase 12.
+**Context:** The git-docs-ide research confirmed that `.vscode/extensions.json` is Level 2 (Safe) on the IDE config risk spectrum: it creates recommendations, not requirements. VS Code shows a notification banner; the developer can install all, install selectively, or dismiss entirely. This is gated behind `qsdev enable vscode` (explicit opt-in) per the "never generate editor-specific config without asking" principle. The extension mapping is a maintained lookup table: each detected ecosystem maps to a set of VS Code extension IDs. The file follows gdev's existing tool lifecycle (`qsdev enable/disable`) from Phase 12.
 
-**Desired Outcome:** `gdev enable vscode` generates `.vscode/extensions.json` with recommendations matching the project's detected ecosystems. `gdev disable vscode` removes it.
+**Desired Outcome:** `qsdev enable vscode` generates `.vscode/extensions.json` with recommendations matching the project's detected ecosystems. `qsdev disable vscode` removes it.
 
 **Steps:**
 1. Register `vscode` as a tool in the lifecycle system (Phase 12 interface).
@@ -304,24 +304,24 @@ Phase 8 currently covers migration, update, and polish. These units add `.editor
    }
    ```
 4. Track via GeneratedState hash system.
-5. `gdev enable vscode` creates the file; `gdev disable vscode` removes it and cleans up GeneratedState entry.
-6. `gdev init --update` regenerates if ecosystems changed (new extensions added for newly-detected ecosystems).
+5. `qsdev enable vscode` creates the file; `qsdev disable vscode` removes it and cleans up GeneratedState entry.
+6. `qsdev init --update` regenerates if ecosystems changed (new extensions added for newly-detected ecosystems).
 7. Use the three-way merge strategy from Unit 6.2 for updates: user-added recommendations are preserved, generated recommendations are updated.
 
 **Acceptance Criteria:**
-- [ ] `gdev enable vscode` generates `.vscode/extensions.json`
-- [ ] `gdev disable vscode` removes `.vscode/extensions.json`
+- [ ] `qsdev enable vscode` generates `.vscode/extensions.json`
+- [ ] `qsdev disable vscode` removes `.vscode/extensions.json`
 - [ ] EditorConfig extension always included
 - [ ] Extension list matches detected ecosystems
 - [ ] Claude Code extension included when claudecode addon active
 - [ ] Copilot extension included as fallback when claudecode addon not active
-- [ ] User-added recommendations survive `gdev init --update`
+- [ ] User-added recommendations survive `qsdev init --update`
 - [ ] File tracked by hash system
 - [ ] JSON is valid and properly formatted
 
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/git-docs-ide-research.md § 3.4 Analysis: What's Actually Harmful?` — extensions.json harm analysis: "minimal"
-- `research-spikes/gdev-ecosystem-expansion-assessment/git-docs-ide-research.md § 3.9 Proposed gdev enable vscode Flow` — detection, mapping, generation flow
+- `research-spikes/gdev-ecosystem-expansion-assessment/git-docs-ide-research.md § 3.9 Proposed qsdev enable vscode Flow` — detection, mapping, generation flow
 - `research-spikes/gdev-ecosystem-expansion-assessment/git-docs-ide-research.md § 3.5 The Extension Pack Pattern` — complementary approach for firm-wide standards
 
 **Status:** Not Started

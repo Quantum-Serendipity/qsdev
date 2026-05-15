@@ -19,10 +19,10 @@ A consulting firm's relationship with developer tooling is fundamentally differe
 
 ### Design
 
-The `.gdev.yaml` `client` block encodes client-specific configuration:
+The `.qsdev.yaml` `client` block encodes client-specific configuration:
 
 ```yaml
-# .gdev.yaml
+# .qsdev.yaml
 client:
   name: acme-corp
   compliance:
@@ -59,10 +59,10 @@ Client profiles compose with language/project profiles:
 
 ```
 Org Defaults (compiled)
-  -> Client Profile (from .gdev.yaml client section)
-    -> Project Profile (from .gdev.yaml profile field)
-      -> Project Overrides (from .gdev.yaml overrides section)
-        -> Local Overrides (.gdev.local.yaml)
+  -> Client Profile (from .qsdev.yaml client section)
+    -> Project Profile (from .qsdev.yaml profile field)
+      -> Project Overrides (from .qsdev.yaml overrides section)
+        -> Local Overrides (.qsdev.local.yaml)
 ```
 
 The client profile applies security constraints that cannot be loosened by lower layers. If the client requires `security_level: strict`, no project-level override can set it to `baseline`.
@@ -95,7 +95,7 @@ func mergeConfig(org, client, project, local Config) Config {
 }
 ```
 
-## Feature 2: Project Teardown (`gdev teardown`)
+## Feature 2: Project Teardown (`qsdev teardown`)
 
 When an engineer leaves a client project, a clean teardown ensures no client data lingers.
 
@@ -133,7 +133,7 @@ $ gdev teardown
 
 | Step | Action | Reversible? | Required |
 |------|--------|-------------|----------|
-| Archive config | Copy .gdev.yaml + .gdev.local.yaml to archive | Yes | Yes |
+| Archive config | Copy .qsdev.yaml + .qsdev.local.yaml to archive | Yes | Yes |
 | Archive state | Copy internal GeneratedState to archive | Yes | Yes |
 | Nix GC | `nix-collect-garbage` for project-specific derivations | No (re-downloadable) | Optional |
 | Revoke MCP tokens | Delete tokens from local keyring/config | No | Yes |
@@ -156,8 +156,8 @@ When a client engagement ends, preserve enough state to re-engage months or year
 
 ```
 ~/.gdev/archives/acme-widget-service-2026-05-12.tar.gz
-├── .gdev.yaml                    # Project configuration
-├── .gdev.local.yaml              # Local overrides (if not sensitive)
+├── .qsdev.yaml                    # Project configuration
+├── .qsdev.local.yaml              # Local overrides (if not sensitive)
 ├── generated-state.yaml          # Internal state (hashes, versions)
 ├── gdev-check-report.json        # Last compliance check
 ├── tool-versions.txt             # Exact versions of all tools at archival time
@@ -187,7 +187,7 @@ When re-engaging with an archived project:
 ```
 $ git clone <project-url>
 $ cd <project>
-$ gdev init
+$ qsdev init
   
   Found archive for this project: acme-widget-service (archived 2026-05-12)
   
@@ -205,14 +205,14 @@ $ gdev init
   Restoring local overrides... done
   
   ⚠ Some archived tools may have newer versions available.
-  Run `gdev init --update` after setup to check for updates.
+  Run `qsdev init --update` after setup to check for updates.
 ```
 
 ## Feature 4: Compliance Evidence Generation
 
 For clients requiring compliance documentation, gdev generates evidence that security controls were in place.
 
-### `gdev evidence` Command
+### `qsdev evidence` Command
 
 ```
 $ gdev evidence --format json --output compliance-evidence.json
@@ -225,7 +225,7 @@ $ gdev evidence --format json --output compliance-evidence.json
   ✓ Pre-commit hook verification
   ✓ Dependency scanning results
   ✓ Tool version inventory
-  ✓ gdev check results
+  ✓ qsdev check results
   ✓ Generated file integrity verification
 ```
 
@@ -317,13 +317,13 @@ $ gdev teardown --quick
 
 ## Edge Cases
 
-1. **Client requires all data deleted, including archives:** `gdev teardown --purge` deletes archives too. Confirmation required with client name typed out.
+1. **Client requires all data deleted, including archives:** `qsdev teardown --purge` deletes archives too. Confirmation required with client name typed out.
 
-2. **Multiple projects for same client:** Archives are per-project, not per-client. `gdev teardown --client acme-corp` tears down all projects for that client.
+2. **Multiple projects for same client:** Archives are per-project, not per-client. `qsdev teardown --client acme-corp` tears down all projects for that client.
 
-3. **Client rebrands / is acquired:** The `client.name` in `.gdev.yaml` should be updated. Archives with the old name remain searchable by project name.
+3. **Client rebrands / is acquired:** The `client.name` in `.qsdev.yaml` should be updated. Archives with the old name remain searchable by project name.
 
-4. **Concurrent access from personal and client machines:** gdev config is per-machine (not synced). Each machine has its own trust state, archives, and local overrides.
+4. **Concurrent access from personal and client machines:** qsdev config is per-machine (not synced). Each machine has its own trust state, archives, and local overrides.
 
 5. **Compliance evidence tampering:** The evidence report is signed with the gdev binary's embedded version hash. This is not cryptographic non-repudiation -- it's integrity verification that the report was generated by an authentic gdev binary.
 

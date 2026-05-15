@@ -71,7 +71,7 @@ func alertsForProject(p ProjectSummary, opts AggregateOptions, history *HistoryS
 			Project:  p.Name,
 			Severity: SeverityHigh,
 			Message:  "Baseline conformance check failed",
-			Action:   "Run 'gdev status' and fix baseline conformance issues",
+			Action:   "Run 'qsdev status' and fix baseline conformance issues",
 		})
 	}
 
@@ -87,7 +87,7 @@ func alertsForProject(p ProjectSummary, opts AggregateOptions, history *HistoryS
 					Project:  p.Name,
 					Severity: SeverityHigh,
 					Message:  fmt.Sprintf("Score dropped %.1f points (%.1f -> %.1f)", delta, prevScore, p.Score.Total),
-					Action:   "Investigate recent changes and run 'gdev status' for details",
+					Action:   "Investigate recent changes and run 'qsdev status' for details",
 				})
 			} else if delta > 5 {
 				// MEDIUM: score drop > 5 points.
@@ -101,13 +101,13 @@ func alertsForProject(p ProjectSummary, opts AggregateOptions, history *HistoryS
 		}
 	}
 
-	// MEDIUM: gdev version outdated (>2 minor versions behind).
-	if isOutdatedGdev(p.GdevVersion, opts.GdevVersion) {
+	// MEDIUM: qsdev version outdated (>2 minor versions behind).
+	if isOutdatedGdev(p.QsdevVersion, opts.QsdevVersion) {
 		alerts = append(alerts, PostureAlert{
 			Project:  p.Name,
 			Severity: SeverityMedium,
-			Message:  fmt.Sprintf("gdev version %s is outdated (current: %s)", p.GdevVersion, opts.GdevVersion),
-			Action:   "Update gdev to the latest version",
+			Message:  fmt.Sprintf("qsdev version %s is outdated (current: %s)", p.QsdevVersion, opts.QsdevVersion),
+			Action:   "Update qsdev to the latest version",
 		})
 	}
 
@@ -117,7 +117,7 @@ func alertsForProject(p ProjectSummary, opts AggregateOptions, history *HistoryS
 			Project:  p.Name,
 			Severity: SeverityMedium,
 			Message:  fmt.Sprintf("Last scan is stale (%s)", relativeTime(p.LastScan)),
-			Action:   "Re-run 'gdev status --scan' to refresh posture data",
+			Action:   "Re-run 'qsdev status --scan' to refresh posture data",
 		})
 	}
 

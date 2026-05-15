@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devinit"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/addons/devinit"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func mustAnswersFromFlags(t *testing.T, opts devinit.ExportInitOptions, root string) types.WizardAnswers {

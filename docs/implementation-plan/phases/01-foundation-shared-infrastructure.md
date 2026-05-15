@@ -92,7 +92,7 @@ None — this is the entry point.
 
 **Description:** Implement the project detection engine that scans a directory for language markers, existing config files, and git state, returning a populated `DetectedProject`.
 
-**Context:** Detection feeds the wizard's pre-population. When a user runs `gdev init` in a Go project with an existing devenv.nix, the wizard should pre-select Go and offer merge mode. Detection must be fast (<100ms) since it runs before the wizard appears.
+**Context:** Detection feeds the wizard's pre-population. When a user runs `qsdev init` in a Go project with an existing devenv.nix, the wizard should pre-select Go and offer merge mode. Detection must be fast (<100ms) since it runs before the wizard appears.
 
 **Desired Outcome:** A `detect.go` in the devinit package that returns `DetectedProject` with all fields populated from filesystem scanning.
 
@@ -213,7 +213,7 @@ None — this is the entry point.
 1. Create `addons/devinit/state/` package.
 2. Implement `ComputeHash(content []byte) string` — returns `"sha256:<hex>"`.
 3. Implement `RecordFiles(files []GeneratedFile) GeneratedState` — hash each file's content, record path → hash mapping with timestamp.
-4. Implement `LoadState(configPath string) (GeneratedState, error)` — read from gdev config YAML (`~/.config/<appname>.yaml` under the addon's namespace).
+4. Implement `LoadState(configPath string) (GeneratedState, error)` — read from qsdev config YAML (`~/.config/<appname>.yaml` under the addon's namespace).
 5. Implement `SaveState(configPath string, state GeneratedState) error` — write back to config.
 6. Implement `CheckModified(state GeneratedState, projectRoot string) map[string]ModificationStatus` — for each tracked file, compare stored hash against current file hash. Returns `Unmodified`, `Modified`, `Deleted`, `New` per file.
 7. Wire into generation pipeline: after `WriteFiles` succeeds, call `RecordFiles` and `SaveState`.
@@ -307,7 +307,7 @@ None — this is the entry point.
 3. Define built-in profiles: `consulting-default` ($0/mo stack), `startup-github` (GitHub-native), `enterprise` (JFrog + Snyk + full stack).
 4. Implement `InfraProfile.EnvironmentVars() map[string]string` — generate env vars for devenv.nix.
 5. Implement `InfraProfile.ConfigFiles() []GeneratedFile` — generate renovate.json, .github/dependabot.yml, etc.
-6. Support profile loading from gdev config YAML and from `Configure()` options.
+6. Support profile loading from qsdev config YAML and from `Configure()` options.
 
 **Acceptance Criteria:**
 - [ ] `InfraProfile` captures all infrastructure choices from artifacts/artifact-stores-caches-research.md

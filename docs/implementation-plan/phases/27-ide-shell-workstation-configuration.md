@@ -6,27 +6,27 @@ Add developer workstation personalization to gdev that lives at two distinct sco
 
 ## Dependencies
 
-Phase 9 complete (cross-platform system detection, `gdev doctor`, `gdev setup` bootstrap step framework). Phase 10 complete (ecosystem addon system, per-ecosystem tool and configuration awareness).
+Phase 9 complete (cross-platform system detection, `qsdev doctor`, `qsdev setup` bootstrap step framework). Phase 10 complete (ecosystem addon system, per-ecosystem tool and configuration awareness).
 
 ## Phase Outputs
 
-- `EditorConfig` generation in `gdev init` with ecosystem-aware rules and hash tracking
-- `gdev enable vscode` command that generates `.vscode/extensions.json` with 14 ecosystem mappings
+- `EditorConfig` generation in `qsdev init` with ecosystem-aware rules and hash tracking
+- `qsdev enable vscode` command that generates `.vscode/extensions.json` with 14 ecosystem mappings
 - `~/.qsdev/shell/` fragment directory system with bash/zsh/fish support
-- `gdev setup --tools` installing 12 personal CLI tools via `nix profile install`
+- `qsdev setup --tools` installing 12 personal CLI tools via `nix profile install`
 - Shell aliases fragment generated conditionally based on installed tools
 - `~/.qsdev/shell/starship-gdev.toml` custom module showing gdev project status
-- `gdev setup` interactive wizard for shell integration with non-interactive `--yes` mode
+- `qsdev setup` interactive wizard for shell integration with non-interactive `--yes` mode
 
 ---
 
 ### Unit 27.1: EditorConfig Generation
 
-**Description:** Generate a `.editorconfig` file on every `gdev init` with ecosystem-aware indent rules, tracking the generated file with the Phase 8 hash system and updating it via `gdev init --update`.
+**Description:** Generate a `.editorconfig` file on every `qsdev init` with ecosystem-aware indent rules, tracking the generated file with the Phase 8 hash system and updating it via `qsdev init --update`.
 
 **Context:** EditorConfig is a project-level concern: it belongs in the repository alongside `devenv.nix` and `.pre-commit-config.yaml`. Unlike shell config (which is personal), EditorConfig rules represent team agreements on code formatting that should be consistent across all contributors. The rules are intentionally minimal and opinionated — gdev generates only the high-signal settings that editors actually act on, not every possible EditorConfig knob. The ecosystem mapping follows community convention: Go uses tabs (consistent with `gofmt`), everything else uses spaces with width varying by language community.
 
-The generated file is tracked by the Phase 8 hash system. If a developer manually modifies `.editorconfig`, the modification flag is set and `gdev init --update` respects the override rather than stomping it. Section markers (introduced in Phase 12) are NOT used for `.editorconfig` because the entire file is gdev-owned — there is no human-edited section to preserve.
+The generated file is tracked by the Phase 8 hash system. If a developer manually modifies `.editorconfig`, the modification flag is set and `qsdev init --update` respects the override rather than stomping it. Section markers (introduced in Phase 12) are NOT used for `.editorconfig` because the entire file is gdev-owned — there is no human-edited section to preserve.
 
 **Code-Grounded Note:** EditorConfig generation should be implemented as a new `Generate()` method on a `EditorConfigGenerator` struct in `internal/generators/editorconfig.go`, following the same interface pattern as existing generators. The Phase 8 `UpdatedFile` struct at the migration infrastructure layer tracks file hashes; EditorConfig plugs into that same tracking without special-casing. The ecosystem list comes from the `DetectedProject.Ecosystems` field produced by `internal/detect/detect.go`.
 
@@ -132,16 +132,16 @@ The generated file is tracked by the Phase 8 hash system. If a developer manuall
    [Makefile,*.mk]
    indent_style = tab
    ```
-4. Wire into `gdev init` generation pipeline:
+4. Wire into `qsdev init` generation pipeline:
    - Call `GenerateEditorConfig(project.Ecosystems)` after ecosystem detection.
    - Write `.editorconfig` to project root.
    - Register the file with Phase 8 hash tracking as a machine-owned file.
-5. Handle update behavior in `gdev init --update`:
+5. Handle update behavior in `qsdev init --update`:
    - If hash matches expected: regenerate (ecosystem may have changed).
    - If hash differs (manual edit detected): skip with message "`.editorconfig` has been manually modified. Skipping regeneration. Use `--force-update` to overwrite."
 6. Handle the no-ecosystem case:
    - If no ecosystems detected (empty project), generate the minimal `[*]` root section only.
-   - Print a note in the init output: "EditorConfig generated with universal rules. Re-run `gdev init --update` after adding language files to get ecosystem-specific rules."
+   - Print a note in the init output: "EditorConfig generated with universal rules. Re-run `qsdev init --update` after adding language files to get ecosystem-specific rules."
 7. Write unit tests:
    - Go-only project produces tab-based rules for `*.go`.
    - Python project produces 4-space rules.
@@ -151,7 +151,7 @@ The generated file is tracked by the Phase 8 hash system. If a developer manuall
    - Empty ecosystem list produces valid minimal EditorConfig.
 
 **Acceptance Criteria:**
-- [ ] `.editorconfig` generated on every `gdev init` with ecosystem-appropriate rules
+- [ ] `.editorconfig` generated on every `qsdev init` with ecosystem-appropriate rules
 - [ ] Go ecosystems produce `indent_style = tab` for `*.go` sections
 - [ ] Python/Rust/Java/Kotlin produce `indent_style = space`, `indent_size = 4`
 - [ ] JavaScript/TypeScript produce `indent_style = space`, `indent_size = 2`
@@ -159,7 +159,7 @@ The generated file is tracked by the Phase 8 hash system. If a developer manuall
 - [ ] Markdown section sets `trim_trailing_whitespace = false`
 - [ ] Multi-ecosystem projects produce one section per ecosystem
 - [ ] Generated file tracked by Phase 8 hash system
-- [ ] Manual edits to `.editorconfig` detected and respected on `gdev init --update`
+- [ ] Manual edits to `.editorconfig` detected and respected on `qsdev init --update`
 - [ ] Output is deterministic: identical inputs produce identical output
 - [ ] Empty/no-ecosystem project generates valid minimal `[*]` section
 
@@ -172,15 +172,15 @@ The generated file is tracked by the Phase 8 hash system. If a developer manuall
 
 ### Unit 27.2: VS Code Extensions.json (Opt-in)
 
-**Description:** Implement `gdev enable vscode` to generate `.vscode/extensions.json` with ecosystem-mapped extension IDs, tracked by the tool lifecycle system so `gdev disable vscode` removes it cleanly.
+**Description:** Implement `qsdev enable vscode` to generate `.vscode/extensions.json` with ecosystem-mapped extension IDs, tracked by the tool lifecycle system so `qsdev disable vscode` removes it cleanly.
 
-**Context:** VS Code extension recommendations are opt-in because not every team uses VS Code — it would be presumptuous to generate `.vscode/` in every project. The `gdev enable vscode` command follows the same tool lifecycle pattern as other addons: it registers the file with the Phase 12 file ownership registry, writes it with section markers, and `gdev disable vscode` removes it via shared-file surgery. `.vscode/settings.json` is explicitly NOT generated because developer settings preferences are too personal and varied to impose project-wide.
+**Context:** VS Code extension recommendations are opt-in because not every team uses VS Code — it would be presumptuous to generate `.vscode/` in every project. The `qsdev enable vscode` command follows the same tool lifecycle pattern as other addons: it registers the file with the Phase 12 file ownership registry, writes it with section markers, and `qsdev disable vscode` removes it via shared-file surgery. `.vscode/settings.json` is explicitly NOT generated because developer settings preferences are too personal and varied to impose project-wide.
 
-The `extensions.json` format is a `recommendations` array of extension IDs. The list is ecosystem-derived at generation time and reflects what gdev found when `gdev detect` was last run. The `anthropics.claude-code` extension is always included when the claudecode addon is active (installed by Phase 4). When claudecode is NOT active, `GitHub.copilot` is included as a fallback AI assistant, since developers on a project without the claudecode addon likely still want an AI coding assistant suggested.
+The `extensions.json` format is a `recommendations` array of extension IDs. The list is ecosystem-derived at generation time and reflects what gdev found when `qsdev detect` was last run. The `anthropics.claude-code` extension is always included when the claudecode addon is active (installed by Phase 4). When claudecode is NOT active, `GitHub.copilot` is included as a fallback AI assistant, since developers on a project without the claudecode addon likely still want an AI coding assistant suggested.
 
 **Code-Grounded Note:** The tool lifecycle system from Phase 12 provides `RegisterTool()`, `EnableTool()`, and `DisableTool()`. The vscode integration is a tool in this registry with a single owned file: `.vscode/extensions.json`. The file is entirely machine-owned (no human-edited sections), so section markers are used to allow `DisableTool()` to cleanly delete it. The claudecode addon state is readable via `addons/claudecode/state.go` (or equivalent).
 
-**Desired Outcome:** Running `gdev enable vscode` generates a correct `.vscode/extensions.json` with ecosystem-appropriate recommendations. `gdev disable vscode` removes it cleanly. The file is regenerated correctly when `gdev init --update` runs.
+**Desired Outcome:** Running `qsdev enable vscode` generates a correct `.vscode/extensions.json` with ecosystem-appropriate recommendations. `qsdev disable vscode` removes it cleanly. The file is regenerated correctly when `qsdev init --update` runs.
 
 **Steps:**
 1. Define the ecosystem-to-extension mapping:
@@ -219,7 +219,7 @@ The `extensions.json` format is a `recommendations` array of extension IDs. The 
    - Example output:
      ```json
      {
-       // Generated by gdev. Run 'gdev enable vscode' to regenerate.
+       // Generated by gdev. Run 'qsdev enable vscode' to regenerate.
        "recommendations": [
          "golang.go",
          "jnoortheen.nix-ide",
@@ -250,24 +250,24 @@ The `extensions.json` format is a `recommendations` array of extension IDs. The 
    - If `.vscode/` directory is now empty, offer to remove it.
    - Release file ownership from registry.
 7. Handle update behavior:
-   - `gdev init --update` regenerates `.vscode/extensions.json` if the vscode tool is enabled.
+   - `qsdev init --update` regenerates `.vscode/extensions.json` if the vscode tool is enabled.
    - Regeneration detects newly-added ecosystems (e.g., Docker added later) and adds their extensions.
 8. Write unit tests:
    - Go project produces `["golang.go", "anthropics.claude-code"]` when claudecode enabled.
    - Go project produces `["GitHub.copilot", "golang.go"]` when claudecode disabled.
    - Multi-ecosystem project deduplicates extension IDs (TypeScript and JavaScript both add eslint — only one entry).
    - Output JSON is valid and parses without error.
-   - `gdev disable vscode` removes the file; empty `.vscode/` directory offered for removal.
+   - `qsdev disable vscode` removes the file; empty `.vscode/` directory offered for removal.
 
 **Acceptance Criteria:**
-- [ ] `gdev enable vscode` generates `.vscode/extensions.json` with ecosystem-mapped extension IDs
+- [ ] `qsdev enable vscode` generates `.vscode/extensions.json` with ecosystem-mapped extension IDs
 - [ ] 14 extension mappings implemented (go, python, rust, java, kotlin, javascript, typescript, nix, docker, terraform, yaml, toml, proto, shell)
 - [ ] `anthropics.claude-code` included when claudecode addon is active
 - [ ] `GitHub.copilot` included when claudecode addon is NOT active
 - [ ] Extension list is deduplicated and deterministically sorted
 - [ ] `.vscode/settings.json` is NOT generated
-- [ ] `gdev disable vscode` removes `.vscode/extensions.json` cleanly
-- [ ] `gdev init --update` regenerates when vscode tool is enabled
+- [ ] `qsdev disable vscode` removes `.vscode/extensions.json` cleanly
+- [ ] `qsdev init --update` regenerates when vscode tool is enabled
 - [ ] File ownership tracked by Phase 12 tool lifecycle registry
 - [ ] Output is valid `.jsonc` parseable by VS Code
 
@@ -278,7 +278,7 @@ The `extensions.json` format is a `recommendations` array of extension IDs. The 
 
 ---
 
-### Unit 27.3: Shell Fragment System (`gdev setup --shell`)
+### Unit 27.3: Shell Fragment System (`qsdev setup --shell`)
 
 **Description:** Implement the shell fragment system that writes per-shell configuration files to `~/.qsdev/shell/` and prints `source` instructions for the user to manually add to their rc file. gdev never modifies `~/.bashrc`, `~/.zshrc`, or `~/.config/fish/config.fish` directly.
 
@@ -286,9 +286,9 @@ The `extensions.json` format is a `recommendations` array of extension IDs. The 
 
 The fragment system must handle three shells with different syntax: bash/zsh (POSIX-compatible, largely shared), and fish (entirely different syntax, no `export VAR=val`, uses `set -gx`). Idempotency is guaranteed by regenerating fragments in place — there is no append-to-file step that could duplicate entries.
 
-**Code-Grounded Note:** The `gdev setup` command is the entry point established in Phase 9 for machine-level bootstrap. `--shell` is a new flag to Phase 9's setup command. The `~/.qsdev/` root directory is used by other gdev user-level outputs (Starship config in Unit 27.6). Create it once in a shared `ensureQsdevDir()` helper.
+**Code-Grounded Note:** The `qsdev setup` command is the entry point established in Phase 9 for machine-level bootstrap. `--shell` is a new flag to Phase 9's setup command. The `~/.qsdev/` root directory is used by other gdev user-level outputs (Starship config in Unit 27.6). Create it once in a shared `ensureQsdevDir()` helper.
 
-**Desired Outcome:** Running `gdev setup --shell` creates `~/.qsdev/shell/` with per-shell fragment files and prints clear source instructions. Re-running is safe and idempotent. Fragments only reference tools that are actually installed.
+**Desired Outcome:** Running `qsdev setup --shell` creates `~/.qsdev/shell/` with per-shell fragment files and prints clear source instructions. Re-running is safe and idempotent. Fragments only reference tools that are actually installed.
 
 **Steps:**
 1. Define the fragment directory structure:
@@ -361,7 +361,7 @@ The fragment system must handle three shells with different syntax: bash/zsh (PO
        set -gx MANROFFOPT "-c"
    end
    ```
-6. Implement the `--shell` flag on `gdev setup`:
+6. Implement the `--shell` flag on `qsdev setup`:
    - Detect current shell from `$SHELL` env var if no `--shell` flag given.
    - Accept explicit `--shell bash`, `--shell zsh`, `--shell fish`.
    - `--shell all` generates fragments for all three shells.
@@ -394,12 +394,12 @@ The fragment system must handle three shells with different syntax: bash/zsh (PO
    - Shell detection from `$SHELL` env var.
 
 **Acceptance Criteria:**
-- [ ] `gdev setup --shell` creates `~/.qsdev/shell/` and writes fragment files
+- [ ] `qsdev setup --shell` creates `~/.qsdev/shell/` and writes fragment files
 - [ ] `~/.bashrc`, `~/.zshrc`, and `~/.config/fish/config.fish` are NEVER modified directly
 - [ ] Fragments generated for bash, zsh, and fish with shell-appropriate syntax
 - [ ] Each fragment section is conditional on the relevant tool being installed
 - [ ] Source instructions printed after generation for each shell
-- [ ] Idempotent: re-running `gdev setup --shell` regenerates fragments without duplication
+- [ ] Idempotent: re-running `qsdev setup --shell` regenerates fragments without duplication
 - [ ] `--shell` flag accepts `bash`, `zsh`, `fish`, `all`; defaults to detected shell from `$SHELL`
 - [ ] Fish fragment uses fish syntax (`set -gx`, `if command -v`, `end` blocks)
 - [ ] Bash/zsh fragment uses POSIX `command -v` guards, not `which`
@@ -413,15 +413,15 @@ The fragment system must handle three shells with different syntax: bash/zsh (PO
 
 ### Unit 27.4: Personal CLI Tools via Nix Profile
 
-**Description:** Implement `gdev setup --tools` to install 12 personal CLI tools to `~/.nix-profile` via `nix profile install`, with confirmation prompt, skip-existing detection, and `gdev doctor` integration to suggest the command when tools are missing.
+**Description:** Implement `qsdev setup --tools` to install 12 personal CLI tools to `~/.nix-profile` via `nix profile install`, with confirmation prompt, skip-existing detection, and `qsdev doctor` integration to suggest the command when tools are missing.
 
 **Context:** Personal shell tools (ripgrep, fd, bat, fzf, etc.) are personal infrastructure — they are not per-project dependencies and should not appear in any `devenv.nix`. They belong at `~/.nix-profile` where they are available in every shell session regardless of which project directory the developer is in. `nix profile install` is the correct mechanism on NixOS/nix-on-any-OS: it installs to the user profile, is declarative-enough for the use case, and does not require root.
 
 The install command is never forced: gdev shows what would be installed, checks what is already present, and asks for confirmation. Developers who already have some tools (via system packages, homebrew, cargo, etc.) should not have gdev blindly reinstall them; already-present-on-PATH tools are skipped.
 
-**Code-Grounded Note:** The `gdev doctor` command from Phase 9 checks for tool presence and reports missing tools. Phase 27 extends `gdev doctor` to check for the personal tool set and emit a suggestion if tools are missing. The `gdev setup --tools` implementation calls `nix profile install nixpkgs#<name>` for each tool that is not already on PATH. All 12 tool names must map to their correct nixpkgs attribute names.
+**Code-Grounded Note:** The `qsdev doctor` command from Phase 9 checks for tool presence and reports missing tools. Phase 27 extends `qsdev doctor` to check for the personal tool set and emit a suggestion if tools are missing. The `qsdev setup --tools` implementation calls `nix profile install nixpkgs#<name>` for each tool that is not already on PATH. All 12 tool names must map to their correct nixpkgs attribute names.
 
-**Desired Outcome:** `gdev setup --tools` installs missing personal CLI tools to `~/.nix-profile` in a single command. Re-running is safe. `gdev doctor` reports missing tools with a clear suggestion.
+**Desired Outcome:** `qsdev setup --tools` installs missing personal CLI tools to `~/.nix-profile` in a single command. Re-running is safe. `qsdev doctor` reports missing tools with a clear suggestion.
 
 **Steps:**
 1. Define the personal tool registry:
@@ -458,7 +458,7 @@ The install command is never forced: gdev shows what would be installed, checks 
        return true, path
    }
    ```
-3. Implement `gdev setup --tools` command flow:
+3. Implement `qsdev setup --tools` command flow:
    - Check each tool with `checkToolPresence`.
    - Categorize: `alreadyInstalled []PersonalTool`, `toInstall []PersonalTool`.
    - Print a table showing status:
@@ -488,12 +488,12 @@ The install command is never forced: gdev shows what would be installed, checks 
    - Install tools sequentially (nix profile install can conflict when run in parallel).
    - On each success: print `✓ Installed <name>`.
    - On failure: print error, continue with remaining tools, report failures at end.
-   - After all installs: print summary and suggest `gdev setup --shell` to add aliases.
-5. Integrate into `gdev doctor`:
-   - Add a "Personal Tools" check category to `gdev doctor` output.
+   - After all installs: print summary and suggest `qsdev setup --shell` to add aliases.
+5. Integrate into `qsdev doctor`:
+   - Add a "Personal Tools" check category to `qsdev doctor` output.
    - For each tool not found on PATH: report as `MISSING`.
-   - If any tools are missing: add suggestion "Run `gdev setup --tools` to install missing personal CLI tools."
-   - `gdev doctor --json` includes personal tool status in JSON output.
+   - If any tools are missing: add suggestion "Run `qsdev setup --tools` to install missing personal CLI tools."
+   - `qsdev doctor --json` includes personal tool status in JSON output.
 6. Handle the case where `nix` is not available:
    - If `nix` binary not found on PATH: print "Nix is not installed. This tool requires Nix package manager. See https://nixos.org/download."
    - Exit with non-zero status.
@@ -502,16 +502,16 @@ The install command is never forced: gdev shows what would be installed, checks 
    - Mix of present/missing: correct split, correct nix attributes in install commands.
    - `--yes` flag skips confirmation.
    - nix not found: clear error message.
-   - `gdev doctor` includes personal tools check.
+   - `qsdev doctor` includes personal tools check.
 
 **Acceptance Criteria:**
-- [ ] `gdev setup --tools` checks all 12 personal tools for PATH presence
+- [ ] `qsdev setup --tools` checks all 12 personal tools for PATH presence
 - [ ] Tools already installed (via any mechanism) are skipped, not reinstalled
 - [ ] Correct `nixpkgs#<attr>` names used: `ripgrep`, `fd`, `bat`, `fzf`, `jq`, `yq-go`, `delta`, `eza`, `zoxide`, `starship`, `sops`, `age`
 - [ ] Confirmation prompt shown before installing, listing what will be installed
 - [ ] `--yes` flag skips confirmation (for scripted setup)
 - [ ] Sequential installation (no parallel nix profile install)
-- [ ] `gdev doctor` reports missing personal tools with `gdev setup --tools` suggestion
+- [ ] `qsdev doctor` reports missing personal tools with `qsdev setup --tools` suggestion
 - [ ] `nix` not on PATH produces clear error with installation link
 - [ ] Already-all-installed case exits cleanly without prompting
 
@@ -586,7 +586,7 @@ bat as MANPAGER and delta as git pager are slightly more complex: they require e
        set -gx MANROFFOPT "-c"
    end
    ```
-6. Integrate the aliases fragment into the `gdev setup --shell` command from Unit 27.3:
+6. Integrate the aliases fragment into the `qsdev setup --shell` command from Unit 27.3:
    - Run tool presence check for all tools in `DefaultAliases` before generating.
    - Include aliases section in the main fragment file (not a separate file).
    - Label the section clearly: `# Aliases (only for installed tools)`.
@@ -620,13 +620,13 @@ bat as MANPAGER and delta as git pager are slightly more complex: they require e
 
 **Description:** Generate a `~/.qsdev/shell/starship-gdev.toml` Starship config fragment that shows a gdev project indicator in the shell prompt, and generate or update `~/.config/starship.toml` to include the gdev module.
 
-**Context:** Starship is the cross-shell prompt configured in TOML. It supports `[custom.X]` modules that run shell commands and display their output in the prompt. The gdev module detects `.gdev.yaml` in the current directory (or any parent) and displays the project name plus compliance level when a client profile is active. This gives developers an at-a-glance signal that they are inside a gdev-managed project.
+**Context:** Starship is the cross-shell prompt configured in TOML. It supports `[custom.X]` modules that run shell commands and display their output in the prompt. The gdev module detects `.qsdev.yaml` in the current directory (or any parent) and displays the project name plus compliance level when a client profile is active. This gives developers an at-a-glance signal that they are inside a gdev-managed project.
 
 The critical constraint: gdev must never overwrite an existing `~/.config/starship.toml`. If one exists, print merge instructions and show the exact TOML block to add. If no `~/.config/starship.toml` exists, generate a minimal one that includes the gdev module. This respects developer prompt customization investment.
 
-**Code-Grounded Note:** Starship `[custom.X]` modules use a `command` field that runs a shell command and a `when` field that controls display. The `when` command should check for `.gdev.yaml` existence. The `format` uses Starship's format string syntax. The generated `starship-gdev.toml` is the source of truth; the merge into `~/.config/starship.toml` adds an `[include]` directive (supported in Starship 1.x) or adds the `[custom.gdev]` block inline.
+**Code-Grounded Note:** Starship `[custom.X]` modules use a `command` field that runs a shell command and a `when` field that controls display. The `when` command should check for `.qsdev.yaml` existence. The `format` uses Starship's format string syntax. The generated `starship-gdev.toml` is the source of truth; the merge into `~/.config/starship.toml` adds an `[include]` directive (supported in Starship 1.x) or adds the `[custom.gdev]` block inline.
 
-**Desired Outcome:** After `gdev setup --shell`, developers with Starship see a gdev project indicator in their prompt. Developers with existing Starship configs receive merge instructions instead of having their config overwritten.
+**Desired Outcome:** After `qsdev setup --shell`, developers with Starship see a gdev project indicator in their prompt. Developers with existing Starship configs receive merge instructions instead of having their config overwritten.
 
 **Steps:**
 1. Define the Starship gdev module:
@@ -640,18 +640,18 @@ The critical constraint: gdev must never overwrite an existing `~/.config/starsh
    [custom.gdev]
    description = "gdev-managed project indicator"
    command = """
-   gdev status --prompt 2>/dev/null || true
+   qsdev status --prompt 2>/dev/null || true
    """
-   when = "test -f .gdev.yaml || test -f ../.gdev.yaml || test -f ../../.gdev.yaml"
+   when = "test -f .qsdev.yaml || test -f ../.qsdev.yaml || test -f ../../.qsdev.yaml"
    format = "[$output]($style) "
    style = "bold cyan"
    shell = ["bash", "--noprofile", "--norc"]
    ```
-2. Implement `gdev status --prompt` (a new output mode of `gdev status`):
-   - Output a short string: project name from `.gdev.yaml` (if set), or directory basename.
+2. Implement `qsdev status --prompt` (a new output mode of `qsdev status`):
+   - Output a short string: project name from `.qsdev.yaml` (if set), or directory basename.
    - If client profile active: append compliance level indicator, e.g., `myproject [strict]`.
    - If health checks recently ran and found issues: append `⚠` symbol.
-   - If no `.gdev.yaml` found in current or parent dirs: output nothing (empty string, exit 0).
+   - If no `.qsdev.yaml` found in current or parent dirs: output nothing (empty string, exit 0).
    - Must complete in under 50ms (Starship prompt impact).
 3. Implement `GenerateStarshipGdevToml() string`:
    - Returns the content of `~/.qsdev/shell/starship-gdev.toml` as a string.
@@ -717,26 +717,26 @@ The critical constraint: gdev must never overwrite an existing `~/.config/starsh
    "$config_dir/../../.qsdev/shell/starship-gdev.toml"
    ```
 7. Write unit tests:
-   - `gdev status --prompt` in a gdev-managed dir returns project name.
-   - `gdev status --prompt` in a non-gdev dir returns empty string.
-   - `gdev status --prompt` with active client profile includes compliance level.
+   - `qsdev status --prompt` in a gdev-managed dir returns project name.
+   - `qsdev status --prompt` in a non-gdev dir returns empty string.
+   - `qsdev status --prompt` with active client profile includes compliance level.
    - `integrateStarshipConfig` writes module file regardless of existing config.
    - Existing `starship.toml`: module file written, existing config untouched, instructions printed.
    - No `starship.toml`: minimal config generated with gdev module included.
-   - `gdev status --prompt` completes in under 50ms.
+   - `qsdev status --prompt` completes in under 50ms.
 
 **Acceptance Criteria:**
 - [ ] `~/.qsdev/shell/starship-gdev.toml` generated with `[custom.gdev]` module
-- [ ] `gdev status --prompt` outputs project name (and compliance level when client profile active)
-- [ ] `gdev status --prompt` outputs empty string in non-gdev directories
-- [ ] `gdev status --prompt` completes in under 50ms
+- [ ] `qsdev status --prompt` outputs project name (and compliance level when client profile active)
+- [ ] `qsdev status --prompt` outputs empty string in non-gdev directories
+- [ ] `qsdev status --prompt` completes in under 50ms
 - [ ] Existing `~/.config/starship.toml` is NEVER overwritten
 - [ ] When no `~/.config/starship.toml`: minimal config generated that includes gdev module
 - [ ] When `~/.config/starship.toml` exists: merge instructions printed with both include and inline options
 - [ ] Starship module file written to `~/.qsdev/shell/starship-gdev.toml` unconditionally
 
 **Research Citations:**
-- `research-spikes/gdev-ecosystem-expansion-assessment/ide-shell-config-research.md` — Starship `[custom.X]` module design, no-overwrite policy, `gdev status --prompt` command spec
+- `research-spikes/gdev-ecosystem-expansion-assessment/ide-shell-config-research.md` — Starship `[custom.X]` module design, no-overwrite policy, `qsdev status --prompt` command spec
 
 **Status:** Not Started
 
@@ -744,15 +744,15 @@ The critical constraint: gdev must never overwrite an existing `~/.config/starsh
 
 ### Unit 27.7: Shell Integration Wizard
 
-**Description:** Implement the `gdev setup` interactive flow for shell integration: detect the current shell, ask which components to enable, show previews, offer to install missing tools, and support non-interactive `--yes` mode.
+**Description:** Implement the `qsdev setup` interactive flow for shell integration: detect the current shell, ask which components to enable, show previews, offer to install missing tools, and support non-interactive `--yes` mode.
 
-**Context:** `gdev setup` as established in Phase 9 is the bootstrap command for machine-level setup. Unit 27.7 adds the interactive orchestration layer that ties together shell fragments (Unit 27.3), personal tools (Unit 27.4), aliases (Unit 27.5), and Starship integration (Unit 27.6). The wizard is the user-facing entry point; the individual units are the implementation. Following Phase 6's wizard pattern (huh form library), the wizard is pleasant to use but always skippable with `--yes`.
+**Context:** `qsdev setup` as established in Phase 9 is the bootstrap command for machine-level setup. Unit 27.7 adds the interactive orchestration layer that ties together shell fragments (Unit 27.3), personal tools (Unit 27.4), aliases (Unit 27.5), and Starship integration (Unit 27.6). The wizard is the user-facing entry point; the individual units are the implementation. Following Phase 6's wizard pattern (huh form library), the wizard is pleasant to use but always skippable with `--yes`.
 
 The key UX decisions: show the user what will happen before doing it, detect the current shell automatically, and offer to install missing tools inline rather than making the user run a second command.
 
-**Code-Grounded Note:** Phase 6 established `huh` (charmbracelet/huh) as the form library. The shell wizard uses huh `Select` and `MultiSelect` forms. Phase 9's `gdev setup` command already has the cobra command structure; this unit extends its `Run` function.
+**Code-Grounded Note:** Phase 6 established `huh` (charmbracelet/huh) as the form library. The shell wizard uses huh `Select` and `MultiSelect` forms. Phase 9's `qsdev setup` command already has the cobra command structure; this unit extends its `Run` function.
 
-**Desired Outcome:** `gdev setup` without flags launches an interactive wizard that configures shell integration. `gdev setup --shell --tools --yes` configures everything non-interactively for CI or scripted onboarding.
+**Desired Outcome:** `qsdev setup` without flags launches an interactive wizard that configures shell integration. `qsdev setup --shell --tools --yes` configures everything non-interactively for CI or scripted onboarding.
 
 **Steps:**
 1. Implement the interactive wizard in `cmd/setup.go`:
@@ -811,11 +811,11 @@ The key UX decisions: show the user what will happen before doing it, detect the
    Proceed? [Y/n]
    ```
 4. Implement non-interactive mode flags:
-   - `gdev setup --shell`: configure shell fragments for detected shell, skip tool install.
-   - `gdev setup --tools`: install missing tools only.
-   - `gdev setup --shell --tools`: both, with confirmation prompts.
-   - `gdev setup --shell --tools --yes`: both, fully non-interactive.
-   - `gdev setup --shell zsh`: force zsh even if `$SHELL` differs.
+   - `qsdev setup --shell`: configure shell fragments for detected shell, skip tool install.
+   - `qsdev setup --tools`: install missing tools only.
+   - `qsdev setup --shell --tools`: both, with confirmation prompts.
+   - `qsdev setup --shell --tools --yes`: both, fully non-interactive.
+   - `qsdev setup --shell zsh`: force zsh even if `$SHELL` differs.
 5. Offer to install Starship if not found:
    ```
    Starship prompt is not installed.
@@ -837,7 +837,7 @@ The key UX decisions: show the user what will happen before doing it, detect the
         source ~/.qsdev/shell/gdev.zsh
    2. Reload your shell: exec zsh
 
-   Tip: Run 'gdev doctor' to verify your environment.
+   Tip: Run 'qsdev doctor' to verify your environment.
    ```
 7. Write integration tests:
    - Non-interactive `--yes` with `--shell zsh --tools`: runs without prompts.
@@ -847,7 +847,7 @@ The key UX decisions: show the user what will happen before doing it, detect the
    - All already set up: "Nothing to do" message.
 
 **Acceptance Criteria:**
-- [ ] `gdev setup` (no flags) launches interactive wizard with shell and tool choices
+- [ ] `qsdev setup` (no flags) launches interactive wizard with shell and tool choices
 - [ ] Shell auto-detected from `$SHELL` env var, pre-selected in wizard
 - [ ] Preview of actions shown before writing
 - [ ] `--shell bash|zsh|fish|all` flag bypasses shell selection question
@@ -855,8 +855,8 @@ The key UX decisions: show the user what will happen before doing it, detect the
 - [ ] `--yes` flag makes all prompts non-interactive (accepts all defaults)
 - [ ] Missing starship offered for install inline during wizard
 - [ ] Summary with source instructions printed after completion
-- [ ] `gdev setup` is idempotent: running twice produces same end state
-- [ ] `gdev doctor` suggested in final output
+- [ ] `qsdev setup` is idempotent: running twice produces same end state
+- [ ] `qsdev doctor` suggested in final output
 
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/ide-shell-config-research.md` — wizard flow design, non-interactive flag combinations
@@ -878,18 +878,18 @@ The key UX decisions: show the user what will happen before doing it, detect the
 | `internal/shell/aliases.go` | Alias fragment content and conditional logic |
 | `internal/shell/starship.go` | Starship module generation and config integration |
 | `internal/tools/personal.go` | Personal tool registry and `nix profile install` logic |
-| `cmd/setup_shell.go` | `gdev setup --shell/--tools` command implementation |
+| `cmd/setup_shell.go` | `qsdev setup --shell/--tools` command implementation |
 
 ### Existing Commands to Extend
 
 | Command | Extension |
 |---------|-----------|
-| `gdev init` | Call EditorConfig generator after ecosystem detection |
-| `gdev doctor` | Add personal tools check category |
-| `gdev status` | Add `--prompt` mode for Starship integration |
-| `gdev setup` | Add `--shell`, `--tools`, `--yes` flags; add interactive wizard |
-| `gdev enable` | Register `vscode` tool in lifecycle registry |
-| `gdev disable` | Handle `vscode` tool cleanup |
+| `qsdev init` | Call EditorConfig generator after ecosystem detection |
+| `qsdev doctor` | Add personal tools check category |
+| `qsdev status` | Add `--prompt` mode for Starship integration |
+| `qsdev setup` | Add `--shell`, `--tools`, `--yes` flags; add interactive wizard |
+| `qsdev enable` | Register `vscode` tool in lifecycle registry |
+| `qsdev disable` | Handle `vscode` tool cleanup |
 
 ### Scope Boundary
 
@@ -900,13 +900,13 @@ These units operate entirely at user (`~/.nix-profile`, `~/.qsdev/`) or project 
 ## Phase Completion Criteria
 
 - [ ] All seven units pass acceptance criteria
-- [ ] `.editorconfig` generated on `gdev init` and verified for correctness across all supported ecosystems
-- [ ] `gdev enable vscode` / `gdev disable vscode` round-trip produces and removes `.vscode/extensions.json` cleanly
-- [ ] `gdev setup --shell` generates `~/.qsdev/shell/` fragments without modifying any rc file
-- [ ] `gdev setup --tools` installs only missing tools; already-installed tools skipped
+- [ ] `.editorconfig` generated on `qsdev init` and verified for correctness across all supported ecosystems
+- [ ] `qsdev enable vscode` / `qsdev disable vscode` round-trip produces and removes `.vscode/extensions.json` cleanly
+- [ ] `qsdev setup --shell` generates `~/.qsdev/shell/` fragments without modifying any rc file
+- [ ] `qsdev setup --tools` installs only missing tools; already-installed tools skipped
 - [ ] Shell fragments contain only aliases for installed tools (verified with no-tools and all-tools scenarios)
-- [ ] `gdev setup --shell --tools --yes` completes non-interactively (for CI/scripted onboarding)
+- [ ] `qsdev setup --shell --tools --yes` completes non-interactively (for CI/scripted onboarding)
 - [ ] Starship gdev module works in bash, zsh, and fish (manual verification)
 - [ ] Existing `~/.config/starship.toml` not modified; merge instructions printed
-- [ ] `gdev status --prompt` returns output in under 50ms
-- [ ] `gdev doctor` reports missing personal tools with actionable suggestion
+- [ ] `qsdev status --prompt` returns output in under 50ms
+- [ ] `qsdev doctor` reports missing personal tools with actionable suggestion

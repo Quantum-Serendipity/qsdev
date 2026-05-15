@@ -14,7 +14,7 @@ func makeTestInfo() *ProjectInfo {
 		Ecosystems:        []string{"go", "python"},
 		ActiveToolCount:   5,
 		SecurityProfile:   "enhanced",
-		GdevVersion:       "1.2.3",
+		QsdevVersion:       "1.2.3",
 		ConfigVersion:     1,
 		LastUpdated:       time.Time{}, // zero = "never"
 		ToolsByCategory:   map[string]int{"Security": 2, "AI Agent": 3},
@@ -37,7 +37,7 @@ func TestFormatDefault(t *testing.T) {
 		"Project:       test-project",
 		"Ecosystems:    go, python",
 		"Security:      enhanced",
-		"gdev Version:  1.2.3",
+		"qsdev Version:  1.2.3",
 		"Config:        v1",
 		"Managed Files: 10",
 		"Active Tools:  5",
@@ -162,8 +162,8 @@ func TestFormatJSON(t *testing.T) {
 	if decoded.SecurityProfile != "enhanced" {
 		t.Errorf("SecurityProfile = %q, want %q", decoded.SecurityProfile, "enhanced")
 	}
-	if decoded.GdevVersion != "1.2.3" {
-		t.Errorf("GdevVersion = %q, want %q", decoded.GdevVersion, "1.2.3")
+	if decoded.QsdevVersion != "1.2.3" {
+		t.Errorf("QsdevVersion = %q, want %q", decoded.QsdevVersion, "1.2.3")
 	}
 	if decoded.ConfigVersion != 1 {
 		t.Errorf("ConfigVersion = %d, want 1", decoded.ConfigVersion)

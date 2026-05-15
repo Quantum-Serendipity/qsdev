@@ -16,7 +16,7 @@ Phase 1 complete (shared types, EcosystemModule interface, detection engine, tem
 - Shared `TerraformProviderDetector` extending the Phase 2 Terraform parser
 - Shared `DoctorCheckRegistry` with 5-second timeouts and graceful degradation
 - `.envrc` additions that warn when ambient cloud credentials detected from outside devenv scope
-- `gdev doctor` cloud checks: auth status, profile/config match, region/project match
+- `qsdev doctor` cloud checks: auth status, profile/config match, region/project match
 
 ---
 
@@ -26,7 +26,7 @@ Phase 1 complete (shared types, EcosystemModule interface, detection engine, tem
 
 **Context:** AWS is the most common cloud provider in enterprise consulting. The CLI (`awscli2` in Nixpkgs) is trivial to install; the real value is per-project `AWS_PROFILE` in devenv.nix, which prevents accidental cross-client operations such as `terraform apply` running against the wrong account. Credential helpers (aws-vault, saml2aws) store credentials in OS keychains rather than plaintext `~/.aws/credentials`. On NixOS/Linux, aws-vault uses the `pass` or `file` backend since there is no macOS Keychain. Static credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) must never appear in generated devenv.nix — the wizard warns about this explicitly. Detection reuses the Terraform provider parser introduced in Unit 23.6 rather than duplicating `.tf` file scanning.
 
-**Desired Outcome:** When AWS usage is detected in a project, `gdev init` generates a devenv.nix fragment that includes `awscli2`, optional credential helpers, a per-project `AWS_PROFILE` env var with a TODO placeholder, and a `gdev doctor` check that runs `aws sts get-caller-identity` with a 5-second timeout. No credential values appear in any generated file.
+**Desired Outcome:** When AWS usage is detected in a project, `qsdev init` generates a devenv.nix fragment that includes `awscli2`, optional credential helpers, a per-project `AWS_PROFILE` env var with a TODO placeholder, and a `qsdev doctor` check that runs `aws sts get-caller-identity` with a 5-second timeout. No credential values appear in any generated file.
 
 **Steps:**
 1. Implement `Detect(projectRoot string) (DetectionResult, error)` for the AWS module:
@@ -76,8 +76,8 @@ Phase 1 complete (shared types, EcosystemModule interface, detection engine, tem
 - [ ] `aws-vault` included by default for consulting profile with `AWS_VAULT_BACKEND=pass` Linux note
 - [ ] `saml2aws` included only when SAML IdP indicators detected in project docs
 - [ ] Wizard collects profile name and region, warns against static credentials in generated files
-- [ ] `gdev doctor` check runs `aws sts get-caller-identity` with 5-second timeout
-- [ ] `gdev doctor` warns when `AWS_PROFILE` is unset
+- [ ] `qsdev doctor` check runs `aws sts get-caller-identity` with 5-second timeout
+- [ ] `qsdev doctor` warns when `AWS_PROFILE` is unset
 - [ ] No credential env vars (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`) appear in any generated file
 
 **Research Citations:**
@@ -93,11 +93,11 @@ Phase 1 complete (shared types, EcosystemModule interface, detection engine, tem
 
 ### Unit 23.2: GCP CLI Module
 
-**Description:** Implement the `EcosystemModule` for Google Cloud Platform. Detect GCP usage from Terraform provider blocks, App Engine, Cloud Build, and Firebase indicator files. Generate a devenv.nix fragment with `google-cloud-sdk`, per-project `CLOUDSDK_ACTIVE_CONFIG_NAME` isolation, and a `gdev doctor` auth check.
+**Description:** Implement the `EcosystemModule` for Google Cloud Platform. Detect GCP usage from Terraform provider blocks, App Engine, Cloud Build, and Firebase indicator files. Generate a devenv.nix fragment with `google-cloud-sdk`, per-project `CLOUDSDK_ACTIVE_CONFIG_NAME` isolation, and a `qsdev doctor` auth check.
 
 **Context:** GCP uses named configurations (`gcloud config configurations`) for multi-project isolation. The `CLOUDSDK_ACTIVE_CONFIG_NAME` environment variable selects the active configuration, analogous to `AWS_PROFILE`. The `google-cloud-sdk` Nixpkgs package includes `gcloud`, `gsutil`, and `bq`. Additional components like `gke-gcloud-auth-plugin` (required for GKE cluster auth) are added via `google-cloud-sdk.withExtraComponents` in Nix — this should trigger when both GCP and K8s are co-detected (coordinated with Phase 24). GCP uses Application Default Credentials (ADC) via `gcloud auth application-default login`; `GOOGLE_APPLICATION_CREDENTIALS` (service account key files, a legacy pattern) must NOT be set in generated devenv.nix.
 
-**Desired Outcome:** When GCP usage is detected, `gdev init` generates a devenv.nix fragment with `google-cloud-sdk` (augmented with the GKE auth plugin when K8s co-detected), per-project `CLOUDSDK_ACTIVE_CONFIG_NAME`, and a `gdev doctor` check that verifies active auth via `gcloud auth print-access-token`.
+**Desired Outcome:** When GCP usage is detected, `qsdev init` generates a devenv.nix fragment with `google-cloud-sdk` (augmented with the GKE auth plugin when K8s co-detected), per-project `CLOUDSDK_ACTIVE_CONFIG_NAME`, and a `qsdev doctor` check that verifies active auth via `gcloud auth print-access-token`.
 
 **Steps:**
 1. Implement `Detect(projectRoot string) (DetectionResult, error)`:
@@ -143,7 +143,7 @@ Phase 1 complete (shared types, EcosystemModule interface, detection engine, tem
 - [ ] `gke-gcloud-auth-plugin` added via `withExtraComponents` when K8s co-detected (coordinated with Phase 24)
 - [ ] Per-project `CLOUDSDK_ACTIVE_CONFIG_NAME`, `CLOUDSDK_CORE_PROJECT`, and `GOOGLE_CLOUD_PROJECT` env vars set with TODO placeholders
 - [ ] `GOOGLE_APPLICATION_CREDENTIALS` explicitly NOT set in any generated file
-- [ ] `gdev doctor` check runs `gcloud auth print-access-token` with 5-second timeout
+- [ ] `qsdev doctor` check runs `gcloud auth print-access-token` with 5-second timeout
 - [ ] ADC pattern documented in generated comments
 
 **Research Citations:**
@@ -157,11 +157,11 @@ Phase 1 complete (shared types, EcosystemModule interface, detection engine, tem
 
 ### Unit 23.3: Azure CLI Module
 
-**Description:** Implement the `EcosystemModule` for Azure. Detect Azure usage from Terraform provider blocks, Azure Pipelines, Bicep, and Azure Developer CLI indicator files. Generate a devenv.nix fragment with `azure-cli`, per-project `ARM_SUBSCRIPTION_ID` and `AZURE_CONFIG_DIR` isolation, and a `gdev doctor` auth check.
+**Description:** Implement the `EcosystemModule` for Azure. Detect Azure usage from Terraform provider blocks, Azure Pipelines, Bicep, and Azure Developer CLI indicator files. Generate a devenv.nix fragment with `azure-cli`, per-project `ARM_SUBSCRIPTION_ID` and `AZURE_CONFIG_DIR` isolation, and a `qsdev doctor` auth check.
 
 **Context:** Azure uses subscription-based isolation; `ARM_SUBSCRIPTION_ID` and `ARM_TENANT_ID` are the Terraform-standard env vars for per-project scoping. Unlike AWS and GCP, Azure has no named-configuration system in the CLI — subscription selection is via `az account set`. Setting `AZURE_CONFIG_DIR` to a project-local path (e.g., `.azure-config/`) isolates the Azure CLI state (active subscription, cached tokens) from the global `~/.azure/` state, preventing cross-client contamination. For AKS authentication, `kubelogin` must be present — it should activate when both Azure and K8s are co-detected (coordinated with Phase 24). `ARM_CLIENT_SECRET` must never appear in any generated file.
 
-**Desired Outcome:** When Azure usage is detected, `gdev init` generates a devenv.nix fragment with `azure-cli`, per-project ARM env vars, project-local `AZURE_CONFIG_DIR`, optional `kubelogin` when K8s co-detected, and a `gdev doctor` check that verifies login via `az account show`.
+**Desired Outcome:** When Azure usage is detected, `qsdev init` generates a devenv.nix fragment with `azure-cli`, per-project ARM env vars, project-local `AZURE_CONFIG_DIR`, optional `kubelogin` when K8s co-detected, and a `qsdev doctor` check that verifies login via `az account show`.
 
 **Steps:**
 1. Implement `Detect(projectRoot string) (DetectionResult, error)`:
@@ -207,7 +207,7 @@ Phase 1 complete (shared types, EcosystemModule interface, detection engine, tem
 - [ ] `AZURE_CONFIG_DIR` set to project-local path to isolate Azure CLI state from `~/.azure/`
 - [ ] `.azure-config/` added to `.gitignore` in `SecurityConfigs`
 - [ ] `kubelogin` included when Azure + K8s co-detected (AKS)
-- [ ] `gdev doctor` checks login via `az account show` and warns on subscription mismatch
+- [ ] `qsdev doctor` checks login via `az account show` and warns on subscription mismatch
 - [ ] `ARM_CLIENT_SECRET` and `ARM_CLIENT_ID` explicitly excluded from all generated files
 
 **Research Citations:**
@@ -223,9 +223,9 @@ Phase 1 complete (shared types, EcosystemModule interface, detection engine, tem
 
 **Description:** Implement a single `EcosystemModule` that covers five Tier 3 cloud platform CLIs — Cloudflare Workers (`wrangler`), DigitalOcean (`doctl`), Fly.io (`flyctl`), Vercel, and Netlify. Each platform is detected by its own indicator file and added independently; multiple platforms can coexist in one project.
 
-**Context:** These platforms are project-specific rather than universally needed. Unlike Tier 1 cloud providers, they are typically used by a single project and do not require the multi-client credential isolation patterns of AWS/GCP/Azure. Each has a simple detection heuristic (one config file), a single CLI package in Nixpkgs, and a single `gdev doctor` auth check. This is a single module with internal sub-detection rather than five separate modules, because they share the same Tier 3 pattern: auto-detect, no wizard questions, no generated config files beyond the devenv.nix fragment.
+**Context:** These platforms are project-specific rather than universally needed. Unlike Tier 1 cloud providers, they are typically used by a single project and do not require the multi-client credential isolation patterns of AWS/GCP/Azure. Each has a simple detection heuristic (one config file), a single CLI package in Nixpkgs, and a single `qsdev doctor` auth check. This is a single module with internal sub-detection rather than five separate modules, because they share the same Tier 3 pattern: auto-detect, no wizard questions, no generated config files beyond the devenv.nix fragment.
 
-**Desired Outcome:** When any Tier 3 platform indicator file is present, `gdev init` includes exactly the matching CLI(s) in the devenv.nix packages list with auth reminder comments. No cross-installation occurs — detecting `wrangler.toml` adds `wrangler` but not the other four platforms.
+**Desired Outcome:** When any Tier 3 platform indicator file is present, `qsdev init` includes exactly the matching CLI(s) in the devenv.nix packages list with auth reminder comments. No cross-installation occurs — detecting `wrangler.toml` adds `wrangler` but not the other four platforms.
 
 **Steps:**
 1. Implement `Detect(projectRoot string) (DetectionResult, error)` with per-platform sub-heuristics:
@@ -262,7 +262,7 @@ Phase 1 complete (shared types, EcosystemModule interface, detection engine, tem
 - [ ] Detects each of the five platforms independently from its indicator file(s)
 - [ ] Only detected platforms are included in devenv.nix (no blanket installation)
 - [ ] Multiple platforms can be detected simultaneously and all are included
-- [ ] Each detected platform has exactly one `gdev doctor` auth check with 5-second timeout
+- [ ] Each detected platform has exactly one `qsdev doctor` auth check with 5-second timeout
 - [ ] Auth reminder comments are platform-specific (correct login command per platform)
 - [ ] No config files generated (Tier 3: install only)
 
@@ -425,7 +425,7 @@ Phase 1 complete (shared types, EcosystemModule interface, detection engine, tem
    func (p ProviderSet) HasAzure() bool   { ... }
    func (p ProviderSet) HasCloudflare() bool { ... }
    ```
-4. Implement result caching: run the scan once per `gdev init` invocation, cache in a module-level variable so all cloud modules share a single parse pass
+4. Implement result caching: run the scan once per `qsdev init` invocation, cache in a module-level variable so all cloud modules share a single parse pass
 5. Wire into cloud module `Detect()` calls: Units 23.1, 23.2, 23.3, and 23.4 all call `DetectTerraformProviders(projectRoot)` and query the returned `ProviderSet`
 6. Write unit tests:
    - Bare `provider "aws"` block detected → `HasAWS() == true`
@@ -439,7 +439,7 @@ Phase 1 complete (shared types, EcosystemModule interface, detection engine, tem
 - [ ] Parses both bare `provider "X"` blocks and `required_providers { X = { source = "..." } }` forms
 - [ ] Short names (`aws`, `google`, `azurerm`) normalized to full source addresses (`hashicorp/aws`, etc.)
 - [ ] Multi-cloud: all providers in a single project detected simultaneously
-- [ ] Result is cached per `gdev init` invocation — `.tf` files scanned only once
+- [ ] Result is cached per `qsdev init` invocation — `.tf` files scanned only once
 - [ ] Non-cloud providers (kubernetes, helm, vault) do not trigger cloud module detection
 - [ ] Empty or non-Terraform projects return empty ProviderSet without error
 - [ ] Shared by all three Tier 1 cloud modules (no per-module duplication)
@@ -454,14 +454,14 @@ Phase 1 complete (shared types, EcosystemModule interface, detection engine, tem
 
 ### Unit 23.7: Cloud Credential Doctor Checks
 
-**Description:** Implement the full set of `gdev doctor` cloud checks: credential validity, profile/config name match, region/project match, and `KUBECONFIG` shared-path warning. Checks run with 5-second timeouts and a no-network fallback mode.
+**Description:** Implement the full set of `qsdev doctor` cloud checks: credential validity, profile/config name match, region/project match, and `KUBECONFIG` shared-path warning. Checks run with 5-second timeouts and a no-network fallback mode.
 
-**Context:** `gdev doctor` already performs machine and tool health checks (Phase 15). This unit extends it with a cloud credential health category. The checks must be non-destructive and safe to run in CI. Network-dependent commands (AWS, GCP, Azure auth checks) must time out cleanly — consulting engineers frequently work from restricted networks or disconnected laptops. The no-network mode (`--offline`) checks only env var presence and config file existence, which is always fast.
+**Context:** `qsdev doctor` already performs machine and tool health checks (Phase 15). This unit extends it with a cloud credential health category. The checks must be non-destructive and safe to run in CI. Network-dependent commands (AWS, GCP, Azure auth checks) must time out cleanly — consulting engineers frequently work from restricted networks or disconnected laptops. The no-network mode (`--offline`) checks only env var presence and config file existence, which is always fast.
 
-**Desired Outcome:** `gdev doctor --category cloud` runs all registered cloud checks, reports credential validity for each detected cloud provider, warns on profile/context mismatches, and completes in under 30 seconds even when cloud API endpoints are unreachable.
+**Desired Outcome:** `qsdev doctor --category cloud` runs all registered cloud checks, reports credential validity for each detected cloud provider, warns on profile/context mismatches, and completes in under 30 seconds even when cloud API endpoints are unreachable.
 
 **Steps:**
-1. Register cloud checks with the `gdev doctor` check runner (Phase 15 infrastructure):
+1. Register cloud checks with the `qsdev doctor` check runner (Phase 15 infrastructure):
    - Category: `"cloud"` (new category alongside existing `system`, `tools`, `project`)
    - Each check registered with: name, description, required packages, network-dependent flag
 2. Implement per-provider checks:
@@ -487,12 +487,12 @@ Phase 1 complete (shared types, EcosystemModule interface, detection engine, tem
    - When `--offline` flag passed: skip all checks marked `network-dependent: true`
    - Run env var presence checks and config file existence checks only
    - Report skipped checks as `skip (offline mode)` rather than failures
-4. Implement check output formatting consistent with existing `gdev doctor` output:
+4. Implement check output formatting consistent with existing `qsdev doctor` output:
    - Pass: green checkmark with one-line summary
    - Fail: red X with remediation command
    - Skip: yellow dash with reason
    - Timeout: orange clock with network hint
-5. Add cloud category to `gdev doctor --help` output and the generated CLAUDE.md doctor section
+5. Add cloud category to `qsdev doctor --help` output and the generated CLAUDE.md doctor section
 6. Write integration tests:
    - With `AWS_PROFILE` set and mock `aws sts get-caller-identity` returning success: `aws-auth` passes
    - With `AWS_PROFILE` unset: `aws-profile-set` fails with message to set `env.AWS_PROFILE` in devenv.nix
@@ -501,18 +501,18 @@ Phase 1 complete (shared types, EcosystemModule interface, detection engine, tem
    - Timeout: mock command that sleeps 10s → returns `timeout` after 5s
 
 **Acceptance Criteria:**
-- [ ] `gdev doctor --category cloud` runs all registered cloud credential checks
+- [ ] `qsdev doctor --category cloud` runs all registered cloud credential checks
 - [ ] Checks for all three Tier 1 providers: AWS (profile-set, auth, region), GCP (config-set, auth, project-match), Azure (sub-set, auth, sub-match)
 - [ ] `KUBECONFIG` shared-path warning fires when `KUBECONFIG` equals `~/.kube/config`
 - [ ] All network-dependent checks enforce 5-second timeout
 - [ ] `--offline` mode skips network-dependent checks and reports `skip (offline mode)`
 - [ ] Each failing check includes a specific remediation command
-- [ ] Total `gdev doctor --category cloud` run time under 30 seconds even when all network checks timeout
+- [ ] Total `qsdev doctor --category cloud` run time under 30 seconds even when all network checks timeout
 
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/cloud-k8s-tooling-research.md` § 4.1 Multi-Client Credential Isolation — per-provider isolation patterns and what to verify
 - `research-spikes/gdev-ecosystem-expansion-assessment/cloud-k8s-module-design.md` Units 2.9-2.14 — per-provider doctor check specifications
-- `phases/15-health-status-compliance-reporting.md` — `gdev doctor` infrastructure this unit extends
+- `phases/15-health-status-compliance-reporting.md` — `qsdev doctor` infrastructure this unit extends
 
 **Status:** Not Started
 

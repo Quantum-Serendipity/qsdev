@@ -77,7 +77,7 @@ Given the constraints discovered above, here are three strategies for per-projec
 
 #### Strategy 1: Project-Level `.claude/` Generation (RECOMMENDED — Already Planned)
 
-**Mechanism:** gdev generates project-level `.claude/settings.json`, `.claude/CLAUDE.md`, `.claude/rules/*.md`, `.claude/skills/*/SKILL.md`, and `.claude/agents/*.md` during `gdev init`. Claude Code discovers these automatically via its standard project-scope mechanism.
+**Mechanism:** gdev generates project-level `.claude/settings.json`, `.claude/CLAUDE.md`, `.claude/rules/*.md`, `.claude/skills/*/SKILL.md`, and `.claude/agents/*.md` during `qsdev init`. Claude Code discovers these automatically via its standard project-scope mechanism.
 
 **What this achieves:**
 - Per-project permission presets (deny rules, allow rules)
@@ -178,7 +178,7 @@ enterShell = ''
 
 ### 5. Recommended Approach for gdev
 
-**Phase 4 (existing):** Generate static `.claude/` directory contents during `gdev init`. This covers 90% of the per-project context use case.
+**Phase 4 (existing):** Generate static `.claude/` directory contents during `qsdev init`. This covers 90% of the per-project context use case.
 
 **Phase 14 enhancement (new):** Add devenv environment variables that carry gdev metadata into Claude Code sessions:
 
@@ -194,7 +194,7 @@ These variables serve two purposes:
 1. Claude Code env vars (`CLAUDE_CODE_EFFORT_LEVEL`) directly affect behavior
 2. gdev-specific variables (`GDEV_*`) are readable by Claude Code via `printenv` or Bash tool, and can be referenced in CLAUDE.md instructions: "Check GDEV_COMPLIANCE_LEVEL to determine which security rules apply"
 
-**Future consideration:** Monitor `CLAUDE_CONFIG_DIR` stabilization. If it becomes official, implement Strategy 3 as an opt-in `gdev claude overlay` command or `enterShell` enhancement.
+**Future consideration:** Monitor `CLAUDE_CONFIG_DIR` stabilization. If it becomes official, implement Strategy 3 as an opt-in `qsdev claude overlay` command or `enterShell` enhancement.
 
 ### 6. `--add-dir` as Alternative Overlay Mechanism
 
@@ -325,7 +325,7 @@ The following section should be added to gdev's CLAUDE.md template, placed AFTER
 
 **Design rationale:**
 
-1. **Placed outside generated markers**: This is user-owned content. `gdev init --update` preserves it. Engineers edit it directly.
+1. **Placed outside generated markers**: This is user-owned content. `qsdev init --update` preserves it. Engineers edit it directly.
 
 2. **HTML comments as prompts**: The `<!-- -->` syntax is invisible to Claude Code (it strips HTML comments from CLAUDE.md before injection). These prompts guide the human filling in the template but don't consume context tokens once filled in. **IMPORTANT CORRECTION**: Actually, Claude Code does see HTML comments in CLAUDE.md — they are not stripped. However, the comment-prompt pattern is still useful because once the engineer replaces the comment with actual content, the prompt text is gone. If left unfilled, the comments serve as documentation without confusing Claude (Claude understands HTML comments are author-facing notes).
 
@@ -454,12 +454,12 @@ The Copier answers flow into TWO files:
 
 **Key design decision:** Answers from `copier.yaml` questionnaire are stored in `.copier-answers.yml`. When the template is updated via `copier update`, the answers persist. This means the project clarity section survives template updates without re-prompting.
 
-**gdev init integration (non-Copier path):**
+**qsdev init integration (non-Copier path):**
 
-For projects initialized with `gdev init` without `--from <template>` (no Copier template), the clarity section is generated as a template with HTML comment prompts (the design in section 3 above). The wizard could optionally ask 2-3 key questions:
+For projects initialized with `qsdev init` without `--from <template>` (no Copier template), the clarity section is generated as a template with HTML comment prompts (the design in section 3 above). The wizard could optionally ask 2-3 key questions:
 
 ```
-gdev init wizard:
+qsdev init wizard:
   [existing questions: language, framework, security preset]
   
   Optional project context (press Enter to skip):
@@ -525,7 +525,7 @@ Before suggesting any new dependency, tool, or architectural approach, evaluate:
 
 2. **A "Project Context" section with clarity questions should be added** to the user-editable area of generated CLAUDE.md, with consulting-specific optional fields (client, engagement type, compliance level, handoff date).
 
-3. **Copier integration enables pre-filling clarity answers** during `gdev init --from <template>`. Answers flow into both CLAUDE.md and README.md, survive template updates via `.copier-answers.yml`.
+3. **Copier integration enables pre-filling clarity answers** during `qsdev init --from <template>`. Answers flow into both CLAUDE.md and README.md, survive template updates via `.copier-answers.yml`.
 
 4. **The tarpit test should be documented as a design principle** in plan.md, as a working principle in generated CLAUDE.md, and as a decision framework in generated security rules.
 

@@ -46,7 +46,7 @@ func TestRenderJSON_ContainsAllFields(t *testing.T) {
 
 	output := buf.String()
 	requiredFields := []string{
-		"schemaVersion", "generatedAt", "gdevVersion",
+		"schemaVersion", "generatedAt", "qsdevVersion",
 		"projectName", "framework", "frameworkVersion",
 		"disclaimer", "summary", "controls", "posture",
 	}

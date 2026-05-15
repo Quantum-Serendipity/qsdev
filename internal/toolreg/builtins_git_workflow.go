@@ -3,8 +3,8 @@ package toolreg
 import (
 	"fmt"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/gitworkflow"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/gitworkflow"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func init() {

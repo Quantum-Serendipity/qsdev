@@ -320,7 +320,7 @@ Research date: 2026-05-12.
 - **Maturity**: Part of official MCP servers repo (85,528 stars). TypeScript.
 - **License**: Unspecified (in servers monorepo)
 - **Consulting relevance**: HIGH. PostgreSQL is the most common database across consulting projects.
-- **gdev integration**: Include in `.mcp.json` template with read-only configuration. Prompt for connection string during `gdev init` wizard.
+- **gdev integration**: Include in `.mcp.json` template with read-only configuration. Prompt for connection string during `qsdev init` wizard.
 
 ### 6.3 Neon MCP Server
 
@@ -384,7 +384,7 @@ Research date: 2026-05-12.
 - **Maturity**: 2,392 stars. Created Apr 2025, actively maintained. Apache-2.0. Python.
 - **License**: Apache-2.0
 - **Consulting relevance**: HIGH. Meta-security: scans the AI tooling itself for vulnerabilities. As gdev installs multiple plugins and MCP servers, scanning them for injection risks is essential defense-in-depth.
-- **gdev integration**: Run as a post-setup validation step in `gdev devenv doctor`. Verify all installed MCP servers and plugins are clean. Include in CI pipeline.
+- **gdev integration**: Run as a post-setup validation step in `qsdev devenv doctor`. Verify all installed MCP servers and plugins are clean. Include in CI pipeline.
 
 ### 7.4 Snyk MCP Server
 

@@ -71,7 +71,7 @@ ZIM files are static, read-only, and ecosystem-scoped — not project-scoped. An
 - **macOS**: `~/Library/Application Support/qsdev/zim/`
 - **Windows**: `%LOCALAPPDATA%\qsdev\zim\`
 
-**Flow**: `gdev init` detects ecosystem from project files (`pyproject.toml` → python, `Cargo.toml` → rust, `package.json` → javascript) → checks shared store for the ecosystem ZIM → downloads on first use or quarterly refresh → configures local MCP server to serve from the shared path. ZIM is read-only and safe for concurrent access across multiple devenvs.
+**Flow**: `qsdev init` detects ecosystem from project files (`pyproject.toml` → python, `Cargo.toml` → rust, `package.json` → javascript) → checks shared store for the ecosystem ZIM → downloads on first use or quarterly refresh → configures local MCP server to serve from the shared path. ZIM is read-only and safe for concurrent access across multiple devenvs.
 
 ## Conclusions
 

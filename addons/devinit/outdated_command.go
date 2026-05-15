@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/outdated"
+	"github.com/Quantum-Serendipity/qsdev/internal/outdated"
 )
 
 func outdatedCmd() *cobra.Command {
@@ -17,7 +17,7 @@ func outdatedCmd() *cobra.Command {
 		Use:   "outdated",
 		Short: "Check for outdated dependencies across all ecosystems",
 		Long: `Runs each ecosystem's native outdated command and reports results.
-Output is the native tool format — gdev does not parse or normalize it.`,
+Output is the native tool format — qsdev does not parse or normalize it.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runOutdated(cmd, opts)

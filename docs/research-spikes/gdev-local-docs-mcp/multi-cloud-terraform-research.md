@@ -290,11 +290,11 @@ gdev/
 ```
 
 gdev selects the right template based on `--profile` or detected cloud CLI:
-- `gdev init --profile enterprise-aws` → generates `aws/` Terraform
-- `gdev init --profile enterprise-azure` → generates `azure/` Terraform
-- `gdev init --profile enterprise-gcp` → generates `gcp/` Terraform
-- `gdev init --profile self-hosted` → generates `s3-compatible/` targeting MinIO
-- `gdev init --profile local` → generates `local/` (no cloud, local paths only)
+- `qsdev init --profile enterprise-aws` → generates `aws/` Terraform
+- `qsdev init --profile enterprise-azure` → generates `azure/` Terraform
+- `qsdev init --profile enterprise-gcp` → generates `gcp/` Terraform
+- `qsdev init --profile self-hosted` → generates `s3-compatible/` targeting MinIO
+- `qsdev init --profile local` → generates `local/` (no cloud, local paths only)
 
 ---
 
@@ -599,23 +599,23 @@ output "estimated_monthly_cost" {
 ### How gdev Generates Terraform
 
 ```
-$ gdev init --profile enterprise-aws --region us-east-1
+$ qsdev init --profile enterprise-aws --region us-east-1
   → Detects AWS SSO profile in ~/.aws/config
   → Copies aws/ template to .gdev/terraform/docs-hosting/
   → Generates terraform.tfvars with detected values
   → Runs terraform init && terraform plan
   → Outputs: mount command, MCP config snippet
 
-$ gdev init --profile enterprise-azure --subscription abc123
+$ qsdev init --profile enterprise-azure --subscription abc123
   → Detects az login credentials
   → Copies azure/ template
   → Same flow
 
-$ gdev init --profile self-hosted --s3-endpoint http://minio.internal:9000
+$ qsdev init --profile self-hosted --s3-endpoint http://minio.internal:9000
   → Copies s3-compatible/ template
   → Configures custom endpoint
 
-$ gdev init --profile local --data-dir /srv/gdev-docs
+$ qsdev init --profile local --data-dir /srv/gdev-docs
   → Copies local/ template
   → No cloud resources, just validates paths
   → Outputs MCP config pointing to local directory

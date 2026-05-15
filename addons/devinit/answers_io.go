@@ -7,14 +7,14 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // loadAnswersOrEmpty reads saved wizard answers from
-// .devinit/.gdev-init-answers.yaml. Unlike loadAnswers (used by init/update),
+// .devinit/.qsdev-init-answers.yaml. Unlike loadAnswers (used by init/update),
 // it returns a zero-value WizardAnswers instead of an error when the file does
 // not exist — lifecycle commands need to work on projects that haven't run
-// `gdev init` yet.
+// `qsdev init` yet.
 func loadAnswersOrEmpty(projectRoot string) (types.WizardAnswers, error) {
 	path := filepath.Join(projectRoot, answersDir, answersFileName)
 

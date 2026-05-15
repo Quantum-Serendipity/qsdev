@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 )
 
 func TestBuildAnswersFromFlags(t *testing.T) {
@@ -256,7 +256,7 @@ func TestInitCmd_SavesState(t *testing.T) {
 		t.Fatalf("init failed: %v", err)
 	}
 
-	stateFile := filepath.Join(tmpDir, ".devenv", ".gdev-state.yaml")
+	stateFile := filepath.Join(tmpDir, ".devenv", ".qsdev-state.yaml")
 	if _, err := os.Stat(stateFile); err != nil {
 		t.Errorf("state file not saved: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestInitCmd_SavesAnswers(t *testing.T) {
 		t.Fatalf("init failed: %v", err)
 	}
 
-	answersFile := filepath.Join(tmpDir, ".devenv", ".gdev-answers.yaml")
+	answersFile := filepath.Join(tmpDir, ".devenv", ".qsdev-answers.yaml")
 	if _, err := os.Stat(answersFile); err != nil {
 		t.Errorf("answers file not saved: %v", err)
 	}

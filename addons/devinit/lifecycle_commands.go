@@ -4,7 +4,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// enableCmd creates the `gdev enable <tool>` command.
+// enableCmd creates the `qsdev enable <tool>` command.
 func enableCmd() *cobra.Command {
 	var opts enableOptions
 
@@ -15,7 +15,7 @@ func enableCmd() *cobra.Command {
 
 The tool's prerequisites are validated before enabling. Shared files (like
 CLAUDE.md or settings.json) are surgically updated; exclusive files are
-written fresh. Use 'gdev list' to see available tools.`,
+written fresh. Use 'qsdev list' to see available tools.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runEnable(cmd, args[0], opts)
@@ -27,7 +27,7 @@ written fresh. Use 'gdev list' to see available tools.`,
 	return cmd
 }
 
-// disableCmd creates the `gdev disable <tool>` command.
+// disableCmd creates the `qsdev disable <tool>` command.
 func disableCmd() *cobra.Command {
 	var opts disableOptions
 
@@ -50,7 +50,7 @@ the user, the command warns and exits unless --force is specified.`,
 	return cmd
 }
 
-// listCmd creates the `gdev list` command.
+// listCmd creates the `qsdev list` command.
 func listCmd() *cobra.Command {
 	var opts listOptions
 

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Implement the `gdev init --update` workflow with per-file merge strategies, team standards versioning, integration tests across the full pipeline, and documentation. At the end of this phase, the system is production-ready: re-runnable, team-scalable, well-tested, and documented.
+Implement the `qsdev init --update` workflow with per-file merge strategies, team standards versioning, integration tests across the full pipeline, and documentation. At the end of this phase, the system is production-ready: re-runnable, team-scalable, well-tested, and documented.
 
 ## Dependencies
 
@@ -10,7 +10,7 @@ Phases 2-5 complete (all generation, wizard, and orchestration working).
 
 ## Phase Outputs
 
-- `gdev init --update` command with hash-based modification detection
+- `qsdev init --update` command with hash-based modification detection
 - Three-way merge for settings.json and .mcp.json
 - Section marker merge for CLAUDE.md
 - devenv.nix update with .new file + diff (never auto-overwrite)
@@ -22,11 +22,11 @@ Phases 2-5 complete (all generation, wizard, and orchestration working).
 
 ### Unit 6.1: Update Command & Modification Detection
 
-**Description:** Implement `gdev init --update` that re-generates files from saved config, using hash tracking to detect user modifications and route each file to its appropriate merge strategy.
+**Description:** Implement `qsdev init --update` that re-generates files from saved config, using hash tracking to detect user modifications and route each file to its appropriate merge strategy.
 
 **Context:** The update workflow reads stored `GeneratedState` (from Phase 1, Unit 1.6), computes current file hashes, classifies each file as unmodified/modified/deleted/new, and dispatches to per-file merge strategies.
 
-**Desired Outcome:** `gdev init --update` safely regenerates files without destroying user customizations.
+**Desired Outcome:** `qsdev init --update` safely regenerates files without destroying user customizations.
 
 **Steps:**
 1. Implement update flow: load saved config → load GeneratedState → generate new files → for each file, check modification status → apply merge strategy → preview → confirm → write → update state.
@@ -160,7 +160,7 @@ Phases 2-5 complete (all generation, wizard, and orchestration working).
 
 **Description:** Implement the mechanism for team standards to propagate via gdev binary updates.
 
-**Context:** When a team updates their gdev binary (with new templates, skills, security rules), developers run `gdev init --update` to get the latest standards. The skill library has per-skill versioning. Generated standards (deny rules, permission presets) update automatically.
+**Context:** When a team updates their gdev binary (with new templates, skills, security rules), developers run `qsdev init --update` to get the latest standards. The skill library has per-skill versioning. Generated standards (deny rules, permission presets) update automatically.
 
 **Desired Outcome:** Team standard updates flow smoothly to all developer projects.
 
@@ -194,7 +194,7 @@ Phases 2-5 complete (all generation, wizard, and orchestration working).
 **Desired Outcome:** Test suite that catches regressions across the full pipeline.
 
 **Steps:**
-1. Test: empty directory → `gdev init --profile go-web --yes` → verify all 7+ files generated with correct content.
+1. Test: empty directory → `qsdev init --profile go-web --yes` → verify all 7+ files generated with correct content.
 2. Test: Go project (go.mod exists) → detection → wizard → verify Go pre-selected.
 3. Test: existing devenv.nix → update → verify .new file generated, not overwritten.
 4. Test: CLAUDE.md with user content → update → verify user content preserved.
@@ -223,7 +223,7 @@ Phases 2-5 complete (all generation, wizard, and orchestration working).
 
 **Description:** Write user documentation: README for the addons, team onboarding guide, and configuration reference.
 
-**Context:** Documentation targets three audiences: developers using `gdev init`, team leads configuring profiles and policies, and security engineers understanding the defense layers.
+**Context:** Documentation targets three audiences: developers using `qsdev init`, team leads configuring profiles and policies, and security engineers understanding the defense layers.
 
 **Desired Outcome:** Complete documentation enabling self-service adoption.
 
@@ -252,7 +252,7 @@ Phases 2-5 complete (all generation, wizard, and orchestration working).
 ## Phase Completion Criteria
 
 - [ ] All seven units pass acceptance criteria
-- [ ] `gdev init --update` correctly handles all file types (regenerate, merge, skip, .new+diff)
+- [ ] `qsdev init --update` correctly handles all file types (regenerate, merge, skip, .new+diff)
 - [ ] Three-way merge preserves user customizations in settings.json
 - [ ] Section markers preserve user content in CLAUDE.md
 - [ ] devenv.nix is never silently overwritten

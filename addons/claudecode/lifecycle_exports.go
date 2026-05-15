@@ -1,12 +1,12 @@
 package claudecode
 
 import (
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // GeneratePostmortemSkill is an exported wrapper around generatePostmortemSkill
-// for use by the tool lifecycle system (gdev enable/disable).
+// for use by the tool lifecycle system (qsdev enable/disable).
 func GeneratePostmortemSkill(answers types.WizardAnswers, registry *ecosystem.Registry) (*types.GeneratedFile, error) {
 	return generatePostmortemSkill(answers, registry)
 }

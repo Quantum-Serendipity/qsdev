@@ -6,15 +6,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestCollectInfo_FullProject(t *testing.T) {
 	dir := t.TempDir()
 
-	// Write .gdev.yaml.
-	gdevYAML := `version: 1
+	// Write .qsdev.yaml.
+	qsdevYAML := `version: 1
 languages:
   - name: go
     version: "1.26"
@@ -23,8 +23,8 @@ languages:
 security:
   level: enhanced
 `
-	if err := os.WriteFile(filepath.Join(dir, ".gdev.yaml"), []byte(gdevYAML), 0o644); err != nil {
-		t.Fatalf("writing .gdev.yaml: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte(qsdevYAML), 0o644); err != nil {
+		t.Fatalf("writing .qsdev.yaml: %v", err)
 	}
 
 	// Write state file.
@@ -35,7 +35,7 @@ security:
 
 	genState := types.GeneratedState{
 		LastRun:     time.Date(2026, 5, 14, 10, 0, 0, 0, time.UTC),
-		GdevVersion: "1.2.3",
+		QsdevVersion: "1.2.3",
 		Files: map[string]types.FileState{
 			"devenv.nix":   {Hash: "abc123"},
 			"devenv.yaml":  {Hash: "def456"},
@@ -47,7 +47,7 @@ security:
 			"changelog":         false,
 		},
 	}
-	statePath := filepath.Join(devinitDir, ".gdev-init-state.yaml")
+	statePath := filepath.Join(devinitDir, ".qsdev-init-state.yaml")
 	if err := state.SaveStateToFile(statePath, genState); err != nil {
 		t.Fatalf("saving state: %v", err)
 	}
@@ -60,7 +60,7 @@ languages:
   - name: go
     version: "1.26"
 `
-	if err := os.WriteFile(filepath.Join(devinitDir, ".gdev-init-answers.yaml"), []byte(answersYAML), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(devinitDir, ".qsdev-init-answers.yaml"), []byte(answersYAML), 0o644); err != nil {
 		t.Fatalf("writing answers: %v", err)
 	}
 
@@ -86,8 +86,8 @@ languages:
 	if info.SecurityProfile != "enhanced" {
 		t.Errorf("SecurityProfile = %q, want %q", info.SecurityProfile, "enhanced")
 	}
-	if info.GdevVersion != "1.2.3" {
-		t.Errorf("GdevVersion = %q, want %q", info.GdevVersion, "1.2.3")
+	if info.QsdevVersion != "1.2.3" {
+		t.Errorf("QsdevVersion = %q, want %q", info.QsdevVersion, "1.2.3")
 	}
 	if info.ConfigVersion != 1 {
 		t.Errorf("ConfigVersion = %d, want 1", info.ConfigVersion)
@@ -113,23 +113,23 @@ func TestCollectInfo_NoGdevYaml(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if err != ErrNotGdevProject {
-		t.Errorf("error = %v, want ErrNotGdevProject", err)
+	if err != ErrNotQsdevProject {
+		t.Errorf("error = %v, want ErrNotQsdevProject", err)
 	}
 }
 
 func TestCollectInfo_MissingState(t *testing.T) {
 	dir := t.TempDir()
 
-	// Write minimal .gdev.yaml.
-	gdevYAML := `version: 1
+	// Write minimal .qsdev.yaml.
+	qsdevYAML := `version: 1
 languages:
   - name: rust
 security:
   level: strict
 `
-	if err := os.WriteFile(filepath.Join(dir, ".gdev.yaml"), []byte(gdevYAML), 0o644); err != nil {
-		t.Fatalf("writing .gdev.yaml: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte(qsdevYAML), 0o644); err != nil {
+		t.Fatalf("writing .qsdev.yaml: %v", err)
 	}
 
 	info, err := CollectInfo(dir)
@@ -158,13 +158,13 @@ security:
 func TestCollectInfo_MissingAnswers(t *testing.T) {
 	dir := t.TempDir()
 
-	// Write .gdev.yaml.
-	gdevYAML := `version: 1
+	// Write .qsdev.yaml.
+	qsdevYAML := `version: 1
 languages:
   - name: javascript
 `
-	if err := os.WriteFile(filepath.Join(dir, ".gdev.yaml"), []byte(gdevYAML), 0o644); err != nil {
-		t.Fatalf("writing .gdev.yaml: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte(qsdevYAML), 0o644); err != nil {
+		t.Fatalf("writing .qsdev.yaml: %v", err)
 	}
 
 	// Write state but no answers.
@@ -174,12 +174,12 @@ languages:
 	}
 	genState := types.GeneratedState{
 		LastRun:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		GdevVersion: "0.9.0",
+		QsdevVersion: "0.9.0",
 		Files: map[string]types.FileState{
 			"devenv.nix": {Hash: "aaa"},
 		},
 	}
-	if err := state.SaveStateToFile(filepath.Join(devinitDir, ".gdev-init-state.yaml"), genState); err != nil {
+	if err := state.SaveStateToFile(filepath.Join(devinitDir, ".qsdev-init-state.yaml"), genState); err != nil {
 		t.Fatalf("saving state: %v", err)
 	}
 
@@ -195,8 +195,8 @@ languages:
 	if info.ClaudeCodeEnabled {
 		t.Errorf("ClaudeCodeEnabled = %v, want false (no answers file)", info.ClaudeCodeEnabled)
 	}
-	if info.GdevVersion != "0.9.0" {
-		t.Errorf("GdevVersion = %q, want %q", info.GdevVersion, "0.9.0")
+	if info.QsdevVersion != "0.9.0" {
+		t.Errorf("QsdevVersion = %q, want %q", info.QsdevVersion, "0.9.0")
 	}
 	if info.ManagedFileCount != 1 {
 		t.Errorf("ManagedFileCount = %d, want 1", info.ManagedFileCount)
@@ -206,11 +206,11 @@ languages:
 func TestCollectInfo_DefaultProjectName(t *testing.T) {
 	dir := t.TempDir()
 
-	// Write minimal .gdev.yaml with no answers file at all.
-	gdevYAML := `version: 1
+	// Write minimal .qsdev.yaml with no answers file at all.
+	qsdevYAML := `version: 1
 `
-	if err := os.WriteFile(filepath.Join(dir, ".gdev.yaml"), []byte(gdevYAML), 0o644); err != nil {
-		t.Fatalf("writing .gdev.yaml: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte(qsdevYAML), 0o644); err != nil {
+		t.Fatalf("writing .qsdev.yaml: %v", err)
 	}
 
 	info, err := CollectInfo(dir)

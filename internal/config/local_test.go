@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestParseLocalConfig_FileNotFound(t *testing.T) {
-	cfg, err := ParseLocalConfig("/nonexistent/path/.gdev.local.yaml")
+	cfg, err := ParseLocalConfig("/nonexistent/path/.qsdev.local.yaml")
 	if err != nil {
 		t.Errorf("expected nil error for missing file, got %v", err)
 	}
@@ -21,7 +21,7 @@ func TestParseLocalConfig_FileNotFound(t *testing.T) {
 
 func TestParseLocalConfig_ValidFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".gdev.local.yaml")
+	path := filepath.Join(dir, ".qsdev.local.yaml")
 	content := `
 extra_packages:
   - neovim
@@ -56,7 +56,7 @@ tools:
 
 func TestParseLocalConfig_InvalidYAML(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".gdev.local.yaml")
+	path := filepath.Join(dir, ".qsdev.local.yaml")
 	if err := os.WriteFile(path, []byte("{{invalid yaml"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -72,13 +72,13 @@ func TestParseLocalConfig_InvalidYAML(t *testing.T) {
 
 func TestGenerateLocalTemplate_CreatesFile(t *testing.T) {
 	dir := t.TempDir()
-	resolved := &types.GdevConfig{}
+	resolved := &types.QsdevConfig{}
 
 	if err := GenerateLocalTemplate(dir, resolved); err != nil {
 		t.Fatal(err)
 	}
 
-	path := filepath.Join(dir, ".gdev.local.yaml")
+	path := filepath.Join(dir, ".qsdev.local.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestGenerateLocalTemplate_CreatesFile(t *testing.T) {
 
 func TestGenerateLocalTemplate_Idempotent(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".gdev.local.yaml")
+	path := filepath.Join(dir, ".qsdev.local.yaml")
 
 	// Write an existing file.
 	existingContent := "# my custom config\n"
@@ -119,7 +119,7 @@ func TestGenerateLocalTemplate_Idempotent(t *testing.T) {
 
 func TestGenerateLocalTemplate_IncludesLanguageOverrides(t *testing.T) {
 	dir := t.TempDir()
-	resolved := &types.GdevConfig{
+	resolved := &types.QsdevConfig{
 		Languages: []types.LanguageConfig{
 			{Name: "go", Version: "1.22"},
 			{Name: "python", Version: "3.12"},
@@ -130,7 +130,7 @@ func TestGenerateLocalTemplate_IncludesLanguageOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, ".gdev.local.yaml"))
+	data, err := os.ReadFile(filepath.Join(dir, ".qsdev.local.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestGenerateLocalTemplate_IncludesLanguageOverrides(t *testing.T) {
 func TestGenerateLocalTemplate_IncludesClaudeSection(t *testing.T) {
 	dir := t.TempDir()
 	enabled := true
-	resolved := &types.GdevConfig{
+	resolved := &types.QsdevConfig{
 		ClaudeCode: types.ClaudeCodeConfig{
 			Enabled: &enabled,
 		},
@@ -157,7 +157,7 @@ func TestGenerateLocalTemplate_IncludesClaudeSection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, ".gdev.local.yaml"))
+	data, err := os.ReadFile(filepath.Join(dir, ".qsdev.local.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestGenerateLocalTemplate_IncludesClaudeSection(t *testing.T) {
 func TestEnsureGitignoreEntry_CreatesFile(t *testing.T) {
 	dir := t.TempDir()
 
-	if err := EnsureGitignoreEntry(dir, ".gdev.local.yaml"); err != nil {
+	if err := EnsureGitignoreEntry(dir, ".qsdev.local.yaml"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -181,10 +181,10 @@ func TestEnsureGitignoreEntry_CreatesFile(t *testing.T) {
 	}
 
 	content := string(data)
-	if !strings.Contains(content, ".gdev.local.yaml") {
-		t.Error("expected .gdev.local.yaml in .gitignore")
+	if !strings.Contains(content, ".qsdev.local.yaml") {
+		t.Error("expected .qsdev.local.yaml in .gitignore")
 	}
-	if !strings.Contains(content, "# gdev local configuration") {
+	if !strings.Contains(content, "# qsdev local configuration") {
 		t.Error("expected section comment in .gitignore")
 	}
 }
@@ -196,7 +196,7 @@ func TestEnsureGitignoreEntry_AppendsWhenNotPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := EnsureGitignoreEntry(dir, ".gdev.local.yaml"); err != nil {
+	if err := EnsureGitignoreEntry(dir, ".qsdev.local.yaml"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -209,19 +209,19 @@ func TestEnsureGitignoreEntry_AppendsWhenNotPresent(t *testing.T) {
 	if !strings.Contains(content, "node_modules/") {
 		t.Error("expected existing content to be preserved")
 	}
-	if !strings.Contains(content, ".gdev.local.yaml") {
-		t.Error("expected .gdev.local.yaml to be appended")
+	if !strings.Contains(content, ".qsdev.local.yaml") {
+		t.Error("expected .qsdev.local.yaml to be appended")
 	}
 }
 
 func TestEnsureGitignoreEntry_NoOpWhenPresent(t *testing.T) {
 	dir := t.TempDir()
-	existing := "node_modules/\n.gdev.local.yaml\n.env\n"
+	existing := "node_modules/\n.qsdev.local.yaml\n.env\n"
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := EnsureGitignoreEntry(dir, ".gdev.local.yaml"); err != nil {
+	if err := EnsureGitignoreEntry(dir, ".qsdev.local.yaml"); err != nil {
 		t.Fatal(err)
 	}
 

@@ -53,7 +53,7 @@
 PostgreSQL, Redis, MySQL/MariaDB, MongoDB, Elasticsearch, RabbitMQ
 
 ### DX Commands (Phases 12, 16)
-gdev doctor, setup, init, repair, info, outdated, update, teardown, enable, disable, status, list, check, team-report, evidence, changelog
+qsdev doctor, setup, init, repair, info, outdated, update, teardown, enable, disable, status, list, check, team-report, evidence, changelog
 
 ### Git Workflow (Phase 16)
 Branch naming hooks, PR templates, commit ticket extraction, automated PR labels, commitlint, git-cliff changelog

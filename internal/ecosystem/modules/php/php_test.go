@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/php"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/php"
 )
 
 // Compile-time interface compliance check.
@@ -203,8 +203,8 @@ func TestSecurityConfigs(t *testing.T) {
 	if len(configs) != 1 {
 		t.Fatalf("SecurityConfigs() returned %d files, want 1", len(configs))
 	}
-	if configs[0].Path != ".gdev/composer-security.json" {
-		t.Errorf("SecurityConfigs()[0].Path = %q, want %q", configs[0].Path, ".gdev/composer-security.json")
+	if configs[0].Path != ".qsdev/composer-security.json" {
+		t.Errorf("SecurityConfigs()[0].Path = %q, want %q", configs[0].Path, ".qsdev/composer-security.json")
 	}
 }
 

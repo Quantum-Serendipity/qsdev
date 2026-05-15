@@ -69,7 +69,7 @@ No unit in Phase 1 defines a shared error handling strategy. What happens when:
 - A template renders invalid Nix? (Unit 1.5 catches this, but what error type?)
 - An ecosystem module's Detect() panics?
 - Multiple modules claim the same file path with different merge strategies?
-- gdev config YAML is corrupt?
+- qsdev config YAML is corrupt?
 
 There is no `errors` package, no error type hierarchy, no logging infrastructure. Phase 2 and 3 units will each invent their own error handling patterns.
 
@@ -213,7 +213,7 @@ This is acceptable if documented, but it should be an explicit design decision, 
 
 ### 39. devenv CLI Commands Need WizardAnswers but Wizard Is Phase 6
 
-Unit 3.5 (labeled "Unit 2.5") says `gdev devenv init` should "run wizard or accept flags." But the huh wizard is Phase 6 (Wizard & Orchestration). Phase 3 can only support flag-based (non-interactive) operation. The acceptance criterion "generates files without wizard" via `--lang go --yes` is fine, but the unit description should clarify that interactive mode is deferred to Phase 6 and Phase 3 only supports flag-driven operation.
+Unit 3.5 (labeled "Unit 2.5") says `qsdev devenv init` should "run wizard or accept flags." But the huh wizard is Phase 6 (Wizard & Orchestration). Phase 3 can only support flag-based (non-interactive) operation. The acceptance criterion "generates files without wizard" via `--lang go --yes` is fine, but the unit description should clarify that interactive mode is deferred to Phase 6 and Phase 3 only supports flag-driven operation.
 
 ### 40. Missing: nix.conf Generation
 
@@ -269,7 +269,7 @@ Phase 2 completion criteria require unit tests per module but no integration tes
 
 ### 49. Persisted Config Shape Diverges Between Research and Phase 1
 
-The devenv-addon-design research defines `DevenvPersistedConfig` with fields like `ProjectName`, `ProjectType`, `Languages []LanguageConfig`, `Services []ServiceConfig`, `GitHooks`, `DirenvEnabled`, etc. Phase 1 Unit 1.2 defines `WizardAnswers` with a different shape (e.g., `Languages []LanguageChoice` not `[]LanguageConfig`, `Direnv bool` not `DirenvEnabled`). Phase 3 Unit 3.5 (labeled "Unit 2.5") says `gdev devenv update` should "load saved config, regenerate files." But the saved config format (from gdev's config key system) is `DevenvPersistedConfig`, while the generation functions take `WizardAnswers`. There must be a conversion between the two, and neither Phase 1 nor Phase 3 defines it.
+The devenv-addon-design research defines `DevenvPersistedConfig` with fields like `ProjectName`, `ProjectType`, `Languages []LanguageConfig`, `Services []ServiceConfig`, `GitHooks`, `DirenvEnabled`, etc. Phase 1 Unit 1.2 defines `WizardAnswers` with a different shape (e.g., `Languages []LanguageChoice` not `[]LanguageConfig`, `Direnv bool` not `DirenvEnabled`). Phase 3 Unit 3.5 (labeled "Unit 2.5") says `qsdev devenv update` should "load saved config, regenerate files." But the saved config format (from gdev's config key system) is `DevenvPersistedConfig`, while the generation functions take `WizardAnswers`. There must be a conversion between the two, and neither Phase 1 nor Phase 3 defines it.
 
 ### 50. config-template-engine-design Shows devinit Calling Both Addons' Generate()
 
@@ -279,7 +279,7 @@ devenvFiles, err := d.devenv.Generate(answers)
 claudeFiles, err := d.claude.Generate(answers)
 ```
 
-This means `devinit` calls `Generate()` on both addons. But Phase 3 only covers the devenv addon. Phase 4 covers claudecode. The orchestration that calls both is Phase 6. This is fine architecturally, but Phase 3's CLI command `gdev devenv init` (Unit 3.5) needs to work standalone — it should only generate devenv files, not claude files. The acceptance criteria confirm this, but the boundary should be explicit: Phase 3's `gdev devenv init` calls devenv's `Generate()` only; Phase 6's `gdev init` calls both.
+This means `devinit` calls `Generate()` on both addons. But Phase 3 only covers the devenv addon. Phase 4 covers claudecode. The orchestration that calls both is Phase 6. This is fine architecturally, but Phase 3's CLI command `qsdev devenv init` (Unit 3.5) needs to work standalone — it should only generate devenv files, not claude files. The acceptance criteria confirm this, but the boundary should be explicit: Phase 3's `qsdev devenv init` calls devenv's `Generate()` only; Phase 6's `qsdev init` calls both.
 
 ---
 
@@ -295,7 +295,7 @@ Design principle #5: "Format-matched generation. Struct marshaling for YAML/JSON
 
 ### 53. Principle #3 vs Phase 3 Missing Wizard Stub
 
-Design principle #3: "`gdev init` detects project type, generates all config files, and produces a working `devenv shell` in under 60 seconds. The wizard asks 1 question on the quick path." Phase 3 has no way to achieve this because the wizard is Phase 6. Phase 3 can only support flag-driven (non-interactive) operation. This is not a contradiction per se (the plan is phased), but Phase 3's completion criteria should explicitly note that the "one command, working environment" principle is only achievable after Phase 6.
+Design principle #3: "`qsdev init` detects project type, generates all config files, and produces a working `devenv shell` in under 60 seconds. The wizard asks 1 question on the quick path." Phase 3 has no way to achieve this because the wizard is Phase 6. Phase 3 can only support flag-driven (non-interactive) operation. This is not a contradiction per se (the plan is phased), but Phase 3's completion criteria should explicitly note that the "one command, working environment" principle is only achievable after Phase 6.
 
 ---
 
@@ -315,7 +315,7 @@ Go's `init()` pattern means all modules must be imported somewhere (typically a 
 
 ### 56. EcosystemModule Interface Will Need Expansion for Phase 9
 
-Phase 9 (Cross-Platform System Detection) adds OS detection, prerequisite mapping, and `gdev devenv doctor`/`gdev devenv setup`. Ecosystem modules may need methods like:
+Phase 9 (Cross-Platform System Detection) adds OS detection, prerequisite mapping, and `qsdev devenv doctor`/`qsdev devenv setup`. Ecosystem modules may need methods like:
 - `Prerequisites() []ToolPrerequisite` — what system tools does this ecosystem need (e.g., Java needs JDK, Terraform needs terraform binary)
 - `DoctorChecks() []Check` — ecosystem-specific health checks
 

@@ -215,9 +215,9 @@ func TestInitCmd_SavesAnswers(t *testing.T) {
 		t.Fatalf("init failed: %v\nOutput: %s", err, output)
 	}
 
-	answersFile := filepath.Join(dir, ".devinit", ".gdev-init-answers.yaml")
+	answersFile := filepath.Join(dir, ".devinit", ".qsdev-init-answers.yaml")
 	if _, err := os.Stat(answersFile); os.IsNotExist(err) {
-		t.Error(".devinit/.gdev-init-answers.yaml was not created")
+		t.Error(".devinit/.qsdev-init-answers.yaml was not created")
 	}
 }
 
@@ -229,9 +229,9 @@ func TestInitCmd_SavesState(t *testing.T) {
 		t.Fatalf("init failed: %v\nOutput: %s", err, output)
 	}
 
-	stateFile := filepath.Join(dir, ".devinit", ".gdev-init-state.yaml")
+	stateFile := filepath.Join(dir, ".devinit", ".qsdev-init-state.yaml")
 	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
-		t.Error(".devinit/.gdev-init-state.yaml was not created")
+		t.Error(".devinit/.qsdev-init-state.yaml was not created")
 	}
 }
 
@@ -274,14 +274,14 @@ func TestInitCmd_SavesPerAddonAnswers(t *testing.T) {
 	}
 
 	// Verify devenv answers were saved.
-	devenvAnswers := filepath.Join(dir, ".devenv", ".gdev-answers.yaml")
+	devenvAnswers := filepath.Join(dir, ".devenv", ".qsdev-answers.yaml")
 	if _, err := os.Stat(devenvAnswers); os.IsNotExist(err) {
-		t.Error(".devenv/.gdev-answers.yaml was not created")
+		t.Error(".devenv/.qsdev-answers.yaml was not created")
 	}
 
 	// Verify Claude Code answers were saved (claude-code defaults to true).
-	claudeAnswers := filepath.Join(dir, ".claude", ".gdev-claude-answers.yaml")
+	claudeAnswers := filepath.Join(dir, ".claude", ".qsdev-claude-answers.yaml")
 	if _, err := os.Stat(claudeAnswers); os.IsNotExist(err) {
-		t.Error(".claude/.gdev-claude-answers.yaml was not created")
+		t.Error(".claude/.qsdev-claude-answers.yaml was not created")
 	}
 }

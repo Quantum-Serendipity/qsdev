@@ -6,28 +6,28 @@ Integrate Copier as the standard way to scaffold new projects from organizationa
 
 ## Dependencies
 
-Phase 6 complete (wizard orchestration, profile system, huh forms, non-interactive `--yes` mode, `gdev init` command structure). Phase 13 complete (`.gdev.yaml` schema, Join mode detection, config resolution engine — Join mode is the post-Copier landing mode when a template ships `.gdev.yaml`).
+Phase 6 complete (wizard orchestration, profile system, huh forms, non-interactive `--yes` mode, `qsdev init` command structure). Phase 13 complete (`.qsdev.yaml` schema, Join mode detection, config resolution engine — Join mode is the post-Copier landing mode when a template ships `.qsdev.yaml`).
 
 ## Phase Outputs
 
-- `~/.qsdev/templates.yaml` registry with `gdev template add/list/remove` commands
+- `~/.qsdev/templates.yaml` registry with `qsdev template add/list/remove` commands
 - `CopierRunner` Go struct wrapping Copier subprocess invocation
-- `gdev init --from <template>` two-phase orchestration (Copier + gdev)
-- `gdev update --template` pulling latest template version
+- `qsdev init --from <template>` two-phase orchestration (Copier + gdev)
+- `qsdev update --template` pulling latest template version
 - Non-interactive template support with `--data answers.yaml`
-- Template authoring specification accessible via `gdev template --help-authoring`
+- Template authoring specification accessible via `qsdev template --help-authoring`
 
 ---
 
 ### Unit 31.1: Template Registry
 
-**Description:** Implement `~/.qsdev/templates.yaml` as the local template registry and three registry management commands: `gdev template add`, `gdev template list`, and `gdev template remove`. The registry tracks template metadata and supports initial population from an organizational template catalog URL.
+**Description:** Implement `~/.qsdev/templates.yaml` as the local template registry and three registry management commands: `qsdev template add`, `qsdev template list`, and `qsdev template remove`. The registry tracks template metadata and supports initial population from an organizational template catalog URL.
 
-**Context:** The template registry solves the discovery problem: developers need to know which templates exist and where they live without consulting a wiki or asking a colleague. The registry is per-developer (lives in `~/.qsdev/`, not in a project), so each consultant accumulates templates across engagements. The design mirrors the way `mise` manages plugins — a flat file maps names to sources, and the tool validates reachability on add. Organization-wide templates are seeded via `gdev setup --org-templates <url>`, which fetches a remote `templates.yaml` and merges it into the local registry.
+**Context:** The template registry solves the discovery problem: developers need to know which templates exist and where they live without consulting a wiki or asking a colleague. The registry is per-developer (lives in `~/.qsdev/`, not in a project), so each consultant accumulates templates across engagements. The design mirrors the way `mise` manages plugins — a flat file maps names to sources, and the tool validates reachability on add. Organization-wide templates are seeded via `qsdev setup --org-templates <url>`, which fetches a remote `templates.yaml` and merges it into the local registry.
 
-Template sources can be git URLs (any URL Copier accepts: `gh:org/repo`, `https://github.com/org/repo`, `git+ssh://...`) or absolute local paths. The registry intentionally does NOT cache template content — it only records names and sources. Copier handles its own caching (in `~/.cache/copier/`). The `last-used-version` field records the git ref that was last successfully copied, enabling `gdev template list` to show whether templates have pending updates.
+Template sources can be git URLs (any URL Copier accepts: `gh:org/repo`, `https://github.com/org/repo`, `git+ssh://...`) or absolute local paths. The registry intentionally does NOT cache template content — it only records names and sources. Copier handles its own caching (in `~/.cache/copier/`). The `last-used-version` field records the git ref that was last successfully copied, enabling `qsdev template list` to show whether templates have pending updates.
 
-**Desired Outcome:** Developers run `gdev template list` and see their registered templates with descriptions and last-used versions. `gdev template add qss/go-service gh:quantumserendipity/go-service-template` registers a template in one command and validates the source is reachable before writing to the registry.
+**Desired Outcome:** Developers run `qsdev template list` and see their registered templates with descriptions and last-used versions. `qsdev template add qss/go-service gh:quantumserendipity/go-service-template` registers a template in one command and validates the source is reachable before writing to the registry.
 
 **Steps:**
 
@@ -44,7 +44,7 @@ Template sources can be git URLs (any URL Copier accepts: `gh:org/repo`, `https:
 
    // TemplateEntry is a single registered template.
    type TemplateEntry struct {
-       // Name is the short identifier used in `gdev init --from <name>`.
+       // Name is the short identifier used in `qsdev init --from <name>`.
        Name string `yaml:"name" validate:"required,kebab-case"`
 
        // Source is the Copier-compatible source URL or local path.
@@ -63,7 +63,7 @@ Template sources can be git URLs (any URL Copier accepts: `gh:org/repo`, `https:
 
        // OrgManaged indicates this entry was seeded by an org template catalog
        // (via gdev setup --org-templates). Org-managed entries are not removed
-       // by `gdev template remove` without --force.
+       // by `qsdev template remove` without --force.
        OrgManaged bool `yaml:"org_managed,omitempty"`
    }
    ```
@@ -87,7 +87,7 @@ Template sources can be git URLs (any URL Copier accepts: `gh:org/repo`, `https:
    - Create `~/.qsdev/` directory with `0700` permissions if it does not exist.
    - Preserve yaml comment at top of file: `# gdev template registry — managed by 'gdev template' commands`.
 
-3. Implement `gdev template add <name> <source> [--description <text>]`:
+3. Implement `qsdev template add <name> <source> [--description <text>]`:
    - Parse and validate `<name>` as kebab-case (pattern: `[a-z][a-z0-9-]*`).
    - Validate `<source>` is syntactically a git URL or absolute path (does not need to resolve yet).
    - Check that `<name>` is not already registered; fail with: `Template "X" is already registered. Use 'gdev template remove X' first, or choose a different name.`
@@ -95,7 +95,7 @@ Template sources can be git URLs (any URL Copier accepts: `gh:org/repo`, `https:
    - If `--skip-validate` is passed: skip the reachability check (for offline environments or local paths under development).
    - On success: append the entry to the registry, print `✓ Template "X" registered (source: Y)`.
 
-4. Implement `gdev template list`:
+4. Implement `qsdev template list`:
    - Read registry and print a table:
      ```
      NAME                   SOURCE                                         LAST USED   ORG
@@ -106,13 +106,13 @@ Template sources can be git URLs (any URL Copier accepts: `gh:org/repo`, `https:
    - `--json` flag: output JSON array of `TemplateEntry`.
    - If registry is empty, print: `No templates registered. Run 'gdev template add <name> <source>' to register one.`
 
-5. Implement `gdev template remove <name>`:
+5. Implement `qsdev template remove <name>`:
    - Look up `<name>` in registry; fail with clear error if not found.
    - If `OrgManaged: true`, require `--force` flag: `Template "X" is org-managed. Use --force to remove it.`
    - On success: remove entry from registry, save, print `✓ Template "X" removed.`
    - Does NOT delete any template source (local path or remote).
 
-6. Implement `gdev setup --org-templates <url>` integration in `cmd/setup.go`:
+6. Implement `qsdev setup --org-templates <url>` integration in `cmd/setup.go`:
    - Fetch the URL (HTTP GET, accept `text/plain` and `application/yaml`).
    - Parse the fetched content as a `TemplateRegistry`.
    - For each entry in the fetched registry: if name not present locally, add it with `OrgManaged: true`; if name already present and `OrgManaged: true`, update the source (org can rotate template locations); if name already present and `OrgManaged: false` (developer-added), skip with a warning.
@@ -128,12 +128,12 @@ Template sources can be git URLs (any URL Copier accepts: `gh:org/repo`, `https:
 
 **Acceptance Criteria:**
 - [ ] `~/.qsdev/templates.yaml` registry with `TemplateEntry` schema (name, source, description, last-used-version, added-at, org-managed)
-- [ ] `gdev template add <name> <source>` registers a template and validates reachability via Copier `--pretend`
+- [ ] `qsdev template add <name> <source>` registers a template and validates reachability via Copier `--pretend`
 - [ ] Duplicate name produces a clear error with remediation hint
-- [ ] `gdev template list` shows registered templates in a table with `--json` output option
-- [ ] `gdev template remove <name>` removes entry without touching template source
+- [ ] `qsdev template list` shows registered templates in a table with `--json` output option
+- [ ] `qsdev template remove <name>` removes entry without touching template source
 - [ ] Org-managed entries require `--force` to remove
-- [ ] `gdev setup --org-templates <url>` seeds registry from remote URL, merging without overwriting user entries
+- [ ] `qsdev setup --org-templates <url>` seeds registry from remote URL, merging without overwriting user entries
 - [ ] Registry file written atomically; `~/.qsdev/` created with `0700` permissions if absent
 - [ ] `--skip-validate` skips reachability check for offline use
 
@@ -194,7 +194,7 @@ Version pinning is a consulting requirement: if a template specifies a minimum C
            "  pipx install copier        # recommended (isolated install)\n" +
            "  uv tool install copier     # if you use uv\n" +
            "  nix profile install nixpkgs#copier  # NixOS/nix-env\n\n" +
-           "After installing, re-run: gdev init --from <template>"
+           "After installing, re-run: qsdev init --from <template>"
    }
 
    // CopierVersionTooOldError is returned when the installed Copier version
@@ -316,21 +316,21 @@ Version pinning is a consulting requirement: if a template specifies a minimum C
 
 ---
 
-### Unit 31.3: `gdev init --from <template>` Orchestration
+### Unit 31.3: `qsdev init --from <template>` Orchestration
 
-**Description:** Implement the two-phase `gdev init --from <template>` flow: Phase 1 runs Copier to create the project structure, Phase 2 runs gdev's normal `init` on the result. The handoff between phases uses mode detection from Phase 13 — if the template shipped `.gdev.yaml`, gdev runs in Join mode; if not, gdev runs full Create mode. Template questions (Copier's domain) and devenv/security questions (gdev's domain) remain separate.
+**Description:** Implement the two-phase `qsdev init --from <template>` flow: Phase 1 runs Copier to create the project structure, Phase 2 runs gdev's normal `init` on the result. The handoff between phases uses mode detection from Phase 13 — if the template shipped `.qsdev.yaml`, gdev runs in Join mode; if not, gdev runs full Create mode. Template questions (Copier's domain) and devenv/security questions (gdev's domain) remain separate.
 
 **Context:** The Copier-first flow is the key architectural decision: Copier handles everything about project structure (directory layout, boilerplate files, CI pipelines, language-specific config), while gdev handles everything about development environment and security (devenv.nix, settings.json, CLAUDE.md, pre-commit hooks). This separation of concerns means templates stay lean — they do not need to know about devenv or Claude Code — while gdev ensures security standards are applied regardless of which template was used.
 
-The template can optionally ship a `.gdev.yaml` that captures project configuration decisions. When it does, gdev's Join mode reads this file and skips most wizard questions (the template author already encoded the right defaults). When it does not, gdev runs full Create mode — ecosystem detection runs on the newly-created project files, and the wizard prompts for the usual questions. This "detect-what-Copier-created" approach ensures gdev works with any template, even those authored before gdev existed.
+The template can optionally ship a `.qsdev.yaml` that captures project configuration decisions. When it does, gdev's Join mode reads this file and skips most wizard questions (the template author already encoded the right defaults). When it does not, gdev runs full Create mode — ecosystem detection runs on the newly-created project files, and the wizard prompts for the usual questions. This "detect-what-Copier-created" approach ensures gdev works with any template, even those authored before gdev existed.
 
 **Code-Grounded Note:** The existing `runInit()` in `cmd/init.go` dispatches to Create/Join/Update/Repair modes via `DetectOnboardingMode()` from Phase 13. The `--from` flag adds a new pre-phase before mode detection: run Copier in a temp directory, move result to destination, then run the normal mode detection. The Copier phase is transparent to the rest of the init flow.
 
-**Desired Outcome:** Developers run `gdev init --from qss/go-service my-new-service` and get a complete project directory with both the template's project structure and gdev's security configuration, having answered only the questions relevant to their choices (template questions and any gdev questions not already encoded in `.gdev.yaml`).
+**Desired Outcome:** Developers run `qsdev init --from qss/go-service my-new-service` and get a complete project directory with both the template's project structure and gdev's security configuration, having answered only the questions relevant to their choices (template questions and any gdev questions not already encoded in `.qsdev.yaml`).
 
 **Steps:**
 
-1. Add `--from <template>` flag to the `gdev init` command in `cmd/init.go`:
+1. Add `--from <template>` flag to the `qsdev init` command in `cmd/init.go`:
    ```go
    var fromTemplate string
    initCmd.Flags().StringVar(&fromTemplate, "from", "", "Copier template name or source URL to scaffold from")
@@ -381,7 +381,7 @@ The template can optionally ship a `.gdev.yaml` that captures project configurat
        if fromTemplate != "" {
            destDir := projectRoot
            if len(args) > 0 {
-               destDir = args[0] // gdev init --from template <directory>
+               destDir = args[0] // qsdev init --from template <directory>
                if err := os.MkdirAll(destDir, 0755); err != nil {
                    return fmt.Errorf("cannot create destination: %w", err)
                }
@@ -400,10 +400,10 @@ The template can optionally ship a `.gdev.yaml` that captures project configurat
                return fmt.Errorf("template scaffolding failed: %w", err)
            }
 
-           fmt.Println("\nTemplate applied. Running gdev initialization...")
+           fmt.Println("\nTemplate applied. Running qsdev initialization...")
        }
 
-       // Phase 1+: Normal gdev init (mode detection runs on the now-populated directory).
+       // Phase 1+: Normal qsdev init (mode detection runs on the now-populated directory).
        result, err := DetectOnboardingMode(projectRoot)
        if err != nil {
            return err
@@ -412,15 +412,15 @@ The template can optionally ship a `.gdev.yaml` that captures project configurat
    }
    ```
 
-4. Implement Join mode detection of template-shipped `.gdev.yaml`:
+4. Implement Join mode detection of template-shipped `.qsdev.yaml`:
    - After Copier phase, `DetectOnboardingMode()` runs on the new directory.
-   - If Copier wrote `.gdev.yaml`: mode is Join. gdev reads it and skips redundant wizard questions.
-   - If Copier did NOT write `.gdev.yaml`: mode is Create. gdev runs full wizard, with ecosystem detection now seeing the template's project files (package.json, go.mod, etc.).
+   - If Copier wrote `.qsdev.yaml`: mode is Join. gdev reads it and skips redundant wizard questions.
+   - If Copier did NOT write `.qsdev.yaml`: mode is Create. gdev runs full wizard, with ecosystem detection now seeing the template's project files (package.json, go.mod, etc.).
    - Log which mode was chosen and why in the terminal output.
 
 5. Handle the directory argument:
-   - `gdev init --from qss/go-service` — initializes current directory.
-   - `gdev init --from qss/go-service my-new-service` — creates `my-new-service/` and initializes it. After init, prints `cd my-new-service && devenv shell`.
+   - `qsdev init --from qss/go-service` — initializes current directory.
+   - `qsdev init --from qss/go-service my-new-service` — creates `my-new-service/` and initializes it. After init, prints `cd my-new-service && devenv shell`.
    - If directory already exists and is non-empty: prompt user before overwriting (or fail with `--yes` if non-interactive).
 
 6. Implement `resolveTemplateSource(nameOrURL string) (string, error)`:
@@ -436,45 +436,45 @@ The template can optionally ship a `.gdev.yaml` that captures project configurat
 8. Write integration tests:
    - `--from` with registered name resolves source and calls Copier.
    - `--from` with direct URL skips registry lookup.
-   - Template with `.gdev.yaml` → Join mode detected after Copier phase.
-   - Template without `.gdev.yaml` → Create mode with ecosystem detection.
+   - Template with `.qsdev.yaml` → Join mode detected after Copier phase.
+   - Template without `.qsdev.yaml` → Create mode with ecosystem detection.
    - `--from` with directory argument creates new directory.
    - Copier failure (non-zero exit) aborts before gdev phase.
-   - Non-existing template name produces friendly error with `gdev template list` suggestion.
+   - Non-existing template name produces friendly error with `qsdev template list` suggestion.
 
 **Acceptance Criteria:**
 - [ ] `--from <name>` looks up template source in registry; `--from <url>` uses URL directly
-- [ ] Copier phase runs before mode detection; gdev init phase runs on Copier output
-- [ ] Template shipping `.gdev.yaml` triggers Join mode (no redundant wizard questions)
-- [ ] Template without `.gdev.yaml` triggers Create mode with detection on template files
-- [ ] `gdev init --from template my-dir` creates `my-dir/` and initializes it
+- [ ] Copier phase runs before mode detection; qsdev init phase runs on Copier output
+- [ ] Template shipping `.qsdev.yaml` triggers Join mode (no redundant wizard questions)
+- [ ] Template without `.qsdev.yaml` triggers Create mode with detection on template files
+- [ ] `qsdev init --from template my-dir` creates `my-dir/` and initializes it
 - [ ] Copier failure produces `CopierFailedError` with stderr and aborts before gdev phase
 - [ ] `resolveTemplateSource` handles registered names, URLs, and local paths
 - [ ] Registry `LastUsedVersion` updated after successful copy
-- [ ] Unknown template name produces error with `gdev template list` hint
+- [ ] Unknown template name produces error with `qsdev template list` hint
 
 **Research Citations:**
-- `research-spikes/gdev-ecosystem-expansion-assessment/copier-integration-research.md` — two-phase orchestration design, template `.gdev.yaml` conventions
+- `research-spikes/gdev-ecosystem-expansion-assessment/copier-integration-research.md` — two-phase orchestration design, template `.qsdev.yaml` conventions
 
 **Status:** Not Started
 
 ---
 
-### Unit 31.4: `gdev update --template`
+### Unit 31.4: `qsdev update --template`
 
-**Description:** Implement `gdev update --template` to pull the latest version of the Copier template that created the current project. If the update changes `.gdev.yaml`, gdev automatically reconciles by running `gdev init --update`. If the update touches files tracked by gdev's hash system, users are warned about potential conflicts.
+**Description:** Implement `qsdev update --template` to pull the latest version of the Copier template that created the current project. If the update changes `.qsdev.yaml`, gdev automatically reconciles by running `qsdev init --update`. If the update touches files tracked by gdev's hash system, users are warned about potential conflicts.
 
 **Context:** Copier stores answers in `.copier-answers.yml` at the project root, which records the template source, the last-used git ref, and all answers given during `copier copy`. The `copier update` command reads this file and re-applies the template at the latest version, merging changes with user modifications. This is Copier's core value proposition for long-lived projects: templates can be updated and changes propagate forward.
 
-The gdev integration adds a reconciliation step: if `copier update` modifies `.gdev.yaml` (the template author updated their gdev defaults), gdev must re-run its generation pipeline to propagate those changes to devenv.nix, settings.json, and other generated files. If `copier update` modifies files that gdev tracks (e.g., the template directly modifies .pre-commit-config.yaml), gdev's hash-based modification detection will detect the change on the next `gdev init` or `gdev check` run and report drift.
+The gdev integration adds a reconciliation step: if `copier update` modifies `.qsdev.yaml` (the template author updated their gdev defaults), gdev must re-run its generation pipeline to propagate those changes to devenv.nix, settings.json, and other generated files. If `copier update` modifies files that gdev tracks (e.g., the template directly modifies .pre-commit-config.yaml), gdev's hash-based modification detection will detect the change on the next `qsdev init` or `qsdev check` run and report drift.
 
-**Code-Grounded Note:** The `.copier-answers.yml` file at the project root is Copier's state file. `gdev update --template` should check for this file's existence before proceeding — it's the signal that the project was created by Copier. Projects not created by Copier get a clear error rather than a confusing Copier error.
+**Code-Grounded Note:** The `.copier-answers.yml` file at the project root is Copier's state file. `qsdev update --template` should check for this file's existence before proceeding — it's the signal that the project was created by Copier. Projects not created by Copier get a clear error rather than a confusing Copier error.
 
-**Desired Outcome:** `gdev update --template` pulls the latest template changes, merges them with local modifications, and keeps gdev's generated configuration consistent with the updated template. The operation is idempotent — running it when already at the latest version is a no-op.
+**Desired Outcome:** `qsdev update --template` pulls the latest template changes, merges them with local modifications, and keeps gdev's generated configuration consistent with the updated template. The operation is idempotent — running it when already at the latest version is a no-op.
 
 **Steps:**
 
-1. Add `--template` flag to the `gdev update` command:
+1. Add `--template` flag to the `qsdev update` command:
    ```go
    var updateTemplate bool
    updateCmd.Flags().BoolVar(&updateTemplate, "template", false, "Pull latest version of the Copier template that created this project")
@@ -499,10 +499,10 @@ The gdev integration adds a reconciliation step: if `copier update` modifies `.g
 3. Implement post-update reconciliation:
    ```go
    func reconcileAfterTemplateUpdate(projectRoot string, changedFiles []string) error {
-       // Check if .gdev.yaml changed.
-       gdevYamlChanged := contains(changedFiles, ".gdev.yaml")
+       // Check if .qsdev.yaml changed.
+       gdevYamlChanged := contains(changedFiles, ".qsdev.yaml")
        if gdevYamlChanged {
-           fmt.Println("Template updated .gdev.yaml. Re-running gdev configuration...")
+           fmt.Println("Template updated .qsdev.yaml. Re-running qsdev configuration...")
            return runUpdateMode(projectRoot)  // Phase 8 update flow
        }
 
@@ -513,7 +513,7 @@ The gdev integration adds a reconciliation step: if `copier update` modifies `.g
            for _, f := range gdevTrackedChanged {
                fmt.Printf("  %s\n", f)
            }
-           fmt.Println("Run 'gdev check' to verify configuration consistency.")
+           fmt.Println("Run 'qsdev check' to verify configuration consistency.")
        }
 
        return nil
@@ -532,28 +532,28 @@ The gdev integration adds a reconciliation step: if `copier update` modifies `.g
    - Print the list of files that would be added/modified/deleted.
    - Do not run reconciliation (nothing changed).
 
-7. Wire into the `gdev update` command:
-   - `gdev update --template`: template update only.
-   - `gdev update`: existing gdev-config update (Phase 8), unchanged behavior.
-   - `gdev update --template --yes`: non-interactive, uses defaults for new Copier questions.
+7. Wire into the `qsdev update` command:
+   - `qsdev update --template`: template update only.
+   - `qsdev update`: existing gdev-config update (Phase 8), unchanged behavior.
+   - `qsdev update --template --yes`: non-interactive, uses defaults for new Copier questions.
 
 8. Write integration tests:
    - Project without `.copier-answers.yml` produces clear error.
-   - Template update that does NOT change `.gdev.yaml` → warns about tracked files if any changed.
-   - Template update that changes `.gdev.yaml` → triggers gdev Update mode.
+   - Template update that does NOT change `.qsdev.yaml` → warns about tracked files if any changed.
+   - Template update that changes `.qsdev.yaml` → triggers gdev Update mode.
    - `--dry-run` shows what would change without writing.
    - `--yes` runs with `--defaults` for Copier questions.
 
 **Acceptance Criteria:**
-- [ ] `gdev update --template` checks for `.copier-answers.yml` before proceeding
+- [ ] `qsdev update --template` checks for `.copier-answers.yml` before proceeding
 - [ ] Absence of `.copier-answers.yml` produces a clear error (not a Copier error)
 - [ ] Copier update output (file additions/modifications/deletions) displayed to user
-- [ ] If template update changes `.gdev.yaml`, gdev Update mode runs automatically
-- [ ] If template update touches gdev-tracked files, user is warned with `gdev check` suggestion
+- [ ] If template update changes `.qsdev.yaml`, gdev Update mode runs automatically
+- [ ] If template update touches gdev-tracked files, user is warned with `qsdev check` suggestion
 - [ ] `--dry-run` shows changes without writing
 - [ ] `--yes` passes `--defaults` to Copier for non-interactive CI use
 - [ ] Registry `LastUsedVersion` updated after successful update
-- [ ] `gdev update` (without `--template`) is unchanged
+- [ ] `qsdev update` (without `--template`) is unchanged
 
 **Research Citations:**
 - `research-spikes/gdev-ecosystem-expansion-assessment/copier-integration-research.md` — `copier update` behavior, `.copier-answers.yml` format, conflict resolution
@@ -564,19 +564,19 @@ The gdev integration adds a reconciliation step: if `copier update` modifies `.g
 
 ### Unit 31.5: Non-Interactive Template Support
 
-**Description:** Implement `gdev init --from <template> --data answers.yaml --yes` for fully non-interactive project creation from CI pipelines or scripted onboarding. The `--data` file supports both Copier answers and gdev answers in separate sections. The command validates that all required answers are present before starting (fail-fast, not mid-wizard).
+**Description:** Implement `qsdev init --from <template> --data answers.yaml --yes` for fully non-interactive project creation from CI pipelines or scripted onboarding. The `--data` file supports both Copier answers and gdev answers in separate sections. The command validates that all required answers are present before starting (fail-fast, not mid-wizard).
 
-**Context:** The primary use case is CI-driven project setup: an organization's "new project" pipeline clones a repository, runs `gdev init --from qss/go-service --data ./project-answers.yaml --yes`, and gets a fully configured project committed. The `--data` file encodes decisions that would otherwise require interactive answers from both Copier (project name, description, Go version) and gdev (profile, services, compliance level).
+**Context:** The primary use case is CI-driven project setup: an organization's "new project" pipeline clones a repository, runs `qsdev init --from qss/go-service --data ./project-answers.yaml --yes`, and gets a fully configured project committed. The `--data` file encodes decisions that would otherwise require interactive answers from both Copier (project name, description, Go version) and gdev (profile, services, compliance level).
 
 Two sources of required answers exist: Copier's `copier.yaml` defines its questions (parseable from the template source before copying), and gdev's wizard defines its questions. The `--data` file uses a two-section structure to keep them separate, avoiding namespace collisions (both Copier and gdev might have a `project_name` question, but they mean different things).
 
-**Desired Outcome:** `gdev init --from template --data answers.yaml --yes` exits 0 with a fully configured project directory, having asked zero interactive questions. It exits non-zero before any writes if any required answer is missing, with a clear list of what's needed.
+**Desired Outcome:** `qsdev init --from template --data answers.yaml --yes` exits 0 with a fully configured project directory, having asked zero interactive questions. It exits non-zero before any writes if any required answer is missing, with a clear list of what's needed.
 
 **Steps:**
 
 1. Define the `--data` file schema:
    ```yaml
-   # Project answers file for gdev init --from <template> --data <this-file>
+   # Project answers file for qsdev init --from <template> --data <this-file>
    # Split into two sections: copier (Copier template answers) and gdev (gdev wizard answers).
 
    copier:
@@ -636,7 +636,7 @@ Two sources of required answers exist: Copier's `copier.yaml` defines its questi
    - Cache result for the session to avoid multiple Copier invocations.
 
 6. Implement a `--validate-data` flag:
-   - `gdev init --from template --data answers.yaml --validate-data`: runs pre-flight validation only, exits 0 if all required answers are present, exits 1 with missing answer list if not.
+   - `qsdev init --from template --data answers.yaml --validate-data`: runs pre-flight validation only, exits 0 if all required answers are present, exits 1 with missing answer list if not.
    - Useful in CI to check a data file before committing it to a pipeline.
 
 7. Write unit tests:
@@ -667,13 +667,13 @@ Two sources of required answers exist: Copier's `copier.yaml` defines its questi
 
 ### Unit 31.6: Template Authoring Specification
 
-**Description:** Implement `gdev template --help-authoring` that prints the template authoring guide, and implement template structure validation on `gdev template add`. The guide documents conventions for creating Copier templates that work with gdev, including where to put `.gdev.yaml`, how to declare ecosystem dependencies, and how to include `.claude/` directory contents.
+**Description:** Implement `qsdev template --help-authoring` that prints the template authoring guide, and implement template structure validation on `qsdev template add`. The guide documents conventions for creating Copier templates that work with gdev, including where to put `.qsdev.yaml`, how to declare ecosystem dependencies, and how to include `.claude/` directory contents.
 
-**Context:** Template authors need a clear contract: if they follow these conventions, their template will integrate cleanly with gdev. The conventions are intentionally minimal — most templates need no gdev-specific content at all, and gdev will work regardless (by running Create mode on the template output). The guide exists to help authors who *want* to provide a better-integrated experience by pre-encoding gdev configuration in the template.
+**Context:** Template authors need a clear contract: if they follow these conventions, their template will integrate cleanly with gdev. The conventions are intentionally minimal — most templates need no gdev-specific content at all, and gdev will work regardless (by running Create mode on the template output). The guide exists to help authors who *want* to provide a better-integrated experience by pre-encoding qsdev configuration in the template.
 
-Template validation on `gdev template add` catches common authoring mistakes early rather than at `gdev init` time. The validator checks structural issues (not content issues — those require running the template, which validation intentionally avoids).
+Template validation on `qsdev template add` catches common authoring mistakes early rather than at `qsdev init` time. The validator checks structural issues (not content issues — those require running the template, which validation intentionally avoids).
 
-**Desired Outcome:** A template author reads `gdev template --help-authoring`, follows the conventions, and their template produces a project that, after `gdev init --from template`, has the full gdev security stack applied and the user answered only template-specific questions (not re-asked about Go version, profile, etc.).
+**Desired Outcome:** A template author reads `qsdev template --help-authoring`, follows the conventions, and their template produces a project that, after `qsdev init --from template`, has the full gdev security stack applied and the user answered only template-specific questions (not re-asked about Go version, profile, etc.).
 
 **Steps:**
 
@@ -682,14 +682,14 @@ Template validation on `gdev template add` catches common authoring mistakes ear
    The guide should cover these sections:
    - **Overview:** how the two-phase flow works; what gdev does vs what the template should do.
    - **Minimal template (no gdev integration):** any Copier template works; gdev runs Create mode on the output.
-   - **Enhanced integration:** ship `.gdev.yaml` in the template to pre-encode gdev configuration; gdev runs Join mode and skips redundant questions.
-   - **`.gdev.yaml` in templates:** the file is templated by Copier (can use Copier variables like `{{project_name}}`); example for a Go service template.
+   - **Enhanced integration:** ship `.qsdev.yaml` in the template to pre-encode qsdev configuration; gdev runs Join mode and skips redundant questions.
+   - **`.qsdev.yaml` in templates:** the file is templated by Copier (can use Copier variables like `{{project_name}}`); example for a Go service template.
    - **Ecosystem hints:** how to declare languages and services so gdev skips detection.
    - **`.claude/` directory:** templates can ship `.claude/skills/`, `.claude/rules/`, `.claude/agents/` content; gdev merges (does not overwrite) its own generated content.
    - **Example template structure:** a complete directory tree for a well-integrated template.
-   - **Validation checklist:** what `gdev template add` checks.
+   - **Validation checklist:** what `qsdev template add` checks.
 
-2. Implement `gdev template --help-authoring` by adding a `--help-authoring` flag to `gdev template`:
+2. Implement `qsdev template --help-authoring` by adding a `--help-authoring` flag to `qsdev template`:
    ```go
    var helpAuthoring bool
    templateCmd.Flags().BoolVar(&helpAuthoring, "help-authoring", false, "Show guide for creating Copier templates that integrate with gdev")
@@ -714,11 +714,11 @@ Template validation on `gdev template add` catches common authoring mistakes ear
    func ValidateTemplateStructure(templateDir string) []TemplateValidationWarning
    ```
    - Check for `copier.yaml` or `copier.yml` at root. If absent: warn `NO_COPIER_YAML` — "Template has no copier.yaml. Is this a Copier template?".
-   - Check for `.gdev.yaml` at root (or inside a template subdirectory if using a `_template/` layout). If present: validate it parses without error.
-   - Check for `.gdev.yaml` inside `{{project_name}}/` or similar variable directory — this is the expected location for templates that use subdirectory layouts.
+   - Check for `.qsdev.yaml` at root (or inside a template subdirectory if using a `_template/` layout). If present: validate it parses without error.
+   - Check for `.qsdev.yaml` inside `{{project_name}}/` or similar variable directory — this is the expected location for templates that use subdirectory layouts.
    - Check `.claude/` directory: if present, verify no files that gdev manages (settings.json, CLAUDE.md root file) would be overwritten. Warn if `settings.json` is in the template (gdev generates its own).
 
-4. Wire validation into `gdev template add`:
+4. Wire validation into `qsdev template add`:
    - After reachability check: clone the template to a temp directory (using `copier copy --pretend`).
    - Run `ValidateTemplateStructure()` on the cloned directory.
    - Print warnings (never errors — template is still registered):
@@ -729,7 +729,7 @@ Template validation on `gdev template add` catches common authoring mistakes ear
      ```
    - `--skip-validate` suppresses validation.
 
-5. Add `gdev template validate <name>` subcommand:
+5. Add `qsdev template validate <name>` subcommand:
    - Looks up template source, clones to temp dir, runs `ValidateTemplateStructure()`, prints results.
    - Useful for template authors to check their template before publishing.
    - `--json` output: array of `TemplateValidationWarning`.
@@ -738,21 +738,21 @@ Template validation on `gdev template add` catches common authoring mistakes ear
    - Valid template (has copier.yaml, no conflicting files) → no warnings.
    - Missing copier.yaml → `NO_COPIER_YAML` warning.
    - Template with settings.json → warning about gdev-managed file conflict.
-   - `.gdev.yaml` that does not parse → warning with parse error included.
-   - `gdev template validate` exits 0 even with warnings (informational only).
+   - `.qsdev.yaml` that does not parse → warning with parse error included.
+   - `qsdev template validate` exits 0 even with warnings (informational only).
 
 **Acceptance Criteria:**
-- [ ] `gdev template --help-authoring` prints the authoring guide covering overview, minimal integration, enhanced integration, `.gdev.yaml` conventions, `.claude/` directory conventions, and example structure
-- [ ] `gdev template add` runs `ValidateTemplateStructure()` after reachability check and prints warnings
+- [ ] `qsdev template --help-authoring` prints the authoring guide covering overview, minimal integration, enhanced integration, `.qsdev.yaml` conventions, `.claude/` directory conventions, and example structure
+- [ ] `qsdev template add` runs `ValidateTemplateStructure()` after reachability check and prints warnings
 - [ ] Warnings are non-blocking (template is registered regardless)
 - [ ] `--skip-validate` suppresses all validation
-- [ ] `gdev template validate <name>` subcommand available for template authors
-- [ ] `ValidateTemplateStructure` detects: missing copier.yaml, conflicting settings.json, unparseable .gdev.yaml
+- [ ] `qsdev template validate <name>` subcommand available for template authors
+- [ ] `ValidateTemplateStructure` detects: missing copier.yaml, conflicting settings.json, unparseable .qsdev.yaml
 - [ ] All validation findings are warnings (never errors) — a template may still work even if it violates conventions
-- [ ] `--json` output on `gdev template validate` for tooling integration
+- [ ] `--json` output on `qsdev template validate` for tooling integration
 
 **Research Citations:**
-- `research-spikes/gdev-ecosystem-expansion-assessment/copier-integration-research.md` — template authoring conventions, `.gdev.yaml` in Copier templates, `.claude/` directory handling
+- `research-spikes/gdev-ecosystem-expansion-assessment/copier-integration-research.md` — template authoring conventions, `.qsdev.yaml` in Copier templates, `.claude/` directory handling
 
 **Status:** Not Started
 
@@ -764,22 +764,22 @@ Template validation on `gdev template add` catches common authoring mistakes ear
 
 | Command | Parent | Notes |
 |---------|--------|-------|
-| `gdev template` | root | New command group |
-| `gdev template add` | template | |
-| `gdev template list` | template | |
-| `gdev template remove` | template | |
-| `gdev template validate` | template | |
-| `gdev template --help-authoring` | template | Flag on template root |
+| `qsdev template` | root | New command group |
+| `qsdev template add` | template | |
+| `qsdev template list` | template | |
+| `qsdev template remove` | template | |
+| `qsdev template validate` | template | |
+| `qsdev template --help-authoring` | template | Flag on template root |
 
 ### Flags Added to Existing Commands
 
 | Command | Flag | Notes |
 |---------|------|-------|
-| `gdev init` | `--from <template>` | Triggers Copier phase before mode detection |
-| `gdev init` | `--data <file>` | Answers file with `copier:` and `gdev:` sections |
-| `gdev update` | `--template` | Runs `copier update` |
-| `gdev update` | `--template --dry-run` | `copier update --pretend` |
-| `gdev setup` | `--org-templates <url>` | Seeds template registry from remote URL |
+| `qsdev init` | `--from <template>` | Triggers Copier phase before mode detection |
+| `qsdev init` | `--data <file>` | Answers file with `copier:` and `gdev:` sections |
+| `qsdev update` | `--template` | Runs `copier update` |
+| `qsdev update` | `--template --dry-run` | `copier update --pretend` |
+| `qsdev setup` | `--org-templates <url>` | Seeds template registry from remote URL |
 
 ### New Packages
 
@@ -799,13 +799,13 @@ Template validation on `gdev template add` catches common authoring mistakes ear
 ## Phase Completion Criteria
 
 - [ ] All six units pass acceptance criteria
-- [ ] `gdev template add/list/remove` manage `~/.qsdev/templates.yaml`
-- [ ] `gdev init --from <template>` runs Copier then gdev in sequence
-- [ ] Template with `.gdev.yaml` → Join mode (no redundant wizard questions)
-- [ ] Template without `.gdev.yaml` → Create mode with detection on template output
-- [ ] `gdev update --template` pulls latest version and reconciles `.gdev.yaml` changes
-- [ ] `gdev init --from template --data answers.yaml --yes` is fully non-interactive
+- [ ] `qsdev template add/list/remove` manage `~/.qsdev/templates.yaml`
+- [ ] `qsdev init --from <template>` runs Copier then gdev in sequence
+- [ ] Template with `.qsdev.yaml` → Join mode (no redundant wizard questions)
+- [ ] Template without `.qsdev.yaml` → Create mode with detection on template output
+- [ ] `qsdev update --template` pulls latest version and reconciles `.qsdev.yaml` changes
+- [ ] `qsdev init --from template --data answers.yaml --yes` is fully non-interactive
 - [ ] Pre-flight validation fails fast on missing required answers before any writes
-- [ ] `gdev template --help-authoring` prints actionable authoring guide
-- [ ] Template validation warnings displayed on `gdev template add`
-- [ ] `gdev setup --org-templates <url>` seeds registry without overwriting user entries
+- [ ] `qsdev template --help-authoring` prints actionable authoring guide
+- [ ] Template validation warnings displayed on `qsdev template add`
+- [ ] `qsdev setup --org-templates <url>` seeds registry without overwriting user entries

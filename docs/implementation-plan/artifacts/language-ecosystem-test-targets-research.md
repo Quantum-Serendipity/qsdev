@@ -1,6 +1,6 @@
 # Language Ecosystem Test Targets Research
 
-End-to-end validation targets for gdev `gdev init` across 27 language/platform ecosystems. Each ecosystem has two test types: **Type A** (new project creation / greenfield) and **Type B** (existing project onboarding / brownfield).
+End-to-end validation targets for gdev `qsdev init` across 27 language/platform ecosystems. Each ecosystem has two test types: **Type A** (new project creation / greenfield) and **Type B** (existing project onboarding / brownfield).
 
 **Last updated:** 2026-05-12
 
@@ -1110,7 +1110,7 @@ These repos combine multiple ecosystems and test gdev's composition logic — de
 - **License:** MIT
 - **Stars:** ~5.7K
 - **Ecosystems:** TypeScript frontend, Node.js backend, Docker (Dockerfile + compose), possible Terraform deployment
-- **Why:** Tests the most common full-stack web app pattern with containerization. Validates that `gdev init` detects multiple ecosystems and generates a unified devenv.nix.
+- **Why:** Tests the most common full-stack web app pattern with containerization. Validates that `qsdev init` detects multiple ecosystems and generates a unified devenv.nix.
 
 **Verification:**
 - [ ] All detected ecosystems appear in devenv.nix
@@ -1241,14 +1241,14 @@ When multiple ecosystems are detected, gdev must resolve conflicts:
 For each ecosystem, the test harness should:
 1. Create a temp directory
 2. Run the new-project commands listed above
-3. Run `gdev init --yes`
+3. Run `qsdev init --yes`
 4. Verify all checklist items programmatically (file existence, content assertions)
 5. Run `devenv shell --command "echo ok"` to validate the generated devenv.nix parses
 
 ### Phase 2: Brownfield (Type B) — Semi-Automated
 For each ecosystem, the test harness should:
 1. `git clone --depth=1` the target repo into a temp directory
-2. Run `gdev init` (interactive or with `--yes`)
+2. Run `qsdev init` (interactive or with `--yes`)
 3. Verify checklist items
 4. Verify NO clobbering: diff existing config files to ensure user content preserved
 5. Verify merge behavior: security additions appear alongside existing content
@@ -1256,7 +1256,7 @@ For each ecosystem, the test harness should:
 ### Phase 3: Polyglot (Combo) — Manual + Automated
 For each combo repo:
 1. Clone the repo
-2. Run `gdev init --yes`
+2. Run `qsdev init --yes`
 3. Verify ALL detected ecosystems appear in devenv.nix
 4. Verify security configs generated for each detected ecosystem
 5. Verify no conflicts between ecosystem configs

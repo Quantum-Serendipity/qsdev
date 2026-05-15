@@ -2,7 +2,7 @@
 
 ## Goal
 
-Implement a project-level configuration file (`.gdev.yaml`) that captures project settings, team standards, and client-specific profiles, enabling a three-layer configuration resolution system (binary defaults -> project config -> local overrides). Add four onboarding modes to `gdev init` (Create/Join/Update/Repair) so returning engineers get a working environment in under 2 minutes. Implement `gdev check` as a CI enforcement command.
+Implement a project-level configuration file (`.qsdev.yaml`) that captures project settings, team standards, and client-specific profiles, enabling a three-layer configuration resolution system (binary defaults -> project config -> local overrides). Add four onboarding modes to `qsdev init` (Create/Join/Update/Repair) so returning engineers get a working environment in under 2 minutes. Implement `qsdev check` as a CI enforcement command.
 
 ## Dependencies
 
@@ -10,33 +10,33 @@ Phase 1 complete (shared types, ecosystem module interface, detection engine). P
 
 ## Phase Outputs
 
-- `.gdev.yaml` project configuration file format and parser
-- `.gdev.local.yaml` gitignored developer overrides
+- `.qsdev.yaml` project configuration file format and parser
+- `.qsdev.local.yaml` gitignored developer overrides
 - Three-layer config resolution engine with security floor enforcement
 - Config schema versioning (`version: 1`) with migration chain
 - `gdev_version` semver constraint (Terraform pattern)
-- Four onboarding modes in `gdev init` (Create/Join/Update/Repair)
-- `gdev check` CI enforcement command with 5 check categories
+- Four onboarding modes in `qsdev init` (Create/Join/Update/Repair)
+- `qsdev check` CI enforcement command with 5 check categories
 - Client-specific profiles with compliance levels (baseline/enhanced/strict)
 
 ---
 
-### Unit 13.1: .gdev.yaml Schema & Parser
+### Unit 13.1: .qsdev.yaml Schema & Parser
 
-**Description:** Define the YAML schema for `.gdev.yaml`, the project-level configuration file that captures all project settings, team standards, and client-specific profiles. Implement Go struct types with YAML tags, a schema validator, and versioned parsing.
+**Description:** Define the YAML schema for `.qsdev.yaml`, the project-level configuration file that captures all project settings, team standards, and client-specific profiles. Implement Go struct types with YAML tags, a schema validator, and versioned parsing.
 
-**Context:** The three-layer configuration hierarchy (org defaults -> `.gdev.yaml` -> `.gdev.local.yaml`) was designed in the team-config-sharing research. `.gdev.yaml` is the middle layer: checked into git, shared across the team, and the primary source of truth for project configuration. It follows the file-in-repo pattern used by mise (`.mise.toml`), proto (`.prototools`), and EditorConfig. The `version` field (integer) tracks config schema versions separately from the gdev binary version, following JSON Schema versioning best practices. The `gdev_version` field (semver constraint string) follows the Terraform `required_version` pattern.
+**Context:** The three-layer configuration hierarchy (org defaults -> `.qsdev.yaml` -> `.qsdev.local.yaml`) was designed in the team-config-sharing research. `.qsdev.yaml` is the middle layer: checked into git, shared across the team, and the primary source of truth for project configuration. It follows the file-in-repo pattern used by mise (`.mise.toml`), proto (`.prototools`), and EditorConfig. The `version` field (integer) tracks config schema versions separately from the gdev binary version, following JSON Schema versioning best practices. The `gdev_version` field (semver constraint string) follows the Terraform `required_version` pattern.
 
-**Code-Grounded Note:** The current codebase already saves wizard answers at `.devinit/.gdev-init-answers.yaml` (see `addons/devinit/answers.go:24-25`) and state at `.devinit/.gdev-init-state.yaml`. The new `.gdev.yaml` is a PUBLIC-FACING project config that coexists alongside these internal files. `.gdev.yaml` captures project intent (profile, ecosystems, tools, compliance level); `.devinit/` answers capture full wizard details (every question answered during `gdev init`). The config resolution engine (Unit 13.2) reads `.gdev.yaml` first and uses it to seed `WizardAnswers`, which then flows through the existing generation pipeline unchanged.
+**Code-Grounded Note:** The current codebase already saves wizard answers at `.devinit/.qsdev-init-answers.yaml` (see `addons/devinit/answers.go:24-25`) and state at `.devinit/.qsdev-init-state.yaml`. The new `.qsdev.yaml` is a PUBLIC-FACING project config that coexists alongside these internal files. `.qsdev.yaml` captures project intent (profile, ecosystems, tools, compliance level); `.devinit/` answers capture full wizard details (every question answered during `qsdev init`). The config resolution engine (Unit 13.2) reads `.qsdev.yaml` first and uses it to seed `WizardAnswers`, which then flows through the existing generation pipeline unchanged.
 
 The schema must be forward-compatible: older binaries reading a v1 config with unknown fields should ignore them gracefully. Required fields are minimal (`version` only); everything else has compiled-in defaults.
 
-**Desired Outcome:** A complete `.gdev.yaml` schema definition with Go types, a parser that loads and validates the file, and clear error messages for schema violations. The parser handles missing optional fields by returning compiled defaults, and rejects unknown `version` values with actionable upgrade instructions.
+**Desired Outcome:** A complete `.qsdev.yaml` schema definition with Go types, a parser that loads and validates the file, and clear error messages for schema violations. The parser handles missing optional fields by returning compiled defaults, and rejects unknown `version` values with actionable upgrade instructions.
 
 **Steps:**
 1. Define the root `GdevConfig` struct in `pkg/types/config.go`:
    ```go
-   // GdevConfig is the schema for .gdev.yaml project configuration.
+   // GdevConfig is the schema for .qsdev.yaml project configuration.
    type GdevConfig struct {
        // Schema version (integer, required). Determines which parser/migrator to use.
        Version int `yaml:"version" validate:"required,min=1"`
@@ -58,7 +58,7 @@ The schema must be forward-compatible: older binaries reading a v1 config with u
        // Security settings.
        Security SecurityConfig `yaml:"security,omitempty"`
 
-       // Tool enablement overrides (complement to gdev enable/disable).
+       // Tool enablement overrides (complement to qsdev enable/disable).
        Tools ToolsConfig `yaml:"tools,omitempty"`
 
        // Claude Code settings.
@@ -128,9 +128,9 @@ The schema must be forward-compatible: older binaries reading a v1 config with u
    ```
 3. Implement `ParseGdevConfig(path string) (*GdevConfig, error)`:
    - Read file, unmarshal YAML.
-   - Check `version` field first. If missing: error with "`.gdev.yaml` must include a `version` field (e.g., `version: 1`)".
-   - If `version` > `MaxSupportedVersion`: error with "This `.gdev.yaml` uses config version N, but your gdev only supports up to version M. Run `gdev self-update`."
-   - If `version` < `MinSupportedVersion`: error with "Config version N is no longer supported. Minimum supported version is M. Run `gdev config migrate` with gdev >= X.Y.Z."
+   - Check `version` field first. If missing: error with "`.qsdev.yaml` must include a `version` field (e.g., `version: 1`)".
+   - If `version` > `MaxSupportedVersion`: error with "This `.qsdev.yaml` uses config version N, but your gdev only supports up to version M. Run `qsdev self-update`."
+   - If `version` < `MinSupportedVersion`: error with "Config version N is no longer supported. Minimum supported version is M. Run `qsdev config migrate` with gdev >= X.Y.Z."
    - Run struct validation (go-playground/validator or equivalent).
    - Return parsed config.
 4. Implement `ValidateGdevConfig(cfg *GdevConfig) []ValidationError`:
@@ -164,9 +164,9 @@ The schema must be forward-compatible: older binaries reading a v1 config with u
 
 **Acceptance Criteria:**
 - [ ] `GdevConfig` struct with YAML tags covers all fields from the research design
-- [ ] `ParseGdevConfig` loads valid `.gdev.yaml` files and returns structured config
+- [ ] `ParseGdevConfig` loads valid `.qsdev.yaml` files and returns structured config
 - [ ] Missing `version` field produces a clear, actionable error message
-- [ ] Unknown config version produces an error with `gdev self-update` instructions
+- [ ] Unknown config version produces an error with `qsdev self-update` instructions
 - [ ] Unknown YAML fields are silently ignored (forward compatibility)
 - [ ] `ValidateGdevConfig` reports all validation errors with field paths
 - [ ] `DefaultGdevConfig` returns compiled org defaults
@@ -174,7 +174,7 @@ The schema must be forward-compatible: older binaries reading a v1 config with u
 - [ ] Unit tests cover valid config, missing version, unknown version, invalid enum, unknown fields, and minimal config
 
 **Research Citations:**
-- `research-spikes/gdev-team-config-onboarding/team-config-sharing-research.md` -- three-layer hierarchy design, `.gdev.yaml` field definitions
+- `research-spikes/gdev-team-config-onboarding/team-config-sharing-research.md` -- three-layer hierarchy design, `.qsdev.yaml` field definitions
 - `research-spikes/gdev-team-config-onboarding/config-versioning-drift-research.md` -- `version` (integer) and `gdev_version` (semver constraint) field design
 - `research-spikes/gdev-team-config-onboarding/consulting-lifecycle-research.md` -- `client` block schema, compliance level mapping
 - `research-spikes/gdev-extension-design/addon-architecture-design.md` -- profile system, config key namespacing
@@ -185,20 +185,20 @@ The schema must be forward-compatible: older binaries reading a v1 config with u
 
 ### Unit 13.2: Configuration Resolution Engine
 
-**Description:** Implement the three-layer deep merge engine that resolves final configuration from binary compiled defaults, `.gdev.yaml` project config, and `.gdev.local.yaml` local overrides. Enforce security floors so local overrides cannot weaken project-level security settings.
+**Description:** Implement the three-layer deep merge engine that resolves final configuration from binary compiled defaults, `.qsdev.yaml` project config, and `.qsdev.local.yaml` local overrides. Enforce security floors so local overrides cannot weaken project-level security settings.
 
-**Context:** The three-layer resolution order is: org defaults (compiled into binary) -> profile (compiled, selected by `.gdev.yaml` profile field) -> `.gdev.yaml` overrides -> `.gdev.local.yaml` overrides. Each layer deep-merges with the previous. The research established clear merge semantics: lists use union for additive fields (permissions, extra packages) and replacement for selective fields (languages, services); maps merge recursively; scalars use last-wins. The critical constraint is the security floor: the `security.level` acts as a minimum that cannot be lowered by lower-priority layers, and `client.blocked_mcp_servers` cannot be unblocked.
+**Context:** The three-layer resolution order is: org defaults (compiled into binary) -> profile (compiled, selected by `.qsdev.yaml` profile field) -> `.qsdev.yaml` overrides -> `.qsdev.local.yaml` overrides. Each layer deep-merges with the previous. The research established clear merge semantics: lists use union for additive fields (permissions, extra packages) and replacement for selective fields (languages, services); maps merge recursively; scalars use last-wins. The critical constraint is the security floor: the `security.level` acts as a minimum that cannot be lowered by lower-priority layers, and `client.blocked_mcp_servers` cannot be unblocked.
 
-`.gdev.local.yaml` uses the same schema as `.gdev.yaml` minus the `version`, `gdev_version`, and `client` fields (those are project-level concerns, not developer-level). It is automatically added to `.gitignore` on first `gdev init`.
+`.qsdev.local.yaml` uses the same schema as `.qsdev.yaml` minus the `version`, `gdev_version`, and `client` fields (those are project-level concerns, not developer-level). It is automatically added to `.gitignore` on first `qsdev init`.
 
-**Code-Grounded Note:** The existing `MergeProfileWithFlags()` at `addons/devinit/profile_convert.go:72-121` already handles profile-to-answers merging and should be the model for `.gdev.yaml`-to-answers merging. Its semantics: languages REPLACE entirely when specified; services APPEND. The resolution engine extends this same pattern to three layers (org -> project -> local) rather than inventing new merge logic. The output of resolution should produce a `WizardAnswers` that is indistinguishable from one produced by the interactive wizard, ensuring the downstream generation pipeline needs no changes.
+**Code-Grounded Note:** The existing `MergeProfileWithFlags()` at `addons/devinit/profile_convert.go:72-121` already handles profile-to-answers merging and should be the model for `.qsdev.yaml`-to-answers merging. Its semantics: languages REPLACE entirely when specified; services APPEND. The resolution engine extends this same pattern to three layers (org -> project -> local) rather than inventing new merge logic. The output of resolution should produce a `WizardAnswers` that is indistinguishable from one produced by the interactive wizard, ensuring the downstream generation pipeline needs no changes.
 
 **Desired Outcome:** `ResolveConfig()` produces a fully resolved `GdevConfig` that correctly merges all layers, enforces security floors, and provides verbose logging of which layer set each value (for debugging via `--verbose`).
 
 **Steps:**
 1. Define `LocalConfig` struct (subset of `GdevConfig` without project-level fields):
    ```go
-   // LocalConfig is the schema for .gdev.local.yaml (developer overrides).
+   // LocalConfig is the schema for .qsdev.local.yaml (developer overrides).
    type LocalConfig struct {
        // Language overrides (e.g., different Go version for testing).
        Languages []LanguageConfig `yaml:"languages,omitempty"`
@@ -222,7 +222,7 @@ The schema must be forward-compatible: older binaries reading a v1 config with u
    type ResolutionTrace struct {
        Field  string // dot-path, e.g., "security.level"
        Value  any
-       Source string // "org-default", "profile:go-web", "project:.gdev.yaml", "local:.gdev.local.yaml"
+       Source string // "org-default", "profile:go-web", "project:.qsdev.yaml", "local:.qsdev.local.yaml"
    }
 
    type ResolvedConfig struct {
@@ -233,8 +233,8 @@ The schema must be forward-compatible: older binaries reading a v1 config with u
    func ResolveConfig(
        orgDefaults *GdevConfig,
        profile *GdevConfig,       // nil if no profile selected
-       project *GdevConfig,       // nil if no .gdev.yaml
-       local *LocalConfig,        // nil if no .gdev.local.yaml
+       project *GdevConfig,       // nil if no .qsdev.yaml
+       local *LocalConfig,        // nil if no .qsdev.local.yaml
        verbose bool,
    ) (*ResolvedConfig, error)
    ```
@@ -272,18 +272,18 @@ The schema must be forward-compatible: older binaries reading a v1 config with u
        }
    }
    ```
-6. Implement `.gdev.local.yaml` auto-gitignore:
-   - On `gdev init`, check if `.gitignore` exists and contains `.gdev.local.yaml`.
-   - If not present, append `.gdev.local.yaml` entry (use section markers from Phase 12 shared-file surgery).
+6. Implement `.qsdev.local.yaml` auto-gitignore:
+   - On `qsdev init`, check if `.gitignore` exists and contains `.qsdev.local.yaml`.
+   - If not present, append `.qsdev.local.yaml` entry (use section markers from Phase 12 shared-file surgery).
 7. Implement resolution logging for `--verbose`:
    - Track which layer provided each resolved value.
-   - Print trace when `--verbose` flag is set: `security.level = "enhanced" (from project:.gdev.yaml, overrode org-default:"baseline")`.
+   - Print trace when `--verbose` flag is set: `security.level = "enhanced" (from project:.qsdev.yaml, overrode org-default:"baseline")`.
    - Include floor enforcement notes: `security.level = "enhanced" (floor enforced: local tried to set "baseline", project requires "enhanced")`.
-8. Write `.gdev.local.yaml` template generator:
+8. Write `.qsdev.local.yaml` template generator:
    ```yaml
-   # .gdev.local.yaml — Local developer overrides (gitignored)
+   # .qsdev.local.yaml — Local developer overrides (gitignored)
    # Uncomment and modify lines below to customize your local environment.
-   # These settings override .gdev.yaml but cannot lower security settings.
+   # These settings override .qsdev.yaml but cannot lower security settings.
    #
    # extra_packages:
    #   - neovim
@@ -308,21 +308,21 @@ The schema must be forward-compatible: older binaries reading a v1 config with u
    - Verbose mode: traces populated correctly.
 
 **Acceptance Criteria:**
-- [ ] Three-layer resolution: org defaults -> profile -> `.gdev.yaml` -> `.gdev.local.yaml`
+- [ ] Three-layer resolution: org defaults -> profile -> `.qsdev.yaml` -> `.qsdev.local.yaml`
 - [ ] Deep merge with correct per-field semantics (union vs replacement vs recursive)
-- [ ] Security floor enforcement: `.gdev.local.yaml` cannot lower `security.level` below project setting
+- [ ] Security floor enforcement: `.qsdev.local.yaml` cannot lower `security.level` below project setting
 - [ ] Security floor enforcement: enabled security features (age_gating, script_blocking) cannot be disabled by local overrides
 - [ ] Client blocked MCP servers cannot be unblocked by local or project overrides
-- [ ] `.gdev.local.yaml` auto-added to `.gitignore` on `gdev init`
+- [ ] `.qsdev.local.yaml` auto-added to `.gitignore` on `qsdev init`
 - [ ] `--verbose` shows which layer set each resolved value, including floor enforcement
-- [ ] Template `.gdev.local.yaml` generated with commented-out examples
+- [ ] Template `.qsdev.local.yaml` generated with commented-out examples
 - [ ] Resolution works with any combination of missing layers (no project, no local, no profile)
 - [ ] Pointer fields (`*bool`) correctly distinguish "not set" from "explicitly false"
 
 **Research Citations:**
 - `research-spikes/gdev-team-config-onboarding/team-config-sharing-research.md` -- resolution order, merge semantics, security floor
 - `research-spikes/gdev-team-config-onboarding/consulting-lifecycle-research.md` -- security level as floor, blocked MCP enforcement
-- `research-spikes/gdev-extension-design/migration-strategy-design.md` -- `.gdev.local.yaml` gitignore pattern
+- `research-spikes/gdev-extension-design/migration-strategy-design.md` -- `.qsdev.local.yaml` gitignore pattern
 
 **Status:** Not Started
 
@@ -330,25 +330,25 @@ The schema must be forward-compatible: older binaries reading a v1 config with u
 
 ### Unit 13.3: Onboarding Mode Detection & Routing
 
-**Description:** Implement the detection engine that determines which of four onboarding modes (Create/Join/Update/Repair) to use when `gdev init` runs, and route to the appropriate wizard/workflow for each mode.
+**Description:** Implement the detection engine that determines which of four onboarding modes (Create/Join/Update/Repair) to use when `qsdev init` runs, and route to the appropriate wizard/workflow for each mode.
 
-**Context:** The developer onboarding research identified four distinct scenarios when `gdev init` runs. The detection engine must distinguish them based on: `.gdev.yaml` presence, `.gdev/` state directory presence, binary version vs `gdev_version` constraint, and hash comparison of generated files. Each mode has radically different UX: Create runs the full wizard, Join skips most questions, Update shows a diff of what changed, and Repair shows a drift report with fix suggestions. Mode detection must be fast (under 500ms) because it runs before any user interaction.
+**Context:** The developer onboarding research identified four distinct scenarios when `qsdev init` runs. The detection engine must distinguish them based on: `.qsdev.yaml` presence, `.gdev/` state directory presence, binary version vs `gdev_version` constraint, and hash comparison of generated files. Each mode has radically different UX: Create runs the full wizard, Join skips most questions, Update shows a diff of what changed, and Repair shows a drift report with fix suggestions. Mode detection must be fast (under 500ms) because it runs before any user interaction.
 
 The detection engine builds on Phase 1's `DetectedProject` (language/service detection) and Phase 8's `GeneratedState` (file hash tracking), adding the config-layer awareness needed for multi-developer workflows.
 
 **Code-Grounded Note:** The existing `DetectExistingConfig()` at `addons/devinit/merge_mode.go:19-55` returns an `ExistingConfig` struct with a `NeedsMergeMode()` method, but it only blocks re-initialization (doesn't route to distinct modes). Phase 13 extends this with a new `DetectOnboardingMode()` function that returns a mode enum (Create/Join/Update/Repair). The existing `detect.Detect()` at `internal/detect/detect.go:12-83` already provides all the filesystem signals needed for mode detection (`HasDevenvNix`, `HasClaudeDir`, `HasPreCommitConfig`, etc.) and should be called as a sub-step of mode detection rather than duplicating its logic.
 
-**Desired Outcome:** `gdev init` automatically detects the correct mode, explains its choice to the user, and routes to the appropriate workflow. The mode selection is deterministic and explainable.
+**Desired Outcome:** `qsdev init` automatically detects the correct mode, explains its choice to the user, and routes to the appropriate workflow. The mode selection is deterministic and explainable.
 
 **Steps:**
 1. Define the `OnboardingMode` type and detection result:
    ```go
    type OnboardingMode int
    const (
-       ModeCreate OnboardingMode = iota // No .gdev.yaml, fresh project setup
-       ModeJoin                         // .gdev.yaml exists, new developer on this machine
-       ModeUpdate                       // .gdev.yaml exists, newer gdev binary or templates
-       ModeRepair                       // .gdev.yaml exists, generated files have drifted
+       ModeCreate OnboardingMode = iota // No .qsdev.yaml, fresh project setup
+       ModeJoin                         // .qsdev.yaml exists, new developer on this machine
+       ModeUpdate                       // .qsdev.yaml exists, newer gdev binary or templates
+       ModeRepair                       // .qsdev.yaml exists, generated files have drifted
    )
 
    type ModeDetectionResult struct {
@@ -402,22 +402,22 @@ The detection engine builds on Phase 1's `DetectedProject` (language/service det
    func DetectOnboardingMode(projectRoot string) (*ModeDetectionResult, error) {
        state := &ProjectState{}
 
-       // Step 1: Check for .gdev.yaml
-       state.HasGdevYaml = fileExists(filepath.Join(projectRoot, ".gdev.yaml"))
+       // Step 1: Check for .qsdev.yaml
+       state.HasGdevYaml = fileExists(filepath.Join(projectRoot, ".qsdev.yaml"))
 
        if !state.HasGdevYaml {
            // No config file -> Create mode (full wizard)
            return &ModeDetectionResult{
                Mode:   ModeCreate,
-               Reason: "No .gdev.yaml found. Starting fresh project setup.",
+               Reason: "No .qsdev.yaml found. Starting fresh project setup.",
                ProjectState: state,
            }, nil
        }
 
-       // Step 2: Parse .gdev.yaml
-       cfg, err := ParseGdevConfig(filepath.Join(projectRoot, ".gdev.yaml"))
+       // Step 2: Parse .qsdev.yaml
+       cfg, err := ParseGdevConfig(filepath.Join(projectRoot, ".qsdev.yaml"))
        if err != nil {
-           return nil, fmt.Errorf("invalid .gdev.yaml: %w", err)
+           return nil, fmt.Errorf("invalid .qsdev.yaml: %w", err)
        }
        state.GdevConfig = cfg
 
@@ -428,7 +428,7 @@ The detection engine builds on Phase 1's `DetectedProject` (language/service det
            // Config exists but no state -> Join mode (new developer)
            return &ModeDetectionResult{
                Mode:   ModeJoin,
-               Reason: "Found .gdev.yaml but no local state. Setting up as new team member.",
+               Reason: "Found .qsdev.yaml but no local state. Setting up as new team member.",
                ProjectState: state,
            }, nil
        }
@@ -462,7 +462,7 @@ The detection engine builds on Phase 1's `DetectedProject` (language/service det
        if state.BinaryVersion != state.LastRunVersion || templatesUpdated(existingState) {
            return &ModeDetectionResult{
                Mode:   ModeUpdate,
-               Reason: fmt.Sprintf("gdev updated from %s to %s. Templates may have changed.", state.LastRunVersion, state.BinaryVersion),
+               Reason: fmt.Sprintf("qsdev updated from %s to %s. Templates may have changed.", state.LastRunVersion, state.BinaryVersion),
                ProjectState: state,
            }, nil
        }
@@ -476,11 +476,11 @@ The detection engine builds on Phase 1's `DetectedProject` (language/service det
    }
    ```
 3. Implement user-facing mode explanation messages:
-   - **Create:** "No .gdev.yaml found. Let's set up this project."
-   - **Join:** "Detected existing gdev configuration (profile: {profile}). Running in Join mode -- verifying your local setup."
+   - **Create:** "No .qsdev.yaml found. Let's set up this project."
+   - **Join:** "Detected existing qsdev configuration (profile: {profile}). Running in Join mode -- verifying your local setup."
    - **Update:** "gdev has been updated ({old} -> {new}). {N} template updates available. Run with `--update` to apply."
    - **Repair:** "Found {N} files that have drifted from expected state. Review the drift report below."
-4. Wire mode detection into the `gdev init` command flow:
+4. Wire mode detection into the `qsdev init` command flow:
    ```go
    func runInit(cmd *cobra.Command, args []string) error {
        result, err := DetectOnboardingMode(projectRoot)
@@ -507,19 +507,19 @@ The detection engine builds on Phase 1's `DetectedProject` (language/service det
 5. Implement Repair mode drift report:
    - List each drifted file with what changed.
    - Categorize drift: "section markers removed" (CLAUDE.md), "deny rule deleted" (settings.json), "package removed" (devenv.nix), "file deleted".
-   - Offer auto-fix for safe issues: `gdev init --repair` regenerates drifted machine-owned files.
+   - Offer auto-fix for safe issues: `qsdev init --repair` regenerates drifted machine-owned files.
    - For human-edited files with drift: show diff and suggest manual review.
 6. Implement `--mode` flag for explicit override:
-   - `gdev init --mode create` forces Create mode even if `.gdev.yaml` exists.
-   - `gdev init --mode join` forces Join mode.
-   - `gdev init --mode repair` forces Repair mode.
+   - `qsdev init --mode create` forces Create mode even if `.qsdev.yaml` exists.
+   - `qsdev init --mode join` forces Join mode.
+   - `qsdev init --mode repair` forces Repair mode.
    - Useful for debugging or when auto-detection picks the wrong mode.
 7. Write unit tests:
-   - No `.gdev.yaml` -> Create mode.
-   - `.gdev.yaml` present, no state dir -> Join mode.
-   - `.gdev.yaml` present, state dir present, all files match -> Join (idempotent).
-   - `.gdev.yaml` present, state dir present, version mismatch -> Update mode.
-   - `.gdev.yaml` present, state dir present, drifted files -> Repair mode.
+   - No `.qsdev.yaml` -> Create mode.
+   - `.qsdev.yaml` present, no state dir -> Join mode.
+   - `.qsdev.yaml` present, state dir present, all files match -> Join (idempotent).
+   - `.qsdev.yaml` present, state dir present, version mismatch -> Update mode.
+   - `.qsdev.yaml` present, state dir present, drifted files -> Repair mode.
    - Corrupt state file -> Repair mode (graceful degradation).
    - `--mode` flag overrides auto-detection.
 
@@ -527,8 +527,8 @@ The detection engine builds on Phase 1's `DetectedProject` (language/service det
 - [ ] Four modes correctly detected based on project state
 - [ ] Mode detection completes in under 500ms
 - [ ] Clear, user-facing explanation for each detected mode
-- [ ] Create mode detected when no `.gdev.yaml` exists
-- [ ] Join mode detected when `.gdev.yaml` exists but no local state directory
+- [ ] Create mode detected when no `.qsdev.yaml` exists
+- [ ] Join mode detected when `.qsdev.yaml` exists but no local state directory
 - [ ] Update mode detected when gdev binary version is newer than last run
 - [ ] Repair mode detected when generated files have drifted from expected state
 - [ ] Repair mode shows drift report with categorized changes
@@ -547,13 +547,13 @@ The detection engine builds on Phase 1's `DetectedProject` (language/service det
 
 ### Unit 13.4: Join Mode Implementation
 
-**Description:** Implement the Join mode workflow: detect existing `.gdev.yaml`, read project config, perform machine-specific setup, generate local files, and verify the environment is ready. Target: `git clone` + `cd` + `gdev init` + `devenv shell` in under 2 minutes.
+**Description:** Implement the Join mode workflow: detect existing `.qsdev.yaml`, read project config, perform machine-specific setup, generate local files, and verify the environment is ready. Target: `git clone` + `cd` + `qsdev init` + `devenv shell` in under 2 minutes.
 
-**Context:** Join mode is the most common onboarding scenario for a consulting firm -- an engineer cloning an existing project that already has `.gdev.yaml` committed by another team member. The research established that Join mode should be near-silent: read the project config, check machine prerequisites, generate local-only files (`.gdev.local.yaml` template), and verify everything is consistent. No wizard questions are needed because the project config already captures all decisions. The critical path is: parse config -> check binary version -> verify/install prerequisites -> generate local files -> verify generated file state -> done.
+**Context:** Join mode is the most common onboarding scenario for a consulting firm -- an engineer cloning an existing project that already has `.qsdev.yaml` committed by another team member. The research established that Join mode should be near-silent: read the project config, check machine prerequisites, generate local-only files (`.qsdev.local.yaml` template), and verify everything is consistent. No wizard questions are needed because the project config already captures all decisions. The critical path is: parse config -> check binary version -> verify/install prerequisites -> generate local files -> verify generated file state -> done.
 
-Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to `gdev devenv setup` (Phase 9 bootstrap steps). Join mode checks prerequisites and offers to run `gdev devenv setup` if anything is missing, but does not duplicate the installation logic.
+Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to `qsdev devenv setup` (Phase 9 bootstrap steps). Join mode checks prerequisites and offers to run `qsdev devenv setup` if anything is missing, but does not duplicate the installation logic.
 
-**Desired Outcome:** A returning engineer runs `git clone <url> && cd project && gdev init` and has a working environment after `devenv shell`. Total hands-on time under 2 minutes. Join mode is quiet when everything is already set up (idempotent re-run).
+**Desired Outcome:** A returning engineer runs `git clone <url> && cd project && qsdev init` and has a working environment after `devenv shell`. Total hands-on time under 2 minutes. Join mode is quiet when everything is already set up (idempotent re-run).
 
 **Steps:**
 1. Implement `runJoinMode(state *ProjectState) error`:
@@ -583,7 +583,7 @@ Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to
            for _, m := range missing {
                fmt.Printf("  - %s: %s\n", m.Name, m.InstallHint)
            }
-           if promptYN("Run gdev devenv setup to install missing tools?") {
+           if promptYN("Run qsdev devenv setup to install missing tools?") {
                if err := runSetup(missing); err != nil {
                    return fmt.Errorf("setup failed: %w", err)
                }
@@ -594,7 +594,7 @@ Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to
        if err := writeLocalConfigTemplate(projectRoot); err != nil {
            return err
        }
-       if err := ensureGitignoreEntry(projectRoot, ".gdev.local.yaml"); err != nil {
+       if err := ensureGitignoreEntry(projectRoot, ".qsdev.local.yaml"); err != nil {
            return err
        }
 
@@ -611,7 +611,7 @@ Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to
            for _, d := range report.Drifted {
                fmt.Printf("  %s: %s\n", d.Path, d.Reason)
            }
-           fmt.Println("Run `gdev init --repair` to fix, or review manually.")
+           fmt.Println("Run `qsdev init --repair` to fix, or review manually.")
        }
 
        // Step 7: Write state tracking
@@ -635,7 +635,7 @@ Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to
        Name        string
        CheckFunc   func() bool           // returns true if installed
        InstallHint string                 // human-readable install instruction
-       SetupStep   string                 // gdev devenv setup step name, if available
+       SetupStep   string                 // qsdev devenv setup step name, if available
        Required    bool                   // false = optional enhancement
    }
 
@@ -661,46 +661,46 @@ Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to
    }
    ```
 3. Implement local config template generation:
-   - Generate `.gdev.local.yaml` template only if it does not already exist.
+   - Generate `.qsdev.local.yaml` template only if it does not already exist.
    - Template includes commented-out examples relevant to the project's detected ecosystem.
    - If project uses Go: include Go-specific examples. If TypeScript: include TypeScript examples.
 4. Implement generated file verification:
-   - For each file that `.gdev.yaml` would generate, check if it exists and matches.
+   - For each file that `.qsdev.yaml` would generate, check if it exists and matches.
    - Machine-owned files (settings.json deny rules, .pre-commit-config.yaml): verify required content present.
    - Human-edited files (devenv.nix): verify existence only, skip content check.
    - Report drift but do not auto-fix in Join mode (that's Repair mode).
 5. Handle the idempotent re-run case:
-   - If `gdev init` in Join mode finds everything already set up, print a brief confirmation and exit.
+   - If `qsdev init` in Join mode finds everything already set up, print a brief confirmation and exit.
    - Do not regenerate files that already match expected state.
    - Update state tracking timestamp only.
 6. Wire into `--non-interactive` mode:
    - Join mode with `--yes` skips the prerequisite installation prompt and either auto-installs or fails.
    - `--skip-setup` flag skips prerequisite checks entirely (for CI where tools are pre-installed).
 7. Write integration tests:
-   - Fresh clone with `.gdev.yaml` -> Join mode generates local template, reports ready.
+   - Fresh clone with `.qsdev.yaml` -> Join mode generates local template, reports ready.
    - Re-run on already-set-up project -> idempotent, no changes.
-   - Missing devenv -> offers `gdev devenv setup`.
+   - Missing devenv -> offers `qsdev devenv setup`.
    - Drifted settings.json -> warns but does not fix.
    - `--yes` mode -> auto-installs prerequisites without prompting.
 
 **Acceptance Criteria:**
-- [ ] Join mode reads `.gdev.yaml` and resolves full config without wizard prompts
+- [ ] Join mode reads `.qsdev.yaml` and resolves full config without wizard prompts
 - [ ] Binary version checked against `gdev_version` constraint before proceeding
-- [ ] Missing prerequisites detected and `gdev devenv setup` offered
-- [ ] `.gdev.local.yaml` template generated with ecosystem-relevant commented examples
-- [ ] `.gdev.local.yaml` added to `.gitignore` if not already present
+- [ ] Missing prerequisites detected and `qsdev devenv setup` offered
+- [ ] `.qsdev.local.yaml` template generated with ecosystem-relevant commented examples
+- [ ] `.qsdev.local.yaml` added to `.gitignore` if not already present
 - [ ] Generated file state verified against expected output from config
 - [ ] Drift reported as warnings (not auto-fixed in Join mode)
 - [ ] Idempotent: re-running Join mode on an already-set-up project is a no-op
 - [ ] `--yes` mode works without prompts (for scripted onboarding)
-- [ ] Total Join mode execution time under 10 seconds (excluding `gdev devenv setup` and `devenv shell`)
+- [ ] Total Join mode execution time under 10 seconds (excluding `qsdev devenv setup` and `devenv shell`)
 - [ ] Clear summary output showing profile, languages, services, and next steps
 
 **Research Citations:**
 - `research-spikes/gdev-team-config-onboarding/developer-onboarding-research.md` -- Join mode scenario, 3-commands-2-minutes target, machine vs project setup distinction
-- `research-spikes/gdev-team-config-onboarding/team-config-sharing-research.md` -- `.gdev.local.yaml` template, resolution order
-- `phases/06-wizard-orchestration.md` -- bootstrap step registration (gdev devenv setup integration)
-- `phases/09-cross-platform-system-detection.md` -- `gdev devenv doctor`/`gdev devenv setup` for prerequisite management
+- `research-spikes/gdev-team-config-onboarding/team-config-sharing-research.md` -- `.qsdev.local.yaml` template, resolution order
+- `phases/06-wizard-orchestration.md` -- bootstrap step registration (qsdev devenv setup integration)
+- `phases/09-cross-platform-system-detection.md` -- `qsdev devenv doctor`/`qsdev devenv setup` for prerequisite management
 
 **Status:** Not Started
 
@@ -708,9 +708,9 @@ Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to
 
 ### Unit 13.5: gdev_version Constraint & Schema Migration
 
-**Description:** Implement semver constraint parsing for the `gdev_version` field, binary version checking at `gdev init` startup, version ratchet enforcement, and the incremental config schema migration chain.
+**Description:** Implement semver constraint parsing for the `gdev_version` field, binary version checking at `qsdev init` startup, version ratchet enforcement, and the incremental config schema migration chain.
 
-**Context:** The config versioning research established a Terraform-inspired pattern: `.gdev.yaml` declares `gdev_version: ">= 0.15.0"` as a semver constraint, and gdev checks this before any operation. Additionally, the `version` field (integer) tracks config schema versions separately. Three version axes can drift independently: binary version, config schema version, and template version. The version ratchet strategy prevents older binaries from downgrading files generated by newer binaries. Config migrations chain incrementally (v1 -> v2 -> v3), never skip versions, and run in-memory only (the file on disk is not rewritten unless the user explicitly runs `gdev config migrate`).
+**Context:** The config versioning research established a Terraform-inspired pattern: `.qsdev.yaml` declares `gdev_version: ">= 0.15.0"` as a semver constraint, and qsdev checks this before any operation. Additionally, the `version` field (integer) tracks config schema versions separately. Three version axes can drift independently: binary version, config schema version, and template version. The version ratchet strategy prevents older binaries from downgrading files generated by newer binaries. Config migrations chain incrementally (v1 -> v2 -> v3), never skip versions, and run in-memory only (the file on disk is not rewritten unless the user explicitly runs `qsdev config migrate`).
 
 **Code-Grounded Note:** `go.mod` has NO semver library currently. This phase must add `github.com/Masterminds/semver/v3` as a dependency (well-maintained, Terraform/Helm use it), or implement minimal constraint matching inline. The `WizardAnswers` struct at `pkg/types/types.go:11-32` has no version field -- a `ConfigVersion string` field should be added to track which config schema version produced the answers, enabling the ratchet check.
 
@@ -719,7 +719,7 @@ Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to
 **Steps:**
 1. Implement semver constraint parsing in `internal/config/version.go`:
    ```go
-   // Constraint represents a version requirement from .gdev.yaml gdev_version field.
+   // Constraint represents a version requirement from .qsdev.yaml gdev_version field.
    type Constraint struct {
        Raw        string           // original string, e.g., ">= 0.15.0"
        Conditions []ConditionGroup // parsed conditions (AND groups of OR comparisons)
@@ -782,7 +782,7 @@ Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to
        return fmt.Sprintf(
            "gdev version mismatch\n"+
            "  Your version:  %s\n"+
-           "  Required:      %s (from .gdev.yaml gdev_version)\n\n"+
+           "  Required:      %s (from .qsdev.yaml gdev_version)\n\n"+
            "  Update with: %s\n"+
            "  Or override with --skip-version-check (not recommended)",
            e.BinaryVersion, e.Constraint, e.UpgradeCommand,
@@ -810,7 +810,7 @@ Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to
    ```
    - Default behavior: skip files generated by newer binary (safe).
    - `--force`: overwrite anyway with explicit confirmation.
-   - `--bump-version` flag on `gdev init --update`: updates `.gdev.yaml` `gdev_version` to match current binary.
+   - `--bump-version` flag on `qsdev init --update`: updates `.qsdev.yaml` `gdev_version` to match current binary.
 6. Implement config schema migration chain:
    ```go
    type Migration struct {
@@ -845,13 +845,13 @@ Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to
        return raw, nil
    }
    ```
-7. Implement `gdev config migrate` command:
-   - Reads `.gdev.yaml`, applies migration chain, writes back with updated `version` field.
+7. Implement `qsdev config migrate` command:
+   - Reads `.qsdev.yaml`, applies migration chain, writes back with updated `version` field.
    - Shows diff before writing.
    - Requires `--write` flag to actually persist (dry-run by default).
 8. Wire version check into all `gdev` subcommands:
-   - `gdev init`, `gdev check`, `gdev enable`, `gdev disable`, `gdev status` all check `gdev_version` constraint before proceeding.
-   - `gdev config migrate` exempted (must work even when constraint is not met, to upgrade the config).
+   - `qsdev init`, `qsdev check`, `qsdev enable`, `qsdev disable`, `qsdev status` all check `gdev_version` constraint before proceeding.
+   - `qsdev config migrate` exempted (must work even when constraint is not met, to upgrade the config).
 9. Write comprehensive tests:
    - Constraint parsing: `">= 0.15.0"`, `"~> 0.16"`, `"^0.15.0"`, `">= 0.15.0, < 1.0.0"`.
    - Version satisfaction: edge cases at constraint boundaries.
@@ -865,14 +865,14 @@ Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to
 **Acceptance Criteria:**
 - [ ] Semver constraint parsing supports `>=`, `<=`, `>`, `<`, `=`, `!=`, `~>`, `^` operators
 - [ ] Comma-separated constraints AND'd correctly (e.g., `">= 0.15.0, < 1.0.0"`)
-- [ ] Binary version checked against constraint before any `gdev init` operation
-- [ ] Version mismatch produces clear error with `gdev self-update` instruction
+- [ ] Binary version checked against constraint before any `qsdev init` operation
+- [ ] Version mismatch produces clear error with `qsdev self-update` instruction
 - [ ] `--skip-version-check` bypasses constraint with a warning
 - [ ] Version ratchet prevents older binary from overwriting newer-generated files
 - [ ] `--force` overrides ratchet with explicit confirmation
-- [ ] `--bump-version` updates `gdev_version` in `.gdev.yaml` to match current binary
+- [ ] `--bump-version` updates `gdev_version` in `.qsdev.yaml` to match current binary
 - [ ] Config migration chain applies incrementally (v1 -> v2 -> v3, not v1 -> v3)
-- [ ] Migration runs in-memory by default; `gdev config migrate --write` persists to disk
+- [ ] Migration runs in-memory by default; `qsdev config migrate --write` persists to disk
 - [ ] Missing migration in chain detected and reported with actionable error
 - [ ] All gdev subcommands (init, check, enable, disable, status) check version constraint
 
@@ -884,17 +884,17 @@ Machine-specific setup (devenv, direnv, claude CLI installation) is delegated to
 
 ---
 
-### Unit 13.6: gdev check Command (CI Enforcement)
+### Unit 13.6: qsdev check Command (CI Enforcement)
 
-**Description:** Implement `gdev check` as a read-only validation command that verifies project compliance against org policy. The command checks 5 categories (binary compatibility, config integrity, required tools, generated file state, security hardening), supports 4 output formats (human, JSON, SARIF, JUnit), and integrates with GitHub Actions annotations.
+**Description:** Implement `qsdev check` as a read-only validation command that verifies project compliance against org policy. The command checks 5 categories (binary compatibility, config integrity, required tools, generated file state, security hardening), supports 4 output formats (human, JSON, SARIF, JUnit), and integrates with GitHub Actions annotations.
 
-**Context:** The standards enforcement research established `gdev check` as the CI enforcement point -- the one place where checks run consistently regardless of individual developer behavior. It complements `gdev devenv doctor` (machine health) but focuses on project compliance. Generated configuration files can drift through manual edits, partial updates, version skew, or developers disabling pre-commit hooks. CI catches this drift before it reaches main.
+**Context:** The standards enforcement research established `qsdev check` as the CI enforcement point -- the one place where checks run consistently regardless of individual developer behavior. It complements `qsdev devenv doctor` (machine health) but focuses on project compliance. Generated configuration files can drift through manual edits, partial updates, version skew, or developers disabling pre-commit hooks. CI catches this drift before it reaches main.
 
 The command is strictly read-only: it never modifies files, making it safe for CI and auditing. An `--auto-fix` flag provides a separate mode that fixes safe additive issues (missing gitignore entries, missing section markers). An `--audit-level` flag controls the exit code threshold so teams can gradually tighten enforcement.
 
-**Code-Grounded Note:** No `--json` or machine-readable output exists on ANY current gdev command. This unit establishes the pattern for structured output across the CLI: a `--format` flag accepting `text|json|sarif|junit`, using `cmd.OutOrStdout()` for testability. Future commands (`gdev status`, `gdev devenv doctor`) should adopt this same pattern. The `toolcheck.Detect()` function at `internal/toolcheck/toolcheck.go:11-40` already checks tool binary availability and can be reused directly for the "Required Tools" check category.
+**Code-Grounded Note:** No `--json` or machine-readable output exists on ANY current gdev command. This unit establishes the pattern for structured output across the CLI: a `--format` flag accepting `text|json|sarif|junit`, using `cmd.OutOrStdout()` for testability. Future commands (`qsdev status`, `qsdev devenv doctor`) should adopt this same pattern. The `toolcheck.Detect()` function at `internal/toolcheck/toolcheck.go:11-40` already checks tool binary availability and can be reused directly for the "Required Tools" check category.
 
-**Desired Outcome:** `gdev check` runs in CI (GitHub Actions and GitLab CI), produces structured output for code scanning dashboards, and fails the pipeline when the project does not meet org policy. Local runs show human-readable output with remediation suggestions.
+**Desired Outcome:** `qsdev check` runs in CI (GitHub Actions and GitLab CI), produces structured output for code scanning dashboards, and fails the pipeline when the project does not meet org policy. Local runs show human-readable output with remediation suggestions.
 
 **Steps:**
 1. Define the check result types in `internal/check/types.go`:
@@ -982,7 +982,7 @@ The command is strictly read-only: it never modifies files, making it safe for C
    ```
 
    **Category 2: Config Integrity**
-   - `.gdev.yaml` exists and parses without error.
+   - `.qsdev.yaml` exists and parses without error.
    - Schema version is supported.
    - Profile name (if specified) exists in compiled profile registry.
    - All referenced language/service names are valid.
@@ -1061,12 +1061,12 @@ The command is strictly read-only: it never modifies files, making it safe for C
    ```
    - Automatically enabled when `GITHUB_ACTIONS=true` environment variable is detected.
    - Annotations appear inline on PR diffs next to the affected file.
-7. Wire the `gdev check` command:
+7. Wire the `qsdev check` command:
    ```go
    func runCheck(cmd *cobra.Command, args []string) error {
-       cfg, err := ParseGdevConfig(filepath.Join(projectRoot, ".gdev.yaml"))
+       cfg, err := ParseGdevConfig(filepath.Join(projectRoot, ".qsdev.yaml"))
        if err != nil {
-           return fmt.Errorf("cannot read .gdev.yaml: %w (exit code 2)", err)
+           return fmt.Errorf("cannot read .qsdev.yaml: %w (exit code 2)", err)
        }
 
        resolved, err := ResolveConfig(DefaultGdevConfig(), profileFor(cfg.Profile), cfg, nil, false)
@@ -1100,14 +1100,14 @@ The command is strictly read-only: it never modifies files, making it safe for C
    ```
    - Exit code 0: all checks pass (at the configured audit level).
    - Exit code 1: one or more checks failed above the audit level threshold.
-   - Exit code 2: `gdev check` itself errored (cannot read config, invalid flags).
+   - Exit code 2: `qsdev check` itself errored (cannot read config, invalid flags).
 8. Provide CI workflow snippets in generated docs:
 
    **GitHub Actions:**
    ```yaml
-   - name: Run gdev check
+   - name: Run qsdev check
      run: |
-       gdev check --format sarif --audit-level medium > gdev-check.sarif
+       qsdev check --format sarif --audit-level medium > gdev-check.sarif
    - name: Upload SARIF
      if: always()
      uses: github/codeql-action/upload-sarif@v3
@@ -1120,7 +1120,7 @@ The command is strictly read-only: it never modifies files, making it safe for C
    gdev-check:
      stage: validate
      script:
-       - gdev check --format junit --audit-level medium > gdev-check.xml
+       - qsdev check --format junit --audit-level medium > gdev-check.xml
      artifacts:
        reports:
          junit: gdev-check.xml
@@ -1140,7 +1140,7 @@ The command is strictly read-only: it never modifies files, making it safe for C
    - GitHub annotations emitted when `GITHUB_ACTIONS=true`.
 
 **Acceptance Criteria:**
-- [ ] `gdev check` is read-only: never modifies files (unless `--auto-fix` is explicitly passed)
+- [ ] `qsdev check` is read-only: never modifies files (unless `--auto-fix` is explicitly passed)
 - [ ] 5 check categories implemented: binary compatibility, config integrity, required tools, file state, security hardening
 - [ ] Human output grouped by category with color-coded status
 - [ ] `--format json` produces valid, parseable JSON matching `CheckReport` schema
@@ -1155,7 +1155,7 @@ The command is strictly read-only: it never modifies files, making it safe for C
 - [ ] devenv.nix existence-only check (no content validation for human-edited files)
 
 **Research Citations:**
-- `research-spikes/gdev-team-config-onboarding/standards-enforcement-ci-research.md` -- 5 check categories, output formats, auto-fix scope, `gdev check` vs `gdev devenv doctor` distinction, CI integration examples
+- `research-spikes/gdev-team-config-onboarding/standards-enforcement-ci-research.md` -- 5 check categories, output formats, auto-fix scope, `qsdev check` vs `qsdev devenv doctor` distinction, CI integration examples
 - `research-spikes/gdev-team-config-onboarding/config-versioning-drift-research.md` -- file hash comparison, version skew detection
 - `research-spikes/gdev-extension-design/migration-strategy-design.md` -- hash-based modification detection
 
@@ -1167,13 +1167,13 @@ The command is strictly read-only: it never modifies files, making it safe for C
 
 **Description:** Implement client-specific profile support with three compliance levels (baseline/enhanced/strict), profile inheritance, security floor enforcement, and built-in profiles for common consulting scenarios.
 
-**Context:** The consulting lifecycle research identified that different clients have different security requirements (SOC2, HIPAA, FedRAMP), which map to different security configurations. Compliance levels act as security floors: a project on a strict client can add more restrictions but never loosen them. The `.gdev.yaml` `client` block encodes client-specific settings that propagate through the resolution engine. Profile inheritance follows: org base -> client overlay -> project specifics -> local overrides. Built-in profiles encode common consulting patterns: `consulting-default` (enhanced security for typical engagements), `startup-fast` (baseline security for speed-focused POCs), and `enterprise` (strict security for regulated industries).
+**Context:** The consulting lifecycle research identified that different clients have different security requirements (SOC2, HIPAA, FedRAMP), which map to different security configurations. Compliance levels act as security floors: a project on a strict client can add more restrictions but never loosen them. The `.qsdev.yaml` `client` block encodes client-specific settings that propagate through the resolution engine. Profile inheritance follows: org base -> client overlay -> project specifics -> local overrides. Built-in profiles encode common consulting patterns: `consulting-default` (enhanced security for typical engagements), `startup-fast` (baseline security for speed-focused POCs), and `enterprise` (strict security for regulated industries).
 
-The compliance level determines concrete settings: age-gating thresholds, vulnerability scanning frequency, MCP server allowlists, pre-commit hook requirements, SBOM generation policy, and Claude Code permission levels. These are not just labels -- they map to specific configuration values that `gdev check` can verify.
+The compliance level determines concrete settings: age-gating thresholds, vulnerability scanning frequency, MCP server allowlists, pre-commit hook requirements, SBOM generation policy, and Claude Code permission levels. These are not just labels -- they map to specific configuration values that `qsdev check` can verify.
 
 **Code-Grounded Note:** The existing `Profile` struct at `addons/devinit/config.go:11-24` has no `ComplianceLevel` field -- it must be added. Similarly, the `InfraProfile` at `internal/profile/types.go:94-210` also lacks compliance levels. Both structs need a `ComplianceLevel string` field (or equivalent) so that profiles can declare their security floor. The existing compiled profiles (go-web, ts-fullstack, etc.) will gain a compliance level field defaulting to `"enhanced"` for consulting profiles.
 
-**Desired Outcome:** Teams set `profile: consulting-default` or `client.security_level: strict` in `.gdev.yaml` and get the correct security posture without manually configuring dozens of individual settings. `gdev check` verifies compliance against the selected level.
+**Desired Outcome:** Teams set `profile: consulting-default` or `client.security_level: strict` in `.qsdev.yaml` and get the correct security posture without manually configuring dozens of individual settings. `qsdev check` verifies compliance against the selected level.
 
 **Steps:**
 1. Define compliance level configuration mappings:
@@ -1361,15 +1361,15 @@ The compliance level determines concrete settings: age-gating thresholds, vulner
    - `client.nix_cache` overrides `infrastructure.nix_cache`.
    - `client.allowed_mcp_servers` restricts MCP servers to only those listed.
    - `client.blocked_mcp_servers` with `["*"]` blocks all MCP servers except explicitly allowed (deny-by-default for high-security clients).
-6. Wire compliance levels into `gdev check` (Unit 13.6):
+6. Wire compliance levels into `qsdev check` (Unit 13.6):
    - Security hardening checks use the resolved compliance level's requirements.
    - Check that age-gating threshold meets the level's minimum.
    - Check that required pre-commit hooks are present per level.
    - Check that SBOM generation is configured per level's policy.
    - Check Claude Code permission level meets the level's requirement.
-7. Implement `gdev init --list-profiles` to show available profiles:
+7. Implement `qsdev init --list-profiles` to show available profiles:
    ```
-   $ gdev init --list-profiles
+   $ qsdev init --list-profiles
    Built-in Profiles:
 
      consulting-default   Enhanced security for typical client engagements (SOC2-ready)
@@ -1387,7 +1387,7 @@ The compliance level determines concrete settings: age-gating thresholds, vulner
    - Client `security_level: strict` overrides profile's `security.level: enhanced`.
    - Client `blocked_mcp_servers: ["*"]` blocks all servers except allowed.
    - Security floor prevents local override of client compliance level.
-   - `gdev check` validates compliance level requirements correctly.
+   - `qsdev check` validates compliance level requirements correctly.
    - Profile inheritance: org -> profile -> client -> project -> local all layer correctly.
    - Unknown profile name produces clear error.
    - Compliance level mapping generates correct concrete values.
@@ -1400,8 +1400,8 @@ The compliance level determines concrete settings: age-gating thresholds, vulner
 - [ ] Client `security_level` acts as a floor that cannot be lowered by project or local overrides
 - [ ] Client `blocked_mcp_servers: ["*"]` enforces deny-by-default MCP policy
 - [ ] Client infrastructure overrides (registry_proxy, nix_cache) propagate through resolution
-- [ ] `gdev check` validates compliance level requirements (age-gating threshold, required hooks, SBOM policy)
-- [ ] `gdev init --list-profiles` shows all available profiles with descriptions
+- [ ] `qsdev check` validates compliance level requirements (age-gating threshold, required hooks, SBOM policy)
+- [ ] `qsdev init --list-profiles` shows all available profiles with descriptions
 - [ ] Unknown profile name produces a clear error with list of available profiles
 - [ ] Compliance level concrete values match the mapping table from consulting lifecycle research
 
@@ -1429,17 +1429,17 @@ The compliance level determines concrete settings: age-gating thresholds, vulner
 
 | Function | Location | Reuse Context |
 |----------|----------|---------------|
-| `MergeProfileWithFlags()` | `addons/devinit/profile_convert.go:72-121` | Model for `.gdev.yaml` -> `WizardAnswers` merging (languages replace, services append) |
+| `MergeProfileWithFlags()` | `addons/devinit/profile_convert.go:72-121` | Model for `.qsdev.yaml` -> `WizardAnswers` merging (languages replace, services append) |
 | `DetectExistingConfig()` | `addons/devinit/merge_mode.go:19-55` | Extend with mode routing (currently only blocks; Phase 13 adds Create/Join/Update/Repair dispatch) |
 | `detect.Detect()` | `internal/detect/detect.go:12-83` | Provides filesystem signals (HasDevenvNix, HasClaudeDir, etc.) for `DetectOnboardingMode()` |
-| `toolcheck.Detect()` | `internal/toolcheck/toolcheck.go:11-40` | Reuse for "Required Tools" check category in `gdev check` |
+| `toolcheck.Detect()` | `internal/toolcheck/toolcheck.go:11-40` | Reuse for "Required Tools" check category in `qsdev check` |
 
 ### Internal File Coexistence
 
-- `.devinit/.gdev-init-answers.yaml` (`addons/devinit/answers.go:24-25`) -- full wizard answers (internal, gitignored)
-- `.devinit/.gdev-init-state.yaml` -- generation state tracking (internal, gitignored)
-- `.gdev.yaml` -- public project config (committed to git, Phase 13 introduces this)
-- `.gdev.local.yaml` -- developer overrides (gitignored, Phase 13 introduces this)
+- `.devinit/.qsdev-init-answers.yaml` (`addons/devinit/answers.go:24-25`) -- full wizard answers (internal, gitignored)
+- `.devinit/.qsdev-init-state.yaml` -- generation state tracking (internal, gitignored)
+- `.qsdev.yaml` -- public project config (committed to git, Phase 13 introduces this)
+- `.qsdev.local.yaml` -- developer overrides (gitignored, Phase 13 introduces this)
 
 ### New Dependencies
 
@@ -1447,24 +1447,24 @@ The compliance level determines concrete settings: age-gating thresholds, vulner
 
 ### Patterns to Establish
 
-- `--format text|json|sarif|junit` flag pattern on `gdev check` using `cmd.OutOrStdout()` -- first structured-output command; all future commands (`gdev status`, `gdev devenv doctor`) should follow this pattern
+- `--format text|json|sarif|junit` flag pattern on `qsdev check` using `cmd.OutOrStdout()` -- first structured-output command; all future commands (`qsdev status`, `qsdev devenv doctor`) should follow this pattern
 
 ---
 
 ## Phase Completion Criteria
 
 - [ ] All seven units pass acceptance criteria
-- [ ] `.gdev.yaml` round-trip: write config -> parse -> resolve -> generate -> `gdev check` passes
+- [ ] `.qsdev.yaml` round-trip: write config -> parse -> resolve -> generate -> `qsdev check` passes
 - [ ] Three-layer resolution produces correct output for all layer combinations (org-only, org+project, org+project+local)
 - [ ] Security floor enforcement verified: local overrides cannot weaken project security level
 - [ ] Four onboarding modes correctly detected and routed: Create (no config) -> wizard, Join (config exists, no state) -> local setup, Update (version mismatch) -> Phase 8, Repair (drift) -> fix suggestions
-- [ ] Join mode: `git clone` + `cd` + `gdev init` + `devenv shell` completes in under 2 minutes
-- [ ] `gdev check` passes on a well-configured project and fails on a misconfigured one
-- [ ] `gdev check --format sarif` produces valid SARIF 2.1.0 uploadable to GitHub Security tab
-- [ ] `gdev check --format junit` produces valid JUnit XML parseable by CI systems
-- [ ] `gdev check --auto-fix` fixes safe additive issues without touching explicit user configuration
+- [ ] Join mode: `git clone` + `cd` + `qsdev init` + `devenv shell` completes in under 2 minutes
+- [ ] `qsdev check` passes on a well-configured project and fails on a misconfigured one
+- [ ] `qsdev check --format sarif` produces valid SARIF 2.1.0 uploadable to GitHub Security tab
+- [ ] `qsdev check --format junit` produces valid JUnit XML parseable by CI systems
+- [ ] `qsdev check --auto-fix` fixes safe additive issues without touching explicit user configuration
 - [ ] Client compliance levels (baseline/enhanced/strict) map to correct concrete settings
 - [ ] Version constraint (`gdev_version`) checked on all gdev commands before any operation
 - [ ] Version ratchet prevents older binary from overwriting newer-generated files
 - [ ] Config migration chain infrastructure in place (v1 only, but chain is extensible)
-- [ ] `gdev init --list-profiles` shows all built-in and team-configured profiles
+- [ ] `qsdev init --list-profiles` shows all built-in and team-configured profiles

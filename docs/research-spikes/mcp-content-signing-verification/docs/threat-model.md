@@ -118,7 +118,7 @@ Key trust boundary crossings:
 
 **Trust boundary**: TB2 (alternative distribution path)
 
-**Prerequisites**: Attacker publishes or modifies content on an unofficial channel. User (or gdev configuration) points to that channel.
+**Prerequisites**: Attacker publishes or modifies content on an unofficial channel. User (or qsdev configuration) points to that channel.
 
 **Likelihood**: LOW for gdev specifically (Nix fetches from pinned URLs, not arbitrary mirrors). MEDIUM for general Kiwix usage where users might download from mirrors.
 

@@ -4,7 +4,7 @@
 - **Type**: decision
 - **Status**: success
 - **Depth**: surface
-- **Summary**: Spike initialized to research team configuration management, developer onboarding workflows, standards propagation, configuration versioning/drift, CI validation, and consulting-specific lifecycle needs for the gdev CLI tool. Substantial prior research exists in gdev-extension-design spike (addon architecture, migration strategy, wizard UX) and the gdev-secure-devenv-bootstrap implementation plan (17 phases). This spike focuses on the team/org-level concerns that sit above the per-project generation layer.
+- **Summary**: Spike initialized to research team configuration management, developer onboarding workflows, standards propagation, configuration versioning/drift, CI validation, and consulting-specific lifecycle needs for the gdev CLI tool. Substantial prior research exists in gdev-extension-design spike (addon architecture, migration strategy, wizard UX) and the qsdev implementation plan (17 phases). This spike focuses on the team/org-level concerns that sit above the per-project generation layer.
 - **Next**: Define Phase 1 tasks covering 6 research areas. Begin parallel sub-agent research.
 
 ## 2026-05-12 — Phase 1 Research Complete
@@ -22,5 +22,5 @@
   - [Dev Container Sharing](https://oneuptime.com/blog/post/2026-01-28-share-dev-container-configurations/view) → `docs/devcontainer-sharing-methods.md`
   - [Terraform Version Constraints](https://developer.hashicorp.com/terraform/language/expressions/version-constraints) → `docs/terraform-version-constraints.md`
   - [JSON Schema Versioning](https://offlinetools.org/a/json-formatter/schema-versioning-for-json-configuration-files) → `docs/json-schema-versioning-best-practices.md`
-- **Summary**: Completed all 6 Phase 1 research tasks. Produced 6 detailed research reports covering team config sharing (three-layer hierarchy), developer onboarding (four modes, 3-command target), config versioning (Terraform-pattern constraints + migration chain), CI enforcement (gdev check with SARIF), prior art (7 tools surveyed), and consulting lifecycle (teardown/archive/evidence). 10 source documents saved to docs/.
+- **Summary**: Completed all 6 Phase 1 research tasks. Produced 6 detailed research reports covering team config sharing (three-layer hierarchy), developer onboarding (four modes, 3-command target), config versioning (Terraform-pattern constraints + migration chain), CI enforcement (qsdev check with SARIF), prior art (7 tools surveyed), and consulting lifecycle (teardown/archive/evidence). 10 source documents saved to docs/.
 - **Next**: Spike ready for synthesis/review or promotion to implementation plan updates.

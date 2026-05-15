@@ -30,12 +30,12 @@ A consulting firm manages 10-50 client projects simultaneously. The engineering 
 
 ### Option A: CI Artifact Aggregation (Recommended)
 
-Each project's CI pipeline generates `gdev status --json > posture.json` as a build artifact. A separate aggregation job collects artifacts across repos and generates the team report.
+Each project's CI pipeline generates `qsdev status --json > posture.json` as a build artifact. A separate aggregation job collects artifacts across repos and generates the team report.
 
 ```yaml
 # Per-project CI (GitHub Actions)
 - name: Generate posture report
-  run: gdev status --json > posture.json
+  run: qsdev status --json > posture.json
 - name: Upload posture artifact
   uses: actions/upload-artifact@v4
   with:
@@ -51,7 +51,7 @@ Each project's CI pipeline generates `gdev status --json > posture.json` as a bu
       gh run download --repo "$repo" --name gdev-posture -D "reports/$repo"
     done
 - name: Aggregate
-  run: gdev team-report --input-dir reports/ --output team-posture.md
+  run: qsdev team-report --input-dir reports/ --output team-posture.md
 ```
 
 **Pros:** No new infrastructure. Uses existing CI. Each project controls its own scan schedule. Reports are git-committed for audit trail.
@@ -60,7 +60,7 @@ Each project's CI pipeline generates `gdev status --json > posture.json` as a bu
 
 ### Option B: Git-Based Collection (Scorecard Monitor Pattern)
 
-A central repo contains a scope file listing all tracked projects. A scheduled action clones each repo, runs `gdev status --json`, and stores results in a JSON database.
+A central repo contains a scope file listing all tracked projects. A scheduled action clones each repo, runs `qsdev status --json`, and stores results in a JSON database.
 
 ```json
 // scope.json
@@ -189,24 +189,24 @@ None.
 ## Team Commands
 
 ```
-gdev team-report                       # Generate team posture report
-gdev team-report --input-dir reports/  # Aggregate from directory of posture JSONs
-gdev team-report --scope scope.json    # Use scope file for project list
-gdev team-report --format md           # Markdown output (default)
-gdev team-report --format json         # JSON output
-gdev team-report --threshold 75        # Highlight projects below score threshold
-gdev team-report --trend               # Include historical trend data
+qsdev team-report                       # Generate team posture report
+qsdev team-report --input-dir reports/  # Aggregate from directory of posture JSONs
+qsdev team-report --scope scope.json    # Use scope file for project list
+qsdev team-report --format md           # Markdown output (default)
+qsdev team-report --format json         # JSON output
+qsdev team-report --threshold 75        # Highlight projects below score threshold
+qsdev team-report --trend               # Include historical trend data
 ```
 
-### Alternative: `gdev status --multi`
+### Alternative: `qsdev status --multi`
 
 For smaller setups, support scanning multiple local project directories:
 
 ```
-gdev status --multi ~/projects/client-a ~/projects/client-b ~/projects/internal-tools
+qsdev status --multi ~/projects/client-a ~/projects/client-b ~/projects/internal-tools
 ```
 
-This runs `gdev status` in each directory and aggregates the results. Simpler than CI-based collection for local-only workflows.
+This runs `qsdev status` in each directory and aggregates the results. Simpler than CI-based collection for local-only workflows.
 
 ## GitHub Issue Generation (Scorecard Monitor Pattern)
 
@@ -231,9 +231,9 @@ Project **internal-tools** security posture has degraded.
 - 1 high-severity vulnerability in npm dependencies
 
 ### Recommended Actions
-1. Run `gdev hooks install` to restore pre-commit hooks
+1. Run `qsdev hooks install` to restore pre-commit hooks
 2. Run `npm audit fix` to address vulnerability
-3. Run `gdev status` to verify posture
+3. Run `qsdev status` to verify posture
 
 Labels: security, gdev-posture
 Assignee: @team-lead

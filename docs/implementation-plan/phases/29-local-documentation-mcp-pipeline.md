@@ -6,7 +6,7 @@ Build a complete local-first documentation serving pipeline for Claude Code. Web
 
 ## Dependencies
 
-Phase 28 complete (MCP registry, `.mcp.json` management, SecurityTier classification, `gdev enable`/`disable` integration).
+Phase 28 complete (MCP registry, `.mcp.json` management, SecurityTier classification, `qsdev enable`/`disable` integration).
 
 ## Phase Outputs
 
@@ -14,7 +14,7 @@ Phase 28 complete (MCP registry, `.mcp.json` management, SecurityTier classifica
 - DevDocs MCP TypeScript server with per-ecosystem doc set management
 - man-mcp-server (always-on) and MCP-NixOS (Nix project auto-enabled) integrations
 - `lookup-docs` skill file at `.claude/skills/lookup-docs/SKILL.md` with tiered routing
-- `gdev docs` subcommand group (download, outdated, update, clean, status)
+- `qsdev docs` subcommand group (download, outdated, update, clean, status)
 - Documentation section in initialization wizard with disk cost annotations
 - Minisign content signing pipeline: CI sign → verify at MCP startup
 - Prompt injection hardening: Tier 1 (Unicode normalization, invisible char stripping, delimiter wrapping) and Tier 2 (datamarking / Microsoft Spotlighting)
@@ -29,7 +29,7 @@ Phase 28 complete (MCP registry, `.mcp.json` management, SecurityTier classifica
 
 The server is auto-enabled when ZIM files are present in the store. When no ZIM files exist, the registry entry remains but the MCP server is not started (openzim-mcp exits with a clear error if the ZIM store is empty, which is handled gracefully by the MCP client).
 
-**Desired Outcome:** `openzim-mcp` is installed into the devenv shell environment, registered with the Phase 28 MCP registry, and serves any ZIM files present in `~/.local/share/gdev/docs/zim/`. A developer can run `gdev docs download --ecosystem js` and then query Stack Overflow for JavaScript answers through Claude Code without any internet access.
+**Desired Outcome:** `openzim-mcp` is installed into the devenv shell environment, registered with the Phase 28 MCP registry, and serves any ZIM files present in `~/.local/share/gdev/docs/zim/`. A developer can run `qsdev docs download --ecosystem js` and then query Stack Overflow for JavaScript answers through Claude Code without any internet access.
 
 **Steps:**
 1. Add `uv tool install openzim-mcp` to the devenv `enterShell` hook in the gdev-generated `devenv.nix` template (inside the MCP tools installation block added by Phase 28):
@@ -92,8 +92,8 @@ The server is auto-enabled when ZIM files are present in the store. When no ZIM 
      }
    }
    ```
-6. Add `gdev enable openzim-docs` and `gdev disable openzim-docs` to the Phase 28 tool lifecycle — openzim-mcp respects the standard `gdev enable`/`disable` interface.
-7. Write a `gdev docs download --ecosystem <name>` handler stub that resolves which ZIM files to download for a given ecosystem (full implementation in Unit 29.5). Map ecosystem names to ZIM file URLs from the kiwix.org catalog. Initial mappings:
+6. Add `qsdev enable openzim-docs` and `qsdev disable openzim-docs` to the Phase 28 tool lifecycle — openzim-mcp respects the standard `qsdev enable`/`disable` interface.
+7. Write a `qsdev docs download --ecosystem <name>` handler stub that resolves which ZIM files to download for a given ecosystem (full implementation in Unit 29.5). Map ecosystem names to ZIM file URLs from the kiwix.org catalog. Initial mappings:
    - `js` / `ts` → `stackoverflow.com_en_javascript` ZIM
    - `python` → `stackoverflow.com_en_python` ZIM
    - `go` → `stackoverflow.com_en_go` ZIM
@@ -102,8 +102,8 @@ The server is auto-enabled when ZIM files are present in the store. When no ZIM 
    - `zimStoreNonEmpty()` returns false for empty/missing directory.
    - `zimStoreNonEmpty()` returns true for directory containing a `.zim` file.
    - Registry entry expands environment variables to absolute paths at write time.
-   - openzim-mcp entry appears in `.mcp.json` after `gdev enable openzim-docs`.
-   - openzim-mcp entry absent from `.mcp.json` after `gdev disable openzim-docs`.
+   - openzim-mcp entry appears in `.mcp.json` after `qsdev enable openzim-docs`.
+   - openzim-mcp entry absent from `.mcp.json` after `qsdev disable openzim-docs`.
 
 **Acceptance Criteria:**
 - [ ] `uv tool install openzim-mcp` runs inside devenv `enterShell` without blocking shell entry on failure
@@ -111,7 +111,7 @@ The server is auto-enabled when ZIM files are present in the store. When no ZIM 
 - [ ] ZIM store path `~/.local/share/gdev/docs/zim/` used for all ZIM file storage
 - [ ] `zim_store_non_empty` condition correctly detects presence of `.zim` files
 - [ ] `.mcp.json` entry uses absolute paths (no unexpanded `$HOME` or shell variables)
-- [ ] `gdev enable openzim-docs` and `gdev disable openzim-docs` work via Phase 28 tool lifecycle
+- [ ] `qsdev enable openzim-docs` and `qsdev disable openzim-docs` work via Phase 28 tool lifecycle
 - [ ] Ecosystem-to-ZIM-URL mappings defined for js/ts, python, go, rust
 
 **Research Citations:**
@@ -130,7 +130,7 @@ The server is auto-enabled when ZIM files are present in the store. When no ZIM 
 
 The server auto-enables when DevDocs data is present for the project's detected languages. The presence detection uses the same auto-enable condition pattern as Unit 29.1.
 
-**Desired Outcome:** Developers working on TypeScript projects can query TypeScript API documentation through Claude Code without network access. The server reads directly from pre-downloaded JSON files, achieving sub-100ms response times. `gdev docs download --ecosystem ts` downloads the TypeScript doc set with a single command.
+**Desired Outcome:** Developers working on TypeScript projects can query TypeScript API documentation through Claude Code without network access. The server reads directly from pre-downloaded JSON files, achieving sub-100ms response times. `qsdev docs download --ecosystem ts` downloads the TypeScript doc set with a single command.
 
 **Steps:**
 1. Define the DevDocs MCP server source. Use the community `devdocs-mcp` TypeScript package (published to npm). Install via `npx` in the MCP command entry (similar to the npx pattern used by Context7 in Phase 28):
@@ -200,8 +200,8 @@ The server auto-enables when DevDocs data is present for the project's detected 
    | `node`    | `node`                  |
    | `react`   | `react`                 |
 
-7. Implement the per-ecosystem default download list: when `gdev init` detects a TypeScript project, the wizard documentation section (Unit 29.6) pre-selects `typescript` and `javascript` doc sets by default.
-8. Add disk usage tracking to the download manifest: record compressed size and entry count per doc set for `gdev docs status` output.
+7. Implement the per-ecosystem default download list: when `qsdev init` detects a TypeScript project, the wizard documentation section (Unit 29.6) pre-selects `typescript` and `javascript` doc sets by default.
+8. Add disk usage tracking to the download manifest: record compressed size and entry count per doc set for `qsdev docs status` output.
 9. Write unit tests:
    - `devdocs_store_non_empty` returns false for empty/missing directory.
    - `devdocs_store_non_empty` returns true when `typescript/index.json` is present.
@@ -217,7 +217,7 @@ The server auto-enables when DevDocs data is present for the project's detected 
 - [ ] Ecosystem-to-doc-set mapping defined for js, ts, python, go, rust, node, react
 - [ ] DevDocs store path `~/.local/share/gdev/docs/devdocs/` used consistently
 - [ ] Disk usage recorded per doc set in download manifest
-- [ ] `gdev enable devdocs-local` and `gdev disable devdocs-local` work via Phase 28 tool lifecycle
+- [ ] `qsdev enable devdocs-local` and `qsdev disable devdocs-local` work via Phase 28 tool lifecycle
 
 **Research Citations:**
 - `research-spikes/gdev-local-docs-mcp/devdocs-mcp-research.md` — DevDocs JSON file format, Docker extraction method, three-file-per-doc-set structure
@@ -288,24 +288,24 @@ Both servers are registered in the Phase 28 MCP registry with `SecurityTier: Low
    ```
    Since all gdev-managed projects have `devenv.nix`, MCP-NixOS is effectively always enabled for gdev projects. The condition is explicit for correctness and testability.
 6. Install MCP-NixOS via `uv tool install mcp-nixos` in devenv `enterShell`.
-7. Update the Phase 28 `.mcp.json` writer to handle the `AlwaysOn: true` flag: always-on servers are written to `.mcp.json` regardless of `gdev enable`/`disable` state and are excluded from the enable/disable command (with a clear error message if a user attempts `gdev disable man-pages`).
-8. Update `gdev status` to show always-on servers with a distinct indicator (e.g., `[always-on]` tag).
+7. Update the Phase 28 `.mcp.json` writer to handle the `AlwaysOn: true` flag: always-on servers are written to `.mcp.json` regardless of `qsdev enable`/`disable` state and are excluded from the enable/disable command (with a clear error message if a user attempts `qsdev disable man-pages`).
+8. Update `qsdev status` to show always-on servers with a distinct indicator (e.g., `[always-on]` tag).
 9. Write unit tests:
    - `nixProjectDetected` returns true for project root containing `flake.nix`.
    - `nixProjectDetected` returns true for project root containing `devenv.nix`.
    - `nixProjectDetected` returns false for project root with no Nix files.
    - man-mcp-server NOT registered on `runtime.GOOS == "windows"`.
-   - `gdev disable man-pages` returns error "man-pages is an always-on server and cannot be disabled".
-   - `gdev status` shows `[always-on]` tag for man-pages entry.
+   - `qsdev disable man-pages` returns error "man-pages is an always-on server and cannot be disabled".
+   - `qsdev status` shows `[always-on]` tag for man-pages entry.
 
 **Acceptance Criteria:**
 - [ ] man-mcp-server registered as `AlwaysOn: true` with `SecurityTier: Low`
-- [ ] man-mcp-server excluded from `gdev enable`/`disable` with clear error if attempted
+- [ ] man-mcp-server excluded from `qsdev enable`/`disable` with clear error if attempted
 - [ ] man-mcp-server not registered on Windows (`runtime.GOOS == "windows"`)
 - [ ] MCP-NixOS registered with `SecurityTier: Low` and `nix_project_detected` auto-enable condition
 - [ ] `nix_project_detected` returns true for any of: `flake.nix`, `devenv.nix`, `shell.nix`, `default.nix`
 - [ ] Both servers installed via `uv tool install` in devenv `enterShell`
-- [ ] `gdev status` shows always-on servers with `[always-on]` indicator
+- [ ] `qsdev status` shows always-on servers with `[always-on]` indicator
 - [ ] MCP-NixOS auto-enabled for all gdev-managed projects (which always have `devenv.nix`)
 
 **Research Citations:**
@@ -387,32 +387,32 @@ Routing degrades gracefully: if a local server returns no results (doc set not d
    func RenderLookupDocsSkill(projectRoot string, cfg *GdevConfig) (string, error)
    ```
    The renderer detects project ecosystems from `cfg.Languages` and the Phase 1 `DetectedProject`, maps them to doc set names, and fills `FallbackN` based on whether MCP-NixOS is included.
-3. Integrate skill generation into the `gdev init` flow: after MCP configuration is written (Phase 28), render and write `lookup-docs/SKILL.md`. Use the Phase 22 skills directory management (section markers, ownership tracking) to ensure the file is treated as gdev-managed.
-4. Add skill file regeneration to `gdev init --update` and `gdev init --repair`: if the skill file is missing or its ecosystem list is stale (project languages changed), regenerate it.
-5. Add `lookup-docs` to the `gdev status` skills section with ecosystem coverage shown:
+3. Integrate skill generation into the `qsdev init` flow: after MCP configuration is written (Phase 28), render and write `lookup-docs/SKILL.md`. Use the Phase 22 skills directory management (section markers, ownership tracking) to ensure the file is treated as gdev-managed.
+4. Add skill file regeneration to `qsdev init --update` and `qsdev init --repair`: if the skill file is missing or its ecosystem list is stale (project languages changed), regenerate it.
+5. Add `lookup-docs` to the `qsdev status` skills section with ecosystem coverage shown:
    ```
    Skills:
      lookup-docs  [gdev-managed]  Ecosystems: typescript, javascript, go
                                   Tiers: devdocs-local, openzim-docs, man-pages, context7
    ```
-6. Handle the case where no local documentation is downloaded: the skill file is still generated, but the priority ordering notes that local tiers are available once `gdev docs download` is run. This avoids Context7 being bypassed for projects that haven't run `gdev docs download` yet.
+6. Handle the case where no local documentation is downloaded: the skill file is still generated, but the priority ordering notes that local tiers are available once `qsdev docs download` is run. This avoids Context7 being bypassed for projects that haven't run `qsdev docs download` yet.
 7. Write unit tests:
    - `RenderLookupDocsSkill` includes `nixos-search` in output for Nix projects.
    - `RenderLookupDocsSkill` excludes `nixos-search` for non-Nix projects.
    - `FallbackN` is 4 for Nix projects (Context7 is 4th) and 4 for non-Nix projects (Context7 is 4th, man pages is 3rd).
    - TypeScript project includes `typescript` doc set in ecosystem-specific instructions.
-   - Skill file written to `.claude/skills/lookup-docs/SKILL.md` by `gdev init`.
-   - `gdev status` shows correct ecosystem list.
+   - Skill file written to `.claude/skills/lookup-docs/SKILL.md` by `qsdev init`.
+   - `qsdev status` shows correct ecosystem list.
 
 **Acceptance Criteria:**
-- [ ] `lookup-docs/SKILL.md` generated at `.claude/skills/lookup-docs/SKILL.md` by `gdev init`
+- [ ] `lookup-docs/SKILL.md` generated at `.claude/skills/lookup-docs/SKILL.md` by `qsdev init`
 - [ ] Skill file lists all registered local documentation servers in priority order
 - [ ] MCP-NixOS entry conditionally included only for Nix projects (`flake.nix`/`devenv.nix` detected)
 - [ ] Context7 listed as final fallback with `[web source]` labeling instruction
 - [ ] Per-ecosystem instructions generated for each detected project language
 - [ ] Trust note explaining Minisign-verified local vs web content included in skill file
-- [ ] Skill file regenerated by `gdev init --update` when project languages change
-- [ ] `gdev status` shows ecosystem coverage for the `lookup-docs` skill
+- [ ] Skill file regenerated by `qsdev init --update` when project languages change
+- [ ] `qsdev status` shows ecosystem coverage for the `lookup-docs` skill
 - [ ] Skill file correctly owned by gdev (Phase 22 section marker pattern applied)
 
 **Research Citations:**
@@ -423,18 +423,18 @@ Routing degrades gracefully: if a local server returns no results (doc set not d
 
 ---
 
-### Unit 29.5: `gdev docs` Commands
+### Unit 29.5: `qsdev docs` Commands
 
-**Description:** Implement the `gdev docs` subcommand group for managing locally-stored documentation: downloading doc sets, checking for updates, cleaning up storage, and reporting status.
+**Description:** Implement the `qsdev docs` subcommand group for managing locally-stored documentation: downloading doc sets, checking for updates, cleaning up storage, and reporting status.
 
-**Context:** Documentation data is separated from MCP configuration: `gdev enable`/`disable` manages the MCP server configuration, while `gdev docs` manages the data those servers serve. Data is user-level (shared across all projects on the machine) and lives at `~/.local/share/gdev/docs/`. Download is lazy — it is never triggered automatically by `gdev enable` or `gdev init`. This prevents unexpected large downloads during project setup.
+**Context:** Documentation data is separated from MCP configuration: `qsdev enable`/`disable` manages the MCP server configuration, while `qsdev docs` manages the data those servers serve. Data is user-level (shared across all projects on the machine) and lives at `~/.local/share/gdev/docs/`. Download is lazy — it is never triggered automatically by `qsdev enable` or `qsdev init`. This prevents unexpected large downloads during project setup.
 
-`gdev disable` removes the MCP server from `.mcp.json` but does NOT delete downloaded documentation data. This mirrors how package managers work (uninstalling a tool does not delete its output files).
+`qsdev disable` removes the MCP server from `.mcp.json` but does NOT delete downloaded documentation data. This mirrors how package managers work (uninstalling a tool does not delete its output files).
 
-**Desired Outcome:** Developers have a clear, single-entry-point command group for documentation management. `gdev docs status` shows at a glance what is downloaded, how much disk space it uses, and whether newer versions are available upstream.
+**Desired Outcome:** Developers have a clear, single-entry-point command group for documentation management. `qsdev docs status` shows at a glance what is downloaded, how much disk space it uses, and whether newer versions are available upstream.
 
 **Steps:**
-1. Implement the `gdev docs` command group in `cmd/docs.go`:
+1. Implement the `qsdev docs` command group in `cmd/docs.go`:
    ```go
    var docsCmd = &cobra.Command{
        Use:   "docs",
@@ -452,7 +452,7 @@ Routing degrades gracefully: if a local server returns no results (doc set not d
        docsCmd.AddCommand(docsStatusCmd)
    }
    ```
-2. Implement `gdev docs download [--ecosystem <name>]`:
+2. Implement `qsdev docs download [--ecosystem <name>]`:
    ```go
    var docsDownloadCmd = &cobra.Command{
        Use:   "download",
@@ -460,28 +460,28 @@ Routing degrades gracefully: if a local server returns no results (doc set not d
        RunE:  runDocsDownload,
    }
    ```
-   - Without `--ecosystem`: detect project languages from the current directory's `.gdev.yaml` and download all matching doc sets.
+   - Without `--ecosystem`: detect project languages from the current directory's `.qsdev.yaml` and download all matching doc sets.
    - With `--ecosystem <name>`: download doc sets for the specified ecosystem only.
    - Show progress: `Downloading typescript docs (450 MB)... ████████░░ 72%`
    - On completion: write manifest entry with file paths, sizes, download timestamp, and upstream version info.
    - Handle partial downloads: use a `.tmp` suffix during download, rename to final path on success, delete `.tmp` on failure.
-3. Implement `gdev docs outdated`:
+3. Implement `qsdev docs outdated`:
    - Read the download manifest for each installed doc set.
    - Compare manifest `upstream_version` field against the current pinned version in `internal/docs/manifest.go`.
    - Output table: `ECOSYSTEM | INSTALLED_VERSION | AVAILABLE_VERSION | STATUS`
    - Exit 0 even when outdated (informational command, not a check command).
-4. Implement `gdev docs update`:
+4. Implement `qsdev docs update`:
    - Downloads newer versions of all outdated doc sets.
    - Verifies Minisign signatures before replacing existing data (Unit 29.7).
    - Diffs index entries before replacing: reports count of added/removed entries.
    - `--ecosystem <name>` to update a single ecosystem.
    - `--all` to update everything regardless of staleness.
-5. Implement `gdev docs clean`:
-   - `gdev docs clean --ecosystem <name>`: removes that ecosystem's doc files from the store.
-   - `gdev docs clean --all`: removes all doc files from the store (prompts for confirmation unless `--yes` flag provided).
+5. Implement `qsdev docs clean`:
+   - `qsdev docs clean --ecosystem <name>`: removes that ecosystem's doc files from the store.
+   - `qsdev docs clean --all`: removes all doc files from the store (prompts for confirmation unless `--yes` flag provided).
    - Does NOT touch MCP configuration — just the data files.
    - Updates the manifest after deletion.
-6. Implement `gdev docs status`:
+6. Implement `qsdev docs status`:
    ```
    $ gdev docs status
 
@@ -517,24 +517,24 @@ Routing degrades gracefully: if a local server returns no results (doc set not d
    ```
    Manifest stored at `~/.local/share/gdev/docs/manifest.yaml`.
 8. Write integration tests:
-   - `gdev docs download --ecosystem ts` creates files in correct location.
+   - `qsdev docs download --ecosystem ts` creates files in correct location.
    - Partial download (simulated network failure) cleans up `.tmp` files.
-   - `gdev docs status` correctly reads manifest and computes disk usage.
-   - `gdev docs clean --ecosystem ts` removes files and updates manifest.
-   - `gdev docs clean --all` without `--yes` prompts for confirmation.
-   - `gdev disable devdocs-local` does NOT delete downloaded data files.
+   - `qsdev docs status` correctly reads manifest and computes disk usage.
+   - `qsdev docs clean --ecosystem ts` removes files and updates manifest.
+   - `qsdev docs clean --all` without `--yes` prompts for confirmation.
+   - `qsdev disable devdocs-local` does NOT delete downloaded data files.
 
 **Acceptance Criteria:**
-- [ ] `gdev docs download [--ecosystem <name>]` downloads doc sets with progress display
-- [ ] Download detects project ecosystems from `.gdev.yaml` when no `--ecosystem` flag given
+- [ ] `qsdev docs download [--ecosystem <name>]` downloads doc sets with progress display
+- [ ] Download detects project ecosystems from `.qsdev.yaml` when no `--ecosystem` flag given
 - [ ] Partial downloads cleaned up on failure (`.tmp` suffix pattern)
-- [ ] `gdev docs outdated` compares installed vs available versions without modifying data
-- [ ] `gdev docs update` downloads newer versions after Minisign verification
-- [ ] `gdev docs clean --ecosystem <name>` removes data without touching MCP configuration
-- [ ] `gdev docs clean --all` prompts for confirmation unless `--yes` is passed
-- [ ] `gdev docs status` shows ecosystem, type, size, version, download date, and staleness
+- [ ] `qsdev docs outdated` compares installed vs available versions without modifying data
+- [ ] `qsdev docs update` downloads newer versions after Minisign verification
+- [ ] `qsdev docs clean --ecosystem <name>` removes data without touching MCP configuration
+- [ ] `qsdev docs clean --all` prompts for confirmation unless `--yes` is passed
+- [ ] `qsdev docs status` shows ecosystem, type, size, version, download date, and staleness
 - [ ] Download manifest written at `~/.local/share/gdev/docs/manifest.yaml`
-- [ ] `gdev disable devdocs-local` does NOT delete downloaded documentation data
+- [ ] `qsdev disable devdocs-local` does NOT delete downloaded documentation data
 - [ ] All data stored at `~/.local/share/gdev/docs/` (user-level, shared across projects)
 
 **Research Citations:**
@@ -547,7 +547,7 @@ Routing degrades gracefully: if a local server returns no results (doc set not d
 
 ### Unit 29.6: Documentation Wizard Integration
 
-**Description:** Add a documentation configuration section to the `gdev init` wizard that shows per-ecosystem disk cost estimates, sets defaults based on detected languages, and supports non-interactive automation flags.
+**Description:** Add a documentation configuration section to the `qsdev init` wizard that shows per-ecosystem disk cost estimates, sets defaults based on detected languages, and supports non-interactive automation flags.
 
 **Context:** The documentation wizard section appears on the "customize" path (when the user selects "Customize" rather than "Quick setup" in the Phase 6 wizard). It is skipped entirely in quick-path mode to minimize friction. The wizard shows size estimates to help developers make informed choices — Stack Overflow ZIM files are large (1-2 GB per ecosystem) and should not be downloaded by default. DevDocs sets are small (200-500 MB) and are enabled by default for detected languages.
 
@@ -597,19 +597,19 @@ The enterprise cloud tier (a remote FUSE-mounted full corpus) is configured via 
    | `go`      | ~210 MB     | ~600 MB  |
    | `rust`    | ~280 MB     | ~500 MB  |
 
-6. Wire wizard answers into post-init steps: after `gdev init` completes, if `DownloadDevDocs` is true, run `gdev docs download` for selected ecosystems. Show progress inline (not in a background process).
-7. Add non-interactive flag support to the `gdev init` command:
+6. Wire wizard answers into post-init steps: after `qsdev init` completes, if `DownloadDevDocs` is true, run `qsdev docs download` for selected ecosystems. Show progress inline (not in a background process).
+7. Add non-interactive flag support to the `qsdev init` command:
    - `--docs=devdocs`: download DevDocs for detected ecosystems, skip ZIM
    - `--docs=all`: download both DevDocs and ZIM for detected ecosystems
    - `--docs=none`: skip all documentation downloads
    - `--docs=<ecosystem>`: comma-separated list of specific ecosystems to download DevDocs for
-8. Handle the case where Docker is not installed (required for DevDocs download via image extraction): display a warning and skip download with instruction to install Docker or run `gdev docs download` manually later.
+8. Handle the case where Docker is not installed (required for DevDocs download via image extraction): display a warning and skip download with instruction to install Docker or run `qsdev docs download` manually later.
 9. Write unit tests:
    - `estimateDevDocsSizes(["typescript", "javascript"])` returns `~830 MB`.
    - Wizard defaults: `DownloadDevDocs: true`, `DownloadZIM: false`.
    - `--docs=none` skips download without prompting.
    - `--docs=all` downloads both DevDocs and ZIM for all detected ecosystems.
-   - Missing Docker: warns and skips, does not fail `gdev init`.
+   - Missing Docker: warns and skips, does not fail `qsdev init`.
 
 **Acceptance Criteria:**
 - [ ] Documentation wizard section appears on customize path, skipped on quick path
@@ -720,13 +720,13 @@ This is a defense-in-depth measure against the scenario where a developer downlo
        return nil
    }
    ```
-5. Distribute `.minisig` files alongside content files: include them in the `gdev docs download` output. The download manifest records the `.minisig` path for each content file.
-6. Add signature presence check to `gdev docs status`: flag doc sets that are missing `.minisig` files as `[unsigned]` in the status output.
+5. Distribute `.minisig` files alongside content files: include them in the `qsdev docs download` output. The download manifest records the `.minisig` path for each content file.
+6. Add signature presence check to `qsdev docs status`: flag doc sets that are missing `.minisig` files as `[unsigned]` in the status output.
 7. Write unit tests:
    - `VerifyDocFile` returns nil for a file with a valid signature.
    - `VerifyDocFile` returns an error for a file with an invalid signature.
    - `VerifyDocFile` returns an error for a file with no `.minisig` file.
-   - `gdev docs status` shows `[unsigned]` for doc sets without `.minisig` files.
+   - `qsdev docs status` shows `[unsigned]` for doc sets without `.minisig` files.
 
 **Acceptance Criteria:**
 - [ ] Minisign public key embedded as a string constant in `internal/docs/signing.go`
@@ -737,7 +737,7 @@ This is a defense-in-depth measure against the scenario where a developer downlo
 - [ ] `VerifyDocFile` verifies signature using embedded public key via `minisign -V`
 - [ ] `VerifyDocFile` returns error for missing, invalid, or tampered signatures
 - [ ] `.minisig` paths recorded in download manifest
-- [ ] `gdev docs status` shows `[unsigned]` for any doc set missing signatures
+- [ ] `qsdev docs status` shows `[unsigned]` for any doc set missing signatures
 
 **Research Citations:**
 - `research-spikes/mcp-content-signing-verification/research.md` — Minisign selection rationale over GPG, Ed25519 key design, CI pipeline structure, content diffing approach
@@ -752,9 +752,9 @@ This is a defense-in-depth measure against the scenario where a developer downlo
 
 **Context:** The signing CI pipeline (Unit 29.7) produces signatures at publish time. MCP startup verification catches the threat scenario where content files are modified after download: malicious packages replacing documentation files, filesystem corruption, or targeted content substitution. The verification runs once at startup (not per-query) so the overhead is a few hundred milliseconds for the startup delay, not an ongoing latency penalty.
 
-The health reporting uses the Phase 15 `gdev health` system: a failed startup verification writes an error entry to the health status store that appears in `gdev health` output and in `gdev check` (Category 5: Security Hardening).
+The health reporting uses the Phase 15 `qsdev health` system: a failed startup verification writes an error entry to the health status store that appears in `qsdev health` output and in `qsdev check` (Category 5: Security Hardening).
 
-**Desired Outcome:** Any MCP documentation server with tampered content files refuses to start and reports the failure to `gdev health`. Developers see a clear error in `gdev health` output identifying which file failed verification and how to remediate (re-download with `gdev docs download`).
+**Desired Outcome:** Any MCP documentation server with tampered content files refuses to start and reports the failure to `qsdev health`. Developers see a clear error in `qsdev health` output identifying which file failed verification and how to remediate (re-download with `qsdev docs download`).
 
 **Steps:**
 1. Add startup verification to the DevDocs MCP server. Since the DevDocs MCP is a TypeScript server, add verification as an initialization step before the MCP server begins handling requests:
@@ -815,16 +815,16 @@ The health reporting uses the Phase 15 `gdev health` system: a failed startup ve
      "remediation": "gdev docs download --ecosystem typescript"
    }
    ```
-4. Integrate with Phase 15 `gdev health` command: add `ReadMCPStartupErrors()` to the health check sources. Failed startup verifications appear under a `MCP Content Integrity` section in `gdev health` output.
-5. Integrate with Phase 13 `gdev check` Category 5 (Security Hardening): `gdev check` reads the MCP startup error log. Unresolved startup verification failures produce a `SeverityHigh` finding with the remediation command.
+4. Integrate with Phase 15 `qsdev health` command: add `ReadMCPStartupErrors()` to the health check sources. Failed startup verifications appear under a `MCP Content Integrity` section in `qsdev health` output.
+5. Integrate with Phase 13 `qsdev check` Category 5 (Security Hardening): `qsdev check` reads the MCP startup error log. Unresolved startup verification failures produce a `SeverityHigh` finding with the remediation command.
 6. Add a `--skip-content-verification` flag to openzim-mcp and devdocs-mcp for use in testing and CI environments where documentation data is not downloaded. This flag bypasses startup verification entirely and should not be set in production MCP configuration.
 7. Write integration tests using a test fixture with a small ZIM/DevDocs file and its valid signature:
    - Server starts successfully when signatures are valid.
    - Server exits with code 1 when a `.minisig` file is missing.
    - Server exits with code 1 when a signature is invalid (tampered content).
    - Health error JSON written to correct path on verification failure.
-   - `gdev health` shows the error after server startup failure.
-   - `gdev check` Category 5 reports high-severity finding for unresolved startup errors.
+   - `qsdev health` shows the error after server startup failure.
+   - `qsdev check` Category 5 reports high-severity finding for unresolved startup errors.
 
 **Acceptance Criteria:**
 - [ ] DevDocs MCP server verifies Minisign signatures at startup before serving any request
@@ -832,8 +832,8 @@ The health reporting uses the Phase 15 `gdev health` system: a failed startup ve
 - [ ] Missing `.minisig` file causes server to exit(1) with a clear error message
 - [ ] Invalid signature causes server to exit(1) with a clear error message
 - [ ] Verification failure writes a JSON health error entry to `~/.local/share/gdev/health/`
-- [ ] Phase 15 `gdev health` shows MCP content integrity failures
-- [ ] Phase 13 `gdev check` Category 5 reports `SeverityHigh` for unresolved integrity failures
+- [ ] Phase 15 `qsdev health` shows MCP content integrity failures
+- [ ] Phase 13 `qsdev check` Category 5 reports `SeverityHigh` for unresolved integrity failures
 - [ ] `--skip-content-verification` flag available for testing/CI (documented as not for production)
 - [ ] Verification runs once at startup, not per-query (no per-query latency impact)
 
@@ -1151,10 +1151,10 @@ The MCP `_meta` field is used to send the marker token to Claude Code. Claude Co
 |-------|-----------|
 | Phase 1 | `DetectedProject` — provides ecosystem/language detection used by auto-enable conditions and wizard pre-population |
 | Phase 6 | Wizard `huh` form library, phase registration, customize-vs-quick-path routing |
-| Phase 13 | `.gdev.yaml` `Client` block — enterprise cloud tier config lives there (not wizard-exposed) |
-| Phase 15 | `gdev health` store — MCP startup failures write to health store; `gdev health` reads them |
+| Phase 13 | `.qsdev.yaml` `Client` block — enterprise cloud tier config lives there (not wizard-exposed) |
+| Phase 15 | `qsdev health` store — MCP startup failures write to health store; `qsdev health` reads them |
 | Phase 22 | Skills directory management, section marker pattern for `lookup-docs/SKILL.md` |
-| Phase 28 | MCP registry, `.mcp.json` writer, `SecurityTier` classification, `gdev enable`/`disable` lifecycle |
+| Phase 28 | MCP registry, `.mcp.json` writer, `SecurityTier` classification, `qsdev enable`/`disable` lifecycle |
 
 ### New External Dependencies
 
@@ -1175,12 +1175,12 @@ The MCP `_meta` field is used to send the marker token to Claude Code. Claude Co
 ## Phase Completion Criteria
 
 - [ ] All ten units pass acceptance criteria
-- [ ] End-to-end: `gdev docs download --ecosystem ts` → `devenv shell` → Claude Code queries TypeScript docs offline
+- [ ] End-to-end: `qsdev docs download --ecosystem ts` → `devenv shell` → Claude Code queries TypeScript docs offline
 - [ ] Minisign verification: tampered content file causes MCP server to refuse to start
-- [ ] `gdev health` shows MCP content integrity failures when signatures are invalid
-- [ ] `gdev check` Category 5 reports high-severity finding for unresolved MCP startup failures
+- [ ] `qsdev health` shows MCP content integrity failures when signatures are invalid
+- [ ] `qsdev check` Category 5 reports high-severity finding for unresolved MCP startup failures
 - [ ] `lookup-docs/SKILL.md` routes correctly: local DevDocs → local ZIM → man pages → (NixOS) → Context7
 - [ ] Tier 1 sanitization: hidden Unicode and HTML comments stripped from all served content
 - [ ] Tier 2 datamarking: Python/YAML code blocks use line-prefix mode, prose and other code use whitespace-replacement mode
-- [ ] `gdev docs status` shows disk usage, version, and signature status for all doc sets
+- [ ] `qsdev docs status` shows disk usage, version, and signature status for all doc sets
 - [ ] Wizard customize path shows accurate disk cost estimates for documentation options

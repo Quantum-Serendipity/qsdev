@@ -8,16 +8,16 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	gdevconfig "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/config"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func configCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
-		Short: "Manage .gdev.yaml project configuration",
-		Long: `Commands for managing the .gdev.yaml project configuration file.
+		Short: "Manage .qsdev.yaml project configuration",
+		Long: `Commands for managing the .qsdev.yaml project configuration file.
 
 Use subcommands to migrate config schemas, validate configuration,
 and inspect the current config state.`,
@@ -33,8 +33,8 @@ func migrateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "migrate",
-		Short: "Migrate .gdev.yaml to the latest schema version",
-		Long: `Read .gdev.yaml, apply any necessary schema migrations, and show the diff.
+		Short: "Migrate .qsdev.yaml to the latest schema version",
+		Long: `Read .qsdev.yaml, apply any necessary schema migrations, and show the diff.
 
 By default, the command performs a dry run showing what would change.
 Use --write to apply the migration in place.`,
@@ -54,22 +54,22 @@ func runMigrate(cmd *cobra.Command, write bool) error {
 		return fmt.Errorf("determining project root: %w", err)
 	}
 
-	configPath := filepath.Join(projectRoot, ".gdev.yaml")
+	configPath := filepath.Join(projectRoot, ".qsdev.yaml")
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return fmt.Errorf("reading .gdev.yaml: %w", err)
+		return fmt.Errorf("reading .qsdev.yaml: %w", err)
 	}
 
 	// Unmarshal to raw map for migration.
 	var raw map[string]any
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("parsing .gdev.yaml: %w", err)
+		return fmt.Errorf("parsing .qsdev.yaml: %w", err)
 	}
 
 	versionRaw, ok := raw["version"]
 	if !ok {
-		return fmt.Errorf("missing \"version\" field in .gdev.yaml")
+		return fmt.Errorf("missing \"version\" field in .qsdev.yaml")
 	}
 
 	versionInt, ok := toConfigVersion(versionRaw)
@@ -77,13 +77,13 @@ func runMigrate(cmd *cobra.Command, write bool) error {
 		return fmt.Errorf("field \"version\" must be an integer")
 	}
 
-	if !gdevconfig.NeedsMigration(versionInt) {
-		fmt.Fprintf(cmd.OutOrStdout(), ".gdev.yaml is already at schema version %d (current). No migration needed.\n",
+	if !qsdevconfig.NeedsMigration(versionInt) {
+		fmt.Fprintf(cmd.OutOrStdout(), ".qsdev.yaml is already at schema version %d (current). No migration needed.\n",
 			types.ConfigVersionCurrent)
 		return nil
 	}
 
-	migrated, err := gdevconfig.MigrateConfig(raw, versionInt)
+	migrated, err := qsdevconfig.MigrateConfig(raw, versionInt)
 	if err != nil {
 		return fmt.Errorf("migration failed: %w", err)
 	}
@@ -96,7 +96,7 @@ func runMigrate(cmd *cobra.Command, write bool) error {
 
 	// Show diff.
 	fmt.Fprintf(cmd.OutOrStdout(), "Migration: version %d -> %d\n\n", versionInt, types.ConfigVersionCurrent)
-	fmt.Fprintf(cmd.OutOrStdout(), "--- .gdev.yaml (before)\n+++ .gdev.yaml (after)\n\n")
+	fmt.Fprintf(cmd.OutOrStdout(), "--- .qsdev.yaml (before)\n+++ .qsdev.yaml (after)\n\n")
 	fmt.Fprintln(cmd.OutOrStdout(), string(newData))
 
 	if !write {
@@ -105,10 +105,10 @@ func runMigrate(cmd *cobra.Command, write bool) error {
 	}
 
 	if err := fileutil.WriteFileAtomic(configPath, newData, 0o644); err != nil {
-		return fmt.Errorf("writing migrated .gdev.yaml: %w", err)
+		return fmt.Errorf("writing migrated .qsdev.yaml: %w", err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Migrated .gdev.yaml from version %d to %d.\n", versionInt, types.ConfigVersionCurrent)
+	fmt.Fprintf(cmd.OutOrStdout(), "Migrated .qsdev.yaml from version %d to %d.\n", versionInt, types.ConfigVersionCurrent)
 	return nil
 }
 

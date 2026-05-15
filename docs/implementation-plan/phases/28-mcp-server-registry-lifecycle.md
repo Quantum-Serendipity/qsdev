@@ -2,7 +2,7 @@
 
 ## Goal
 
-Replace the MVP's hardcoded 5-server `.mcp.json` generation with a registry-driven system. Each MCP server has structured metadata: tool count, security tier, config policy, detection function, and credential requirements. The registry enables `gdev mcp list/enable/disable` commands, enforces a hard 40-tool ceiling, and generates per-tier security notices in CLAUDE.md. Detection-based auto-enable, detect-and-offer confirmation, and an explicit optional catalog provide three graduated paths for adding servers.
+Replace the MVP's hardcoded 5-server `.mcp.json` generation with a registry-driven system. Each MCP server has structured metadata: tool count, security tier, config policy, detection function, and credential requirements. The registry enables `qsdev mcp list/enable/disable` commands, enforces a hard 40-tool ceiling, and generates per-tier security notices in CLAUDE.md. Detection-based auto-enable, detect-and-offer confirmation, and an explicit optional catalog provide three graduated paths for adding servers.
 
 ## Dependencies
 
@@ -15,7 +15,7 @@ Phase 4 complete (Claude Code addon — `.mcp.json` generation, section markers,
 - MySQL and SQLite MCP servers as new auto-detection entries
 - Terraform and Sentry MCP servers as detect-and-offer entries
 - 5 optional catalog servers (Atlassian, Linear, Slack, Datadog, Grafana)
-- `gdev mcp list/enable/disable/check` commands
+- `qsdev mcp list/enable/disable/check` commands
 - MCP security documentation generator (per-tier notices in CLAUDE.md)
 - Registry-driven `.mcp.json` generation with devenv 2.0 native module support
 
@@ -54,7 +54,7 @@ The 40-tool ceiling is a Claude Code context budget constraint. Each MCP tool co
        AutoDetect ConfigPolicy = "auto_detect"
        // DetectAndOffer: detected but wizard confirms before enabling. Credentials shown upfront.
        DetectAndOffer ConfigPolicy = "detect_and_offer"
-       // OptionalCatalog: only via explicit 'gdev enable mcp-<name>' or wizard customize path.
+       // OptionalCatalog: only via explicit 'qsdev enable mcp-<name>' or wizard customize path.
        OptionalCatalog ConfigPolicy = "optional_catalog"
    )
 
@@ -291,11 +291,11 @@ MySQL detection is coupled to devenv service detection (not just MySQL code impo
        },
    }
    ```
-5. Wire auto-detection into the `gdev init` wizard:
+5. Wire auto-detection into the `qsdev init` wizard:
    - After ecosystem detection, run `DetectFunc` for all `AutoDetect` servers.
    - Servers whose `DetectFunc` returns `true` are added to the enabled list without prompting.
    - Log at `--verbose` level: "Auto-enabled MCP server: mysql (MySQL service detected in devenv + mysql2 in package.json)".
-6. Wire auto-detection into `gdev init --update`:
+6. Wire auto-detection into `qsdev init --update`:
    - Re-run detection for all `AutoDetect` servers.
    - If a new server is now detected (e.g., developer added SQLite files): auto-enable and notify.
    - If a previously auto-enabled server is no longer detected: do NOT auto-disable (developer may have intentionally kept it).
@@ -313,9 +313,9 @@ MySQL detection is coupled to devenv service detection (not just MySQL code impo
 - [ ] SQLite detection triggers on `.sqlite`/`.db` files OR SQLite imports in code
 - [ ] MySQL `SecurityTier` is `Medium` (network-accessible database, credentials via env)
 - [ ] SQLite `SecurityTier` is `Low` (local files only)
-- [ ] Auto-detect servers enabled silently during `gdev init` (no wizard question)
+- [ ] Auto-detect servers enabled silently during `qsdev init` (no wizard question)
 - [ ] `--verbose` logs which detection signal triggered each auto-enable
-- [ ] `gdev init --update` detects newly added SQLite files and auto-enables the server
+- [ ] `qsdev init --update` detects newly added SQLite files and auto-enables the server
 - [ ] Auto-disabled servers are not removed on re-detection loss (preserved if manually kept)
 
 **Research Citations:**
@@ -469,9 +469,9 @@ The `--yes` flag does NOT auto-enable `DetectAndOffer` servers. This is intentio
 
 ### Unit 28.4: Optional Catalog MCP Servers
 
-**Description:** Register 5 optional catalog MCP servers (Atlassian, Linear, Slack, Datadog, Grafana) that require explicit enablement via `gdev enable mcp-<name>` or the wizard's customize path. Slack requires an unavoidable security acknowledgment that cannot be bypassed with `--yes`.
+**Description:** Register 5 optional catalog MCP servers (Atlassian, Linear, Slack, Datadog, Grafana) that require explicit enablement via `qsdev enable mcp-<name>` or the wizard's customize path. Slack requires an unavoidable security acknowledgment that cannot be bypassed with `--yes`.
 
-**Context:** Optional catalog servers are for integrations that are clearly team-specific, require OAuth or API credentials that gdev cannot detect, or carry significant security implications (Slack with write access to team communications). No project signal can reliably detect these — a project may use Jira without any `.jira` file or import. The catalog path requires the developer to make an intentional choice: `gdev enable mcp-atlassian`.
+**Context:** Optional catalog servers are for integrations that are clearly team-specific, require OAuth or API credentials that gdev cannot detect, or carry significant security implications (Slack with write access to team communications). No project signal can reliably detect these — a project may use Jira without any `.jira` file or import. The catalog path requires the developer to make an intentional choice: `qsdev enable mcp-atlassian`.
 
 Atlassian (Jira + Confluence) represents the highest consulting value in this tier: project management and documentation access are the two most common requests from consulting developers. Linear and Datadog/Grafana are narrow-audience but high-value for teams that use them.
 
@@ -479,7 +479,7 @@ The Slack MCP's security warning cannot be bypassed: Slack has write access to t
 
 **Code-Grounded Note:** OAuth 2.1 servers (Atlassian, Linear) require a different `ServerConfig` shape than API-key servers: they use the `url` transport field (HTTP transport) rather than `command`/`args` (stdio transport). The `.mcp.json` format supports both; the registry's `McpServerConfig` struct already has both `Command`/`Args` (stdio) and `URL`/`Headers` (HTTP) fields from Unit 28.1.
 
-**Desired Outcome:** Developers can enable any catalog server with `gdev enable mcp-<name>`. The Slack server requires a security acknowledgment that cannot be skipped. OAuth servers use HTTP transport in `.mcp.json`. `gdev mcp list` shows all catalog servers as `disabled`.
+**Desired Outcome:** Developers can enable any catalog server with `qsdev enable mcp-<name>`. The Slack server requires a security acknowledgment that cannot be skipped. OAuth servers use HTTP transport in `.mcp.json`. `qsdev mcp list` shows all catalog servers as `disabled`.
 
 **Steps:**
 1. Register Atlassian MCP server:
@@ -572,7 +572,7 @@ The Slack MCP's security warning cannot be bypassed: Slack has write access to t
    }
    ```
    - This function is called regardless of `--yes` mode.
-   - `--yes` mode reaches this point and fails with: "Slack MCP server requires explicit security acknowledgment. Run `gdev mcp enable slack` interactively."
+   - `--yes` mode reaches this point and fails with: "Slack MCP server requires explicit security acknowledgment. Run `qsdev mcp enable slack` interactively."
 5. Register Datadog MCP server:
    ```go
    &McpServerEntry{
@@ -624,7 +624,7 @@ The Slack MCP's security warning cannot be bypassed: Slack has write access to t
    // Used for mandatory security acknowledgments (e.g., Slack).
    EnableHook func() error `json:"-"`
    ```
-8. Wire `EnableHook` into `gdev mcp enable`:
+8. Wire `EnableHook` into `qsdev mcp enable`:
    - Before calling `CanEnable`, call `EnableHook()` if non-nil.
    - If `EnableHook` returns an error, abort with the error message.
 9. Write unit tests:
@@ -654,20 +654,20 @@ The Slack MCP's security warning cannot be bypassed: Slack has write access to t
 
 ---
 
-### Unit 28.5: `gdev mcp` Commands
+### Unit 28.5: `qsdev mcp` Commands
 
-**Description:** Implement the `gdev mcp` command group with subcommands: `list`, `enable`, `disable`, and `check --compliance`.
+**Description:** Implement the `qsdev mcp` command group with subcommands: `list`, `enable`, `disable`, and `check --compliance`.
 
-**Context:** The `gdev mcp` command group is the primary interface for developers managing their MCP server configuration. `gdev mcp list` provides an at-a-glance view of the tool budget and available servers. `gdev mcp enable`/`disable` are the manual counterparts to wizard-driven enablement. `gdev mcp check --compliance` runs the `@yawlabs/mcp-compliance` suite and grades each server.
+**Context:** The `qsdev mcp` command group is the primary interface for developers managing their MCP server configuration. `qsdev mcp list` provides an at-a-glance view of the tool budget and available servers. `qsdev mcp enable`/`disable` are the manual counterparts to wizard-driven enablement. `qsdev mcp check --compliance` runs the `@yawlabs/mcp-compliance` suite and grades each server.
 
-The `--strict` mode for `gdev mcp check --compliance` is designed for CI: it fails on any server graded below B. This allows teams to maintain a minimum quality bar on their MCP integrations as server implementations evolve.
+The `--strict` mode for `qsdev mcp check --compliance` is designed for CI: it fails on any server graded below B. This allows teams to maintain a minimum quality bar on their MCP integrations as server implementations evolve.
 
-**Code-Grounded Note:** The Phase 12 tool lifecycle system (`gdev enable`/`gdev disable`) provides the pattern for `gdev mcp enable`/`disable`. The MCP commands should delegate to the same underlying `EnableTool`/`DisableTool` functions (or equivalent) used by the general lifecycle, with MCP-specific pre/post hooks (budget check, credential check, security notice).
+**Code-Grounded Note:** The Phase 12 tool lifecycle system (`qsdev enable`/`qsdev disable`) provides the pattern for `qsdev mcp enable`/`disable`. The MCP commands should delegate to the same underlying `EnableTool`/`DisableTool` functions (or equivalent) used by the general lifecycle, with MCP-specific pre/post hooks (budget check, credential check, security notice).
 
-**Desired Outcome:** `gdev mcp list` shows the full registry state at a glance. `gdev mcp enable`/`disable` modify `.mcp.json` via tool lifecycle shared-file surgery. `gdev mcp check --compliance` grades each enabled server with a pass/fail for CI.
+**Desired Outcome:** `qsdev mcp list` shows the full registry state at a glance. `qsdev mcp enable`/`disable` modify `.mcp.json` via tool lifecycle shared-file surgery. `qsdev mcp check --compliance` grades each enabled server with a pass/fail for CI.
 
 **Steps:**
-1. Implement `gdev mcp list`:
+1. Implement `qsdev mcp list`:
    - Print a table of all servers in the registry: name, status (enabled/disabled), tool count, security tier, description.
    - Enabled servers shown first.
    - Print summary line: "Active: N servers, ~M tools (budget: 40 | remaining: R)".
@@ -691,8 +691,8 @@ The `--strict` mode for `gdev mcp check --compliance` is designed for CI: it fai
      ─────────────────────────────────────────────────────────────────────────
      Active: 3 servers, ~31 tools (budget: 40 | remaining: 9)
      ```
-2. Implement `gdev mcp enable <name>`:
-   - Look up `name` in registry; fail with "Unknown MCP server. Run `gdev mcp list`." if not found.
+2. Implement `qsdev mcp enable <name>`:
+   - Look up `name` in registry; fail with "Unknown MCP server. Run `qsdev mcp list`." if not found.
    - Load currently enabled servers.
    - Run `EnableHook` if present (for Slack acknowledgment).
    - Call `CanEnable` to check 40-tool ceiling.
@@ -700,12 +700,12 @@ The `--strict` mode for `gdev mcp check --compliance` is designed for CI: it fai
    - Append server to enabled list.
    - Regenerate `.mcp.json` via registry-driven generation.
    - Print: "Enabled mcp-<name> (~N tools). Total: M/40 tools."
-3. Implement `gdev mcp disable <name>`:
+3. Implement `qsdev mcp disable <name>`:
    - Look up `name` in registry.
    - Remove from enabled list.
    - Regenerate `.mcp.json` via registry-driven generation.
    - Print: "Disabled mcp-<name>. Total: M/40 tools."
-4. Implement `gdev mcp check --compliance`:
+4. Implement `qsdev mcp check --compliance`:
    ```go
    func runMcpComplianceCheck(enabled []*McpServerEntry, strict bool) error {
        for _, server := range enabled {
@@ -733,15 +733,15 @@ The `--strict` mode for `gdev mcp check --compliance` is designed for CI: it fai
    - Grades: A (≥90%), B (≥80%), C (≥70%), D (≥60%), F (<60%).
    - `--strict`: exit 1 if any enabled server grades below B.
    - Uses `@yawlabs/mcp-compliance` npm package if available; degrades gracefully if not installed.
-5. Implement credential prompt for `gdev mcp enable` when credentials are missing:
+5. Implement credential prompt for `qsdev mcp enable` when credentials are missing:
    ```
    Enabling atlassian requires ATLASSIAN_SITE_URL.
    Enter ATLASSIAN_SITE_URL (or press Enter to skip and set manually):
    > mycompany.atlassian.net
 
    Note: Set ATLASSIAN_SITE_URL in your .env or shell before using this server.
-   The value you entered has been added to .gdev.local.yaml for local reference.
-   The value is NOT committed to .mcp.json or .gdev.yaml (security).
+   The value you entered has been added to .qsdev.local.yaml for local reference.
+   The value is NOT committed to .mcp.json or .qsdev.yaml (security).
    ```
 6. Wire the command group into the cobra CLI:
    ```go
@@ -750,28 +750,28 @@ The `--strict` mode for `gdev mcp check --compliance` is designed for CI: it fai
    rootCmd.AddCommand(mcpCmd)
    ```
 7. Write unit tests:
-   - `gdev mcp list` output includes all registry servers.
-   - `gdev mcp list --json` produces valid JSON.
-   - `gdev mcp enable unknown-server` fails with clear error.
-   - `gdev mcp enable <server>` over budget fails with `ToolBudgetExceededError`.
-   - `gdev mcp disable <server>` removes from enabled list.
+   - `qsdev mcp list` output includes all registry servers.
+   - `qsdev mcp list --json` produces valid JSON.
+   - `qsdev mcp enable unknown-server` fails with clear error.
+   - `qsdev mcp enable <server>` over budget fails with `ToolBudgetExceededError`.
+   - `qsdev mcp disable <server>` removes from enabled list.
    - `--compliance --strict` exits 1 on sub-B grade.
    - Credential prompt shown when env var missing and not `--yes`.
 
 **Acceptance Criteria:**
-- [ ] `gdev mcp list` shows all registry servers with status, tool count, security tier, description
+- [ ] `qsdev mcp list` shows all registry servers with status, tool count, security tier, description
 - [ ] Summary line shows active server count, total tools, budget, and remaining
-- [ ] `gdev mcp list --json` produces structured JSON output
-- [ ] `gdev mcp enable <name>` enforces 40-tool ceiling with actionable error
-- [ ] `gdev mcp enable <name>` calls `EnableHook` before enabling (for Slack acknowledgment)
-- [ ] `gdev mcp enable <name>` prompts for missing credentials
-- [ ] `gdev mcp disable <name>` removes server from `.mcp.json`
-- [ ] `gdev mcp check --compliance` grades each enabled server A-F
-- [ ] `gdev mcp check --compliance --strict` exits 1 if any server grades below B
-- [ ] `gdev mcp enable unknown` fails with "Unknown MCP server. Run `gdev mcp list`."
+- [ ] `qsdev mcp list --json` produces structured JSON output
+- [ ] `qsdev mcp enable <name>` enforces 40-tool ceiling with actionable error
+- [ ] `qsdev mcp enable <name>` calls `EnableHook` before enabling (for Slack acknowledgment)
+- [ ] `qsdev mcp enable <name>` prompts for missing credentials
+- [ ] `qsdev mcp disable <name>` removes server from `.mcp.json`
+- [ ] `qsdev mcp check --compliance` grades each enabled server A-F
+- [ ] `qsdev mcp check --compliance --strict` exits 1 if any server grades below B
+- [ ] `qsdev mcp enable unknown` fails with "Unknown MCP server. Run `qsdev mcp list`."
 
 **Research Citations:**
-- `research-spikes/gdev-ecosystem-expansion-assessment/mcp-registry-research.md` — `gdev mcp` command design, compliance check grading, --strict CI mode
+- `research-spikes/gdev-ecosystem-expansion-assessment/mcp-registry-research.md` — `qsdev mcp` command design, compliance check grading, --strict CI mode
 - `phases/12-tool-lifecycle-management.md` — shared-file surgery pattern for add/remove operations
 
 **Status:** Not Started
@@ -784,7 +784,7 @@ The `--strict` mode for `gdev mcp check --compliance` is designed for CI: it fai
 
 **Context:** Claude Code reads `.claude/rules/` as agent context. The `mcp-security.md` rule file tells the agent which servers are high-risk and what operations to be cautious about. This is not just documentation: the agent reads these rules before taking actions, so clear per-server trust boundaries reduce the chance of unintended writes to production systems. The notices scale with tier: Low tier servers get no warning (read-only local data is fine), Medium tier gets a network-call notice, High tier gets an explicit write-access warning.
 
-Credential validation catches a common mistake: developers embedding API keys directly in `.mcp.json` instead of using `${ENV_VAR}` references. This is a security finding that `gdev check` should catch and `gdev mcp enable` should prevent at creation time.
+Credential validation catches a common mistake: developers embedding API keys directly in `.mcp.json` instead of using `${ENV_VAR}` references. This is a security finding that `qsdev check` should catch and `qsdev mcp enable` should prevent at creation time.
 
 **Code-Grounded Note:** Phase 4's CLAUDE.md generation uses section markers (`# BEGIN gdev:mcp-servers` / `# END gdev:mcp-servers`). The MCP security section is appended to CLAUDE.md within these markers. The `.claude/rules/mcp-security.md` file is a new gdev-owned file deployed alongside the existing rules from Phase 4.
 
@@ -818,8 +818,8 @@ Credential validation catches a common mistake: developers embedding API keys di
    - Header: `# MCP Server Trust Boundaries — generated by gdev`
    - One section per enabled server that has a non-empty security notice.
    - Each section lists the server name, tier, and trust boundary description.
-   - Footer: "Generated by `gdev`. Re-run `gdev init --update` to refresh after changing enabled servers."
-3. Write `.claude/rules/mcp-security.md` during `gdev init` and `gdev mcp enable/disable`:
+   - Footer: "Generated by `gdev`. Re-run `qsdev init --update` to refresh after changing enabled servers."
+3. Write `.claude/rules/mcp-security.md` during `qsdev init` and `qsdev mcp enable/disable`:
    - Write the file unconditionally (machine-owned, no human-edited sections).
    - Register with Phase 12 file ownership registry.
 4. Update CLAUDE.md MCP section via section markers:
@@ -859,9 +859,9 @@ Credential validation catches a common mistake: developers embedding API keys di
    }
    ```
 6. Call `ValidateMcpJsonCredentials` in:
-   - `gdev mcp enable <name>`: validate the server config before writing.
-   - `gdev check` (Unit 28.5's `gdev mcp check --compliance`): report leaks as `SeverityCritical` findings.
-   - `gdev init --update`: validate after regeneration.
+   - `qsdev mcp enable <name>`: validate the server config before writing.
+   - `qsdev check` (Unit 28.5's `qsdev mcp check --compliance`): report leaks as `SeverityCritical` findings.
+   - `qsdev init --update`: validate after regeneration.
 7. Write unit tests:
    - Low tier server: `GenerateMcpSecurityNotice` returns empty string.
    - Medium tier server: notice mentions "network requests".
@@ -869,7 +869,7 @@ Credential validation catches a common mistake: developers embedding API keys di
    - `looksLikeSecret`: flags `SLACK_BOT_TOKEN = "xoxb-actual-token"`, not `SLACK_BOT_TOKEN = "${SLACK_BOT_TOKEN}"`.
    - `looksLikeSecret`: does not flag `MYSQL_PORT = "3306"`.
    - `GenerateMcpSecurityRulesFile`: only includes servers with non-empty notices.
-   - Credential validation blocks `gdev mcp enable` when literal value provided.
+   - Credential validation blocks `qsdev mcp enable` when literal value provided.
 
 **Acceptance Criteria:**
 - [ ] Low-tier servers produce no security notice
@@ -878,8 +878,8 @@ Credential validation catches a common mistake: developers embedding API keys di
 - [ ] `.claude/rules/mcp-security.md` generated with per-server trust boundaries for non-Low servers
 - [ ] CLAUDE.md MCP section updated with tier labels for Medium and High servers
 - [ ] `ValidateMcpJsonCredentials` detects literal secret values in `.mcp.json` env fields
-- [ ] `gdev mcp enable` blocks if server config contains a likely-literal credential value
-- [ ] `gdev check` reports credential leaks as `SeverityCritical`
+- [ ] `qsdev mcp enable` blocks if server config contains a likely-literal credential value
+- [ ] `qsdev check` reports credential leaks as `SeverityCritical`
 - [ ] Env var references (`${TOKEN}`) correctly excluded from credential leak detection
 
 **Research Citations:**
@@ -898,9 +898,9 @@ Credential validation catches a common mistake: developers embedding API keys di
 
 devenv 2.0 introduced a native `claude.code.mcpServers` NixOS module option (confirmed in `gdev-ecosystem-expansion-assessment` spike). When devenv >= 2.0 is detected, gdev should prefer writing to `devenv.nix` via the native module (which generates `.mcp.json` as a devenv output) rather than writing `.mcp.json` directly. This avoids conflicts when devenv also manages `.mcp.json`. For devenv < 2.0, the existing direct-write path remains.
 
-**Code-Grounded Note:** The Phase 12 shared-file surgery pattern uses section markers to allow `gdev mcp enable/disable` to add/remove individual servers without rewriting the entire file. The markers in `.mcp.json` are structured as comments is not valid JSON — use a different approach: maintain a separate `~/.qsdev/mcp-state/<project-hash>/enabled.json` file as the canonical enabled-server list, and regenerate `.mcp.json` from scratch on every change. This is simpler than surgical JSON editing and avoids invalid JSON from comments.
+**Code-Grounded Note:** The Phase 12 shared-file surgery pattern uses section markers to allow `qsdev mcp enable/disable` to add/remove individual servers without rewriting the entire file. The markers in `.mcp.json` are structured as comments is not valid JSON — use a different approach: maintain a separate `~/.qsdev/mcp-state/<project-hash>/enabled.json` file as the canonical enabled-server list, and regenerate `.mcp.json` from scratch on every change. This is simpler than surgical JSON editing and avoids invalid JSON from comments.
 
-**Desired Outcome:** `.mcp.json` is generated from the registry. Adding or removing servers via `gdev mcp enable/disable` regenerates the file cleanly. devenv 2.0 projects use the native module path. The generated file never contains plaintext credentials.
+**Desired Outcome:** `.mcp.json` is generated from the registry. Adding or removing servers via `qsdev mcp enable/disable` regenerates the file cleanly. devenv 2.0 projects use the native module path. The generated file never contains plaintext credentials.
 
 **Steps:**
 1. Implement the canonical enabled-server state file:
@@ -987,7 +987,7 @@ devenv 2.0 introduced a native `claude.code.mcpServers` NixOS module option (con
        return os.WriteFile(filepath.Join(projectRoot, ".mcp.json"), content, 0644)
    }
    ```
-6. Implement the dispatch function called by `gdev mcp enable/disable` and `gdev init`:
+6. Implement the dispatch function called by `qsdev mcp enable/disable` and `qsdev init`:
    ```go
    func WriteMcpConfig(enabled []*McpServerEntry, projectState ProjectState, projectRoot string) error {
        devenvVer, _ := detectDevenvVersion(projectRoot)
@@ -1013,7 +1013,7 @@ devenv 2.0 introduced a native `claude.code.mcpServers` NixOS module option (con
 - [ ] HTTP transport servers (Atlassian, Linear) use `url` field in output, not `command`/`args`
 - [ ] devenv >= 2.0 detected; native `claude.code.mcpServers` module used as primary path
 - [ ] devenv < 2.0: direct `.mcp.json` write path used as fallback
-- [ ] `WriteMcpConfig` called by `gdev mcp enable`, `gdev mcp disable`, and `gdev init`
+- [ ] `WriteMcpConfig` called by `qsdev mcp enable`, `qsdev mcp disable`, and `qsdev init`
 - [ ] Plaintext credential values block `.mcp.json` write with clear error
 - [ ] Empty enabled server list produces valid `{"mcpServers": {}}` output
 - [ ] Output is deterministic: same enabled servers always produce identical `.mcp.json`
@@ -1038,8 +1038,8 @@ devenv 2.0 introduced a native `claude.code.mcpServers` NixOS module option (con
 | `internal/mcp/detect.go` | Detection functions: MySQL, SQLite, Terraform, Sentry |
 | `internal/mcp/generate.go` | Registry-driven `.mcp.json` generation and devenv 2.0 module path |
 | `internal/mcp/security.go` | `GenerateMcpSecurityNotice`, `ValidateMcpJsonCredentials`, rules file generation |
-| `internal/mcp/compliance.go` | `gdev mcp check --compliance` implementation |
-| `cmd/mcp.go` | `gdev mcp` cobra command group |
+| `internal/mcp/compliance.go` | `qsdev mcp check --compliance` implementation |
+| `cmd/mcp.go` | `qsdev mcp` cobra command group |
 
 ### Existing Code to Migrate
 
@@ -1072,14 +1072,14 @@ Note: The 40-tool ceiling applies to the set of *enabled* servers at any given t
 
 - [ ] All seven units pass acceptance criteria
 - [ ] All MVP Phase 4 servers migrated to registry format with correct ToolCount, SecurityTier, and ConfigPolicy
-- [ ] `gdev mcp list` shows full registry state including tool budget summary
-- [ ] `gdev mcp enable context7` succeeds; `gdev mcp enable atlassian` (over budget) fails with clear error
+- [ ] `qsdev mcp list` shows full registry state including tool budget summary
+- [ ] `qsdev mcp enable context7` succeeds; `qsdev mcp enable atlassian` (over budget) fails with clear error
 - [ ] MySQL auto-detection: detected in a project with devenv MySQL service + mysql2 dependency
 - [ ] SQLite auto-detection: detected in a project with `.sqlite` files
 - [ ] Terraform detect-and-offer: wizard prompt shown when `*.tf` files present
 - [ ] Sentry detect-and-offer: wizard prompt shown when Sentry SDK imported
 - [ ] Slack security acknowledgment cannot be bypassed; `--yes` flag fails with instructions
-- [ ] `gdev mcp check --compliance --strict` exits 1 on sub-B graded server
+- [ ] `qsdev mcp check --compliance --strict` exits 1 on sub-B graded server
 - [ ] `.mcp.json` contains no plaintext credential values (validated on write)
 - [ ] `.claude/rules/mcp-security.md` generated with correct notices for Medium/High tier servers
 - [ ] devenv 2.0 native `claude.code.mcpServers` module path used when available

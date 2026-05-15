@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestBuildEcosystemsList_Empty(t *testing.T) {
@@ -106,12 +106,12 @@ func TestBuildDevenvNixData_GdevEnvVars(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Verify gdev env vars are present.
+	// Verify qsdev env vars are present.
 	checks := map[string]string{
-		"GDEV_PROJECT_NAME":    "myproject",
-		"GDEV_SECURITY_PROFILE": "enhanced",
-		"GDEV_ECOSYSTEMS":      "go,python",
-		"GDEV_TOOL_COUNT":      "2",
+		"QSDEV_PROJECT_NAME":    "myproject",
+		"QSDEV_SECURITY_PROFILE": "enhanced",
+		"QSDEV_ECOSYSTEMS":      "go,python",
+		"QSDEV_TOOL_COUNT":      "2",
 	}
 	for key, want := range checks {
 		got, ok := data.EnvVars[key]
@@ -124,9 +124,9 @@ func TestBuildDevenvNixData_GdevEnvVars(t *testing.T) {
 		}
 	}
 
-	// GDEV_VERSION should be present and non-empty.
-	if v, ok := data.EnvVars["GDEV_VERSION"]; !ok || v == "" {
-		t.Error("EnvVars missing or empty GDEV_VERSION")
+	// QSDEV_VERSION should be present and non-empty.
+	if v, ok := data.EnvVars["QSDEV_VERSION"]; !ok || v == "" {
+		t.Error("EnvVars missing or empty QSDEV_VERSION")
 	}
 }
 
@@ -141,24 +141,24 @@ func TestBuildDevenvNixData_GdevEnvVars_Defaults(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if v := data.EnvVars["GDEV_PROJECT_NAME"]; v != "unknown" {
-		t.Errorf("default GDEV_PROJECT_NAME = %q, want %q", v, "unknown")
+	if v := data.EnvVars["QSDEV_PROJECT_NAME"]; v != "unknown" {
+		t.Errorf("default QSDEV_PROJECT_NAME = %q, want %q", v, "unknown")
 	}
-	if v := data.EnvVars["GDEV_SECURITY_PROFILE"]; v != "standard" {
-		t.Errorf("default GDEV_SECURITY_PROFILE = %q, want %q", v, "standard")
+	if v := data.EnvVars["QSDEV_SECURITY_PROFILE"]; v != "standard" {
+		t.Errorf("default QSDEV_SECURITY_PROFILE = %q, want %q", v, "standard")
 	}
-	if v := data.EnvVars["GDEV_ECOSYSTEMS"]; v != "none" {
-		t.Errorf("default GDEV_ECOSYSTEMS = %q, want %q", v, "none")
+	if v := data.EnvVars["QSDEV_ECOSYSTEMS"]; v != "none" {
+		t.Errorf("default QSDEV_ECOSYSTEMS = %q, want %q", v, "none")
 	}
-	if v := data.EnvVars["GDEV_TOOL_COUNT"]; v != "0" {
-		t.Errorf("default GDEV_TOOL_COUNT = %q, want %q", v, "0")
+	if v := data.EnvVars["QSDEV_TOOL_COUNT"]; v != "0" {
+		t.Errorf("default QSDEV_TOOL_COUNT = %q, want %q", v, "0")
 	}
 }
 
 func TestBuildEnterShellScript_ContainsGdevVars(t *testing.T) {
 	script := buildEnterShellScript()
 
-	for _, want := range []string{"GDEV_PROJECT_NAME", "GDEV_SECURITY_PROFILE", "GDEV_TOOL_COUNT"} {
+	for _, want := range []string{"QSDEV_PROJECT_NAME", "QSDEV_SECURITY_PROFILE", "QSDEV_TOOL_COUNT"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("enterShell script does not contain %q", want)
 		}

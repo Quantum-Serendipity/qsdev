@@ -4,7 +4,7 @@
 
 **Recommendation: Include learning-opportunities and orient as opt-in skills in gdev's claudecode addon skill library. Exclude learning-opportunities-auto (the hook variant). Reference MEASURE-THIS.md in consulting workflow documentation but do not deploy it as a tool.**
 
-The learning-opportunities ecosystem is a well-constructed, research-backed Claude Code plugin suite that directly addresses a real consulting firm problem: engineers who produce AI-accelerated output without building genuine understanding of unfamiliar client codebases. The skill format is compatible with gdev's deployment pattern — standard `.claude/skills/` YAML frontmatter markdown files that can be copied into gdev's embedded skill library and deployed via `gdev claude init`. The project is credible (1,530 stars, active development, PhD-level learning science research backing with peer-reviewed publications), properly licensed (CC-BY-4.0), and has zero runtime dependencies.
+The learning-opportunities ecosystem is a well-constructed, research-backed Claude Code plugin suite that directly addresses a real consulting firm problem: engineers who produce AI-accelerated output without building genuine understanding of unfamiliar client codebases. The skill format is compatible with gdev's deployment pattern — standard `.claude/skills/` YAML frontmatter markdown files that can be copied into gdev's embedded skill library and deployed via `qsdev claude init`. The project is credible (1,530 stars, active development, PhD-level learning science research backing with peer-reviewed publications), properly licensed (CC-BY-4.0), and has zero runtime dependencies.
 
 The orient companion is the strongest fit for consulting — it generates structured codebase orientation exercises grounded in program comprehension research, which maps directly to gdev's Join mode onboarding. Learning-opportunities-auto (the post-commit hook) should be excluded because it conflicts with gdev's existing hook deployment architecture and would add hook management complexity for marginal benefit.
 
@@ -123,11 +123,11 @@ Orient has an alternative "showboat" mode that uses Simon Willison's `showboat` 
 Orient maps directly to Phase 13 (Unit 13.4) Join mode onboarding:
 
 **Current gdev Join mode flow:**
-1. `gdev init` in existing repo → detect ecosystems → generate devenv/Claude Code config
+1. `qsdev init` in existing repo → detect ecosystems → generate devenv/Claude Code config
 2. Developer reads CLAUDE.md, explores codebase manually
 
 **Enhanced flow with orient:**
-1. `gdev init` in existing repo → detect ecosystems → generate devenv/Claude Code config
+1. `qsdev init` in existing repo → detect ecosystems → generate devenv/Claude Code config
 2. Orient auto-generates `orientation.md` with structured codebase overview
 3. Developer runs `/learning-opportunities orient` to get guided orientation exercises
 4. Developer gets productive faster with structured, research-backed onboarding
@@ -135,7 +135,7 @@ Orient maps directly to Phase 13 (Unit 13.4) Join mode onboarding:
 **Implementation:** The `/gdev-onboard` skill (Phase 14, Unit 14.1) could invoke orient at the end of Join mode setup:
 
 ```
-After gdev init completes in Join mode, run /orient to generate orientation.md,
+After qsdev init completes in Join mode, run /orient to generate orientation.md,
 then suggest the user run /learning-opportunities orient for a guided tour.
 ```
 
@@ -312,22 +312,22 @@ The research backing is substantially more rigorous than typical open-source dev
 
 ## 6. Integration Design for gdev
 
-### How `gdev enable learning-opportunities` Would Work
+### How `qsdev enable learning-opportunities` Would Work
 
 ```
-gdev enable learning-opportunities
+qsdev enable learning-opportunities
   → Copies to .claude/skills/learning-opportunities/SKILL.md
   → Copies to .claude/skills/learning-opportunities/resources/PRINCIPLES.md
   → Adds "## Learning Opportunities" section to CLAUDE.md (between markers)
-  → Runs gdev claude update to refresh settings.json if needed
+  → Runs qsdev claude update to refresh settings.json if needed
 
-gdev enable orient
+qsdev enable orient
   → Copies to .claude/skills/orient/SKILL.md
   → Copies to .claude/skills/orient/resources/orient-bibliography.md
   → No CLAUDE.md changes needed (orient is invoked on-demand)
 ```
 
-This follows the existing `gdev enable/disable` pattern from Phase 12 (Unit 12.1). Skills are embedded in gdev's Go binary and deployed to `.claude/skills/` on enable.
+This follows the existing `qsdev enable/disable` pattern from Phase 12 (Unit 12.1). Skills are embedded in gdev's Go binary and deployed to `.claude/skills/` on enable.
 
 ### Default-On vs Opt-In
 
@@ -339,11 +339,11 @@ Reasons for opt-in:
 3. Not all projects warrant learning exercises (quick bug fixes, routine maintenance)
 4. Consulting firm culture should determine adoption — some teams will embrace it, others won't
 
-The nudge: during `gdev init` in Join mode, after setup completes, print:
+The nudge: during `qsdev init` in Join mode, after setup completes, print:
 ```
-Tip: Run `gdev enable learning-opportunities` to get science-based learning
+Tip: Run `qsdev enable learning-opportunities` to get science-based learning
 exercises as you explore this codebase. Great for unfamiliar repos.
-Run `gdev enable orient` first to generate a structured orientation.
+Run `qsdev enable orient` first to generate a structured orientation.
 ```
 
 ### Interaction with Existing gdev Skills
@@ -385,7 +385,7 @@ gdev could ship a customized version of the SKILL.md that adjusts triggers for c
 
 gdev's CC-BY-4.0 license allows this customization with attribution.
 
-### Should Orient Auto-Run During `gdev init` Join Mode?
+### Should Orient Auto-Run During `qsdev init` Join Mode?
 
 **No, but gdev should make it a one-command follow-up.**
 
@@ -396,9 +396,9 @@ Reasons against auto-run:
 
 Recommended UX:
 ```
-$ gdev init                    # Join mode detected
+$ qsdev init                    # Join mode detected
   [... normal init ...]
-  Tip: New to this codebase? Run `gdev orient` for structured orientation.
+  Tip: New to this codebase? Run `qsdev orient` for structured orientation.
 
 $ gdev orient                  # Convenience wrapper
   → Ensures orient skill is enabled
@@ -481,11 +481,11 @@ The weakest link: the skill itself has not been through a controlled trial (no p
 
 | Component | Action | Effort | Priority |
 |-----------|--------|--------|----------|
-| learning-opportunities SKILL.md | Embed in Go binary, deploy via `gdev enable learning-opportunities` | Small | High |
+| learning-opportunities SKILL.md | Embed in Go binary, deploy via `qsdev enable learning-opportunities` | Small | High |
 | learning-opportunities PRINCIPLES.md | Embed as resource, deployed alongside SKILL.md | Small | High |
-| orient SKILL.md | Embed in Go binary, deploy via `gdev enable orient` | Small | High |
+| orient SKILL.md | Embed in Go binary, deploy via `qsdev enable orient` | Small | High |
 | orient-bibliography.md | Embed as resource, deployed alongside orient SKILL.md | Small | Medium |
-| `gdev orient` convenience command | Thin wrapper: enable orient + invoke /orient | Small | Medium |
+| `qsdev orient` convenience command | Thin wrapper: enable orient + invoke /orient | Small | Medium |
 
 ### Exclude from gdev
 
@@ -497,7 +497,7 @@ The weakest link: the skill itself has not been through a controlled trial (no p
 
 ### CLAUDE.md Additions When Enabled
 
-When `gdev enable learning-opportunities` is run, add to CLAUDE.md generated section:
+When `qsdev enable learning-opportunities` is run, add to CLAUDE.md generated section:
 
 ```markdown
 ## Learning & Skill Development

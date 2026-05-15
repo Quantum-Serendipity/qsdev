@@ -149,7 +149,7 @@ func discoverSessions(dir string) ([]sessionInfo, error) {
 				}
 			}
 			if ms := jsonField(last, "duration_ms"); ms != "" {
-				fmt.Sscanf(ms, "%d", &si.Duration)
+				_, _ = fmt.Sscanf(ms, "%d", &si.Duration)
 			}
 		}
 

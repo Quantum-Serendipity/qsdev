@@ -25,7 +25,6 @@ type wizardState struct {
 	includeEnv     bool
 	logSource      string
 	logWindow      string
-	logSessions    []string
 	includeExtLogs bool
 	submitMethod   string
 }

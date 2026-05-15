@@ -80,7 +80,7 @@ func extractDebugFlag(args []string) []string {
 		filtered = append(filtered, arg)
 	}
 	if found {
-		os.Setenv("QSDEV_LOG", "debug")
+		_ = os.Setenv("QSDEV_LOG", "debug")
 	}
 	return filtered
 }

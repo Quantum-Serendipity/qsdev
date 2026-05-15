@@ -3,6 +3,7 @@ package devinit
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -110,6 +111,12 @@ func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptio
 		FreshScan:  opts.scan,
 		AuditLevel: opts.auditLevel,
 	})
+	if err == nil {
+		slog.Info("posture assessed",
+			"score", report.Score.Total,
+			"grade", report.Score.Grade,
+			"tools", len(report.Tools))
+	}
 	if err != nil {
 		if errors.Is(err, posture.ErrNotInitialized) {
 			fmt.Fprintln(cmd.ErrOrStderr(), "Project not initialized. Run 'qsdev init' first.")

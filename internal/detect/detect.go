@@ -4,6 +4,8 @@
 package detect
 
 import (
+	"log/slog"
+
 	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -14,5 +16,10 @@ import (
 func Detect(projectRoot string) types.DetectedProject {
 	registry := ecosystem.DefaultRegistry()
 	summary := registry.DetectWithEnvironment(projectRoot)
+	slog.Debug("project detection complete",
+		"ecosystems", len(summary.Project.Ecosystems),
+		"has_go", summary.Project.HasGoMod,
+		"has_node", summary.Project.HasPackageJSON,
+		"has_docker", summary.Project.HasDockerfile)
 	return summary.Project
 }

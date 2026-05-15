@@ -2,6 +2,7 @@ package generate
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -116,10 +117,12 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 		if err := fileutil.WriteFileAtomic(fullPath, file.Content, mode); err != nil {
 			fr.Action = ActionFailed
 			fr.Error = fmt.Errorf("write %s: %w", file.Path, err)
+			slog.Warn("file write failed", "path", file.Path, "error", err)
 			result.Files = append(result.Files, fr)
 			result.Failed++
 			continue
 		}
+		slog.Debug("file written", "path", file.Path, "action", fr.Action, "bytes", fr.BytesSize)
 
 		result.Files = append(result.Files, fr)
 		switch fr.Action {

@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
@@ -44,7 +45,13 @@ func ParseQsdevConfig(path string) (*types.QsdevConfig, error) {
 		return nil, fmt.Errorf("reading config file %s: %w", path, err)
 	}
 
-	return ParseQsdevConfigBytes(data)
+	cfg, err := ParseQsdevConfigBytes(data)
+	if err != nil {
+		slog.Debug("config parse failed", "path", path, "error", err)
+		return nil, err
+	}
+	slog.Debug("config loaded", "path", path, "version", cfg.Version)
+	return cfg, nil
 }
 
 // ParseQsdevConfigBytes parses .qsdev.yaml content from raw bytes.

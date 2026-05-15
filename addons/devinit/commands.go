@@ -2,6 +2,7 @@ package devinit
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,6 +84,8 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 		}
 	}
 
+	slog.Info("onboarding mode detected", "mode", result.Mode)
+
 	// d. Print explanation.
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s\n", result.Mode, result.Explanation)
 
@@ -115,6 +118,11 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 
 	// d. Run detection.
 	detected := detect.Detect(projectRoot)
+	slog.Debug("ecosystem detection complete",
+		"ecosystems", len(detected.Ecosystems),
+		"has_go", detected.HasGoMod,
+		"has_node", detected.HasPackageJSON,
+		"has_devenv_nix", detected.HasDevenvNix)
 
 	// e. Build answers from flags.
 	answers, err := AnswersFromFlags(opts, projectRoot)
@@ -208,6 +216,7 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		}
 		allFiles = append(allFiles, files...)
 		devenvGenerated = len(files) > 0
+		slog.Info("devenv files generated", "count", len(files))
 	}
 
 	// m. Generate Claude Code files (if not --devenv-only and Claude Code enabled).
@@ -219,6 +228,7 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		}
 		allFiles = append(allFiles, files...)
 		claudeGenerated = len(files) > 0
+		slog.Info("claude code files generated", "count", len(files))
 	}
 
 	// n. Dry-run: preview and return.
@@ -245,6 +255,12 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
 	}
+
+	slog.Info("files written",
+		"created", result.Created,
+		"updated", result.Updated,
+		"skipped", result.Skipped,
+		"failed", result.Failed)
 
 	if result.HasFailures() {
 		var details strings.Builder

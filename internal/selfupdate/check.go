@@ -2,6 +2,7 @@ package selfupdate
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,6 +41,8 @@ type githubAsset struct {
 
 // apiBaseURL can be overridden in tests.
 var apiBaseURL = "https://api.github.com"
+
+var errReleaseNotFound = errors.New("release not found")
 
 // CheckForUpdate queries GitHub for the latest release and returns it if
 // the latest version is newer than currentVersion. It caches check results
@@ -93,6 +96,10 @@ func CheckForUpdate(cfg Config, currentVersion string) (*Release, error) {
 		return nil, err
 	}
 
+	if release == nil {
+		return nil, nil
+	}
+
 	// Save to cache regardless of whether an update is available.
 	_ = saveCache(cfg, &cachedCheck{
 		CheckedAt: time.Now(),
@@ -119,11 +126,16 @@ func FetchRelease(cfg Config, tag string) (*Release, error) {
 }
 
 // fetchLatestRelease fetches the latest release from GitHub.
+// Returns nil, nil if no releases exist (404).
 func fetchLatestRelease(cfg Config) (*Release, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest",
 		apiBaseURL, cfg.GitHubOwner, cfg.GitHubRepo)
 
-	return doFetchRelease(cfg, url)
+	release, err := doFetchRelease(cfg, url)
+	if errors.Is(err, errReleaseNotFound) {
+		return nil, nil
+	}
+	return release, err
 }
 
 // doFetchRelease performs the HTTP request and parses the response.
@@ -147,6 +159,9 @@ func doFetchRelease(cfg Config, url string) (*Release, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errReleaseNotFound
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, string(body))

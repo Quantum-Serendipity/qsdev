@@ -127,6 +127,12 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		"has_node", detected.HasPackageJSON,
 		"has_devenv_nix", detected.HasDevenvNix)
 
+	if !detected.IsGitRepo {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: not a git repository. Some features (hooks, branch naming) require git.")
+		fmt.Fprintln(cmd.ErrOrStderr(), "Run 'git init' to initialize a repository.")
+		fmt.Fprintln(cmd.ErrOrStderr())
+	}
+
 	// d2. Warn about missing critical dependencies (non-blocking).
 	if !opts.ClaudeOnly {
 		prereqs := CheckPrerequisites(cmd.Context())

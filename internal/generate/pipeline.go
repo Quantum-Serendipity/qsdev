@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
@@ -24,6 +25,13 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 	}
 	if !info.IsDir() {
 		return WriteResult{}, fmt.Errorf("project root is not a directory: %q", opts.ProjectRoot)
+	}
+
+	// Resolve the project root once for consistent symlink escape checks.
+	// On Windows, EvalSymlinks may normalize casing or resolve junctions.
+	resolvedRoot := opts.ProjectRoot
+	if r, err := filepath.EvalSymlinks(opts.ProjectRoot); err == nil {
+		resolvedRoot = r
 	}
 
 	registry := NewValidatorRegistry()
@@ -68,9 +76,9 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 		fullPath := filepath.Join(opts.ProjectRoot, file.Path)
 
 		// Verify the resolved path doesn't escape the project root via symlinks.
-		if dir := filepath.Dir(fullPath); dir != opts.ProjectRoot {
+		if dir := filepath.Dir(fullPath); dir != resolvedRoot {
 			resolved, resolveErr := filepath.EvalSymlinks(dir)
-			if resolveErr == nil && !strings.HasPrefix(resolved+string(filepath.Separator), opts.ProjectRoot+string(filepath.Separator)) {
+			if resolveErr == nil && !pathHasPrefix(resolved, resolvedRoot) {
 				fr.Action = ActionFailed
 				fr.Error = fmt.Errorf("resolved path escapes project root: %q", file.Path)
 				result.Files = append(result.Files, fr)
@@ -166,6 +174,19 @@ func ValidateFiles(files []types.GeneratedFile) []ValidationResult {
 		results = append(results, vr)
 	}
 	return results
+}
+
+// pathHasPrefix checks whether resolved is under root, accounting for
+// filesystem separator boundaries and case-insensitive paths on Windows.
+func pathHasPrefix(resolved, root string) bool {
+	sep := string(filepath.Separator)
+	a := resolved + sep
+	b := root + sep
+	if runtime.GOOS == "windows" {
+		a = strings.ToLower(a)
+		b = strings.ToLower(b)
+	}
+	return strings.HasPrefix(a, b)
 }
 
 // containsPathTraversal checks whether a file path contains ".." components.

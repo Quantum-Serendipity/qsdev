@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -140,8 +141,12 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	}
 
 	if result.HasFailures() {
-		return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); run gdev repair to recover",
-			result.Failed, len(successfulFiles))
+		var details strings.Builder
+		for _, ff := range result.FailedFiles() {
+			fmt.Fprintf(&details, "\n  - %s: %v", ff.Path, ff.Error)
+		}
+		return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); run gdev repair to recover%s",
+			result.Failed, len(successfulFiles), details.String())
 	}
 
 	// 12. Save answers.

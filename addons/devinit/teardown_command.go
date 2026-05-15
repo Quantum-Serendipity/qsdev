@@ -98,6 +98,8 @@ func runTeardown(cmd *cobra.Command, quick, compliance, force, archive, dryRun b
 		fmt.Fprintln(cmd.OutOrStdout(), "\n[dry-run] No files were modified.")
 	}
 
-	_ = result
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("teardown completed with %d error(s)", len(result.Errors))
+	}
 	return nil
 }

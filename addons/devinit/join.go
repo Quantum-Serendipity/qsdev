@@ -104,10 +104,9 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	if _, err := os.Stat(localConfigPath); os.IsNotExist(err) {
 		localContent := GenerateLocalConfigTemplate(answers, detected)
 		allFiles = append(allFiles, types.GeneratedFile{
-			Path:           ".qsdev.local.yaml",
-			Content:        localContent,
-			Mode:           0o644,
-			SkipValidation: true,
+			Path:    ".qsdev.local.yaml",
+			Content: localContent,
+			Mode:    0o644,
 		})
 	}
 

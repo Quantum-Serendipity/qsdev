@@ -40,7 +40,12 @@
             pname = "qsdev";
             inherit version;
 
-            src = ./.;
+            src = pkgs.lib.cleanSourceWith {
+              src = ./.;
+              filter = path: type:
+                let name = baseNameOf path;
+                in name != "go.work" && name != "go.work.sum";
+            };
 
             vendorHash = null;
 

@@ -13,24 +13,15 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-func configCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "config",
-		Short: "Manage .qsdev.yaml project configuration",
-		Long: `Commands for managing the .qsdev.yaml project configuration file.
-
-Use subcommands to migrate config schemas, validate configuration,
-and inspect the current config state.
-
-When run without a subcommand, displays the current project configuration.`,
+func configShowCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "show",
+		Short: "Display current .qsdev.yaml project configuration",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runConfigShow(cmd)
 		},
 	}
-
-	cmd.AddCommand(migrateCmd())
-
-	return cmd
 }
 
 func runConfigShow(cmd *cobra.Command) error {

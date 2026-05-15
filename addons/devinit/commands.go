@@ -94,6 +94,9 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 	case ModeCreate:
 		return runCreate(cmd, opts, projectRoot)
 	case ModeJoin:
+		if result.AlreadySetUp && opts.Force {
+			return runCreate(cmd, opts, projectRoot)
+		}
 		if result.AlreadySetUp {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Project is already set up.")
 			return nil

@@ -263,10 +263,13 @@ func TestIntegration_ProfilePlusFlagOverride(t *testing.T) {
 	// devenv.nix should still have Go (from profile).
 	requireFileContains(t, dir, "devenv.nix", "go")
 
-	// settings.json should have minimal permissions (no defaultMode).
+	// settings.json should have minimal permissions with defaultMode "plan".
 	settingsContent := readFileContent(t, dir, ".claude/settings.json")
-	if strings.Contains(settingsContent, `"defaultMode"`) {
-		t.Error("settings.json should not contain defaultMode with minimal preset")
+	if !strings.Contains(settingsContent, `"defaultMode"`) {
+		t.Error("settings.json should contain defaultMode with minimal preset")
+	}
+	if !strings.Contains(settingsContent, `"plan"`) {
+		t.Error("settings.json minimal preset should set defaultMode to plan")
 	}
 }
 

@@ -6,6 +6,9 @@ import "github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 var stateFiles = []string{
 	".devenv/.qsdev-state.yaml",
 	".claude/.qsdev-claude-state.yaml",
+	".devinit/.qsdev-init-state.yaml",
+	".devinit/.qsdev-init-answers.yaml",
+	".qsdev.yaml",
 }
 
 // BuildPlan creates a TeardownPlan from classified files and options.

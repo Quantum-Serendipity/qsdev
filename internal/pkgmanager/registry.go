@@ -177,6 +177,42 @@ var toolRegistry = map[string]ToolEntry{
 		Name: "tree", Binary: "tree", VersionFlag: "--version",
 		Packages: PackageNames{Generic: "tree"},
 	},
+	"devenv": {
+		Name: "devenv", Binary: "devenv", VersionFlag: "version",
+		Packages: PackageNames{
+			Generic: "devenv",
+			ByManager: map[string]string{
+				"nix": "devenv",
+			},
+		},
+	},
+	"pre-commit": {
+		Name: "pre-commit", Binary: "pre-commit", VersionFlag: "--version",
+		Packages: PackageNames{
+			Generic: "pre-commit",
+			ByManager: map[string]string{
+				"nix": "pre-commit",
+			},
+		},
+	},
+	"shfmt": {
+		Name: "shfmt", Binary: "shfmt", VersionFlag: "--version",
+		Packages: PackageNames{
+			Generic: "shfmt",
+			ByManager: map[string]string{
+				"nix": "shfmt",
+			},
+		},
+	},
+	"hadolint": {
+		Name: "hadolint", Binary: "hadolint", VersionFlag: "--version",
+		Packages: PackageNames{
+			Generic: "hadolint",
+			ByManager: map[string]string{
+				"nix": "hadolint",
+			},
+		},
+	},
 }
 
 // ResolvePackageName returns the best package name for the given tool,

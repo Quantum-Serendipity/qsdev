@@ -47,11 +47,22 @@ var apiBaseURL = "https://api.github.com"
 //   - the current version is already up-to-date
 //   - a recent cache entry indicates we checked recently
 //   - the current version string is empty or "dev"
+// stripBuildMeta removes semver build metadata (everything after "+") so that
+// version comparison works correctly. "0.3.0+cee1fee" → "0.3.0".
+func stripBuildMeta(v string) string {
+	if idx := strings.Index(v, "+"); idx >= 0 {
+		return v[:idx]
+	}
+	return v
+}
+
 func CheckForUpdate(cfg Config, currentVersion string) (*Release, error) {
 	// Skip check for dev builds.
 	if currentVersion == "" || currentVersion == "dev" || currentVersion == "(devel)" {
 		return nil, nil
 	}
+
+	cleanCurrent := stripBuildMeta(currentVersion)
 
 	// Check cache first.
 	cached, err := loadCache(cfg)
@@ -59,7 +70,7 @@ func CheckForUpdate(cfg Config, currentVersion string) (*Release, error) {
 		if time.Since(cached.CheckedAt) < cfg.CheckInterval {
 			// We checked recently. Only return a release if the cached
 			// version is newer than current.
-			if cached.Version != "" && doctor.CompareVersions(cached.Version, currentVersion) > 0 {
+			if cached.Version != "" && doctor.CompareVersions(stripBuildMeta(cached.Version), cleanCurrent) > 0 {
 				return &Release{
 					Version: cached.Version,
 					URL:     cached.URL,
@@ -83,7 +94,7 @@ func CheckForUpdate(cfg Config, currentVersion string) (*Release, error) {
 	})
 
 	// Compare versions.
-	if doctor.CompareVersions(release.Version, currentVersion) <= 0 {
+	if doctor.CompareVersions(stripBuildMeta(release.Version), cleanCurrent) <= 0 {
 		return nil, nil
 	}
 

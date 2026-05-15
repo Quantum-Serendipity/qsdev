@@ -77,6 +77,9 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 			channel = ch
 		}
 	}
+	if channel == "stable" && config.Version != "" {
+		channel = config.Version
+	}
 
 	return fmt.Sprintf(`  languages.rust = {
     enable = true;

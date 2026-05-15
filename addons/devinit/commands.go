@@ -124,6 +124,17 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		"has_node", detected.HasPackageJSON,
 		"has_devenv_nix", detected.HasDevenvNix)
 
+	// d2. Warn about missing critical dependencies (non-blocking).
+	if !opts.ClaudeOnly {
+		prereqs := CheckPrerequisites(cmd.Context())
+		if prereqs.HasMissing() {
+			fmt.Fprintln(cmd.ErrOrStderr(), "Note: some prerequisites are missing:")
+			prereqs.PrintReport(cmd.ErrOrStderr())
+			fmt.Fprintln(cmd.ErrOrStderr(), "Run 'qsdev devenv setup' after init to install them.")
+			fmt.Fprintln(cmd.ErrOrStderr())
+		}
+	}
+
 	// e. Build answers from flags.
 	answers, err := AnswersFromFlags(opts, projectRoot)
 	if err != nil {
@@ -288,7 +299,21 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		}
 	}
 
-	// r. Print summary + post-generation message.
+	// r. Generate .qsdev.yaml project config.
+	qsdevCfg := buildQsdevConfig(answers, version.Info().Version)
+	qsdevCfgPath := filepath.Join(projectRoot, ".qsdev.yaml")
+	if err := writeQsdevConfig(qsdevCfgPath, qsdevCfg); err != nil {
+		return fmt.Errorf("writing .qsdev.yaml: %w", err)
+	}
+
+	// s. Add managed directories to .gitignore.
+	for _, entry := range []string{".devinit/", ".qsdev/", ".direnv/", ".devenv/"} {
+		if err := EnsureGitignoreEntry(projectRoot, entry); err != nil {
+			slog.Warn("could not update .gitignore", "entry", entry, "error", err)
+		}
+	}
+
+	// t. Print summary + post-generation message.
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
 	_, _ = fmt.Fprint(cmd.OutOrStdout(), postGenerationMessage(answers, devenvGenerated, claudeGenerated))
 

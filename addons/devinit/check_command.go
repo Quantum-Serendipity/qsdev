@@ -115,9 +115,9 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		return fmt.Errorf("formatting report: %w", err)
 	}
 
-	// Emit GitHub Actions annotations if running in CI.
+	// Emit GitHub Actions annotations to stderr so they don't pollute JSON/SARIF output.
 	if check.IsGitHubActions() {
-		check.EmitGitHubAnnotations(report.Checks, cmd.OutOrStdout())
+		check.EmitGitHubAnnotations(report.Checks, cmd.ErrOrStderr())
 	}
 
 	// Check if we should fail.

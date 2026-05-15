@@ -100,7 +100,11 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 	// Print summary.
 	w := cmd.OutOrStdout()
 	if len(result.Fixed) > 0 {
-		fmt.Fprintf(w, "Fixed (%d):\n", len(result.Fixed))
+		if opts.DryRun {
+			fmt.Fprintf(w, "Would fix (%d):\n", len(result.Fixed))
+		} else {
+			fmt.Fprintf(w, "Fixed (%d):\n", len(result.Fixed))
+		}
 		for _, a := range result.Fixed {
 			fmt.Fprintf(w, "  [fix] %s — %s\n", a.File, a.Description)
 		}

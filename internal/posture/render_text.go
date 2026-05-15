@@ -29,66 +29,81 @@ func renderQuiet(report *PostureReport, w io.Writer) error {
 	return err
 }
 
+// sectionMatch returns true if the given section name matches the filter, or if
+// the filter is empty (show all).
+func sectionMatch(filter, name string) bool {
+	return filter == "" || strings.EqualFold(filter, name)
+}
+
 // renderDefault outputs the standard multi-section text report.
 func renderDefault(report *PostureReport, w io.Writer, opts RenderOptions) error {
 	pass, partial, skip, fail := Indicators(opts.UseColor)
+	sec := strings.ToLower(opts.Section)
 
-	// Header
+	// Header (always shown)
 	fmt.Fprintf(w, "Security Posture: %s (%s)\n", report.ProjectName, report.ProjectPath)
 	fmt.Fprintf(w, "Score: %d/100 (%s)\n", int(math.Round(report.Score.Total)), report.Score.Grade)
 	fmt.Fprintln(w)
 
-	// Conformance
-	baselineStatus := pass
-	if !report.Conformance.Baseline.Pass {
-		baselineStatus = fail
+	// Conformance (shown when no section filter or "conformance")
+	if sec == "" || sec == "conformance" {
+		baselineStatus := pass
+		if !report.Conformance.Baseline.Pass {
+			baselineStatus = fail
+		}
+		enhancedStatus := pass
+		if !report.Conformance.Enhanced.Pass {
+			enhancedStatus = fail
+		}
+		fmt.Fprintf(w, "Conformance: %s Baseline  %s Enhanced\n", baselineStatus, enhancedStatus)
+		fmt.Fprintln(w)
 	}
-	enhancedStatus := pass
-	if !report.Conformance.Enhanced.Pass {
-		enhancedStatus = fail
-	}
-	fmt.Fprintf(w, "Conformance: %s Baseline  %s Enhanced\n", baselineStatus, enhancedStatus)
-	fmt.Fprintln(w)
 
 	// Defense Coverage
-	fmt.Fprintf(w, "Defense Coverage: %d/%d layers (%.0f%%)\n",
-		report.Defense.Enabled, report.Defense.Total, report.Defense.Score)
-	for _, l := range report.Defense.Layers {
-		ind := indicatorForLayer(l.Status, pass, partial, skip, fail)
-		fmt.Fprintf(w, "  %s %-30s %s\n", ind, l.Name, l.Status)
+	if sectionMatch(sec, "defense") {
+		fmt.Fprintf(w, "Defense Coverage: %d/%d layers (%.0f%%)\n",
+			report.Defense.Enabled, report.Defense.Total, report.Defense.Score)
+		for _, l := range report.Defense.Layers {
+			ind := indicatorForLayer(l.Status, pass, partial, skip, fail)
+			fmt.Fprintf(w, "  %s %-30s %s\n", ind, l.Name, l.Status)
+		}
+		fmt.Fprintln(w)
 	}
-	fmt.Fprintln(w)
 
 	// Config Health
-	fmt.Fprintf(w, "Config Health: %.0f%% (%d/%d files current)\n",
-		report.Config.Score, report.Config.Current, report.Config.Total)
-	if report.Config.Modified > 0 {
-		fmt.Fprintf(w, "  Modified: %d\n", report.Config.Modified)
+	if sectionMatch(sec, "config") {
+		fmt.Fprintf(w, "Config Health: %.0f%% (%d/%d files current)\n",
+			report.Config.Score, report.Config.Current, report.Config.Total)
+		if report.Config.Modified > 0 {
+			fmt.Fprintf(w, "  Modified: %d\n", report.Config.Modified)
+		}
+		if report.Config.Outdated > 0 {
+			fmt.Fprintf(w, "  Outdated: %d\n", report.Config.Outdated)
+		}
+		if report.Config.Missing > 0 {
+			fmt.Fprintf(w, "  Missing:  %d\n", report.Config.Missing)
+		}
+		fmt.Fprintln(w)
 	}
-	if report.Config.Outdated > 0 {
-		fmt.Fprintf(w, "  Outdated: %d\n", report.Config.Outdated)
-	}
-	if report.Config.Missing > 0 {
-		fmt.Fprintf(w, "  Missing:  %d\n", report.Config.Missing)
-	}
-	fmt.Fprintln(w)
 
 	// Dependency Health
-	totals := report.Dependencies.Totals
-	fmt.Fprintf(w, "Dependency Health: %.0f%%\n", report.Dependencies.Score)
-	if totals.Total() > 0 {
-		fmt.Fprintf(w, "  Vulnerabilities: %d critical, %d high, %d moderate, %d low\n",
-			totals.Critical, totals.High, totals.Moderate, totals.Low)
-	} else {
-		fmt.Fprintf(w, "  No vulnerabilities detected\n")
+	if sectionMatch(sec, "deps") || sectionMatch(sec, "dependencies") {
+		totals := report.Dependencies.Totals
+		fmt.Fprintf(w, "Dependency Health: %.0f%%\n", report.Dependencies.Score)
+		if totals.Total() > 0 {
+			fmt.Fprintf(w, "  Vulnerabilities: %d critical, %d high, %d moderate, %d low\n",
+				totals.Critical, totals.High, totals.Moderate, totals.Low)
+		} else {
+			fmt.Fprintf(w, "  No vulnerabilities detected\n")
+		}
+		if report.Dependencies.Stale {
+			fmt.Fprintf(w, "  %s Scan data may be stale; re-run with --scan\n", fail)
+		}
+		fmt.Fprintln(w)
 	}
-	if report.Dependencies.Stale {
-		fmt.Fprintf(w, "  %s Scan data may be stale; re-run with --scan\n", fail)
-	}
-	fmt.Fprintln(w)
 
 	// Drift summary
-	if report.Drift.TotalFindings > 0 {
+	if sec == "" && report.Drift.TotalFindings > 0 {
 		fmt.Fprintf(w, "Drift: %d finding(s)\n", report.Drift.TotalFindings)
 		for sev, count := range report.Drift.BySeverity {
 			fmt.Fprintf(w, "  %s: %d\n", sev, count)
@@ -96,8 +111,26 @@ func renderDefault(report *PostureReport, w io.Writer, opts RenderOptions) error
 		fmt.Fprintln(w)
 	}
 
-	// Footer hint
-	fmt.Fprintf(w, "Run 'qsdev status --verbose' for details or 'qsdev status --fix' for remediation commands.\n")
+	// Tools (shown when "tools" section requested)
+	if sectionMatch(sec, "tools") && sec != "" && len(report.Tools) > 0 {
+		fmt.Fprintln(w, "Tools:")
+		for _, t := range report.Tools {
+			ind := pass
+			if !t.Enabled {
+				ind = skip
+			} else if !t.Available {
+				ind = fail
+			}
+			fmt.Fprintf(w, "  %s %-25s enabled=%v available=%v\n",
+				ind, t.Name, t.Enabled, t.Available)
+		}
+		fmt.Fprintln(w)
+	}
+
+	// Footer hint (only when showing full report)
+	if sec == "" {
+		fmt.Fprintf(w, "Run 'qsdev status --verbose' for details or 'qsdev status --fix' for remediation commands.\n")
+	}
 	return nil
 }
 

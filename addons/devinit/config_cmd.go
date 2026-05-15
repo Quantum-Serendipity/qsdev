@@ -20,12 +20,35 @@ func configCmd() *cobra.Command {
 		Long: `Commands for managing the .qsdev.yaml project configuration file.
 
 Use subcommands to migrate config schemas, validate configuration,
-and inspect the current config state.`,
+and inspect the current config state.
+
+When run without a subcommand, displays the current project configuration.`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runConfigShow(cmd)
+		},
 	}
 
 	cmd.AddCommand(migrateCmd())
 
 	return cmd
+}
+
+func runConfigShow(cmd *cobra.Command) error {
+	projectRoot, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("determining project root: %w", err)
+	}
+	configPath := filepath.Join(projectRoot, ".qsdev.yaml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Fprintln(cmd.OutOrStdout(), "No .qsdev.yaml found. Run 'qsdev init' to create one.")
+			return nil
+		}
+		return fmt.Errorf("reading .qsdev.yaml: %w", err)
+	}
+	_, err = cmd.OutOrStdout().Write(data)
+	return err
 }
 
 func migrateCmd() *cobra.Command {

@@ -136,10 +136,22 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 
 	exitCode := result.ExitCode()
 	if exitCode != 0 {
-		return fmt.Errorf("repair completed with exit code %d", exitCode)
+		return &repairExitErr{code: exitCode, failed: len(result.Failed), skipped: len(result.Skipped)}
 	}
 	return nil
 }
+
+type repairExitErr struct {
+	code    int
+	failed  int
+	skipped int
+}
+
+func (e *repairExitErr) Error() string {
+	return fmt.Sprintf("repair: %d failed, %d skipped", e.failed, e.skipped)
+}
+
+func (e *repairExitErr) ExitCode() int { return e.code }
 
 // regenerateFreshFiles runs both generators to produce a map of path to fresh
 // GeneratedFile. Individual generator failures are logged as warnings so repair

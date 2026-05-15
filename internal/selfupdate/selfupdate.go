@@ -33,8 +33,15 @@ type Config struct {
 	CacheDir      string        // Directory for caching update check results
 }
 
+// testConfigOverride, when non-nil, is used by DefaultConfig instead of
+// the real config. This prevents tests from polluting ~/.qsdev/.
+var testConfigOverride *Config
+
 // DefaultConfig returns the default self-update configuration.
 func DefaultConfig() Config {
+	if testConfigOverride != nil {
+		return *testConfigOverride
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = os.TempDir()

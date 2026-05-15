@@ -4,17 +4,18 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 )
 
-// clearUpdateCache removes the cached update check file so tests don't
-// interfere with each other.
-func clearUpdateCache(t *testing.T) {
+// useTestConfig sets the default config override to use a temp directory,
+// preventing tests from polluting the real ~/.qsdev/ cache.
+func useTestConfig(t *testing.T) {
 	t.Helper()
 	cfg := DefaultConfig()
-	_ = os.Remove(cacheFile(cfg))
+	cfg.CacheDir = t.TempDir()
+	testConfigOverride = &cfg
+	t.Cleanup(func() { testConfigOverride = nil })
 }
 
 func TestBackgroundCheck_Suppressed(t *testing.T) {
@@ -28,7 +29,7 @@ func TestBackgroundCheck_Suppressed(t *testing.T) {
 
 func TestBackgroundCheck_NotSuppressed(t *testing.T) {
 	t.Setenv("QSDEV_NO_UPDATE_CHECK", "")
-	clearUpdateCache(t)
+	useTestConfig(t)
 
 	gh := githubRelease{
 		TagName: "v2.0.0",
@@ -63,7 +64,7 @@ func TestBackgroundCheck_NotSuppressed(t *testing.T) {
 
 func TestBackgroundCheck_NoUpdate(t *testing.T) {
 	t.Setenv("QSDEV_NO_UPDATE_CHECK", "")
-	clearUpdateCache(t)
+	useTestConfig(t)
 
 	gh := githubRelease{
 		TagName: "v1.0.0",

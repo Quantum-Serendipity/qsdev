@@ -28,7 +28,10 @@ func Execute(plan *TeardownPlan, opts TeardownOptions, registry *toolreg.Registr
 	// Remove exclusive files.
 	for _, fa := range plan.Remove {
 		absPath := filepath.Join(opts.ProjectRoot, fa.Path)
-		if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(absPath); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
 			result.Errors = append(result.Errors, fmt.Errorf("removing %s: %w", fa.Path, err))
 			continue
 		}
@@ -47,6 +50,9 @@ func Execute(plan *TeardownPlan, opts TeardownOptions, registry *toolreg.Registr
 	// Remove directories.
 	for _, dir := range plan.Dirs {
 		absPath := filepath.Join(opts.ProjectRoot, dir)
+		if _, err := os.Stat(absPath); os.IsNotExist(err) {
+			continue
+		}
 		if err := os.RemoveAll(absPath); err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("removing directory %s: %w", dir, err))
 			continue

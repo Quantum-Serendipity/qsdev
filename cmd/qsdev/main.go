@@ -27,6 +27,10 @@ var logSession *logging.Session
 func main() {
 	instance.SetAppName("qsdev")
 
+	if vi := version.Info(); vi.Version != "dev" && vi.Version != "(devel)" {
+		instance.SetVersionOverride(vi.Version, vi.Commit)
+	}
+
 	bootstrap.Configure(
 		bootstrap.WithSteps(
 			devenv.InstallDevenvStep(),

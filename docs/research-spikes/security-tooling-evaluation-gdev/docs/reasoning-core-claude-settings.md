@@ -1,0 +1,124 @@
+# reasoning-core .claude/settings.json (Hook Configuration)
+
+- **Source**: https://github.com/jakubkrzysztofsikora/reasoning-core/blob/main/.claude/settings.json
+- **Retrieved**: 2026-05-15
+
+---
+
+```json
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/pre_plan_guard.py",
+            "timeout": 15000
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/pre_edit_guard.py",
+            "timeout": 60000
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/pre_bash_guard.py",
+            "timeout": 5000
+          }
+        ]
+      },
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/pre_task_guard.py",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/post_bash_revive.py",
+            "timeout": 5000
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/post_batch_lang_audit.py",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/session_start_manifest.py",
+            "timeout": 30000
+          },
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/session_resume_inject.py",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/pre_compact_guard.py",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/session_resume_inject.py",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  },
+  "mcpServers": {
+    "hybrid-reasoner": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["-m", "src.mcp_reasoner"],
+      "env": {}
+    }
+  }
+}
+```

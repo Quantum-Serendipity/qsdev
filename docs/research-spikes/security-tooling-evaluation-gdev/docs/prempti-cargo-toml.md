@@ -1,0 +1,43 @@
+<!-- Source: https://raw.githubusercontent.com/falcosecurity/prempti/main/Cargo.toml -->
+<!-- Retrieved: 2026-05-15 -->
+
+```toml
+[workspace]
+resolver = "2"
+members = [
+    "hooks/claude-code",
+    "plugins/coding-agents-plugin",
+    "tools/premptictl",
+    "tests",
+]
+
+# Single source of truth for the project version. Bump this when cutting a
+# release -- crates, the plugin-reported version, the Makefile and the platform
+# packaging scripts all derive from here.
+[workspace.package]
+version = "0.3.0"
+edition = "2021"
+license = "Apache-2.0"
+
+# Workspace-level profile settings. `lto` and `strip` must live here (Cargo
+# does not accept them in per-package overrides). `opt-level` and
+# `codegen-units` are overridden per crate below.
+[profile.release]
+lto = true
+strip = true
+
+# Small size-optimized binaries for the interceptor and ctl -- they launch
+# for every tool call or are invoked manually, so binary size matters more
+# than raw throughput.
+[profile.release.package.claude-interceptor]
+opt-level = "z"
+codegen-units = 1
+
+[profile.release.package.premptictl]
+opt-level = "z"
+codegen-units = 1
+
+# Plugin runs inside Falco's hot path; prefer speed over minimum size.
+[profile.release.package.coding-agents-plugin]
+opt-level = 2
+```

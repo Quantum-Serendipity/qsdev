@@ -1,0 +1,35 @@
+# reasoning-core pyproject.toml
+
+- **Source**: https://github.com/jakubkrzysztofsikora/reasoning-core/blob/main/pyproject.toml
+- **Retrieved**: 2026-05-15
+
+---
+
+```toml
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reasoning-core"
+version = "0.1.0"
+description = "Hybrid System 1 / System 2 cognitive architecture: Claude Code as linguistic surface, local Mamba SSM as non-textual reasoner."
+requires-python = ">=3.11"
+readme = "README.md"
+authors = [{ name = "Reasoning Core" }]
+
+[tool.setuptools]
+packages = ["src", "src.hooks"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+norecursedirs = [".git", ".venv", "venv", "build", "dist", "*.egg-info", "__pycache__", "hf_cache", ".cache"]
+addopts = "-q --strict-markers --rootdir=."
+consider_namespace_packages = false
+markers = [
+  "live: requires live network and Scaleway credentials (gated by RC_LIVE=1)",
+  "slow: takes >5s; auto-runs in CI with timeout",
+]
+timeout = 120
+```

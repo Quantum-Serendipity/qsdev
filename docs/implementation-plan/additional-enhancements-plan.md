@@ -2,18 +2,18 @@
 
 ## Overview
 
-This plan extends the qsdev MVP (phases 1–22) with 15 additional phases (23–37) that deepen ecosystem coverage, add consulting-grade infrastructure, build a secure local documentation pipeline, and refine the developer experience through agentic quality tooling and session analytics.
+This plan extends the gdev-secure-devenv-bootstrap MVP (phases 1–22) with 21 additional phases (23–43) that deepen ecosystem coverage, add consulting-grade infrastructure, build a secure local documentation pipeline, refine the developer experience, harden the supply chain distribution pipeline, build native security intelligence, and deploy comprehensive agent self-protection.
 
-Where the MVP establishes the core three-addon architecture (devenv, claudecode, devinit) with 27 language ecosystem modules and 6-layer security hardening, these enhancements expand into cloud/K8s operations, per-client encrypted profiles, MCP server lifecycle management with local-first documentation, managed hook policies for consulting enforcement, and observability instrumentation. The enhancements assume all 22 MVP phases are complete and a working `qsdev init` → `devenv shell` pipeline exists.
+Where the MVP establishes the core three-addon architecture (devenv, claudecode, devinit) with 27 language ecosystem modules and 6-layer security hardening, these enhancements expand into cloud/K8s operations, per-client encrypted profiles, MCP server lifecycle management with local-first documentation, managed hook policies for consulting enforcement, observability instrumentation, SBOM/signing/attestation for supply chain integrity, native security pattern implementations, and a 32-rule agent self-protection enforcement layer. The enhancements assume all 22 MVP phases are complete and a working `gdev init` → `devenv shell` pipeline exists.
 
-All enhancements fit the existing 3-addon architecture — no fourth addon is required. The implementation adds approximately 97 units across 12 development phases and 3 validation phases. Development phases are organized into four groups: ecosystem expansion (23–27), MCP pipeline (28–29), consulting infrastructure (30–33), and developer experience refinement (34). Validation phases (35–37) mirror this grouping.
+All enhancements fit the existing 3-addon architecture — no fourth addon is required. The implementation adds approximately 124 units across 17 development phases and 4 validation phases. Development phases are organized into five groups: ecosystem expansion (23–27), MCP pipeline (28–29), consulting infrastructure (30–33), developer experience refinement (34), and supply chain, security intelligence & agent self-protection (38–42). Validation phases (35–37, 43) mirror this grouping.
 
 ## Research Foundation
 
 | Spike / Report | Contribution |
 |---|---|
 | `research-spikes/gdev-ecosystem-expansion-assessment/research.md` | 51 implementation units across 9 phase amendments: cloud CLIs, K8s ecosystem, service templates, MCP registry, Copier integration, client profiles, tool detection modules, IDE/shell config, observability sidecar. Tarpit test design principle. 13 confirmed non-expansions. |
-| `research-spikes/gdev-local-docs-mcp/research.md` | 3-tier local documentation architecture (local/enterprise/fallback), 5 MCP server integrations, skill-level routing, `qsdev docs` command design, wizard integration. Quantified web fetch injection risk (66–84% ASR). |
+| `research-spikes/gdev-local-docs-mcp/research.md` | 3-tier local documentation architecture (local/enterprise/fallback), 5 MCP server integrations, skill-level routing, `gdev docs` command design, wizard integration. Quantified web fetch injection risk (66–84% ASR). |
 | `research-spikes/mcp-content-signing-verification/research.md` | Minisign signing pipeline, CI verification workflow, MCP startup verification, content diffing. Industry-wide gap: no documentation aggregator implements signing. 1–3 person-day effort. |
 | `research-spikes/mcp-documentation-prompt-injection-hardening/research.md` | 5-layer defense architecture reducing ASR from ~25% to ~1–2%. Datamarking as highest single-defense impact. Content sanitization, structural framing, provenance metadata. |
 | `research-spikes/sotoki-filtered-stackoverflow-subsets/research.md` | Per-ecosystem SO ZIM builds via sotoki `--include-tags` upstream PR. Size estimates per ecosystem (250 MB–13 GB). Shared ZIM store architecture. Fork-and-upstream recommended approach. |
@@ -24,6 +24,10 @@ All enhancements fit the existing 3-addon architecture — no fourth addon is re
 | `research-spikes/nix-adoption-failure-reversion/research.md` | Zero documented abandonments of devShells+direnv scope. Champion dependency as #1 team failure mode. AI assistance neutralizes top 3 pain points. Shopify two-act lesson (raw Nix failed, devenv succeeded). |
 | `research-spikes/consulting-tooling-adoption-roi/research.md` | $524K–$1.18M annual friction cost for 20-person team. 264–889% first-year ROI. Environment setup 2–5 days → under 1 hour. Utilization-based value framing. CI efficiency claims unsubstantiated — do not use. |
 | `research-spikes/devcontainers-vs-nix-competitive-analysis/research.md` | Nix+direnv wins for multi-project consulting (sub-second switching). DevPod dead (mid-2025). Codespaces has sovereignty blockers. Dev Containers complementary, not competitive. Devbox as stepping-stone option. |
+| `research-spikes/go-sbom-goreleaser-pipeline/research.md` | Syft SBOM generation (SPDX 2.3 + CycloneDX 1.5), cosign keyless signing via GitHub Actions OIDC (SLSA Build Level 2), govulncheck OpenVEX (97.5% false-positive suppression), Trivy exclusion (March 2026 compromise), distribution channel integrity, Nix flake with SRI hashes. |
+| `research-spikes/security-tooling-evaluation-gdev/research.md` | 5-tool evaluation (Prempti, npm-scan, reasoning-core, Cloudberry, Sense), 23 borrowable design patterns for native Go implementation, runtime policy enforcement engine, package risk assessment, MCP trust scoring, optional integration points. |
+| `research-spikes/gdev-agent-self-protection-design/research.md` | 32-rule enforcement layer across 4 categories (self-protection, config-guard, MCP-poisoning, integrity), exit code 2 enforcement (Claude Code bugs #39344/#52822), two-tier path canonicalization, fail-closed harness, three-tier bypass policy, per-rule monitor mode with enforce_always, Go binary consolidation. |
+| `research-spikes/effective-readme-formats/research.md` | 12 winning README patterns, 11 anti-patterns, effectiveness spectrum across 20 developer tools, conversion funnel model (0-5s scan → 5-30s evaluate → 30s-5min try → 5-15min first value), concrete comparison as single most effective element, academic evidence from 3 studies. Phase 16.2 in main plan. |
 
 ## Design Principles (Supplementary)
 
@@ -31,7 +35,7 @@ These complement the 15 principles in `plan.md`. Numbering continues from there.
 
 16. **Tarpit test.** If a feature sells itself as a replacement for thinking clearly, it's a tarpit. Every proposed addition passes a 4-question rubric: Does this require understanding the domain? Does this hide failure modes? Does a purpose-built tool already exist? Does it compound with existing features or compete? This retroactively validates the 13 features rejected in the MVP plan and the 18 tools rejected in Phase 12 research, and provides an evaluation framework for future proposals.
 
-17. **Credential isolation, not credential management.** qsdev configures per-project environment variables (`AWS_PROFILE`, `KUBECONFIG`, `CLOUDSDK_ACTIVE_CONFIG_NAME`) in devenv.nix. It never stores, retrieves, rotates, or manages actual credentials. The security value is preventing cross-client credential leakage — running `terraform apply` against the wrong AWS account. Credential lifecycle remains the domain of aws-vault, gcloud auth, az login, and SecretSpec.
+17. **Credential isolation, not credential management.** gdev configures per-project environment variables (`AWS_PROFILE`, `KUBECONFIG`, `CLOUDSDK_ACTIVE_CONFIG_NAME`) in devenv.nix. It never stores, retrieves, rotates, or manages actual credentials. The security value is preventing cross-client credential leakage — running `terraform apply` against the wrong AWS account. Credential lifecycle remains the domain of aws-vault, gcloud auth, az login, and SecretSpec.
 
 18. **Local-first documentation.** Web-fetched content has a 66–84% prompt injection attack success rate in auto-execution mode, with 32% quarterly growth. Local documentation eliminates the dominant attack vector while introducing smaller, controllable residual risks. Context7 and web search are clearly labeled fallbacks, not defaults.
 
@@ -42,6 +46,12 @@ These complement the 15 principles in `plan.md`. Numbering continues from there.
 21. **Calm positive directives.** Generated CLAUDE.md templates and `.claude/rules/` files use calm, positive language. Research shows aggressive emphasis markers ("CRITICAL!", "MUST", "NEVER") measurably degrade Claude 4.6 performance. Reframe prohibitions as positive directives: "Use frozen lockfiles for all installs" rather than "NEVER install without a lockfile."
 
 22. **Amplify, don't replace.** Derived from the tarpit test. Tools like learning-opportunities and orient amplify developer understanding — they don't replace thinking. The observability sidecar amplifies debugging — it doesn't automate diagnosis. Every enhancement should make the developer more capable, not more dependent.
+
+23. **Exit code 2 for all security denials.** Claude Code's `permissionDecision` JSON response has known bugs (#39344, #52822) that cause infinite loops. All gdev security hooks use exit code 2 (hard block) instead. This is a deliberate architectural choice, not a workaround — the fail-closed semantic is clearer than asking the model to reconsider.
+
+24. **Native first, integrate second.** Build security primitives (policy engine, risk assessment, trust scoring) as native Go code using borrowed design patterns. External tools (Prempti, Sense) are optional adapters behind feature flags, never required dependencies. This prevents supply chain risk from security tooling itself.
+
+25. **Verifiable supply chain.** Every gdev release ships with dual-format SBOMs, cosign-signed checksums, OpenVEX reachability analysis, and SLSA Build Level 2 attestation. Consumers can cryptographically verify provenance without trusting the distribution channel. `gdev self-update` verifies SBOM signatures before applying updates.
 
 ## Prerequisites
 
@@ -77,21 +87,27 @@ The following were evaluated and explicitly rejected during research. They are d
 
 | # | Phase | Status | Dependencies | Summary |
 |---|-------|--------|--------------|---------|
-| 23 | Cloud CLI & Credential Isolation Modules | Not Started | Phases 1, 2 | AWS, GCP, Azure, misc cloud platform CLI modules with per-project credential env vars, Terraform provider detection, `qsdev doctor` cloud checks |
+| 23 | Cloud CLI & Credential Isolation Modules | Not Started | Phases 1, 2 | AWS, GCP, Azure, misc cloud platform CLI modules with per-project credential env vars, Terraform provider detection, `gdev doctor` cloud checks |
 | 24 | Kubernetes Ecosystem Modules | Not Started | Phases 1, 2, 23 | Core K8s tools (kubectl, kubectx, k9s, stern, kustomize), dev tools (Skaffold, Tilt, DevSpace), security tools (kubescape, kube-linter), Helm ecosystem, cloud-auth coordination, KUBECONFIG isolation |
 | 25 | Service Template Expansion | Not Started | Phase 3 | Kafka (KRaft), MinIO, Mailpit, Keycloak, NATS service modules with detection engine tiering (Tier 1/Tier 2) and wizard sub-groups |
 | 26 | Non-Language Tool Detection Modules | Not Started | Phase 1 | Git platform CLIs (gh, glab, git-lfs), documentation tools (mkdocs, mdbook, d2, adr-tools), API tools (grpcurl, buf, openapi-generator, bruno), database migration (Flyway, Prisma, Atlas, Alembic) |
-| 27 | IDE, Shell & Workstation Configuration | Not Started | Phases 9, 10 | EditorConfig generation, VS Code extensions.json, shell fragment system (`qsdev setup --shell`), personal tools via nix profile, Starship gdev module |
-| 28 | MCP Server Registry & Lifecycle Management | Not Started | Phases 4, 12 | `McpServerRegistry` with metadata, auto-detection, `qsdev mcp list/enable/disable`, optional catalog (Atlassian, Linear, Slack, Datadog, Grafana, DB MCPs), MCP compliance testing, security documentation |
-| 29 | Local Documentation MCP Pipeline & Content Security | Not Started | Phase 28 | openzim-mcp, DevDocs MCP, man-mcp-server, MCP-NixOS integration, skill-level routing, `qsdev docs` commands, Minisign content signing, 5-layer prompt injection hardening, sotoki integration planning |
-| 30 | Client Profile System | Not Started | Phases 6, 13 | sops+age encrypted per-client profiles, profile CRUD commands, init-time wizard integration, SecretSpec generation, non-secret value baking, compliance enforcement in `qsdev check` |
-| 31 | Copier Template Integration | Not Started | Phase 6 | Template registry, `qsdev template add/list/remove`, `qsdev init --from <template>`, `qsdev update --template`, non-interactive support, template authoring specification |
+| 27 | IDE, Shell & Workstation Configuration | Not Started | Phases 9, 10 | EditorConfig generation, VS Code extensions.json, shell fragment system (`gdev setup --shell`), personal tools via nix profile, Starship gdev module |
+| 28 | MCP Server Registry & Lifecycle Management | Not Started | Phases 4, 12 | `McpServerRegistry` with metadata, auto-detection, `gdev mcp list/enable/disable`, optional catalog (Atlassian, Linear, Slack, Datadog, Grafana, DB MCPs), MCP compliance testing, security documentation |
+| 29 | Local Documentation MCP Pipeline & Content Security | Not Started | Phase 28 | openzim-mcp, DevDocs MCP, man-mcp-server, MCP-NixOS integration, skill-level routing, `gdev docs` commands, Minisign content signing, 5-layer prompt injection hardening, sotoki integration planning |
+| 30 | Client Profile System | Not Started | Phases 6, 13 | sops+age encrypted per-client profiles, profile CRUD commands, init-time wizard integration, SecretSpec generation, non-secret value baking, compliance enforcement in `gdev check` |
+| 31 | Copier Template Integration | Not Started | Phase 6 | Template registry, `gdev template add/list/remove`, `gdev init --from <template>`, `gdev update --template`, non-interactive support, template authoring specification |
 | 32 | Managed Hook Policy & Consulting Enforcement | Not Started | Phase 4 | 6 consulting hook configurations (credential scanning, destructive prevention, cost alerting, SOC 2 logging, test enforcement, client isolation), 3-tier deployment, Claude Code version pinning |
-| 33 | Observability & Session Analytics | Not Started | Phases 12, 16 | OTel sidecar (grafana/otel-lgtm), ccusage cost tracking, metadata-only team analytics via hooks, `qsdev observability` commands, OTEL env var generation |
+| 33 | Observability & Session Analytics | Not Started | Phases 12, 16 | OTel sidecar (grafana/otel-lgtm), ccusage cost tracking, metadata-only team analytics via hooks, `gdev observability` commands, OTEL env var generation |
 | 34 | Agentic Quality, Learning & Project Clarity | Not Started | Phases 13, 14 | learning-opportunities skill, orient codebase exploration, project clarity CLAUDE.md template, tree-sitter repo map skill, pre-edit validation hook, time-to-first-environment benchmarking |
 | 35 | Ecosystem & Tool Expansion Validation | Not Started | Phase 17, Phases 23–27 | Cloud/K8s module E2E, service template validation, tool detection accuracy, IDE/shell config generation, credential isolation verification |
 | 36 | MCP & Documentation Pipeline Validation | Not Started | Phase 17, Phases 28–29 | MCP registry lifecycle E2E, documentation serving verification, content signing round-trip, prompt injection defense testing, skill routing validation |
 | 37 | Consulting Infrastructure & Analytics Validation | Not Started | Phase 17, Phases 30–34 | Client profile encryption round-trip, Copier template E2E, hook policy enforcement, observability pipeline, agentic skill validation, analytics metadata-only verification |
+| 38 | SBOM Generation & Supply Chain Attestation | Not Started | Phase 10 | Syft dual-format SBOMs (SPDX 2.3 + CycloneDX 1.5), cosign keyless signing (OIDC), govulncheck OpenVEX, SLSA Build Level 2 attestation, `gdev version --sbom`, Nix flake with SRI hashes |
+| 39 | Native Security Pattern Library | Not Started | Phases 5, 12, 32 | YAML policy engine, package risk assessment (publication age, maintainer analysis), security analysis pipeline (SARIF output), MCP trust scoring, optional Prempti/Sense integration points |
+| 40 | Agent Self-Protection — Tier 1 Rules & Fail-Closed Harness | Not Started | Phases 4, 32 | Rule definition schema, path canonicalization (symlink/traversal/proc evasion), fail-closed harness (exit code 2), 18 Tier 1 enforce_always rules, PreToolUse Bash hook binary |
+| 41 | Agent Self-Protection — Bypass Policy & Monitor Mode | Not Started | Phase 40 | Three-tier bypass system (enforce_always/session/command), per-rule monitor mode, Tier 2 security rules, session state management, PreToolUse Write/Edit hook |
+| 42 | Agent Self-Protection — Go Binary Consolidation | Not Started | Phase 41 | Unified `gdev-hook` binary, Phase 32 pattern consolidation (54+ total rules), performance optimization (<50ms), Agent/MCP tool rules, `gdev upgrade hooks` migration |
+| 43 | Supply Chain, Security & Self-Protection Validation | Not Started | Phase 17, Phases 38–42 | SBOM pipeline E2E, policy engine validation, Tier 1 rule positive/negative controls, bypass/monitor mode testing, Go binary regression tests, cross-phase integration verification |
 
 ## Phase Grouping
 
@@ -107,14 +123,18 @@ Adds the consulting-specific capabilities that differentiate gdev from generic d
 ### Group D: Developer Experience Refinement (Phase 34)
 Integrates research-backed agentic quality patterns and learning tools that make developers more effective when working with AI coding assistants. Grounded in quantitative research: scaffold architecture produces 27× more impact than model changes; external verification doubles task success rates.
 
-### Group E: Enhancement Validation (Phases 35–37)
-Three validation phases covering the four development groups. Builds on the testscript E2E framework, CI pipeline, and golden file infrastructure from MVP Phase 17. Follows the same validation methodology as MVP phases 18–22: positive controls (features work), negative controls (no regressions), and cross-feature interaction testing.
+### Group E: Enhancement Validation (Phases 35–37, 43)
+Four validation phases covering the five development groups. Builds on the testscript E2E framework, CI pipeline, and golden file infrastructure from MVP Phase 17. Follows the same validation methodology as MVP phases 18–22: positive controls (features work), negative controls (no regressions), and cross-feature interaction testing. Phase 43 validates the Group F additions (SBOM pipeline, security patterns, self-protection rules).
+
+### Group F: Supply Chain, Security Intelligence & Agent Self-Protection (Phases 38–42)
+Hardens the gdev distribution pipeline with SBOM generation and supply chain attestation (SLSA Build Level 2), builds native security intelligence primitives (policy engine, package risk assessment, MCP trust scoring) from 23 design patterns borrowed from evaluated security tools, and deploys a comprehensive 32-rule agent self-protection enforcement layer that prevents AI agents from dismantling gdev's own security infrastructure. This group closes the gap between gdev generating security configs (MVP) and gdev verifying and enforcing those configs at runtime (post-MVP). The self-protection layer evolves from Phase 32's 6 consulting hooks into a unified Go binary with 54+ rules, three-tier bypass policy, and per-rule monitor mode.
 
 ## Current Status
 
-No enhancement work has started. Phase 23 is the entry point for Group A. Groups A–D can proceed partially in parallel once their MVP dependencies are met:
+No enhancement work has started. Phase 23 is the entry point for Group A. Groups A–F can proceed partially in parallel once their MVP dependencies are met:
 - **Group A** (Phases 23–27): Requires Phases 1, 2, 3, 9, 10 complete
 - **Group B** (Phases 28–29): Requires Phases 4, 12 complete
 - **Group C** (Phases 30–33): Requires Phases 4, 6, 12, 13, 16 complete
 - **Group D** (Phase 34): Requires Phases 13, 14 complete
-- **Group E** (Phases 35–37): Requires Phase 17 complete plus their respective development phases
+- **Group E** (Phases 35–37, 43): Requires Phase 17 complete plus their respective development phases
+- **Group F** (Phases 38–42): Requires Phases 4, 5, 10, 12, 32 complete. Phase 38 (SBOM) can start as soon as Phase 10 is done. Phases 40–42 (self-protection) require Phase 32 hooks infrastructure.

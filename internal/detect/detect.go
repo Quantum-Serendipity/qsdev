@@ -4,9 +4,9 @@
 package detect
 
 import (
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Detect scans projectRoot for language markers, lockfiles, configuration

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/doctor"
+	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
 )
 
 func TestDoctorCmd_Flags(t *testing.T) {
@@ -65,8 +65,8 @@ func TestDoctorCmd_JSONOutput(t *testing.T) {
 	}
 
 	// Verify some expected fields.
-	if report.GdevVersion == "" {
-		t.Error("expected non-empty gdev_version in JSON output")
+	if report.QsdevVersion == "" {
+		t.Error("expected non-empty qsdev_version in JSON output")
 	}
 	if report.System.OS == "" {
 		t.Error("expected non-empty system.os in JSON output")

@@ -1,6 +1,6 @@
 # Security Architecture
 
-This document describes the threat model, defense layers, permission model, and known limitations of the security hardening provided by gdev-secure-devenv-bootstrap.
+This document describes the threat model, defense layers, permission model, and known limitations of the security hardening provided by qsdev.
 
 ## Threat Model
 

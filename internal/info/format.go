@@ -15,7 +15,7 @@ func FormatDefault(info *ProjectInfo, w io.Writer) error {
 		fmt.Fprintf(w, "Ecosystems:    %s\n", strings.Join(info.Ecosystems, ", "))
 	}
 	fmt.Fprintf(w, "Security:      %s\n", info.SecurityProfile)
-	fmt.Fprintf(w, "gdev Version:  %s\n", info.GdevVersion)
+	fmt.Fprintf(w, "qsdev Version:  %s\n", info.QsdevVersion)
 	fmt.Fprintf(w, "Config:        v%d\n", info.ConfigVersion)
 	fmt.Fprintf(w, "Managed Files: %d\n", info.ManagedFileCount)
 	fmt.Fprintf(w, "Active Tools:  %d\n", info.ActiveToolCount)

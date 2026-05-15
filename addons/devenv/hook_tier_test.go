@@ -3,7 +3,7 @@ package devenv_test
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 )
 
 func TestFilterHooksByTier_Baseline(t *testing.T) {

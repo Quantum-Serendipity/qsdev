@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/info"
+	"github.com/Quantum-Serendipity/qsdev/internal/info"
 )
 
 func infoCmd() *cobra.Command {
@@ -41,8 +41,8 @@ func runInfo(cmd *cobra.Command, oneline, jsonOutput bool) error {
 
 	projectInfo, err := info.CollectInfo(projectRoot)
 	if err != nil {
-		if errors.Is(err, info.ErrNotGdevProject) {
-			fmt.Fprintln(cmd.ErrOrStderr(), "Not a gdev-managed project. Run 'gdev init' to set up.")
+		if errors.Is(err, info.ErrNotQsdevProject) {
+			fmt.Fprintln(cmd.ErrOrStderr(), "Not a qsdev-managed project. Run 'qsdev init' to set up.")
 			return &ExitError{Code: 1}
 		}
 		return err

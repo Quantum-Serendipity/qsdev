@@ -3,7 +3,7 @@ package config
 import (
 	"fmt"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // ComplianceLevel represents an ordered security compliance tier.
@@ -97,16 +97,16 @@ func CompareComplianceLevels(a, b string) int {
 	return 0
 }
 
-// ComplianceLevelToConfig converts a compliance level name to a GdevConfig
+// ComplianceLevelToConfig converts a compliance level name to a QsdevConfig
 // overlay suitable for merging into the resolution chain.
-func ComplianceLevelToConfig(level string) *types.GdevConfig {
+func ComplianceLevelToConfig(level string) *types.QsdevConfig {
 	profile, ok := ComplianceLevels[level]
 	if !ok {
 		return nil
 	}
 
 	t := true
-	return &types.GdevConfig{
+	return &types.QsdevConfig{
 		Security: types.SecurityConfig{
 			Level:          level,
 			AgeGating:      &t,

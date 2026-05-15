@@ -3,7 +3,7 @@ package teardown
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 )
 
 func TestBuildPlan_QuickProfile(t *testing.T) {

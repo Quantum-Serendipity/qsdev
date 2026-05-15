@@ -8,16 +8,16 @@ import (
 // MarkdownInsertSection inserts content between HTML comment markers in a
 // Markdown file. Markers use the format:
 //
-//	<!-- gdev:<sectionID> -->
+//	<!-- qsdev:<sectionID> -->
 //	... content ...
-//	<!-- /gdev:<sectionID> -->
+//	<!-- /qsdev:<sectionID> -->
 //
 // If the section already exists, its content is replaced.
 // If it doesn't exist, the section is inserted before <!-- END GENERATED SECTION -->.
 // Returns an error if neither existing markers nor the end marker are found.
 func MarkdownInsertSection(existing []byte, sectionID string, content []byte) ([]byte, error) {
-	openMarker := []byte(fmt.Sprintf("<!-- gdev:%s -->", sectionID))
-	closeMarker := []byte(fmt.Sprintf("<!-- /gdev:%s -->", sectionID))
+	openMarker := []byte(fmt.Sprintf("<!-- qsdev:%s -->", sectionID))
+	closeMarker := []byte(fmt.Sprintf("<!-- /qsdev:%s -->", sectionID))
 
 	openIdx := bytes.Index(existing, openMarker)
 	closeIdx := bytes.Index(existing, closeMarker)
@@ -57,8 +57,8 @@ func MarkdownInsertSection(existing []byte, sectionID string, content []byte) ([
 // MarkdownRemoveSection removes a tool section from a Markdown file.
 // Returns unchanged content if the section is not found.
 func MarkdownRemoveSection(existing []byte, sectionID string) ([]byte, error) {
-	openMarker := []byte(fmt.Sprintf("<!-- gdev:%s -->", sectionID))
-	closeMarker := []byte(fmt.Sprintf("<!-- /gdev:%s -->", sectionID))
+	openMarker := []byte(fmt.Sprintf("<!-- qsdev:%s -->", sectionID))
+	closeMarker := []byte(fmt.Sprintf("<!-- /qsdev:%s -->", sectionID))
 
 	openIdx := bytes.Index(existing, openMarker)
 	if openIdx < 0 {
@@ -93,6 +93,6 @@ func MarkdownRemoveSection(existing []byte, sectionID string) ([]byte, error) {
 
 // MarkdownHasSection returns true if the section markers exist in the content.
 func MarkdownHasSection(content []byte, sectionID string) bool {
-	marker := []byte(fmt.Sprintf("<!-- gdev:%s -->", sectionID))
+	marker := []byte(fmt.Sprintf("<!-- qsdev:%s -->", sectionID))
 	return bytes.Contains(content, marker)
 }

@@ -3,8 +3,8 @@ package posture
 import (
 	"fmt"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 const categoryFileModification = "File Modification"
@@ -35,7 +35,7 @@ func detectFileModification(projectDir string, genState types.GeneratedState) Dr
 					Description: fmt.Sprintf("Machine-owned file %q has been modified (strategy: %s)", path, storedFile.Strategy),
 					Expected:    fs.StoredHash,
 					Actual:      fs.CurrentHash,
-					Remediation: "Run gdev update to regenerate this file",
+					Remediation: "Run qsdev update to regenerate this file",
 					AutoFixable: true,
 				})
 			case types.SectionMarker, types.ThreeWayMerge:
@@ -66,7 +66,7 @@ func detectFileModification(projectDir string, genState types.GeneratedState) Dr
 				Severity:    DriftError,
 				Subject:     path,
 				Description: fmt.Sprintf("Generated file %q has been deleted", path),
-				Remediation: "Run gdev update to regenerate this file",
+				Remediation: "Run qsdev update to regenerate this file",
 				AutoFixable: true,
 			})
 

@@ -4,8 +4,8 @@ import (
 	"fastcat.org/go/gdev/addons"
 	"fastcat.org/go/gdev/instance"
 
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devenv"
+	_ "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	_ "github.com/Quantum-Serendipity/qsdev/addons/devenv"
 )
 
 var addon = addons.Addon[config]{

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/doctor"
+	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
 )
 
 // cachedCheck stores the result of the most recent update check.

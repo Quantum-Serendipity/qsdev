@@ -1,6 +1,6 @@
 package posture
 
-import "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+import "github.com/Quantum-Serendipity/qsdev/pkg/types"
 
 // FileCategory returns "machine-owned" or "human-edited" based on MergeStrategy.
 func FileCategory(strategy types.MergeStrategy) string {

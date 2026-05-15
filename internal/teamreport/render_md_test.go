@@ -29,7 +29,7 @@ func makeTeamReport() *TeamReport {
 		Alerts: []PostureAlert{
 			{Project: "gamma", Severity: SeverityCritical, Message: "2 critical vulnerabilities found", Action: "Fix immediately"},
 			{Project: "gamma", Severity: SeverityHigh, Message: "Baseline conformance check failed", Action: "Fix baseline"},
-			{Project: "beta", Severity: SeverityMedium, Message: "gdev version outdated", Action: "Update gdev"},
+			{Project: "beta", Severity: SeverityMedium, Message: "qsdev version outdated", Action: "Update qsdev"},
 		},
 	}
 }
@@ -96,7 +96,7 @@ func TestRenderMarkdownProjectTable(t *testing.T) {
 		t.Error("expected project scores section")
 	}
 
-	if !strings.Contains(md, "| Project | Score | Grade | Baseline | Enhanced | Vulns (C/H) | gdev Version | Last Scan |") {
+	if !strings.Contains(md, "| Project | Score | Grade | Baseline | Enhanced | Vulns (C/H) | qsdev Version | Last Scan |") {
 		t.Error("expected project table header")
 	}
 
@@ -157,7 +157,7 @@ func TestRenderMarkdownFooter(t *testing.T) {
 	report := makeTeamReport()
 	md := RenderMarkdown(report)
 
-	if !strings.Contains(md, "Generated at 2025-06-15T10:00:00Z by gdev team-report") {
+	if !strings.Contains(md, "Generated at 2025-06-15T10:00:00Z by qsdev team-report") {
 		t.Error("expected footer with timestamp")
 	}
 }

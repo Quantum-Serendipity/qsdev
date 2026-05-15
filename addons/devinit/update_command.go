@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/selfupdate"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
 )
 
 // StageStatus represents the outcome of an update stage.
@@ -61,10 +61,10 @@ func updateCmd() *cobra.Command {
 	var opts FullUpdateOptions
 	cmd := &cobra.Command{
 		Use:   "update",
-		Short: "Update gdev binary, project configs, and devenv inputs",
+		Short: "Update qsdev binary, project configs, and devenv inputs",
 		Long: `Perform a coordinated update in up to three stages:
 
-  Stage 1: Check for gdev binary updates (informational only)
+  Stage 1: Check for qsdev binary updates (informational only)
   Stage 2: Regenerate project configuration files from saved answers
   Stage 3: Update devenv flake inputs (nix packages)
 
@@ -186,7 +186,7 @@ func runSelfUpdateStage(opts FullUpdateOptions) StageResult {
 	return StageResult{
 		Name:    "Self-update",
 		Status:  StageSuccess,
-		Message: fmt.Sprintf("v%s available (current: v%s). Run 'gdev self-update' to install.", release.Version, currentVersion),
+		Message: fmt.Sprintf("v%s available (current: v%s). Run 'qsdev self-update' to install.", release.Version, currentVersion),
 	}
 }
 

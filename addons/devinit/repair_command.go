@@ -8,24 +8,24 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devenv"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/detect"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/profile"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/repair"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/detect"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/profile"
+	"github.com/Quantum-Serendipity/qsdev/internal/repair"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func repairCmd() *cobra.Command {
 	var opts repair.RepairOptions
 	cmd := &cobra.Command{
 		Use:   "repair",
-		Short: "Fix corrupted or drifted gdev-managed files",
-		Long: `Detects and fixes issues with gdev-managed configuration files.
+		Short: "Fix corrupted or drifted qsdev-managed files",
+		Long: `Detects and fixes issues with qsdev-managed configuration files.
 
 Conservative by default: only fixes unambiguously safe issues (machine-owned
 files with strategy overwrite or library-managed). User-edited files with
@@ -90,7 +90,7 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 
 	// Save updated state.
 	if !opts.DryRun && len(result.Fixed) > 0 {
-		updatedState.GdevVersion = version.Info().Version
+		updatedState.QsdevVersion = version.Info().Version
 		updatedState.LastRun = time.Now().UTC()
 		if err := state.SaveStateToFile(stateFile, *updatedState); err != nil {
 			return fmt.Errorf("saving state: %w", err)

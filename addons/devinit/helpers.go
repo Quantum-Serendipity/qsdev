@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // ExitError is a sentinel error that carries a process exit code. Command
@@ -19,7 +19,7 @@ func (e *ExitError) Error() string {
 }
 
 // postGenerationMessage returns a human-readable summary of next steps after
-// gdev init has generated files. It adapts the message based on what was
+// qsdev init has generated files. It adapts the message based on what was
 // generated (devenv, Claude Code, or both).
 func postGenerationMessage(answers types.WizardAnswers, devenvGenerated, claudeGenerated bool) string {
 	var steps []string

@@ -3,8 +3,8 @@ package repair
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestClassifyFindings_NilReport(t *testing.T) {
@@ -357,8 +357,8 @@ func TestClassifyVersionDrift(t *testing.T) {
 				Name: "Version Drift",
 				Findings: []posture.DriftFinding{
 					{
-						Subject:     "gdev version",
-						Description: "Configuration was generated with a different gdev version",
+						Subject:     "qsdev version",
+						Description: "Configuration was generated with a different qsdev version",
 						Severity:    posture.DriftInfo,
 					},
 				},
@@ -449,7 +449,7 @@ func TestClassifyFindings_MultipleCategories(t *testing.T) {
 			{
 				Name: "Version Drift",
 				Findings: []posture.DriftFinding{
-					{Subject: "gdev version", Description: "Version mismatch", Severity: posture.DriftInfo},
+					{Subject: "qsdev version", Description: "Version mismatch", Severity: posture.DriftInfo},
 				},
 			},
 		},

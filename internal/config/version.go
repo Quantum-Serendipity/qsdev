@@ -8,14 +8,14 @@ import (
 	"github.com/Masterminds/semver/v3"
 )
 
-// VersionConstraint wraps a parsed semver constraint for gdev_version checks.
+// VersionConstraint wraps a parsed semver constraint for qsdev_version checks.
 type VersionConstraint struct {
 	raw        string
 	constraint *semver.Constraints
 }
 
 // VersionMismatchError is returned when the binary version does not satisfy
-// the gdev_version constraint in .gdev.yaml.
+// the qsdev_version constraint in .qsdev.yaml.
 type VersionMismatchError struct {
 	BinaryVersion  string
 	Constraint     string
@@ -25,7 +25,7 @@ type VersionMismatchError struct {
 // Error implements the error interface with an actionable message.
 func (e *VersionMismatchError) Error() string {
 	msg := fmt.Sprintf(
-		"qsdev version %s does not satisfy the project's gdev_version constraint %q",
+		"qsdev version %s does not satisfy the project's qsdev_version constraint %q",
 		e.BinaryVersion, e.Constraint)
 	if e.UpgradeCommand != "" {
 		msg += fmt.Sprintf("; run %q to update", e.UpgradeCommand)
@@ -90,15 +90,15 @@ func (vc *VersionConstraint) String() string {
 	return vc.raw
 }
 
-// CheckBinaryVersion checks whether binaryVersion satisfies the gdev_version
-// constraint from .gdev.yaml. Returns nil if:
-//   - gdevVersionConstraint is empty (no constraint specified)
+// CheckBinaryVersion checks whether binaryVersion satisfies the qsdev_version
+// constraint from .qsdev.yaml. Returns nil if:
+//   - qsdevVersionConstraint is empty (no constraint specified)
 //   - binaryVersion is "dev" or "(devel)" (development build)
 //   - the constraint is satisfied
 //
 // Returns a *VersionMismatchError if the constraint is not satisfied.
-func CheckBinaryVersion(gdevVersionConstraint, binaryVersion string) error {
-	if gdevVersionConstraint == "" {
+func CheckBinaryVersion(qsdevVersionConstraint, binaryVersion string) error {
+	if qsdevVersionConstraint == "" {
 		return nil
 	}
 
@@ -107,20 +107,20 @@ func CheckBinaryVersion(gdevVersionConstraint, binaryVersion string) error {
 		return nil
 	}
 
-	vc, err := ParseVersionConstraint(gdevVersionConstraint)
+	vc, err := ParseVersionConstraint(qsdevVersionConstraint)
 	if err != nil {
-		return fmt.Errorf("parsing gdev_version constraint: %w", err)
+		return fmt.Errorf("parsing qsdev_version constraint: %w", err)
 	}
 
 	ok, err := vc.Check(binaryVersion)
 	if err != nil {
-		return fmt.Errorf("checking gdev_version constraint: %w", err)
+		return fmt.Errorf("checking qsdev_version constraint: %w", err)
 	}
 
 	if !ok {
 		return &VersionMismatchError{
 			BinaryVersion:  binaryVersion,
-			Constraint:     gdevVersionConstraint,
+			Constraint:     qsdevVersionConstraint,
 			UpgradeCommand: "nix flake update",
 		}
 	}

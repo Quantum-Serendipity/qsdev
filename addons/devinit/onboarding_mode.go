@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // OnboardingMode represents the detected mode for the init command.
@@ -17,7 +17,7 @@ type OnboardingMode int
 const (
 	// ModeCreate indicates a fresh project with no existing configuration.
 	ModeCreate OnboardingMode = iota
-	// ModeJoin indicates a project with .gdev.yaml but no local state.
+	// ModeJoin indicates a project with .qsdev.yaml but no local state.
 	ModeJoin
 	// ModeUpdate indicates the binary version has changed since last init.
 	ModeUpdate
@@ -58,19 +58,19 @@ type DriftReport struct {
 
 // DetectOnboardingMode examines projectRoot to determine the correct onboarding
 // mode. The decision tree is:
-//  1. No .gdev.yaml -> ModeCreate
-//  2. No .devinit/.gdev-init-state.yaml -> ModeJoin
+//  1. No .qsdev.yaml -> ModeCreate
+//  2. No .devinit/.qsdev-init-state.yaml -> ModeJoin
 //  3. State file unreadable -> ModeRepair
 //  4. Version mismatch (non-dev) -> ModeUpdate
 //  5. Files drifted (modified or deleted) -> ModeRepair
 //  6. All matches -> ModeJoin with AlreadySetUp=true
 func DetectOnboardingMode(projectRoot string) (*ModeDetectionResult, error) {
-	// 1. Check .gdev.yaml exists.
-	gdevYaml := filepath.Join(projectRoot, ".gdev.yaml")
-	if _, err := os.Stat(gdevYaml); os.IsNotExist(err) {
+	// 1. Check .qsdev.yaml exists.
+	qsdevYaml := filepath.Join(projectRoot, ".qsdev.yaml")
+	if _, err := os.Stat(qsdevYaml); os.IsNotExist(err) {
 		return &ModeDetectionResult{
 			Mode:        ModeCreate,
-			Explanation: "No .gdev.yaml found. Starting fresh project setup.",
+			Explanation: "No .qsdev.yaml found. Starting fresh project setup.",
 		}, nil
 	}
 
@@ -79,7 +79,7 @@ func DetectOnboardingMode(projectRoot string) (*ModeDetectionResult, error) {
 	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
 		return &ModeDetectionResult{
 			Mode:        ModeJoin,
-			Explanation: "Found .gdev.yaml but no local state. Setting up as new team member.",
+			Explanation: "Found .qsdev.yaml but no local state. Setting up as new team member.",
 		}, nil
 	}
 
@@ -94,7 +94,7 @@ func DetectOnboardingMode(projectRoot string) (*ModeDetectionResult, error) {
 
 	// 4. Compare versions.
 	currentVersion := version.Info().Version
-	storedVersion := existingState.GdevVersion
+	storedVersion := existingState.QsdevVersion
 	if storedVersion != "" && currentVersion != "" &&
 		storedVersion != "dev" && currentVersion != "dev" &&
 		storedVersion != currentVersion {

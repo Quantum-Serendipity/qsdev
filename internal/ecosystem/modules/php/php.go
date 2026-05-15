@@ -1,5 +1,5 @@
 // Package php implements the PHP (Composer) ecosystem module for
-// gdev-secure-devenv-bootstrap. It detects PHP projects by scanning for
+// qsdev. It detects PHP projects by scanning for
 // composer.json and composer.lock, generates devenv.nix fragments with the
 // appropriate PHP version, produces a security-hardened Composer configuration
 // file, and provides pre-commit hooks, CI commands, deny rules, and wizard
@@ -14,9 +14,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.
@@ -149,7 +149,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 
 	return []types.GeneratedFile{
 		{
-			Path:     ".gdev/composer-security.json",
+			Path:     ".qsdev/composer-security.json",
 			Content:  content,
 			Mode:     0o644,
 			Strategy: types.Overwrite,

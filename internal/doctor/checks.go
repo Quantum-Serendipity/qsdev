@@ -4,7 +4,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/sysinfo"
+	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 )
 
 // ToolCheck defines how to detect and classify a single tool.
@@ -20,7 +20,7 @@ type ToolCheck struct {
 	Notes        func(osInfo *sysinfo.OSInfo) string
 }
 
-// DefaultChecks returns the 15-tool registry used by gdev doctor.
+// DefaultChecks returns the 15-tool registry used by qsdev doctor.
 func DefaultChecks() []ToolCheck {
 	return []ToolCheck{
 		{

@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 )
 
 const categoryMarkerIntegrity = "Section Marker Integrity"
 
 var (
-	openMarkerRe  = regexp.MustCompile(`<!-- gdev:(\S+) -->`)
-	closeMarkerRe = regexp.MustCompile(`<!-- /gdev:(\S+) -->`)
+	openMarkerRe  = regexp.MustCompile(`<!-- qsdev:(\S+) -->`)
+	closeMarkerRe = regexp.MustCompile(`<!-- /qsdev:(\S+) -->`)
 )
 
 // detectMarkerIntegrity checks that section markers in CLAUDE.md are properly
@@ -30,7 +30,7 @@ func detectMarkerIntegrity(projectDir string, enabledTools map[string]bool) Drif
 				Severity:    DriftError,
 				Subject:     "CLAUDE.md",
 				Description: "CLAUDE.md does not exist",
-				Remediation: "Run gdev init or gdev update to generate CLAUDE.md",
+				Remediation: "Run qsdev init or qsdev update to generate CLAUDE.md",
 			})
 		} else {
 			cat.Findings = append(cat.Findings, DriftFinding{
@@ -66,8 +66,8 @@ func detectMarkerIntegrity(projectDir string, enabledTools map[string]bool) Drif
 				Category:    categoryMarkerIntegrity,
 				Severity:    DriftWarning,
 				Subject:     fmt.Sprintf("marker:%s", id),
-				Description: fmt.Sprintf("Opening marker <!-- gdev:%s --> has no matching closing marker", id),
-				Remediation: fmt.Sprintf("Add <!-- /gdev:%s --> or run gdev update", id),
+				Description: fmt.Sprintf("Opening marker <!-- qsdev:%s --> has no matching closing marker", id),
+				Remediation: fmt.Sprintf("Add <!-- /qsdev:%s --> or run qsdev update", id),
 			})
 		}
 	}
@@ -78,8 +78,8 @@ func detectMarkerIntegrity(projectDir string, enabledTools map[string]bool) Drif
 				Category:    categoryMarkerIntegrity,
 				Severity:    DriftWarning,
 				Subject:     fmt.Sprintf("marker:%s", id),
-				Description: fmt.Sprintf("Closing marker <!-- /gdev:%s --> has no matching opening marker", id),
-				Remediation: fmt.Sprintf("Add <!-- gdev:%s --> or run gdev update", id),
+				Description: fmt.Sprintf("Closing marker <!-- /qsdev:%s --> has no matching opening marker", id),
+				Remediation: fmt.Sprintf("Add <!-- qsdev:%s --> or run qsdev update", id),
 			})
 		}
 	}
@@ -93,7 +93,7 @@ func detectMarkerIntegrity(projectDir string, enabledTools map[string]bool) Drif
 				Severity:    DriftWarning,
 				Subject:     fmt.Sprintf("marker:%s", marker),
 				Description: fmt.Sprintf("Expected marker pair for %q is entirely missing from CLAUDE.md", marker),
-				Remediation: fmt.Sprintf("Run gdev update to add the %s section to CLAUDE.md", marker),
+				Remediation: fmt.Sprintf("Run qsdev update to add the %s section to CLAUDE.md", marker),
 			})
 		}
 	}

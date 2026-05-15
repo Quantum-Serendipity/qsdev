@@ -1,11 +1,11 @@
-// Package devinit provides the orchestration addon for gdev init.
+// Package devinit provides the orchestration addon for qsdev init.
 package devinit
 
 import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // MapDetectionToDefaults converts detection results into pre-populated

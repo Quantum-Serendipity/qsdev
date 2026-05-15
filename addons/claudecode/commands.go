@@ -7,19 +7,19 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/detect"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules" // register all modules
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/generate"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/merge"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/validation"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/detect"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules" // register all modules
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/generate"
+	"github.com/Quantum-Serendipity/qsdev/internal/merge"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 const (
-	statePath  = ".claude/.gdev-claude-state.yaml"
+	statePath  = ".claude/.qsdev-claude-state.yaml"
 	answersDir = ".claude"
 )
 
@@ -336,7 +336,7 @@ func addSkillCmd() *cobra.Command {
 				known[s.Name] = true
 			}
 			if !known[skillName] {
-				return fmt.Errorf("unknown skill %q; available skills are listed by 'gdev claude list-skills'", skillName)
+				return fmt.Errorf("unknown skill %q; available skills are listed by 'qsdev claude list-skills'", skillName)
 			}
 
 			projectRoot, err := os.Getwd()
@@ -448,7 +448,7 @@ func addHookCmd() *cobra.Command {
 			case "auto-format":
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Note: auto-format hook preset is not yet implemented. The setting will be saved but no hook files are generated.")
 			case "pre-commit":
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Note: pre-commit hook preset is managed by devenv, not Claude Code. Use 'gdev devenv init' with git hooks enabled.")
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Note: pre-commit hook preset is managed by devenv, not Claude Code. Use 'qsdev devenv init' with git hooks enabled.")
 			}
 
 			projectRoot, err := os.Getwd()

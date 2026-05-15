@@ -5,46 +5,46 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// GdevOpsManifest holds the list of gdev operation skills parsed from
-// gdev-ops-manifest.yaml.
-type GdevOpsManifest struct {
-	Skills []GdevOpsEntry `yaml:"skills"`
+// QsdevOpsManifest holds the list of qsdev operation skills parsed from
+// qsdev-ops-manifest.yaml.
+type QsdevOpsManifest struct {
+	Skills []QsdevOpsEntry `yaml:"skills"`
 }
 
-// GdevOpsEntry describes a single gdev operation skill in the manifest.
-type GdevOpsEntry struct {
+// QsdevOpsEntry describes a single qsdev operation skill in the manifest.
+type QsdevOpsEntry struct {
 	Name        string   `yaml:"name"`
 	Description string   `yaml:"description"`
 	Tags        []string `yaml:"tags"`
 	UserOnly    bool     `yaml:"user_only"`
 }
 
-// loadGdevOpsManifest reads and parses the gdev-ops skill manifest from the
+// loadQsdevOpsManifest reads and parses the qsdev-ops skill manifest from the
 // embedded filesystem.
-func loadGdevOpsManifest() (*GdevOpsManifest, error) {
-	data, err := templateFS.ReadFile("templates/skills/gdev-ops-manifest.yaml")
+func loadQsdevOpsManifest() (*QsdevOpsManifest, error) {
+	data, err := templateFS.ReadFile("templates/skills/qsdev-ops-manifest.yaml")
 	if err != nil {
-		return nil, fmt.Errorf("reading gdev-ops manifest: %w", err)
+		return nil, fmt.Errorf("reading qsdev-ops manifest: %w", err)
 	}
 
-	var manifest GdevOpsManifest
+	var manifest QsdevOpsManifest
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		return nil, fmt.Errorf("parsing gdev-ops manifest: %w", err)
+		return nil, fmt.Errorf("parsing qsdev-ops manifest: %w", err)
 	}
 
 	return &manifest, nil
 }
 
-// deployOperationSkills reads the gdev operation skill files from the embedded
+// deployOperationSkills reads the qsdev operation skill files from the embedded
 // filesystem and returns GeneratedFile entries for each. When EnabledTools is
 // non-nil, only skills whose name is present and true in EnabledTools are
 // deployed. When EnabledTools is nil (legacy/first-run), all skills are
 // deployed.
 func deployOperationSkills(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
-	manifest, err := loadGdevOpsManifest()
+	manifest, err := loadQsdevOpsManifest()
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +60,7 @@ func deployOperationSkills(answers types.WizardAnswers) ([]types.GeneratedFile, 
 
 		content, err := templateFS.ReadFile("templates/skills/" + entry.Name + "/SKILL.md")
 		if err != nil {
-			return nil, fmt.Errorf("reading gdev-ops skill %q: %w", entry.Name, err)
+			return nil, fmt.Errorf("reading qsdev-ops skill %q: %w", entry.Name, err)
 		}
 
 		files = append(files, types.GeneratedFile{
@@ -75,10 +75,10 @@ func deployOperationSkills(answers types.WizardAnswers) ([]types.GeneratedFile, 
 	return files, nil
 }
 
-// AvailableGdevOpsSkillNames returns the names of all gdev operation skills
+// AvailableQsdevOpsSkillNames returns the names of all qsdev operation skills
 // from the embedded manifest.
-func AvailableGdevOpsSkillNames() []string {
-	manifest, err := loadGdevOpsManifest()
+func AvailableQsdevOpsSkillNames() []string {
+	manifest, err := loadQsdevOpsManifest()
 	if err != nil {
 		return nil
 	}

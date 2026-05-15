@@ -44,7 +44,7 @@ func renderOverviewTable(b *strings.Builder, report *TeamReport) {
 
 func renderProjectTable(b *strings.Builder, report *TeamReport) {
 	b.WriteString("## Project Scores\n\n")
-	b.WriteString("| Project | Score | Grade | Baseline | Enhanced | Vulns (C/H) | gdev Version | Last Scan |\n")
+	b.WriteString("| Project | Score | Grade | Baseline | Enhanced | Vulns (C/H) | qsdev Version | Last Scan |\n")
 	b.WriteString("|---------|-------|-------|----------|----------|-------------|--------------|----------|\n")
 
 	// Sort by score descending.
@@ -70,7 +70,7 @@ func renderProjectTable(b *strings.Builder, report *TeamReport) {
 			enhancedStatus,
 			p.VulnTotals.Critical,
 			p.VulnTotals.High,
-			p.GdevVersion,
+			p.QsdevVersion,
 			relativeTime(p.LastScan),
 		)
 	}
@@ -205,6 +205,6 @@ func renderStaleScans(b *strings.Builder, report *TeamReport) {
 }
 
 func renderFooter(b *strings.Builder, report *TeamReport) {
-	fmt.Fprintf(b, "---\n\n*Generated at %s by gdev team-report*\n",
+	fmt.Fprintf(b, "---\n\n*Generated at %s by qsdev team-report*\n",
 		report.GeneratedAt.Format("2006-01-02T15:04:05Z"))
 }

@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // DevenvNixTemplateData holds all data required to render the devenv.nix template.
@@ -70,22 +70,22 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data.EnvVars = make(map[string]string, len(answers.EnvVars)+6)
 	data.EnvVars["DEVENV_SECURITY_HARDENED"] = "true"
 
-	// gdev context environment variables.
+	// qsdev context environment variables.
 	projectName := answers.ProjectName
 	if projectName == "" {
 		projectName = "unknown"
 	}
-	data.EnvVars["GDEV_PROJECT_NAME"] = projectName
+	data.EnvVars["QSDEV_PROJECT_NAME"] = projectName
 
 	securityProfile := answers.ComplianceLevel
 	if securityProfile == "" {
 		securityProfile = "standard"
 	}
-	data.EnvVars["GDEV_SECURITY_PROFILE"] = securityProfile
+	data.EnvVars["QSDEV_SECURITY_PROFILE"] = securityProfile
 
-	data.EnvVars["GDEV_VERSION"] = version.Info().Version
-	data.EnvVars["GDEV_ECOSYSTEMS"] = buildEcosystemsList(answers)
-	data.EnvVars["GDEV_TOOL_COUNT"] = strconv.Itoa(countEnabledTools(answers))
+	data.EnvVars["QSDEV_VERSION"] = version.Info().Version
+	data.EnvVars["QSDEV_ECOSYSTEMS"] = buildEcosystemsList(answers)
+	data.EnvVars["QSDEV_TOOL_COUNT"] = strconv.Itoa(countEnabledTools(answers))
 
 	for k, v := range answers.EnvVars {
 		data.EnvVars[k] = v

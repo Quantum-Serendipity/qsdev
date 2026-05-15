@@ -3,7 +3,7 @@ package devinit_test
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devinit"
+	"github.com/Quantum-Serendipity/qsdev/addons/devinit"
 )
 
 func TestBuiltinProfiles_HaveRequiredFields(t *testing.T) {

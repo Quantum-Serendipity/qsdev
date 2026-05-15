@@ -61,7 +61,7 @@ func TestComplianceLevel_StrictMappings(t *testing.T) {
 	}
 }
 
-func TestComplianceLevelToConfig_ProducesValidGdevConfig(t *testing.T) {
+func TestComplianceLevelToConfig_ProducesValidQsdevConfig(t *testing.T) {
 	for _, level := range []string{"baseline", "enhanced", "strict"} {
 		cfg := ComplianceLevelToConfig(level)
 		if cfg == nil {

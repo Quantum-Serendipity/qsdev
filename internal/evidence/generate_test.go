@@ -3,7 +3,7 @@ package evidence
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 )
 
 func TestGenerate_NilFramework_Error(t *testing.T) {

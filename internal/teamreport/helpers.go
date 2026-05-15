@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 )
 
 // medianFloat64 returns the median of a sorted slice of float64 values.

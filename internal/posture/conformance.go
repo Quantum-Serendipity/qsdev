@@ -3,7 +3,7 @@ package posture
 import (
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // EvaluateConformance checks baseline and enhanced conformance.

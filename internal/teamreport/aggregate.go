@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 )
 
 const staleScanThreshold = 7 * 24 * time.Hour
@@ -93,7 +93,7 @@ func Aggregate(reports []*posture.PostureReport, opts AggregateOptions) (*TeamRe
 			Score:       r.Score,
 			Conformance: r.Conformance,
 			VulnTotals:  r.Dependencies.Totals,
-			GdevVersion: r.GdevVersion,
+			QsdevVersion: r.QsdevVersion,
 			LastScan:    r.GeneratedAt,
 		}
 
@@ -186,7 +186,7 @@ func computeSummary(projects []ProjectSummary, opts AggregateOptions) TeamSummar
 		criticalVulns += p.VulnTotals.Critical
 		highVulns += p.VulnTotals.High
 
-		if isOutdatedGdev(p.GdevVersion, opts.GdevVersion) {
+		if isOutdatedGdev(p.QsdevVersion, opts.QsdevVersion) {
 			needUpdate++
 		}
 	}
@@ -205,7 +205,7 @@ func computeSummary(projects []ProjectSummary, opts AggregateOptions) TeamSummar
 	}
 }
 
-// isOutdatedGdev returns true if the project's gdev version is more than
+// isOutdatedGdev returns true if the project's qsdev version is more than
 // 2 minor versions behind the current version.
 func isOutdatedGdev(projectVersion, currentVersion string) bool {
 	if currentVersion == "" || projectVersion == "" {

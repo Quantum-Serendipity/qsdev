@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devenv"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestSaveAndLoadAnswers_RoundTrip(t *testing.T) {
@@ -102,7 +102,7 @@ func TestSaveAnswers_CreatesDirectory(t *testing.T) {
 	}
 
 	// Verify the answers file exists.
-	answersFile := filepath.Join(devenvDir, ".gdev-answers.yaml")
+	answersFile := filepath.Join(devenvDir, ".qsdev-answers.yaml")
 	if _, err := os.Stat(answersFile); err != nil {
 		t.Fatalf("answers file not created: %v", err)
 	}

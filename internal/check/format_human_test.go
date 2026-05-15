@@ -126,7 +126,7 @@ func TestFormatHuman_ShowsRemediation(t *testing.T) {
 				Status:      StatusFail,
 				Severity:    SeverityHigh,
 				Message:     "config error",
-				Remediation: "run gdev init",
+				Remediation: "run qsdev init",
 			},
 		},
 		Summary: CheckSummary{Total: 1, Fail: 1},
@@ -138,7 +138,7 @@ func TestFormatHuman_ShowsRemediation(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "run gdev init") {
+	if !strings.Contains(output, "run qsdev init") {
 		t.Error("expected remediation text in output")
 	}
 }

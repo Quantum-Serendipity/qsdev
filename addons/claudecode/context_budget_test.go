@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 )
 
 func TestResolveModelSize_Sonnet(t *testing.T) {

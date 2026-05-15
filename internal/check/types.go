@@ -1,4 +1,4 @@
-// Package check implements the gdev check command for CI enforcement.
+// Package check implements the qsdev check command for CI enforcement.
 // It verifies binary compatibility, config integrity, required tools,
 // generated file state, and security hardening.
 package check
@@ -6,7 +6,7 @@ package check
 import (
 	"fmt"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // CheckCategory groups related checks for reporting.
@@ -155,7 +155,7 @@ const (
 type CheckContext struct {
 	ProjectRoot       string
 	BinaryVersion     string
-	GdevConfig        *types.GdevConfig
+	QsdevConfig        *types.QsdevConfig
 	ToolNames         []string
 	ProfileNames      []string
 	RequiredDenyRules    []string

@@ -3,7 +3,7 @@ package gitworkflow
 import (
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // GeneratePRTemplate produces a GitHub pull request template tailored to

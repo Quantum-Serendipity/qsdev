@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // ValidateEnable checks that enabling toolName is valid given the current
@@ -13,7 +13,7 @@ import (
 func ValidateEnable(registry *Registry, toolName string, enabledTools map[string]bool) error {
 	tool, ok := registry.ByName(toolName)
 	if !ok {
-		return fmt.Errorf("unknown tool %q; use 'gdev list' to see available tools", toolName)
+		return fmt.Errorf("unknown tool %q; use 'qsdev list' to see available tools", toolName)
 	}
 
 	for _, prereq := range tool.Prerequisites {
@@ -35,7 +35,7 @@ func ValidateEnable(registry *Registry, toolName string, enabledTools map[string
 // enabled tool lists it as a prerequisite.
 func ValidateDisable(registry *Registry, toolName string, enabledTools map[string]bool) error {
 	if _, ok := registry.ByName(toolName); !ok {
-		return fmt.Errorf("unknown tool %q; use 'gdev list' to see available tools", toolName)
+		return fmt.Errorf("unknown tool %q; use 'qsdev list' to see available tools", toolName)
 	}
 
 	var dependents []string

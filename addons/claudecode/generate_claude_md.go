@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/tmpl"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // SkillSummary describes a skill for inclusion in CLAUDE.md.
@@ -22,7 +22,7 @@ type AgentSummary struct {
 	Description string
 }
 
-// CommandSummary describes a gdev CLI command for inclusion in CLAUDE.md.
+// CommandSummary describes a qsdev CLI command for inclusion in CLAUDE.md.
 type CommandSummary struct {
 	Command     string
 	Description string
@@ -117,16 +117,16 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 	} else if data.ProjectName != "" {
 		data.ProjectDescription = fmt.Sprintf("%s development environment.", data.ProjectName)
 	} else {
-		data.ProjectDescription = "Development environment managed by gdev."
+		data.ProjectDescription = "Development environment managed by qsdev."
 	}
 
-	// Skills from gdev-ops manifest.
-	opsManifest, _ := loadGdevOpsManifest()
+	// Skills from qsdev-ops manifest.
+	opsManifest, _ := loadQsdevOpsManifest()
 	if opsManifest != nil {
 		for _, s := range opsManifest.Skills {
 			if answers.EnabledTools == nil || answers.EnabledTools[s.Name] {
 				data.AvailableSkills = append(data.AvailableSkills, SkillSummary{
-					Name: "/" + s.Name, Description: s.Description, Category: "gdev-operations",
+					Name: "/" + s.Name, Description: s.Description, Category: "qsdev-operations",
 				})
 			}
 		}
@@ -158,16 +158,16 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 		}
 	}
 
-	// Static gdev commands.
+	// Static qsdev commands.
 	data.GdevCommands = []CommandSummary{
-		{Command: "gdev init", Description: "Initialize or re-initialize project"},
-		{Command: "gdev devenv doctor", Description: "Check system and project health"},
-		{Command: "gdev devenv setup", Description: "Install missing prerequisites"},
-		{Command: "gdev enable <tool>", Description: "Enable a tool"},
-		{Command: "gdev disable <tool>", Description: "Disable a tool"},
-		{Command: "gdev status", Description: "Show configuration state"},
-		{Command: "gdev list", Description: "Show available tools"},
-		{Command: "gdev check", Description: "Validate configuration for CI"},
+		{Command: "qsdev init", Description: "Initialize or re-initialize project"},
+		{Command: "qsdev devenv doctor", Description: "Check system and project health"},
+		{Command: "qsdev devenv setup", Description: "Install missing prerequisites"},
+		{Command: "qsdev enable <tool>", Description: "Enable a tool"},
+		{Command: "qsdev disable <tool>", Description: "Disable a tool"},
+		{Command: "qsdev status", Description: "Show configuration state"},
+		{Command: "qsdev list", Description: "Show available tools"},
+		{Command: "qsdev check", Description: "Validate configuration for CI"},
 	}
 
 	// Devenv tasks from verification commands.

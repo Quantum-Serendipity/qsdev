@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/sysinfo"
+	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 )
 
 func TestDetectPackageManagerWithRunner(t *testing.T) {

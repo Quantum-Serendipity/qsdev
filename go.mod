@@ -1,4 +1,4 @@
-module github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap
+module github.com/Quantum-Serendipity/qsdev
 
 go 1.26.1
 

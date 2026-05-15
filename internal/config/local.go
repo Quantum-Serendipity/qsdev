@@ -6,15 +6,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 	"gopkg.in/yaml.v3"
 )
 
-// LocalConfig represents the .gdev.local.yaml file, which contains
+// LocalConfig represents the .qsdev.local.yaml file, which contains
 // per-developer overrides. It omits project-level fields (Version,
-// GdevVersion, Profile, Client, Infrastructure) that only belong in
-// the shared .gdev.yaml.
+// QsdevVersion, Profile, Client, Infrastructure) that only belong in
+// the shared .qsdev.yaml.
 type LocalConfig struct {
 	Languages     []types.LanguageConfig `yaml:"languages,omitempty"`
 	Services      []types.ServiceConfig  `yaml:"services,omitempty"`
@@ -24,7 +24,7 @@ type LocalConfig struct {
 	ExtraPackages []string               `yaml:"extra_packages,omitempty"`
 }
 
-// ParseLocalConfig reads and parses a .gdev.local.yaml file.
+// ParseLocalConfig reads and parses a .qsdev.local.yaml file.
 // Returns (nil, nil) if the file does not exist — this is not an error
 // since the local config file is optional. Only parse failures produce errors.
 func ParseLocalConfig(path string) (*LocalConfig, error) {
@@ -44,15 +44,15 @@ func ParseLocalConfig(path string) (*LocalConfig, error) {
 	return &local, nil
 }
 
-// localToGdevConfig converts a LocalConfig to a GdevConfig for use in the
-// merge chain. Fields that exist only in GdevConfig (Version, GdevVersion,
+// localToQsdevConfig converts a LocalConfig to a QsdevConfig for use in the
+// merge chain. Fields that exist only in QsdevConfig (Version, QsdevVersion,
 // Profile, Client, Infrastructure) are left at zero values.
-func localToGdevConfig(local *LocalConfig) *types.GdevConfig {
+func localToQsdevConfig(local *LocalConfig) *types.QsdevConfig {
 	if local == nil {
 		return nil
 	}
 
-	return &types.GdevConfig{
+	return &types.QsdevConfig{
 		Languages:  local.Languages,
 		Services:   local.Services,
 		Security:   local.Security,
@@ -61,12 +61,12 @@ func localToGdevConfig(local *LocalConfig) *types.GdevConfig {
 	}
 }
 
-// GenerateLocalTemplate writes a .gdev.local.yaml template file with
+// GenerateLocalTemplate writes a .qsdev.local.yaml template file with
 // commented-out examples. It only creates the file if it doesn't already
 // exist (idempotent). The template content is context-sensitive: it includes
 // language version overrides if the resolved config contains languages.
-func GenerateLocalTemplate(projectRoot string, resolved *types.GdevConfig) error {
-	path := filepath.Join(projectRoot, ".gdev.local.yaml")
+func GenerateLocalTemplate(projectRoot string, resolved *types.QsdevConfig) error {
+	path := filepath.Join(projectRoot, ".qsdev.local.yaml")
 
 	// Don't overwrite an existing file.
 	if _, err := os.Stat(path); err == nil {
@@ -74,8 +74,8 @@ func GenerateLocalTemplate(projectRoot string, resolved *types.GdevConfig) error
 	}
 
 	var b strings.Builder
-	b.WriteString("# .gdev.local.yaml — Local developer overrides (gitignored)\n")
-	b.WriteString("# These settings override .gdev.yaml but cannot lower security settings.\n")
+	b.WriteString("# .qsdev.local.yaml — Local developer overrides (gitignored)\n")
+	b.WriteString("# These settings override .qsdev.yaml but cannot lower security settings.\n")
 	b.WriteString("#\n")
 	b.WriteString("# extra_packages:\n")
 	b.WriteString("#   - neovim\n")
@@ -144,7 +144,7 @@ func EnsureGitignoreEntry(projectRoot, entry string) error {
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString("# gdev local configuration\n")
+	b.WriteString("# qsdev local configuration\n")
 	b.WriteString(entry)
 	b.WriteString("\n")
 

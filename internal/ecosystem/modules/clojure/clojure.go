@@ -1,5 +1,5 @@
 // Package clojure implements the Clojure ecosystem module for
-// gdev-secure-devenv-bootstrap. It detects Clojure projects by scanning for
+// qsdev. It detects Clojure projects by scanning for
 // deps.edn (tools.deps) and project.clj (Leiningen), generates devenv.nix
 // fragments with a warning about the lack of lockfile support, and provides
 // pre-commit hooks, CI commands, wizard fields, and package manager metadata
@@ -9,9 +9,9 @@ package clojure
 import (
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.

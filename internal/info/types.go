@@ -2,13 +2,13 @@ package info
 
 import "time"
 
-// ProjectInfo holds the data displayed by `gdev info`.
+// ProjectInfo holds the data displayed by `qsdev info`.
 type ProjectInfo struct {
 	ProjectName       string         `json:"project_name"`
 	Ecosystems        []string       `json:"ecosystems"`
 	ActiveToolCount   int            `json:"active_tool_count"`
 	SecurityProfile   string         `json:"security_profile"`
-	GdevVersion       string         `json:"gdev_version"`
+	QsdevVersion       string         `json:"qsdev_version"`
 	ConfigVersion     int            `json:"config_version"`
 	LastUpdated       time.Time      `json:"last_updated"`
 	ToolsByCategory   map[string]int `json:"tools_by_category"`

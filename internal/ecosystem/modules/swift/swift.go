@@ -1,5 +1,5 @@
 // Package swift implements the Swift (SPM) ecosystem module for
-// gdev-secure-devenv-bootstrap. It detects Swift projects by scanning for
+// qsdev. It detects Swift projects by scanning for
 // Package.swift, Package.resolved, and *.xcodeproj, generates devenv.nix
 // fragments with Swift language support and SE-0391 TOFU commentary, and
 // provides pre-commit hooks, CI commands, deny rules, and package manager
@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.

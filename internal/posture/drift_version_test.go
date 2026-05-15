@@ -3,15 +3,15 @@ package posture
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestDetectVersionDrift_SameVersion(t *testing.T) {
 	currentVersion := version.Info().Version
 
 	genState := types.GeneratedState{
-		GdevVersion: currentVersion,
+		QsdevVersion: currentVersion,
 	}
 
 	cat := detectVersionDrift(genState)
@@ -23,7 +23,7 @@ func TestDetectVersionDrift_SameVersion(t *testing.T) {
 
 func TestDetectVersionDrift_DifferentVersion(t *testing.T) {
 	genState := types.GeneratedState{
-		GdevVersion: "v0.0.1-old",
+		QsdevVersion: "v0.0.1-old",
 	}
 
 	cat := detectVersionDrift(genState)
@@ -47,7 +47,7 @@ func TestDetectVersionDrift_DifferentVersion(t *testing.T) {
 
 func TestDetectVersionDrift_EmptyStateVersion(t *testing.T) {
 	genState := types.GeneratedState{
-		GdevVersion: "",
+		QsdevVersion: "",
 	}
 
 	cat := detectVersionDrift(genState)
@@ -60,8 +60,8 @@ func TestDetectVersionDrift_EmptyStateVersion(t *testing.T) {
 	if f.Severity != DriftInfo {
 		t.Errorf("expected severity %q, got %q", DriftInfo, f.Severity)
 	}
-	if f.Subject != "gdev version" {
-		t.Errorf("expected subject %q, got %q", "gdev version", f.Subject)
+	if f.Subject != "qsdev version" {
+		t.Errorf("expected subject %q, got %q", "qsdev version", f.Subject)
 	}
 	if f.Expected != "" {
 		t.Errorf("expected empty Expected for pre-tracking state, got %q", f.Expected)

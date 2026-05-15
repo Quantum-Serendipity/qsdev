@@ -2,14 +2,14 @@ package check
 
 // CheckRequiredTools verifies that always-on tools are not in the disabled list.
 func CheckRequiredTools(ctx CheckContext) []CheckResult {
-	if ctx.GdevConfig == nil {
+	if ctx.QsdevConfig == nil {
 		return []CheckResult{
 			{
 				Category: CategoryRequiredTools,
 				Name:     "required_tools",
 				Status:   StatusSkip,
 				Severity: SeverityInfo,
-				Message:  "No .gdev.yaml found; skipping required tools check",
+				Message:  "No .qsdev.yaml found; skipping required tools check",
 			},
 		}
 	}
@@ -26,8 +26,8 @@ func CheckRequiredTools(ctx CheckContext) []CheckResult {
 		}
 	}
 
-	disabled := make(map[string]bool, len(ctx.GdevConfig.Tools.Disabled))
-	for _, t := range ctx.GdevConfig.Tools.Disabled {
+	disabled := make(map[string]bool, len(ctx.QsdevConfig.Tools.Disabled))
+	for _, t := range ctx.QsdevConfig.Tools.Disabled {
 		disabled[t] = true
 	}
 
@@ -40,7 +40,7 @@ func CheckRequiredTools(ctx CheckContext) []CheckResult {
 				Status:      StatusFail,
 				Severity:    SeverityHigh,
 				Message:     "Required tool " + toolName + " is in the disabled list",
-				Remediation: "Remove " + toolName + " from tools.disabled in .gdev.yaml",
+				Remediation: "Remove " + toolName + " from tools.disabled in .qsdev.yaml",
 			})
 		}
 	}

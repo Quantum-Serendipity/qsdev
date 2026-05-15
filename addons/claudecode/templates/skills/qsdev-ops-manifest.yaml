@@ -1,0 +1,41 @@
+skills:
+  - name: qsdev-init
+    description: "Initialize qsdev project configuration"
+    tags: [qsdev, ops, setup]
+    user_only: true
+  - name: qsdev-onboard
+    description: "Onboard existing project to qsdev"
+    tags: [qsdev, ops, onboarding]
+    user_only: true
+  - name: qsdev-setup
+    description: "Install missing prerequisites"
+    tags: [qsdev, ops, setup]
+    user_only: true
+  - name: qsdev-enable
+    description: "Enable a tool in the project"
+    tags: [qsdev, ops, lifecycle]
+    user_only: true
+  - name: qsdev-disable
+    description: "Disable a tool from the project"
+    tags: [qsdev, ops, lifecycle]
+    user_only: true
+  - name: qsdev-update
+    description: "Update qsdev-managed configuration"
+    tags: [qsdev, ops, lifecycle]
+    user_only: true
+  - name: qsdev-doctor
+    description: "Run qsdev health diagnostics"
+    tags: [qsdev, ops, diagnostic]
+    user_only: false
+  - name: qsdev-status
+    description: "Show qsdev configuration status"
+    tags: [qsdev, ops, diagnostic]
+    user_only: false
+  - name: qsdev-tools
+    description: "List available qsdev tools"
+    tags: [qsdev, ops, diagnostic]
+    user_only: false
+  - name: qsdev-detect
+    description: "Detect project ecosystems"
+    tags: [qsdev, ops, diagnostic]
+    user_only: false

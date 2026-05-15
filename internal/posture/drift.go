@@ -1,7 +1,7 @@
 package posture
 
 import (
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // DetectDrift runs all drift detection categories and aggregates the results

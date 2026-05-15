@@ -7,35 +7,35 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	gdevconfig "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/config"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/toolreg"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// ErrNotGdevProject is returned when the project root does not contain a
-// .gdev.yaml configuration file.
-var ErrNotGdevProject = errors.New("not a gdev-managed project")
+// ErrNotQsdevProject is returned when the project root does not contain a
+// .qsdev.yaml configuration file.
+var ErrNotQsdevProject = errors.New("not a qsdev-managed project")
 
 // CollectInfo reads cached state files to build a ProjectInfo.
-// It reads only .gdev.yaml, .devinit/.gdev-init-state.yaml, and
-// .devinit/.gdev-init-answers.yaml — no evaluation, no scanning.
+// It reads only .qsdev.yaml, .devinit/.qsdev-init-state.yaml, and
+// .devinit/.qsdev-init-answers.yaml — no evaluation, no scanning.
 func CollectInfo(projectRoot string) (*ProjectInfo, error) {
-	// 1. Check .gdev.yaml exists.
-	configPath := filepath.Join(projectRoot, ".gdev.yaml")
+	// 1. Check .qsdev.yaml exists.
+	configPath := filepath.Join(projectRoot, ".qsdev.yaml")
 	if _, err := os.Stat(configPath); err != nil {
 		if os.IsNotExist(err) {
-			return nil, ErrNotGdevProject
+			return nil, ErrNotQsdevProject
 		}
 		return nil, err
 	}
 
-	// 2. Parse .gdev.yaml.
-	cfg, cfgErr := gdevconfig.ParseGdevConfig(configPath)
+	// 2. Parse .qsdev.yaml.
+	cfg, cfgErr := qsdevconfig.ParseQsdevConfig(configPath)
 
 	// 3. Load state (graceful if missing).
-	statePath := filepath.Join(projectRoot, ".devinit", ".gdev-init-state.yaml")
+	statePath := filepath.Join(projectRoot, ".devinit", ".qsdev-init-state.yaml")
 	genState, _ := state.LoadStateFromFile(statePath)
 
 	// 4. Load answers (graceful if missing).
@@ -58,9 +58,9 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 	}
 
 	// From state.
-	info.GdevVersion = genState.GdevVersion
-	if info.GdevVersion == "" {
-		info.GdevVersion = version.Info().Version
+	info.QsdevVersion = genState.QsdevVersion
+	if info.QsdevVersion == "" {
+		info.QsdevVersion = version.Info().Version
 	}
 	info.LastUpdated = genState.LastRun
 	info.ManagedFileCount = len(genState.Files)
@@ -106,9 +106,9 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 	return info, nil
 }
 
-// loadAnswersQuietly reads .devinit/.gdev-init-answers.yaml without errors.
+// loadAnswersQuietly reads .devinit/.qsdev-init-answers.yaml without errors.
 func loadAnswersQuietly(projectRoot string) types.WizardAnswers {
-	path := filepath.Join(projectRoot, ".devinit", ".gdev-init-answers.yaml")
+	path := filepath.Join(projectRoot, ".devinit", ".qsdev-init-answers.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return types.WizardAnswers{}

@@ -1,6 +1,6 @@
 package claudecode
 
-import "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+import "github.com/Quantum-Serendipity/qsdev/pkg/types"
 
 // ExportMCPServerConfig re-exports MCPServerConfig for convenience in tests.
 type ExportMCPServerConfig = MCPServerConfig
@@ -56,15 +56,15 @@ type ExportUpdateSummary = UpdateSummary
 // ExportContains exposes the contains helper for external tests.
 var ExportContains = contains
 
-var ExportLoadGdevOpsManifest    = loadGdevOpsManifest
+var ExportLoadQsdevOpsManifest    = loadQsdevOpsManifest
 var ExportDeployOperationSkills  = deployOperationSkills
 var ExportLoadAgentManifest      = loadAgentManifest
 var ExportDeployAgents           = deployAgents
 var ExportLoadConsultingSkillManifest = loadConsultingSkillManifest
 var ExportDeployWorkflowSkills   = deployWorkflowSkills
 
-type ExportGdevOpsManifest       = GdevOpsManifest
-type ExportGdevOpsEntry          = GdevOpsEntry
+type ExportQsdevOpsManifest       = QsdevOpsManifest
+type ExportQsdevOpsEntry          = QsdevOpsEntry
 type ExportAgentManifest         = AgentManifest
 type ExportAgentEntry            = AgentEntry
 type ExportConsultingSkillManifest = ConsultingSkillManifest

@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
 )
 
-const gitignoreSectionComment = "# gdev local configuration"
+const gitignoreSectionComment = "# qsdev local configuration"
 
 // EnsureGitignoreEntry ensures that entry appears in the .gitignore file at
 // projectRoot. It is idempotent: if the entry already exists, it is a no-op.

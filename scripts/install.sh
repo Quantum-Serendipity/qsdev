@@ -1,6 +1,6 @@
 #!/bin/sh
 # install.sh - qsdev installer for macOS and Linux
-# Usage: curl -fsSL https://raw.githubusercontent.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/main/scripts/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/Quantum-Serendipity/qsdev/main/scripts/install.sh | sh
 #    or: sh install.sh [--help] [--dry-run] [--no-modify-path] [--install-dir <dir>]
 #
 # Environment variables:
@@ -12,7 +12,7 @@ set -eu
 
 # --- Configuration ---
 GITHUB_ORG="Quantum-Serendipity"
-GITHUB_REPO="gdev-secure-devenv-bootstrap"
+GITHUB_REPO="qsdev"
 BINARY_NAME="qsdev"
 DEFAULT_INSTALL_DIR="${HOME}/.qsdev/bin"
 
@@ -79,7 +79,7 @@ Environment variables:
 
 Examples:
   # Install latest version
-  curl -fsSL https://raw.githubusercontent.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/main/scripts/install.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/Quantum-Serendipity/qsdev/main/scripts/install.sh | sh
 
   # Install specific version
   QSDEV_VERSION=1.2.3 sh install.sh

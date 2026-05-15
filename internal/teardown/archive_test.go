@@ -47,7 +47,7 @@ func TestCreateArchive_BasicFiles(t *testing.T) {
 
 	// Verify the archive name format.
 	archiveName := filepath.Base(archivePath)
-	if !strings.HasPrefix(archiveName, ".gdev-archive-") || !strings.HasSuffix(archiveName, ".tar.gz") {
+	if !strings.HasPrefix(archiveName, ".qsdev-archive-") || !strings.HasSuffix(archiveName, ".tar.gz") {
 		t.Errorf("archive name %q doesn't match expected format", archiveName)
 	}
 

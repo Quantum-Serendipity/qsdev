@@ -1,4 +1,4 @@
-// Package ansible implements the Ansible ecosystem module for gdev-secure-devenv-bootstrap.
+// Package ansible implements the Ansible ecosystem module for qsdev.
 // It detects Ansible projects by scanning for ansible.cfg, galaxy.yml, playbooks/,
 // roles/, and requirements.yml, then generates devenv.nix fragments with ansible
 // and ansible-lint packages, a security-hardened ansible.cfg with GPG signature
@@ -8,9 +8,9 @@ package ansible
 import (
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.
@@ -95,7 +95,7 @@ func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvIn
 // separate file to avoid overwriting the user's ansible.cfg.
 func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {
 	var b strings.Builder
-	b.WriteString("# Security-hardened Ansible configuration (gdev-managed)\n")
+	b.WriteString("# Security-hardened Ansible configuration (qsdev-managed)\n")
 	b.WriteString("# Merge into your ansible.cfg or set ANSIBLE_CONFIG=.ansible-security.cfg\n")
 	b.WriteString("# Requires: Ansible >= 2.15 for GPG signature verification of collections.\n")
 	b.WriteString("\n")

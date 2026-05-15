@@ -69,10 +69,10 @@ func TestIntegration_EmptyDir_GoWebProfile(t *testing.T) {
 	requireFileExists(t, dir, ".claude/rules/security-rules.md")
 
 	// State and answers saved.
-	requireFileExists(t, dir, ".devinit/.gdev-init-state.yaml")
-	requireFileExists(t, dir, ".devinit/.gdev-init-answers.yaml")
-	requireFileExists(t, dir, ".devenv/.gdev-answers.yaml")
-	requireFileExists(t, dir, ".claude/.gdev-claude-answers.yaml")
+	requireFileExists(t, dir, ".devinit/.qsdev-init-state.yaml")
+	requireFileExists(t, dir, ".devinit/.qsdev-init-answers.yaml")
+	requireFileExists(t, dir, ".devenv/.qsdev-answers.yaml")
+	requireFileExists(t, dir, ".claude/.qsdev-claude-answers.yaml")
 
 	// Content spot-checks.
 	requireFileContains(t, dir, "devenv.nix", "go")
@@ -99,7 +99,7 @@ func TestIntegration_GoProjectDetection(t *testing.T) {
 	requireFileExists(t, dir, ".claude/rules/go-conventions.md")
 
 	// Answers should include Go.
-	answersContent := readFileContent(t, dir, ".devinit/.gdev-init-answers.yaml")
+	answersContent := readFileContent(t, dir, ".devinit/.qsdev-init-answers.yaml")
 	if !strings.Contains(answersContent, "name: go") {
 		t.Error("answers should contain Go language")
 	}
@@ -130,7 +130,7 @@ func TestIntegration_UpdateCommand_UnmodifiedRegenerate(t *testing.T) {
 	}
 
 	// State should be updated.
-	requireFileExists(t, dir, ".devinit/.gdev-init-state.yaml")
+	requireFileExists(t, dir, ".devinit/.qsdev-init-state.yaml")
 }
 
 func TestIntegration_UpdateCommand_ModifiedFile_MergeOrSkip(t *testing.T) {
@@ -231,7 +231,7 @@ func TestIntegration_UpdateCommand_DryRun(t *testing.T) {
 	}
 
 	// Record state before update.
-	stateBefore := readFileContent(t, dir, ".devinit/.gdev-init-state.yaml")
+	stateBefore := readFileContent(t, dir, ".devinit/.qsdev-init-state.yaml")
 
 	// Dry-run update.
 	output, err := executeInitCmd(t, dir, "--update", "--dry-run")
@@ -245,7 +245,7 @@ func TestIntegration_UpdateCommand_DryRun(t *testing.T) {
 	}
 
 	// State should NOT have changed.
-	stateAfter := readFileContent(t, dir, ".devinit/.gdev-init-state.yaml")
+	stateAfter := readFileContent(t, dir, ".devinit/.qsdev-init-state.yaml")
 	if stateBefore != stateAfter {
 		t.Error("state file changed during dry-run")
 	}

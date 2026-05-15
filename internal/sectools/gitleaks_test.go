@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/sectools"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/sectools"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestGenerateGitleaksToml_Structure(t *testing.T) {

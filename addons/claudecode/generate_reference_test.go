@@ -3,24 +3,24 @@ package claudecode_test
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-func TestGenerateGdevReference_NotNil(t *testing.T) {
+func TestGenerateQsdevReference_NotNil(t *testing.T) {
 	answers := types.WizardAnswers{ProjectName: "test"}
 	reg := ecosystem.NewRegistry()
 
-	got, err := claudecode.GenerateGdevReference(answers, reg)
+	got, err := claudecode.GenerateQsdevReference(answers, reg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got == nil {
 		t.Fatal("expected non-nil result")
 	}
-	if got.Path != ".claude/gdev-reference.md" {
-		t.Errorf("Path = %q, want %q", got.Path, ".claude/gdev-reference.md")
+	if got.Path != ".claude/qsdev-reference.md" {
+		t.Errorf("Path = %q, want %q", got.Path, ".claude/qsdev-reference.md")
 	}
 	if got.Mode != 0o644 {
 		t.Errorf("Mode = %#o, want %#o", got.Mode, 0o644)
@@ -30,11 +30,11 @@ func TestGenerateGdevReference_NotNil(t *testing.T) {
 	}
 }
 
-func TestGenerateGdevReference_ContainsCommands(t *testing.T) {
+func TestGenerateQsdevReference_ContainsCommands(t *testing.T) {
 	answers := types.WizardAnswers{ProjectName: "test"}
 	reg := ecosystem.NewRegistry()
 
-	got, err := claudecode.GenerateGdevReference(answers, reg)
+	got, err := claudecode.GenerateQsdevReference(answers, reg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -43,29 +43,29 @@ func TestGenerateGdevReference_ContainsCommands(t *testing.T) {
 
 	// Check for key CLI commands.
 	for _, cmd := range []string{
-		"gdev init",
-		"gdev init --update",
-		"gdev init --mode join",
-		"gdev devenv doctor",
-		"gdev devenv setup",
-		"gdev enable <tool>",
-		"gdev disable <tool>",
-		"gdev status",
-		"gdev list",
-		"gdev check",
-		"gdev check --format json",
-		"gdev check --audit-level medium",
-		"gdev config migrate",
+		"qsdev init",
+		"qsdev init --update",
+		"qsdev init --mode join",
+		"qsdev devenv doctor",
+		"qsdev devenv setup",
+		"qsdev enable <tool>",
+		"qsdev disable <tool>",
+		"qsdev status",
+		"qsdev list",
+		"qsdev check",
+		"qsdev check --format json",
+		"qsdev check --audit-level medium",
+		"qsdev config migrate",
 	} {
 		requireContains(t, content, cmd)
 	}
 }
 
-func TestGenerateGdevReference_ContainsTroubleshooting(t *testing.T) {
+func TestGenerateQsdevReference_ContainsTroubleshooting(t *testing.T) {
 	answers := types.WizardAnswers{ProjectName: "test"}
 	reg := ecosystem.NewRegistry()
 
-	got, err := claudecode.GenerateGdevReference(answers, reg)
+	got, err := claudecode.GenerateQsdevReference(answers, reg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -73,16 +73,16 @@ func TestGenerateGdevReference_ContainsTroubleshooting(t *testing.T) {
 	content := string(got.Content)
 
 	requireContains(t, content, "Troubleshooting")
-	requireContains(t, content, "gdev commands not found")
+	requireContains(t, content, "qsdev commands not found")
 	requireContains(t, content, "devenv not activated")
 	requireContains(t, content, "Permission denied")
 }
 
-func TestGenerateGdevReference_ContainsSecurityPolicy(t *testing.T) {
+func TestGenerateQsdevReference_ContainsSecurityPolicy(t *testing.T) {
 	answers := types.WizardAnswers{ProjectName: "test"}
 	reg := ecosystem.NewRegistry()
 
-	got, err := claudecode.GenerateGdevReference(answers, reg)
+	got, err := claudecode.GenerateQsdevReference(answers, reg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -91,6 +91,6 @@ func TestGenerateGdevReference_ContainsSecurityPolicy(t *testing.T) {
 
 	requireContains(t, content, "Security Policy")
 	requireContains(t, content, "deny rules")
-	requireContains(t, content, "gdev enable")
-	requireContains(t, content, "gdev devenv doctor")
+	requireContains(t, content, "qsdev enable")
+	requireContains(t, content, "qsdev devenv doctor")
 }

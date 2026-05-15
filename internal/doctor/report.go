@@ -9,13 +9,13 @@ import (
 
 	"github.com/mattn/go-isatty"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/pkgmanager"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/sysinfo"
+	"github.com/Quantum-Serendipity/qsdev/internal/pkgmanager"
+	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 )
 
-// Report is the top-level output of gdev doctor.
+// Report is the top-level output of qsdev doctor.
 type Report struct {
-	GdevVersion        string       `json:"gdev_version"`
+	QsdevVersion        string       `json:"qsdev_version"`
 	Timestamp          string       `json:"timestamp"`
 	System             SystemInfo   `json:"system"`
 	Shell              ShellInfo    `json:"shell"`
@@ -63,9 +63,9 @@ type ToolEntry struct {
 }
 
 // BuildReport constructs a Report from raw OS info and check results.
-func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, gdevVersion string) *Report {
+func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, qsdevVersion string) *Report {
 	r := &Report{
-		GdevVersion: gdevVersion,
+		QsdevVersion: qsdevVersion,
 		Timestamp:   time.Now().UTC().Format(time.RFC3339),
 		System: SystemInfo{
 			OS:          capitalOS(osInfo.OS),
@@ -163,7 +163,7 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 		warnSym = "\033[33m!\033[0m"
 	}
 
-	fmt.Fprintf(w, "gdev doctor v%s\n", r.GdevVersion)
+	fmt.Fprintf(w, "qsdev doctor v%s\n", r.QsdevVersion)
 	fmt.Fprintln(w, "============================")
 	fmt.Fprintln(w)
 

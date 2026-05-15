@@ -11,10 +11,10 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/doctor"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/pkgmanager"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/privilege"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/sysinfo"
+	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
+	"github.com/Quantum-Serendipity/qsdev/internal/pkgmanager"
+	"github.com/Quantum-Serendipity/qsdev/internal/privilege"
+	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 )
 
 // installLevel groups tools by dependency order.

@@ -7,7 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// PolicyFile represents a .gdev-policy.yaml configuration.
+// PolicyFile represents a .qsdev-policy.yaml configuration.
 type PolicyFile struct {
 	Conformance PolicyConformance `yaml:"conformance"`
 }
@@ -29,7 +29,7 @@ type PolicyRequirement struct {
 	Check string `yaml:"check"`
 }
 
-// LoadPolicyFile loads a .gdev-policy.yaml from the given path.
+// LoadPolicyFile loads a .qsdev-policy.yaml from the given path.
 // Returns (nil, nil) if the file does not exist.
 func LoadPolicyFile(path string) (*PolicyFile, error) {
 	data, err := os.ReadFile(path)

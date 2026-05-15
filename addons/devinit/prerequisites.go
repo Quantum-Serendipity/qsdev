@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/toolcheck"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolcheck"
 )
 
 // PrerequisiteStatus describes whether a required tool is present on the system.

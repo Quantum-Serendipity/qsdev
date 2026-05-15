@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestDetectOnboardingMode_EmptyDir_ModeCreate(t *testing.T) {
@@ -26,8 +26,8 @@ func TestDetectOnboardingMode_EmptyDir_ModeCreate(t *testing.T) {
 func TestDetectOnboardingMode_GdevYamlOnly_ModeJoin(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create .gdev.yaml but no state file.
-	if err := os.WriteFile(filepath.Join(dir, ".gdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+	// Create .qsdev.yaml but no state file.
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -46,8 +46,8 @@ func TestDetectOnboardingMode_GdevYamlOnly_ModeJoin(t *testing.T) {
 func TestDetectOnboardingMode_AlreadySetUp(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create .gdev.yaml.
-	if err := os.WriteFile(filepath.Join(dir, ".gdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+	// Create .qsdev.yaml.
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -61,7 +61,7 @@ func TestDetectOnboardingMode_AlreadySetUp(t *testing.T) {
 	genState := state.RecordFiles([]types.GeneratedFile{
 		{Path: "devenv.yaml", Content: managedContent, Mode: 0o644},
 	})
-	genState.GdevVersion = "dev"
+	genState.QsdevVersion = "dev"
 
 	stateDir := filepath.Join(dir, ".devinit")
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
@@ -86,14 +86,14 @@ func TestDetectOnboardingMode_AlreadySetUp(t *testing.T) {
 func TestDetectOnboardingMode_VersionMismatch_ModeUpdate(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create .gdev.yaml.
-	if err := os.WriteFile(filepath.Join(dir, ".gdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+	// Create .qsdev.yaml.
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Create state with a different version.
 	genState := types.GeneratedState{
-		GdevVersion: "0.1.0",
+		QsdevVersion: "0.1.0",
 		Files:       make(map[string]types.FileState),
 	}
 
@@ -123,8 +123,8 @@ func TestDetectOnboardingMode_VersionMismatch_ModeUpdate(t *testing.T) {
 func TestDetectOnboardingMode_DriftedFiles_ModeRepair(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create .gdev.yaml.
-	if err := os.WriteFile(filepath.Join(dir, ".gdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+	// Create .qsdev.yaml.
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -138,7 +138,7 @@ func TestDetectOnboardingMode_DriftedFiles_ModeRepair(t *testing.T) {
 	genState := state.RecordFiles([]types.GeneratedFile{
 		{Path: "devenv.yaml", Content: originalContent, Mode: 0o644},
 	})
-	genState.GdevVersion = "dev"
+	genState.QsdevVersion = "dev"
 
 	stateDir := filepath.Join(dir, ".devinit")
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
@@ -171,14 +171,14 @@ func TestDetectOnboardingMode_DriftedFiles_ModeRepair(t *testing.T) {
 func TestDetectOnboardingMode_DeletedFile_ModeRepair(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create .gdev.yaml.
-	if err := os.WriteFile(filepath.Join(dir, ".gdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+	// Create .qsdev.yaml.
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Record state for a file that doesn't exist on disk.
 	genState := types.GeneratedState{
-		GdevVersion: "dev",
+		QsdevVersion: "dev",
 		Files: map[string]types.FileState{
 			"devenv.yaml": {
 				Hash: "abc123",
@@ -213,8 +213,8 @@ func TestDetectOnboardingMode_DeletedFile_ModeRepair(t *testing.T) {
 func TestDetectOnboardingMode_CorruptState_ModeRepair(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create .gdev.yaml.
-	if err := os.WriteFile(filepath.Join(dir, ".gdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+	// Create .qsdev.yaml.
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -292,14 +292,14 @@ func TestOnboardingMode_String(t *testing.T) {
 func TestDetectOnboardingMode_GdevYamlAndState_NoFiles_AlreadySetUp(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create .gdev.yaml.
-	if err := os.WriteFile(filepath.Join(dir, ".gdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+	// Create .qsdev.yaml.
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Create state with no files (empty).
 	genState := types.GeneratedState{
-		GdevVersion: "dev",
+		QsdevVersion: "dev",
 		Files:       make(map[string]types.FileState),
 	}
 

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
 )
 
 func newTestRegistry(t *testing.T, modules ...*ecosystem.MockModule) *ecosystem.Registry {

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
 )
 
 func TestWriteFileAtomic_CreatesFileWithCorrectContentAndPermissions(t *testing.T) {
@@ -108,7 +108,7 @@ func TestWriteFileAtomic_CleansUpTempFileOnWriteFailure(t *testing.T) {
 	// Verify no temp files were left behind in the subdir
 	entries, _ := os.ReadDir(subdir)
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".gdev-tmp-") {
+		if strings.HasPrefix(entry.Name(), ".qsdev-tmp-") {
 			t.Errorf("temp file left behind: %s", entry.Name())
 		}
 	}

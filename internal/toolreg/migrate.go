@@ -1,6 +1,6 @@
 package toolreg
 
-import "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+import "github.com/Quantum-Serendipity/qsdev/pkg/types"
 
 // InferEnabledTools builds the EnabledTools map from legacy WizardAnswers
 // fields for projects created before the lifecycle system existed.

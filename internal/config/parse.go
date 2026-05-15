@@ -1,4 +1,4 @@
-// Package config provides parsing, validation, and migration for .gdev.yaml
+// Package config provides parsing, validation, and migration for .qsdev.yaml
 // project configuration files.
 package config
 
@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/validation"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 	"gopkg.in/yaml.v3"
 )
 
-// ValidationError describes a single validation failure in a GdevConfig.
+// ValidationError describes a single validation failure in a QsdevConfig.
 type ValidationError struct {
 	Field   string
 	Value   string
@@ -32,23 +32,23 @@ type ValidateOptions struct {
 	ToolNames    []string
 }
 
-// ParseGdevConfig reads and parses a .gdev.yaml file at path.
+// ParseQsdevConfig reads and parses a .qsdev.yaml file at path.
 //
 // It uses two-pass parsing: first unmarshal to map[string]any to extract
 // and validate the version field with clear error messages, then full
-// struct unmarshal into GdevConfig. Unknown YAML fields are silently
+// struct unmarshal into QsdevConfig. Unknown YAML fields are silently
 // ignored (gopkg.in/yaml.v3 default behavior).
-func ParseGdevConfig(path string) (*types.GdevConfig, error) {
+func ParseQsdevConfig(path string) (*types.QsdevConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading config file %s: %w", path, err)
 	}
 
-	return ParseGdevConfigBytes(data)
+	return ParseQsdevConfigBytes(data)
 }
 
-// ParseGdevConfigBytes parses .gdev.yaml content from raw bytes.
-func ParseGdevConfigBytes(data []byte) (*types.GdevConfig, error) {
+// ParseQsdevConfigBytes parses .qsdev.yaml content from raw bytes.
+func ParseQsdevConfigBytes(data []byte) (*types.QsdevConfig, error) {
 	// Pass 1: extract version field from raw map.
 	var raw map[string]any
 	if err := yaml.Unmarshal(data, &raw); err != nil {
@@ -57,7 +57,7 @@ func ParseGdevConfigBytes(data []byte) (*types.GdevConfig, error) {
 
 	versionRaw, ok := raw["version"]
 	if !ok {
-		return nil, fmt.Errorf("missing required field \"version\" in .gdev.yaml; add \"version: %d\" at the top of the file",
+		return nil, fmt.Errorf("missing required field \"version\" in .qsdev.yaml; add \"version: %d\" at the top of the file",
 			types.ConfigVersionCurrent)
 	}
 
@@ -79,7 +79,7 @@ func ParseGdevConfigBytes(data []byte) (*types.GdevConfig, error) {
 	}
 
 	// Pass 2: full struct unmarshal.
-	var cfg types.GdevConfig
+	var cfg types.QsdevConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
@@ -87,9 +87,9 @@ func ParseGdevConfigBytes(data []byte) (*types.GdevConfig, error) {
 	return &cfg, nil
 }
 
-// ValidateGdevConfig validates a parsed config and returns all validation
+// ValidateQsdevConfig validates a parsed config and returns all validation
 // errors found. An empty slice means the config is valid.
-func ValidateGdevConfig(cfg *types.GdevConfig, opts ValidateOptions) []ValidationError {
+func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []ValidationError {
 	var errs []ValidationError
 
 	// Validate language names.
@@ -177,12 +177,12 @@ func ValidateGdevConfig(cfg *types.GdevConfig, opts ValidateOptions) []Validatio
 		}
 	}
 
-	// Validate gdev_version syntax (if present).
-	if cfg.GdevVersion != "" {
-		if _, err := ParseVersionConstraint(cfg.GdevVersion); err != nil {
+	// Validate qsdev_version syntax (if present).
+	if cfg.QsdevVersion != "" {
+		if _, err := ParseVersionConstraint(cfg.QsdevVersion); err != nil {
 			errs = append(errs, ValidationError{
-				Field:   "gdev_version",
-				Value:   cfg.GdevVersion,
+				Field:   "qsdev_version",
+				Value:   cfg.QsdevVersion,
 				Message: fmt.Sprintf("invalid version constraint: %v", err),
 			})
 		}
@@ -215,11 +215,11 @@ func ValidateGdevConfig(cfg *types.GdevConfig, opts ValidateOptions) []Validatio
 	return errs
 }
 
-// DefaultGdevConfig returns a GdevConfig with organization defaults.
-func DefaultGdevConfig() *types.GdevConfig {
+// DefaultQsdevConfig returns a QsdevConfig with organization defaults.
+func DefaultQsdevConfig() *types.QsdevConfig {
 	t := true
 	enabled := true
-	return &types.GdevConfig{
+	return &types.QsdevConfig{
 		Version: types.ConfigVersionCurrent,
 		Security: types.SecurityConfig{
 			Level:          "enhanced",

@@ -9,19 +9,19 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devenv"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/detect"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules" // register all modules
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/fileutil"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/merge"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/profile"
-	gdevconfig "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/config"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/update"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/detect"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules" // register all modules
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/merge"
+	"github.com/Quantum-Serendipity/qsdev/internal/profile"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/update"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // UpdateOptions holds configuration for the update command.
@@ -87,7 +87,7 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 
 	// 4b. Version ratchet check — warn if current binary is older than last run.
 	if !opts.Force {
-		if ratchet := gdevconfig.CheckVersionRatchet(version.Info().Version, existingState.GdevVersion); ratchet != nil {
+		if ratchet := qsdevconfig.CheckVersionRatchet(version.Info().Version, existingState.QsdevVersion); ratchet != nil {
 			return ratchet
 		}
 	}
@@ -142,7 +142,7 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	// 11. Save updated state.
 	// Merge: new state for written files + old state for skipped files.
 	newState := state.RecordFiles(writtenFiles)
-	newState.GdevVersion = version.Info().Version
+	newState.QsdevVersion = version.Info().Version
 	// Preserve state entries for files we didn't touch.
 	for path, fs := range existingState.Files {
 		if _, written := newState.Files[path]; !written {

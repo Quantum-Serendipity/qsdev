@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
 )
 
 // Generate produces an EvidenceReport by evaluating a compliance framework's
@@ -33,7 +33,7 @@ func Generate(fw *Framework, report *posture.PostureReport, projectName string) 
 	return &EvidenceReport{
 		SchemaVersion: posture.SchemaVersion,
 		GeneratedAt:   time.Now().UTC(),
-		GdevVersion:   version.Info().Version,
+		QsdevVersion:   version.Info().Version,
 		ProjectName:   projectName,
 		Framework:     fw.Name,
 		FrameworkVer:  fw.Version,

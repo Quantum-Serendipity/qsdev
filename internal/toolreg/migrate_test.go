@@ -3,7 +3,7 @@ package toolreg
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestInferEnabledTools_NilMap_AttachGuard(t *testing.T) {

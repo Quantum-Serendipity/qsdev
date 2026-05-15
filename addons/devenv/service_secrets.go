@@ -1,6 +1,6 @@
 package devenv
 
-import "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
+import "github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
 
 // ServiceSecretDeclarations returns the secret declarations for a given devenv
 // service. Services that do not require secrets return nil.

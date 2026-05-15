@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-func TestParseGdevConfig_FullConfig(t *testing.T) {
+func TestParseQsdevConfig_FullConfig(t *testing.T) {
 	yaml := `
 version: 1
-gdev_version: ">= 0.15.0"
+qsdev_version: ">= 0.15.0"
 profile: go-service
 languages:
   - name: go
@@ -66,7 +66,7 @@ client:
     - github
   data_classification: confidential
 `
-	cfg, err := ParseGdevConfigBytes([]byte(yaml))
+	cfg, err := ParseQsdevConfigBytes([]byte(yaml))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,8 +74,8 @@ client:
 	if cfg.Version != 1 {
 		t.Errorf("Version = %d, want 1", cfg.Version)
 	}
-	if cfg.GdevVersion != ">= 0.15.0" {
-		t.Errorf("GdevVersion = %q, want %q", cfg.GdevVersion, ">= 0.15.0")
+	if cfg.QsdevVersion != ">= 0.15.0" {
+		t.Errorf("QsdevVersion = %q, want %q", cfg.QsdevVersion, ">= 0.15.0")
 	}
 	if cfg.Profile != "go-service" {
 		t.Errorf("Profile = %q, want %q", cfg.Profile, "go-service")
@@ -130,10 +130,10 @@ client:
 	}
 }
 
-func TestParseGdevConfig_MinimalConfig(t *testing.T) {
+func TestParseQsdevConfig_MinimalConfig(t *testing.T) {
 	yaml := `version: 1`
 
-	cfg, err := ParseGdevConfigBytes([]byte(yaml))
+	cfg, err := ParseQsdevConfigBytes([]byte(yaml))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -148,11 +148,11 @@ func TestParseGdevConfig_MinimalConfig(t *testing.T) {
 	}
 }
 
-func TestParseGdevConfig_MissingVersion(t *testing.T) {
+func TestParseQsdevConfig_MissingVersion(t *testing.T) {
 	yaml := `languages:
   - name: go`
 
-	_, err := ParseGdevConfigBytes([]byte(yaml))
+	_, err := ParseQsdevConfigBytes([]byte(yaml))
 	if err == nil {
 		t.Fatal("expected error for missing version")
 	}
@@ -161,10 +161,10 @@ func TestParseGdevConfig_MissingVersion(t *testing.T) {
 	}
 }
 
-func TestParseGdevConfig_VersionTooHigh(t *testing.T) {
+func TestParseQsdevConfig_VersionTooHigh(t *testing.T) {
 	yaml := `version: 999`
 
-	_, err := ParseGdevConfigBytes([]byte(yaml))
+	_, err := ParseQsdevConfigBytes([]byte(yaml))
 	if err == nil {
 		t.Fatal("expected error for high version")
 	}
@@ -173,7 +173,7 @@ func TestParseGdevConfig_VersionTooHigh(t *testing.T) {
 	}
 }
 
-func TestParseGdevConfig_UnknownFieldsIgnored(t *testing.T) {
+func TestParseQsdevConfig_UnknownFieldsIgnored(t *testing.T) {
 	yaml := `
 version: 1
 future_field: some_value
@@ -181,7 +181,7 @@ languages:
   - name: go
     future_lang_field: ignored
 `
-	cfg, err := ParseGdevConfigBytes([]byte(yaml))
+	cfg, err := ParseQsdevConfigBytes([]byte(yaml))
 	if err != nil {
 		t.Fatalf("unknown fields should be silently ignored, got: %v", err)
 	}
@@ -193,10 +193,10 @@ languages:
 	}
 }
 
-func TestParseGdevConfig_InvalidYAML(t *testing.T) {
+func TestParseQsdevConfig_InvalidYAML(t *testing.T) {
 	yaml := `{invalid: yaml: [broken`
 
-	_, err := ParseGdevConfigBytes([]byte(yaml))
+	_, err := ParseQsdevConfigBytes([]byte(yaml))
 	if err == nil {
 		t.Fatal("expected error for invalid YAML")
 	}
@@ -205,8 +205,8 @@ func TestParseGdevConfig_InvalidYAML(t *testing.T) {
 	}
 }
 
-func TestParseGdevConfig_FileNotFound(t *testing.T) {
-	_, err := ParseGdevConfig("/nonexistent/path/.gdev.yaml")
+func TestParseQsdevConfig_FileNotFound(t *testing.T) {
+	_, err := ParseQsdevConfig("/nonexistent/path/.qsdev.yaml")
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -215,14 +215,14 @@ func TestParseGdevConfig_FileNotFound(t *testing.T) {
 	}
 }
 
-func TestParseGdevConfig_FromFile(t *testing.T) {
+func TestParseQsdevConfig_FromFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".gdev.yaml")
+	path := filepath.Join(dir, ".qsdev.yaml")
 	if err := os.WriteFile(path, []byte("version: 1\nlanguages:\n  - name: go\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	cfg, err := ParseGdevConfig(path)
+	cfg, err := ParseQsdevConfig(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -234,15 +234,15 @@ func TestParseGdevConfig_FromFile(t *testing.T) {
 	}
 }
 
-func TestValidateGdevConfig_InvalidSecurityLevel(t *testing.T) {
-	cfg := &types.GdevConfig{
+func TestValidateQsdevConfig_InvalidSecurityLevel(t *testing.T) {
+	cfg := &types.QsdevConfig{
 		Version: 1,
 		Security: types.SecurityConfig{
 			Level: "maximum",
 		},
 	}
 
-	errs := ValidateGdevConfig(cfg, ValidateOptions{})
+	errs := ValidateQsdevConfig(cfg, ValidateOptions{})
 	if len(errs) != 1 {
 		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
 	}
@@ -254,8 +254,8 @@ func TestValidateGdevConfig_InvalidSecurityLevel(t *testing.T) {
 	}
 }
 
-func TestValidateGdevConfig_InvalidLanguageName(t *testing.T) {
-	cfg := &types.GdevConfig{
+func TestValidateQsdevConfig_InvalidLanguageName(t *testing.T) {
+	cfg := &types.QsdevConfig{
 		Version: 1,
 		Languages: []types.LanguageConfig{
 			{Name: "go"},
@@ -263,7 +263,7 @@ func TestValidateGdevConfig_InvalidLanguageName(t *testing.T) {
 		},
 	}
 
-	errs := ValidateGdevConfig(cfg, ValidateOptions{})
+	errs := ValidateQsdevConfig(cfg, ValidateOptions{})
 	if len(errs) != 1 {
 		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
 	}
@@ -272,8 +272,8 @@ func TestValidateGdevConfig_InvalidLanguageName(t *testing.T) {
 	}
 }
 
-func TestValidateGdevConfig_InvalidServiceName(t *testing.T) {
-	cfg := &types.GdevConfig{
+func TestValidateQsdevConfig_InvalidServiceName(t *testing.T) {
+	cfg := &types.QsdevConfig{
 		Version: 1,
 		Services: []types.ServiceConfig{
 			{Name: "postgres"},
@@ -281,7 +281,7 @@ func TestValidateGdevConfig_InvalidServiceName(t *testing.T) {
 		},
 	}
 
-	errs := ValidateGdevConfig(cfg, ValidateOptions{})
+	errs := ValidateQsdevConfig(cfg, ValidateOptions{})
 	if len(errs) != 1 {
 		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
 	}
@@ -290,8 +290,8 @@ func TestValidateGdevConfig_InvalidServiceName(t *testing.T) {
 	}
 }
 
-func TestValidateGdevConfig_InvalidToolName(t *testing.T) {
-	cfg := &types.GdevConfig{
+func TestValidateQsdevConfig_InvalidToolName(t *testing.T) {
+	cfg := &types.QsdevConfig{
 		Version: 1,
 		Tools: types.ToolsConfig{
 			Enabled:  []string{"version-sentinel", "nonexistent-tool"},
@@ -299,7 +299,7 @@ func TestValidateGdevConfig_InvalidToolName(t *testing.T) {
 		},
 	}
 
-	errs := ValidateGdevConfig(cfg, ValidateOptions{
+	errs := ValidateQsdevConfig(cfg, ValidateOptions{
 		ToolNames: []string{"version-sentinel", "postmortem", "semble"},
 	})
 	if len(errs) != 2 {
@@ -307,7 +307,7 @@ func TestValidateGdevConfig_InvalidToolName(t *testing.T) {
 	}
 }
 
-func TestValidateGdevConfig_PointerBoolDistinction(t *testing.T) {
+func TestValidateQsdevConfig_PointerBoolDistinction(t *testing.T) {
 	// Test that nil (omitted) and explicit false are distinguishable.
 	yamlNil := `
 version: 1
@@ -318,11 +318,11 @@ version: 1
 security:
   age_gating: false
 `
-	cfgNil, err := ParseGdevConfigBytes([]byte(yamlNil))
+	cfgNil, err := ParseQsdevConfigBytes([]byte(yamlNil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfgFalse, err := ParseGdevConfigBytes([]byte(yamlFalse))
+	cfgFalse, err := ParseQsdevConfigBytes([]byte(yamlFalse))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ security:
 	}
 }
 
-func TestValidateGdevConfig_ClientPresentVsAbsent(t *testing.T) {
+func TestValidateQsdevConfig_ClientPresentVsAbsent(t *testing.T) {
 	yamlWithClient := `
 version: 1
 client:
@@ -346,11 +346,11 @@ client:
 `
 	yamlWithout := `version: 1`
 
-	cfgWith, err := ParseGdevConfigBytes([]byte(yamlWithClient))
+	cfgWith, err := ParseQsdevConfigBytes([]byte(yamlWithClient))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfgWithout, err := ParseGdevConfigBytes([]byte(yamlWithout))
+	cfgWithout, err := ParseQsdevConfigBytes([]byte(yamlWithout))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,8 +363,8 @@ client:
 	}
 }
 
-func TestValidateGdevConfig_MultipleErrors(t *testing.T) {
-	cfg := &types.GdevConfig{
+func TestValidateQsdevConfig_MultipleErrors(t *testing.T) {
+	cfg := &types.QsdevConfig{
 		Version: 1,
 		Languages: []types.LanguageConfig{
 			{Name: "cobol"},
@@ -380,14 +380,14 @@ func TestValidateGdevConfig_MultipleErrors(t *testing.T) {
 		},
 	}
 
-	errs := ValidateGdevConfig(cfg, ValidateOptions{})
+	errs := ValidateQsdevConfig(cfg, ValidateOptions{})
 	if len(errs) < 4 {
 		t.Errorf("expected at least 4 errors, got %d: %v", len(errs), errs)
 	}
 }
 
-func TestValidateGdevConfig_ClientMissingName(t *testing.T) {
-	cfg := &types.GdevConfig{
+func TestValidateQsdevConfig_ClientMissingName(t *testing.T) {
+	cfg := &types.QsdevConfig{
 		Version: 1,
 		Client: &types.ClientConfig{
 			SecurityLevel:      "invalid",
@@ -395,15 +395,15 @@ func TestValidateGdevConfig_ClientMissingName(t *testing.T) {
 		},
 	}
 
-	errs := ValidateGdevConfig(cfg, ValidateOptions{})
+	errs := ValidateQsdevConfig(cfg, ValidateOptions{})
 	// Should have 3 errors: missing name, invalid security level, invalid data classification.
 	if len(errs) != 3 {
 		t.Errorf("expected 3 errors, got %d: %v", len(errs), errs)
 	}
 }
 
-func TestValidateGdevConfig_ValidConfig(t *testing.T) {
-	cfg := &types.GdevConfig{
+func TestValidateQsdevConfig_ValidConfig(t *testing.T) {
+	cfg := &types.QsdevConfig{
 		Version: 1,
 		Languages: []types.LanguageConfig{
 			{Name: "go", Version: "1.22"},
@@ -420,14 +420,14 @@ func TestValidateGdevConfig_ValidConfig(t *testing.T) {
 		},
 	}
 
-	errs := ValidateGdevConfig(cfg, ValidateOptions{})
+	errs := ValidateQsdevConfig(cfg, ValidateOptions{})
 	if len(errs) != 0 {
 		t.Errorf("expected no errors, got: %v", errs)
 	}
 }
 
-func TestDefaultGdevConfig(t *testing.T) {
-	cfg := DefaultGdevConfig()
+func TestDefaultQsdevConfig(t *testing.T) {
+	cfg := DefaultQsdevConfig()
 
 	if cfg.Version != types.ConfigVersionCurrent {
 		t.Errorf("Version = %d, want %d", cfg.Version, types.ConfigVersionCurrent)
@@ -471,13 +471,13 @@ func TestValidationError_Error(t *testing.T) {
 	}
 }
 
-func TestValidateGdevConfig_ProfileValidation(t *testing.T) {
-	cfg := &types.GdevConfig{
+func TestValidateQsdevConfig_ProfileValidation(t *testing.T) {
+	cfg := &types.QsdevConfig{
 		Version: 1,
 		Profile: "nonexistent-profile",
 	}
 
-	errs := ValidateGdevConfig(cfg, ValidateOptions{
+	errs := ValidateQsdevConfig(cfg, ValidateOptions{
 		ProfileNames: []string{"go-service", "web-app"},
 	})
 	if len(errs) != 1 {
@@ -488,17 +488,17 @@ func TestValidateGdevConfig_ProfileValidation(t *testing.T) {
 	}
 }
 
-func TestValidateGdevConfig_GdevVersionValidation(t *testing.T) {
-	cfg := &types.GdevConfig{
+func TestValidateQsdevConfig_QsdevVersionValidation(t *testing.T) {
+	cfg := &types.QsdevConfig{
 		Version:     1,
-		GdevVersion: "not a valid constraint !!!",
+		QsdevVersion: "not a valid constraint !!!",
 	}
 
-	errs := ValidateGdevConfig(cfg, ValidateOptions{})
+	errs := ValidateQsdevConfig(cfg, ValidateOptions{})
 	if len(errs) != 1 {
 		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
 	}
-	if errs[0].Field != "gdev_version" {
-		t.Errorf("Field = %q, want gdev_version", errs[0].Field)
+	if errs[0].Field != "qsdev_version" {
+		t.Errorf("Field = %q, want qsdev_version", errs[0].Field)
 	}
 }

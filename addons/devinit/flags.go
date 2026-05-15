@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 var validEnvKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -87,7 +87,7 @@ type InitOptions struct {
 	Mode string
 }
 
-// RegisterInitFlags registers all flags for the gdev init command.
+// RegisterInitFlags registers all flags for the qsdev init command.
 func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	// Core flags.
 	cmd.Flags().StringSliceVar(&opts.Langs, "lang", nil, "Languages to configure (e.g. go,javascript,python)")

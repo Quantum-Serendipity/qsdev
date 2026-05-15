@@ -20,7 +20,7 @@ func RenderMarkdown(report *EvidenceReport, w io.Writer) error {
 	fmt.Fprintf(&b, "**Project:** %s\n", report.ProjectName)
 	fmt.Fprintf(&b, "**Framework:** %s (v%s)\n", report.Framework, report.FrameworkVer)
 	fmt.Fprintf(&b, "**Generated:** %s\n", report.GeneratedAt.Format("2006-01-02 15:04:05 UTC"))
-	fmt.Fprintf(&b, "**gdev Version:** %s\n", report.GdevVersion)
+	fmt.Fprintf(&b, "**qsdev Version:** %s\n", report.QsdevVersion)
 	fmt.Fprintf(&b, "**Schema Version:** %s\n\n", report.SchemaVersion)
 
 	b.WriteString("## Disclaimer\n\n")

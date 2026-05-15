@@ -1,12 +1,12 @@
 package config
 
 import (
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // ResolvedConfig is the result of merging all configuration layers.
 type ResolvedConfig struct {
-	Config     *types.GdevConfig
+	Config     *types.QsdevConfig
 	Traces     []ResolutionTrace
 	Violations []FloorViolation
 }
@@ -25,17 +25,17 @@ type FloorViolation struct {
 //  2. Profile overlay (if profile is not nil)
 //  3. Compliance level overlay (if project has Client.SecurityLevel)
 //  4. Project overrides (project)
-//  5. Local developer overrides (local, converted to GdevConfig)
+//  5. Local developer overrides (local, converted to QsdevConfig)
 //
 // After merging, enforceSecurityFloor ensures security settings cannot be
 // weakened below the project's declared floor.
-func ResolveConfig(orgDefaults, profile, project *types.GdevConfig, local *LocalConfig, verbose bool) (*ResolvedConfig, error) {
+func ResolveConfig(orgDefaults, profile, project *types.QsdevConfig, local *LocalConfig, verbose bool) (*ResolvedConfig, error) {
 	tracer := NewTracer(verbose)
 
 	// Layer 1: Start from org defaults.
-	resolved := cloneGdevConfig(orgDefaults)
+	resolved := cloneQsdevConfig(orgDefaults)
 	if resolved == nil {
-		resolved = &types.GdevConfig{}
+		resolved = &types.QsdevConfig{}
 	}
 	tracer.Record("*", "org-defaults", "layer-1", nil, "base layer")
 
@@ -62,7 +62,7 @@ func ResolveConfig(orgDefaults, profile, project *types.GdevConfig, local *Local
 
 	// Layer 5: Merge local overrides.
 	if local != nil {
-		localCfg := localToGdevConfig(local)
+		localCfg := localToQsdevConfig(local)
 		resolved = deepMerge(resolved, localCfg)
 		tracer.Record("*", "local", "layer-5", nil, "local overrides applied")
 	}
@@ -78,19 +78,19 @@ func ResolveConfig(orgDefaults, profile, project *types.GdevConfig, local *Local
 }
 
 // deepMerge applies per-field merge semantics to combine a base and overlay
-// GdevConfig. The result is a new GdevConfig; neither input is modified.
-func deepMerge(base, overlay *types.GdevConfig) *types.GdevConfig {
+// QsdevConfig. The result is a new QsdevConfig; neither input is modified.
+func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 	if base == nil && overlay == nil {
-		return &types.GdevConfig{}
+		return &types.QsdevConfig{}
 	}
 	if base == nil {
-		return cloneGdevConfig(overlay)
+		return cloneQsdevConfig(overlay)
 	}
 	if overlay == nil {
-		return cloneGdevConfig(base)
+		return cloneQsdevConfig(base)
 	}
 
-	result := cloneGdevConfig(base)
+	result := cloneQsdevConfig(base)
 
 	// Languages: replacement semantics.
 	result.Languages = mergeReplaceLanguages(base.Languages, overlay.Languages)
@@ -172,9 +172,9 @@ func deepMerge(base, overlay *types.GdevConfig) *types.GdevConfig {
 		result.Version = overlay.Version
 	}
 
-	// GdevVersion: NOT merged, only from project.
-	if overlay.GdevVersion != "" {
-		result.GdevVersion = overlay.GdevVersion
+	// QsdevVersion: NOT merged, only from project.
+	if overlay.QsdevVersion != "" {
+		result.QsdevVersion = overlay.QsdevVersion
 	}
 
 	return result
@@ -182,7 +182,7 @@ func deepMerge(base, overlay *types.GdevConfig) *types.GdevConfig {
 
 // enforceSecurityFloor ensures the resolved config cannot have security
 // settings weaker than the project's declared floor.
-func enforceSecurityFloor(resolved, project *types.GdevConfig) []FloorViolation {
+func enforceSecurityFloor(resolved, project *types.QsdevConfig) []FloorViolation {
 	if project == nil {
 		return nil
 	}
@@ -252,7 +252,7 @@ func enforceBoolFloor(resolved **bool, floor *bool, field string) []FloorViolati
 
 // filterBlockedMCP removes blocked MCP servers from the resolved config.
 // If BlockedMCP contains ["*"], all servers except those in AllowedMCP are removed.
-func filterBlockedMCP(resolved *types.GdevConfig, blocked, allowed []string) *types.GdevConfig {
+func filterBlockedMCP(resolved *types.QsdevConfig, blocked, allowed []string) *types.QsdevConfig {
 	if len(blocked) == 0 {
 		return resolved
 	}
@@ -299,15 +299,15 @@ func filterBlockedMCP(resolved *types.GdevConfig, blocked, allowed []string) *ty
 	return resolved
 }
 
-// cloneGdevConfig creates a deep copy of a GdevConfig.
-func cloneGdevConfig(cfg *types.GdevConfig) *types.GdevConfig {
+// cloneQsdevConfig creates a deep copy of a QsdevConfig.
+func cloneQsdevConfig(cfg *types.QsdevConfig) *types.QsdevConfig {
 	if cfg == nil {
 		return nil
 	}
 
-	result := &types.GdevConfig{
+	result := &types.QsdevConfig{
 		Version:     cfg.Version,
-		GdevVersion: cfg.GdevVersion,
+		QsdevVersion: cfg.QsdevVersion,
 		Profile:     cfg.Profile,
 		Security: types.SecurityConfig{
 			Level:          cfg.Security.Level,

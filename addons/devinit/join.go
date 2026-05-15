@@ -8,27 +8,27 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devenv"
-	gdevconfig "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/config"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/detect"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/generate"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/profile"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/detect"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules"
+	"github.com/Quantum-Serendipity/qsdev/internal/generate"
+	"github.com/Quantum-Serendipity/qsdev/internal/profile"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// runJoin sets up a local development environment from an existing .gdev.yaml.
+// runJoin sets up a local development environment from an existing .qsdev.yaml.
 // This is the "join" path for new team members cloning a project.
 func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
-	// 1. Parse .gdev.yaml.
-	gdevYaml := filepath.Join(projectRoot, ".gdev.yaml")
-	cfg, err := gdevconfig.ParseGdevConfig(gdevYaml)
+	// 1. Parse .qsdev.yaml.
+	qsdevYaml := filepath.Join(projectRoot, ".qsdev.yaml")
+	cfg, err := qsdevconfig.ParseQsdevConfig(qsdevYaml)
 	if err != nil {
-		return fmt.Errorf("parsing .gdev.yaml: %w", err)
+		return fmt.Errorf("parsing .qsdev.yaml: %w", err)
 	}
 
 	// 2. Run detection.
@@ -99,20 +99,20 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		claudeGenerated = len(cfiles) > 0
 	}
 
-	// 7. Generate .gdev.local.yaml template (only if it doesn't exist).
-	localConfigPath := filepath.Join(projectRoot, ".gdev.local.yaml")
+	// 7. Generate .qsdev.local.yaml template (only if it doesn't exist).
+	localConfigPath := filepath.Join(projectRoot, ".qsdev.local.yaml")
 	if _, err := os.Stat(localConfigPath); os.IsNotExist(err) {
 		localContent := GenerateLocalConfigTemplate(answers, detected)
 		allFiles = append(allFiles, types.GeneratedFile{
-			Path:           ".gdev.local.yaml",
+			Path:           ".qsdev.local.yaml",
 			Content:        localContent,
 			Mode:           0o644,
 			SkipValidation: true,
 		})
 	}
 
-	// 8. Ensure .gdev.local.yaml is in .gitignore.
-	if err := EnsureGitignoreEntry(projectRoot, ".gdev.local.yaml"); err != nil {
+	// 8. Ensure .qsdev.local.yaml is in .gitignore.
+	if err := EnsureGitignoreEntry(projectRoot, ".qsdev.local.yaml"); err != nil {
 		return fmt.Errorf("updating .gitignore: %w", err)
 	}
 
@@ -131,10 +131,10 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		return fmt.Errorf("writing files: %w", err)
 	}
 
-	// 11. Record state with GdevVersion (only for successfully written files).
+	// 11. Record state with QsdevVersion (only for successfully written files).
 	successfulFiles := result.SuccessfulFiles(allFiles)
 	genState := state.RecordFiles(successfulFiles)
-	genState.GdevVersion = version.Info().Version
+	genState.QsdevVersion = version.Info().Version
 	stateFile := filepath.Join(projectRoot, statePath)
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
@@ -145,7 +145,7 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		for _, ff := range result.FailedFiles() {
 			fmt.Fprintf(&details, "\n  - %s: %v", ff.Path, ff.Error)
 		}
-		return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); run gdev repair to recover%s",
+		return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); run qsdev repair to recover%s",
 			result.Failed, len(successfulFiles), details.String())
 	}
 
@@ -166,16 +166,16 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 
 	// 13. Print join-specific summary.
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Joined project successfully from .gdev.yaml configuration.")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Joined project successfully from .qsdev.yaml configuration.")
 	_, _ = fmt.Fprint(cmd.OutOrStdout(), postGenerationMessage(answers, devenvGenerated, claudeGenerated))
 
 	return nil
 }
 
 // configToAnswersTemp is a temporary bridge function that converts a parsed
-// GdevConfig into WizardAnswers. This will be replaced by the full resolution
+// QsdevConfig into WizardAnswers. This will be replaced by the full resolution
 // engine (Unit 13.2) when it lands.
-func configToAnswersTemp(cfg *types.GdevConfig, detected types.DetectedProject, projectRoot string) types.WizardAnswers {
+func configToAnswersTemp(cfg *types.QsdevConfig, detected types.DetectedProject, projectRoot string) types.WizardAnswers {
 	answers := types.WizardAnswers{
 		ProjectName: filepath.Base(projectRoot),
 		ProjectRoot: projectRoot,

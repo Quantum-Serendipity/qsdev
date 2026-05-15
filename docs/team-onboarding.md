@@ -1,6 +1,6 @@
 # Team Onboarding Guide
 
-This guide walks team leads through choosing profiles, customizing security policies, configuring Claude Code skills and hooks, and rolling out gdev-secure-devenv-bootstrap to an engineering team.
+This guide walks team leads through choosing profiles, customizing security policies, configuring Claude Code skills and hooks, and rolling out qsdev to an engineering team.
 
 ## Choosing a Profile
 
@@ -22,7 +22,7 @@ Start with a profile and override individual settings:
 
 ```bash
 # Use the Go web profile but swap Redis for MongoDB
-gdev init --profile go-web --service postgres,mongodb --yes
+qsdev init --profile go-web --service postgres,mongodb --yes
 ```
 
 Flags explicitly set on the command line always take precedence over profile defaults.
@@ -36,7 +36,7 @@ Flags explicitly set on the command line always take precedence over profile def
 | `enterprise` | Regulated environments; Artifactory, Snyk scanning, 7-day age gate, Cosign SBOM signing |
 
 ```bash
-gdev init --profile go-web --infra-profile enterprise --yes
+qsdev init --profile go-web --infra-profile enterprise --yes
 ```
 
 ### Registering Custom Profiles
@@ -47,7 +47,7 @@ Use the Go API to register organization-specific profiles in your gdev plugin:
 package main
 
 import (
-    "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devinit"
+    "github.com/Quantum-Serendipity/qsdev/addons/devinit"
 )
 
 func init() {
@@ -141,16 +141,16 @@ Install skills at init time or add them later:
 
 ```bash
 # At init time
-gdev init --claude-skills deploy,security-review --yes
+qsdev init --claude-skills deploy,security-review --yes
 
 # Add to an existing project
-gdev claude add-skill generate-tests
+qsdev claude add-skill generate-tests
 ```
 
 List all available skills and their install status:
 
 ```bash
-gdev claude list-skills
+qsdev claude list-skills
 ```
 
 ## Configuring Hooks
@@ -166,10 +166,10 @@ Four hook presets control Claude Code runtime behavior:
 
 ```bash
 # At init time
-gdev init --claude-hooks safety-block,pre-commit --yes
+qsdev init --claude-hooks safety-block,pre-commit --yes
 
 # Add to an existing project
-gdev claude add-hook audit-log
+qsdev claude add-hook audit-log
 ```
 
 ## Configuring MCP Servers
@@ -185,7 +185,7 @@ Five built-in MCP servers are available:
 | `socket` | `npx @anthropic-ai/mcp-socket` | `SOCKET_SECURITY_API_KEY` |
 
 ```bash
-gdev init --mcp github,filesystem --yes
+qsdev init --mcp github,filesystem --yes
 ```
 
 Custom MCP servers can be added via the Go API:
@@ -213,7 +213,7 @@ Pick a project-type profile and infrastructure profile. Run on a sample project:
 
 ```bash
 cd sample-project
-gdev init --profile go-web --infra-profile consulting-default --dry-run
+qsdev init --profile go-web --infra-profile consulting-default --dry-run
 ```
 
 Review the `--dry-run` output to verify the generated files match expectations.
@@ -223,7 +223,7 @@ Review the `--dry-run` output to verify the generated files match expectations.
 Run the init without `--dry-run` and commit all generated files:
 
 ```bash
-gdev init --profile go-web --infra-profile consulting-default --yes
+qsdev init --profile go-web --infra-profile consulting-default --yes
 git add -A
 git commit -m "chore: add gdev security-hardened devenv configuration"
 ```
@@ -237,15 +237,15 @@ direnv allow   # if using direnv
 devenv shell   # activates the environment
 ```
 
-The generated `devenv.yaml` and `devenv.nix` are self-contained. Team members do not need to run `gdev init` again -- the committed files configure their environment automatically.
+The generated `devenv.yaml` and `devenv.nix` are self-contained. Team members do not need to run `qsdev init` again -- the committed files configure their environment automatically.
 
 ### Step 4: Ongoing Updates
 
 When new template versions or skill library updates are available:
 
 ```bash
-gdev init --update --dry-run   # preview changes
-gdev init --update             # apply
+qsdev init --update --dry-run   # preview changes
+qsdev init --update             # apply
 ```
 
 The update workflow respects user modifications via file-specific merge strategies. See the [Configuration Reference](configuration-reference.md) for details on which files support three-way merge vs. overwrite.
@@ -268,8 +268,8 @@ For organizations with many repositories, create a shared gdev plugin that regis
 package mygdev
 
 import (
-    "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/devinit"
-    "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/profile"
+    "github.com/Quantum-Serendipity/qsdev/addons/devinit"
+    "github.com/Quantum-Serendipity/qsdev/internal/profile"
 )
 
 func init() {
@@ -287,7 +287,7 @@ func init() {
 Each repository then runs:
 
 ```bash
-gdev init --profile myorg-api --yes
+qsdev init --profile myorg-api --yes
 ```
 
 This ensures consistent security policies, tooling versions, and Claude Code permissions across the entire organization.

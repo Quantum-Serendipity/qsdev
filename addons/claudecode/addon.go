@@ -4,7 +4,7 @@ import (
 	"fastcat.org/go/gdev/addons"
 	"fastcat.org/go/gdev/instance"
 
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules"
 )
 
 var addon = addons.Addon[Config]{

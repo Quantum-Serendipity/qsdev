@@ -12,7 +12,7 @@ func TestRenderJSON_SchemaVersionPresent(t *testing.T) {
 	report := &PostureReport{
 		SchemaVersion: "old-version", // should be overwritten
 		GeneratedAt:   time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
-		GdevVersion:   "1.0.0",
+		QsdevVersion:   "1.0.0",
 		ProjectName:   "test-project",
 		ProjectPath:   "/tmp/test",
 		Score:         AggregateScore{Total: 85, Grade: "B"},
@@ -46,7 +46,7 @@ func TestRenderJSON_RoundTrip(t *testing.T) {
 	report := &PostureReport{
 		SchemaVersion: SchemaVersion,
 		GeneratedAt:   time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
-		GdevVersion:   "1.0.0",
+		QsdevVersion:   "1.0.0",
 		ProjectName:   "round-trip-test",
 		ProjectPath:   "/tmp/test",
 		Score:         AggregateScore{Total: 82.5, Grade: "B-", Defense: 90, Config: 80, DepHealth: 75},
@@ -136,7 +136,7 @@ func TestRenderJSON_Deterministic(t *testing.T) {
 	report := &PostureReport{
 		SchemaVersion: SchemaVersion,
 		GeneratedAt:   time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
-		GdevVersion:   "1.0.0",
+		QsdevVersion:   "1.0.0",
 		ProjectName:   "determinism",
 		ProjectPath:   "/tmp/test",
 		Score:         AggregateScore{Total: 85, Grade: "B"},

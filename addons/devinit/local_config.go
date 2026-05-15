@@ -4,20 +4,20 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // GenerateLocalConfigTemplate returns a commented YAML template for
-// .gdev.local.yaml. The template includes sections relevant to the
+// .qsdev.local.yaml. The template includes sections relevant to the
 // answers (e.g., language version overrides, Claude Code settings).
 // All keys are commented out so the file has no active configuration
 // by default.
 func GenerateLocalConfigTemplate(answers types.WizardAnswers, detected types.DetectedProject) []byte {
 	var b strings.Builder
 
-	b.WriteString("# .gdev.local.yaml — Local developer overrides (gitignored)\n")
+	b.WriteString("# .qsdev.local.yaml — Local developer overrides (gitignored)\n")
 	b.WriteString("# Uncomment and modify lines below to customize your local environment.\n")
-	b.WriteString("# These settings override .gdev.yaml but cannot lower security settings.\n")
+	b.WriteString("# These settings override .qsdev.yaml but cannot lower security settings.\n")
 	b.WriteString("#\n")
 
 	// Extra packages section.

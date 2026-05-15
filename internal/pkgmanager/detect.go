@@ -1,7 +1,7 @@
 package pkgmanager
 
 import (
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/sysinfo"
+	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 )
 
 // DetectPackageManager returns the appropriate PackageManager for the given OS info.

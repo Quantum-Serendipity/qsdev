@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // CheckFileState verifies that generated files have not been modified or
@@ -29,7 +29,7 @@ func checkGeneratedFiles(ctx CheckContext) []CheckResult {
 				Name:     "generated_files",
 				Status:   StatusSkip,
 				Severity: SeverityInfo,
-				Message:  "No state file configured. Run gdev init first.",
+				Message:  "No state file configured. Run qsdev init first.",
 			},
 		}
 	}
@@ -43,7 +43,7 @@ func checkGeneratedFiles(ctx CheckContext) []CheckResult {
 				Status:      StatusFail,
 				Severity:    SeverityHigh,
 				Message:     fmt.Sprintf("Failed to load state file: %v", err),
-				Remediation: "Run 'gdev init' to regenerate the state file",
+				Remediation: "Run 'qsdev init' to regenerate the state file",
 			},
 		}
 	}
@@ -55,7 +55,7 @@ func checkGeneratedFiles(ctx CheckContext) []CheckResult {
 				Name:     "generated_files",
 				Status:   StatusSkip,
 				Severity: SeverityInfo,
-				Message:  "No state file found. Run gdev init first.",
+				Message:  "No state file found. Run qsdev init first.",
 			},
 		}
 	}
@@ -76,7 +76,7 @@ func checkGeneratedFiles(ctx CheckContext) []CheckResult {
 				Severity:    SeverityMedium,
 				Message:     fmt.Sprintf("Generated file %s has been modified", relPath),
 				FilePath:    relPath,
-				Remediation: "Run 'gdev init --force' to regenerate, or commit intentional changes",
+				Remediation: "Run 'qsdev init --force' to regenerate, or commit intentional changes",
 			})
 		case types.Deleted:
 			hasIssues = true
@@ -87,7 +87,7 @@ func checkGeneratedFiles(ctx CheckContext) []CheckResult {
 				Severity:    SeverityHigh,
 				Message:     fmt.Sprintf("Generated file %s has been deleted", relPath),
 				FilePath:    relPath,
-				Remediation: "Run 'gdev init' to regenerate the file",
+				Remediation: "Run 'qsdev init' to regenerate the file",
 			})
 		case types.Unknown:
 			if fs.Error != nil {
@@ -133,7 +133,7 @@ func checkDenyRules(ctx CheckContext) []CheckResult {
 					Severity:    SeverityMedium,
 					Message:     ".claude/settings.json not found; cannot verify deny rules",
 					FilePath:    ".claude/settings.json",
-					Remediation: "Run 'gdev init' with Claude Code enabled",
+					Remediation: "Run 'qsdev init' with Claude Code enabled",
 				},
 			}
 		}
@@ -202,7 +202,7 @@ func checkDenyRules(ctx CheckContext) []CheckResult {
 			Severity:    SeverityMedium,
 			Message:     fmt.Sprintf("Required deny rule missing: %s", rule),
 			FilePath:    ".claude/settings.json",
-			Remediation: "Run 'gdev check --auto-fix' to add missing deny rules",
+			Remediation: "Run 'qsdev check --auto-fix' to add missing deny rules",
 			AutoFixable: true,
 		})
 	}

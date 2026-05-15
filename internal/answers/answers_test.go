@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/answers"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/answers"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestSaveAndLoad_RoundTrip(t *testing.T) {
@@ -81,7 +81,7 @@ func TestLoadFromDir_NotFound(t *testing.T) {
 	}
 
 	// Verify the error message includes the command name hint.
-	want := "run 'gdev test init' first"
+	want := "run 'qsdev test init' first"
 	if got := err.Error(); !containsStr(got, want) {
 		t.Errorf("error = %q, want it to contain %q", got, want)
 	}
@@ -183,8 +183,8 @@ func TestSaveToDir_AtomicWrite(t *testing.T) {
 }
 
 func TestFilePath(t *testing.T) {
-	got := answers.FilePath("/project", ".devenv", ".gdev-answers.yaml")
-	want := filepath.Join("/project", ".devenv", ".gdev-answers.yaml")
+	got := answers.FilePath("/project", ".devenv", ".qsdev-answers.yaml")
+	want := filepath.Join("/project", ".devenv", ".qsdev-answers.yaml")
 	if got != want {
 		t.Errorf("FilePath = %q, want %q", got, want)
 	}

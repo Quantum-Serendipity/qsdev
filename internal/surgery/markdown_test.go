@@ -24,7 +24,7 @@ Some preamble content.
 	got := string(result)
 
 	// The new section should appear before the END marker.
-	wantContains := "<!-- gdev:mytool -->\nThis is my tool section content.\n<!-- /gdev:mytool -->\n<!-- END GENERATED SECTION -->"
+	wantContains := "<!-- qsdev:mytool -->\nThis is my tool section content.\n<!-- /qsdev:mytool -->\n<!-- END GENERATED SECTION -->"
 	if !containsStr(got, wantContains) {
 		t.Errorf("expected result to contain:\n%s\n\ngot:\n%s", wantContains, got)
 	}
@@ -43,9 +43,9 @@ Some preamble content.
 func TestMarkdownInsertSection_ReplacesExisting(t *testing.T) {
 	existing := []byte(`# My Document
 
-<!-- gdev:mytool -->
+<!-- qsdev:mytool -->
 Old content here.
-<!-- /gdev:mytool -->
+<!-- /qsdev:mytool -->
 
 <!-- END GENERATED SECTION -->
 `)
@@ -65,7 +65,7 @@ Old content here.
 		t.Error("new content should be present")
 	}
 
-	wantContains := "<!-- gdev:mytool -->\nNew replacement content.\n<!-- /gdev:mytool -->"
+	wantContains := "<!-- qsdev:mytool -->\nNew replacement content.\n<!-- /qsdev:mytool -->"
 	if !containsStr(got, wantContains) {
 		t.Errorf("expected markers wrapping new content:\n%s\n\ngot:\n%s", wantContains, got)
 	}
@@ -98,7 +98,7 @@ func TestMarkdownInsertSection_ContentTrimmed(t *testing.T) {
 	}
 
 	got := string(result)
-	wantContains := "<!-- gdev:test -->\npadded content\n<!-- /gdev:test -->"
+	wantContains := "<!-- qsdev:test -->\npadded content\n<!-- /qsdev:test -->"
 	if !containsStr(got, wantContains) {
 		t.Errorf("content should be trimmed; got:\n%s", got)
 	}
@@ -107,9 +107,9 @@ func TestMarkdownInsertSection_ContentTrimmed(t *testing.T) {
 func TestMarkdownRemoveSection_RemovesExisting(t *testing.T) {
 	existing := []byte(`# My Document
 
-<!-- gdev:mytool -->
+<!-- qsdev:mytool -->
 Tool content here.
-<!-- /gdev:mytool -->
+<!-- /qsdev:mytool -->
 
 <!-- END GENERATED SECTION -->
 `)
@@ -120,7 +120,7 @@ Tool content here.
 	}
 
 	got := string(result)
-	if containsStr(got, "gdev:mytool") {
+	if containsStr(got, "qsdev:mytool") {
 		t.Error("section markers should have been removed")
 	}
 	if containsStr(got, "Tool content here.") {
@@ -150,12 +150,12 @@ Some content.
 }
 
 func TestMarkdownRemoveSection_PreservesOtherSections(t *testing.T) {
-	existing := []byte(`<!-- gdev:tool-a -->
+	existing := []byte(`<!-- qsdev:tool-a -->
 Tool A content.
-<!-- /gdev:tool-a -->
-<!-- gdev:tool-b -->
+<!-- /qsdev:tool-a -->
+<!-- qsdev:tool-b -->
 Tool B content.
-<!-- /gdev:tool-b -->
+<!-- /qsdev:tool-b -->
 <!-- END GENERATED SECTION -->
 `)
 
@@ -168,7 +168,7 @@ Tool B content.
 	if containsStr(got, "tool-a") {
 		t.Error("tool-a section should have been removed")
 	}
-	if !containsStr(got, "<!-- gdev:tool-b -->") {
+	if !containsStr(got, "<!-- qsdev:tool-b -->") {
 		t.Error("tool-b section should be preserved")
 	}
 	if !containsStr(got, "Tool B content.") {
@@ -178,7 +178,7 @@ Tool B content.
 
 func TestMarkdownRemoveSection_MissingCloseMarker(t *testing.T) {
 	// If the close marker is missing, the function should return unchanged content.
-	existing := []byte(`<!-- gdev:mytool -->
+	existing := []byte(`<!-- qsdev:mytool -->
 Content without a close marker.
 <!-- END GENERATED SECTION -->
 `)
@@ -194,9 +194,9 @@ Content without a close marker.
 }
 
 func TestMarkdownHasSection_True(t *testing.T) {
-	content := []byte(`<!-- gdev:mytool -->
+	content := []byte(`<!-- qsdev:mytool -->
 Some content.
-<!-- /gdev:mytool -->
+<!-- /qsdev:mytool -->
 `)
 
 	if !MarkdownHasSection(content, "mytool") {
@@ -216,9 +216,9 @@ Just some plain markdown.
 }
 
 func TestMarkdownHasSection_DifferentSection(t *testing.T) {
-	content := []byte(`<!-- gdev:other-tool -->
+	content := []byte(`<!-- qsdev:other-tool -->
 Content.
-<!-- /gdev:other-tool -->
+<!-- /qsdev:other-tool -->
 `)
 
 	if MarkdownHasSection(content, "mytool") {
@@ -248,10 +248,10 @@ func TestMarkdownInsertSection_MultipleSections(t *testing.T) {
 	if !containsStr(got, "Content B") {
 		t.Error("Content B should be present")
 	}
-	if !containsStr(got, "<!-- gdev:tool-a -->") {
+	if !containsStr(got, "<!-- qsdev:tool-a -->") {
 		t.Error("tool-a markers should be present")
 	}
-	if !containsStr(got, "<!-- gdev:tool-b -->") {
+	if !containsStr(got, "<!-- qsdev:tool-b -->") {
 		t.Error("tool-b markers should be present")
 	}
 }
@@ -284,7 +284,7 @@ func TestMarkdownInsertSection_Idempotent(t *testing.T) {
 	}
 
 	got := string(result)
-	marker := "<!-- gdev:test-section -->"
+	marker := "<!-- qsdev:test-section -->"
 	count := strings.Count(got, marker)
 	if count != 1 {
 		t.Errorf("expected exactly 1 instance of section marker, got %d\nfull output:\n%s", count, got)

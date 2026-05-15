@@ -9,8 +9,8 @@ func TestDetectMarkerIntegrity_AllIntact(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "CLAUDE.md"),
 		"# CLAUDE.md\n"+
-			"<!-- gdev:semgrep -->\nSemgrep rules\n<!-- /gdev:semgrep -->\n"+
-			"<!-- gdev:gitleaks -->\nGitleaks config\n<!-- /gdev:gitleaks -->\n")
+			"<!-- qsdev:semgrep -->\nSemgrep rules\n<!-- /qsdev:semgrep -->\n"+
+			"<!-- qsdev:gitleaks -->\nGitleaks config\n<!-- /qsdev:gitleaks -->\n")
 
 	enabledTools := map[string]bool{
 		"semgrep":  true,
@@ -27,7 +27,7 @@ func TestDetectMarkerIntegrity_AllIntact(t *testing.T) {
 func TestDetectMarkerIntegrity_MissingClosingMarker(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "CLAUDE.md"),
-		"# CLAUDE.md\n<!-- gdev:semgrep -->\nSemgrep rules\n")
+		"# CLAUDE.md\n<!-- qsdev:semgrep -->\nSemgrep rules\n")
 
 	enabledTools := map[string]bool{
 		"semgrep": true,
@@ -50,7 +50,7 @@ func TestDetectMarkerIntegrity_MissingClosingMarker(t *testing.T) {
 func TestDetectMarkerIntegrity_MissingOpeningMarker(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "CLAUDE.md"),
-		"# CLAUDE.md\nSemgrep rules\n<!-- /gdev:semgrep -->\n")
+		"# CLAUDE.md\nSemgrep rules\n<!-- /qsdev:semgrep -->\n")
 
 	enabledTools := map[string]bool{
 		"semgrep": true,
@@ -130,9 +130,9 @@ func TestDetectMarkerIntegrity_MultiplePairs(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "CLAUDE.md"),
 		"# CLAUDE.md\n"+
-			"<!-- gdev:semgrep -->\nSemgrep\n<!-- /gdev:semgrep -->\n"+
-			"<!-- gdev:gitleaks -->\nGitleaks\n<!-- /gdev:gitleaks -->\n"+
-			"<!-- gdev:attach-guard -->\nGuard\n<!-- /gdev:attach-guard -->\n")
+			"<!-- qsdev:semgrep -->\nSemgrep\n<!-- /qsdev:semgrep -->\n"+
+			"<!-- qsdev:gitleaks -->\nGitleaks\n<!-- /qsdev:gitleaks -->\n"+
+			"<!-- qsdev:attach-guard -->\nGuard\n<!-- /qsdev:attach-guard -->\n")
 
 	enabledTools := map[string]bool{
 		"semgrep":      true,

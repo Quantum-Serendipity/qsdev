@@ -28,28 +28,28 @@
 ```
 {{ end }}
 {{ if hasAny .AvailableSkills }}
-<!-- gdev:skills -->
+<!-- qsdev:skills -->
 ## Available Skills
 {{ range .AvailableSkills }}{{ if eq $.ModelSize "opus" }}- `{{ .Name }}` — {{ .Description }}
 {{ else }}- `{{ .Name }}`
-{{ end }}{{ end }}<!-- /gdev:skills -->
+{{ end }}{{ end }}<!-- /qsdev:skills -->
 {{ end }}
 {{ if hasAny .AvailableAgents }}
-<!-- gdev:agents -->
+<!-- qsdev:agents -->
 ## Available Agents
 {{ range .AvailableAgents }}{{ if eq $.ModelSize "opus" }}- `{{ .Name }}` — {{ .Description }}
 {{ else }}- `{{ .Name }}`
-{{ end }}{{ end }}<!-- /gdev:agents -->
+{{ end }}{{ end }}<!-- /qsdev:agents -->
 {{ end }}
-<!-- gdev:commands -->
-## gdev Commands
+<!-- qsdev:commands -->
+## qsdev Commands
 {{ range .GdevCommands }}- `{{ .Command }}` — {{ .Description }}
-{{ end }}<!-- /gdev:commands -->
+{{ end }}<!-- /qsdev:commands -->
 {{ if hasAny .DevenvTasks }}
-<!-- gdev:tasks -->
+<!-- qsdev:tasks -->
 ## Development Tasks
-{{ range .DevenvTasks }}- `gdev-{{ .Name }}` — {{ join ", " .Commands }}
-{{ end }}<!-- /gdev:tasks -->
+{{ range .DevenvTasks }}- `qsdev-{{ .Name }}` — {{ join ", " .Commands }}
+{{ end }}<!-- /qsdev:tasks -->
 {{ end }}
 
 ## Security
@@ -61,36 +61,36 @@
 - Package managers: {{ join ", " .PackageManagers }}.
 {{- end }}
 {{- if .HasSecurityHooks }}
-<!-- gdev:attach-guard -->
+<!-- qsdev:attach-guard -->
 - Safety-block hooks are enabled.
-<!-- /gdev:attach-guard -->
+<!-- /qsdev:attach-guard -->
 {{- end }}
 {{- if .PostmortemEnabled }}
-<!-- gdev:agent-postmortem -->
+<!-- qsdev:agent-postmortem -->
 - Agent-postmortem skill is active.
-<!-- /gdev:agent-postmortem -->
+<!-- /qsdev:agent-postmortem -->
 {{- end }}
 {{- if .VersionSentinelEnabled }}
-<!-- gdev:version-sentinel -->
+<!-- qsdev:version-sentinel -->
 - **Version-Sentinel** guards dependency changes in: {{ join ", " .VersionSentinelCovered }}.
 {{- if hasAny .VersionSentinelUncovered }}
 - Version-Sentinel does NOT cover: {{ join ", " .VersionSentinelUncovered }}. Review these manually.
 {{- end }}
-<!-- /gdev:version-sentinel -->
+<!-- /qsdev:version-sentinel -->
 {{- end }}
 {{- if .SembleEnabled }}
-<!-- gdev:semble -->
+<!-- qsdev:semble -->
 - **Semble** semantic search available.
-<!-- /gdev:semble -->
+<!-- /qsdev:semble -->
 {{- end }}
 {{- if .TrailOfBitsEnabled }}
-<!-- gdev:trail-of-bits-skills -->
+<!-- qsdev:trail-of-bits-skills -->
 - Security review skills installed.
-<!-- /gdev:trail-of-bits-skills -->
+<!-- /qsdev:trail-of-bits-skills -->
 {{- end }}
 - Prefer vendored or pinned dependencies.
 {{ if .HasGdevReference }}
-@.claude/gdev-reference.md
+@.claude/qsdev-reference.md
 {{ end }}
 <!-- END GENERATED SECTION -->
 

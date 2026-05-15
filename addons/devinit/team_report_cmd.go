@@ -6,9 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/teamreport"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/teamreport"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
 )
 
 func teamReportCmd() *cobra.Command {
@@ -124,7 +124,7 @@ func runTeamReport(cmd *cobra.Command, opts teamReportOptions) error {
 	aggOpts := teamreport.AggregateOptions{
 		Threshold:     opts.threshold,
 		IncludeTrends: opts.trend,
-		GdevVersion:   version.Info().Version,
+		QsdevVersion:   version.Info().Version,
 	}
 	if opts.trend {
 		aggOpts.HistoryFile = opts.historyFile

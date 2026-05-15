@@ -4,19 +4,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/sectools"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/sectools"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 
 	// Import modules so they register with the default registry.
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/docker"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/dotnet"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/golang"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/java"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/javascript"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/python"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/rust"
-	_ "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/ecosystem/modules/terraform"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/docker"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/dotnet"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/golang"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/java"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/javascript"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/python"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/rust"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules/terraform"
 )
 
 func TestGenerateSemgrepYml_GoProject(t *testing.T) {

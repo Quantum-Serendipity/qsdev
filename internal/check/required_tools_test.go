@@ -3,12 +3,12 @@ package check
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestCheckRequiredTools_NoneDisabled(t *testing.T) {
 	ctx := CheckContext{
-		GdevConfig: &types.GdevConfig{},
+		QsdevConfig: &types.QsdevConfig{},
 		ToolNames:  []string{"safety-block", "pre-commit"},
 	}
 
@@ -34,7 +34,7 @@ func TestCheckRequiredTools_NoneDisabled(t *testing.T) {
 
 func TestCheckRequiredTools_ToolDisabled(t *testing.T) {
 	ctx := CheckContext{
-		GdevConfig: &types.GdevConfig{
+		QsdevConfig: &types.QsdevConfig{
 			Tools: types.ToolsConfig{
 				Disabled: []string{"safety-block"},
 			},
@@ -73,7 +73,7 @@ func TestCheckRequiredTools_NoConfig(t *testing.T) {
 
 func TestCheckRequiredTools_NoTools(t *testing.T) {
 	ctx := CheckContext{
-		GdevConfig: &types.GdevConfig{},
+		QsdevConfig: &types.QsdevConfig{},
 		ToolNames:  nil,
 	}
 

@@ -8,11 +8,11 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/addons/claudecode"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/check"
-	gdevconfig "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/config"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/toolreg"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/check"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
 )
 
 func checkCmd() *cobra.Command {
@@ -60,13 +60,13 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		StateFile:     filepath.Join(projectRoot, statePath),
 	}
 
-	// Parse .gdev.yaml if present.
-	cfg, err := gdevconfig.ParseGdevConfig(projectRoot)
+	// Parse .qsdev.yaml if present.
+	cfg, err := qsdevconfig.ParseQsdevConfig(projectRoot)
 	if err != nil {
 		// Log warning but continue — config_integrity checks will report the issue.
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not parse .gdev.yaml: %v\n", err)
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not parse .qsdev.yaml: %v\n", err)
 	}
-	ctx.GdevConfig = cfg
+	ctx.QsdevConfig = cfg
 
 	// Tool names from registry.
 	ctx.ToolNames = toolreg.DefaultRegistry().Names()

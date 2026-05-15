@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // FileStatus describes the current on-disk state of a previously generated

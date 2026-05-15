@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/state"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestCheckFileState_AllFilesMatch(t *testing.T) {
@@ -29,7 +29,7 @@ func TestCheckFileState_AllFilesMatch(t *testing.T) {
 		},
 	})
 
-	stateFile := filepath.Join(dir, ".devinit", ".gdev-init-state.yaml")
+	stateFile := filepath.Join(dir, ".devinit", ".qsdev-init-state.yaml")
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestCheckFileState_ModifiedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stateFile := filepath.Join(dir, ".devinit", ".gdev-init-state.yaml")
+	stateFile := filepath.Join(dir, ".devinit", ".qsdev-init-state.yaml")
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestCheckFileState_DeletedFile(t *testing.T) {
 
 	// Don't create the file — simulate deletion.
 
-	stateFile := filepath.Join(dir, ".devinit", ".gdev-init-state.yaml")
+	stateFile := filepath.Join(dir, ".devinit", ".qsdev-init-state.yaml")
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		t.Fatal(err)
 	}

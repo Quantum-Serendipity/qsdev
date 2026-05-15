@@ -12,7 +12,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/toolcheck"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolcheck"
 )
 
 // ToolSpec declaratively describes a tool that can be installed.

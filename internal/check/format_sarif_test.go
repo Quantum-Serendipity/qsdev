@@ -18,7 +18,7 @@ func TestFormatSARIF_ValidStructure(t *testing.T) {
 				Status:   StatusFail,
 				Severity: SeverityCritical,
 				Message:  "version mismatch",
-				FilePath: ".gdev.yaml",
+				FilePath: ".qsdev.yaml",
 			},
 			{
 				Category: CategoryConfigIntegrity,
@@ -50,8 +50,8 @@ func TestFormatSARIF_ValidStructure(t *testing.T) {
 	if len(parsed.Runs) != 1 {
 		t.Fatalf("expected 1 run, got %d", len(parsed.Runs))
 	}
-	if parsed.Runs[0].Tool.Driver.Name != "gdev" {
-		t.Errorf("tool name = %q, want %q", parsed.Runs[0].Tool.Driver.Name, "gdev")
+	if parsed.Runs[0].Tool.Driver.Name != "qsdev" {
+		t.Errorf("tool name = %q, want %q", parsed.Runs[0].Tool.Driver.Name, "qsdev")
 	}
 	if parsed.Runs[0].Tool.Driver.Version != "1.0.0" {
 		t.Errorf("tool version = %q, want %q", parsed.Runs[0].Tool.Driver.Version, "1.0.0")

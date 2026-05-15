@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/surgery"
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/internal/surgery"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 )
 
 // Execute carries out the teardown plan, removing files, cleaning shared
@@ -35,7 +35,7 @@ func Execute(plan *TeardownPlan, opts TeardownOptions, registry *toolreg.Registr
 		result.Removed = append(result.Removed, fa)
 	}
 
-	// Clean shared files by removing gdev sections.
+	// Clean shared files by removing qsdev sections.
 	for _, fa := range plan.Clean {
 		if err := cleanSharedFile(opts.ProjectRoot, fa.Path, registry); err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("cleaning %s: %w", fa.Path, err))
@@ -72,7 +72,7 @@ func Execute(plan *TeardownPlan, opts TeardownOptions, registry *toolreg.Registr
 	return result, nil
 }
 
-// cleanSharedFile reads a shared file, collects all gdev section IDs from
+// cleanSharedFile reads a shared file, collects all qsdev section IDs from
 // the registry, and removes each section using the appropriate surgery function.
 func cleanSharedFile(projectRoot, relPath string, registry *toolreg.Registry) error {
 	absPath := filepath.Join(projectRoot, relPath)

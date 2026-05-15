@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 )
 
 // LoadScopeFile reads and validates a scope file from the given path.
@@ -47,7 +47,7 @@ func CollectFromScope(scopePath string) ([]*posture.PostureReport, []string, err
 		return nil, nil, err
 	}
 
-	tmpDir, err := os.MkdirTemp("", "gdev-team-report-*")
+	tmpDir, err := os.MkdirTemp("", "qsdev-team-report-*")
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating temp directory: %w", err)
 	}

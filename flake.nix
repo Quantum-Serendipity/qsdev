@@ -1,5 +1,5 @@
 {
-  description = "gdev addons for security-hardened development environment bootstrapping";
+  description = "qsdev — secure developer environment bootstrapping tool";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -28,10 +28,10 @@
 
         ldflags = [
           "-s" "-w"
-          "-X" "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version.version=${version}"
-          "-X" "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version.commit=${commit}"
-          "-X" "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version.date=${date}"
-          "-X" "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/version.builtBy=nix"
+          "-X" "github.com/Quantum-Serendipity/qsdev/internal/version.version=${version}"
+          "-X" "github.com/Quantum-Serendipity/qsdev/internal/version.commit=${commit}"
+          "-X" "github.com/Quantum-Serendipity/qsdev/internal/version.date=${date}"
+          "-X" "github.com/Quantum-Serendipity/qsdev/internal/version.builtBy=nix"
         ];
       in
       {
@@ -69,7 +69,7 @@
 
             meta = with pkgs.lib; {
               description = "Secure developer environment bootstrapping tool";
-              homepage = "https://github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap";
+              homepage = "https://github.com/Quantum-Serendipity/qsdev";
               license = licenses.unfree;
               mainProgram = "qsdev";
               platforms = platforms.linux ++ platforms.darwin;
@@ -92,7 +92,7 @@
           shellHook = ''
             export GOPATH="$PWD/.go"
             export PATH="$GOPATH/bin:$PATH"
-            echo "gdev-secure-devenv-bootstrap dev environment loaded"
+            echo "qsdev dev environment loaded"
             echo "  Go: $(go version)"
           '';
         };

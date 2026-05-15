@@ -16,7 +16,7 @@ type Framework struct {
 }
 
 // ControlDefinition defines a single control within a framework,
-// including how it maps to gdev defense layers.
+// including how it maps to qsdev defense layers.
 type ControlDefinition struct {
 	ID                  string
 	Name                string
@@ -26,7 +26,7 @@ type ControlDefinition struct {
 	NotApplicableReason string
 }
 
-// LayerMapping describes the relationship between a gdev defense layer
+// LayerMapping describes the relationship between a qsdev defense layer
 // and a compliance control.
 type LayerMapping struct {
 	LayerName   string

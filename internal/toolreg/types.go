@@ -1,6 +1,6 @@
 package toolreg
 
-import "github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+import "github.com/Quantum-Serendipity/qsdev/pkg/types"
 
 // DefaultPolicy controls when a tool is enabled during initial project setup.
 type DefaultPolicy int

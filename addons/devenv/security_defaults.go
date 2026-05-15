@@ -181,7 +181,7 @@ fi
 
 echo "==================================================="
 echo ""
-echo "  gdev: ${GDEV_PROJECT_NAME:-unknown} | security: ${GDEV_SECURITY_PROFILE:-standard} | tools: ${GDEV_TOOL_COUNT:-0}"
+echo "  qsdev: ${QSDEV_PROJECT_NAME:-unknown} | security: ${QSDEV_SECURITY_PROFILE:-standard} | tools: ${QSDEV_TOOL_COUNT:-0}"
 echo ""`
 }
 

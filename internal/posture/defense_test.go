@@ -3,7 +3,7 @@ package posture
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestAssessDefenseLayers_AllEnabled(t *testing.T) {

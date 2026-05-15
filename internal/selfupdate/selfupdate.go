@@ -41,7 +41,7 @@ func DefaultConfig() Config {
 	}
 	return Config{
 		GitHubOwner:   "Quantum-Serendipity",
-		GitHubRepo:    "gdev-secure-devenv-bootstrap",
+		GitHubRepo:    "qsdev",
 		BinaryName:    "qsdev",
 		CheckInterval: 7 * 24 * time.Hour, // 7 days
 		CacheDir:      filepath.Join(home, ".qsdev"),

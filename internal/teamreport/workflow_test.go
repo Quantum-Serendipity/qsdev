@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/internal/cigeneration"
+	"github.com/Quantum-Serendipity/qsdev/internal/cigeneration"
 )
 
 func TestGenerateTeamWorkflowContainsSHAPins(t *testing.T) {
@@ -93,7 +93,7 @@ func TestGeneratePerProjectStepsValidStructure(t *testing.T) {
 	requiredElements := []string{
 		"Harden Runner",
 		"Generate posture report",
-		"gdev status --json",
+		"qsdev status --json",
 		"Upload posture report",
 		"posture-report.json",
 		"retention-days:",

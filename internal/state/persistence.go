@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 	"gopkg.in/yaml.v3"
 )
 
@@ -52,7 +52,7 @@ func SaveStateToFile(path string, state types.GeneratedState) error {
 
 	// Atomic write: create a temp file with a random suffix in the same
 	// directory (guarantees same filesystem for rename), write, then rename.
-	tmp, err := os.CreateTemp(dir, ".gdev-state-*")
+	tmp, err := os.CreateTemp(dir, ".qsdev-state-*")
 	if err != nil {
 		return fmt.Errorf("creating temp state file in %s: %w", dir, err)
 	}

@@ -1,9 +1,9 @@
 package evidence
 
 // Disclaimer is the standard disclaimer included in all evidence reports.
-// It clarifies that gdev provides supporting evidence but is not a complete
+// It clarifies that qsdev provides supporting evidence but is not a complete
 // compliance solution.
-const Disclaimer = `DISCLAIMER: This report is generated automatically by gdev and maps ` +
+const Disclaimer = `DISCLAIMER: This report is generated automatically by qsdev and maps ` +
 	`its defense-in-depth layers to compliance framework controls as ` +
 	`supporting evidence. This report does NOT constitute a compliance ` +
 	`certification or audit. Compliance requires a holistic assessment by ` +

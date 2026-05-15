@@ -63,18 +63,18 @@ type sarifArtifactLocation struct {
 
 // allRules defines the 12 rule IDs and their default SARIF levels.
 var allRules = []sarifRule{
-	{ID: "gdev/defense-disabled", ShortDescription: sarifMultiText{Text: "A defense layer is disabled"}, DefaultConfig: sarifConfig{Level: "warning"}},
-	{ID: "gdev/defense-partial", ShortDescription: sarifMultiText{Text: "A defense layer is only partially enabled"}, DefaultConfig: sarifConfig{Level: "warning"}},
-	{ID: "gdev/config-missing", ShortDescription: sarifMultiText{Text: "A managed configuration file is missing"}, DefaultConfig: sarifConfig{Level: "error"}},
-	{ID: "gdev/config-outdated", ShortDescription: sarifMultiText{Text: "A managed configuration file is outdated"}, DefaultConfig: sarifConfig{Level: "warning"}},
-	{ID: "gdev/config-modified", ShortDescription: sarifMultiText{Text: "A machine-owned configuration file was modified"}, DefaultConfig: sarifConfig{Level: "warning"}},
-	{ID: "gdev/vuln-critical", ShortDescription: sarifMultiText{Text: "Critical vulnerabilities detected"}, DefaultConfig: sarifConfig{Level: "error"}},
-	{ID: "gdev/vuln-high", ShortDescription: sarifMultiText{Text: "High vulnerabilities detected"}, DefaultConfig: sarifConfig{Level: "warning"}},
-	{ID: "gdev/lockfile-missing", ShortDescription: sarifMultiText{Text: "A lockfile is missing"}, DefaultConfig: sarifConfig{Level: "error"}},
-	{ID: "gdev/lockfile-stale", ShortDescription: sarifMultiText{Text: "A lockfile is stale"}, DefaultConfig: sarifConfig{Level: "warning"}},
-	{ID: "gdev/hooks-not-installed", ShortDescription: sarifMultiText{Text: "Git hooks are not installed"}, DefaultConfig: sarifConfig{Level: "warning"}},
-	{ID: "gdev/markers-broken", ShortDescription: sarifMultiText{Text: "Section markers in CLAUDE.md are broken"}, DefaultConfig: sarifConfig{Level: "warning"}},
-	{ID: "gdev/tool-unavailable", ShortDescription: sarifMultiText{Text: "A required tool binary is not on PATH"}, DefaultConfig: sarifConfig{Level: "warning"}},
+	{ID: "qsdev/defense-disabled", ShortDescription: sarifMultiText{Text: "A defense layer is disabled"}, DefaultConfig: sarifConfig{Level: "warning"}},
+	{ID: "qsdev/defense-partial", ShortDescription: sarifMultiText{Text: "A defense layer is only partially enabled"}, DefaultConfig: sarifConfig{Level: "warning"}},
+	{ID: "qsdev/config-missing", ShortDescription: sarifMultiText{Text: "A managed configuration file is missing"}, DefaultConfig: sarifConfig{Level: "error"}},
+	{ID: "qsdev/config-outdated", ShortDescription: sarifMultiText{Text: "A managed configuration file is outdated"}, DefaultConfig: sarifConfig{Level: "warning"}},
+	{ID: "qsdev/config-modified", ShortDescription: sarifMultiText{Text: "A machine-owned configuration file was modified"}, DefaultConfig: sarifConfig{Level: "warning"}},
+	{ID: "qsdev/vuln-critical", ShortDescription: sarifMultiText{Text: "Critical vulnerabilities detected"}, DefaultConfig: sarifConfig{Level: "error"}},
+	{ID: "qsdev/vuln-high", ShortDescription: sarifMultiText{Text: "High vulnerabilities detected"}, DefaultConfig: sarifConfig{Level: "warning"}},
+	{ID: "qsdev/lockfile-missing", ShortDescription: sarifMultiText{Text: "A lockfile is missing"}, DefaultConfig: sarifConfig{Level: "error"}},
+	{ID: "qsdev/lockfile-stale", ShortDescription: sarifMultiText{Text: "A lockfile is stale"}, DefaultConfig: sarifConfig{Level: "warning"}},
+	{ID: "qsdev/hooks-not-installed", ShortDescription: sarifMultiText{Text: "Git hooks are not installed"}, DefaultConfig: sarifConfig{Level: "warning"}},
+	{ID: "qsdev/markers-broken", ShortDescription: sarifMultiText{Text: "Section markers in CLAUDE.md are broken"}, DefaultConfig: sarifConfig{Level: "warning"}},
+	{ID: "qsdev/tool-unavailable", ShortDescription: sarifMultiText{Text: "A required tool binary is not on PATH"}, DefaultConfig: sarifConfig{Level: "warning"}},
 }
 
 // RenderSARIF produces a SARIF 2.1.0 JSON document from a PostureReport.
@@ -86,9 +86,9 @@ func RenderSARIF(report *PostureReport) ([]byte, error) {
 			{
 				Tool: sarifTool{
 					Driver: sarifDriver{
-						Name:           "gdev",
-						Version:        report.GdevVersion,
-						InformationURI: "https://github.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap",
+						Name:           "qsdev",
+						Version:        report.QsdevVersion,
+						InformationURI: "https://github.com/Quantum-Serendipity/qsdev",
 						Rules:          allRules,
 					},
 				},
@@ -104,13 +104,13 @@ func RenderSARIF(report *PostureReport) ([]byte, error) {
 		switch l.Status {
 		case LayerDisabled:
 			*results = append(*results, sarifResult{
-				RuleID:  "gdev/defense-disabled",
+				RuleID:  "qsdev/defense-disabled",
 				Level:   "warning",
 				Message: sarifMultiText{Text: fmt.Sprintf("Defense layer %q is disabled: %s", l.Name, l.Reason)},
 			})
 		case LayerPartial:
 			*results = append(*results, sarifResult{
-				RuleID:  "gdev/defense-partial",
+				RuleID:  "qsdev/defense-partial",
 				Level:   "warning",
 				Message: sarifMultiText{Text: fmt.Sprintf("Defense layer %q is partially enabled (%d/10): %s", l.Name, l.Score, l.Reason)},
 			})
@@ -123,7 +123,7 @@ func RenderSARIF(report *PostureReport) ([]byte, error) {
 		switch f.State {
 		case "missing":
 			*results = append(*results, sarifResult{
-				RuleID:  "gdev/config-missing",
+				RuleID:  "qsdev/config-missing",
 				Level:   "error",
 				Message: sarifMultiText{Text: fmt.Sprintf("Configuration file %q is missing", f.Path)},
 				Locations: []sarifLocation{{
@@ -134,7 +134,7 @@ func RenderSARIF(report *PostureReport) ([]byte, error) {
 			})
 		case "outdated":
 			*results = append(*results, sarifResult{
-				RuleID:  "gdev/config-outdated",
+				RuleID:  "qsdev/config-outdated",
 				Level:   "warning",
 				Message: sarifMultiText{Text: fmt.Sprintf("Configuration file %q is outdated", f.Path)},
 				Locations: []sarifLocation{{
@@ -146,7 +146,7 @@ func RenderSARIF(report *PostureReport) ([]byte, error) {
 		case "modified":
 			if f.Category == "machine-owned" {
 				*results = append(*results, sarifResult{
-					RuleID:  "gdev/config-modified",
+					RuleID:  "qsdev/config-modified",
 					Level:   "warning",
 					Message: sarifMultiText{Text: fmt.Sprintf("Machine-owned configuration file %q has been modified", f.Path)},
 					Locations: []sarifLocation{{
@@ -162,14 +162,14 @@ func RenderSARIF(report *PostureReport) ([]byte, error) {
 	// Map vulnerability counts.
 	if report.Dependencies.Totals.Critical > 0 {
 		*results = append(*results, sarifResult{
-			RuleID:  "gdev/vuln-critical",
+			RuleID:  "qsdev/vuln-critical",
 			Level:   "error",
 			Message: sarifMultiText{Text: fmt.Sprintf("%d critical vulnerability(ies) detected", report.Dependencies.Totals.Critical)},
 		})
 	}
 	if report.Dependencies.Totals.High > 0 {
 		*results = append(*results, sarifResult{
-			RuleID:  "gdev/vuln-high",
+			RuleID:  "qsdev/vuln-high",
 			Level:   "warning",
 			Message: sarifMultiText{Text: fmt.Sprintf("%d high vulnerability(ies) detected", report.Dependencies.Totals.High)},
 		})
@@ -211,21 +211,21 @@ func driftToSARIF(categoryName string, f DriftFinding) (ruleID, level string) {
 	switch categoryName {
 	case categoryLockfileDrift:
 		if f.Severity == DriftError {
-			return "gdev/lockfile-missing", "error"
+			return "qsdev/lockfile-missing", "error"
 		}
-		return "gdev/lockfile-stale", "warning"
+		return "qsdev/lockfile-stale", "warning"
 	case categoryHookDrift:
-		return "gdev/hooks-not-installed", "warning"
+		return "qsdev/hooks-not-installed", "warning"
 	case categoryMarkerIntegrity:
-		return "gdev/markers-broken", "warning"
+		return "qsdev/markers-broken", "warning"
 	case categoryToolAvailability:
-		return "gdev/tool-unavailable", "warning"
+		return "qsdev/tool-unavailable", "warning"
 	case categoryFileModification:
 		switch f.Severity {
 		case DriftError:
-			return "gdev/config-missing", "error"
+			return "qsdev/config-missing", "error"
 		case DriftWarning:
-			return "gdev/config-modified", "warning"
+			return "qsdev/config-modified", "warning"
 		default:
 			return "", "" // Info-level file modification is not a finding
 		}
@@ -235,12 +235,12 @@ func driftToSARIF(categoryName string, f DriftFinding) (ruleID, level string) {
 }
 
 // isMetaSubject returns true if the subject is a meta-reference rather than
-// a file path (e.g. "pre-commit", "gdev version", "marker:xyz").
+// a file path (e.g. "pre-commit", "qsdev version", "marker:xyz").
 func isMetaSubject(s string) bool {
 	switch {
 	case s == "pre-commit", s == "commit-msg", s == ".git":
 		return true
-	case s == "gdev version":
+	case s == "qsdev version":
 		return true
 	case len(s) > 7 && s[:7] == "marker:":
 		return true

@@ -70,7 +70,6 @@
             meta = with pkgs.lib; {
               description = "Secure developer environment bootstrapping tool";
               homepage = "https://github.com/Quantum-Serendipity/qsdev";
-              license = licenses.unfree;
               mainProgram = "qsdev";
               platforms = platforms.linux ++ platforms.darwin;
             };

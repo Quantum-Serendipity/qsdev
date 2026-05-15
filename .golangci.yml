@@ -2,6 +2,8 @@ version: "2"
 
 linters:
   default: standard
+  enable:
+    - depguard
   exclusions:
     generated: lax
     presets:
@@ -21,3 +23,24 @@ linters:
       - linters:
           - errcheck
         text: "Error return value of `os\\.Remove"
+  settings:
+    depguard:
+      rules:
+        devenv-addon-isolation:
+          list-mode: lax
+          files:
+            - "**/addons/devenv/**"
+          deny:
+            - pkg: "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+              desc: "devenv must not import claudecode — addons communicate through pkg/types"
+            - pkg: "github.com/Quantum-Serendipity/qsdev/addons/devinit"
+              desc: "devenv must not import devinit — only devinit may orchestrate other addons"
+        claudecode-addon-isolation:
+          list-mode: lax
+          files:
+            - "**/addons/claudecode/**"
+          deny:
+            - pkg: "github.com/Quantum-Serendipity/qsdev/addons/devenv"
+              desc: "claudecode must not import devenv — addons communicate through pkg/types"
+            - pkg: "github.com/Quantum-Serendipity/qsdev/addons/devinit"
+              desc: "claudecode must not import devinit — only devinit may orchestrate other addons"

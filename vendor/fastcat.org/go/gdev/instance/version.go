@@ -6,30 +6,30 @@ import (
 	"sync"
 )
 
-var info = sync.OnceValue(loadVersionInfo)
+var (
+	info = sync.OnceValue(loadVersionInfo)
 
-// versionOverride, if non-empty, replaces MainVersion from build info.
-var versionOverride string
+	versionOvr struct {
+		version string
+		commit  string
+	}
+)
 
-// SetVersion overrides the main version string reported by Version() and
-// VersionInfo(). Call before any use of the version functions.
-func SetVersion(v string) {
-	versionOverride = v
+// SetVersionOverride provides build-time version information for downstream
+// applications where debug.ReadBuildInfo().Main.Version returns "(devel)".
+// Must be called before Main().
+func SetVersionOverride(version, commit string) {
+	CheckCanCustomize()
+	versionOvr.version = version
+	versionOvr.commit = commit
 }
 
 func Version() string {
-	if versionOverride != "" {
-		return versionOverride
-	}
 	return info().MainVersion
 }
 
 func VersionInfo() versionInfo {
-	vi := info()
-	if versionOverride != "" {
-		vi.MainVersion = versionOverride
-	}
-	return vi
+	return info()
 }
 
 type versionInfo struct {
@@ -80,6 +80,13 @@ func loadVersionInfo() versionInfo {
 		if !strings.Contains(ret.MainVersion, rev) {
 			ret.MainVersion += "+" + rev
 		}
+	}
+
+	if versionOvr.version != "" {
+		ret.MainVersion = versionOvr.version
+	}
+	if versionOvr.commit != "" {
+		ret.MainRev = versionOvr.commit
 	}
 
 	const gdevPath = "fastcat.org/go/gdev"

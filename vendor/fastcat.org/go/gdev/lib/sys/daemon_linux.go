@@ -14,14 +14,6 @@ import (
 	"fastcat.org/go/gdev/instance"
 )
 
-// FallbackLogFileEnv is an environment variable that can be set to provide
-// a fallback log file path for daemons started without systemd support.
-//
-// This will not be passed to the actual daemon.
-//
-// TODO: this is ugly
-const FallbackLogFileEnv = "__FALLBACK_LOG_FILE"
-
 var expectSystemdAbsent = false
 
 // ExpectSystemdAbsent can be called from apps that know they are running in an

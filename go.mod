@@ -55,4 +55,4 @@ require (
 	golang.org/x/text v0.37.0 // indirect
 )
 
-replace fastcat.org/go/gdev => github.com/Quantum-Serendipity/gdev v0.0.0-20260513164954-05f35cda9052
+replace fastcat.org/go/gdev => github.com/Quantum-Serendipity/gdev v0.0.0-20260515232304-7ffd0edf72e3

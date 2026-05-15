@@ -8,8 +8,8 @@ import (
 
 func Config() *cobra.Command {
 	cfg := &cobra.Command{
-		Use: "config",
-		// just a parent for other commands
+		Use:   "config",
+		Short: "Manage project configuration",
 	}
 
 	for _, fn := range cfgCmdBuilders {

@@ -217,9 +217,9 @@ func TestExecute_NonexistentFileRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should succeed (os.Remove on nonexistent file is treated as success).
-	if len(result.Removed) != 1 {
-		t.Errorf("Removed = %d, want 1 (nonexistent file removal is a no-op success)", len(result.Removed))
+	// Nonexistent files should be silently skipped, not counted as removed.
+	if len(result.Removed) != 0 {
+		t.Errorf("Removed = %d, want 0 (nonexistent files should be skipped)", len(result.Removed))
 	}
 }
 

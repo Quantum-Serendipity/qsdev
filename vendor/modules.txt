@@ -1,4 +1,4 @@
-# fastcat.org/go/gdev v0.0.0-00010101000000-000000000000 => github.com/Quantum-Serendipity/gdev v0.0.0-20260513164954-05f35cda9052
+# fastcat.org/go/gdev v0.0.0-00010101000000-000000000000 => github.com/Quantum-Serendipity/gdev v0.0.0-20260515232304-7ffd0edf72e3
 ## explicit; go 1.26.1
 fastcat.org/go/gdev/addons
 fastcat.org/go/gdev/addons/bootstrap
@@ -204,4 +204,4 @@ google.golang.org/protobuf/runtime/protoimpl
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
-# fastcat.org/go/gdev => github.com/Quantum-Serendipity/gdev v0.0.0-20260513164954-05f35cda9052
+# fastcat.org/go/gdev => github.com/Quantum-Serendipity/gdev v0.0.0-20260515232304-7ffd0edf72e3

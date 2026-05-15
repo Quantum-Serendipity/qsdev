@@ -20,8 +20,8 @@
 
         version =
           if (self ? shortRev)
-          then "0.3.0+${self.shortRev}"
-          else "0.3.0+dirty";
+          then "0.3.1+${self.shortRev}"
+          else "0.3.1+dirty";
 
         commit = self.shortRev or "dirty";
         date = self.lastModifiedDate or "unknown";

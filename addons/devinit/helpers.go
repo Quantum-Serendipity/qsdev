@@ -18,6 +18,10 @@ func (e *ExitError) Error() string {
 	return fmt.Sprintf("exit code %d", e.Code)
 }
 
+func (e *ExitError) ExitCode() int {
+	return e.Code
+}
+
 // postGenerationMessage returns a human-readable summary of next steps after
 // qsdev init has generated files. It adapts the message based on what was
 // generated (devenv, Claude Code, or both).

@@ -427,6 +427,8 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 		deny = append(deny, baseDeny...)
 		deny = append(deny, ecosystemDeny...)
 		ask = append(ask, askMinimal...)
+		defaultMode = "plan"
+		disableBypass = "disable"
 
 	case PermissionPresetStandard:
 		allow = append(allow, allowStandardBase...)

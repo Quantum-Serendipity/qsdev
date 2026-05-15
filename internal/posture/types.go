@@ -215,4 +215,5 @@ type RenderOptions struct {
 	Fix       bool
 	UseColor  bool
 	Writer    io.Writer
+	Section   string
 }

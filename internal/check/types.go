@@ -174,3 +174,7 @@ type CheckFailedError struct {
 func (e *CheckFailedError) Error() string {
 	return fmt.Sprintf("%d check(s) failed at audit level %s", e.FailCount, e.Level)
 }
+
+func (e *CheckFailedError) ExitCode() int {
+	return 1
+}

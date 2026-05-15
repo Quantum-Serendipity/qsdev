@@ -26,6 +26,7 @@ var logSession *logging.Session
 
 func main() {
 	instance.SetAppName("qsdev")
+	instance.SetVersion(version.Info().Version)
 
 	bootstrap.Configure(
 		bootstrap.WithSteps(

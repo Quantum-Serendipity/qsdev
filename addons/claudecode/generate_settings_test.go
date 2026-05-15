@@ -75,9 +75,12 @@ func TestGenerateSettings_MinimalPreset(t *testing.T) {
 		t.Error("minimal deny should contain Bash(npm install *)")
 	}
 
-	// DefaultMode should NOT be set for minimal.
-	if s.Permissions.DefaultMode != "" {
-		t.Errorf("minimal should not set defaultMode, got %q", s.Permissions.DefaultMode)
+	// DefaultMode should be "plan" for minimal (most restrictive).
+	if s.Permissions.DefaultMode != "plan" {
+		t.Errorf("minimal should set defaultMode to plan, got %q", s.Permissions.DefaultMode)
+	}
+	if s.Permissions.DisableBypassPermissionsMode != "disable" {
+		t.Errorf("minimal should set disableBypassPermissionsMode to disable, got %q", s.Permissions.DisableBypassPermissionsMode)
 	}
 
 	// Verify JSON is valid by attempting re-marshal.

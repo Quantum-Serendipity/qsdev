@@ -54,7 +54,7 @@ func defaultSpecializedHooks() []CustomHookData {
 			ID:          "lock-file-audit",
 			Name:        "Lock file change audit",
 			Description: "Flag lock file changes for review — lock files redirect package sources",
-			Entry: `${pkgs.writeShellScript "lock-audit" ''
+			Entry: `pkgs.writeShellScript "lock-audit" ''
         for f in "$@"; do
           case "$f" in
             devenv.lock|flake.lock)
@@ -65,7 +65,7 @@ func defaultSpecializedHooks() []CustomHookData {
               ;;
           esac
         done
-      ''}`,
+      ''`,
 			RawEntry:      true,
 			Language:      "system",
 			Files:         `(devenv|flake)\.lock$`,
@@ -76,7 +76,7 @@ func defaultSpecializedHooks() []CustomHookData {
 			ID:          "nix-secrets-check",
 			Name:        "Nix file secrets check",
 			Description: "Detect hardcoded secrets and credential patterns in .nix files",
-			Entry: `${pkgs.writeShellScript "nix-secrets-check" ''
+			Entry: `pkgs.writeShellScript "nix-secrets-check" ''
         ret=0
         for f in "$@"; do
           if ${pkgs.gnugrep}/bin/grep -nP 'env\.\w*(SECRET|TOKEN|PASSWORD|KEY|CREDENTIAL|API_KEY)\w*\s*=' "$f" 2>/dev/null; then
@@ -89,7 +89,7 @@ func defaultSpecializedHooks() []CustomHookData {
           fi
         done
         exit $ret
-      ''}`,
+      ''`,
 			RawEntry:      true,
 			Language:      "system",
 			Files:         `\.nix$`,

@@ -148,6 +148,9 @@ func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptio
 		UseColor:  useColor,
 		BadgeType: opts.badgeType,
 	}
+	if len(args) > 0 {
+		renderOpts.Section = args[0]
+	}
 
 	// Render the report.
 	w := cmd.OutOrStdout()

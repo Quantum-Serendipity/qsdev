@@ -47,7 +47,10 @@ func runOutdated(cmd *cobra.Command, opts outdated.OutdatedOptions) error {
 		ecosystems = outdated.SupportedEcosystems()
 	}
 
-	ctx := context.Background()
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	result, err := outdated.RunOutdated(ctx, cmd.OutOrStdout(), projectRoot, ecosystems, opts)
 	if err != nil {
 		return err

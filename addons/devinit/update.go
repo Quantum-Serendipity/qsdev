@@ -335,15 +335,7 @@ func executeUpdatePlan(
 		case UpdateActionMerge:
 			merged, err := dispatchMerge(fp, projectRoot)
 			if err != nil {
-				// Merge failed — keep the current on-disk content in state so
-				// the next update doesn't operate with stale hashes.
-				fmt.Fprintf(os.Stderr, "Warning: merge failed for %s: %v\n", fp.Path, err)
-				current, readErr := os.ReadFile(absPath)
-				if readErr == nil {
-					writtenFiles = append(writtenFiles, types.GeneratedFile{
-						Path: fp.Path, Content: current, Mode: mode, Strategy: fp.Strategy,
-					})
-				}
+				fmt.Fprintf(os.Stderr, "Warning: merge failed for %s: %v (will retry on next update)\n", fp.Path, err)
 				continue
 			}
 			if err := fileutil.WriteFileAtomic(absPath, merged, mode); err != nil {

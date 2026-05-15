@@ -27,10 +27,9 @@ func GenerateDevenvNix(answers types.WizardAnswers, registry *ecosystem.Registry
 	}
 
 	return &types.GeneratedFile{
-		Path:           "devenv.nix",
-		Content:        content,
-		Mode:           0o644,
-		Strategy:       types.ManualMerge,
-		SkipValidation: true,
+		Path:     "devenv.nix",
+		Content:  content,
+		Mode:     0o644,
+		Strategy: types.ManualMerge,
 	}, nil
 }

@@ -2,6 +2,7 @@ package devinit
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -79,7 +80,11 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 	// If reset or there are findings, regenerate fresh files.
 	freshFiles := make(map[string]types.GeneratedFile)
 	if opts.Reset || driftReport.TotalFindings > 0 {
-		freshFiles = regenerateFreshFiles(answers)
+		var genErr error
+		freshFiles, genErr = regenerateFreshFiles(answers)
+		if genErr != nil {
+			return genErr
+		}
 	}
 
 	// Run repair.
@@ -137,17 +142,21 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 }
 
 // regenerateFreshFiles runs both generators to produce a map of path to fresh
-// GeneratedFile. Errors from individual generators are silently ignored so that
-// the repair can still proceed with whatever files were successfully generated.
-func regenerateFreshFiles(answers types.WizardAnswers) map[string]types.GeneratedFile {
+// GeneratedFile. Individual generator failures are logged as warnings so repair
+// can proceed with partial results. Returns an error only if ALL generators fail.
+func regenerateFreshFiles(answers types.WizardAnswers) (map[string]types.GeneratedFile, error) {
 	freshFiles := make(map[string]types.GeneratedFile)
 	registry := ecosystem.DefaultRegistry()
+	var genErrors int
 
 	// Generate devenv files (unless claude-only mode).
 	if answers.MergeMode != "claude-only" {
 		gen := devenv.NewDevenvGenerator(registry, devenv.WithProfileRegistry(profile.DefaultProfileRegistry()))
 		files, err := gen.Generate(answers)
-		if err == nil {
+		if err != nil {
+			slog.Warn("devenv generator failed during repair", "error", err)
+			genErrors++
+		} else {
 			for _, f := range files {
 				freshFiles[f.Path] = f
 			}
@@ -158,12 +167,19 @@ func regenerateFreshFiles(answers types.WizardAnswers) map[string]types.Generate
 	if answers.ClaudeCode {
 		gen := claudecode.NewClaudeCodeGenerator(registry, claudecode.Config{})
 		files, err := gen.Generate(answers)
-		if err == nil {
+		if err != nil {
+			slog.Warn("claudecode generator failed during repair", "error", err)
+			genErrors++
+		} else {
 			for _, f := range files {
 				freshFiles[f.Path] = f
 			}
 		}
 	}
 
-	return freshFiles
+	if len(freshFiles) == 0 && genErrors > 0 {
+		return nil, fmt.Errorf("all generators failed; cannot determine expected file state for repair")
+	}
+
+	return freshFiles, nil
 }

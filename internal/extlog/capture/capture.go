@@ -1,0 +1,75 @@
+// Package capture provides a CaptureWriter that tees tool output to a
+// capture file alongside the original writer. This preserves ephemeral
+// stderr/stdout from external tools for later inclusion in bug reports.
+package capture
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+// CaptureWriter tees output to a capture file alongside the original writer.
+type CaptureWriter struct {
+	original io.Writer
+	file     *os.File
+	multi    io.Writer
+}
+
+// New creates a CaptureWriter that writes to both original and a new file
+// in captureDir named "{provider}-{timestamp}.log".
+func New(original io.Writer, captureDir, provider string) (*CaptureWriter, error) {
+	if err := os.MkdirAll(captureDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating capture dir: %w", err)
+	}
+
+	filename := fmt.Sprintf("%s-%s.log", provider, time.Now().Format("2006-01-02T15-04-05"))
+	path := filepath.Join(captureDir, filename)
+
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("opening capture file: %w", err)
+	}
+
+	return &CaptureWriter{
+		original: original,
+		file:     f,
+		multi:    io.MultiWriter(original, f),
+	}, nil
+}
+
+// Write implements io.Writer, writing to both the original and capture file.
+func (w *CaptureWriter) Write(p []byte) (int, error) {
+	return w.multi.Write(p)
+}
+
+// Close closes the capture file. The original writer is not closed.
+func (w *CaptureWriter) Close() error {
+	if w.file != nil {
+		return w.file.Close()
+	}
+	return nil
+}
+
+// Path returns the capture file path.
+func (w *CaptureWriter) Path() string {
+	if w.file != nil {
+		return w.file.Name()
+	}
+	return ""
+}
+
+// CaptureDir returns the appropriate capture directory for the current context.
+// Uses .qsdev/logs/capture/ in a project, or ~/.qsdev/logs/capture/ globally.
+func CaptureDir(projectRoot string) string {
+	if projectRoot != "" {
+		return filepath.Join(projectRoot, ".qsdev", "logs", "capture")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = os.TempDir()
+	}
+	return filepath.Join(home, ".qsdev", "logs", "capture")
+}

@@ -3,6 +3,7 @@ package state
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -34,6 +35,7 @@ func LoadStateFromFile(path string) (types.GeneratedState, error) {
 		state.Files = make(map[string]types.FileState)
 	}
 
+	slog.Debug("state loaded", "path", path, "files", len(state.Files))
 	return state, nil
 }
 

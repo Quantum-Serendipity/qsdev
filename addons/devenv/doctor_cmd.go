@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -45,6 +46,11 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 	osInfo := sysinfo.DetectOS()
 	checks := doctor.RunAllChecks(ctx, osInfo)
 	report := doctor.BuildReport(osInfo, checks, "0.1.0")
+	slog.Info("doctor check complete",
+		"required_tools", len(report.RequiredTools),
+		"optional_tools", len(report.OptionalTools),
+		"os", report.System.OS,
+		"arch", report.System.Arch)
 
 	w := cmd.OutOrStdout()
 

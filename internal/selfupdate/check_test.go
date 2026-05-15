@@ -266,7 +266,7 @@ func TestCheckForUpdate_NoGithubToken(t *testing.T) {
 	}
 }
 
-func TestCheckForUpdate_APIError(t *testing.T) {
+func TestCheckForUpdate_NoReleases(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte(`{"message":"Not Found"}`))
@@ -278,9 +278,30 @@ func TestCheckForUpdate_APIError(t *testing.T) {
 	defer func() { apiBaseURL = oldBase }()
 
 	cfg := testConfig(t)
+	release, err := CheckForUpdate(cfg, "1.0.0")
+	if err != nil {
+		t.Fatalf("expected no error for 404 (no releases), got: %v", err)
+	}
+	if release != nil {
+		t.Fatalf("expected nil release for 404, got: %+v", release)
+	}
+}
+
+func TestCheckForUpdate_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"message":"Internal Server Error"}`))
+	}))
+	defer srv.Close()
+
+	oldBase := apiBaseURL
+	apiBaseURL = srv.URL
+	defer func() { apiBaseURL = oldBase }()
+
+	cfg := testConfig(t)
 	_, err := CheckForUpdate(cfg, "1.0.0")
 	if err == nil {
-		t.Fatal("expected error for 404 response")
+		t.Fatal("expected error for 500 response")
 	}
 }
 

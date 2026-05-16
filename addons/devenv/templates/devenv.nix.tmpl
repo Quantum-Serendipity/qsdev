@@ -48,7 +48,7 @@
       name = {{ nixString .Name }};
       description = {{ nixString .Description }};
 {{- if .RawEntry }}
-      entry = {{ .Entry }};
+      entry = toString ({{ .Entry }});
 {{- else }}
       entry = {{ nixString .Entry }};
 {{- end }}

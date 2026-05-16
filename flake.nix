@@ -11,6 +11,16 @@
       overlays.default = final: prev: {
         qsdev = self.packages.${prev.system}.qsdev;
       };
+
+      nixosModules.default = { config, lib, pkgs, ... }: {
+        programs.direnv.enable = lib.mkDefault true;
+        programs.direnv.nix-direnv.enable = lib.mkDefault true;
+
+        environment.systemPackages = [
+          self.packages.${pkgs.system}.qsdev
+          pkgs.devenv
+        ];
+      };
     }
     //
     flake-utils.lib.eachDefaultSystem (system:

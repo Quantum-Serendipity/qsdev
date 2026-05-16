@@ -9,7 +9,7 @@ var hookTiers = map[string][]string{
 		"gitleaks",
 		"check-added-large-files",
 		"no-commit-to-branch",
-		"check-merge-conflict",
+		"check-merge-conflicts",
 	},
 	"enhanced": {
 		"semgrep",

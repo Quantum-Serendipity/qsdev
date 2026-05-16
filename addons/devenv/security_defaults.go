@@ -13,7 +13,7 @@ var defaultSecurityHooks = []string{
 	"ripsecrets",
 	"check-added-large-files",
 	"no-commit-to-branch",
-	"check-merge-conflict",
+	"check-merge-conflicts",
 	"shellcheck",
 	"statix",
 }

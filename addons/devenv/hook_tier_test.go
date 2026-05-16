@@ -9,7 +9,7 @@ import (
 func TestFilterHooksByTier_Baseline(t *testing.T) {
 	hooks := []string{
 		"ripsecrets", "gitleaks", "check-added-large-files",
-		"no-commit-to-branch", "check-merge-conflict",
+		"no-commit-to-branch", "check-merge-conflicts",
 		"semgrep", "shellcheck", "formatters",
 		"lock-file-audit", "nix-secrets-check", "statix",
 	}
@@ -21,7 +21,7 @@ func TestFilterHooksByTier_Baseline(t *testing.T) {
 		"gitleaks":              true,
 		"check-added-large-files": true,
 		"no-commit-to-branch":  true,
-		"check-merge-conflict": true,
+		"check-merge-conflicts": true,
 	}
 
 	if len(result) != len(expected) {
@@ -38,7 +38,7 @@ func TestFilterHooksByTier_Baseline(t *testing.T) {
 func TestFilterHooksByTier_Enhanced(t *testing.T) {
 	hooks := []string{
 		"ripsecrets", "gitleaks", "check-added-large-files",
-		"no-commit-to-branch", "check-merge-conflict",
+		"no-commit-to-branch", "check-merge-conflicts",
 		"semgrep", "shellcheck", "formatters",
 		"lock-file-audit", "nix-secrets-check", "statix",
 	}
@@ -50,7 +50,7 @@ func TestFilterHooksByTier_Enhanced(t *testing.T) {
 		"gitleaks":              true,
 		"check-added-large-files": true,
 		"no-commit-to-branch":  true,
-		"check-merge-conflict": true,
+		"check-merge-conflicts": true,
 		"semgrep":              true,
 		"shellcheck":           true,
 		"formatters":           true,
@@ -70,7 +70,7 @@ func TestFilterHooksByTier_Enhanced(t *testing.T) {
 func TestFilterHooksByTier_Specialized(t *testing.T) {
 	hooks := []string{
 		"ripsecrets", "gitleaks", "check-added-large-files",
-		"no-commit-to-branch", "check-merge-conflict",
+		"no-commit-to-branch", "check-merge-conflicts",
 		"semgrep", "shellcheck", "formatters",
 		"lock-file-audit", "nix-secrets-check", "statix",
 	}
@@ -86,7 +86,7 @@ func TestFilterHooksByTier_Specialized(t *testing.T) {
 func TestFilterHooksByTier_Full(t *testing.T) {
 	hooks := []string{
 		"ripsecrets", "gitleaks", "check-added-large-files",
-		"no-commit-to-branch", "check-merge-conflict",
+		"no-commit-to-branch", "check-merge-conflicts",
 		"semgrep", "shellcheck", "formatters",
 		"lock-file-audit", "nix-secrets-check", "statix",
 		"custom-hook-1", "custom-hook-2",
@@ -119,14 +119,14 @@ func TestFilterHooksByTier_EmptyHooks(t *testing.T) {
 }
 
 func TestFilterHooksByTier_PreservesOrder(t *testing.T) {
-	hooks := []string{"check-merge-conflict", "ripsecrets", "gitleaks"}
+	hooks := []string{"check-merge-conflicts", "ripsecrets", "gitleaks"}
 
 	result := devenv.FilterHooksByTier(hooks, "baseline")
 
 	if len(result) != 3 {
 		t.Fatalf("expected 3 hooks, got %d", len(result))
 	}
-	if result[0] != "check-merge-conflict" {
+	if result[0] != "check-merge-conflicts" {
 		t.Errorf("expected first hook to be check-merge-conflict, got %q", result[0])
 	}
 	if result[1] != "ripsecrets" {

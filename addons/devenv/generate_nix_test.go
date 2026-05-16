@@ -188,7 +188,7 @@ func TestGenerateDevenvNix_SecurityDefaultsAlwaysPresent(t *testing.T) {
 	requireContains(t, content, `ripsecrets.enable = true`)
 	requireContains(t, content, `check-added-large-files.enable = true`)
 	requireContains(t, content, `no-commit-to-branch.enable = true`)
-	requireContains(t, content, `check-merge-conflict.enable = true`)
+	requireContains(t, content, `check-merge-conflicts.enable = true`)
 	requireContains(t, content, `shellcheck.enable = true`)
 	requireContains(t, content, `statix.enable = true`)
 

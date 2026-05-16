@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -40,6 +41,10 @@ func devenvCmd() *cobra.Command {
 		updateCmd(),
 		addServiceCmd(),
 		addLanguageCmd(),
+		addPackageCmd(),
+		removeServiceCmd(),
+		removeLanguageCmd(),
+		removePackageCmd(),
 		doctorCmd(),
 		setupCmd(),
 		changelogCmd(),
@@ -404,6 +409,314 @@ func addLanguageCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing files")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
+
+	return cmd
+}
+
+func addPackageCmd() *cobra.Command {
+	var (
+		force  bool
+		dryRun bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "add-package <name> [name...]",
+		Short: "Add system packages to the development environment",
+		Long:  "Add Nix packages (e.g., imagemagick, ffmpeg, jq) to the devenv shell without editing Nix files.",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectRoot, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("determining project root: %w", err)
+			}
+
+			answers, err := loadAnswers(projectRoot)
+			if err != nil {
+				return err
+			}
+
+			existing := make(map[string]bool)
+			for _, p := range answers.ExtraPackages {
+				existing[p] = true
+			}
+			var added []string
+			for _, pkg := range args {
+				if existing[pkg] && !force {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Package %q already configured (use --force to re-add)\n", pkg)
+					continue
+				}
+				if !existing[pkg] {
+					answers.ExtraPackages = append(answers.ExtraPackages, pkg)
+					added = append(added, pkg)
+				}
+			}
+			if len(added) == 0 {
+				return fmt.Errorf("no new packages to add")
+			}
+
+			registry := ecosystem.DefaultRegistry()
+			gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
+			files, err := gen.Generate(answers)
+			if err != nil {
+				return fmt.Errorf("generating files: %w", err)
+			}
+
+			if dryRun {
+				preview := generate.PreviewFiles(files, nil, projectRoot)
+				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
+				return nil
+			}
+
+			result, err := generate.WriteFiles(files, generate.PipelineOptions{
+				ProjectRoot: projectRoot,
+			})
+			if err != nil {
+				return fmt.Errorf("writing files: %w", err)
+			}
+
+			genState := state.RecordFiles(files)
+			stateFile := filepath.Join(projectRoot, statePath)
+			if err := state.SaveStateToFile(stateFile, genState); err != nil {
+				return fmt.Errorf("saving state: %w", err)
+			}
+			if err := saveAnswers(projectRoot, answers); err != nil {
+				return fmt.Errorf("saving answers: %w", err)
+			}
+
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added package(s): %s\n%s\n", strings.Join(added, ", "), result.Summary())
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Run 'direnv allow' or re-enter 'devenv shell' to activate.")
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing configuration")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
+
+	return cmd
+}
+
+func removePackageCmd() *cobra.Command {
+	var dryRun bool
+
+	cmd := &cobra.Command{
+		Use:   "remove-package <name> [name...]",
+		Short: "Remove system packages from the development environment",
+		Long:  "Remove previously added Nix packages from the devenv shell.",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectRoot, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("determining project root: %w", err)
+			}
+
+			answers, err := loadAnswers(projectRoot)
+			if err != nil {
+				return err
+			}
+
+			toRemove := make(map[string]bool)
+			for _, pkg := range args {
+				toRemove[pkg] = true
+			}
+
+			var kept []string
+			var removed []string
+			for _, p := range answers.ExtraPackages {
+				if toRemove[p] {
+					removed = append(removed, p)
+				} else {
+					kept = append(kept, p)
+				}
+			}
+			if len(removed) == 0 {
+				return fmt.Errorf("none of the specified packages are configured")
+			}
+			answers.ExtraPackages = kept
+
+			registry := ecosystem.DefaultRegistry()
+			gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
+			files, err := gen.Generate(answers)
+			if err != nil {
+				return fmt.Errorf("generating files: %w", err)
+			}
+
+			if dryRun {
+				preview := generate.PreviewFiles(files, nil, projectRoot)
+				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
+				return nil
+			}
+
+			result, err := generate.WriteFiles(files, generate.PipelineOptions{
+				ProjectRoot: projectRoot,
+			})
+			if err != nil {
+				return fmt.Errorf("writing files: %w", err)
+			}
+
+			genState := state.RecordFiles(files)
+			stateFile := filepath.Join(projectRoot, statePath)
+			if err := state.SaveStateToFile(stateFile, genState); err != nil {
+				return fmt.Errorf("saving state: %w", err)
+			}
+			if err := saveAnswers(projectRoot, answers); err != nil {
+				return fmt.Errorf("saving answers: %w", err)
+			}
+
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed package(s): %s\n%s\n", strings.Join(removed, ", "), result.Summary())
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Run 'direnv allow' or re-enter 'devenv shell' to activate.")
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
+
+	return cmd
+}
+
+func removeServiceCmd() *cobra.Command {
+	var dryRun bool
+
+	cmd := &cobra.Command{
+		Use:       "remove-service <name>",
+		Short:     "Remove a service from the development environment",
+		Long:      "Remove a previously added service (database, cache, queue) from the devenv configuration.",
+		Args:      cobra.ExactArgs(1),
+		ValidArgs: validServices,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			serviceName := args[0]
+			projectRoot, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("determining project root: %w", err)
+			}
+
+			answers, err := loadAnswers(projectRoot)
+			if err != nil {
+				return err
+			}
+
+			found := false
+			var kept []types.ServiceChoice
+			for _, svc := range answers.Services {
+				if svc.Name == serviceName {
+					found = true
+				} else {
+					kept = append(kept, svc)
+				}
+			}
+			if !found {
+				return fmt.Errorf("service %q is not configured", serviceName)
+			}
+			answers.Services = kept
+
+			registry := ecosystem.DefaultRegistry()
+			gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
+			files, err := gen.Generate(answers)
+			if err != nil {
+				return fmt.Errorf("generating files: %w", err)
+			}
+
+			if dryRun {
+				preview := generate.PreviewFiles(files, nil, projectRoot)
+				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
+				return nil
+			}
+
+			result, err := generate.WriteFiles(files, generate.PipelineOptions{
+				ProjectRoot: projectRoot,
+			})
+			if err != nil {
+				return fmt.Errorf("writing files: %w", err)
+			}
+
+			genState := state.RecordFiles(files)
+			stateFile := filepath.Join(projectRoot, statePath)
+			if err := state.SaveStateToFile(stateFile, genState); err != nil {
+				return fmt.Errorf("saving state: %w", err)
+			}
+			if err := saveAnswers(projectRoot, answers); err != nil {
+				return fmt.Errorf("saving answers: %w", err)
+			}
+
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed service %q.\n%s\n", serviceName, result.Summary())
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
+
+	return cmd
+}
+
+func removeLanguageCmd() *cobra.Command {
+	var dryRun bool
+
+	cmd := &cobra.Command{
+		Use:       "remove-language <name>",
+		Short:     "Remove a language ecosystem from the environment",
+		Long:      "Remove a previously added language/platform ecosystem from the devenv configuration.",
+		Args:      cobra.ExactArgs(1),
+		ValidArgs: validLanguages,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			langName := args[0]
+			projectRoot, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("determining project root: %w", err)
+			}
+
+			answers, err := loadAnswers(projectRoot)
+			if err != nil {
+				return err
+			}
+
+			found := false
+			var kept []types.LanguageChoice
+			for _, lang := range answers.Languages {
+				if lang.Name == langName {
+					found = true
+				} else {
+					kept = append(kept, lang)
+				}
+			}
+			if !found {
+				return fmt.Errorf("language %q is not configured", langName)
+			}
+			answers.Languages = kept
+
+			registry := ecosystem.DefaultRegistry()
+			gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
+			files, err := gen.Generate(answers)
+			if err != nil {
+				return fmt.Errorf("generating files: %w", err)
+			}
+
+			if dryRun {
+				preview := generate.PreviewFiles(files, nil, projectRoot)
+				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
+				return nil
+			}
+
+			result, err := generate.WriteFiles(files, generate.PipelineOptions{
+				ProjectRoot: projectRoot,
+			})
+			if err != nil {
+				return fmt.Errorf("writing files: %w", err)
+			}
+
+			genState := state.RecordFiles(files)
+			stateFile := filepath.Join(projectRoot, statePath)
+			if err := state.SaveStateToFile(stateFile, genState); err != nil {
+				return fmt.Errorf("saving state: %w", err)
+			}
+			if err := saveAnswers(projectRoot, answers); err != nil {
+				return fmt.Errorf("saving answers: %w", err)
+			}
+
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed language %q.\n%s\n", langName, result.Summary())
+			return nil
+		},
+	}
+
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
 
 	return cmd

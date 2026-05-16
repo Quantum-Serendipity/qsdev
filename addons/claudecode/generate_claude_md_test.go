@@ -191,7 +191,8 @@ func TestGenerateClaudeMd_SecurityAlwaysPresent(t *testing.T) {
 
 	content := string(got.Content)
 	requireContains(t, content, "## Security")
-	requireContains(t, content, "devenv.nix")
+	requireContains(t, content, "package guard hook")
+	requireContains(t, content, "qsdev enable")
 	requireContains(t, content, "ripsecrets")
 	requireContains(t, content, "Lock files")
 }

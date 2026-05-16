@@ -3,10 +3,15 @@
 These rules apply to all languages and ecosystems in this project.
 
 ## Package installation
-- Never install packages via raw shell commands (`npm install`, `pip install`,
-  `cargo add`, etc.). All dependencies must be managed through the devenv
-  configuration and lockfiles.
+- Never install packages via raw imperative commands outside the devenv shell.
+  The package guard hook blocks unsafe operations automatically.
+- To add project dependencies (npm, pip, cargo packages): use the project's
+  package manager within the devenv shell (e.g., `pnpm add <pkg>` — the
+  package guard validates safety before allowing).
+- To add system packages or dev tools: run `qsdev devenv add-package <name>`.
+- To add ecosystem tools (linters, scanners, MCP servers): run `qsdev enable <tool>`.
 - Never run `curl | bash` or `wget | sh` to install tools or scripts.
+- Never run `nix-env -i`, `nix profile install`, or other imperative Nix commands.
 
 ## Secrets management
 - Never commit secrets, API keys, passwords, tokens, or private keys to

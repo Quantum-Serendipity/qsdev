@@ -18,8 +18,8 @@ func TestLoadQsdevOpsManifest_Valid(t *testing.T) {
 		t.Fatalf("loadQsdevOpsManifest returned error: %v", err)
 	}
 
-	if len(manifest.Skills) != 10 {
-		t.Errorf("expected 10 skills in manifest, got %d", len(manifest.Skills))
+	if len(manifest.Skills) != 11 {
+		t.Errorf("expected 11 skills in manifest, got %d", len(manifest.Skills))
 	}
 
 	for i, s := range manifest.Skills {
@@ -77,8 +77,8 @@ func TestDeployOperationSkills_DeploysAll(t *testing.T) {
 		t.Fatalf("deployOperationSkills returned error: %v", err)
 	}
 
-	if len(files) != 10 {
-		t.Errorf("expected 10 files when EnabledTools is nil, got %d", len(files))
+	if len(files) != 11 {
+		t.Errorf("expected 11 files when EnabledTools is nil, got %d", len(files))
 	}
 }
 
@@ -209,8 +209,8 @@ func TestDeployOperationSkills_FileMetadata(t *testing.T) {
 
 func TestAvailableQsdevOpsSkillNames(t *testing.T) {
 	names := claudecode.AvailableQsdevOpsSkillNames()
-	if len(names) != 10 {
-		t.Errorf("expected 10 qsdev-ops skill names, got %d", len(names))
+	if len(names) != 11 {
+		t.Errorf("expected 11 qsdev-ops skill names, got %d", len(names))
 	}
 
 	expected := map[string]bool{
@@ -224,6 +224,7 @@ func TestAvailableQsdevOpsSkillNames(t *testing.T) {
 		"qsdev-status":  true,
 		"qsdev-tools":   true,
 		"qsdev-detect":  true,
+		"qsdev-add-dep": true,
 	}
 
 	for _, name := range names {

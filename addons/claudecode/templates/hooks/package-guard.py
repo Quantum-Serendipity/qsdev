@@ -463,7 +463,10 @@ def validate_package(
                         # in OSV schema is the CVSS vector string.
                         severities.append(score_str)
 
-            summary = f"Package '{package_name}' has {len(vulns)} known vulnerabilities: {', '.join(vuln_ids[:5])}"
+            summary = (
+                f"Package '{package_name}' has {len(vulns)} known vulnerabilities: "
+                f"{', '.join(vuln_ids[:5])}. Choose a patched version or an alternative package."
+            )
             if len(vulns) > 5:
                 summary += f" (and {len(vulns) - 5} more)"
 
@@ -490,7 +493,8 @@ def validate_package(
             return "deny", (
                 f"Package '{package_name}' was published/updated {age_days:.1f} days ago "
                 f"(minimum: {MIN_AGE_DAYS} days). New packages are quarantined to "
-                f"block supply chain attacks."
+                f"block supply chain attacks. Wait for the quarantine period to pass, "
+                f"or use an older, established version."
             )
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError, ValueError) as e:
         if FAIL_CLOSED:
@@ -534,8 +538,8 @@ def main() -> None:
     if manager in ("nix-env", "nix-profile"):
         reason = (
             f"Imperative Nix installs ({manager}) bypass flake pinning and are not "
-            f"permitted. Use declarative package management (add to devenv.nix or "
-            f"flake.nix) instead."
+            f"permitted. Use `qsdev devenv add-package <name>` for system packages "
+            f"or `qsdev enable <tool>` for ecosystem tools instead."
         )
         audit_log({
             "event": "deny",

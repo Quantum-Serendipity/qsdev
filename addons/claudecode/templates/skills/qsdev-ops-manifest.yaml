@@ -39,3 +39,7 @@ skills:
     description: "Detect project ecosystems"
     tags: [qsdev, ops, diagnostic]
     user_only: false
+  - name: qsdev-add-dep
+    description: "Add a dependency or package safely"
+    tags: [qsdev, ops, lifecycle]
+    user_only: false

@@ -54,7 +54,11 @@
 
 ## Security
 
-- All packages are managed through devenv.nix — do not run raw install commands outside the Nix shell.
+- Never run raw install commands (`npm install`, `pip install`, `nix-env -i`, etc.) — the package guard hook blocks unsafe operations and guides you through the safe workflow.
+- To add ecosystem tools: `qsdev enable <tool>` (run `qsdev list` to see available tools)
+- To add system packages: `qsdev devenv add-package <name>`
+- To add languages: `qsdev devenv add-language <name>`
+- To add services: `qsdev devenv add-service <name>`
 - Never commit secrets, tokens, or credentials. The pre-commit hook `ripsecrets` blocks accidental leaks.
 - Lock files must always be committed.
 {{- if hasAny .PackageManagers }}

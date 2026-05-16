@@ -21,4 +21,4 @@ allowed-tools: Bash(qsdev *) Read Grep Glob
 
 3. **Recommended modules**: Based on the detected ecosystems, list the qsdev ecosystem modules that would be enabled and what security configurations they bring.
 
-4. **Missing ecosystems**: If there are project files suggesting an ecosystem that was not detected, note them and explain how to manually configure them.
+4. **Missing ecosystems**: If there are project files suggesting an ecosystem that was not detected, note them and suggest running `qsdev devenv add-language <name>` to add support.

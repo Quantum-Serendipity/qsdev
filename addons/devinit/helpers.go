@@ -37,7 +37,7 @@ func postGenerationMessage(answers types.WizardAnswers, devenvGenerated, claudeG
 	}
 
 	if claudeGenerated {
-		steps = append(steps, "Review .claude/settings.json and CLAUDE.md for Claude Code configuration.")
+		steps = append(steps, "Run 'qsdev list' to see available tools and 'qsdev enable <tool>' to add more.")
 	}
 
 	if devenvGenerated && claudeGenerated {

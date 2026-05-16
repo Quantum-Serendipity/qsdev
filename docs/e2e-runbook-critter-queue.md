@@ -25,7 +25,7 @@ Expect: All required tools PASS (git, nix, devenv, direnv, node, pnpm, python3, 
 
 ### PF-3: Doctor JSON + check mode
 ```bash
-qsdev devenv doctor --json | jq '.requiredTools | length'
+qsdev devenv doctor --json | jq '.required_tools | length'
 qsdev devenv doctor --check && echo "ALL CLEAR" || echo "MISSING TOOLS"
 ```
 
@@ -33,7 +33,7 @@ qsdev devenv doctor --check && echo "ALL CLEAR" || echo "MISSING TOOLS"
 ```bash
 qsdev init --list-profiles
 ```
-Expect: go-web, ts-fullstack, python-data, rust-cli. Note ts-fullstack: JavaScript (pnpm), PostgreSQL, Redis, standard permissions, deploy skill, safety-block + auto-format + pre-commit hooks. All profiles include AlwaysOn MCP servers (context7, github, socket, semble) and AlwaysOn skills/agents (agent-postmortem, version-sentinel, semble-search, security-review).
+Expect: go-web, ts-fullstack, python-data, rust-cli. Note ts-fullstack: JavaScript (pnpm), PostgreSQL, Redis, standard permissions, deploy + security-review skills, safety-block + auto-format + pre-commit hooks. All profiles include AlwaysOn MCP servers (context7, github, socket, semble) and AlwaysOn skills/agents (agent-postmortem, version-sentinel, semble-search, security-review).
 
 ### PF-5: Create clean project
 ```bash
@@ -53,7 +53,7 @@ git add README.md && git commit -m "initial commit"
 ```bash
 qsdev init --profile ts-fullstack --yes --dry-run
 ```
-Expect: Preview listing all files without writing. Count total files (~30). Look for: devenv.yaml, devenv.nix, .envrc, .claude/settings.json, CLAUDE.md, .claude/hooks/package-guard.py, .claude/skills/, .claude/rules/, .claude/agents/semble-search.md, .mcp.json, .qsdev.yaml, .semgrep.yml, .gitleaks.toml, .version-sentinel/ignore.
+Expect: Preview listing all files without writing. Count total files (~34). Look for: devenv.yaml, devenv.nix, .envrc, .claude/settings.json, CLAUDE.md, .claude/hooks/package-guard.py, .claude/skills/, .claude/rules/, .claude/agents/semble-search.md, .mcp.json, .qsdev.yaml, .semgrep.yml, .gitleaks.toml, .github/labeler.yml, .github/workflows/labeler.yml, .github/pull_request_template.md.
 
 ### A1-2: Full init
 ```bash
@@ -65,21 +65,20 @@ Expect: `Created: N  Updated: 0  Skipped: 0  Failed: 0`. Post-generation message
 ```bash
 find . -name '.git' -prune -o -name '.direnv' -prune -o -name '.devenv' -prune -o -type f -print | sort
 ```
-Key files to confirm exist (~30 files total):
+Key files to confirm exist (~34 files total):
 - `.claude/hooks/package-guard.py` (executable — safety-block hook)
 - `.claude/settings.json` (permissions, deny rules, hooks)
 - `.claude/rules/security-rules.md`
 - `.claude/rules/typescript-conventions.md`
 - `.claude/skills/deploy.md` (from profile)
+- `.claude/skills/security-review.md` (AlwaysOn — Trail of Bits methodology)
 - `.claude/skills/agent-postmortem/SKILL.md` (AlwaysOn — verification protocol)
 - `.claude/skills/version-sentinel/SKILL.md` (AlwaysOn — dependency version guard)
-- `.claude/skills/security-review.md` (AlwaysOn — Trail of Bits methodology)
 - `.claude/skills/qsdev-*/SKILL.md` (10 qsdev ops skills)
 - `.claude/agents/semble-search.md` (AlwaysOn — semantic code search agent)
 - `.claude/.qsdev-claude-answers.yaml`
 - `.claude/qsdev-reference.md`
 - `.mcp.json` (AlwaysOn MCP servers: context7, github, socket, semble)
-- `.version-sentinel/ignore` (version-sentinel ignore file)
 - `.semgrep.yml` (AlwaysOn — Semgrep SAST rules)
 - `.gitleaks.toml` (AlwaysOn — Gitleaks secret scanner config)
 - `CLAUDE.md`
@@ -90,8 +89,14 @@ Key files to confirm exist (~30 files total):
 - `pnpm-workspace.yaml` (pnpm security config with age-gating, script blocking)
 - `renovate.json` (dependency update automation)
 - `.github/workflows/security-scan.yml`
+- `.github/labeler.yml` (PR auto-labeling rules)
+- `.github/workflows/labeler.yml` (labeler workflow)
+- `.github/pull_request_template.md`
 - `docs/security-overview.md`
 - `.gitignore`
+
+**Conditionally generated** (only when coverage gaps exist):
+- `.version-sentinel/ignore` — only when project has ecosystems without version-sentinel support
 
 Verify `.gitignore` contains ecosystem-specific entries for JavaScript in addition to infrastructure entries:
 ```bash

@@ -192,8 +192,8 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		return err
 	}
 
-	// i. If not complete and --yes, fill defaults from detection.
-	if !answers.IsComplete() && opts.Yes {
+	// i. Fill defaults (agent tools, MCP servers, etc.) for any unset fields.
+	if opts.Yes {
 		answers.Confirmed = true
 		answers.FillDefaults(detected)
 	}

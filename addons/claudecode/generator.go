@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -155,6 +156,35 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 	}
 	if refFile != nil {
 		files = append(files, *refFile)
+	}
+
+	// 14. AlwaysOn tool generation (semgrep, gitleaks, etc.)
+	reg := toolreg.DefaultRegistry()
+	alreadyHandled := map[string]bool{
+		"attach-guard":         true,
+		"agent-postmortem":     true,
+		"version-sentinel":     true,
+		"semble":              true,
+		"trail-of-bits-skills": true,
+	}
+	for _, tool := range reg.All() {
+		if tool.Default != toolreg.AlwaysOn {
+			continue
+		}
+		if alreadyHandled[tool.Name] {
+			continue
+		}
+		if tool.GenerateFunc == nil {
+			continue
+		}
+		toolFiles, err := tool.GenerateFunc(answers)
+		if err != nil {
+			return nil, fmt.Errorf("generating %s files: %w", tool.Name, err)
+		}
+		for i := range toolFiles {
+			toolFiles[i].Owner = tool.Name
+		}
+		files = append(files, toolFiles...)
 	}
 
 	return files, nil

@@ -18,9 +18,9 @@ var GoWeb = Profile{
 
 // TSFullstack is a project-type profile for TypeScript full-stack applications.
 // Includes JavaScript with pnpm, PostgreSQL and Redis, direnv, standard Claude Code
-// permissions, deploy skill, and auto-format + safety-block + pre-commit hooks.
+// permissions, deploy + security-review skills, and auto-format + safety-block + pre-commit hooks.
 var TSFullstack = Profile{
-	Description: "TypeScript full-stack: JavaScript (pnpm), PostgreSQL, Redis, direnv, Claude Code (standard), deploy skill",
+	Description: "TypeScript full-stack: JavaScript (pnpm), PostgreSQL, Redis, direnv, Claude Code (standard), deploy + security-review skills",
 	Languages: []LanguageSpec{
 		{Name: "javascript", PackageManager: "pnpm"},
 	},
@@ -28,7 +28,7 @@ var TSFullstack = Profile{
 	Direnv:          true,
 	ClaudeCode:      true,
 	PermissionLevel: "standard",
-	Skills:          []string{"deploy"},
+	Skills:          []string{"deploy", "security-review"},
 	Hooks:           []string{"auto-format", "safety-block", "pre-commit"},
 }
 

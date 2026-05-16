@@ -219,71 +219,15 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 			a.AgentTools.VersionSentinelHours = 24
 		}
 		if a.AgentTools.SembleMode == "" {
-			a.AgentTools.SembleMode = "mcp"
+			a.AgentTools.SembleMode = "both"
 		}
-		if hasVSSupportedLanguage(a.Languages) {
-			a.AgentTools.VersionSentinel = true
-		}
-		if pythonVersionAtLeast(detected.PythonVersion, 3, 10) {
-			a.AgentTools.SembleEnabled = true
-		}
+		a.AgentTools.VersionSentinel = true
+		a.AgentTools.SembleEnabled = true
 	}
 
 	// Default MCP servers when Claude Code is enabled and none are configured.
 	if a.ClaudeCode && len(a.MCPServers) == 0 {
-		a.MCPServers = append(a.MCPServers, "context7", "github")
+		a.MCPServers = append(a.MCPServers, "context7", "github", "socket", "semble")
 	}
 }
 
-func hasVSSupportedLanguage(langs []LanguageChoice) bool {
-	for _, l := range langs {
-		switch l.Name {
-		case "javascript", "python", "rust", "dotnet":
-			return true
-		}
-	}
-	return false
-}
-
-func pythonVersionAtLeast(version string, major, minor int) bool {
-	if version == "" {
-		return false
-	}
-	parts := splitVersion(version)
-	if len(parts) < 2 {
-		return false
-	}
-	if parts[0] > major {
-		return true
-	}
-	return parts[0] == major && parts[1] >= minor
-}
-
-func splitVersion(v string) []int {
-	var result []int
-	for _, part := range splitOnDot(v) {
-		n := 0
-		for _, c := range part {
-			if c >= '0' && c <= '9' {
-				n = n*10 + int(c-'0')
-			} else {
-				break
-			}
-		}
-		result = append(result, n)
-	}
-	return result
-}
-
-func splitOnDot(s string) []string {
-	var parts []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '.' {
-			parts = append(parts, s[start:i])
-			start = i + 1
-		}
-	}
-	parts = append(parts, s[start:])
-	return parts
-}

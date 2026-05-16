@@ -63,8 +63,8 @@ type ModuleConfig struct {
 // DevenvInput represents a devenv.sh input (flake reference) to be added
 // to devenv.yaml.
 type DevenvInput struct {
-	URL     string            `yaml:"url"              json:"url"`
-	Follows map[string]string `yaml:"follows,omitempty" json:"follows,omitempty"`
+	URL     string `yaml:"url"              json:"url"`
+	Follows string `yaml:"follows,omitempty" json:"follows,omitempty"`
 }
 
 // HookConfig represents a pre-commit hook configuration entry.

@@ -4,9 +4,11 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    devenv.url = "github:cachix/devenv";
+    devenv.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, devenv }:
     {
       overlays.default = final: prev: {
         qsdev = self.packages.${prev.system}.qsdev;
@@ -18,7 +20,7 @@
 
         environment.systemPackages = [
           self.packages.${pkgs.system}.qsdev
-          pkgs.devenv
+          devenv.packages.${pkgs.system}.devenv
         ];
       };
     }

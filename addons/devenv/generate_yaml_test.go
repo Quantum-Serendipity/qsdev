@@ -174,12 +174,12 @@ func TestWithGitHooksInputPresent(t *testing.T) {
 	}
 
 	// Verify follows.
-	follows, ok := gitHooks["follows"].(map[string]interface{})
+	follows, ok := gitHooks["follows"].(string)
 	if !ok {
-		t.Fatal("git-hooks should have follows")
+		t.Fatal("git-hooks should have follows as a string")
 	}
-	if follows["nixpkgs"] != "nixpkgs" {
-		t.Errorf("git-hooks follows.nixpkgs should be 'nixpkgs', got %v", follows["nixpkgs"])
+	if follows != "nixpkgs" {
+		t.Errorf("git-hooks follows should be 'nixpkgs', got %v", follows)
 	}
 }
 
@@ -239,7 +239,7 @@ func TestEcosystemModuleInputsMerged(t *testing.T) {
 		DevenvYamlInputsVal: []ecosystem.DevenvInput{
 			{
 				URL:     "github:cachix/nixpkgs-python",
-				Follows: map[string]string{"nixpkgs": "nixpkgs"},
+				Follows: "nixpkgs",
 			},
 		},
 	})
@@ -258,12 +258,12 @@ func TestEcosystemModuleInputsMerged(t *testing.T) {
 	if pythonInput["url"] != "github:cachix/nixpkgs-python" {
 		t.Errorf("nixpkgs-python url wrong: %v", pythonInput["url"])
 	}
-	follows, ok := pythonInput["follows"].(map[string]interface{})
+	follows, ok := pythonInput["follows"].(string)
 	if !ok {
-		t.Fatal("nixpkgs-python should have follows")
+		t.Fatal("nixpkgs-python should have follows as a string")
 	}
-	if follows["nixpkgs"] != "nixpkgs" {
-		t.Errorf("nixpkgs-python follows.nixpkgs should be 'nixpkgs', got %v", follows["nixpkgs"])
+	if follows != "nixpkgs" {
+		t.Errorf("nixpkgs-python follows should be 'nixpkgs', got %v", follows)
 	}
 }
 
@@ -511,7 +511,7 @@ func TestMultipleEcosystemInputs(t *testing.T) {
 		DevenvYamlInputsVal: []ecosystem.DevenvInput{
 			{
 				URL:     "github:cachix/nixpkgs-python",
-				Follows: map[string]string{"nixpkgs": "nixpkgs"},
+				Follows: "nixpkgs",
 			},
 		},
 	})

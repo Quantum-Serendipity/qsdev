@@ -33,8 +33,8 @@ type DevenvYaml struct {
 
 // DevenvYamlInput represents a single flake input entry in devenv.yaml.
 type DevenvYamlInput struct {
-	URL     string            `yaml:"url"`
-	Follows map[string]string `yaml:"follows,omitempty"`
+	URL     string `yaml:"url"`
+	Follows string `yaml:"follows,omitempty"`
 }
 
 // DevenvClean represents the clean section of devenv.yaml.
@@ -67,7 +67,7 @@ func collectEcosystemInputs(answers types.WizardAnswers, registry *ecosystem.Reg
 			entry := DevenvYamlInput{
 				URL: inp.URL,
 			}
-			if len(inp.Follows) > 0 {
+			if inp.Follows != "" {
 				entry.Follows = inp.Follows
 			}
 			merged[key] = entry
@@ -101,10 +101,8 @@ func GenerateDevenvYaml(answers types.WizardAnswers, registry *ecosystem.Registr
 	// Add git-hooks input when needed.
 	if needsGitHooks(answers, registry) {
 		dy.Inputs["git-hooks"] = DevenvYamlInput{
-			URL: gitHooksURL,
-			Follows: map[string]string{
-				"nixpkgs": "nixpkgs",
-			},
+			URL:     gitHooksURL,
+			Follows: "nixpkgs",
 		}
 	}
 
@@ -230,21 +228,8 @@ func addStringSeqPair(mapping *yaml.Node, key string, values []string) {
 func addInputNode(mapping *yaml.Node, key string, inp DevenvYamlInput) {
 	inputMapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	addScalarPair(inputMapping, "url", inp.URL)
-	if len(inp.Follows) > 0 {
-		followsMapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		// Sort follows keys for deterministic output.
-		var fkeys []string
-		for k := range inp.Follows {
-			fkeys = append(fkeys, k)
-		}
-		sort.Strings(fkeys)
-		for _, fk := range fkeys {
-			addScalarPair(followsMapping, fk, inp.Follows[fk])
-		}
-		inputMapping.Content = append(inputMapping.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Value: "follows"},
-			followsMapping,
-		)
+	if inp.Follows != "" {
+		addScalarPair(inputMapping, "follows", inp.Follows)
 	}
 	mapping.Content = append(mapping.Content,
 		&yaml.Node{Kind: yaml.ScalarNode, Value: key},

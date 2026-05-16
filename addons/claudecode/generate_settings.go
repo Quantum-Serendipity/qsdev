@@ -48,26 +48,34 @@ type HookEntry struct {
 
 // ---------------------------------------------------------------------------
 // Base deny rules — categorized slices from the reference deny rules document.
-// These are the "fast catch" layer blocking obvious package install patterns.
+// These block dangerous patterns that should never execute.
 // ---------------------------------------------------------------------------
 
-// denyJSPackageManagers blocks npm, npx, yarn, pnpm, and bun install commands.
-var denyJSPackageManagers = []string{
+// denyNpx blocks npx which runs arbitrary remote code.
+var denyNpx = []string{
+	`Bash(npx *)`,
+}
+
+// ---------------------------------------------------------------------------
+// Ask rules — package install operations gated by the PreToolUse hook.
+// These trigger the package-guard hook which does age-gating + vulnerability
+// checks, allowing safe packages through while denying unsafe ones.
+// ---------------------------------------------------------------------------
+
+// askJSPackageManagers are JS package install commands routed to the hook.
+var askJSPackageManagers = []string{
 	`Bash(npm install *)`,
 	`Bash(npm install)`,
 	`Bash(npm i *)`,
 	`Bash(npm i)`,
 	`Bash(npm add *)`,
 	`Bash(npm add)`,
-	`Bash(npm ci *)`,
-	`Bash(npm ci)`,
 	`Bash(npm update *)`,
 	`Bash(npm update)`,
 	`Bash(npm uninstall *)`,
 	`Bash(npm uninstall)`,
 	`Bash(npm remove *)`,
 	`Bash(npm remove)`,
-	`Bash(npx *)`,
 	`Bash(yarn add *)`,
 	`Bash(yarn install *)`,
 	`Bash(yarn install)`,
@@ -85,8 +93,8 @@ var denyJSPackageManagers = []string{
 	`Bash(bun remove *)`,
 }
 
-// denyPython blocks pip, pip3, python -m pip, pipx, and uv install commands.
-var denyPython = []string{
+// askPython are Python package install commands routed to the hook.
+var askPython = []string{
 	`Bash(pip install *)`,
 	`Bash(pip install)`,
 	`Bash(pip3 install *)`,
@@ -107,21 +115,21 @@ var denyPython = []string{
 	`Bash(uv remove *)`,
 }
 
-// denyRust blocks cargo add and cargo install.
-var denyRust = []string{
+// askRust are Rust package install commands routed to the hook.
+var askRust = []string{
 	`Bash(cargo add *)`,
 	`Bash(cargo install *)`,
 	`Bash(cargo install)`,
 }
 
-// denyGo blocks go get and go install.
-var denyGo = []string{
+// askGo are Go package install commands routed to the hook.
+var askGo = []string{
 	`Bash(go get *)`,
 	`Bash(go install *)`,
 }
 
-// denyRuby blocks gem install and bundle install/add/update.
-var denyRuby = []string{
+// askRuby are Ruby package install commands routed to the hook.
+var askRuby = []string{
 	`Bash(gem install *)`,
 	`Bash(bundle install *)`,
 	`Bash(bundle install)`,
@@ -130,8 +138,8 @@ var denyRuby = []string{
 	`Bash(bundle update)`,
 }
 
-// denyPHP blocks composer require/install/update.
-var denyPHP = []string{
+// askPHP are PHP package install commands routed to the hook.
+var askPHP = []string{
 	`Bash(composer require *)`,
 	`Bash(composer install *)`,
 	`Bash(composer install)`,
@@ -276,12 +284,7 @@ func AllBaseDenyRules() []string {
 
 func allBaseDenyRules() []string {
 	var rules []string
-	rules = append(rules, denyJSPackageManagers...)
-	rules = append(rules, denyPython...)
-	rules = append(rules, denyRust...)
-	rules = append(rules, denyGo...)
-	rules = append(rules, denyRuby...)
-	rules = append(rules, denyPHP...)
+	rules = append(rules, denyNpx...)
 	rules = append(rules, denyNix...)
 	rules = append(rules, denySystem...)
 	rules = append(rules, denyPipeToShell...)
@@ -291,6 +294,19 @@ func allBaseDenyRules() []string {
 	rules = append(rules, denySubprocessEscape...)
 	rules = append(rules, denyEvalXargs...)
 	rules = append(rules, denyDestructiveOps...)
+	return rules
+}
+
+// allPackageInstallAskRules returns the package install rules that should
+// be in the ask list, gated by the PreToolUse package-guard hook.
+func allPackageInstallAskRules() []string {
+	var rules []string
+	rules = append(rules, askJSPackageManagers...)
+	rules = append(rules, askPython...)
+	rules = append(rules, askRust...)
+	rules = append(rules, askGo...)
+	rules = append(rules, askRuby...)
+	rules = append(rules, askPHP...)
 	return rules
 }
 
@@ -382,24 +398,33 @@ var allowStandardBuildTestLint = []string{
 	`Bash(nix flake metadata *)`,
 }
 
+// allowFrozenLockfileInstalls provides pre-approved frozen lockfile installs
+// that cannot modify dependencies — safe to run without hook intervention.
+var allowFrozenLockfileInstalls = []string{
+	`Bash(npm ci)`,
+	`Bash(npm ci *)`,
+	`Bash(pnpm install --frozen-lockfile)`,
+	`Bash(pnpm install --frozen-lockfile *)`,
+	`Bash(yarn install --immutable)`,
+	`Bash(yarn install --immutable *)`,
+	`Bash(bun install --frozen-lockfile)`,
+	`Bash(bun install --frozen-lockfile *)`,
+}
+
 // allowPermissiveExtra provides the additional rules for the permissive preset.
 var allowPermissiveExtra = []string{
 	`Bash(make *)`,
 	`Bash(docker *)`,
 }
 
-// askStandard provides the ask rules for standard and permissive presets.
-var askStandard = []string{
+// askStandardBase provides non-package ask rules for standard and permissive presets.
+var askStandardBase = []string{
 	`Bash(nix flake update *)`,
 	`Bash(nix flake update)`,
-	`Bash(pip install -r requirements.txt *)`,
-	`Bash(pip install -r requirements.txt)`,
-	`Bash(pip install -e . *)`,
-	`Bash(pip install -e .)`,
 }
 
-// askMinimal provides the ask rules for the minimal preset.
-var askMinimal = []string{
+// askMinimalBase provides non-package ask rules for the minimal preset.
+var askMinimalBase = []string{
 	`Bash(nix flake update *)`,
 	`Bash(nix flake update)`,
 }
@@ -420,32 +445,40 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 	var defaultMode string
 	var disableBypass string
 
+	packageAskRules := allPackageInstallAskRules()
+
 	switch preset {
 	case PermissionPresetMinimal:
 		allow = append(allow, allowMinimal...)
 		allow = append(allow, allowMinimalBashBuildTest...)
+		allow = append(allow, allowFrozenLockfileInstalls...)
 		deny = append(deny, baseDeny...)
 		deny = append(deny, ecosystemDeny...)
-		ask = append(ask, askMinimal...)
+		ask = append(ask, askMinimalBase...)
+		ask = append(ask, packageAskRules...)
 		defaultMode = "plan"
 		disableBypass = "disable"
 
 	case PermissionPresetStandard:
 		allow = append(allow, allowStandardBase...)
 		allow = append(allow, allowStandardBuildTestLint...)
+		allow = append(allow, allowFrozenLockfileInstalls...)
 		deny = append(deny, baseDeny...)
 		deny = append(deny, ecosystemDeny...)
-		ask = append(ask, askStandard...)
+		ask = append(ask, askStandardBase...)
+		ask = append(ask, packageAskRules...)
 		defaultMode = "default"
 		disableBypass = "disable"
 
 	case PermissionPresetPermissive:
 		allow = append(allow, allowStandardBase...)
 		allow = append(allow, allowStandardBuildTestLint...)
+		allow = append(allow, allowFrozenLockfileInstalls...)
 		allow = append(allow, allowPermissiveExtra...)
 		deny = append(deny, baseDeny...)
 		deny = append(deny, ecosystemDeny...)
-		ask = append(ask, askStandard...)
+		ask = append(ask, askStandardBase...)
+		ask = append(ask, packageAskRules...)
 		defaultMode = "default"
 		disableBypass = "disable"
 
@@ -455,10 +488,12 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 		deny = append(deny, baseDeny...)
 		deny = append(deny, ecosystemDeny...)
 		deny = append(deny, cfg.ExtraDenyPatterns...)
+		ask = append(ask, packageAskRules...)
 		// Return early — don't append extras again below.
 		return Permissions{
 			Allow: dedup(allow),
 			Deny:  dedup(deny),
+			Ask:   dedup(ask),
 		}
 	}
 

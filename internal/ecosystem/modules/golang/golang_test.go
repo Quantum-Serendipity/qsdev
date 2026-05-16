@@ -285,18 +285,8 @@ func TestDenyRules(t *testing.T) {
 	m := &golang.Module{}
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 
-	if len(rules) != 2 {
-		t.Fatalf("DenyRules() returned %d rules, want 2", len(rules))
-	}
-
-	expected := []string{
-		"Bash(go get *)",
-		"Bash(go install *)",
-	}
-	for i, rule := range rules {
-		if rule != expected[i] {
-			t.Errorf("rules[%d] = %q, want %q", i, rule, expected[i])
-		}
+	if len(rules) != 0 {
+		t.Fatalf("DenyRules() returned %d rules, want 0 (installs handled by ask rules)", len(rules))
 	}
 }
 

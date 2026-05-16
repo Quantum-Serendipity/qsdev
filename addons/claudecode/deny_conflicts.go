@@ -41,26 +41,15 @@ func ValidateDenyRuleConflicts(denyRules []string, skills []SkillDefinition) []D
 }
 
 // ExpectedConflicts returns the map of known expected conflicts.
-// These are conflicts that exist by design — the deny rules block package
-// installs, but the upgrade-dep skill legitimately needs those operations.
-// The PreToolUse guardrail hook validates packages before allowing them.
+// These are conflicts that exist by design — where deny rules intentionally
+// block operations that a skill would otherwise need.
 // Key format: "skillName:denyRule"
+//
+// Note: Package install operations (npm install, pip install, etc.) are no
+// longer in deny — they are in the ask list, gated by the PreToolUse
+// package-guard hook. This means upgrade-dep no longer conflicts with deny rules.
 func ExpectedConflicts() map[string]string {
-	return map[string]string{
-		"upgrade-dep:Bash(npm install *)":    "Works with PreToolUse guardrail hook which validates packages",
-		"upgrade-dep:Bash(npm uninstall *)":  "Package removal through guardrail hook",
-		"upgrade-dep:Bash(yarn add *)":       "Works with PreToolUse guardrail hook",
-		"upgrade-dep:Bash(yarn remove *)":    "Package removal through guardrail hook",
-		"upgrade-dep:Bash(pnpm add *)":       "Works with PreToolUse guardrail hook",
-		"upgrade-dep:Bash(pnpm remove *)":    "Package removal through guardrail hook",
-		"upgrade-dep:Bash(bun add *)":        "Works with PreToolUse guardrail hook",
-		"upgrade-dep:Bash(bun remove *)":     "Package removal through guardrail hook",
-		"upgrade-dep:Bash(pip install *)":    "Works with PreToolUse guardrail hook",
-		"upgrade-dep:Bash(pip uninstall *)":  "Package removal through guardrail hook",
-		"upgrade-dep:Bash(uv pip install *)": "Works with PreToolUse guardrail hook",
-		"upgrade-dep:Bash(cargo install *)":  "Works with PreToolUse guardrail hook",
-		"upgrade-dep:Bash(go install *)":     "Works with PreToolUse guardrail hook",
-	}
+	return map[string]string{}
 }
 
 // FilterExpectedConflicts removes known expected conflicts from the list,

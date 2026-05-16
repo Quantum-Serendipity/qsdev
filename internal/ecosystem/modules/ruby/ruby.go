@@ -153,11 +153,9 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // DenyRules returns Claude Code deny-rule patterns for the Ruby ecosystem.
 // These prevent direct dependency modification outside of controlled workflows.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	return []string{
-		"Bash(gem install *)",
-		"Bash(bundle add *)",
-		"Bash(bundle update *)",
-	}
+	// Package install commands (gem/bundle) are handled by base ask rules +
+	// package-guard hook. Return empty — no Ruby-specific hard-deny patterns.
+	return nil
 }
 
 // CICommands returns CI pipeline commands for the Ruby ecosystem.

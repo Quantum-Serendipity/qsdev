@@ -57,6 +57,7 @@ ALLOWLIST: set[str] = {p.strip() for p in _env_allowlist.split(",") if p.strip()
     # "typescript", "eslint", "prettier", "react", "react-dom",
     # "pytest", "black", "ruff", "mypy",
     # "serde", "tokio", "clap",
+    *(),  # empty spread — keeps this a set literal, not a dict
 }
 
 # Packages that are always denied, regardless of vulnerability status.
@@ -66,6 +67,7 @@ _env_denylist = os.environ.get("PACKAGE_GUARD_DENYLIST", "")
 DENYLIST: set[str] = {p.strip() for p in _env_denylist.split(",") if p.strip()} | {
     # "event-stream",  # famous supply chain attack
     # "colors",        # protestware incident
+    *(),  # empty spread — keeps this a set literal, not a dict
 }
 
 # Timeout per individual API call in seconds.

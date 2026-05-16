@@ -322,6 +322,17 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		}
 	}
 
+	// s2. Add ecosystem-specific .gitignore entries (build artifacts, secrets).
+	var langNames []string
+	for _, lc := range answers.Languages {
+		langNames = append(langNames, lc.Name)
+	}
+	for _, entry := range gitignoreEntriesForLanguages(langNames) {
+		if err := EnsureGitignoreEntry(projectRoot, entry); err != nil {
+			slog.Warn("could not update .gitignore", "entry", entry, "error", err)
+		}
+	}
+
 	// t. Print summary + post-generation message.
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
 	_, _ = fmt.Fprint(cmd.OutOrStdout(), postGenerationMessage(answers, devenvGenerated, claudeGenerated))

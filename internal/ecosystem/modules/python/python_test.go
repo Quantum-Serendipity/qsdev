@@ -497,43 +497,9 @@ func TestDenyRules(t *testing.T) {
 	m := &python.Module{}
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 
-	if len(rules) != 12 {
-		t.Fatalf("DenyRules() returned %d rules, want 12", len(rules))
-	}
-
-	expected := []string{
-		"Bash(pip install *)",
-		"Bash(pip uninstall *)",
-		"Bash(pip3 install *)",
-		"Bash(pip3 uninstall *)",
-		"Bash(python -m pip install *)",
-		"Bash(python -m pip uninstall *)",
-		"Bash(python3 -m pip install *)",
-		"Bash(python3 -m pip uninstall *)",
-		"Bash(uv pip install *)",
-		"Bash(uv add *)",
-		"Bash(poetry add *)",
-		"Bash(poetry remove *)",
-	}
-
-	for i, rule := range rules {
-		if rule != expected[i] {
-			t.Errorf("rules[%d] = %q, want %q", i, rule, expected[i])
-		}
-	}
-}
-
-func TestDenyRules_DoesNotDenyLockfileInstalls(t *testing.T) {
-	m := &python.Module{}
-	rules := m.DenyRules(ecosystem.ModuleConfig{})
-
-	for _, rule := range rules {
-		if strings.Contains(rule, "uv sync") {
-			t.Errorf("deny rules should not block 'uv sync', found: %q", rule)
-		}
-		if strings.Contains(rule, "poetry install") {
-			t.Errorf("deny rules should not block 'poetry install', found: %q", rule)
-		}
+	// Package install commands moved to base ask rules + package-guard hook.
+	if len(rules) != 0 {
+		t.Fatalf("DenyRules() returned %d rules, want 0 (installs handled by ask rules)", len(rules))
 	}
 }
 

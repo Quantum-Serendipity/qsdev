@@ -81,10 +81,7 @@ func versionSentinelTool() Tool {
 		DisplayName: "Version Sentinel",
 		Category:    CategoryAIAgent,
 		Description: "Guards dependency version changes in manifest files, requiring agents to justify bumps",
-		Default:     OnWhenDetected,
-		DetectFunc: func(d types.DetectedProject) bool {
-			return d.HasPackageJSON || d.HasPyProject || d.HasCargoToml || d.HasCsproj
-		},
+		Default:     AlwaysOn,
 		OwnedFiles: []FileOwnership{
 			{Path: ".claude/skills/version-sentinel/SKILL.md", Ownership: Exclusive},
 			{Path: ".version-sentinel/ignore", Ownership: Exclusive},
@@ -108,10 +105,7 @@ func sembleTool() Tool {
 		DisplayName: "Semble Semantic Code Search",
 		Category:    CategoryAIAgent,
 		Description: "Semantic code search via MCP server or sub-agent for codebase navigation",
-		Default:     OnWhenDetected,
-		DetectFunc: func(d types.DetectedProject) bool {
-			return d.HasPyProject
-		},
+		Default:     AlwaysOn,
 		Prerequisites: nil,
 		OwnedFiles: []FileOwnership{
 			{Path: ".mcp.json", Ownership: Shared, SectionID: "semble"},
@@ -218,10 +212,7 @@ func socketDevMCPTool() Tool {
 		DisplayName: "Socket.dev MCP",
 		Category:    CategoryAIAgent,
 		Description: "Socket.dev MCP server for supply chain security analysis of dependencies",
-		Default:     OnWhenDetected,
-		DetectFunc: func(d types.DetectedProject) bool {
-			return d.HasPackageJSON || d.HasPyProject || d.HasCargoToml || d.HasGoMod
-		},
+		Default:     AlwaysOn,
 		OwnedFiles: []FileOwnership{
 			{Path: ".mcp.json", Ownership: Shared, SectionID: "socket-dev-mcp"},
 			{Path: "CLAUDE.md", Ownership: Shared, SectionID: "socket-dev-mcp"},
@@ -238,6 +229,8 @@ func socketDevMCPTool() Tool {
 }
 
 func postgresMCPTool() Tool {
+	// TODO: promote to OnWhenDetected once DetectedProject gains a HasPostgres
+	// field (or equivalent service-presence detection).
 	return Tool{
 		Name:        "postgres-mcp",
 		DisplayName: "PostgreSQL MCP",

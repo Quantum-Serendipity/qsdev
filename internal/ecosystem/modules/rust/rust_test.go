@@ -435,18 +435,8 @@ func TestDenyRules(t *testing.T) {
 	m := newModule()
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 
-	if len(rules) != 2 {
-		t.Fatalf("DenyRules() returned %d rules, want 2", len(rules))
-	}
-
-	expected := map[string]bool{
-		"Bash(cargo add *)":     true,
-		"Bash(cargo install *)": true,
-	}
-	for _, r := range rules {
-		if !expected[r] {
-			t.Errorf("unexpected deny rule: %q", r)
-		}
+	if len(rules) != 0 {
+		t.Fatalf("DenyRules() returned %d rules, want 0 (installs handled by ask rules)", len(rules))
 	}
 }
 

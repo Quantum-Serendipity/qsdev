@@ -45,7 +45,7 @@ var PythonData = Profile{
 	ClaudeCode:      true,
 	PermissionLevel: "minimal",
 	Skills:          []string{"security-review"},
-	Hooks:           []string{"safety-block"},
+	Hooks:           []string{"safety-block", "pre-commit"},
 }
 
 // RustCLI is a project-type profile for Rust command-line tools.

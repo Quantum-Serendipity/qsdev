@@ -44,8 +44,9 @@ func TestValidateDenyRuleConflicts_DetectsConflict(t *testing.T) {
 	}
 }
 
-func TestValidateDenyRuleConflicts_UpgradeDepExpected(t *testing.T) {
-	// The upgrade-dep skill intentionally conflicts with package install deny rules.
+func TestValidateDenyRuleConflicts_UpgradeDepNoConflicts(t *testing.T) {
+	// Package install commands are now in ask (not deny), so upgrade-dep
+	// should have zero conflicts with the deny list.
 	denyRules := AllBaseDenyRules()
 	skills := []SkillDefinition{
 		{Name: "upgrade-dep", AllowedTools: []string{
@@ -55,44 +56,38 @@ func TestValidateDenyRuleConflicts_UpgradeDepExpected(t *testing.T) {
 	}
 
 	conflicts := ValidateDenyRuleConflicts(denyRules, skills)
-	if len(conflicts) == 0 {
-		t.Fatal("expected conflicts for upgrade-dep skill")
-	}
-
-	// All conflicts should be for the upgrade-dep skill.
-	for _, c := range conflicts {
-		if c.Skill != "upgrade-dep" {
-			t.Errorf("unexpected conflict for skill %q", c.Skill)
+	if len(conflicts) != 0 {
+		for _, c := range conflicts {
+			t.Errorf("unexpected conflict: %s", c.Message)
 		}
+		t.Fatalf("expected no conflicts for upgrade-dep skill (package installs are in ask), got %d", len(conflicts))
 	}
 }
 
-func TestFilterExpectedConflicts_RemovesKnown(t *testing.T) {
+func TestFilterExpectedConflicts_NoExpectedConflicts(t *testing.T) {
+	// With package installs moved to ask, there are no expected conflicts.
+	// Any conflict passed to FilterExpectedConflicts should come back as unexpected.
 	conflicts := []DenyRuleConflict{
-		{Skill: "upgrade-dep", DenyRule: "Bash(npm install *)", Operation: "Bash(npm install *)"},
-		{Skill: "upgrade-dep", DenyRule: "Bash(pip install *)", Operation: "Bash(pip install *)"},
-		{Skill: "upgrade-dep", DenyRule: "Bash(cargo install *)", Operation: "Bash(cargo install *)"},
-	}
-
-	unexpected := FilterExpectedConflicts(conflicts)
-	if len(unexpected) != 0 {
-		t.Errorf("expected all conflicts to be filtered as expected, got %d unexpected: %+v",
-			len(unexpected), unexpected)
-	}
-}
-
-func TestFilterExpectedConflicts_KeepsUnexpected(t *testing.T) {
-	conflicts := []DenyRuleConflict{
-		{Skill: "upgrade-dep", DenyRule: "Bash(npm install *)", Operation: "Bash(npm install *)"},
-		{Skill: "add-tests", DenyRule: "Bash(npm *)", Operation: "Bash(npm test *)"},
+		{Skill: "some-skill", DenyRule: "Bash(something *)", Operation: "Bash(something *)"},
 	}
 
 	unexpected := FilterExpectedConflicts(conflicts)
 	if len(unexpected) != 1 {
-		t.Fatalf("expected 1 unexpected conflict, got %d: %+v", len(unexpected), unexpected)
+		t.Errorf("expected 1 unexpected conflict (no expected conflicts exist), got %d",
+			len(unexpected))
 	}
-	if unexpected[0].Skill != "add-tests" {
-		t.Errorf("unexpected conflict skill = %q, want %q", unexpected[0].Skill, "add-tests")
+}
+
+func TestFilterExpectedConflicts_PassesThroughAllConflicts(t *testing.T) {
+	// Since ExpectedConflicts() is empty, all conflicts are unexpected.
+	conflicts := []DenyRuleConflict{
+		{Skill: "add-tests", DenyRule: "Bash(npm *)", Operation: "Bash(npm test *)"},
+		{Skill: "some-skill", DenyRule: "Bash(other *)", Operation: "Bash(other thing *)"},
+	}
+
+	unexpected := FilterExpectedConflicts(conflicts)
+	if len(unexpected) != 2 {
+		t.Fatalf("expected 2 unexpected conflicts (none are expected), got %d: %+v", len(unexpected), unexpected)
 	}
 }
 
@@ -129,23 +124,11 @@ func TestBuiltinSkillDefinitions_QsdevOpsUseGdevBash(t *testing.T) {
 	}
 }
 
-func TestExpectedConflicts_NonEmpty(t *testing.T) {
+func TestExpectedConflicts_Empty(t *testing.T) {
+	// Package installs are now in ask, not deny. No expected conflicts remain.
 	ec := ExpectedConflicts()
-	if len(ec) == 0 {
-		t.Fatal("ExpectedConflicts should not be empty")
-	}
-}
-
-func TestExpectedConflicts_AllKeysReferenceUpgradeDep(t *testing.T) {
-	ec := ExpectedConflicts()
-	for key := range ec {
-		if len(key) < len("upgrade-dep:") {
-			t.Errorf("expected conflict key %q is too short", key)
-			continue
-		}
-		if key[:len("upgrade-dep:")] != "upgrade-dep:" {
-			t.Errorf("expected conflict key %q does not start with 'upgrade-dep:'", key)
-		}
+	if len(ec) != 0 {
+		t.Fatalf("ExpectedConflicts should be empty (package installs moved to ask), got %d entries", len(ec))
 	}
 }
 

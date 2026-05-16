@@ -67,12 +67,25 @@ func TestGenerateSettings_MinimalPreset(t *testing.T) {
 		t.Error("minimal allow should contain Bash(cargo test *)")
 	}
 
-	// Deny should have base rules.
+	// Deny should have base rules (dangerous patterns).
 	if len(s.Permissions.Deny) == 0 {
 		t.Error("minimal deny should not be empty")
 	}
-	if !containsRule(s.Permissions.Deny, "Bash(npm install *)") {
-		t.Error("minimal deny should contain Bash(npm install *)")
+	if !containsRule(s.Permissions.Deny, "Bash(npx *)") {
+		t.Error("minimal deny should contain Bash(npx *)")
+	}
+
+	// Package install commands should be in ask, not deny.
+	if containsRule(s.Permissions.Deny, "Bash(npm install *)") {
+		t.Error("minimal deny should NOT contain Bash(npm install *) — it belongs in ask")
+	}
+	if !containsRule(s.Permissions.Ask, "Bash(npm install *)") {
+		t.Error("minimal ask should contain Bash(npm install *)")
+	}
+
+	// Frozen lockfile installs should be in allow.
+	if !containsRule(s.Permissions.Allow, "Bash(npm ci)") {
+		t.Error("minimal allow should contain Bash(npm ci)")
 	}
 
 	// DefaultMode should be "plan" for minimal (most restrictive).
@@ -119,15 +132,26 @@ func TestGenerateSettings_StandardPreset(t *testing.T) {
 		t.Error("standard allow should contain Bash(cargo audit *)")
 	}
 
-	// Deny should have all base deny rules.
-	if !containsRule(s.Permissions.Deny, "Bash(npm install *)") {
-		t.Error("standard deny should contain Bash(npm install *)")
-	}
-	if !containsRule(s.Permissions.Deny, "Bash(pip install *)") {
-		t.Error("standard deny should contain Bash(pip install *)")
-	}
+	// Deny should have dangerous pattern rules (not package installs).
 	if !containsRule(s.Permissions.Deny, "Bash(curl * | bash)") {
 		t.Error("standard deny should contain Bash(curl * | bash)")
+	}
+	if !containsRule(s.Permissions.Deny, "Bash(npx *)") {
+		t.Error("standard deny should contain Bash(npx *)")
+	}
+
+	// Package install commands should be in ask, not deny.
+	if containsRule(s.Permissions.Deny, "Bash(npm install *)") {
+		t.Error("standard deny should NOT contain Bash(npm install *) — it belongs in ask")
+	}
+	if containsRule(s.Permissions.Deny, "Bash(pip install *)") {
+		t.Error("standard deny should NOT contain Bash(pip install *) — it belongs in ask")
+	}
+	if !containsRule(s.Permissions.Ask, "Bash(npm install *)") {
+		t.Error("standard ask should contain Bash(npm install *)")
+	}
+	if !containsRule(s.Permissions.Ask, "Bash(pip install *)") {
+		t.Error("standard ask should contain Bash(pip install *)")
 	}
 
 	// DefaultMode and disableBypass should be set.
@@ -142,8 +166,31 @@ func TestGenerateSettings_StandardPreset(t *testing.T) {
 	if !containsRule(s.Permissions.Ask, "Bash(nix flake update)") {
 		t.Error("standard ask should contain Bash(nix flake update)")
 	}
-	if !containsRule(s.Permissions.Ask, "Bash(pip install -r requirements.txt)") {
-		t.Error("standard ask should contain Bash(pip install -r requirements.txt)")
+	if !containsRule(s.Permissions.Ask, "Bash(go get *)") {
+		t.Error("standard ask should contain Bash(go get *)")
+	}
+	if !containsRule(s.Permissions.Ask, "Bash(cargo add *)") {
+		t.Error("standard ask should contain Bash(cargo add *)")
+	}
+	if !containsRule(s.Permissions.Ask, "Bash(gem install *)") {
+		t.Error("standard ask should contain Bash(gem install *)")
+	}
+	if !containsRule(s.Permissions.Ask, "Bash(composer require *)") {
+		t.Error("standard ask should contain Bash(composer require *)")
+	}
+
+	// Frozen lockfile installs should be in allow.
+	if !containsRule(s.Permissions.Allow, "Bash(npm ci)") {
+		t.Error("standard allow should contain Bash(npm ci)")
+	}
+	if !containsRule(s.Permissions.Allow, "Bash(pnpm install --frozen-lockfile)") {
+		t.Error("standard allow should contain Bash(pnpm install --frozen-lockfile)")
+	}
+	if !containsRule(s.Permissions.Allow, "Bash(yarn install --immutable)") {
+		t.Error("standard allow should contain Bash(yarn install --immutable)")
+	}
+	if !containsRule(s.Permissions.Allow, "Bash(bun install --frozen-lockfile)") {
+		t.Error("standard allow should contain Bash(bun install --frozen-lockfile)")
 	}
 }
 
@@ -171,12 +218,20 @@ func TestGenerateSettings_PermissivePreset(t *testing.T) {
 		t.Error("permissive allow should contain Bash(git *)")
 	}
 
-	// Deny should still be full.
-	if !containsRule(s.Permissions.Deny, "Bash(npm install *)") {
-		t.Error("permissive deny should contain Bash(npm install *)")
-	}
+	// Deny should contain dangerous patterns but not package installs.
 	if !containsRule(s.Permissions.Deny, `Bash(rm -rf *)`) {
 		t.Error("permissive deny should contain Bash(rm -rf *)")
+	}
+	if !containsRule(s.Permissions.Deny, `Bash(npx *)`) {
+		t.Error("permissive deny should contain Bash(npx *)")
+	}
+	if containsRule(s.Permissions.Deny, "Bash(npm install *)") {
+		t.Error("permissive deny should NOT contain Bash(npm install *) — it belongs in ask")
+	}
+
+	// Package installs should be in ask.
+	if !containsRule(s.Permissions.Ask, "Bash(npm install *)") {
+		t.Error("permissive ask should contain Bash(npm install *)")
 	}
 
 	// DefaultMode and disableBypass should be set.
@@ -214,13 +269,21 @@ func TestGenerateSettings_CustomPreset(t *testing.T) {
 		t.Error("custom allow should NOT contain Bash(git *)")
 	}
 
-	// Deny should still have base rules.
-	if !containsRule(s.Permissions.Deny, "Bash(npm install *)") {
-		t.Error("custom deny should still contain base Bash(npm install *)")
+	// Deny should have dangerous patterns but not package installs.
+	if !containsRule(s.Permissions.Deny, "Bash(npx *)") {
+		t.Error("custom deny should contain Bash(npx *)")
+	}
+	if containsRule(s.Permissions.Deny, "Bash(npm install *)") {
+		t.Error("custom deny should NOT contain Bash(npm install *) — it belongs in ask")
 	}
 	// Extra deny should be present.
 	if !containsRule(s.Permissions.Deny, "Bash(forbidden *)") {
 		t.Error("custom deny should contain extra Bash(forbidden *)")
+	}
+
+	// Package installs should be in ask for custom too.
+	if !containsRule(s.Permissions.Ask, "Bash(npm install *)") {
+		t.Error("custom ask should contain Bash(npm install *)")
 	}
 
 	// DefaultMode should NOT be set for custom.
@@ -258,9 +321,14 @@ func TestGenerateSettings_EcosystemDenyRules(t *testing.T) {
 		t.Error("deny should contain ecosystem rule Bash(npx --yes *)")
 	}
 
-	// Base deny rules should also be present.
-	if !containsRule(s.Permissions.Deny, "Bash(pip install *)") {
-		t.Error("deny should still contain base rule Bash(pip install *)")
+	// Base deny rules should still be present (dangerous patterns).
+	if !containsRule(s.Permissions.Deny, "Bash(curl * | bash)") {
+		t.Error("deny should still contain base rule Bash(curl * | bash)")
+	}
+
+	// Package install rules should be in ask, not deny.
+	if !containsRule(s.Permissions.Ask, "Bash(pip install *)") {
+		t.Error("ask should contain Bash(pip install *)")
 	}
 }
 
@@ -273,7 +341,7 @@ func TestGenerateSettings_DenyRuleDeduplication(t *testing.T) {
 		TierVal:        1,
 		DenyRulesVal: []string{
 			"Bash(npm install --ignore-scripts *)",
-			"Bash(npm install *)", // overlaps with base
+			"Bash(npx --yes *)", // overlaps with another module
 		},
 	})
 	_ = reg.Register(&ecosystem.MockModule{
@@ -282,7 +350,7 @@ func TestGenerateSettings_DenyRuleDeduplication(t *testing.T) {
 		TierVal:        1,
 		DenyRulesVal: []string{
 			"Bash(npm install --ignore-scripts *)", // duplicate with javascript module
-			"Bash(npx --yes *)",
+			"Bash(npx --yes *)",                    // duplicate with javascript module
 		},
 	})
 
@@ -296,7 +364,7 @@ func TestGenerateSettings_DenyRuleDeduplication(t *testing.T) {
 	gf := mustGenerateSettings(t, answers, reg)
 	s := mustUnmarshalSettings(t, gf)
 
-	// Count occurrences of the overlapping rule.
+	// Count occurrences of the overlapping ecosystem deny rule.
 	count := 0
 	for _, r := range s.Permissions.Deny {
 		if r == "Bash(npm install --ignore-scripts *)" {
@@ -304,18 +372,18 @@ func TestGenerateSettings_DenyRuleDeduplication(t *testing.T) {
 		}
 	}
 	if count != 1 {
-		t.Errorf("Bash(npm install --ignore-scripts *) should appear exactly once, got %d", count)
+		t.Errorf("Bash(npm install --ignore-scripts *) should appear exactly once in deny, got %d", count)
 	}
 
-	// Also check that base rule Bash(npm install *) is not duplicated.
+	// Verify npx --yes is also deduped.
 	count = 0
 	for _, r := range s.Permissions.Deny {
-		if r == "Bash(npm install *)" {
+		if r == "Bash(npx --yes *)" {
 			count++
 		}
 	}
 	if count != 1 {
-		t.Errorf("Bash(npm install *) should appear exactly once, got %d", count)
+		t.Errorf("Bash(npx --yes *) should appear exactly once in deny, got %d", count)
 	}
 }
 
@@ -507,19 +575,15 @@ func TestGenerateSettings_CriticalDenyRulesPresent(t *testing.T) {
 	gf := mustGenerateSettings(t, answers, reg)
 	s := mustUnmarshalSettings(t, gf)
 
-	criticalRules := []string{
-		// Core package managers
-		`Bash(npm install *)`,
-		`Bash(npm i *)`,
-		`Bash(pip install *)`,
-		`Bash(pip3 install *)`,
-		`Bash(cargo install *)`,
-		`Bash(go get *)`,
-		`Bash(go install *)`,
-		`Bash(gem install *)`,
-		`Bash(composer require *)`,
+	criticalDenyRules := []string{
+		// npx (arbitrary code execution)
+		`Bash(npx *)`,
+
+		// Nix imperative installs
 		`Bash(nix-env -i *)`,
 		`Bash(nix profile install *)`,
+
+		// System package managers
 		`Bash(apt install *)`,
 		`Bash(brew install *)`,
 
@@ -563,9 +627,53 @@ func TestGenerateSettings_CriticalDenyRulesPresent(t *testing.T) {
 		`Read(./secrets/**)`,
 	}
 
-	for _, rule := range criticalRules {
+	for _, rule := range criticalDenyRules {
 		if !containsRule(s.Permissions.Deny, rule) {
 			t.Errorf("critical deny rule missing: %s", rule)
+		}
+	}
+
+	// Package install commands should NOT be in deny — they belong in ask.
+	packageRulesNotInDeny := []string{
+		`Bash(npm install *)`,
+		`Bash(npm i *)`,
+		`Bash(pip install *)`,
+		`Bash(pip3 install *)`,
+		`Bash(cargo install *)`,
+		`Bash(go get *)`,
+		`Bash(go install *)`,
+		`Bash(gem install *)`,
+		`Bash(composer require *)`,
+	}
+
+	for _, rule := range packageRulesNotInDeny {
+		if containsRule(s.Permissions.Deny, rule) {
+			t.Errorf("package install rule should NOT be in deny (belongs in ask): %s", rule)
+		}
+	}
+
+	// Critical ask rules — package installs gated by PreToolUse hook.
+	criticalAskRules := []string{
+		`Bash(npm install *)`,
+		`Bash(npm i *)`,
+		`Bash(pip install *)`,
+		`Bash(pip3 install *)`,
+		`Bash(cargo install *)`,
+		`Bash(cargo add *)`,
+		`Bash(go get *)`,
+		`Bash(go install *)`,
+		`Bash(gem install *)`,
+		`Bash(composer require *)`,
+		`Bash(uv pip install *)`,
+		`Bash(uv add *)`,
+		`Bash(yarn add *)`,
+		`Bash(pnpm add *)`,
+		`Bash(bun add *)`,
+	}
+
+	for _, rule := range criticalAskRules {
+		if !containsRule(s.Permissions.Ask, rule) {
+			t.Errorf("critical ask rule missing: %s", rule)
 		}
 	}
 }
@@ -601,9 +709,13 @@ func TestGenerateSettings_NilRegistryHandledGracefully(t *testing.T) {
 	}
 	s := mustUnmarshalSettings(t, gf)
 
-	// Should still have all base deny rules.
-	if !containsRule(s.Permissions.Deny, "Bash(npm install *)") {
+	// Should still have base deny rules (dangerous patterns).
+	if !containsRule(s.Permissions.Deny, "Bash(curl * | bash)") {
 		t.Error("nil registry should still include base deny rules")
+	}
+	// Package installs should be in ask.
+	if !containsRule(s.Permissions.Ask, "Bash(npm install *)") {
+		t.Error("nil registry should still include package install ask rules")
 	}
 }
 

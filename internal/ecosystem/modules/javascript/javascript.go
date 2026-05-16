@@ -180,21 +180,11 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // These cover ALL four package managers regardless of which one is detected,
 // plus pipe-to-shell patterns that are common JS supply chain attack vectors.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
+	// Package install commands (npm/pnpm/yarn/bun add/install) are handled by
+	// base ask rules + package-guard hook. Only hard-deny patterns here that
+	// must never execute regardless of hook validation.
 	return []string{
-		// npm
-		"Bash(npm install *)",
-		"Bash(npm i *)",
-		"Bash(npm add *)",
 		"Bash(npx *)",
-		// yarn
-		"Bash(yarn add *)",
-		// pnpm
-		"Bash(pnpm add *)",
-		"Bash(pnpm i *)",
-		// bun
-		"Bash(bun add *)",
-		"Bash(bun install *)",
-		// pipe-to-shell patterns
 		"Bash(curl * | sh*)",
 		"Bash(curl * | bash*)",
 		"Bash(wget * | sh*)",

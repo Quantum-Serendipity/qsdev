@@ -24,6 +24,7 @@ var defaultBasePackages = []string{
 	"jq",
 	"curl",
 	"coreutils",
+	"uv",
 }
 
 // defaultCleanKeep is the allowlist of environment variables that pass through

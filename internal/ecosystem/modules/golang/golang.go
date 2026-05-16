@@ -152,10 +152,9 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // DenyRules returns Claude Code deny-rule patterns for the Go ecosystem.
 // These prevent direct dependency modification outside of controlled workflows.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	return []string{
-		"Bash(go get *)",
-		"Bash(go install *)",
-	}
+	// Package install commands (go get/install) are handled by base ask rules +
+	// package-guard hook. Return empty — no Go-specific hard-deny patterns.
+	return nil
 }
 
 // CICommands returns CI pipeline commands for the Go ecosystem.

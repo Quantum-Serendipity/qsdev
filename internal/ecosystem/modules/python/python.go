@@ -231,20 +231,9 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // These prevent direct dependency installation outside of controlled workflows.
 // Note: uv sync and poetry install (lockfile-based installs) are intentionally allowed.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	return []string{
-		"Bash(pip install *)",
-		"Bash(pip uninstall *)",
-		"Bash(pip3 install *)",
-		"Bash(pip3 uninstall *)",
-		"Bash(python -m pip install *)",
-		"Bash(python -m pip uninstall *)",
-		"Bash(python3 -m pip install *)",
-		"Bash(python3 -m pip uninstall *)",
-		"Bash(uv pip install *)",
-		"Bash(uv add *)",
-		"Bash(poetry add *)",
-		"Bash(poetry remove *)",
-	}
+	// Package install commands (pip/uv/poetry) are handled by base ask rules +
+	// package-guard hook. Return empty — no Python-specific hard-deny patterns.
+	return nil
 }
 
 // CICommands returns CI pipeline commands for the Python ecosystem.

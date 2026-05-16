@@ -655,24 +655,17 @@ func TestDenyRules(t *testing.T) {
 	m := &javascript.Module{}
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 
-	// Should cover all 4 PMs + pipe-to-shell
-	if len(rules) < 13 {
-		t.Fatalf("DenyRules() returned %d rules, want at least 13", len(rules))
+	// Only npx + pipe-to-shell patterns remain (package installs moved to ask).
+	if len(rules) != 5 {
+		t.Fatalf("DenyRules() returned %d rules, want 5 (npx + 4 pipe-to-shell)", len(rules))
 	}
 
-	// Verify all PM commands are covered
 	expectedPatterns := []string{
-		"npm install",
-		"npm i ",
-		"npm add",
 		"npx",
-		"yarn add",
-		"pnpm add",
-		"pnpm i ",
-		"bun add",
-		"bun install",
-		"curl",
-		"wget",
+		"curl * | sh",
+		"curl * | bash",
+		"wget * | sh",
+		"wget * | bash",
 	}
 	for _, pattern := range expectedPatterns {
 		found := false
@@ -684,26 +677,6 @@ func TestDenyRules(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("DenyRules() missing pattern containing %q\nrules: %v", pattern, rules)
-		}
-	}
-
-	// Verify pipe-to-shell patterns
-	pipePatterns := []string{
-		"curl * | sh",
-		"curl * | bash",
-		"wget * | sh",
-		"wget * | bash",
-	}
-	for _, pattern := range pipePatterns {
-		found := false
-		for _, rule := range rules {
-			if strings.Contains(rule, pattern) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("DenyRules() missing pipe-to-shell pattern %q", pattern)
 		}
 	}
 }

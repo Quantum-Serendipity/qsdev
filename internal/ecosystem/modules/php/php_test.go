@@ -165,19 +165,8 @@ func TestDenyRules(t *testing.T) {
 	m := &php.Module{}
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 
-	if len(rules) != 3 {
-		t.Fatalf("DenyRules() returned %d rules, want 3", len(rules))
-	}
-
-	expected := []string{
-		"Bash(composer require *)",
-		"Bash(composer remove *)",
-		"Bash(composer update *)",
-	}
-	for i, rule := range rules {
-		if rule != expected[i] {
-			t.Errorf("rules[%d] = %q, want %q", i, rule, expected[i])
-		}
+	if len(rules) != 0 {
+		t.Fatalf("DenyRules() returned %d rules, want 0 (installs handled by ask rules)", len(rules))
 	}
 }
 

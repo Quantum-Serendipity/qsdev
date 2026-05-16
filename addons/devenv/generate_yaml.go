@@ -33,7 +33,13 @@ type DevenvYaml struct {
 
 // DevenvYamlInput represents a single flake input entry in devenv.yaml.
 type DevenvYamlInput struct {
-	URL     string `yaml:"url"`
+	URL    string                        `yaml:"url"`
+	Inputs map[string]DevenvYamlSubInput `yaml:"inputs,omitempty"`
+}
+
+// DevenvYamlSubInput represents a sub-input override within a flake input.
+// Used for follows declarations (e.g. inputs.nixpkgs.follows = "nixpkgs").
+type DevenvYamlSubInput struct {
 	Follows string `yaml:"follows,omitempty"`
 }
 
@@ -68,7 +74,9 @@ func collectEcosystemInputs(answers types.WizardAnswers, registry *ecosystem.Reg
 				URL: inp.URL,
 			}
 			if inp.Follows != "" {
-				entry.Follows = inp.Follows
+				entry.Inputs = map[string]DevenvYamlSubInput{
+					"nixpkgs": {Follows: inp.Follows},
+				}
 			}
 			merged[key] = entry
 		}
@@ -101,8 +109,10 @@ func GenerateDevenvYaml(answers types.WizardAnswers, registry *ecosystem.Registr
 	// Add git-hooks input when needed.
 	if needsGitHooks(answers, registry) {
 		dy.Inputs["git-hooks"] = DevenvYamlInput{
-			URL:     gitHooksURL,
-			Follows: "nixpkgs",
+			URL: gitHooksURL,
+			Inputs: map[string]DevenvYamlSubInput{
+				"nixpkgs": {Follows: "nixpkgs"},
+			},
 		}
 	}
 
@@ -228,8 +238,28 @@ func addStringSeqPair(mapping *yaml.Node, key string, values []string) {
 func addInputNode(mapping *yaml.Node, key string, inp DevenvYamlInput) {
 	inputMapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	addScalarPair(inputMapping, "url", inp.URL)
-	if inp.Follows != "" {
-		addScalarPair(inputMapping, "follows", inp.Follows)
+	if len(inp.Inputs) > 0 {
+		subInputsMapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		keys := make([]string, 0, len(inp.Inputs))
+		for k := range inp.Inputs {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			sub := inp.Inputs[k]
+			subMapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			if sub.Follows != "" {
+				addScalarPair(subMapping, "follows", sub.Follows)
+			}
+			subInputsMapping.Content = append(subInputsMapping.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: k},
+				subMapping,
+			)
+		}
+		inputMapping.Content = append(inputMapping.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "inputs"},
+			subInputsMapping,
+		)
 	}
 	mapping.Content = append(mapping.Content,
 		&yaml.Node{Kind: yaml.ScalarNode, Value: key},

@@ -173,13 +173,22 @@ func TestWithGitHooksInputPresent(t *testing.T) {
 		t.Errorf("git-hooks url wrong: %v", gitHooks["url"])
 	}
 
-	// Verify follows.
-	follows, ok := gitHooks["follows"].(string)
-	if !ok {
-		t.Fatal("git-hooks should have follows as a string")
+	// git-hooks must NOT have top-level follows (that aliases the entire input).
+	if _, hasFollows := gitHooks["follows"]; hasFollows {
+		t.Error("git-hooks must not have top-level follows (aliases entire input to nixpkgs)")
 	}
-	if follows != "nixpkgs" {
-		t.Errorf("git-hooks follows should be 'nixpkgs', got %v", follows)
+
+	// git-hooks should have nested inputs.nixpkgs.follows = "nixpkgs".
+	subInputs, ok := gitHooks["inputs"].(map[string]interface{})
+	if !ok {
+		t.Fatal("git-hooks should have nested inputs for sub-input follows")
+	}
+	nixpkgsSub, ok := subInputs["nixpkgs"].(map[string]interface{})
+	if !ok {
+		t.Fatal("git-hooks.inputs should have nixpkgs sub-input")
+	}
+	if nixpkgsSub["follows"] != "nixpkgs" {
+		t.Errorf("git-hooks.inputs.nixpkgs.follows should be 'nixpkgs', got %v", nixpkgsSub["follows"])
 	}
 }
 
@@ -258,12 +267,21 @@ func TestEcosystemModuleInputsMerged(t *testing.T) {
 	if pythonInput["url"] != "github:cachix/nixpkgs-python" {
 		t.Errorf("nixpkgs-python url wrong: %v", pythonInput["url"])
 	}
-	follows, ok := pythonInput["follows"].(string)
-	if !ok {
-		t.Fatal("nixpkgs-python should have follows as a string")
+	// Must NOT have top-level follows (that aliases the entire input).
+	if _, hasFollows := pythonInput["follows"]; hasFollows {
+		t.Error("nixpkgs-python must not have top-level follows")
 	}
-	if follows != "nixpkgs" {
-		t.Errorf("nixpkgs-python follows should be 'nixpkgs', got %v", follows)
+	// Should have nested inputs.nixpkgs.follows = "nixpkgs".
+	subInputs, ok := pythonInput["inputs"].(map[string]interface{})
+	if !ok {
+		t.Fatal("nixpkgs-python should have nested inputs for sub-input follows")
+	}
+	nixpkgsSub, ok := subInputs["nixpkgs"].(map[string]interface{})
+	if !ok {
+		t.Fatal("nixpkgs-python.inputs should have nixpkgs sub-input")
+	}
+	if nixpkgsSub["follows"] != "nixpkgs" {
+		t.Errorf("nixpkgs-python.inputs.nixpkgs.follows should be 'nixpkgs', got %v", nixpkgsSub["follows"])
 	}
 }
 

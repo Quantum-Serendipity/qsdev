@@ -3,7 +3,6 @@ package answers_test
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"testing"
 
@@ -112,9 +111,6 @@ func TestSaveToDir_CreatesDirectory(t *testing.T) {
 }
 
 func TestSaveToDir_AtomicWrite(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("atomic write concurrency test not reliable on Windows")
-	}
 	tmpDir := t.TempDir()
 	dir := ".atomictest"
 	filename := "answers.yaml"

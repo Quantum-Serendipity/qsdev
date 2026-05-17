@@ -45,7 +45,7 @@ func WriteFileAtomic(path string, content []byte, mode os.FileMode) error {
 		return fmt.Errorf("chmod temp file %s: %w", tmp.Name(), err)
 	}
 
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	if err := renameWithRetry(tmp.Name(), path); err != nil {
 		return fmt.Errorf("rename %s to %s: %w", tmp.Name(), path, err)
 	}
 

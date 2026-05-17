@@ -17,6 +17,42 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 )
 
+// AutoSetupPrerequisites installs missing core prerequisites (nix, devenv, direnv)
+// non-interactively. It is called by the init/join flow when --yes is set to deliver
+// on the "one command and go" promise. Returns nil if all prerequisites are already
+// present or were successfully installed.
+func AutoSetupPrerequisites(ctx context.Context, w io.Writer) error {
+	osInfo := sysinfo.DetectOS()
+	checks := doctor.RunAllChecks(ctx, osInfo)
+
+	coreTools := map[string]bool{"nix": true, "devenv": true, "direnv": true}
+	var missing []string
+	for _, ts := range checks {
+		if coreTools[ts.Name] && (!ts.Installed || (ts.MinVersion != "" && !ts.VersionOK)) {
+			if ts.AutoInstallable {
+				missing = append(missing, ts.Name)
+			}
+		}
+	}
+
+	if len(missing) == 0 {
+		return nil
+	}
+
+	// NixOS: prerequisites come from the system config, not imperative install.
+	if osInfo.Distro == "nixos" {
+		return nil
+	}
+
+	_, _ = fmt.Fprintf(w, "Installing prerequisites: %s\n", strings.Join(missing, ", "))
+	if err := installToolsInOrder(ctx, w, missing, osInfo); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintln(w, "Prerequisites installed.")
+	return nil
+}
+
 // installLevel groups tools by dependency order.
 type installLevel struct {
 	level int

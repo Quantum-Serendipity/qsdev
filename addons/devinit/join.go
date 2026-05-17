@@ -64,14 +64,23 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		answers.Detected = detected
 	}
 
-	// 4. Check prerequisites (non-blocking — generate files first, install tools after).
+	// 4. Auto-install missing prerequisites if --yes, otherwise warn.
 	prereqs := CheckPrerequisites(cmd.Context())
 	hasMissingPrereqs := prereqs.HasMissing()
 	if hasMissingPrereqs {
-		fmt.Fprintln(cmd.ErrOrStderr(), "Note: some prerequisites are missing:")
-		prereqs.PrintReport(cmd.ErrOrStderr())
-		fmt.Fprintf(cmd.ErrOrStderr(), "Run '%s devenv setup' after join to install them.\n", branding.Get().AppName)
-		fmt.Fprintln(cmd.ErrOrStderr())
+		if opts.Yes {
+			if err := devenv.AutoSetupPrerequisites(cmd.Context(), cmd.ErrOrStderr()); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: prerequisite installation failed: %v\n", err)
+				fmt.Fprintf(cmd.ErrOrStderr(), "Run '%s devenv setup' manually.\n\n", branding.Get().AppName)
+			} else {
+				hasMissingPrereqs = false
+			}
+		} else {
+			fmt.Fprintln(cmd.ErrOrStderr(), "Note: some prerequisites are missing:")
+			prereqs.PrintReport(cmd.ErrOrStderr())
+			fmt.Fprintf(cmd.ErrOrStderr(), "Run '%s devenv setup' after join to install them.\n", branding.Get().AppName)
+			fmt.Fprintln(cmd.ErrOrStderr())
+		}
 	}
 
 	// 5. Validate answers.

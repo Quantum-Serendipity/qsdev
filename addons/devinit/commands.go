@@ -141,14 +141,21 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		fmt.Fprintln(cmd.ErrOrStderr())
 	}
 
-	// d2. Warn about missing critical dependencies (non-blocking).
+	// d2. Auto-install missing prerequisites if --yes, otherwise warn.
 	if !opts.ClaudeOnly {
 		prereqs := CheckPrerequisites(cmd.Context())
 		if prereqs.HasMissing() {
-			fmt.Fprintln(cmd.ErrOrStderr(), "Note: some prerequisites are missing:")
-			prereqs.PrintReport(cmd.ErrOrStderr())
-			fmt.Fprintf(cmd.ErrOrStderr(), "Run '%s devenv setup' after init to install them.\n", branding.Get().AppName)
-			fmt.Fprintln(cmd.ErrOrStderr())
+			if opts.Yes {
+				if err := devenv.AutoSetupPrerequisites(cmd.Context(), cmd.ErrOrStderr()); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: prerequisite installation failed: %v\n", err)
+					fmt.Fprintf(cmd.ErrOrStderr(), "Run '%s devenv setup' manually after init.\n\n", branding.Get().AppName)
+				}
+			} else {
+				fmt.Fprintln(cmd.ErrOrStderr(), "Note: some prerequisites are missing:")
+				prereqs.PrintReport(cmd.ErrOrStderr())
+				fmt.Fprintf(cmd.ErrOrStderr(), "Run '%s devenv setup' after init to install them.\n", branding.Get().AppName)
+				fmt.Fprintln(cmd.ErrOrStderr())
+			}
 		}
 	}
 

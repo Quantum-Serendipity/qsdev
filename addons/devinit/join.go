@@ -64,12 +64,14 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		answers.Detected = detected
 	}
 
-	// 4. Check prerequisites.
+	// 4. Check prerequisites (non-blocking — generate files first, install tools after).
 	prereqs := CheckPrerequisites(cmd.Context())
-	if prereqs.HasMissing() {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Prerequisite check:")
-		prereqs.PrintReport(cmd.OutOrStdout())
-		return fmt.Errorf("missing required prerequisites; install them and retry")
+	hasMissingPrereqs := prereqs.HasMissing()
+	if hasMissingPrereqs {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Note: some prerequisites are missing:")
+		prereqs.PrintReport(cmd.ErrOrStderr())
+		fmt.Fprintf(cmd.ErrOrStderr(), "Run '%s devenv setup' after join to install them.\n", branding.Get().AppName)
+		fmt.Fprintln(cmd.ErrOrStderr())
 	}
 
 	// 5. Validate answers.
@@ -170,6 +172,10 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Joined project successfully from %s configuration.\n", branding.Get().ConfigFile)
 	_, _ = fmt.Fprint(cmd.OutOrStdout(), postGenerationMessage(answers, devenvGenerated, claudeGenerated))
+
+	if hasMissingPrereqs {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nNext: run '%s devenv setup --yes' to install missing prerequisites (nix, devenv, direnv).\n", branding.Get().AppName)
+	}
 
 	return nil
 }

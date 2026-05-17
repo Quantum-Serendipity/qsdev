@@ -237,12 +237,29 @@ qsdev generates configuration files. It does not:
 
 qsdev is built on [gdev](https://github.com/fastcat/gdev), a fantastic developer experience framework I have used for years and deeply miss whenever I can't created by Matthew Gabeler-Lee. As always thank you for building such an awesome tool.
 
+## Build Your Own
+
+qsdev is a white-label framework. Want a branded internal tool that enforces your company's security policies, registries, and ecosystems? Build one in an afternoon.
+
+```go
+instance.SetBranding(branding.Config{
+    AppName: "acmedev", ConfigFile: ".acmedev.yaml",
+    EnvPrefix: "ACMEDEV_", GitHubOwner: "acme-corp", GitHubRepo: "acmedev",
+})
+cmd.Main()
+```
+
+That's it — you now have `acmedev init`, `acmedev status`, `acmedev check`, self-update, 27 ecosystems, and the full security stack under your own name. From there, add proprietary addons, wire in private registry proxies, define team-specific ecosystem modules, or enforce custom compliance profiles.
+
+**[Full guide: Build Your Own *dev Tool](docs/build-your-own.md)**
+
 ## Documentation
 
 - [Security Architecture](docs/security-architecture.md) — Threat model, 10 defense layers, permission model
 - [Configuration Reference](docs/configuration-reference.md) — Every generated file and its merge strategy
 - [Team Onboarding](docs/team-onboarding.md) — Profiles, policies, team rollout
 - [Migration Guide](docs/migration-guide.md) — Adding qsdev to existing projects
+- [Build Your Own](docs/build-your-own.md) — Create a custom branded tool on the qsdev framework
 
 ## License
 

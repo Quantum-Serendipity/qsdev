@@ -13,6 +13,7 @@ jobs:
   analysis:
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       security-events: write
     steps:
       - name: Harden Runner

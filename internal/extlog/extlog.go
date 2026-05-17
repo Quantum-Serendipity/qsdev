@@ -67,11 +67,12 @@ type LogFile struct {
 
 // CollectionSummary describes what was found for display in the wizard.
 type CollectionSummary struct {
-	Provider   string
-	FileCount  int
-	TotalBytes int64
-	EntryCount int
-	ErrorCount int
+	Provider         string
+	FileCount        int
+	TotalBytes       int64
+	EntryCount       int
+	ErrorCount       int
+	CollectionErrors []string
 }
 
 // LogProvider is the interface that external log source modules implement.

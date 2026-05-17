@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -398,10 +399,11 @@ func levelPrefix(level string) string {
 }
 
 func truncate(s string, max int) string {
-	if len(s) <= max {
+	if utf8.RuneCountInString(s) <= max {
 		return s
 	}
-	return s[:max-1] + "…"
+	runes := []rune(s)
+	return string(runes[:max-1]) + "…"
 }
 
 func formatDuration(ms int64) string {

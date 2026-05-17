@@ -177,7 +177,7 @@ func regenerateFreshFiles(answers types.WizardAnswers) (map[string]types.Generat
 
 	// Generate Claude Code files.
 	if answers.ClaudeCode {
-		gen := claudecode.NewClaudeCodeGenerator(registry, claudecode.Config{})
+		gen := claudecode.NewClaudeCodeGenerator(registry, claudecode.CurrentConfig())
 		files, err := gen.Generate(answers)
 		if err != nil {
 			slog.Warn("claudecode generator failed during repair", "error", err)

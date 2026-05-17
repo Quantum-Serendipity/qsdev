@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -41,6 +42,24 @@ func RecordFiles(files []types.GeneratedFile) types.GeneratedState {
 		state.Files[f.Path] = fs
 	}
 	return state
+}
+
+// OrphanedFiles returns paths that exist in oldState but are not present in
+// the newFiles set. These are files that were previously generated but are
+// no longer produced after a configuration change (e.g., removing a language).
+func OrphanedFiles(oldState types.GeneratedState, newFiles []types.GeneratedFile) []string {
+	newSet := make(map[string]bool, len(newFiles))
+	for _, f := range newFiles {
+		newSet[f.Path] = true
+	}
+	var orphans []string
+	for path := range oldState.Files {
+		if !newSet[path] {
+			orphans = append(orphans, path)
+		}
+	}
+	sort.Strings(orphans)
+	return orphans
 }
 
 // CheckModified compares each file in stored against its current on-disk

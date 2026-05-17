@@ -27,6 +27,11 @@ func Configure(opts ...Option) {
 	addon.RegisterIfNeeded()
 }
 
+// CurrentConfig returns the addon's current configuration.
+func CurrentConfig() Config {
+	return addon.Config
+}
+
 func initialize() error {
 	instance.AddCommands(claudeCmd())
 	return nil

@@ -215,17 +215,19 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 		a.Hooks.SafetyBlock = true
 	}
 
-	// Default agent tools when Claude is enabled.
-	if a.ClaudeCode {
+	// Default agent tools when Claude is enabled — only if user hasn't configured any.
+	if a.ClaudeCode && !a.AgentTools.PostmortemEnabled && !a.AgentTools.VersionSentinel && !a.AgentTools.SembleEnabled {
 		a.AgentTools.PostmortemEnabled = true
+		a.AgentTools.VersionSentinel = true
+		a.AgentTools.SembleEnabled = true
+	}
+	if a.ClaudeCode {
 		if a.AgentTools.VersionSentinelHours == 0 {
 			a.AgentTools.VersionSentinelHours = 24
 		}
 		if a.AgentTools.SembleMode == "" {
 			a.AgentTools.SembleMode = "both"
 		}
-		a.AgentTools.VersionSentinel = true
-		a.AgentTools.SembleEnabled = true
 	}
 
 	// Default MCP servers when Claude Code is enabled and none are configured.

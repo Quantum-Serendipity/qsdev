@@ -16,9 +16,14 @@ func answersPath(projectRoot string) string {
 	return answers.FilePath(projectRoot, ".claude", answersFile())
 }
 
-// saveAnswers persists the wizard answers to .claude/.qsdev-claude-answers.yaml.
+// saveAnswers persists the wizard answers to .claude/.qsdev-claude-answers.yaml
+// and syncs to the primary (devinit) answers file for cross-addon consistency.
 func saveAnswers(projectRoot string, a types.WizardAnswers) error {
-	return answers.SaveToDir(projectRoot, ".claude", answersFile(), a)
+	if err := answers.SaveToDir(projectRoot, ".claude", answersFile(), a); err != nil {
+		return err
+	}
+	_ = answers.SavePrimary(projectRoot, a)
+	return nil
 }
 
 // SaveAnswers is an exported wrapper around saveAnswers, allowing other

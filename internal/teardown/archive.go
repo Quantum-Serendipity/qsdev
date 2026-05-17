@@ -24,23 +24,36 @@ func CreateArchive(projectRoot string, files []string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("creating archive file: %w", err)
 	}
-	defer outFile.Close()
 
 	gw := gzip.NewWriter(outFile)
-	defer gw.Close()
-
 	tw := tar.NewWriter(gw)
-	defer tw.Close()
 
+	var writeErr error
 	for _, relPath := range files {
 		absPath := filepath.Join(projectRoot, relPath)
 		if err := addFileToTar(tw, absPath, relPath); err != nil {
-			// Skip files that don't exist.
 			if os.IsNotExist(err) {
 				continue
 			}
-			return "", fmt.Errorf("adding %s to archive: %w", relPath, err)
+			writeErr = fmt.Errorf("adding %s to archive: %w", relPath, err)
+			break
 		}
+	}
+
+	// Close in order: tar -> gzip -> file. Each flush may fail on full disk.
+	if err := tw.Close(); err != nil && writeErr == nil {
+		writeErr = fmt.Errorf("closing tar writer: %w", err)
+	}
+	if err := gw.Close(); err != nil && writeErr == nil {
+		writeErr = fmt.Errorf("closing gzip writer: %w", err)
+	}
+	if err := outFile.Close(); err != nil && writeErr == nil {
+		writeErr = fmt.Errorf("closing archive file: %w", err)
+	}
+
+	if writeErr != nil {
+		os.Remove(archivePath)
+		return "", writeErr
 	}
 
 	return archivePath, nil

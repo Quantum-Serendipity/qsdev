@@ -92,7 +92,7 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	devenvGenerated = len(files) > 0
 
 	if answers.ClaudeCode {
-		cgen := claudecode.NewClaudeCodeGenerator(registry, claudecode.Config{})
+		cgen := claudecode.NewClaudeCodeGenerator(registry, claudecode.CurrentConfig())
 		cfiles, err := cgen.Generate(answers)
 		if err != nil {
 			return fmt.Errorf("generating Claude Code files: %w", err)

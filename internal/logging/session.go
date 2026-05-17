@@ -91,7 +91,7 @@ func Init(cfg Config) (*Session, error) {
 
 	writeOpeningRecord(session)
 
-	go pruneExcessLogs(logDir, cfg.MaxFiles)
+	pruneExcessLogs(logDir, cfg.MaxFiles)
 
 	return session, nil
 }

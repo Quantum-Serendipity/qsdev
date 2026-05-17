@@ -1,6 +1,7 @@
 package extlog
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"time"
@@ -34,6 +35,10 @@ func CollectAll(projectRoot, homeDir string, window CollectionWindow) (map[strin
 	for _, provider := range available {
 		files, err := provider.Discover(projectRoot, homeDir, window.Start)
 		if err != nil {
+			summaries = append(summaries, CollectionSummary{
+				Provider:         provider.Name(),
+				CollectionErrors: []string{fmt.Sprintf("discover: %v", err)},
+			})
 			continue
 		}
 
@@ -48,12 +53,16 @@ func CollectAll(projectRoot, homeDir string, window CollectionWindow) (map[strin
 
 			f, err := os.Open(lf.Path)
 			if err != nil {
+				summary.CollectionErrors = append(summary.CollectionErrors,
+					fmt.Sprintf("open %s: %v", lf.Path, err))
 				continue
 			}
 
 			parsed, err := provider.Parse(f, lf.Path)
 			f.Close()
 			if err != nil {
+				summary.CollectionErrors = append(summary.CollectionErrors,
+					fmt.Sprintf("parse %s: %v", lf.Path, err))
 				continue
 			}
 

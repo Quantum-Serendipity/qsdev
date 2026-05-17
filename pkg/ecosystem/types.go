@@ -19,7 +19,7 @@ var confidenceNames = [...]string{
 }
 
 func (c Confidence) String() string {
-	if int(c) < len(confidenceNames) {
+	if int(c) >= 0 && int(c) < len(confidenceNames) {
 		return confidenceNames[c]
 	}
 	return "unknown"
@@ -98,7 +98,7 @@ var ciPhaseNames = [...]string{
 }
 
 func (p CIPhase) String() string {
-	if int(p) < len(ciPhaseNames) {
+	if int(p) >= 0 && int(p) < len(ciPhaseNames) {
 		return ciPhaseNames[p]
 	}
 	return "unknown"
@@ -159,7 +159,7 @@ var wizardFieldTypeNames = [...]string{
 }
 
 func (f WizardFieldType) String() string {
-	if int(f) < len(wizardFieldTypeNames) {
+	if int(f) >= 0 && int(f) < len(wizardFieldTypeNames) {
 		return wizardFieldTypeNames[f]
 	}
 	return "unknown"
@@ -254,7 +254,7 @@ var lockFilePolicyNames = [...]string{
 }
 
 func (p LockFilePolicy) String() string {
-	if int(p) < len(lockFilePolicyNames) {
+	if int(p) >= 0 && int(p) < len(lockFilePolicyNames) {
 		return lockFilePolicyNames[p]
 	}
 	return "unknown"

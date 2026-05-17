@@ -9,7 +9,7 @@ import (
 func init() {
 	r := DefaultRegistry()
 	for _, t := range builtinTools() {
-		_ = r.Register(t)
+		r.MustRegister(t)
 	}
 }
 

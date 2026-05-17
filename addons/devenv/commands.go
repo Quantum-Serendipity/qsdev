@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -123,7 +124,8 @@ func initCmd() *cobra.Command {
 			}
 
 			// Save state and answers.
-			genState := state.RecordFiles(files)
+			successfulFiles := result.SuccessfulFiles(files)
+			genState := state.RecordFiles(successfulFiles)
 			stateFile := filepath.Join(projectRoot, statePath())
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
@@ -185,10 +187,16 @@ func updateCmd() *cobra.Command {
 					return fmt.Errorf("loading state: %w", err)
 				}
 				modified := state.CheckModified(existingState, projectRoot)
+				var modifiedPaths []string
 				for path, status := range modified {
 					if status.Status == types.Modified {
-						return fmt.Errorf("file %s has been modified; use --force to overwrite", path)
+						modifiedPaths = append(modifiedPaths, path)
 					}
+				}
+				if len(modifiedPaths) > 0 {
+					sort.Strings(modifiedPaths)
+					return fmt.Errorf("modified files found (use --force to overwrite):\n  %s",
+						strings.Join(modifiedPaths, "\n  "))
 				}
 			}
 
@@ -216,7 +224,8 @@ func updateCmd() *cobra.Command {
 			}
 
 			// Save state and answers.
-			genState := state.RecordFiles(files)
+			successfulFiles := result.SuccessfulFiles(files)
+			genState := state.RecordFiles(successfulFiles)
 			stateFile := filepath.Join(projectRoot, statePath())
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
@@ -308,7 +317,8 @@ func addServiceCmd() *cobra.Command {
 			}
 
 			// Save state and answers.
-			genState := state.RecordFiles(files)
+			successfulFiles := result.SuccessfulFiles(files)
+			genState := state.RecordFiles(successfulFiles)
 			stateFile := filepath.Join(projectRoot, statePath())
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
@@ -400,7 +410,8 @@ func addLanguageCmd() *cobra.Command {
 			}
 
 			// Save state and answers.
-			genState := state.RecordFiles(files)
+			successfulFiles := result.SuccessfulFiles(files)
+			genState := state.RecordFiles(successfulFiles)
 			stateFile := filepath.Join(projectRoot, statePath())
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
@@ -481,7 +492,8 @@ func addPackageCmd() *cobra.Command {
 				return fmt.Errorf("writing files: %w", err)
 			}
 
-			genState := state.RecordFiles(files)
+			successfulFiles := result.SuccessfulFiles(files)
+			genState := state.RecordFiles(successfulFiles)
 			stateFile := filepath.Join(projectRoot, statePath())
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
@@ -553,6 +565,9 @@ func removePackageCmd() *cobra.Command {
 				return nil
 			}
 
+			stateFile := filepath.Join(projectRoot, statePath())
+			oldState, _ := state.LoadStateFromFile(stateFile)
+
 			result, err := generate.WriteFiles(files, generate.PipelineOptions{
 				ProjectRoot: projectRoot,
 			})
@@ -560,8 +575,10 @@ func removePackageCmd() *cobra.Command {
 				return fmt.Errorf("writing files: %w", err)
 			}
 
-			genState := state.RecordFiles(files)
-			stateFile := filepath.Join(projectRoot, statePath())
+			cleanupOrphanedFiles(cmd, oldState, files, projectRoot)
+
+			successfulFiles := result.SuccessfulFiles(files)
+			genState := state.RecordFiles(successfulFiles)
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
 			}
@@ -628,6 +645,9 @@ func removeServiceCmd() *cobra.Command {
 				return nil
 			}
 
+			stateFile := filepath.Join(projectRoot, statePath())
+			oldState, _ := state.LoadStateFromFile(stateFile)
+
 			result, err := generate.WriteFiles(files, generate.PipelineOptions{
 				ProjectRoot: projectRoot,
 			})
@@ -635,8 +655,10 @@ func removeServiceCmd() *cobra.Command {
 				return fmt.Errorf("writing files: %w", err)
 			}
 
-			genState := state.RecordFiles(files)
-			stateFile := filepath.Join(projectRoot, statePath())
+			cleanupOrphanedFiles(cmd, oldState, files, projectRoot)
+
+			successfulFiles := result.SuccessfulFiles(files)
+			genState := state.RecordFiles(successfulFiles)
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
 			}
@@ -702,6 +724,9 @@ func removeLanguageCmd() *cobra.Command {
 				return nil
 			}
 
+			stateFile := filepath.Join(projectRoot, statePath())
+			oldState, _ := state.LoadStateFromFile(stateFile)
+
 			result, err := generate.WriteFiles(files, generate.PipelineOptions{
 				ProjectRoot: projectRoot,
 			})
@@ -709,8 +734,10 @@ func removeLanguageCmd() *cobra.Command {
 				return fmt.Errorf("writing files: %w", err)
 			}
 
-			genState := state.RecordFiles(files)
-			stateFile := filepath.Join(projectRoot, statePath())
+			cleanupOrphanedFiles(cmd, oldState, files, projectRoot)
+
+			successfulFiles := result.SuccessfulFiles(files)
+			genState := state.RecordFiles(successfulFiles)
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
 			}
@@ -749,4 +776,27 @@ func buildAnswersFromFlags(projectRoot string, langs, services []string, direnv 
 	}
 
 	return answers
+}
+
+// cleanupOrphanedFiles removes files that were previously tracked in state but
+// are no longer produced after a configuration change. Modified orphans are
+// preserved with a warning.
+func cleanupOrphanedFiles(cmd *cobra.Command, oldState types.GeneratedState, newFiles []types.GeneratedFile, projectRoot string) {
+	orphans := state.OrphanedFiles(oldState, newFiles)
+	for _, orphanPath := range orphans {
+		absPath := filepath.Join(projectRoot, orphanPath)
+		fs, ok := oldState.Files[orphanPath]
+		if ok {
+			currentHash, err := state.ComputeFileHash(absPath)
+			if err == nil && currentHash != fs.Hash {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  Orphaned file %s has local modifications; not removing\n", orphanPath)
+				continue
+			}
+		}
+		if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  Warning: could not remove orphaned file %s: %v\n", orphanPath, err)
+		} else if err == nil {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Removed orphaned file: %s\n", orphanPath)
+		}
+	}
 }

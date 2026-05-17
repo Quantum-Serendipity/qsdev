@@ -58,3 +58,9 @@ func LoadFromDir(projectRoot, dir, filename, cmdName string) (types.WizardAnswer
 func FilePath(projectRoot, dir, filename string) string {
 	return filepath.Join(projectRoot, dir, filename)
 }
+
+// SavePrimary persists answers to the primary (devinit) answers file so that
+// per-addon modifications stay in sync with the unified init state.
+func SavePrimary(projectRoot string, a types.WizardAnswers) error {
+	return SaveToDir(projectRoot, ".devinit", ".qsdev-init-answers.yaml", a)
+}

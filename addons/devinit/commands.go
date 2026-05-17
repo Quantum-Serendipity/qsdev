@@ -249,7 +249,7 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 
 	// m. Generate Claude Code files (if not --devenv-only and Claude Code enabled).
 	if !opts.DevenvOnly && answers.ClaudeCode {
-		gen := claudecode.NewClaudeCodeGenerator(registry, claudecode.Config{})
+		gen := claudecode.NewClaudeCodeGenerator(registry, claudecode.CurrentConfig())
 		files, err := gen.Generate(answers)
 		if err != nil {
 			return fmt.Errorf("generating Claude Code files: %w", err)

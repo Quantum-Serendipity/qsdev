@@ -24,7 +24,7 @@ var fileActionNames = [...]string{
 }
 
 func (a FileAction) String() string {
-	if int(a) < len(fileActionNames) {
+	if int(a) >= 0 && int(a) < len(fileActionNames) {
 		return fileActionNames[a]
 	}
 	return "unknown"

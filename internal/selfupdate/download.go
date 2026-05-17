@@ -15,6 +15,12 @@ import (
 	"strings"
 )
 
+const (
+	maxDownloadSize  = 200 << 20 // 200 MB for archive downloads.
+	maxExtractSize   = 200 << 20 // 200 MB for extracted binary.
+	maxChecksumsSize = 1 << 20   // 1 MB for checksums.txt.
+)
+
 // DownloadAndVerify downloads the appropriate archive for the given OS/arch
 // from the release, verifies its SHA256 checksum against checksums.txt,
 // extracts the binary, and returns the path to the extracted binary.
@@ -48,13 +54,13 @@ func DownloadAndVerify(ctx context.Context, release *Release, cfg Config, target
 
 	// Download the archive.
 	archivePath := filepath.Join(tmpDir, archiveName)
-	if err := downloadFile(ctx, archiveURL, archivePath); err != nil {
+	if err := downloadFile(ctx, archiveURL, archivePath, maxDownloadSize); err != nil {
 		return "", fmt.Errorf("downloading archive: %w", err)
 	}
 
 	// Download checksums.
 	checksumsPath := filepath.Join(tmpDir, "checksums.txt")
-	if err := downloadFile(ctx, checksumsURL, checksumsPath); err != nil {
+	if err := downloadFile(ctx, checksumsURL, checksumsPath, maxChecksumsSize); err != nil {
 		return "", fmt.Errorf("downloading checksums: %w", err)
 	}
 
@@ -82,8 +88,9 @@ func DownloadAndVerify(ctx context.Context, release *Release, cfg Config, target
 	return extractedPath, nil
 }
 
-// downloadFile downloads a URL to a local file path.
-func downloadFile(ctx context.Context, url, dest string) error {
+// downloadFile downloads a URL to a local file path, rejecting payloads
+// exceeding maxSize bytes.
+func downloadFile(ctx context.Context, url, dest string, maxSize int64) (retErr error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return fmt.Errorf("creating request for %s: %w", url, err)
@@ -105,16 +112,28 @@ func downloadFile(ctx context.Context, url, dest string) error {
 		return fmt.Errorf("download %s returned HTTP %d", url, resp.StatusCode)
 	}
 
+	if resp.ContentLength > maxSize {
+		return fmt.Errorf("download %s: Content-Length %d exceeds maximum %d", url, resp.ContentLength, maxSize)
+	}
+
 	f, err := os.Create(dest)
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", dest, err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); retErr == nil {
+			retErr = cerr
+		}
+	}()
 
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	n, err := io.Copy(f, io.LimitReader(resp.Body, maxSize+1))
+	if err != nil {
 		return fmt.Errorf("writing %s: %w", dest, err)
 	}
-	return f.Close()
+	if n > maxSize {
+		return fmt.Errorf("download %s: payload exceeds maximum size (%d bytes)", url, maxSize)
+	}
+	return nil
 }
 
 // verifyChecksum checks the SHA256 of the archive against the checksums file.
@@ -194,14 +213,21 @@ func extractFromTarGz(archivePath, binaryName, destPath string) error {
 
 		// Match by base name — the binary might be at the root or in a directory.
 		if filepath.Base(header.Name) == binaryName && header.Typeflag == tar.TypeReg {
+			if header.Size > maxExtractSize {
+				return fmt.Errorf("entry %s size %d exceeds maximum %d", header.Name, header.Size, maxExtractSize)
+			}
 			out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 			if err != nil {
 				return fmt.Errorf("creating output file %s: %w", destPath, err)
 			}
 			defer out.Close()
 
-			if _, err := io.Copy(out, tr); err != nil {
+			n, err := io.Copy(out, io.LimitReader(tr, maxExtractSize+1))
+			if err != nil {
 				return fmt.Errorf("extracting %s: %w", binaryName, err)
+			}
+			if n > maxExtractSize {
+				return fmt.Errorf("extracted %s exceeds maximum size (%d bytes)", binaryName, maxExtractSize)
 			}
 			return out.Close()
 		}
@@ -220,6 +246,9 @@ func extractFromZip(archivePath, binaryName, destPath string) error {
 
 	for _, zf := range r.File {
 		if filepath.Base(zf.Name) == binaryName {
+			if zf.UncompressedSize64 > uint64(maxExtractSize) {
+				return fmt.Errorf("entry %s size %d exceeds maximum %d", zf.Name, zf.UncompressedSize64, maxExtractSize)
+			}
 			src, err := zf.Open()
 			if err != nil {
 				return fmt.Errorf("opening %s in zip: %w", zf.Name, err)
@@ -232,8 +261,12 @@ func extractFromZip(archivePath, binaryName, destPath string) error {
 			}
 			defer out.Close()
 
-			if _, err := io.Copy(out, src); err != nil {
+			n, err := io.Copy(out, io.LimitReader(src, maxExtractSize+1))
+			if err != nil {
 				return fmt.Errorf("extracting %s: %w", binaryName, err)
+			}
+			if n > maxExtractSize {
+				return fmt.Errorf("extracted %s exceeds maximum size (%d bytes)", binaryName, maxExtractSize)
 			}
 			return out.Close()
 		}

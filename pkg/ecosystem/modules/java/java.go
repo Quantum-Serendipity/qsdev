@@ -349,7 +349,7 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 
 // VerificationCommands returns project verification commands for the JVM ecosystem.
 func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.VerificationCommands {
-	bt := config.PackageManager
+	bt := config.Extras["build_tool"]
 	if bt == "" {
 		bt = "maven"
 	}
@@ -369,7 +369,7 @@ func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.V
 
 // ManifestFiles returns manifest file metadata for the JVM ecosystem.
 func (m *Module) ManifestFiles(config ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
-	bt := config.PackageManager
+	bt := config.Extras["build_tool"]
 	if bt == "" {
 		bt = "maven"
 	}

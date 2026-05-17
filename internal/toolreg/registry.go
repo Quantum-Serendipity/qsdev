@@ -32,6 +32,14 @@ func (r *Registry) Register(t Tool) error {
 	return nil
 }
 
+// MustRegister adds a tool to the registry and panics if registration fails.
+// Intended for use in init() where a registration failure is a programmer error.
+func (r *Registry) MustRegister(t Tool) {
+	if err := r.Register(t); err != nil {
+		panic(fmt.Sprintf("toolreg: %v", err))
+	}
+}
+
 // ByName returns the tool with the given name.
 func (r *Registry) ByName(name string) (*Tool, bool) {
 	r.mu.RLock()

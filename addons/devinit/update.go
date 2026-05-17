@@ -107,7 +107,7 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	}
 
 	if answers.ClaudeCode {
-		gen := claudecode.NewClaudeCodeGenerator(registry, claudecode.Config{})
+		gen := claudecode.NewClaudeCodeGenerator(registry, claudecode.CurrentConfig())
 		files, err := gen.Generate(answers)
 		if err != nil {
 			return fmt.Errorf("generating Claude Code files: %w", err)

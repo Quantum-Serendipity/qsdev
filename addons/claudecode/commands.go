@@ -116,7 +116,8 @@ func initCmd() *cobra.Command {
 			}
 
 			// Save state and answers.
-			genState := state.RecordFiles(files)
+			successfulFiles := result.SuccessfulFiles(files)
+			genState := state.RecordFiles(successfulFiles)
 			stateFile := filepath.Join(projectRoot, statePath())
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)

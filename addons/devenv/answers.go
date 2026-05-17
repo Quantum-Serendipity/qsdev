@@ -16,9 +16,14 @@ func answersPath(projectRoot string) string {
 	return answers.FilePath(projectRoot, ".devenv", answersFile())
 }
 
-// saveAnswers persists the wizard answers to .devenv/.qsdev-answers.yaml.
+// saveAnswers persists the wizard answers to .devenv/.qsdev-answers.yaml
+// and syncs to the primary (devinit) answers file for cross-addon consistency.
 func saveAnswers(projectRoot string, a types.WizardAnswers) error {
-	return answers.SaveToDir(projectRoot, ".devenv", answersFile(), a)
+	if err := answers.SaveToDir(projectRoot, ".devenv", answersFile(), a); err != nil {
+		return err
+	}
+	_ = answers.SavePrimary(projectRoot, a)
+	return nil
 }
 
 // SaveAnswers is an exported wrapper around saveAnswers, allowing other

@@ -44,8 +44,8 @@ func (p *Pacman) Install(ctx context.Context, packages ...string) error {
 	return p.runner.Run(ctx, "pacman", args...)
 }
 
-func (p *Pacman) IsInstalled(pkg string) bool {
-	err := p.runner.Run(context.Background(), "pacman", "-Qi", pkg)
+func (p *Pacman) IsInstalled(ctx context.Context, pkg string) bool {
+	err := p.runner.Run(ctx, "pacman", "-Qi", pkg)
 	return err == nil
 }
 

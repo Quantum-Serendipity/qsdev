@@ -33,8 +33,8 @@ func (a *Apt) Install(ctx context.Context, packages ...string) error {
 	return a.runner.Run(ctx, "apt-get", args...)
 }
 
-func (a *Apt) IsInstalled(pkg string) bool {
-	out, err := a.runner.Output(context.Background(), "dpkg", "-l", pkg)
+func (a *Apt) IsInstalled(ctx context.Context, pkg string) bool {
+	out, err := a.runner.Output(ctx, "dpkg", "-l", pkg)
 	if err != nil {
 		return false
 	}

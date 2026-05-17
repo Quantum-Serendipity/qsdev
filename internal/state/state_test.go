@@ -171,7 +171,7 @@ func TestCheckModified_PermissionChange(t *testing.T) {
 	content := []byte("same content, different mode")
 	relPath := "script.sh"
 	absPath := filepath.Join(dir, relPath)
-	// Write with mode 0755 but store with 0644
+	// Write with mode 0o755 but store with 0o644
 	if err := os.WriteFile(absPath, content, 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -186,20 +186,19 @@ func containsFunc(haystack []string, needle string) bool {
 }
 
 // dict builds a map[string]any from alternating key-value pairs.
-// Panics if an odd number of arguments is provided.
-func dict(keyvals ...any) map[string]any {
+func dict(keyvals ...any) (map[string]any, error) {
 	if len(keyvals)%2 != 0 {
-		panic(fmt.Sprintf("dict: odd number of arguments (%d)", len(keyvals)))
+		return nil, fmt.Errorf("dict: odd number of arguments (%d)", len(keyvals))
 	}
 	m := make(map[string]any, len(keyvals)/2)
 	for i := 0; i < len(keyvals); i += 2 {
 		key, ok := keyvals[i].(string)
 		if !ok {
-			panic(fmt.Sprintf("dict: key at position %d is not a string: %T", i, keyvals[i]))
+			return nil, fmt.Errorf("dict: key at position %d is not a string: %T", i, keyvals[i])
 		}
 		m[key] = keyvals[i+1]
 	}
-	return m
+	return m, nil
 }
 
 // default_ returns val if it is non-zero, otherwise returns defaultVal.

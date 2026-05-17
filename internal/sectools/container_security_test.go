@@ -16,8 +16,8 @@ func TestGenerateGrypeYaml_Structure(t *testing.T) {
 	if f.Path != ".grype.yaml" {
 		t.Errorf("Path = %q, want %q", f.Path, ".grype.yaml")
 	}
-	if f.Mode != 0644 {
-		t.Errorf("Mode = %#o, want %#o", f.Mode, 0644)
+	if f.Mode != 0o644 {
+		t.Errorf("Mode = %#o, want %#o", f.Mode, 0o644)
 	}
 	if f.Strategy != types.Overwrite {
 		t.Errorf("Strategy = %v, want Overwrite", f.Strategy)
@@ -53,8 +53,8 @@ func TestGenerateCosignPolicy_Structure(t *testing.T) {
 	if f.Path != ".cosign/policy.yaml" {
 		t.Errorf("Path = %q, want %q", f.Path, ".cosign/policy.yaml")
 	}
-	if f.Mode != 0644 {
-		t.Errorf("Mode = %#o, want %#o", f.Mode, 0644)
+	if f.Mode != 0o644 {
+		t.Errorf("Mode = %#o, want %#o", f.Mode, 0o644)
 	}
 	if f.Strategy != types.Overwrite {
 		t.Errorf("Strategy = %v, want Overwrite", f.Strategy)

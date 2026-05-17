@@ -32,8 +32,8 @@ func (a *Apk) Install(ctx context.Context, packages ...string) error {
 	return a.runner.Run(ctx, "apk", args...)
 }
 
-func (a *Apk) IsInstalled(pkg string) bool {
-	err := a.runner.Run(context.Background(), "apk", "info", "-e", pkg)
+func (a *Apk) IsInstalled(ctx context.Context, pkg string) bool {
+	err := a.runner.Run(ctx, "apk", "info", "-e", pkg)
 	return err == nil
 }
 

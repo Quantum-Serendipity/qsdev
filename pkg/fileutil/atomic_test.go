@@ -16,7 +16,7 @@ func TestWriteFileAtomic_CreatesFileWithCorrectContentAndPermissions(t *testing.
 	path := filepath.Join(dir, "test.txt")
 	content := []byte("hello world")
 
-	if err := fileutil.WriteFileAtomic(path, content, 0644); err != nil {
+	if err := fileutil.WriteFileAtomic(path, content, 0o644); err != nil {
 		t.Fatalf("WriteFileAtomic: %v", err)
 	}
 
@@ -33,8 +33,8 @@ func TestWriteFileAtomic_CreatesFileWithCorrectContentAndPermissions(t *testing.
 		t.Fatalf("Stat: %v", err)
 	}
 	if runtime.GOOS != "windows" {
-		if info.Mode().Perm() != 0644 {
-			t.Errorf("mode = %o, want %o", info.Mode().Perm(), 0644)
+		if info.Mode().Perm() != 0o644 {
+			t.Errorf("mode = %o, want %o", info.Mode().Perm(), 0o644)
 		}
 	}
 }
@@ -43,12 +43,12 @@ func TestWriteFileAtomic_OverwritesExistingFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
 
-	if err := os.WriteFile(path, []byte("old content"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("old content"), 0o644); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
 	newContent := []byte("new content")
-	if err := fileutil.WriteFileAtomic(path, newContent, 0644); err != nil {
+	if err := fileutil.WriteFileAtomic(path, newContent, 0o644); err != nil {
 		t.Fatalf("WriteFileAtomic: %v", err)
 	}
 
@@ -66,7 +66,7 @@ func TestWriteFileAtomic_CreatesNestedDirectories(t *testing.T) {
 	path := filepath.Join(dir, "subdir", "nested", "file.txt")
 	content := []byte("nested content")
 
-	if err := fileutil.WriteFileAtomic(path, content, 0644); err != nil {
+	if err := fileutil.WriteFileAtomic(path, content, 0o644); err != nil {
 		t.Fatalf("WriteFileAtomic: %v", err)
 	}
 
@@ -89,18 +89,18 @@ func TestWriteFileAtomic_CleansUpTempFileOnWriteFailure(t *testing.T) {
 	// write to a path where rename will fail because target dir doesn't exist
 	// and we prevent MkdirAll from creating it by making parent read-only.
 	subdir := filepath.Join(dir, "readonly")
-	if err := os.MkdirAll(subdir, 0755); err != nil {
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
 		t.Fatalf("setup MkdirAll: %v", err)
 	}
-	if err := os.Chmod(subdir, 0444); err != nil {
+	if err := os.Chmod(subdir, 0o444); err != nil {
 		t.Fatalf("setup Chmod: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = os.Chmod(subdir, 0755)
+		_ = os.Chmod(subdir, 0o755)
 	})
 
 	path := filepath.Join(subdir, "child", "file.txt")
-	err := fileutil.WriteFileAtomic(path, []byte("data"), 0644)
+	err := fileutil.WriteFileAtomic(path, []byte("data"), 0o644)
 	if err == nil {
 		t.Fatal("expected error when writing to read-only directory, got nil")
 	}
@@ -122,7 +122,7 @@ func TestWriteFileAtomic_Mode0755Preserved(t *testing.T) {
 	path := filepath.Join(dir, "script.sh")
 	content := []byte("#!/bin/bash\necho hello")
 
-	if err := fileutil.WriteFileAtomic(path, content, 0755); err != nil {
+	if err := fileutil.WriteFileAtomic(path, content, 0o755); err != nil {
 		t.Fatalf("WriteFileAtomic: %v", err)
 	}
 
@@ -130,8 +130,8 @@ func TestWriteFileAtomic_Mode0755Preserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
-	if info.Mode().Perm() != 0755 {
-		t.Errorf("mode = %o, want %o", info.Mode().Perm(), 0755)
+	if info.Mode().Perm() != 0o755 {
+		t.Errorf("mode = %o, want %o", info.Mode().Perm(), 0o755)
 	}
 }
 
@@ -141,7 +141,7 @@ func TestWriteFileAtomic_NoPartialContentDuringConcurrentRead(t *testing.T) {
 	original := []byte("original content that should remain intact")
 
 	// Write the initial file.
-	if err := os.WriteFile(path, original, 0644); err != nil {
+	if err := os.WriteFile(path, original, 0o644); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -180,7 +180,7 @@ func TestWriteFileAtomic_NoPartialContentDuringConcurrentRead(t *testing.T) {
 	}
 
 	// Perform the atomic write while readers are running.
-	if err := fileutil.WriteFileAtomic(path, replacement, 0644); err != nil {
+	if err := fileutil.WriteFileAtomic(path, replacement, 0o644); err != nil {
 		t.Fatalf("WriteFileAtomic: %v", err)
 	}
 

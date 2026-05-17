@@ -43,8 +43,8 @@ func (w *Winget) Install(ctx context.Context, packages ...string) error {
 	return nil
 }
 
-func (w *Winget) IsInstalled(pkg string) bool {
-	err := w.runner.Run(context.Background(), "winget", "list", "--id", pkg, "-e")
+func (w *Winget) IsInstalled(ctx context.Context, pkg string) bool {
+	err := w.runner.Run(ctx, "winget", "list", "--id", pkg, "-e")
 	return err == nil
 }
 

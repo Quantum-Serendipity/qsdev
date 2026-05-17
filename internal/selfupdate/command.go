@@ -42,7 +42,7 @@ during the update and restored if anything goes wrong.`,
 				if tag[0] != 'v' {
 					tag = "v" + tag
 				}
-				release, err = FetchRelease(cfg, tag)
+				release, err = FetchRelease(ctx, cfg, tag)
 				if err != nil {
 					return fmt.Errorf("fetching release %s: %w", version, err)
 				}
@@ -50,10 +50,10 @@ during the update and restored if anything goes wrong.`,
 			} else {
 				// Check for latest.
 				if !force {
-					release, err = CheckForUpdate(cfg, currentVersion)
+					release, err = CheckForUpdate(ctx, cfg, currentVersion)
 				} else {
 					// Force: skip cache, just fetch latest.
-					release, err = fetchLatestRelease(cfg)
+					release, err = fetchLatestRelease(ctx, cfg)
 				}
 				if err != nil {
 					return fmt.Errorf("checking for updates: %w", err)

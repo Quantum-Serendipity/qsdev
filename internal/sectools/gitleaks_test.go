@@ -16,8 +16,8 @@ func TestGenerateGitleaksToml_Structure(t *testing.T) {
 	if f.Path != ".gitleaks.toml" {
 		t.Errorf("Path = %q, want %q", f.Path, ".gitleaks.toml")
 	}
-	if f.Mode != 0644 {
-		t.Errorf("Mode = %#o, want %#o", f.Mode, 0644)
+	if f.Mode != 0o644 {
+		t.Errorf("Mode = %#o, want %#o", f.Mode, 0o644)
 	}
 	if f.Strategy != types.Overwrite {
 		t.Errorf("Strategy = %v, want Overwrite", f.Strategy)

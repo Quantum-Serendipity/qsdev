@@ -1,6 +1,7 @@
 package devinit
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 
@@ -166,7 +167,7 @@ func runSelfUpdateStage(opts FullUpdateOptions) StageResult {
 	}
 
 	cfg := selfupdate.DefaultConfig()
-	release, err := selfupdate.CheckForUpdate(cfg, currentVersion)
+	release, err := selfupdate.CheckForUpdate(context.Background(), cfg, currentVersion)
 	if err != nil {
 		return StageResult{
 			Name:    "Self-update",

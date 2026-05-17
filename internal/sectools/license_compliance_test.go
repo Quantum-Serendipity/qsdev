@@ -16,8 +16,8 @@ func TestGenerateScancodeYml_Structure(t *testing.T) {
 	if f.Path != ".scancode.yml" {
 		t.Errorf("Path = %q, want %q", f.Path, ".scancode.yml")
 	}
-	if f.Mode != 0644 {
-		t.Errorf("Mode = %#o, want %#o", f.Mode, 0644)
+	if f.Mode != 0o644 {
+		t.Errorf("Mode = %#o, want %#o", f.Mode, 0o644)
 	}
 	if f.Strategy != types.Overwrite {
 		t.Errorf("Strategy = %v, want Overwrite", f.Strategy)
@@ -91,8 +91,8 @@ func TestGenerateLicenseExceptionsYml_Structure(t *testing.T) {
 	if f.Path != ".license-exceptions.yml" {
 		t.Errorf("Path = %q, want %q", f.Path, ".license-exceptions.yml")
 	}
-	if f.Mode != 0644 {
-		t.Errorf("Mode = %#o, want %#o", f.Mode, 0644)
+	if f.Mode != 0o644 {
+		t.Errorf("Mode = %#o, want %#o", f.Mode, 0o644)
 	}
 	if f.Strategy != types.Skip {
 		t.Errorf("Strategy = %v, want Skip", f.Strategy)

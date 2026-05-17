@@ -178,7 +178,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 		{
 			Path:     ".hadolint.yaml",
 			Content:  buf.Bytes(),
-			Mode:     0644,
+			Mode:     0o644,
 			Strategy: types.Overwrite,
 		},
 	}

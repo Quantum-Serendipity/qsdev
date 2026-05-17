@@ -281,7 +281,7 @@ func TestGenerateMcpJson_FileMetadata(t *testing.T) {
 		t.Errorf("expected path '.mcp.json', got %q", gf.Path)
 	}
 	if gf.Mode != 0o644 {
-		t.Errorf("expected mode 0644, got %04o", gf.Mode)
+		t.Errorf("expected mode 0o644, got %04o", gf.Mode)
 	}
 	if gf.Strategy != types.ThreeWayMerge {
 		t.Errorf("expected strategy ThreeWayMerge, got %v", gf.Strategy)

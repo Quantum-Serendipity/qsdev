@@ -1,6 +1,7 @@
 package selfupdate
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,10 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
 )
+
+var httpClient = &http.Client{
+	Timeout: 30 * time.Second,
+}
 
 // cachedCheck stores the result of the most recent update check.
 type cachedCheck struct {
@@ -61,7 +66,7 @@ func stripBuildMeta(v string) string {
 	return v
 }
 
-func CheckForUpdate(cfg Config, currentVersion string) (*Release, error) {
+func CheckForUpdate(ctx context.Context, cfg Config, currentVersion string) (*Release, error) {
 	// Skip check for dev builds.
 	if currentVersion == "" || currentVersion == "dev" || currentVersion == "(devel)" {
 		return nil, nil
@@ -91,7 +96,7 @@ func CheckForUpdate(cfg Config, currentVersion string) (*Release, error) {
 	}
 
 	// Fetch latest release from GitHub.
-	release, err := fetchLatestRelease(cfg)
+	release, err := fetchLatestRelease(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -118,20 +123,20 @@ func CheckForUpdate(cfg Config, currentVersion string) (*Release, error) {
 }
 
 // FetchRelease fetches a specific release by tag from GitHub.
-func FetchRelease(cfg Config, tag string) (*Release, error) {
+func FetchRelease(ctx context.Context, cfg Config, tag string) (*Release, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/releases/tags/%s",
 		apiBaseURL, cfg.GitHubOwner, cfg.GitHubRepo, tag)
 
-	return doFetchRelease(cfg, url)
+	return doFetchRelease(ctx, cfg, url)
 }
 
 // fetchLatestRelease fetches the latest release from GitHub.
 // Returns nil, nil if no releases exist (404).
-func fetchLatestRelease(cfg Config) (*Release, error) {
+func fetchLatestRelease(ctx context.Context, cfg Config) (*Release, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest",
 		apiBaseURL, cfg.GitHubOwner, cfg.GitHubRepo)
 
-	release, err := doFetchRelease(cfg, url)
+	release, err := doFetchRelease(ctx, cfg, url)
 	if errors.Is(err, errReleaseNotFound) {
 		return nil, nil
 	}
@@ -139,8 +144,8 @@ func fetchLatestRelease(cfg Config) (*Release, error) {
 }
 
 // doFetchRelease performs the HTTP request and parses the response.
-func doFetchRelease(cfg Config, url string) (*Release, error) {
-	req, err := http.NewRequest("GET", url, nil)
+func doFetchRelease(ctx context.Context, cfg Config, url string) (*Release, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
@@ -153,7 +158,7 @@ func doFetchRelease(cfg Config, url string) (*Release, error) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetching release: %w", err)
 	}

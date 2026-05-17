@@ -99,7 +99,7 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 		// Apply default mode.
 		mode := file.Mode
 		if mode == 0 {
-			mode = 0644
+			mode = 0o644
 		}
 
 		if opts.DryRun {

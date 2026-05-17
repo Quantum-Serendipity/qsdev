@@ -251,7 +251,7 @@ func TestLoadFile_ValidYAML(t *testing.T) {
       - name: "sast enabled"
         check: "tools.semgrep.enabled == true"
 `
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -277,7 +277,7 @@ func TestLoadFile_InvalidYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".qsdev-policy.yaml")
 
-	if err := os.WriteFile(path, []byte("conformance:\n  custom:\n    - :\n  ][broken"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("conformance:\n  custom:\n    - :\n  ][broken"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -291,7 +291,7 @@ func TestLoadFile_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".qsdev-policy.yaml")
 
-	if err := os.WriteFile(path, []byte(""), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

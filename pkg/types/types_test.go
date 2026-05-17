@@ -100,9 +100,9 @@ func TestGeneratedStateYAMLRoundTrip(t *testing.T) {
 		TemplateVersion:     "1.0.0",
 		SkillLibraryVersion: "2.1.0",
 		Files: map[string]types.FileState{
-			"devenv.yaml": {Hash: "sha256:abc123", Strategy: types.Overwrite, Mode: 0644},
-			"devenv.nix":  {Hash: "sha256:def456", Strategy: types.SectionMarker, Mode: 0644},
-			".envrc":      {Hash: "sha256:789abc", Strategy: types.Append, Mode: 0755},
+			"devenv.yaml": {Hash: "sha256:abc123", Strategy: types.Overwrite, Mode: 0o644},
+			"devenv.nix":  {Hash: "sha256:def456", Strategy: types.SectionMarker, Mode: 0o644},
+			".envrc":      {Hash: "sha256:789abc", Strategy: types.Append, Mode: 0o755},
 		},
 	}
 	data, err := yaml.Marshal(original)
@@ -148,7 +148,7 @@ func TestGeneratedStateJSONRoundTrip(t *testing.T) {
 		LastRun:         time.Date(2026, 5, 12, 14, 30, 0, 0, time.UTC),
 		TemplateVersion: "1.0.0",
 		Files: map[string]types.FileState{
-			"devenv.yaml": {Hash: "sha256:abc123", Strategy: types.Overwrite, Mode: 0644},
+			"devenv.yaml": {Hash: "sha256:abc123", Strategy: types.Overwrite, Mode: 0o644},
 		},
 	}
 	data, err := json.Marshal(original)
@@ -200,7 +200,7 @@ func TestGeneratedFileContentRoundTrip(t *testing.T) {
 	original := types.GeneratedFile{
 		Path:     "test.nix",
 		Content:  []byte("{ pkgs, ... }: { packages = [ pkgs.git ]; }"),
-		Mode:     os.FileMode(0644),
+		Mode:     os.FileMode(0o644),
 		Strategy: types.Overwrite,
 	}
 	data, err := json.Marshal(original)
@@ -474,7 +474,7 @@ func TestFileStateWithBaseContentRoundTrip(t *testing.T) {
 			"settings.json": {
 				Hash:        "sha256:abc123",
 				Strategy:    types.ThreeWayMerge,
-				Mode:        0644,
+				Mode:        0o644,
 				BaseContent: []byte(`{"permissions": {"allow": ["Read"]}}`),
 			},
 		},

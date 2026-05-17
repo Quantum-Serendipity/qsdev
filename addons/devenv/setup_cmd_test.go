@@ -198,5 +198,5 @@ func (p *pmNameOnly) Available() bool                                       { pa
 func (p *pmNameOnly) NeedsElevation() bool                                  { panic("unused") }
 func (p *pmNameOnly) UpdateIndex(_ context.Context) error                   { panic("unused") }
 func (p *pmNameOnly) Install(_ context.Context, _ ...string) error          { panic("unused") }
-func (p *pmNameOnly) IsInstalled(_ string) bool                             { panic("unused") }
+func (p *pmNameOnly) IsInstalled(_ context.Context, _ string) bool           { panic("unused") }
 func (p *pmNameOnly) SearchCmd() string                                     { panic("unused") }

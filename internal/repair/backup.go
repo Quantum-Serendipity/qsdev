@@ -95,21 +95,28 @@ func pruneBackups(projectRoot, relPath string, keep int) error {
 func copyFile(src, dst string) error {
 	srcFile, err := os.Open(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("opening source %s: %w", src, err)
 	}
 	defer srcFile.Close()
 
 	srcInfo, err := srcFile.Stat()
 	if err != nil {
-		return err
+		return fmt.Errorf("stat source %s: %w", src, err)
 	}
 
 	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode())
 	if err != nil {
-		return err
+		return fmt.Errorf("creating destination %s: %w", dst, err)
 	}
-	defer dstFile.Close()
 
-	_, err = io.Copy(dstFile, srcFile)
-	return err
+	_, copyErr := io.Copy(dstFile, srcFile)
+	closeErr := dstFile.Close()
+
+	if copyErr != nil {
+		return fmt.Errorf("copying to %s: %w", dst, copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("closing %s: %w", dst, closeErr)
+	}
+	return nil
 }

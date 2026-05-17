@@ -212,7 +212,10 @@ func TestContains(t *testing.T) {
 
 func TestDict(t *testing.T) {
 	t.Run("even_count", func(t *testing.T) {
-		m := dict("a", 1, "b", "two")
+		m, err := dict("a", 1, "b", "two")
+		if err != nil {
+			t.Fatalf("dict() error: %v", err)
+		}
 		if m["a"] != 1 {
 			t.Errorf("dict[\"a\"] = %v, want 1", m["a"])
 		}
@@ -220,14 +223,11 @@ func TestDict(t *testing.T) {
 			t.Errorf("dict[\"b\"] = %v, want \"two\"", m["b"])
 		}
 	})
-	t.Run("odd_panics", func(t *testing.T) {
-		defer func() {
-			r := recover()
-			if r == nil {
-				t.Error("dict with odd count should panic")
-			}
-		}()
-		dict("a", 1, "b") //nolint:staticcheck // intentionally testing odd-count panic
+	t.Run("odd_returns_error", func(t *testing.T) {
+		_, err := dict("a", 1, "b")
+		if err == nil {
+			t.Error("dict with odd count should return error")
+		}
 	})
 }
 

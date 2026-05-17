@@ -557,7 +557,7 @@ func TestGenerateSettings_FileMetadata(t *testing.T) {
 		t.Errorf("path should be .claude/settings.json, got %q", gf.Path)
 	}
 	if gf.Mode != 0o644 {
-		t.Errorf("mode should be 0644, got %04o", gf.Mode)
+		t.Errorf("mode should be 0o644, got %04o", gf.Mode)
 	}
 	if gf.Strategy != types.ThreeWayMerge {
 		t.Errorf("strategy should be ThreeWayMerge, got %v", gf.Strategy)

@@ -37,7 +37,7 @@ func GenerateGitleaksToml(_ types.WizardAnswers) (*types.GeneratedFile, error) {
 	return &types.GeneratedFile{
 		Path:     ".gitleaks.toml",
 		Content:  []byte(b.String()),
-		Mode:     0644,
+		Mode:     0o644,
 		Strategy: types.Overwrite,
 		Owner:    "gitleaks",
 	}, nil

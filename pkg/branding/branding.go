@@ -1,6 +1,6 @@
 package branding
 
-import "sync"
+import "sync/atomic"
 
 type Config struct {
 	AppName       string
@@ -34,58 +34,58 @@ func Default() Config {
 	}
 }
 
-var (
-	mu     sync.Mutex
-	active = Default()
-)
+var active atomic.Pointer[Config]
+
+func init() {
+	d := Default()
+	active.Store(&d)
+}
 
 // Set merges non-empty fields from cfg into the active branding configuration.
 // Must be called early in main(), before cmd.Main(). The gdev lockdown lifecycle
 // prevents Set from being called after initialization.
 func Set(cfg Config) {
-	mu.Lock()
-	defer mu.Unlock()
+	current := *active.Load()
 	if cfg.AppName != "" {
-		active.AppName = cfg.AppName
+		current.AppName = cfg.AppName
 	}
 	if cfg.ConfigFile != "" {
-		active.ConfigFile = cfg.ConfigFile
+		current.ConfigFile = cfg.ConfigFile
 	}
 	if cfg.LocalConfig != "" {
-		active.LocalConfig = cfg.LocalConfig
+		current.LocalConfig = cfg.LocalConfig
 	}
 	if cfg.StateDir != "" {
-		active.StateDir = cfg.StateDir
+		current.StateDir = cfg.StateDir
 	}
 	if cfg.EnvLogVar != "" {
-		active.EnvLogVar = cfg.EnvLogVar
+		current.EnvLogVar = cfg.EnvLogVar
 	}
 	if cfg.EnvLogDirVar != "" {
-		active.EnvLogDirVar = cfg.EnvLogDirVar
+		current.EnvLogDirVar = cfg.EnvLogDirVar
 	}
 	if cfg.EnvNoUpdate != "" {
-		active.EnvNoUpdate = cfg.EnvNoUpdate
+		current.EnvNoUpdate = cfg.EnvNoUpdate
 	}
 	if cfg.EnvPrefix != "" {
-		active.EnvPrefix = cfg.EnvPrefix
+		current.EnvPrefix = cfg.EnvPrefix
 	}
 	if cfg.LogFilePrefix != "" {
-		active.LogFilePrefix = cfg.LogFilePrefix
+		current.LogFilePrefix = cfg.LogFilePrefix
 	}
 	if cfg.TempPrefix != "" {
-		active.TempPrefix = cfg.TempPrefix
+		current.TempPrefix = cfg.TempPrefix
 	}
 	if cfg.GitHubOwner != "" {
-		active.GitHubOwner = cfg.GitHubOwner
+		current.GitHubOwner = cfg.GitHubOwner
 	}
 	if cfg.GitHubRepo != "" {
-		active.GitHubRepo = cfg.GitHubRepo
+		current.GitHubRepo = cfg.GitHubRepo
 	}
+	active.Store(&current)
 }
 
 // Get returns the current branding configuration.
 func Get() Config {
-	mu.Lock()
-	defer mu.Unlock()
-	return active
+	return *active.Load()
 }

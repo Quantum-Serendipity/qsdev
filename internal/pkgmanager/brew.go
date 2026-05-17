@@ -32,8 +32,8 @@ func (b *Brew) Install(ctx context.Context, packages ...string) error {
 	return b.runner.Run(ctx, "brew", args...)
 }
 
-func (b *Brew) IsInstalled(pkg string) bool {
-	err := b.runner.Run(context.Background(), "brew", "list", pkg)
+func (b *Brew) IsInstalled(ctx context.Context, pkg string) bool {
+	err := b.runner.Run(ctx, "brew", "list", pkg)
 	return err == nil
 }
 

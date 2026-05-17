@@ -47,8 +47,8 @@ func (n *Nix) Install(ctx context.Context, packages ...string) error {
 	return nil
 }
 
-func (n *Nix) IsInstalled(pkg string) bool {
-	out, err := n.runner.Output(context.Background(), "nix", "profile", "list")
+func (n *Nix) IsInstalled(ctx context.Context, pkg string) bool {
+	out, err := n.runner.Output(ctx, "nix", "profile", "list")
 	if err != nil {
 		return false
 	}

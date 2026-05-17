@@ -33,8 +33,8 @@ func (e *Emerge) Install(ctx context.Context, packages ...string) error {
 	return e.runner.Run(ctx, "emerge", args...)
 }
 
-func (e *Emerge) IsInstalled(pkg string) bool {
-	err := e.runner.Run(context.Background(), "equery", "list", pkg)
+func (e *Emerge) IsInstalled(ctx context.Context, pkg string) bool {
+	err := e.runner.Run(ctx, "equery", "list", pkg)
 	return err == nil
 }
 

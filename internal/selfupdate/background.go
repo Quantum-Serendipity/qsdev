@@ -31,7 +31,7 @@ func BackgroundCheck(currentVersion string) <-chan string {
 
 		done := make(chan *Release, 1)
 		go func() {
-			release, err := CheckForUpdate(cfg, currentVersion)
+			release, err := CheckForUpdate(ctx, cfg, currentVersion)
 			if err != nil || release == nil {
 				done <- nil
 				return

@@ -12,7 +12,7 @@ import (
 // are created as needed. On failure, the temporary file is cleaned up.
 func WriteFileAtomic(path string, content []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create parent directories for %s: %w", path, err)
 	}
 
@@ -31,6 +31,10 @@ func WriteFileAtomic(path string, content []byte, mode os.FileMode) error {
 
 	if _, err := tmp.Write(content); err != nil {
 		return fmt.Errorf("write to temp file %s: %w", tmp.Name(), err)
+	}
+
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("sync temp file %s: %w", tmp.Name(), err)
 	}
 
 	if err := tmp.Close(); err != nil {

@@ -405,8 +405,8 @@ func TestFileMetadata(t *testing.T) {
 	if gf.Path != "devenv.yaml" {
 		t.Errorf("path should be devenv.yaml, got %q", gf.Path)
 	}
-	if gf.Mode != 0644 {
-		t.Errorf("mode should be 0644, got %04o", gf.Mode)
+	if gf.Mode != 0o644 {
+		t.Errorf("mode should be 0o644, got %04o", gf.Mode)
 	}
 	if gf.Strategy != types.Overwrite {
 		t.Errorf("strategy should be Overwrite, got %v", gf.Strategy)

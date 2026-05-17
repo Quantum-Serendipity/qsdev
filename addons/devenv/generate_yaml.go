@@ -134,7 +134,7 @@ func GenerateDevenvYaml(answers types.WizardAnswers, registry *ecosystem.Registr
 	return &types.GeneratedFile{
 		Path:     "devenv.yaml",
 		Content:  []byte(content),
-		Mode:     0644,
+		Mode:     0o644,
 		Strategy: types.Overwrite,
 	}, nil
 }

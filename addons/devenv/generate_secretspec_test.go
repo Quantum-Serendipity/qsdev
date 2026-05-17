@@ -67,7 +67,7 @@ func TestGenerateSecretSpecToml_WithServices(t *testing.T) {
 		t.Errorf("expected path secretspec.toml, got %q", gf.Path)
 	}
 	if gf.Mode != 0o644 {
-		t.Errorf("expected mode 0644, got %04o", gf.Mode)
+		t.Errorf("expected mode 0o644, got %04o", gf.Mode)
 	}
 	if gf.Strategy != types.Overwrite {
 		t.Errorf("expected strategy Overwrite, got %v", gf.Strategy)

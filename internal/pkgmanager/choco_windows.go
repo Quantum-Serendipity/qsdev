@@ -37,8 +37,8 @@ func (c *Choco) Install(ctx context.Context, packages ...string) error {
 	return c.runner.Run(ctx, "choco", args...)
 }
 
-func (c *Choco) IsInstalled(pkg string) bool {
-	out, err := c.runner.Output(context.Background(), "choco", "list", "--local-only", "--exact", pkg)
+func (c *Choco) IsInstalled(ctx context.Context, pkg string) bool {
+	out, err := c.runner.Output(ctx, "choco", "list", "--local-only", "--exact", pkg)
 	if err != nil {
 		return false
 	}

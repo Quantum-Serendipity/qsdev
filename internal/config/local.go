@@ -109,7 +109,7 @@ func GenerateLocalTemplate(projectRoot string, resolved *types.QsdevConfig) erro
 	sb.WriteString("#   enabled:\n")
 	sb.WriteString("#     - changelog\n")
 
-	return fileutil.WriteFileAtomic(path, []byte(sb.String()), 0644)
+	return fileutil.WriteFileAtomic(path, []byte(sb.String()), 0o644)
 }
 
 // EnsureGitignoreEntry reads the .gitignore file in projectRoot, checks for
@@ -150,5 +150,5 @@ func EnsureGitignoreEntry(projectRoot, entry string) error {
 	b.WriteString(entry)
 	b.WriteString("\n")
 
-	return fileutil.WriteFileAtomic(gitignorePath, []byte(b.String()), 0644)
+	return fileutil.WriteFileAtomic(gitignorePath, []byte(b.String()), 0o644)
 }

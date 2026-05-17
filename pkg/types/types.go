@@ -169,8 +169,9 @@ func (a *WizardAnswers) IsComplete() bool {
 	return true
 }
 
-// FillDefaults populates empty fields from detection results and hardcoded
-// defaults. It does NOT overwrite fields that already have values.
+// FillDefaults populates empty user-configurable fields from detection results
+// and hardcoded defaults. The Detected field is always set from the provided
+// detection results regardless of prior value.
 func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 	if a.EnvVars == nil {
 		a.EnvVars = make(map[string]string)

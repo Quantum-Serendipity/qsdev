@@ -217,7 +217,7 @@ func TestRenderNixValidation(t *testing.T) {
 	// Write to a temp file because nix-instantiate --parse /dev/stdin
 	// doesn't work reliably in all environments.
 	tmpFile := filepath.Join(t.TempDir(), "test.nix")
-	if err := os.WriteFile(tmpFile, rendered, 0644); err != nil {
+	if err := os.WriteFile(tmpFile, rendered, 0o644); err != nil {
 		t.Fatalf("writing temp file: %v", err)
 	}
 

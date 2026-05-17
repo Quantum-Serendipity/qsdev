@@ -72,7 +72,7 @@ func (p *InfraProfile) generateDependabotYML() types.GeneratedFile {
 	return types.GeneratedFile{
 		Path:     ".github/dependabot.yml",
 		Content:  []byte(buf.String()),
-		Mode:     os.FileMode(0644),
+		Mode:     os.FileMode(0o644),
 		Strategy: types.Overwrite,
 	}
 }

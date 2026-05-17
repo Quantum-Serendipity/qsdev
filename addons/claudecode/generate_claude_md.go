@@ -2,6 +2,7 @@ package claudecode
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
@@ -123,7 +124,10 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 	}
 
 	// Skills from qsdev-ops manifest.
-	opsManifest, _ := loadQsdevOpsManifest()
+	opsManifest, err := loadQsdevOpsManifest()
+	if err != nil {
+		slog.Warn("failed to load ops manifest", "error", err)
+	}
 	if opsManifest != nil {
 		for _, s := range opsManifest.Skills {
 			if answers.EnabledTools == nil || answers.EnabledTools[s.Name] {
@@ -135,7 +139,10 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 	}
 
 	// Skills from consulting manifest.
-	consultingManifest, _ := loadConsultingSkillManifest()
+	consultingManifest, err := loadConsultingSkillManifest()
+	if err != nil {
+		slog.Warn("failed to load consulting skill manifest", "error", err)
+	}
 	if consultingManifest != nil {
 		for _, s := range consultingManifest.Skills {
 			toolKey := "consulting-workflow-" + s.Name
@@ -148,7 +155,10 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 	}
 
 	// Agents from manifest.
-	agentManifest, _ := loadAgentManifest()
+	agentManifest, err := loadAgentManifest()
+	if err != nil {
+		slog.Warn("failed to load agent manifest", "error", err)
+	}
 	if agentManifest != nil {
 		for _, a := range agentManifest.Agents {
 			toolKey := "consulting-agent-" + a.Name

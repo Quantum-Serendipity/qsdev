@@ -24,7 +24,7 @@ type PackageManager interface {
 	Install(ctx context.Context, packages ...string) error
 
 	// IsInstalled reports whether a package is currently installed.
-	IsInstalled(pkg string) bool
+	IsInstalled(ctx context.Context, pkg string) bool
 
 	// SearchCmd returns the shell command prefix for searching packages,
 	// e.g. "apt-cache search" or "brew search".

@@ -18,5 +18,5 @@ func (c *Choco) Available() bool                                  { return false
 func (c *Choco) NeedsElevation() bool                             { return false }
 func (c *Choco) UpdateIndex(_ context.Context) error              { return nil }
 func (c *Choco) Install(_ context.Context, _ ...string) error     { return fmt.Errorf("choco not available") }
-func (c *Choco) IsInstalled(_ string) bool                        { return false }
+func (c *Choco) IsInstalled(_ context.Context, _ string) bool      { return false }
 func (c *Choco) SearchCmd() string                                { return "" }

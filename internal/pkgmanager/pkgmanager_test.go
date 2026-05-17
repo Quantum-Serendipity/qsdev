@@ -276,10 +276,10 @@ func TestAptIsInstalled(t *testing.T) {
 	}
 
 	apt := NewApt(mock)
-	if !apt.IsInstalled("git") {
+	if !apt.IsInstalled(context.Background(), "git") {
 		t.Error("expected git to be installed")
 	}
-	if apt.IsInstalled("missing") {
+	if apt.IsInstalled(context.Background(), "missing") {
 		t.Error("expected missing to not be installed")
 	}
 }

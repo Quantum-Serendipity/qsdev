@@ -32,7 +32,7 @@ tools:
   enabled:
     - changelog
 `
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -57,7 +57,7 @@ tools:
 func TestParseLocalConfig_InvalidYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".qsdev.local.yaml")
-	if err := os.WriteFile(path, []byte("{{invalid yaml"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("{{invalid yaml"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -99,7 +99,7 @@ func TestGenerateLocalTemplate_Idempotent(t *testing.T) {
 
 	// Write an existing file.
 	existingContent := "# my custom config\n"
-	if err := os.WriteFile(path, []byte(existingContent), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(existingContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -192,7 +192,7 @@ func TestEnsureGitignoreEntry_CreatesFile(t *testing.T) {
 func TestEnsureGitignoreEntry_AppendsWhenNotPresent(t *testing.T) {
 	dir := t.TempDir()
 	existing := "node_modules/\n.env\n"
-	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -217,7 +217,7 @@ func TestEnsureGitignoreEntry_AppendsWhenNotPresent(t *testing.T) {
 func TestEnsureGitignoreEntry_NoOpWhenPresent(t *testing.T) {
 	dir := t.TempDir()
 	existing := "node_modules/\n.qsdev.local.yaml\n.env\n"
-	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

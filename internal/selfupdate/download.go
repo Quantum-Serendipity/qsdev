@@ -95,7 +95,7 @@ func downloadFile(ctx context.Context, url, dest string) error {
 	}
 	req.Header.Set("Accept", "application/octet-stream")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("fetching %s: %w", url, err)
 	}

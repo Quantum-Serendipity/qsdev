@@ -74,7 +74,7 @@ func (p *InfraProfile) generateRenovateJSON() types.GeneratedFile {
 	return types.GeneratedFile{
 		Path:     "renovate.json",
 		Content:  data,
-		Mode:     os.FileMode(0644),
+		Mode:     os.FileMode(0o644),
 		Strategy: types.Overwrite,
 	}
 }

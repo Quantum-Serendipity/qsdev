@@ -50,7 +50,7 @@ func GenerateSemgrepYml(answers types.WizardAnswers, registry *ecosystem.Registr
 	return &types.GeneratedFile{
 		Path:     ".semgrep.yml",
 		Content:  []byte(b.String()),
-		Mode:     0644,
+		Mode:     0o644,
 		Strategy: types.Overwrite,
 		Owner:    "semgrep",
 	}, nil

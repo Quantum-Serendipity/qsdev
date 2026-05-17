@@ -18,5 +18,5 @@ func (w *Winget) Available() bool                                  { return fals
 func (w *Winget) NeedsElevation() bool                             { return false }
 func (w *Winget) UpdateIndex(_ context.Context) error              { return nil }
 func (w *Winget) Install(_ context.Context, _ ...string) error     { return fmt.Errorf("winget not available") }
-func (w *Winget) IsInstalled(_ string) bool                        { return false }
+func (w *Winget) IsInstalled(_ context.Context, _ string) bool                        { return false }
 func (w *Winget) SearchCmd() string                                { return "" }

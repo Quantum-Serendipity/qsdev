@@ -14,8 +14,8 @@ import (
 func TestWriteFiles_CreatesNewFiles(t *testing.T) {
 	dir := t.TempDir()
 	files := []types.GeneratedFile{
-		{Path: "a.yaml", Content: []byte("key: value\n"), Mode: 0644},
-		{Path: "b.json", Content: []byte(`{"k":"v"}`), Mode: 0644},
+		{Path: "a.yaml", Content: []byte("key: value\n"), Mode: 0o644},
+		{Path: "b.json", Content: []byte(`{"k":"v"}`), Mode: 0o644},
 	}
 
 	result, err := generate.WriteFiles(files, generate.PipelineOptions{
@@ -53,12 +53,12 @@ func TestWriteFiles_UpdatesExistingFiles(t *testing.T) {
 
 	// Create existing file.
 	existing := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(existing, []byte("old: content\n"), 0644); err != nil {
+	if err := os.WriteFile(existing, []byte("old: content\n"), 0o644); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
 	files := []types.GeneratedFile{
-		{Path: "config.yaml", Content: []byte("new: content\n"), Mode: 0644},
+		{Path: "config.yaml", Content: []byte("new: content\n"), Mode: 0o644},
 	}
 
 	result, err := generate.WriteFiles(files, generate.PipelineOptions{
@@ -88,7 +88,7 @@ func TestWriteFiles_UpdatesExistingFiles(t *testing.T) {
 func TestWriteFiles_DryRunWritesNothing(t *testing.T) {
 	dir := t.TempDir()
 	files := []types.GeneratedFile{
-		{Path: "should-not-exist.yaml", Content: []byte("key: value\n"), Mode: 0644},
+		{Path: "should-not-exist.yaml", Content: []byte("key: value\n"), Mode: 0o644},
 	}
 
 	result, err := generate.WriteFiles(files, generate.PipelineOptions{
@@ -118,7 +118,7 @@ func TestWriteFiles_RejectsAbsolutePaths(t *testing.T) {
 		absPath = `C:\Windows\System32\bad.txt`
 	}
 	files := []types.GeneratedFile{
-		{Path: absPath, Content: []byte("bad"), Mode: 0644},
+		{Path: absPath, Content: []byte("bad"), Mode: 0o644},
 	}
 
 	result, err := generate.WriteFiles(files, generate.PipelineOptions{
@@ -143,8 +143,8 @@ func TestWriteFiles_RejectsAbsolutePaths(t *testing.T) {
 func TestWriteFiles_RejectsPathTraversal(t *testing.T) {
 	dir := t.TempDir()
 	files := []types.GeneratedFile{
-		{Path: "../escape/file.txt", Content: []byte("bad"), Mode: 0644},
-		{Path: "sub/../../escape.txt", Content: []byte("bad"), Mode: 0644},
+		{Path: "../escape/file.txt", Content: []byte("bad"), Mode: 0o644},
+		{Path: "sub/../../escape.txt", Content: []byte("bad"), Mode: 0o644},
 	}
 
 	result, err := generate.WriteFiles(files, generate.PipelineOptions{
@@ -186,16 +186,16 @@ func TestWriteFiles_DefaultModeIs0644(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
-	if info.Mode().Perm() != 0644 {
-		t.Errorf("mode = %o, want %o", info.Mode().Perm(), 0644)
+	if info.Mode().Perm() != 0o644 {
+		t.Errorf("mode = %o, want %o", info.Mode().Perm(), 0o644)
 	}
 }
 
 func TestWriteFiles_ValidationFailureContinuesToNextFile(t *testing.T) {
 	dir := t.TempDir()
 	files := []types.GeneratedFile{
-		{Path: "bad.json", Content: []byte("{invalid json}"), Mode: 0644},
-		{Path: "good.yaml", Content: []byte("key: value\n"), Mode: 0644},
+		{Path: "bad.json", Content: []byte("{invalid json}"), Mode: 0o644},
+		{Path: "good.yaml", Content: []byte("key: value\n"), Mode: 0o644},
 	}
 
 	result, err := generate.WriteFiles(files, generate.PipelineOptions{
@@ -226,7 +226,7 @@ func TestWriteFiles_ValidationFailureContinuesToNextFile(t *testing.T) {
 func TestWriteFiles_SkipValidateBypassesValidation(t *testing.T) {
 	dir := t.TempDir()
 	files := []types.GeneratedFile{
-		{Path: "bad.json", Content: []byte("{invalid json}"), Mode: 0644},
+		{Path: "bad.json", Content: []byte("{invalid json}"), Mode: 0o644},
 	}
 
 	result, err := generate.WriteFiles(files, generate.PipelineOptions{
@@ -248,7 +248,7 @@ func TestWriteFiles_SkipValidateBypassesValidation(t *testing.T) {
 func TestWriteFiles_CreatesNestedDirectories(t *testing.T) {
 	dir := t.TempDir()
 	files := []types.GeneratedFile{
-		{Path: "deep/nested/dir/file.yaml", Content: []byte("key: value\n"), Mode: 0644},
+		{Path: "deep/nested/dir/file.yaml", Content: []byte("key: value\n"), Mode: 0o644},
 	}
 
 	result, err := generate.WriteFiles(files, generate.PipelineOptions{
@@ -307,7 +307,7 @@ func TestWriteResult_HasFailures(t *testing.T) {
 
 func TestWriteFiles_RelativeProjectRootRejected(t *testing.T) {
 	files := []types.GeneratedFile{
-		{Path: "file.txt", Content: []byte("content"), Mode: 0644},
+		{Path: "file.txt", Content: []byte("content"), Mode: 0o644},
 	}
 	_, err := generate.WriteFiles(files, generate.PipelineOptions{
 		ProjectRoot: "relative/path",
@@ -322,7 +322,7 @@ func TestWriteFiles_RelativeProjectRootRejected(t *testing.T) {
 
 func TestWriteFiles_NonexistentProjectRootRejected(t *testing.T) {
 	files := []types.GeneratedFile{
-		{Path: "file.txt", Content: []byte("content"), Mode: 0644},
+		{Path: "file.txt", Content: []byte("content"), Mode: 0o644},
 	}
 	_, err := generate.WriteFiles(files, generate.PipelineOptions{
 		ProjectRoot: "/nonexistent/path/that/does/not/exist",
@@ -337,7 +337,7 @@ func TestPreviewFiles_ProducesReadableOutput(t *testing.T) {
 
 	// Create an existing file so one shows as "update".
 	existing := filepath.Join(dir, "existing.yaml")
-	if err := os.WriteFile(existing, []byte("old"), 0644); err != nil {
+	if err := os.WriteFile(existing, []byte("old"), 0o644); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -418,7 +418,7 @@ func TestFileAction_String(t *testing.T) {
 func TestWriteFiles_FileSkipValidationFlag(t *testing.T) {
 	dir := t.TempDir()
 	files := []types.GeneratedFile{
-		{Path: "bad.json", Content: []byte("{invalid}"), Mode: 0644, SkipValidation: true},
+		{Path: "bad.json", Content: []byte("{invalid}"), Mode: 0o644, SkipValidation: true},
 	}
 
 	result, err := generate.WriteFiles(files, generate.PipelineOptions{

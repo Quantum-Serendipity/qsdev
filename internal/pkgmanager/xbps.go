@@ -32,8 +32,8 @@ func (x *Xbps) Install(ctx context.Context, packages ...string) error {
 	return x.runner.Run(ctx, "xbps-install", args...)
 }
 
-func (x *Xbps) IsInstalled(pkg string) bool {
-	err := x.runner.Run(context.Background(), "xbps-query", pkg)
+func (x *Xbps) IsInstalled(ctx context.Context, pkg string) bool {
+	err := x.runner.Run(ctx, "xbps-query", pkg)
 	return err == nil
 }
 

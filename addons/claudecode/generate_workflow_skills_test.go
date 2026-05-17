@@ -134,7 +134,7 @@ func TestDeployWorkflowSkills_DirectoryFormat(t *testing.T) {
 			t.Errorf("path %q does not end with /SKILL.md", f.Path)
 		}
 		if f.Mode != 0o644 {
-			t.Errorf("file %q has mode %o, want 0644", f.Path, f.Mode)
+			t.Errorf("file %q has mode %o, want 0o644", f.Path, f.Mode)
 		}
 		if f.Strategy != types.LibraryManaged {
 			t.Errorf("file %q has strategy %v, want LibraryManaged", f.Path, f.Strategy)

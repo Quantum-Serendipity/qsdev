@@ -34,8 +34,8 @@ func (s *Scoop) Install(ctx context.Context, packages ...string) error {
 	return s.runner.Run(ctx, "scoop", args...)
 }
 
-func (s *Scoop) IsInstalled(pkg string) bool {
-	err := s.runner.Run(context.Background(), "scoop", "info", pkg)
+func (s *Scoop) IsInstalled(ctx context.Context, pkg string) bool {
+	err := s.runner.Run(ctx, "scoop", "info", pkg)
 	return err == nil
 }
 

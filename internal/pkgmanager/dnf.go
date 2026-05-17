@@ -44,8 +44,8 @@ func (d *Dnf) Install(ctx context.Context, packages ...string) error {
 	return d.runner.Run(ctx, d.cmd(), args...)
 }
 
-func (d *Dnf) IsInstalled(pkg string) bool {
-	err := d.runner.Run(context.Background(), "rpm", "-q", pkg)
+func (d *Dnf) IsInstalled(ctx context.Context, pkg string) bool {
+	err := d.runner.Run(ctx, "rpm", "-q", pkg)
 	return err == nil
 }
 

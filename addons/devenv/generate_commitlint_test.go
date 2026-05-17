@@ -70,7 +70,7 @@ func TestGenerateCommitlintConfig_Metadata(t *testing.T) {
 	}
 
 	if file.Mode != 0o644 {
-		t.Errorf("expected mode 0644, got %o", file.Mode)
+		t.Errorf("expected mode 0o644, got %o", file.Mode)
 	}
 
 	if file.Strategy != types.Overwrite {

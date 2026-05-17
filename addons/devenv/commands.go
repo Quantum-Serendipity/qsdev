@@ -20,7 +20,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-const answersDir = ".devenv"
 
 // devenvStatePath returns the path to the devenv state file, using the branding app name.
 func devenvStatePath() string {

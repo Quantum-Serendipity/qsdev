@@ -17,9 +17,9 @@ func GenerateLocalConfigTemplate(answers types.WizardAnswers, detected types.Det
 	var b strings.Builder
 
 	br := branding.Get()
-	b.WriteString(fmt.Sprintf("# %s — Local developer overrides (gitignored)\n", br.LocalConfig))
+	fmt.Fprintf(&b, "# %s — Local developer overrides (gitignored)\n", br.LocalConfig)
 	b.WriteString("# Uncomment and modify lines below to customize your local environment.\n")
-	b.WriteString(fmt.Sprintf("# These settings override %s but cannot lower security settings.\n", br.ConfigFile))
+	fmt.Fprintf(&b, "# These settings override %s but cannot lower security settings.\n", br.ConfigFile)
 	b.WriteString("#\n")
 
 	// Extra packages section.

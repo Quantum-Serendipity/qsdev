@@ -21,7 +21,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-const answersDir = ".claude"
 
 // claudeStatePath returns the path to the claude state file, using the branding app name.
 func claudeStatePath() string {

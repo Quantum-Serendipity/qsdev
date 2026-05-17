@@ -82,7 +82,7 @@ func (r *BugReport) FormatIssueBody() string {
 		b.WriteString("</details>\n\n")
 	}
 
-	b.WriteString(fmt.Sprintf("---\n*Filed via `%s report bug`*\n", branding.Get().AppName))
+	fmt.Fprintf(&b, "---\n*Filed via `%s report bug`*\n", branding.Get().AppName)
 
 	return b.String()
 }

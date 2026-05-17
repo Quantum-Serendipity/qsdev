@@ -43,6 +43,8 @@ func initialize() error {
 	gdevcmd.AddConfigCommandBuilder(configShowCmd, migrateCmd)
 	instance.AddCommands(
 		initCmd(),
+		trialCmd(),
+		scaffoldCmd(),
 		enableCmd(),
 		disableCmd(),
 		statusCmd(),

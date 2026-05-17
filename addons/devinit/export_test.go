@@ -48,6 +48,24 @@ var (
 	// ExportRustCLI exposes the RustCLI built-in profile.
 	ExportRustCLI = RustCLI
 
+	// ExportJavaWeb exposes the JavaWeb built-in profile.
+	ExportJavaWeb = JavaWeb
+
+	// ExportPythonWeb exposes the PythonWeb built-in profile.
+	ExportPythonWeb = PythonWeb
+
+	// ExportTSBackend exposes the TSBackend built-in profile.
+	ExportTSBackend = TSBackend
+
+	// ExportElixirWeb exposes the ElixirWeb built-in profile.
+	ExportElixirWeb = ElixirWeb
+
+	// ExportRustWeb exposes the RustWeb built-in profile.
+	ExportRustWeb = RustWeb
+
+	// ExportDotnetWeb exposes the DotnetWeb built-in profile.
+	ExportDotnetWeb = DotnetWeb
+
 	// ExportMapDetectionToDefaults exposes MapDetectionToDefaults for external tests.
 	ExportMapDetectionToDefaults = MapDetectionToDefaults
 

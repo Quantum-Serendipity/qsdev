@@ -44,15 +44,64 @@ func DetectEnvironment(root string) EnvironmentState {
 		HasClaudeSettings: fileutil.FileExists(root, ".claude", "settings.json"),
 		HasEnvrc:          fileutil.FileExists(root, ".envrc"),
 		HasMcpJson:        fileutil.FileExists(root, ".mcp.json"),
-		IsGitRepo:         fileutil.DirExists(root, ".git"),
+		IsGitRepo:         isGitRepository(root),
 	}
 
 	if s.IsGitRepo {
-		s.HasGitHooks = hasExecutableHooks(filepath.Join(root, ".git", "hooks"))
-		s.RemoteURL = parseOriginURL(filepath.Join(root, ".git", "config"))
+		gitDir := resolveGitDir(root)
+		s.HasGitHooks = hasExecutableHooks(filepath.Join(gitDir, "hooks"))
+		s.RemoteURL = parseOriginURL(filepath.Join(gitDir, "config"))
 	}
 
 	return s
+}
+
+// isGitRepository returns true if root contains a .git directory (normal repo)
+// or a .git file (worktree). Both are valid git working trees.
+func isGitRepository(root string) bool {
+	info, err := os.Stat(filepath.Join(root, ".git"))
+	if err != nil {
+		return false
+	}
+	return info.IsDir() || info.Mode().IsRegular()
+}
+
+// resolveGitDir returns the actual .git directory path. For normal repos this
+// is root/.git. For worktrees, the .git file contains "gitdir: <path>" pointing
+// to the real git directory; we follow it to find the common dir for config access.
+func resolveGitDir(root string) string {
+	gitPath := filepath.Join(root, ".git")
+	info, err := os.Stat(gitPath)
+	if err != nil {
+		return gitPath
+	}
+	if info.IsDir() {
+		return gitPath
+	}
+	// Worktree: .git is a file with "gitdir: <path>"
+	data, err := os.ReadFile(gitPath)
+	if err != nil {
+		return gitPath
+	}
+	content := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(content, "gitdir: ") {
+		return gitPath
+	}
+	gitDir := strings.TrimPrefix(content, "gitdir: ")
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(root, gitDir)
+	}
+	// The gitdir points to .git/worktrees/<name>. The config is in the
+	// common directory (parent of worktrees/). Check for a commondir file.
+	commonDirPath := filepath.Join(gitDir, "commondir")
+	if commonData, err := os.ReadFile(commonDirPath); err == nil {
+		commonDir := strings.TrimSpace(string(commonData))
+		if !filepath.IsAbs(commonDir) {
+			commonDir = filepath.Join(gitDir, commonDir)
+		}
+		return commonDir
+	}
+	return gitDir
 }
 
 // hasExecutableHooks returns true if the hooks directory contains at least

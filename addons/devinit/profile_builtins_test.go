@@ -15,6 +15,12 @@ func TestBuiltinProfiles_HaveRequiredFields(t *testing.T) {
 		{"ts-fullstack", devinit.ExportTSFullstack},
 		{"python-data", devinit.ExportPythonData},
 		{"rust-cli", devinit.ExportRustCLI},
+		{"java-web", devinit.ExportJavaWeb},
+		{"python-web", devinit.ExportPythonWeb},
+		{"ts-backend", devinit.ExportTSBackend},
+		{"elixir-web", devinit.ExportElixirWeb},
+		{"rust-web", devinit.ExportRustWeb},
+		{"dotnet-web", devinit.ExportDotnetWeb},
 	}
 
 	for _, tt := range tests {
@@ -113,10 +119,44 @@ func TestBuiltinProfiles_RustCLI(t *testing.T) {
 	}
 }
 
+func TestBuiltinProfiles_WebProfiles_HaveServices(t *testing.T) {
+	webProfiles := []struct {
+		name    string
+		profile devinit.ExportProfile
+	}{
+		{"java-web", devinit.ExportJavaWeb},
+		{"python-web", devinit.ExportPythonWeb},
+		{"ts-backend", devinit.ExportTSBackend},
+		{"elixir-web", devinit.ExportElixirWeb},
+		{"rust-web", devinit.ExportRustWeb},
+		{"dotnet-web", devinit.ExportDotnetWeb},
+	}
+
+	for _, tt := range webProfiles {
+		t.Run(tt.name, func(t *testing.T) {
+			if len(tt.profile.Services) != 2 {
+				t.Errorf("Services length = %d, want 2 (postgres, redis)", len(tt.profile.Services))
+			}
+			if tt.profile.PermissionLevel != "standard" {
+				t.Errorf("PermissionLevel = %q, want %q", tt.profile.PermissionLevel, "standard")
+			}
+			if !tt.profile.Direnv {
+				t.Error("Direnv should be true")
+			}
+			if !tt.profile.ClaudeCode {
+				t.Error("ClaudeCode should be true")
+			}
+		})
+	}
+}
+
 func TestDefaultProjectProfileRegistry_AllBuiltinsRegistered(t *testing.T) {
 	r := devinit.ExportDefaultProjectProfileRegistry()
 
-	builtins := []string{"go-web", "ts-fullstack", "python-data", "rust-cli"}
+	builtins := []string{
+		"go-web", "ts-fullstack", "ts-backend", "python-data", "python-web",
+		"rust-cli", "rust-web", "java-web", "elixir-web", "dotnet-web",
+	}
 	for _, name := range builtins {
 		p, ok := r.Get(name)
 		if !ok {
@@ -140,7 +180,10 @@ func TestDefaultProjectProfileRegistry_AllBuiltinsRegistered(t *testing.T) {
 func TestDefaultProjectProfileRegistry_InsertionOrder(t *testing.T) {
 	r := devinit.ExportDefaultProjectProfileRegistry()
 
-	want := []string{"go-web", "ts-fullstack", "python-data", "rust-cli"}
+	want := []string{
+		"go-web", "ts-fullstack", "ts-backend", "python-data", "python-web",
+		"rust-cli", "rust-web", "java-web", "elixir-web", "dotnet-web",
+	}
 	names := r.Names()
 	if len(names) != len(want) {
 		t.Fatalf("Names length = %d, want %d", len(names), len(want))

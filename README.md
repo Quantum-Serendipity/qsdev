@@ -43,7 +43,9 @@ qsdev eliminates the ritual and makes security the default, not the afterthought
 - **Provable, not promissory** — `qsdev status` shows your security posture with a real score and grade, not a checkbox
 - **Team-reproducible** — commit `.qsdev.yaml`, teammates run `qsdev init --mode join` for identical environments
 - **Non-destructive updates** — `qsdev update` preserves your modifications via three-way merge
-- **Profile-driven** — `go-web`, `ts-fullstack`, `python-data`, `rust-cli` project presets; `consulting-default`, `startup-fast`, `enterprise` infrastructure tiers
+- **Profile-driven** — 10 project presets (`go-web`, `ts-fullstack`, `python-web`, `java-web`, `rust-web`, and more); `consulting-default`, `startup-github`, `enterprise` infrastructure tiers
+- **Optimal security/productivity balance** — most security tools force a painful tradeoff: more protection means more friction. qsdev eliminates the configuration cost (the 2–5 day manual setup) without adding ongoing overhead. After init, the only friction is 3–10 seconds of pre-commit hooks per commit — indistinguishable from a project without security. Age-gating silently catches 92% of malicious packages; install-script blocking requires no approval; Nix isolation is invisible. Heavyweight approaches (VMs per project, all-action approval) impose 10–40% permanent productivity loss for marginal additional protection against threats outside most teams' models
+- **Code like a power user from day one** — every generated config represents hours of ecosystem research and best-practice curation. You get 30+ AI agent skills, per-language convention rules, real-time SAST and secrets scanning, MCP servers for documentation and behavioral analysis, and package install validation — the exact setup a security-conscious power user would build, generated in seconds instead of days
 
 ## Quick Start
 
@@ -55,6 +57,23 @@ curl -fsSL https://raw.githubusercontent.com/Quantum-Serendipity/qsdev/main/scri
 cd your-project
 qsdev init --yes
 ```
+
+## Try It Out
+
+### On an existing project (non-destructive)
+
+Use `qsdev trial` to evaluate in an isolated git worktree — zero risk to your working branch:
+
+```bash
+cd your-project
+qsdev trial
+```
+
+This creates a worktree with the full qsdev configuration applied. Happy with it? Merge the branch. Not for you? Delete the worktree — zero residue.
+
+### On our example project
+
+Follow the [Critter Queue end-to-end runbook](docs/e2e-runbook-critter-queue.md) — a TypeScript + PostgreSQL + Redis project that exercises all 10 defense layers, the full CLI lifecycle, and AI agent integration in a realistic scenario.
 
 After running, your project has a complete security-hardened environment:
 
@@ -210,16 +229,24 @@ Pre-configured bundles for common project types:
 |---------|-----------|----------|----------|
 | `go-web` | Go | PostgreSQL, Redis | Standard + safety-block |
 | `ts-fullstack` | TypeScript (pnpm) | PostgreSQL, Redis | Standard + auto-format |
+| `ts-backend` | TypeScript (pnpm) | PostgreSQL, Redis | Standard |
 | `python-data` | Python (uv) | — | Minimal |
+| `python-web` | Python (uv) | PostgreSQL, Redis | Standard |
 | `rust-cli` | Rust | — | Minimal + pre-commit |
+| `rust-web` | Rust | PostgreSQL, Redis | Standard |
+| `java-web` | Java (Gradle) | PostgreSQL, Redis | Standard |
+| `elixir-web` | Elixir | PostgreSQL, Redis | Standard |
+| `dotnet-web` | .NET | PostgreSQL, Redis | Standard |
+
+Create custom profiles via `.qsdev.yaml` — combine any languages, services, and infrastructure tier.
 
 Infrastructure profiles control organization-wide policy:
 
 | Profile | Focus |
 |---------|-------|
-| `consulting-default` | Enhanced security (semgrep, gitleaks, secretspec) |
-| `startup-fast` | Baseline security, minimal overhead |
-| `enterprise` | Strict security, audit logging, SBOM |
+| `consulting-default` | Enhanced security (semgrep, gitleaks, Nexus proxy, Renovate) |
+| `startup-github` | GitHub-native, baseline security, minimal overhead |
+| `enterprise` | Strict security, Artifactory, audit logging, SBOM signing |
 
 ## What qsdev is NOT
 
@@ -235,18 +262,16 @@ qsdev generates configuration files. It does not:
 
 ## Built On
 
-qsdev is built on [gdev](https://github.com/fastcat/gdev), a fantastic developer experience framework I have used for years and deeply miss whenever I can't created by Matthew Gabeler-Lee. As always thank you for building such an awesome tool.
+qsdev is built on [gdev](https://github.com/fastcat/gdev), a fantastic developer experience framework I have used for years and deeply miss whenever I can't, created by Matthew Gabeler-Lee. As always thank you for building such an awesome tool.
 
 ## Build Your Own
 
-qsdev is a white-label framework. Want a branded internal tool that enforces your company's security policies, registries, and ecosystems? Build one in an afternoon.
+qsdev is a white-label framework. Want a branded internal tool that enforces your company's security policies? Scaffold one in under a minute:
 
-```go
-instance.SetBranding(branding.Config{
-    AppName: "acmedev", ConfigFile: ".acmedev.yaml",
-    EnvPrefix: "ACMEDEV_", GitHubOwner: "acme-corp", GitHubRepo: "acmedev",
-})
-cmd.Main()
+```bash
+qsdev scaffold-instance acmedev --github-owner acme-corp
+cd acmedev && go mod tidy && go build ./cmd/acmedev
+./acmedev --help
 ```
 
 That's it — you now have `acmedev init`, `acmedev status`, `acmedev check`, self-update, 27 ecosystems, and the full security stack under your own name. From there, add proprietary addons, wire in private registry proxies, define team-specific ecosystem modules, or enforce custom compliance profiles.
@@ -255,7 +280,7 @@ That's it — you now have `acmedev init`, `acmedev status`, `acmedev check`, se
 
 ## Documentation
 
-- [Security Architecture](docs/security-architecture.md) — Threat model, 10 defense layers, permission model
+- [Security Architecture](docs/security-architecture.md) — Threat model, 10 defense layers, security spectrum positioning, permission model
 - [Configuration Reference](docs/configuration-reference.md) — Every generated file and its merge strategy
 - [Team Onboarding](docs/team-onboarding.md) — Profiles, policies, team rollout
 - [Migration Guide](docs/migration-guide.md) — Adding qsdev to existing projects

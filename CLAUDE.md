@@ -16,11 +16,11 @@ This machine runs NixOS. Use `nix develop` (via direnv) for the development envi
 
 ## Implementation Plan
 
-The full implementation plan is at `docs/implementation-plan/plan.md`. Phase files with detailed implementation units are in `docs/implementation-plan/phases/`.
+The full implementation plan is at `internal-docs/implementation-plan/plan.md`. Phase files with detailed implementation units are in `internal-docs/implementation-plan/phases/`. These files are local-only (gitignored).
 
 ## Research Foundation
 
-Four completed research spikes are in `docs/research-spikes/`:
+Four completed research spikes are in `internal-docs/research-spikes/` (local-only, gitignored):
 - `gdev-extension-design/` — Addon architecture, wizard UX, template engine, migration strategy
 - `package-supply-chain-security/` — Per-ecosystem attack surface, age-gating, lockfile enforcement
 - `devenv-security/` — Hardened devenv.sh boilerplate, nix.conf hardening, pre-commit hooks, trust model

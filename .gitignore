@@ -27,3 +27,6 @@ bin/
 # Go workspace (local dev override — never commit)
 go.work
 go.work.sum
+
+# Internal documentation (not tracked in git)
+internal-docs/

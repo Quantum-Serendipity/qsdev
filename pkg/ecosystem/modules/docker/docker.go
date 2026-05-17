@@ -22,7 +22,7 @@ var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.SecretDeclarer = (*Module)(nil)
 
 func init() {
-	ecosystem.RegisterModule(&Module{})
+	ecosystem.MustRegisterModule(&Module{})
 }
 
 // Module implements ecosystem.EcosystemModule for Docker / Containerfiles.

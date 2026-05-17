@@ -86,7 +86,7 @@ func DownloadAndVerify(ctx context.Context, release *Release, cfg Config, target
 func downloadFile(ctx context.Context, url, dest string) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating request for %s: %w", url, err)
 	}
 
 	// Support optional GITHUB_TOKEN for private repos.
@@ -97,22 +97,22 @@ func downloadFile(ctx context.Context, url, dest string) error {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("fetching %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download returned HTTP %d", resp.StatusCode)
+		return fmt.Errorf("download %s returned HTTP %d", url, resp.StatusCode)
 	}
 
 	f, err := os.Create(dest)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating %s: %w", dest, err)
 	}
 	defer f.Close()
 
 	if _, err := io.Copy(f, resp.Body); err != nil {
-		return err
+		return fmt.Errorf("writing %s: %w", dest, err)
 	}
 	return f.Close()
 }
@@ -172,7 +172,7 @@ func findChecksum(checksums, filename string) (string, error) {
 func extractFromTarGz(archivePath, binaryName, destPath string) error {
 	f, err := os.Open(archivePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("opening archive %s: %w", archivePath, err)
 	}
 	defer f.Close()
 
@@ -196,12 +196,12 @@ func extractFromTarGz(archivePath, binaryName, destPath string) error {
 		if filepath.Base(header.Name) == binaryName && header.Typeflag == tar.TypeReg {
 			out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 			if err != nil {
-				return err
+				return fmt.Errorf("creating output file %s: %w", destPath, err)
 			}
 			defer out.Close()
 
 			if _, err := io.Copy(out, tr); err != nil {
-				return err
+				return fmt.Errorf("extracting %s: %w", binaryName, err)
 			}
 			return out.Close()
 		}
@@ -214,7 +214,7 @@ func extractFromTarGz(archivePath, binaryName, destPath string) error {
 func extractFromZip(archivePath, binaryName, destPath string) error {
 	r, err := zip.OpenReader(archivePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("opening zip archive %s: %w", archivePath, err)
 	}
 	defer r.Close()
 
@@ -222,18 +222,18 @@ func extractFromZip(archivePath, binaryName, destPath string) error {
 		if filepath.Base(zf.Name) == binaryName {
 			src, err := zf.Open()
 			if err != nil {
-				return err
+				return fmt.Errorf("opening %s in zip: %w", zf.Name, err)
 			}
 			defer src.Close()
 
 			out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 			if err != nil {
-				return err
+				return fmt.Errorf("creating output file %s: %w", destPath, err)
 			}
 			defer out.Close()
 
 			if _, err := io.Copy(out, src); err != nil {
-				return err
+				return fmt.Errorf("extracting %s: %w", binaryName, err)
 			}
 			return out.Close()
 		}

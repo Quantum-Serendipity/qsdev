@@ -36,8 +36,8 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	// 2. Run detection.
 	detected := detect.Detect(projectRoot)
 
-	// 3. Convert config to answers using temporary bridge function.
-	answers := configToAnswersTemp(cfg, detected, projectRoot)
+	// 3. Convert config to answers for the generation pipeline.
+	answers := configToAnswers(cfg, detected, projectRoot)
 
 	// 3b. If --answers-file is set, merge file answers over config answers.
 	if opts.AnswersFile != "" {
@@ -174,10 +174,9 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	return nil
 }
 
-// configToAnswersTemp is a temporary bridge function that converts a parsed
-// QsdevConfig into WizardAnswers. This will be replaced by the full resolution
-// engine (Unit 13.2) when it lands.
-func configToAnswersTemp(cfg *types.QsdevConfig, detected types.DetectedProject, projectRoot string) types.WizardAnswers {
+// configToAnswers converts a parsed QsdevConfig into WizardAnswers for use
+// by the generation pipeline during join mode.
+func configToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, projectRoot string) types.WizardAnswers {
 	answers := types.WizardAnswers{
 		ProjectName: filepath.Base(projectRoot),
 		ProjectRoot: projectRoot,

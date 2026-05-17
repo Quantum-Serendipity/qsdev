@@ -22,7 +22,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	ecosystem.RegisterModule(&Module{})
+	ecosystem.MustRegisterModule(&Module{})
 }
 
 // requiresPythonRe matches the requires-python line in pyproject.toml and

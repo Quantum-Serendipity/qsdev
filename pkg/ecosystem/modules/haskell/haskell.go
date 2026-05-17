@@ -19,7 +19,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	ecosystem.RegisterModule(&Module{})
+	ecosystem.MustRegisterModule(&Module{})
 }
 
 // Module implements ecosystem.EcosystemModule for the Haskell programming language.

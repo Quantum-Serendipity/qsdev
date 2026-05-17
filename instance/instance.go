@@ -1,3 +1,15 @@
+// Package instance is the entry point for building tools on the qsdev framework.
+// Downstream tools import this package and call its functions during initialization,
+// before cmd.Main() is invoked.
+//
+// Initialization order:
+//  1. SetBranding — configure app name, env vars, file paths, GitHub coordinates
+//  2. Addon Configure() calls — devenv.Configure(), claudecode.Configure(), etc.
+//  3. AddCommands / AddCommandBuilders — register custom CLI commands
+//  4. cmd.Main() — starts the application
+//
+// All customization must happen before cmd.Main() is called. The gdev lifecycle
+// enforces this: calls to SetBranding or AddEcosystemModules after lockdown will panic.
 package instance
 
 import (
@@ -28,7 +40,7 @@ func EcosystemRegistry() *ecosystem.Registry {
 func AddEcosystemModules(modules ...ecosystem.EcosystemModule) {
 	gdevinstance.CheckCanCustomize()
 	for _, m := range modules {
-		ecosystem.RegisterModule(m)
+		ecosystem.MustRegisterModule(m)
 	}
 }
 

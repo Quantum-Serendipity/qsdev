@@ -24,7 +24,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	ecosystem.RegisterModule(&Module{})
+	ecosystem.MustRegisterModule(&Module{})
 }
 
 // scalaVersionRe matches a scalaVersion setting in build.sbt, with an optional

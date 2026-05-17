@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// WizardAnswers holds all user selections from the init wizard.
-// It flows from the wizard to generators and is the single source of truth
-// for what the user wants configured.
+// WizardAnswers holds user selections and detected project state from the init wizard.
+// It flows through generators to produce output files and is serialized to the
+// per-addon answers file for incremental updates.
 type WizardAnswers struct {
 	ProjectName     string            `yaml:"project_name"     json:"project_name"`
 	ProjectRoot     string            `yaml:"project_root"     json:"project_root"`
@@ -66,8 +66,9 @@ type ServiceChoice struct {
 	Settings map[string]string `yaml:"settings" json:"settings"`
 }
 
-// DetectedProject holds the results of scanning a project directory
-// for language markers, existing config files, and git state.
+// DetectedProject is the result of scanning a project root for language markers,
+// existing configuration files, and git state. It seeds WizardAnswers.Detected
+// and drives auto-detection of ecosystems during init and join.
 type DetectedProject struct {
 	HasGoMod       bool   `yaml:"has_go_mod"       json:"has_go_mod"`
 	GoVersion      string `yaml:"go_version"       json:"go_version"`
@@ -115,8 +116,9 @@ type HookChoices struct {
 	AuditLog    bool `yaml:"audit_log"    json:"audit_log"`
 }
 
-// GeneratedFile represents a single file produced by a generator,
-// ready to be written to disk by the generation pipeline.
+// GeneratedFile represents a single file to be written by the generation pipeline.
+// Generators return slices of these; the pipeline handles atomicity, merge
+// strategies, and permission modes.
 type GeneratedFile struct {
 	Path           string        `yaml:"path"            json:"path"`
 	Content        []byte        `yaml:"content"         json:"content"`

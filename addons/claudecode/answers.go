@@ -6,19 +6,19 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// claudeAnswersFile returns the answers file name, using the branding app name.
-func claudeAnswersFile() string {
+// answersFile returns the answers file name, using the branding app name.
+func answersFile() string {
 	return "." + branding.Get().AppName + "-claude-answers.yaml"
 }
 
 // answersPath returns the full path to the answers persistence file.
 func answersPath(projectRoot string) string {
-	return answers.FilePath(projectRoot, ".claude", claudeAnswersFile())
+	return answers.FilePath(projectRoot, ".claude", answersFile())
 }
 
 // saveAnswers persists the wizard answers to .claude/.qsdev-claude-answers.yaml.
 func saveAnswers(projectRoot string, a types.WizardAnswers) error {
-	return answers.SaveToDir(projectRoot, ".claude", claudeAnswersFile(), a)
+	return answers.SaveToDir(projectRoot, ".claude", answersFile(), a)
 }
 
 // SaveAnswers is an exported wrapper around saveAnswers, allowing other
@@ -30,5 +30,5 @@ func SaveAnswers(projectRoot string, a types.WizardAnswers) error {
 // loadAnswers reads and unmarshals saved wizard answers from
 // .claude/.qsdev-claude-answers.yaml. It returns an error if the file does not exist.
 func loadAnswers(projectRoot string) (types.WizardAnswers, error) {
-	return answers.LoadFromDir(projectRoot, ".claude", claudeAnswersFile(), "claude")
+	return answers.LoadFromDir(projectRoot, ".claude", answersFile(), "claude")
 }

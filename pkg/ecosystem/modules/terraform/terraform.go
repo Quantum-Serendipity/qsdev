@@ -20,7 +20,7 @@ var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.SecretDeclarer = (*Module)(nil)
 
 func init() {
-	ecosystem.RegisterModule(&Module{})
+	ecosystem.MustRegisterModule(&Module{})
 }
 
 // Module is the stateless Terraform/OpenTofu ecosystem module.

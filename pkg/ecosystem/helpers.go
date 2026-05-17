@@ -7,10 +7,16 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// RegisterModule is a convenience function for module init() blocks.
-// It registers the module with the default registry and panics on failure.
-func RegisterModule(m EcosystemModule) {
-	if err := DefaultRegistry().Register(m); err != nil {
+// RegisterModule registers a module with the default registry.
+// Returns an error if registration fails (e.g., duplicate name).
+func RegisterModule(m EcosystemModule) error {
+	return DefaultRegistry().Register(m)
+}
+
+// MustRegisterModule registers a module with the default registry and panics on failure.
+// Intended for use in init() blocks where error handling is not possible.
+func MustRegisterModule(m EcosystemModule) {
+	if err := RegisterModule(m); err != nil {
 		panic(fmt.Sprintf("%s: failed to register ecosystem module: %v", m.Name(), err))
 	}
 }

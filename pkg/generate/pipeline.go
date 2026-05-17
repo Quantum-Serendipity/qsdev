@@ -30,9 +30,9 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 
 	// Resolve the project root once for consistent symlink escape checks.
 	// On Windows, EvalSymlinks may normalize casing or resolve junctions.
-	resolvedRoot := opts.ProjectRoot
-	if r, err := filepath.EvalSymlinks(opts.ProjectRoot); err == nil {
-		resolvedRoot = r
+	resolvedRoot, err := filepath.EvalSymlinks(opts.ProjectRoot)
+	if err != nil {
+		return WriteResult{}, fmt.Errorf("resolving project root symlinks: %w", err)
 	}
 
 	registry := NewValidatorRegistry()

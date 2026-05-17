@@ -14,16 +14,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// stateFilePaths returns the state file paths to load (same as posture.stateFilePaths).
-func stateFilePaths() [3]string {
-	b := branding.Get()
-	return [3]string{
-		b.StateDir + "/." + b.AppName + "-init-state.yaml",
-		".devenv/." + b.AppName + "-state.yaml",
-		".claude/." + b.AppName + "-claude-state.yaml",
-	}
-}
-
 // Teardown orchestrates the full teardown operation: load state, classify
 // files, build and display the plan, optionally archive and assess posture,
 // execute the plan, and display the result.
@@ -116,7 +106,7 @@ func loadAndMergeStates(projectRoot string) types.GeneratedState {
 		Files: make(map[string]types.FileState),
 	}
 
-	for _, relPath := range stateFilePaths() {
+	for _, relPath := range state.StateFilePaths() {
 		absPath := filepath.Join(projectRoot, relPath)
 		st, err := state.LoadStateFromFile(absPath)
 		if err != nil {

@@ -1,6 +1,7 @@
 package selfupdate
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -23,6 +24,9 @@ func BackgroundCheck(currentVersion string) <-chan string {
 	go func() {
 		defer close(ch)
 
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
 		cfg := DefaultConfig()
 
 		done := make(chan *Release, 1)
@@ -35,7 +39,6 @@ func BackgroundCheck(currentVersion string) <-chan string {
 			done <- release
 		}()
 
-		// Wait up to 5 seconds for the check to complete.
 		select {
 		case release := <-done:
 			if release != nil {
@@ -46,7 +49,7 @@ func BackgroundCheck(currentVersion string) <-chan string {
 				)
 				ch <- notice
 			}
-		case <-time.After(5 * time.Second):
+		case <-ctx.Done():
 			// Timed out — silently skip.
 		}
 	}()

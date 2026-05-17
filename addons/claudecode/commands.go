@@ -21,9 +21,12 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// AddonDir is the project-relative directory used by the claudecode addon for
+// its configuration and state files.
+const AddonDir = ".claude"
 
-// claudeStatePath returns the path to the claude state file, using the branding app name.
-func claudeStatePath() string {
+// statePath returns the path to the claude state file, using the branding app name.
+func statePath() string {
 	return ".claude/." + branding.Get().AppName + "-claude-state.yaml"
 }
 
@@ -114,7 +117,7 @@ func initCmd() *cobra.Command {
 
 			// Save state and answers.
 			genState := state.RecordFiles(files)
-			stateFile := filepath.Join(projectRoot, claudeStatePath())
+			stateFile := filepath.Join(projectRoot, statePath())
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
 			}
@@ -167,7 +170,7 @@ func updateCmd() *cobra.Command {
 			answers.Detected = detect.Detect(projectRoot)
 
 			// Load stored state.
-			stateFile := filepath.Join(projectRoot, claudeStatePath())
+			stateFile := filepath.Join(projectRoot, statePath())
 			existingState, err := state.LoadStateFromFile(stateFile)
 			if err != nil {
 				return fmt.Errorf("loading state: %w", err)
@@ -371,7 +374,7 @@ func addSkillCmd() *cobra.Command {
 			}
 
 			// Load existing state to determine what changed.
-			stateFile := filepath.Join(projectRoot, claudeStatePath())
+			stateFile := filepath.Join(projectRoot, statePath())
 			existingState, err := state.LoadStateFromFile(stateFile)
 			if err != nil {
 				return fmt.Errorf("loading state: %w", err)
@@ -478,7 +481,7 @@ func addHookCmd() *cobra.Command {
 			}
 
 			// Load existing state to determine what changed.
-			stateFile := filepath.Join(projectRoot, claudeStatePath())
+			stateFile := filepath.Join(projectRoot, statePath())
 			existingState, err := state.LoadStateFromFile(stateFile)
 			if err != nil {
 				return fmt.Errorf("loading state: %w", err)

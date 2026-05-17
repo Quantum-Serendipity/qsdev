@@ -23,7 +23,7 @@ var _ ecosystem.EcosystemModule = (*Module)(nil)
 type Module struct{}
 
 func init() {
-	ecosystem.RegisterModule(&Module{})
+	ecosystem.MustRegisterModule(&Module{})
 }
 
 // Name returns the canonical module identifier.

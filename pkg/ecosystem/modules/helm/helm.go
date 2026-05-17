@@ -22,7 +22,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	ecosystem.RegisterModule(&Module{})
+	ecosystem.MustRegisterModule(&Module{})
 }
 
 // chartVersionRe matches the "version: X.Y.Z" line in Chart.yaml.

@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -27,7 +28,10 @@ func CleanOldLogs(dir string, maxAge time.Duration) error {
 			continue
 		}
 		if info.ModTime().Before(cutoff) {
-			os.Remove(filepath.Join(dir, e.Name()))
+			path := filepath.Join(dir, e.Name())
+			if err := os.Remove(path); err != nil {
+				slog.Debug("failed to prune old log file", "path", path, "error", err)
+			}
 		}
 	}
 	return nil
@@ -68,6 +72,9 @@ func pruneExcessLogs(dir string, maxFiles int) {
 
 	toRemove := len(logs) - maxFiles
 	for i := 0; i < toRemove; i++ {
-		os.Remove(filepath.Join(dir, logs[i].name))
+		path := filepath.Join(dir, logs[i].name)
+		if err := os.Remove(path); err != nil {
+			slog.Debug("failed to prune excess log file", "path", path, "error", err)
+		}
 	}
 }

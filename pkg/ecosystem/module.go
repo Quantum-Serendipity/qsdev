@@ -21,36 +21,44 @@ type EcosystemModule interface {
 	// DevenvNixFragment returns a Nix code fragment to include in devenv.nix.
 	DevenvNixFragment(config ModuleConfig) (string, error)
 
-	// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
+	// DevenvYamlInputs returns additional flake inputs for devenv.yaml. Returning
+	// nil means this ecosystem needs no extra flake inputs.
 	DevenvYamlInputs(config ModuleConfig) []DevenvInput
 
 	// SecurityConfigs returns generated security configuration files
-	// (e.g. .npmrc, pip.conf, cargo config).
+	// (e.g. .npmrc, pip.conf, cargo config). Returning nil indicates no
+	// security configs are needed for this ecosystem.
 	SecurityConfigs(config ModuleConfig) []types.GeneratedFile
 
 	// PreCommitHooks returns pre-commit hook definitions for this ecosystem.
+	// Returning nil means no pre-commit hooks are contributed by this module.
 	PreCommitHooks(config ModuleConfig) []HookConfig
 
 	// DenyRules returns Claude Code deny-rule patterns for this ecosystem
-	// (e.g. "npm install --ignore-scripts").
+	// (e.g. "npm install --ignore-scripts"). Returning nil means no deny
+	// rules are needed for this ecosystem.
 	DenyRules(config ModuleConfig) []string
 
-	// CICommands returns CI pipeline commands for this ecosystem.
+	// CICommands returns CI pipeline commands for this ecosystem. Returning nil
+	// means this ecosystem contributes no CI steps.
 	CICommands(config ModuleConfig) []CICommand
 
 	// PackageManagers returns metadata about the ecosystem's package managers.
 	PackageManagers() []PackageManagerInfo
 
 	// WizardFields returns additional wizard form fields this ecosystem needs.
+	// Returning nil means the ecosystem requires no extra user input beyond
+	// language selection.
 	WizardFields() []WizardField
 
 	// VerificationCommands returns the build/test/lint/typecheck/format commands
 	// for this ecosystem. Used by agent-postmortem-skill to inject project-specific
-	// verification steps.
+	// verification steps. A zero-value result means no verification commands apply.
 	VerificationCommands(config ModuleConfig) VerificationCommands
 
 	// ManifestFiles returns metadata about dependency manifest and lock files
 	// for this ecosystem. Used by Version-Sentinel integration to determine
-	// which files can be guarded.
+	// which files can be guarded. Returning nil means there are no manifest
+	// files for this ecosystem.
 	ManifestFiles(config ModuleConfig) []ManifestFileInfo
 }

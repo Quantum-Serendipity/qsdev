@@ -43,3 +43,22 @@ func ReadFirstLine(path string) string {
 	}
 	return ""
 }
+
+// ReadFirstLineErr reads the first line of a file, returning any error encountered.
+// Unlike ReadFirstLine, this does not silently swallow errors.
+func ReadFirstLineErr(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close() //nolint:errcheck
+
+	scanner := bufio.NewScanner(f)
+	if scanner.Scan() {
+		return scanner.Text(), nil
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return "", nil
+}

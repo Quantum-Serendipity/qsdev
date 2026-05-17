@@ -21,7 +21,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 
 func init() {
-	ecosystem.RegisterModule(&Module{})
+	ecosystem.MustRegisterModule(&Module{})
 }
 
 // goVersionRe matches the "go X.Y" or "go X.Y.Z" directive in go.mod.

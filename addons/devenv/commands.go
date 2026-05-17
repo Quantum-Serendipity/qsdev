@@ -20,9 +20,12 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// AddonDir is the project-relative directory used by the devenv addon for its
+// configuration and state files.
+const AddonDir = ".devenv"
 
-// devenvStatePath returns the path to the devenv state file, using the branding app name.
-func devenvStatePath() string {
+// statePath returns the path to the devenv state file, using the branding app name.
+func statePath() string {
 	return ".devenv/." + branding.Get().AppName + "-state.yaml"
 }
 
@@ -121,7 +124,7 @@ func initCmd() *cobra.Command {
 
 			// Save state and answers.
 			genState := state.RecordFiles(files)
-			stateFile := filepath.Join(projectRoot, devenvStatePath())
+			stateFile := filepath.Join(projectRoot, statePath())
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
 			}
@@ -176,7 +179,7 @@ func updateCmd() *cobra.Command {
 
 			// Check for existing devenv.nix unless --force is set.
 			if !force {
-				stateFile := filepath.Join(projectRoot, devenvStatePath())
+				stateFile := filepath.Join(projectRoot, statePath())
 				existingState, err := state.LoadStateFromFile(stateFile)
 				if err != nil {
 					return fmt.Errorf("loading state: %w", err)
@@ -214,7 +217,7 @@ func updateCmd() *cobra.Command {
 
 			// Save state and answers.
 			genState := state.RecordFiles(files)
-			stateFile := filepath.Join(projectRoot, devenvStatePath())
+			stateFile := filepath.Join(projectRoot, statePath())
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
 			}
@@ -306,7 +309,7 @@ func addServiceCmd() *cobra.Command {
 
 			// Save state and answers.
 			genState := state.RecordFiles(files)
-			stateFile := filepath.Join(projectRoot, devenvStatePath())
+			stateFile := filepath.Join(projectRoot, statePath())
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
 			}
@@ -398,7 +401,7 @@ func addLanguageCmd() *cobra.Command {
 
 			// Save state and answers.
 			genState := state.RecordFiles(files)
-			stateFile := filepath.Join(projectRoot, devenvStatePath())
+			stateFile := filepath.Join(projectRoot, statePath())
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
 			}
@@ -479,7 +482,7 @@ func addPackageCmd() *cobra.Command {
 			}
 
 			genState := state.RecordFiles(files)
-			stateFile := filepath.Join(projectRoot, devenvStatePath())
+			stateFile := filepath.Join(projectRoot, statePath())
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
 			}
@@ -558,7 +561,7 @@ func removePackageCmd() *cobra.Command {
 			}
 
 			genState := state.RecordFiles(files)
-			stateFile := filepath.Join(projectRoot, devenvStatePath())
+			stateFile := filepath.Join(projectRoot, statePath())
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
 			}
@@ -633,7 +636,7 @@ func removeServiceCmd() *cobra.Command {
 			}
 
 			genState := state.RecordFiles(files)
-			stateFile := filepath.Join(projectRoot, devenvStatePath())
+			stateFile := filepath.Join(projectRoot, statePath())
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
 			}
@@ -707,7 +710,7 @@ func removeLanguageCmd() *cobra.Command {
 			}
 
 			genState := state.RecordFiles(files)
-			stateFile := filepath.Join(projectRoot, devenvStatePath())
+			stateFile := filepath.Join(projectRoot, statePath())
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
 			}

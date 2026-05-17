@@ -20,7 +20,7 @@
 
 .EXAMPLE
     # Install latest version
-    irm https://raw.githubusercontent.com/Quantum-Serendipity/gdev-secure-devenv-bootstrap/main/scripts/install.ps1 | iex
+    irm https://raw.githubusercontent.com/Quantum-Serendipity/qsdev/main/scripts/install.ps1 | iex
 
 .EXAMPLE
     # Install specific version
@@ -42,7 +42,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $GithubOrg = "Quantum-Serendipity"
-$GithubRepo = "gdev-secure-devenv-bootstrap"
+$GithubRepo = "qsdev"
 $BinaryName = "qsdev"
 
 function Detect-Architecture {

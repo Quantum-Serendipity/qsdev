@@ -142,8 +142,19 @@ scoops:
       branch: main
       token: "{{ .Env.SCOOP_TAP_GITHUB_TOKEN }}"
 
+sboms:
+  - artifacts: archive
+    cmd: syft
+    args:
+      - "$artifact"
+      - "--output"
+      - "spdx-json=$document"
+    documents:
+      - "{{ .ArtifactName }}.spdx.json"
+
 signs:
-  - artifacts: checksum
+  - id: gpg
+    artifacts: checksum
     cmd: gpg
     args:
       - "--batch"
@@ -153,3 +164,14 @@ signs:
       - "${signature}"
       - "--detach-sig"
       - "${artifact}"
+
+  - id: cosign
+    artifacts: checksum
+    cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - "sign-blob"
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    output: true

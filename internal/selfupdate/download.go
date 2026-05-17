@@ -64,6 +64,13 @@ func DownloadAndVerify(ctx context.Context, release *Release, cfg Config, target
 		return "", fmt.Errorf("downloading checksums: %w", err)
 	}
 
+	// Verify Sigstore signature on checksums.txt (if available).
+	sigResult, err := verifySigstoreBundle(ctx, release, checksumsPath, tmpDir)
+	if err != nil {
+		return "", err
+	}
+	logVerificationResult(sigResult)
+
 	// Verify checksum.
 	if err := verifyChecksum(archivePath, archiveName, checksumsPath); err != nil {
 		return "", err

@@ -1,0 +1,44 @@
+Copyright 2024-2026 Quantum Serendipity Software
+
+Licensed under the Apache License, Version 2.0.
+
+This product includes software developed by third parties:
+
+- Charm (github.com/charmbracelet/*) — MIT License
+  Copyright (c) 2022-2025 Charmbracelet, Inc.
+
+- The Go Authors (golang.org/x/*) — BSD-3-Clause
+  Copyright (c) 2009-2025 The Go Authors
+
+- The Cobra Authors (github.com/spf13/cobra) — Apache-2.0
+  Copyright (c) 2013-2023 Steve Francia
+
+- Steve Francia (github.com/spf13/pflag) — BSD-3-Clause
+  Copyright (c) 2012 Alex Ogier, 2012-2014 Steve Francia
+
+- The containerd Authors (github.com/containerd/*) — Apache-2.0
+  Copyright The containerd Authors
+
+- The eBPF Authors (github.com/cilium/ebpf) — MIT License
+  Copyright (c) 2017 Nathan Sweet, 2018-2023 Cloudflare, 2019 Authors of cilium/ebpf
+
+- The Protocol Buffers Authors (google.golang.org/protobuf) — BSD-3-Clause
+  Copyright (c) 2018 The Go Authors
+
+- Masterminds (github.com/Masterminds/semver) — MIT License
+  Copyright (c) 2014-2019 Matt Butcher and Matt Farina
+
+- yaml.v3 (gopkg.in/yaml.v3) — MIT License and Apache-2.0
+  Copyright (c) 2006-2011 Kirill Simonov, 2011-2019 Canonical Ltd.
+
+- CoreOS (github.com/coreos/go-systemd) — Apache-2.0
+  Copyright (c) 2015 CoreOS, Inc.
+
+- godbus (github.com/godbus/dbus) — BSD-2-Clause
+  Copyright (c) 2013 Georg Reinke, 2014 Lennart Poettering
+
+- OCI (github.com/opencontainers/runtime-spec) — Apache-2.0
+  Copyright The Linux Foundation
+
+- logrus (github.com/sirupsen/logrus) — MIT License
+  Copyright (c) 2014 Simon Eskildsen

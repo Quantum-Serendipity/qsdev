@@ -1,9 +1,11 @@
 name: OpenSSF Scorecard
 
 on:
-  push:
-    branches:
-      - main
+  # Scorecard requires public repos or GitHub Advanced Security.
+  # Re-enable push trigger when repo goes public.
+  # push:
+  #   branches:
+  #     - main
   schedule:
     - cron: "30 2 * * 1"
 

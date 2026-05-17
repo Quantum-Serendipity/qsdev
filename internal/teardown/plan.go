@@ -1,21 +1,28 @@
 package teardown
 
-import "github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+import (
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+)
 
-// State file paths that are removed as part of the default teardown.
-var stateFiles = []string{
-	".devenv/.qsdev-state.yaml",
-	".claude/.qsdev-claude-state.yaml",
-	".devinit/.qsdev-init-state.yaml",
-	".devinit/.qsdev-init-answers.yaml",
-	".qsdev.yaml",
+// stateFilesForTeardown returns the state file paths that are removed as part
+// of the default teardown, built dynamically from branding.
+func stateFilesForTeardown() []string {
+	b := branding.Get()
+	return []string{
+		".devenv/." + b.AppName + "-state.yaml",
+		".claude/." + b.AppName + "-claude-state.yaml",
+		b.StateDir + "/." + b.AppName + "-init-state.yaml",
+		b.StateDir + "/." + b.AppName + "-init-answers.yaml",
+		b.ConfigFile,
+	}
 }
 
 // BuildPlan creates a TeardownPlan from classified files and options.
 func BuildPlan(classified []ClassifiedFile, opts TeardownOptions) *TeardownPlan {
 	plan := &TeardownPlan{
 		Profile: opts.Profile,
-		Dirs:    []string{".devinit"},
+		Dirs:    []string{branding.Get().StateDir},
 	}
 
 	if opts.Profile == ProfileQuick {
@@ -52,7 +59,7 @@ func BuildPlan(classified []ClassifiedFile, opts TeardownOptions) *TeardownPlan 
 	}
 
 	// Add state files to the remove list.
-	for _, sf := range stateFiles {
+	for _, sf := range stateFilesForTeardown() {
 		plan.Remove = append(plan.Remove, FileAction{
 			Path:   sf,
 			Reason: "qsdev state file",

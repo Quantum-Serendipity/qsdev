@@ -9,6 +9,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // ErrNotInitialized is returned when Assess is called on a project that has
@@ -34,7 +35,7 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 
 	// Check for .qsdev.yaml as an alternative initialization indicator.
 	qsdevYAMLExists := false
-	if _, err := os.Stat(filepath.Join(projectPath, ".qsdev.yaml")); err == nil {
+	if _, err := os.Stat(filepath.Join(projectPath, branding.Get().ConfigFile)); err == nil {
 		qsdevYAMLExists = true
 	}
 

@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -149,7 +150,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 
 	return []types.GeneratedFile{
 		{
-			Path:     ".qsdev/composer-security.json",
+			Path:     "." + branding.Get().AppName + "/composer-security.json",
 			Content:  content,
 			Mode:     0o644,
 			Strategy: types.Overwrite,

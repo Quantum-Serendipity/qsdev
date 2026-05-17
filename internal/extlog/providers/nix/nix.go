@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/extlog"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 func init() {
@@ -26,7 +27,7 @@ func (p *Provider) Name() string        { return "nix" }
 func (p *Provider) DisplayName() string { return "nix build" }
 
 func (p *Provider) Detect(projectRoot, homeDir string) bool {
-	captureDir := filepath.Join(projectRoot, ".qsdev", "logs", "capture")
+	captureDir := filepath.Join(projectRoot, "."+branding.Get().AppName, "logs", "capture")
 	entries, _ := os.ReadDir(captureDir)
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), "nix-") {
@@ -48,7 +49,7 @@ func (p *Provider) Discover(projectRoot, _ string, since time.Time) ([]extlog.Lo
 	var files []extlog.LogFile
 
 	// Check capture directory.
-	captureDir := filepath.Join(projectRoot, ".qsdev", "logs", "capture")
+	captureDir := filepath.Join(projectRoot, "."+branding.Get().AppName, "logs", "capture")
 	if entries, err := os.ReadDir(captureDir); err == nil {
 		for _, e := range entries {
 			if !strings.HasPrefix(e.Name(), "nix-") {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -13,24 +14,25 @@ import (
 // CLAUDE.md lean while providing full CLI and workflow documentation.
 func GenerateQsdevReference(answers types.WizardAnswers, registry *ecosystem.Registry) (*types.GeneratedFile, error) {
 	var b strings.Builder
+	app := branding.Get().AppName
 
-	b.WriteString("# qsdev Reference\n\n")
+	fmt.Fprintf(&b, "# %s Reference\n\n", app)
 	b.WriteString("## CLI Commands\n\n")
 
 	commands := []struct{ Cmd, Desc string }{
-		{"qsdev init", "Initialize project with detection, wizard, and generation"},
-		{"qsdev init --update", "Update generated files to latest templates"},
-		{"qsdev init --mode join", "Join an existing qsdev-managed project"},
-		{"qsdev devenv doctor", "Check system prerequisites and project health"},
-		{"qsdev devenv setup", "Install missing prerequisites"},
-		{"qsdev enable <tool>", "Enable a tool (updates configs, adds to shared files)"},
-		{"qsdev disable <tool>", "Disable a tool (cleans up all owned files)"},
-		{"qsdev status", "Show enabled/disabled tools and configuration state"},
-		{"qsdev list", "Show all available tools with categories"},
-		{"qsdev check", "Validate configuration for CI enforcement"},
-		{"qsdev check --format json", "Machine-readable check output"},
-		{"qsdev check --audit-level medium", "Set minimum severity that fails CI"},
-		{"qsdev config migrate", "Migrate .qsdev.yaml to latest schema version"},
+		{app + " init", "Initialize project with detection, wizard, and generation"},
+		{app + " init --update", "Update generated files to latest templates"},
+		{app + " init --mode join", "Join an existing " + app + "-managed project"},
+		{app + " devenv doctor", "Check system prerequisites and project health"},
+		{app + " devenv setup", "Install missing prerequisites"},
+		{app + " enable <tool>", "Enable a tool (updates configs, adds to shared files)"},
+		{app + " disable <tool>", "Disable a tool (cleans up all owned files)"},
+		{app + " status", "Show enabled/disabled tools and configuration state"},
+		{app + " list", "Show all available tools with categories"},
+		{app + " check", "Validate configuration for CI enforcement"},
+		{app + " check --format json", "Machine-readable check output"},
+		{app + " check --audit-level medium", "Set minimum severity that fails CI"},
+		{app + " config migrate", "Migrate " + branding.Get().ConfigFile + " to latest schema version"},
 	}
 	for _, c := range commands {
 		fmt.Fprintf(&b, "### `%s`\n%s\n\n", c.Cmd, c.Desc)
@@ -38,12 +40,12 @@ func GenerateQsdevReference(answers types.WizardAnswers, registry *ecosystem.Reg
 
 	b.WriteString("## Security Policy\n\n")
 	b.WriteString("- The package guard hook validates all package installs for vulnerabilities and age\n")
-	b.WriteString("- Use `qsdev enable <tool>` to add ecosystem tools (run `qsdev list` to see all)\n")
-	b.WriteString("- Use `qsdev devenv add-package <name>` to add system packages\n")
-	b.WriteString("- Use `qsdev devenv add-language <name>` to add language ecosystems\n")
-	b.WriteString("- Use `qsdev devenv add-service <name>` to add services (databases, caches)\n")
-	b.WriteString("- Never edit devenv.nix or .nix files directly — use qsdev commands\n")
-	b.WriteString("- Run `qsdev devenv doctor` after configuration changes\n\n")
+	fmt.Fprintf(&b, "- Use `%s enable <tool>` to add ecosystem tools (run `%s list` to see all)\n", app, app)
+	fmt.Fprintf(&b, "- Use `%s devenv add-package <name>` to add system packages\n", app)
+	fmt.Fprintf(&b, "- Use `%s devenv add-language <name>` to add language ecosystems\n", app)
+	fmt.Fprintf(&b, "- Use `%s devenv add-service <name>` to add services (databases, caches)\n", app)
+	fmt.Fprintf(&b, "- Never edit devenv.nix or .nix files directly — use %s commands\n", app)
+	fmt.Fprintf(&b, "- Run `%s devenv doctor` after configuration changes\n\n", app)
 
 	b.WriteString("## Common Workflows\n\n")
 	b.WriteString("### Add a project dependency\n")
@@ -54,14 +56,14 @@ func GenerateQsdevReference(answers types.WizardAnswers, registry *ecosystem.Reg
 	b.WriteString("- `go get <module>` (Go projects)\n")
 	b.WriteString("The package guard hook validates safety automatically. Commit the lockfile after.\n\n")
 	b.WriteString("### Add a system tool\n")
-	b.WriteString("`qsdev devenv add-package <name>` — then run `direnv allow` to activate.\n\n")
+	fmt.Fprintf(&b, "`%s devenv add-package <name>` — then run `direnv allow` to activate.\n\n", app)
 	b.WriteString("### Enable a security/AI tool\n")
-	b.WriteString("`qsdev enable <tool>` — run `qsdev list` to see available tools.\n\n")
+	fmt.Fprintf(&b, "`%s enable <tool>` — run `%s list` to see available tools.\n\n", app, app)
 
 	b.WriteString("## Troubleshooting\n\n")
-	b.WriteString("### qsdev commands not found\nInstall qsdev: see project README for installation instructions.\n\n")
+	fmt.Fprintf(&b, "### %s commands not found\nInstall %s: see project README for installation instructions.\n\n", app, app)
 	b.WriteString("### devenv not activated\nRun `direnv allow` in the project root, then `devenv shell`.\n\n")
-	b.WriteString("### Permission denied on tool operations\nCheck `.claude/settings.json` deny rules. Use `qsdev check --deny-rules` to validate.\n\n")
+	fmt.Fprintf(&b, "### Permission denied on tool operations\nCheck `.claude/settings.json` deny rules. Use `%s check --deny-rules` to validate.\n\n", app)
 
 	return &types.GeneratedFile{
 		Path:     ".claude/qsdev-reference.md",

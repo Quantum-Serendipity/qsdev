@@ -9,6 +9,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // StageStatus represents the outcome of an update stage.
@@ -186,7 +187,7 @@ func runSelfUpdateStage(opts FullUpdateOptions) StageResult {
 	return StageResult{
 		Name:    "Self-update",
 		Status:  StageSuccess,
-		Message: fmt.Sprintf("v%s available (current: v%s). Run 'qsdev self-update' to install.", release.Version, currentVersion),
+		Message: fmt.Sprintf("v%s available (current: v%s). Run '%s self-update' to install.", release.Version, currentVersion, branding.Get().AppName),
 	}
 }
 

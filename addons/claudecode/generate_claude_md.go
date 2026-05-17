@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -118,7 +119,7 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 	} else if data.ProjectName != "" {
 		data.ProjectDescription = fmt.Sprintf("%s development environment.", data.ProjectName)
 	} else {
-		data.ProjectDescription = "Development environment managed by qsdev."
+		data.ProjectDescription = "Development environment managed by " + branding.Get().AppName + "."
 	}
 
 	// Skills from qsdev-ops manifest.
@@ -127,7 +128,7 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 		for _, s := range opsManifest.Skills {
 			if answers.EnabledTools == nil || answers.EnabledTools[s.Name] {
 				data.AvailableSkills = append(data.AvailableSkills, SkillSummary{
-					Name: "/" + s.Name, Description: s.Description, Category: "qsdev-operations",
+					Name: "/" + s.Name, Description: s.Description, Category: branding.Get().AppName + "-operations",
 				})
 			}
 		}
@@ -160,15 +161,16 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 	}
 
 	// Static qsdev commands.
+	app := branding.Get().AppName
 	data.GdevCommands = []CommandSummary{
-		{Command: "qsdev init", Description: "Initialize or re-initialize project"},
-		{Command: "qsdev devenv doctor", Description: "Check system and project health"},
-		{Command: "qsdev devenv setup", Description: "Install missing prerequisites"},
-		{Command: "qsdev enable <tool>", Description: "Enable a tool"},
-		{Command: "qsdev disable <tool>", Description: "Disable a tool"},
-		{Command: "qsdev status", Description: "Show configuration state"},
-		{Command: "qsdev list", Description: "Show available tools"},
-		{Command: "qsdev check", Description: "Validate configuration for CI"},
+		{Command: app + " init", Description: "Initialize or re-initialize project"},
+		{Command: app + " devenv doctor", Description: "Check system and project health"},
+		{Command: app + " devenv setup", Description: "Install missing prerequisites"},
+		{Command: app + " enable <tool>", Description: "Enable a tool"},
+		{Command: app + " disable <tool>", Description: "Disable a tool"},
+		{Command: app + " status", Description: "Show configuration state"},
+		{Command: app + " list", Description: "Show available tools"},
+		{Command: app + " check", Description: "Validate configuration for CI"},
 	}
 
 	// Devenv tasks from verification commands.

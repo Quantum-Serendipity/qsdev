@@ -6,6 +6,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // FormatDefault renders a human-readable multi-line summary of the project.
@@ -15,7 +17,7 @@ func FormatDefault(info *ProjectInfo, w io.Writer) error {
 		fmt.Fprintf(w, "Ecosystems:    %s\n", strings.Join(info.Ecosystems, ", "))
 	}
 	fmt.Fprintf(w, "Security:      %s\n", info.SecurityProfile)
-	fmt.Fprintf(w, "qsdev Version:  %s\n", info.QsdevVersion)
+	fmt.Fprintf(w, "%s Version:  %s\n", branding.Get().AppName, info.QsdevVersion)
 	fmt.Fprintf(w, "Config:        v%d\n", info.ConfigVersion)
 	fmt.Fprintf(w, "Managed Files: %d\n", info.ManagedFileCount)
 	fmt.Fprintf(w, "Active Tools:  %d\n", info.ActiveToolCount)

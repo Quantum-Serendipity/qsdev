@@ -1,6 +1,10 @@
 package claudecode
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+)
 
 // DenyRuleConflict represents a conflict between a deny rule and a skill operation.
 type DenyRuleConflict struct {
@@ -69,18 +73,20 @@ func FilterExpectedConflicts(conflicts []DenyRuleConflict) []DenyRuleConflict {
 // BuiltinSkillDefinitions returns the operations required by all built-in skills.
 // This is a static registry derived from the skill YAML frontmatter allowed-tools fields.
 func BuiltinSkillDefinitions() []SkillDefinition {
+	app := branding.Get().AppName
+	bashTool := "Bash(" + app + " *)"
 	return []SkillDefinition{
 		// qsdev operation skills (14.1)
-		{Name: "qsdev-init", AllowedTools: []string{"Bash(qsdev *)"}},
-		{Name: "qsdev-onboard", AllowedTools: []string{"Bash(qsdev *)"}},
-		{Name: "qsdev-setup", AllowedTools: []string{"Bash(qsdev *)"}},
-		{Name: "qsdev-enable", AllowedTools: []string{"Bash(qsdev *)"}},
-		{Name: "qsdev-disable", AllowedTools: []string{"Bash(qsdev *)"}},
-		{Name: "qsdev-update", AllowedTools: []string{"Bash(qsdev *)"}},
-		{Name: "qsdev-doctor", AllowedTools: []string{"Bash(qsdev *)"}},
-		{Name: "qsdev-status", AllowedTools: []string{"Bash(qsdev *)"}},
-		{Name: "qsdev-tools", AllowedTools: []string{"Bash(qsdev *)"}},
-		{Name: "qsdev-detect", AllowedTools: []string{"Bash(qsdev *)"}},
+		{Name: app + "-init", AllowedTools: []string{bashTool}},
+		{Name: app + "-onboard", AllowedTools: []string{bashTool}},
+		{Name: app + "-setup", AllowedTools: []string{bashTool}},
+		{Name: app + "-enable", AllowedTools: []string{bashTool}},
+		{Name: app + "-disable", AllowedTools: []string{bashTool}},
+		{Name: app + "-update", AllowedTools: []string{bashTool}},
+		{Name: app + "-doctor", AllowedTools: []string{bashTool}},
+		{Name: app + "-status", AllowedTools: []string{bashTool}},
+		{Name: app + "-tools", AllowedTools: []string{bashTool}},
+		{Name: app + "-detect", AllowedTools: []string{bashTool}},
 		// consulting workflow skills (14.3)
 		{Name: "review-pr", AllowedTools: []string{"Bash(git *)", "Bash(gh *)"}},
 		{Name: "add-tests", AllowedTools: []string{"Bash(npm test *)", "Bash(go test *)", "Bash(pytest *)", "Bash(cargo test *)"}},

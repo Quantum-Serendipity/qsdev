@@ -8,6 +8,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/info"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 func infoCmd() *cobra.Command {
@@ -42,7 +43,7 @@ func runInfo(cmd *cobra.Command, oneline, jsonOutput bool) error {
 	projectInfo, err := info.CollectInfo(projectRoot)
 	if err != nil {
 		if errors.Is(err, info.ErrNotQsdevProject) {
-			fmt.Fprintln(cmd.ErrOrStderr(), "Not a qsdev-managed project. Run 'qsdev init' to set up.")
+			fmt.Fprintf(cmd.ErrOrStderr(), "Not a %s-managed project. Run '%s init' to set up.\n", branding.Get().AppName, branding.Get().AppName)
 			return &ExitError{Code: 1}
 		}
 		return err

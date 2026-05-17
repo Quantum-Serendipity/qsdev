@@ -6,6 +6,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // SARIF 2.1.0 types — local, unexported.
@@ -98,7 +99,7 @@ func RenderSARIF(report *posture.PostureReport) ([]byte, error) {
 			{
 				Tool: sarifTool{
 					Driver: sarifDriver{
-						Name:           "qsdev",
+						Name:           branding.Get().AppName,
 						Version:        report.QsdevVersion,
 						InformationURI: "https://github.com/Quantum-Serendipity/qsdev",
 						Rules:          allRules,
@@ -252,7 +253,7 @@ func isMetaSubject(s string) bool {
 	switch {
 	case s == "pre-commit", s == "commit-msg", s == ".git":
 		return true
-	case s == "qsdev version":
+	case s == branding.Get().AppName+" version":
 		return true
 	case len(s) > 7 && s[:7] == "marker:":
 		return true

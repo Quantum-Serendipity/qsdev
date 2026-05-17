@@ -86,7 +86,7 @@ func Teardown(
 			if err != nil {
 				fmt.Fprintf(w, "Warning: could not marshal posture report: %v\n", err)
 			} else {
-				reportPath = filepath.Join(opts.ProjectRoot, ".qsdev-posture-final.json")
+				reportPath = filepath.Join(opts.ProjectRoot, "."+branding.Get().AppName+"-posture-final.json")
 				if err := os.WriteFile(reportPath, reportJSON, 0o644); err != nil {
 					fmt.Fprintf(w, "Warning: could not write posture report: %v\n", err)
 					reportPath = ""

@@ -7,24 +7,24 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/shellintegration"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
-const binaryName = "qsdev"
-
 func completionCmd() *cobra.Command {
+	appName := branding.Get().AppName
 	cmd := &cobra.Command{
 		Use:   "completion",
-		Short: "Generate or install shell completions for qsdev",
-		Long: `Generate shell completion scripts for qsdev.
+		Short: "Generate or install shell completions for " + appName,
+		Long: `Generate shell completion scripts for ` + appName + `.
 
 To load completions in your current session:
 
-  bash:       source <(qsdev completion bash)
-  zsh:        source <(qsdev completion zsh)
-  fish:       qsdev completion fish | source
-  powershell: qsdev completion powershell | Out-String | Invoke-Expression
+  bash:       source <(` + appName + ` completion bash)
+  zsh:        source <(` + appName + ` completion zsh)
+  fish:       ` + appName + ` completion fish | source
+  powershell: ` + appName + ` completion powershell | Out-String | Invoke-Expression
 
-To install completions permanently, use "qsdev completion install".`,
+To install completions permanently, use "` + appName + ` completion install".`,
 	}
 
 	cmd.AddCommand(
@@ -118,7 +118,7 @@ SHELL environment variable.`,
 			}
 
 			installer := &shellintegration.CompletionInstaller{
-				BinaryName: binaryName,
+				BinaryName: branding.Get().AppName,
 				HomeDir:    home,
 			}
 

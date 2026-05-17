@@ -2,6 +2,7 @@ package drift
 
 import (
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -11,6 +12,7 @@ const categoryVersionDrift = "Version Drift"
 // against the currently running qsdev version.
 func detectVersionDrift(genState types.GeneratedState) Category {
 	cat := Category{Name: categoryVersionDrift}
+	app := branding.Get().AppName
 
 	currentVersion := version.Info().Version
 
@@ -18,10 +20,10 @@ func detectVersionDrift(genState types.GeneratedState) Category {
 		cat.Findings = append(cat.Findings, Finding{
 			Category:    categoryVersionDrift,
 			Severity:    Info,
-			Subject:     "qsdev version",
+			Subject:     app + " version",
 			Description: "State was generated before version tracking was added",
 			Actual:      currentVersion,
-			Remediation: "Run qsdev update to record the current version",
+			Remediation: "Run " + app + " update to record the current version",
 		})
 		return cat
 	}
@@ -30,11 +32,11 @@ func detectVersionDrift(genState types.GeneratedState) Category {
 		cat.Findings = append(cat.Findings, Finding{
 			Category:    categoryVersionDrift,
 			Severity:    Info,
-			Subject:     "qsdev version",
-			Description: "Configuration was generated with a different qsdev version",
+			Subject:     app + " version",
+			Description: "Configuration was generated with a different " + app + " version",
 			Expected:    genState.QsdevVersion,
 			Actual:      currentVersion,
-			Remediation: "Run qsdev update to regenerate configuration with the current version",
+			Remediation: "Run " + app + " update to regenerate configuration with the current version",
 		})
 	}
 

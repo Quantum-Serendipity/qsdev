@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -15,9 +16,10 @@ import (
 func GenerateLocalConfigTemplate(answers types.WizardAnswers, detected types.DetectedProject) []byte {
 	var b strings.Builder
 
-	b.WriteString("# .qsdev.local.yaml — Local developer overrides (gitignored)\n")
+	br := branding.Get()
+	b.WriteString(fmt.Sprintf("# %s — Local developer overrides (gitignored)\n", br.LocalConfig))
 	b.WriteString("# Uncomment and modify lines below to customize your local environment.\n")
-	b.WriteString("# These settings override .qsdev.yaml but cannot lower security settings.\n")
+	b.WriteString(fmt.Sprintf("# These settings override %s but cannot lower security settings.\n", br.ConfigFile))
 	b.WriteString("#\n")
 
 	// Extra packages section.

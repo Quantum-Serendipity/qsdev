@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // CaptureWriter tees output to a capture file alongside the original writer.
@@ -62,14 +64,15 @@ func (w *CaptureWriter) Path() string {
 }
 
 // CaptureDir returns the appropriate capture directory for the current context.
-// Uses .qsdev/logs/capture/ in a project, or ~/.qsdev/logs/capture/ globally.
+// Uses .<appname>/logs/capture/ in a project, or ~/.<appname>/logs/capture/ globally.
 func CaptureDir(projectRoot string) string {
+	dotDir := "." + branding.Get().AppName
 	if projectRoot != "" {
-		return filepath.Join(projectRoot, ".qsdev", "logs", "capture")
+		return filepath.Join(projectRoot, dotDir, "logs", "capture")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = os.TempDir()
 	}
-	return filepath.Join(home, ".qsdev", "logs", "capture")
+	return filepath.Join(home, dotDir, "logs", "capture")
 }

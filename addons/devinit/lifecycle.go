@@ -11,10 +11,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
-	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/surgery"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -41,7 +42,7 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 	// Look up the tool.
 	tool, ok := registry.ByName(toolName)
 	if !ok {
-		return fmt.Errorf("unknown tool %q; use 'qsdev list' to see available tools", toolName)
+		return fmt.Errorf("unknown tool %q; use '%s list' to see available tools", toolName, branding.Get().AppName)
 	}
 
 	// Already enabled — no-op.
@@ -167,7 +168,7 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 
 	tool, ok := registry.ByName(toolName)
 	if !ok {
-		return fmt.Errorf("unknown tool %q; use 'qsdev list' to see available tools", toolName)
+		return fmt.Errorf("unknown tool %q; use '%s list' to see available tools", toolName, branding.Get().AppName)
 	}
 
 	// Already disabled — no-op.

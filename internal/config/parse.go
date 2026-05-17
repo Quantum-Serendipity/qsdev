@@ -76,14 +76,14 @@ func ParseQsdevConfigBytes(data []byte) (*types.QsdevConfig, error) {
 
 	if versionInt > types.ConfigVersionMax {
 		return nil, fmt.Errorf(
-			"config version %d is newer than this binary supports (max %d); please update qsdev to the latest version",
-			versionInt, types.ConfigVersionMax)
+			"config version %d is newer than this binary supports (max %d); please update %s to the latest version",
+			versionInt, types.ConfigVersionMax, branding.Get().AppName)
 	}
 
 	if versionInt < types.ConfigVersionMin {
 		return nil, fmt.Errorf(
-			"config version %d is no longer supported (minimum %d); run \"qsdev config migrate\" to upgrade",
-			versionInt, types.ConfigVersionMin)
+			"config version %d is no longer supported (minimum %d); run \"%s config migrate\" to upgrade",
+			versionInt, types.ConfigVersionMin, branding.Get().AppName)
 	}
 
 	// Pass 2: full struct unmarshal.

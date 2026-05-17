@@ -14,25 +14,27 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // Command returns the "logs" cobra command tree.
 func Command() *cobra.Command {
+	app := branding.Get().AppName
 	cmd := &cobra.Command{
 		Use:   "logs",
-		Short: "Browse and manage qsdev log files",
-		Long: `Browse and manage structured log files from qsdev operations.
+		Short: "Browse and manage " + app + " log files",
+		Long: fmt.Sprintf(`Browse and manage structured log files from %s operations.
 
-Inside a qsdev project, shows project-scoped logs (.qsdev/logs/) by default.
-Use --global to view global logs (~/.qsdev/logs/).
-Outside a project, global logs are shown.`,
+Inside a %s project, shows project-scoped logs (.%s/logs/) by default.
+Use --global to view global logs (~/.%s/logs/).
+Outside a project, global logs are shown.`, app, app, app, app),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runList(cmd)
 		},
 	}
 
 	var global bool
-	cmd.PersistentFlags().BoolVar(&global, "global", false, "Use global logs (~/.qsdev/logs/) instead of project logs")
+	cmd.PersistentFlags().BoolVar(&global, "global", false, fmt.Sprintf("Use global logs (~/.%s/logs/) instead of project logs", app))
 
 	list := &cobra.Command{
 		Use:   "list",

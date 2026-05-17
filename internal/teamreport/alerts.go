@@ -3,6 +3,8 @@ package teamreport
 import (
 	"fmt"
 	"sort"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // Alert severity constants.
@@ -106,8 +108,8 @@ func alertsForProject(p ProjectSummary, opts AggregateOptions, history *HistoryS
 		alerts = append(alerts, PostureAlert{
 			Project:  p.Name,
 			Severity: SeverityMedium,
-			Message:  fmt.Sprintf("qsdev version %s is outdated (current: %s)", p.QsdevVersion, opts.QsdevVersion),
-			Action:   "Update qsdev to the latest version",
+			Message:  fmt.Sprintf("%s version %s is outdated (current: %s)", branding.Get().AppName, p.QsdevVersion, opts.QsdevVersion),
+			Action:   "Update " + branding.Get().AppName + " to the latest version",
 		})
 	}
 

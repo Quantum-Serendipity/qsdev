@@ -5,14 +5,19 @@ import (
 	"path/filepath"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Standard state file locations relative to the project root.
-var stateFilePaths = [3]string{
-	".devinit/.qsdev-init-state.yaml",
-	".devenv/.qsdev-state.yaml",
-	".claude/.qsdev-claude-state.yaml",
+// stateFilePaths returns the standard state file locations relative to the
+// project root, built dynamically from branding.
+func stateFilePaths() [3]string {
+	b := branding.Get()
+	return [3]string{
+		b.StateDir + "/." + b.AppName + "-init-state.yaml",
+		".devenv/." + b.AppName + "-state.yaml",
+		".claude/." + b.AppName + "-claude-state.yaml",
+	}
 }
 
 // MergedState holds the unified view of all three addon state files.
@@ -64,7 +69,7 @@ func LoadAllStates(projectRoot string) *MergedState {
 		EnabledTools: make(map[string]bool),
 	}
 
-	for _, relPath := range stateFilePaths {
+	for _, relPath := range stateFilePaths() {
 		absPath := filepath.Join(projectRoot, relPath)
 		st, err := state.LoadStateFromFile(absPath)
 		if err != nil {

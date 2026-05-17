@@ -102,7 +102,7 @@ func DetectOnboardingMode(projectRoot string) (*ModeDetectionResult, error) {
 		storedVersion != currentVersion {
 		return &ModeDetectionResult{
 			Mode:        ModeUpdate,
-			Explanation: fmt.Sprintf("qsdev updated from %s to %s.", storedVersion, currentVersion),
+			Explanation: fmt.Sprintf("%s updated from %s to %s.", branding.Get().AppName, storedVersion, currentVersion),
 		}, nil
 	}
 

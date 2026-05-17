@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // CreateArchive creates a tar.gz archive of the given files relative to
@@ -15,7 +17,7 @@ import (
 // path to the created archive.
 func CreateArchive(projectRoot string, files []string) (string, error) {
 	timestamp := time.Now().Format("20060102-150405")
-	archiveName := fmt.Sprintf(".qsdev-archive-%s.tar.gz", timestamp)
+	archiveName := fmt.Sprintf(".%s-archive-%s.tar.gz", branding.Get().AppName, timestamp)
 	archivePath := filepath.Join(projectRoot, archiveName)
 
 	outFile, err := os.Create(archivePath)

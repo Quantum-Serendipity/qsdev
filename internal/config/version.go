@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // VersionConstraint wraps a parsed semver constraint for qsdev_version checks.
@@ -24,9 +26,10 @@ type VersionMismatchError struct {
 
 // Error implements the error interface with an actionable message.
 func (e *VersionMismatchError) Error() string {
+	app := branding.Get().AppName
 	msg := fmt.Sprintf(
-		"qsdev version %s does not satisfy the project's qsdev_version constraint %q",
-		e.BinaryVersion, e.Constraint)
+		"%s version %s does not satisfy the project's qsdev_version constraint %q",
+		app, e.BinaryVersion, e.Constraint)
 	if e.UpgradeCommand != "" {
 		msg += fmt.Sprintf("; run %q to update", e.UpgradeCommand)
 	}
@@ -42,10 +45,11 @@ type RatchetWarning struct {
 
 // Error implements the error interface.
 func (w *RatchetWarning) Error() string {
+	app := branding.Get().AppName
 	return fmt.Sprintf(
-		"current qsdev version %s is older than the version (%s) that last generated this project's files; "+
-			"use --force to proceed anyway, or update qsdev",
-		w.CurrentVersion, w.LastRunVersion)
+		"current %s version %s is older than the version (%s) that last generated this project's files; "+
+			"use --force to proceed anyway, or update %s",
+		app, w.CurrentVersion, w.LastRunVersion, app)
 }
 
 // ParseVersionConstraint parses a version constraint string. It pre-processes

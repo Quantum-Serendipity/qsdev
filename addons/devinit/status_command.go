@@ -11,6 +11,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/render"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 const (
@@ -121,7 +122,7 @@ func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptio
 	}
 	if err != nil {
 		if errors.Is(err, posture.ErrNotInitialized) {
-			fmt.Fprintln(cmd.ErrOrStderr(), "Project not initialized. Run 'qsdev init' first.")
+			fmt.Fprintf(cmd.ErrOrStderr(), "Project not initialized. Run '%s init' first.\n", branding.Get().AppName)
 			return &ExitError{Code: exitNotInitialized}
 		}
 		return fmt.Errorf("assessing project posture: %w", err)

@@ -1,7 +1,11 @@
 package devinit
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // enableCmd creates the `qsdev enable <tool>` command.
@@ -11,11 +15,11 @@ func enableCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "enable <tool>",
 		Short: "Enable a tool in the current project",
-		Long: `Enable a tool and generate its configuration files.
+		Long: fmt.Sprintf(`Enable a tool and generate its configuration files.
 
 The tool's prerequisites are validated before enabling. Shared files (like
 CLAUDE.md or settings.json) are surgically updated; exclusive files are
-written fresh. Use 'qsdev list' to see available tools.`,
+written fresh. Use '%s list' to see available tools.`, branding.Get().AppName),
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runEnable(cmd, args[0], opts)

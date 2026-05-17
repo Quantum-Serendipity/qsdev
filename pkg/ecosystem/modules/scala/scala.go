@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -169,7 +170,7 @@ addSbtPlugin("net.vonbuchholtz" % "sbt-dependency-check" % "5.1.0")
 
 	return []types.GeneratedFile{
 		{
-			Path:     ".qsdev/sbt-security-plugins.sbt",
+			Path:     "." + branding.Get().AppName + "/sbt-security-plugins.sbt",
 			Content:  []byte(content),
 			Mode:     0o644,
 			Strategy: types.Overwrite,

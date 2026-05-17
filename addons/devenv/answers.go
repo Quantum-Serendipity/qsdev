@@ -2,19 +2,23 @@ package devenv
 
 import (
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-const answersFileName = ".qsdev-answers.yaml"
+// devenvAnswersFile returns the answers file name, using the branding app name.
+func devenvAnswersFile() string {
+	return "." + branding.Get().AppName + "-answers.yaml"
+}
 
 // answersPath returns the full path to the answers persistence file.
 func answersPath(projectRoot string) string {
-	return answers.FilePath(projectRoot, ".devenv", answersFileName)
+	return answers.FilePath(projectRoot, ".devenv", devenvAnswersFile())
 }
 
 // saveAnswers persists the wizard answers to .devenv/.qsdev-answers.yaml.
 func saveAnswers(projectRoot string, a types.WizardAnswers) error {
-	return answers.SaveToDir(projectRoot, ".devenv", answersFileName, a)
+	return answers.SaveToDir(projectRoot, ".devenv", devenvAnswersFile(), a)
 }
 
 // SaveAnswers is an exported wrapper around saveAnswers, allowing other
@@ -26,5 +30,5 @@ func SaveAnswers(projectRoot string, a types.WizardAnswers) error {
 // loadAnswers reads and unmarshals saved wizard answers from
 // .devenv/.qsdev-answers.yaml. It returns an error if the file does not exist.
 func loadAnswers(projectRoot string) (types.WizardAnswers, error) {
-	return answers.LoadFromDir(projectRoot, ".devenv", answersFileName, "devenv")
+	return answers.LoadFromDir(projectRoot, ".devenv", devenvAnswersFile(), "devenv")
 }

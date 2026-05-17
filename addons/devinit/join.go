@@ -147,7 +147,7 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		for _, ff := range result.FailedFiles() {
 			fmt.Fprintf(&details, "\n  - %s: %v", ff.Path, ff.Error)
 		}
-		return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); run qsdev repair to recover%s",
+		return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); run "+branding.Get().AppName+" repair to recover%s",
 			result.Failed, len(successfulFiles), details.String())
 	}
 

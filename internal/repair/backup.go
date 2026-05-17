@@ -8,11 +8,13 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // backupDir returns the path to the backup directory within a project.
 func backupDir(projectRoot string) string {
-	return filepath.Join(projectRoot, ".qsdev", "backups")
+	return filepath.Join(projectRoot, "."+branding.Get().AppName, "backups")
 }
 
 // createBackup copies the file at projectRoot/relPath to

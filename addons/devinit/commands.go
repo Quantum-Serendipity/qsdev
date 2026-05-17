@@ -147,7 +147,7 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		if prereqs.HasMissing() {
 			fmt.Fprintln(cmd.ErrOrStderr(), "Note: some prerequisites are missing:")
 			prereqs.PrintReport(cmd.ErrOrStderr())
-			fmt.Fprintln(cmd.ErrOrStderr(), "Run 'qsdev devenv setup' after init to install them.")
+			fmt.Fprintf(cmd.ErrOrStderr(), "Run '%s devenv setup' after init to install them.\n", branding.Get().AppName)
 			fmt.Fprintln(cmd.ErrOrStderr())
 		}
 	}
@@ -295,7 +295,7 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		for _, ff := range result.FailedFiles() {
 			fmt.Fprintf(&details, "\n  - %s: %v", ff.Path, ff.Error)
 		}
-		return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); run qsdev repair to recover%s",
+		return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); run "+branding.Get().AppName+" repair to recover%s",
 			result.Failed, len(successfulFiles), details.String())
 	}
 
@@ -324,7 +324,7 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	}
 
 	// s. Add managed directories to .gitignore.
-	for _, entry := range []string{".devinit/", ".qsdev/", ".direnv/", ".devenv/"} {
+	for _, entry := range []string{".devinit/", "." + branding.Get().AppName + "/", ".direnv/", ".devenv/"} {
 		if err := EnsureGitignoreEntry(projectRoot, entry); err != nil {
 			slog.Warn("could not update .gitignore", "entry", entry, "error", err)
 		}

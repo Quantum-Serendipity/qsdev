@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 	"gopkg.in/yaml.v3"
@@ -66,48 +67,49 @@ func localToQsdevConfig(local *LocalConfig) *types.QsdevConfig {
 // exist (idempotent). The template content is context-sensitive: it includes
 // language version overrides if the resolved config contains languages.
 func GenerateLocalTemplate(projectRoot string, resolved *types.QsdevConfig) error {
-	path := filepath.Join(projectRoot, ".qsdev.local.yaml")
+	b := branding.Get()
+	path := filepath.Join(projectRoot, b.LocalConfig)
 
 	// Don't overwrite an existing file.
 	if _, err := os.Stat(path); err == nil {
 		return nil
 	}
 
-	var b strings.Builder
-	b.WriteString("# .qsdev.local.yaml — Local developer overrides (gitignored)\n")
-	b.WriteString("# These settings override .qsdev.yaml but cannot lower security settings.\n")
-	b.WriteString("#\n")
-	b.WriteString("# extra_packages:\n")
-	b.WriteString("#   - neovim\n")
-	b.WriteString("#   - lazygit\n")
-	b.WriteString("#\n")
+	var sb strings.Builder
+	sb.WriteString("# " + b.LocalConfig + " — Local developer overrides (gitignored)\n")
+	sb.WriteString("# These settings override " + b.ConfigFile + " but cannot lower security settings.\n")
+	sb.WriteString("#\n")
+	sb.WriteString("# extra_packages:\n")
+	sb.WriteString("#   - neovim\n")
+	sb.WriteString("#   - lazygit\n")
+	sb.WriteString("#\n")
 
 	// Include language version overrides if resolved config has languages.
 	if resolved != nil && len(resolved.Languages) > 0 {
-		b.WriteString("# languages:\n")
+		sb.WriteString("# languages:\n")
 		for _, lang := range resolved.Languages {
 			version := lang.Version
 			if version == "" {
 				version = "latest"
 			}
-			fmt.Fprintf(&b, "#   - name: %s\n", lang.Name)
-			fmt.Fprintf(&b, "#     version: %q\n", version)
+			fmt.Fprintf(&sb, "#   - name: %s\n", lang.Name)
+			fmt.Fprintf(&sb, "#     version: %q\n", version)
 		}
-		b.WriteString("#\n")
+		sb.WriteString("#\n")
 	}
 
 	// Include Claude Code section if enabled.
 	if resolved != nil && resolved.ClaudeCode.Enabled != nil && *resolved.ClaudeCode.Enabled {
-		b.WriteString("# claude_code:\n")
-		b.WriteString("#   permission_level: permissive\n")
-		b.WriteString("#\n")
+		sb.WriteString("# claude_code:\n")
+		sb.WriteString("#   permission_level: permissive\n")
+		sb.WriteString("#\n")
 	}
 
-	b.WriteString("# tools:\n")
-	b.WriteString("#   enabled:\n")
-	b.WriteString("#     - changelog\n")
+	sb.WriteString("# tools:\n")
+	sb.WriteString("#   enabled:\n")
+	sb.WriteString("#     - changelog\n")
 
-	return fileutil.WriteFileAtomic(path, []byte(b.String()), 0644)
+	return fileutil.WriteFileAtomic(path, []byte(sb.String()), 0644)
 }
 
 // EnsureGitignoreEntry reads the .gitignore file in projectRoot, checks for

@@ -1,6 +1,9 @@
 package toolreg
 
-import "github.com/Quantum-Serendipity/qsdev/pkg/types"
+import (
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
+)
 
 func init() {
 	r := DefaultRegistry()
@@ -10,17 +13,18 @@ func init() {
 }
 
 func qsdevOpsTools() []Tool {
+	app := branding.Get().AppName
 	return []Tool{
-		qsdevSkillTool("qsdev-init", "qsdev init", "Initialize qsdev project configuration with security-hardened defaults"),
-		qsdevSkillTool("qsdev-onboard", "qsdev onboard", "Onboard existing project to qsdev with non-destructive merge"),
-		qsdevSkillTool("qsdev-setup", "qsdev setup", "Install missing prerequisites detected by qsdev doctor"),
-		qsdevSkillTool("qsdev-enable", "qsdev enable", "Enable a tool in the qsdev project configuration"),
-		qsdevSkillTool("qsdev-disable", "qsdev disable", "Disable a tool from the qsdev project configuration"),
-		qsdevSkillTool("qsdev-update", "qsdev update", "Update qsdev-managed configuration to latest templates"),
-		qsdevSkillTool("qsdev-doctor", "qsdev doctor", "Run qsdev health diagnostics and analyze results"),
-		qsdevSkillTool("qsdev-status", "qsdev status", "Show qsdev configuration status and security posture"),
-		qsdevSkillTool("qsdev-tools", "qsdev tools", "List available qsdev tools organized by category"),
-		qsdevSkillTool("qsdev-detect", "qsdev detect", "Detect project ecosystems, languages, and frameworks"),
+		qsdevSkillTool(app+"-init", app+" init", "Initialize "+app+" project configuration with security-hardened defaults"),
+		qsdevSkillTool(app+"-onboard", app+" onboard", "Onboard existing project to "+app+" with non-destructive merge"),
+		qsdevSkillTool(app+"-setup", app+" setup", "Install missing prerequisites detected by "+app+" doctor"),
+		qsdevSkillTool(app+"-enable", app+" enable", "Enable a tool in the "+app+" project configuration"),
+		qsdevSkillTool(app+"-disable", app+" disable", "Disable a tool from the "+app+" project configuration"),
+		qsdevSkillTool(app+"-update", app+" update", "Update "+app+"-managed configuration to latest templates"),
+		qsdevSkillTool(app+"-doctor", app+" doctor", "Run "+app+" health diagnostics and analyze results"),
+		qsdevSkillTool(app+"-status", app+" status", "Show "+app+" configuration status and security posture"),
+		qsdevSkillTool(app+"-tools", app+" tools", "List available "+app+" tools organized by category"),
+		qsdevSkillTool(app+"-detect", app+" detect", "Detect project ecosystems, languages, and frameworks"),
 	}
 }
 

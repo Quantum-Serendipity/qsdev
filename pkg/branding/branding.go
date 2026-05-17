@@ -1,9 +1,6 @@
 package branding
 
-import (
-	"sync"
-	"sync/atomic"
-)
+import "sync"
 
 type Config struct {
 	AppName       string
@@ -40,15 +37,14 @@ func Default() Config {
 var (
 	mu     sync.Mutex
 	active = Default()
-	sealed atomic.Bool
 )
 
+// Set merges non-empty fields from cfg into the active branding configuration.
+// Must be called early in main(), before cmd.Main(). The gdev lockdown lifecycle
+// prevents Set from being called after initialization.
 func Set(cfg Config) {
 	mu.Lock()
 	defer mu.Unlock()
-	if sealed.Load() {
-		panic("branding: Set called after Get; branding must be configured before first use")
-	}
 	if cfg.AppName != "" {
 		active.AppName = cfg.AppName
 	}
@@ -87,7 +83,9 @@ func Set(cfg Config) {
 	}
 }
 
+// Get returns the current branding configuration.
 func Get() Config {
-	sealed.Store(true)
+	mu.Lock()
+	defer mu.Unlock()
 	return active
 }

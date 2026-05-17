@@ -98,9 +98,9 @@ func TestBuildPlan_DefaultProfile_DeletedFile(t *testing.T) {
 	plan := BuildPlan(classified, opts)
 
 	// Deleted files should be skipped.
-	if len(plan.Remove) != len(stateFiles) {
+	if len(plan.Remove) != len(stateFilesForTeardown()) {
 		t.Errorf("Remove = %d items, want %d (only state files, deleted file skipped)",
-			len(plan.Remove), len(stateFiles))
+			len(plan.Remove), len(stateFilesForTeardown()))
 	}
 	if len(plan.Preserve) != 0 {
 		t.Errorf("Preserve = %d items, want 0 (deleted file skipped)", len(plan.Preserve))
@@ -116,7 +116,7 @@ func TestBuildPlan_DefaultProfile_IncludesStateFiles(t *testing.T) {
 	for _, fa := range plan.Remove {
 		statePathSet[fa.Path] = true
 	}
-	for _, sf := range stateFiles {
+	for _, sf := range stateFilesForTeardown() {
 		if !statePathSet[sf] {
 			t.Errorf("expected state file %q in Remove list", sf)
 		}

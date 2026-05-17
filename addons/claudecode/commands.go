@@ -9,6 +9,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // register all modules
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -20,10 +21,12 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-const (
-	statePath  = ".claude/.qsdev-claude-state.yaml"
-	answersDir = ".claude"
-)
+const answersDir = ".claude"
+
+// claudeStatePath returns the path to the claude state file, using the branding app name.
+func claudeStatePath() string {
+	return ".claude/." + branding.Get().AppName + "-claude-state.yaml"
+}
 
 var validPermissionPresets = validation.PermissionPresets()
 var validHookPresets = validation.HookPresets()
@@ -112,7 +115,7 @@ func initCmd() *cobra.Command {
 
 			// Save state and answers.
 			genState := state.RecordFiles(files)
-			stateFile := filepath.Join(projectRoot, statePath)
+			stateFile := filepath.Join(projectRoot, claudeStatePath())
 			if err := state.SaveStateToFile(stateFile, genState); err != nil {
 				return fmt.Errorf("saving state: %w", err)
 			}
@@ -165,7 +168,7 @@ func updateCmd() *cobra.Command {
 			answers.Detected = detect.Detect(projectRoot)
 
 			// Load stored state.
-			stateFile := filepath.Join(projectRoot, statePath)
+			stateFile := filepath.Join(projectRoot, claudeStatePath())
 			existingState, err := state.LoadStateFromFile(stateFile)
 			if err != nil {
 				return fmt.Errorf("loading state: %w", err)
@@ -369,7 +372,7 @@ func addSkillCmd() *cobra.Command {
 			}
 
 			// Load existing state to determine what changed.
-			stateFile := filepath.Join(projectRoot, statePath)
+			stateFile := filepath.Join(projectRoot, claudeStatePath())
 			existingState, err := state.LoadStateFromFile(stateFile)
 			if err != nil {
 				return fmt.Errorf("loading state: %w", err)
@@ -450,7 +453,7 @@ func addHookCmd() *cobra.Command {
 			case "auto-format":
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Note: auto-format hook preset is not yet implemented. The setting will be saved but no hook files are generated.")
 			case "pre-commit":
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Note: pre-commit hook preset is managed by devenv, not Claude Code. Use 'qsdev devenv init' with git hooks enabled.")
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Note: pre-commit hook preset is managed by devenv, not Claude Code. Use '%s devenv init' with git hooks enabled.\n", branding.Get().AppName)
 			}
 
 			projectRoot, err := cmdutil.ProjectRoot()
@@ -476,7 +479,7 @@ func addHookCmd() *cobra.Command {
 			}
 
 			// Load existing state to determine what changed.
-			stateFile := filepath.Join(projectRoot, statePath)
+			stateFile := filepath.Join(projectRoot, claudeStatePath())
 			existingState, err := state.LoadStateFromFile(stateFile)
 			if err != nil {
 				return fmt.Errorf("loading state: %w", err)

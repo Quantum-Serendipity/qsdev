@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -37,7 +38,7 @@ func postGenerationMessage(answers types.WizardAnswers, devenvGenerated, claudeG
 	}
 
 	if claudeGenerated {
-		steps = append(steps, "Run 'qsdev list' to see available tools and 'qsdev enable <tool>' to add more.")
+		steps = append(steps, fmt.Sprintf("Run '%s list' to see available tools and '%s enable <tool>' to add more.", branding.Get().AppName, branding.Get().AppName))
 	}
 
 	if devenvGenerated && claudeGenerated {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/pkgmanager"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // Report is the top-level output of qsdev doctor.
@@ -163,7 +164,7 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 		warnSym = "\033[33m!\033[0m"
 	}
 
-	fmt.Fprintf(w, "qsdev doctor v%s\n", r.QsdevVersion)
+	fmt.Fprintf(w, "%s doctor v%s\n", branding.Get().AppName, r.QsdevVersion)
 	fmt.Fprintln(w, "============================")
 	fmt.Fprintln(w)
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/extlog"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 func init() {
@@ -24,7 +25,7 @@ func (p *Provider) Name() string        { return "devenv" }
 func (p *Provider) DisplayName() string { return "devenv" }
 
 func (p *Provider) Detect(projectRoot, _ string) bool {
-	captureDir := filepath.Join(projectRoot, ".qsdev", "logs", "capture")
+	captureDir := filepath.Join(projectRoot, "."+branding.Get().AppName, "logs", "capture")
 	entries, err := os.ReadDir(captureDir)
 	if err != nil {
 		return false
@@ -38,7 +39,7 @@ func (p *Provider) Detect(projectRoot, _ string) bool {
 }
 
 func (p *Provider) Discover(projectRoot, _ string, since time.Time) ([]extlog.LogFile, error) {
-	captureDir := filepath.Join(projectRoot, ".qsdev", "logs", "capture")
+	captureDir := filepath.Join(projectRoot, "."+branding.Get().AppName, "logs", "capture")
 	entries, err := os.ReadDir(captureDir)
 	if err != nil {
 		return nil, nil

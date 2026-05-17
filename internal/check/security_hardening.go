@@ -3,19 +3,9 @@ package check
 import (
 	"os"
 	"path/filepath"
-)
 
-// lockFileMapping maps language names to their expected lock file(s).
-var lockFileMapping = map[string][]string{
-	"go":         {"go.sum"},
-	"javascript": {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"},
-	"python":     {"requirements.txt", "poetry.lock", "uv.lock", "Pipfile.lock"},
-	"rust":       {"Cargo.lock"},
-	"java":       {"gradle.lockfile", "pom.xml"},
-	"dotnet":     {"packages.lock.json"},
-	"ruby":       {"Gemfile.lock"},
-	"php":        {"composer.lock"},
-}
+	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+)
 
 // CheckSecurityHardening verifies security-related file presence for
 // detected ecosystems.
@@ -48,7 +38,7 @@ func CheckSecurityHardening(ctx CheckContext) []CheckResult {
 
 	// Check lock files for each language.
 	for _, lang := range ctx.QsdevConfig.Languages {
-		lockFiles, ok := lockFileMapping[lang.Name]
+		lockFiles, ok := ecosystem.LockFilesByEcosystem[lang.Name]
 		if !ok {
 			continue
 		}

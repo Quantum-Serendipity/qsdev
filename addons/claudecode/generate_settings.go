@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -491,9 +492,9 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 		ask = append(ask, packageAskRules...)
 		// Return early — don't append extras again below.
 		return Permissions{
-			Allow: dedup(allow),
-			Deny:  dedup(deny),
-			Ask:   dedup(ask),
+			Allow: sliceutil.Dedup(allow),
+			Deny:  sliceutil.Dedup(deny),
+			Ask:   sliceutil.Dedup(ask),
 		}
 	}
 
@@ -502,11 +503,11 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 	deny = append(deny, cfg.ExtraDenyPatterns...)
 
 	perms := Permissions{
-		Allow: dedup(allow),
-		Deny:  dedup(deny),
+		Allow: sliceutil.Dedup(allow),
+		Deny:  sliceutil.Dedup(deny),
 	}
 	if len(ask) > 0 {
-		perms.Ask = dedup(ask)
+		perms.Ask = sliceutil.Dedup(ask)
 	}
 	if defaultMode != "" {
 		perms.DefaultMode = defaultMode
@@ -529,10 +530,10 @@ func collectEcosystemDenyRules(answers types.WizardAnswers, registry *ecosystem.
 		if !ok {
 			continue
 		}
-		cfg := toModuleConfig(lang)
+		cfg := ecosystem.ToModuleConfig(lang)
 		rules = append(rules, mod.DenyRules(cfg)...)
 	}
-	return dedup(rules)
+	return sliceutil.Dedup(rules)
 }
 
 // buildSandbox returns a SandboxConfig when sandbox is enabled, or nil otherwise.

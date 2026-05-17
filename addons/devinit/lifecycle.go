@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/surgery"
@@ -20,9 +21,9 @@ import (
 // runEnable enables a tool: validates prerequisites, generates files, and
 // updates persisted answers and state.
 func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
-	projectRoot, err := os.Getwd()
+	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
-		return fmt.Errorf("determining project root: %w", err)
+		return err
 	}
 
 	registry := toolreg.DefaultRegistry()
@@ -149,9 +150,9 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 // runDisable disables a tool: validates dependents, removes files, and
 // updates persisted answers and state.
 func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error {
-	projectRoot, err := os.Getwd()
+	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
-		return fmt.Errorf("determining project root: %w", err)
+		return err
 	}
 
 	registry := toolreg.DefaultRegistry()

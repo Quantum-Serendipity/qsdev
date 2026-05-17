@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 )
 
 func makeReport(name string, score float64, baselinePass, enhancedPass bool, critVulns, highVulns int, qsdevVersion string, generatedAt time.Time) *posture.PostureReport {
@@ -46,9 +47,9 @@ func makeReport(name string, score float64, baselinePass, enhancedPass bool, cri
 		Config: posture.ConfigHealth{
 			Files: []posture.ConfigFileInfo{},
 		},
-		Drift: posture.DriftReport{
-			Categories: []posture.DriftCategory{},
-			BySeverity: make(map[posture.DriftSeverity]int),
+		Drift: drift.Report{
+			Categories: []drift.Category{},
+			BySeverity: make(map[drift.Severity]int),
 		},
 		Tools:      []posture.ToolStatus{},
 		Ecosystems: []posture.EcosystemStatus{},

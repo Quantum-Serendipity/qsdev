@@ -3,7 +3,6 @@ package devinit
 import (
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -11,9 +10,10 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
-	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/repair"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
@@ -48,9 +48,9 @@ The devenv.nix file is never auto-modified regardless of flags.`,
 }
 
 func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
-	projectRoot, err := os.Getwd()
+	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
-		return fmt.Errorf("determining project root: %w", err)
+		return err
 	}
 
 	// Load answers.
@@ -75,7 +75,7 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 	}
 
 	// Detect drift.
-	driftReport := posture.DetectDrift(projectRoot, existingState, enabledTools)
+	driftReport := drift.Detect(projectRoot, existingState, enabledTools)
 
 	// If reset or there are findings, regenerate fresh files.
 	freshFiles := make(map[string]types.GeneratedFile)

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -48,15 +48,15 @@ func TestRepair_DryRun(t *testing.T) {
 		},
 	}
 
-	driftReport := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	driftReport := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     relPath,
 						Description: "Machine-owned file \".claude/settings.json\" has been modified (strategy: overwrite)",
-						Severity:    posture.DriftWarning,
+						Severity:    drift.Warning,
 					},
 				},
 			},
@@ -117,15 +117,15 @@ func TestRepair_FixOverwriteFile(t *testing.T) {
 		},
 	}
 
-	driftReport := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	driftReport := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     relPath,
 						Description: "Machine-owned file \".claude/settings.json\" has been modified (strategy: overwrite)",
-						Severity:    posture.DriftWarning,
+						Severity:    drift.Warning,
 					},
 				},
 			},
@@ -201,15 +201,15 @@ func TestRepair_DeletedFileRegenerated(t *testing.T) {
 		},
 	}
 
-	driftReport := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	driftReport := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     relPath,
 						Description: "Generated file \".envrc\" has been deleted",
-						Severity:    posture.DriftError,
+						Severity:    drift.Error,
 					},
 				},
 			},
@@ -271,15 +271,15 @@ func TestRepair_MissingFreshContent(t *testing.T) {
 		},
 	}
 
-	driftReport := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	driftReport := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     relPath,
 						Description: "Machine-owned file has been modified (strategy: overwrite)",
-						Severity:    posture.DriftWarning,
+						Severity:    drift.Warning,
 					},
 				},
 			},
@@ -322,13 +322,13 @@ func TestRepair_TargetFile(t *testing.T) {
 		},
 	}
 
-	driftReport := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	driftReport := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
-					{Subject: ".npmrc", Description: "Machine-owned file has been modified (strategy: overwrite)", Severity: posture.DriftWarning},
-					{Subject: ".envrc", Description: "Machine-owned file has been modified (strategy: overwrite)", Severity: posture.DriftWarning},
+				Findings: []drift.Finding{
+					{Subject: ".npmrc", Description: "Machine-owned file has been modified (strategy: overwrite)", Severity: drift.Warning},
+					{Subject: ".envrc", Description: "Machine-owned file has been modified (strategy: overwrite)", Severity: drift.Warning},
 				},
 			},
 		},
@@ -362,18 +362,18 @@ func TestRepair_TargetFile(t *testing.T) {
 func TestRepair_SkippedActions(t *testing.T) {
 	root := t.TempDir()
 
-	driftReport := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	driftReport := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "Version Drift",
-				Findings: []posture.DriftFinding{
-					{Subject: "qsdev version", Description: "Version mismatch", Severity: posture.DriftInfo},
+				Findings: []drift.Finding{
+					{Subject: "qsdev version", Description: "Version mismatch", Severity: drift.Info},
 				},
 			},
 			{
 				Name: "Tool Availability",
-				Findings: []posture.DriftFinding{
-					{Subject: "semgrep", Description: "Binary missing", Severity: posture.DriftWarning},
+				Findings: []drift.Finding{
+					{Subject: "semgrep", Description: "Binary missing", Severity: drift.Warning},
 				},
 			},
 		},
@@ -408,12 +408,12 @@ func TestRepair_StateIsolation(t *testing.T) {
 		},
 	}
 
-	driftReport := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	driftReport := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
-					{Subject: relPath, Description: "Machine-owned file has been modified (strategy: overwrite)", Severity: posture.DriftWarning},
+				Findings: []drift.Finding{
+					{Subject: relPath, Description: "Machine-owned file has been modified (strategy: overwrite)", Severity: drift.Warning},
 				},
 			},
 		},
@@ -486,15 +486,15 @@ func TestRepair_DevenvNixProtected_WithForce(t *testing.T) {
 		},
 	}
 
-	driftReport := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	driftReport := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     relPath,
 						Description: "Machine-owned file modified",
-						Severity:    posture.DriftWarning,
+						Severity:    drift.Warning,
 					},
 				},
 			},
@@ -551,15 +551,15 @@ func TestRepair_DevenvNixProtected_WithReset(t *testing.T) {
 		},
 	}
 
-	driftReport := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	driftReport := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     relPath,
 						Description: "Machine-owned file modified",
-						Severity:    posture.DriftWarning,
+						Severity:    drift.Warning,
 					},
 				},
 			},

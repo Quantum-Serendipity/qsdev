@@ -53,7 +53,7 @@ func collectManifestCoverage(answers types.WizardAnswers, registry *ecosystem.Re
 	configFor := func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
 		for _, lang := range answers.Languages {
 			if lang.Name == mod.Name() {
-				return toModuleConfig(lang)
+				return ecosystem.ToModuleConfig(lang)
 			}
 		}
 		return ecosystem.ModuleConfig{}

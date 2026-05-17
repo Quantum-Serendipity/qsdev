@@ -2,11 +2,11 @@ package devinit
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 )
@@ -227,7 +227,7 @@ func runDevenvInputStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult
 		}
 	}
 
-	projectRoot, err := os.Getwd()
+	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
 		return StageResult{
 			Name:    "Devenv inputs",

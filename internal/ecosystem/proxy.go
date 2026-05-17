@@ -41,22 +41,22 @@ func ResolveProxyURL(baseURL string, overrides map[string]string, ecosystem stri
 // key used in DefaultProxyPaths.
 func ProxyKeyForLanguage(langName, packageManager string) string {
 	switch langName {
-	case "javascript":
+	case NameJavaScript:
 		return "npm"
-	case "python":
+	case NamePython:
 		return "pypi"
-	case "go":
+	case NameGo:
 		return "go"
-	case "java":
+	case NameJava:
 		if packageManager == "gradle" {
 			return "gradle"
 		}
 		return "maven"
-	case "rust":
+	case NameRust:
 		return "cargo"
-	case "dotnet":
+	case NameDotnet:
 		return "nuget"
-	case "php":
+	case NamePHP:
 		return "composer"
 	default:
 		return ""

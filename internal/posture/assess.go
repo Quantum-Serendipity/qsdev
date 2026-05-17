@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 )
 
@@ -79,9 +80,9 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 		Dependencies: DependencyHealth{
 			Ecosystems: []EcosystemStatus{},
 		},
-		Drift: DriftReport{
-			Categories: []DriftCategory{},
-			BySeverity: make(map[DriftSeverity]int),
+		Drift: drift.Report{
+			Categories: []drift.Category{},
+			BySeverity: make(map[drift.Severity]int),
 		},
 		Tools:      []ToolStatus{},
 		Ecosystems: []EcosystemStatus{},
@@ -92,9 +93,9 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 		report.Drift.Categories = appendOrCreateCategory(
 			report.Drift.Categories,
 			"state-files",
-			DriftFinding{
+			drift.Finding{
 				Category:    "state-files",
-				Severity:    DriftWarning,
+				Severity:    drift.Warning,
 				Subject:     loadErr.Path,
 				Description: fmt.Sprintf("Failed to load state file: %s", loadErr.Err),
 				Remediation: "Re-run 'qsdev init' to regenerate state files.",
@@ -102,7 +103,7 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 			},
 		)
 		report.Drift.TotalFindings++
-		report.Drift.BySeverity[DriftWarning]++
+		report.Drift.BySeverity[drift.Warning]++
 	}
 
 	return report, nil
@@ -110,15 +111,15 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 
 // appendOrCreateCategory adds a finding to the named category, creating the
 // category if it does not already exist.
-func appendOrCreateCategory(categories []DriftCategory, name string, finding DriftFinding) []DriftCategory {
+func appendOrCreateCategory(categories []drift.Category, name string, finding drift.Finding) []drift.Category {
 	for i, cat := range categories {
 		if cat.Name == name {
 			categories[i].Findings = append(categories[i].Findings, finding)
 			return categories
 		}
 	}
-	return append(categories, DriftCategory{
+	return append(categories, drift.Category{
 		Name:     name,
-		Findings: []DriftFinding{finding},
+		Findings: []drift.Finding{finding},
 	})
 }

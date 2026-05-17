@@ -103,7 +103,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 			return nil, fmt.Errorf("unknown language module: %q", lang.Name)
 		}
 
-		cfg := toModuleConfigWithProxy(lang, answers.Infrastructure)
+		cfg := ecosystem.ToModuleConfigWithProxy(lang, answers.Infrastructure)
 		fragment, err := mod.DevenvNixFragment(cfg)
 		if err != nil {
 			return nil, fmt.Errorf("generating Nix fragment for %s: %w", lang.Name, err)
@@ -172,7 +172,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	configForFunc := func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
 		for _, lang := range answers.Languages {
 			if lang.Name == mod.Name() {
-				return toModuleConfigWithProxy(lang, answers.Infrastructure)
+				return ecosystem.ToModuleConfigWithProxy(lang, answers.Infrastructure)
 			}
 		}
 		return ecosystem.ModuleConfig{}

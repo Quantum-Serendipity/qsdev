@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -25,9 +26,9 @@ func configShowCmd() *cobra.Command {
 }
 
 func runConfigShow(cmd *cobra.Command) error {
-	projectRoot, err := os.Getwd()
+	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
-		return fmt.Errorf("determining project root: %w", err)
+		return err
 	}
 	configPath := filepath.Join(projectRoot, ".qsdev.yaml")
 	data, err := os.ReadFile(configPath)
@@ -63,9 +64,9 @@ Use --write to apply the migration in place.`,
 }
 
 func runMigrate(cmd *cobra.Command, write bool) error {
-	projectRoot, err := os.Getwd()
+	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
-		return fmt.Errorf("determining project root: %w", err)
+		return err
 	}
 
 	configPath := filepath.Join(projectRoot, ".qsdev.yaml")

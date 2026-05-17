@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -78,7 +79,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 
 	// 5b. Inject semble into MCP servers if enabled in MCP or both mode.
 	if answers.AgentTools.SembleEnabled && (answers.AgentTools.SembleMode == "mcp" || answers.AgentTools.SembleMode == "both" || answers.AgentTools.SembleMode == "") {
-		if !contains(answers.MCPServers, "semble") {
+		if !sliceutil.Contains(answers.MCPServers, "semble") {
 			answers.MCPServers = append(answers.MCPServers, "semble")
 		}
 	}

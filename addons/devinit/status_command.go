@@ -8,7 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/render"
 )
 
 const (
@@ -101,9 +103,9 @@ type postureStatusOptions struct {
 }
 
 func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptions) error {
-	projectDir, err := os.Getwd()
+	projectDir, err := cmdutil.ProjectRoot()
 	if err != nil {
-		return fmt.Errorf("determining project directory: %w", err)
+		return err
 	}
 
 	// Perform assessment.
@@ -126,14 +128,14 @@ func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptio
 	}
 
 	// Detect color support.
-	useColor := posture.ColorSupported(os.Stdout.Fd())
+	useColor := render.ColorSupported(os.Stdout.Fd())
 
 	// Determine output format.
 	outputFormat := resolveFormat(cmd, opts)
 
 	// Handle --all-badges special case.
 	if opts.allBadges {
-		if err := posture.RenderAllBadges(report, opts.outputDir); err != nil {
+		if err := render.RenderAllBadges(report, opts.outputDir); err != nil {
 			return fmt.Errorf("writing badges: %w", err)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Badges written to %s/\n", opts.outputDir)
@@ -141,7 +143,7 @@ func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptio
 	}
 
 	// Build render options.
-	renderOpts := posture.RenderOptions{
+	renderOpts := render.Options{
 		Verbose:   opts.verbose,
 		Quiet:     opts.quiet,
 		Fix:       opts.fix,
@@ -154,7 +156,7 @@ func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptio
 
 	// Render the report.
 	w := cmd.OutOrStdout()
-	if err := posture.RenderReport(report, outputFormat, w, renderOpts); err != nil {
+	if err := render.Report(report, outputFormat, w, renderOpts); err != nil {
 		return fmt.Errorf("rendering report: %w", err)
 	}
 
@@ -162,16 +164,16 @@ func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptio
 }
 
 // resolveFormat determines the output format based on flags and environment.
-func resolveFormat(cmd *cobra.Command, opts postureStatusOptions) posture.OutputFormat {
+func resolveFormat(cmd *cobra.Command, opts postureStatusOptions) render.Format {
 	// Explicit flags take priority.
 	if opts.jsonFlag {
-		return posture.FormatJSON
+		return render.JSON
 	}
 	if opts.sarifFlag {
-		return posture.FormatSARIF
+		return render.SARIF
 	}
 	if opts.format == "badge" {
-		return posture.FormatBadge
+		return render.Badge
 	}
 
 	// CI detection: if CI=true and no explicit format flag was provided,
@@ -182,11 +184,11 @@ func resolveFormat(cmd *cobra.Command, opts postureStatusOptions) posture.Output
 		sarifChanged := cmd.Flags().Changed("sarif")
 		formatChanged := cmd.Flags().Changed("format")
 		if !jsonChanged && !sarifChanged && !formatChanged {
-			return posture.FormatJSON
+			return render.JSON
 		}
 	}
 
-	return posture.FormatText
+	return render.Text
 }
 
 // exitForAudit evaluates the audit level and returns an error that wraps the

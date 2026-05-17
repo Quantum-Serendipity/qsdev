@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/evidence"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
@@ -90,9 +91,9 @@ func runEvidence(cmd *cobra.Command, frameworkID, format string) error {
 	}
 
 	// Build a posture report for the current project.
-	projectRoot, err := os.Getwd()
+	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
-		return fmt.Errorf("determining project root: %w", err)
+		return err
 	}
 
 	projectName := filepath.Base(projectRoot)

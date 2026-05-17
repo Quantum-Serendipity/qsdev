@@ -148,15 +148,14 @@ func aggregateDetections(results map[string]DetectionResult) types.DetectedProje
 
 		// Populate well-known fields for modules that have dedicated struct fields.
 		switch name {
-		case "go":
+		case NameGo:
 			p.HasGoMod = true
 			if dr.SuggestedConfig.Version != "" {
 				p.GoVersion = dr.SuggestedConfig.Version
 			}
 
-		case "javascript":
-			// Set both "javascript" (canonical) and "node" (legacy alias).
-			p.Ecosystems["node"] = true
+		case NameJavaScript:
+			p.Ecosystems[NameNode] = true
 			p.HasPackageJSON = true
 			if dr.SuggestedConfig.Version != "" {
 				p.NodeVersion = dr.SuggestedConfig.Version
@@ -165,17 +164,16 @@ func aggregateDetections(results map[string]DetectionResult) types.DetectedProje
 				p.PackageManager = dr.SuggestedConfig.PackageManager
 			}
 
-		case "python":
+		case NamePython:
 			p.HasPyProject = true
 			if dr.SuggestedConfig.Version != "" {
 				p.PythonVersion = dr.SuggestedConfig.Version
 			}
 
-		case "rust":
+		case NameRust:
 			p.HasCargoToml = true
 
-		case "java":
-			// Java detection may set extras to indicate the build tool.
+		case NameJava:
 			if dr.SuggestedConfig.Extras != nil {
 				if _, ok := dr.SuggestedConfig.Extras["build_tool"]; ok {
 					switch dr.SuggestedConfig.Extras["build_tool"] {
@@ -189,15 +187,14 @@ func aggregateDetections(results map[string]DetectionResult) types.DetectedProje
 					}
 				}
 			}
-			// If no build tool extra is set, default to both false (just Ecosystems map).
 
-		case "dotnet":
+		case NameDotnet:
 			p.HasCsproj = true
 
-		case "docker":
+		case NameDocker:
 			p.HasDockerfile = true
 
-		case "terraform":
+		case NameTerraform:
 			p.HasTerraform = true
 		}
 	}

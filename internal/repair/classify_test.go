@@ -3,7 +3,7 @@ package repair
 import (
 	"testing"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -15,7 +15,7 @@ func TestClassifyFindings_NilReport(t *testing.T) {
 }
 
 func TestClassifyFindings_EmptyReport(t *testing.T) {
-	report := &posture.DriftReport{}
+	report := &drift.Report{}
 	actions := classifyFindings(report, types.GeneratedState{}, RepairOptions{})
 	if len(actions) != 0 {
 		t.Errorf("got %d actions for empty report, want 0", len(actions))
@@ -23,15 +23,15 @@ func TestClassifyFindings_EmptyReport(t *testing.T) {
 }
 
 func TestClassifyFileModification_Overwrite(t *testing.T) {
-	report := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	report := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     ".claude/settings.json",
 						Description: "Machine-owned file \".claude/settings.json\" has been modified (strategy: overwrite)",
-						Severity:    posture.DriftWarning,
+						Severity:    drift.Warning,
 					},
 				},
 			},
@@ -60,15 +60,15 @@ func TestClassifyFileModification_Overwrite(t *testing.T) {
 }
 
 func TestClassifyFileModification_LibraryManaged(t *testing.T) {
-	report := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	report := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     ".npmrc",
 						Description: "Machine-owned file \".npmrc\" has been modified (strategy: library-managed)",
-						Severity:    posture.DriftWarning,
+						Severity:    drift.Warning,
 					},
 				},
 			},
@@ -93,15 +93,15 @@ func TestClassifyFileModification_LibraryManaged(t *testing.T) {
 }
 
 func TestClassifyFileModification_SectionMarker_NoForce(t *testing.T) {
-	report := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	report := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     "CLAUDE.md",
 						Description: "Human-edited file \"CLAUDE.md\" has been modified (strategy: section-marker)",
-						Severity:    posture.DriftInfo,
+						Severity:    drift.Info,
 					},
 				},
 			},
@@ -126,15 +126,15 @@ func TestClassifyFileModification_SectionMarker_NoForce(t *testing.T) {
 }
 
 func TestClassifyFileModification_SectionMarker_WithForce(t *testing.T) {
-	report := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	report := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     "CLAUDE.md",
 						Description: "Human-edited file \"CLAUDE.md\" has been modified (strategy: section-marker)",
-						Severity:    posture.DriftInfo,
+						Severity:    drift.Info,
 					},
 				},
 			},
@@ -159,15 +159,15 @@ func TestClassifyFileModification_SectionMarker_WithForce(t *testing.T) {
 }
 
 func TestClassifyFileModification_SectionMarker_WithReset(t *testing.T) {
-	report := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	report := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     "CLAUDE.md",
 						Description: "Human-edited file \"CLAUDE.md\" has been modified (strategy: section-marker)",
-						Severity:    posture.DriftInfo,
+						Severity:    drift.Info,
 					},
 				},
 			},
@@ -189,15 +189,15 @@ func TestClassifyFileModification_SectionMarker_WithReset(t *testing.T) {
 }
 
 func TestClassifyFileModification_DevenvNix_AlwaysSkipped(t *testing.T) {
-	report := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	report := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     "devenv.nix",
 						Description: "Machine-owned file \"devenv.nix\" has been modified (strategy: overwrite)",
-						Severity:    posture.DriftWarning,
+						Severity:    drift.Warning,
 					},
 				},
 			},
@@ -223,15 +223,15 @@ func TestClassifyFileModification_DevenvNix_AlwaysSkipped(t *testing.T) {
 }
 
 func TestClassifyFileModification_Deleted(t *testing.T) {
-	report := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	report := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     ".envrc",
 						Description: "Generated file \".envrc\" has been deleted",
-						Severity:    posture.DriftError,
+						Severity:    drift.Error,
 					},
 				},
 			},
@@ -256,15 +256,15 @@ func TestClassifyFileModification_Deleted(t *testing.T) {
 }
 
 func TestClassifyFileModification_DeletedDevenvNix(t *testing.T) {
-	report := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	report := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     "devenv.nix",
 						Description: "Generated file \"devenv.nix\" has been deleted",
-						Severity:    posture.DriftError,
+						Severity:    drift.Error,
 					},
 				},
 			},
@@ -287,15 +287,15 @@ func TestClassifyFileModification_DeletedDevenvNix(t *testing.T) {
 }
 
 func TestClassifyHookDrift(t *testing.T) {
-	report := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	report := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "Pre-Commit Hook Drift",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     "pre-commit",
 						Description: "Git pre-commit hook is not installed",
-						Severity:    posture.DriftWarning,
+						Severity:    drift.Warning,
 					},
 				},
 			},
@@ -319,15 +319,15 @@ func TestClassifyHookDrift(t *testing.T) {
 }
 
 func TestClassifyMarkerDrift(t *testing.T) {
-	report := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	report := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "Section Marker Integrity",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     "marker:security",
 						Description: "Opening marker has no matching closing marker",
-						Severity:    posture.DriftWarning,
+						Severity:    drift.Warning,
 					},
 				},
 			},
@@ -351,15 +351,15 @@ func TestClassifyMarkerDrift(t *testing.T) {
 }
 
 func TestClassifyVersionDrift(t *testing.T) {
-	report := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	report := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "Version Drift",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     "qsdev version",
 						Description: "Configuration was generated with a different qsdev version",
-						Severity:    posture.DriftInfo,
+						Severity:    drift.Info,
 					},
 				},
 			},
@@ -379,15 +379,15 @@ func TestClassifyVersionDrift(t *testing.T) {
 }
 
 func TestClassifyToolAvailability(t *testing.T) {
-	report := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	report := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "Tool Availability",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     "semgrep",
 						Description: "Required binary \"semgrep\" for tool \"semgrep\" is not available on PATH",
-						Severity:    posture.DriftWarning,
+						Severity:    drift.Warning,
 					},
 				},
 			},
@@ -407,15 +407,15 @@ func TestClassifyToolAvailability(t *testing.T) {
 }
 
 func TestClassifyLockfileDrift(t *testing.T) {
-	report := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	report := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "Lock File Drift",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     "package-lock.json",
 						Description: "Lockfile is older than manifest",
-						Severity:    posture.DriftWarning,
+						Severity:    drift.Warning,
 					},
 				},
 			},
@@ -432,24 +432,24 @@ func TestClassifyLockfileDrift(t *testing.T) {
 }
 
 func TestClassifyFindings_MultipleCategories(t *testing.T) {
-	report := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	report := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
-					{Subject: ".npmrc", Description: "Machine-owned file has been modified", Severity: posture.DriftWarning},
+				Findings: []drift.Finding{
+					{Subject: ".npmrc", Description: "Machine-owned file has been modified", Severity: drift.Warning},
 				},
 			},
 			{
 				Name: "Pre-Commit Hook Drift",
-				Findings: []posture.DriftFinding{
-					{Subject: "pre-commit", Description: "Hook not installed", Severity: posture.DriftWarning},
+				Findings: []drift.Finding{
+					{Subject: "pre-commit", Description: "Hook not installed", Severity: drift.Warning},
 				},
 			},
 			{
 				Name: "Version Drift",
-				Findings: []posture.DriftFinding{
-					{Subject: "qsdev version", Description: "Version mismatch", Severity: posture.DriftInfo},
+				Findings: []drift.Finding{
+					{Subject: "qsdev version", Description: "Version mismatch", Severity: drift.Info},
 				},
 			},
 		},
@@ -478,15 +478,15 @@ func TestClassifyFindings_MultipleCategories(t *testing.T) {
 }
 
 func TestClassifyFileModification_UnknownFile(t *testing.T) {
-	report := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	report := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "File Modification",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     "unknown-file.txt",
 						Description: "File \"unknown-file.txt\" has been modified",
-						Severity:    posture.DriftWarning,
+						Severity:    drift.Warning,
 					},
 				},
 			},
@@ -507,15 +507,15 @@ func TestClassifyFileModification_UnknownFile(t *testing.T) {
 }
 
 func TestClassifyUnknownCategory(t *testing.T) {
-	report := &posture.DriftReport{
-		Categories: []posture.DriftCategory{
+	report := &drift.Report{
+		Categories: []drift.Category{
 			{
 				Name: "Future Category",
-				Findings: []posture.DriftFinding{
+				Findings: []drift.Finding{
 					{
 						Subject:     "something",
 						Description: "Something happened",
-						Severity:    posture.DriftInfo,
+						Severity:    drift.Info,
 					},
 				},
 			},

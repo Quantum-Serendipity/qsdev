@@ -1,6 +1,10 @@
 package posture
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
+)
 
 func TestVulnSeverityCountsTotal(t *testing.T) {
 	tests := []struct {
@@ -105,20 +109,20 @@ func TestLayerWeightStringValues(t *testing.T) {
 
 func TestDriftSeverityStringValues(t *testing.T) {
 	tests := []struct {
-		severity DriftSeverity
+		severity drift.Severity
 		want     string
 	}{
-		{DriftCritical, "critical"},
-		{DriftError, "error"},
-		{DriftWarning, "warning"},
-		{DriftInfo, "info"},
+		{drift.Critical, "critical"},
+		{drift.Error, "error"},
+		{drift.Warning, "warning"},
+		{drift.Info, "info"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
 			got := string(tt.severity)
 			if got != tt.want {
-				t.Errorf("DriftSeverity = %q, want %q", got, tt.want)
+				t.Errorf("drift.Severity = %q, want %q", got, tt.want)
 			}
 		})
 	}

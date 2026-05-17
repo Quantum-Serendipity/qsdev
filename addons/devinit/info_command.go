@@ -3,10 +3,10 @@ package devinit
 import (
 	"errors"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/info"
 )
 
@@ -34,9 +34,9 @@ Instant response — reads cached state only, no evaluation.`,
 }
 
 func runInfo(cmd *cobra.Command, oneline, jsonOutput bool) error {
-	projectRoot, err := os.Getwd()
+	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
-		return fmt.Errorf("determining project root: %w", err)
+		return err
 	}
 
 	projectInfo, err := info.CollectInfo(projectRoot)

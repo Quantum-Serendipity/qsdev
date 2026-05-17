@@ -1,6 +1,10 @@
 package posture
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
+)
 
 func TestShouldExitNonZero_None(t *testing.T) {
 	report := &PostureReport{
@@ -159,7 +163,7 @@ func TestShouldExitNonZero_Info(t *testing.T) {
 			Conformance: ConformanceResult{
 				Baseline: ConformanceLevel{Pass: true},
 			},
-			Drift: DriftReport{TotalFindings: 1},
+			Drift: drift.Report{TotalFindings: 1},
 		}
 		if !ShouldExitNonZero(report, "info") {
 			t.Error("report with drift should exit non-zero at info level")
@@ -203,7 +207,7 @@ func TestShouldExitNonZero_Any(t *testing.T) {
 		Conformance: ConformanceResult{
 			Baseline: ConformanceLevel{Pass: true},
 		},
-		Drift: DriftReport{TotalFindings: 1},
+		Drift: drift.Report{TotalFindings: 1},
 	}
 	if !ShouldExitNonZero(report, "any") {
 		t.Error("'any' should exit non-zero when there are drift findings")

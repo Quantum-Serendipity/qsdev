@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -83,20 +84,20 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 			data.PackageManagers = append(data.PackageManagers, pm.Name)
 		}
 
-		config := toModuleConfig(lang)
+		config := ecosystem.ToModuleConfig(lang)
 		vc := mod.VerificationCommands(config)
 		buildCmds = append(buildCmds, vc.Build...)
 		testCmds = append(testCmds, vc.Test...)
 		lintCmds = append(lintCmds, vc.Lint...)
 	}
 
-	data.BuildCommands = dedup(buildCmds)
-	data.TestCommands = dedup(testCmds)
-	data.LintCommands = dedup(lintCmds)
-	data.PackageManagers = dedup(data.PackageManagers)
+	data.BuildCommands = sliceutil.Dedup(buildCmds)
+	data.TestCommands = sliceutil.Dedup(testCmds)
+	data.LintCommands = sliceutil.Dedup(lintCmds)
+	data.PackageManagers = sliceutil.Dedup(data.PackageManagers)
 
 	// Agent tools metadata for CLAUDE.md.
-	data.TrailOfBitsEnabled = contains(answers.Skills, "security-review")
+	data.TrailOfBitsEnabled = sliceutil.Contains(answers.Skills, "security-review")
 	data.PostmortemEnabled = answers.AgentTools.PostmortemEnabled
 	data.SembleEnabled = answers.AgentTools.SembleEnabled
 	data.SembleMode = answers.AgentTools.SembleMode
@@ -172,13 +173,13 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 
 	// Devenv tasks from verification commands.
 	if len(buildCmds) > 0 {
-		data.DevenvTasks = append(data.DevenvTasks, TaskSummary{Name: "build", Commands: dedup(buildCmds)})
+		data.DevenvTasks = append(data.DevenvTasks, TaskSummary{Name: "build", Commands: sliceutil.Dedup(buildCmds)})
 	}
 	if len(testCmds) > 0 {
-		data.DevenvTasks = append(data.DevenvTasks, TaskSummary{Name: "test", Commands: dedup(testCmds)})
+		data.DevenvTasks = append(data.DevenvTasks, TaskSummary{Name: "test", Commands: sliceutil.Dedup(testCmds)})
 	}
 	if len(lintCmds) > 0 {
-		data.DevenvTasks = append(data.DevenvTasks, TaskSummary{Name: "lint", Commands: dedup(lintCmds)})
+		data.DevenvTasks = append(data.DevenvTasks, TaskSummary{Name: "lint", Commands: sliceutil.Dedup(lintCmds)})
 	}
 
 	// Model size for template rendering.

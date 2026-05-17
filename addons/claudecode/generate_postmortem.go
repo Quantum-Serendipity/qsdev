@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -46,7 +47,7 @@ func collectVerificationCommands(answers types.WizardAnswers, registry *ecosyste
 	configFor := func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
 		for _, lang := range answers.Languages {
 			if lang.Name == mod.Name() {
-				return toModuleConfig(lang)
+				return ecosystem.ToModuleConfig(lang)
 			}
 		}
 		return ecosystem.ModuleConfig{}
@@ -59,5 +60,5 @@ func collectVerificationCommands(answers types.WizardAnswers, registry *ecosyste
 	}
 
 	agg := ecosystem.AggregateVerificationCommands(modules, configFor)
-	return dedup(agg.All())
+	return sliceutil.Dedup(agg.All())
 }

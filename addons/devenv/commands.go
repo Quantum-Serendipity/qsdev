@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules" // register all modules
@@ -70,9 +71,9 @@ func initCmd() *cobra.Command {
 		Short: "Initialize a security-hardened devenv environment",
 		Long:  "Generate devenv.yaml, devenv.nix, and security configuration files for the current project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := os.Getwd()
+			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
-				return fmt.Errorf("determining project root: %w", err)
+				return err
 			}
 
 			// Check for existing devenv.nix unless --force is set.
@@ -157,9 +158,9 @@ func updateCmd() *cobra.Command {
 		Short: "Regenerate devenv files from saved answers",
 		Long:  "Re-run generation using previously saved wizard answers, incorporating any detection changes.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := os.Getwd()
+			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
-				return fmt.Errorf("determining project root: %w", err)
+				return err
 			}
 
 			// Load saved answers.
@@ -250,9 +251,9 @@ func addServiceCmd() *cobra.Command {
 				return fmt.Errorf("unknown service %q; valid services: %v", serviceName, validServices)
 			}
 
-			projectRoot, err := os.Getwd()
+			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
-				return fmt.Errorf("determining project root: %w", err)
+				return err
 			}
 
 			// Load saved answers.
@@ -342,9 +343,9 @@ func addLanguageCmd() *cobra.Command {
 				return fmt.Errorf("unknown language %q; valid languages: %v", langName, validLanguages)
 			}
 
-			projectRoot, err := os.Getwd()
+			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
-				return fmt.Errorf("determining project root: %w", err)
+				return err
 			}
 
 			// Load saved answers.
@@ -426,9 +427,9 @@ func addPackageCmd() *cobra.Command {
 		Long:  "Add Nix packages (e.g., imagemagick, ffmpeg, jq) to the devenv shell without editing Nix files.",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := os.Getwd()
+			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
-				return fmt.Errorf("determining project root: %w", err)
+				return err
 			}
 
 			answers, err := loadAnswers(projectRoot)
@@ -505,9 +506,9 @@ func removePackageCmd() *cobra.Command {
 		Long:  "Remove previously added Nix packages from the devenv shell.",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := os.Getwd()
+			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
-				return fmt.Errorf("determining project root: %w", err)
+				return err
 			}
 
 			answers, err := loadAnswers(projectRoot)
@@ -585,9 +586,9 @@ func removeServiceCmd() *cobra.Command {
 		ValidArgs: validServices,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			serviceName := args[0]
-			projectRoot, err := os.Getwd()
+			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
-				return fmt.Errorf("determining project root: %w", err)
+				return err
 			}
 
 			answers, err := loadAnswers(projectRoot)
@@ -659,9 +660,9 @@ func removeLanguageCmd() *cobra.Command {
 		ValidArgs: validLanguages,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			langName := args[0]
-			projectRoot, err := os.Getwd()
+			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
-				return fmt.Errorf("determining project root: %w", err)
+				return err
 			}
 
 			answers, err := loadAnswers(projectRoot)

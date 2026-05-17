@@ -1,6 +1,9 @@
 package claudecode
 
-import "github.com/Quantum-Serendipity/qsdev/pkg/types"
+import (
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
+)
 
 // ExportMCPServerConfig re-exports MCPServerConfig for convenience in tests.
 type ExportMCPServerConfig = MCPServerConfig
@@ -54,7 +57,7 @@ type ExportVersionDiff = VersionDiff
 type ExportUpdateSummary = UpdateSummary
 
 // ExportContains exposes the contains helper for external tests.
-var ExportContains = contains
+var ExportContains = sliceutil.Contains
 
 var ExportLoadQsdevOpsManifest    = loadQsdevOpsManifest
 var ExportDeployOperationSkills  = deployOperationSkills

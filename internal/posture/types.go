@@ -1,8 +1,9 @@
 package posture
 
 import (
-	"io"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 )
 
 // SchemaVersion is the current version of the PostureReport schema.
@@ -33,7 +34,7 @@ const (
 type PostureReport struct {
 	SchemaVersion string            `json:"schemaVersion"`
 	GeneratedAt   time.Time         `json:"generatedAt"`
-	QsdevVersion   string            `json:"qsdevVersion"`
+	QsdevVersion  string            `json:"qsdevVersion"`
 	ProjectPath   string            `json:"projectPath"`
 	ProjectName   string            `json:"projectName"`
 	Score         AggregateScore    `json:"score"`
@@ -41,7 +42,7 @@ type PostureReport struct {
 	Defense       DefenseCoverage   `json:"defense"`
 	Config        ConfigHealth      `json:"config"`
 	Dependencies  DependencyHealth  `json:"dependencies"`
-	Drift         DriftReport       `json:"drift"`
+	Drift         drift.Report      `json:"drift"`
 	Tools         []ToolStatus      `json:"tools"`
 	Ecosystems    []EcosystemStatus `json:"ecosystems"`
 }
@@ -160,41 +161,6 @@ type ToolStatus struct {
 	Description string `json:"description"`
 }
 
-// DriftReport summarizes configuration drift findings across categories.
-type DriftReport struct {
-	Categories    []DriftCategory       `json:"categories"`
-	TotalFindings int                   `json:"totalFindings"`
-	BySeverity    map[DriftSeverity]int `json:"bySeverity"`
-}
-
-// DriftSeverity categorizes the importance of a drift finding.
-type DriftSeverity string
-
-const (
-	DriftCritical DriftSeverity = "critical"
-	DriftError    DriftSeverity = "error"
-	DriftWarning  DriftSeverity = "warning"
-	DriftInfo     DriftSeverity = "info"
-)
-
-// DriftCategory groups drift findings under a named category.
-type DriftCategory struct {
-	Name     string         `json:"name"`
-	Findings []DriftFinding `json:"findings"`
-}
-
-// DriftFinding describes a single configuration drift issue.
-type DriftFinding struct {
-	Category    string        `json:"category"`
-	Severity    DriftSeverity `json:"severity"`
-	Subject     string        `json:"subject"`
-	Description string        `json:"description"`
-	Expected    string        `json:"expected,omitempty"`
-	Actual      string        `json:"actual,omitempty"`
-	Remediation string        `json:"remediation,omitempty"`
-	AutoFixable bool          `json:"autoFixable"`
-}
-
 // AssessOptions configures the behavior of the Assess function.
 type AssessOptions struct {
 	FreshScan  bool
@@ -202,18 +168,4 @@ type AssessOptions struct {
 	PolicyFile string
 	CacheDir   string
 	CacheTTL   time.Duration
-}
-
-// RenderOptions configures output rendering of a PostureReport.
-type RenderOptions struct {
-	Verbose   bool
-	Quiet     bool
-	JSON      bool
-	SARIF     bool
-	Badge     bool
-	BadgeType string
-	Fix       bool
-	UseColor  bool
-	Writer    io.Writer
-	Section   string
 }

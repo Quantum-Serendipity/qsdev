@@ -7,12 +7,14 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules" // register all modules
 	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/generate"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -65,9 +67,9 @@ func initCmd() *cobra.Command {
 				return fmt.Errorf("unknown permission preset %q; valid presets: %v", preset, validPermissionPresets)
 			}
 
-			projectRoot, err := os.Getwd()
+			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
-				return fmt.Errorf("determining project root: %w", err)
+				return err
 			}
 
 			// Check for existing settings.json unless --force is set.
@@ -148,9 +150,9 @@ func updateCmd() *cobra.Command {
 		Short: "Regenerate Claude Code files from saved answers",
 		Long:  "Re-run generation using previously saved wizard answers, incorporating any detection changes.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := os.Getwd()
+			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
-				return fmt.Errorf("determining project root: %w", err)
+				return err
 			}
 
 			// Load saved answers.
@@ -339,9 +341,9 @@ func addSkillCmd() *cobra.Command {
 				return fmt.Errorf("unknown skill %q; available skills are listed by 'qsdev claude list-skills'", skillName)
 			}
 
-			projectRoot, err := os.Getwd()
+			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
-				return fmt.Errorf("determining project root: %w", err)
+				return err
 			}
 
 			// Load saved answers.
@@ -351,7 +353,7 @@ func addSkillCmd() *cobra.Command {
 			}
 
 			// Check for duplicate.
-			if contains(answers.Skills, skillName) {
+			if sliceutil.Contains(answers.Skills, skillName) {
 				return fmt.Errorf("skill %q is already configured", skillName)
 			}
 
@@ -451,9 +453,9 @@ func addHookCmd() *cobra.Command {
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Note: pre-commit hook preset is managed by devenv, not Claude Code. Use 'qsdev devenv init' with git hooks enabled.")
 			}
 
-			projectRoot, err := os.Getwd()
+			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
-				return fmt.Errorf("determining project root: %w", err)
+				return err
 			}
 
 			// Load saved answers.
@@ -545,9 +547,9 @@ func listSkillsCmd() *cobra.Command {
 				return fmt.Errorf("loading skill manifest: %w", err)
 			}
 
-			projectRoot, err := os.Getwd()
+			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
-				return fmt.Errorf("determining project root: %w", err)
+				return err
 			}
 
 			// Load answers, tolerating missing file.

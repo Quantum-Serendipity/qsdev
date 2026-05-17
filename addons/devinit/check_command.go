@@ -10,6 +10,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
@@ -48,9 +49,9 @@ Use --auto-fix to automatically fix issues where possible.`,
 }
 
 func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.AuditLevel, autoFix bool) error {
-	projectRoot, err := os.Getwd()
+	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
-		return fmt.Errorf("determining project root: %w", err)
+		return err
 	}
 
 	// Build CheckContext.

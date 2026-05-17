@@ -5,6 +5,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -116,7 +117,7 @@ func deployRules(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 
 	// Always include security rules.
 	ruleNames = append(ruleNames, "security-rules.md")
-	ruleNames = dedup(ruleNames)
+	ruleNames = sliceutil.Dedup(ruleNames)
 
 	var files []types.GeneratedFile
 	for _, name := range ruleNames {

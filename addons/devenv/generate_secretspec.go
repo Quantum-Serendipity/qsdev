@@ -30,7 +30,7 @@ func GenerateSecretSpecToml(answers types.WizardAnswers, registry *ecosystem.Reg
 			if !ok {
 				continue
 			}
-			cfg := toModuleConfig(lang)
+			cfg := ecosystem.ToModuleConfig(lang)
 			decls = append(decls, declarer.SecretDeclarations(cfg)...)
 		}
 	}

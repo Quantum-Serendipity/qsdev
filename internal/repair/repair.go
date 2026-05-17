@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
-	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -22,7 +22,7 @@ func Repair(
 	opts RepairOptions,
 	genState types.GeneratedState,
 	freshFiles map[string]types.GeneratedFile,
-	driftReport *posture.DriftReport,
+	driftReport *drift.Report,
 ) (*RepairResult, *types.GeneratedState, error) {
 	if driftReport == nil {
 		return &RepairResult{}, &genState, nil

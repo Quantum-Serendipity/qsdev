@@ -3,7 +3,6 @@ package devinit
 import (
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -11,6 +10,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules" // register all modules
@@ -60,9 +60,9 @@ project-type profiles, and writes all files atomically.`,
 // to the appropriate handler (create, join, update, repair).
 func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 	// a. Get project root.
-	projectRoot, err := os.Getwd()
+	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
-		return fmt.Errorf("determining project root: %w", err)
+		return err
 	}
 
 	// b. Handle --list-profiles early return.

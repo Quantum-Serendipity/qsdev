@@ -67,7 +67,7 @@ func collectEcosystemInputs(answers types.WizardAnswers, registry *ecosystem.Reg
 		if !ok {
 			continue
 		}
-		cfg := toModuleConfig(lang)
+		cfg := ecosystem.ToModuleConfig(lang)
 		for _, inp := range mod.DevenvYamlInputs(cfg) {
 			key := inputKeyFromURL(inp.URL)
 			entry := DevenvYamlInput{

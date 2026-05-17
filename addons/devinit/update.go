@@ -11,13 +11,14 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules" // register all modules
 	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
-	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/update"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
@@ -60,9 +61,9 @@ type UpdatePlan struct {
 }
 
 func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
-	projectRoot, err := os.Getwd()
+	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
-		return fmt.Errorf("determining project root: %w", err)
+		return err
 	}
 
 	// 1. Load saved answers — fail if none exist.

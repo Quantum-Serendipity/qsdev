@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // classifyFindings maps drift findings from a posture DriftReport into
 // concrete RepairActions. The classification rules depend on the file's merge
 // strategy (from genState) and the drift category.
-func classifyFindings(report *posture.DriftReport, genState types.GeneratedState, opts RepairOptions) []RepairAction {
+func classifyFindings(report *drift.Report, genState types.GeneratedState, opts RepairOptions) []RepairAction {
 	if report == nil {
 		return nil
 	}
@@ -29,7 +29,7 @@ func classifyFindings(report *posture.DriftReport, genState types.GeneratedState
 }
 
 // classifyFinding maps a single drift finding to a RepairAction.
-func classifyFinding(categoryName string, f posture.DriftFinding, genState types.GeneratedState, opts RepairOptions) RepairAction {
+func classifyFinding(categoryName string, f drift.Finding, genState types.GeneratedState, opts RepairOptions) RepairAction {
 	switch categoryName {
 	case "File Modification":
 		return classifyFileModification(f, genState, opts)
@@ -55,7 +55,7 @@ func classifyFinding(categoryName string, f posture.DriftFinding, genState types
 }
 
 // classifyFileModification handles the "File Modification" drift category.
-func classifyFileModification(f posture.DriftFinding, genState types.GeneratedState, opts RepairOptions) RepairAction {
+func classifyFileModification(f drift.Finding, genState types.GeneratedState, opts RepairOptions) RepairAction {
 	file := f.Subject
 
 	// devenv.nix is NEVER auto-modified regardless of strategy or flags.
@@ -137,7 +137,7 @@ func classifyFileModification(f posture.DriftFinding, genState types.GeneratedSt
 }
 
 // classifyHookDrift handles the "Pre-Commit Hook Drift" category.
-func classifyHookDrift(f posture.DriftFinding) RepairAction {
+func classifyHookDrift(f drift.Finding) RepairAction {
 	return RepairAction{
 		File:        f.Subject,
 		Category:    CategoryHookDrift,
@@ -148,7 +148,7 @@ func classifyHookDrift(f posture.DriftFinding) RepairAction {
 }
 
 // classifyMarkerDrift handles the "Section Marker Integrity" category.
-func classifyMarkerDrift(f posture.DriftFinding) RepairAction {
+func classifyMarkerDrift(f drift.Finding) RepairAction {
 	return RepairAction{
 		File:        f.Subject,
 		Category:    CategoryMarkerDrift,
@@ -159,7 +159,7 @@ func classifyMarkerDrift(f posture.DriftFinding) RepairAction {
 }
 
 // classifyVersionDrift handles the "Version Drift" category.
-func classifyVersionDrift(f posture.DriftFinding) RepairAction {
+func classifyVersionDrift(f drift.Finding) RepairAction {
 	return RepairAction{
 		File:        f.Subject,
 		Category:    CategoryEnvDrift,
@@ -170,7 +170,7 @@ func classifyVersionDrift(f posture.DriftFinding) RepairAction {
 }
 
 // classifyToolAvailability handles the "Tool Availability" category.
-func classifyToolAvailability(f posture.DriftFinding) RepairAction {
+func classifyToolAvailability(f drift.Finding) RepairAction {
 	return RepairAction{
 		File:        f.Subject,
 		Category:    CategoryToolMissing,
@@ -181,7 +181,7 @@ func classifyToolAvailability(f posture.DriftFinding) RepairAction {
 }
 
 // classifyLockfileDrift handles the "Lock File Drift" category.
-func classifyLockfileDrift(f posture.DriftFinding) RepairAction {
+func classifyLockfileDrift(f drift.Finding) RepairAction {
 	return RepairAction{
 		File:        f.Subject,
 		Category:    CategoryEnvDrift,

@@ -136,6 +136,13 @@ func TestWriteFileAtomic_Mode0755Preserved(t *testing.T) {
 }
 
 func TestWriteFileAtomic_NoPartialContentDuringConcurrentRead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows cannot rename over a file with open handles that lack FILE_SHARE_DELETE.
+		// Go's os.ReadFile opens without FILE_SHARE_DELETE (golang/go#32088), making it
+		// impossible to atomically replace a file under continuous concurrent reads.
+		// Production scenarios (brief, non-overlapping reads) work fine with os.Root.Rename.
+		t.Skip("Windows file sharing semantics prevent atomic rename under continuous readers")
+	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "concurrent.txt")
 	original := []byte("original content that should remain intact")

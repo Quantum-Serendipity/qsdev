@@ -67,7 +67,7 @@ func TestDetectOnboardingMode_AlreadySetUp(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.SaveStateToFile(filepath.Join(dir, statePath), genState); err != nil {
+	if err := state.SaveStateToFile(filepath.Join(dir, stateFilePath()), genState); err != nil {
 		t.Fatal(err)
 	}
 
@@ -101,7 +101,7 @@ func TestDetectOnboardingMode_VersionMismatch_ModeUpdate(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.SaveStateToFile(filepath.Join(dir, statePath), genState); err != nil {
+	if err := state.SaveStateToFile(filepath.Join(dir, stateFilePath()), genState); err != nil {
 		t.Fatal(err)
 	}
 
@@ -144,7 +144,7 @@ func TestDetectOnboardingMode_DriftedFiles_ModeRepair(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.SaveStateToFile(filepath.Join(dir, statePath), genState); err != nil {
+	if err := state.SaveStateToFile(filepath.Join(dir, stateFilePath()), genState); err != nil {
 		t.Fatal(err)
 	}
 
@@ -191,7 +191,7 @@ func TestDetectOnboardingMode_DeletedFile_ModeRepair(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.SaveStateToFile(filepath.Join(dir, statePath), genState); err != nil {
+	if err := state.SaveStateToFile(filepath.Join(dir, stateFilePath()), genState); err != nil {
 		t.Fatal(err)
 	}
 
@@ -223,7 +223,7 @@ func TestDetectOnboardingMode_CorruptState_ModeRepair(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, statePath), []byte("{{{{not valid yaml"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, stateFilePath()), []byte("{{{{not valid yaml"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -307,7 +307,7 @@ func TestDetectOnboardingMode_GdevYamlAndState_NoFiles_AlreadySetUp(t *testing.T
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.SaveStateToFile(filepath.Join(dir, statePath), genState); err != nil {
+	if err := state.SaveStateToFile(filepath.Join(dir, stateFilePath()), genState); err != nil {
 		t.Fatal(err)
 	}
 

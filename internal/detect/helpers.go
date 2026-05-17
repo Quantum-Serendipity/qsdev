@@ -1,7 +1,7 @@
 package detect
 
 import (
-	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 // fileExists returns true if the path formed by joining parts exists and is a regular file.

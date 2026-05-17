@@ -14,6 +14,7 @@ import (
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 func checkCmd() *cobra.Command {
@@ -58,14 +59,14 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	ctx := check.CheckContext{
 		ProjectRoot:   projectRoot,
 		BinaryVersion: version.Info().Version,
-		StateFile:     filepath.Join(projectRoot, statePath),
+		StateFile:     filepath.Join(projectRoot, stateFilePath()),
 	}
 
-	// Parse .qsdev.yaml if present.
-	cfg, err := qsdevconfig.ParseQsdevConfig(filepath.Join(projectRoot, ".qsdev.yaml"))
+	// Parse config if present.
+	cfgFile := branding.Get().ConfigFile
+	cfg, err := qsdevconfig.ParseQsdevConfig(filepath.Join(projectRoot, cfgFile))
 	if err != nil {
-		// Log warning but continue — config_integrity checks will report the issue.
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not parse .qsdev.yaml: %v\n", err)
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not parse %s: %v\n", cfgFile, err)
 	}
 	ctx.QsdevConfig = cfg
 

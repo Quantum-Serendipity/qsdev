@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // Release represents a GitHub release.
@@ -42,16 +44,17 @@ func DefaultConfig() Config {
 	if testConfigOverride != nil {
 		return *testConfigOverride
 	}
+	b := branding.Get()
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = os.TempDir()
 	}
 	return Config{
-		GitHubOwner:   "Quantum-Serendipity",
-		GitHubRepo:    "qsdev",
-		BinaryName:    "qsdev",
-		CheckInterval: 7 * 24 * time.Hour, // 7 days
-		CacheDir:      filepath.Join(home, ".qsdev"),
+		GitHubOwner:   b.GitHubOwner,
+		GitHubRepo:    b.GitHubRepo,
+		BinaryName:    b.AppName,
+		CheckInterval: 7 * 24 * time.Hour,
+		CacheDir:      filepath.Join(home, "."+b.AppName),
 	}
 }
 

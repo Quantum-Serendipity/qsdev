@@ -8,6 +8,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -65,21 +66,22 @@ type DriftReport struct {
 //  5. Files drifted (modified or deleted) -> ModeRepair
 //  6. All matches -> ModeJoin with AlreadySetUp=true
 func DetectOnboardingMode(projectRoot string) (*ModeDetectionResult, error) {
-	// 1. Check .qsdev.yaml exists.
-	qsdevYaml := filepath.Join(projectRoot, ".qsdev.yaml")
-	if _, err := os.Stat(qsdevYaml); os.IsNotExist(err) {
+	// 1. Check config file exists.
+	cfgFile := branding.Get().ConfigFile
+	cfgPath := filepath.Join(projectRoot, cfgFile)
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
 		return &ModeDetectionResult{
 			Mode:        ModeCreate,
-			Explanation: "No .qsdev.yaml found. Starting fresh project setup.",
+			Explanation: fmt.Sprintf("No %s found. Starting fresh project setup.", cfgFile),
 		}, nil
 	}
 
 	// 2. Check state file exists.
-	stateFile := filepath.Join(projectRoot, statePath)
+	stateFile := filepath.Join(projectRoot, stateFilePath())
 	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
 		return &ModeDetectionResult{
 			Mode:        ModeJoin,
-			Explanation: "Found .qsdev.yaml but no local state. Setting up as new team member.",
+			Explanation: fmt.Sprintf("Found %s but no local state. Setting up as new team member.", cfgFile),
 		}, nil
 	}
 

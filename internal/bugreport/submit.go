@@ -7,13 +7,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
-const (
-	repoOwner     = "Quantum-Serendipity"
-	repoName      = "qsdev"
-	browserMaxLen = 8000
-)
+const browserMaxLen = 8000
 
 // SubmitMethod represents how the report will be delivered.
 type SubmitMethod int
@@ -41,8 +39,9 @@ func CheckGH() error {
 
 // SubmitViaGH creates a GitHub issue using the gh CLI.
 func SubmitViaGH(title, body string) error {
+	b := branding.Get()
 	cmd := exec.Command("gh", "issue", "create",
-		"--repo", repoOwner+"/"+repoName,
+		"--repo", b.GitHubOwner+"/"+b.GitHubRepo,
 		"--title", title,
 		"--body", body,
 		"--label", "bug",
@@ -54,7 +53,8 @@ func SubmitViaGH(title, body string) error {
 
 // BrowserURL returns a pre-filled GitHub new issue URL.
 func BrowserURL(title, body string) string {
-	u := fmt.Sprintf("https://github.com/%s/%s/issues/new", repoOwner, repoName)
+	b := branding.Get()
+	u := fmt.Sprintf("https://github.com/%s/%s/issues/new", b.GitHubOwner, b.GitHubRepo)
 	params := url.Values{
 		"title":  {title},
 		"labels": {"bug"},
@@ -67,13 +67,13 @@ func BrowserURL(title, body string) string {
 	return u + "?" + params.Encode()
 }
 
-// SaveToFile writes the report to ~/.qsdev/ and returns the path.
+// SaveToFile writes the report to the app's home directory and returns the path.
 func SaveToFile(title, body string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = os.TempDir()
 	}
-	dir := filepath.Join(home, ".qsdev")
+	dir := filepath.Join(home, "."+branding.Get().AppName)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}

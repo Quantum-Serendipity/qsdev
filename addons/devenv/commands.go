@@ -10,9 +10,9 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
-	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
-	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules" // register all modules
-	"github.com/Quantum-Serendipity/qsdev/internal/generate"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // register all modules
+	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"

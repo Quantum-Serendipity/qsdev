@@ -3,23 +3,26 @@ package logging
 import (
 	"os"
 	"path/filepath"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // GlobalLogDir returns the global log directory for non-project operations.
 func GlobalLogDir() string {
-	if dir := os.Getenv("QSDEV_LOG_DIR"); dir != "" {
+	b := branding.Get()
+	if dir := os.Getenv(b.EnvLogDirVar); dir != "" {
 		return dir
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = os.TempDir()
 	}
-	return filepath.Join(home, ".qsdev", "logs")
+	return filepath.Join(home, "."+b.AppName, "logs")
 }
 
 // ProjectLogDir returns the project-scoped log directory.
 func ProjectLogDir(projectRoot string) string {
-	return filepath.Join(projectRoot, ".qsdev", "logs")
+	return filepath.Join(projectRoot, "."+branding.Get().AppName, "logs")
 }
 
 // ResolveLogDir determines which log tier to use based on context.
@@ -39,14 +42,15 @@ func DetectProjectRoot() string {
 		return ""
 	}
 
+	b := branding.Get()
 	for {
-		if fileExists(filepath.Join(dir, ".qsdev.yaml")) {
+		if fileExists(filepath.Join(dir, b.ConfigFile)) {
 			return dir
 		}
-		if dirExists(filepath.Join(dir, ".qsdev")) {
+		if dirExists(filepath.Join(dir, "."+b.AppName)) {
 			return dir
 		}
-		if dirExists(filepath.Join(dir, ".devinit")) {
+		if dirExists(filepath.Join(dir, b.StateDir)) {
 			return dir
 		}
 
@@ -61,13 +65,14 @@ func DetectProjectRoot() string {
 // IsProjectScopedCommand returns true for commands that should write to
 // the project log tier rather than the global tier.
 func IsProjectScopedCommand(commandPath string) bool {
+	app := branding.Get().AppName
 	globalCommands := map[string]bool{
-		"qsdev self-update": true,
-		"qsdev version":     true,
-		"qsdev report":      true,
-		"qsdev report bug":  true,
-		"qsdev logs":        true,
-		"qsdev completion":  true,
+		app + " self-update": true,
+		app + " version":     true,
+		app + " report":      true,
+		app + " report bug":  true,
+		app + " logs":        true,
+		app + " completion":  true,
 	}
 
 	for cmd := range globalCommands {

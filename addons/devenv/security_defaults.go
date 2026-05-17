@@ -1,6 +1,11 @@
 package devenv
 
-import "github.com/Quantum-Serendipity/qsdev/internal/secrets"
+import (
+	"fmt"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+)
 
 // defaultUnsetEnvVars is the canonical list of credential-bearing environment
 // variables that are explicitly stripped from the devenv shell. This provides
@@ -105,7 +110,8 @@ func defaultSpecializedHooks() []CustomHookData {
 // Shell variable references use ${VAR} syntax; the caller applies nixMultiline
 // escaping before embedding in a Nix '' ... '' string.
 func buildEnterShellScript() string {
-	return `echo ""
+	prefix := branding.Get().EnvPrefix
+	return fmt.Sprintf(`echo ""
 echo "=== Security-Hardened Development Environment ==="
 
 # Verify git hooks are installed
@@ -132,8 +138,8 @@ fi
 
 echo "==================================================="
 echo ""
-echo "  qsdev: ${QSDEV_PROJECT_NAME:-unknown} | security: ${QSDEV_SECURITY_PROFILE:-standard} | tools: ${QSDEV_TOOL_COUNT:-0}"
-echo ""`
+echo "  ${%[1]sPROJECT_NAME:-unknown} | security: ${%[1]sSECURITY_PROFILE:-standard} | tools: ${%[1]sTOOL_COUNT:-0}"
+echo ""`, prefix)
 }
 
 // buildEnterTestScript returns the shell script body for devenv.nix enterTest.

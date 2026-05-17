@@ -16,7 +16,7 @@ import (
 // not exist — lifecycle commands need to work on projects that haven't run
 // `qsdev init` yet.
 func loadAnswersOrEmpty(projectRoot string) (types.WizardAnswers, error) {
-	path := filepath.Join(projectRoot, answersDir, answersFileName)
+	path := filepath.Join(projectRoot, answersDirectory(), answersFile())
 
 	data, err := os.ReadFile(path)
 	if err != nil {

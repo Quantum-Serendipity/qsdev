@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
-	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/surgery"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -115,7 +115,7 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 	}
 
 	// Update state.
-	stateFile := filepath.Join(projectRoot, statePath)
+	stateFile := filepath.Join(projectRoot, stateFilePath())
 	existingState, err := state.LoadStateFromFile(stateFile)
 	if err != nil {
 		return fmt.Errorf("loading state: %w", err)
@@ -182,7 +182,7 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	}
 
 	// Load state and check for user modifications on owned files.
-	stateFile := filepath.Join(projectRoot, statePath)
+	stateFile := filepath.Join(projectRoot, stateFilePath())
 	existingState, err := state.LoadStateFromFile(stateFile)
 	if err != nil {
 		return fmt.Errorf("loading state: %w", err)

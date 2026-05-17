@@ -1,7 +1,7 @@
 package toolreg
 
 import (
-	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/internal/sectools"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )

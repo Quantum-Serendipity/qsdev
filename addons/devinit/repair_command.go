@@ -12,7 +12,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
-	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/repair"
@@ -62,7 +62,7 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 	answers.ProjectRoot = projectRoot
 
 	// Load state.
-	stateFile := filepath.Join(projectRoot, statePath)
+	stateFile := filepath.Join(projectRoot, stateFilePath())
 	existingState, err := state.LoadStateFromFile(stateFile)
 	if err != nil {
 		return fmt.Errorf("loading state: %w", err)

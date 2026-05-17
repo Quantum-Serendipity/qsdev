@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 	"gopkg.in/yaml.v3"
 )
@@ -64,8 +65,8 @@ func ParseQsdevConfigBytes(data []byte) (*types.QsdevConfig, error) {
 
 	versionRaw, ok := raw["version"]
 	if !ok {
-		return nil, fmt.Errorf("missing required field \"version\" in .qsdev.yaml; add \"version: %d\" at the top of the file",
-			types.ConfigVersionCurrent)
+		return nil, fmt.Errorf("missing required field \"version\" in %s; add \"version: %d\" at the top of the file",
+			branding.Get().ConfigFile, types.ConfigVersionCurrent)
 	}
 
 	versionInt, ok := toInt(versionRaw)

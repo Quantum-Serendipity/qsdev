@@ -10,14 +10,18 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// State file paths to load (same as posture.stateFilePaths).
-var allStatePaths = [3]string{
-	".devinit/.qsdev-init-state.yaml",
-	".devenv/.qsdev-state.yaml",
-	".claude/.qsdev-claude-state.yaml",
+// stateFilePaths returns the state file paths to load (same as posture.stateFilePaths).
+func stateFilePaths() [3]string {
+	b := branding.Get()
+	return [3]string{
+		b.StateDir + "/." + b.AppName + "-init-state.yaml",
+		".devenv/." + b.AppName + "-state.yaml",
+		".claude/." + b.AppName + "-claude-state.yaml",
+	}
 }
 
 // Teardown orchestrates the full teardown operation: load state, classify
@@ -112,7 +116,7 @@ func loadAndMergeStates(projectRoot string) types.GeneratedState {
 		Files: make(map[string]types.FileState),
 	}
 
-	for _, relPath := range allStatePaths {
+	for _, relPath := range stateFilePaths() {
 		absPath := filepath.Join(projectRoot, relPath)
 		st, err := state.LoadStateFromFile(absPath)
 		if err != nil {

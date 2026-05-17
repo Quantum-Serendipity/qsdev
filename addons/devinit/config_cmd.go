@@ -10,14 +10,15 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
-	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func configShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
-		Short: "Display current .qsdev.yaml project configuration",
+		Short: "Display current project configuration",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runConfigShow(cmd)
@@ -30,14 +31,15 @@ func runConfigShow(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	configPath := filepath.Join(projectRoot, ".qsdev.yaml")
+	b := branding.Get()
+	configPath := filepath.Join(projectRoot, b.ConfigFile)
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Fprintln(cmd.OutOrStdout(), "No .qsdev.yaml found. Run 'qsdev init' to create one.")
+			fmt.Fprintf(cmd.OutOrStdout(), "No %s found. Run '%s init' to create one.\n", b.ConfigFile, b.AppName)
 			return nil
 		}
-		return fmt.Errorf("reading .qsdev.yaml: %w", err)
+		return fmt.Errorf("reading %s: %w", b.ConfigFile, err)
 	}
 	_, err = cmd.OutOrStdout().Write(data)
 	return err
@@ -48,8 +50,8 @@ func migrateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "migrate",
-		Short: "Migrate .qsdev.yaml to the latest schema version",
-		Long: `Read .qsdev.yaml, apply any necessary schema migrations, and show the diff.
+		Short: "Migrate project config to the latest schema version",
+		Long: `Read the project config, apply any necessary schema migrations, and show the diff.
 
 By default, the command performs a dry run showing what would change.
 Use --write to apply the migration in place.`,
@@ -69,22 +71,22 @@ func runMigrate(cmd *cobra.Command, write bool) error {
 		return err
 	}
 
-	configPath := filepath.Join(projectRoot, ".qsdev.yaml")
+	cfgFile := branding.Get().ConfigFile
+	configPath := filepath.Join(projectRoot, cfgFile)
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return fmt.Errorf("reading .qsdev.yaml: %w", err)
+		return fmt.Errorf("reading %s: %w", cfgFile, err)
 	}
 
-	// Unmarshal to raw map for migration.
 	var raw map[string]any
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("parsing .qsdev.yaml: %w", err)
+		return fmt.Errorf("parsing %s: %w", cfgFile, err)
 	}
 
 	versionRaw, ok := raw["version"]
 	if !ok {
-		return fmt.Errorf("missing \"version\" field in .qsdev.yaml")
+		return fmt.Errorf("missing \"version\" field in %s", cfgFile)
 	}
 
 	versionInt, ok := toConfigVersion(versionRaw)
@@ -93,8 +95,8 @@ func runMigrate(cmd *cobra.Command, write bool) error {
 	}
 
 	if !qsdevconfig.NeedsMigration(versionInt) {
-		fmt.Fprintf(cmd.OutOrStdout(), ".qsdev.yaml is already at schema version %d (current). No migration needed.\n",
-			types.ConfigVersionCurrent)
+		fmt.Fprintf(cmd.OutOrStdout(), "%s is already at schema version %d (current). No migration needed.\n",
+			cfgFile, types.ConfigVersionCurrent)
 		return nil
 	}
 
@@ -103,15 +105,13 @@ func runMigrate(cmd *cobra.Command, write bool) error {
 		return fmt.Errorf("migration failed: %w", err)
 	}
 
-	// Marshal the migrated config.
 	newData, err := yaml.Marshal(migrated)
 	if err != nil {
 		return fmt.Errorf("marshaling migrated config: %w", err)
 	}
 
-	// Show diff.
 	fmt.Fprintf(cmd.OutOrStdout(), "Migration: version %d -> %d\n\n", versionInt, types.ConfigVersionCurrent)
-	fmt.Fprintf(cmd.OutOrStdout(), "--- .qsdev.yaml (before)\n+++ .qsdev.yaml (after)\n\n")
+	fmt.Fprintf(cmd.OutOrStdout(), "--- %s (before)\n+++ %s (after)\n\n", cfgFile, cfgFile)
 	fmt.Fprintln(cmd.OutOrStdout(), string(newData))
 
 	if !write {
@@ -120,10 +120,10 @@ func runMigrate(cmd *cobra.Command, write bool) error {
 	}
 
 	if err := fileutil.WriteFileAtomic(configPath, newData, 0o644); err != nil {
-		return fmt.Errorf("writing migrated .qsdev.yaml: %w", err)
+		return fmt.Errorf("writing migrated %s: %w", cfgFile, err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Migrated .qsdev.yaml from version %d to %d.\n", versionInt, types.ConfigVersionCurrent)
+	fmt.Fprintf(cmd.OutOrStdout(), "Migrated %s from version %d to %d.\n", cfgFile, versionInt, types.ConfigVersionCurrent)
 	return nil
 }
 

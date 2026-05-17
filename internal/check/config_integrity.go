@@ -3,6 +3,7 @@ package check
 import (
 	"github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // CheckConfigIntegrity verifies that .qsdev.yaml exists, parses correctly,
@@ -15,8 +16,8 @@ func CheckConfigIntegrity(ctx CheckContext) []CheckResult {
 				Name:        "config_exists",
 				Status:      StatusFail,
 				Severity:    SeverityCritical,
-				Message:     ".qsdev.yaml not found",
-				Remediation: "Run 'qsdev init' to create a project configuration",
+				Message:     branding.Get().ConfigFile + " not found",
+				Remediation: "Run '" + branding.Get().AppName + " init' to create a project configuration",
 			},
 		}
 	}
@@ -29,7 +30,7 @@ func CheckConfigIntegrity(ctx CheckContext) []CheckResult {
 		Name:     "config_exists",
 		Status:   StatusPass,
 		Severity: SeverityInfo,
-		Message:  ".qsdev.yaml found and parsed successfully",
+		Message:  branding.Get().ConfigFile + " found and parsed successfully",
 	})
 
 	// Validate using config.ValidateQsdevConfig.
@@ -45,7 +46,7 @@ func CheckConfigIntegrity(ctx CheckContext) []CheckResult {
 				Status:      StatusFail,
 				Severity:    SeverityHigh,
 				Message:     ve.Error(),
-				Remediation: "Fix the configuration in .qsdev.yaml",
+				Remediation: "Fix the configuration in " + branding.Get().ConfigFile,
 			})
 		}
 	}

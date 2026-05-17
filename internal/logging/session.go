@@ -12,6 +12,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // Session represents a single CLI invocation's logging context.
@@ -54,7 +55,8 @@ func Init(cfg Config) (*Session, error) {
 
 	sessionID := generateSessionID()
 	now := time.Now()
-	filename := fmt.Sprintf("qsdev-%s-%s.jsonl",
+	filename := fmt.Sprintf("%s%s-%s.jsonl",
+		branding.Get().LogFilePrefix,
 		now.Format("2006-01-02T15-04-05"),
 		sessionID,
 	)
@@ -108,7 +110,7 @@ func (s *Session) Close() {
 // LevelFromEnv reads the QSDEV_LOG environment variable and returns
 // the corresponding slog.Level. Returns slog.LevelInfo if unset or invalid.
 func LevelFromEnv() slog.Level {
-	switch strings.ToLower(os.Getenv("QSDEV_LOG")) {
+	switch strings.ToLower(os.Getenv(branding.Get().EnvLogVar)) {
 	case "debug":
 		return slog.LevelDebug
 	case "info", "":
@@ -123,7 +125,7 @@ func LevelFromEnv() slog.Level {
 }
 
 func isDisabled() bool {
-	return strings.ToLower(os.Getenv("QSDEV_LOG")) == "off"
+	return strings.ToLower(os.Getenv(branding.Get().EnvLogVar)) == "off"
 }
 
 func generateSessionID() string {

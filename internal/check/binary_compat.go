@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // supportedSchemaVersions lists the schema versions this binary understands.
@@ -19,7 +20,7 @@ func CheckBinaryCompatibility(ctx CheckContext) []CheckResult {
 				Name:     "qsdev_version_constraint",
 				Status:   StatusSkip,
 				Severity: SeverityInfo,
-				Message:  "No .qsdev.yaml found",
+				Message:  "No " + branding.Get().ConfigFile + " found",
 			},
 		}
 	}
@@ -58,7 +59,7 @@ func checkVersionConstraint(ctx CheckContext) []CheckResult {
 				Status:      StatusFail,
 				Severity:    SeverityCritical,
 				Message:     err.Error(),
-				Remediation: "Update qsdev to a version satisfying " + constraint,
+				Remediation: "Update " + branding.Get().AppName + " to a version satisfying " + constraint,
 			},
 		}
 	}
@@ -83,8 +84,8 @@ func checkSchemaVersion(ctx CheckContext) []CheckResult {
 				Name:        "config_schema_version",
 				Status:      StatusWarn,
 				Severity:    SeverityMedium,
-				Message:     "No version specified in .qsdev.yaml",
-				Remediation: "Add 'version: 1' to .qsdev.yaml",
+				Message:     "No version specified in " + branding.Get().ConfigFile,
+				Remediation: "Add 'version: 1' to " + branding.Get().ConfigFile,
 			},
 		}
 	}
@@ -111,7 +112,7 @@ func checkSchemaVersion(ctx CheckContext) []CheckResult {
 			Status:      StatusFail,
 			Severity:    SeverityCritical,
 			Message:     fmt.Sprintf("Schema version %d is not supported by this binary", sv),
-			Remediation: "Update qsdev or change schema_version to a supported version",
+			Remediation: "Update " + branding.Get().AppName + " or change schema_version to a supported version",
 		},
 	}
 }

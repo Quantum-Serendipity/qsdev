@@ -12,21 +12,29 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
-	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
-	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules" // register all modules
-	"github.com/Quantum-Serendipity/qsdev/internal/generate"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/repair"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules"
+	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-const (
-	statePath       = ".devinit/.qsdev-init-state.yaml"
-	answersDir      = ".devinit"
-	answersFileName = ".qsdev-init-answers.yaml"
-)
+func stateFilePath() string {
+	b := branding.Get()
+	return b.StateDir + "/." + b.AppName + "-init-state.yaml"
+}
+
+func answersDirectory() string {
+	return branding.Get().StateDir
+}
+
+func answersFile() string {
+	return "." + branding.Get().AppName + "-init-answers.yaml"
+}
 
 func initCmd() *cobra.Command {
 	var opts InitOptions
@@ -271,7 +279,7 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	successfulFiles := result.SuccessfulFiles(allFiles)
 	genState := state.RecordFiles(successfulFiles)
 	genState.QsdevVersion = version.Info().Version
-	stateFile := filepath.Join(projectRoot, statePath)
+	stateFile := filepath.Join(projectRoot, stateFilePath())
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
 	}
@@ -308,11 +316,11 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		}
 	}
 
-	// r. Generate .qsdev.yaml project config.
+	// r. Generate project config.
 	qsdevCfg := buildQsdevConfig(answers, version.Info().Version)
-	qsdevCfgPath := filepath.Join(projectRoot, ".qsdev.yaml")
+	qsdevCfgPath := filepath.Join(projectRoot, branding.Get().ConfigFile)
 	if err := writeQsdevConfig(qsdevCfgPath, qsdevCfg); err != nil {
-		return fmt.Errorf("writing .qsdev.yaml: %w", err)
+		return fmt.Errorf("writing %s: %w", branding.Get().ConfigFile, err)
 	}
 
 	// s. Add managed directories to .gitignore.

@@ -7,16 +7,16 @@ import (
 
 // answersPath returns the full path to the devinit answers persistence file.
 func answersPath(projectRoot string) string {
-	return answers.FilePath(projectRoot, answersDir, answersFileName)
+	return answers.FilePath(projectRoot, answersDirectory(), answersFile())
 }
 
 // saveAnswers persists the wizard answers to .devinit/.qsdev-init-answers.yaml.
 func saveAnswers(projectRoot string, a types.WizardAnswers) error {
-	return answers.SaveToDir(projectRoot, answersDir, answersFileName, a)
+	return answers.SaveToDir(projectRoot, answersDirectory(), answersFile(), a)
 }
 
 // loadAnswers reads and unmarshals saved wizard answers from
 // .devinit/.qsdev-init-answers.yaml. It returns an error if the file does not exist.
 func loadAnswers(projectRoot string) (types.WizardAnswers, error) {
-	return answers.LoadFromDir(projectRoot, answersDir, answersFileName, "init")
+	return answers.LoadFromDir(projectRoot, answersDirectory(), answersFile(), "init")
 }

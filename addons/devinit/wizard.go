@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
-	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 

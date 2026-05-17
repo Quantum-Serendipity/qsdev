@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // BackgroundCheck starts a goroutine that checks for updates with a 5-second
@@ -13,7 +15,7 @@ import (
 //
 // Returns nil if QSDEV_NO_UPDATE_CHECK=1 is set.
 func BackgroundCheck(currentVersion string) <-chan string {
-	if os.Getenv("QSDEV_NO_UPDATE_CHECK") == "1" {
+	if os.Getenv(branding.Get().EnvNoUpdate) == "1" {
 		return nil
 	}
 
@@ -37,9 +39,10 @@ func BackgroundCheck(currentVersion string) <-chan string {
 		select {
 		case release := <-done:
 			if release != nil {
+				app := branding.Get().AppName
 				notice := fmt.Sprintf(
-					"A new version of qsdev is available: %s (current: %s)\nRun 'qsdev self-update' to update.",
-					release.Version, currentVersion,
+					"A new version of %s is available: %s (current: %s)\nRun '%s self-update' to update.",
+					app, release.Version, currentVersion, app,
 				)
 				ch <- notice
 			}

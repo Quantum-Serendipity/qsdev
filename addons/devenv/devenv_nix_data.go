@@ -6,8 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -70,22 +71,23 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data.EnvVars = make(map[string]string, len(answers.EnvVars)+6)
 	data.EnvVars["DEVENV_SECURITY_HARDENED"] = "true"
 
-	// qsdev context environment variables.
+	// Context environment variables.
+	prefix := branding.Get().EnvPrefix
 	projectName := answers.ProjectName
 	if projectName == "" {
 		projectName = "unknown"
 	}
-	data.EnvVars["QSDEV_PROJECT_NAME"] = projectName
+	data.EnvVars[prefix+"PROJECT_NAME"] = projectName
 
 	securityProfile := answers.ComplianceLevel
 	if securityProfile == "" {
 		securityProfile = "standard"
 	}
-	data.EnvVars["QSDEV_SECURITY_PROFILE"] = securityProfile
+	data.EnvVars[prefix+"SECURITY_PROFILE"] = securityProfile
 
-	data.EnvVars["QSDEV_VERSION"] = version.Info().Version
-	data.EnvVars["QSDEV_ECOSYSTEMS"] = buildEcosystemsList(answers)
-	data.EnvVars["QSDEV_TOOL_COUNT"] = strconv.Itoa(countEnabledTools(answers))
+	data.EnvVars[prefix+"VERSION"] = version.Info().Version
+	data.EnvVars[prefix+"ECOSYSTEMS"] = buildEcosystemsList(answers)
+	data.EnvVars[prefix+"TOOL_COUNT"] = strconv.Itoa(countEnabledTools(answers))
 
 	for k, v := range answers.EnvVars {
 		data.EnvVars[k] = v

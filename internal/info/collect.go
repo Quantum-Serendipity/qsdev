@@ -11,6 +11,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -23,7 +24,7 @@ var ErrNotQsdevProject = errors.New("not a qsdev-managed project")
 // .devinit/.qsdev-init-answers.yaml — no evaluation, no scanning.
 func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 	// 1. Check .qsdev.yaml exists.
-	configPath := filepath.Join(projectRoot, ".qsdev.yaml")
+	configPath := filepath.Join(projectRoot, branding.Get().ConfigFile)
 	if _, err := os.Stat(configPath); err != nil {
 		if os.IsNotExist(err) {
 			return nil, ErrNotQsdevProject
@@ -35,7 +36,7 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 	cfg, cfgErr := qsdevconfig.ParseQsdevConfig(configPath)
 
 	// 3. Load state (graceful if missing).
-	statePath := filepath.Join(projectRoot, ".devinit", ".qsdev-init-state.yaml")
+	statePath := filepath.Join(projectRoot, branding.Get().StateDir, "."+branding.Get().AppName+"-init-state.yaml")
 	genState, _ := state.LoadStateFromFile(statePath)
 
 	// 4. Load answers (graceful if missing).
@@ -108,7 +109,7 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 
 // loadAnswersQuietly reads .devinit/.qsdev-init-answers.yaml without errors.
 func loadAnswersQuietly(projectRoot string) types.WizardAnswers {
-	path := filepath.Join(projectRoot, ".devinit", ".qsdev-init-answers.yaml")
+	path := filepath.Join(projectRoot, branding.Get().StateDir, "."+branding.Get().AppName+"-init-answers.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return types.WizardAnswers{}

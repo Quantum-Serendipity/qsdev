@@ -14,9 +14,9 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
-	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
-	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules" // register all modules
-	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // register all modules
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
@@ -77,7 +77,7 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	answers.ProjectRoot = projectRoot
 
 	// 3. Load stored state.
-	stateFile := filepath.Join(projectRoot, statePath)
+	stateFile := filepath.Join(projectRoot, stateFilePath())
 	existingState, err := state.LoadStateFromFile(stateFile)
 	if err != nil {
 		return fmt.Errorf("loading state: %w", err)

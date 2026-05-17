@@ -4,7 +4,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 // CheckSecurityHardening verifies security-related file presence for
@@ -17,7 +18,7 @@ func CheckSecurityHardening(ctx CheckContext) []CheckResult {
 				Name:     "security_hardening",
 				Status:   StatusSkip,
 				Severity: SeverityInfo,
-				Message:  "No .qsdev.yaml found; skipping security hardening checks",
+				Message:  "No " + branding.Get().ConfigFile + " found; skipping security hardening checks",
 			},
 		}
 	}

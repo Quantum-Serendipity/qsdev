@@ -1,5 +1,7 @@
 package check
 
+import "github.com/Quantum-Serendipity/qsdev/pkg/branding"
+
 // CheckRequiredTools verifies that always-on tools are not in the disabled list.
 func CheckRequiredTools(ctx CheckContext) []CheckResult {
 	if ctx.QsdevConfig == nil {
@@ -9,7 +11,7 @@ func CheckRequiredTools(ctx CheckContext) []CheckResult {
 				Name:     "required_tools",
 				Status:   StatusSkip,
 				Severity: SeverityInfo,
-				Message:  "No .qsdev.yaml found; skipping required tools check",
+				Message:  "No " + branding.Get().ConfigFile + " found; skipping required tools check",
 			},
 		}
 	}
@@ -40,7 +42,7 @@ func CheckRequiredTools(ctx CheckContext) []CheckResult {
 				Status:      StatusFail,
 				Severity:    SeverityHigh,
 				Message:     "Required tool " + toolName + " is in the disabled list",
-				Remediation: "Remove " + toolName + " from tools.disabled in .qsdev.yaml",
+				Remediation: "Remove " + toolName + " from tools.disabled in " + branding.Get().ConfigFile,
 			})
 		}
 	}

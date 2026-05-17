@@ -12,23 +12,25 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
-	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
-	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules"
-	"github.com/Quantum-Serendipity/qsdev/internal/generate"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules"
+	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // runJoin sets up a local development environment from an existing .qsdev.yaml.
 // This is the "join" path for new team members cloning a project.
 func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
-	// 1. Parse .qsdev.yaml.
-	qsdevYaml := filepath.Join(projectRoot, ".qsdev.yaml")
-	cfg, err := qsdevconfig.ParseQsdevConfig(qsdevYaml)
+	// 1. Parse project config.
+	cfgFile := branding.Get().ConfigFile
+	cfgPath := filepath.Join(projectRoot, cfgFile)
+	cfg, err := qsdevconfig.ParseQsdevConfig(cfgPath)
 	if err != nil {
-		return fmt.Errorf("parsing .qsdev.yaml: %w", err)
+		return fmt.Errorf("parsing %s: %w", cfgFile, err)
 	}
 
 	// 2. Run detection.
@@ -99,19 +101,20 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		claudeGenerated = len(cfiles) > 0
 	}
 
-	// 7. Generate .qsdev.local.yaml template (only if it doesn't exist).
-	localConfigPath := filepath.Join(projectRoot, ".qsdev.local.yaml")
+	// 7. Generate local config template (only if it doesn't exist).
+	localCfg := branding.Get().LocalConfig
+	localConfigPath := filepath.Join(projectRoot, localCfg)
 	if _, err := os.Stat(localConfigPath); os.IsNotExist(err) {
 		localContent := GenerateLocalConfigTemplate(answers, detected)
 		allFiles = append(allFiles, types.GeneratedFile{
-			Path:    ".qsdev.local.yaml",
+			Path:    localCfg,
 			Content: localContent,
 			Mode:    0o644,
 		})
 	}
 
-	// 8. Ensure .qsdev.local.yaml is in .gitignore.
-	if err := EnsureGitignoreEntry(projectRoot, ".qsdev.local.yaml"); err != nil {
+	// 8. Ensure local config is in .gitignore.
+	if err := EnsureGitignoreEntry(projectRoot, localCfg); err != nil {
 		return fmt.Errorf("updating .gitignore: %w", err)
 	}
 
@@ -134,7 +137,7 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	successfulFiles := result.SuccessfulFiles(allFiles)
 	genState := state.RecordFiles(successfulFiles)
 	genState.QsdevVersion = version.Info().Version
-	stateFile := filepath.Join(projectRoot, statePath)
+	stateFile := filepath.Join(projectRoot, stateFilePath())
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
 	}
@@ -165,7 +168,7 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 
 	// 13. Print join-specific summary.
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Joined project successfully from .qsdev.yaml configuration.")
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Joined project successfully from %s configuration.\n", branding.Get().ConfigFile)
 	_, _ = fmt.Fprint(cmd.OutOrStdout(), postGenerationMessage(answers, devenvGenerated, claudeGenerated))
 
 	return nil

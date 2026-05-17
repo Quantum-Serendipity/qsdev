@@ -8,6 +8,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/info"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // Environment holds auto-collected diagnostic information.
@@ -64,7 +65,7 @@ func (e Environment) FormatTable() string {
 	var b strings.Builder
 	b.WriteString("| Field | Value |\n")
 	b.WriteString("|-------|-------|\n")
-	fmt.Fprintf(&b, "| qsdev version | %s (%s) |\n", e.QsdevVersion, e.Commit)
+	fmt.Fprintf(&b, "| %s version | %s (%s) |\n", branding.Get().AppName, e.QsdevVersion, e.Commit)
 	fmt.Fprintf(&b, "| Go version | %s |\n", e.GoVersion)
 	fmt.Fprintf(&b, "| OS | %s/%s (%s) |\n", e.OS, e.Arch, e.Family)
 	fmt.Fprintf(&b, "| Shell | %s |\n", e.Shell)

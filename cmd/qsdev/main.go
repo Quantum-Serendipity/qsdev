@@ -9,23 +9,24 @@ import (
 
 	"fastcat.org/go/gdev/addons/bootstrap"
 	"fastcat.org/go/gdev/cmd"
-	"fastcat.org/go/gdev/instance"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/addons/devinit"
+	"github.com/Quantum-Serendipity/qsdev/instance"
 	"github.com/Quantum-Serendipity/qsdev/internal/bugreport"
 	_ "github.com/Quantum-Serendipity/qsdev/internal/extlog/providers"
 	"github.com/Quantum-Serendipity/qsdev/internal/logcmd"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 var logSession *logging.Session
 
 func main() {
-	instance.SetAppName("qsdev")
+	instance.SetBranding(branding.Default())
 
 	if vi := version.Info(); vi.Version != "dev" && vi.Version != "(devel)" {
 		instance.SetVersionOverride(vi.Version, vi.Commit)
@@ -84,7 +85,7 @@ func extractDebugFlag(args []string) []string {
 		filtered = append(filtered, arg)
 	}
 	if found {
-		_ = os.Setenv("QSDEV_LOG", "debug")
+		_ = os.Setenv(branding.Get().EnvLogVar, "debug")
 	}
 	return filtered
 }
@@ -93,7 +94,7 @@ func extractDebugFlag(args []string) []string {
 // command's PreRun. It sets up the two-tier structured logging system.
 func initLogging() {
 	level := logging.LevelFromEnv()
-	stderrToo := strings.EqualFold(os.Getenv("QSDEV_LOG"), "debug")
+	stderrToo := strings.EqualFold(os.Getenv(branding.Get().EnvLogVar), "debug")
 
 	projectRoot := logging.DetectProjectRoot()
 	commandPath := detectCommandFromArgs()
@@ -120,7 +121,7 @@ func initLogging() {
 // opening log record. This runs before cobra parses, so it uses simple
 // heuristics: take args until one starts with "-".
 func detectCommandFromArgs() string {
-	parts := []string{"qsdev"}
+	parts := []string{branding.Get().AppName}
 	for _, arg := range os.Args[1:] {
 		if strings.HasPrefix(arg, "-") {
 			break

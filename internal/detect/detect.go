@@ -6,8 +6,8 @@ package detect
 import (
 	"log/slog"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/ecosystem"
-	_ "github.com/Quantum-Serendipity/qsdev/internal/ecosystem/modules"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 

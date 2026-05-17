@@ -7,7 +7,7 @@ This guide covers adding qsdev to projects with existing configuration files. It
 Before running `qsdev init`, verify:
 
 1. Your project is a git repository with no uncommitted changes (`git status` is clean).
-2. gdev, devenv.sh, and Nix with flakes are installed.
+2. qsdev is installed (see [README](../README.md) for installation methods).
 3. You know which languages, services, and security policies you want.
 
 **Back up your existing configuration:**
@@ -70,7 +70,7 @@ If your `devenv.nix` has significant customizations you want to preserve:
 1. Generate the new configuration alongside your existing one:
 
    ```bash
-   qsdev init --force --dry-run > /tmp/gdev-preview.txt
+   qsdev init --force --dry-run > /tmp/qsdev-preview.txt
    ```
 
 2. Review the preview to understand what would be generated.
@@ -88,15 +88,15 @@ If your `devenv.nix` has significant customizations you want to preserve:
    git checkout -p devenv.nix   # interactively restore sections you want to keep
    ```
 
-5. After merging, run `qsdev init --update` to save state for the final version:
+5. After merging, run `qsdev update` to save state for the final version:
 
    ```bash
-   qsdev init --update --force
+   qsdev update --force
    ```
 
 ### Preserving Custom Nix Expressions
 
-The generated `devenv.nix` uses the `manual-merge` strategy. On subsequent updates via `qsdev init --update`, if you have modified `devenv.nix`, a `devenv.nix.new` sidecar file will be created instead of overwriting your changes. You will see a diff and can merge manually.
+The generated `devenv.nix` uses the `manual-merge` strategy. On subsequent runs of `qsdev update`, if you have modified `devenv.nix`, a `devenv.nix.new` sidecar file will be created instead of overwriting your changes. You will see a diff and can merge manually.
 
 ## Scenario 3: Existing Claude Code Configuration
 
@@ -128,7 +128,7 @@ qsdev init --devenv-only --yes
 
 ### Option C: Merge Existing Settings
 
-The generated `.claude/settings.json` uses the `three-way-merge` strategy. To adopt gdev management while preserving your custom rules:
+The generated `.claude/settings.json` uses the `three-way-merge` strategy. To adopt qsdev management while preserving your custom rules:
 
 1. Run with `--force` to generate the initial configuration:
 
@@ -138,7 +138,7 @@ The generated `.claude/settings.json` uses the `three-way-merge` strategy. To ad
 
 2. Add back your custom allow/deny rules by editing `.claude/settings.json`.
 
-3. Run `qsdev init --update` to save state. Future updates will three-way merge, preserving your additions.
+3. Run `qsdev update` to save state. Future updates will three-way merge, preserving your additions.
 
 ### Preserving Custom MCP Servers
 
@@ -159,7 +159,7 @@ To add a custom server after initial setup:
 }
 ```
 
-This entry will survive future `qsdev init --update` runs.
+This entry will survive future `qsdev update` runs.
 
 ## Scenario 4: Both devenv and Claude Code Exist
 
@@ -167,7 +167,7 @@ Your project has configuration from both systems.
 
 ### Recommended Approach
 
-1. **Preview** what gdev would generate:
+1. **Preview** what qsdev would generate:
 
    ```bash
    qsdev init --dry-run
@@ -182,7 +182,7 @@ Your project has configuration from both systems.
 
    ```bash
    devenv shell   # verify the environment works
-   devenv test    # verify security controls
+   qsdev status   # verify security posture
    ```
 
 ## Post-Migration Steps
@@ -198,10 +198,11 @@ direnv allow
 ### 2. Verify Security Controls
 
 ```bash
+qsdev status
 devenv test
 ```
 
-This runs the security validation suite:
+`qsdev status` shows your security posture with a score and grade. `devenv test` runs the security validation suite:
 - Pre-commit hooks are installed
 - Credential variables are stripped from the environment
 - No secrets detected in tracked files
@@ -210,14 +211,14 @@ This runs the security validation suite:
 ### 3. Commit Generated Files
 
 ```bash
-git add devenv.yaml devenv.nix .envrc
-git add .claude/ CLAUDE.md
-git add .mcp.json           # if MCP servers were configured
-git add .devinit/            # state files for update workflow
-git add renovate.json        # or .github/dependabot.yml
-git add .github/workflows/security-scan.yml
-git add docs/security-overview.md
-git commit -m "chore: add gdev security-hardened devenv configuration"
+git add devenv.nix devenv.yaml .envrc .pre-commit-config.yaml
+git add .claude/settings.json .claude/hooks/package-guard.py
+git add .claude/skills/ .claude/rules/
+git add .mcp.json CLAUDE.md
+git add .npmrc              # or pip.conf, etc. (per-ecosystem configs)
+git add .gitignore
+git add .devinit/           # state files for update workflow
+git commit -m "chore: add qsdev security-hardened dev environment"
 ```
 
 ### 4. Team Communication
@@ -252,9 +253,9 @@ qsdev init --devenv-only --yes
 qsdev init --claude-only --yes
 ```
 
-### `update` cannot be combined with `lang`, `service`, or `profile`
+### Changing languages or services after initial setup
 
-The `--update` flag regenerates from saved answers. To change languages or services, edit the saved answers file at `.devinit/.qsdev-init-answers.yaml` and then run `--update`, or run a fresh `qsdev init --force` with the new flags.
+To change languages or services, edit the saved answers file at `.devinit/.qsdev-init-answers.yaml` and then run `qsdev update`, or run a fresh `qsdev init --force` with the new flags.
 
 ### Pre-commit hooks fail after migration
 
@@ -278,4 +279,14 @@ If `devenv test` reports credential variables are set:
 
 ### MCP server "unknown" error
 
-Only five built-in MCP servers are recognized: `github`, `filesystem`, `postgres`, `fetch`, `socket`. Custom servers must be added via the Go API or by editing `.mcp.json` directly after generation.
+Only five built-in MCP servers are recognized: `github`, `filesystem`, `postgres`, `fetch`, `socket`. Custom servers must be added by editing `.mcp.json` directly after generation.
+
+### Corrupted or drifted configuration files
+
+If generated files have been accidentally modified or corrupted:
+
+```bash
+qsdev repair
+```
+
+This restores managed files to their expected state while preserving your customizations in merge-strategy files.

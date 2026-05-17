@@ -31,50 +31,19 @@ Flags explicitly set on the command line always take precedence over profile def
 
 | Profile | When to Use |
 |---------|-------------|
-| `consulting-default` | Multi-client consulting shops; Nexus proxy, OSV/Socket scanning, Renovate with 3-day age gate |
-| `startup-github` | GitHub-centric teams; GitHub Packages, Dependabot, Turborepo caching |
-| `enterprise` | Regulated environments; Artifactory, Snyk scanning, 7-day age gate, Cosign SBOM signing |
+| `consulting-default` | Multi-client consulting shops; enhanced security (semgrep, gitleaks, secretspec) |
+| `startup-fast` | Baseline security, minimal overhead |
+| `enterprise` | Regulated environments; strict security, audit logging, SBOM |
 
 ```bash
 qsdev init --profile go-web --infra-profile enterprise --yes
-```
-
-### Registering Custom Profiles
-
-Use the Go API to register organization-specific profiles in your gdev plugin:
-
-```go
-package main
-
-import (
-    "github.com/Quantum-Serendipity/qsdev/addons/devinit"
-)
-
-func init() {
-    devinit.Configure(
-        devinit.WithProfiles(map[string]devinit.Profile{
-            "myorg-backend": {
-                Description: "MyOrg backend service: Go 1.24, PostgreSQL, standard permissions",
-                Languages: []devinit.LanguageSpec{
-                    {Name: "go", Version: "1.24"},
-                },
-                Services:        []string{"postgres"},
-                Direnv:          true,
-                ClaudeCode:      true,
-                PermissionLevel: "standard",
-                Skills:          []string{"deploy", "security-review", "review-pr"},
-                Hooks:           []string{"safety-block", "pre-commit", "auto-format"},
-            },
-        }),
-    )
-}
 ```
 
 ## Configuring Security Policies
 
 ### Permission Presets
 
-Choose a Claude Code permission level based on your team's risk tolerance:
+Package installs are hook-gated (the user is asked for confirmation), not blocked outright. Choose a permission preset based on your team's risk tolerance:
 
 | Preset | Allow | Deny | Ask | Notes |
 |--------|-------|------|-----|-------|
@@ -107,26 +76,25 @@ All presets share the same deny rules, organized into 15 categories:
 
 Each ecosystem module also contributes its own deny rules (e.g., JavaScript modules block `npx create-*` patterns).
 
-### Customizing Deny Rules via Go API
+### Customizing Deny Rules
 
-```go
-claudecode.Configure(
-    claudecode.WithConfig(claudecode.Config{
-        DefaultPermissions: "standard",
-        ExtraDenyPatterns: []string{
-            `Bash(terraform apply *)`,
-            `Bash(kubectl delete *)`,
-        },
-        ExtraAllowPatterns: []string{
-            `Bash(terraform plan *)`,
-        },
-    }),
-)
+Add extra deny or allow patterns in `.qsdev.yaml`:
+
+```yaml
+claude:
+  permissions: standard
+  extra_deny:
+    - "Bash(terraform apply *)"
+    - "Bash(kubectl delete *)"
+  extra_allow:
+    - "Bash(terraform plan *)"
 ```
 
 ## Configuring Skills
 
-Six built-in skills are available:
+### Built-in Skills
+
+Six built-in skills are available for Claude Code workflows:
 
 | Skill | Description | Language-Specific |
 |-------|-------------|-------------------|
@@ -137,6 +105,12 @@ Six built-in skills are available:
 | `refactor` | Refactor code for clarity, performance, and maintainability | No |
 | `db-migration` | Create safe, reversible database schema migrations | Go, Python, JavaScript |
 
+### qsdev Operations Skills
+
+In addition, 11 qsdev operations skills are auto-generated during `qsdev init`, providing Claude Code with structured commands for managing the environment (adding dependencies, running checks, updating configs, etc.).
+
+### Managing Skills
+
 Install skills at init time or add them later:
 
 ```bash
@@ -145,11 +119,8 @@ qsdev init --claude-skills deploy,security-review --yes
 
 # Add to an existing project
 qsdev claude add-skill generate-tests
-```
 
-List all available skills and their install status:
-
-```bash
+# List all available skills and their install status
 qsdev claude list-skills
 ```
 
@@ -174,36 +145,16 @@ qsdev claude add-hook audit-log
 
 ## Configuring MCP Servers
 
-Five built-in MCP servers are available:
+Four AlwaysOn MCP servers are configured by default:
 
-| Server | Command | Required Environment |
-|--------|---------|---------------------|
-| `github` | `npx @anthropic-ai/mcp-github` | `GITHUB_TOKEN` |
-| `filesystem` | `npx @anthropic-ai/mcp-filesystem` | (none) |
-| `postgres` | `npx @anthropic-ai/mcp-postgres` | `DATABASE_URL` |
-| `fetch` | `npx @anthropic-ai/mcp-fetch` | (none) |
-| `socket` | `npx @anthropic-ai/mcp-socket` | `SOCKET_SECURITY_API_KEY` |
+| Server | Purpose |
+|--------|---------|
+| `context7` | Library documentation lookup |
+| `github` | GitHub API integration |
+| `socket` | Package security analysis |
+| `semble` | Semantic code search |
 
-```bash
-qsdev init --mcp github,filesystem --yes
-```
-
-Custom MCP servers can be added via the Go API:
-
-```go
-claudecode.Configure(
-    claudecode.WithConfig(claudecode.Config{
-        MCPServers: []claudecode.MCPServerConfig{
-            {
-                Name:    "internal-docs",
-                Command: "npx",
-                Args:    []string{"@myorg/mcp-internal-docs"},
-                Env:     map[string]string{"DOCS_API_KEY": "${DOCS_API_KEY}"},
-            },
-        },
-    }),
-)
-```
+These are included automatically during `qsdev init`. No additional flags are needed.
 
 ## Rolling Out to a Team
 
@@ -225,7 +176,7 @@ Run the init without `--dry-run` and commit all generated files:
 ```bash
 qsdev init --profile go-web --infra-profile consulting-default --yes
 git add -A
-git commit -m "chore: add gdev security-hardened devenv configuration"
+git commit -m "chore: add qsdev security-hardened devenv configuration"
 ```
 
 ### Step 3: Onboard Team Members
@@ -233,55 +184,60 @@ git commit -m "chore: add gdev security-hardened devenv configuration"
 Each team member clones the repo and runs:
 
 ```bash
-direnv allow   # if using direnv
-devenv shell   # activates the environment
+qsdev init --mode join
 ```
 
-The generated `devenv.yaml` and `devenv.nix` are self-contained. Team members do not need to run `qsdev init` again -- the committed files configure their environment automatically.
+This detects the committed `.qsdev.yaml` and reproduces an identical environment locally, including Claude Code permissions, skills, hooks, and MCP servers. No manual configuration is needed -- every developer gets the same security posture.
 
 ### Step 4: Ongoing Updates
 
 When new template versions or skill library updates are available:
 
 ```bash
-qsdev init --update --dry-run   # preview changes
-qsdev init --update             # apply
+qsdev update --dry-run   # preview changes
+qsdev update             # apply
 ```
 
-The update workflow respects user modifications via file-specific merge strategies. See the [Configuration Reference](configuration-reference.md) for details on which files support three-way merge vs. overwrite.
+The update workflow respects user modifications via three-way merge. Files you have customized are merged intelligently rather than overwritten.
 
 ### Step 5: Enforce in CI
 
-The generated `.github/workflows/security-scan.yml` workflow runs vulnerability scanning and harden-runner in CI. The generated `devenv.nix` includes an `enterTest` script that validates security controls:
+Add `qsdev check` to your CI pipeline to enforce configuration integrity and security hardening:
 
 ```bash
-devenv test   # verifies hooks, credential stripping, secret scanning
+# In your CI workflow
+qsdev check
 ```
 
-Add `devenv test` to your CI pipeline to ensure security controls are not bypassed.
+`qsdev check` validates that security controls are present, deny rules are intact, and no configuration has drifted. It exits non-zero on violations and supports JSON, SARIF, and JUnit output formats for integration with CI dashboards.
+
+### Step 6: Monitor Security Posture
+
+Use `qsdev status` to see each project's security score and grade:
+
+```bash
+qsdev status
+```
+
+For multi-project visibility, `qsdev team-report` aggregates posture across repositories.
 
 ## Standardizing Across Repositories
 
-For organizations with many repositories, create a shared gdev plugin that registers your custom profiles and infrastructure choices:
+For organizations with many repositories, define your standard configuration in a shared `.qsdev.yaml` template:
 
-```go
-package mygdev
-
-import (
-    "github.com/Quantum-Serendipity/qsdev/addons/devinit"
-    "github.com/Quantum-Serendipity/qsdev/internal/profile"
-)
-
-func init() {
-    // Register custom project-type profiles
-    devinit.Configure(
-        devinit.WithProfiles(map[string]devinit.Profile{
-            "myorg-api":       myOrgAPIProfile,
-            "myorg-frontend":  myOrgFrontendProfile,
-            "myorg-data":      myOrgDataProfile,
-        }),
-    )
-}
+```yaml
+profile: go-web
+infra_profile: consulting-default
+claude:
+  permissions: standard
+  skills:
+    - deploy
+    - security-review
+    - review-pr
+  hooks:
+    - safety-block
+    - pre-commit
+    - auto-format
 ```
 
 Each repository then runs:
@@ -291,3 +247,21 @@ qsdev init --profile myorg-api --yes
 ```
 
 This ensures consistent security policies, tooling versions, and Claude Code permissions across the entire organization.
+
+## Command Reference
+
+| Command | Purpose |
+|---------|---------|
+| `qsdev init --profile X --yes` | Generate environment from a profile |
+| `qsdev init --mode join` | Join an existing team environment |
+| `qsdev status` | Security posture assessment (score + grade) |
+| `qsdev check` | CI enforcement (config integrity, hardening) |
+| `qsdev update` | Update configs + devenv inputs |
+| `qsdev enable <tool>` | Enable a security/AI tool |
+| `qsdev disable <tool>` | Disable a tool |
+| `qsdev list` | Show all available tools |
+| `qsdev devenv doctor` | Diagnose environment issues |
+| `qsdev devenv setup` | Install prerequisites (Nix, devenv, direnv) |
+| `qsdev claude add-skill <name>` | Add a Claude Code skill |
+| `qsdev claude add-hook <name>` | Enable a hook preset |
+| `qsdev claude list-skills` | List available skills |

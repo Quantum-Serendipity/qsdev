@@ -3,8 +3,8 @@ package merge
 // unionStrings returns the union of two string slices, preserving order.
 // Elements from a appear first, followed by elements from b not already in a.
 func unionStrings(a, b []string) []string {
-	seen := make(map[string]bool, len(a)+len(b))
-	result := make([]string, 0, len(a)+len(b))
+	seen := make(map[string]bool)
+	var result []string
 	for _, s := range a {
 		if !seen[s] {
 			seen[s] = true

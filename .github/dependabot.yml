@@ -7,6 +7,10 @@ updates:
       day: "monday"
     commit-message:
       prefix: "chore(deps):"
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -15,3 +19,7 @@ updates:
       day: "monday"
     commit-message:
       prefix: "chore(ci):"
+    groups:
+      actions:
+        patterns:
+          - "*"

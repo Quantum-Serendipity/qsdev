@@ -6,13 +6,16 @@ on:
       - "v*"
 
 permissions:
-  contents: write
   id-token: write
   attestations: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     outputs:
       hashes: ${{ steps.hash.outputs.hashes }}
     # harden-runner disabled — no monitoring without StepSecurity subscription on private repos.

@@ -1,8 +1,6 @@
 # Build Your Own *dev Tool
 
-Want your own branded dev tool with security hardening, 27 ecosystem modules, and an AI-powered setup wizard? One Go file. Five minutes.
-
-qsdev is a framework. You import it, set your branding, pick your addons, and ship a binary your team already knows how to use.
+qsdev is a framework you can fork and rebrand. Import it, set your branding, and ship a binary with the full feature set under your own name.
 
 ## Prerequisites
 
@@ -209,10 +207,5 @@ By importing qsdev, your tool ships with:
 - **27 ecosystem modules** — Go, JavaScript/TypeScript, Python, Rust, Java, .NET, Ruby, PHP, Swift, Scala, Elixir, Haskell, Zig, C/C++, Dart, Clojure, Lua, Perl, R, Shell, PowerShell, Nix, Docker, Terraform, Helm, Ansible, Bazel
 - **Supply chain security** — lockfile enforcement, age-gating, registry pinning, deny rules per ecosystem
 - **AI agent configuration** — Claude Code permissions, PreToolUse hooks, skill scaffolding
-- **Interactive wizard** — project type detection, infrastructure profiles, guided setup
 - **devenv.sh generation** — languages, services, packages, pre-commit hooks, all from one config
 - **Self-update** — GitHub release checking, in-place binary update
-- **Structured logging** — file + console, configurable via env vars
-- **Bootstrap system** — dependency installation steps with progress UI
-
-Fork it. Brand it. Ship it.

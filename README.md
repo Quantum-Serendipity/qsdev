@@ -1,51 +1,28 @@
 # qsdev
 
-**One command replaces 30–90 minutes of manual dev environment setup — with security hardening included.**
+Security-hardened dev environments, generated from your existing project.
 
 [![CI](https://github.com/Quantum-Serendipity/qsdev/actions/workflows/ci.yml/badge.svg)](https://github.com/Quantum-Serendipity/qsdev/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Quantum-Serendipity/qsdev)](https://github.com/Quantum-Serendipity/qsdev/releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-informational)]()
 
-<!-- TODO: Terminal recording of `qsdev init --profile ts-fullstack --yes` -->
-
 ## The Problem
 
-Every new project starts with the same ritual: write environment config from scratch, copy security settings from the last project, remember which pre-commit hooks you need, figure out the right AI agent permissions. It takes 30–90 minutes of yak-shaving before you write a single line of real code — and you do it every time.
+Setting up a new project means writing environment config, copying security settings from the last project, configuring pre-commit hooks, and setting AI agent permissions. Then you do it all again next time. Most of the security config never gets written at all because there's always real work to do instead.
 
-Meanwhile, supply chain attacks are accelerating. A new malicious package lands on npm or PyPI every few hours. Install-time code execution is the single most exploited vector — and most ecosystems still allow it by default. AI agents are adding dependencies, running commands, and making unreviewed trust decisions on your behalf. Every `npm install` an agent runs is an attack surface you didn't audit.
-
-The usual answer is "we'll add security later." Later never comes — or it comes after the incident.
-
-qsdev eliminates the ritual and makes security the default, not the afterthought. One command generates a deterministic environment with 10 layers of supply-chain defense, AI agent guardrails, and per-ecosystem hardening — so you ship fast without shipping vulnerabilities.
-
-## Before vs. After
-
-| Manual setup | With qsdev |
-|---|---|
-| Write 50–200 lines of environment config from scratch | `qsdev init` |
-| Research and configure per-ecosystem security for every package manager | generated |
-| Set up pre-commit hooks for linting, formatting, and lockfile enforcement | generated |
-| Manually write 150+ deny rules to stop AI agents from running dangerous commands | generated |
-| Configure MCP servers for AI-assisted workflows | generated |
-| Write project documentation that AI agents can actually use | generated |
-| Set up package install interception hooks | generated |
-| Add vulnerability scanning, secret detection, and SAST | generated |
-| Wire up age-gating to block packages published less than 24 hours ago | generated |
-| **Time: 30–90 minutes per project** | **Under 2 minutes** |
+qsdev detects your stack and generates a complete environment with supply-chain hardening, AI agent guardrails, and per-ecosystem security config. You get a working setup in about two minutes instead of building it by hand every time.
 
 ## Why qsdev
 
-- **Instant setup** — detects your stack across 27 ecosystems and generates a complete, working environment in under two minutes
-- **Secure by default** — 10 defense layers (age-gating, install-script blocking, lockfile enforcement, vulnerability scanning, SAST, secrets detection, and more) configured automatically — not bolted on later
-- **AI-agent-ready** — Claude Code permissions, 150+ deny rules, 11 operation skills, hooks, and MCP servers from day one
-- **Zero lock-in** — don't like it? `qsdev teardown` removes everything cleanly. Generated configs are standard files you own
-- **Provable, not promissory** — `qsdev status` shows your security posture with a real score and grade, not a checkbox
-- **Team-reproducible** — commit `.qsdev.yaml`, teammates run `qsdev init --mode join` for identical environments
-- **Non-destructive updates** — `qsdev update` preserves your modifications via three-way merge
-- **Profile-driven** — 10 project presets (`go-web`, `ts-fullstack`, `python-web`, `java-web`, `rust-web`, and more); `consulting-default`, `startup-github`, `enterprise` infrastructure tiers
-- **Optimal security/productivity balance** — most security tools force a painful tradeoff: more protection means more friction. qsdev eliminates the configuration cost (the 2–5 day manual setup) without adding ongoing overhead. After init, the only friction is 3–10 seconds of pre-commit hooks per commit — indistinguishable from a project without security. Age-gating silently catches 92% of malicious packages; install-script blocking requires no approval; Nix isolation is invisible. Heavyweight approaches (VMs per project, all-action approval) impose 10–40% permanent productivity loss for marginal additional protection against threats outside most teams' models
-- **Code like a power user from day one** — every generated config represents hours of ecosystem research and best-practice curation. You get 30+ AI agent skills, per-language convention rules, real-time SAST and secrets scanning, MCP servers for documentation and behavioral analysis, and package install validation — the exact setup a security-conscious power user would build, generated in seconds instead of days
+- Detects your stack across 27 ecosystems and generates a complete, working [devenv.sh](https://devenv.sh) environment
+- Ships with 10 layers of supply-chain defense (age-gating, install-script blocking, lockfile enforcement, vuln scanning, SAST, secrets detection, etc.) configured out of the box
+- Sets up Claude Code with deny rules, operation skills, hooks, and MCP servers so your AI agent can't `curl | sh` or install unvetted packages
+- `qsdev teardown` removes everything cleanly. The generated configs are standard files you own
+- `qsdev status` gives you a real security score and grade, not a checkbox
+- Commit `.qsdev.yaml` and teammates run `qsdev init --mode join` for identical environments
+- `qsdev update` preserves your modifications via three-way merge
+- 10 project profiles (`go-web`, `ts-fullstack`, `python-web`, etc.) and 3 infrastructure tiers (`consulting-default`, `startup-github`, `enterprise`)
 
 ## Quick Start
 
@@ -73,18 +50,18 @@ This creates a worktree with the full qsdev configuration applied. Happy with it
 
 ### On our example project
 
-Follow the [Critter Queue end-to-end runbook](docs/e2e-runbook-critter-queue.md) — a TypeScript + PostgreSQL + Redis project that exercises all 10 defense layers, the full CLI lifecycle, and AI agent integration in a realistic scenario.
+Follow the [Critter Queue end-to-end runbook](docs/e2e-runbook-critter-queue.md), which walks through the full qsdev lifecycle on a TypeScript + PostgreSQL + Redis project.
 
-After running, your project has a complete security-hardened environment:
+After running, your project has a working environment:
 
 ```
 devenv.nix                  # Deterministic environment (languages, services, packages)
 devenv.yaml                 # Environment inputs
 .envrc                      # Automatic shell activation
 .pre-commit-config.yaml     # Linting, formatting, lockfile enforcement
-.claude/settings.json       # AI agent permissions + 150+ deny rules
-.claude/hooks/package-guard.py  # Real-time package install interception
-.claude/skills/             # 11 operation skills for AI-assisted workflows
+.claude/settings.json       # AI agent permissions and deny rules
+.claude/hooks/package-guard.py  # Package install interception
+.claude/skills/             # Operation skills for AI-assisted workflows
 .claude/rules/              # Language-specific convention rules
 .mcp.json                   # MCP server configuration
 CLAUDE.md                   # Project context for AI agents
@@ -250,23 +227,22 @@ Infrastructure profiles control organization-wide policy:
 
 ## What qsdev is NOT
 
-qsdev generates configuration files. It does not:
+qsdev generates configuration files. It doesn't:
 
-- **Run your environment** — [devenv.sh](https://devenv.sh) does that
-- **Manage runtime versions** — Nix pins versions declaratively; no need for nvm/pyenv/mise
-- **Run tasks** — Use devenv tasks, Make, or Just
-- **Manage containers** — Docker Compose or Podman handles orchestration
-- **Deploy anything** — Strictly local development; CI/CD is out of scope
-- **Scaffold application code** — Generates dev environment config, not boilerplate
-- **Configure your entire IDE** — Only `.editorconfig` and VS Code extension recommendations
+- Run your environment ([devenv.sh](https://devenv.sh) does that)
+- Manage runtime versions (Nix handles that declaratively)
+- Run tasks (use Make, Just, or devenv tasks)
+- Manage containers or deploy anything
+- Scaffold application code
+- Configure your entire IDE (just `.editorconfig` and VS Code extension recs)
 
 ## Built On
 
-qsdev is built on [gdev](https://github.com/fastcat/gdev), a fantastic developer experience framework I have used for years and deeply miss whenever I can't, created by Matthew Gabeler-Lee. As always thank you for building such an awesome tool.
+qsdev is built on [gdev](https://github.com/fastcat/gdev), a developer experience framework created by Matthew Gabeler-Lee. I've used it for years and always miss it when I can't. Thanks for building such a great tool.
 
 ## Build Your Own
 
-qsdev is a white-label framework. Want a branded internal tool that enforces your company's security policies? Scaffold one in under a minute:
+qsdev is also a white-label framework. You can fork it, rebrand it, and ship your own `acmedev` with your company's security policies baked in:
 
 ```bash
 qsdev scaffold-instance acmedev --github-owner acme-corp
@@ -274,17 +250,17 @@ cd acmedev && go mod tidy && go build ./cmd/acmedev
 ./acmedev --help
 ```
 
-That's it — you now have `acmedev init`, `acmedev status`, `acmedev check`, self-update, 27 ecosystems, and the full security stack under your own name. From there, add proprietary addons, wire in private registry proxies, define team-specific ecosystem modules, or enforce custom compliance profiles.
+From there, add proprietary addons, wire in registry proxies, or enforce custom compliance profiles.
 
 **[Full guide: Build Your Own *dev Tool](docs/build-your-own.md)**
 
 ## Documentation
 
-- [Security Architecture](docs/security-architecture.md) — Threat model, 10 defense layers, security spectrum positioning, permission model
-- [Configuration Reference](docs/configuration-reference.md) — Every generated file and its merge strategy
+- [Security Architecture](docs/security-architecture.md) — Threat model, defense layers, permission model
+- [Configuration Reference](docs/configuration-reference.md) — Generated files and merge strategies
 - [Team Onboarding](docs/team-onboarding.md) — Profiles, policies, team rollout
 - [Migration Guide](docs/migration-guide.md) — Adding qsdev to existing projects
-- [Build Your Own](docs/build-your-own.md) — Create a custom branded tool on the qsdev framework
+- [Build Your Own](docs/build-your-own.md) — Fork and rebrand qsdev as your own tool
 
 ## License
 

@@ -1,7 +1,5 @@
 # Security Architecture
 
-This document describes the threat model, defense layers, permission model, and known limitations of the security hardening provided by qsdev.
-
 ## Threat Model
 
 ### Adversary Goals
@@ -21,7 +19,7 @@ This document describes the threat model, defense layers, permission model, and 
 
 ## Defense Layers
 
-qsdev implements 10 layers of supply-chain defense. Each layer operates independently — a compromise that bypasses one layer is caught by the next.
+qsdev implements 10 layers of supply-chain defense.
 
 | # | Layer | Catches |
 |---|-------|---------|

@@ -30,3 +30,15 @@ go.work.sum
 
 # Internal documentation (not tracked in git)
 internal-docs/
+
+# Claude Code local files
+.claude/settings.local.json
+.claude/worktrees/
+
+# Node (not a JS project — ignore test debris)
+node_modules/
+package.json
+package-lock.json
+
+# Build artifact
+/qsdev

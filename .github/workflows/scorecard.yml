@@ -15,6 +15,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      id-token: write
     # harden-runner disabled — no monitoring without StepSecurity subscription on private repos.
     # Re-enable when repo goes public or subscription is active.
     steps:
@@ -29,6 +30,8 @@ jobs:
           results_file: results.sarif
           results_format: sarif
           publish_results: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@78ed0c7291d93e40c51b085850dc669a4c3ab73b # v3

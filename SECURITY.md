@@ -4,7 +4,7 @@
 
 **Do NOT open a public issue for security vulnerabilities.**
 
-Please report security issues by email to: security@quantumserendipitysoftware.com
+Please report security issues through [GitHub's private vulnerability reporting](https://github.com/Quantum-Serendipity/qsdev/security/advisories/new).
 
 Include:
 - Description of the vulnerability

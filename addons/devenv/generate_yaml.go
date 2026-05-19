@@ -96,7 +96,7 @@ func GenerateDevenvYaml(answers types.WizardAnswers, registry *ecosystem.Registr
 			"nixpkgs": {URL: nixpkgsURL},
 		},
 		Impure:                    false,
-		AllowUnfree:               false,
+		AllowUnfree:               true,
 		AllowBroken:               false,
 		PermittedUnfreePackages:   []string{},
 		PermittedInsecurePackages: []string{},

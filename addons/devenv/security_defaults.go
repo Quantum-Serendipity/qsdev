@@ -139,7 +139,16 @@ fi
 echo "==================================================="
 echo ""
 echo "  ${%[1]sPROJECT_NAME:-unknown} | security: ${%[1]sSECURITY_PROFILE:-standard} | tools: ${%[1]sTOOL_COUNT:-0}"
-echo ""`, prefix)
+echo ""
+
+# Shell completions for qsdev
+if command -v qsdev >/dev/null 2>&1; then
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    eval "$(qsdev completion zsh)"
+  elif [ -n "${BASH_VERSION:-}" ]; then
+    eval "$(qsdev completion bash)"
+  fi
+fi`, prefix)
 }
 
 // buildEnterTestScript returns the shell script body for devenv.nix enterTest.

@@ -343,41 +343,25 @@ var allowStandardBase = []string{
 	`Bash(git *)`,
 }
 
-// allowStandardBuildTestLint provides build, test, lint, and run commands.
+// allowStandardBuildTestLint provides build, test, lint, and read-only commands.
 var allowStandardBuildTestLint = []string{
-	// JS script runners
-	`Bash(npm run *)`,
+	// JS build/test (npm run/start moved to askCodeExecution)
 	`Bash(npm test *)`,
 	`Bash(npm test)`,
-	`Bash(npm start *)`,
-	`Bash(npm start)`,
 	`Bash(npm run build *)`,
-	`Bash(yarn run *)`,
-	`Bash(pnpm run *)`,
-	`Bash(bun run *)`,
-	// Go
+	// Go build/test (go run moved to askCodeExecution)
 	`Bash(go build *)`,
 	`Bash(go build)`,
 	`Bash(go test *)`,
 	`Bash(go test)`,
-	`Bash(go run *)`,
-	// Rust
+	// Rust build/test (cargo run moved to askCodeExecution)
 	`Bash(cargo build *)`,
 	`Bash(cargo build)`,
 	`Bash(cargo test *)`,
 	`Bash(cargo test)`,
-	`Bash(cargo run *)`,
-	`Bash(cargo run)`,
-	// Ruby / PHP
-	`Bash(bundle exec *)`,
-	`Bash(composer run-script *)`,
-	// Nix development
+	// Nix development (nix build/run/shell moved to askCodeExecution)
 	`Bash(nix develop *)`,
 	`Bash(nix develop)`,
-	`Bash(nix build *)`,
-	`Bash(nix build)`,
-	`Bash(nix run *)`,
-	`Bash(nix shell *)`,
 	`Bash(nix flake check *)`,
 	`Bash(nix flake show *)`,
 	`Bash(devenv shell *)`,
@@ -397,6 +381,27 @@ var allowStandardBuildTestLint = []string{
 	`Bash(vulnix *)`,
 	`Bash(nix flake info *)`,
 	`Bash(nix flake metadata *)`,
+}
+
+// askCodeExecution lists commands that can execute arbitrary code and require
+// user confirmation. These run project scripts, compile+execute source, or
+// fetch and execute remote code (nix flakes).
+var askCodeExecution = []string{
+	`Bash(npm run *)`,
+	`Bash(npm start *)`,
+	`Bash(npm start)`,
+	`Bash(yarn run *)`,
+	`Bash(pnpm run *)`,
+	`Bash(bun run *)`,
+	`Bash(go run *)`,
+	`Bash(cargo run *)`,
+	`Bash(cargo run)`,
+	`Bash(bundle exec *)`,
+	`Bash(composer run-script *)`,
+	`Bash(nix run *)`,
+	`Bash(nix shell *)`,
+	`Bash(nix build *)`,
+	`Bash(nix build)`,
 }
 
 // allowFrozenLockfileInstalls provides pre-approved frozen lockfile installs
@@ -456,6 +461,7 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 		deny = append(deny, baseDeny...)
 		deny = append(deny, ecosystemDeny...)
 		ask = append(ask, askMinimalBase...)
+		ask = append(ask, askCodeExecution...)
 		ask = append(ask, packageAskRules...)
 		defaultMode = "plan"
 		disableBypass = "disable"
@@ -467,6 +473,7 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 		deny = append(deny, baseDeny...)
 		deny = append(deny, ecosystemDeny...)
 		ask = append(ask, askStandardBase...)
+		ask = append(ask, askCodeExecution...)
 		ask = append(ask, packageAskRules...)
 		defaultMode = "default"
 		disableBypass = "disable"
@@ -479,6 +486,7 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 		deny = append(deny, baseDeny...)
 		deny = append(deny, ecosystemDeny...)
 		ask = append(ask, askStandardBase...)
+		ask = append(ask, askCodeExecution...)
 		ask = append(ask, packageAskRules...)
 		defaultMode = "default"
 		disableBypass = "disable"

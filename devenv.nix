@@ -12,7 +12,7 @@
   env.QSDEV_PROJECT_NAME = "qsdev";
   env.QSDEV_SECURITY_PROFILE = "standard";
   env.QSDEV_TOOL_COUNT = "0";
-  env.QSDEV_VERSION = "v0.7.2-0.20260518155304-ae31d7bfafdd+dirty";
+  env.QSDEV_VERSION = "v0.7.2-0.20260519133156-c2d91b273f5f+dirty";
 
   # Credential-bearing variables stripped from the shell
   unsetEnvVars = [ "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN" "AWS_SECURITY_TOKEN" "AWS_DEFAULT_REGION" "GITHUB_TOKEN" "GH_TOKEN" "GITHUB_PAT" "GITLAB_TOKEN" "GL_TOKEN" "GOOGLE_APPLICATION_CREDENTIALS" "GCLOUD_PROJECT" "CLOUDSDK_CORE_PROJECT" "AZURE_CLIENT_ID" "AZURE_CLIENT_SECRET" "AZURE_TENANT_ID" "AZURE_SUBSCRIPTION_ID" "NPM_TOKEN" "PYPI_TOKEN" "DOCKER_PASSWORD" "DOCKER_AUTH_CONFIG" "CACHIX_AUTH_TOKEN" "DATABASE_URL" "DATABASE_PASSWORD" "PGPASSWORD" "MYSQL_PWD" "REDIS_PASSWORD" "VAULT_TOKEN" "SENTRY_DSN" "STRIPE_SECRET_KEY" "SENDGRID_API_KEY" "SLACK_TOKEN" "SLACK_WEBHOOK_URL" "API_KEY" "API_SECRET" "SECRET_KEY" "PRIVATE_KEY" "ENCRYPTION_KEY" ];
@@ -158,6 +158,15 @@
     echo ""
     echo "  ''${QSDEV_PROJECT_NAME:-unknown} | security: ''${QSDEV_SECURITY_PROFILE:-standard} | tools: ''${QSDEV_TOOL_COUNT:-0}"
     echo ""
+
+    # Shell completions for qsdev
+    if command -v qsdev >/dev/null 2>&1; then
+      if [ -n "''${ZSH_VERSION:-}" ]; then
+        eval "$(qsdev completion zsh)"
+      elif [ -n "''${BASH_VERSION:-}" ]; then
+        eval "$(qsdev completion bash)"
+      fi
+    fi
   '';
 
   enterTest = ''

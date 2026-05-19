@@ -8,5 +8,24 @@ paths:
   exclude:
     - vendor/
     - node_modules/
+    - third_party/
     - dist/
+    - build/
+    - out/
+    - target/
+    - .next/
+    - .nuxt/
     - .devenv/
+    - .direnv/
+    - result
+    - __pycache__/
+    - .venv/
+    - venv/
+    - .tox/
+    - .egg-info/
+    - .cache/
+    - .pytest_cache/
+    - coverage/
+    - .coverage/
+    - testdata/
+    - fixtures/

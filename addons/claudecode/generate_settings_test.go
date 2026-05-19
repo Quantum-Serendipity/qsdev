@@ -125,11 +125,18 @@ func TestGenerateSettings_StandardPreset(t *testing.T) {
 	if !containsRule(s.Permissions.Allow, "Bash(nix develop *)") {
 		t.Error("standard allow should contain Bash(nix develop *)")
 	}
-	if !containsRule(s.Permissions.Allow, "Bash(npm run *)") {
-		t.Error("standard allow should contain Bash(npm run *)")
-	}
 	if !containsRule(s.Permissions.Allow, "Bash(cargo audit *)") {
 		t.Error("standard allow should contain Bash(cargo audit *)")
+	}
+
+	// Code-execution commands should be in ask, not allow.
+	for _, cmd := range []string{"Bash(npm run *)", "Bash(go run *)", "Bash(nix run *)", "Bash(nix build *)", "Bash(cargo run *)"} {
+		if containsRule(s.Permissions.Allow, cmd) {
+			t.Errorf("standard allow should NOT contain %s — it belongs in ask", cmd)
+		}
+		if !containsRule(s.Permissions.Ask, cmd) {
+			t.Errorf("standard ask should contain %s", cmd)
+		}
 	}
 
 	// Deny should have dangerous pattern rules (not package installs).

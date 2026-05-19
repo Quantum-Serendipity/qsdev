@@ -11,10 +11,9 @@
       goOverlay = import ./nix/go-overlay.nix;
     in
     {
-      overlays.default = final: prev:
-        (goOverlay final prev) // {
-          qsdev = self.packages.${prev.system}.qsdev;
-        };
+      overlays.default = final: prev: {
+        qsdev = self.packages.${prev.system}.qsdev;
+      };
 
       nixosModules.default = { config, lib, pkgs, ... }: {
         programs.direnv.enable = lib.mkDefault true;

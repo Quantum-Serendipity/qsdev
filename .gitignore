@@ -34,6 +34,7 @@ internal-docs/
 # Claude Code local files
 .claude/settings.local.json
 .claude/worktrees/
+.claude/.qsdev-claude-answers.yaml
 
 # Node (not a JS project — ignore test debris)
 node_modules/
@@ -42,3 +43,12 @@ package-lock.json
 
 # Build artifact
 /qsdev
+
+# qsdev local configuration
+.devinit/
+.qsdev/
+.devenv/
+.env
+.env.*
+*.pem
+*.key

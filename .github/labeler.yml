@@ -1,0 +1,20 @@
+documentation:
+  - changed-files:
+      - any-glob-to-any-file: ['docs/**', '*.md', 'README*']
+
+infrastructure:
+  - changed-files:
+      - any-glob-to-any-file: ['devenv.nix', 'devenv.yaml', '.envrc', 'flake.*', 'Dockerfile*', '.github/**']
+
+security:
+  - changed-files:
+      - any-glob-to-any-file: ['.semgrep.yml', '.gitleaks.toml', '.scancode.yml']
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file: ['**/package-lock.json', '**/yarn.lock', '**/pnpm-lock.yaml', '**/go.sum', '**/Cargo.lock', '**/requirements*.txt', '**/poetry.lock', '**/Gemfile.lock', '**/composer.lock']
+
+go:
+  - changed-files:
+      - any-glob-to-any-file: ['**/*.go']
+

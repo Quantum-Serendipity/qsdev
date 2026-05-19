@@ -1,0 +1,37 @@
+{
+  "mcpServers": {
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ]
+    },
+    "github": {
+      "command": "npx",
+      "args": [
+        "@anthropic-ai/mcp-github"
+      ],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    },
+    "semble": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "semble[mcp]",
+        "semble"
+      ]
+    },
+    "socket": {
+      "command": "npx",
+      "args": [
+        "@anthropic-ai/mcp-socket"
+      ],
+      "env": {
+        "SOCKET_SECURITY_API_KEY": "${SOCKET_SECURITY_API_KEY}"
+      }
+    }
+  }
+}

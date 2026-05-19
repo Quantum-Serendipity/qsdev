@@ -21,15 +21,24 @@ Contributions are welcome. If you have ideas for new tools, plugins, ecosystem m
 
 ## Development setup
 
+qsdev uses itself for development environment management.
+
+**Prerequisites**: [qsdev](https://github.com/Quantum-Serendipity/qsdev) and
+[devenv](https://devenv.sh) must be installed. On NixOS, the qsdev module
+provides both.
+
 ```bash
 git clone https://github.com/Quantum-Serendipity/qsdev.git
 cd qsdev
-direnv allow   # or: nix develop
+direnv allow   # activates the devenv environment
 go build ./...
 go test ./...
 ```
 
-The flake provides Go tooling. Run `go vet ./...` and `golangci-lint run` before submitting.
+The devenv environment provides Go tooling, pre-commit hooks, and security
+scanning. Run `go vet ./...` and `golangci-lint run` before submitting.
+
+Without direnv: `devenv shell` for manual activation.
 
 ## Guidelines
 

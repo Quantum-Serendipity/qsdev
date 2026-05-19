@@ -9,10 +9,14 @@
   };
 
   outputs = { self, nixpkgs, flake-utils, devenv }:
+    let
+      goOverlay = import ./nix/go-overlay.nix;
+    in
     {
-      overlays.default = final: prev: {
-        qsdev = self.packages.${prev.system}.qsdev;
-      };
+      overlays.default = final: prev:
+        (goOverlay final prev) // {
+          qsdev = self.packages.${prev.system}.qsdev;
+        };
 
       nixosModules.default = { config, lib, pkgs, ... }: {
         programs.direnv.enable = lib.mkDefault true;
@@ -27,7 +31,10 @@
     //
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ goOverlay ];
+        };
         go = pkgs.go_1_26;
 
         version =
@@ -95,22 +102,5 @@
           default = qsdev;
         };
 
-        devShells.default = pkgs.mkShell {
-          packages = [
-            go
-            pkgs.gopls
-            pkgs.gotools
-            pkgs.golangci-lint
-            pkgs.delve
-            pkgs.goreleaser
-          ];
-
-          shellHook = ''
-            export GOPATH="$PWD/.go"
-            export PATH="$GOPATH/bin:$PATH"
-            echo "qsdev dev environment loaded"
-            echo "  Go: $(go version)"
-          '';
-        };
       });
 }

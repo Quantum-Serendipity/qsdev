@@ -84,7 +84,7 @@ func TestBasicGoProject(t *testing.T) {
 	if !ok {
 		t.Fatal("inputs.nixpkgs should be a map")
 	}
-	if nixpkgs["url"] != "github:NixOS/nixpkgs/nixos-25.11" {
+	if nixpkgs["url"] != "github:NixOS/nixpkgs/nixpkgs-unstable" {
 		t.Errorf("nixpkgs url wrong: %v", nixpkgs["url"])
 	}
 
@@ -307,7 +307,7 @@ func TestEcosystemInputDoesNotOverrideNixpkgs(t *testing.T) {
 	inputs := m["inputs"].(map[string]interface{})
 	nixpkgs := inputs["nixpkgs"].(map[string]interface{})
 	// The hardened nixpkgs URL should not be overridden by ecosystem input.
-	if nixpkgs["url"] != "github:NixOS/nixpkgs/nixos-25.11" {
+	if nixpkgs["url"] != "github:NixOS/nixpkgs/nixpkgs-unstable" {
 		t.Errorf("nixpkgs URL was overridden by ecosystem input: %v", nixpkgs["url"])
 	}
 }

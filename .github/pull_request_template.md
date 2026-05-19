@@ -1,14 +1,26 @@
 ## Summary
 
-<!-- Brief description of what this PR does and why -->
+<!-- Describe what changed and why -->
 
-## Test Plan
+## Type of Change
 
+- [ ] Feature
+- [ ] Bug fix
+- [ ] Refactor
+- [ ] Documentation
+- [ ] Chore
+
+## Testing
+
+- [ ] Unit tests added/updated
+- [ ] Manual testing performed
+- [ ] `go vet ./...` passes
 - [ ] `go test ./...` passes
-- [ ] Tested manually (describe how)
 
-## Checklist
+## Breaking Changes
 
-- [ ] No new dependencies with copyleft licenses
-- [ ] No secrets or credentials in code
-- [ ] Existing tests still pass
+<!-- List breaking changes or write "None" -->
+
+## Reviewer Notes
+
+<!-- Any context the reviewer should know -->

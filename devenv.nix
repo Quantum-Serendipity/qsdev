@@ -5,7 +5,7 @@
   ];
 
   # Base packages
-  packages = [ pkgs.git pkgs.jq pkgs.curl pkgs.coreutils pkgs.uv pkgs.goreleaser pkgs.gopls pkgs.gotools pkgs.golangci-lint pkgs.delve pkgs.go-tools pkgs.govulncheck ];
+  packages = [ pkgs.git pkgs.jq pkgs.curl pkgs.coreutils pkgs.goreleaser pkgs.gopls pkgs.gotools pkgs.golangci-lint pkgs.delve pkgs.go-tools pkgs.govulncheck ];
 
   env = {
     DEVENV_SECURITY_HARDENED = "true";
@@ -49,7 +49,7 @@
       enable = true;
       name = "staticcheck";
       description = "Run staticcheck for advanced static analysis";
-      entry = "staticcheck ./...";
+      entry = "${pkgs.go-tools}/bin/staticcheck ./...";
       language = "system";
       types = [ "go" ];
       stages = [ "pre-commit" ];
@@ -59,7 +59,7 @@
       enable = true;
       name = "govulncheck";
       description = "Check for known vulnerabilities in Go dependencies";
-      entry = "govulncheck ./...";
+      entry = "${pkgs.govulncheck}/bin/govulncheck ./...";
       language = "system";
       types = [ "go" ];
       stages = [ "pre-commit" ];

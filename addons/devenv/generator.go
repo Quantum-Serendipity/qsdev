@@ -98,7 +98,7 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 
 	// 6. Profile-driven configs (CI workflow, Renovate/Dependabot, security docs)
 	// Requires tier >= Standard: these are opinionated workflow configs.
-	t, _ := tier.ParseTier(answers.Tier)
+	t := tier.Resolve(answers.Tier, answers.PermissionLevel, answers.MCPServers)
 	if t >= tier.Standard && g.profileRegistry != nil {
 		profileName := answers.ProfileName
 		if profileName == "" {

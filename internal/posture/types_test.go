@@ -135,9 +135,9 @@ func TestTierDescription(t *testing.T) {
 		name string
 		want string
 	}{
-		{"supply-chain-only", "Package supply chain security + devenv sandbox"},
-		{"standard", "Supply chain deny rules + Claude Code governance"},
-		{"full", "Full tooling: MCP, agent tools, consulting workflows"},
+		{"supply-chain-only", "Package supply chain security + devenv sandbox; no Claude Code restrictions"},
+		{"standard", "Supply chain deny rules + Claude Code governance + CLAUDE.md + gitleaks"},
+		{"full", "Full tooling: MCP servers, agent tools, consulting workflows, AlwaysOn tools"},
 		{"unknown", ""},
 		{"", ""},
 	}

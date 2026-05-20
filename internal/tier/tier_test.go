@@ -98,6 +98,31 @@ func TestNextTier(t *testing.T) {
 	}
 }
 
+func TestResolve(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		tierStr   string
+		permLevel string
+		mcp       []string
+		want      Tier
+	}{
+		{"supply-chain-only", "standard", nil, SupplyChainOnly},
+		{"full", "standard", nil, Full},
+		{"", "standard", nil, Standard},
+		{"", "supply-chain-only", nil, SupplyChainOnly},
+		{"", "standard", []string{"github"}, Full},
+		{"bogus", "standard", nil, Standard},
+		{"", "", nil, Standard},
+	}
+	for _, tc := range tests {
+		got := Resolve(tc.tierStr, tc.permLevel, tc.mcp)
+		if got != tc.want {
+			t.Errorf("Resolve(%q, %q, %v) = %v, want %v",
+				tc.tierStr, tc.permLevel, tc.mcp, got, tc.want)
+		}
+	}
+}
+
 func TestInfer(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

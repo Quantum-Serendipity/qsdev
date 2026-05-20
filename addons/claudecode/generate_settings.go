@@ -502,10 +502,12 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 		disableBypass = "disable"
 
 	case PermissionPresetSupplyChainOnly:
+		deny = append(deny, supplyChainDenyRules()...)
+		deny = append(deny, ecosystemDeny...)
 		ask = append(ask, packageAskRules...)
 		return Permissions{
 			Allow: []string{},
-			Deny:  []string{},
+			Deny:  sliceutil.Dedup(deny),
 			Ask:   sliceutil.Dedup(ask),
 		}
 
@@ -623,7 +625,11 @@ func GenerateSettings(answers types.WizardAnswers, registry *ecosystem.Registry,
 		preset = PermissionPresetStandard
 	}
 
-	// Override from wizard answers if set.
+	// Override from wizard answers. PermissionLevel is the most specific knob
+	// (user-facing --claude-permissions flag), so it takes precedence when set
+	// to something other than the tier's own default. When only Tier is set
+	// (and PermissionLevel is empty because FillDefaults didn't populate it),
+	// derive the preset from the tier.
 	if answers.PermissionLevel != "" {
 		preset = PermissionPreset(answers.PermissionLevel)
 	} else if answers.Tier != "" {

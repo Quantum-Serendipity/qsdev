@@ -13,7 +13,6 @@ var defaultGitleaksAllowPaths = []string{
 	"vendor/",
 	"node_modules/",
 	".devenv/",
-	"docs/",
 	"testdata/",
 }
 

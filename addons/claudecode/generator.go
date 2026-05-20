@@ -29,12 +29,7 @@ func NewClaudeCodeGenerator(registry *ecosystem.Registry, cfg Config) *ClaudeCod
 // resolveTier determines the effective tier from wizard answers, falling back
 // to inference from legacy fields when the explicit tier is not set.
 func resolveTier(answers types.WizardAnswers) tier.Tier {
-	if answers.Tier != "" {
-		if t, err := tier.ParseTier(answers.Tier); err == nil {
-			return t
-		}
-	}
-	return tier.Infer(answers.PermissionLevel, answers.MCPServers)
+	return tier.Resolve(answers.Tier, answers.PermissionLevel, answers.MCPServers)
 }
 
 // Generate produces the full set of generated files from wizard answers:
@@ -51,7 +46,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 	var files []types.GeneratedFile
 	t := resolveTier(answers)
 
-	// 1. settings.json — all tiers
+	// 1. settings.json (all tiers)
 	settingsFile, err := GenerateSettings(answers, g.registry, g.cfg)
 	if err != nil {
 		return nil, fmt.Errorf("generating settings: %w", err)
@@ -60,7 +55,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		files = append(files, *settingsFile)
 	}
 
-	// 3. Hook files (package guard, audit log, etc.) — all tiers
+	// 2. Hook files (all tiers)
 	hookFiles, err := GenerateHookFiles(answers)
 	if err != nil {
 		return nil, fmt.Errorf("generating hook files: %w", err)
@@ -72,7 +67,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		return files, nil
 	}
 
-	// 2. CLAUDE.md
+	// 3. CLAUDE.md
 	claudeMdFile, err := GenerateClaudeMd(answers, g.registry)
 	if err != nil {
 		return nil, fmt.Errorf("generating CLAUDE.md: %w", err)
@@ -81,7 +76,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		files = append(files, *claudeMdFile)
 	}
 
-	// 5. Rules
+	// 4. Rules
 	ruleFiles, err := deployRules(answers)
 	if err != nil {
 		return nil, fmt.Errorf("generating rules: %w", err)
@@ -93,21 +88,21 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		return files, nil
 	}
 
-	// 4. Skills
+	// 5. Skills
 	skillFiles, err := deploySkills(answers)
 	if err != nil {
 		return nil, fmt.Errorf("generating skills: %w", err)
 	}
 	files = append(files, skillFiles...)
 
-	// 5b. Inject semble into MCP servers if enabled in MCP or both mode.
+	// 6. Inject semble into MCP servers if enabled.
 	if answers.AgentTools.SembleEnabled && (answers.AgentTools.SembleMode == "mcp" || answers.AgentTools.SembleMode == "both" || answers.AgentTools.SembleMode == "") {
 		if !sliceutil.Contains(answers.MCPServers, "semble") {
 			answers.MCPServers = append(answers.MCPServers, "semble")
 		}
 	}
 
-	// 6. MCP config (only when MCP servers are configured)
+	// 7. MCP config
 	mcpFile, err := GenerateMcpJson(answers, g.cfg)
 	if err != nil {
 		return nil, fmt.Errorf("generating MCP config: %w", err)
@@ -116,7 +111,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		files = append(files, *mcpFile)
 	}
 
-	// 7. Agent postmortem skill
+	// 8. Agent postmortem skill
 	if answers.AgentTools.PostmortemEnabled {
 		postmortemFile, err := generatePostmortemSkill(answers, g.registry)
 		if err != nil {
@@ -128,7 +123,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		}
 	}
 
-	// 8. Version-Sentinel config
+	// 9. Version-Sentinel config
 	if answers.AgentTools.VersionSentinel {
 		vsFiles, err := generateVersionSentinelFiles(answers, g.registry)
 		if err != nil {
@@ -140,7 +135,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		files = append(files, vsFiles...)
 	}
 
-	// 9. Semble sub-agent (MCP handled in step 5b+6)
+	// 10. Semble sub-agent
 	if answers.AgentTools.SembleEnabled && (answers.AgentTools.SembleMode == "subagent" || answers.AgentTools.SembleMode == "both") {
 		sembleFiles, err := generateSembleFiles(answers)
 		if err != nil {
@@ -152,28 +147,28 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		files = append(files, sembleFiles...)
 	}
 
-	// 10. qsdev operation skills
+	// 11. qsdev operation skills
 	qsdevOpsFiles, err := deployOperationSkills(answers)
 	if err != nil {
 		return nil, fmt.Errorf("generating qsdev-ops skills: %w", err)
 	}
 	files = append(files, qsdevOpsFiles...)
 
-	// 11. Consulting workflow agents
+	// 12. Consulting workflow agents
 	agentFiles, err := deployAgents(answers)
 	if err != nil {
 		return nil, fmt.Errorf("generating consulting agents: %w", err)
 	}
 	files = append(files, agentFiles...)
 
-	// 12. Consulting workflow skills
+	// 13. Consulting workflow skills
 	workflowFiles, err := deployWorkflowSkills(answers, g.registry)
 	if err != nil {
 		return nil, fmt.Errorf("generating workflow skills: %w", err)
 	}
 	files = append(files, workflowFiles...)
 
-	// 13. qsdev reference doc
+	// 14. qsdev reference doc
 	refFile, err := GenerateQsdevReference(answers, g.registry)
 	if err != nil {
 		return nil, fmt.Errorf("generating qsdev reference: %w", err)
@@ -182,7 +177,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		files = append(files, *refFile)
 	}
 
-	// 14. AlwaysOn tool generation (semgrep, gitleaks, etc.)
+	// 15. AlwaysOn tool generation (semgrep, gitleaks, etc.)
 	reg := toolreg.DefaultRegistry()
 	alreadyHandled := map[string]bool{
 		"attach-guard":         true,

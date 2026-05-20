@@ -164,7 +164,7 @@ func (a *WizardAnswers) IsComplete() bool {
 	if len(a.Languages) == 0 {
 		return false
 	}
-	if a.ClaudeCode && a.PermissionLevel == "" {
+	if a.ClaudeCode && a.PermissionLevel == "" && a.Tier == "" {
 		return false
 	}
 	return true
@@ -206,8 +206,10 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 		}
 	}
 
-	// Default permission level.
-	if a.ClaudeCode && a.PermissionLevel == "" {
+	// Default permission level — only when Tier is not explicitly set.
+	// When Tier is set, the tier determines the permission preset; filling
+	// in "standard" here would mask the tier's intent.
+	if a.ClaudeCode && a.PermissionLevel == "" && a.Tier == "" {
 		a.PermissionLevel = "standard"
 	}
 

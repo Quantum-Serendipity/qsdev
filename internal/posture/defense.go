@@ -21,7 +21,7 @@ var DefenseLayerNames = [...]string{
 }
 
 // AssessDefenseLayers evaluates all 10 defense layers.
-func AssessDefenseLayers(enabledTools map[string]bool, detected types.DetectedProject, genState types.GeneratedState) DefenseCoverage {
+func AssessDefenseLayers(enabledTools map[string]bool, detected types.DetectedProject, genState types.GeneratedState, currentTier int) DefenseCoverage {
 	layers := []DefenseLayer{
 		assessPreToolUseHooks(enabledTools, genState),
 		assessAgeGating(enabledTools, genState),
@@ -35,7 +35,7 @@ func AssessDefenseLayers(enabledTools map[string]bool, detected types.DetectedPr
 		assessLicenseCompliance(enabledTools),
 	}
 
-	score := ComputeDefenseScore(layers)
+	score := ComputeTierRelativeDefenseScore(layers, currentTier)
 
 	enabled := 0
 	total := 0

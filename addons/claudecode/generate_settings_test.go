@@ -726,6 +726,106 @@ func TestGenerateSettings_NilRegistryHandledGracefully(t *testing.T) {
 	}
 }
 
+func TestGenerateSettings_TierDrivesPresetWhenPermissionLevelEmpty(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t)
+	answers := types.WizardAnswers{
+		ProjectRoot: "/tmp/test",
+		ProjectName: "test",
+		ClaudeCode:  true,
+		Tier:        "supply-chain-only",
+		Languages:   []types.LanguageChoice{{Name: "go"}},
+		Hooks:       types.HookChoices{SafetyBlock: true},
+	}
+	gf := mustGenerateSettings(t, answers, reg)
+	s := mustUnmarshalSettings(t, gf)
+
+	// When Tier is set and PermissionLevel is empty (FillDefaults doesn't
+	// fill it when Tier is present), the tier's default preset is used.
+	if s.Permissions.DefaultMode != "" {
+		t.Errorf("supply-chain-only should have no defaultMode, got %q", s.Permissions.DefaultMode)
+	}
+
+	// Supply chain deny rules should be present.
+	if !containsRule(s.Permissions.Deny, `Bash(npx *)`) {
+		t.Error("supply-chain-only tier should include supply chain deny rules")
+	}
+}
+
+func TestGenerateSettings_ExplicitPermissionLevelWithoutTier(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t)
+	answers := types.WizardAnswers{
+		ProjectRoot:     "/tmp/test",
+		ProjectName:     "test",
+		ClaudeCode:      true,
+		Tier:            "",
+		PermissionLevel: "minimal",
+		Languages:       []types.LanguageChoice{{Name: "go"}},
+		Hooks:           types.HookChoices{SafetyBlock: true},
+	}
+	gf := mustGenerateSettings(t, answers, reg)
+	s := mustUnmarshalSettings(t, gf)
+
+	// When Tier is empty, PermissionLevel should be used directly.
+	if s.Permissions.DefaultMode != "plan" {
+		t.Errorf("minimal preset should have defaultMode=plan, got %q", s.Permissions.DefaultMode)
+	}
+}
+
+func TestGenerateSettings_SupplyChainOnlyPreset(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t)
+	answers := types.WizardAnswers{
+		ProjectRoot:     "/tmp/test",
+		ProjectName:     "test",
+		ClaudeCode:      true,
+		PermissionLevel: "supply-chain-only",
+		Languages:       []types.LanguageChoice{{Name: "go"}},
+		Hooks:           types.HookChoices{SafetyBlock: true},
+	}
+	gf := mustGenerateSettings(t, answers, reg)
+	s := mustUnmarshalSettings(t, gf)
+
+	if len(s.Permissions.Allow) != 0 {
+		t.Errorf("supply-chain-only Allow should be empty, got %d rules", len(s.Permissions.Allow))
+	}
+
+	supplyChainRules := []string{
+		`Bash(npx *)`,
+		`Bash(nix-env -i *)`,
+		`Bash(curl * | bash *)`,
+		`Bash(bash -c *npm install*)`,
+	}
+	for _, rule := range supplyChainRules {
+		if !containsRule(s.Permissions.Deny, rule) {
+			t.Errorf("supply-chain-only Deny missing supply chain rule: %s", rule)
+		}
+	}
+
+	destructiveRules := []string{
+		`Bash(git push --force *)`,
+		`Bash(git reset --hard *)`,
+		`Bash(rm -rf *)`,
+	}
+	for _, rule := range destructiveRules {
+		if containsRule(s.Permissions.Deny, rule) {
+			t.Errorf("supply-chain-only Deny should NOT include destructive op: %s", rule)
+		}
+	}
+
+	if !containsRule(s.Permissions.Ask, `Bash(npm install *)`) {
+		t.Error("supply-chain-only Ask should include npm install rules")
+	}
+
+	if s.Permissions.DefaultMode != "" {
+		t.Errorf("supply-chain-only should have no defaultMode, got %q", s.Permissions.DefaultMode)
+	}
+	if s.Permissions.DisableBypassPermissionsMode != "" {
+		t.Errorf("supply-chain-only should have no disableBypass, got %q", s.Permissions.DisableBypassPermissionsMode)
+	}
+}
+
 // containsStr checks if s contains substr.
 func containsStr(s, substr string) bool {
 	return len(s) >= len(substr) && searchStr(s, substr)

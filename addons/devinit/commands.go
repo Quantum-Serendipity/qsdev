@@ -400,6 +400,7 @@ func flagSetToChangedMap(fs *FlagSet, cmd *cobra.Command) map[string]bool {
 		"git-hooks":          "git_hooks",
 		"packages":           "extra_packages",
 		"mcp":                "mcp_servers",
+		"tier":               "tier",
 		"infra-profile":      "profile_name",
 		"yes":                "confirmed",
 	}

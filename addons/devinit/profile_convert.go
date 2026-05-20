@@ -117,6 +117,9 @@ func MergeProfileWithFlags(base types.WizardAnswers, overrides types.WizardAnswe
 	if changed["confirmed"] {
 		result.Confirmed = overrides.Confirmed
 	}
+	if changed["tier"] {
+		result.Tier = overrides.Tier
+	}
 	if changed["agent_tools"] {
 		result.AgentTools = overrides.AgentTools
 	}

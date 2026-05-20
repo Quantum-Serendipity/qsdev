@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
+	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 )
 
 // SchemaVersion is the current version of the PostureReport schema.
@@ -31,7 +32,7 @@ const (
 
 // TierInfo describes the project's position in the progressive onboarding
 // tier system: supply-chain-only (T1), standard (T2), full (T3).
-type TierInfo struct {
+type ReportTierInfo struct {
 	Current  string `json:"current"`
 	Position int    `json:"position"`
 	Total    int    `json:"total"`
@@ -46,7 +47,7 @@ type PostureReport struct {
 	QsdevVersion  string            `json:"qsdevVersion"`
 	ProjectPath   string            `json:"projectPath"`
 	ProjectName   string            `json:"projectName"`
-	Tier          TierInfo          `json:"tier"`
+	Tier          ReportTierInfo    `json:"tier"`
 	Score         AggregateScore    `json:"score"`
 	Conformance   ConformanceResult `json:"conformance"`
 	Defense       DefenseCoverage   `json:"defense"`
@@ -163,16 +164,12 @@ type EcosystemStatus struct {
 
 // TierDescription returns a short description for a tier name.
 func TierDescription(name string) string {
-	switch name {
-	case "supply-chain-only":
-		return "Package supply chain security + devenv sandbox"
-	case "standard":
-		return "Supply chain deny rules + Claude Code governance"
-	case "full":
-		return "Full tooling: MCP, agent tools, consulting workflows"
-	default:
-		return ""
+	for _, t := range tier.AllTiers() {
+		if t.Name == name {
+			return t.Description
+		}
 	}
+	return ""
 }
 
 // ToolStatus describes the availability and configuration of a security tool.

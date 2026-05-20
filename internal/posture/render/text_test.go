@@ -190,7 +190,7 @@ func TestRenderText_DefaultTierLineShown(t *testing.T) {
 		ProjectName: "tier-test",
 		ProjectPath: "/tmp/test",
 		Score:       posture.AggregateScore{Total: 85, Grade: "B"},
-		Tier: posture.TierInfo{
+		Tier: posture.ReportTierInfo{
 			Current:  "standard",
 			Position: 2,
 			Total:    3,
@@ -267,7 +267,7 @@ func TestRenderText_DefaultTierFullNoNextTier(t *testing.T) {
 		ProjectName: "full-tier",
 		ProjectPath: "/tmp/test",
 		Score:       posture.AggregateScore{Total: 95, Grade: "A"},
-		Tier: posture.TierInfo{
+		Tier: posture.ReportTierInfo{
 			Current:  "full",
 			Position: 3,
 			Total:    3,
@@ -311,7 +311,7 @@ func TestRenderText_VerboseTierExpanded(t *testing.T) {
 		SchemaVersion: posture.SchemaVersion,
 		QsdevVersion:  "1.0.0",
 		Score:         posture.AggregateScore{Total: 85, Grade: "B"},
-		Tier: posture.TierInfo{
+		Tier: posture.ReportTierInfo{
 			Current:  "standard",
 			Position: 2,
 			Total:    3,
@@ -341,7 +341,7 @@ func TestRenderText_VerboseTierExpanded(t *testing.T) {
 	if !strings.Contains(output, "Next tier: full") {
 		t.Errorf("missing next tier line in verbose output:\n%s", output)
 	}
-	if !strings.Contains(output, "Full tooling: MCP, agent tools, consulting workflows") {
+	if !strings.Contains(output, "Full tooling: MCP servers, agent tools, consulting workflows, AlwaysOn tools") {
 		t.Errorf("missing tier description in verbose output:\n%s", output)
 	}
 	if !strings.Contains(output, "Upgrade: qsdev init --tier full --dry-run") {
@@ -358,7 +358,7 @@ func TestRenderText_VerboseTierFullNoUpgrade(t *testing.T) {
 		SchemaVersion: posture.SchemaVersion,
 		QsdevVersion:  "1.0.0",
 		Score:         posture.AggregateScore{Total: 95, Grade: "A"},
-		Tier: posture.TierInfo{
+		Tier: posture.ReportTierInfo{
 			Current:  "full",
 			Position: 3,
 			Total:    3,

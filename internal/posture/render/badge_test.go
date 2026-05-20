@@ -46,31 +46,31 @@ func TestRenderBadge_ScoreVariant(t *testing.T) {
 func TestRenderBadge_TierVariant(t *testing.T) {
 	tests := []struct {
 		name      string
-		tier      posture.TierInfo
+		tier      posture.ReportTierInfo
 		wantMsg   string
 		wantColor string
 	}{
 		{
 			name:      "supply-chain-only",
-			tier:      posture.TierInfo{Current: "supply-chain-only", Position: 1, Total: 3, NextTier: "standard"},
+			tier:      posture.ReportTierInfo{Current: "supply-chain-only", Position: 1, Total: 3, NextTier: "standard"},
 			wantMsg:   "supply-chain-only",
 			wantColor: "yellow",
 		},
 		{
 			name:      "standard",
-			tier:      posture.TierInfo{Current: "standard", Position: 2, Total: 3, NextTier: "full"},
+			tier:      posture.ReportTierInfo{Current: "standard", Position: 2, Total: 3, NextTier: "full"},
 			wantMsg:   "standard",
 			wantColor: "blue",
 		},
 		{
 			name:      "full",
-			tier:      posture.TierInfo{Current: "full", Position: 3, Total: 3},
+			tier:      posture.ReportTierInfo{Current: "full", Position: 3, Total: 3},
 			wantMsg:   "full",
 			wantColor: "brightgreen",
 		},
 		{
 			name:      "empty tier",
-			tier:      posture.TierInfo{},
+			tier:      posture.ReportTierInfo{},
 			wantMsg:   "unknown",
 			wantColor: "lightgrey",
 		},

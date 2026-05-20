@@ -102,7 +102,7 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 		}
 	}
 	nextTierName, _ := tier.NextTier(currentTierName)
-	report.Tier = TierInfo{
+	report.Tier = ReportTierInfo{
 		Current:  currentTierName,
 		Position: tier.Position(currentTierName),
 		Total:    tier.Total(),

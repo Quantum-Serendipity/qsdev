@@ -107,6 +107,18 @@ func Total() int {
 	return len(Order)
 }
 
+// Resolve determines the effective tier from an explicit tier string,
+// falling back to inference from legacy fields when the explicit tier
+// is not set or is invalid.
+func Resolve(tierStr string, permissionLevel string, mcpServers []string) Tier {
+	if tierStr != "" {
+		if t, err := ParseTier(tierStr); err == nil {
+			return t
+		}
+	}
+	return Infer(permissionLevel, mcpServers)
+}
+
 // Infer determines the most likely tier from legacy config fields that predate
 // the explicit tier field. Used for backward compatibility with existing
 // .qsdev.yaml files.

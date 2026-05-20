@@ -132,7 +132,7 @@ func TestRenderJSON_TierFieldPresent(t *testing.T) {
 	report := &posture.PostureReport{
 		SchemaVersion: posture.SchemaVersion,
 		ProjectName:   "tier-json-test",
-		Tier: posture.TierInfo{
+		Tier: posture.ReportTierInfo{
 			Current:  "standard",
 			Position: 2,
 			Total:    3,
@@ -186,7 +186,7 @@ func TestRenderJSON_TierFieldPresent(t *testing.T) {
 func TestRenderJSON_TierOmitsNextTierWhenEmpty(t *testing.T) {
 	report := &posture.PostureReport{
 		SchemaVersion: posture.SchemaVersion,
-		Tier: posture.TierInfo{
+		Tier: posture.ReportTierInfo{
 			Current:  "full",
 			Position: 3,
 			Total:    3,

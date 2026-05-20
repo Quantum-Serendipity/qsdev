@@ -293,6 +293,21 @@ func TestMergeProfileWithFlags_MultipleOverrides(t *testing.T) {
 	}
 }
 
+func TestMergeProfileWithFlags_TierOverride(t *testing.T) {
+	t.Parallel()
+	base := types.WizardAnswers{
+		Tier: "full",
+	}
+	overrides := types.WizardAnswers{
+		Tier: "standard",
+	}
+	changed := map[string]bool{"tier": true}
+	result := devinit.ExportMergeProfileWithFlags(base, overrides, changed)
+	if result.Tier != "standard" {
+		t.Errorf("Tier = %q, want %q", result.Tier, "standard")
+	}
+}
+
 func TestHooksFromStrings(t *testing.T) {
 	hc := devinit.ExportHooksFromStrings([]string{"auto-format", "audit-log"})
 

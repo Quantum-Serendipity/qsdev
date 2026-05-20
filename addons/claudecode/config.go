@@ -6,10 +6,11 @@ import "embed"
 type PermissionPreset string
 
 const (
-	PermissionPresetMinimal    PermissionPreset = "minimal"
-	PermissionPresetStandard   PermissionPreset = "standard"
-	PermissionPresetPermissive PermissionPreset = "permissive"
-	PermissionPresetCustom     PermissionPreset = "custom"
+	PermissionPresetMinimal         PermissionPreset = "minimal"
+	PermissionPresetStandard        PermissionPreset = "standard"
+	PermissionPresetPermissive      PermissionPreset = "permissive"
+	PermissionPresetCustom          PermissionPreset = "custom"
+	PermissionPresetSupplyChainOnly PermissionPreset = "supply-chain-only"
 )
 
 // HookConfig defines a Claude Code event hook.

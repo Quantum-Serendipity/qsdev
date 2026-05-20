@@ -15,6 +15,7 @@ type Profile struct {
 	Direnv          bool           `yaml:"direnv,omitempty"`
 	ClaudeCode      bool           `yaml:"claude_code,omitempty"`
 	PermissionLevel string         `yaml:"permission_level,omitempty"`
+	Tier            string         `yaml:"tier,omitempty"`
 	Skills          []string       `yaml:"skills,omitempty"`
 	Hooks           []string       `yaml:"hooks,omitempty"`
 	GitHooks        []string       `yaml:"git_hooks,omitempty"`

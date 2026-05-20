@@ -183,6 +183,215 @@ func TestRenderText_FixModeOnlyRemediation(t *testing.T) {
 	}
 }
 
+func TestRenderText_DefaultTierLineShown(t *testing.T) {
+	t.Parallel()
+
+	report := &posture.PostureReport{
+		ProjectName: "tier-test",
+		ProjectPath: "/tmp/test",
+		Score:       posture.AggregateScore{Total: 85, Grade: "B"},
+		Tier: posture.TierInfo{
+			Current:  "standard",
+			Position: 2,
+			Total:    3,
+			NextTier: "full",
+		},
+		Conformance: posture.ConformanceResult{
+			Baseline: posture.ConformanceLevel{Pass: true, Checks: []posture.ConformanceCheck{}},
+			Enhanced: posture.ConformanceLevel{Pass: true, Checks: []posture.ConformanceCheck{}},
+		},
+		Defense:      posture.DefenseCoverage{Layers: []posture.DefenseLayer{}},
+		Config:       posture.ConfigHealth{Files: []posture.ConfigFileInfo{}},
+		Dependencies: posture.DependencyHealth{},
+		Drift:        drift.Report{Categories: []drift.Category{}, BySeverity: make(map[drift.Severity]int)},
+	}
+
+	var buf bytes.Buffer
+	opts := Options{UseColor: false}
+	if err := RenderText(report, &buf, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	output := buf.String()
+
+	if !strings.Contains(output, "Tier: standard (2/3)") {
+		t.Errorf("missing tier line in default output:\n%s", output)
+	}
+	if !strings.Contains(output, "Next: qsdev init --tier full --dry-run") {
+		t.Errorf("missing next-tier hint in default output:\n%s", output)
+	}
+	// Footer should also have the upgrade hint.
+	if !strings.Contains(output, "Upgrade tier: qsdev init --tier full --dry-run") {
+		t.Errorf("missing upgrade tier footer hint:\n%s", output)
+	}
+}
+
+func TestRenderText_DefaultTierHiddenWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	report := &posture.PostureReport{
+		ProjectName: "no-tier",
+		ProjectPath: "/tmp/test",
+		Score:       posture.AggregateScore{Total: 85, Grade: "B"},
+		// Tier is zero value — Current is empty.
+		Conformance: posture.ConformanceResult{
+			Baseline: posture.ConformanceLevel{Pass: true, Checks: []posture.ConformanceCheck{}},
+			Enhanced: posture.ConformanceLevel{Pass: true, Checks: []posture.ConformanceCheck{}},
+		},
+		Defense:      posture.DefenseCoverage{Layers: []posture.DefenseLayer{}},
+		Config:       posture.ConfigHealth{Files: []posture.ConfigFileInfo{}},
+		Dependencies: posture.DependencyHealth{},
+		Drift:        drift.Report{Categories: []drift.Category{}, BySeverity: make(map[drift.Severity]int)},
+	}
+
+	var buf bytes.Buffer
+	opts := Options{UseColor: false}
+	if err := RenderText(report, &buf, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	output := buf.String()
+
+	if strings.Contains(output, "Tier:") {
+		t.Errorf("tier line should not appear when TierInfo.Current is empty:\n%s", output)
+	}
+	if strings.Contains(output, "Upgrade tier:") {
+		t.Errorf("upgrade tier footer should not appear when TierInfo.Current is empty:\n%s", output)
+	}
+}
+
+func TestRenderText_DefaultTierFullNoNextTier(t *testing.T) {
+	t.Parallel()
+
+	report := &posture.PostureReport{
+		ProjectName: "full-tier",
+		ProjectPath: "/tmp/test",
+		Score:       posture.AggregateScore{Total: 95, Grade: "A"},
+		Tier: posture.TierInfo{
+			Current:  "full",
+			Position: 3,
+			Total:    3,
+			// NextTier is empty — at max tier.
+		},
+		Conformance: posture.ConformanceResult{
+			Baseline: posture.ConformanceLevel{Pass: true, Checks: []posture.ConformanceCheck{}},
+			Enhanced: posture.ConformanceLevel{Pass: true, Checks: []posture.ConformanceCheck{}},
+		},
+		Defense:      posture.DefenseCoverage{Layers: []posture.DefenseLayer{}},
+		Config:       posture.ConfigHealth{Files: []posture.ConfigFileInfo{}},
+		Dependencies: posture.DependencyHealth{},
+		Drift:        drift.Report{Categories: []drift.Category{}, BySeverity: make(map[drift.Severity]int)},
+	}
+
+	var buf bytes.Buffer
+	opts := Options{UseColor: false}
+	if err := RenderText(report, &buf, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	output := buf.String()
+
+	if !strings.Contains(output, "Tier: full (3/3)") {
+		t.Errorf("missing tier line for full tier:\n%s", output)
+	}
+	if strings.Contains(output, "Next:") {
+		t.Errorf("full tier should not show Next hint:\n%s", output)
+	}
+	if strings.Contains(output, "Upgrade tier:") {
+		t.Errorf("full tier should not show upgrade footer:\n%s", output)
+	}
+}
+
+func TestRenderText_VerboseTierExpanded(t *testing.T) {
+	t.Parallel()
+
+	report := &posture.PostureReport{
+		ProjectName:   "verbose-tier",
+		ProjectPath:   "/tmp/test",
+		SchemaVersion: posture.SchemaVersion,
+		QsdevVersion:  "1.0.0",
+		Score:         posture.AggregateScore{Total: 85, Grade: "B"},
+		Tier: posture.TierInfo{
+			Current:  "standard",
+			Position: 2,
+			Total:    3,
+			NextTier: "full",
+		},
+		Conformance: posture.ConformanceResult{
+			Baseline: posture.ConformanceLevel{Pass: true, Checks: []posture.ConformanceCheck{}},
+			Enhanced: posture.ConformanceLevel{Pass: true, Checks: []posture.ConformanceCheck{}},
+		},
+		Defense:      posture.DefenseCoverage{Layers: []posture.DefenseLayer{}},
+		Config:       posture.ConfigHealth{Files: []posture.ConfigFileInfo{}},
+		Dependencies: posture.DependencyHealth{Ecosystems: []posture.EcosystemStatus{}},
+		Drift:        drift.Report{Categories: []drift.Category{}, BySeverity: make(map[drift.Severity]int)},
+	}
+
+	var buf bytes.Buffer
+	opts := Options{Verbose: true, UseColor: false}
+	if err := RenderText(report, &buf, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	output := buf.String()
+
+	if !strings.Contains(output, "Tier: standard (2/3)") {
+		t.Errorf("missing tier header in verbose output:\n%s", output)
+	}
+	if !strings.Contains(output, "Next tier: full") {
+		t.Errorf("missing next tier line in verbose output:\n%s", output)
+	}
+	if !strings.Contains(output, "Full tooling: MCP, agent tools, consulting workflows") {
+		t.Errorf("missing tier description in verbose output:\n%s", output)
+	}
+	if !strings.Contains(output, "Upgrade: qsdev init --tier full --dry-run") {
+		t.Errorf("missing upgrade command in verbose output:\n%s", output)
+	}
+}
+
+func TestRenderText_VerboseTierFullNoUpgrade(t *testing.T) {
+	t.Parallel()
+
+	report := &posture.PostureReport{
+		ProjectName:   "verbose-full",
+		ProjectPath:   "/tmp/test",
+		SchemaVersion: posture.SchemaVersion,
+		QsdevVersion:  "1.0.0",
+		Score:         posture.AggregateScore{Total: 95, Grade: "A"},
+		Tier: posture.TierInfo{
+			Current:  "full",
+			Position: 3,
+			Total:    3,
+		},
+		Conformance: posture.ConformanceResult{
+			Baseline: posture.ConformanceLevel{Pass: true, Checks: []posture.ConformanceCheck{}},
+			Enhanced: posture.ConformanceLevel{Pass: true, Checks: []posture.ConformanceCheck{}},
+		},
+		Defense:      posture.DefenseCoverage{Layers: []posture.DefenseLayer{}},
+		Config:       posture.ConfigHealth{Files: []posture.ConfigFileInfo{}},
+		Dependencies: posture.DependencyHealth{Ecosystems: []posture.EcosystemStatus{}},
+		Drift:        drift.Report{Categories: []drift.Category{}, BySeverity: make(map[drift.Severity]int)},
+	}
+
+	var buf bytes.Buffer
+	opts := Options{Verbose: true, UseColor: false}
+	if err := RenderText(report, &buf, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	output := buf.String()
+
+	if !strings.Contains(output, "Tier: full (3/3)") {
+		t.Errorf("missing tier line for full tier in verbose:\n%s", output)
+	}
+	if strings.Contains(output, "Next tier:") {
+		t.Errorf("full tier should not show next tier in verbose:\n%s", output)
+	}
+	if strings.Contains(output, "Upgrade:") {
+		t.Errorf("full tier should not show upgrade in verbose:\n%s", output)
+	}
+}
+
 func TestRenderText_DefaultWithNoColor(t *testing.T) {
 	report := &posture.PostureReport{
 		ProjectName: "test",

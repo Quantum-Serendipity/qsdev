@@ -43,6 +43,65 @@ func TestRenderBadge_ScoreVariant(t *testing.T) {
 	}
 }
 
+func TestRenderBadge_TierVariant(t *testing.T) {
+	tests := []struct {
+		name      string
+		tier      posture.TierInfo
+		wantMsg   string
+		wantColor string
+	}{
+		{
+			name:      "supply-chain-only",
+			tier:      posture.TierInfo{Current: "supply-chain-only", Position: 1, Total: 3, NextTier: "standard"},
+			wantMsg:   "supply-chain-only",
+			wantColor: "yellow",
+		},
+		{
+			name:      "standard",
+			tier:      posture.TierInfo{Current: "standard", Position: 2, Total: 3, NextTier: "full"},
+			wantMsg:   "standard",
+			wantColor: "blue",
+		},
+		{
+			name:      "full",
+			tier:      posture.TierInfo{Current: "full", Position: 3, Total: 3},
+			wantMsg:   "full",
+			wantColor: "brightgreen",
+		},
+		{
+			name:      "empty tier",
+			tier:      posture.TierInfo{},
+			wantMsg:   "unknown",
+			wantColor: "lightgrey",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			report := &posture.PostureReport{Tier: tt.tier}
+			data, err := RenderBadge(report, "tier")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			var badge BadgeJSON
+			if err := json.Unmarshal(data, &badge); err != nil {
+				t.Fatalf("invalid JSON: %v", err)
+			}
+
+			if badge.Label != "tier" {
+				t.Errorf("label = %q, want %q", badge.Label, "tier")
+			}
+			if badge.Message != tt.wantMsg {
+				t.Errorf("message = %q, want %q", badge.Message, tt.wantMsg)
+			}
+			if badge.Color != tt.wantColor {
+				t.Errorf("color = %q, want %q", badge.Color, tt.wantColor)
+			}
+		})
+	}
+}
+
 func TestRenderBadge_UnknownVariantError(t *testing.T) {
 	report := &posture.PostureReport{}
 
@@ -80,7 +139,7 @@ func TestRenderAllBadges(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	for _, name := range []string{"badge-score.json", "badge-conformance.json", "badge-defense.json"} {
+	for _, name := range []string{"badge-score.json", "badge-conformance.json", "badge-defense.json", "badge-tier.json"} {
 		path := filepath.Join(dir, name)
 		data, err := os.ReadFile(path)
 		if err != nil {

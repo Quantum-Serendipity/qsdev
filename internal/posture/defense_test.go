@@ -312,6 +312,50 @@ func TestAssessDefenseLayers_LayerCount(t *testing.T) {
 	}
 }
 
+func TestAssessDefenseLayers_MinTierValues(t *testing.T) {
+	t.Parallel()
+	result := AssessDefenseLayers(
+		map[string]bool{},
+		types.DetectedProject{},
+		types.GeneratedState{Files: map[string]types.FileState{}},
+	)
+
+	expectedMinTier := map[string]int{
+		"pretooluse-hooks":        1,
+		"install-script-blocking": 1,
+		"lock-file-enforcement":   1,
+		"vulnerability-scanning":  1,
+		"age-gating":              2,
+		"secrets-scanning":        2,
+		"sast":                    3,
+		"nix-hardening":           3,
+		"container-security":      3,
+		"license-compliance":      3,
+	}
+
+	for _, l := range result.Layers {
+		want, ok := expectedMinTier[l.Name]
+		if !ok {
+			t.Errorf("unexpected layer name %q", l.Name)
+			continue
+		}
+		if l.MinTier != want {
+			t.Errorf("layer %q: MinTier = %d, want %d", l.Name, l.MinTier, want)
+		}
+	}
+
+	// Verify all expected layers were found.
+	layerNames := make(map[string]bool)
+	for _, l := range result.Layers {
+		layerNames[l.Name] = true
+	}
+	for name := range expectedMinTier {
+		if !layerNames[name] {
+			t.Errorf("expected layer %q not found in results", name)
+		}
+	}
+}
+
 func TestAssessDefenseLayers_AgeGating(t *testing.T) {
 	detected := types.DetectedProject{}
 

@@ -13,6 +13,7 @@ func buildQsdevConfig(answers types.WizardAnswers, qsdevVersion string) types.Qs
 	cfg := types.QsdevConfig{
 		Version:      types.ConfigVersionCurrent,
 		QsdevVersion: qsdevVersion,
+		Tier:         answers.Tier,
 		Profile:      answers.ProfileName,
 	}
 

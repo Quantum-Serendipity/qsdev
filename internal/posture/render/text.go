@@ -46,6 +46,13 @@ func renderDefault(report *posture.PostureReport, w io.Writer, opts Options) err
 	// Header (always shown)
 	fmt.Fprintf(w, "Security Posture: %s (%s)\n", report.ProjectName, report.ProjectPath)
 	fmt.Fprintf(w, "Score: %d/100 (%s)\n", int(math.Round(report.Score.Total)), report.Score.Grade)
+	if report.Tier.Current != "" {
+		tierLine := fmt.Sprintf("Tier: %s (%d/%d)", report.Tier.Current, report.Tier.Position, report.Tier.Total)
+		if report.Tier.NextTier != "" {
+			tierLine += fmt.Sprintf(" | Next: qsdev init --tier %s --dry-run", report.Tier.NextTier)
+		}
+		fmt.Fprintln(w, tierLine)
+	}
 	fmt.Fprintln(w)
 
 	// Conformance (shown when no section filter or "conformance")
@@ -133,6 +140,9 @@ func renderDefault(report *posture.PostureReport, w io.Writer, opts Options) err
 	// Footer hint (only when showing full report)
 	if sec == "" {
 		fmt.Fprintf(w, "Run 'qsdev status --verbose' for details or 'qsdev status --fix' for remediation commands.\n")
+		if report.Tier.Current != "" && report.Tier.NextTier != "" {
+			fmt.Fprintf(w, "Upgrade tier: qsdev init --tier %s --dry-run\n", report.Tier.NextTier)
+		}
 	}
 	return nil
 }
@@ -149,6 +159,18 @@ func renderVerbose(report *posture.PostureReport, w io.Writer, opts Options) err
 		report.Score.Defense, report.Score.Config, report.Score.DepHealth)
 	fmt.Fprintf(w, "Schema: %s  Generated: %s  qsdev: %s\n",
 		report.SchemaVersion, report.GeneratedAt.Format("2006-01-02 15:04:05 UTC"), report.QsdevVersion)
+	if report.Tier.Current != "" {
+		fmt.Fprintf(w, "Tier: %s (%d/%d)\n", report.Tier.Current, report.Tier.Position, report.Tier.Total)
+		if report.Tier.NextTier != "" {
+			desc := posture.TierDescription(report.Tier.NextTier)
+			if desc != "" {
+				fmt.Fprintf(w, "  Next tier: %s — %s\n", report.Tier.NextTier, desc)
+			} else {
+				fmt.Fprintf(w, "  Next tier: %s\n", report.Tier.NextTier)
+			}
+			fmt.Fprintf(w, "  Upgrade: qsdev init --tier %s --dry-run\n", report.Tier.NextTier)
+		}
+	}
 	fmt.Fprintln(w)
 
 	// Conformance (detailed)

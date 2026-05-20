@@ -41,6 +41,35 @@ func ComputeDefenseScore(layers []DefenseLayer) float64 {
 	return (earnedWeight / totalWeight) * 100.0
 }
 
+// ComputeTierRelativeDefenseScore computes weighted defense coverage (0-100)
+// considering only layers whose MinTier <= currentTier. Layers above the
+// project's current tier are excluded from both numerator and denominator,
+// so a T1 project is not penalized for missing T3-only layers.
+// Not-applicable layers are also excluded.
+func ComputeTierRelativeDefenseScore(layers []DefenseLayer, currentTier int) float64 {
+	var totalWeight, earnedWeight float64
+	for _, l := range layers {
+		if l.MinTier > currentTier {
+			continue
+		}
+		if l.Status == LayerNotApplicable {
+			continue
+		}
+		w := WeightMultiplier(l.Weight)
+		totalWeight += w
+		switch l.Status {
+		case LayerEnabled:
+			earnedWeight += w
+		case LayerPartial:
+			earnedWeight += w * float64(l.Score) / 10.0
+		}
+	}
+	if totalWeight == 0 {
+		return 100.0
+	}
+	return (earnedWeight / totalWeight) * 100.0
+}
+
 // ComputeAggregateScore combines three layer scores with 40/30/30 weighting.
 func ComputeAggregateScore(defense, config, deps float64) AggregateScore {
 	total := defense*0.40 + config*0.30 + deps*0.30

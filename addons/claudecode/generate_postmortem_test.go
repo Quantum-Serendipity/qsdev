@@ -12,6 +12,7 @@ import (
 func TestGeneratePostmortemSkill_GoProject(t *testing.T) {
 	reg := newTestRegistry(t, goMock())
 	answers := types.WizardAnswers{
+		Tier:       "full",
 		Languages:  []types.LanguageChoice{{Name: "go"}},
 		AgentTools: types.AgentToolsAnswers{PostmortemEnabled: true},
 	}
@@ -49,6 +50,7 @@ func TestGeneratePostmortemSkill_GoProject(t *testing.T) {
 func TestGeneratePostmortemSkill_MultiLanguage(t *testing.T) {
 	reg := newTestRegistry(t, goMock(), jsMock())
 	answers := types.WizardAnswers{
+		Tier: "full",
 		Languages: []types.LanguageChoice{
 			{Name: "go"},
 			{Name: "javascript"},
@@ -106,6 +108,7 @@ func TestGeneratePostmortemSkill_Disabled(t *testing.T) {
 func TestGeneratePostmortemSkill_PreservesBaseSkillStructure(t *testing.T) {
 	reg := newTestRegistry(t, goMock())
 	answers := types.WizardAnswers{
+		Tier:       "full",
 		Languages:  []types.LanguageChoice{{Name: "go"}},
 		AgentTools: types.AgentToolsAnswers{PostmortemEnabled: true},
 	}
@@ -148,6 +151,7 @@ func TestGeneratePostmortemSkill_PreservesBaseSkillStructure(t *testing.T) {
 func TestGeneratePostmortemSkill_FileMetadata(t *testing.T) {
 	reg := newTestRegistry(t, goMock())
 	answers := types.WizardAnswers{
+		Tier:       "full",
 		Languages:  []types.LanguageChoice{{Name: "go"}},
 		AgentTools: types.AgentToolsAnswers{PostmortemEnabled: true},
 	}
@@ -175,6 +179,7 @@ func TestGeneratePostmortemSkill_FileMetadata(t *testing.T) {
 func TestGeneratePostmortemSkill_NoLanguages(t *testing.T) {
 	reg := newTestRegistry(t)
 	answers := types.WizardAnswers{
+		Tier:       "full",
 		AgentTools: types.AgentToolsAnswers{PostmortemEnabled: true},
 	}
 
@@ -211,6 +216,7 @@ func TestGeneratePostmortemSkill_PackageManagerAware(t *testing.T) {
 		},
 	})
 	answers := types.WizardAnswers{
+		Tier:       "full",
 		Languages:  []types.LanguageChoice{{Name: "javascript", PackageManager: "pnpm"}},
 		AgentTools: types.AgentToolsAnswers{PostmortemEnabled: true},
 	}

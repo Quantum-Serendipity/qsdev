@@ -64,6 +64,7 @@ type InitOptions struct {
 	Env               []string
 	NixHardeningGuide bool
 	InfraProfile      string
+	Tier              string
 
 	// Claude Code
 	ClaudeCode        bool
@@ -120,10 +121,11 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.Flags().StringSliceVar(&opts.Env, "env", nil, "Environment variables as KEY=VALUE pairs")
 	cmd.Flags().BoolVar(&opts.NixHardeningGuide, "nix-hardening-guide", false, "Generate Nix security hardening guide")
 	cmd.Flags().StringVar(&opts.InfraProfile, "infra-profile", "", "Infrastructure profile name (e.g. consulting-default)")
+	cmd.Flags().StringVar(&opts.Tier, "tier", "", "Security tier: supply-chain-only, standard, full (default: standard)")
 
 	// Claude Code flags.
 	cmd.Flags().BoolVar(&opts.ClaudeCode, "claude-code", true, "Enable Claude Code configuration")
-	cmd.Flags().StringVar(&opts.ClaudePermissions, "claude-permissions", "standard", "Permission preset (minimal, standard, permissive, custom)")
+	cmd.Flags().StringVar(&opts.ClaudePermissions, "claude-permissions", "standard", "Permission preset (supply-chain-only, minimal, standard, permissive, custom)")
 	cmd.Flags().StringSliceVar(&opts.ClaudeSkills, "claude-skills", nil, "Skills to install (e.g. deploy,review-pr)")
 	cmd.Flags().StringSliceVar(&opts.ClaudeHooks, "claude-hooks", nil, "Hook presets to enable (e.g. safety-block,auto-format)")
 	cmd.Flags().StringSliceVar(&opts.MCPServers, "mcp", nil, "MCP servers to configure (e.g. github,filesystem)")
@@ -145,6 +147,7 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.MarkFlagsMutuallyExclusive("update", "service")
 	cmd.MarkFlagsMutuallyExclusive("update", "profile")
 	cmd.MarkFlagsMutuallyExclusive("mode", "update")
+	cmd.MarkFlagsMutuallyExclusive("tier", "infra-profile")
 }
 
 // AnswersFromFlags converts flag values into WizardAnswers.
@@ -166,11 +169,11 @@ func AnswersFromFlags(opts InitOptions, projectRoot string) (types.WizardAnswers
 		Confirmed:         opts.Yes,
 		AgentTools: types.AgentToolsAnswers{
 			PostmortemEnabled:    opts.AgentPostmortem,
-			VersionSentinel:     opts.AgentVersionSentinel,
+			VersionSentinel:      opts.AgentVersionSentinel,
 			VersionSentinelHours: 24,
-			SembleEnabled:       opts.AgentSemble,
-			SembleMode:          opts.AgentSembleMode,
-			SembleTextFiles:     opts.AgentSembleTextFiles,
+			SembleEnabled:        opts.AgentSemble,
+			SembleMode:           opts.AgentSembleMode,
+			SembleTextFiles:      opts.AgentSembleTextFiles,
 		},
 	}
 
@@ -266,6 +269,10 @@ func AnswersFromFlags(opts InitOptions, projectRoot string) (types.WizardAnswers
 	// --profile is the project-type profile name.
 	if opts.ProfileName != "" {
 		answers.ProjectTypeProfile = opts.ProfileName
+	}
+
+	if opts.Tier != "" {
+		answers.Tier = opts.Tier
 	}
 
 	return answers, nil

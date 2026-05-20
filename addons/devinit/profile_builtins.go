@@ -12,6 +12,7 @@ var GoWeb = Profile{
 	Direnv:          true,
 	ClaudeCode:      true,
 	PermissionLevel: "standard",
+	Tier:            "full",
 	Skills:          []string{"deploy", "security-review"},
 	Hooks:           []string{"safety-block", "pre-commit"},
 }
@@ -28,6 +29,7 @@ var TSFullstack = Profile{
 	Direnv:          true,
 	ClaudeCode:      true,
 	PermissionLevel: "standard",
+	Tier:            "full",
 	Skills:          []string{"deploy", "security-review"},
 	Hooks:           []string{"auto-format", "safety-block", "pre-commit"},
 }
@@ -44,6 +46,7 @@ var PythonData = Profile{
 	Direnv:          true,
 	ClaudeCode:      true,
 	PermissionLevel: "minimal",
+	Tier:            "full",
 	Skills:          []string{"security-review"},
 	Hooks:           []string{"safety-block", "pre-commit"},
 }
@@ -60,6 +63,7 @@ var RustCLI = Profile{
 	Direnv:          true,
 	ClaudeCode:      true,
 	PermissionLevel: "minimal",
+	Tier:            "full",
 	Skills:          []string{"security-review"},
 	Hooks:           []string{"safety-block", "pre-commit"},
 }
@@ -76,6 +80,7 @@ var JavaWeb = Profile{
 	Direnv:          true,
 	ClaudeCode:      true,
 	PermissionLevel: "standard",
+	Tier:            "full",
 	Skills:          []string{"deploy", "security-review"},
 	Hooks:           []string{"safety-block", "pre-commit"},
 }
@@ -92,6 +97,7 @@ var PythonWeb = Profile{
 	Direnv:          true,
 	ClaudeCode:      true,
 	PermissionLevel: "standard",
+	Tier:            "full",
 	Skills:          []string{"deploy", "security-review"},
 	Hooks:           []string{"safety-block", "pre-commit"},
 }
@@ -108,6 +114,7 @@ var TSBackend = Profile{
 	Direnv:          true,
 	ClaudeCode:      true,
 	PermissionLevel: "standard",
+	Tier:            "full",
 	Skills:          []string{"deploy", "security-review"},
 	Hooks:           []string{"safety-block", "pre-commit"},
 }
@@ -124,6 +131,7 @@ var ElixirWeb = Profile{
 	Direnv:          true,
 	ClaudeCode:      true,
 	PermissionLevel: "standard",
+	Tier:            "full",
 	Skills:          []string{"deploy", "security-review"},
 	Hooks:           []string{"safety-block", "pre-commit"},
 }
@@ -140,6 +148,7 @@ var RustWeb = Profile{
 	Direnv:          true,
 	ClaudeCode:      true,
 	PermissionLevel: "standard",
+	Tier:            "full",
 	Skills:          []string{"deploy", "security-review"},
 	Hooks:           []string{"safety-block", "pre-commit"},
 }
@@ -156,6 +165,7 @@ var DotnetWeb = Profile{
 	Direnv:          true,
 	ClaudeCode:      true,
 	PermissionLevel: "standard",
+	Tier:            "full",
 	Skills:          []string{"deploy", "security-review"},
 	Hooks:           []string{"safety-block", "pre-commit"},
 }

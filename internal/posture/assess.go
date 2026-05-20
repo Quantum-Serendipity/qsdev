@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
+	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
@@ -58,7 +60,7 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 	report := &PostureReport{
 		SchemaVersion: SchemaVersion,
 		GeneratedAt:   time.Now().UTC(),
-		QsdevVersion:   qsdevVersion,
+		QsdevVersion:  qsdevVersion,
 		ProjectPath:   projectPath,
 		ProjectName:   projectName,
 		Score: AggregateScore{
@@ -87,6 +89,24 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 		},
 		Tools:      []ToolStatus{},
 		Ecosystems: []EcosystemStatus{},
+	}
+
+	// Determine progressive tier from config.
+	currentTierName := "standard"
+	configPath := filepath.Join(projectPath, branding.Get().ConfigFile)
+	if cfg, cfgErr := config.ParseQsdevConfig(configPath); cfgErr == nil {
+		if cfg.Tier != "" {
+			currentTierName = cfg.Tier
+		} else {
+			currentTierName = tier.Infer(cfg.ClaudeCode.PermissionLevel, cfg.ClaudeCode.MCPServers).String()
+		}
+	}
+	nextTierName, _ := tier.NextTier(currentTierName)
+	report.Tier = TierInfo{
+		Current:  currentTierName,
+		Position: tier.Position(currentTierName),
+		Total:    tier.Total(),
+		NextTier: nextTierName,
 	}
 
 	// Record any state loading errors as drift findings.

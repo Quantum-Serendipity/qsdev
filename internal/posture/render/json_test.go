@@ -128,6 +128,93 @@ func TestRenderJSON_TrailingNewline(t *testing.T) {
 	}
 }
 
+func TestRenderJSON_TierFieldPresent(t *testing.T) {
+	report := &posture.PostureReport{
+		SchemaVersion: posture.SchemaVersion,
+		ProjectName:   "tier-json-test",
+		Tier: posture.TierInfo{
+			Current:  "standard",
+			Position: 2,
+			Total:    3,
+			NextTier: "full",
+		},
+		Conformance: posture.ConformanceResult{
+			Baseline: posture.ConformanceLevel{Checks: []posture.ConformanceCheck{}},
+			Enhanced: posture.ConformanceLevel{Checks: []posture.ConformanceCheck{}},
+		},
+		Defense:      posture.DefenseCoverage{Layers: []posture.DefenseLayer{}},
+		Config:       posture.ConfigHealth{Files: []posture.ConfigFileInfo{}},
+		Dependencies: posture.DependencyHealth{Ecosystems: []posture.EcosystemStatus{}},
+		Drift:        drift.Report{Categories: []drift.Category{}, BySeverity: make(map[drift.Severity]int)},
+		Tools:        []posture.ToolStatus{},
+		Ecosystems:   []posture.EcosystemStatus{},
+	}
+
+	data, err := RenderJSON(report)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify tier fields are present.
+	jsonStr := string(data)
+	if !strings.Contains(jsonStr, `"current": "standard"`) {
+		t.Errorf("missing tier.current in JSON:\n%s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"position": 2`) {
+		t.Errorf("missing tier.position in JSON:\n%s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"nextTier": "full"`) {
+		t.Errorf("missing tier.nextTier in JSON:\n%s", jsonStr)
+	}
+
+	// Round-trip to verify deserialization.
+	var decoded posture.PostureReport
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	if decoded.Tier.Current != "standard" {
+		t.Errorf("Tier.Current = %q, want %q", decoded.Tier.Current, "standard")
+	}
+	if decoded.Tier.Position != 2 {
+		t.Errorf("Tier.Position = %d, want 2", decoded.Tier.Position)
+	}
+	if decoded.Tier.NextTier != "full" {
+		t.Errorf("Tier.NextTier = %q, want %q", decoded.Tier.NextTier, "full")
+	}
+}
+
+func TestRenderJSON_TierOmitsNextTierWhenEmpty(t *testing.T) {
+	report := &posture.PostureReport{
+		SchemaVersion: posture.SchemaVersion,
+		Tier: posture.TierInfo{
+			Current:  "full",
+			Position: 3,
+			Total:    3,
+			// NextTier is empty.
+		},
+		Conformance: posture.ConformanceResult{
+			Baseline: posture.ConformanceLevel{Checks: []posture.ConformanceCheck{}},
+			Enhanced: posture.ConformanceLevel{Checks: []posture.ConformanceCheck{}},
+		},
+		Defense:      posture.DefenseCoverage{Layers: []posture.DefenseLayer{}},
+		Config:       posture.ConfigHealth{Files: []posture.ConfigFileInfo{}},
+		Dependencies: posture.DependencyHealth{Ecosystems: []posture.EcosystemStatus{}},
+		Drift:        drift.Report{Categories: []drift.Category{}, BySeverity: make(map[drift.Severity]int)},
+		Tools:        []posture.ToolStatus{},
+		Ecosystems:   []posture.EcosystemStatus{},
+	}
+
+	data, err := RenderJSON(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// nextTier should be omitted when empty (omitempty).
+	if strings.Contains(string(data), `"nextTier"`) {
+		t.Errorf("nextTier should be omitted when empty:\n%s", string(data))
+	}
+}
+
 func TestRenderJSON_RoundTrip(t *testing.T) {
 	report := &posture.PostureReport{
 		SchemaVersion: posture.SchemaVersion,

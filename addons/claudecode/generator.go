@@ -3,9 +3,10 @@ package claudecode
 import (
 	"fmt"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -25,6 +26,17 @@ func NewClaudeCodeGenerator(registry *ecosystem.Registry, cfg Config) *ClaudeCod
 	return &ClaudeCodeGenerator{registry: registry, cfg: cfg}
 }
 
+// resolveTier determines the effective tier from wizard answers, falling back
+// to inference from legacy fields when the explicit tier is not set.
+func resolveTier(answers types.WizardAnswers) tier.Tier {
+	if answers.Tier != "" {
+		if t, err := tier.ParseTier(answers.Tier); err == nil {
+			return t
+		}
+	}
+	return tier.Infer(answers.PermissionLevel, answers.MCPServers)
+}
+
 // Generate produces the full set of generated files from wizard answers:
 //  1. .claude/settings.json — permission rules, deny rules, hooks
 //  2. CLAUDE.md             — project documentation for Claude
@@ -37,14 +49,27 @@ func NewClaudeCodeGenerator(registry *ecosystem.Registry, cfg Config) *ClaudeCod
 //  9. Semble sub-agent (.claude/agents/semble-search.md)
 func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 	var files []types.GeneratedFile
+	t := resolveTier(answers)
 
-	// 1. settings.json
+	// 1. settings.json — all tiers
 	settingsFile, err := GenerateSettings(answers, g.registry, g.cfg)
 	if err != nil {
 		return nil, fmt.Errorf("generating settings: %w", err)
 	}
 	if settingsFile != nil {
 		files = append(files, *settingsFile)
+	}
+
+	// 3. Hook files (package guard, audit log, etc.) — all tiers
+	hookFiles, err := GenerateHookFiles(answers)
+	if err != nil {
+		return nil, fmt.Errorf("generating hook files: %w", err)
+	}
+	files = append(files, hookFiles...)
+
+	// Gate 1: tier >= Standard for CLAUDE.md, skills, rules
+	if t < tier.Standard {
+		return files, nil
 	}
 
 	// 2. CLAUDE.md
@@ -56,12 +81,17 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		files = append(files, *claudeMdFile)
 	}
 
-	// 3. Hook files (package guard, audit log, etc.)
-	hookFiles, err := GenerateHookFiles(answers)
+	// 5. Rules
+	ruleFiles, err := deployRules(answers)
 	if err != nil {
-		return nil, fmt.Errorf("generating hook files: %w", err)
+		return nil, fmt.Errorf("generating rules: %w", err)
 	}
-	files = append(files, hookFiles...)
+	files = append(files, ruleFiles...)
+
+	// Gate 2: tier >= Full for MCP, agents, skills, workflows, AlwaysOn tools
+	if t < tier.Full {
+		return files, nil
+	}
 
 	// 4. Skills
 	skillFiles, err := deploySkills(answers)
@@ -69,13 +99,6 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		return nil, fmt.Errorf("generating skills: %w", err)
 	}
 	files = append(files, skillFiles...)
-
-	// 5. Rules
-	ruleFiles, err := deployRules(answers)
-	if err != nil {
-		return nil, fmt.Errorf("generating rules: %w", err)
-	}
-	files = append(files, ruleFiles...)
 
 	// 5b. Inject semble into MCP servers if enabled in MCP or both mode.
 	if answers.AgentTools.SembleEnabled && (answers.AgentTools.SembleMode == "mcp" || answers.AgentTools.SembleMode == "both" || answers.AgentTools.SembleMode == "") {
@@ -165,7 +188,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		"attach-guard":         true,
 		"agent-postmortem":     true,
 		"version-sentinel":     true,
-		"semble":              true,
+		"semble":               true,
 		"trail-of-bits-skills": true,
 	}
 	for _, tool := range reg.All() {

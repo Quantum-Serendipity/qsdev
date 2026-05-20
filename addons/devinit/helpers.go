@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -53,6 +54,15 @@ func postGenerationMessage(answers types.WizardAnswers, devenvGenerated, claudeG
 	fmt.Fprintln(&b, "Next steps:")
 	for _, step := range steps {
 		fmt.Fprintf(&b, "  - %s\n", step)
+	}
+
+	if answers.Tier != "" && answers.Tier != "full" {
+		pos := tier.Position(answers.Tier)
+		next, ok := tier.NextTier(answers.Tier)
+		if ok && pos > 0 {
+			fmt.Fprintf(&b, "\nSecurity tier: %s (%d/%d)\n", answers.Tier, pos, tier.Total())
+			fmt.Fprintf(&b, "  Tip: Run '%s init --tier %s --dry-run' to preview the next tier.\n", branding.Get().AppName, next)
+		}
 	}
 
 	return b.String()

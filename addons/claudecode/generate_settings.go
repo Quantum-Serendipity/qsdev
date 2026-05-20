@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -285,6 +285,17 @@ func AllBaseDenyRules() []string {
 
 func allBaseDenyRules() []string {
 	var rules []string
+	rules = append(rules, supplyChainDenyRules()...)
+	rules = append(rules, denyDestructiveOps...)
+	return rules
+}
+
+// supplyChainDenyRules returns deny rules that prevent supply chain attacks:
+// bypassing the package guard, running arbitrary remote code, using system
+// package managers outside the sandbox. Excludes workflow guardrails
+// (destructive git ops, rm -rf, .env reads).
+func supplyChainDenyRules() []string {
+	var rules []string
 	rules = append(rules, denyNpx...)
 	rules = append(rules, denyNix...)
 	rules = append(rules, denySystem...)
@@ -294,7 +305,6 @@ func allBaseDenyRules() []string {
 	rules = append(rules, denySudoPrefix...)
 	rules = append(rules, denySubprocessEscape...)
 	rules = append(rules, denyEvalXargs...)
-	rules = append(rules, denyDestructiveOps...)
 	return rules
 }
 
@@ -491,6 +501,14 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 		defaultMode = "default"
 		disableBypass = "disable"
 
+	case PermissionPresetSupplyChainOnly:
+		ask = append(ask, packageAskRules...)
+		return Permissions{
+			Allow: []string{},
+			Deny:  []string{},
+			Ask:   sliceutil.Dedup(ask),
+		}
+
 	case PermissionPresetCustom:
 		// Custom: allow only what's in ExtraAllowPatterns.
 		allow = append(allow, cfg.ExtraAllowPatterns...)
@@ -608,6 +626,9 @@ func GenerateSettings(answers types.WizardAnswers, registry *ecosystem.Registry,
 	// Override from wizard answers if set.
 	if answers.PermissionLevel != "" {
 		preset = PermissionPreset(answers.PermissionLevel)
+	} else if answers.Tier != "" {
+		t := resolveTier(answers)
+		preset = PermissionPreset(t.DefaultPermissionPreset())
 	}
 
 	settings := SettingsJSON{

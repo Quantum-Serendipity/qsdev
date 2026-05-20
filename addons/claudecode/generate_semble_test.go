@@ -32,6 +32,7 @@ func TestSemble_Disabled(t *testing.T) {
 func TestSemble_MCPMode(t *testing.T) {
 	reg := newTestRegistry(t, goMock())
 	answers := types.WizardAnswers{
+		Tier:       "full",
 		Languages:  []types.LanguageChoice{{Name: "go"}},
 		MCPServers: []string{"semble"},
 		AgentTools: types.AgentToolsAnswers{
@@ -80,6 +81,7 @@ func TestSemble_MCPMode(t *testing.T) {
 func TestSemble_SubAgentMode(t *testing.T) {
 	reg := newTestRegistry(t, goMock())
 	answers := types.WizardAnswers{
+		Tier:      "full",
 		Languages: []types.LanguageChoice{{Name: "go"}},
 		AgentTools: types.AgentToolsAnswers{
 			SembleEnabled: true,
@@ -110,6 +112,7 @@ func TestSemble_SubAgentMode(t *testing.T) {
 func TestSemble_BothMode(t *testing.T) {
 	reg := newTestRegistry(t, goMock())
 	answers := types.WizardAnswers{
+		Tier:       "full",
 		Languages:  []types.LanguageChoice{{Name: "go"}},
 		MCPServers: []string{"semble"},
 		AgentTools: types.AgentToolsAnswers{
@@ -144,6 +147,7 @@ func TestSemble_BothMode(t *testing.T) {
 func TestSemble_TextFilesFlag(t *testing.T) {
 	reg := newTestRegistry(t, goMock())
 	answers := types.WizardAnswers{
+		Tier:       "full",
 		Languages:  []types.LanguageChoice{{Name: "go"}},
 		MCPServers: []string{"semble"},
 		AgentTools: types.AgentToolsAnswers{

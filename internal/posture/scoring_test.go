@@ -144,8 +144,8 @@ func TestComputeDefenseScore_EmptyLayers(t *testing.T) {
 
 func TestComputeDefenseScore_MixedStatus(t *testing.T) {
 	layers := []DefenseLayer{
-		{Name: "a", Weight: WeightCritical, Status: LayerEnabled},  // 10/10
-		{Name: "b", Weight: WeightHigh, Status: LayerDisabled},     // 0/7.5
+		{Name: "a", Weight: WeightCritical, Status: LayerEnabled},     // 10/10
+		{Name: "b", Weight: WeightHigh, Status: LayerDisabled},        // 0/7.5
 		{Name: "c", Weight: WeightMedium, Status: LayerNotApplicable}, // excluded
 	}
 	// totalWeight = 10 + 7.5 = 17.5
@@ -345,5 +345,108 @@ func TestComputeDefenseScore_SinglePartialLayer(t *testing.T) {
 	got := ComputeDefenseScore(layers)
 	if got != 30.0 {
 		t.Errorf("single partial: got %f, want 30.0", got)
+	}
+}
+
+func TestComputeTierRelativeDefenseScore_T1NotPenalizedForT3(t *testing.T) {
+	t.Parallel()
+	// T1 user has all T1 layers enabled but T2/T3 layers disabled.
+	// The score should be 100 because T2/T3 layers are excluded.
+	layers := []DefenseLayer{
+		{Name: "pretooluse-hooks", Weight: WeightCritical, Status: LayerEnabled, MinTier: 1},
+		{Name: "install-script-blocking", Weight: WeightHigh, Status: LayerEnabled, MinTier: 1},
+		{Name: "lock-file-enforcement", Weight: WeightHigh, Status: LayerEnabled, MinTier: 1},
+		{Name: "vulnerability-scanning", Weight: WeightHigh, Status: LayerEnabled, MinTier: 1},
+		{Name: "age-gating", Weight: WeightHigh, Status: LayerDisabled, MinTier: 2},
+		{Name: "secrets-scanning", Weight: WeightMedium, Status: LayerDisabled, MinTier: 2},
+		{Name: "sast", Weight: WeightMedium, Status: LayerDisabled, MinTier: 3},
+		{Name: "nix-hardening", Weight: WeightMedium, Status: LayerDisabled, MinTier: 3},
+		{Name: "container-security", Weight: WeightMedium, Status: LayerDisabled, MinTier: 3},
+		{Name: "license-compliance", Weight: WeightLow, Status: LayerDisabled, MinTier: 3},
+	}
+
+	got := ComputeTierRelativeDefenseScore(layers, 1)
+	if got != 100.0 {
+		t.Errorf("T1 with all T1 layers enabled: got %f, want 100.0", got)
+	}
+}
+
+func TestComputeTierRelativeDefenseScore_T2IncludesT1AndT2(t *testing.T) {
+	t.Parallel()
+	layers := []DefenseLayer{
+		{Name: "pretooluse-hooks", Weight: WeightCritical, Status: LayerEnabled, MinTier: 1},
+		{Name: "install-script-blocking", Weight: WeightHigh, Status: LayerEnabled, MinTier: 1},
+		{Name: "age-gating", Weight: WeightHigh, Status: LayerDisabled, MinTier: 2},
+		{Name: "sast", Weight: WeightMedium, Status: LayerDisabled, MinTier: 3},
+	}
+
+	got := ComputeTierRelativeDefenseScore(layers, 2)
+	// T2 includes T1 (pretooluse + install-script) and T2 (age-gating).
+	// T3 (sast) excluded.
+	// totalWeight = 10 + 7.5 + 7.5 = 25
+	// earned = 10 + 7.5 + 0 = 17.5
+	// score = 17.5 / 25 * 100 = 70
+	if got != 70.0 {
+		t.Errorf("T2 mixed: got %f, want 70.0", got)
+	}
+}
+
+func TestComputeTierRelativeDefenseScore_T3IncludesAll(t *testing.T) {
+	t.Parallel()
+	layers := []DefenseLayer{
+		{Name: "pretooluse-hooks", Weight: WeightCritical, Status: LayerEnabled, MinTier: 1},
+		{Name: "sast", Weight: WeightMedium, Status: LayerEnabled, MinTier: 3},
+	}
+
+	got := ComputeTierRelativeDefenseScore(layers, 3)
+	if got != 100.0 {
+		t.Errorf("T3 all enabled: got %f, want 100.0", got)
+	}
+}
+
+func TestComputeTierRelativeDefenseScore_EmptyLayers(t *testing.T) {
+	t.Parallel()
+	got := ComputeTierRelativeDefenseScore(nil, 1)
+	if got != 100.0 {
+		t.Errorf("empty layers: got %f, want 100.0", got)
+	}
+}
+
+func TestComputeTierRelativeDefenseScore_AllAboveTier(t *testing.T) {
+	t.Parallel()
+	// All layers are T3, but user is T1 — nothing counts.
+	layers := []DefenseLayer{
+		{Name: "sast", Weight: WeightMedium, Status: LayerDisabled, MinTier: 3},
+		{Name: "nix-hardening", Weight: WeightMedium, Status: LayerDisabled, MinTier: 3},
+	}
+	got := ComputeTierRelativeDefenseScore(layers, 1)
+	if got != 100.0 {
+		t.Errorf("all above tier: got %f, want 100.0", got)
+	}
+}
+
+func TestComputeTierRelativeDefenseScore_NAExcluded(t *testing.T) {
+	t.Parallel()
+	layers := []DefenseLayer{
+		{Name: "pretooluse-hooks", Weight: WeightCritical, Status: LayerEnabled, MinTier: 1},
+		{Name: "container-security", Weight: WeightMedium, Status: LayerNotApplicable, MinTier: 3},
+	}
+	// At T3, container-security is in scope but NA, so excluded.
+	got := ComputeTierRelativeDefenseScore(layers, 3)
+	if got != 100.0 {
+		t.Errorf("NA excluded at T3: got %f, want 100.0", got)
+	}
+}
+
+func TestComputeTierRelativeDefenseScore_PartialScoring(t *testing.T) {
+	t.Parallel()
+	layers := []DefenseLayer{
+		{Name: "pretooluse-hooks", Weight: WeightCritical, Status: LayerPartial, Score: 5, MinTier: 1},
+	}
+	// totalWeight = 10, earned = 10 * 5/10 = 5
+	// score = 5/10 * 100 = 50
+	got := ComputeTierRelativeDefenseScore(layers, 1)
+	if got != 50.0 {
+		t.Errorf("partial scoring: got %f, want 50.0", got)
 	}
 }

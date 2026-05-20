@@ -29,6 +29,15 @@ const (
 	WeightLow      LayerWeight = "low"
 )
 
+// TierInfo describes the project's position in the progressive onboarding
+// tier system: supply-chain-only (T1), standard (T2), full (T3).
+type TierInfo struct {
+	Current  string `json:"current"`
+	Position int    `json:"position"`
+	Total    int    `json:"total"`
+	NextTier string `json:"nextTier,omitempty"`
+}
+
 // PostureReport is the top-level structure containing the complete security
 // posture assessment of a project.
 type PostureReport struct {
@@ -37,6 +46,7 @@ type PostureReport struct {
 	QsdevVersion  string            `json:"qsdevVersion"`
 	ProjectPath   string            `json:"projectPath"`
 	ProjectName   string            `json:"projectName"`
+	Tier          TierInfo          `json:"tier"`
 	Score         AggregateScore    `json:"score"`
 	Conformance   ConformanceResult `json:"conformance"`
 	Defense       DefenseCoverage   `json:"defense"`
@@ -92,6 +102,7 @@ type DefenseLayer struct {
 	Status  LayerStatus `json:"status"`
 	Weight  LayerWeight `json:"weight"`
 	Score   int         `json:"score"` // 0-10
+	MinTier int         `json:"minTier"`
 	Details string      `json:"details,omitempty"`
 	Reason  string      `json:"reason,omitempty"`
 }
@@ -148,6 +159,20 @@ type EcosystemStatus struct {
 	VulnCounts VulnSeverityCounts `json:"vulnCounts"`
 	AgeGate    string             `json:"ageGate,omitempty"`
 	LastScan   *time.Time         `json:"lastScan,omitempty"`
+}
+
+// TierDescription returns a short description for a tier name.
+func TierDescription(name string) string {
+	switch name {
+	case "supply-chain-only":
+		return "Package supply chain security + devenv sandbox"
+	case "standard":
+		return "Supply chain deny rules + Claude Code governance"
+	case "full":
+		return "Full tooling: MCP, agent tools, consulting workflows"
+	default:
+		return ""
+	}
 }
 
 // ToolStatus describes the availability and configuration of a security tool.

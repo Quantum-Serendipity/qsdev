@@ -1,18 +1,23 @@
 { pkgs, lib, config, ... }:
 {
-  nixpkgs.overlays = [
+  overlays = [
     (import ./nix/go-overlay.nix)
   ];
 
   # Base packages
   packages = [ pkgs.git pkgs.jq pkgs.curl pkgs.coreutils pkgs.uv pkgs.goreleaser pkgs.gopls pkgs.gotools pkgs.golangci-lint pkgs.delve ];
 
-  env.DEVENV_SECURITY_HARDENED = "true";
-  env.QSDEV_ECOSYSTEMS = "go";
-  env.QSDEV_PROJECT_NAME = "qsdev";
-  env.QSDEV_SECURITY_PROFILE = "standard";
-  env.QSDEV_TOOL_COUNT = "0";
-  env.QSDEV_VERSION = "v0.7.2-0.20260519133156-c2d91b273f5f+dirty";
+  env = {
+    DEVENV_SECURITY_HARDENED = "true";
+    QSDEV_ECOSYSTEMS = "go";
+    QSDEV_PROJECT_NAME = "qsdev";
+    QSDEV_SECURITY_PROFILE = "standard";
+    QSDEV_TOOL_COUNT = "0";
+    QSDEV_VERSION = "v0.7.2-0.20260519133156-c2d91b273f5f+dirty";
+    GOFLAGS = "-mod=readonly";
+    GONOSUMCHECK = "";
+    GONOSUMDB = "";
+  };
 
   # Credential-bearing variables stripped from the shell
   unsetEnvVars = [ "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN" "AWS_SECURITY_TOKEN" "AWS_DEFAULT_REGION" "GITHUB_TOKEN" "GH_TOKEN" "GITHUB_PAT" "GITLAB_TOKEN" "GL_TOKEN" "GOOGLE_APPLICATION_CREDENTIALS" "GCLOUD_PROJECT" "CLOUDSDK_CORE_PROJECT" "AZURE_CLIENT_ID" "AZURE_CLIENT_SECRET" "AZURE_TENANT_ID" "AZURE_SUBSCRIPTION_ID" "NPM_TOKEN" "PYPI_TOKEN" "DOCKER_PASSWORD" "DOCKER_AUTH_CONFIG" "CACHIX_AUTH_TOKEN" "DATABASE_URL" "DATABASE_PASSWORD" "PGPASSWORD" "MYSQL_PWD" "REDIS_PASSWORD" "VAULT_TOKEN" "SENTRY_DSN" "STRIPE_SECRET_KEY" "SENDGRID_API_KEY" "SLACK_TOKEN" "SLACK_WEBHOOK_URL" "API_KEY" "API_SECRET" "SECRET_KEY" "PRIVATE_KEY" "ENCRYPTION_KEY" ];
@@ -25,13 +30,6 @@
     enable = true;
     package = pkgs.go_1_26;
   };
-
-  # Enforce module-aware mode — prevents unvetted dependency additions
-  env.GOFLAGS = "-mod=readonly";
-  # Ensure all modules are verified via the Go checksum database
-  env.GONOSUMCHECK = "";
-  # Ensure all modules use the Go notary for transparency
-  env.GONOSUMDB = "";
 
   # Git hooks — managed by prek (devenv 1.11+ default hook runner).
   # Tiers: baseline (always-on), enhanced (language-aware), specialized (custom)
@@ -92,20 +90,32 @@
       enable = true;
       name = "Nix file secrets check";
       description = "Detect hardcoded secrets and credential patterns in .nix files";
-      entry = toString (pkgs.writeShellScript "nix-secrets-check" ''
-        ret=0
-        for f in "$@"; do
-          if ${pkgs.gnugrep}/bin/grep -nP 'env\.\w*(SECRET|TOKEN|PASSWORD|KEY|CREDENTIAL|API_KEY)\w*\s*=' "$f" 2>/dev/null; then
-            echo "ERROR: $f appears to set a secret via env.*"
-            ret=1
-          fi
-          if ${pkgs.gnugrep}/bin/grep -nP '(sk_live_|sk_test_|ghp_|gho_|glpat-|AKIA[A-Z0-9]{16})' "$f" 2>/dev/null; then
-            echo "ERROR: $f appears to contain a hardcoded credential"
-            ret=1
-          fi
-        done
-        exit $ret
-      '');
+      entry =
+        let
+          envPattern = "env\\.\\w*(SECRET|TOKEN|PASSWORD|KEY|CREDENTIAL|API_KEY)\\w*\\s*=";
+          # Fragments split so this source file doesn't match its own credential patterns
+          credPattern = "("
+            + "sk_" + "live_"
+            + "|sk_" + "test_"
+            + "|gh" + "p_"
+            + "|gh" + "o_"
+            + "|gl" + "pat-"
+            + "|AKIA[A-Z0-9]{16})";
+        in
+        toString (pkgs.writeShellScript "nix-secrets-check" ''
+          ret=0
+          for f in "$@"; do
+            if ${pkgs.gnugrep}/bin/grep -nP '${envPattern}' "$f" 2>/dev/null; then
+              echo "ERROR: $f appears to set a secret via env.*"
+              ret=1
+            fi
+            if ${pkgs.gnugrep}/bin/grep -nP '${credPattern}' "$f" 2>/dev/null; then
+              echo "ERROR: $f appears to contain a hardcoded credential"
+              ret=1
+            fi
+          done
+          exit $ret
+        '');
       language = "system";
       stages = [ "pre-commit" ];
       files = "\\.nix$";

@@ -52,7 +52,7 @@
       in
       {
         packages = rec {
-          qsdev = pkgs.buildGoModule.override { go = go; } {
+          qsdev = pkgs.buildGoModule.override { inherit go; } {
             pname = "qsdev";
             inherit version;
 

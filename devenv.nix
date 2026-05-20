@@ -5,7 +5,7 @@
   ];
 
   # Base packages
-  packages = [ pkgs.git pkgs.jq pkgs.curl pkgs.coreutils pkgs.uv pkgs.goreleaser pkgs.gopls pkgs.gotools pkgs.golangci-lint pkgs.delve ];
+  packages = [ pkgs.git pkgs.jq pkgs.curl pkgs.coreutils pkgs.uv pkgs.goreleaser pkgs.gopls pkgs.gotools pkgs.golangci-lint pkgs.delve pkgs.go-tools pkgs.govulncheck ];
 
   env = {
     DEVENV_SECURITY_HARDENED = "true";

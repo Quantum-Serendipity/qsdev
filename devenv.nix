@@ -5,7 +5,7 @@
   ];
 
   # Base packages
-  packages = [ pkgs.git pkgs.jq pkgs.curl pkgs.coreutils pkgs.go-tools pkgs.govulncheck pkgs.gopls pkgs.golangci-lint pkgs.delve pkgs.goreleaser pkgs.gitleaks pkgs.semgrep ];
+  packages = [ pkgs.git pkgs.jq pkgs.curl pkgs.coreutils pkgs.go-tools pkgs.govulncheck pkgs.gopls pkgs.golangci-lint pkgs.delve pkgs.goreleaser pkgs.gitleaks ] ++ [ (pkgs.writeShellScriptBin "semgrep" "exec -a osemgrep ''${pkgs.semgrep-core}/bin/semgrep-core --experimental \"$@\"") ];
   env = {
     DEVENV_SECURITY_HARDENED = "true";
     QSDEV_ECOSYSTEMS = "go";

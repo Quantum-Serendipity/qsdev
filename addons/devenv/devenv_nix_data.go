@@ -13,14 +13,22 @@ import (
 )
 
 // toolNixPackages maps enabled tool names to their Nix package attribute names.
+// Only lightweight binary tools belong here.
 var toolNixPackages = map[string]string{
-	"semgrep":  "semgrep",
 	"gitleaks": "gitleaks",
+}
+
+// toolNixExprs maps enabled tool names to raw Nix expressions that produce
+// a derivation. Used for tools that need wrappers instead of plain pkgs.NAME
+// (e.g. semgrep-core's osemgrep wrapper avoids the 734MB Python closure).
+var toolNixExprs = map[string]string{
+	"semgrep": `(pkgs.writeShellScriptBin "semgrep" "exec -a osemgrep ''${pkgs.semgrep-core}/bin/semgrep-core --experimental \"$@\"")`,
 }
 
 // DevenvNixTemplateData holds all data required to render the devenv.nix template.
 type DevenvNixTemplateData struct {
-	Packages          []string                   // Base + extra packages.
+	Packages          []string                   // Base + extra packages (rendered as pkgs.NAME).
+	PackageExprs      []string                   // Raw Nix expressions that produce derivations.
 	EnvVars           map[string]string          // Non-sensitive env vars (always includes DEVENV_SECURITY_HARDENED).
 	UnsetEnvVars      []string                   // Credential-bearing vars stripped from the shell.
 	LanguageFragments []LanguageFragment         // Pre-rendered Nix from ecosystem modules.
@@ -182,6 +190,9 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 		}
 		if nixPkg, ok := toolNixPackages[toolName]; ok {
 			data.Packages = append(data.Packages, nixPkg)
+		}
+		if expr, ok := toolNixExprs[toolName]; ok {
+			data.PackageExprs = append(data.PackageExprs, expr)
 		}
 	}
 

@@ -1,7 +1,7 @@
 { pkgs, lib, config, ... }:
 {
   # Base packages
-  packages = {{ nixPkgList .Packages }};
+  packages = {{ nixPkgList .Packages }}{{ range .PackageExprs }} ++ [ {{ . }} ]{{ end }};
   env = {
 {{- range $key, $val := .EnvVars}}
     {{ $key }} = {{ nixString $val }};

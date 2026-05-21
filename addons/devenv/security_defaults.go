@@ -51,14 +51,15 @@ func defaultSpecializedHooks() []CustomHookData {
 
 		switch def.ID {
 		case "lock-file-audit":
-			hook.Entry = fmt.Sprintf(`pkgs.writeShellScript "lock-audit" ''
-        %s
-      ''`, strings.TrimSpace(def.Entry))
+			hook.Entry = fmt.Sprintf("pkgs.writeShellScript \"lock-audit\" ''\n%s\n      ''",
+				indentBlock(strings.TrimSpace(def.Entry), "        "))
 			hook.RawEntry = true
+			hook.NeedsToString = true
 
 		case "nix-secrets-check":
 			hook.Entry = buildNixSecretsCheckEntry(def)
 			hook.RawEntry = true
+			hook.NeedsToString = true
 
 		default:
 			if def.Entry != "" {
@@ -74,22 +75,38 @@ func defaultSpecializedHooks() []CustomHookData {
 
 func buildNixSecretsCheckEntry(def catalog.CustomHookDef) string {
 	envPattern := def.EnvPattern
-	credPattern := "(" + strings.Join(def.CredentialPatterns, "|") + ")"
 
-	return fmt.Sprintf(`pkgs.writeShellScript "nix-secrets-check" ''
-        ret=0
-        for f in "$@"; do
-          if ${pkgs.gnugrep}/bin/grep -nP '%s' "$f" 2>/dev/null; then
-            echo "ERROR: $f appears to set a secret via env.*"
-            ret=1
-          fi
-          if ${pkgs.gnugrep}/bin/grep -nP '%s' "$f" 2>/dev/null; then
-            echo "ERROR: $f appears to contain a hardcoded credential"
-            ret=1
-          fi
-        done
-        exit $ret
-      ''`, envPattern, credPattern)
+	// Build credential pattern using Nix string concatenation so the
+	// generated devenv.nix doesn't contain literal credential prefixes
+	// that would trigger the hook's own scanner.
+	var nixFragments []string
+	for _, p := range def.CredentialPatterns {
+		mid := len(p) / 2
+		if mid == 0 {
+			mid = 1
+		}
+		nixFragments = append(nixFragments, fmt.Sprintf(`"%s" + "%s"`, p[:mid], p[mid:]))
+	}
+	credPatternExpr := `"(" + ` + strings.Join(nixFragments, ` + "|" + `) + ` + ")"`
+
+	return fmt.Sprintf(`let
+          envPattern = "%s";
+          credPattern = %s;
+        in
+        pkgs.writeShellScript "nix-secrets-check" ''
+          ret=0
+          for f in "$@"; do
+            if ${pkgs.gnugrep}/bin/grep -nP '${envPattern}' "$f" 2>/dev/null; then
+              echo "ERROR: $f appears to set a secret via env.*"
+              ret=1
+            fi
+            if ${pkgs.gnugrep}/bin/grep -nP '${credPattern}' "$f" 2>/dev/null; then
+              echo "ERROR: $f appears to contain a hardcoded credential"
+              ret=1
+            fi
+          done
+          exit $ret
+        ''`, envPattern, credPatternExpr)
 }
 
 // buildEnterShellScript returns the shell script body for devenv.nix enterShell.
@@ -175,4 +192,15 @@ test "${DEVENV_SECURITY_HARDENED:-}" = "true" || {
 echo "PASS: security-hardened flag present"
 
 echo "=== All security checks passed ==="`
+}
+
+// indentBlock prepends prefix to every line of text.
+func indentBlock(text, prefix string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if line != "" {
+			lines[i] = prefix + line
+		}
+	}
+	return strings.Join(lines, "\n")
 }

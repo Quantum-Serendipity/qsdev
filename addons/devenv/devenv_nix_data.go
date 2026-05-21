@@ -49,6 +49,7 @@ type CustomHookData struct {
 	Description   string
 	Entry         string
 	RawEntry      bool // When true, Entry is emitted as raw Nix (no double-quoting).
+	NeedsToString bool // When true, wrap Entry in toString() (for Nix derivations like writeShellScript).
 	Language      string
 	Types         []string
 	Stages        []string

@@ -6,17 +6,13 @@
 
   # Base packages
   packages = [ pkgs.git pkgs.jq pkgs.curl pkgs.coreutils pkgs.go-tools pkgs.govulncheck pkgs.gopls pkgs.golangci-lint pkgs.delve pkgs.goreleaser ];
-
   env = {
     DEVENV_SECURITY_HARDENED = "true";
     QSDEV_ECOSYSTEMS = "go";
     QSDEV_PROJECT_NAME = "qsdev";
     QSDEV_SECURITY_PROFILE = "enhanced";
     QSDEV_TOOL_COUNT = "3";
-    QSDEV_VERSION = "v0.7.2-0.20260521172213-ecef8dd81da4";
-    GOFLAGS = "-mod=readonly";
-    GONOSUMCHECK = "";
-    GONOSUMDB = "";
+    QSDEV_VERSION = "v0.7.2-0.20260521172746-c92db2ade5ac+dirty";
   };
 
   # Credential-bearing variables stripped from the shell
@@ -30,6 +26,13 @@
     enable = true;
     package = pkgs.go_1_26;
   };
+
+  # Enforce module-aware mode — prevents unvetted dependency additions
+  env.GOFLAGS = "-mod=readonly";
+  # Ensure all modules are verified via the Go checksum database
+  env.GONOSUMCHECK = "";
+  # Ensure all modules use the Go notary for transparency
+  env.GONOSUMDB = "";
 
   # Git hooks — managed by prek (devenv 1.11+ default hook runner).
   # Tiers: baseline (always-on), enhanced (language-aware), specialized (custom)
@@ -90,19 +93,11 @@
       enable = true;
       name = "Nix file secrets check";
       description = "Detect hardcoded secrets and credential patterns in .nix files";
-      entry =
-        let
-          envPattern = "env\\.\\w*(SECRET|TOKEN|PASSWORD|KEY|CREDENTIAL|API_KEY)\\w*\\s*=";
-          # Fragments split so this source file doesn't match its own credential patterns
-          credPattern = "("
-            + "sk_" + "live_"
-            + "|sk_" + "test_"
-            + "|gh" + "p_"
-            + "|gh" + "o_"
-            + "|gl" + "pat-"
-            + "|AKIA[A-Z0-9]{16})";
+      entry = toString (let
+          envPattern = "env\.\w*(SECRET|TOKEN|PASSWORD|KEY|CREDENTIAL|API_KEY)\w*\s*=";
+          credPattern = "(" + "sk_l" + "ive_" + "|" + "sk_t" + "est_" + "|" + "gh" + "p_" + "|" + "gh" + "o_" + "|" + "glp" + "at-" + "|" + "AKIA[A-Z" + "0-9]{16}" + ")";
         in
-        toString (pkgs.writeShellScript "nix-secrets-check" ''
+        pkgs.writeShellScript "nix-secrets-check" ''
           ret=0
           for f in "$@"; do
             if ${pkgs.gnugrep}/bin/grep -nP '${envPattern}' "$f" 2>/dev/null; then

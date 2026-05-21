@@ -294,8 +294,9 @@ func TestGenerateDevenvNix_ExtraPackagesAndEnvVars(t *testing.T) {
 	requireContains(t, content, "pkgs.ripgrep")
 	requireContains(t, content, "pkgs.fd")
 
-	// Custom env var.
-	requireContains(t, content, `env.EDITOR = "vim"`)
+	// Custom env var (inside env = { ... } block).
+	requireContains(t, content, `EDITOR = "vim"`)
+	requireContains(t, content, "env = {")
 }
 
 func TestGenerateDevenvNix_EnterShellEscaping(t *testing.T) {

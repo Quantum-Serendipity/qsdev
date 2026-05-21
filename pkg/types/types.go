@@ -206,6 +206,24 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 		}
 	}
 
+	// Merge detected versions into existing language entries that lack one.
+	for i := range a.Languages {
+		if a.Languages[i].Version != "" {
+			continue
+		}
+		switch a.Languages[i].Name {
+		case "go":
+			a.Languages[i].Version = detected.GoVersion
+		case "javascript":
+			a.Languages[i].Version = detected.NodeVersion
+			if a.Languages[i].PackageManager == "" {
+				a.Languages[i].PackageManager = detected.PackageManager
+			}
+		case "python":
+			a.Languages[i].Version = detected.PythonVersion
+		}
+	}
+
 	// Default permission level — only when Tier is not explicitly set.
 	// When Tier is set, the tier determines the permission preset; filling
 	// in "standard" here would mask the tier's intent.
@@ -240,5 +258,29 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 	// Default MCP servers when Claude Code is enabled and none are configured.
 	if a.ClaudeCode && len(a.MCPServers) == 0 {
 		a.MCPServers = append(a.MCPServers, "context7", "github", "socket", "semble")
+	}
+
+	// Derive ComplianceLevel from Tier when not explicitly set.
+	if a.ComplianceLevel == "" && a.Tier != "" {
+		switch a.Tier {
+		case "supply-chain-only":
+			a.ComplianceLevel = "baseline"
+		case "standard":
+			a.ComplianceLevel = "standard"
+		case "full":
+			a.ComplianceLevel = "enhanced"
+		}
+	}
+
+	// Derive EnabledTools from Tier when not explicitly set.
+	if a.EnabledTools == nil && a.Tier != "" {
+		switch a.Tier {
+		case "standard":
+			a.EnabledTools = map[string]bool{"gitleaks": true}
+		case "full":
+			a.EnabledTools = map[string]bool{
+				"semgrep": true, "gitleaks": true, "secretspec": true,
+			}
+		}
 	}
 }

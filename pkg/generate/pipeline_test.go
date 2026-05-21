@@ -436,3 +436,175 @@ func TestWriteFiles_FileSkipValidationFlag(t *testing.T) {
 		t.Errorf("Created = %d, want 1", result.Created)
 	}
 }
+
+func TestWriteFiles_SectionMarkerMergesExisting(t *testing.T) {
+	dir := t.TempDir()
+
+	existing := "# Header\n<!-- BEGIN GENERATED SECTION -->\nold content\n<!-- END GENERATED SECTION -->\n\n## Custom\nUser notes\n"
+	newGenerated := "# Header\n<!-- BEGIN GENERATED SECTION -->\nnew content\n<!-- END GENERATED SECTION -->\n\n## Custom Instructions\nDefault text\n"
+
+	existingPath := filepath.Join(dir, "CLAUDE.md")
+	if err := os.WriteFile(existingPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	files := []types.GeneratedFile{
+		{Path: "CLAUDE.md", Content: []byte(newGenerated), Strategy: types.SectionMarker},
+	}
+	result, err := generate.WriteFiles(files, generate.PipelineOptions{
+		ProjectRoot: dir,
+		SectionMergeFunc: func(existing, newGen []byte) ([]byte, error) {
+			// Simple splice: replace between markers, preserve rest.
+			beginMarker := []byte("<!-- BEGIN GENERATED SECTION -->")
+			endMarker := []byte("<!-- END GENERATED SECTION -->")
+
+			eBegin := indexOf(existing, beginMarker)
+			eEnd := indexOf(existing, endMarker)
+			nBegin := indexOf(newGen, beginMarker)
+			nEnd := indexOf(newGen, endMarker)
+			if eBegin < 0 || eEnd < 0 || nBegin < 0 || nEnd < 0 {
+				return nil, os.ErrNotExist
+			}
+			eEndLine := eEnd + len(endMarker)
+			if eEndLine < len(existing) && existing[eEndLine] == '\n' {
+				eEndLine++
+			}
+			nEndLine := nEnd + len(endMarker)
+			if nEndLine < len(newGen) && newGen[nEndLine] == '\n' {
+				nEndLine++
+			}
+
+			merged := make([]byte, 0, len(existing))
+			merged = append(merged, existing[:eBegin]...)
+			merged = append(merged, newGen[nBegin:nEndLine]...)
+			merged = append(merged, existing[eEndLine:]...)
+			return merged, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Updated != 1 {
+		t.Errorf("Updated = %d, want 1", result.Updated)
+	}
+
+	got, _ := os.ReadFile(existingPath)
+	gotStr := string(got)
+	if !strings.Contains(gotStr, "new content") {
+		t.Error("merged file should contain new generated content")
+	}
+	if !strings.Contains(gotStr, "User notes") {
+		t.Error("merged file should preserve user content outside markers")
+	}
+	if strings.Contains(gotStr, "old content") {
+		t.Error("merged file should not contain old generated content")
+	}
+}
+
+func TestWriteFiles_SectionMarkerNewFile(t *testing.T) {
+	dir := t.TempDir()
+
+	content := "<!-- BEGIN GENERATED SECTION -->\ncontent\n<!-- END GENERATED SECTION -->\n\n## Custom\nDefaults\n"
+	files := []types.GeneratedFile{
+		{Path: "NEW.md", Content: []byte(content), Strategy: types.SectionMarker},
+	}
+
+	mergeCallCount := 0
+	result, err := generate.WriteFiles(files, generate.PipelineOptions{
+		ProjectRoot: dir,
+		SectionMergeFunc: func(_, _ []byte) ([]byte, error) {
+			mergeCallCount++
+			return nil, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Created != 1 {
+		t.Errorf("Created = %d, want 1", result.Created)
+	}
+	if mergeCallCount != 0 {
+		t.Errorf("SectionMergeFunc called %d times for new file, want 0", mergeCallCount)
+	}
+
+	got, _ := os.ReadFile(filepath.Join(dir, "NEW.md"))
+	if string(got) != content {
+		t.Errorf("new file should have full template content")
+	}
+}
+
+func TestWriteFiles_SectionMarkerNilFunc(t *testing.T) {
+	dir := t.TempDir()
+
+	existing := "<!-- BEGIN GENERATED SECTION -->\nold\n<!-- END GENERATED SECTION -->\nUser stuff\n"
+	if err := os.WriteFile(filepath.Join(dir, "FILE.md"), []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent := "<!-- BEGIN GENERATED SECTION -->\nnew\n<!-- END GENERATED SECTION -->\nDefault\n"
+	files := []types.GeneratedFile{
+		{Path: "FILE.md", Content: []byte(newContent), Strategy: types.SectionMarker},
+	}
+	result, err := generate.WriteFiles(files, generate.PipelineOptions{
+		ProjectRoot:      dir,
+		SectionMergeFunc: nil,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Updated != 1 {
+		t.Errorf("Updated = %d, want 1", result.Updated)
+	}
+
+	got, _ := os.ReadFile(filepath.Join(dir, "FILE.md"))
+	if string(got) != newContent {
+		t.Error("with nil SectionMergeFunc, file should be fully overwritten")
+	}
+}
+
+func TestWriteFiles_SectionMarkerMergeError(t *testing.T) {
+	dir := t.TempDir()
+
+	existing := "no markers here\nUser content\n"
+	if err := os.WriteFile(filepath.Join(dir, "FILE.md"), []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent := "<!-- BEGIN GENERATED SECTION -->\nnew\n<!-- END GENERATED SECTION -->\nDefault\n"
+	files := []types.GeneratedFile{
+		{Path: "FILE.md", Content: []byte(newContent), Strategy: types.SectionMarker},
+	}
+	result, err := generate.WriteFiles(files, generate.PipelineOptions{
+		ProjectRoot: dir,
+		SectionMergeFunc: func(_, _ []byte) ([]byte, error) {
+			return nil, os.ErrNotExist
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Updated != 1 {
+		t.Errorf("Updated = %d, want 1", result.Updated)
+	}
+
+	got, _ := os.ReadFile(filepath.Join(dir, "FILE.md"))
+	if string(got) != newContent {
+		t.Error("on merge error, file should be fully overwritten (fallthrough)")
+	}
+}
+
+func indexOf(data, marker []byte) int {
+	for i := 0; i <= len(data)-len(marker); i++ {
+		match := true
+		for j := range marker {
+			if data[i+j] != marker[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
+}

@@ -155,9 +155,9 @@ func TestDevenvNixFragment_VersionMapping(t *testing.T) {
 	m := &golang.Module{}
 
 	tests := []struct {
-		name       string
-		version    string
-		wantPkg    string
+		name    string
+		version string
+		wantPkg string
 	}{
 		{"empty version uses latest", "", "package = pkgs.go;"},
 		{"major.minor maps correctly", "1.24", "package = pkgs.go_1_24;"},
@@ -365,6 +365,27 @@ func TestWizardFields(t *testing.T) {
 	}
 	if f.Type != ecosystem.FieldTypeInput {
 		t.Errorf("Type = %v, want FieldTypeInput", f.Type)
+	}
+}
+
+func TestDevenvPackages(t *testing.T) {
+	t.Parallel()
+	var m ecosystem.EcosystemModule = &golang.Module{}
+	pp, ok := m.(ecosystem.PackageProvider)
+	if !ok {
+		t.Fatal("Go module does not implement PackageProvider")
+	}
+	pkgs := pp.DevenvPackages(ecosystem.ModuleConfig{})
+
+	want := map[string]bool{"gopls": true, "golangci-lint": true, "delve": true, "goreleaser": true}
+	got := make(map[string]bool, len(pkgs))
+	for _, p := range pkgs {
+		got[p] = true
+	}
+	for name := range want {
+		if !got[name] {
+			t.Errorf("DevenvPackages() missing %q; got %v", name, pkgs)
+		}
 	}
 }
 

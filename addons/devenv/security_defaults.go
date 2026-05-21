@@ -29,7 +29,6 @@ var defaultBasePackages = []string{
 	"jq",
 	"curl",
 	"coreutils",
-	"uv",
 }
 
 // defaultCleanKeep is the allowlist of environment variables that pass through
@@ -108,7 +107,7 @@ func defaultSpecializedHooks() []CustomHookData {
 // buildEnterShellScript returns the shell script body for devenv.nix enterShell.
 // This runs on every shell entry and provides security posture awareness.
 // Shell variable references use ${VAR} syntax; the caller applies nixMultiline
-// escaping before embedding in a Nix '' ... '' string.
+// escaping before embedding in a Nix ” ... ” string.
 func buildEnterShellScript() string {
 	prefix := branding.Get().EnvPrefix
 	return fmt.Sprintf(`echo ""

@@ -5,7 +5,7 @@
   ];
 
   # Base packages
-  packages = [ pkgs.git pkgs.jq pkgs.curl pkgs.coreutils pkgs.goreleaser pkgs.gopls pkgs.gotools pkgs.golangci-lint pkgs.delve pkgs.go-tools pkgs.govulncheck ];
+  packages = [ pkgs.git pkgs.jq pkgs.curl pkgs.coreutils pkgs.go-tools pkgs.govulncheck pkgs.gopls pkgs.golangci-lint pkgs.delve pkgs.goreleaser ];
 
   env = {
     DEVENV_SECURITY_HARDENED = "true";
@@ -13,7 +13,7 @@
     QSDEV_PROJECT_NAME = "qsdev";
     QSDEV_SECURITY_PROFILE = "enhanced";
     QSDEV_TOOL_COUNT = "3";
-    QSDEV_VERSION = "dev";
+    QSDEV_VERSION = "v0.7.2-0.20260521172213-ecef8dd81da4";
     GOFLAGS = "-mod=readonly";
     GONOSUMCHECK = "";
     GONOSUMDB = "";
@@ -137,6 +137,10 @@
     }
     qsdev-format() {
       gofmt -l .
+    }
+    qsdev-security-scan() {
+      semgrep --config auto --error .
+      gitleaks detect --no-banner
     }
 
     echo ""

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -417,11 +418,14 @@ func pmInstallArgs(pm pkgmanager.PackageManager, pkg string) []string {
 
 // installNix installs Nix using the Determinate Systems installer.
 func installNix(ctx context.Context, w io.Writer) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
 	cmd := exec.CommandContext(ctx, "sh", "-c",
 		"curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install --no-confirm")
+	cmd.WaitDelay = 10 * time.Second
 	cmd.Stdout = w
 	cmd.Stderr = w
-	cmd.Stdin = os.Stdin
 	return cmd.Run()
 }
 

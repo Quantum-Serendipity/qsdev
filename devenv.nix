@@ -17,7 +17,7 @@
     QSDEV_PROJECT_NAME = "qsdev";
     QSDEV_SECURITY_PROFILE = "enhanced";
     QSDEV_TOOL_COUNT = "22";
-    QSDEV_VERSION = "v0.7.2-0.20260521215209-a7a115d5abe4+dirty";
+    QSDEV_VERSION = "v0.7.2-0.20260521220409-c97fcb68bdaa";
   };
 
   # Credential-bearing variables stripped from the shell

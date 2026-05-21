@@ -1,7 +1,7 @@
 tier_to_compliance:
   supply-chain-only: baseline
-  standard: standard
-  full: enhanced
+  standard: enhanced
+  full: strict
 
 tier_to_enabled_tools:
   supply-chain-only: []

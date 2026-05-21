@@ -104,21 +104,35 @@ func (c *Catalog) validateProfiles() []CatalogError {
 func (c *Catalog) validateDerivations() []CatalogError {
 	var errs []CatalogError
 
-	for tierName := range c.derivations.TierToCompliance {
+	for tierName, complianceName := range c.derivations.TierToCompliance {
 		if _, ok := c.tiers.Tiers[tierName]; !ok {
 			errs = append(errs, CatalogError{
 				"derivations.yaml", "tier_to_compliance",
 				fmt.Sprintf("references unknown tier %q", tierName),
 			})
 		}
+		if _, ok := c.compliance.Levels[complianceName]; !ok {
+			errs = append(errs, CatalogError{
+				"derivations.yaml", "tier_to_compliance",
+				fmt.Sprintf("tier %q maps to unknown compliance level %q", tierName, complianceName),
+			})
+		}
 	}
 
-	for tierName := range c.derivations.TierToEnabledTools {
+	for tierName, tools := range c.derivations.TierToEnabledTools {
 		if _, ok := c.tiers.Tiers[tierName]; !ok {
 			errs = append(errs, CatalogError{
 				"derivations.yaml", "tier_to_enabled_tools",
 				fmt.Sprintf("references unknown tier %q", tierName),
 			})
+		}
+		for _, toolName := range tools {
+			if _, ok := c.tools.Tools[toolName]; !ok {
+				errs = append(errs, CatalogError{
+					"derivations.yaml", "tier_to_enabled_tools",
+					fmt.Sprintf("tier %q references unknown tool %q", tierName, toolName),
+				})
+			}
 		}
 	}
 

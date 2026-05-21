@@ -486,8 +486,8 @@ func TestTierToCompliance(t *testing.T) {
 		compliance string
 	}{
 		{"supply-chain-only", "baseline"},
-		{"standard", "standard"},
-		{"full", "enhanced"},
+		{"standard", "enhanced"},
+		{"full", "strict"},
 	}
 	for _, tt := range tests {
 		if m[tt.tier] != tt.compliance {
@@ -548,6 +548,27 @@ func TestDefaultAgentToolConfig(t *testing.T) {
 	}
 	if cfg.SembleMode != "both" {
 		t.Errorf("semble_mode = %q, want both", cfg.SembleMode)
+	}
+}
+
+func TestDerivations_CrossReferenceIntegrity(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+
+	complianceLevels := cat.ComplianceLevels()
+	for tier, level := range cat.TierToCompliance() {
+		if _, ok := complianceLevels[level]; !ok {
+			t.Errorf("tier_to_compliance: tier %q maps to unknown compliance level %q", tier, level)
+		}
+	}
+
+	tools := cat.Tools()
+	for tier, toolNames := range cat.TierToEnabledTools() {
+		for _, toolName := range toolNames {
+			if _, ok := tools[toolName]; !ok {
+				t.Errorf("tier_to_enabled_tools: tier %q references unknown tool %q", tier, toolName)
+			}
+		}
 	}
 }
 

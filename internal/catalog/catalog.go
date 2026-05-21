@@ -20,16 +20,32 @@ type Catalog struct {
 }
 
 var (
-	defaultOnce sync.Once
-	defaultCat  *Catalog
+	defaultOnce    sync.Once
+	defaultCat     *Catalog
+	projectRootDir string
 )
 
+// SetProjectRoot configures the project-level override path.
+// Must be called before Default() is first accessed.
+func SetProjectRoot(root string) {
+	projectRootDir = root
+}
+
 // Default returns the lazily-initialized global catalog loaded from
-// embedded defaults. It panics if loading fails.
+// embedded defaults, with optional org and project overrides.
 func Default() *Catalog {
 	defaultOnce.Do(func() {
+		var opts []LoadOption
+
+		if orgDir := OrgConfigDir(); orgDir != "" {
+			opts = append(opts, WithOrgConfig(orgDir))
+		}
+		if projDir := ProjectConfigDir(projectRootDir); projDir != "" {
+			opts = append(opts, WithProjectConfig(projDir))
+		}
+
 		var err error
-		defaultCat, err = Load()
+		defaultCat, err = Load(opts...)
 		if err != nil {
 			panic(fmt.Sprintf("catalog: failed to load: %v", err))
 		}
@@ -42,6 +58,7 @@ func Default() *Catalog {
 func ResetDefault() {
 	defaultOnce = sync.Once{}
 	defaultCat = nil
+	projectRootDir = ""
 }
 
 // --- Tier accessors ---

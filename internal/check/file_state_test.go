@@ -106,6 +106,47 @@ func TestCheckFileState_ModifiedFile(t *testing.T) {
 	}
 }
 
+func TestCheckFileState_ModifiedUserEditableStrategy(t *testing.T) {
+	strategies := []types.MergeStrategy{
+		types.ManualMerge,
+		types.SectionMarker,
+		types.ThreeWayMerge,
+	}
+
+	for _, strat := range strategies {
+		t.Run(strat.String(), func(t *testing.T) {
+			dir := t.TempDir()
+
+			originalContent := []byte("original")
+			testFile := filepath.Join(dir, "test.txt")
+			if err := os.WriteFile(testFile, originalContent, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			genState := state.RecordFiles([]types.GeneratedFile{
+				{Path: "test.txt", Content: originalContent, Mode: 0o644, Strategy: strat},
+			})
+
+			if err := os.WriteFile(testFile, []byte("modified by user"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			stateFile := filepath.Join(dir, ".devinit", ".qsdev-init-state.yaml")
+			if err := state.SaveStateToFile(stateFile, genState); err != nil {
+				t.Fatal(err)
+			}
+
+			results := checkGeneratedFiles(CheckContext{ProjectRoot: dir, StateFile: stateFile})
+
+			for _, r := range results {
+				if r.Status == StatusFail {
+					t.Errorf("strategy %s: should not fail for user-editable file, got: %s", strat, r.Message)
+				}
+			}
+		})
+	}
+}
+
 func TestCheckFileState_DeletedFile(t *testing.T) {
 	dir := t.TempDir()
 

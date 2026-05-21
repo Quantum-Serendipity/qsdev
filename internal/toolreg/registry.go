@@ -2,6 +2,7 @@ package toolreg
 
 import (
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 )
@@ -128,6 +129,7 @@ func (r *Registry) AttachBehavior(name string, b ToolBehavior) {
 
 	t, ok := r.tools[name]
 	if !ok {
+		slog.Warn("AttachBehavior called for unknown tool", "tool", name)
 		return
 	}
 	if b.EnableFunc != nil {

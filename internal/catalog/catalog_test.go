@@ -2,6 +2,8 @@ package catalog
 
 import (
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 )
 
 func loadTestCatalog(t *testing.T) *Catalog {
@@ -680,6 +682,23 @@ func TestContract_ProfileAliases(t *testing.T) {
 	}
 	if aliases["consulting-default"] != "full" {
 		t.Error("BACKWARD COMPAT: alias consulting-default must resolve to full")
+	}
+}
+
+func TestUnsetVars_SupersetOfKnownCredentialVars(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+	unsetVars := cat.UnsetVars()
+
+	unsetSet := make(map[string]bool, len(unsetVars))
+	for _, v := range unsetVars {
+		unsetSet[v] = true
+	}
+
+	for _, v := range secrets.KnownCredentialVars {
+		if !unsetSet[v] {
+			t.Errorf("secrets.KnownCredentialVars contains %q but security.yaml unset_vars does not", v)
+		}
 	}
 }
 

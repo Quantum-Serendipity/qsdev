@@ -1,7 +1,9 @@
 package catalog
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"sync"
 )
 
@@ -73,11 +75,9 @@ func (c *Catalog) TierOrder() []string {
 	for name, def := range c.tiers.Tiers {
 		items = append(items, kv{name, def.Order})
 	}
-	for i := 1; i < len(items); i++ {
-		for j := i; j > 0 && items[j].order < items[j-1].order; j-- {
-			items[j], items[j-1] = items[j-1], items[j]
-		}
-	}
+	slices.SortFunc(items, func(a, b kv) int {
+		return cmp.Compare(a.order, b.order)
+	})
 	result := make([]string, len(items))
 	for i, item := range items {
 		result[i] = item.name

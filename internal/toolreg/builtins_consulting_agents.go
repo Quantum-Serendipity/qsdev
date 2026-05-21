@@ -10,18 +10,18 @@ func init() {
 		"incident-debugger",
 	} {
 		toolName := "consulting-agent-" + name
-		n := toolName
-		r.AttachBehavior(n, ToolBehavior{
+		r.AttachBehavior(toolName, ToolBehavior{
 			EnableFunc: func(a *types.WizardAnswers) {
 				if a.EnabledTools == nil {
 					a.EnabledTools = make(map[string]bool)
 				}
-				a.EnabledTools[n] = true
+				a.EnabledTools[toolName] = true
 			},
 			DisableFunc: func(a *types.WizardAnswers) {
-				if a.EnabledTools != nil {
-					a.EnabledTools[n] = false
+				if a.EnabledTools == nil {
+					a.EnabledTools = make(map[string]bool)
 				}
+				a.EnabledTools[toolName] = false
 			},
 		})
 	}

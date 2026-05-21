@@ -5,7 +5,7 @@ import (
 )
 
 func TestComplianceLevel_BaselineMappings(t *testing.T) {
-	p := ComplianceLevels["baseline"]
+	p := GetComplianceLevels()["baseline"]
 	if p.AgeGatingThresholdHours != 72 {
 		t.Errorf("expected 72h age-gating, got %d", p.AgeGatingThresholdHours)
 	}
@@ -24,7 +24,7 @@ func TestComplianceLevel_BaselineMappings(t *testing.T) {
 }
 
 func TestComplianceLevel_EnhancedMappings(t *testing.T) {
-	p := ComplianceLevels["enhanced"]
+	p := GetComplianceLevels()["enhanced"]
 	if p.AgeGatingThresholdHours != 168 {
 		t.Errorf("expected 168h age-gating, got %d", p.AgeGatingThresholdHours)
 	}
@@ -37,7 +37,7 @@ func TestComplianceLevel_EnhancedMappings(t *testing.T) {
 }
 
 func TestComplianceLevel_StrictMappings(t *testing.T) {
-	p := ComplianceLevels["strict"]
+	p := GetComplianceLevels()["strict"]
 	if p.AgeGatingThresholdHours != 336 {
 		t.Errorf("expected 336h age-gating, got %d", p.AgeGatingThresholdHours)
 	}

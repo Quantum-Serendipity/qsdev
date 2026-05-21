@@ -39,9 +39,11 @@ var complianceLevelOrder = map[string]ComplianceLevel{
 	"strict":   ComplianceLevelStrict,
 }
 
-// ComplianceLevels maps compliance level names to their profiles.
+// GetComplianceLevels returns compliance level profiles.
 // Backed by internal/catalog/defaults/compliance.yaml.
-var ComplianceLevels = buildComplianceLevels()
+func GetComplianceLevels() map[string]ComplianceProfile {
+	return buildComplianceLevels()
+}
 
 func buildComplianceLevels() map[string]ComplianceProfile {
 	cat := catalog.Default()
@@ -91,7 +93,7 @@ func CompareComplianceLevels(a, b string) int {
 // ComplianceLevelToConfig converts a compliance level name to a QsdevConfig
 // overlay suitable for merging into the resolution chain.
 func ComplianceLevelToConfig(level string) *types.QsdevConfig {
-	profile, ok := ComplianceLevels[level]
+	profile, ok := GetComplianceLevels()[level]
 	if !ok {
 		return nil
 	}

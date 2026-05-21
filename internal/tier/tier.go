@@ -24,10 +24,6 @@ type TierInfo struct {
 	Description string
 }
 
-// Order is the canonical tier ordering from lowest to highest.
-// Backed by internal/catalog/defaults/tiers.yaml.
-var Order = catalog.Default().TierOrder()
-
 // ParseTier converts a string to a Tier. Returns an error for unknown values.
 func ParseTier(s string) (Tier, error) {
 	defs := catalog.Default().TierDefs()

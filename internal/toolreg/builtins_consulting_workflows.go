@@ -19,18 +19,18 @@ func init() {
 	r := DefaultRegistry()
 	for _, name := range consultingWorkflowNames {
 		toolKey := "consulting-workflow-" + name
-		k := toolKey
 		b := ToolBehavior{
 			EnableFunc: func(a *types.WizardAnswers) {
 				if a.EnabledTools == nil {
 					a.EnabledTools = make(map[string]bool)
 				}
-				a.EnabledTools[k] = true
+				a.EnabledTools[toolKey] = true
 			},
 			DisableFunc: func(a *types.WizardAnswers) {
-				if a.EnabledTools != nil {
-					delete(a.EnabledTools, k)
+				if a.EnabledTools == nil {
+					a.EnabledTools = make(map[string]bool)
 				}
+				a.EnabledTools[toolKey] = false
 			},
 		}
 
@@ -44,6 +44,6 @@ func init() {
 			}
 		}
 
-		r.AttachBehavior(k, b)
+		r.AttachBehavior(toolKey, b)
 	}
 }

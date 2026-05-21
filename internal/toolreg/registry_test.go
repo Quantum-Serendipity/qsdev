@@ -1,8 +1,12 @@
 package toolreg
 
 import (
+	"strings"
 	"sync"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 func TestRegister_Success(t *testing.T) {
@@ -171,6 +175,28 @@ func TestDefaultRegistry_Singleton(t *testing.T) {
 	r2 := DefaultRegistry()
 	if r1 != r2 {
 		t.Fatal("expected DefaultRegistry to return the same instance")
+	}
+}
+
+func TestYAMLRegistryCorrespondence(t *testing.T) {
+	t.Parallel()
+	reg := DefaultRegistry()
+	yamlTools := catalog.Default().Tools()
+
+	for name := range yamlTools {
+		if _, ok := reg.ByName(name); !ok {
+			t.Errorf("YAML tool %q not found in registry", name)
+		}
+	}
+
+	opsPrefix := branding.Get().AppName + "-"
+	for _, tool := range reg.All() {
+		if strings.HasPrefix(tool.Name, opsPrefix) {
+			continue
+		}
+		if _, ok := yamlTools[tool.Name]; !ok {
+			t.Errorf("registry tool %q not found in YAML catalog", tool.Name)
+		}
 	}
 }
 

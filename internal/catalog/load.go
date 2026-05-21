@@ -1,10 +1,12 @@
 package catalog
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -45,7 +47,11 @@ func Load(opts ...LoadOption) (*Catalog, error) {
 	}
 
 	if errs := cat.Validate(); len(errs) > 0 {
-		return nil, fmt.Errorf("catalog validation: %s", errs[0])
+		msgs := make([]string, len(errs))
+		for i, e := range errs {
+			msgs[i] = e.Error()
+		}
+		return nil, fmt.Errorf("catalog validation: %s", strings.Join(msgs, "; "))
 	}
 
 	return cat, nil
@@ -105,6 +111,7 @@ func loadFromFS(fsys fs.FS, root string) (*Catalog, error) {
 }
 
 // loadFromDisk loads catalog data from a directory on disk.
+// Missing files are silently skipped; malformed YAML returns an error.
 func loadFromDisk(dir string) (*Catalog, error) {
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -117,16 +124,29 @@ func loadFromDisk(dir string) (*Catalog, error) {
 	cat := &Catalog{}
 	dirFS := os.DirFS(dir)
 
-	// Each file is optional in an overlay.
-	_ = loadYAMLFile(dirFS, "tiers.yaml", &cat.tiers)
-	_ = loadYAMLFile(dirFS, "compliance.yaml", &cat.compliance)
-	_ = loadYAMLFile(dirFS, "profiles.yaml", &cat.profiles)
-	_ = loadYAMLFile(dirFS, "project_profiles.yaml", &cat.projectProfiles)
-	_ = loadYAMLFile(dirFS, "tools.yaml", &cat.tools)
-	_ = loadYAMLFile(dirFS, "security.yaml", &cat.security)
-	_ = loadYAMLFile(dirFS, "hook_tiers.yaml", &cat.hookTiers)
-	_ = loadYAMLFile(dirFS, "derivations.yaml", &cat.derivations)
-	_ = loadYAMLFile(dirFS, "validation.yaml", &cat.validation)
+	overlayFiles := []struct {
+		name   string
+		target any
+	}{
+		{"tiers.yaml", &cat.tiers},
+		{"compliance.yaml", &cat.compliance},
+		{"profiles.yaml", &cat.profiles},
+		{"project_profiles.yaml", &cat.projectProfiles},
+		{"tools.yaml", &cat.tools},
+		{"security.yaml", &cat.security},
+		{"hook_tiers.yaml", &cat.hookTiers},
+		{"derivations.yaml", &cat.derivations},
+		{"validation.yaml", &cat.validation},
+	}
+
+	for _, f := range overlayFiles {
+		if err := loadYAMLFile(dirFS, f.name, f.target); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("parsing %s in %s: %w", f.name, dir, err)
+		}
+	}
 
 	return cat, nil
 }

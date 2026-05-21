@@ -134,9 +134,10 @@ type ToolDef struct {
 
 // ToolOwnedFileDef describes a file owned or contributed to by a tool.
 type ToolOwnedFileDef struct {
-	Path      string `yaml:"path"`
-	Ownership string `yaml:"ownership"`
-	SectionID string `yaml:"section_id,omitempty"`
+	Path           string `yaml:"path"`
+	Ownership      string `yaml:"ownership"`
+	SectionID      string `yaml:"section_id,omitempty"`
+	SectionContent string `yaml:"section_content,omitempty"`
 }
 
 // SecurityFile represents the security.yaml schema.

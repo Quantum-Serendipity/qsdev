@@ -5,14 +5,14 @@
   ];
 
   # Base packages
-  packages = [ pkgs.git pkgs.jq pkgs.curl pkgs.coreutils pkgs.go-tools pkgs.govulncheck pkgs.gopls pkgs.golangci-lint pkgs.delve pkgs.goreleaser ];
+  packages = [ pkgs.git pkgs.jq pkgs.curl pkgs.coreutils pkgs.go-tools pkgs.govulncheck pkgs.gopls pkgs.golangci-lint pkgs.delve pkgs.goreleaser pkgs.gitleaks pkgs.semgrep ];
   env = {
     DEVENV_SECURITY_HARDENED = "true";
     QSDEV_ECOSYSTEMS = "go";
     QSDEV_PROJECT_NAME = "qsdev";
     QSDEV_SECURITY_PROFILE = "enhanced";
-    QSDEV_TOOL_COUNT = "3";
-    QSDEV_VERSION = "v0.7.2-0.20260521172746-c92db2ade5ac+dirty";
+    QSDEV_TOOL_COUNT = "22";
+    QSDEV_VERSION = "v0.7.2-0.20260521205046-335151b63faa+dirty";
   };
 
   # Credential-bearing variables stripped from the shell

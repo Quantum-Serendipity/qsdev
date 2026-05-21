@@ -43,6 +43,35 @@ func builtinBehaviors() map[string]ToolBehavior {
 			DisableFunc: func(a *types.WizardAnswers) {
 				a.AgentTools.VersionSentinel = false
 			},
+			SectionDataFunc: func(answers types.WizardAnswers, ecoReg *ecosystem.Registry) map[string]any {
+				var modules []ecosystem.EcosystemModule
+				configFor := func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
+					for _, lang := range answers.Languages {
+						if lang.Name == mod.Name() {
+							return ecosystem.ToModuleConfig(lang)
+						}
+					}
+					return ecosystem.ModuleConfig{}
+				}
+				for _, lang := range answers.Languages {
+					if mod, ok := ecoReg.ByName(lang.Name); ok {
+						modules = append(modules, mod)
+					}
+				}
+				report := ecosystem.AggregateManifestCoverage(modules, configFor)
+				covered := make([]string, len(report.Covered))
+				for i, m := range report.Covered {
+					covered[i] = m.Path
+				}
+				uncovered := make([]string, len(report.Uncovered))
+				for i, m := range report.Uncovered {
+					uncovered[i] = m.Path
+				}
+				return map[string]any{
+					"Covered":   covered,
+					"Uncovered": uncovered,
+				}
+			},
 		},
 		"semble": {
 			EnableFunc: func(a *types.WizardAnswers) {

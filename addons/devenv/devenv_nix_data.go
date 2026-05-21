@@ -12,6 +12,12 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// toolNixPackages maps enabled tool names to their Nix package attribute names.
+var toolNixPackages = map[string]string{
+	"semgrep":  "semgrep",
+	"gitleaks": "gitleaks",
+}
+
 // DevenvNixTemplateData holds all data required to render the devenv.nix template.
 type DevenvNixTemplateData struct {
 	Packages          []string                   // Base + extra packages.
@@ -166,6 +172,16 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 		if pp, ok := mod.(ecosystem.PackageProvider); ok {
 			cfg := ecosystem.ToModuleConfigWithProxy(lang, answers.Infrastructure)
 			data.Packages = append(data.Packages, pp.DevenvPackages(cfg)...)
+		}
+	}
+
+	// 4c. Collect packages for enabled tools that need binaries on PATH.
+	for toolName, enabled := range answers.EnabledTools {
+		if !enabled {
+			continue
+		}
+		if nixPkg, ok := toolNixPackages[toolName]; ok {
+			data.Packages = append(data.Packages, nixPkg)
 		}
 	}
 

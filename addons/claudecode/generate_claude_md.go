@@ -1,12 +1,16 @@
 package claudecode
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
+	"text/template"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -37,6 +41,12 @@ type TaskSummary struct {
 	Commands []string
 }
 
+// ToolSection describes an enabled tool's CLAUDE.md section marker content.
+type ToolSection struct {
+	SectionID string
+	Content   string
+}
+
 // ClaudeMdTemplateData holds all data required to render the CLAUDE.md template.
 type ClaudeMdTemplateData struct {
 	ProjectName        string
@@ -46,16 +56,9 @@ type ClaudeMdTemplateData struct {
 	BuildCommands      []string
 	TestCommands       []string
 	LintCommands       []string
-	HasSecurityHooks   bool
 	PackageManagers    []string
 
-	PostmortemEnabled        bool
-	VersionSentinelEnabled   bool
-	VersionSentinelCovered   []string
-	VersionSentinelUncovered []string
-	SembleEnabled            bool
-	SembleMode               string
-	TrailOfBitsEnabled       bool
+	ToolSections []ToolSection
 
 	AvailableSkills  []SkillSummary
 	AvailableAgents  []AgentSummary
@@ -70,8 +73,7 @@ type ClaudeMdTemplateData struct {
 // ecosystem module VerificationCommands, and collects package manager metadata.
 func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry) *ClaudeMdTemplateData {
 	data := &ClaudeMdTemplateData{
-		ProjectName:      answers.ProjectName,
-		HasSecurityHooks: answers.Hooks.SafetyBlock,
+		ProjectName: answers.ProjectName,
 	}
 
 	var buildCmds, testCmds, lintCmds []string
@@ -98,21 +100,8 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 	data.LintCommands = sliceutil.Dedup(lintCmds)
 	data.PackageManagers = sliceutil.Dedup(data.PackageManagers)
 
-	// Agent tools metadata for CLAUDE.md.
-	data.TrailOfBitsEnabled = sliceutil.Contains(answers.Skills, "security-review")
-	data.PostmortemEnabled = answers.AgentTools.PostmortemEnabled
-	data.SembleEnabled = answers.AgentTools.SembleEnabled
-	data.SembleMode = answers.AgentTools.SembleMode
-	if answers.AgentTools.VersionSentinel {
-		data.VersionSentinelEnabled = true
-		report := collectManifestCoverage(answers, registry)
-		for _, m := range report.Covered {
-			data.VersionSentinelCovered = append(data.VersionSentinelCovered, m.Path)
-		}
-		for _, m := range report.Uncovered {
-			data.VersionSentinelUncovered = append(data.VersionSentinelUncovered, m.Path)
-		}
-	}
+	// Build tool sections from enabled tools + catalog metadata.
+	data.ToolSections = buildToolSections(answers, registry)
 
 	// Generate a default description if none provided.
 	if data.ProjectName != "" && len(data.Languages) > 0 {
@@ -223,4 +212,69 @@ func GenerateClaudeMd(answers types.WizardAnswers, registry *ecosystem.Registry)
 		Mode:     0o644,
 		Strategy: types.SectionMarker,
 	}, nil
+}
+
+// buildToolSections iterates enabled tools and builds CLAUDE.md section
+// content from the catalog's section_content field. Tools with a
+// SectionDataFunc get their content rendered as a Go template; all others
+// use their section_content as-is or fall back to a default one-liner.
+func buildToolSections(answers types.WizardAnswers, ecoReg *ecosystem.Registry) []ToolSection {
+	reg := toolreg.DefaultRegistry()
+	var sections []ToolSection
+
+	for toolName, enabled := range answers.EnabledTools {
+		if !enabled {
+			continue
+		}
+		tool, ok := reg.ByName(toolName)
+		if !ok {
+			continue
+		}
+		for _, owned := range tool.OwnedFiles {
+			if owned.Path != "CLAUDE.md" || owned.SectionID == "" {
+				continue
+			}
+
+			content := owned.SectionContent
+			if content == "" {
+				content = fmt.Sprintf("- **%s**: %s", tool.DisplayName, tool.Description)
+			}
+
+			if tool.SectionDataFunc != nil && strings.Contains(content, "{{") {
+				rendered, err := renderSectionTemplate(content, tool.SectionDataFunc(answers, ecoReg))
+				if err != nil {
+					slog.Warn("failed to render section template", "tool", toolName, "error", err)
+				} else {
+					content = rendered
+				}
+			}
+
+			sections = append(sections, ToolSection{
+				SectionID: owned.SectionID,
+				Content:   content,
+			})
+		}
+	}
+
+	sort.Slice(sections, func(i, j int) bool {
+		return sections[i].SectionID < sections[j].SectionID
+	})
+	return sections
+}
+
+func renderSectionTemplate(tmplStr string, data map[string]any) (string, error) {
+	funcMap := template.FuncMap{
+		"join": func(sep string, items []string) string {
+			return strings.Join(items, sep)
+		},
+	}
+	t, err := template.New("section").Funcs(funcMap).Parse(tmplStr)
+	if err != nil {
+		return "", fmt.Errorf("parsing section template: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("executing section template: %w", err)
+	}
+	return buf.String(), nil
 }

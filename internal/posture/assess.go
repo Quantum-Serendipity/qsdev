@@ -291,7 +291,11 @@ func buildEcosystemStatuses(detected types.DetectedProject, projectPath string) 
 			}
 		}
 		if status.LockFile == "" {
-			status.LockFile = "missing"
+			if _, hasEntries := ecosystem.LockFilesByEcosystem[name]; hasEntries {
+				status.LockFile = "missing"
+			} else {
+				status.LockFile = "n/a"
+			}
 		}
 		statuses = append(statuses, status)
 	}

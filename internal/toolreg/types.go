@@ -1,6 +1,9 @@
 package toolreg
 
-import "github.com/Quantum-Serendipity/qsdev/pkg/types"
+import (
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
+)
 
 // DefaultPolicy controls when a tool is enabled during initial project setup.
 type DefaultPolicy int
@@ -74,9 +77,10 @@ func (c ToolCategory) DisplayName() string {
 
 // FileOwnership maps a tool to a file it creates or contributes to.
 type FileOwnership struct {
-	Path      string        // Relative path from project root.
-	Ownership OwnershipType // Exclusive or Shared.
-	SectionID string        // For shared files: section identifier used in markers.
+	Path           string        // Relative path from project root.
+	Ownership      OwnershipType // Exclusive or Shared.
+	SectionID      string        // For shared files: section identifier used in markers.
+	SectionContent string        // Go template or static content for this section.
 }
 
 // DetectFunc determines whether a tool should be auto-enabled based on project state.
@@ -90,6 +94,9 @@ type DisableFunc func(answers *types.WizardAnswers)
 
 // GenerateFunc produces the exclusive files for a tool given the current answers.
 type GenerateFunc func(answers types.WizardAnswers) ([]types.GeneratedFile, error)
+
+// SectionDataFunc provides template data for rendering section_content templates.
+type SectionDataFunc func(answers types.WizardAnswers, ecoReg *ecosystem.Registry) map[string]any
 
 // SharedContentFunc produces the content to insert into a shared file section.
 type SharedContentFunc func(answers types.WizardAnswers) ([]byte, error)
@@ -112,6 +119,10 @@ type Tool struct {
 	// SharedContent maps SectionID to a function that produces the content
 	// to insert into the shared file. Used during enable operations.
 	SharedContent map[string]SharedContentFunc
+
+	// SectionDataFunc provides template data for rendering section_content
+	// templates in CLAUDE.md. Only needed for tools with dynamic content.
+	SectionDataFunc SectionDataFunc
 }
 
 // ExclusiveFiles returns all files this tool exclusively owns.

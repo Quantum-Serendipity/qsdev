@@ -64,33 +64,10 @@
 {{- if hasAny .PackageManagers }}
 - Package managers: {{ join ", " .PackageManagers }}.
 {{- end }}
-{{- if .HasSecurityHooks }}
-<!-- qsdev:attach-guard -->
-- Safety-block hooks are enabled.
-<!-- /qsdev:attach-guard -->
-{{- end }}
-{{- if .PostmortemEnabled }}
-<!-- qsdev:agent-postmortem -->
-- Agent-postmortem skill is active.
-<!-- /qsdev:agent-postmortem -->
-{{- end }}
-{{- if .VersionSentinelEnabled }}
-<!-- qsdev:version-sentinel -->
-- **Version-Sentinel** guards dependency changes in: {{ join ", " .VersionSentinelCovered }}.
-{{- if hasAny .VersionSentinelUncovered }}
-- Version-Sentinel does NOT cover: {{ join ", " .VersionSentinelUncovered }}. Review these manually.
-{{- end }}
-<!-- /qsdev:version-sentinel -->
-{{- end }}
-{{- if .SembleEnabled }}
-<!-- qsdev:semble -->
-- **Semble** semantic search available.
-<!-- /qsdev:semble -->
-{{- end }}
-{{- if .TrailOfBitsEnabled }}
-<!-- qsdev:trail-of-bits-skills -->
-- Security review skills installed.
-<!-- /qsdev:trail-of-bits-skills -->
+{{- range .ToolSections }}
+<!-- qsdev:{{ .SectionID }} -->
+{{ .Content }}
+<!-- /qsdev:{{ .SectionID }} -->
 {{- end }}
 - Prefer vendored or pinned dependencies.
 {{ if .HasGdevReference }}

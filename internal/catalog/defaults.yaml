@@ -321,6 +321,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: agent-postmortem
+              section_content: "- Agent-postmortem skill is active."
     attach-guard:
         display_name: Package Install Guard
         category: security
@@ -335,6 +336,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: attach-guard
+              section_content: "- Safety-block hooks are enabled."
     branch-naming:
         display_name: Branch Naming Convention
         category: devex
@@ -358,6 +360,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: changelog
+              section_content: "- **git-cliff** generates changelogs from conventional commits."
     commit-ticket:
         display_name: Commit Ticket Extraction
         category: devex
@@ -378,6 +381,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: commitlint
+              section_content: "- **Commitlint** enforces conventional commit message format."
     consulting-agent-codebase-explorer:
         display_name: Codebase Explorer Agent
         category: ai-agent
@@ -514,6 +518,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: container-security
+              section_content: "- **Container Security** scans images with Grype and signs with Cosign."
     context7:
         display_name: Context7 MCP
         category: ai-agent
@@ -526,6 +531,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: context7
+              section_content: "- **Context7** MCP provides library documentation lookups."
     github-mcp:
         display_name: GitHub MCP
         category: ai-agent
@@ -538,6 +544,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: github-mcp
+              section_content: "- **GitHub MCP** enables repository and issue management."
     gitleaks:
         display_name: Gitleaks Secret Scanner
         category: security
@@ -552,6 +559,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: gitleaks
+              section_content: "- **Gitleaks** scans for leaked secrets in git history and staged commits."
     license-compliance:
         display_name: License Compliance (ScanCode)
         category: security
@@ -565,6 +573,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: license-compliance
+              section_content: "- **License Compliance** checks dependencies against SPDX allowlist/blocklist policies."
     otel-config:
         display_name: OpenTelemetry Configuration
         category: infrastructure
@@ -586,6 +595,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: postgres-mcp
+              section_content: "- **PostgreSQL MCP** enables database schema inspection and query execution."
     pr-labels:
         display_name: PR Auto-Labeler
         category: devex
@@ -618,6 +628,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: secretspec
+              section_content: "- **Secret Specification** declares required secrets for services and ecosystem modules."
     semble:
         display_name: Semble Semantic Code Search
         category: ai-agent
@@ -632,6 +643,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: semble
+              section_content: "- **Semble** semantic search available."
     semgrep:
         display_name: Semgrep SAST
         category: security
@@ -646,6 +658,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: semgrep
+              section_content: "- **Semgrep SAST** scans code with ecosystem-aware rule sets."
     socket-dev-mcp:
         display_name: Socket.dev MCP
         category: ai-agent
@@ -658,6 +671,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: socket-dev-mcp
+              section_content: "- **Socket.dev MCP** provides supply chain security analysis of dependencies."
     starship-integration:
         display_name: Starship Prompt Integration
         category: devex
@@ -680,6 +694,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: trail-of-bits-skills
+              section_content: "- Security review skills installed."
     version-sentinel:
         display_name: Version Sentinel
         category: ai-agent
@@ -693,6 +708,11 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: version-sentinel
+              section_content: |-
+                - **Version-Sentinel** guards dependency changes in: {{ join ", " .Covered }}.
+                {{- if .Uncovered }}
+                - Version-Sentinel does NOT cover: {{ join ", " .Uncovered }}. Review these manually.
+                {{- end }}
 security_hooks:
     - ripsecrets
     - check-added-large-files

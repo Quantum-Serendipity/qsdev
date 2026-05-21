@@ -352,9 +352,10 @@ func TestGenerateClaudeMd_PackageManagersInSecurity(t *testing.T) {
 func TestGenerateClaudeMd_SecurityHooksEnabled(t *testing.T) {
 	reg := newTestRegistry(t, goMock())
 	answers := types.WizardAnswers{
-		ProjectName: "secure",
-		Languages:   []types.LanguageChoice{{Name: "go"}},
-		Hooks:       types.HookChoices{SafetyBlock: true},
+		ProjectName:  "secure",
+		Languages:    []types.LanguageChoice{{Name: "go"}},
+		Hooks:        types.HookChoices{SafetyBlock: true},
+		EnabledTools: map[string]bool{"attach-guard": true},
 	}
 
 	got, err := claudecode.GenerateClaudeMd(answers, reg)
@@ -421,6 +422,13 @@ func TestGenerateClaudeMd_SectionMarkers(t *testing.T) {
 			SembleMode:        "mcp",
 		},
 		Skills: []string{"security-review"},
+		EnabledTools: map[string]bool{
+			"attach-guard":         true,
+			"agent-postmortem":     true,
+			"version-sentinel":     true,
+			"semble":               true,
+			"trail-of-bits-skills": true,
+		},
 	}
 
 	got, err := claudecode.GenerateClaudeMd(answers, reg)
@@ -487,6 +495,63 @@ func TestGenerateClaudeMd_QsdevCommandsSection(t *testing.T) {
 	requireContains(t, content, "<!-- /qsdev:commands -->")
 	requireContains(t, content, "qsdev init")
 	requireContains(t, content, "qsdev check")
+}
+
+func TestGenerateClaudeMd_CatalogDrivenToolSections(t *testing.T) {
+	reg := newTestRegistry(t, goMock())
+
+	t.Run("enabled tools get markers from catalog", func(t *testing.T) {
+		answers := types.WizardAnswers{
+			ProjectName: "test",
+			Languages:   []types.LanguageChoice{{Name: "go"}},
+			EnabledTools: map[string]bool{
+				"semgrep":  true,
+				"gitleaks": true,
+			},
+		}
+		got, err := claudecode.GenerateClaudeMd(answers, reg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		content := string(got.Content)
+		requireContains(t, content, "<!-- qsdev:semgrep -->")
+		requireContains(t, content, "<!-- /qsdev:semgrep -->")
+		requireContains(t, content, "<!-- qsdev:gitleaks -->")
+		requireContains(t, content, "<!-- /qsdev:gitleaks -->")
+		requireContains(t, content, "Semgrep SAST")
+		requireContains(t, content, "Gitleaks")
+	})
+
+	t.Run("disabled tools get no markers", func(t *testing.T) {
+		answers := types.WizardAnswers{
+			ProjectName:  "test",
+			Languages:    []types.LanguageChoice{{Name: "go"}},
+			EnabledTools: map[string]bool{},
+		}
+		got, err := claudecode.GenerateClaudeMd(answers, reg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		content := string(got.Content)
+		requireNotContains(t, content, "<!-- qsdev:semgrep -->")
+		requireNotContains(t, content, "<!-- qsdev:gitleaks -->")
+	})
+
+	t.Run("tools without CLAUDE.md section_id get no markers", func(t *testing.T) {
+		answers := types.WizardAnswers{
+			ProjectName: "test",
+			Languages:   []types.LanguageChoice{{Name: "go"}},
+			EnabledTools: map[string]bool{
+				"branch-naming": true,
+			},
+		}
+		got, err := claudecode.GenerateClaudeMd(answers, reg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		content := string(got.Content)
+		requireNotContains(t, content, "<!-- qsdev:branch-naming -->")
+	})
 }
 
 func TestGenerateClaudeMd_NoLanguageConventions(t *testing.T) {

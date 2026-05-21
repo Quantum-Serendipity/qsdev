@@ -16,6 +16,8 @@ var LockFilesByEcosystem = map[string][]string{
 	NameDotnet:     {"packages.lock.json"},
 	NameRuby:       {"Gemfile.lock"},
 	NamePHP:        {"composer.lock"},
+	NameNix:        {"flake.lock"},
+	NameCpp:        {"conan.lock", "vcpkg.json"},
 }
 
 // ManifestLockfilePairs maps manifest files to their corresponding lock files

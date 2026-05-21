@@ -55,9 +55,10 @@ func convertOwnedFiles(defs []catalog.ToolOwnedFileDef) []FileOwnership {
 			ownership = Shared
 		}
 		result[i] = FileOwnership{
-			Path:      d.Path,
-			Ownership: ownership,
-			SectionID: d.SectionID,
+			Path:           d.Path,
+			Ownership:      ownership,
+			SectionID:      d.SectionID,
+			SectionContent: d.SectionContent,
 		}
 	}
 	return result

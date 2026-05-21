@@ -147,17 +147,21 @@ func (r *Registry) AttachBehavior(name string, b ToolBehavior) {
 	if b.SharedContent != nil {
 		t.SharedContent = b.SharedContent
 	}
+	if b.SectionDataFunc != nil {
+		t.SectionDataFunc = b.SectionDataFunc
+	}
 }
 
 // ToolBehavior holds the Go function fields for a tool. Used with
 // AttachBehavior to separate declarative metadata (YAML) from
 // behavioral hooks (Go code).
 type ToolBehavior struct {
-	EnableFunc    EnableFunc
-	DisableFunc   DisableFunc
-	DetectFunc    DetectFunc
-	GenerateFunc  GenerateFunc
-	SharedContent map[string]SharedContentFunc
+	EnableFunc      EnableFunc
+	DisableFunc     DisableFunc
+	DetectFunc      DetectFunc
+	GenerateFunc    GenerateFunc
+	SharedContent   map[string]SharedContentFunc
+	SectionDataFunc SectionDataFunc
 }
 
 var (

@@ -48,13 +48,13 @@ func TestTierString_Roundtrip(t *testing.T) {
 
 func TestSuperset(t *testing.T) {
 	t.Parallel()
-	if !(Standard > SupplyChainOnly) {
+	if Standard <= SupplyChainOnly {
 		t.Error("Standard should be > SupplyChainOnly")
 	}
-	if !(Full > Standard) {
+	if Full <= Standard {
 		t.Error("Full should be > Standard")
 	}
-	if !(Full > SupplyChainOnly) {
+	if Full <= SupplyChainOnly {
 		t.Error("Full should be > SupplyChainOnly")
 	}
 }

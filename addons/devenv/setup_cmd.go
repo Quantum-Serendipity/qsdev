@@ -22,6 +22,10 @@ import (
 // on the "one command and go" promise. Returns nil if all prerequisites are already
 // present or were successfully installed.
 func AutoSetupPrerequisites(ctx context.Context, w io.Writer) error {
+	if os.Getenv("QSDEV_SKIP_SETUP") == "1" {
+		return nil
+	}
+
 	osInfo := sysinfo.DetectOS()
 	checks := doctor.RunAllChecks(ctx, osInfo)
 

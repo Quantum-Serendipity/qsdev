@@ -1,7 +1,6 @@
 package catalog
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -12,7 +11,7 @@ import (
 )
 
 // Load reads the embedded defaults and optionally overlays organization
-// and project configuration from disk.
+// and project configuration from unified defaults files.
 func Load(opts ...LoadOption) (*Catalog, error) {
 	cfg := &loadConfig{}
 	for _, opt := range opts {
@@ -24,22 +23,22 @@ func Load(opts ...LoadOption) (*Catalog, error) {
 		return nil, fmt.Errorf("loading embedded defaults: %w", err)
 	}
 
-	if cfg.orgConfigDir != "" {
-		orgCat, err := loadFromDisk(cfg.orgConfigDir)
+	if cfg.orgConfigFile != "" {
+		orgCat, err := loadUnifiedFile(cfg.orgConfigFile)
 		if err != nil {
 			if !os.IsNotExist(err) {
-				return nil, fmt.Errorf("loading org config from %s: %w", cfg.orgConfigDir, err)
+				return nil, fmt.Errorf("loading org config from %s: %w", cfg.orgConfigFile, err)
 			}
 		} else {
 			cat = MergeCatalogs(cat, orgCat)
 		}
 	}
 
-	if cfg.projectConfigDir != "" {
-		projCat, err := loadFromDisk(cfg.projectConfigDir)
+	if cfg.projectConfigFile != "" {
+		projCat, err := loadUnifiedFile(cfg.projectConfigFile)
 		if err != nil {
 			if !os.IsNotExist(err) {
-				return nil, fmt.Errorf("loading project config from %s: %w", cfg.projectConfigDir, err)
+				return nil, fmt.Errorf("loading project config from %s: %w", cfg.projectConfigFile, err)
 			}
 		} else {
 			cat = MergeCatalogs(cat, projCat)
@@ -61,18 +60,18 @@ func Load(opts ...LoadOption) (*Catalog, error) {
 type LoadOption func(*loadConfig)
 
 type loadConfig struct {
-	orgConfigDir     string
-	projectConfigDir string
+	orgConfigFile     string
+	projectConfigFile string
 }
 
-// WithOrgConfig sets the organization override directory.
-func WithOrgConfig(dir string) LoadOption {
-	return func(c *loadConfig) { c.orgConfigDir = dir }
+// WithOrgConfigFile sets the organization-level unified defaults file path.
+func WithOrgConfigFile(path string) LoadOption {
+	return func(c *loadConfig) { c.orgConfigFile = path }
 }
 
-// WithProjectConfig sets the project override directory.
-func WithProjectConfig(dir string) LoadOption {
-	return func(c *loadConfig) { c.projectConfigDir = dir }
+// WithProjectConfigFile sets the project-level unified defaults file path.
+func WithProjectConfigFile(path string) LoadOption {
+	return func(c *loadConfig) { c.projectConfigFile = path }
 }
 
 // loadFromFS loads catalog data from an embedded or OS filesystem.
@@ -105,47 +104,6 @@ func loadFromFS(fsys fs.FS, root string) (*Catalog, error) {
 	}
 	if err := loadYAMLFile(fsys, path.Join(root, "validation.yaml"), &cat.validation); err != nil {
 		return nil, fmt.Errorf("validation.yaml: %w", err)
-	}
-
-	return cat, nil
-}
-
-// loadFromDisk loads catalog data from a directory on disk.
-// Missing files are silently skipped; malformed YAML returns an error.
-func loadFromDisk(dir string) (*Catalog, error) {
-	info, err := os.Stat(dir)
-	if err != nil {
-		return nil, err
-	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("%s is not a directory", dir)
-	}
-
-	cat := &Catalog{}
-	dirFS := os.DirFS(dir)
-
-	overlayFiles := []struct {
-		name   string
-		target any
-	}{
-		{"tiers.yaml", &cat.tiers},
-		{"compliance.yaml", &cat.compliance},
-		{"profiles.yaml", &cat.profiles},
-		{"project_profiles.yaml", &cat.projectProfiles},
-		{"tools.yaml", &cat.tools},
-		{"security.yaml", &cat.security},
-		{"hook_tiers.yaml", &cat.hookTiers},
-		{"derivations.yaml", &cat.derivations},
-		{"validation.yaml", &cat.validation},
-	}
-
-	for _, f := range overlayFiles {
-		if err := loadYAMLFile(dirFS, f.name, f.target); err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			return nil, fmt.Errorf("parsing %s in %s: %w", f.name, dir, err)
-		}
 	}
 
 	return cat, nil

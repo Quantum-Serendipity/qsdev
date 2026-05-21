@@ -5,14 +5,11 @@ import (
 	"path/filepath"
 )
 
-// OrgConfigDir returns the directory for organization-level catalog overrides.
-// Priority: $QSDEV_ORG_CONFIG > ~/.config/qsdev/catalog/
-// Returns empty string if no override directory is configured or exists.
-func OrgConfigDir() string {
-	if dir := os.Getenv("QSDEV_ORG_CONFIG"); dir != "" {
-		if info, err := os.Stat(dir); err == nil && info.IsDir() {
-			return dir
-		}
+// OrgConfigPath returns the expected path for the user-level defaults file.
+// Priority: $QSDEV_ORG_CONFIG > ~/.config/qsdev/defaults.yaml
+func OrgConfigPath() string {
+	if p := os.Getenv("QSDEV_ORG_CONFIG"); p != "" {
+		return p
 	}
 
 	home, err := os.UserHomeDir()
@@ -20,26 +17,39 @@ func OrgConfigDir() string {
 		return ""
 	}
 
-	dir := filepath.Join(home, ".config", "qsdev", "catalog")
-	if info, err := os.Stat(dir); err == nil && info.IsDir() {
-		return dir
-	}
+	return filepath.Join(home, ".config", "qsdev", "defaults.yaml")
+}
 
+// OrgConfigFile returns the user-level defaults file path if it exists,
+// or empty string if not.
+func OrgConfigFile() string {
+	p := OrgConfigPath()
+	if p == "" {
+		return ""
+	}
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
 	return ""
 }
 
-// ProjectConfigDir returns the directory for project-level catalog overrides.
-// Looks for .qsdev/catalog/ relative to the given project root.
-// Returns empty string if the directory does not exist.
-func ProjectConfigDir(projectRoot string) string {
+// ProjectConfigPath returns the expected path for a project-level defaults file.
+func ProjectConfigPath(projectRoot string) string {
 	if projectRoot == "" {
 		return ""
 	}
+	return filepath.Join(projectRoot, ".qsdev", "defaults.yaml")
+}
 
-	dir := filepath.Join(projectRoot, ".qsdev", "catalog")
-	if info, err := os.Stat(dir); err == nil && info.IsDir() {
-		return dir
+// ProjectConfigFile returns the project-level defaults file path if it exists,
+// or empty string if not.
+func ProjectConfigFile(projectRoot string) string {
+	p := ProjectConfigPath(projectRoot)
+	if p == "" {
+		return ""
 	}
-
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
 	return ""
 }

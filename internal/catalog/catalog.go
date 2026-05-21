@@ -39,11 +39,11 @@ func Default() *Catalog {
 	defaultOnce.Do(func() {
 		var opts []LoadOption
 
-		if orgDir := OrgConfigDir(); orgDir != "" {
-			opts = append(opts, WithOrgConfig(orgDir))
+		if orgFile := OrgConfigFile(); orgFile != "" {
+			opts = append(opts, WithOrgConfigFile(orgFile))
 		}
-		if projDir := ProjectConfigDir(projectRootDir); projDir != "" {
-			opts = append(opts, WithProjectConfig(projDir))
+		if projFile := ProjectConfigFile(projectRootDir); projFile != "" {
+			opts = append(opts, WithProjectConfigFile(projFile))
 		}
 
 		var err error

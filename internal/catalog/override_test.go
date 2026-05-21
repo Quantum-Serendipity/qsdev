@@ -10,8 +10,7 @@ import (
 func TestLoadWithOrgOverride_AddsTier(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "tiers.yaml"), `
+	f := writeUnifiedFile(t, `
 tiers:
   custom-tier:
     order: 10
@@ -19,7 +18,7 @@ tiers:
     default_permission_preset: standard
 `)
 
-	cat, err := Load(WithOrgConfig(dir))
+	cat, err := Load(WithOrgConfigFile(f))
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -35,8 +34,7 @@ tiers:
 func TestLoadWithOrgOverride_AddsTool(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "tools.yaml"), `
+	f := writeUnifiedFile(t, `
 tools:
   custom-scanner:
     display_name: "Custom Scanner"
@@ -45,7 +43,7 @@ tools:
     default_policy: opt-in
 `)
 
-	cat, err := Load(WithOrgConfig(dir))
+	cat, err := Load(WithOrgConfigFile(f))
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -61,9 +59,8 @@ tools:
 func TestLoadWithProjectOverride_AddsProjectProfile(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "project_profiles.yaml"), `
-profiles:
+	f := writeUnifiedFile(t, `
+project_profiles:
   custom-web:
     description: "Custom project profile"
     tier: full
@@ -75,7 +72,7 @@ profiles:
     permission_level: standard
 `)
 
-	cat, err := Load(WithProjectConfig(dir))
+	cat, err := Load(WithProjectConfigFile(f))
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -88,64 +85,69 @@ profiles:
 	}
 }
 
-func TestLoadWithOrgOverride_MissingDirIgnored(t *testing.T) {
+func TestLoadWithOrgOverride_MissingFileIgnored(t *testing.T) {
 	t.Parallel()
 
-	cat, err := Load(WithOrgConfig("/nonexistent/path"))
+	cat, err := Load(WithOrgConfigFile("/nonexistent/path/defaults.yaml"))
 	if err != nil {
-		t.Fatalf("Load() should not error for missing org dir: %v", err)
+		t.Fatalf("Load() should not error for missing org file: %v", err)
 	}
 	if cat == nil {
 		t.Fatal("catalog should not be nil")
 	}
 }
 
-func TestProjectConfigDir_ExistingDir(t *testing.T) {
+func TestProjectConfigFile_ExistingFile(t *testing.T) {
 	dir := t.TempDir()
-	catalogDir := filepath.Join(dir, ".qsdev", "catalog")
-	if err := os.MkdirAll(catalogDir, 0o755); err != nil {
+	qsdevDir := filepath.Join(dir, ".qsdev")
+	if err := os.MkdirAll(qsdevDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defaultsFile := filepath.Join(qsdevDir, "defaults.yaml")
+	if err := os.WriteFile(defaultsFile, []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	result := ProjectConfigDir(dir)
-	if result != catalogDir {
-		t.Errorf("ProjectConfigDir() = %q, want %q", result, catalogDir)
+	result := ProjectConfigFile(dir)
+	if result != defaultsFile {
+		t.Errorf("ProjectConfigFile() = %q, want %q", result, defaultsFile)
 	}
 }
 
-func TestProjectConfigDir_MissingDir(t *testing.T) {
-	result := ProjectConfigDir(t.TempDir())
+func TestProjectConfigFile_MissingFile(t *testing.T) {
+	result := ProjectConfigFile(t.TempDir())
 	if result != "" {
-		t.Errorf("ProjectConfigDir() = %q, want empty", result)
+		t.Errorf("ProjectConfigFile() = %q, want empty", result)
 	}
 }
 
-func TestProjectConfigDir_EmptyRoot(t *testing.T) {
-	result := ProjectConfigDir("")
+func TestProjectConfigFile_EmptyRoot(t *testing.T) {
+	result := ProjectConfigFile("")
 	if result != "" {
-		t.Errorf("ProjectConfigDir() = %q, want empty", result)
+		t.Errorf("ProjectConfigFile() = %q, want empty", result)
 	}
 }
 
-func writeFile(t *testing.T, path, content string) {
+func writeUnifiedFile(t *testing.T, content string) string {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	f := filepath.Join(t.TempDir(), "defaults.yaml")
+	if err := os.WriteFile(f, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	return f
 }
 
 func TestLoadWithOrgOverride_MalformedYAML(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "tiers.yaml"), `
+	f := writeUnifiedFile(t, `
 tiers:
   broken:
     - this: [is not valid
     yaml because the bracket is unclosed
 `)
 
-	_, err := Load(WithOrgConfig(dir))
+	_, err := Load(WithOrgConfigFile(f))
 	if err == nil {
 		t.Fatal("expected error for malformed YAML overlay, got nil")
 	}
@@ -154,8 +156,7 @@ tiers:
 func TestLoadWithCombinedOrgAndProject(t *testing.T) {
 	t.Parallel()
 
-	orgDir := t.TempDir()
-	writeFile(t, filepath.Join(orgDir, "tiers.yaml"), `
+	orgFile := writeUnifiedFile(t, `
 tiers:
   org-tier:
     order: 10
@@ -163,8 +164,7 @@ tiers:
     default_permission_preset: standard
 `)
 
-	projDir := t.TempDir()
-	writeFile(t, filepath.Join(projDir, "tiers.yaml"), `
+	projFile := writeUnifiedFile(t, `
 tiers:
   org-tier:
     order: 10
@@ -176,7 +176,7 @@ tiers:
     default_permission_preset: standard
 `)
 
-	cat, err := Load(WithOrgConfig(orgDir), WithProjectConfig(projDir))
+	cat, err := Load(WithOrgConfigFile(orgFile), WithProjectConfigFile(projFile))
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -201,15 +201,14 @@ tiers:
 func TestLoadWithOverlay_BreaksValidation(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "profiles.yaml"), `
+	f := writeUnifiedFile(t, `
 profiles:
   broken-profile:
     tier: nonexistent-tier
     description: "This profile references a bad tier"
 `)
 
-	_, err := Load(WithOrgConfig(dir))
+	_, err := Load(WithOrgConfigFile(f))
 	if err == nil {
 		t.Fatal("expected validation error for overlay with bad tier reference")
 	}

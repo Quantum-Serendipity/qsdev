@@ -3,6 +3,7 @@ package catalog
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -130,5 +131,89 @@ func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLoadWithOrgOverride_MalformedYAML(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "tiers.yaml"), `
+tiers:
+  broken:
+    - this: [is not valid
+    yaml because the bracket is unclosed
+`)
+
+	_, err := Load(WithOrgConfig(dir))
+	if err == nil {
+		t.Fatal("expected error for malformed YAML overlay, got nil")
+	}
+}
+
+func TestLoadWithCombinedOrgAndProject(t *testing.T) {
+	t.Parallel()
+
+	orgDir := t.TempDir()
+	writeFile(t, filepath.Join(orgDir, "tiers.yaml"), `
+tiers:
+  org-tier:
+    order: 10
+    description: "Org tier original"
+    default_permission_preset: standard
+`)
+
+	projDir := t.TempDir()
+	writeFile(t, filepath.Join(projDir, "tiers.yaml"), `
+tiers:
+  org-tier:
+    order: 10
+    description: "Org tier overridden by project"
+    default_permission_preset: standard
+  proj-tier:
+    order: 11
+    description: "Project-only tier"
+    default_permission_preset: standard
+`)
+
+	cat, err := Load(WithOrgConfig(orgDir), WithProjectConfig(projDir))
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if _, ok := cat.TierDef("full"); !ok {
+		t.Error("base tier 'full' missing")
+	}
+
+	orgTier, ok := cat.TierDef("org-tier")
+	if !ok {
+		t.Fatal("org-tier missing")
+	}
+	if orgTier.Description != "Org tier overridden by project" {
+		t.Errorf("org-tier description = %q, want project override", orgTier.Description)
+	}
+
+	if _, ok := cat.TierDef("proj-tier"); !ok {
+		t.Error("proj-tier missing")
+	}
+}
+
+func TestLoadWithOverlay_BreaksValidation(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "profiles.yaml"), `
+profiles:
+  broken-profile:
+    tier: nonexistent-tier
+    description: "This profile references a bad tier"
+`)
+
+	_, err := Load(WithOrgConfig(dir))
+	if err == nil {
+		t.Fatal("expected validation error for overlay with bad tier reference")
+	}
+	if !strings.Contains(err.Error(), "nonexistent-tier") {
+		t.Errorf("error should mention nonexistent-tier, got: %v", err)
 	}
 }

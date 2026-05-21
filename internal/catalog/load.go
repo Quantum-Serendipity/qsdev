@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -79,31 +79,31 @@ func WithProjectConfig(dir string) LoadOption {
 func loadFromFS(fsys fs.FS, root string) (*Catalog, error) {
 	cat := &Catalog{}
 
-	if err := loadYAMLFile(fsys, filepath.Join(root, "tiers.yaml"), &cat.tiers); err != nil {
+	if err := loadYAMLFile(fsys, path.Join(root, "tiers.yaml"), &cat.tiers); err != nil {
 		return nil, fmt.Errorf("tiers.yaml: %w", err)
 	}
-	if err := loadYAMLFile(fsys, filepath.Join(root, "compliance.yaml"), &cat.compliance); err != nil {
+	if err := loadYAMLFile(fsys, path.Join(root, "compliance.yaml"), &cat.compliance); err != nil {
 		return nil, fmt.Errorf("compliance.yaml: %w", err)
 	}
-	if err := loadYAMLFile(fsys, filepath.Join(root, "profiles.yaml"), &cat.profiles); err != nil {
+	if err := loadYAMLFile(fsys, path.Join(root, "profiles.yaml"), &cat.profiles); err != nil {
 		return nil, fmt.Errorf("profiles.yaml: %w", err)
 	}
-	if err := loadYAMLFile(fsys, filepath.Join(root, "project_profiles.yaml"), &cat.projectProfiles); err != nil {
+	if err := loadYAMLFile(fsys, path.Join(root, "project_profiles.yaml"), &cat.projectProfiles); err != nil {
 		return nil, fmt.Errorf("project_profiles.yaml: %w", err)
 	}
-	if err := loadYAMLFile(fsys, filepath.Join(root, "tools.yaml"), &cat.tools); err != nil {
+	if err := loadYAMLFile(fsys, path.Join(root, "tools.yaml"), &cat.tools); err != nil {
 		return nil, fmt.Errorf("tools.yaml: %w", err)
 	}
-	if err := loadYAMLFile(fsys, filepath.Join(root, "security.yaml"), &cat.security); err != nil {
+	if err := loadYAMLFile(fsys, path.Join(root, "security.yaml"), &cat.security); err != nil {
 		return nil, fmt.Errorf("security.yaml: %w", err)
 	}
-	if err := loadYAMLFile(fsys, filepath.Join(root, "hook_tiers.yaml"), &cat.hookTiers); err != nil {
+	if err := loadYAMLFile(fsys, path.Join(root, "hook_tiers.yaml"), &cat.hookTiers); err != nil {
 		return nil, fmt.Errorf("hook_tiers.yaml: %w", err)
 	}
-	if err := loadYAMLFile(fsys, filepath.Join(root, "derivations.yaml"), &cat.derivations); err != nil {
+	if err := loadYAMLFile(fsys, path.Join(root, "derivations.yaml"), &cat.derivations); err != nil {
 		return nil, fmt.Errorf("derivations.yaml: %w", err)
 	}
-	if err := loadYAMLFile(fsys, filepath.Join(root, "validation.yaml"), &cat.validation); err != nil {
+	if err := loadYAMLFile(fsys, path.Join(root, "validation.yaml"), &cat.validation); err != nil {
 		return nil, fmt.Errorf("validation.yaml: %w", err)
 	}
 

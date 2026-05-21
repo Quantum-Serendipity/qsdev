@@ -110,3 +110,30 @@ func TestParseComplianceLevel_Unknown(t *testing.T) {
 		t.Error("expected error for unknown compliance level")
 	}
 }
+
+func TestCompareComplianceLevels_AllPairs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		a, b string
+		want int
+	}{
+		{"baseline", "baseline", 0},
+		{"enhanced", "enhanced", 0},
+		{"strict", "strict", 0},
+		{"baseline", "enhanced", -1},
+		{"baseline", "strict", -1},
+		{"enhanced", "strict", -1},
+		{"enhanced", "baseline", 1},
+		{"strict", "baseline", 1},
+		{"strict", "enhanced", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.a+"_vs_"+tt.b, func(t *testing.T) {
+			t.Parallel()
+			got := CompareComplianceLevels(tt.a, tt.b)
+			if got != tt.want {
+				t.Errorf("CompareComplianceLevels(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}

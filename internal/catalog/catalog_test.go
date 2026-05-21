@@ -1,6 +1,8 @@
 package catalog
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
@@ -730,4 +732,450 @@ func containsStr(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func newMinimalCatalog() *Catalog {
+	cat := &Catalog{}
+	cat.tiers.Tiers = map[string]TierDef{}
+	cat.compliance.Levels = map[string]ComplianceLevelDef{}
+	cat.profiles.Profiles = map[string]ProfileDef{}
+	cat.profiles.Aliases = map[string]string{}
+	cat.projectProfiles.Profiles = map[string]ProjectProfileDef{}
+	cat.tools.Tools = map[string]ToolDef{}
+	cat.hookTiers.Tiers = map[string][]string{}
+	cat.derivations.TierToCompliance = map[string]string{}
+	cat.derivations.TierToEnabledTools = map[string][]string{}
+	return cat
+}
+
+func hasValidationError(errs []CatalogError, substr string) bool {
+	for _, e := range errs {
+		if strings.Contains(e.Error(), substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// --- Negative Validation Tests ---
+
+func TestValidate_CircularTierInheritance(t *testing.T) {
+	t.Parallel()
+	cat := newMinimalCatalog()
+	cat.tiers.Tiers["alpha"] = TierDef{Order: 1, Description: "A", Inherits: "beta"}
+	cat.tiers.Tiers["beta"] = TierDef{Order: 2, Description: "B", Inherits: "gamma"}
+	cat.tiers.Tiers["gamma"] = TierDef{Order: 3, Description: "C", Inherits: "alpha"}
+
+	errs := cat.Validate()
+	if !hasValidationError(errs, "circular inheritance") {
+		t.Errorf("expected circular inheritance error, got: %v", errs)
+	}
+}
+
+func TestValidate_DeepInheritanceChain(t *testing.T) {
+	t.Parallel()
+	cat := newMinimalCatalog()
+	for i := 0; i <= 11; i++ {
+		name := fmt.Sprintf("tier-%d", i)
+		def := TierDef{Order: i + 1, Description: name}
+		if i > 0 {
+			def.Inherits = fmt.Sprintf("tier-%d", i-1)
+		}
+		cat.tiers.Tiers[name] = def
+	}
+
+	errs := cat.Validate()
+	if !hasValidationError(errs, "exceeds maximum depth") {
+		t.Errorf("expected max depth error, got: %v", errs)
+	}
+}
+
+func TestValidate_TierInheritsUnknown(t *testing.T) {
+	t.Parallel()
+	cat := newMinimalCatalog()
+	cat.tiers.Tiers["orphan"] = TierDef{Order: 1, Description: "Orphan", Inherits: "ghost"}
+
+	errs := cat.Validate()
+	if !hasValidationError(errs, `inherits unknown tier "ghost"`) {
+		t.Errorf("expected unknown inherits error, got: %v", errs)
+	}
+}
+
+func TestValidate_TierMissingDescription(t *testing.T) {
+	t.Parallel()
+	cat := newMinimalCatalog()
+	cat.tiers.Tiers["no-desc"] = TierDef{Order: 99}
+
+	errs := cat.Validate()
+	if !hasValidationError(errs, "missing description") {
+		t.Errorf("expected missing description error, got: %v", errs)
+	}
+}
+
+func TestValidate_TierZeroOrder(t *testing.T) {
+	t.Parallel()
+	cat := newMinimalCatalog()
+	cat.tiers.Tiers["zero-order"] = TierDef{Description: "has desc"}
+
+	errs := cat.Validate()
+	if !hasValidationError(errs, "order must be > 0") {
+		t.Errorf("expected zero order error, got: %v", errs)
+	}
+}
+
+func TestValidate_ProfileReferencesUnknownTier(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+	cat.profiles.Profiles["broken"] = ProfileDef{Tier: "nonexistent"}
+
+	errs := cat.Validate()
+	if !hasValidationError(errs, `references unknown tier "nonexistent"`) {
+		t.Errorf("expected broken profile tier error, got: %v", errs)
+	}
+}
+
+func TestValidate_BrokenProfileAlias(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+	cat.profiles.Aliases["bad-alias"] = "nonexistent-profile"
+
+	errs := cat.Validate()
+	if !hasValidationError(errs, "aliases.bad-alias") {
+		t.Errorf("expected broken alias error, got: %v", errs)
+	}
+}
+
+func TestValidate_DerivationUnknownTier(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+	cat.derivations.TierToCompliance["ghost-tier"] = "baseline"
+
+	errs := cat.Validate()
+	if !hasValidationError(errs, `references unknown tier "ghost-tier"`) {
+		t.Errorf("expected unknown derivation tier error, got: %v", errs)
+	}
+}
+
+func TestValidate_DerivationUnknownComplianceLevel(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+	cat.derivations.TierToCompliance["full"] = "nonexistent"
+
+	errs := cat.Validate()
+	if !hasValidationError(errs, `unknown compliance level "nonexistent"`) {
+		t.Errorf("expected unknown compliance error, got: %v", errs)
+	}
+}
+
+func TestValidate_DerivationUnknownTool(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+	cat.derivations.TierToEnabledTools["full"] = []string{"fake-tool"}
+
+	errs := cat.Validate()
+	if !hasValidationError(errs, `unknown tool "fake-tool"`) {
+		t.Errorf("expected unknown tool error, got: %v", errs)
+	}
+}
+
+func TestValidate_BrokenHookTierOrder(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+	cat.hookTiers.TierOrder = append(cat.hookTiers.TierOrder, "phantom-tier")
+
+	errs := cat.Validate()
+	if !hasValidationError(errs, `"phantom-tier"`) {
+		t.Errorf("expected broken hook tier order error, got: %v", errs)
+	}
+}
+
+func TestValidate_BrokenProjectProfileTier(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+	cat.projectProfiles.Profiles["broken-pp"] = ProjectProfileDef{Tier: "nonexistent"}
+
+	errs := cat.Validate()
+	if !hasValidationError(errs, `references unknown tier "nonexistent"`) {
+		t.Errorf("expected broken project profile tier error, got: %v", errs)
+	}
+}
+
+// --- Multi-Level Inheritance Tests ---
+
+func TestResolveTier_ThreeLevelInheritance(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+	resolved, err := cat.ResolveTier("full")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resolved.Security.AgeGating == nil || !*resolved.Security.AgeGating {
+		t.Error("full should inherit age_gating=true from supply-chain-only")
+	}
+	if resolved.Security.ScriptBlocking == nil || !*resolved.Security.ScriptBlocking {
+		t.Error("full should inherit script_blocking=true from supply-chain-only")
+	}
+	if resolved.Security.LockEnforcement == nil || !*resolved.Security.LockEnforcement {
+		t.Error("full should inherit lock_enforcement=true from supply-chain-only")
+	}
+	if resolved.Security.Level != "enhanced" {
+		t.Errorf("security.level = %q, want enhanced (full's override)", resolved.Security.Level)
+	}
+
+	if !containsStr(resolved.Tools.Enabled, "gitleaks") {
+		t.Error("full should inherit gitleaks from standard")
+	}
+	if !containsStr(resolved.Tools.Enabled, "semgrep") {
+		t.Error("full should have semgrep from its own definition")
+	}
+
+	gitleaksCount := 0
+	for _, tool := range resolved.Tools.Enabled {
+		if tool == "gitleaks" {
+			gitleaksCount++
+		}
+	}
+	if gitleaksCount != 1 {
+		t.Errorf("gitleaks appears %d times, want 1 (deduplication)", gitleaksCount)
+	}
+
+	if !containsStr(resolved.ClaudeCode.MCPServers, "context7") {
+		t.Error("full should have context7 MCP server")
+	}
+}
+
+// --- Additional Merge Tests ---
+
+func TestMergeCatalogs_OverlayReplacesTier(t *testing.T) {
+	t.Parallel()
+	base := loadTestCatalog(t)
+
+	overlay := &Catalog{}
+	overlay.tiers.Tiers = map[string]TierDef{
+		"standard": {Order: 2, Description: "Overridden standard", DefaultPermissionPreset: "custom"},
+	}
+
+	merged := MergeCatalogs(base, overlay)
+
+	def, ok := merged.TierDef("standard")
+	if !ok {
+		t.Fatal("standard tier should exist after merge")
+	}
+	if def.Description != "Overridden standard" {
+		t.Errorf("description = %q, want overlay value", def.Description)
+	}
+	if def.DefaultPermissionPreset != "custom" {
+		t.Errorf("permission_preset = %q, want custom", def.DefaultPermissionPreset)
+	}
+
+	if _, ok := merged.TierDef("full"); !ok {
+		t.Error("full tier should still exist after merge")
+	}
+}
+
+func TestMergeCatalogs_OverlayReplacesStringSlice(t *testing.T) {
+	t.Parallel()
+	base := loadTestCatalog(t)
+
+	overlay := &Catalog{}
+	overlay.security.Hooks.Default = []string{"custom-hook"}
+
+	merged := MergeCatalogs(base, overlay)
+	hooks := merged.SecurityHooks()
+
+	if len(hooks) != 1 || hooks[0] != "custom-hook" {
+		t.Errorf("SecurityHooks() = %v, want [custom-hook]", hooks)
+	}
+}
+
+func TestMergeCatalogs_CustomHookOverrideByID(t *testing.T) {
+	t.Parallel()
+
+	base := &Catalog{}
+	base.tiers.Tiers = map[string]TierDef{}
+	base.compliance.Levels = map[string]ComplianceLevelDef{}
+	base.profiles.Profiles = map[string]ProfileDef{}
+	base.profiles.Aliases = map[string]string{}
+	base.projectProfiles.Profiles = map[string]ProjectProfileDef{}
+	base.tools.Tools = map[string]ToolDef{}
+	base.hookTiers.Tiers = map[string][]string{}
+	base.derivations.TierToCompliance = map[string]string{}
+	base.derivations.TierToEnabledTools = map[string][]string{}
+	base.security.CustomHooks = []CustomHookDef{
+		{ID: "hook-a", Name: "Hook A base", Language: "system"},
+		{ID: "hook-b", Name: "Hook B base", Language: "system"},
+	}
+
+	overlay := &Catalog{}
+	overlay.security.CustomHooks = []CustomHookDef{
+		{ID: "hook-b", Name: "Hook B overlay", Language: "python"},
+		{ID: "hook-c", Name: "Hook C new", Language: "system"},
+	}
+
+	merged := MergeCatalogs(base, overlay)
+	hooks := merged.CustomHooks()
+
+	if len(hooks) != 3 {
+		t.Fatalf("CustomHooks count = %d, want 3", len(hooks))
+	}
+	if hooks[0].ID != "hook-a" || hooks[0].Name != "Hook A base" {
+		t.Errorf("hooks[0] = %+v, want hook-a from base", hooks[0])
+	}
+	if hooks[1].ID != "hook-b" || hooks[1].Name != "Hook B overlay" || hooks[1].Language != "python" {
+		t.Errorf("hooks[1] = %+v, want hook-b from overlay", hooks[1])
+	}
+	if hooks[2].ID != "hook-c" || hooks[2].Name != "Hook C new" {
+		t.Errorf("hooks[2] = %+v, want hook-c from overlay", hooks[2])
+	}
+}
+
+func TestMergeCatalogs_ValidationPartialOverride(t *testing.T) {
+	t.Parallel()
+	base := loadTestCatalog(t)
+	baseServices := base.Services()
+
+	overlay := &Catalog{}
+	overlay.validation.Languages.All = []string{"go", "rust"}
+
+	merged := MergeCatalogs(base, overlay)
+
+	langs := merged.Languages()
+	if len(langs) != 2 || langs[0] != "go" || langs[1] != "rust" {
+		t.Errorf("Languages() = %v, want [go rust]", langs)
+	}
+
+	svcs := merged.Services()
+	if len(svcs) != len(baseServices) {
+		t.Errorf("Services() count = %d, want %d (base preserved)", len(svcs), len(baseServices))
+	}
+}
+
+// --- Validation Accessor Tests ---
+
+func TestValidationAccessors(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+
+	t.Run("KeepVars", func(t *testing.T) {
+		t.Parallel()
+		vars := cat.KeepVars()
+		if len(vars) < 5 {
+			t.Errorf("KeepVars() count = %d, want >= 5", len(vars))
+		}
+		for _, v := range []string{"TERM", "HOME", "USER"} {
+			if !containsStr(vars, v) {
+				t.Errorf("KeepVars() should contain %q", v)
+			}
+		}
+	})
+
+	t.Run("PackageManagers_node", func(t *testing.T) {
+		t.Parallel()
+		pms := cat.PackageManagers("node")
+		if len(pms) != 4 {
+			t.Fatalf("PackageManagers(node) count = %d, want 4", len(pms))
+		}
+	})
+
+	t.Run("PackageManagers_python", func(t *testing.T) {
+		t.Parallel()
+		pms := cat.PackageManagers("python")
+		if len(pms) != 3 {
+			t.Fatalf("PackageManagers(python) count = %d, want 3", len(pms))
+		}
+	})
+
+	t.Run("PackageManagers_unknown", func(t *testing.T) {
+		t.Parallel()
+		pms := cat.PackageManagers("brainfuck")
+		if pms != nil {
+			t.Errorf("PackageManagers(brainfuck) = %v, want nil", pms)
+		}
+	})
+
+	t.Run("HookPresets", func(t *testing.T) {
+		t.Parallel()
+		presets := cat.HookPresets()
+		if len(presets) != 4 {
+			t.Errorf("HookPresets() count = %d, want 4", len(presets))
+		}
+		for _, p := range []string{"auto-format", "safety-block", "pre-commit", "audit-log"} {
+			if !containsStr(presets, p) {
+				t.Errorf("HookPresets() should contain %q", p)
+			}
+		}
+	})
+
+	t.Run("SecurityLevels", func(t *testing.T) {
+		t.Parallel()
+		levels := cat.SecurityLevels()
+		if len(levels) != 3 {
+			t.Errorf("SecurityLevels() count = %d, want 3", len(levels))
+		}
+	})
+
+	t.Run("DataClassifications", func(t *testing.T) {
+		t.Parallel()
+		dc := cat.DataClassifications()
+		if len(dc) != 3 {
+			t.Errorf("DataClassifications() count = %d, want 3", len(dc))
+		}
+	})
+
+	t.Run("ToolCategories", func(t *testing.T) {
+		t.Parallel()
+		cats := cat.ToolCategories()
+		if len(cats) != 4 {
+			t.Fatalf("ToolCategories() count = %d, want 4", len(cats))
+		}
+		ids := make(map[string]bool)
+		for _, c := range cats {
+			ids[c.ID] = true
+		}
+		for _, id := range []string{"security", "ai-agent", "devex", "infrastructure"} {
+			if !ids[id] {
+				t.Errorf("ToolCategories() missing id %q", id)
+			}
+		}
+	})
+}
+
+// --- End-to-End Integration Test ---
+
+func TestEndToEnd_TierToComplianceChain(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+
+	compliance := cat.TierToCompliance()["full"]
+	if compliance != "strict" {
+		t.Fatalf("TierToCompliance[full] = %q, want strict", compliance)
+	}
+
+	level, ok := cat.ComplianceLevel(compliance)
+	if !ok {
+		t.Fatalf("ComplianceLevel(%q) not found", compliance)
+	}
+	if level.AgeGatingThresholdHours != 336 {
+		t.Errorf("strict age gating = %d, want 336", level.AgeGatingThresholdHours)
+	}
+	if len(level.RequiredPreCommitHooks) != 4 {
+		t.Errorf("strict hooks count = %d, want 4", len(level.RequiredPreCommitHooks))
+	}
+	if level.MCPServerPolicy != "explicit-only" {
+		t.Errorf("strict MCP policy = %q, want explicit-only", level.MCPServerPolicy)
+	}
+
+	enabledTools := cat.TierToEnabledTools()["full"]
+	tools := cat.Tools()
+	for _, toolName := range enabledTools {
+		if _, ok := tools[toolName]; !ok {
+			t.Errorf("enabled tool %q not found in tools catalog", toolName)
+		}
+	}
+	for _, expected := range []string{"semgrep", "gitleaks", "secretspec"} {
+		if !containsStr(enabledTools, expected) {
+			t.Errorf("full tier enabled tools %v should contain %q", enabledTools, expected)
+		}
+	}
 }

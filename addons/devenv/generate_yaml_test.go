@@ -65,8 +65,8 @@ func TestBasicGoProject(t *testing.T) {
 	if m["impure"] != false {
 		t.Errorf("impure should be false, got %v", m["impure"])
 	}
-	if m["allow_unfree"] != false {
-		t.Errorf("allow_unfree should be false, got %v", m["allow_unfree"])
+	if m["allow_unfree"] != true {
+		t.Errorf("allow_unfree should be true, got %v", m["allow_unfree"])
 	}
 	if m["allow_broken"] != false {
 		t.Errorf("allow_broken should be false, got %v", m["allow_broken"])
@@ -84,7 +84,7 @@ func TestBasicGoProject(t *testing.T) {
 	if !ok {
 		t.Fatal("inputs.nixpkgs should be a map")
 	}
-	if nixpkgs["url"] != "github:NixOS/nixpkgs/nixos-25.11" {
+	if nixpkgs["url"] != "github:NixOS/nixpkgs/nixpkgs-unstable" {
 		t.Errorf("nixpkgs url wrong: %v", nixpkgs["url"])
 	}
 
@@ -307,7 +307,7 @@ func TestEcosystemInputDoesNotOverrideNixpkgs(t *testing.T) {
 	inputs := m["inputs"].(map[string]interface{})
 	nixpkgs := inputs["nixpkgs"].(map[string]interface{})
 	// The hardened nixpkgs URL should not be overridden by ecosystem input.
-	if nixpkgs["url"] != "github:NixOS/nixpkgs/nixos-25.11" {
+	if nixpkgs["url"] != "github:NixOS/nixpkgs/nixpkgs-unstable" {
 		t.Errorf("nixpkgs URL was overridden by ecosystem input: %v", nixpkgs["url"])
 	}
 }
@@ -365,8 +365,8 @@ func TestSecurityDefaultsWithEmptyAnswers(t *testing.T) {
 	if m["impure"] != false {
 		t.Errorf("impure should be false with empty answers, got %v", m["impure"])
 	}
-	if m["allow_unfree"] != false {
-		t.Errorf("allow_unfree should be false with empty answers, got %v", m["allow_unfree"])
+	if m["allow_unfree"] != true {
+		t.Errorf("allow_unfree should be true with empty answers, got %v", m["allow_unfree"])
 	}
 	if m["allow_broken"] != false {
 		t.Errorf("allow_broken should be false with empty answers, got %v", m["allow_broken"])
@@ -483,8 +483,8 @@ func TestBoolFieldsExplicitInOutput(t *testing.T) {
 	if !strings.Contains(content, "impure: false") {
 		t.Error("'impure: false' must appear explicitly in YAML output")
 	}
-	if !strings.Contains(content, "allow_unfree: false") {
-		t.Error("'allow_unfree: false' must appear explicitly in YAML output")
+	if !strings.Contains(content, "allow_unfree: true") {
+		t.Error("'allow_unfree: true' must appear explicitly in YAML output")
 	}
 	if !strings.Contains(content, "allow_broken: false") {
 		t.Error("'allow_broken: false' must appear explicitly in YAML output")

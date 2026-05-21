@@ -14,17 +14,17 @@ import (
 
 // DevenvNixTemplateData holds all data required to render the devenv.nix template.
 type DevenvNixTemplateData struct {
-	Packages          []string              // Base + extra packages.
-	EnvVars           map[string]string     // Non-sensitive env vars (always includes DEVENV_SECURITY_HARDENED).
-	UnsetEnvVars      []string              // Credential-bearing vars stripped from the shell.
-	LanguageFragments []LanguageFragment    // Pre-rendered Nix from ecosystem modules.
-	Services          []ServiceTemplateData // Structured service configs.
-	GitHooksEnabled   bool                  // Whether the git-hooks block appears.
-	SecurityHooks     []string              // Always-present hooks (ripsecrets, etc.).
-	BuiltInHooks      []string              // Ecosystem hooks using .enable = true syntax.
-	CustomHooks       []CustomHookData      // Ecosystem hooks needing full attribute sets.
-	EnterShell        string                // Shell script body for enterShell.
-	EnterTest         string                // Test script body for enterTest.
+	Packages          []string                   // Base + extra packages.
+	EnvVars           map[string]string          // Non-sensitive env vars (always includes DEVENV_SECURITY_HARDENED).
+	UnsetEnvVars      []string                   // Credential-bearing vars stripped from the shell.
+	LanguageFragments []LanguageFragment         // Pre-rendered Nix from ecosystem modules.
+	Services          []ServiceTemplateData      // Structured service configs.
+	GitHooksEnabled   bool                       // Whether the git-hooks block appears.
+	SecurityHooks     []string                   // Always-present hooks (ripsecrets, etc.).
+	BuiltInHooks      []string                   // Ecosystem hooks using .enable = true syntax.
+	CustomHooks       []CustomHookData           // Ecosystem hooks needing full attribute sets.
+	EnterShell        string                     // Shell script body for enterShell.
+	EnterTest         string                     // Test script body for enterTest.
 	Tasks             []ecosystem.TaskDefinition // Development task definitions from ecosystem modules.
 }
 
@@ -126,11 +126,26 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 			if hook.BuiltIn {
 				data.BuiltInHooks = append(data.BuiltInHooks, hook.ID)
 			} else {
+				entry := hook.Entry
+				rawEntry := false
+
+				if hook.NixPackage != "" {
+					binary := strings.SplitN(hook.Entry, " ", 2)[0]
+					args := ""
+					if parts := strings.SplitN(hook.Entry, " ", 2); len(parts) > 1 {
+						args = " " + parts[1]
+					}
+					entry = fmt.Sprintf(`"${pkgs.%s}/bin/%s%s"`, hook.NixPackage, binary, args)
+					rawEntry = true
+					data.Packages = append(data.Packages, "pkgs."+hook.NixPackage)
+				}
+
 				data.CustomHooks = append(data.CustomHooks, CustomHookData{
 					ID:            hook.ID,
 					Name:          hook.Name,
 					Description:   hook.Description,
-					Entry:         hook.Entry,
+					Entry:         entry,
+					RawEntry:      rawEntry,
 					Language:      hook.Language,
 					Types:         hook.Types,
 					Stages:        hook.Stages,

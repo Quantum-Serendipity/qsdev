@@ -13,6 +13,7 @@ import (
 // the provided args. It returns the combined stdout/stderr and any error.
 func executeInitCmd(t *testing.T, dir string, args ...string) (string, error) {
 	t.Helper()
+	t.Setenv("QSDEV_SKIP_SETUP", "1")
 	origDir, _ := os.Getwd()
 	defer func() { _ = os.Chdir(origDir) }()
 	if err := os.Chdir(dir); err != nil {

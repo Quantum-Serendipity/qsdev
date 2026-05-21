@@ -128,6 +128,31 @@ func TestDriftSeverityStringValues(t *testing.T) {
 	}
 }
 
+func TestTierDescription(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		want string
+	}{
+		{"supply-chain-only", "Package supply chain security + devenv sandbox; no Claude Code restrictions"},
+		{"standard", "Supply chain deny rules + Claude Code governance + CLAUDE.md + gitleaks"},
+		{"full", "Full tooling: MCP servers, agent tools, consulting workflows, AlwaysOn tools"},
+		{"unknown", ""},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := TierDescription(tt.name)
+			if got != tt.want {
+				t.Errorf("TierDescription(%q) = %q, want %q", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSchemaVersionIsSet(t *testing.T) {
 	if SchemaVersion == "" {
 		t.Error("SchemaVersion should not be empty")

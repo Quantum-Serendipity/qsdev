@@ -9,44 +9,45 @@ import (
 // It flows through generators to produce output files and is serialized to the
 // per-addon answers file for incremental updates.
 type WizardAnswers struct {
-	ProjectName     string            `yaml:"project_name"     json:"project_name"`
-	ProjectRoot     string            `yaml:"project_root"     json:"project_root"`
-	Detected        DetectedProject   `yaml:"detected"         json:"detected"`
-	Languages       []LanguageChoice  `yaml:"languages"        json:"languages"`
-	Services        []ServiceChoice   `yaml:"services"         json:"services"`
-	Direnv          bool              `yaml:"direnv"           json:"direnv"`
-	GitHooks        []string          `yaml:"git_hooks"        json:"git_hooks"`
-	ExtraPackages   []string          `yaml:"extra_packages"   json:"extra_packages"`
-	EnvVars         map[string]string `yaml:"env_vars"         json:"env_vars"`
+	ProjectName        string            `yaml:"project_name"     json:"project_name"`
+	ProjectRoot        string            `yaml:"project_root"     json:"project_root"`
+	Detected           DetectedProject   `yaml:"detected"         json:"detected"`
+	Languages          []LanguageChoice  `yaml:"languages"        json:"languages"`
+	Services           []ServiceChoice   `yaml:"services"         json:"services"`
+	Direnv             bool              `yaml:"direnv"           json:"direnv"`
+	GitHooks           []string          `yaml:"git_hooks"        json:"git_hooks"`
+	ExtraPackages      []string          `yaml:"extra_packages"   json:"extra_packages"`
+	EnvVars            map[string]string `yaml:"env_vars"         json:"env_vars"`
 	ClaudeCode         bool              `yaml:"claude_code"         json:"claude_code"`
 	NixHardeningGuide  bool              `yaml:"nix_hardening_guide" json:"nix_hardening_guide"`
 	ProfileName        string            `yaml:"profile_name"        json:"profile_name"`
 	ProjectTypeProfile string            `yaml:"project_type_profile" json:"project_type_profile"`
-	PermissionLevel string            `yaml:"permission_level" json:"permission_level"`
-	Skills          []string          `yaml:"skills"           json:"skills"`
-	Hooks           HookChoices       `yaml:"hooks"            json:"hooks"`
-	MCPServers      []string          `yaml:"mcp_servers"      json:"mcp_servers"`
-	QuickChoice     string            `yaml:"quick_choice"     json:"quick_choice"`
-	Confirmed       bool              `yaml:"confirmed"        json:"confirmed"`
-	MergeMode       string            `yaml:"merge_mode"       json:"merge_mode"`
-	AgentTools      AgentToolsAnswers `yaml:"agent_tools"      json:"agent_tools"`
-	EnabledTools    map[string]bool   `yaml:"enabled_tools,omitempty" json:"enabled_tools,omitempty"`
-	CIPlatform      string            `yaml:"ci_platform,omitempty"   json:"ci_platform,omitempty"`
-	HookTier        string            `yaml:"hook_tier,omitempty"     json:"hook_tier,omitempty"`
-	ConfigVersion   int               `yaml:"config_version,omitempty"   json:"config_version,omitempty"`
-	ComplianceLevel string            `yaml:"compliance_level,omitempty"  json:"compliance_level,omitempty"`
-	ModelSize       string            `yaml:"model_size,omitempty"        json:"model_size,omitempty"`
-	Infrastructure  InfraConfig       `yaml:"infrastructure,omitempty"    json:"infrastructure,omitempty"`
+	Tier               string            `yaml:"tier,omitempty"          json:"tier,omitempty"`
+	PermissionLevel    string            `yaml:"permission_level" json:"permission_level"`
+	Skills             []string          `yaml:"skills"           json:"skills"`
+	Hooks              HookChoices       `yaml:"hooks"            json:"hooks"`
+	MCPServers         []string          `yaml:"mcp_servers"      json:"mcp_servers"`
+	QuickChoice        string            `yaml:"quick_choice"     json:"quick_choice"`
+	Confirmed          bool              `yaml:"confirmed"        json:"confirmed"`
+	MergeMode          string            `yaml:"merge_mode"       json:"merge_mode"`
+	AgentTools         AgentToolsAnswers `yaml:"agent_tools"      json:"agent_tools"`
+	EnabledTools       map[string]bool   `yaml:"enabled_tools,omitempty" json:"enabled_tools,omitempty"`
+	CIPlatform         string            `yaml:"ci_platform,omitempty"   json:"ci_platform,omitempty"`
+	HookTier           string            `yaml:"hook_tier,omitempty"     json:"hook_tier,omitempty"`
+	ConfigVersion      int               `yaml:"config_version,omitempty"   json:"config_version,omitempty"`
+	ComplianceLevel    string            `yaml:"compliance_level,omitempty"  json:"compliance_level,omitempty"`
+	ModelSize          string            `yaml:"model_size,omitempty"        json:"model_size,omitempty"`
+	Infrastructure     InfraConfig       `yaml:"infrastructure,omitempty"    json:"infrastructure,omitempty"`
 }
 
 // AgentToolsAnswers holds AI agent tool selections from the wizard.
 type AgentToolsAnswers struct {
 	PostmortemEnabled    bool   `yaml:"postmortem_enabled"     json:"postmortem_enabled"`
-	VersionSentinel     bool   `yaml:"version_sentinel"       json:"version_sentinel"`
-	VersionSentinelHours int   `yaml:"version_sentinel_hours" json:"version_sentinel_hours"`
-	SembleEnabled       bool   `yaml:"semble_enabled"         json:"semble_enabled"`
-	SembleMode          string `yaml:"semble_mode"            json:"semble_mode"`
-	SembleTextFiles     bool   `yaml:"semble_text_files"      json:"semble_text_files"`
+	VersionSentinel      bool   `yaml:"version_sentinel"       json:"version_sentinel"`
+	VersionSentinelHours int    `yaml:"version_sentinel_hours" json:"version_sentinel_hours"`
+	SembleEnabled        bool   `yaml:"semble_enabled"         json:"semble_enabled"`
+	SembleMode           string `yaml:"semble_mode"            json:"semble_mode"`
+	SembleTextFiles      bool   `yaml:"semble_text_files"      json:"semble_text_files"`
 }
 
 // LanguageChoice represents a user's selection of a programming language
@@ -132,7 +133,7 @@ type GeneratedFile struct {
 // enabling modification detection on subsequent runs.
 type GeneratedState struct {
 	LastRun             time.Time            `yaml:"last_run"              json:"last_run"`
-	QsdevVersion         string               `yaml:"qsdev_version,omitempty" json:"qsdev_version,omitempty"`
+	QsdevVersion        string               `yaml:"qsdev_version,omitempty" json:"qsdev_version,omitempty"`
 	Files               map[string]FileState `yaml:"files"                 json:"files"`
 	TemplateVersion     string               `yaml:"template_version"      json:"template_version"`
 	SkillLibraryVersion string               `yaml:"skill_library_version" json:"skill_library_version"`
@@ -163,7 +164,7 @@ func (a *WizardAnswers) IsComplete() bool {
 	if len(a.Languages) == 0 {
 		return false
 	}
-	if a.ClaudeCode && a.PermissionLevel == "" {
+	if a.ClaudeCode && a.PermissionLevel == "" && a.Tier == "" {
 		return false
 	}
 	return true
@@ -205,14 +206,20 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 		}
 	}
 
-	// Default permission level.
-	if a.ClaudeCode && a.PermissionLevel == "" {
+	// Default permission level — only when Tier is not explicitly set.
+	// When Tier is set, the tier determines the permission preset; filling
+	// in "standard" here would mask the tier's intent.
+	if a.ClaudeCode && a.PermissionLevel == "" && a.Tier == "" {
 		a.PermissionLevel = "standard"
 	}
 
 	// Default hooks when Claude is enabled.
 	if a.ClaudeCode && !a.Hooks.SafetyBlock && !a.Hooks.AutoFormat && !a.Hooks.PreCommit && !a.Hooks.AuditLog {
 		a.Hooks.SafetyBlock = true
+	}
+
+	if a.Tier == "supply-chain-only" || (a.Tier == "" && a.PermissionLevel == "supply-chain-only") {
+		return
 	}
 
 	// Default agent tools when Claude is enabled — only if user hasn't configured any.
@@ -235,4 +242,3 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 		a.MCPServers = append(a.MCPServers, "context7", "github", "socket", "semble")
 	}
 }
-

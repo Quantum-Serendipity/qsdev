@@ -13,11 +13,32 @@ import (
 )
 
 // defaultSemgrepExcludes lists paths excluded from Semgrep scanning.
+// Covers vendored deps, build output, caches, and virtual environments
+// across all supported ecosystems.
 var defaultSemgrepExcludes = []string{
 	"vendor/",
 	"node_modules/",
+	"third_party/",
 	"dist/",
+	"build/",
+	"out/",
+	"target/",
+	".next/",
+	".nuxt/",
 	".devenv/",
+	".direnv/",
+	"result",
+	"__pycache__/",
+	".venv/",
+	"venv/",
+	".tox/",
+	".egg-info/",
+	".cache/",
+	".pytest_cache/",
+	"coverage/",
+	".coverage/",
+	"testdata/",
+	"fixtures/",
 }
 
 // GenerateSemgrepYml produces a .semgrep.yml configuration file. It collects

@@ -155,6 +155,16 @@ func TestAddSkillCmd_ValidSkill(t *testing.T) {
 		t.Fatalf("init failed: %v", err)
 	}
 
+	// Skills require Full tier — upgrade saved answers before add-skill.
+	savedAnswers, err := claudecode.ExportLoadAnswers(tmpDir)
+	if err != nil {
+		t.Fatalf("loading saved answers: %v", err)
+	}
+	savedAnswers.Tier = "full"
+	if err := claudecode.ExportSaveAnswers(tmpDir, savedAnswers); err != nil {
+		t.Fatalf("saving upgraded answers: %v", err)
+	}
+
 	// Now add a skill.
 	cmd2 := claudecode.ExportClaudeCmd()
 	var buf2 bytes.Buffer
@@ -290,7 +300,7 @@ func TestBuildClaudeAnswersFromFlags(t *testing.T) {
 
 func TestInvalidPermissionPresetRejected(t *testing.T) {
 	// Verify validPermissionPresets contains the expected values.
-	expectedPresets := []string{"minimal", "standard", "permissive", "custom"}
+	expectedPresets := []string{"minimal", "standard", "permissive", "custom", "supply-chain-only"}
 	presets := claudecode.ExportValidPermissionPresets
 	if len(presets) != len(expectedPresets) {
 		t.Fatalf("validPermissionPresets has %d entries, want %d", len(presets), len(expectedPresets))

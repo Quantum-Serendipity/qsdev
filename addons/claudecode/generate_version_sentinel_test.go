@@ -31,6 +31,7 @@ func TestVersionSentinel_Disabled(t *testing.T) {
 func TestVersionSentinelIgnore_GoProject(t *testing.T) {
 	reg := newTestRegistry(t, goMock())
 	answers := types.WizardAnswers{
+		Tier:       "full",
 		Languages:  []types.LanguageChoice{{Name: "go"}},
 		AgentTools: types.AgentToolsAnswers{VersionSentinel: true},
 	}
@@ -62,6 +63,7 @@ func TestVersionSentinelIgnore_GoProject(t *testing.T) {
 func TestVersionSentinelIgnore_NpmProject(t *testing.T) {
 	reg := newTestRegistry(t, jsMock())
 	answers := types.WizardAnswers{
+		Tier:       "full",
 		Languages:  []types.LanguageChoice{{Name: "javascript"}},
 		AgentTools: types.AgentToolsAnswers{VersionSentinel: true},
 	}
@@ -82,6 +84,7 @@ func TestVersionSentinelIgnore_NpmProject(t *testing.T) {
 func TestVersionSentinelRecoverySkill(t *testing.T) {
 	reg := newTestRegistry(t, goMock())
 	answers := types.WizardAnswers{
+		Tier:       "full",
 		Languages:  []types.LanguageChoice{{Name: "go"}},
 		AgentTools: types.AgentToolsAnswers{VersionSentinel: true},
 	}
@@ -116,6 +119,7 @@ func TestVersionSentinelRecoverySkill(t *testing.T) {
 func TestVersionSentinelIgnore_GoAndJsProject(t *testing.T) {
 	reg := newTestRegistry(t, goMock(), jsMock())
 	answers := types.WizardAnswers{
+		Tier: "full",
 		Languages: []types.LanguageChoice{
 			{Name: "go"},
 			{Name: "javascript"},

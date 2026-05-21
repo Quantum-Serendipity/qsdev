@@ -21,7 +21,7 @@ var DefenseLayerNames = [...]string{
 }
 
 // AssessDefenseLayers evaluates all 10 defense layers.
-func AssessDefenseLayers(enabledTools map[string]bool, detected types.DetectedProject, genState types.GeneratedState) DefenseCoverage {
+func AssessDefenseLayers(enabledTools map[string]bool, detected types.DetectedProject, genState types.GeneratedState, currentTier int) DefenseCoverage {
 	layers := []DefenseLayer{
 		assessPreToolUseHooks(enabledTools, genState),
 		assessAgeGating(enabledTools, genState),
@@ -35,7 +35,7 @@ func AssessDefenseLayers(enabledTools map[string]bool, detected types.DetectedPr
 		assessLicenseCompliance(enabledTools),
 	}
 
-	score := ComputeDefenseScore(layers)
+	score := ComputeTierRelativeDefenseScore(layers, currentTier)
 
 	enabled := 0
 	total := 0
@@ -59,8 +59,9 @@ func AssessDefenseLayers(enabledTools map[string]bool, detected types.DetectedPr
 
 func assessPreToolUseHooks(enabledTools map[string]bool, genState types.GeneratedState) DefenseLayer {
 	layer := DefenseLayer{
-		Name:   "pretooluse-hooks",
-		Weight: WeightCritical,
+		Name:    "pretooluse-hooks",
+		Weight:  WeightCritical,
+		MinTier: 1,
 	}
 
 	attachGuardEnabled := enabledTools["attach-guard"]
@@ -86,8 +87,9 @@ func assessPreToolUseHooks(enabledTools map[string]bool, genState types.Generate
 
 func assessAgeGating(enabledTools map[string]bool, genState types.GeneratedState) DefenseLayer {
 	layer := DefenseLayer{
-		Name:   "age-gating",
-		Weight: WeightHigh,
+		Name:    "age-gating",
+		Weight:  WeightHigh,
+		MinTier: 2,
 	}
 
 	// Age-gating is configured when the attach-guard is enabled and there are
@@ -117,8 +119,9 @@ func assessAgeGating(enabledTools map[string]bool, genState types.GeneratedState
 
 func assessInstallScriptBlocking(enabledTools map[string]bool) DefenseLayer {
 	layer := DefenseLayer{
-		Name:   "install-script-blocking",
-		Weight: WeightHigh,
+		Name:    "install-script-blocking",
+		Weight:  WeightHigh,
+		MinTier: 1,
 	}
 
 	if enabledTools["attach-guard"] {
@@ -133,8 +136,9 @@ func assessInstallScriptBlocking(enabledTools map[string]bool) DefenseLayer {
 
 func assessLockFileEnforcement(enabledTools map[string]bool, genState types.GeneratedState) DefenseLayer {
 	layer := DefenseLayer{
-		Name:   "lock-file-enforcement",
-		Weight: WeightHigh,
+		Name:    "lock-file-enforcement",
+		Weight:  WeightHigh,
+		MinTier: 1,
 	}
 
 	// Check if lock file enforcement is configured through generated state.
@@ -163,8 +167,9 @@ func assessLockFileEnforcement(enabledTools map[string]bool, genState types.Gene
 
 func assessVulnScanning(enabledTools map[string]bool, genState types.GeneratedState) DefenseLayer {
 	layer := DefenseLayer{
-		Name:   "vulnerability-scanning",
-		Weight: WeightHigh,
+		Name:    "vulnerability-scanning",
+		Weight:  WeightHigh,
+		MinTier: 1,
 	}
 
 	// Check for vulnerability scanning configs (grype, socket-dev, etc.)
@@ -188,8 +193,9 @@ func assessVulnScanning(enabledTools map[string]bool, genState types.GeneratedSt
 
 func assessNixHardening(genState types.GeneratedState) DefenseLayer {
 	layer := DefenseLayer{
-		Name:   "nix-hardening",
-		Weight: WeightMedium,
+		Name:    "nix-hardening",
+		Weight:  WeightMedium,
+		MinTier: 3,
 	}
 
 	// Check if devenv.nix exists in generated state (implies NixHardeningGuide was applied).
@@ -206,8 +212,9 @@ func assessNixHardening(genState types.GeneratedState) DefenseLayer {
 
 func assessSAST(enabledTools map[string]bool, genState types.GeneratedState) DefenseLayer {
 	layer := DefenseLayer{
-		Name:   "sast",
-		Weight: WeightMedium,
+		Name:    "sast",
+		Weight:  WeightMedium,
+		MinTier: 3,
 	}
 
 	semgrepEnabled := enabledTools["semgrep"]
@@ -233,8 +240,9 @@ func assessSAST(enabledTools map[string]bool, genState types.GeneratedState) Def
 
 func assessSecretsScanning(enabledTools map[string]bool) DefenseLayer {
 	layer := DefenseLayer{
-		Name:   "secrets-scanning",
-		Weight: WeightMedium,
+		Name:    "secrets-scanning",
+		Weight:  WeightMedium,
+		MinTier: 2,
 	}
 
 	gitleaksEnabled := enabledTools["gitleaks"]
@@ -261,8 +269,9 @@ func assessSecretsScanning(enabledTools map[string]bool) DefenseLayer {
 
 func assessContainerSecurity(enabledTools map[string]bool, detected types.DetectedProject) DefenseLayer {
 	layer := DefenseLayer{
-		Name:   "container-security",
-		Weight: WeightMedium,
+		Name:    "container-security",
+		Weight:  WeightMedium,
+		MinTier: 3,
 	}
 
 	if !detected.HasDockerfile {
@@ -283,8 +292,9 @@ func assessContainerSecurity(enabledTools map[string]bool, detected types.Detect
 
 func assessLicenseCompliance(enabledTools map[string]bool) DefenseLayer {
 	layer := DefenseLayer{
-		Name:   "license-compliance",
-		Weight: WeightLow,
+		Name:    "license-compliance",
+		Weight:  WeightLow,
+		MinTier: 3,
 	}
 
 	if enabledTools["license-compliance"] {

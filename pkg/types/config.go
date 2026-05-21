@@ -11,7 +11,8 @@ const (
 // It is the declarative project configuration that drives devinit behavior.
 type QsdevConfig struct {
 	Version        int              `yaml:"version"`
-	QsdevVersion    string           `yaml:"qsdev_version,omitempty"`
+	QsdevVersion   string           `yaml:"qsdev_version,omitempty"`
+	Tier           string           `yaml:"tier,omitempty"`
 	Profile        string           `yaml:"profile,omitempty"`
 	Languages      []LanguageConfig `yaml:"languages,omitempty"`
 	Services       []ServiceConfig  `yaml:"services,omitempty"`

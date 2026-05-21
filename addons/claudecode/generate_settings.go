@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -285,6 +285,17 @@ func AllBaseDenyRules() []string {
 
 func allBaseDenyRules() []string {
 	var rules []string
+	rules = append(rules, supplyChainDenyRules()...)
+	rules = append(rules, denyDestructiveOps...)
+	return rules
+}
+
+// supplyChainDenyRules returns deny rules that prevent supply chain attacks:
+// bypassing the package guard, running arbitrary remote code, using system
+// package managers outside the sandbox. Excludes workflow guardrails
+// (destructive git ops, rm -rf, .env reads).
+func supplyChainDenyRules() []string {
+	var rules []string
 	rules = append(rules, denyNpx...)
 	rules = append(rules, denyNix...)
 	rules = append(rules, denySystem...)
@@ -294,7 +305,6 @@ func allBaseDenyRules() []string {
 	rules = append(rules, denySudoPrefix...)
 	rules = append(rules, denySubprocessEscape...)
 	rules = append(rules, denyEvalXargs...)
-	rules = append(rules, denyDestructiveOps...)
 	return rules
 }
 
@@ -343,41 +353,25 @@ var allowStandardBase = []string{
 	`Bash(git *)`,
 }
 
-// allowStandardBuildTestLint provides build, test, lint, and run commands.
+// allowStandardBuildTestLint provides build, test, lint, and read-only commands.
 var allowStandardBuildTestLint = []string{
-	// JS script runners
-	`Bash(npm run *)`,
+	// JS build/test (npm run/start moved to askCodeExecution)
 	`Bash(npm test *)`,
 	`Bash(npm test)`,
-	`Bash(npm start *)`,
-	`Bash(npm start)`,
 	`Bash(npm run build *)`,
-	`Bash(yarn run *)`,
-	`Bash(pnpm run *)`,
-	`Bash(bun run *)`,
-	// Go
+	// Go build/test (go run moved to askCodeExecution)
 	`Bash(go build *)`,
 	`Bash(go build)`,
 	`Bash(go test *)`,
 	`Bash(go test)`,
-	`Bash(go run *)`,
-	// Rust
+	// Rust build/test (cargo run moved to askCodeExecution)
 	`Bash(cargo build *)`,
 	`Bash(cargo build)`,
 	`Bash(cargo test *)`,
 	`Bash(cargo test)`,
-	`Bash(cargo run *)`,
-	`Bash(cargo run)`,
-	// Ruby / PHP
-	`Bash(bundle exec *)`,
-	`Bash(composer run-script *)`,
-	// Nix development
+	// Nix development (nix build/run/shell moved to askCodeExecution)
 	`Bash(nix develop *)`,
 	`Bash(nix develop)`,
-	`Bash(nix build *)`,
-	`Bash(nix build)`,
-	`Bash(nix run *)`,
-	`Bash(nix shell *)`,
 	`Bash(nix flake check *)`,
 	`Bash(nix flake show *)`,
 	`Bash(devenv shell *)`,
@@ -397,6 +391,27 @@ var allowStandardBuildTestLint = []string{
 	`Bash(vulnix *)`,
 	`Bash(nix flake info *)`,
 	`Bash(nix flake metadata *)`,
+}
+
+// askCodeExecution lists commands that can execute arbitrary code and require
+// user confirmation. These run project scripts, compile+execute source, or
+// fetch and execute remote code (nix flakes).
+var askCodeExecution = []string{
+	`Bash(npm run *)`,
+	`Bash(npm start *)`,
+	`Bash(npm start)`,
+	`Bash(yarn run *)`,
+	`Bash(pnpm run *)`,
+	`Bash(bun run *)`,
+	`Bash(go run *)`,
+	`Bash(cargo run *)`,
+	`Bash(cargo run)`,
+	`Bash(bundle exec *)`,
+	`Bash(composer run-script *)`,
+	`Bash(nix run *)`,
+	`Bash(nix shell *)`,
+	`Bash(nix build *)`,
+	`Bash(nix build)`,
 }
 
 // allowFrozenLockfileInstalls provides pre-approved frozen lockfile installs
@@ -456,6 +471,7 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 		deny = append(deny, baseDeny...)
 		deny = append(deny, ecosystemDeny...)
 		ask = append(ask, askMinimalBase...)
+		ask = append(ask, askCodeExecution...)
 		ask = append(ask, packageAskRules...)
 		defaultMode = "plan"
 		disableBypass = "disable"
@@ -467,6 +483,7 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 		deny = append(deny, baseDeny...)
 		deny = append(deny, ecosystemDeny...)
 		ask = append(ask, askStandardBase...)
+		ask = append(ask, askCodeExecution...)
 		ask = append(ask, packageAskRules...)
 		defaultMode = "default"
 		disableBypass = "disable"
@@ -479,9 +496,20 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 		deny = append(deny, baseDeny...)
 		deny = append(deny, ecosystemDeny...)
 		ask = append(ask, askStandardBase...)
+		ask = append(ask, askCodeExecution...)
 		ask = append(ask, packageAskRules...)
 		defaultMode = "default"
 		disableBypass = "disable"
+
+	case PermissionPresetSupplyChainOnly:
+		deny = append(deny, supplyChainDenyRules()...)
+		deny = append(deny, ecosystemDeny...)
+		ask = append(ask, packageAskRules...)
+		return Permissions{
+			Allow: []string{},
+			Deny:  sliceutil.Dedup(deny),
+			Ask:   sliceutil.Dedup(ask),
+		}
 
 	case PermissionPresetCustom:
 		// Custom: allow only what's in ExtraAllowPatterns.
@@ -597,9 +625,16 @@ func GenerateSettings(answers types.WizardAnswers, registry *ecosystem.Registry,
 		preset = PermissionPresetStandard
 	}
 
-	// Override from wizard answers if set.
+	// Override from wizard answers. PermissionLevel is the most specific knob
+	// (user-facing --claude-permissions flag), so it takes precedence when set
+	// to something other than the tier's own default. When only Tier is set
+	// (and PermissionLevel is empty because FillDefaults didn't populate it),
+	// derive the preset from the tier.
 	if answers.PermissionLevel != "" {
 		preset = PermissionPreset(answers.PermissionLevel)
+	} else if answers.Tier != "" {
+		t := resolveTier(answers)
+		preset = PermissionPreset(t.DefaultPermissionPreset())
 	}
 
 	settings := SettingsJSON{

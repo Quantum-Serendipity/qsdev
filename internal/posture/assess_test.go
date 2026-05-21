@@ -58,7 +58,7 @@ func TestAssess_WithStateFiles(t *testing.T) {
 	// Create a state file.
 	st := types.GeneratedState{
 		QsdevVersion: "2.0.0",
-		LastRun:     time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+		LastRun:      time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
 		Files: map[string]types.FileState{
 			"devenv.nix": {Hash: "abc123"},
 		},
@@ -145,6 +145,106 @@ func TestAssess_EmptySlicesNotNil(t *testing.T) {
 	}
 	if report.Conformance.Enhanced.Checks == nil {
 		t.Error("Conformance.Enhanced.Checks should be empty slice, not nil")
+	}
+}
+
+func TestAssess_TierInfoDefaultStandard(t *testing.T) {
+	root := t.TempDir()
+
+	// Create .qsdev.yaml without a security level — should default to standard.
+	if err := os.WriteFile(filepath.Join(root, ".qsdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := Assess(root, AssessOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if report.Tier.Current != "standard" {
+		t.Errorf("Tier.Current = %q, want %q", report.Tier.Current, "standard")
+	}
+	if report.Tier.Position != 2 {
+		t.Errorf("Tier.Position = %d, want 2", report.Tier.Position)
+	}
+	if report.Tier.Total != 3 {
+		t.Errorf("Tier.Total = %d, want 3", report.Tier.Total)
+	}
+	if report.Tier.NextTier != "full" {
+		t.Errorf("Tier.NextTier = %q, want %q", report.Tier.NextTier, "full")
+	}
+}
+
+func TestAssess_TierInfoFromConfig(t *testing.T) {
+	tests := []struct {
+		name         string
+		yaml         string
+		wantCurrent  string
+		wantPosition int
+		wantNext     string
+	}{
+		{
+			name:         "explicit tier supply-chain-only",
+			yaml:         "version: 1\ntier: supply-chain-only\n",
+			wantCurrent:  "supply-chain-only",
+			wantPosition: 1,
+			wantNext:     "standard",
+		},
+		{
+			name:         "explicit tier standard",
+			yaml:         "version: 1\ntier: standard\n",
+			wantCurrent:  "standard",
+			wantPosition: 2,
+			wantNext:     "full",
+		},
+		{
+			name:         "explicit tier full",
+			yaml:         "version: 1\ntier: full\n",
+			wantCurrent:  "full",
+			wantPosition: 3,
+			wantNext:     "",
+		},
+		{
+			name:         "inferred from supply-chain-only permission level",
+			yaml:         "version: 1\nclaude_code:\n  permission_level: supply-chain-only\n",
+			wantCurrent:  "supply-chain-only",
+			wantPosition: 1,
+			wantNext:     "standard",
+		},
+		{
+			name:         "inferred from MCP servers present",
+			yaml:         "version: 1\nclaude_code:\n  mcp_servers:\n    - github\n",
+			wantCurrent:  "full",
+			wantPosition: 3,
+			wantNext:     "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, ".qsdev.yaml"), []byte(tt.yaml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			report, err := Assess(root, AssessOptions{})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if report.Tier.Current != tt.wantCurrent {
+				t.Errorf("Tier.Current = %q, want %q", report.Tier.Current, tt.wantCurrent)
+			}
+			if report.Tier.Position != tt.wantPosition {
+				t.Errorf("Tier.Position = %d, want %d", report.Tier.Position, tt.wantPosition)
+			}
+			if report.Tier.Total != 3 {
+				t.Errorf("Tier.Total = %d, want 3", report.Tier.Total)
+			}
+			if report.Tier.NextTier != tt.wantNext {
+				t.Errorf("Tier.NextTier = %q, want %q", report.Tier.NextTier, tt.wantNext)
+			}
+		})
 	}
 }
 

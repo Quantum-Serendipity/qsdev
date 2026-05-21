@@ -162,6 +162,11 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 		result.Client = overlay.Client
 	}
 
+	// Tier: last-wins scalar.
+	if overlay.Tier != "" {
+		result.Tier = overlay.Tier
+	}
+
 	// Profile: NOT merged, only from project.
 	if overlay.Profile != "" {
 		result.Profile = overlay.Profile
@@ -306,9 +311,10 @@ func cloneQsdevConfig(cfg *types.QsdevConfig) *types.QsdevConfig {
 	}
 
 	result := &types.QsdevConfig{
-		Version:     cfg.Version,
+		Version:      cfg.Version,
 		QsdevVersion: cfg.QsdevVersion,
-		Profile:     cfg.Profile,
+		Tier:         cfg.Tier,
+		Profile:      cfg.Profile,
 		Security: types.SecurityConfig{
 			Level:          cfg.Security.Level,
 			AgeGating:      cloneBoolPtr(cfg.Security.AgeGating),

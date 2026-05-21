@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 
@@ -14,24 +15,75 @@ type ProfileSummary struct {
 	Description string
 }
 
-// builtInProfiles contains the pre-defined infrastructure profiles.
+// builtInProfiles contains the tier-based infrastructure profiles.
 var builtInProfiles = map[string]*types.QsdevConfig{
-	"consulting-default": consultingDefaultProfile(),
-	"startup-fast":       startupFastProfile(),
-	"enterprise":         enterpriseProfile(),
+	"supply-chain-only": supplyChainOnlyProfile(),
+	"standard":          standardProfile(),
+	"full":              fullProfile(),
 }
 
 // builtInDescriptions provides human-readable descriptions for built-in profiles.
 var builtInDescriptions = map[string]string{
-	"consulting-default": "Enhanced security with semgrep, gitleaks, secretspec; standard Claude Code; context7 + github MCP servers",
-	"startup-fast":       "Baseline security with gitleaks only; standard Claude Code; minimal overhead",
-	"enterprise":         "Strict security with all security tools; restricted Claude Code; audit logging enabled",
+	"supply-chain-only": "Package supply chain security + devenv sandbox; no Claude Code restrictions",
+	"standard":          "Supply chain deny rules + Claude Code governance + CLAUDE.md + gitleaks",
+	"full":              "Full tooling: MCP servers, agent tools, consulting workflows, AlwaysOn tools",
 }
 
-func consultingDefaultProfile() *types.QsdevConfig {
+// profileAliases maps legacy profile names to their tier-based replacements.
+var profileAliases = map[string]string{
+	"startup-fast":       "standard",
+	"consulting-default": "full",
+}
+
+func supplyChainOnlyProfile() *types.QsdevConfig {
 	t := true
 	enabled := true
 	return &types.QsdevConfig{
+		Tier: "supply-chain-only",
+		Security: types.SecurityConfig{
+			Level:          "baseline",
+			AgeGating:      &t,
+			ScriptBlocking: &t,
+			LockEnforce:    &t,
+			VulnScanning:   &t,
+		},
+		Tools: types.ToolsConfig{
+			Enabled: []string{},
+		},
+		ClaudeCode: types.ClaudeCodeConfig{
+			Enabled:         &enabled,
+			PermissionLevel: "supply-chain-only",
+		},
+	}
+}
+
+func standardProfile() *types.QsdevConfig {
+	t := true
+	enabled := true
+	return &types.QsdevConfig{
+		Tier: "standard",
+		Security: types.SecurityConfig{
+			Level:          "baseline",
+			AgeGating:      &t,
+			ScriptBlocking: &t,
+			LockEnforce:    &t,
+			VulnScanning:   &t,
+		},
+		Tools: types.ToolsConfig{
+			Enabled: []string{"gitleaks"},
+		},
+		ClaudeCode: types.ClaudeCodeConfig{
+			Enabled:         &enabled,
+			PermissionLevel: "standard",
+		},
+	}
+}
+
+func fullProfile() *types.QsdevConfig {
+	t := true
+	enabled := true
+	return &types.QsdevConfig{
+		Tier: "full",
 		Security: types.SecurityConfig{
 			Level:          "enhanced",
 			AgeGating:      &t,
@@ -50,51 +102,15 @@ func consultingDefaultProfile() *types.QsdevConfig {
 	}
 }
 
-func startupFastProfile() *types.QsdevConfig {
-	t := true
-	enabled := true
-	return &types.QsdevConfig{
-		Security: types.SecurityConfig{
-			Level:          "baseline",
-			AgeGating:      &t,
-			ScriptBlocking: &t,
-			LockEnforce:    &t,
-			VulnScanning:   &t,
-		},
-		Tools: types.ToolsConfig{
-			Enabled: []string{"gitleaks"},
-		},
-		ClaudeCode: types.ClaudeCodeConfig{
-			Enabled:         &enabled,
-			PermissionLevel: "standard",
-		},
-	}
-}
-
-func enterpriseProfile() *types.QsdevConfig {
-	t := true
-	enabled := true
-	return &types.QsdevConfig{
-		Security: types.SecurityConfig{
-			Level:          "strict",
-			AgeGating:      &t,
-			ScriptBlocking: &t,
-			LockEnforce:    &t,
-			VulnScanning:   &t,
-		},
-		Tools: types.ToolsConfig{
-			Enabled: []string{"semgrep", "gitleaks", "secretspec", "license-compliance"},
-		},
-		ClaudeCode: types.ClaudeCodeConfig{
-			Enabled:         &enabled,
-			PermissionLevel: "restricted",
-		},
-	}
-}
-
 // GetBuiltInProfile returns the QsdevConfig for a named built-in profile.
-// Returns an error listing available profiles if the name is not found.
+// Legacy names (startup-fast, consulting-default) are resolved via aliases
+// with a deprecation warning. Returns an error listing available profiles
+// if the name is not found.
 func GetBuiltInProfile(name string) (*types.QsdevConfig, error) {
+	if alias, ok := profileAliases[name]; ok {
+		log.Printf("warning: profile %q is deprecated, use %q instead", name, alias)
+		name = alias
+	}
 	cfg, ok := builtInProfiles[name]
 	if !ok {
 		available := make([]string, 0, len(builtInProfiles))
@@ -120,6 +136,15 @@ func ListBuiltInProfiles() []ProfileSummary {
 		return result[i].Name < result[j].Name
 	})
 	return result
+}
+
+// ResolveProfileAlias returns the canonical profile name, resolving any legacy
+// alias. The second return value is true if the name was an alias.
+func ResolveProfileAlias(name string) (string, bool) {
+	if alias, ok := profileAliases[name]; ok {
+		return alias, true
+	}
+	return name, false
 }
 
 // OrgDefaults returns the organization-wide default QsdevConfig.

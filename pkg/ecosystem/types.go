@@ -80,6 +80,7 @@ type HookConfig struct {
 	Files                  string   `yaml:"files"                     json:"files"`
 	AdditionalDependencies []string `yaml:"additional_dependencies"   json:"additional_dependencies"`
 	BuiltIn                bool     `yaml:"built_in"                  json:"built_in"`
+	NixPackage             string   `yaml:"nix_package,omitempty"     json:"nix_package,omitempty"`
 }
 
 // CIPhase categorizes a CI command into a build pipeline phase.

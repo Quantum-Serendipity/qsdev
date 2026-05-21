@@ -30,13 +30,16 @@ var services = []string{
 
 // permissionPresets is the set of valid Claude Code permission preset names.
 var permissionPresets = []string{
-	"minimal", "standard", "permissive", "custom",
+	"minimal", "standard", "permissive", "custom", "supply-chain-only",
 }
 
 // hookPresets is the set of valid Claude Code hook preset names.
 var hookPresets = []string{
 	"auto-format", "safety-block", "pre-commit", "audit-log",
 }
+
+// tiers is the set of valid security onboarding tiers.
+var tiers = []string{"supply-chain-only", "standard", "full"}
 
 // securityLevels is the set of valid security posture levels.
 var securityLevels = []string{"baseline", "enhanced", "strict"}
@@ -76,6 +79,9 @@ func NodePackageManagers() []string { return copyStrings(nodePackageManagers) }
 // PythonPackageManagers returns valid Python package manager names.
 func PythonPackageManagers() []string { return copyStrings(pythonPackageManagers) }
 
+// Tiers returns all valid security onboarding tier names.
+func Tiers() []string { return copyStrings(tiers) }
+
 // SecurityLevels returns all valid security posture levels.
 func SecurityLevels() []string { return copyStrings(securityLevels) }
 
@@ -106,6 +112,9 @@ func IsValidNodePackageManager(pm string) bool { return containsStr(nodePackageM
 
 // IsValidPythonPackageManager checks if pm is a valid Python package manager.
 func IsValidPythonPackageManager(pm string) bool { return containsStr(pythonPackageManagers, pm) }
+
+// IsValidTier checks if t is a valid security onboarding tier.
+func IsValidTier(t string) bool { return containsStr(tiers, t) }
 
 // IsValidSecurityLevel checks if level is a valid security posture level.
 func IsValidSecurityLevel(level string) bool { return containsStr(securityLevels, level) }

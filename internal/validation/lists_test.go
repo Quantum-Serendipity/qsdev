@@ -33,10 +33,10 @@ func TestServicesReturns6(t *testing.T) {
 	}
 }
 
-func TestPermissionPresetsReturns4(t *testing.T) {
+func TestPermissionPresetsReturns5(t *testing.T) {
 	presets := PermissionPresets()
-	if len(presets) != 4 {
-		t.Errorf("PermissionPresets() returned %d entries, want 4", len(presets))
+	if len(presets) != 5 {
+		t.Errorf("PermissionPresets() returned %d entries, want 5", len(presets))
 	}
 }
 

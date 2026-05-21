@@ -3,6 +3,7 @@ package config
 import (
 	"path/filepath"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -64,6 +65,13 @@ func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, pro
 		answers.HookTier = cfg.Client.SecurityLevel
 	} else if cfg.Security.Level != "" {
 		answers.HookTier = cfg.Security.Level
+	}
+
+	// Set tier (infer from legacy fields if not explicit).
+	if cfg.Tier != "" {
+		answers.Tier = cfg.Tier
+	} else {
+		answers.Tier = tier.Infer(cfg.ClaudeCode.PermissionLevel, cfg.ClaudeCode.MCPServers).String()
 	}
 
 	// Set profile.

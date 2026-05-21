@@ -38,7 +38,7 @@ func goMock() *ecosystem.MockModule {
 		PreCommitHooksVal: []ecosystem.HookConfig{
 			{ID: "gofmt", Name: "gofmt", Description: "Format Go source code", Entry: "gofmt -l -w", Language: "system", Types: []string{"go"}, Stages: []string{"pre-commit"}, PassFilenames: true, BuiltIn: true},
 			{ID: "govet", Name: "govet", Description: "Run go vet", Entry: "go vet ./...", Language: "system", Types: []string{"go"}, Stages: []string{"pre-commit"}, BuiltIn: true},
-			{ID: "staticcheck", Name: "staticcheck", Description: "Run staticcheck", Entry: "staticcheck ./...", Language: "system", Types: []string{"go"}, Stages: []string{"pre-commit"}, BuiltIn: false},
+			{ID: "staticcheck", Name: "staticcheck", Description: "Run staticcheck", Entry: "staticcheck ./...", Language: "system", Types: []string{"go"}, Stages: []string{"pre-commit"}, BuiltIn: false, NixPackage: "go-tools"},
 		},
 	}
 }
@@ -234,9 +234,9 @@ func TestGenerateDevenvNix_HookComposition(t *testing.T) {
 	requireContains(t, content, "ruff.enable = true")
 	requireContains(t, content, "mypy.enable = true")
 
-	// Custom hook from Go module (staticcheck is BuiltIn: false).
+	// Custom hook from Go module (staticcheck has NixPackage: go-tools).
 	requireContains(t, content, "staticcheck")
-	requireContains(t, content, `entry = "staticcheck ./..."`)
+	requireContains(t, content, `${pkgs.go-tools}/bin/staticcheck`)
 }
 
 func TestGenerateDevenvNix_UnknownLanguageReturnsError(t *testing.T) {
@@ -329,18 +329,18 @@ func TestGenerateDevenvNix_NixInstantiateParse(t *testing.T) {
 func TestGenerateDevenvNix_HookDeduplication(t *testing.T) {
 	// Two modules returning the same hook ID should not produce duplicates.
 	mod1 := &ecosystem.MockModule{
-		NameVal:        "lang1",
-		DisplayNameVal: "Lang1",
-		TierVal:        1,
+		NameVal:              "lang1",
+		DisplayNameVal:       "Lang1",
+		TierVal:              1,
 		DevenvNixFragmentVal: "  # lang1 fragment",
 		PreCommitHooksVal: []ecosystem.HookConfig{
 			{ID: "shared-lint", Name: "shared-lint", Description: "Shared linter", Entry: "lint", Language: "system", BuiltIn: true},
 		},
 	}
 	mod2 := &ecosystem.MockModule{
-		NameVal:        "lang2",
-		DisplayNameVal: "Lang2",
-		TierVal:        1,
+		NameVal:              "lang2",
+		DisplayNameVal:       "Lang2",
+		TierVal:              1,
 		DevenvNixFragmentVal: "  # lang2 fragment",
 		PreCommitHooksVal: []ecosystem.HookConfig{
 			{ID: "shared-lint", Name: "shared-lint", Description: "Shared linter", Entry: "lint", Language: "system", BuiltIn: true},

@@ -4,11 +4,12 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    devenv.url = "github:cachix/devenv";
-    devenv.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, flake-utils, devenv }:
+  outputs = { self, nixpkgs, flake-utils }:
+    let
+      goOverlay = import ./nix/go-overlay.nix;
+    in
     {
       overlays.default = final: prev: {
         qsdev = self.packages.${prev.system}.qsdev;
@@ -20,14 +21,17 @@
 
         environment.systemPackages = [
           self.packages.${pkgs.system}.qsdev
-          devenv.packages.${pkgs.system}.devenv
+          pkgs.devenv
         ];
       };
     }
     //
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ goOverlay ];
+        };
         go = pkgs.go_1_26;
 
         version =
@@ -48,7 +52,7 @@
       in
       {
         packages = rec {
-          qsdev = pkgs.buildGoModule.override { go = go; } {
+          qsdev = pkgs.buildGoModule.override { inherit go; } {
             pname = "qsdev";
             inherit version;
 
@@ -95,22 +99,5 @@
           default = qsdev;
         };
 
-        devShells.default = pkgs.mkShell {
-          packages = [
-            go
-            pkgs.gopls
-            pkgs.gotools
-            pkgs.golangci-lint
-            pkgs.delve
-            pkgs.goreleaser
-          ];
-
-          shellHook = ''
-            export GOPATH="$PWD/.go"
-            export PATH="$GOPATH/bin:$PATH"
-            echo "qsdev dev environment loaded"
-            echo "  Go: $(go version)"
-          '';
-        };
       });
 }

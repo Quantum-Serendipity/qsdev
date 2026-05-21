@@ -142,7 +142,8 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	}
 
 	// d2. Auto-install missing prerequisites if --yes, otherwise warn.
-	if !opts.ClaudeOnly {
+	// Skip for --dry-run: preview should not have side effects.
+	if !opts.ClaudeOnly && !opts.DryRun {
 		prereqs := CheckPrerequisites(cmd.Context())
 		if prereqs.HasMissing() {
 			if opts.Yes {
@@ -400,6 +401,7 @@ func flagSetToChangedMap(fs *FlagSet, cmd *cobra.Command) map[string]bool {
 		"git-hooks":          "git_hooks",
 		"packages":           "extra_packages",
 		"mcp":                "mcp_servers",
+		"tier":               "tier",
 		"infra-profile":      "profile_name",
 		"yes":                "confirmed",
 	}

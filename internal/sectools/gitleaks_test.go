@@ -52,9 +52,15 @@ func TestGenerateGitleaksToml_AllowlistPaths(t *testing.T) {
 	}
 	content := string(f.Content)
 
-	for _, path := range []string{"vendor/", "node_modules/", ".devenv/", "docs/", "testdata/"} {
+	for _, path := range []string{"vendor/", "node_modules/", ".devenv/", "testdata/"} {
 		if !strings.Contains(content, path) {
 			t.Errorf("content should contain allowlisted path %q", path)
 		}
+	}
+
+	// docs/ should NOT be in the allowlist — it may contain legitimate secrets
+	// documentation that should still be scanned.
+	if strings.Contains(content, `"docs/"`) {
+		t.Error("content should NOT contain allowlisted path \"docs/\"")
 	}
 }

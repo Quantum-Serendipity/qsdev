@@ -3,8 +3,9 @@ package devenv
 import (
 	"fmt"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
+	"github.com/Quantum-Serendipity/qsdev/internal/tier"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -96,7 +97,9 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 	}
 
 	// 6. Profile-driven configs (CI workflow, Renovate/Dependabot, security docs)
-	if g.profileRegistry != nil {
+	// Requires tier >= Standard: these are opinionated workflow configs.
+	t := tier.Resolve(answers.Tier, answers.PermissionLevel, answers.MCPServers)
+	if t >= tier.Standard && g.profileRegistry != nil {
 		profileName := answers.ProfileName
 		if profileName == "" {
 			profileName = "consulting-default"

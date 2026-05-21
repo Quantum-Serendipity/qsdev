@@ -14,6 +14,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -240,6 +241,13 @@ func configToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, pro
 		}
 	}
 
+	// Map tier (infer from legacy fields if not explicit).
+	if cfg.Tier != "" {
+		answers.Tier = cfg.Tier
+	} else {
+		answers.Tier = inferTier(cfg)
+	}
+
 	// Map profile.
 	if cfg.Profile != "" {
 		answers.ProjectTypeProfile = cfg.Profile
@@ -252,4 +260,8 @@ func configToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, pro
 	}
 
 	return answers
+}
+
+func inferTier(cfg *types.QsdevConfig) string {
+	return tier.Infer(cfg.ClaudeCode.PermissionLevel, cfg.ClaudeCode.MCPServers).String()
 }

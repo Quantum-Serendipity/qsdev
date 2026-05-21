@@ -52,8 +52,19 @@ func RenderBadge(report *posture.PostureReport, variant string) ([]byte, error) 
 			Message:       fmt.Sprintf("%d/%d layers", report.Defense.Enabled, report.Defense.Total),
 			Color:         scoreColor(report.Defense.Score),
 		}
+	case "tier":
+		tierName := report.Tier.Current
+		if tierName == "" {
+			tierName = "unknown"
+		}
+		badge = BadgeJSON{
+			SchemaVersion: 1,
+			Label:         "tier",
+			Message:       tierName,
+			Color:         tierColor(tierName),
+		}
 	default:
-		return nil, fmt.Errorf("unknown badge variant: %q (supported: score, conformance, defense)", variant)
+		return nil, fmt.Errorf("unknown badge variant: %q (supported: score, conformance, defense, tier)", variant)
 	}
 
 	data, err := json.MarshalIndent(badge, "", "  ")
@@ -71,7 +82,7 @@ func RenderAllBadges(report *posture.PostureReport, outputDir string) error {
 		return fmt.Errorf("creating badge output directory: %w", err)
 	}
 
-	variants := []string{"score", "conformance", "defense"}
+	variants := []string{"score", "conformance", "defense", "tier"}
 	for _, v := range variants {
 		data, err := RenderBadge(report, v)
 		if err != nil {
@@ -99,6 +110,20 @@ func scoreColor(score float64) string {
 		return "orange"
 	default:
 		return "red"
+	}
+}
+
+// tierColor returns a badge color based on the tier name.
+func tierColor(tier string) string {
+	switch tier {
+	case "supply-chain-only":
+		return "yellow"
+	case "standard":
+		return "blue"
+	case "full":
+		return "brightgreen"
+	default:
+		return "lightgrey"
 	}
 }
 

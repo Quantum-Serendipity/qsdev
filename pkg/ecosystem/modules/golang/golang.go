@@ -134,6 +134,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
 			BuiltIn:       false,
+			NixPackage:    "go-tools",
 		},
 		{
 			ID:            "govulncheck",
@@ -145,6 +146,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
 			BuiltIn:       false,
+			NixPackage:    "govulncheck",
 		},
 	}
 }

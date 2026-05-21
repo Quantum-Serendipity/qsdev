@@ -9,17 +9,18 @@ import (
 // directly since profiles do not encode per-project paths.
 func ProfileToAnswers(p Profile, projectRoot, projectName string) types.WizardAnswers {
 	answers := types.WizardAnswers{
-		ProjectName:    projectName,
-		ProjectRoot:    projectRoot,
-		Direnv:         p.Direnv,
-		ClaudeCode:     p.ClaudeCode,
+		ProjectName:     projectName,
+		ProjectRoot:     projectRoot,
+		Direnv:          p.Direnv,
+		ClaudeCode:      p.ClaudeCode,
 		PermissionLevel: p.PermissionLevel,
-		Skills:         copyStrings(p.Skills),
-		ExtraPackages:  copyStrings(p.ExtraPackages),
-		MCPServers:     copyStrings(p.MCPServers),
-		GitHooks:       copyStrings(p.GitHooks),
-		ProfileName:    p.InfraProfile,
-		Confirmed:      true,
+		Tier:            p.Tier,
+		Skills:          copyStrings(p.Skills),
+		ExtraPackages:   copyStrings(p.ExtraPackages),
+		MCPServers:      copyStrings(p.MCPServers),
+		GitHooks:        copyStrings(p.GitHooks),
+		ProfileName:     p.InfraProfile,
+		Confirmed:       true,
 	}
 
 	// Convert LanguageSpec -> LanguageChoice.
@@ -115,6 +116,9 @@ func MergeProfileWithFlags(base types.WizardAnswers, overrides types.WizardAnswe
 	}
 	if changed["confirmed"] {
 		result.Confirmed = overrides.Confirmed
+	}
+	if changed["tier"] {
+		result.Tier = overrides.Tier
 	}
 	if changed["agent_tools"] {
 		result.AgentTools = overrides.AgentTools

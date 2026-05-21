@@ -437,6 +437,96 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 		}
 	})
 
+	t.Run("merges Go version from detection into existing empty-version entry", func(t *testing.T) {
+		a := types.WizardAnswers{
+			Languages: []types.LanguageChoice{{Name: "go"}},
+		}
+		a.FillDefaults(types.DetectedProject{HasGoMod: true, GoVersion: "1.26.3"})
+
+		if a.Languages[0].Version != "1.26.3" {
+			t.Errorf("expected Go version 1.26.3 from detection, got %q", a.Languages[0].Version)
+		}
+	})
+
+	t.Run("preserves explicit Go version over detection", func(t *testing.T) {
+		a := types.WizardAnswers{
+			Languages: []types.LanguageChoice{{Name: "go", Version: "1.24"}},
+		}
+		a.FillDefaults(types.DetectedProject{HasGoMod: true, GoVersion: "1.26.3"})
+
+		if a.Languages[0].Version != "1.24" {
+			t.Errorf("expected explicit Go version 1.24 preserved, got %q", a.Languages[0].Version)
+		}
+	})
+
+	t.Run("merges JavaScript version and package manager from detection", func(t *testing.T) {
+		a := types.WizardAnswers{
+			Languages: []types.LanguageChoice{{Name: "javascript"}},
+		}
+		a.FillDefaults(types.DetectedProject{HasPackageJSON: true, NodeVersion: "22", PackageManager: "pnpm"})
+
+		if a.Languages[0].Version != "22" {
+			t.Errorf("expected JS version 22 from detection, got %q", a.Languages[0].Version)
+		}
+		if a.Languages[0].PackageManager != "pnpm" {
+			t.Errorf("expected package manager pnpm from detection, got %q", a.Languages[0].PackageManager)
+		}
+	})
+
+	t.Run("derives ComplianceLevel from Tier full", func(t *testing.T) {
+		a := types.WizardAnswers{ClaudeCode: true, Tier: "full"}
+		a.FillDefaults(types.DetectedProject{})
+
+		if a.ComplianceLevel != "strict" {
+			t.Errorf("expected ComplianceLevel 'strict' for full tier, got %q", a.ComplianceLevel)
+		}
+	})
+
+	t.Run("derives ComplianceLevel from Tier standard", func(t *testing.T) {
+		a := types.WizardAnswers{ClaudeCode: true, Tier: "standard"}
+		a.FillDefaults(types.DetectedProject{})
+
+		if a.ComplianceLevel != "enhanced" {
+			t.Errorf("expected ComplianceLevel 'enhanced' for standard tier, got %q", a.ComplianceLevel)
+		}
+	})
+
+	t.Run("preserves explicit ComplianceLevel over Tier", func(t *testing.T) {
+		a := types.WizardAnswers{ClaudeCode: true, Tier: "full", ComplianceLevel: "strict"}
+		a.FillDefaults(types.DetectedProject{})
+
+		if a.ComplianceLevel != "strict" {
+			t.Errorf("expected explicit ComplianceLevel 'strict' preserved, got %q", a.ComplianceLevel)
+		}
+	})
+
+	t.Run("derives EnabledTools from Tier full", func(t *testing.T) {
+		a := types.WizardAnswers{ClaudeCode: true, Tier: "full"}
+		a.FillDefaults(types.DetectedProject{})
+
+		for _, tool := range []string{"semgrep", "gitleaks", "secretspec"} {
+			if !a.EnabledTools[tool] {
+				t.Errorf("expected EnabledTools[%q] = true for full tier", tool)
+			}
+		}
+	})
+
+	t.Run("preserves existing EnabledTools over Tier", func(t *testing.T) {
+		a := types.WizardAnswers{
+			ClaudeCode:   true,
+			Tier:         "full",
+			EnabledTools: map[string]bool{"custom": true},
+		}
+		a.FillDefaults(types.DetectedProject{})
+
+		if !a.EnabledTools["custom"] {
+			t.Error("expected existing EnabledTools[\"custom\"] preserved")
+		}
+		if a.EnabledTools["semgrep"] {
+			t.Error("expected tier-derived tools NOT added when EnabledTools already set")
+		}
+	})
+
 	t.Run("catalog-backed agent tool defaults", func(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: true, Tier: "full"}
 		a.FillDefaults(types.DetectedProject{})

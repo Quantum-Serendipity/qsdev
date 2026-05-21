@@ -137,7 +137,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 					}
 					entry = fmt.Sprintf(`"${pkgs.%s}/bin/%s%s"`, hook.NixPackage, binary, args)
 					rawEntry = true
-					data.Packages = append(data.Packages, "pkgs."+hook.NixPackage)
+					data.Packages = append(data.Packages, hook.NixPackage)
 				}
 
 				data.CustomHooks = append(data.CustomHooks, CustomHookData{
@@ -153,6 +153,18 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 					PassFilenames: hook.PassFilenames,
 				})
 			}
+		}
+	}
+
+	// 4b. Collect packages from modules that implement PackageProvider.
+	for _, lang := range answers.Languages {
+		mod, ok := registry.ByName(lang.Name)
+		if !ok {
+			continue
+		}
+		if pp, ok := mod.(ecosystem.PackageProvider); ok {
+			cfg := ecosystem.ToModuleConfigWithProxy(lang, answers.Infrastructure)
+			data.Packages = append(data.Packages, pp.DevenvPackages(cfg)...)
 		}
 	}
 

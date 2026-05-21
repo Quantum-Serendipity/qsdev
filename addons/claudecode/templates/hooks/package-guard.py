@@ -20,10 +20,14 @@ Design decisions:
   - Timeout budget: 10s per API call, 25s total (fits within 30s hook timeout).
 
 Configuration via environment variables:
-  PACKAGE_GUARD_FAIL_CLOSED  — bool (default: true)
-  PACKAGE_GUARD_MIN_AGE_DAYS — int  (default: 3)
-  PACKAGE_GUARD_ALLOWLIST    — comma-separated package names to always allow
+  PACKAGE_GUARD_MIN_AGE_DAYS — int  (default: 3, minimum: 1)
+  PACKAGE_GUARD_ALLOWLIST    — comma-separated package names to always allow (max 200)
   PACKAGE_GUARD_DENYLIST     — comma-separated package names to always deny
+
+Security invariants (not configurable):
+  - Fail-closed mode is always enabled.
+  - Minimum age cannot be set below 1 day.
+  - Allowlist is capped at 200 entries.
 """
 
 import json
@@ -41,22 +45,25 @@ from typing import Optional
 # Configuration (environment variable overrides)
 # ---------------------------------------------------------------------------
 
-# Whether to fail closed (deny) on API errors. True is the safe default.
-FAIL_CLOSED = os.environ.get("PACKAGE_GUARD_FAIL_CLOSED", "true").lower() in ("true", "1", "yes")
+# Always fail closed on API errors. This is a security invariant that cannot
+# be weakened via environment variables.
+FAIL_CLOSED = True
 
 # Minimum publication age in days. Packages newer than this are blocked.
 # 92% of PyPI malware is caught within 24 hours; 3 days is a strong default.
-MIN_AGE_DAYS = int(os.environ.get("PACKAGE_GUARD_MIN_AGE_DAYS", "3"))
+# The env var can increase strictness but cannot decrease below 1 day.
+MIN_AGE_DAYS = max(int(os.environ.get("PACKAGE_GUARD_MIN_AGE_DAYS", "3")), 1)
 
 # Packages that are always allowed without checks. Add project dependencies
 # that are already in your lockfile, or well-known stdlib-adjacent packages.
-# Merge hardcoded set with environment variable.
+# Merge hardcoded set with environment variable. Capped at 200 entries to
+# prevent abuse — an oversized allowlist defeats the purpose of the guard.
 _env_allowlist = os.environ.get("PACKAGE_GUARD_ALLOWLIST", "")
-ALLOWLIST: set[str] = {p.strip() for p in _env_allowlist.split(",") if p.strip()} | {
-    # Example entries — customize per project:
-    # "typescript", "eslint", "prettier", "react", "react-dom",
-    # "pytest", "black", "ruff", "mypy",
-    # "serde", "tokio", "clap",
+_MAX_ALLOWLIST_SIZE = 200
+_parsed_allowlist = {p.strip() for p in _env_allowlist.split(",") if p.strip()}
+if len(_parsed_allowlist) > _MAX_ALLOWLIST_SIZE:
+    _parsed_allowlist = set()
+ALLOWLIST: set[str] = _parsed_allowlist | {
     *(),  # empty spread — keeps this a set literal, not a dict
 }
 
@@ -235,11 +242,14 @@ def check_pypi_age(package_name: str) -> Optional[float]:
         return None
 
     # Use the most recent upload timestamp across all files.
-    latest = max(
+    timestamps = [
         datetime.fromisoformat(u["upload_time_iso_8601"].replace("Z", "+00:00"))
         for u in urls
         if u.get("upload_time_iso_8601")
-    )
+    ]
+    if not timestamps:
+        return None
+    latest = max(timestamps)
     age = (datetime.now(timezone.utc) - latest).total_seconds() / 86400
     return age
 
@@ -371,24 +381,24 @@ def strip_version(specifier: str) -> str:
 # Command matching
 # ---------------------------------------------------------------------------
 
-def detect_install_command(command: str) -> Optional[tuple[str, str, re.Match]]:
+def detect_install_commands(command: str) -> list[tuple[str, str, str]]:
     """
-    Check if a command string contains a package install invocation.
-    Returns (ecosystem, manager_label, regex_match) or None.
-
-    Handles compound commands (cmd1 && cmd2) by checking each segment.
+    Find ALL package install invocations in a (possibly compound) command.
+    Returns a list of (ecosystem, manager_label, segment) tuples — one per
+    segment that contains an install command. Validates every segment so that
+    compound commands like ``pip install safe && npm install evil`` cannot
+    sneak an unchecked install past the guard.
     """
-    # Split on shell operators to handle compound commands.
-    # We check each segment independently.
     segments = re.split(r'\s*(?:&&|\|\||;)\s*', command)
+    results: list[tuple[str, str, str]] = []
 
     for segment in segments:
         for pattern, ecosystem, manager in INSTALL_PATTERNS:
-            match = pattern.search(segment)
-            if match:
-                return ecosystem, manager, match
+            if pattern.search(segment):
+                results.append((ecosystem, manager, segment))
+                break  # one match per segment is sufficient
 
-    return None
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -526,97 +536,71 @@ def main() -> None:
     if tool_name != "Bash" or not command:
         sys.exit(0)
 
-    # 3. Detect if this is a package install command.
-    detection = detect_install_command(command)
-    if detection is None:
+    # 3. Detect ALL package install commands (handles compound commands).
+    detections = detect_install_commands(command)
+    if not detections:
         # Not a package install command — allow silently.
         sys.exit(0)
 
-    ecosystem, manager, match = detection
-
-    # 4. Nix imperative installs: deny outright with a clear message.
-    if manager in ("nix-env", "nix-profile"):
-        reason = (
-            f"Imperative Nix installs ({manager}) bypass flake pinning and are not "
-            f"permitted. Use `qsdev devenv add-package <name>` for system packages "
-            f"or `qsdev enable <tool>` for ecosystem tools instead."
-        )
-        audit_log({
-            "event": "deny",
-            "command": command,
-            "manager": manager,
-            "reason": reason,
-        })
-        result = {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": reason,
-            }
-        }
-        print(json.dumps(result))
-        sys.exit(0)
-
-    # 5. Extract package names from the command.
-    packages = extract_packages(command, manager)
-
-    if not packages:
-        # Install command with no explicit packages (e.g., bare `npm install`
-        # or `npm ci`). These install from lockfile/manifest — apply safety
-        # flags but don't block.
-        rewritten = apply_safety_flags(command, manager)
-        if rewritten and rewritten != command:
-            result = {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "allow",
-                    "updatedInput": {"command": rewritten},
-                    "additionalContext": (
-                        f"Safety flags appended to install command. "
-                        f"Original: `{command}` -> Rewritten: `{rewritten}`"
-                    ),
-                }
-            }
-            audit_log({
-                "event": "rewrite",
-                "command": command,
-                "rewritten": rewritten,
-                "manager": manager,
-            })
-            print(json.dumps(result))
-        sys.exit(0)
-
-    # 6. Validate each package.
+    # 4. Validate every detected install command. Most restrictive wins.
     deny_reasons: list[str] = []
     ask_reasons: list[str] = []
     checked_packages: list[str] = []
+    needs_safety_flags: list[str] = []  # managers that need flag injection
 
-    for specifier in packages:
-        pkg_name = strip_version(specifier)
-        # Extract version if present (for more precise OSV queries).
-        version: Optional[str] = None
-        if specifier != pkg_name:
-            version = specifier[len(pkg_name):].lstrip("@=><~^!")
-            if not version:
-                version = None
-
-        checked_packages.append(pkg_name)
-        decision, reason = validate_package(pkg_name, ecosystem, manager, version)
-
-        if decision == "deny":
+    for ecosystem, manager, segment in detections:
+        # Nix imperative installs: deny outright.
+        if manager in ("nix-env", "nix-profile"):
+            reason = (
+                f"Imperative Nix installs ({manager}) bypass flake pinning and are not "
+                f"permitted. Use `qsdev devenv add-package <name>` for system packages "
+                f"or `qsdev enable <tool>` for ecosystem tools instead."
+            )
             deny_reasons.append(reason)
-        elif decision == "ask":
-            ask_reasons.append(reason)
+            audit_log({
+                "event": "deny_nix",
+                "command": command,
+                "segment": segment,
+                "manager": manager,
+                "reason": reason,
+            })
+            continue
+
+        # Extract package names from this segment (not the full compound command).
+        packages = extract_packages(segment, manager)
+
+        if not packages:
+            # Bare install from lockfile/manifest — track for safety flags.
+            needs_safety_flags.append(manager)
+            continue
+
+        # Validate each package in this segment.
+        for specifier in packages:
+            pkg_name = strip_version(specifier)
+            version: Optional[str] = None
+            if specifier != pkg_name:
+                version = specifier[len(pkg_name):].lstrip("@=><~^!")
+                if not version:
+                    version = None
+
+            checked_packages.append(pkg_name)
+            decision, reason = validate_package(pkg_name, ecosystem, manager, version)
+
+            if decision == "deny":
+                deny_reasons.append(reason)
+            elif decision == "ask":
+                ask_reasons.append(reason)
+
+        needs_safety_flags.append(manager)
 
     elapsed = time.monotonic() - start_time
 
-    # 7. Make final decision. Most restrictive wins.
+    # 5. Make final decision. Most restrictive wins across ALL segments.
     if deny_reasons:
         combined_reason = " | ".join(deny_reasons)
         audit_log({
             "event": "deny",
             "command": command,
-            "manager": manager,
             "packages": checked_packages,
             "reasons": deny_reasons,
             "elapsed_seconds": round(elapsed, 2),
@@ -636,7 +620,6 @@ def main() -> None:
         audit_log({
             "event": "ask",
             "command": command,
-            "manager": manager,
             "packages": checked_packages,
             "reasons": ask_reasons,
             "elapsed_seconds": round(elapsed, 2),
@@ -651,19 +634,22 @@ def main() -> None:
         print(json.dumps(result))
         sys.exit(0)
 
-    # 8. All packages passed — allow, but apply safety flags via updatedInput.
-    rewritten = apply_safety_flags(command, manager)
+    # 6. All packages passed — apply safety flags for each manager detected.
+    rewritten = command
+    for mgr in needs_safety_flags:
+        candidate = apply_safety_flags(rewritten, mgr)
+        if candidate and candidate != rewritten:
+            rewritten = candidate
 
     audit_log({
         "event": "allow",
         "command": command,
-        "rewritten": rewritten,
-        "manager": manager,
+        "rewritten": rewritten if rewritten != command else None,
         "packages": checked_packages,
         "elapsed_seconds": round(elapsed, 2),
     })
 
-    if rewritten and rewritten != command:
+    if rewritten != command:
         result = {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",

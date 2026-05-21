@@ -158,6 +158,100 @@ func TestBuildDevenvNixData_GdevEnvVars_Defaults(t *testing.T) {
 	}
 }
 
+func TestBuildDevenvNixData_HookPackagesBareName(t *testing.T) {
+	t.Parallel()
+	reg := ecosystem.NewRegistry()
+	_ = reg.Register(&ecosystem.MockModule{
+		NameVal:        "go",
+		DisplayNameVal: "Go",
+		TierVal:        1,
+		PreCommitHooksVal: []ecosystem.HookConfig{
+			{
+				ID:         "staticcheck",
+				Name:       "staticcheck",
+				Entry:      "staticcheck ./...",
+				NixPackage: "go-tools",
+				Language:   "system",
+				Types:      []string{"go"},
+				Stages:     []string{"pre-commit"},
+			},
+		},
+	})
+
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{{Name: "go"}},
+	}
+
+	data, err := BuildDevenvNixData(answers, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, pkg := range data.Packages {
+		if pkg == "pkgs.go-tools" {
+			t.Error("data.Packages contains \"pkgs.go-tools\"; want bare name \"go-tools\"")
+		}
+	}
+
+	found := false
+	for _, pkg := range data.Packages {
+		if pkg == "go-tools" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("data.Packages does not contain \"go-tools\"; got %v", data.Packages)
+	}
+}
+
+func TestBuildDevenvNixData_NoUvInBasePackages(t *testing.T) {
+	t.Parallel()
+	reg := ecosystem.NewRegistry()
+	answers := types.WizardAnswers{}
+
+	data, err := BuildDevenvNixData(answers, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, pkg := range data.Packages {
+		if pkg == "uv" {
+			t.Error("data.Packages contains \"uv\"; Python tool should not be in base packages")
+		}
+	}
+}
+
+func TestBuildDevenvNixData_ModulePackagesCollected(t *testing.T) {
+	t.Parallel()
+	reg := ecosystem.NewRegistry()
+	_ = reg.Register(&ecosystem.MockModule{
+		NameVal:           "go",
+		DisplayNameVal:    "Go",
+		TierVal:           1,
+		DevenvPackagesVal: []string{"gopls", "delve"},
+	})
+
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{{Name: "go"}},
+	}
+
+	data, err := BuildDevenvNixData(answers, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	pkgSet := make(map[string]bool, len(data.Packages))
+	for _, p := range data.Packages {
+		pkgSet[p] = true
+	}
+	for _, want := range []string{"gopls", "delve"} {
+		if !pkgSet[want] {
+			t.Errorf("data.Packages missing %q from module PackageProvider; got %v", want, data.Packages)
+		}
+	}
+}
+
 func TestBuildEnterShellScript_ContainsGdevVars(t *testing.T) {
 	script := buildEnterShellScript()
 

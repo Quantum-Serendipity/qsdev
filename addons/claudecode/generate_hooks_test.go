@@ -79,12 +79,21 @@ func TestGeneratePackageGuardHook_ContentIntegrity(t *testing.T) {
 		{"osv.dev", "OSV.dev vulnerability database reference"},
 		{"PreToolUse", "PreToolUse hook event name"},
 		{"updatedInput", "updatedInput for command rewriting"},
-		{"PACKAGE_GUARD_FAIL_CLOSED", "FAIL_CLOSED env var configuration"},
+		{"FAIL_CLOSED = True", "non-configurable fail-closed invariant"},
+		{"max(int(", "MIN_AGE_DAYS floor enforcement"},
+		{"_MAX_ALLOWLIST_SIZE", "allowlist size cap"},
+		{"detect_install_commands", "multi-match command detection"},
+		{"if not timestamps", "empty timestamps guard"},
 	}
 	for _, c := range checks {
 		if !strings.Contains(content, c.needle) {
 			t.Errorf("content does not contain %q (%s)", c.needle, c.desc)
 		}
+	}
+
+	// FAIL_CLOSED must NOT be configurable via env var.
+	if strings.Contains(content, "PACKAGE_GUARD_FAIL_CLOSED") {
+		t.Error("content contains PACKAGE_GUARD_FAIL_CLOSED env var — fail-closed must be a non-configurable invariant")
 	}
 }
 

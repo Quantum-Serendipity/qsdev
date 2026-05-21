@@ -9,15 +9,15 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
+	"github.com/Quantum-Serendipity/qsdev/internal/merge"
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // register all modules
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
-	"github.com/Quantum-Serendipity/qsdev/internal/merge"
-	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
-	"github.com/Quantum-Serendipity/qsdev/internal/state"
-	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -53,13 +53,13 @@ func claudeCmd() *cobra.Command {
 
 func initCmd() *cobra.Command {
 	var (
-		preset         string
-		skills         []string
-		mcpServers     []string
-		yes            bool
-		force          bool
-		dryRun         bool
-		noSafetyBlock  bool
+		preset        string
+		skills        []string
+		mcpServers    []string
+		yes           bool
+		force         bool
+		dryRun        bool
+		noSafetyBlock bool
 	)
 
 	cmd := &cobra.Command{
@@ -109,7 +109,8 @@ func initCmd() *cobra.Command {
 
 			// Write files to disk.
 			result, err := generate.WriteFiles(files, generate.PipelineOptions{
-				ProjectRoot: projectRoot,
+				ProjectRoot:      projectRoot,
+				SectionMergeFunc: merge.SectionMarkers,
 			})
 			if err != nil {
 				return fmt.Errorf("writing files: %w", err)

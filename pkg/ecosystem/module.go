@@ -62,3 +62,11 @@ type EcosystemModule interface {
 	// files for this ecosystem.
 	ManifestFiles(config ModuleConfig) []ManifestFileInfo
 }
+
+// PackageProvider is an optional interface that ecosystem modules can
+// implement to contribute Nix packages to the devenv shell beyond those
+// implied by hooks and language fragments. Names are bare (e.g. "gopls"),
+// not prefixed with "pkgs.".
+type PackageProvider interface {
+	DevenvPackages(config ModuleConfig) []string
+}

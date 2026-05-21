@@ -102,4 +102,9 @@ type PipelineOptions struct {
 	DryRun       bool
 	SkipValidate bool
 	ProjectRoot  string
+	// SectionMergeFunc, when non-nil, is called for files with Strategy
+	// SectionMarker that already exist on disk. It receives the existing
+	// and new content and returns the merged result. On error the pipeline
+	// falls through to a full overwrite.
+	SectionMergeFunc func(existing, newGenerated []byte) ([]byte, error)
 }

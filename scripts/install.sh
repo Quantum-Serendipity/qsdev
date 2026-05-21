@@ -190,7 +190,7 @@ download_and_verify() {
     download "${checksum_url}" "${tmp_dir}/checksums.txt"
 
     info "Verifying SHA256 checksum..."
-    expected_checksum="$(grep "${filename}" "${tmp_dir}/checksums.txt" | awk '{print $1}')"
+    expected_checksum="$(awk -v f="${filename}" '$2 == f {print $1}' "${tmp_dir}/checksums.txt")"
 
     if [ -z "${expected_checksum}" ]; then
         error "Could not find checksum for ${filename} in checksums.txt"

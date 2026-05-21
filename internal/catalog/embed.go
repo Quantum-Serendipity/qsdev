@@ -1,6 +1,6 @@
 package catalog
 
-import "embed"
+import _ "embed"
 
-//go:embed all:defaults
-var defaultsFS embed.FS
+//go:embed defaults.yaml
+var defaultsData []byte

@@ -2,9 +2,7 @@ package catalog
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
-	"path"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -18,7 +16,7 @@ func Load(opts ...LoadOption) (*Catalog, error) {
 		opt(cfg)
 	}
 
-	cat, err := loadFromFS(defaultsFS, "defaults")
+	cat, err := loadEmbeddedDefaults()
 	if err != nil {
 		return nil, fmt.Errorf("loading embedded defaults: %w", err)
 	}
@@ -74,45 +72,11 @@ func WithProjectConfigFile(path string) LoadOption {
 	return func(c *loadConfig) { c.projectConfigFile = path }
 }
 
-// loadFromFS loads catalog data from an embedded or OS filesystem.
-func loadFromFS(fsys fs.FS, root string) (*Catalog, error) {
-	cat := &Catalog{}
-
-	if err := loadYAMLFile(fsys, path.Join(root, "tiers.yaml"), &cat.tiers); err != nil {
-		return nil, fmt.Errorf("tiers.yaml: %w", err)
+// loadEmbeddedDefaults parses the embedded defaults.yaml into a Catalog.
+func loadEmbeddedDefaults() (*Catalog, error) {
+	var u UnifiedDefaults
+	if err := yaml.Unmarshal(defaultsData, &u); err != nil {
+		return nil, fmt.Errorf("parsing embedded defaults: %w", err)
 	}
-	if err := loadYAMLFile(fsys, path.Join(root, "compliance.yaml"), &cat.compliance); err != nil {
-		return nil, fmt.Errorf("compliance.yaml: %w", err)
-	}
-	if err := loadYAMLFile(fsys, path.Join(root, "profiles.yaml"), &cat.profiles); err != nil {
-		return nil, fmt.Errorf("profiles.yaml: %w", err)
-	}
-	if err := loadYAMLFile(fsys, path.Join(root, "project_profiles.yaml"), &cat.projectProfiles); err != nil {
-		return nil, fmt.Errorf("project_profiles.yaml: %w", err)
-	}
-	if err := loadYAMLFile(fsys, path.Join(root, "tools.yaml"), &cat.tools); err != nil {
-		return nil, fmt.Errorf("tools.yaml: %w", err)
-	}
-	if err := loadYAMLFile(fsys, path.Join(root, "security.yaml"), &cat.security); err != nil {
-		return nil, fmt.Errorf("security.yaml: %w", err)
-	}
-	if err := loadYAMLFile(fsys, path.Join(root, "hook_tiers.yaml"), &cat.hookTiers); err != nil {
-		return nil, fmt.Errorf("hook_tiers.yaml: %w", err)
-	}
-	if err := loadYAMLFile(fsys, path.Join(root, "derivations.yaml"), &cat.derivations); err != nil {
-		return nil, fmt.Errorf("derivations.yaml: %w", err)
-	}
-	if err := loadYAMLFile(fsys, path.Join(root, "validation.yaml"), &cat.validation); err != nil {
-		return nil, fmt.Errorf("validation.yaml: %w", err)
-	}
-
-	return cat, nil
-}
-
-func loadYAMLFile(fsys fs.FS, path string, target any) error {
-	data, err := fs.ReadFile(fsys, path)
-	if err != nil {
-		return err
-	}
-	return yaml.Unmarshal(data, target)
+	return u.ToCatalog(), nil
 }

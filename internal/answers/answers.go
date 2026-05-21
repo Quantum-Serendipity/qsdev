@@ -64,3 +64,22 @@ func FilePath(projectRoot, dir, filename string) string {
 func SavePrimary(projectRoot string, a types.WizardAnswers) error {
 	return SaveToDir(projectRoot, ".devinit", ".qsdev-init-answers.yaml", a)
 }
+
+// LoadPrimary reads the primary (devinit) answers file. Returns a zero-value
+// WizardAnswers and nil error if the file does not exist or is corrupt.
+func LoadPrimary(projectRoot string) (types.WizardAnswers, error) {
+	path := filepath.Join(projectRoot, ".devinit", ".qsdev-init-answers.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return types.WizardAnswers{}, nil
+		}
+		return types.WizardAnswers{}, fmt.Errorf("reading primary answers: %w", err)
+	}
+
+	var a types.WizardAnswers
+	if err := yaml.Unmarshal(data, &a); err != nil {
+		return types.WizardAnswers{}, nil
+	}
+	return a, nil
+}

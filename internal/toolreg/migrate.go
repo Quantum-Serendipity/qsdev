@@ -1,6 +1,10 @@
 package toolreg
 
-import "github.com/Quantum-Serendipity/qsdev/pkg/types"
+import (
+	"slices"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
+)
 
 // InferEnabledTools builds the EnabledTools map from legacy WizardAnswers
 // fields for projects created before the lifecycle system existed.
@@ -20,6 +24,23 @@ func InferEnabledTools(answers *types.WizardAnswers, registry *Registry) {
 	}
 }
 
+// MergeInferredTools augments an existing EnabledTools map with implicitly
+// enabled tools (from answers fields and AlwaysOn registry defaults) without
+// overriding entries that are already present.
+func MergeInferredTools(answers *types.WizardAnswers, registry *Registry) {
+	if answers.EnabledTools == nil {
+		answers.EnabledTools = make(map[string]bool)
+	}
+	for _, tool := range registry.All() {
+		if _, explicit := answers.EnabledTools[tool.Name]; explicit {
+			continue
+		}
+		if isToolImplicitlyEnabled(tool, answers) {
+			answers.EnabledTools[tool.Name] = true
+		}
+	}
+}
+
 // isToolImplicitlyEnabled checks existing WizardAnswers fields to determine
 // whether a tool was effectively enabled before the lifecycle system existed.
 func isToolImplicitlyEnabled(tool *Tool, answers *types.WizardAnswers) bool {
@@ -33,7 +54,7 @@ func isToolImplicitlyEnabled(tool *Tool, answers *types.WizardAnswers) bool {
 	case "semble":
 		return answers.AgentTools.SembleEnabled
 	case "trail-of-bits-skills":
-		return containsStr(answers.Skills, "security-review")
+		return slices.Contains(answers.Skills, "security-review")
 	default:
 		// For tools added in Phase 12+, they weren't present in pre-lifecycle
 		// projects, so default to the tool's DefaultPolicy.
@@ -45,13 +66,4 @@ func isToolImplicitlyEnabled(tool *Tool, answers *types.WizardAnswers) bool {
 		}
 		return false
 	}
-}
-
-func containsStr(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }

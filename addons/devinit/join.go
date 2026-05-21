@@ -15,6 +15,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -89,6 +90,9 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		return err
 	}
 
+	// 5b. Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
+	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
+
 	// 6. Generate files.
 	registry := ecosystem.DefaultRegistry()
 	var allFiles []types.GeneratedFile
@@ -149,6 +153,7 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	successfulFiles := result.SuccessfulFiles(allFiles)
 	genState := state.RecordFiles(successfulFiles)
 	genState.QsdevVersion = version.Info().Version
+	genState.EnabledTools = answers.EnabledTools
 	stateFile := filepath.Join(projectRoot, stateFilePath())
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)

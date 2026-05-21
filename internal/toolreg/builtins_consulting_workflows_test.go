@@ -1,6 +1,7 @@
 package toolreg
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -72,10 +73,10 @@ func TestConsultingWorkflowReviewPrSupersedesBasic(t *testing.T) {
 	}
 
 	// Other skills should remain.
-	if !containsStr(answers.Skills, "deploy") {
+	if !slices.Contains(answers.Skills, "deploy") {
 		t.Error("EnableFunc removed 'deploy' from Skills unexpectedly")
 	}
-	if !containsStr(answers.Skills, "security-review") {
+	if !slices.Contains(answers.Skills, "security-review") {
 		t.Error("EnableFunc removed 'security-review' from Skills unexpectedly")
 	}
 

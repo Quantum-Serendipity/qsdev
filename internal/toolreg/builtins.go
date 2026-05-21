@@ -1,6 +1,8 @@
 package toolreg
 
 import (
+	"slices"
+
 	"github.com/Quantum-Serendipity/qsdev/internal/sectools"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -56,7 +58,7 @@ func builtinBehaviors() map[string]ToolBehavior {
 		},
 		"trail-of-bits-skills": {
 			EnableFunc: func(a *types.WizardAnswers) {
-				if !containsStr(a.Skills, "security-review") {
+				if !slices.Contains(a.Skills, "security-review") {
 					a.Skills = append(a.Skills, "security-review")
 				}
 			},
@@ -66,7 +68,7 @@ func builtinBehaviors() map[string]ToolBehavior {
 		},
 		"context7": {
 			EnableFunc: func(a *types.WizardAnswers) {
-				if !containsStr(a.MCPServers, "context7") {
+				if !slices.Contains(a.MCPServers, "context7") {
 					a.MCPServers = append(a.MCPServers, "context7")
 				}
 			},
@@ -76,7 +78,7 @@ func builtinBehaviors() map[string]ToolBehavior {
 		},
 		"github-mcp": {
 			EnableFunc: func(a *types.WizardAnswers) {
-				if !containsStr(a.MCPServers, "github") {
+				if !slices.Contains(a.MCPServers, "github") {
 					a.MCPServers = append(a.MCPServers, "github")
 				}
 			},
@@ -86,7 +88,7 @@ func builtinBehaviors() map[string]ToolBehavior {
 		},
 		"socket-dev-mcp": {
 			EnableFunc: func(a *types.WizardAnswers) {
-				if !containsStr(a.MCPServers, "socket") {
+				if !slices.Contains(a.MCPServers, "socket") {
 					a.MCPServers = append(a.MCPServers, "socket")
 				}
 			},
@@ -96,7 +98,7 @@ func builtinBehaviors() map[string]ToolBehavior {
 		},
 		"postgres-mcp": {
 			EnableFunc: func(a *types.WizardAnswers) {
-				if !containsStr(a.MCPServers, "postgres") {
+				if !slices.Contains(a.MCPServers, "postgres") {
 					a.MCPServers = append(a.MCPServers, "postgres")
 				}
 			},

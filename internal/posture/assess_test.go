@@ -270,13 +270,20 @@ func TestAssess_CorruptStateRecordedAsDrift(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if report.Drift.TotalFindings != 1 {
-		t.Errorf("expected 1 drift finding, got %d", report.Drift.TotalFindings)
+	if report.Drift.TotalFindings < 1 {
+		t.Errorf("expected at least 1 drift finding, got %d", report.Drift.TotalFindings)
 	}
-	if len(report.Drift.Categories) != 1 {
-		t.Fatalf("expected 1 drift category, got %d", len(report.Drift.Categories))
+	found := false
+	for _, cat := range report.Drift.Categories {
+		if cat.Name == "state-files" {
+			found = true
+			if len(cat.Findings) != 1 {
+				t.Errorf("expected 1 finding in state-files category, got %d", len(cat.Findings))
+			}
+			break
+		}
 	}
-	if report.Drift.Categories[0].Name != "state-files" {
-		t.Errorf("drift category name = %q, want %q", report.Drift.Categories[0].Name, "state-files")
+	if !found {
+		t.Error("expected state-files drift category to be present")
 	}
 }

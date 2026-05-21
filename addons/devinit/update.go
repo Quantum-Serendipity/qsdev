@@ -14,14 +14,14 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
-	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // register all modules
-	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/update"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // register all modules
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -218,8 +218,14 @@ func buildUpdatePlan(
 
 		switch fs.Status {
 		case types.Unmodified:
-			fp.Action = UpdateActionRegenerate
-			fp.Reason = "unmodified, safe to update"
+			switch f.Strategy {
+			case types.SectionMarker:
+				fp.Action = UpdateActionMerge
+				fp.Reason = "unmodified, section marker merge"
+			default:
+				fp.Action = UpdateActionRegenerate
+				fp.Reason = "unmodified, safe to update"
+			}
 
 		case types.Modified:
 			if opts.Force {

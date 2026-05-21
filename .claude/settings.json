@@ -1,4 +1,19 @@
 {
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/package-guard.py",
+            "timeout": 30,
+            "statusMessage": "Checking package install safety..."
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "defaultMode": "default",
     "disableBypassPermissionsMode": "disable",
@@ -222,21 +237,6 @@
       "Bash(composer install)",
       "Bash(composer update *)",
       "Bash(composer update)"
-    ]
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/package-guard.py",
-            "timeout": 30,
-            "statusMessage": "Checking package install safety..."
-          }
-        ]
-      }
     ]
   }
 }

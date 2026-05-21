@@ -2,6 +2,7 @@ package toolreg
 
 import (
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 )
@@ -118,15 +119,63 @@ func categoryOrder(c ToolCategory) int {
 	}
 }
 
+// AttachBehavior attaches behavioral functions to a tool that was loaded
+// from the catalog YAML. This is the second phase of two-phase registration:
+// YAML provides declarative metadata, Go code provides function hooks.
+// If the tool name is not in the registry, this is a no-op.
+func (r *Registry) AttachBehavior(name string, b ToolBehavior) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	t, ok := r.tools[name]
+	if !ok {
+		slog.Warn("AttachBehavior called for unknown tool", "tool", name)
+		return
+	}
+	if b.EnableFunc != nil {
+		t.EnableFunc = b.EnableFunc
+	}
+	if b.DisableFunc != nil {
+		t.DisableFunc = b.DisableFunc
+	}
+	if b.DetectFunc != nil {
+		t.DetectFunc = b.DetectFunc
+	}
+	if b.GenerateFunc != nil {
+		t.GenerateFunc = b.GenerateFunc
+	}
+	if b.SharedContent != nil {
+		t.SharedContent = b.SharedContent
+	}
+}
+
+// ToolBehavior holds the Go function fields for a tool. Used with
+// AttachBehavior to separate declarative metadata (YAML) from
+// behavioral hooks (Go code).
+type ToolBehavior struct {
+	EnableFunc    EnableFunc
+	DisableFunc   DisableFunc
+	DetectFunc    DetectFunc
+	GenerateFunc  GenerateFunc
+	SharedContent map[string]SharedContentFunc
+}
+
 var (
 	defaultRegistryOnce sync.Once
 	defaultRegistry     *Registry
 )
 
 // DefaultRegistry returns the lazily-initialized singleton tool registry.
+// Tools from the YAML catalog are pre-loaded with their declarative metadata.
 func DefaultRegistry() *Registry {
 	defaultRegistryOnce.Do(func() {
-		defaultRegistry = NewRegistry()
+		defaultRegistry = BuildFromCatalog()
 	})
 	return defaultRegistry
+}
+
+// ResetDefaultRegistry clears the cached registry. For testing only.
+func ResetDefaultRegistry() {
+	defaultRegistryOnce = sync.Once{}
+	defaultRegistry = nil
 }

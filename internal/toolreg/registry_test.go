@@ -1,8 +1,12 @@
 package toolreg
 
 import (
+	"strings"
 	"sync"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 func TestRegister_Success(t *testing.T) {
@@ -171,6 +175,88 @@ func TestDefaultRegistry_Singleton(t *testing.T) {
 	r2 := DefaultRegistry()
 	if r1 != r2 {
 		t.Fatal("expected DefaultRegistry to return the same instance")
+	}
+}
+
+func TestYAMLRegistryCorrespondence(t *testing.T) {
+	t.Parallel()
+	reg := DefaultRegistry()
+	yamlTools := catalog.Default().Tools()
+
+	for name := range yamlTools {
+		if _, ok := reg.ByName(name); !ok {
+			t.Errorf("YAML tool %q not found in registry", name)
+		}
+	}
+
+	opsPrefix := branding.Get().AppName + "-"
+	for _, tool := range reg.All() {
+		if strings.HasPrefix(tool.Name, opsPrefix) {
+			continue
+		}
+		if _, ok := yamlTools[tool.Name]; !ok {
+			t.Errorf("registry tool %q not found in YAML catalog", tool.Name)
+		}
+	}
+}
+
+func TestBridgeMetadataFidelity(t *testing.T) {
+	t.Parallel()
+	cat := catalog.Default()
+	reg := DefaultRegistry()
+
+	opsPrefix := branding.Get().AppName + "-"
+	for name, def := range cat.Tools() {
+		tool, ok := reg.ByName(name)
+		if !ok {
+			t.Errorf("tool %q missing from registry", name)
+			continue
+		}
+		if tool.DisplayName != def.DisplayName {
+			t.Errorf("%s: DisplayName = %q, want %q", name, tool.DisplayName, def.DisplayName)
+		}
+		if string(tool.Category) != def.Category {
+			t.Errorf("%s: Category = %q, want %q", name, tool.Category, def.Category)
+		}
+		if tool.Description != def.Description {
+			t.Errorf("%s: Description mismatch", name)
+		}
+		wantPolicy := parseDefaultPolicy(def.DefaultPolicy)
+		if tool.Default != wantPolicy {
+			t.Errorf("%s: Default = %v, want %v", name, tool.Default, wantPolicy)
+		}
+		if len(def.OwnedFiles) != len(tool.OwnedFiles) {
+			t.Errorf("%s: OwnedFiles count = %d, want %d", name, len(tool.OwnedFiles), len(def.OwnedFiles))
+		}
+		_ = opsPrefix
+	}
+}
+
+func TestBridgeOwnedFiles_SharedVsExclusive(t *testing.T) {
+	t.Parallel()
+	reg := DefaultRegistry()
+
+	tool, ok := reg.ByName("attach-guard")
+	if !ok {
+		t.Fatal("attach-guard not in registry")
+	}
+
+	exclusive := tool.ExclusiveFiles()
+	shared := tool.SharedFiles()
+
+	if len(exclusive) != 1 {
+		t.Errorf("ExclusiveFiles count = %d, want 1", len(exclusive))
+	}
+	if len(shared) != 2 {
+		t.Errorf("SharedFiles count = %d, want 2", len(shared))
+	}
+	if len(exclusive) > 0 && exclusive[0].Path != ".claude/hooks/package-guard.py" {
+		t.Errorf("exclusive path = %q, want .claude/hooks/package-guard.py", exclusive[0].Path)
+	}
+	for _, sf := range shared {
+		if sf.SectionID == "" {
+			t.Errorf("shared file %q has empty SectionID", sf.Path)
+		}
 	}
 }
 

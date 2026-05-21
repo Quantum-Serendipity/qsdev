@@ -9,30 +9,8 @@ import (
 
 func init() {
 	r := DefaultRegistry()
-	for _, t := range gitWorkflowTools() {
-		_ = r.Register(t)
-	}
-}
 
-func gitWorkflowTools() []Tool {
-	return []Tool{
-		prTemplatesTool(),
-		branchNamingTool(),
-		commitTicketTool(),
-		prLabelsTool(),
-	}
-}
-
-func prTemplatesTool() Tool {
-	return Tool{
-		Name:        "pr-templates",
-		DisplayName: "PR Templates",
-		Category:    CategoryDevEx,
-		Description: "GitHub pull request template with ecosystem-aware checklists",
-		Default:     AlwaysOn,
-		OwnedFiles: []FileOwnership{
-			{Path: ".github/pull_request_template.md", Ownership: Exclusive},
-		},
+	r.AttachBehavior("pr-templates", ToolBehavior{
 		EnableFunc: func(a *types.WizardAnswers) {
 			if a.EnabledTools == nil {
 				a.EnabledTools = make(map[string]bool)
@@ -52,19 +30,9 @@ func prTemplatesTool() Tool {
 			}
 			return []types.GeneratedFile{*f}, nil
 		},
-	}
-}
+	})
 
-func branchNamingTool() Tool {
-	return Tool{
-		Name:        "branch-naming",
-		DisplayName: "Branch Naming Convention",
-		Category:    CategoryDevEx,
-		Description: "Pre-push hook enforcing branch naming conventions (feat|fix|chore|docs|refactor|test|ci/<description>)",
-		Default:     AlwaysOn,
-		OwnedFiles: []FileOwnership{
-			{Path: "devenv.nix", Ownership: Shared, SectionID: "branch-naming"},
-		},
+	r.AttachBehavior("branch-naming", ToolBehavior{
 		EnableFunc: func(a *types.WizardAnswers) {
 			if a.EnabledTools == nil {
 				a.EnabledTools = make(map[string]bool)
@@ -80,11 +48,46 @@ func branchNamingTool() Tool {
 		SharedContent: map[string]SharedContentFunc{
 			"branch-naming": branchNamingNixContent,
 		},
-	}
+	})
+
+	r.AttachBehavior("commit-ticket", ToolBehavior{
+		EnableFunc: func(a *types.WizardAnswers) {
+			if a.EnabledTools == nil {
+				a.EnabledTools = make(map[string]bool)
+			}
+			a.EnabledTools["commit-ticket"] = true
+		},
+		DisableFunc: func(a *types.WizardAnswers) {
+			if a.EnabledTools == nil {
+				a.EnabledTools = make(map[string]bool)
+			}
+			a.EnabledTools["commit-ticket"] = false
+		},
+		SharedContent: map[string]SharedContentFunc{
+			"commit-ticket": commitTicketNixContent,
+		},
+	})
+
+	r.AttachBehavior("pr-labels", ToolBehavior{
+		EnableFunc: func(a *types.WizardAnswers) {
+			if a.EnabledTools == nil {
+				a.EnabledTools = make(map[string]bool)
+			}
+			a.EnabledTools["pr-labels"] = true
+		},
+		DisableFunc: func(a *types.WizardAnswers) {
+			if a.EnabledTools == nil {
+				a.EnabledTools = make(map[string]bool)
+			}
+			a.EnabledTools["pr-labels"] = false
+		},
+		GenerateFunc: func(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
+			return gitworkflow.GenerateLabelerConfig(answers)
+		},
+	})
 }
 
-func branchNamingNixContent(answers types.WizardAnswers) ([]byte, error) {
-	// Default pattern.
+func branchNamingNixContent(_ types.WizardAnswers) ([]byte, error) {
 	pattern := `^(feat|fix|chore|docs|refactor|test|ci)/[a-z0-9._-]+$`
 
 	nix := fmt.Sprintf(`  git-hooks.hooks.branch-naming = {
@@ -111,35 +114,7 @@ func branchNamingNixContent(answers types.WizardAnswers) ([]byte, error) {
 	return []byte(nix), nil
 }
 
-func commitTicketTool() Tool {
-	return Tool{
-		Name:        "commit-ticket",
-		DisplayName: "Commit Ticket Extraction",
-		Category:    CategoryDevEx,
-		Description: "Prepare-commit-msg hook that extracts ticket IDs from branch names into commit messages",
-		Default:     OptIn,
-		OwnedFiles: []FileOwnership{
-			{Path: "devenv.nix", Ownership: Shared, SectionID: "commit-ticket"},
-		},
-		EnableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
-			a.EnabledTools["commit-ticket"] = true
-		},
-		DisableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
-			a.EnabledTools["commit-ticket"] = false
-		},
-		SharedContent: map[string]SharedContentFunc{
-			"commit-ticket": commitTicketNixContent,
-		},
-	}
-}
-
-func commitTicketNixContent(answers types.WizardAnswers) ([]byte, error) {
+func commitTicketNixContent(_ types.WizardAnswers) ([]byte, error) {
 	nix := `  git-hooks.hooks.commit-ticket = {
     enable = true;
     name = "Commit ticket extraction";
@@ -167,37 +142,4 @@ func commitTicketNixContent(answers types.WizardAnswers) ([]byte, error) {
   };`
 
 	return []byte(nix), nil
-}
-
-func prLabelsTool() Tool {
-	return Tool{
-		Name:        "pr-labels",
-		DisplayName: "PR Auto-Labeler",
-		Category:    CategoryDevEx,
-		Description: "GitHub Actions workflow that auto-labels PRs based on changed files",
-		Default:     AlwaysOn,
-		OwnedFiles: []FileOwnership{
-			{Path: ".github/labeler.yml", Ownership: Exclusive},
-			{Path: ".github/workflows/labeler.yml", Ownership: Exclusive},
-		},
-		EnableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
-			a.EnabledTools["pr-labels"] = true
-		},
-		DisableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
-			a.EnabledTools["pr-labels"] = false
-		},
-		GenerateFunc: func(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
-			files, err := gitworkflow.GenerateLabelerConfig(answers)
-			if err != nil {
-				return nil, err
-			}
-			return files, nil
-		},
-	}
 }

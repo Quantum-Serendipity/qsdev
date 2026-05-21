@@ -247,7 +247,7 @@ func TestGenerateClaudeMd_EmptyFieldsNoError(t *testing.T) {
 	requireNotContains(t, content, "## Lint Commands")
 }
 
-func TestGenerateClaudeMd_CustomInstructionsBelowMarkers(t *testing.T) {
+func TestGenerateClaudeMd_NoDefaultContentAfterEndMarker(t *testing.T) {
 	reg := newTestRegistry(t, goMock())
 	answers := types.WizardAnswers{
 		ProjectName: "myproject",
@@ -262,16 +262,13 @@ func TestGenerateClaudeMd_CustomInstructionsBelowMarkers(t *testing.T) {
 	content := string(got.Content)
 
 	endIdx := strings.Index(content, "<!-- END GENERATED SECTION -->")
-	customIdx := strings.Index(content, "## Custom Instructions")
-
 	if endIdx < 0 {
 		t.Fatal("END marker not found")
 	}
-	if customIdx < 0 {
-		t.Fatal("Custom Instructions section not found")
-	}
-	if customIdx <= endIdx {
-		t.Errorf("Custom Instructions (at %d) should appear after END marker (at %d)", customIdx, endIdx)
+
+	afterMarker := strings.TrimSpace(content[endIdx+len("<!-- END GENERATED SECTION -->"):])
+	if afterMarker != "" {
+		t.Errorf("expected no content after END marker, got: %q", afterMarker)
 	}
 }
 

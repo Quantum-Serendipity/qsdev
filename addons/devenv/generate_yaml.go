@@ -19,9 +19,9 @@ const (
 
 // DevenvYaml is the top-level structure that marshals to devenv.yaml.
 type DevenvYaml struct {
-	RequireVersion string                    `yaml:"require_version"`
+	RequireVersion string                     `yaml:"require_version"`
 	Inputs         map[string]DevenvYamlInput `yaml:"inputs"`
-	Impure         bool                       `yaml:"impure"` // no omitempty: false is security-critical
+	Impure         bool                       `yaml:"impure"`       // no omitempty: false is security-critical
 	AllowUnfree    bool                       `yaml:"allow_unfree"` // no omitempty
 	AllowBroken    bool                       `yaml:"allow_broken"` // no omitempty
 	Clean          DevenvClean                `yaml:"clean"`
@@ -102,7 +102,7 @@ func GenerateDevenvYaml(answers types.WizardAnswers, registry *ecosystem.Registr
 		PermittedInsecurePackages: []string{},
 		Clean: DevenvClean{
 			Enabled: true,
-			Keep:    append([]string(nil), defaultCleanKeep...),
+			Keep:    defaultCleanKeep(),
 		},
 	}
 

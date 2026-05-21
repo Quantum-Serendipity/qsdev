@@ -9,6 +9,7 @@ import (
 
 	_ "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	_ "github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/defaults"
 )
 
 var addon = addons.Addon[config]{
@@ -57,6 +58,7 @@ func initialize() error {
 		outdatedCmd(),
 		updateCmd(),
 		teardownCmd(),
+		defaults.Command(),
 	)
 	return nil
 }

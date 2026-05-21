@@ -304,6 +304,88 @@ func TestPreviewUpdatePlan_Output(t *testing.T) {
 	}
 }
 
+func TestBuildUpdatePlan_UnmodifiedSectionMarker(t *testing.T) {
+	files := []types.GeneratedFile{
+		{Path: "CLAUDE.md", Content: []byte("new generated"), Mode: 0o644, Strategy: types.SectionMarker},
+	}
+	modStatus := map[string]state.FileStatus{
+		"CLAUDE.md": {Path: "CLAUDE.md", Status: types.Unmodified},
+	}
+	stored := types.GeneratedState{
+		Files: map[string]types.FileState{
+			"CLAUDE.md": {Hash: "sha256:abc", Strategy: types.SectionMarker},
+		},
+	}
+	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	if len(plan.Files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(plan.Files))
+	}
+	if plan.Files[0].Action != UpdateActionMerge {
+		t.Errorf("expected Merge for unmodified SectionMarker file, got %v", plan.Files[0].Action)
+	}
+	if plan.Files[0].Reason != "unmodified, section marker merge" {
+		t.Errorf("unexpected reason: %q", plan.Files[0].Reason)
+	}
+}
+
+func TestBuildUpdatePlan_UnmodifiedThreeWayMerge(t *testing.T) {
+	files := []types.GeneratedFile{
+		{Path: ".claude/settings.json", Content: []byte("new generated"), Mode: 0o644, Strategy: types.ThreeWayMerge},
+	}
+	modStatus := map[string]state.FileStatus{
+		".claude/settings.json": {Path: ".claude/settings.json", Status: types.Unmodified},
+	}
+	stored := types.GeneratedState{
+		Files: map[string]types.FileState{
+			".claude/settings.json": {
+				Hash:        "sha256:abc",
+				Strategy:    types.ThreeWayMerge,
+				BaseContent: []byte("previous base"),
+			},
+		},
+	}
+	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	if len(plan.Files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(plan.Files))
+	}
+	fp := plan.Files[0]
+	if fp.Action != UpdateActionMerge {
+		t.Errorf("expected Merge for unmodified ThreeWayMerge file, got %v", fp.Action)
+	}
+	if fp.Reason != "unmodified, three-way merge" {
+		t.Errorf("unexpected reason: %q", fp.Reason)
+	}
+	if string(fp.OldContent) != "previous base" {
+		t.Errorf("expected OldContent from stored BaseContent, got %q", string(fp.OldContent))
+	}
+}
+
+func TestBuildUpdatePlan_UnmodifiedOverwrite_StillRegenerates(t *testing.T) {
+	files := []types.GeneratedFile{
+		{Path: "devenv.yaml", Content: []byte("new"), Mode: 0o644, Strategy: types.Overwrite},
+		{Path: "changelog.md", Content: []byte("new"), Mode: 0o644, Strategy: types.LibraryManaged},
+	}
+	modStatus := map[string]state.FileStatus{
+		"devenv.yaml":  {Path: "devenv.yaml", Status: types.Unmodified},
+		"changelog.md": {Path: "changelog.md", Status: types.Unmodified},
+	}
+	stored := types.GeneratedState{
+		Files: map[string]types.FileState{
+			"devenv.yaml":  {Hash: "sha256:abc", Strategy: types.Overwrite},
+			"changelog.md": {Hash: "sha256:def", Strategy: types.LibraryManaged},
+		},
+	}
+	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	if len(plan.Files) != 2 {
+		t.Fatalf("expected 2 files, got %d", len(plan.Files))
+	}
+	for _, fp := range plan.Files {
+		if fp.Action != UpdateActionRegenerate {
+			t.Errorf("%s: expected Regenerate for unmodified non-SectionMarker file, got %v", fp.Path, fp.Action)
+		}
+	}
+}
+
 func TestUpdateActionString(t *testing.T) {
 	tests := []struct {
 		action   UpdateAction

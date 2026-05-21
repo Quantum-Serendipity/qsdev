@@ -9,15 +9,15 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
+	"github.com/Quantum-Serendipity/qsdev/internal/merge"
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // register all modules
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
-	"github.com/Quantum-Serendipity/qsdev/internal/merge"
-	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
-	"github.com/Quantum-Serendipity/qsdev/internal/state"
-	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -53,13 +53,13 @@ func claudeCmd() *cobra.Command {
 
 func initCmd() *cobra.Command {
 	var (
-		preset         string
-		skills         []string
-		mcpServers     []string
-		yes            bool
-		force          bool
-		dryRun         bool
-		noSafetyBlock  bool
+		preset        string
+		skills        []string
+		mcpServers    []string
+		yes           bool
+		force         bool
+		dryRun        bool
+		noSafetyBlock bool
 	)
 
 	cmd := &cobra.Command{
@@ -109,7 +109,8 @@ func initCmd() *cobra.Command {
 
 			// Write files to disk.
 			result, err := generate.WriteFiles(files, generate.PipelineOptions{
-				ProjectRoot: projectRoot,
+				ProjectRoot:      projectRoot,
+				SectionMergeFunc: merge.SectionMarkers,
 			})
 			if err != nil {
 				return fmt.Errorf("writing files: %w", err)
@@ -197,6 +198,7 @@ func updateCmd() *cobra.Command {
 
 			// Write files respecting merge strategies.
 			var writtenFiles []types.GeneratedFile
+			mergedOriginals := make(map[string][]byte)
 			created, updated, skipped := 0, 0, 0
 
 			for _, f := range files {
@@ -219,10 +221,29 @@ func updateCmd() *cobra.Command {
 
 				switch fs.Status {
 				case types.Unmodified:
-					if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
-						return fmt.Errorf("writing %s: %w", f.Path, err)
+					switch f.Strategy {
+					case types.SectionMarker, types.ThreeWayMerge:
+						content, mergeErr := mergeFile(f, existingState, projectRoot)
+						if mergeErr != nil {
+							if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
+								return fmt.Errorf("writing %s: %w", f.Path, err)
+							}
+							writtenFiles = append(writtenFiles, f)
+						} else {
+							if err := fileutil.WriteFileAtomic(absPath, content, mode); err != nil {
+								return fmt.Errorf("writing merged %s: %w", f.Path, err)
+							}
+							writtenFiles = append(writtenFiles, types.GeneratedFile{
+								Path: f.Path, Content: content, Mode: mode, Strategy: f.Strategy,
+							})
+							mergedOriginals[f.Path] = f.Content
+						}
+					default:
+						if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
+							return fmt.Errorf("writing %s: %w", f.Path, err)
+						}
+						writtenFiles = append(writtenFiles, f)
 					}
-					writtenFiles = append(writtenFiles, f)
 					updated++
 
 				case types.Modified:
@@ -245,6 +266,7 @@ func updateCmd() *cobra.Command {
 						writtenFiles = append(writtenFiles, types.GeneratedFile{
 							Path: f.Path, Content: content, Mode: mode, Strategy: f.Strategy,
 						})
+						mergedOriginals[f.Path] = f.Content
 						updated++
 					}
 
@@ -266,6 +288,14 @@ func updateCmd() *cobra.Command {
 
 			// Save updated state (merge new + old for skipped files).
 			newState := state.RecordFiles(writtenFiles)
+			// Correct BaseContent for merged ThreeWayMerge files: store the
+			// original generated content (ours), not the merged result.
+			for path, origContent := range mergedOriginals {
+				if fs, ok := newState.Files[path]; ok && fs.Strategy == types.ThreeWayMerge {
+					fs.BaseContent = origContent
+					newState.Files[path] = fs
+				}
+			}
 			for path, fs := range existingState.Files {
 				if _, written := newState.Files[path]; !written {
 					newState.Files[path] = fs

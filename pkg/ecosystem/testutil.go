@@ -13,22 +13,23 @@ type MockModule struct {
 	DetectFn     func(projectRoot string) DetectionResult
 	DetectResult DetectionResult
 
-	DevenvNixFragmentVal   string
-	DevenvNixFragmentErr   error
-	DevenvYamlInputsVal    []DevenvInput
-	SecurityConfigsVal     []types.GeneratedFile
-	PreCommitHooksVal      []HookConfig
-	DenyRulesVal           []string
-	CICommandsVal          []CICommand
-	PackageManagersVal         []PackageManagerInfo
-	WizardFieldsVal            []WizardField
-	VerificationCommandsVal    VerificationCommands
-	ManifestFilesVal           []ManifestFileInfo
+	DevenvNixFragmentVal    string
+	DevenvNixFragmentErr    error
+	DevenvYamlInputsVal     []DevenvInput
+	SecurityConfigsVal      []types.GeneratedFile
+	PreCommitHooksVal       []HookConfig
+	DenyRulesVal            []string
+	CICommandsVal           []CICommand
+	PackageManagersVal      []PackageManagerInfo
+	WizardFieldsVal         []WizardField
+	VerificationCommandsVal VerificationCommands
+	ManifestFilesVal        []ManifestFileInfo
+	DevenvPackagesVal       []string
 }
 
 func (m *MockModule) Name() string        { return m.NameVal }
-func (m *MockModule) DisplayName() string  { return m.DisplayNameVal }
-func (m *MockModule) Tier() int            { return m.TierVal }
+func (m *MockModule) DisplayName() string { return m.DisplayNameVal }
+func (m *MockModule) Tier() int           { return m.TierVal }
 
 func (m *MockModule) Detect(projectRoot string) DetectionResult {
 	if m.DetectFn != nil {
@@ -75,4 +76,8 @@ func (m *MockModule) VerificationCommands(_ ModuleConfig) VerificationCommands {
 
 func (m *MockModule) ManifestFiles(_ ModuleConfig) []ManifestFileInfo {
 	return m.ManifestFilesVal
+}
+
+func (m *MockModule) DevenvPackages(_ ModuleConfig) []string {
+	return m.DevenvPackagesVal
 }

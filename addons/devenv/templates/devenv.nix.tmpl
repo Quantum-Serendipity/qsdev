@@ -2,9 +2,11 @@
 {
   # Base packages
   packages = {{ nixPkgList .Packages }};
-{{range $key, $val := .EnvVars}}
-  env.{{ $key }} = {{ nixString $val }};
+  env = {
+{{- range $key, $val := .EnvVars}}
+    {{ $key }} = {{ nixString $val }};
 {{- end}}
+  };
 
   # Credential-bearing variables stripped from the shell
   unsetEnvVars = {{ nixStringList .UnsetEnvVars }};
@@ -48,7 +50,11 @@
       name = {{ nixString .Name }};
       description = {{ nixString .Description }};
 {{- if .RawEntry }}
+{{- if .NeedsToString }}
       entry = toString ({{ .Entry }});
+{{- else }}
+      entry = {{ .Entry }};
+{{- end }}
 {{- else }}
       entry = {{ nixString .Entry }};
 {{- end }}

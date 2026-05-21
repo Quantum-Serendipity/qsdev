@@ -1,9 +1,12 @@
 package devenv
 
 import (
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -108,10 +111,10 @@ func TestBuildDevenvNixData_GdevEnvVars(t *testing.T) {
 
 	// Verify qsdev env vars are present.
 	checks := map[string]string{
-		"QSDEV_PROJECT_NAME":    "myproject",
+		"QSDEV_PROJECT_NAME":     "myproject",
 		"QSDEV_SECURITY_PROFILE": "enhanced",
-		"QSDEV_ECOSYSTEMS":      "go,python",
-		"QSDEV_TOOL_COUNT":      "2",
+		"QSDEV_ECOSYSTEMS":       "go,python",
+		"QSDEV_TOOL_COUNT":       "2",
 	}
 	for key, want := range checks {
 		got, ok := data.EnvVars[key]
@@ -155,12 +158,199 @@ func TestBuildDevenvNixData_GdevEnvVars_Defaults(t *testing.T) {
 	}
 }
 
+func TestBuildDevenvNixData_HookPackagesBareName(t *testing.T) {
+	t.Parallel()
+	reg := ecosystem.NewRegistry()
+	_ = reg.Register(&ecosystem.MockModule{
+		NameVal:        "go",
+		DisplayNameVal: "Go",
+		TierVal:        1,
+		PreCommitHooksVal: []ecosystem.HookConfig{
+			{
+				ID:         "staticcheck",
+				Name:       "staticcheck",
+				Entry:      "staticcheck ./...",
+				NixPackage: "go-tools",
+				Language:   "system",
+				Types:      []string{"go"},
+				Stages:     []string{"pre-commit"},
+			},
+		},
+	})
+
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{{Name: "go"}},
+	}
+
+	data, err := BuildDevenvNixData(answers, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, pkg := range data.Packages {
+		if pkg == "pkgs.go-tools" {
+			t.Error("data.Packages contains \"pkgs.go-tools\"; want bare name \"go-tools\"")
+		}
+	}
+
+	found := false
+	for _, pkg := range data.Packages {
+		if pkg == "go-tools" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("data.Packages does not contain \"go-tools\"; got %v", data.Packages)
+	}
+}
+
+func TestBuildDevenvNixData_NoUvInBasePackages(t *testing.T) {
+	t.Parallel()
+	reg := ecosystem.NewRegistry()
+	answers := types.WizardAnswers{}
+
+	data, err := BuildDevenvNixData(answers, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, pkg := range data.Packages {
+		if pkg == "uv" {
+			t.Error("data.Packages contains \"uv\"; Python tool should not be in base packages")
+		}
+	}
+}
+
+func TestBuildDevenvNixData_ModulePackagesCollected(t *testing.T) {
+	t.Parallel()
+	reg := ecosystem.NewRegistry()
+	_ = reg.Register(&ecosystem.MockModule{
+		NameVal:           "go",
+		DisplayNameVal:    "Go",
+		TierVal:           1,
+		DevenvPackagesVal: []string{"gopls", "delve"},
+	})
+
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{{Name: "go"}},
+	}
+
+	data, err := BuildDevenvNixData(answers, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	pkgSet := make(map[string]bool, len(data.Packages))
+	for _, p := range data.Packages {
+		pkgSet[p] = true
+	}
+	for _, want := range []string{"gopls", "delve"} {
+		if !pkgSet[want] {
+			t.Errorf("data.Packages missing %q from module PackageProvider; got %v", want, data.Packages)
+		}
+	}
+}
+
 func TestBuildEnterShellScript_ContainsGdevVars(t *testing.T) {
 	script := buildEnterShellScript()
 
 	for _, want := range []string{"QSDEV_PROJECT_NAME", "QSDEV_SECURITY_PROFILE", "QSDEV_TOOL_COUNT"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("enterShell script does not contain %q", want)
+		}
+	}
+}
+
+func TestBuildDevenvNixData_CatalogBasePackages(t *testing.T) {
+	t.Parallel()
+	reg := ecosystem.NewRegistry()
+	data, err := BuildDevenvNixData(types.WizardAnswers{}, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	catPkgs := catalog.Default().BasePackages()
+	for _, want := range catPkgs {
+		if !slices.Contains(data.Packages, want) {
+			t.Errorf("data.Packages missing catalog base package %q", want)
+		}
+	}
+}
+
+func TestBuildDevenvNixData_CatalogSecurityHooks(t *testing.T) {
+	t.Parallel()
+	reg := ecosystem.NewRegistry()
+	data, err := BuildDevenvNixData(types.WizardAnswers{}, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	catHooks := catalog.Default().SecurityHooks()
+	for _, want := range catHooks {
+		if !slices.Contains(data.SecurityHooks, want) {
+			t.Errorf("data.SecurityHooks missing catalog hook %q", want)
+		}
+	}
+}
+
+func TestBuildDevenvNixData_CatalogCustomHooks(t *testing.T) {
+	t.Parallel()
+	reg := ecosystem.NewRegistry()
+	data, err := BuildDevenvNixData(types.WizardAnswers{}, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	catCustom := catalog.Default().CustomHooks()
+	catIDs := make(map[string]bool, len(catCustom))
+	for _, h := range catCustom {
+		catIDs[h.ID] = true
+	}
+
+	for _, h := range data.CustomHooks {
+		if catIDs[h.ID] {
+			delete(catIDs, h.ID)
+		}
+	}
+	for id := range catIDs {
+		t.Errorf("catalog custom hook %q not found in data.CustomHooks", id)
+	}
+}
+
+func TestBuildDevenvNixData_FillDefaultsThenBuild(t *testing.T) {
+	t.Parallel()
+	reg := ecosystem.NewRegistry()
+
+	answers := types.WizardAnswers{
+		ClaudeCode:  true,
+		Tier:        "full",
+		ProjectName: "integration-test",
+	}
+	answers.FillDefaults(types.DetectedProject{})
+
+	data, err := BuildDevenvNixData(answers, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cat := catalog.Default()
+
+	wantCompliance := cat.TierToCompliance()["full"]
+	if got := data.EnvVars["QSDEV_SECURITY_PROFILE"]; got != wantCompliance {
+		t.Errorf("QSDEV_SECURITY_PROFILE = %q, want %q (from catalog TierToCompliance)", got, wantCompliance)
+	}
+
+	wantTools := cat.TierToEnabledTools()["full"]
+	wantCount := strconv.Itoa(len(wantTools))
+	if got := data.EnvVars["QSDEV_TOOL_COUNT"]; got != wantCount {
+		t.Errorf("QSDEV_TOOL_COUNT = %q, want %q (from catalog TierToEnabledTools)", got, wantCount)
+	}
+
+	catPkgs := cat.BasePackages()
+	for _, want := range catPkgs {
+		if !slices.Contains(data.Packages, want) {
+			t.Errorf("data.Packages missing catalog base package %q after FillDefaults", want)
 		}
 	}
 }

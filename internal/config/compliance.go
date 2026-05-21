@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -31,45 +32,37 @@ type ComplianceProfile struct {
 	LicenseScanning         bool
 }
 
-// ComplianceLevels maps compliance level names to their profiles.
-var ComplianceLevels = map[string]ComplianceProfile{
-	"baseline": {
-		AgeGatingThresholdHours: 72,
-		ScriptBlocking:          true,
-		RequiredPreCommitHooks:  []string{"ripsecrets", "gitleaks"},
-		MCPServerPolicy:         "allow-list",
-		ClaudePermissionLevel:   "standard",
-		ClaudeAuditLog:          false,
-		SBOMPolicy:              "off",
-		LicenseScanning:         false,
-	},
-	"enhanced": {
-		AgeGatingThresholdHours: 168,
-		ScriptBlocking:          true,
-		RequiredPreCommitHooks:  []string{"ripsecrets", "gitleaks", "semgrep"},
-		MCPServerPolicy:         "allow-list",
-		ClaudePermissionLevel:   "standard",
-		ClaudeAuditLog:          false,
-		SBOMPolicy:              "on-release",
-		LicenseScanning:         false,
-	},
-	"strict": {
-		AgeGatingThresholdHours: 336,
-		ScriptBlocking:          true,
-		RequiredPreCommitHooks:  []string{"ripsecrets", "gitleaks", "semgrep", "license-compliance"},
-		MCPServerPolicy:         "explicit-only",
-		ClaudePermissionLevel:   "restricted",
-		ClaudeAuditLog:          true,
-		SBOMPolicy:              "every-build",
-		LicenseScanning:         true,
-	},
-}
-
 // complianceLevelOrder maps level name to ordinal for comparison.
 var complianceLevelOrder = map[string]ComplianceLevel{
 	"baseline": ComplianceLevelBaseline,
 	"enhanced": ComplianceLevelEnhanced,
 	"strict":   ComplianceLevelStrict,
+}
+
+// GetComplianceLevels returns compliance level profiles.
+// Backed by internal/catalog/defaults/compliance.yaml.
+func GetComplianceLevels() map[string]ComplianceProfile {
+	return buildComplianceLevels()
+}
+
+func buildComplianceLevels() map[string]ComplianceProfile {
+	cat := catalog.Default()
+	defs := cat.ComplianceLevels()
+
+	result := make(map[string]ComplianceProfile, len(defs))
+	for name, def := range defs {
+		result[name] = ComplianceProfile{
+			AgeGatingThresholdHours: def.AgeGatingThresholdHours,
+			ScriptBlocking:          def.ScriptBlocking,
+			RequiredPreCommitHooks:  def.RequiredPreCommitHooks,
+			MCPServerPolicy:         def.MCPServerPolicy,
+			ClaudePermissionLevel:   def.ClaudePermissionLevel,
+			ClaudeAuditLog:          def.ClaudeAuditLog,
+			SBOMPolicy:              def.SBOMPolicy,
+			LicenseScanning:         def.LicenseScanning,
+		}
+	}
+	return result
 }
 
 // ParseComplianceLevel converts a string to a ComplianceLevel ordinal.
@@ -100,7 +93,7 @@ func CompareComplianceLevels(a, b string) int {
 // ComplianceLevelToConfig converts a compliance level name to a QsdevConfig
 // overlay suitable for merging into the resolution chain.
 func ComplianceLevelToConfig(level string) *types.QsdevConfig {
-	profile, ok := ComplianceLevels[level]
+	profile, ok := GetComplianceLevels()[level]
 	if !ok {
 		return nil
 	}

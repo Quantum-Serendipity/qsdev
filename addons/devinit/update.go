@@ -14,14 +14,14 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
-	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // register all modules
-	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/update"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // register all modules
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -143,6 +143,16 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	// 11. Save updated state.
 	// Merge: new state for written files + old state for skipped files.
 	newState := state.RecordFiles(writtenFiles)
+	// Correct BaseContent for merged ThreeWayMerge files: store the
+	// original generated content (ours), not the merged result.
+	for _, fp := range plan.Files {
+		if fp.Action == UpdateActionMerge && fp.Strategy == types.ThreeWayMerge {
+			if fs, ok := newState.Files[fp.Path]; ok {
+				fs.BaseContent = fp.NewContent
+				newState.Files[fp.Path] = fs
+			}
+		}
+	}
 	newState.QsdevVersion = version.Info().Version
 	// Preserve state entries for files we didn't touch.
 	for path, fs := range existingState.Files {
@@ -218,8 +228,18 @@ func buildUpdatePlan(
 
 		switch fs.Status {
 		case types.Unmodified:
-			fp.Action = UpdateActionRegenerate
-			fp.Reason = "unmodified, safe to update"
+			switch f.Strategy {
+			case types.SectionMarker:
+				fp.Action = UpdateActionMerge
+				fp.Reason = "unmodified, section marker merge"
+			case types.ThreeWayMerge:
+				fp.Action = UpdateActionMerge
+				fp.Reason = "unmodified, three-way merge"
+				fp.OldContent = readFileForMerge(storedState, f.Path)
+			default:
+				fp.Action = UpdateActionRegenerate
+				fp.Reason = "unmodified, safe to update"
+			}
 
 		case types.Modified:
 			if opts.Force {

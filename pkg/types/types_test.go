@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 	"gopkg.in/yaml.v3"
 )
@@ -16,11 +17,11 @@ func fullWizardAnswers() types.WizardAnswers {
 		ProjectName: "my-project",
 		ProjectRoot: "/home/user/projects/my-project",
 		Detected: types.DetectedProject{
-			HasGoMod:    true,
-			GoVersion:   "1.22.5",
-			IsGitRepo:   true,
-			RemoteURL:   "git@github.com:org/repo.git",
-			Ecosystems:  map[string]bool{"go": true, "docker": true},
+			HasGoMod:     true,
+			GoVersion:    "1.22.5",
+			IsGitRepo:    true,
+			RemoteURL:    "git@github.com:org/repo.git",
+			Ecosystems:   map[string]bool{"go": true, "docker": true},
 			HasClaudeDir: true,
 		},
 		Languages: []types.LanguageChoice{
@@ -435,6 +436,181 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 			t.Errorf("expected empty permission level when claude disabled, got %q", a.PermissionLevel)
 		}
 	})
+
+	t.Run("merges Go version from detection into existing empty-version entry", func(t *testing.T) {
+		a := types.WizardAnswers{
+			Languages: []types.LanguageChoice{{Name: "go"}},
+		}
+		a.FillDefaults(types.DetectedProject{HasGoMod: true, GoVersion: "1.26.3"})
+
+		if a.Languages[0].Version != "1.26.3" {
+			t.Errorf("expected Go version 1.26.3 from detection, got %q", a.Languages[0].Version)
+		}
+	})
+
+	t.Run("preserves explicit Go version over detection", func(t *testing.T) {
+		a := types.WizardAnswers{
+			Languages: []types.LanguageChoice{{Name: "go", Version: "1.24"}},
+		}
+		a.FillDefaults(types.DetectedProject{HasGoMod: true, GoVersion: "1.26.3"})
+
+		if a.Languages[0].Version != "1.24" {
+			t.Errorf("expected explicit Go version 1.24 preserved, got %q", a.Languages[0].Version)
+		}
+	})
+
+	t.Run("merges JavaScript version and package manager from detection", func(t *testing.T) {
+		a := types.WizardAnswers{
+			Languages: []types.LanguageChoice{{Name: "javascript"}},
+		}
+		a.FillDefaults(types.DetectedProject{HasPackageJSON: true, NodeVersion: "22", PackageManager: "pnpm"})
+
+		if a.Languages[0].Version != "22" {
+			t.Errorf("expected JS version 22 from detection, got %q", a.Languages[0].Version)
+		}
+		if a.Languages[0].PackageManager != "pnpm" {
+			t.Errorf("expected package manager pnpm from detection, got %q", a.Languages[0].PackageManager)
+		}
+	})
+
+	t.Run("derives ComplianceLevel from Tier full", func(t *testing.T) {
+		a := types.WizardAnswers{ClaudeCode: true, Tier: "full"}
+		a.FillDefaults(types.DetectedProject{})
+
+		if a.ComplianceLevel != "strict" {
+			t.Errorf("expected ComplianceLevel 'strict' for full tier, got %q", a.ComplianceLevel)
+		}
+	})
+
+	t.Run("derives ComplianceLevel from Tier standard", func(t *testing.T) {
+		a := types.WizardAnswers{ClaudeCode: true, Tier: "standard"}
+		a.FillDefaults(types.DetectedProject{})
+
+		if a.ComplianceLevel != "enhanced" {
+			t.Errorf("expected ComplianceLevel 'enhanced' for standard tier, got %q", a.ComplianceLevel)
+		}
+	})
+
+	t.Run("preserves explicit ComplianceLevel over Tier", func(t *testing.T) {
+		a := types.WizardAnswers{ClaudeCode: true, Tier: "full", ComplianceLevel: "strict"}
+		a.FillDefaults(types.DetectedProject{})
+
+		if a.ComplianceLevel != "strict" {
+			t.Errorf("expected explicit ComplianceLevel 'strict' preserved, got %q", a.ComplianceLevel)
+		}
+	})
+
+	t.Run("derives EnabledTools from Tier full", func(t *testing.T) {
+		a := types.WizardAnswers{ClaudeCode: true, Tier: "full"}
+		a.FillDefaults(types.DetectedProject{})
+
+		for _, tool := range []string{"semgrep", "gitleaks", "secretspec"} {
+			if !a.EnabledTools[tool] {
+				t.Errorf("expected EnabledTools[%q] = true for full tier", tool)
+			}
+		}
+	})
+
+	t.Run("preserves existing EnabledTools over Tier", func(t *testing.T) {
+		a := types.WizardAnswers{
+			ClaudeCode:   true,
+			Tier:         "full",
+			EnabledTools: map[string]bool{"custom": true},
+		}
+		a.FillDefaults(types.DetectedProject{})
+
+		if !a.EnabledTools["custom"] {
+			t.Error("expected existing EnabledTools[\"custom\"] preserved")
+		}
+		if a.EnabledTools["semgrep"] {
+			t.Error("expected tier-derived tools NOT added when EnabledTools already set")
+		}
+	})
+
+	t.Run("catalog-backed agent tool defaults", func(t *testing.T) {
+		a := types.WizardAnswers{ClaudeCode: true, Tier: "full"}
+		a.FillDefaults(types.DetectedProject{})
+
+		cat := catalog.Default()
+		defaults := cat.DefaultAgentToolConfig()
+
+		if a.AgentTools.PostmortemEnabled != defaults.PostmortemEnabled {
+			t.Errorf("PostmortemEnabled = %v, want %v", a.AgentTools.PostmortemEnabled, defaults.PostmortemEnabled)
+		}
+		if a.AgentTools.VersionSentinel != defaults.VersionSentinel {
+			t.Errorf("VersionSentinel = %v, want %v", a.AgentTools.VersionSentinel, defaults.VersionSentinel)
+		}
+		if a.AgentTools.VersionSentinelHours != defaults.VersionSentinelHours {
+			t.Errorf("VersionSentinelHours = %d, want %d", a.AgentTools.VersionSentinelHours, defaults.VersionSentinelHours)
+		}
+		if a.AgentTools.SembleEnabled != defaults.SembleEnabled {
+			t.Errorf("SembleEnabled = %v, want %v", a.AgentTools.SembleEnabled, defaults.SembleEnabled)
+		}
+		if a.AgentTools.SembleMode != defaults.SembleMode {
+			t.Errorf("SembleMode = %q, want %q", a.AgentTools.SembleMode, defaults.SembleMode)
+		}
+	})
+
+	t.Run("catalog-backed MCP server defaults", func(t *testing.T) {
+		a := types.WizardAnswers{ClaudeCode: true, Tier: "full"}
+		a.FillDefaults(types.DetectedProject{})
+
+		want := catalog.Default().DefaultMCPServers()
+		if !reflect.DeepEqual(a.MCPServers, want) {
+			t.Errorf("MCPServers = %v, want %v", a.MCPServers, want)
+		}
+	})
+
+	t.Run("catalog-backed tier-to-compliance derivation", func(t *testing.T) {
+		tierMap := catalog.Default().TierToCompliance()
+		for tier, wantLevel := range tierMap {
+			if tier == "supply-chain-only" {
+				continue // early return path, tested separately
+			}
+			a := types.WizardAnswers{ClaudeCode: true, Tier: tier}
+			a.FillDefaults(types.DetectedProject{})
+			if a.ComplianceLevel != wantLevel {
+				t.Errorf("Tier %q: ComplianceLevel = %q, want %q", tier, a.ComplianceLevel, wantLevel)
+			}
+		}
+	})
+
+	t.Run("catalog-backed tier-to-enabled-tools derivation", func(t *testing.T) {
+		tierTools := catalog.Default().TierToEnabledTools()
+		for tier, wantTools := range tierTools {
+			if tier == "supply-chain-only" {
+				continue // early return path, tested separately
+			}
+			a := types.WizardAnswers{ClaudeCode: true, Tier: tier}
+			a.FillDefaults(types.DetectedProject{})
+			for _, tool := range wantTools {
+				if !a.EnabledTools[tool] {
+					t.Errorf("Tier %q: EnabledTools missing %q", tier, tool)
+				}
+			}
+			if len(wantTools) > 0 && len(a.EnabledTools) != len(wantTools) {
+				t.Errorf("Tier %q: EnabledTools count = %d, want %d", tier, len(a.EnabledTools), len(wantTools))
+			}
+		}
+	})
+
+	t.Run("supply-chain-only early return skips catalog agent defaults", func(t *testing.T) {
+		a := types.WizardAnswers{ClaudeCode: true, Tier: "supply-chain-only"}
+		a.FillDefaults(types.DetectedProject{})
+
+		if len(a.MCPServers) != 0 {
+			t.Errorf("supply-chain-only should skip MCP defaults, got %v", a.MCPServers)
+		}
+		if a.AgentTools.PostmortemEnabled {
+			t.Error("supply-chain-only should skip agent tool defaults")
+		}
+		if a.ComplianceLevel != "" {
+			t.Errorf("supply-chain-only early return should leave ComplianceLevel empty, got %q", a.ComplianceLevel)
+		}
+		if a.EnabledTools != nil {
+			t.Errorf("supply-chain-only should leave EnabledTools nil, got %v", a.EnabledTools)
+		}
+	})
 }
 
 func TestGeneratedStateZeroValueRoundTrip(t *testing.T) {
@@ -562,11 +738,11 @@ func TestNewDetectedProject(t *testing.T) {
 func TestEnvVarsMapWithSpecialCharacters(t *testing.T) {
 	original := types.WizardAnswers{
 		EnvVars: map[string]string{
-			"NORMAL":    "value",
-			"WITH_EQUAL": "key=value&other=thing",
-			"WITH_QUOTE": `she said "hello"`,
+			"NORMAL":       "value",
+			"WITH_EQUAL":   "key=value&other=thing",
+			"WITH_QUOTE":   `she said "hello"`,
 			"WITH_NEWLINE": "line1\nline2",
-			"EMPTY":     "",
+			"EMPTY":        "",
 		},
 	}
 	data, err := json.Marshal(original)

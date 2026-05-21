@@ -49,6 +49,7 @@ type CustomHookData struct {
 	Description   string
 	Entry         string
 	RawEntry      bool // When true, Entry is emitted as raw Nix (no double-quoting).
+	NeedsToString bool // When true, wrap Entry in toString() (for Nix derivations like writeShellScript).
 	Language      string
 	Types         []string
 	Stages        []string
@@ -63,8 +64,9 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data := &DevenvNixTemplateData{}
 
 	// 1. Packages: base + extras.
-	data.Packages = make([]string, 0, len(defaultBasePackages)+len(answers.ExtraPackages))
-	data.Packages = append(data.Packages, defaultBasePackages...)
+	basePkgs := defaultBasePackages()
+	data.Packages = make([]string, 0, len(basePkgs)+len(answers.ExtraPackages))
+	data.Packages = append(data.Packages, basePkgs...)
 	data.Packages = append(data.Packages, answers.ExtraPackages...)
 
 	// 2. Environment variables: always include the security-hardened flag.
@@ -94,8 +96,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	}
 
 	// 3. Unset env vars: credential-bearing variables.
-	data.UnsetEnvVars = make([]string, len(defaultUnsetEnvVars))
-	copy(data.UnsetEnvVars, defaultUnsetEnvVars)
+	data.UnsetEnvVars = defaultUnsetEnvVars()
 
 	// 4. Language fragments from ecosystem modules.
 	seenHookIDs := make(map[string]bool)
@@ -137,7 +138,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 					}
 					entry = fmt.Sprintf(`"${pkgs.%s}/bin/%s%s"`, hook.NixPackage, binary, args)
 					rawEntry = true
-					data.Packages = append(data.Packages, "pkgs."+hook.NixPackage)
+					data.Packages = append(data.Packages, hook.NixPackage)
 				}
 
 				data.CustomHooks = append(data.CustomHooks, CustomHookData{
@@ -156,6 +157,18 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 		}
 	}
 
+	// 4b. Collect packages from modules that implement PackageProvider.
+	for _, lang := range answers.Languages {
+		mod, ok := registry.ByName(lang.Name)
+		if !ok {
+			continue
+		}
+		if pp, ok := mod.(ecosystem.PackageProvider); ok {
+			cfg := ecosystem.ToModuleConfigWithProxy(lang, answers.Infrastructure)
+			data.Packages = append(data.Packages, pp.DevenvPackages(cfg)...)
+		}
+	}
+
 	// 5. Services.
 	for _, svc := range answers.Services {
 		svcData, err := serviceToTemplateData(svc)
@@ -166,8 +179,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	}
 
 	// 6. Security hooks are always present.
-	data.SecurityHooks = make([]string, len(defaultSecurityHooks))
-	copy(data.SecurityHooks, defaultSecurityHooks)
+	data.SecurityHooks = defaultSecurityHooks()
 
 	// Specialized security custom hooks (always present).
 	for _, hook := range defaultSpecializedHooks() {

@@ -3,6 +3,8 @@ package types
 import (
 	"os"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 )
 
 // WizardAnswers holds user selections and detected project state from the init wizard.
@@ -206,6 +208,24 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 		}
 	}
 
+	// Merge detected versions into existing language entries that lack one.
+	for i := range a.Languages {
+		if a.Languages[i].Version != "" {
+			continue
+		}
+		switch a.Languages[i].Name {
+		case "go":
+			a.Languages[i].Version = detected.GoVersion
+		case "javascript":
+			a.Languages[i].Version = detected.NodeVersion
+			if a.Languages[i].PackageManager == "" {
+				a.Languages[i].PackageManager = detected.PackageManager
+			}
+		case "python":
+			a.Languages[i].Version = detected.PythonVersion
+		}
+	}
+
 	// Default permission level — only when Tier is not explicitly set.
 	// When Tier is set, the tier determines the permission preset; filling
 	// in "standard" here would mask the tier's intent.
@@ -224,21 +244,63 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 
 	// Default agent tools when Claude is enabled — only if user hasn't configured any.
 	if a.ClaudeCode && !a.AgentTools.PostmortemEnabled && !a.AgentTools.VersionSentinel && !a.AgentTools.SembleEnabled {
-		a.AgentTools.PostmortemEnabled = true
-		a.AgentTools.VersionSentinel = true
-		a.AgentTools.SembleEnabled = true
+		defaults := catalog.Default().DefaultAgentToolConfig()
+		a.AgentTools.PostmortemEnabled = defaults.PostmortemEnabled
+		a.AgentTools.VersionSentinel = defaults.VersionSentinel
+		a.AgentTools.SembleEnabled = defaults.SembleEnabled
 	}
 	if a.ClaudeCode {
 		if a.AgentTools.VersionSentinelHours == 0 {
-			a.AgentTools.VersionSentinelHours = 24
+			a.AgentTools.VersionSentinelHours = catalog.Default().DefaultAgentToolConfig().VersionSentinelHours
 		}
 		if a.AgentTools.SembleMode == "" {
-			a.AgentTools.SembleMode = "both"
+			a.AgentTools.SembleMode = catalog.Default().DefaultAgentToolConfig().SembleMode
 		}
 	}
 
 	// Default MCP servers when Claude Code is enabled and none are configured.
 	if a.ClaudeCode && len(a.MCPServers) == 0 {
-		a.MCPServers = append(a.MCPServers, "context7", "github", "socket", "semble")
+		a.MCPServers = append(a.MCPServers, catalog.Default().DefaultMCPServers()...)
+	}
+
+	// Derive ComplianceLevel from Tier when not explicitly set.
+	if a.ComplianceLevel == "" && a.Tier != "" {
+		if level, ok := catalog.Default().TierToCompliance()[a.Tier]; ok {
+			a.ComplianceLevel = level
+		}
+	}
+
+	// Derive EnabledTools from Tier when not explicitly set.
+	if a.EnabledTools == nil && a.Tier != "" {
+		if tools, ok := catalog.Default().TierToEnabledTools()[a.Tier]; ok && len(tools) > 0 {
+			a.EnabledTools = make(map[string]bool, len(tools))
+			for _, t := range tools {
+				a.EnabledTools[t] = true
+			}
+		}
+	}
+
+	// Derive ComplianceLevel from Tier when not explicitly set.
+	if a.ComplianceLevel == "" && a.Tier != "" {
+		switch a.Tier {
+		case "supply-chain-only":
+			a.ComplianceLevel = "baseline"
+		case "standard":
+			a.ComplianceLevel = "standard"
+		case "full":
+			a.ComplianceLevel = "enhanced"
+		}
+	}
+
+	// Derive EnabledTools from Tier when not explicitly set.
+	if a.EnabledTools == nil && a.Tier != "" {
+		switch a.Tier {
+		case "standard":
+			a.EnabledTools = map[string]bool{"gitleaks": true}
+		case "full":
+			a.EnabledTools = map[string]bool{
+				"semgrep": true, "gitleaks": true, "secretspec": true,
+			}
+		}
 	}
 }

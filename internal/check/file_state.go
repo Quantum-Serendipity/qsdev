@@ -66,18 +66,25 @@ func checkGeneratedFiles(ctx CheckContext) []CheckResult {
 	hasIssues := false
 
 	for relPath, fs := range statuses {
+		storedFile := genState.Files[relPath]
+
 		switch fs.Status {
 		case types.Modified:
-			hasIssues = true
-			results = append(results, CheckResult{
-				Category:    CategoryFileState,
-				Name:        "file_unmodified_" + relPath,
-				Status:      StatusFail,
-				Severity:    SeverityMedium,
-				Message:     fmt.Sprintf("Generated file %s has been modified", relPath),
-				FilePath:    relPath,
-				Remediation: "Run 'qsdev init --force' to regenerate, or commit intentional changes",
-			})
+			switch storedFile.Strategy {
+			case types.ManualMerge, types.SectionMarker, types.ThreeWayMerge:
+				// User-editable strategies: modification is expected, not a failure.
+			default:
+				hasIssues = true
+				results = append(results, CheckResult{
+					Category:    CategoryFileState,
+					Name:        "file_unmodified_" + relPath,
+					Status:      StatusFail,
+					Severity:    SeverityMedium,
+					Message:     fmt.Sprintf("Generated file %s has been modified", relPath),
+					FilePath:    relPath,
+					Remediation: "Run 'qsdev init --force' to regenerate, or commit intentional changes",
+				})
+			}
 		case types.Deleted:
 			hasIssues = true
 			results = append(results, CheckResult{

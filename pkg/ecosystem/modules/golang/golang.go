@@ -232,6 +232,11 @@ func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFil
 	}
 }
 
+// DevenvPackages returns standard Go development tool packages.
+func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
+	return []string{"gopls", "golangci-lint", "delve", "goreleaser"}
+}
+
 // goVersionToNixPackage maps a Go version string to the corresponding Nix package
 // attribute. For example, "1.24.1" maps to "pkgs.go_1_24". If the version is empty
 // or cannot be parsed into at least major.minor components, "pkgs.go" (latest) is returned.

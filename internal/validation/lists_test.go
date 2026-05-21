@@ -1,7 +1,10 @@
 package validation
 
 import (
+	"reflect"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 )
 
 func TestLanguagesReturnsAtLeast27(t *testing.T) {
@@ -153,5 +156,67 @@ func TestIsValidCoreLanguage(t *testing.T) {
 	}
 	if IsValidCoreLanguage("php") {
 		t.Error("IsValidCoreLanguage(\"php\") = true, want false")
+	}
+}
+
+func TestDelegationFunctions_MatchCatalog(t *testing.T) {
+	t.Parallel()
+	cat := catalog.Default()
+
+	tests := []struct {
+		name string
+		got  []string
+		want []string
+	}{
+		{"Languages", Languages(), cat.Languages()},
+		{"CoreLanguages", CoreLanguages(), cat.CoreLanguages()},
+		{"Services", Services(), cat.Services()},
+		{"PermissionPresets", PermissionPresets(), cat.PermissionPresets()},
+		{"HookPresets", HookPresets(), cat.HookPresets()},
+		{"NodePackageManagers", NodePackageManagers(), cat.PackageManagers("node")},
+		{"PythonPackageManagers", PythonPackageManagers(), cat.PackageManagers("python")},
+		{"Tiers", Tiers(), cat.TierOrder()},
+		{"SecurityLevels", SecurityLevels(), cat.SecurityLevels()},
+		{"DataClassifications", DataClassifications(), cat.DataClassifications()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if !reflect.DeepEqual(tt.got, tt.want) {
+				t.Errorf("%s() = %v, want catalog value %v", tt.name, tt.got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMembershipChecks_AgreeWithCatalog(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		check   func(string) bool
+		valid   []string
+		invalid []string
+	}{
+		{"Language", IsValidLanguage, []string{"go", "python", "rust"}, []string{"cobol", "fortran"}},
+		{"Service", IsValidService, []string{"postgres", "redis"}, []string{"fakedb", "nosql"}},
+		{"PermissionPreset", IsValidPermissionPreset, []string{"standard", "minimal"}, []string{"admin", "root"}},
+		{"HookPreset", IsValidHookPreset, []string{"safety-block", "pre-commit"}, []string{"nonexistent"}},
+		{"Tier", IsValidTier, []string{"supply-chain-only", "standard", "full"}, []string{"ultra", "none"}},
+		{"SecurityLevel", IsValidSecurityLevel, []string{"baseline", "enhanced", "strict"}, []string{"maximum", "none"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			for _, v := range tt.valid {
+				if !tt.check(v) {
+					t.Errorf("IsValid%s(%q) = false, want true", tt.name, v)
+				}
+			}
+			for _, v := range tt.invalid {
+				if tt.check(v) {
+					t.Errorf("IsValid%s(%q) = true, want false", tt.name, v)
+				}
+			}
+		})
 	}
 }

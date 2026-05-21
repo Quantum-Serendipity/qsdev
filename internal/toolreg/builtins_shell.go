@@ -9,29 +9,8 @@ import (
 
 func init() {
 	r := DefaultRegistry()
-	for _, t := range shellTools() {
-		_ = r.Register(t)
-	}
-}
 
-func shellTools() []Tool {
-	return []Tool{
-		starshipIntegrationTool(),
-		otelConfigTool(),
-	}
-}
-
-func starshipIntegrationTool() Tool {
-	return Tool{
-		Name:        "starship-integration",
-		DisplayName: "Starship Prompt Integration",
-		Category:    CategoryDevEx,
-		Description: "Starship prompt configuration with qsdev project name, security profile, and tool count segments",
-		Default:     OptIn,
-		OwnedFiles: []FileOwnership{
-			{Path: ".starship.toml", Ownership: Exclusive},
-			{Path: "devenv.nix", Ownership: Shared, SectionID: "starship"},
-		},
+	r.AttachBehavior("starship-integration", ToolBehavior{
 		EnableFunc: func(a *types.WizardAnswers) {
 			if a.EnabledTools == nil {
 				a.EnabledTools = make(map[string]bool)
@@ -56,19 +35,9 @@ func starshipIntegrationTool() Tool {
 				return []byte(`  env.STARSHIP_CONFIG = ".starship.toml";`), nil
 			},
 		},
-	}
-}
+	})
 
-func otelConfigTool() Tool {
-	return Tool{
-		Name:        "otel-config",
-		DisplayName: "OpenTelemetry Configuration",
-		Category:    CategoryInfrastructure,
-		Description: "OpenTelemetry environment variable configuration for traces and metrics collection",
-		Default:     OptIn,
-		OwnedFiles: []FileOwnership{
-			{Path: "devenv.nix", Ownership: Shared, SectionID: "otel-config"},
-		},
+	r.AttachBehavior("otel-config", ToolBehavior{
 		EnableFunc: func(a *types.WizardAnswers) {
 			if a.EnabledTools == nil {
 				a.EnabledTools = make(map[string]bool)
@@ -81,11 +50,10 @@ func otelConfigTool() Tool {
 			}
 			a.EnabledTools["otel-config"] = false
 		},
-		GenerateFunc: nil,
 		SharedContent: map[string]SharedContentFunc{
 			"otel-config": otelConfigNixContent,
 		},
-	}
+	})
 }
 
 func otelConfigNixContent(answers types.WizardAnswers) ([]byte, error) {

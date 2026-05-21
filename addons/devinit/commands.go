@@ -12,6 +12,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
+	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/repair"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
@@ -276,7 +277,8 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 
 	// o. Write files to disk.
 	result, err := generate.WriteFiles(allFiles, generate.PipelineOptions{
-		ProjectRoot: projectRoot,
+		ProjectRoot:      projectRoot,
+		SectionMergeFunc: merge.SectionMarkers,
 	})
 	if err != nil {
 		return fmt.Errorf("writing files: %w", err)

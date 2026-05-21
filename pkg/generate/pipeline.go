@@ -113,8 +113,20 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 			continue
 		}
 
+		// Apply section-marker merge when the file already exists and the
+		// caller provided a merge function.
+		contentToWrite := file.Content
+		if file.Strategy == types.SectionMarker && statErr == nil && opts.SectionMergeFunc != nil {
+			if existingContent, readErr := os.ReadFile(fullPath); readErr == nil {
+				if merged, mergeErr := opts.SectionMergeFunc(existingContent, file.Content); mergeErr == nil {
+					contentToWrite = merged
+					fr.BytesSize = len(contentToWrite)
+				}
+			}
+		}
+
 		// Write atomically.
-		if err := fileutil.WriteFileAtomic(fullPath, file.Content, mode); err != nil {
+		if err := fileutil.WriteFileAtomic(fullPath, contentToWrite, mode); err != nil {
 			fr.Action = ActionFailed
 			fr.Error = fmt.Errorf("write %s: %w", file.Path, err)
 			slog.Warn("file write failed", "path", file.Path, "error", err)

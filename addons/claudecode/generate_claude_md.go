@@ -130,11 +130,9 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 	}
 	if opsManifest != nil {
 		for _, s := range opsManifest.Skills {
-			if answers.EnabledTools == nil || answers.EnabledTools[s.Name] {
-				data.AvailableSkills = append(data.AvailableSkills, SkillSummary{
-					Name: "/" + s.Name, Description: s.Description, Category: branding.Get().AppName + "-operations",
-				})
-			}
+			data.AvailableSkills = append(data.AvailableSkills, SkillSummary{
+				Name: "/" + s.Name, Description: s.Description, Category: branding.Get().AppName + "-operations",
+			})
 		}
 	}
 

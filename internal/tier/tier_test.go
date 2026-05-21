@@ -1,6 +1,10 @@
 package tier
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+)
 
 func TestParseTier(t *testing.T) {
 	t.Parallel()
@@ -35,7 +39,7 @@ func TestParseTier_Invalid(t *testing.T) {
 
 func TestTierString_Roundtrip(t *testing.T) {
 	t.Parallel()
-	for _, name := range Order {
+	for _, name := range catalog.Default().TierOrder() {
 		tier, err := ParseTier(name)
 		if err != nil {
 			t.Fatal(err)

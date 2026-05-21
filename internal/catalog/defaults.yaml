@@ -1,0 +1,922 @@
+tiers:
+    full:
+        order: 3
+        inherits: standard
+        description: 'Full tooling: MCP servers, agent tools, consulting workflows, AlwaysOn tools'
+        default_permission_preset: standard
+        security:
+            level: enhanced
+        tools:
+            enabled:
+                - semgrep
+                - gitleaks
+                - secretspec
+        claude_code:
+            permission_level: standard
+            mcp_servers:
+                - context7
+                - github
+    standard:
+        order: 2
+        inherits: supply-chain-only
+        description: Supply chain deny rules + Claude Code governance + CLAUDE.md + gitleaks
+        default_permission_preset: standard
+        tools:
+            enabled:
+                - gitleaks
+        claude_code:
+            permission_level: standard
+    supply-chain-only:
+        order: 1
+        description: Package supply chain security + devenv sandbox; no Claude Code restrictions
+        default_permission_preset: supply-chain-only
+        security:
+            level: baseline
+            age_gating: true
+            script_blocking: true
+            lock_enforcement: true
+            vuln_scanning: true
+        tools:
+            enabled: []
+        claude_code:
+            enabled: true
+            permission_level: supply-chain-only
+compliance:
+    baseline:
+        order: 0
+        age_gating_threshold_hours: 72
+        script_blocking: true
+        required_pre_commit_hooks:
+            - ripsecrets
+            - gitleaks
+        mcp_server_policy: allow-list
+        claude_permission_level: standard
+        claude_audit_log: false
+        sbom_policy: "off"
+        license_scanning: false
+    enhanced:
+        order: 1
+        age_gating_threshold_hours: 168
+        script_blocking: true
+        required_pre_commit_hooks:
+            - ripsecrets
+            - gitleaks
+            - semgrep
+        mcp_server_policy: allow-list
+        claude_permission_level: standard
+        claude_audit_log: false
+        sbom_policy: on-release
+        license_scanning: false
+    strict:
+        order: 2
+        age_gating_threshold_hours: 336
+        script_blocking: true
+        required_pre_commit_hooks:
+            - ripsecrets
+            - gitleaks
+            - semgrep
+            - license-compliance
+        mcp_server_policy: explicit-only
+        claude_permission_level: restricted
+        claude_audit_log: true
+        sbom_policy: every-build
+        license_scanning: true
+profiles:
+    full:
+        tier: full
+        description: 'Full tooling: MCP servers, agent tools, consulting workflows, AlwaysOn tools'
+        security:
+            level: enhanced
+            age_gating: true
+            script_blocking: true
+            lock_enforcement: true
+            vuln_scanning: true
+        tools:
+            enabled:
+                - semgrep
+                - gitleaks
+                - secretspec
+        claude_code:
+            enabled: true
+            permission_level: standard
+            mcp_servers:
+                - context7
+                - github
+    standard:
+        tier: standard
+        description: Supply chain deny rules + Claude Code governance + CLAUDE.md + gitleaks
+        security:
+            level: baseline
+            age_gating: true
+            script_blocking: true
+            lock_enforcement: true
+            vuln_scanning: true
+        tools:
+            enabled:
+                - gitleaks
+        claude_code:
+            enabled: true
+            permission_level: standard
+    supply-chain-only:
+        tier: supply-chain-only
+        description: Package supply chain security + devenv sandbox; no Claude Code restrictions
+        security:
+            level: baseline
+            age_gating: true
+            script_blocking: true
+            lock_enforcement: true
+            vuln_scanning: true
+        tools:
+            enabled: []
+        claude_code:
+            enabled: true
+            permission_level: supply-chain-only
+profile_aliases:
+    consulting-default: full
+    startup-fast: standard
+project_profiles:
+    dotnet-web:
+        description: '.NET web service: .NET, PostgreSQL, Redis, direnv, Claude Code (standard)'
+        tier: full
+        languages:
+            - name: dotnet
+        services:
+            - postgres
+            - redis
+        direnv: true
+        claude_code: true
+        permission_level: standard
+        skills:
+            - deploy
+            - security-review
+        hooks:
+            - safety-block
+            - pre-commit
+    elixir-web:
+        description: 'Elixir web service: Elixir, PostgreSQL, Redis, direnv, Claude Code (standard)'
+        tier: full
+        languages:
+            - name: elixir
+        services:
+            - postgres
+            - redis
+        direnv: true
+        claude_code: true
+        permission_level: standard
+        skills:
+            - deploy
+            - security-review
+        hooks:
+            - safety-block
+            - pre-commit
+    go-web:
+        description: 'Go web service: Go 1.24, PostgreSQL, Redis, direnv, Claude Code (standard), deploy + security-review skills'
+        tier: full
+        languages:
+            - name: go
+              version: "1.24"
+        services:
+            - postgres
+            - redis
+        direnv: true
+        claude_code: true
+        permission_level: standard
+        skills:
+            - deploy
+            - security-review
+        hooks:
+            - safety-block
+            - pre-commit
+    java-web:
+        description: 'Java web service: Java 21 (Gradle), PostgreSQL, Redis, direnv, Claude Code (standard)'
+        tier: full
+        languages:
+            - name: java
+              version: "21"
+              package_manager: gradle
+        services:
+            - postgres
+            - redis
+        direnv: true
+        claude_code: true
+        permission_level: standard
+        skills:
+            - deploy
+            - security-review
+        hooks:
+            - safety-block
+            - pre-commit
+    python-data:
+        description: 'Python data science: Python 3.12 (uv), no services, direnv, Claude Code (minimal)'
+        tier: full
+        languages:
+            - name: python
+              version: "3.12"
+              package_manager: uv
+        services: []
+        direnv: true
+        claude_code: true
+        permission_level: minimal
+        skills:
+            - security-review
+        hooks:
+            - safety-block
+            - pre-commit
+    python-web:
+        description: 'Python web service: Python 3.12 (uv), PostgreSQL, Redis, direnv, Claude Code (standard)'
+        tier: full
+        languages:
+            - name: python
+              version: "3.12"
+              package_manager: uv
+        services:
+            - postgres
+            - redis
+        direnv: true
+        claude_code: true
+        permission_level: standard
+        skills:
+            - deploy
+            - security-review
+        hooks:
+            - safety-block
+            - pre-commit
+    rust-cli:
+        description: 'Rust CLI tool: Rust, no services, direnv, Claude Code (minimal)'
+        tier: full
+        languages:
+            - name: rust
+        services: []
+        direnv: true
+        claude_code: true
+        permission_level: minimal
+        skills:
+            - security-review
+        hooks:
+            - safety-block
+            - pre-commit
+    rust-web:
+        description: 'Rust web service: Rust, PostgreSQL, Redis, direnv, Claude Code (standard)'
+        tier: full
+        languages:
+            - name: rust
+        services:
+            - postgres
+            - redis
+        direnv: true
+        claude_code: true
+        permission_level: standard
+        skills:
+            - deploy
+            - security-review
+        hooks:
+            - safety-block
+            - pre-commit
+    ts-backend:
+        description: 'TypeScript backend: JavaScript (pnpm), PostgreSQL, Redis, direnv, Claude Code (standard)'
+        tier: full
+        languages:
+            - name: javascript
+              package_manager: pnpm
+        services:
+            - postgres
+            - redis
+        direnv: true
+        claude_code: true
+        permission_level: standard
+        skills:
+            - deploy
+            - security-review
+        hooks:
+            - safety-block
+            - pre-commit
+    ts-fullstack:
+        description: 'TypeScript full-stack: JavaScript (pnpm), PostgreSQL, Redis, direnv, Claude Code (standard)'
+        tier: full
+        languages:
+            - name: javascript
+              package_manager: pnpm
+        services:
+            - postgres
+            - redis
+        direnv: true
+        claude_code: true
+        permission_level: standard
+        skills:
+            - deploy
+            - security-review
+        hooks:
+            - auto-format
+            - safety-block
+            - pre-commit
+tools:
+    agent-postmortem:
+        display_name: Agent Postmortem Protocol
+        category: ai-agent
+        description: Verification skill requiring agents to validate changes against build/test/lint after implementation
+        default_policy: always-on
+        owned_files:
+            - path: .claude/skills/agent-postmortem/SKILL.md
+              ownership: exclusive
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: agent-postmortem
+    attach-guard:
+        display_name: Package Install Guard
+        category: security
+        description: PreToolUse hook blocking unverified package installs with age-gating and vulnerability checks
+        default_policy: always-on
+        owned_files:
+            - path: .claude/hooks/package-guard.py
+              ownership: exclusive
+            - path: .claude/settings.json
+              ownership: shared
+              section_id: attach-guard
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: attach-guard
+    branch-naming:
+        display_name: Branch Naming Convention
+        category: devex
+        description: Pre-push hook enforcing branch naming conventions (feat|fix|chore|docs|refactor|test|ci/<description>)
+        default_policy: always-on
+        owned_files:
+            - path: devenv.nix
+              ownership: shared
+              section_id: branch-naming
+    changelog:
+        display_name: git-cliff Changelog
+        category: devex
+        description: Generates cliff.toml configuration for git-cliff conventional changelog generation
+        default_policy: opt-in
+        owned_files:
+            - path: cliff.toml
+              ownership: exclusive
+            - path: devenv.nix
+              ownership: shared
+              section_id: changelog
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: changelog
+    commit-ticket:
+        display_name: Commit Ticket Extraction
+        category: devex
+        description: Prepare-commit-msg hook that extracts ticket IDs from branch names into commit messages
+        default_policy: opt-in
+        owned_files:
+            - path: devenv.nix
+              ownership: shared
+              section_id: commit-ticket
+    commitlint:
+        display_name: Commitlint
+        category: devex
+        description: Conventional commit message linting via commitlint with standard type enforcement
+        default_policy: opt-in
+        owned_files:
+            - path: .commitlintrc.yml
+              ownership: exclusive
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: commitlint
+    consulting-agent-codebase-explorer:
+        display_name: Codebase Explorer Agent
+        category: ai-agent
+        description: Fast codebase navigation and architecture analysis
+        default_policy: opt-in
+        owned_files:
+            - path: .claude/agents/codebase-explorer.md
+              ownership: exclusive
+    consulting-agent-handoff-doc-generator:
+        display_name: Handoff Doc Generator Agent
+        category: ai-agent
+        description: Client handoff documentation synthesis
+        default_policy: opt-in
+        owned_files:
+            - path: .claude/agents/handoff-doc-generator.md
+              ownership: exclusive
+    consulting-agent-incident-debugger:
+        display_name: Incident Debugger Agent
+        category: ai-agent
+        description: Systematic incident debugging with hypothesis testing
+        default_policy: opt-in
+        owned_files:
+            - path: .claude/agents/incident-debugger.md
+              ownership: exclusive
+    consulting-agent-migration-planner:
+        display_name: Migration Planner Agent
+        category: ai-agent
+        description: Framework upgrade risk assessment and planning
+        default_policy: opt-in
+        owned_files:
+            - path: .claude/agents/migration-planner.md
+              ownership: exclusive
+    consulting-agent-onboarding-guide:
+        display_name: Onboarding Guide Agent
+        category: ai-agent
+        description: Interactive codebase mentoring for new engineers
+        default_policy: opt-in
+        owned_files:
+            - path: .claude/agents/onboarding-guide.md
+              ownership: exclusive
+    consulting-agent-security-reviewer:
+        display_name: Security Reviewer Agent
+        category: ai-agent
+        description: Deep security analysis with OWASP methodology
+        default_policy: opt-in
+        owned_files:
+            - path: .claude/agents/security-reviewer.md
+              ownership: exclusive
+    consulting-agent-test-gap-analyzer:
+        display_name: Test Gap Analyzer Agent
+        category: ai-agent
+        description: Identify untested code paths and coverage gaps
+        default_policy: opt-in
+        owned_files:
+            - path: .claude/agents/test-gap-analyzer.md
+              ownership: exclusive
+    consulting-workflow-add-tests:
+        display_name: Add Tests (Consulting)
+        category: ai-agent
+        description: Analyze coverage gaps and generate tests following project patterns
+        default_policy: opt-in
+        owned_files:
+            - path: .claude/skills/add-tests/SKILL.md
+              ownership: exclusive
+    consulting-workflow-handoff-doc:
+        display_name: Handoff Doc (Consulting)
+        category: ai-agent
+        description: Client handoff documentation synthesis
+        default_policy: opt-in
+        owned_files:
+            - path: .claude/skills/handoff-doc/SKILL.md
+              ownership: exclusive
+    consulting-workflow-incident-debug:
+        display_name: Incident Debug (Consulting)
+        category: ai-agent
+        description: Systematic incident debugging with hypothesis testing
+        default_policy: opt-in
+        owned_files:
+            - path: .claude/skills/incident-debug/SKILL.md
+              ownership: exclusive
+    consulting-workflow-migration-plan:
+        display_name: Migration Plan (Consulting)
+        category: ai-agent
+        description: Phased migration planning with risk assessment
+        default_policy: opt-in
+        owned_files:
+            - path: .claude/skills/migration-plan/SKILL.md
+              ownership: exclusive
+    consulting-workflow-onboard-me:
+        display_name: Codebase Onboarding (Consulting)
+        category: ai-agent
+        description: Systematic codebase onboarding via exploration agent
+        default_policy: opt-in
+        owned_files:
+            - path: .claude/skills/onboard-me/SKILL.md
+              ownership: exclusive
+    consulting-workflow-review-pr:
+        display_name: PR Review (Consulting)
+        category: ai-agent
+        description: Comprehensive PR review with security, performance, and quality analysis
+        default_policy: opt-in
+        owned_files:
+            - path: .claude/skills/review-pr/SKILL.md
+              ownership: exclusive
+    consulting-workflow-upgrade-dep:
+        display_name: Upgrade Dependency (Consulting)
+        category: ai-agent
+        description: Plan and execute dependency upgrades with verification
+        default_policy: opt-in
+        owned_files:
+            - path: .claude/skills/upgrade-dep/SKILL.md
+              ownership: exclusive
+    consulting-workflow-write-adr:
+        display_name: Write ADR (Consulting)
+        category: ai-agent
+        description: Generate Architecture Decision Records in MADR format
+        default_policy: opt-in
+        owned_files:
+            - path: .claude/skills/write-adr/SKILL.md
+              ownership: exclusive
+    container-security:
+        display_name: Container Security (Grype + Cosign)
+        category: security
+        description: Container vulnerability scanning with Grype and image signing with Cosign
+        default_policy: on-when-detected
+        owned_files:
+            - path: .grype.yaml
+              ownership: exclusive
+            - path: .cosign/policy.yaml
+              ownership: exclusive
+            - path: devenv.nix
+              ownership: shared
+              section_id: container-security
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: container-security
+    context7:
+        display_name: Context7 MCP
+        category: ai-agent
+        description: Context7 MCP server providing library documentation lookups for AI agents
+        default_policy: always-on
+        owned_files:
+            - path: .mcp.json
+              ownership: shared
+              section_id: context7
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: context7
+    github-mcp:
+        display_name: GitHub MCP
+        category: ai-agent
+        description: GitHub MCP server for repository and issue management by AI agents
+        default_policy: always-on
+        owned_files:
+            - path: .mcp.json
+              ownership: shared
+              section_id: github-mcp
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: github-mcp
+    gitleaks:
+        display_name: Gitleaks Secret Scanner
+        category: security
+        description: Secret detection via Gitleaks with project-specific allowlists
+        default_policy: always-on
+        owned_files:
+            - path: .gitleaks.toml
+              ownership: exclusive
+            - path: devenv.nix
+              ownership: shared
+              section_id: gitleaks
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: gitleaks
+    license-compliance:
+        display_name: License Compliance (ScanCode)
+        category: security
+        description: License compliance checking via ScanCode with SPDX allowlist/blocklist policies
+        default_policy: opt-in
+        owned_files:
+            - path: .scancode.yml
+              ownership: exclusive
+            - path: .license-exceptions.yml
+              ownership: exclusive
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: license-compliance
+    otel-config:
+        display_name: OpenTelemetry Configuration
+        category: infrastructure
+        description: OpenTelemetry environment variable configuration for traces and metrics collection
+        default_policy: opt-in
+        owned_files:
+            - path: devenv.nix
+              ownership: shared
+              section_id: otel-config
+    postgres-mcp:
+        display_name: PostgreSQL MCP
+        category: ai-agent
+        description: PostgreSQL MCP server for database schema inspection and query execution by AI agents
+        default_policy: opt-in
+        owned_files:
+            - path: .mcp.json
+              ownership: shared
+              section_id: postgres-mcp
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: postgres-mcp
+    pr-labels:
+        display_name: PR Auto-Labeler
+        category: devex
+        description: GitHub Actions workflow that auto-labels PRs based on changed files
+        default_policy: always-on
+        owned_files:
+            - path: .github/labeler.yml
+              ownership: exclusive
+            - path: .github/workflows/labeler.yml
+              ownership: exclusive
+    pr-templates:
+        display_name: PR Templates
+        category: devex
+        description: GitHub pull request template with ecosystem-aware checklists
+        default_policy: always-on
+        owned_files:
+            - path: .github/pull_request_template.md
+              ownership: exclusive
+    secretspec:
+        display_name: Secret Specification
+        category: devex
+        description: Generates secretspec.toml declaring required secrets for services and ecosystem modules
+        default_policy: opt-in
+        owned_files:
+            - path: secretspec.toml
+              ownership: exclusive
+            - path: devenv.nix
+              ownership: shared
+              section_id: secretspec
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: secretspec
+    semble:
+        display_name: Semble Semantic Code Search
+        category: ai-agent
+        description: Semantic code search via MCP server or sub-agent for codebase navigation
+        default_policy: always-on
+        owned_files:
+            - path: .mcp.json
+              ownership: shared
+              section_id: semble
+            - path: .claude/agents/semble-search.md
+              ownership: exclusive
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: semble
+    semgrep:
+        display_name: Semgrep SAST
+        category: security
+        description: Static analysis via Semgrep with ecosystem-aware rule sets
+        default_policy: always-on
+        owned_files:
+            - path: .semgrep.yml
+              ownership: exclusive
+            - path: devenv.nix
+              ownership: shared
+              section_id: semgrep
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: semgrep
+    socket-dev-mcp:
+        display_name: Socket.dev MCP
+        category: ai-agent
+        description: Socket.dev MCP server for supply chain security analysis of dependencies
+        default_policy: always-on
+        owned_files:
+            - path: .mcp.json
+              ownership: shared
+              section_id: socket-dev-mcp
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: socket-dev-mcp
+    starship-integration:
+        display_name: Starship Prompt Integration
+        category: devex
+        description: Starship prompt configuration with qsdev project name, security profile, and tool count segments
+        default_policy: opt-in
+        owned_files:
+            - path: .starship.toml
+              ownership: exclusive
+            - path: devenv.nix
+              ownership: shared
+              section_id: starship
+    trail-of-bits-skills:
+        display_name: Trail of Bits Security Skills
+        category: ai-agent
+        description: Security-focused code review skills based on Trail of Bits audit methodology
+        default_policy: always-on
+        owned_files:
+            - path: .claude/skills/security-review.md
+              ownership: exclusive
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: trail-of-bits-skills
+    version-sentinel:
+        display_name: Version Sentinel
+        category: ai-agent
+        description: Guards dependency version changes in manifest files, requiring agents to justify bumps
+        default_policy: always-on
+        owned_files:
+            - path: .claude/skills/version-sentinel/SKILL.md
+              ownership: exclusive
+            - path: .version-sentinel/ignore
+              ownership: exclusive
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: version-sentinel
+security_hooks:
+    - ripsecrets
+    - check-added-large-files
+    - no-commit-to-branch
+    - check-merge-conflicts
+    - shellcheck
+    - statix
+base_packages:
+    - git
+    - jq
+    - curl
+    - coreutils
+unset_vars:
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+    - AWS_SESSION_TOKEN
+    - AWS_SECURITY_TOKEN
+    - AWS_DEFAULT_REGION
+    - GITHUB_TOKEN
+    - GH_TOKEN
+    - GITHUB_PAT
+    - GITLAB_TOKEN
+    - GL_TOKEN
+    - GOOGLE_APPLICATION_CREDENTIALS
+    - GCLOUD_PROJECT
+    - CLOUDSDK_CORE_PROJECT
+    - AZURE_CLIENT_ID
+    - AZURE_CLIENT_SECRET
+    - AZURE_TENANT_ID
+    - AZURE_SUBSCRIPTION_ID
+    - NPM_TOKEN
+    - PYPI_TOKEN
+    - DOCKER_PASSWORD
+    - DOCKER_AUTH_CONFIG
+    - CACHIX_AUTH_TOKEN
+    - DATABASE_URL
+    - DATABASE_PASSWORD
+    - PGPASSWORD
+    - MYSQL_PWD
+    - REDIS_PASSWORD
+    - VAULT_TOKEN
+    - SENTRY_DSN
+    - STRIPE_SECRET_KEY
+    - SENDGRID_API_KEY
+    - SLACK_TOKEN
+    - SLACK_WEBHOOK_URL
+    - API_KEY
+    - API_SECRET
+    - SECRET_KEY
+    - PRIVATE_KEY
+    - ENCRYPTION_KEY
+keep_vars:
+    - TERM
+    - COLORTERM
+    - HOME
+    - USER
+    - LOGNAME
+    - DISPLAY
+    - WAYLAND_DISPLAY
+    - XDG_RUNTIME_DIR
+    - XDG_SESSION_TYPE
+    - SSH_AUTH_SOCK
+    - LANG
+    - LC_ALL
+    - NIX_SSL_CERT_FILE
+    - SSL_CERT_FILE
+custom_hooks:
+    - id: lock-file-audit
+      name: Lock file change audit
+      description: Flag lock file changes for review — lock files redirect package sources
+      entry: |
+        for f in "$@"; do
+          case "$f" in
+            devenv.lock|flake.lock)
+              echo "WARNING: $f has been modified."
+              echo "  Lock file changes redirect package sources."
+              echo "  Verify the diff carefully during code review."
+              echo "  Run 'nix flake metadata' to inspect resolved inputs."
+              ;;
+          esac
+        done
+      language: system
+      files: (devenv|flake)\.lock$
+      pass_filenames: true
+      stages:
+        - pre-commit
+    - id: nix-secrets-check
+      name: Nix file secrets check
+      description: Detect hardcoded secrets and credential patterns in .nix files
+      env_pattern: env\.\w*(SECRET|TOKEN|PASSWORD|KEY|CREDENTIAL|API_KEY)\w*\s*=
+      credential_patterns:
+        - sk_live_
+        - sk_test_
+        - ghp_
+        - gho_
+        - glpat-
+        - AKIA[A-Z0-9]{16}
+      language: system
+      files: \.nix$
+      pass_filenames: true
+      stages:
+        - pre-commit
+hook_tier_order:
+    - baseline
+    - enhanced
+    - specialized
+hook_tiers:
+    baseline:
+        - ripsecrets
+        - gitleaks
+        - check-added-large-files
+        - no-commit-to-branch
+        - check-merge-conflicts
+    enhanced:
+        - semgrep
+        - shellcheck
+        - formatters
+    specialized:
+        - lock-file-audit
+        - nix-secrets-check
+        - statix
+tier_to_compliance:
+    full: strict
+    standard: enhanced
+    supply-chain-only: baseline
+tier_to_enabled_tools:
+    full:
+        - semgrep
+        - gitleaks
+        - secretspec
+    standard:
+        - gitleaks
+    supply-chain-only: []
+default_mcp_servers:
+    - context7
+    - github
+    - socket
+    - semble
+default_agent_tools:
+    postmortem_enabled: true
+    version_sentinel: true
+    version_sentinel_hours: 24
+    semble_enabled: true
+    semble_mode: both
+languages:
+    all:
+        - go
+        - javascript
+        - python
+        - rust
+        - java
+        - dotnet
+        - docker
+        - terraform
+        - php
+        - ruby
+        - scala
+        - cpp
+        - helm
+        - ansible
+        - shell
+        - elixir
+        - dart
+        - swift
+        - haskell
+        - clojure
+        - bazel
+        - nix
+        - perl
+        - r
+        - lua
+        - zig
+        - powershell
+    core:
+        - go
+        - javascript
+        - python
+        - rust
+        - java
+        - dotnet
+        - docker
+        - terraform
+services:
+    - postgres
+    - redis
+    - mysql
+    - mongodb
+    - elasticsearch
+    - rabbitmq
+permission_presets:
+    - minimal
+    - standard
+    - permissive
+    - custom
+    - supply-chain-only
+hook_presets:
+    - auto-format
+    - safety-block
+    - pre-commit
+    - audit-log
+security_levels:
+    - baseline
+    - enhanced
+    - strict
+data_classifications:
+    - public
+    - internal
+    - confidential
+package_managers:
+    node:
+        - npm
+        - pnpm
+        - yarn
+        - bun
+    python:
+        - pip
+        - uv
+        - poetry
+tool_categories:
+    - id: security
+      display_name: Security
+    - id: ai-agent
+      display_name: AI Agent
+    - id: devex
+      display_name: Developer Experience
+    - id: infrastructure
+      display_name: Infrastructure

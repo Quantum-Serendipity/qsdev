@@ -1,5 +1,10 @@
 { pkgs, lib, config, ... }:
 {
+  # Local customizations (not managed by qsdev). Create devenv.local.nix to
+  # add packages, overlays, env vars, or any other devenv config for this machine.
+  imports = lib.optional (builtins.pathExists ./devenv.local.nix) ./devenv.local.nix;
+
+  # Nixpkgs overlays
   overlays = [
     (import ./nix/go-overlay.nix)
   ];
@@ -12,7 +17,7 @@
     QSDEV_PROJECT_NAME = "qsdev";
     QSDEV_SECURITY_PROFILE = "enhanced";
     QSDEV_TOOL_COUNT = "22";
-    QSDEV_VERSION = "v0.7.2-0.20260521205046-335151b63faa+dirty";
+    QSDEV_VERSION = "v0.7.2-0.20260521215209-a7a115d5abe4+dirty";
   };
 
   # Credential-bearing variables stripped from the shell

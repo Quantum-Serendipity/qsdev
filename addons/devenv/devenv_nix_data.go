@@ -27,6 +27,7 @@ var toolNixExprs = map[string]string{
 
 // DevenvNixTemplateData holds all data required to render the devenv.nix template.
 type DevenvNixTemplateData struct {
+	Overlays          []string                   // Nix overlay file paths (e.g. "./nix/go-overlay.nix").
 	Packages          []string                   // Base + extra packages (rendered as pkgs.NAME).
 	PackageExprs      []string                   // Raw Nix expressions that produce derivations.
 	EnvVars           map[string]string          // Non-sensitive env vars (always includes DEVENV_SECURITY_HARDENED).
@@ -76,6 +77,9 @@ type CustomHookData struct {
 // then merges them with security defaults.
 func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registry) (*DevenvNixTemplateData, error) {
 	data := &DevenvNixTemplateData{}
+
+	// 0. Overlays from user configuration.
+	data.Overlays = answers.Overlays
 
 	// 1. Packages: base + extras.
 	basePkgs := defaultBasePackages()

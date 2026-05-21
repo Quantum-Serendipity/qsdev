@@ -40,6 +40,7 @@ type WizardAnswers struct {
 	ComplianceLevel    string            `yaml:"compliance_level,omitempty"  json:"compliance_level,omitempty"`
 	ModelSize          string            `yaml:"model_size,omitempty"        json:"model_size,omitempty"`
 	Infrastructure     InfraConfig       `yaml:"infrastructure,omitempty"    json:"infrastructure,omitempty"`
+	Overlays           []string          `yaml:"overlays,omitempty"          json:"overlays,omitempty"`
 }
 
 // AgentToolsAnswers holds AI agent tool selections from the wizard.

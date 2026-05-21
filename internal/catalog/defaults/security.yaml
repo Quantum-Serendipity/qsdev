@@ -1,0 +1,106 @@
+hooks:
+  default:
+    - ripsecrets
+    - check-added-large-files
+    - no-commit-to-branch
+    - check-merge-conflicts
+    - shellcheck
+    - statix
+
+base_packages:
+  - git
+  - jq
+  - curl
+  - coreutils
+
+clean_environment:
+  unset_vars:
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+    - AWS_SESSION_TOKEN
+    - AWS_SECURITY_TOKEN
+    - AWS_DEFAULT_REGION
+    - GITHUB_TOKEN
+    - GH_TOKEN
+    - GITHUB_PAT
+    - GITLAB_TOKEN
+    - GL_TOKEN
+    - GOOGLE_APPLICATION_CREDENTIALS
+    - GCLOUD_PROJECT
+    - CLOUDSDK_CORE_PROJECT
+    - AZURE_CLIENT_ID
+    - AZURE_CLIENT_SECRET
+    - AZURE_TENANT_ID
+    - AZURE_SUBSCRIPTION_ID
+    - NPM_TOKEN
+    - PYPI_TOKEN
+    - DOCKER_PASSWORD
+    - DOCKER_AUTH_CONFIG
+    - CACHIX_AUTH_TOKEN
+    - DATABASE_URL
+    - DATABASE_PASSWORD
+    - PGPASSWORD
+    - MYSQL_PWD
+    - REDIS_PASSWORD
+    - VAULT_TOKEN
+    - SENTRY_DSN
+    - STRIPE_SECRET_KEY
+    - SENDGRID_API_KEY
+    - SLACK_TOKEN
+    - SLACK_WEBHOOK_URL
+    - API_KEY
+    - API_SECRET
+    - SECRET_KEY
+    - PRIVATE_KEY
+    - ENCRYPTION_KEY
+  keep_vars:
+    - TERM
+    - COLORTERM
+    - HOME
+    - USER
+    - LOGNAME
+    - DISPLAY
+    - WAYLAND_DISPLAY
+    - XDG_RUNTIME_DIR
+    - XDG_SESSION_TYPE
+    - SSH_AUTH_SOCK
+    - LANG
+    - LC_ALL
+    - NIX_SSL_CERT_FILE
+    - SSL_CERT_FILE
+
+custom_hooks:
+  - id: lock-file-audit
+    name: "Lock file change audit"
+    description: "Flag lock file changes for review — lock files redirect package sources"
+    entry: |
+      for f in "$@"; do
+        case "$f" in
+          devenv.lock|flake.lock)
+            echo "WARNING: $f has been modified."
+            echo "  Lock file changes redirect package sources."
+            echo "  Verify the diff carefully during code review."
+            echo "  Run 'nix flake metadata' to inspect resolved inputs."
+            ;;
+        esac
+      done
+    language: system
+    files: '(devenv|flake)\.lock$'
+    pass_filenames: true
+    stages: [pre-commit]
+
+  - id: nix-secrets-check
+    name: "Nix file secrets check"
+    description: "Detect hardcoded secrets and credential patterns in .nix files"
+    env_pattern: 'env\.\w*(SECRET|TOKEN|PASSWORD|KEY|CREDENTIAL|API_KEY)\w*\s*='
+    credential_patterns:
+      - 'sk_live_'
+      - 'sk_test_'
+      - 'ghp_'
+      - 'gho_'
+      - 'glpat-'
+      - 'AKIA[A-Z0-9]{16}'
+    language: system
+    files: '\.nix$'
+    pass_filenames: true
+    stages: [pre-commit]

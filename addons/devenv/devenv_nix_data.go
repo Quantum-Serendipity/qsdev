@@ -63,8 +63,9 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data := &DevenvNixTemplateData{}
 
 	// 1. Packages: base + extras.
-	data.Packages = make([]string, 0, len(defaultBasePackages)+len(answers.ExtraPackages))
-	data.Packages = append(data.Packages, defaultBasePackages...)
+	basePkgs := defaultBasePackages()
+	data.Packages = make([]string, 0, len(basePkgs)+len(answers.ExtraPackages))
+	data.Packages = append(data.Packages, basePkgs...)
 	data.Packages = append(data.Packages, answers.ExtraPackages...)
 
 	// 2. Environment variables: always include the security-hardened flag.
@@ -94,8 +95,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	}
 
 	// 3. Unset env vars: credential-bearing variables.
-	data.UnsetEnvVars = make([]string, len(defaultUnsetEnvVars))
-	copy(data.UnsetEnvVars, defaultUnsetEnvVars)
+	data.UnsetEnvVars = defaultUnsetEnvVars()
 
 	// 4. Language fragments from ecosystem modules.
 	seenHookIDs := make(map[string]bool)
@@ -166,8 +166,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	}
 
 	// 6. Security hooks are always present.
-	data.SecurityHooks = make([]string, len(defaultSecurityHooks))
-	copy(data.SecurityHooks, defaultSecurityHooks)
+	data.SecurityHooks = defaultSecurityHooks()
 
 	// Specialized security custom hooks (always present).
 	for _, hook := range defaultSpecializedHooks() {

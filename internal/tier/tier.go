@@ -1,6 +1,10 @@
 package tier
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+)
 
 // Tier represents an ordered security onboarding level. Each tier is a strict
 // superset of the previous: features enabled at tier N are always present at
@@ -20,40 +24,37 @@ type TierInfo struct {
 	Description string
 }
 
-var tiersByName = map[string]Tier{
-	"supply-chain-only": SupplyChainOnly,
-	"standard":          Standard,
-	"full":              Full,
-}
-
-var tierNames = map[Tier]string{
-	SupplyChainOnly: "supply-chain-only",
-	Standard:        "standard",
-	Full:            "full",
-}
-
 // Order is the canonical tier ordering from lowest to highest.
-var Order = []string{"supply-chain-only", "standard", "full"}
+// Backed by internal/catalog/defaults/tiers.yaml.
+var Order = catalog.Default().TierOrder()
 
 // ParseTier converts a string to a Tier. Returns an error for unknown values.
 func ParseTier(s string) (Tier, error) {
-	t, ok := tiersByName[s]
+	defs := catalog.Default().TierDefs()
+	def, ok := defs[s]
 	if !ok {
 		return 0, fmt.Errorf("unknown tier %q; valid tiers: supply-chain-only, standard, full", s)
 	}
-	return t, nil
+	return Tier(def.Order), nil
 }
 
 // String returns the canonical name for the tier.
 func (t Tier) String() string {
-	if name, ok := tierNames[t]; ok {
-		return name
+	for name, def := range catalog.Default().TierDefs() {
+		if Tier(def.Order) == t {
+			return name
+		}
 	}
 	return fmt.Sprintf("tier(%d)", int(t))
 }
 
 // DefaultPermissionPreset returns the permission preset implied by this tier.
 func (t Tier) DefaultPermissionPreset() string {
+	for _, def := range catalog.Default().TierDefs() {
+		if Tier(def.Order) == t && def.DefaultPermissionPreset != "" {
+			return def.DefaultPermissionPreset
+		}
+	}
 	if t <= SupplyChainOnly {
 		return "supply-chain-only"
 	}
@@ -61,31 +62,30 @@ func (t Tier) DefaultPermissionPreset() string {
 }
 
 // AllTiers returns information about every tier in order.
+// Backed by internal/catalog/defaults/tiers.yaml.
 func AllTiers() []TierInfo {
-	return []TierInfo{
-		{
-			Name:        "supply-chain-only",
-			Level:       SupplyChainOnly,
-			Description: "Package supply chain security + devenv sandbox; no Claude Code restrictions",
-		},
-		{
-			Name:        "standard",
-			Level:       Standard,
-			Description: "Supply chain deny rules + Claude Code governance + CLAUDE.md + gitleaks",
-		},
-		{
-			Name:        "full",
-			Level:       Full,
-			Description: "Full tooling: MCP servers, agent tools, consulting workflows, AlwaysOn tools",
-		},
+	cat := catalog.Default()
+	order := cat.TierOrder()
+	defs := cat.TierDefs()
+
+	infos := make([]TierInfo, 0, len(order))
+	for _, name := range order {
+		def := defs[name]
+		infos = append(infos, TierInfo{
+			Name:        name,
+			Level:       Tier(def.Order),
+			Description: def.Description,
+		})
 	}
+	return infos
 }
 
 // NextTier returns the next tier above current, or false if already at max.
 func NextTier(current string) (string, bool) {
-	for i, name := range Order {
-		if name == current && i+1 < len(Order) {
-			return Order[i+1], true
+	order := catalog.Default().TierOrder()
+	for i, name := range order {
+		if name == current && i+1 < len(order) {
+			return order[i+1], true
 		}
 	}
 	return "", false
@@ -94,7 +94,7 @@ func NextTier(current string) (string, bool) {
 // Position returns the 1-based position of the named tier in the ordering,
 // or 0 if the tier is not recognized.
 func Position(name string) int {
-	for i, t := range Order {
+	for i, t := range catalog.Default().TierOrder() {
 		if t == name {
 			return i + 1
 		}
@@ -104,7 +104,7 @@ func Position(name string) int {
 
 // Total returns the number of defined tiers.
 func Total() int {
-	return len(Order)
+	return len(catalog.Default().TierOrder())
 }
 
 // Resolve determines the effective tier from an explicit tier string,

@@ -1,0 +1,50 @@
+profiles:
+  supply-chain-only:
+    tier: supply-chain-only
+    description: "Package supply chain security + devenv sandbox; no Claude Code restrictions"
+    security:
+      level: baseline
+      age_gating: true
+      script_blocking: true
+      lock_enforcement: true
+      vuln_scanning: true
+    tools:
+      enabled: []
+    claude_code:
+      enabled: true
+      permission_level: supply-chain-only
+
+  standard:
+    tier: standard
+    description: "Supply chain deny rules + Claude Code governance + CLAUDE.md + gitleaks"
+    security:
+      level: baseline
+      age_gating: true
+      script_blocking: true
+      lock_enforcement: true
+      vuln_scanning: true
+    tools:
+      enabled: [gitleaks]
+    claude_code:
+      enabled: true
+      permission_level: standard
+
+  full:
+    tier: full
+    description: "Full tooling: MCP servers, agent tools, consulting workflows, AlwaysOn tools"
+    security:
+      level: enhanced
+      age_gating: true
+      script_blocking: true
+      lock_enforcement: true
+      vuln_scanning: true
+    tools:
+      enabled: [semgrep, gitleaks, secretspec]
+    claude_code:
+      enabled: true
+      permission_level: standard
+      mcp_servers: [context7, github]
+
+aliases:
+  startup-fast: standard
+  consulting-default: full

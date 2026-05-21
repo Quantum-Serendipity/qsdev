@@ -2,113 +2,97 @@ package devenv
 
 import (
 	"fmt"
+	"strings"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
-// defaultUnsetEnvVars is the canonical list of credential-bearing environment
-// variables that are explicitly stripped from the devenv shell. This provides
-// a second layer of defense beyond clean.enabled in devenv.yaml.
-var defaultUnsetEnvVars = secrets.KnownCredentialVars
-
-// defaultSecurityHooks lists the built-in git-hooks.nix hooks that are always
-// enabled for security scanning.
-var defaultSecurityHooks = []string{
-	"ripsecrets",
-	"check-added-large-files",
-	"no-commit-to-branch",
-	"check-merge-conflicts",
-	"shellcheck",
-	"statix",
+// defaultUnsetEnvVars returns the canonical list of credential-bearing
+// environment variables stripped from the devenv shell.
+func defaultUnsetEnvVars() []string {
+	return catalog.Default().UnsetVars()
 }
 
-// defaultBasePackages is the minimal set of packages always included.
-var defaultBasePackages = []string{
-	"git",
-	"jq",
-	"curl",
-	"coreutils",
-	"uv",
+// defaultSecurityHooks returns the built-in git-hooks.nix hooks that are
+// always enabled for security scanning.
+func defaultSecurityHooks() []string {
+	return catalog.Default().SecurityHooks()
 }
 
-// defaultCleanKeep is the allowlist of environment variables that pass through
-// when clean.enabled is true.
-var defaultCleanKeep = []string{
-	"TERM",
-	"COLORTERM",
-	"HOME",
-	"USER",
-	"LOGNAME",
-	"DISPLAY",
-	"WAYLAND_DISPLAY",
-	"XDG_RUNTIME_DIR",
-	"XDG_SESSION_TYPE",
-	"SSH_AUTH_SOCK",
-	"LANG",
-	"LC_ALL",
-	"NIX_SSL_CERT_FILE",
-	"SSL_CERT_FILE",
+// defaultBasePackages returns the minimal set of packages always included.
+func defaultBasePackages() []string {
+	return catalog.Default().BasePackages()
 }
 
-// defaultSpecializedHooks returns the specialized custom security hooks that are
-// always present. These go beyond the baseline built-in hooks and use custom
-// Nix expressions for advanced checks.
+// defaultCleanKeep returns the allowlist of environment variables that pass
+// through when clean.enabled is true.
+func defaultCleanKeep() []string {
+	return catalog.Default().KeepVars()
+}
+
+// defaultSpecializedHooks returns the specialized custom security hooks that
+// are always present. These use custom Nix expressions for advanced checks.
 func defaultSpecializedHooks() []CustomHookData {
-	return []CustomHookData{
-		{
-			ID:          "lock-file-audit",
-			Name:        "Lock file change audit",
-			Description: "Flag lock file changes for review — lock files redirect package sources",
-			Entry: `pkgs.writeShellScript "lock-audit" ''
-        for f in "$@"; do
-          case "$f" in
-            devenv.lock|flake.lock)
-              echo "WARNING: $f has been modified."
-              echo "  Lock file changes redirect package sources."
-              echo "  Verify the diff carefully during code review."
-              echo "  Run 'nix flake metadata' to inspect resolved inputs."
-              ;;
-          esac
-        done
-      ''`,
-			RawEntry:      true,
-			Language:      "system",
-			Files:         `(devenv|flake)\.lock$`,
-			PassFilenames: true,
-			Stages:        []string{"pre-commit"},
-		},
-		{
-			ID:          "nix-secrets-check",
-			Name:        "Nix file secrets check",
-			Description: "Detect hardcoded secrets and credential patterns in .nix files",
-			Entry: `pkgs.writeShellScript "nix-secrets-check" ''
+	cat := catalog.Default()
+	defs := cat.CustomHooks()
+
+	hooks := make([]CustomHookData, 0, len(defs))
+	for _, def := range defs {
+		hook := CustomHookData{
+			ID:            def.ID,
+			Name:          def.Name,
+			Description:   def.Description,
+			Language:      def.Language,
+			Files:         def.Files,
+			PassFilenames: def.PassFilenames,
+			Stages:        def.Stages,
+		}
+
+		switch def.ID {
+		case "lock-file-audit":
+			hook.Entry = fmt.Sprintf(`pkgs.writeShellScript "lock-audit" ''
+        %s
+      ''`, strings.TrimSpace(def.Entry))
+			hook.RawEntry = true
+
+		case "nix-secrets-check":
+			hook.Entry = buildNixSecretsCheckEntry(def)
+			hook.RawEntry = true
+
+		default:
+			if def.Entry != "" {
+				hook.Entry = def.Entry
+			}
+		}
+
+		hooks = append(hooks, hook)
+	}
+
+	return hooks
+}
+
+func buildNixSecretsCheckEntry(def catalog.CustomHookDef) string {
+	envPattern := def.EnvPattern
+	credPattern := "(" + strings.Join(def.CredentialPatterns, "|") + ")"
+
+	return fmt.Sprintf(`pkgs.writeShellScript "nix-secrets-check" ''
         ret=0
         for f in "$@"; do
-          if ${pkgs.gnugrep}/bin/grep -nP 'env\.\w*(SECRET|TOKEN|PASSWORD|KEY|CREDENTIAL|API_KEY)\w*\s*=' "$f" 2>/dev/null; then
+          if ${pkgs.gnugrep}/bin/grep -nP '%s' "$f" 2>/dev/null; then
             echo "ERROR: $f appears to set a secret via env.*"
             ret=1
           fi
-          if ${pkgs.gnugrep}/bin/grep -nP '(sk_live_|sk_test_|ghp_|gho_|glpat-|AKIA[A-Z0-9]{16})' "$f" 2>/dev/null; then
+          if ${pkgs.gnugrep}/bin/grep -nP '%s' "$f" 2>/dev/null; then
             echo "ERROR: $f appears to contain a hardcoded credential"
             ret=1
           fi
         done
         exit $ret
-      ''`,
-			RawEntry:      true,
-			Language:      "system",
-			Files:         `\.nix$`,
-			PassFilenames: true,
-			Stages:        []string{"pre-commit"},
-		},
-	}
+      ''`, envPattern, credPattern)
 }
 
 // buildEnterShellScript returns the shell script body for devenv.nix enterShell.
-// This runs on every shell entry and provides security posture awareness.
-// Shell variable references use ${VAR} syntax; the caller applies nixMultiline
-// escaping before embedding in a Nix '' ... '' string.
 func buildEnterShellScript() string {
 	prefix := branding.Get().EnvPrefix
 	return fmt.Sprintf(`echo ""
@@ -152,7 +136,6 @@ fi`, prefix)
 }
 
 // buildEnterTestScript returns the shell script body for devenv.nix enterTest.
-// This runs during 'devenv test' and validates security controls in CI.
 func buildEnterTestScript() string {
 	return `echo "=== Security Validation ==="
 

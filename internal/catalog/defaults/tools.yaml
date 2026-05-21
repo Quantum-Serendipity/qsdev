@@ -1,0 +1,432 @@
+tools:
+  # === Security Tools ===
+
+  attach-guard:
+    display_name: "Package Install Guard"
+    category: security
+    description: "PreToolUse hook blocking unverified package installs with age-gating and vulnerability checks"
+    default_policy: always-on
+    owned_files:
+      - path: .claude/hooks/package-guard.py
+        ownership: exclusive
+      - path: .claude/settings.json
+        ownership: shared
+        section_id: attach-guard
+      - path: CLAUDE.md
+        ownership: shared
+        section_id: attach-guard
+
+  semgrep:
+    display_name: "Semgrep SAST"
+    category: security
+    description: "Static analysis via Semgrep with ecosystem-aware rule sets"
+    default_policy: always-on
+    owned_files:
+      - path: .semgrep.yml
+        ownership: exclusive
+      - path: devenv.nix
+        ownership: shared
+        section_id: semgrep
+      - path: CLAUDE.md
+        ownership: shared
+        section_id: semgrep
+
+  gitleaks:
+    display_name: "Gitleaks Secret Scanner"
+    category: security
+    description: "Secret detection via Gitleaks with project-specific allowlists"
+    default_policy: always-on
+    owned_files:
+      - path: .gitleaks.toml
+        ownership: exclusive
+      - path: devenv.nix
+        ownership: shared
+        section_id: gitleaks
+      - path: CLAUDE.md
+        ownership: shared
+        section_id: gitleaks
+
+  container-security:
+    display_name: "Container Security (Grype + Cosign)"
+    category: security
+    description: "Container vulnerability scanning with Grype and image signing with Cosign"
+    default_policy: on-when-detected
+    owned_files:
+      - path: .grype.yaml
+        ownership: exclusive
+      - path: .cosign/policy.yaml
+        ownership: exclusive
+      - path: devenv.nix
+        ownership: shared
+        section_id: container-security
+      - path: CLAUDE.md
+        ownership: shared
+        section_id: container-security
+
+  license-compliance:
+    display_name: "License Compliance (ScanCode)"
+    category: security
+    description: "License compliance checking via ScanCode with SPDX allowlist/blocklist policies"
+    default_policy: opt-in
+    owned_files:
+      - path: .scancode.yml
+        ownership: exclusive
+      - path: .license-exceptions.yml
+        ownership: exclusive
+      - path: CLAUDE.md
+        ownership: shared
+        section_id: license-compliance
+
+  # === AI Agent Tools ===
+
+  agent-postmortem:
+    display_name: "Agent Postmortem Protocol"
+    category: ai-agent
+    description: "Verification skill requiring agents to validate changes against build/test/lint after implementation"
+    default_policy: always-on
+    owned_files:
+      - path: .claude/skills/agent-postmortem/SKILL.md
+        ownership: exclusive
+      - path: CLAUDE.md
+        ownership: shared
+        section_id: agent-postmortem
+
+  version-sentinel:
+    display_name: "Version Sentinel"
+    category: ai-agent
+    description: "Guards dependency version changes in manifest files, requiring agents to justify bumps"
+    default_policy: always-on
+    owned_files:
+      - path: .claude/skills/version-sentinel/SKILL.md
+        ownership: exclusive
+      - path: .version-sentinel/ignore
+        ownership: exclusive
+      - path: CLAUDE.md
+        ownership: shared
+        section_id: version-sentinel
+
+  semble:
+    display_name: "Semble Semantic Code Search"
+    category: ai-agent
+    description: "Semantic code search via MCP server or sub-agent for codebase navigation"
+    default_policy: always-on
+    owned_files:
+      - path: .mcp.json
+        ownership: shared
+        section_id: semble
+      - path: .claude/agents/semble-search.md
+        ownership: exclusive
+      - path: CLAUDE.md
+        ownership: shared
+        section_id: semble
+
+  trail-of-bits-skills:
+    display_name: "Trail of Bits Security Skills"
+    category: ai-agent
+    description: "Security-focused code review skills based on Trail of Bits audit methodology"
+    default_policy: always-on
+    owned_files:
+      - path: .claude/skills/security-review.md
+        ownership: exclusive
+      - path: CLAUDE.md
+        ownership: shared
+        section_id: trail-of-bits-skills
+
+  context7:
+    display_name: "Context7 MCP"
+    category: ai-agent
+    description: "Context7 MCP server providing library documentation lookups for AI agents"
+    default_policy: always-on
+    owned_files:
+      - path: .mcp.json
+        ownership: shared
+        section_id: context7
+      - path: CLAUDE.md
+        ownership: shared
+        section_id: context7
+
+  github-mcp:
+    display_name: "GitHub MCP"
+    category: ai-agent
+    description: "GitHub MCP server for repository and issue management by AI agents"
+    default_policy: always-on
+    owned_files:
+      - path: .mcp.json
+        ownership: shared
+        section_id: github-mcp
+      - path: CLAUDE.md
+        ownership: shared
+        section_id: github-mcp
+
+  socket-dev-mcp:
+    display_name: "Socket.dev MCP"
+    category: ai-agent
+    description: "Socket.dev MCP server for supply chain security analysis of dependencies"
+    default_policy: always-on
+    owned_files:
+      - path: .mcp.json
+        ownership: shared
+        section_id: socket-dev-mcp
+      - path: CLAUDE.md
+        ownership: shared
+        section_id: socket-dev-mcp
+
+  postgres-mcp:
+    display_name: "PostgreSQL MCP"
+    category: ai-agent
+    description: "PostgreSQL MCP server for database schema inspection and query execution by AI agents"
+    default_policy: opt-in
+    owned_files:
+      - path: .mcp.json
+        ownership: shared
+        section_id: postgres-mcp
+      - path: CLAUDE.md
+        ownership: shared
+        section_id: postgres-mcp
+
+  # === Consulting Agents ===
+
+  consulting-agent-security-reviewer:
+    display_name: "Security Reviewer Agent"
+    category: ai-agent
+    description: "Deep security analysis with OWASP methodology"
+    default_policy: opt-in
+    owned_files:
+      - path: .claude/agents/security-reviewer.md
+        ownership: exclusive
+
+  consulting-agent-codebase-explorer:
+    display_name: "Codebase Explorer Agent"
+    category: ai-agent
+    description: "Fast codebase navigation and architecture analysis"
+    default_policy: opt-in
+    owned_files:
+      - path: .claude/agents/codebase-explorer.md
+        ownership: exclusive
+
+  consulting-agent-test-gap-analyzer:
+    display_name: "Test Gap Analyzer Agent"
+    category: ai-agent
+    description: "Identify untested code paths and coverage gaps"
+    default_policy: opt-in
+    owned_files:
+      - path: .claude/agents/test-gap-analyzer.md
+        ownership: exclusive
+
+  consulting-agent-onboarding-guide:
+    display_name: "Onboarding Guide Agent"
+    category: ai-agent
+    description: "Interactive codebase mentoring for new engineers"
+    default_policy: opt-in
+    owned_files:
+      - path: .claude/agents/onboarding-guide.md
+        ownership: exclusive
+
+  consulting-agent-migration-planner:
+    display_name: "Migration Planner Agent"
+    category: ai-agent
+    description: "Framework upgrade risk assessment and planning"
+    default_policy: opt-in
+    owned_files:
+      - path: .claude/agents/migration-planner.md
+        ownership: exclusive
+
+  consulting-agent-handoff-doc-generator:
+    display_name: "Handoff Doc Generator Agent"
+    category: ai-agent
+    description: "Client handoff documentation synthesis"
+    default_policy: opt-in
+    owned_files:
+      - path: .claude/agents/handoff-doc-generator.md
+        ownership: exclusive
+
+  consulting-agent-incident-debugger:
+    display_name: "Incident Debugger Agent"
+    category: ai-agent
+    description: "Systematic incident debugging with hypothesis testing"
+    default_policy: opt-in
+    owned_files:
+      - path: .claude/agents/incident-debugger.md
+        ownership: exclusive
+
+  # === Consulting Workflows ===
+
+  consulting-workflow-review-pr:
+    display_name: "PR Review (Consulting)"
+    category: ai-agent
+    description: "Comprehensive PR review with security, performance, and quality analysis"
+    default_policy: opt-in
+    owned_files:
+      - path: .claude/skills/review-pr/SKILL.md
+        ownership: exclusive
+
+  consulting-workflow-add-tests:
+    display_name: "Add Tests (Consulting)"
+    category: ai-agent
+    description: "Analyze coverage gaps and generate tests following project patterns"
+    default_policy: opt-in
+    owned_files:
+      - path: .claude/skills/add-tests/SKILL.md
+        ownership: exclusive
+
+  consulting-workflow-upgrade-dep:
+    display_name: "Upgrade Dependency (Consulting)"
+    category: ai-agent
+    description: "Plan and execute dependency upgrades with verification"
+    default_policy: opt-in
+    owned_files:
+      - path: .claude/skills/upgrade-dep/SKILL.md
+        ownership: exclusive
+
+  consulting-workflow-onboard-me:
+    display_name: "Codebase Onboarding (Consulting)"
+    category: ai-agent
+    description: "Systematic codebase onboarding via exploration agent"
+    default_policy: opt-in
+    owned_files:
+      - path: .claude/skills/onboard-me/SKILL.md
+        ownership: exclusive
+
+  consulting-workflow-write-adr:
+    display_name: "Write ADR (Consulting)"
+    category: ai-agent
+    description: "Generate Architecture Decision Records in MADR format"
+    default_policy: opt-in
+    owned_files:
+      - path: .claude/skills/write-adr/SKILL.md
+        ownership: exclusive
+
+  consulting-workflow-incident-debug:
+    display_name: "Incident Debug (Consulting)"
+    category: ai-agent
+    description: "Systematic incident debugging with hypothesis testing"
+    default_policy: opt-in
+    owned_files:
+      - path: .claude/skills/incident-debug/SKILL.md
+        ownership: exclusive
+
+  consulting-workflow-migration-plan:
+    display_name: "Migration Plan (Consulting)"
+    category: ai-agent
+    description: "Phased migration planning with risk assessment"
+    default_policy: opt-in
+    owned_files:
+      - path: .claude/skills/migration-plan/SKILL.md
+        ownership: exclusive
+
+  consulting-workflow-handoff-doc:
+    display_name: "Handoff Doc (Consulting)"
+    category: ai-agent
+    description: "Client handoff documentation synthesis"
+    default_policy: opt-in
+    owned_files:
+      - path: .claude/skills/handoff-doc/SKILL.md
+        ownership: exclusive
+
+  # === Developer Experience Tools ===
+
+  secretspec:
+    display_name: "Secret Specification"
+    category: devex
+    description: "Generates secretspec.toml declaring required secrets for services and ecosystem modules"
+    default_policy: opt-in
+    owned_files:
+      - path: secretspec.toml
+        ownership: exclusive
+      - path: devenv.nix
+        ownership: shared
+        section_id: secretspec
+      - path: CLAUDE.md
+        ownership: shared
+        section_id: secretspec
+
+  changelog:
+    display_name: "git-cliff Changelog"
+    category: devex
+    description: "Generates cliff.toml configuration for git-cliff conventional changelog generation"
+    default_policy: opt-in
+    owned_files:
+      - path: cliff.toml
+        ownership: exclusive
+      - path: devenv.nix
+        ownership: shared
+        section_id: changelog
+      - path: CLAUDE.md
+        ownership: shared
+        section_id: changelog
+
+  commitlint:
+    display_name: "Commitlint"
+    category: devex
+    description: "Conventional commit message linting via commitlint with standard type enforcement"
+    default_policy: opt-in
+    owned_files:
+      - path: .commitlintrc.yml
+        ownership: exclusive
+      - path: CLAUDE.md
+        ownership: shared
+        section_id: commitlint
+
+  pr-templates:
+    display_name: "PR Templates"
+    category: devex
+    description: "GitHub pull request template with ecosystem-aware checklists"
+    default_policy: always-on
+    owned_files:
+      - path: .github/pull_request_template.md
+        ownership: exclusive
+
+  branch-naming:
+    display_name: "Branch Naming Convention"
+    category: devex
+    description: "Pre-push hook enforcing branch naming conventions (feat|fix|chore|docs|refactor|test|ci/<description>)"
+    default_policy: always-on
+    owned_files:
+      - path: devenv.nix
+        ownership: shared
+        section_id: branch-naming
+
+  commit-ticket:
+    display_name: "Commit Ticket Extraction"
+    category: devex
+    description: "Prepare-commit-msg hook that extracts ticket IDs from branch names into commit messages"
+    default_policy: opt-in
+    owned_files:
+      - path: devenv.nix
+        ownership: shared
+        section_id: commit-ticket
+
+  pr-labels:
+    display_name: "PR Auto-Labeler"
+    category: devex
+    description: "GitHub Actions workflow that auto-labels PRs based on changed files"
+    default_policy: always-on
+    owned_files:
+      - path: .github/labeler.yml
+        ownership: exclusive
+      - path: .github/workflows/labeler.yml
+        ownership: exclusive
+
+  starship-integration:
+    display_name: "Starship Prompt Integration"
+    category: devex
+    description: "Starship prompt configuration with qsdev project name, security profile, and tool count segments"
+    default_policy: opt-in
+    owned_files:
+      - path: .starship.toml
+        ownership: exclusive
+      - path: devenv.nix
+        ownership: shared
+        section_id: starship
+
+  # === Infrastructure Tools ===
+
+  otel-config:
+    display_name: "OpenTelemetry Configuration"
+    category: infrastructure
+    description: "OpenTelemetry environment variable configuration for traces and metrics collection"
+    default_policy: opt-in
+    owned_files:
+      - path: devenv.nix
+        ownership: shared
+        section_id: otel-config

@@ -1,30 +1,6 @@
 package devenv
 
-// hookTiers defines which hooks belong to each tier.
-// Tier hierarchy: baseline < enhanced < specialized < full.
-// Higher tiers include all hooks from lower tiers.
-var hookTiers = map[string][]string{
-	"baseline": {
-		"ripsecrets",
-		"gitleaks",
-		"check-added-large-files",
-		"no-commit-to-branch",
-		"check-merge-conflicts",
-	},
-	"enhanced": {
-		"semgrep",
-		"shellcheck",
-		"formatters",
-	},
-	"specialized": {
-		"lock-file-audit",
-		"nix-secrets-check",
-		"statix",
-	},
-}
-
-// tierOrder defines the cumulative ordering of tiers.
-var tierOrder = []string{"baseline", "enhanced", "specialized"}
+import "github.com/Quantum-Serendipity/qsdev/internal/catalog"
 
 // FilterHooksByTier returns the subset of hooks that belong to the given tier
 // or any tier below it. The "full" tier returns all hooks unchanged.
@@ -46,8 +22,11 @@ func FilterHooksByTier(hooks []string, tier string) []string {
 
 // allowedHooksForTier builds the set of hooks allowed at the given tier level.
 func allowedHooksForTier(tier string) map[string]bool {
-	allowed := make(map[string]bool)
+	cat := catalog.Default()
+	hookTiers := cat.HookTiers()
+	tierOrder := cat.HookTierOrder()
 
+	allowed := make(map[string]bool)
 	for _, t := range tierOrder {
 		for _, h := range hookTiers[t] {
 			allowed[h] = true

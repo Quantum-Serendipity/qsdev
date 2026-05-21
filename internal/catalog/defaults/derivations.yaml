@@ -1,0 +1,18 @@
+tier_to_compliance:
+  supply-chain-only: baseline
+  standard: standard
+  full: enhanced
+
+tier_to_enabled_tools:
+  supply-chain-only: []
+  standard: [gitleaks]
+  full: [semgrep, gitleaks, secretspec]
+
+default_mcp_servers: [context7, github, socket, semble]
+
+default_agent_tools:
+  postmortem_enabled: true
+  version_sentinel: true
+  version_sentinel_hours: 24
+  semble_enabled: true
+  semble_mode: both

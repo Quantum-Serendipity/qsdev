@@ -1,0 +1,39 @@
+tiers:
+  supply-chain-only:
+    order: 1
+    description: "Package supply chain security + devenv sandbox; no Claude Code restrictions"
+    default_permission_preset: supply-chain-only
+    security:
+      level: baseline
+      age_gating: true
+      script_blocking: true
+      lock_enforcement: true
+      vuln_scanning: true
+    tools:
+      enabled: []
+    claude_code:
+      enabled: true
+      permission_level: supply-chain-only
+
+  standard:
+    order: 2
+    inherits: supply-chain-only
+    description: "Supply chain deny rules + Claude Code governance + CLAUDE.md + gitleaks"
+    default_permission_preset: standard
+    tools:
+      enabled: [gitleaks]
+    claude_code:
+      permission_level: standard
+
+  full:
+    order: 3
+    inherits: standard
+    description: "Full tooling: MCP servers, agent tools, consulting workflows, AlwaysOn tools"
+    default_permission_preset: standard
+    security:
+      level: enhanced
+    tools:
+      enabled: [semgrep, gitleaks, secretspec]
+    claude_code:
+      permission_level: standard
+      mcp_servers: [context7, github]

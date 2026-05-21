@@ -175,14 +175,12 @@ devenv.Configure(
 
 // claudecode — Claude Code agent configuration
 claudecode.Configure(
-    claudecode.WithDefaultPermissions(claudecode.PermissionPresetStrict),
-    claudecode.WithDenyPatterns("*.secret", "internal/**"),
+    claudecode.WithDefaultPermissions(claudecode.PermissionPresetStandard),
 )
 
 // devinit — orchestration wizard
 devinit.Configure(
     devinit.WithDetectProjectType(true),
-    devinit.WithProfile("enterprise"),
 )
 ```
 

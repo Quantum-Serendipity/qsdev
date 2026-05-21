@@ -15,8 +15,14 @@ Two profile types work together:
 |---------|----------|
 | `go-web` | Go HTTP services with PostgreSQL and Redis |
 | `ts-fullstack` | TypeScript/React applications with PostgreSQL and Redis |
+| `ts-backend` | TypeScript API services with PostgreSQL and Redis |
 | `python-data` | Data science, ML, and analytics projects |
+| `python-web` | Python web applications with PostgreSQL and Redis |
 | `rust-cli` | Command-line tools and systems utilities |
+| `rust-web` | Rust web services with PostgreSQL and Redis |
+| `java-web` | Java/Gradle web applications with PostgreSQL and Redis |
+| `elixir-web` | Elixir/Phoenix applications with PostgreSQL and Redis |
+| `dotnet-web` | .NET web applications with PostgreSQL and Redis |
 
 Start with a profile and override individual settings:
 
@@ -32,7 +38,7 @@ Flags explicitly set on the command line always take precedence over profile def
 | Profile | When to Use |
 |---------|-------------|
 | `consulting-default` | Multi-client consulting shops; enhanced security (semgrep, gitleaks, secretspec) |
-| `startup-fast` | Baseline security, minimal overhead |
+| `startup-github` | GitHub-native; baseline security, minimal overhead |
 | `enterprise` | Regulated environments; strict security, audit logging, SBOM |
 
 ```bash
@@ -50,6 +56,7 @@ Package installs are hook-gated (the user is asked for confirmation), not blocke
 | `minimal` | `Read(*)`, basic build/test commands | All base deny rules + ecosystem-specific | `nix flake update` | Read-only by default; every write requires approval |
 | `standard` | `Read(*)`, `Edit(*)`, `Write(*)`, `Bash(git *)`, build/test/lint, Nix dev commands | All base deny rules + ecosystem-specific | `nix flake update`, `pip install -r`, `pip install -e .` | Recommended for most teams |
 | `permissive` | Everything in standard + `Bash(make *)`, `Bash(docker *)` | All base deny rules + ecosystem-specific | Same as standard | For teams with Docker/Make workflows |
+| `supply-chain-only` | Minimal | All base + ecosystem deny rules | (none) | Supply chain defense only; no dev tooling permissions |
 | `custom` | Only `ExtraAllowPatterns` from config | All base + ecosystem + `ExtraDenyPatterns` | (none) | Full manual control |
 
 The `standard` and `permissive` presets also set `defaultMode: "default"` and `disableBypassPermissionsMode: "disable"` to prevent developers from bypassing the permission model.

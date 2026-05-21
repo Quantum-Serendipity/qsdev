@@ -279,7 +279,7 @@ If `devenv test` reports credential variables are set:
 
 ### MCP server "unknown" error
 
-Only five built-in MCP servers are recognized: `github`, `filesystem`, `postgres`, `fetch`, `socket`. Custom servers must be added by editing `.mcp.json` directly after generation.
+Seven built-in MCP servers are recognized: `github`, `filesystem`, `postgres`, `fetch`, `socket`, `semble`, `context7`. Custom servers must be added by editing `.mcp.json` directly after generation.
 
 ### Corrupted or drifted configuration files
 

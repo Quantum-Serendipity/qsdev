@@ -64,16 +64,28 @@ func TestConsultingAgentToolsOptIn(t *testing.T) {
 }
 
 func TestConsultingAgentToolEnableDisable(t *testing.T) {
-	tools := consultingAgentTools()
-	if len(tools) != 7 {
-		t.Fatalf("expected 7 consulting agent tools, got %d", len(tools))
+	reg := DefaultRegistry()
+
+	agentNames := []string{
+		"consulting-agent-security-reviewer",
+		"consulting-agent-codebase-explorer",
+		"consulting-agent-test-gap-analyzer",
+		"consulting-agent-onboarding-guide",
+		"consulting-agent-migration-planner",
+		"consulting-agent-handoff-doc-generator",
+		"consulting-agent-incident-debugger",
 	}
 
-	for _, tool := range tools {
-		t.Run(tool.Name, func(t *testing.T) {
+	for _, name := range agentNames {
+		tool, ok := reg.ByName(name)
+		if !ok {
+			t.Errorf("tool %q not found", name)
+			continue
+		}
+
+		t.Run(name, func(t *testing.T) {
 			answers := types.WizardAnswers{}
 
-			// Enable.
 			if tool.EnableFunc == nil {
 				t.Fatal("EnableFunc is nil")
 			}
@@ -82,18 +94,17 @@ func TestConsultingAgentToolEnableDisable(t *testing.T) {
 			if answers.EnabledTools == nil {
 				t.Fatal("EnabledTools should be initialized after Enable")
 			}
-			if !answers.EnabledTools[tool.Name] {
-				t.Errorf("after Enable, EnabledTools[%q] should be true", tool.Name)
+			if !answers.EnabledTools[name] {
+				t.Errorf("after Enable, EnabledTools[%q] should be true", name)
 			}
 
-			// Disable.
 			if tool.DisableFunc == nil {
 				t.Fatal("DisableFunc is nil")
 			}
 			tool.DisableFunc(&answers)
 
-			if answers.EnabledTools[tool.Name] {
-				t.Errorf("after Disable, EnabledTools[%q] should be false", tool.Name)
+			if answers.EnabledTools[name] {
+				t.Errorf("after Disable, EnabledTools[%q] should be false", name)
 			}
 		})
 	}

@@ -10,6 +10,13 @@
 - [ ] Documentation
 - [ ] Chore
 
+## Security Checklist
+
+- [ ] No secrets or credentials in code
+- [ ] Dependency versions pinned
+- [ ] SAST scan passes
+- [ ] New endpoints require authentication
+
 ## Testing
 
 - [ ] Unit tests added/updated

@@ -11,9 +11,9 @@
     DEVENV_SECURITY_HARDENED = "true";
     QSDEV_ECOSYSTEMS = "go";
     QSDEV_PROJECT_NAME = "qsdev";
-    QSDEV_SECURITY_PROFILE = "standard";
-    QSDEV_TOOL_COUNT = "0";
-    QSDEV_VERSION = "v0.7.2-0.20260519133156-c2d91b273f5f+dirty";
+    QSDEV_SECURITY_PROFILE = "enhanced";
+    QSDEV_TOOL_COUNT = "3";
+    QSDEV_VERSION = "dev";
     GOFLAGS = "-mod=readonly";
     GONOSUMCHECK = "";
     GONOSUMDB = "";

@@ -18,6 +18,21 @@ golangci-lint run
 ```
 
 
+<!-- qsdev:skills -->
+## Available Skills
+- `/qsdev-init` — Initialize qsdev project configuration
+- `/qsdev-onboard` — Onboard existing project to qsdev
+- `/qsdev-setup` — Install missing prerequisites
+- `/qsdev-enable` — Enable a tool in the project
+- `/qsdev-disable` — Disable a tool from the project
+- `/qsdev-update` — Update qsdev-managed configuration
+- `/qsdev-doctor` — Run qsdev health diagnostics
+- `/qsdev-status` — Show qsdev configuration status
+- `/qsdev-tools` — List available qsdev tools
+- `/qsdev-detect` — Detect project ecosystems
+- `/qsdev-add-dep` — Add a dependency or package safely
+<!-- /qsdev:skills -->
+
 
 <!-- qsdev:commands -->
 ## qsdev Commands

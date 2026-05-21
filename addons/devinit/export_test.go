@@ -206,6 +206,9 @@ const (
 	ExportUpdateActionSidecar = UpdateActionSidecar
 )
 
+// ExportIsMachineReadableFormat exposes isMachineReadableFormat for external tests.
+var ExportIsMachineReadableFormat = isMachineReadableFormat
+
 // ExportCheckCmd exposes checkCmd for external tests.
 var ExportCheckCmd = checkCmd
 

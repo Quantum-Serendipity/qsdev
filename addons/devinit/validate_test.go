@@ -190,6 +190,64 @@ func TestValidateAnswers_AllValidLanguages(t *testing.T) {
 	}
 }
 
+func TestValidateAnswers_InvalidTier(t *testing.T) {
+	answers := types.WizardAnswers{
+		Tier: "nonexistent",
+	}
+
+	err := devinit.ExportValidateAnswers(answers)
+	if err == nil {
+		t.Fatal("expected error for invalid tier")
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("error should mention 'nonexistent', got: %v", err)
+	}
+}
+
+func TestValidateAnswers_EmptyTierIsValid(t *testing.T) {
+	answers := types.WizardAnswers{
+		Tier: "",
+	}
+
+	if err := devinit.ExportValidateAnswers(answers); err != nil {
+		t.Errorf("expected no error for empty tier, got: %v", err)
+	}
+}
+
+func TestValidateAnswers_AllValidTiers(t *testing.T) {
+	for _, tier := range []string{"supply-chain-only", "standard", "full"} {
+		t.Run(tier, func(t *testing.T) {
+			answers := types.WizardAnswers{
+				Tier: tier,
+			}
+			if err := devinit.ExportValidateAnswers(answers); err != nil {
+				t.Errorf("expected %q to be valid, got: %v", tier, err)
+			}
+		})
+	}
+}
+
+func TestValidateAnswers_TierInMultipleErrors(t *testing.T) {
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{
+			{Name: "fortran"},
+		},
+		Tier: "nonexistent",
+	}
+
+	err := devinit.ExportValidateAnswers(answers)
+	if err == nil {
+		t.Fatal("expected errors for multiple invalid values")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "fortran") {
+		t.Error("error should mention 'fortran'")
+	}
+	if !strings.Contains(errStr, "nonexistent") {
+		t.Error("error should mention 'nonexistent'")
+	}
+}
+
 func TestValidateAnswers_AllValidServices(t *testing.T) {
 	for _, svc := range []string{"postgres", "redis", "mysql", "mongodb", "elasticsearch", "rabbitmq"} {
 		t.Run(svc, func(t *testing.T) {

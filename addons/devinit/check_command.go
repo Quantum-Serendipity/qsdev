@@ -19,9 +19,9 @@ import (
 
 func checkCmd() *cobra.Command {
 	var (
-		formatStr   string
-		auditStr    string
-		autoFix     bool
+		formatStr string
+		auditStr  string
+		autoFix   bool
 	)
 
 	cmd := &cobra.Command{
@@ -124,6 +124,9 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 
 	// Check if we should fail.
 	if check.ShouldFail(report.Checks, auditLevel) {
+		if isMachineReadableFormat(format) {
+			return &ExitError{Code: 1}
+		}
 		return &check.CheckFailedError{
 			FailCount: check.FailCount(report.Checks, auditLevel),
 			Level:     auditLevel,
@@ -131,6 +134,15 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	}
 
 	return nil
+}
+
+func isMachineReadableFormat(f check.OutputFormat) bool {
+	switch f {
+	case check.FormatJSON, check.FormatSARIF, check.FormatJUnit:
+		return true
+	default:
+		return false
+	}
 }
 
 // criticalDenyRules returns the deny rules that are considered critical and

@@ -144,7 +144,11 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Enabled %q.\n", tool.DisplayName)
-	printOwnedFiles(cmd, tool, "wrote")
+	if len(writtenFiles) > 0 {
+		printWrittenFiles(cmd, writtenFiles, "wrote")
+	} else {
+		fmt.Fprintf(cmd.OutOrStdout(), "  No files generated (tool enabled but no output needed for current project configuration).\n")
+	}
 	return nil
 }
 
@@ -423,5 +427,17 @@ func printOwnedFiles(cmd *cobra.Command, tool *toolreg.Tool, verb string) {
 	for _, f := range tool.OwnedFiles {
 		ownerType := f.Ownership.String()
 		fmt.Fprintf(cmd.OutOrStdout(), "  %s (%s)\n", f.Path, ownerType)
+	}
+}
+
+// printWrittenFiles prints the list of files that were actually written during
+// an enable operation.
+func printWrittenFiles(cmd *cobra.Command, files []types.GeneratedFile, verb string) {
+	if len(files) == 0 {
+		return
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Files %s:\n", verb)
+	for _, f := range files {
+		fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", f.Path)
 	}
 }

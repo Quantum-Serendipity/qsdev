@@ -10,11 +10,12 @@ import (
 
 // Validation lists are sourced from the shared validation package.
 var (
-	validLanguages        = validation.Languages()
-	validServices         = validation.Services()
+	validLanguages         = validation.Languages()
+	validServices          = validation.Services()
 	validPermissionPresets = validation.PermissionPresets()
-	validNodePkgMgrs      = validation.NodePackageManagers()
-	validPythonPkgMgrs    = validation.PythonPackageManagers()
+	validNodePkgMgrs       = validation.NodePackageManagers()
+	validPythonPkgMgrs     = validation.PythonPackageManagers()
+	validTiers             = validation.Tiers()
 )
 
 // ValidateAnswers checks that all user-provided values are valid.
@@ -55,6 +56,13 @@ func ValidateAnswers(answers types.WizardAnswers) error {
 	if answers.PermissionLevel != "" {
 		if !validation.IsValidPermissionPreset(answers.PermissionLevel) {
 			errs = append(errs, fmt.Sprintf("unknown permission preset %q; valid presets: %v", answers.PermissionLevel, validPermissionPresets))
+		}
+	}
+
+	// Validate tier.
+	if answers.Tier != "" {
+		if !validation.IsValidTier(answers.Tier) {
+			errs = append(errs, fmt.Sprintf("unknown tier %q; valid tiers: %v", answers.Tier, validTiers))
 		}
 	}
 

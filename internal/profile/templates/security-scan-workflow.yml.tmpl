@@ -11,11 +11,13 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   security-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
 {{- if .HasHardenRunner }}
       - name: Harden Runner

@@ -7,16 +7,19 @@ on:
 
 permissions:
   contents: write
+  actions: read
   id-token: write
   attestations: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     outputs:
       hashes: ${{ steps.hash.outputs.hashes }}
-    # harden-runner disabled — no monitoring without StepSecurity subscription on private repos.
-    # Re-enable when repo goes public or subscription is active.
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -60,3 +63,15 @@ jobs:
         run: |
           cd dist
           echo "hashes=$(sha256sum *.tar.gz *.zip *.deb *.rpm *.apk 2>/dev/null | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+  provenance:
+    needs: release
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
+    with:
+      base64-subjects: "${{ needs.release.outputs.hashes }}"
+      upload-assets: true
+      private-repository: false

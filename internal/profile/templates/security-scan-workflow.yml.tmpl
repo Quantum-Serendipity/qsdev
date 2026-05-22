@@ -19,12 +19,12 @@ jobs:
     steps:
 {{- if .HasHardenRunner }}
       - name: Harden Runner
-        uses: step-security/harden-runner@v2
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 {{ end }}
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Validate lock files
         run: |
@@ -39,7 +39,7 @@ jobs:
 {{- if .HasOSV }}
 
       - name: OSV Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@v2.3.8
+        uses: google/osv-scanner-action/osv-scanner-action@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
         with:
           scan-args: |-
             --recursive
@@ -48,7 +48,7 @@ jobs:
 {{- if .HasSnyk }}
 
       - name: Snyk Security Scan
-        uses: snyk/actions@master
+        uses: snyk/actions@9cf6ca713d71123d2d229cc3d7f145b96ea3c518 # master
         env:
           SNYK_TOKEN: ${{ "{{" }} secrets.SNYK_TOKEN {{ "}}" }}
         with:
@@ -57,7 +57,7 @@ jobs:
 {{- if .HasGrype }}
 
       - name: Grype Vulnerability Scan
-        uses: anchore/scan-action@v6
+        uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
         with:
           path: "."
           fail-build: true

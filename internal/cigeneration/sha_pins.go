@@ -28,14 +28,14 @@ var (
 	ActionCheckout = ActionRef{
 		Owner: "actions",
 		Repo:  "checkout",
-		SHA:   "11bd71901bbe5b1630ceea73d27597364c9af683",
-		Tag:   "v4.2.2",
+		SHA:   "de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+		Tag:   "v6.0.2",
 	}
 	ActionHardenRunner = ActionRef{
 		Owner: "step-security",
 		Repo:  "harden-runner",
-		SHA:   "0634a2670c59f64b4a01f0f96f84700a4088b9f0",
-		Tag:   "v2.12.0",
+		SHA:   "9af89fc71515a100421586dfdb3dc9c984fbf411",
+		Tag:   "v2.19.4",
 	}
 	ActionUploadArtifact = ActionRef{
 		Owner: "actions",
@@ -75,9 +75,9 @@ var (
 	}
 	ActionOSVScanner = ActionRef{
 		Owner: "google",
-		Repo:  "osv-scanner-action",
-		SHA:   "6e2fede655b48e4ef7e24ab4cd20395d5a41f515",
-		Tag:   "v2.0.2",
+		Repo:  "osv-scanner-action/osv-scanner-action",
+		SHA:   "9a498708959aeaef5ef730655706c5a1df1edbc2",
+		Tag:   "v2.3.8",
 	}
 	ActionClaudeCodeReview = ActionRef{
 		Owner: "anthropics",

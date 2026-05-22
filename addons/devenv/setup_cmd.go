@@ -16,6 +16,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/pkgmanager"
 	"github.com/Quantum-Serendipity/qsdev/internal/privilege"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // AutoSetupPrerequisites installs missing core prerequisites (nix, devenv, direnv)
@@ -23,7 +24,7 @@ import (
 // on the "one command and go" promise. Returns nil if all prerequisites are already
 // present or were successfully installed.
 func AutoSetupPrerequisites(ctx context.Context, w io.Writer) error {
-	if os.Getenv("QSDEV_SKIP_SETUP") == "1" {
+	if os.Getenv(branding.Get().EnvPrefix+"SKIP_SETUP") == "1" {
 		return nil
 	}
 

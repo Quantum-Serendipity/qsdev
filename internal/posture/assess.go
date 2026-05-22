@@ -260,23 +260,9 @@ func buildConfigFileInfos(projectPath string, files map[string]types.FileState) 
 // buildEcosystemStatuses detects which ecosystems are present and whether
 // their lock files exist.
 func buildEcosystemStatuses(detected types.DetectedProject, projectPath string) []EcosystemStatus {
-	ecoDetected := map[string]bool{
-		ecosystem.NameGo:         detected.HasGoMod,
-		ecosystem.NameJavaScript: detected.HasPackageJSON,
-		ecosystem.NameRust:       detected.HasCargoToml,
-		ecosystem.NamePython:     detected.HasPyProject,
-		ecosystem.NameJava:       detected.HasPomXML || detected.HasBuildGradle,
-		ecosystem.NameDotnet:     detected.HasCsproj,
-	}
-	for name, present := range detected.Ecosystems {
-		if present {
-			ecoDetected[name] = true
-		}
-	}
-
 	var statuses []EcosystemStatus
-	for name, isDetected := range ecoDetected {
-		if !isDetected {
+	for name, present := range detected.Ecosystems {
+		if !present {
 			continue
 		}
 		status := EcosystemStatus{

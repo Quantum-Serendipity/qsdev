@@ -23,6 +23,20 @@ func BuildFromCatalog() *Registry {
 			Conflicts:     def.Conflicts,
 			OwnedFiles:    convertOwnedFiles(def.OwnedFiles),
 		}
+
+		if def.MCPServerName != "" {
+			t.EnableFunc = mcpEnableFunc(def.MCPServerName)
+			t.DisableFunc = mcpDisableFunc(def.MCPServerName)
+		}
+		if def.SkillName != "" {
+			t.EnableFunc = skillEnableFunc(def.SkillName)
+			t.DisableFunc = skillDisableFunc(def.SkillName)
+		}
+		if def.ToggleField != "" {
+			t.EnableFunc = toggleEnableFunc(def.ToggleField)
+			t.DisableFunc = toggleDisableFunc(def.ToggleField)
+		}
+
 		r.tools[name] = &t
 	}
 

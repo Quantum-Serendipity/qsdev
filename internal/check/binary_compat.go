@@ -17,7 +17,7 @@ func CheckBinaryCompatibility(ctx CheckContext) []CheckResult {
 		return []CheckResult{
 			{
 				Category: CategoryBinaryCompat,
-				Name:     "qsdev_version_constraint",
+				Name:     branding.Get().AppName + "_version_constraint",
 				Status:   StatusSkip,
 				Severity: SeverityInfo,
 				Message:  "No " + branding.Get().ConfigFile + " found",
@@ -42,7 +42,7 @@ func checkVersionConstraint(ctx CheckContext) []CheckResult {
 		return []CheckResult{
 			{
 				Category: CategoryBinaryCompat,
-				Name:     "qsdev_version_constraint",
+				Name:     branding.Get().AppName + "_version_constraint",
 				Status:   StatusPass,
 				Severity: SeverityInfo,
 				Message:  "No version constraint specified",
@@ -55,7 +55,7 @@ func checkVersionConstraint(ctx CheckContext) []CheckResult {
 		return []CheckResult{
 			{
 				Category:    CategoryBinaryCompat,
-				Name:        "qsdev_version_constraint",
+				Name:        branding.Get().AppName + "_version_constraint",
 				Status:      StatusFail,
 				Severity:    SeverityCritical,
 				Message:     err.Error(),
@@ -67,7 +67,7 @@ func checkVersionConstraint(ctx CheckContext) []CheckResult {
 	return []CheckResult{
 		{
 			Category: CategoryBinaryCompat,
-			Name:     "qsdev_version_constraint",
+			Name:     branding.Get().AppName + "_version_constraint",
 			Status:   StatusPass,
 			Severity: SeverityInfo,
 			Message:  "Binary version " + ctx.BinaryVersion + " satisfies " + constraint,

@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 const (
@@ -46,7 +48,7 @@ func DownloadAndVerify(ctx context.Context, release *Release, cfg Config, target
 	}
 
 	// Create temp directory for downloads.
-	tmpDir, err := os.MkdirTemp("", "qsdev-update-*")
+	tmpDir, err := os.MkdirTemp("", branding.Get().AppName+"-update-*")
 	if err != nil {
 		return "", fmt.Errorf("creating temp dir: %w", err)
 	}

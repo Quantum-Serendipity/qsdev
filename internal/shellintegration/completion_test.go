@@ -60,10 +60,10 @@ func TestCompletionInstaller_InstallBash(t *testing.T) {
 	}
 	rc := string(rcContent)
 
-	if !strings.Contains(rc, completionMarkerStart) {
+	if !strings.Contains(rc, completionMarkerStart()) {
 		t.Error("RC file should contain completion start marker")
 	}
-	if !strings.Contains(rc, completionMarkerEnd) {
+	if !strings.Contains(rc, completionMarkerEnd()) {
 		t.Error("RC file should contain completion end marker")
 	}
 	if !strings.Contains(rc, completionFile) {

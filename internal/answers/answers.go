@@ -11,6 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -40,7 +41,7 @@ func LoadFromDir(projectRoot, dir, filename, cmdName string) (types.WizardAnswer
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return types.WizardAnswers{}, fmt.Errorf("no saved answers found at %s: run 'qsdev %s init' first", path, cmdName)
+			return types.WizardAnswers{}, fmt.Errorf("no saved answers found at %s: run '%s %s init' first", path, branding.Get().AppName, cmdName)
 		}
 		return types.WizardAnswers{}, fmt.Errorf("reading answers file: %w", err)
 	}
@@ -62,13 +63,15 @@ func FilePath(projectRoot, dir, filename string) string {
 // SavePrimary persists answers to the primary (devinit) answers file so that
 // per-addon modifications stay in sync with the unified init state.
 func SavePrimary(projectRoot string, a types.WizardAnswers) error {
-	return SaveToDir(projectRoot, ".devinit", ".qsdev-init-answers.yaml", a)
+	b := branding.Get()
+	return SaveToDir(projectRoot, b.StateDir, "."+b.AppName+"-init-answers.yaml", a)
 }
 
 // LoadPrimary reads the primary (devinit) answers file. Returns a zero-value
 // WizardAnswers and nil error if the file does not exist or is corrupt.
 func LoadPrimary(projectRoot string) (types.WizardAnswers, error) {
-	path := filepath.Join(projectRoot, ".devinit", ".qsdev-init-answers.yaml")
+	b := branding.Get()
+	path := filepath.Join(projectRoot, b.StateDir, "."+b.AppName+"-init-answers.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

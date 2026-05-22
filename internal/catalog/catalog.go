@@ -177,6 +177,30 @@ func (c *Catalog) Tool(name string) (ToolDef, bool) {
 	return d, ok
 }
 
+// ToolNixPackages returns a map of tool name to Nix package attribute
+// for tools that declare a nix_package field.
+func (c *Catalog) ToolNixPackages() map[string]string {
+	out := make(map[string]string)
+	for name, def := range c.tools.Tools {
+		if def.NixPackage != "" {
+			out[name] = def.NixPackage
+		}
+	}
+	return out
+}
+
+// ToolNixExprs returns a map of tool name to raw Nix expression
+// for tools that declare a nix_expr field.
+func (c *Catalog) ToolNixExprs() map[string]string {
+	out := make(map[string]string)
+	for name, def := range c.tools.Tools {
+		if def.NixExpr != "" {
+			out[name] = def.NixExpr
+		}
+	}
+	return out
+}
+
 // --- Security accessors ---
 
 // SecurityHooks returns the default security hook names.

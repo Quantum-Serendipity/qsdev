@@ -3,6 +3,8 @@ package check
 import (
 	"encoding/json"
 	"io"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // SARIF 2.1.0 types — minimum viable subset.
@@ -28,10 +30,10 @@ type sarifDriver struct {
 }
 
 type sarifResult struct {
-	RuleID    string           `json:"ruleId"`
-	Level     string           `json:"level"`
-	Message   sarifMessage     `json:"message"`
-	Locations []sarifLocation  `json:"locations,omitempty"`
+	RuleID    string          `json:"ruleId"`
+	Level     string          `json:"level"`
+	Message   sarifMessage    `json:"message"`
+	Locations []sarifLocation `json:"locations,omitempty"`
 }
 
 type sarifMessage struct {
@@ -58,7 +60,7 @@ func formatSARIF(report *CheckReport, w io.Writer) error {
 			{
 				Tool: sarifTool{
 					Driver: sarifDriver{
-						Name:    "qsdev",
+						Name:    branding.Get().AppName,
 						Version: report.Version,
 					},
 				},

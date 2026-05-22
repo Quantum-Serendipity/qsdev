@@ -315,6 +315,7 @@ tools:
         category: ai-agent
         description: Verification skill requiring agents to validate changes against build/test/lint after implementation
         default_policy: always-on
+        toggle_field: agent_tools.postmortem_enabled
         owned_files:
             - path: .claude/skills/agent-postmortem/SKILL.md
               ownership: exclusive
@@ -327,6 +328,7 @@ tools:
         category: security
         description: PreToolUse hook blocking unverified package installs with age-gating and vulnerability checks
         default_policy: always-on
+        toggle_field: hooks.safety_block
         owned_files:
             - path: .claude/hooks/package-guard.py
               ownership: exclusive
@@ -524,6 +526,7 @@ tools:
         category: ai-agent
         description: Context7 MCP server providing library documentation lookups for AI agents
         default_policy: always-on
+        mcp_server_name: context7
         owned_files:
             - path: .mcp.json
               ownership: shared
@@ -537,6 +540,7 @@ tools:
         category: ai-agent
         description: GitHub MCP server for repository and issue management by AI agents
         default_policy: always-on
+        mcp_server_name: github
         owned_files:
             - path: .mcp.json
               ownership: shared
@@ -550,6 +554,7 @@ tools:
         category: security
         description: Secret detection via Gitleaks with project-specific allowlists
         default_policy: always-on
+        nix_package: gitleaks
         owned_files:
             - path: .gitleaks.toml
               ownership: exclusive
@@ -588,6 +593,7 @@ tools:
         category: ai-agent
         description: PostgreSQL MCP server for database schema inspection and query execution by AI agents
         default_policy: opt-in
+        mcp_server_name: postgres
         owned_files:
             - path: .mcp.json
               ownership: shared
@@ -649,6 +655,7 @@ tools:
         category: security
         description: Static analysis via Semgrep with ecosystem-aware rule sets
         default_policy: always-on
+        nix_expr: '(pkgs.writeShellScriptBin "semgrep" "exec -a osemgrep ''''${pkgs.semgrep-core}/bin/semgrep-core --experimental \"$@\"")'
         owned_files:
             - path: .semgrep.yml
               ownership: exclusive
@@ -664,6 +671,7 @@ tools:
         category: ai-agent
         description: Socket.dev MCP server for supply chain security analysis of dependencies
         default_policy: always-on
+        mcp_server_name: socket
         owned_files:
             - path: .mcp.json
               ownership: shared
@@ -688,6 +696,7 @@ tools:
         category: ai-agent
         description: Security-focused code review skills based on Trail of Bits audit methodology
         default_policy: always-on
+        skill_name: security-review
         owned_files:
             - path: .claude/skills/security-review.md
               ownership: exclusive

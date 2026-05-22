@@ -1,8 +1,6 @@
 package toolreg
 
 import (
-	"slices"
-
 	"github.com/Quantum-Serendipity/qsdev/internal/sectools"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -17,22 +15,6 @@ func init() {
 
 func builtinBehaviors() map[string]ToolBehavior {
 	return map[string]ToolBehavior{
-		"attach-guard": {
-			EnableFunc: func(a *types.WizardAnswers) {
-				a.Hooks.SafetyBlock = true
-			},
-			DisableFunc: func(a *types.WizardAnswers) {
-				a.Hooks.SafetyBlock = false
-			},
-		},
-		"agent-postmortem": {
-			EnableFunc: func(a *types.WizardAnswers) {
-				a.AgentTools.PostmortemEnabled = true
-			},
-			DisableFunc: func(a *types.WizardAnswers) {
-				a.AgentTools.PostmortemEnabled = false
-			},
-		},
 		"version-sentinel": {
 			EnableFunc: func(a *types.WizardAnswers) {
 				a.AgentTools.VersionSentinel = true
@@ -83,56 +65,6 @@ func builtinBehaviors() map[string]ToolBehavior {
 			DisableFunc: func(a *types.WizardAnswers) {
 				a.AgentTools.SembleEnabled = false
 				a.MCPServers = removeStr(a.MCPServers, "semble")
-			},
-		},
-		"trail-of-bits-skills": {
-			EnableFunc: func(a *types.WizardAnswers) {
-				if !slices.Contains(a.Skills, "security-review") {
-					a.Skills = append(a.Skills, "security-review")
-				}
-			},
-			DisableFunc: func(a *types.WizardAnswers) {
-				a.Skills = removeStr(a.Skills, "security-review")
-			},
-		},
-		"context7": {
-			EnableFunc: func(a *types.WizardAnswers) {
-				if !slices.Contains(a.MCPServers, "context7") {
-					a.MCPServers = append(a.MCPServers, "context7")
-				}
-			},
-			DisableFunc: func(a *types.WizardAnswers) {
-				a.MCPServers = removeStr(a.MCPServers, "context7")
-			},
-		},
-		"github-mcp": {
-			EnableFunc: func(a *types.WizardAnswers) {
-				if !slices.Contains(a.MCPServers, "github") {
-					a.MCPServers = append(a.MCPServers, "github")
-				}
-			},
-			DisableFunc: func(a *types.WizardAnswers) {
-				a.MCPServers = removeStr(a.MCPServers, "github")
-			},
-		},
-		"socket-dev-mcp": {
-			EnableFunc: func(a *types.WizardAnswers) {
-				if !slices.Contains(a.MCPServers, "socket") {
-					a.MCPServers = append(a.MCPServers, "socket")
-				}
-			},
-			DisableFunc: func(a *types.WizardAnswers) {
-				a.MCPServers = removeStr(a.MCPServers, "socket")
-			},
-		},
-		"postgres-mcp": {
-			EnableFunc: func(a *types.WizardAnswers) {
-				if !slices.Contains(a.MCPServers, "postgres") {
-					a.MCPServers = append(a.MCPServers, "postgres")
-				}
-			},
-			DisableFunc: func(a *types.WizardAnswers) {
-				a.MCPServers = removeStr(a.MCPServers, "postgres")
 			},
 		},
 		"semgrep": {

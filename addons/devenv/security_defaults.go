@@ -31,6 +31,16 @@ func defaultCleanKeep() []string {
 	return catalog.Default().KeepVars()
 }
 
+// defaultToolNixPackages returns the tool→Nix package map from the catalog.
+func defaultToolNixPackages() map[string]string {
+	return catalog.Default().ToolNixPackages()
+}
+
+// defaultToolNixExprs returns the tool→Nix expression map from the catalog.
+func defaultToolNixExprs() map[string]string {
+	return catalog.Default().ToolNixExprs()
+}
+
 // defaultSpecializedHooks returns the specialized custom security hooks that
 // are always present. These use custom Nix expressions for advanced checks.
 func defaultSpecializedHooks() []CustomHookData {

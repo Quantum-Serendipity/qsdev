@@ -12,19 +12,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// toolNixPackages maps enabled tool names to their Nix package attribute names.
-// Only lightweight binary tools belong here.
-var toolNixPackages = map[string]string{
-	"gitleaks": "gitleaks",
-}
-
-// toolNixExprs maps enabled tool names to raw Nix expressions that produce
-// a derivation. Used for tools that need wrappers instead of plain pkgs.NAME
-// (e.g. semgrep-core's osemgrep wrapper avoids the 734MB Python closure).
-var toolNixExprs = map[string]string{
-	"semgrep": `(pkgs.writeShellScriptBin "semgrep" "exec -a osemgrep ''${pkgs.semgrep-core}/bin/semgrep-core --experimental \"$@\"")`,
-}
-
 // DevenvNixTemplateData holds all data required to render the devenv.nix template.
 type DevenvNixTemplateData struct {
 	Overlays          []string                   // Nix overlay file paths (e.g. "./nix/go-overlay.nix").
@@ -188,14 +175,16 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	}
 
 	// 4c. Collect packages for enabled tools that need binaries on PATH.
+	nixPkgs := defaultToolNixPackages()
+	nixExprs := defaultToolNixExprs()
 	for toolName, enabled := range answers.EnabledTools {
 		if !enabled {
 			continue
 		}
-		if nixPkg, ok := toolNixPackages[toolName]; ok {
+		if nixPkg, ok := nixPkgs[toolName]; ok {
 			data.Packages = append(data.Packages, nixPkg)
 		}
-		if expr, ok := toolNixExprs[toolName]; ok {
+		if expr, ok := nixExprs[toolName]; ok {
 			data.PackageExprs = append(data.PackageExprs, expr)
 		}
 	}

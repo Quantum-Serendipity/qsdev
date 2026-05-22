@@ -8,12 +8,12 @@ import (
 
 	"fastcat.org/go/gdev/addons/bootstrap/textedit"
 	"github.com/spf13/cobra"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
-const (
-	completionMarkerStart = "# qsdev: shell completions"
-	completionMarkerEnd   = "# qsdev end shell completions"
-)
+func completionMarkerStart() string { return "# " + branding.Get().AppName + ": shell completions" }
+func completionMarkerEnd() string   { return "# " + branding.Get().AppName + " end shell completions" }
 
 // CompletionInstaller writes shell completion files and updates RC files
 // so that completions are loaded automatically in new shell sessions.
@@ -139,9 +139,9 @@ func spliceRCFile(rcFile string, contentLine string) error {
 	}
 
 	editor := textedit.SpliceRange(
-		completionMarkerStart,
+		completionMarkerStart(),
 		contentLine,
-		completionMarkerEnd,
+		completionMarkerEnd(),
 	)
 
 	if err := os.MkdirAll(filepath.Dir(rcFile), 0o755); err != nil {
@@ -163,9 +163,9 @@ func spliceRCFileMulti(rcFile string, lines ...string) error {
 	}
 
 	spliceArgs := make([]string, 0, len(lines)+2)
-	spliceArgs = append(spliceArgs, completionMarkerStart)
+	spliceArgs = append(spliceArgs, completionMarkerStart())
 	spliceArgs = append(spliceArgs, lines...)
-	spliceArgs = append(spliceArgs, completionMarkerEnd)
+	spliceArgs = append(spliceArgs, completionMarkerEnd())
 
 	editor := textedit.SpliceRange(spliceArgs...)
 

@@ -15,22 +15,6 @@ func init() {
 
 func builtinBehaviors() map[string]ToolBehavior {
 	return map[string]ToolBehavior{
-		"attach-guard": {
-			EnableFunc: func(a *types.WizardAnswers) {
-				a.Hooks.SafetyBlock = true
-			},
-			DisableFunc: func(a *types.WizardAnswers) {
-				a.Hooks.SafetyBlock = false
-			},
-		},
-		"agent-postmortem": {
-			EnableFunc: func(a *types.WizardAnswers) {
-				a.AgentTools.PostmortemEnabled = true
-			},
-			DisableFunc: func(a *types.WizardAnswers) {
-				a.AgentTools.PostmortemEnabled = false
-			},
-		},
 		"version-sentinel": {
 			EnableFunc: func(a *types.WizardAnswers) {
 				a.AgentTools.VersionSentinel = true
@@ -40,6 +24,35 @@ func builtinBehaviors() map[string]ToolBehavior {
 			},
 			DisableFunc: func(a *types.WizardAnswers) {
 				a.AgentTools.VersionSentinel = false
+			},
+			SectionDataFunc: func(answers types.WizardAnswers, ecoReg *ecosystem.Registry) map[string]any {
+				var modules []ecosystem.EcosystemModule
+				configFor := func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
+					for _, lang := range answers.Languages {
+						if lang.Name == mod.Name() {
+							return ecosystem.ToModuleConfig(lang)
+						}
+					}
+					return ecosystem.ModuleConfig{}
+				}
+				for _, lang := range answers.Languages {
+					if mod, ok := ecoReg.ByName(lang.Name); ok {
+						modules = append(modules, mod)
+					}
+				}
+				report := ecosystem.AggregateManifestCoverage(modules, configFor)
+				covered := make([]string, len(report.Covered))
+				for i, m := range report.Covered {
+					covered[i] = m.Path
+				}
+				uncovered := make([]string, len(report.Uncovered))
+				for i, m := range report.Uncovered {
+					uncovered[i] = m.Path
+				}
+				return map[string]any{
+					"Covered":   covered,
+					"Uncovered": uncovered,
+				}
 			},
 		},
 		"semble": {
@@ -52,56 +65,6 @@ func builtinBehaviors() map[string]ToolBehavior {
 			DisableFunc: func(a *types.WizardAnswers) {
 				a.AgentTools.SembleEnabled = false
 				a.MCPServers = removeStr(a.MCPServers, "semble")
-			},
-		},
-		"trail-of-bits-skills": {
-			EnableFunc: func(a *types.WizardAnswers) {
-				if !containsStr(a.Skills, "security-review") {
-					a.Skills = append(a.Skills, "security-review")
-				}
-			},
-			DisableFunc: func(a *types.WizardAnswers) {
-				a.Skills = removeStr(a.Skills, "security-review")
-			},
-		},
-		"context7": {
-			EnableFunc: func(a *types.WizardAnswers) {
-				if !containsStr(a.MCPServers, "context7") {
-					a.MCPServers = append(a.MCPServers, "context7")
-				}
-			},
-			DisableFunc: func(a *types.WizardAnswers) {
-				a.MCPServers = removeStr(a.MCPServers, "context7")
-			},
-		},
-		"github-mcp": {
-			EnableFunc: func(a *types.WizardAnswers) {
-				if !containsStr(a.MCPServers, "github") {
-					a.MCPServers = append(a.MCPServers, "github")
-				}
-			},
-			DisableFunc: func(a *types.WizardAnswers) {
-				a.MCPServers = removeStr(a.MCPServers, "github")
-			},
-		},
-		"socket-dev-mcp": {
-			EnableFunc: func(a *types.WizardAnswers) {
-				if !containsStr(a.MCPServers, "socket") {
-					a.MCPServers = append(a.MCPServers, "socket")
-				}
-			},
-			DisableFunc: func(a *types.WizardAnswers) {
-				a.MCPServers = removeStr(a.MCPServers, "socket")
-			},
-		},
-		"postgres-mcp": {
-			EnableFunc: func(a *types.WizardAnswers) {
-				if !containsStr(a.MCPServers, "postgres") {
-					a.MCPServers = append(a.MCPServers, "postgres")
-				}
-			},
-			DisableFunc: func(a *types.WizardAnswers) {
-				a.MCPServers = removeStr(a.MCPServers, "postgres")
 			},
 		},
 		"semgrep": {

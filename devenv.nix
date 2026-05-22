@@ -1,18 +1,23 @@
 { pkgs, lib, config, ... }:
 {
+  # Local customizations (not managed by qsdev). Create devenv.local.nix to
+  # add packages, overlays, env vars, or any other devenv config for this machine.
+  imports = lib.optional (builtins.pathExists ./devenv.local.nix) ./devenv.local.nix;
+
+  # Nixpkgs overlays
   overlays = [
     (import ./nix/go-overlay.nix)
   ];
 
   # Base packages
-  packages = [ pkgs.git pkgs.jq pkgs.curl pkgs.coreutils pkgs.go-tools pkgs.govulncheck pkgs.gopls pkgs.golangci-lint pkgs.delve pkgs.goreleaser ];
+  packages = [ pkgs.git pkgs.jq pkgs.curl pkgs.coreutils pkgs.go-tools pkgs.govulncheck pkgs.gopls pkgs.golangci-lint pkgs.delve pkgs.goreleaser pkgs.gitleaks ] ++ [ (pkgs.writeShellScriptBin "semgrep" "exec -a osemgrep ''${pkgs.semgrep-core}/bin/semgrep-core --experimental \"$@\"") ];
   env = {
     DEVENV_SECURITY_HARDENED = "true";
     QSDEV_ECOSYSTEMS = "go";
     QSDEV_PROJECT_NAME = "qsdev";
     QSDEV_SECURITY_PROFILE = "enhanced";
-    QSDEV_TOOL_COUNT = "3";
-    QSDEV_VERSION = "v0.7.2-0.20260521172746-c92db2ade5ac+dirty";
+    QSDEV_TOOL_COUNT = "22";
+    QSDEV_VERSION = "v0.7.2-0.20260521220409-c97fcb68bdaa";
   };
 
   # Credential-bearing variables stripped from the shell

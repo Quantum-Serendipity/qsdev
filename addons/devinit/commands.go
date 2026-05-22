@@ -16,6 +16,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/repair"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -215,6 +216,9 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		answers.FillDefaults(detected)
 	}
 
+	// i2. Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
+	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
+
 	// j. Run wizard for missing answers.
 	if !answers.IsComplete() && !opts.Yes {
 		wizardAnswers, err := RunWizard(projectRoot, detected, answers, flagSet)
@@ -289,6 +293,7 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	successfulFiles := result.SuccessfulFiles(allFiles)
 	genState := state.RecordFiles(successfulFiles)
 	genState.QsdevVersion = version.Info().Version
+	genState.EnabledTools = answers.EnabledTools
 	stateFile := filepath.Join(projectRoot, stateFilePath())
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)

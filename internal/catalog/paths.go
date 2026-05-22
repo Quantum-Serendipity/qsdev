@@ -3,12 +3,14 @@ package catalog
 import (
 	"os"
 	"path/filepath"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // OrgConfigPath returns the expected path for the user-level defaults file.
 // Priority: $QSDEV_ORG_CONFIG > ~/.config/qsdev/defaults.yaml
 func OrgConfigPath() string {
-	if p := os.Getenv("QSDEV_ORG_CONFIG"); p != "" {
+	if p := os.Getenv(branding.Get().EnvPrefix + "ORG_CONFIG"); p != "" {
 		return p
 	}
 
@@ -17,7 +19,7 @@ func OrgConfigPath() string {
 		return ""
 	}
 
-	return filepath.Join(home, ".config", "qsdev", "defaults.yaml")
+	return filepath.Join(home, ".config", branding.Get().AppName, "defaults.yaml")
 }
 
 // OrgConfigFile returns the user-level defaults file path if it exists,
@@ -38,7 +40,7 @@ func ProjectConfigPath(projectRoot string) string {
 	if projectRoot == "" {
 		return ""
 	}
-	return filepath.Join(projectRoot, ".qsdev", "defaults.yaml")
+	return filepath.Join(projectRoot, "."+branding.Get().AppName, "defaults.yaml")
 }
 
 // ProjectConfigFile returns the project-level defaults file path if it exists,

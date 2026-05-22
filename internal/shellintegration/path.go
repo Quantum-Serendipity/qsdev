@@ -9,12 +9,12 @@ import (
 	"strings"
 
 	"fastcat.org/go/gdev/addons/bootstrap/textedit"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
-const (
-	pathMarkerStart = "# qsdev: PATH setup"
-	pathMarkerEnd   = "# qsdev end PATH setup"
-)
+func pathMarkerStart() string { return "# " + branding.Get().AppName + ": PATH setup" }
+func pathMarkerEnd() string   { return "# " + branding.Get().AppName + " end PATH setup" }
 
 // EnsurePath idempotently ensures that dir is on the user's PATH by editing
 // the given shell RC file. It uses marker comments to allow future updates.
@@ -32,9 +32,9 @@ func EnsurePath(dir string, shell string, rcFile string) error {
 	exportLine := pathExportLine(dir, shell)
 
 	editor := textedit.SpliceRange(
-		pathMarkerStart,
+		pathMarkerStart(),
 		exportLine,
-		pathMarkerEnd,
+		pathMarkerEnd(),
 	)
 
 	// Ensure parent directory exists (the RC file may not exist yet).

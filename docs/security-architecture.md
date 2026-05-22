@@ -41,7 +41,7 @@ New package versions are blocked for a configurable period after publication. Th
 | Infrastructure Profile | Minimum Release Age | Update Tool |
 |------------------------|--------------------:|-------------|
 | `consulting-default` | 3 days (4320 min) | Renovate |
-| `startup-fast` | 1 day | Dependabot |
+| `startup-github` | None (0 days) | Dependabot |
 | `enterprise` | 7 days | Renovate |
 
 For pnpm workspaces, age-gating is additionally enforced at install time via `minimumReleaseAge: 4320` in `pnpm-workspace.yaml`.
@@ -74,7 +74,7 @@ pnpm workspaces additionally enforce `blockExoticSubdeps` to prevent subdependen
 
 | Scanner | Profiles | Integration |
 |---------|----------|-------------|
-| OSV-Scanner | `consulting-default`, `startup-fast` | CI workflow + PreToolUse hook |
+| OSV-Scanner | `consulting-default`, `startup-github` | CI workflow + PreToolUse hook |
 | Snyk | `enterprise` | CI workflow step |
 | Socket.dev | All profiles | MCP server for behavioral analysis |
 
@@ -102,7 +102,7 @@ The generated `devenv.yaml` enforces:
 
 The generated `devenv.nix` additionally:
 
-- **Unsets 50+ credential-bearing variables** — AWS, GCP, Azure, GitHub, GitLab, Docker, database, secrets management, and generic API keys.
+- **Unsets 37 credential-bearing variables** — AWS, GCP, Azure, GitHub, GitLab, Docker, database, secrets management, and generic API keys.
 - **Sets `DEVENV_SECURITY_HARDENED=true`** — A sentinel flag verified by `devenv test`.
 - **Installs security pre-commit hooks** — ripsecrets, check-added-large-files, no-commit-to-branch, check-merge-conflict, shellcheck, statix.
 - **Installs custom hooks** — lock-file-audit and nix-secrets-check (detects hardcoded credentials in `.nix` files).
@@ -244,6 +244,7 @@ Commands that represent bypass vectors — ways to circumvent the hook-gating �
 | **minimal** | Read-only by default. Only `Read(*)` and basic build/test commands are allowed. Every write or edit requires approval. |
 | **standard** | Productive development. `Read`, `Edit`, `Write`, `git`, build/test/lint, and Nix dev commands are allowed. Package installs are hook-gated (ask). Bypass vectors are denied. |
 | **permissive** | Standard plus `make` and `docker` commands. For teams using Makefiles or Docker-based workflows. |
+| **supply-chain-only** | Minimal permissions focused exclusively on supply chain defense. Deny rules and package-guard hook without broader development tooling permissions. |
 | **custom** | Only explicitly configured allow/deny patterns. Full manual control. |
 
 Select a preset during `qsdev init` or set it in `.qsdev.yaml`:
@@ -283,7 +284,7 @@ Infrastructure profiles generate `.github/workflows/security-scan.yml` with:
 ### Generated Update Configuration
 
 - **Renovate** (`consulting-default`, `enterprise`) — `renovate.json` with `minimumReleaseAge`, `automergeType: "pr"` for patches (enterprise), and lockfile maintenance.
-- **Dependabot** (`startup-fast`) — `.github/dependabot.yml` with configured update schedules.
+- **Dependabot** (`startup-github`) — `.github/dependabot.yml` with configured update schedules.
 
 ### SBOM Generation
 

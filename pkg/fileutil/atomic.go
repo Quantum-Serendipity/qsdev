@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // WriteFileAtomic writes content to path atomically by creating a temporary
@@ -16,7 +18,7 @@ func WriteFileAtomic(path string, content []byte, mode os.FileMode) error {
 		return fmt.Errorf("create parent directories for %s: %w", path, err)
 	}
 
-	tmp, err := os.CreateTemp(dir, ".qsdev-tmp-")
+	tmp, err := os.CreateTemp(dir, branding.Get().TempPrefix)
 	if err != nil {
 		return fmt.Errorf("create temp file in %s: %w", dir, err)
 	}

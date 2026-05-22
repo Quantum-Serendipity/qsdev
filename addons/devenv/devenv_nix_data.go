@@ -14,7 +14,9 @@ import (
 
 // DevenvNixTemplateData holds all data required to render the devenv.nix template.
 type DevenvNixTemplateData struct {
-	Packages          []string                   // Base + extra packages.
+	Overlays          []string                   // Nix overlay file paths (e.g. "./nix/go-overlay.nix").
+	Packages          []string                   // Base + extra packages (rendered as pkgs.NAME).
+	PackageExprs      []string                   // Raw Nix expressions that produce derivations.
 	EnvVars           map[string]string          // Non-sensitive env vars (always includes DEVENV_SECURITY_HARDENED).
 	UnsetEnvVars      []string                   // Credential-bearing vars stripped from the shell.
 	LanguageFragments []LanguageFragment         // Pre-rendered Nix from ecosystem modules.
@@ -62,6 +64,9 @@ type CustomHookData struct {
 // then merges them with security defaults.
 func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registry) (*DevenvNixTemplateData, error) {
 	data := &DevenvNixTemplateData{}
+
+	// 0. Overlays from user configuration.
+	data.Overlays = answers.Overlays
 
 	// 1. Packages: base + extras.
 	basePkgs := defaultBasePackages()
@@ -166,6 +171,21 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 		if pp, ok := mod.(ecosystem.PackageProvider); ok {
 			cfg := ecosystem.ToModuleConfigWithProxy(lang, answers.Infrastructure)
 			data.Packages = append(data.Packages, pp.DevenvPackages(cfg)...)
+		}
+	}
+
+	// 4c. Collect packages for enabled tools that need binaries on PATH.
+	nixPkgs := defaultToolNixPackages()
+	nixExprs := defaultToolNixExprs()
+	for toolName, enabled := range answers.EnabledTools {
+		if !enabled {
+			continue
+		}
+		if nixPkg, ok := nixPkgs[toolName]; ok {
+			data.Packages = append(data.Packages, nixPkg)
+		}
+		if expr, ok := nixExprs[toolName]; ok {
+			data.PackageExprs = append(data.PackageExprs, expr)
 		}
 	}
 

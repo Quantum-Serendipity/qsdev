@@ -35,8 +35,8 @@ Happy with it? Merge the branch. Not for you? Delete the worktree.`,
 		},
 	}
 
-	cmd.Flags().StringVarP(&opts.Branch, "branch", "b", "qsdev-trial", "Branch name for the trial worktree")
-	cmd.Flags().StringVarP(&opts.Path, "path", "p", "", "Worktree path (default: ../<repo>-qsdev-trial)")
+	cmd.Flags().StringVarP(&opts.Branch, "branch", "b", branding.Get().AppName+"-trial", "Branch name for the trial worktree")
+	cmd.Flags().StringVarP(&opts.Path, "path", "p", "", "Worktree path (default: ../<repo>-"+branding.Get().AppName+"-trial)")
 	cmd.Flags().StringVar(&opts.Profile, "profile", "", "Project-type profile to apply")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Show what would be done without creating the worktree")
 
@@ -56,7 +56,7 @@ func runTrial(cmd *cobra.Command, opts TrialOptions) error {
 	repoName := filepath.Base(projectRoot)
 	worktreePath := opts.Path
 	if worktreePath == "" {
-		worktreePath = filepath.Join(filepath.Dir(projectRoot), repoName+"-qsdev-trial")
+		worktreePath = filepath.Join(filepath.Dir(projectRoot), repoName+"-"+branding.Get().AppName+"-trial")
 	}
 	if !filepath.IsAbs(worktreePath) {
 		worktreePath = filepath.Join(projectRoot, worktreePath)

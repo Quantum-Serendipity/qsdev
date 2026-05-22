@@ -136,6 +136,17 @@ func TestComputeDepScore_OnlyLow(t *testing.T) {
 	}
 }
 
+func TestComputeDepScore_NALockFileNotPenalized(t *testing.T) {
+	ecosystems := []EcosystemStatus{
+		{Name: "go", Detected: true, LockFile: "go.sum"},
+		{Name: "shell", Detected: true, LockFile: "n/a"},
+	}
+	result := ComputeDepScore(ecosystems)
+	if result.Score != 100.0 {
+		t.Errorf("n/a lock file should not deduct: got %f, want 100.0", result.Score)
+	}
+}
+
 func TestComputeDepScore_EcosystemsPreserved(t *testing.T) {
 	ecosystems := []EcosystemStatus{
 		{Name: "go", Detected: true, LockFile: "valid"},

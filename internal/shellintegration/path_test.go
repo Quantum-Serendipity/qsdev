@@ -110,10 +110,10 @@ func TestEnsurePath_CreatesNewRCFile(t *testing.T) {
 	}
 
 	s := string(content)
-	if !strings.Contains(s, pathMarkerStart) {
+	if !strings.Contains(s, pathMarkerStart()) {
 		t.Error("RC file should contain start marker")
 	}
-	if !strings.Contains(s, pathMarkerEnd) {
+	if !strings.Contains(s, pathMarkerEnd()) {
 		t.Error("RC file should contain end marker")
 	}
 	if !strings.Contains(s, `export PATH="/home/user/.local/bin:$PATH"`) {
@@ -169,9 +169,9 @@ func TestEnsurePath_UpdatesExistingBlock(t *testing.T) {
 
 	// Write RC file with an existing qsdev PATH block.
 	existing := "# some config\n" +
-		pathMarkerStart + "\n" +
+		pathMarkerStart() + "\n" +
 		`export PATH="/old/path:$PATH"` + "\n" +
-		pathMarkerEnd + "\n" +
+		pathMarkerEnd() + "\n" +
 		"# more config\n"
 	if err := os.WriteFile(rcFile, []byte(existing), 0o644); err != nil {
 		t.Fatal(err)
@@ -274,4 +274,3 @@ func TestEnsurePath_CreatesParentDirs(t *testing.T) {
 		t.Errorf("RC file should have been created: %v", err)
 	}
 }
-

@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // DoUpdate downloads, verifies, and replaces the current binary with the
@@ -41,7 +43,7 @@ func DoUpdate(ctx context.Context, cfg Config, release *Release) error {
 	currentMode := currentInfo.Mode()
 
 	// Download and verify the new binary to a temp directory.
-	tmpDir, err := os.MkdirTemp("", "qsdev-update-*")
+	tmpDir, err := os.MkdirTemp("", branding.Get().AppName+"-update-*")
 	if err != nil {
 		return fmt.Errorf("creating temp dir: %w", err)
 	}

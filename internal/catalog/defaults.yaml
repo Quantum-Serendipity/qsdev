@@ -315,17 +315,20 @@ tools:
         category: ai-agent
         description: Verification skill requiring agents to validate changes against build/test/lint after implementation
         default_policy: always-on
+        toggle_field: agent_tools.postmortem_enabled
         owned_files:
             - path: .claude/skills/agent-postmortem/SKILL.md
               ownership: exclusive
             - path: CLAUDE.md
               ownership: shared
               section_id: agent-postmortem
+              section_content: "- Agent-postmortem skill is active."
     attach-guard:
         display_name: Package Install Guard
         category: security
         description: PreToolUse hook blocking unverified package installs with age-gating and vulnerability checks
         default_policy: always-on
+        toggle_field: hooks.safety_block
         owned_files:
             - path: .claude/hooks/package-guard.py
               ownership: exclusive
@@ -335,6 +338,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: attach-guard
+              section_content: "- Safety-block hooks are enabled."
     branch-naming:
         display_name: Branch Naming Convention
         category: devex
@@ -358,6 +362,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: changelog
+              section_content: "- **git-cliff** generates changelogs from conventional commits."
     commit-ticket:
         display_name: Commit Ticket Extraction
         category: devex
@@ -378,6 +383,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: commitlint
+              section_content: "- **Commitlint** enforces conventional commit message format."
     consulting-agent-codebase-explorer:
         display_name: Codebase Explorer Agent
         category: ai-agent
@@ -514,11 +520,13 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: container-security
+              section_content: "- **Container Security** scans images with Grype and signs with Cosign."
     context7:
         display_name: Context7 MCP
         category: ai-agent
         description: Context7 MCP server providing library documentation lookups for AI agents
         default_policy: always-on
+        mcp_server_name: context7
         owned_files:
             - path: .mcp.json
               ownership: shared
@@ -526,11 +534,13 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: context7
+              section_content: "- **Context7** MCP provides library documentation lookups."
     github-mcp:
         display_name: GitHub MCP
         category: ai-agent
         description: GitHub MCP server for repository and issue management by AI agents
         default_policy: always-on
+        mcp_server_name: github
         owned_files:
             - path: .mcp.json
               ownership: shared
@@ -538,11 +548,13 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: github-mcp
+              section_content: "- **GitHub MCP** enables repository and issue management."
     gitleaks:
         display_name: Gitleaks Secret Scanner
         category: security
         description: Secret detection via Gitleaks with project-specific allowlists
         default_policy: always-on
+        nix_package: gitleaks
         owned_files:
             - path: .gitleaks.toml
               ownership: exclusive
@@ -552,6 +564,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: gitleaks
+              section_content: "- **Gitleaks** scans for leaked secrets in git history and staged commits."
     license-compliance:
         display_name: License Compliance (ScanCode)
         category: security
@@ -565,6 +578,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: license-compliance
+              section_content: "- **License Compliance** checks dependencies against SPDX allowlist/blocklist policies."
     otel-config:
         display_name: OpenTelemetry Configuration
         category: infrastructure
@@ -579,6 +593,7 @@ tools:
         category: ai-agent
         description: PostgreSQL MCP server for database schema inspection and query execution by AI agents
         default_policy: opt-in
+        mcp_server_name: postgres
         owned_files:
             - path: .mcp.json
               ownership: shared
@@ -586,6 +601,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: postgres-mcp
+              section_content: "- **PostgreSQL MCP** enables database schema inspection and query execution."
     pr-labels:
         display_name: PR Auto-Labeler
         category: devex
@@ -618,6 +634,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: secretspec
+              section_content: "- **Secret Specification** declares required secrets for services and ecosystem modules."
     semble:
         display_name: Semble Semantic Code Search
         category: ai-agent
@@ -632,11 +649,13 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: semble
+              section_content: "- **Semble** semantic search available."
     semgrep:
         display_name: Semgrep SAST
         category: security
         description: Static analysis via Semgrep with ecosystem-aware rule sets
         default_policy: always-on
+        nix_expr: '(pkgs.writeShellScriptBin "semgrep" "exec -a osemgrep ''''${pkgs.semgrep-core}/bin/semgrep-core --experimental \"$@\"")'
         owned_files:
             - path: .semgrep.yml
               ownership: exclusive
@@ -646,11 +665,13 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: semgrep
+              section_content: "- **Semgrep SAST** scans code with ecosystem-aware rule sets."
     socket-dev-mcp:
         display_name: Socket.dev MCP
         category: ai-agent
         description: Socket.dev MCP server for supply chain security analysis of dependencies
         default_policy: always-on
+        mcp_server_name: socket
         owned_files:
             - path: .mcp.json
               ownership: shared
@@ -658,6 +679,7 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: socket-dev-mcp
+              section_content: "- **Socket.dev MCP** provides supply chain security analysis of dependencies."
     starship-integration:
         display_name: Starship Prompt Integration
         category: devex
@@ -674,12 +696,14 @@ tools:
         category: ai-agent
         description: Security-focused code review skills based on Trail of Bits audit methodology
         default_policy: always-on
+        skill_name: security-review
         owned_files:
             - path: .claude/skills/security-review.md
               ownership: exclusive
             - path: CLAUDE.md
               ownership: shared
               section_id: trail-of-bits-skills
+              section_content: "- Security review skills installed."
     version-sentinel:
         display_name: Version Sentinel
         category: ai-agent
@@ -693,6 +717,11 @@ tools:
             - path: CLAUDE.md
               ownership: shared
               section_id: version-sentinel
+              section_content: |-
+                - **Version-Sentinel** guards dependency changes in: {{ join ", " .Covered }}.
+                {{- if .Uncovered }}
+                - Version-Sentinel does NOT cover: {{ join ", " .Uncovered }}. Review these manually.
+                {{- end }}
 security_hooks:
     - ripsecrets
     - check-added-large-files

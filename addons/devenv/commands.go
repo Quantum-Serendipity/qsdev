@@ -11,13 +11,13 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
+	"github.com/Quantum-Serendipity/qsdev/internal/profile"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // register all modules
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
-	"github.com/Quantum-Serendipity/qsdev/internal/profile"
-	"github.com/Quantum-Serendipity/qsdev/internal/state"
-	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -49,9 +49,11 @@ func devenvCmd() *cobra.Command {
 		addServiceCmd(),
 		addLanguageCmd(),
 		addPackageCmd(),
+		addOverlayCmd(),
 		removeServiceCmd(),
 		removeLanguageCmd(),
 		removePackageCmd(),
+		removeOverlayCmd(),
 		doctorCmd(),
 		setupCmd(),
 		changelogCmd(),
@@ -62,14 +64,14 @@ func devenvCmd() *cobra.Command {
 
 func initCmd() *cobra.Command {
 	var (
-		langs              []string
-		services           []string
-		direnv             bool
-		yes                bool
-		force              bool
-		dryRun             bool
-		nixHardeningGuide  bool
-		profileName        string
+		langs             []string
+		services          []string
+		direnv            bool
+		yes               bool
+		force             bool
+		dryRun            bool
+		nixHardeningGuide bool
+		profileName       string
 	)
 
 	cmd := &cobra.Command{
@@ -587,6 +589,158 @@ func removePackageCmd() *cobra.Command {
 			}
 
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed package(s): %s\n%s\n", strings.Join(removed, ", "), result.Summary())
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Run 'direnv allow' or re-enter 'devenv shell' to activate.")
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
+
+	return cmd
+}
+
+func addOverlayCmd() *cobra.Command {
+	var dryRun bool
+
+	cmd := &cobra.Command{
+		Use:   "add-overlay <path>",
+		Short: "Add a Nix overlay to the development environment",
+		Long:  "Register a Nix overlay file (e.g. ./nix/go-overlay.nix) so it persists across qsdev updates.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectRoot, err := cmdutil.ProjectRoot()
+			if err != nil {
+				return err
+			}
+
+			overlayPath := args[0]
+
+			absOverlay := overlayPath
+			if !filepath.IsAbs(overlayPath) {
+				absOverlay = filepath.Join(projectRoot, overlayPath)
+			}
+			if _, err := os.Stat(absOverlay); err != nil {
+				return fmt.Errorf("overlay file not found: %s", overlayPath)
+			}
+
+			answers, err := loadAnswers(projectRoot)
+			if err != nil {
+				return err
+			}
+
+			for _, existing := range answers.Overlays {
+				if existing == overlayPath {
+					return fmt.Errorf("overlay %q is already configured", overlayPath)
+				}
+			}
+			answers.Overlays = append(answers.Overlays, overlayPath)
+
+			registry := ecosystem.DefaultRegistry()
+			gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
+			files, err := gen.Generate(answers)
+			if err != nil {
+				return fmt.Errorf("generating files: %w", err)
+			}
+
+			if dryRun {
+				preview := generate.PreviewFiles(files, nil, projectRoot)
+				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
+				return nil
+			}
+
+			result, err := generate.WriteFiles(files, generate.PipelineOptions{
+				ProjectRoot: projectRoot,
+			})
+			if err != nil {
+				return fmt.Errorf("writing files: %w", err)
+			}
+
+			successfulFiles := result.SuccessfulFiles(files)
+			genState := state.RecordFiles(successfulFiles)
+			stateFile := filepath.Join(projectRoot, statePath())
+			if err := state.SaveStateToFile(stateFile, genState); err != nil {
+				return fmt.Errorf("saving state: %w", err)
+			}
+			if err := saveAnswers(projectRoot, answers); err != nil {
+				return fmt.Errorf("saving answers: %w", err)
+			}
+
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added overlay: %s\n%s\n", overlayPath, result.Summary())
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Run 'direnv allow' or re-enter 'devenv shell' to activate.")
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
+
+	return cmd
+}
+
+func removeOverlayCmd() *cobra.Command {
+	var dryRun bool
+
+	cmd := &cobra.Command{
+		Use:   "remove-overlay <path>",
+		Short: "Remove a Nix overlay from the development environment",
+		Long:  "Unregister a Nix overlay file so it is no longer included in devenv.nix.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectRoot, err := cmdutil.ProjectRoot()
+			if err != nil {
+				return err
+			}
+
+			answers, err := loadAnswers(projectRoot)
+			if err != nil {
+				return err
+			}
+
+			overlayPath := args[0]
+			found := false
+			var kept []string
+			for _, o := range answers.Overlays {
+				if o == overlayPath {
+					found = true
+				} else {
+					kept = append(kept, o)
+				}
+			}
+			if !found {
+				return fmt.Errorf("overlay %q is not configured", overlayPath)
+			}
+			answers.Overlays = kept
+
+			registry := ecosystem.DefaultRegistry()
+			gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
+			files, err := gen.Generate(answers)
+			if err != nil {
+				return fmt.Errorf("generating files: %w", err)
+			}
+
+			if dryRun {
+				preview := generate.PreviewFiles(files, nil, projectRoot)
+				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
+				return nil
+			}
+
+			result, err := generate.WriteFiles(files, generate.PipelineOptions{
+				ProjectRoot: projectRoot,
+			})
+			if err != nil {
+				return fmt.Errorf("writing files: %w", err)
+			}
+
+			successfulFiles := result.SuccessfulFiles(files)
+			genState := state.RecordFiles(successfulFiles)
+			stateFile := filepath.Join(projectRoot, statePath())
+			if err := state.SaveStateToFile(stateFile, genState); err != nil {
+				return fmt.Errorf("saving state: %w", err)
+			}
+			if err := saveAnswers(projectRoot, answers); err != nil {
+				return fmt.Errorf("saving answers: %w", err)
+			}
+
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed overlay: %s\n%s\n", overlayPath, result.Summary())
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Run 'direnv allow' or re-enter 'devenv shell' to activate.")
 			return nil
 		},

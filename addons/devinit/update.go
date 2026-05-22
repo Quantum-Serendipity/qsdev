@@ -17,6 +17,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/update"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -75,6 +76,9 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	// 2. Refresh detection.
 	answers.Detected = detect.Detect(projectRoot)
 	answers.ProjectRoot = projectRoot
+
+	// 2b. Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
+	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
 
 	// 3. Load stored state.
 	stateFile := filepath.Join(projectRoot, stateFilePath())
@@ -154,6 +158,7 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 		}
 	}
 	newState.QsdevVersion = version.Info().Version
+	newState.EnabledTools = answers.EnabledTools
 	// Preserve state entries for files we didn't touch.
 	for path, fs := range existingState.Files {
 		if _, written := newState.Files[path]; !written {

@@ -37,9 +37,9 @@ func TestEvaluateConformance_BaselinePass(t *testing.T) {
 	}
 	genState := types.GeneratedState{
 		Files: map[string]types.FileState{
-			"CLAUDE.md":                   {},
-			".claude/settings.json":       {},
-			".pre-commit-config.yaml":     {},
+			"CLAUDE.md":               {},
+			".claude/settings.json":   {},
+			".pre-commit-config.yaml": {},
 		},
 	}
 
@@ -124,9 +124,9 @@ func TestEvaluateConformance_BaselineFail_CriticalVulns(t *testing.T) {
 	enabledTools := map[string]bool{}
 	genState := types.GeneratedState{
 		Files: map[string]types.FileState{
-			"CLAUDE.md":                {},
-			".claude/settings.json":    {},
-			".pre-commit-config.yaml":  {},
+			"CLAUDE.md":               {},
+			".claude/settings.json":   {},
+			".pre-commit-config.yaml": {},
 		},
 	}
 
@@ -160,9 +160,9 @@ func TestEvaluateConformance_BaselineFail_MissingLockFile(t *testing.T) {
 	enabledTools := map[string]bool{}
 	genState := types.GeneratedState{
 		Files: map[string]types.FileState{
-			"CLAUDE.md":                {},
-			".claude/settings.json":    {},
-			".pre-commit-config.yaml":  {},
+			"CLAUDE.md":               {},
+			".claude/settings.json":   {},
+			".pre-commit-config.yaml": {},
 		},
 	}
 
@@ -194,9 +194,9 @@ func TestEvaluateConformance_BaselineFail_HighLayerDisabled(t *testing.T) {
 	enabledTools := map[string]bool{}
 	genState := types.GeneratedState{
 		Files: map[string]types.FileState{
-			"CLAUDE.md":                {},
-			".claude/settings.json":    {},
-			".pre-commit-config.yaml":  {},
+			"CLAUDE.md":               {},
+			".claude/settings.json":   {},
+			".pre-commit-config.yaml": {},
 		},
 	}
 
@@ -233,10 +233,10 @@ func TestEvaluateConformance_EnhancedPass(t *testing.T) {
 	}
 	genState := types.GeneratedState{
 		Files: map[string]types.FileState{
-			"CLAUDE.md":                    {},
-			".claude/settings.json":        {},
-			".pre-commit-config.yaml":      {},
-			".github/workflows/ci.yml":     {},
+			"CLAUDE.md":                {},
+			".claude/settings.json":    {},
+			".pre-commit-config.yaml":  {},
+			".github/workflows/ci.yml": {},
 		},
 	}
 
@@ -286,9 +286,9 @@ func TestEvaluateConformance_EnhancedFail_HighVulns(t *testing.T) {
 	}
 	genState := types.GeneratedState{
 		Files: map[string]types.FileState{
-			"CLAUDE.md":                {},
-			".claude/settings.json":    {},
-			".pre-commit-config.yaml":  {},
+			"CLAUDE.md":               {},
+			".claude/settings.json":   {},
+			".pre-commit-config.yaml": {},
 		},
 	}
 
@@ -327,9 +327,9 @@ func TestEvaluateConformance_EnhancedFail_NoSemgrep(t *testing.T) {
 	}
 	genState := types.GeneratedState{
 		Files: map[string]types.FileState{
-			"CLAUDE.md":                {},
-			".claude/settings.json":    {},
-			".pre-commit-config.yaml":  {},
+			"CLAUDE.md":               {},
+			".claude/settings.json":   {},
+			".pre-commit-config.yaml": {},
 		},
 	}
 
@@ -366,9 +366,9 @@ func TestEvaluateConformance_EnhancedRequiresBaseline(t *testing.T) {
 	}
 	genState := types.GeneratedState{
 		Files: map[string]types.FileState{
-			"CLAUDE.md":                {},
-			".claude/settings.json":    {},
-			".pre-commit-config.yaml":  {},
+			"CLAUDE.md":               {},
+			".claude/settings.json":   {},
+			".pre-commit-config.yaml": {},
 		},
 	}
 
@@ -489,10 +489,10 @@ func TestEvaluateConformance_EnhancedPass_CIWorkflows(t *testing.T) {
 	}
 	genState := types.GeneratedState{
 		Files: map[string]types.FileState{
-			"CLAUDE.md":                    {},
-			".claude/settings.json":        {},
-			".pre-commit-config.yaml":      {},
-			".github/workflows/ci.yml":     {},
+			"CLAUDE.md":                {},
+			".claude/settings.json":    {},
+			".pre-commit-config.yaml":  {},
+			".github/workflows/ci.yml": {},
 		},
 	}
 
@@ -537,9 +537,9 @@ func TestEvaluateConformance_EnhancedFail_NoCIWorkflows(t *testing.T) {
 	}
 	genState := types.GeneratedState{
 		Files: map[string]types.FileState{
-			"CLAUDE.md":                {},
-			".claude/settings.json":    {},
-			".pre-commit-config.yaml":  {},
+			"CLAUDE.md":               {},
+			".claude/settings.json":   {},
+			".pre-commit-config.yaml": {},
 		},
 	}
 
@@ -561,4 +561,41 @@ func TestEvaluateConformance_EnhancedFail_NoCIWorkflows(t *testing.T) {
 	if result.Enhanced.Pass {
 		t.Error("expected enhanced to fail without CI workflows")
 	}
+}
+
+func TestEvaluateConformance_BaselinePass_NALockFile(t *testing.T) {
+	defense := DefenseCoverage{
+		Layers: []DefenseLayer{
+			{Name: "pretooluse-hooks", Weight: WeightCritical, Status: LayerEnabled},
+			{Name: "age-gating", Weight: WeightHigh, Status: LayerEnabled},
+			{Name: "install-script-blocking", Weight: WeightHigh, Status: LayerEnabled},
+			{Name: "lock-file-enforcement", Weight: WeightHigh, Status: LayerEnabled},
+			{Name: "vulnerability-scanning", Weight: WeightHigh, Status: LayerEnabled},
+		},
+	}
+	deps := DependencyHealth{
+		Ecosystems: []EcosystemStatus{
+			{Name: "go", Detected: true, LockFile: "go.sum"},
+			{Name: "shell", Detected: true, LockFile: "n/a"},
+		},
+	}
+	genState := types.GeneratedState{
+		Files: map[string]types.FileState{
+			"CLAUDE.md":               {},
+			".claude/settings.json":   {},
+			".pre-commit-config.yaml": {},
+		},
+	}
+
+	result := EvaluateConformance(defense, deps, map[string]bool{}, genState)
+
+	for _, c := range result.Baseline.Checks {
+		if c.Name == "lock-files-present" {
+			if !c.Pass {
+				t.Error("lock-files-present should pass when only n/a lockfiles are non-missing")
+			}
+			return
+		}
+	}
+	t.Error("lock-files-present check not found")
 }

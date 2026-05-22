@@ -126,9 +126,8 @@ The installer handles all dependencies automatically — no manual setup require
 | Ecosystems | Coverage |
 |-----------|----------|
 | Go, JavaScript/TypeScript, Python, Rust, Java/Kotlin, .NET, Docker, Terraform | Full supply-chain hardening |
-| PHP, Ruby, Scala, C/C++, Helm, Ansible | Security configs + deny rules |
-| Shell, Elixir, Dart, Swift, Haskell, Clojure, Bazel, Nix | Packages + deny rules |
-| Perl, R, Lua, Zig, PowerShell | Packages only |
+| PHP, Ruby, Scala, C/C++, Shell, Helm, Ansible | Security configs + deny rules |
+| Elixir, Dart, Swift, Haskell, Clojure, Bazel, Nix, Perl, R, Lua, Zig, PowerShell | Packages + deny rules |
 
 ## Integrations
 

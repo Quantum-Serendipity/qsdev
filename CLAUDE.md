@@ -64,12 +64,30 @@ golangci-lint run
 - Never commit secrets, tokens, or credentials. The pre-commit hook `ripsecrets` blocks accidental leaks.
 - Lock files must always be committed.
 - Package managers: go modules.
-<!-- qsdev:attach-guard -->
-- Safety-block hooks are enabled.
-<!-- /qsdev:attach-guard -->
 <!-- qsdev:agent-postmortem -->
 - Agent-postmortem skill is active.
 <!-- /qsdev:agent-postmortem -->
+<!-- qsdev:attach-guard -->
+- Safety-block hooks are enabled.
+<!-- /qsdev:attach-guard -->
+<!-- qsdev:context7 -->
+- **Context7** MCP provides library documentation lookups.
+<!-- /qsdev:context7 -->
+<!-- qsdev:github-mcp -->
+- **GitHub MCP** enables repository and issue management.
+<!-- /qsdev:github-mcp -->
+<!-- qsdev:gitleaks -->
+- **Gitleaks** scans for leaked secrets in git history and staged commits.
+<!-- /qsdev:gitleaks -->
+<!-- qsdev:secretspec -->
+- **Secret Specification** declares required secrets for services and ecosystem modules.
+<!-- /qsdev:secretspec -->
+<!-- qsdev:semgrep -->
+- **Semgrep SAST** scans code with ecosystem-aware rule sets.
+<!-- /qsdev:semgrep -->
+<!-- qsdev:socket-dev-mcp -->
+- **Socket.dev MCP** provides supply chain security analysis of dependencies.
+<!-- /qsdev:socket-dev-mcp -->
 <!-- qsdev:version-sentinel -->
 - **Version-Sentinel** guards dependency changes in: .
 - Version-Sentinel does NOT cover: go.mod. Review these manually.

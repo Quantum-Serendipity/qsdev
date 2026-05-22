@@ -47,13 +47,13 @@ func BuildPlan(classified []ClassifiedFile, opts TeardownOptions) *TeardownPlan 
 			} else {
 				plan.Remove = append(plan.Remove, FileAction{
 					Path:   cf.Path,
-					Reason: "exclusively owned by qsdev",
+					Reason: "exclusively owned by " + branding.Get().AppName,
 				})
 			}
 		case toolreg.Shared:
 			plan.Clean = append(plan.Clean, FileAction{
 				Path:   cf.Path,
-				Reason: "surgically remove qsdev sections",
+				Reason: "surgically remove " + branding.Get().AppName + " sections",
 			})
 		}
 	}
@@ -62,7 +62,7 @@ func BuildPlan(classified []ClassifiedFile, opts TeardownOptions) *TeardownPlan 
 	for _, sf := range stateFilesForTeardown() {
 		plan.Remove = append(plan.Remove, FileAction{
 			Path:   sf,
-			Reason: "qsdev state file",
+			Reason: branding.Get().AppName + " state file",
 		})
 	}
 

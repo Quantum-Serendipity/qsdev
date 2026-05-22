@@ -2,9 +2,12 @@ package posture
 
 import (
 	"fmt"
+	"log/slog"
 	"path/filepath"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -86,6 +89,20 @@ func LoadAllStates(projectRoot string) *MergedState {
 
 		for k, v := range st.EnabledTools {
 			merged.EnabledTools[k] = v
+		}
+	}
+
+	// Fallback: if state files were loaded but none contributed EnabledTools,
+	// try the primary answers file and run the standard inference logic.
+	// This handles projects initialized before EnabledTools was persisted to state.
+	if len(merged.EnabledTools) == 0 && len(merged.Sources) > 0 {
+		a, err := answers.LoadPrimary(projectRoot)
+		if err == nil {
+			toolreg.MergeInferredTools(&a, toolreg.DefaultRegistry())
+			for k, v := range a.EnabledTools {
+				merged.EnabledTools[k] = v
+			}
+			slog.Debug("enabled tools loaded from answers fallback", "count", len(merged.EnabledTools))
 		}
 	}
 

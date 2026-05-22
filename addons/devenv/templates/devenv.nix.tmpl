@@ -1,7 +1,20 @@
 { pkgs, lib, config, ... }:
 {
+  # Local customizations (not managed by qsdev). Create devenv.local.nix to
+  # add packages, overlays, env vars, or any other devenv config for this machine.
+  imports = lib.optional (builtins.pathExists ./devenv.local.nix) ./devenv.local.nix;
+{{- if .Overlays }}
+
+  # Nixpkgs overlays
+  overlays = [
+{{- range .Overlays }}
+    (import {{ . }})
+{{- end }}
+  ];
+{{- end }}
+
   # Base packages
-  packages = {{ nixPkgList .Packages }};
+  packages = {{ nixPkgList .Packages }}{{ range .PackageExprs }} ++ [ {{ . }} ]{{ end }};
   env = {
 {{- range $key, $val := .EnvVars}}
     {{ $key }} = {{ nixString $val }};

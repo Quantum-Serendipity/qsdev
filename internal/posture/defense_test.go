@@ -316,11 +316,11 @@ func TestAssessDefenseLayers_LayerCount(t *testing.T) {
 func TestAssessDefenseLayers_AgeGating(t *testing.T) {
 	detected := types.DetectedProject{}
 
-	t.Run("enabled with config files", func(t *testing.T) {
+	t.Run("enabled with package-guard", func(t *testing.T) {
 		enabledTools := map[string]bool{"attach-guard": true}
 		genState := types.GeneratedState{
 			Files: map[string]types.FileState{
-				"age-gate-npm.yaml": {},
+				".claude/hooks/package-guard.py": {},
 			},
 		}
 		result := AssessDefenseLayers(enabledTools, detected, genState, 3)
@@ -339,7 +339,7 @@ func TestAssessDefenseLayers_AgeGating(t *testing.T) {
 		enabledTools := map[string]bool{}
 		genState := types.GeneratedState{
 			Files: map[string]types.FileState{
-				"age-gate-npm.yaml": {},
+				".claude/hooks/package-guard.py": {},
 			},
 		}
 		result := AssessDefenseLayers(enabledTools, detected, genState, 3)

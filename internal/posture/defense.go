@@ -30,7 +30,7 @@ func AssessDefenseLayers(enabledTools map[string]bool, detected types.DetectedPr
 		assessVulnScanning(enabledTools, genState),
 		assessNixHardening(genState),
 		assessSAST(enabledTools, genState),
-		assessSecretsScanning(enabledTools),
+		assessSecretsScanning(enabledTools, genState),
 		assessContainerSecurity(enabledTools, detected),
 		assessLicenseCompliance(enabledTools),
 	}
@@ -92,27 +92,21 @@ func assessAgeGating(enabledTools map[string]bool, genState types.GeneratedState
 		MinTier: 2,
 	}
 
-	// Age-gating is configured when the attach-guard is enabled and there are
-	// per-ecosystem config files (age-gate-*.yaml) in the generated state.
 	if !enabledTools["attach-guard"] {
 		layer.Status = LayerDisabled
 		layer.Reason = "attach-guard not enabled; age-gating requires it"
 		return layer
 	}
 
-	count := 0
-	for path := range genState.Files {
-		if strings.Contains(path, "age-gate") || strings.Contains(path, "age_gate") {
-			count++
-		}
-	}
-
-	if count > 0 {
+	// Age-gating is built into package-guard.py (MIN_AGE_DAYS). When the
+	// guard script is present and attach-guard is enabled, age-gating is active.
+	_, hasPackageGuard := genState.Files[".claude/hooks/package-guard.py"]
+	if hasPackageGuard {
 		layer.Status = LayerEnabled
-		layer.Reason = "age-gating configuration files present"
+		layer.Reason = "package-guard.py enforces publication age checks"
 	} else {
 		layer.Status = LayerDisabled
-		layer.Reason = "no age-gating configuration files found in state"
+		layer.Reason = "package-guard.py not found in generated state"
 	}
 	return layer
 }
@@ -238,7 +232,7 @@ func assessSAST(enabledTools map[string]bool, genState types.GeneratedState) Def
 	return layer
 }
 
-func assessSecretsScanning(enabledTools map[string]bool) DefenseLayer {
+func assessSecretsScanning(enabledTools map[string]bool, genState types.GeneratedState) DefenseLayer {
 	layer := DefenseLayer{
 		Name:    "secrets-scanning",
 		Weight:  WeightMedium,
@@ -247,6 +241,10 @@ func assessSecretsScanning(enabledTools map[string]bool) DefenseLayer {
 
 	gitleaksEnabled := enabledTools["gitleaks"]
 	ripsecrets := enabledTools["ripsecrets"]
+	if !ripsecrets {
+		_, hasPreCommit := genState.Files[".pre-commit-config.yaml"]
+		ripsecrets = hasPreCommit
+	}
 
 	if gitleaksEnabled && ripsecrets {
 		layer.Status = LayerEnabled

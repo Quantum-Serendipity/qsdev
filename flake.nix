@@ -34,10 +34,13 @@
         };
         go = pkgs.go_1_26;
 
+        baseVersion = builtins.replaceStrings [ "\n" " " ] [ "" "" ]
+          (builtins.readFile ./VERSION);
+
         version =
           if (self ? shortRev)
-          then "0.6.0+${self.shortRev}"
-          else "0.6.0+dirty";
+          then "${baseVersion}+${self.shortRev}"
+          else "${baseVersion}+dirty";
 
         commit = self.shortRev or "dirty";
         date = self.lastModifiedDate or "unknown";

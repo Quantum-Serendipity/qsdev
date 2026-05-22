@@ -95,14 +95,19 @@ jobs:
           - os: windows-latest
             script: pwsh scripts/install.ps1 -DryRun
     runs-on: ${{ matrix.os }}
-    env:
-      QSDEV_VERSION: "0.7.0"
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Read VERSION
+        id: version
+        shell: bash
+        run: echo "value=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+
       - name: Validate install script (dry-run)
         run: ${{ matrix.script }}
+        env:
+          QSDEV_VERSION: ${{ steps.version.outputs.value }}
 
   snapshot:
     runs-on: ubuntu-latest

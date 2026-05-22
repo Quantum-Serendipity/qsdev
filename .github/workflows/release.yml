@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  actions: read
   id-token: write
   attestations: write
 
@@ -19,7 +18,7 @@ jobs:
       id-token: write
       attestations: write
     outputs:
-      hashes: ${{ steps.hash.outputs.hashes }}
+      artifacts: ${{ steps.artifacts.outputs.paths }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -58,20 +57,13 @@ jobs:
           SCOOP_TAP_GITHUB_TOKEN: ${{ secrets.SCOOP_TAP_GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
 
-      - name: Generate subject hashes for SLSA provenance
-        id: hash
+      - name: Collect release artifacts
+        id: artifacts
         run: |
           cd dist
-          echo "hashes=$(sha256sum *.tar.gz *.zip *.deb *.rpm *.apk 2>/dev/null | base64 -w0)" >> "$GITHUB_OUTPUT"
+          echo "paths=$(ls *.tar.gz *.zip *.deb *.rpm *.apk 2>/dev/null | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
 
-  provenance:
-    needs: release
-    permissions:
-      actions: read
-      id-token: write
-      contents: write
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
-    with:
-      base64-subjects: "${{ needs.release.outputs.hashes }}"
-      upload-assets: true
-      private-repository: false
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: dist/*.tar.gz, dist/*.zip, dist/*.deb, dist/*.rpm, dist/*.apk

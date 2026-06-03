@@ -32,9 +32,9 @@ func TestCIFragmentProducer_GitHubActions(t *testing.T) {
 	p := &generate.CIFragmentProducer{
 		Registry: reg,
 		Config: cigeneration.GenerateConfig{
-			Platform:      cigeneration.PlatformGitHubActions,
-			HasDocker:     false,
-			HasClaudeCode: false,
+			Platform:           cigeneration.PlatformGitHubActions,
+			HasContainerModule: false,
+			HasClaudeCode:      false,
 		},
 	}
 
@@ -92,9 +92,9 @@ func TestCIFragmentProducer_PreservesFileMetadata(t *testing.T) {
 	p := &generate.CIFragmentProducer{
 		Registry: reg,
 		Config: cigeneration.GenerateConfig{
-			Platform:      cigeneration.PlatformGitHubActions,
-			HasDocker:     false,
-			HasClaudeCode: false,
+			Platform:           cigeneration.PlatformGitHubActions,
+			HasContainerModule: false,
+			HasClaudeCode:      false,
 		},
 	}
 
@@ -130,9 +130,9 @@ func TestCIFragmentProducer_GitLabCI(t *testing.T) {
 	p := &generate.CIFragmentProducer{
 		Registry: reg,
 		Config: cigeneration.GenerateConfig{
-			Platform:      cigeneration.PlatformGitLabCI,
-			HasDocker:     false,
-			HasClaudeCode: false,
+			Platform:           cigeneration.PlatformGitLabCI,
+			HasContainerModule: false,
+			HasClaudeCode:      false,
 		},
 	}
 

@@ -143,3 +143,43 @@ func TestFormatMigrationReport_ColorCodesAbsent(t *testing.T) {
 		t.Error("found ANSI escape codes when useColor=false")
 	}
 }
+
+func TestFormatMigrationReport_EmptyReport(t *testing.T) {
+	t.Parallel()
+	report := &MigrationReport{
+		SourceRuntime: RuntimeDocker,
+		TargetRuntime: RuntimePodmanRootless,
+		RuntimeInfo:   &RuntimeInfo{Active: RuntimeNone},
+	}
+
+	var buf bytes.Buffer
+	if err := FormatMigrationReport(report, FormatText, &buf, false); err != nil {
+		t.Fatalf("FormatMigrationReport(empty) error = %v", err)
+	}
+	text := buf.String()
+	if !strings.Contains(text, "No compose files found") {
+		t.Errorf("expected 'No compose files found' in output:\n%s", text)
+	}
+}
+
+func TestFormatMigrationReport_JSONNilRuntimeInfo(t *testing.T) {
+	t.Parallel()
+	report := &MigrationReport{
+		SourceRuntime: RuntimeDocker,
+		TargetRuntime: RuntimePodmanRootless,
+		ComposeFiles:  []string{"compose.yml"},
+	}
+
+	var buf bytes.Buffer
+	if err := FormatMigrationReport(report, FormatJSON, &buf, false); err != nil {
+		t.Fatalf("FormatMigrationReport(nil runtime) error = %v", err)
+	}
+
+	var decoded MigrationReport
+	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+		t.Fatalf("JSON unmarshal error: %v", err)
+	}
+	if decoded.RuntimeInfo != nil {
+		t.Error("expected nil RuntimeInfo in decoded report")
+	}
+}

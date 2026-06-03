@@ -30,11 +30,10 @@ func (p *ExecProber) LookPath(name string) (string, error) {
 
 func (p *ExecProber) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
 	err := cmd.Run()
-	return buf.Bytes(), err
+	return stdout.Bytes(), err
 }
 
 func (p *ExecProber) ReadFile(path string) ([]byte, error) {

@@ -103,8 +103,11 @@ func BuiltinSkillDefinitions() []SkillDefinition {
 		{Name: "migration-plan", AllowedTools: []string{"Bash(git *)", "Bash(find *)", "Bash(wc *)"}},
 		// Container runtime migration skill (17.3)
 		{
-			Name:         "container-migrate",
-			AllowedTools: []string{"Bash(qsdev container migrate *)", "Bash(qsdev container detect)"},
+			Name: "container-migrate",
+			AllowedTools: []string{
+				fmt.Sprintf("Bash(%s container migrate *)", app),
+				fmt.Sprintf("Bash(%s container detect)", app),
+			},
 		},
 	}
 }

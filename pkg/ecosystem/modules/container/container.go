@@ -36,7 +36,7 @@ func (m *Module) DisplayName() string { return "Containers" }
 // Tier returns the implementation priority tier.
 func (m *Module) Tier() int { return 1 }
 
-// Detect scans projectRoot for Docker-related files and returns a
+// Detect scans projectRoot for container-related files and returns a
 // DetectionResult with accumulated evidence.
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	var (
@@ -216,7 +216,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 	}
 }
 
-// PreCommitHooks returns pre-commit hook definitions for the Docker ecosystem.
+// PreCommitHooks returns pre-commit hook definitions for the container ecosystem.
 func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	return []ecosystem.HookConfig{
 		{
@@ -298,13 +298,12 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 	}
 }
 
-// PackageManagers returns metadata about Docker's package management.
-// Docker is not a package manager, so this returns nil.
+// PackageManagers returns nil — containers are not a package manager.
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return nil
 }
 
-// WizardFields returns additional wizard form fields for Docker configuration.
+// WizardFields returns additional wizard form fields for container configuration.
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return []ecosystem.WizardField{
 		{
@@ -331,7 +330,7 @@ func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.V
 	}
 }
 
-// ManifestFiles returns manifest file metadata for the Docker ecosystem.
+// ManifestFiles returns manifest file metadata for the container ecosystem.
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	return nil
 }

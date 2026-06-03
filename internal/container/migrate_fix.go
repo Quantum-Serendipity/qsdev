@@ -119,9 +119,10 @@ func applyPortRemap(doc *yaml.Node, serviceName string) error {
 	}
 
 	for _, item := range portsNode.Content {
-		if item.Kind == yaml.ScalarNode {
+		switch item.Kind {
+		case yaml.ScalarNode:
 			item.Value = remapPort(item.Value)
-		} else if item.Kind == yaml.MappingNode {
+		case yaml.MappingNode:
 			remapMappingPort(item)
 		}
 	}

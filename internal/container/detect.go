@@ -163,12 +163,12 @@ func DetectCapabilities(ctx context.Context, prober Prober, info *RuntimeInfo) (
 		caps.CgroupsV2 = true
 	}
 
-	// Privileged port threshold.
+	// Privileged port threshold: true when rootless can bind traditionally
+	// privileged ports (ip_unprivileged_port_start < 1024).
 	if data, err := prober.ReadFile("/proc/sys/net/ipv4/ip_unprivileged_port_start"); err == nil {
 		threshold := strings.TrimSpace(string(data))
-		if n, parseErr := strconv.Atoi(threshold); parseErr == nil && n > 0 {
-			// Default is 1024; if lowered (e.g., to 80), rootless can bind those ports.
-			caps.PrivilegedPorts = n <= 1024
+		if n, parseErr := strconv.Atoi(threshold); parseErr == nil {
+			caps.PrivilegedPorts = n < 1024
 		}
 	}
 

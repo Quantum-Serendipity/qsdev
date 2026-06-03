@@ -313,9 +313,9 @@ func TestDetectCapabilities_PrivilegedPorts(t *testing.T) {
 		threshold string
 		want      bool
 	}{
-		{"default 1024", "1024\n", true},
+		{"default 1024", "1024\n", false},
 		{"lowered to 80", "80\n", true},
-		{"set to 0", "0\n", false},
+		{"set to 0", "0\n", true},
 		{"raised to 2048", "2048\n", false},
 	}
 	for _, tt := range tests {

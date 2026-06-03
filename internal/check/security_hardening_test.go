@@ -97,6 +97,7 @@ func TestCheckSecurityHardening_NpmrcPresent(t *testing.T) {
 
 	if npmrcResult == nil {
 		t.Fatal("expected npmrc_exists result")
+		return
 	}
 	if npmrcResult.Status != StatusPass {
 		t.Errorf("npmrc_exists.Status = %s, want %s", npmrcResult.Status, StatusPass)
@@ -132,6 +133,7 @@ func TestCheckSecurityHardening_NpmrcMissing(t *testing.T) {
 
 	if npmrcResult == nil {
 		t.Fatal("expected npmrc_exists result")
+		return
 	}
 	if npmrcResult.Status != StatusFail {
 		t.Errorf("npmrc_exists.Status = %s, want %s", npmrcResult.Status, StatusFail)
@@ -170,6 +172,7 @@ func TestCheckSecurityHardening_PythonConfigPresent(t *testing.T) {
 
 	if pyResult == nil {
 		t.Fatal("expected python_config_exists result")
+		return
 	}
 	if pyResult.Status != StatusPass {
 		t.Errorf("python_config_exists.Status = %s, want %s", pyResult.Status, StatusPass)

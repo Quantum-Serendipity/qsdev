@@ -12,6 +12,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "case \"$TOOL_INPUT_FILE_PATH\" in *.go) gofmt -w \"$TOOL_INPUT_FILE_PATH\" 2>/dev/null ;; esac; exit 0",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   },
   "permissions": {

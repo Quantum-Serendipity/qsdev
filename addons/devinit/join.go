@@ -12,13 +12,11 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
-	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -93,29 +91,17 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	// 5b. Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
 	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
 
-	// 6. Generate files.
-	registry := ecosystem.DefaultRegistry()
-	var allFiles []types.GeneratedFile
-	devenvGenerated := false
-	claudeGenerated := false
-
-	gen := devenv.NewDevenvGenerator(registry, devenv.WithProfileRegistry(profile.DefaultProfileRegistry()))
-	files, err := gen.Generate(answers)
+	// 6. Generate files via fragment accumulation.
+	accResult, err := runAccumulator(answers, struct {
+		ClaudeOnly bool
+		DevenvOnly bool
+	}{})
 	if err != nil {
-		return fmt.Errorf("generating devenv files: %w", err)
+		return fmt.Errorf("generating files: %w", err)
 	}
-	allFiles = append(allFiles, files...)
-	devenvGenerated = len(files) > 0
-
-	if answers.ClaudeCode {
-		cgen := claudecode.NewClaudeCodeGenerator(registry, claudecode.CurrentConfig())
-		cfiles, err := cgen.Generate(answers)
-		if err != nil {
-			return fmt.Errorf("generating Claude Code files: %w", err)
-		}
-		allFiles = append(allFiles, cfiles...)
-		claudeGenerated = len(cfiles) > 0
-	}
+	allFiles := accResult.allFiles
+	devenvGenerated := accResult.devenvGenerated
+	claudeGenerated := accResult.claudeGenerated
 
 	// 7. Generate local config template (only if it doesn't exist).
 	localCfg := branding.Get().LocalConfig
@@ -154,6 +140,7 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	genState := state.RecordFiles(successfulFiles)
 	genState.QsdevVersion = version.Info().Version
 	genState.EnabledTools = answers.EnabledTools
+	genState.Fragments = state.RecordFragments(accResult.fragments)
 	stateFile := filepath.Join(projectRoot, stateFilePath())
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)

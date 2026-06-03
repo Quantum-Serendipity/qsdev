@@ -355,6 +355,7 @@ func TestSecurityConfigs_NugetConfig(t *testing.T) {
 	}
 	if nugetConfig == nil {
 		t.Fatal("no nuget.config in SecurityConfigs output")
+		return
 	}
 
 	content := string(nugetConfig.Content)
@@ -427,6 +428,7 @@ func TestSecurityConfigs_NugetConfig_ValidXMLStructure(t *testing.T) {
 	}
 	if nugetConfig == nil {
 		t.Fatal("no nuget.config in SecurityConfigs output")
+		return
 	}
 
 	// Parse the XML to verify structure.
@@ -435,8 +437,8 @@ func TestSecurityConfigs_NugetConfig_ValidXMLStructure(t *testing.T) {
 		Value string `xml:"value,attr"`
 	}
 	type xmlCertificate struct {
-		Fingerprint       string `xml:"fingerprint,attr"`
-		HashAlgorithm     string `xml:"hashAlgorithm,attr"`
+		Fingerprint        string `xml:"fingerprint,attr"`
+		HashAlgorithm      string `xml:"hashAlgorithm,attr"`
 		AllowUntrustedRoot string `xml:"allowUntrustedRoot,attr"`
 	}
 	type xmlOwners struct {
@@ -449,8 +451,10 @@ func TestSecurityConfigs_NugetConfig_ValidXMLStructure(t *testing.T) {
 		Owners       xmlOwners      `xml:"owners"`
 	}
 	type xmlConfiguration struct {
-		XMLName        xml.Name        `xml:"configuration"`
-		Config         []struct{ Add []xmlAdd `xml:"add"` } `xml:"config"`
+		XMLName xml.Name `xml:"configuration"`
+		Config  []struct {
+			Add []xmlAdd `xml:"add"`
+		} `xml:"config"`
 		TrustedSigners struct {
 			Repository xmlRepository `xml:"repository"`
 		} `xml:"trustedSigners"`
@@ -500,6 +504,7 @@ func TestSecurityConfigs_NugetConfig_Comments(t *testing.T) {
 	}
 	if nugetConfig == nil {
 		t.Fatal("no nuget.config in SecurityConfigs output")
+		return
 	}
 
 	content := string(nugetConfig.Content)
@@ -532,6 +537,7 @@ func TestSecurityConfigs_DirectoryBuildProps(t *testing.T) {
 	}
 	if buildProps == nil {
 		t.Fatal("no Directory.Build.props in SecurityConfigs output")
+		return
 	}
 
 	content := string(buildProps.Content)
@@ -592,16 +598,17 @@ func TestSecurityConfigs_DirectoryBuildProps_XMLStructure(t *testing.T) {
 	}
 	if buildProps == nil {
 		t.Fatal("no Directory.Build.props in SecurityConfigs output")
+		return
 	}
 
 	// Parse a simplified XML structure.
 	type xmlPropertyGroup struct {
-		RestorePackagesWithLockFile  string `xml:"RestorePackagesWithLockFile"`
-		RestoreLockedMode           string `xml:"RestoreLockedMode"`
+		RestorePackagesWithLockFile    string `xml:"RestorePackagesWithLockFile"`
+		RestoreLockedMode              string `xml:"RestoreLockedMode"`
 		ManagePackageVersionsCentrally string `xml:"ManagePackageVersionsCentrally"`
 	}
 	type xmlProject struct {
-		XMLName       xml.Name        `xml:"Project"`
+		XMLName       xml.Name         `xml:"Project"`
 		PropertyGroup xmlPropertyGroup `xml:"PropertyGroup"`
 	}
 
@@ -640,6 +647,7 @@ func TestSecurityConfigs_NugetConfig_RegistryProxy(t *testing.T) {
 	}
 	if nugetConfig == nil {
 		t.Fatal("no nuget.config in SecurityConfigs output")
+		return
 	}
 
 	content := string(nugetConfig.Content)
@@ -678,6 +686,7 @@ func TestSecurityConfigs_NugetConfig_NoRegistryProxy(t *testing.T) {
 	}
 	if nugetConfig == nil {
 		t.Fatal("no nuget.config in SecurityConfigs output")
+		return
 	}
 
 	content := string(nugetConfig.Content)
@@ -700,6 +709,7 @@ func TestSecurityConfigs_NugetConfig_RegistryProxyPreservesExisting(t *testing.T
 	}
 	if nugetConfig == nil {
 		t.Fatal("no nuget.config in SecurityConfigs output")
+		return
 	}
 
 	content := string(nugetConfig.Content)
@@ -763,7 +773,7 @@ func TestDenyRules(t *testing.T) {
 
 	expected := map[string]bool{
 		"Bash(dotnet add package *)": true,
-		"Bash(nuget install *)":     true,
+		"Bash(nuget install *)":      true,
 	}
 	for _, r := range rules {
 		if !expected[r] {

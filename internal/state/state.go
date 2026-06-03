@@ -113,3 +113,79 @@ func CheckModified(stored types.GeneratedState, projectRoot string) map[string]F
 
 	return results
 }
+
+// RecordFragments converts a fragment set into ledger entries grouped by target path.
+func RecordFragments(fragments []types.FragmentEntry) map[string][]types.FragmentLedgerEntry {
+	ledger := make(map[string][]types.FragmentLedgerEntry)
+	for _, f := range fragments {
+		entry := types.FragmentLedgerEntry{
+			Source:      f.Source,
+			Tag:         f.Tag,
+			Priority:    f.Priority,
+			ComposeMode: f.ComposeMode,
+			ContentHash: ComputeHash(f.Content),
+			Timestamp:   f.Provenance.Timestamp,
+			Reason:      f.Provenance.Reason,
+		}
+		ledger[f.Target] = append(ledger[f.Target], entry)
+	}
+	for target := range ledger {
+		sort.Slice(ledger[target], func(i, j int) bool {
+			a, b := ledger[target][i], ledger[target][j]
+			if a.Source != b.Source {
+				return a.Source < b.Source
+			}
+			return a.Tag < b.Tag
+		})
+	}
+	return ledger
+}
+
+// FragmentsBySource returns all ledger entries contributed by the given source
+// across all target files.
+func FragmentsBySource(state types.GeneratedState, source string) []types.FragmentLedgerEntry {
+	var result []types.FragmentLedgerEntry
+	for _, entries := range state.Fragments {
+		for _, e := range entries {
+			if e.Source == source {
+				result = append(result, e)
+			}
+		}
+	}
+	return result
+}
+
+// FragmentsByTarget returns all ledger entries contributing to the given file path.
+func FragmentsByTarget(state types.GeneratedState, target string) []types.FragmentLedgerEntry {
+	return state.Fragments[target]
+}
+
+// RemoveFragmentsBySource removes all ledger entries from the given source
+// and returns the target file paths that were affected.
+func RemoveFragmentsBySource(state *types.GeneratedState, source string) []string {
+	if state.Fragments == nil {
+		return nil
+	}
+	var affected []string
+	for target, entries := range state.Fragments {
+		var kept []types.FragmentLedgerEntry
+		found := false
+		for _, e := range entries {
+			if e.Source == source {
+				found = true
+			} else {
+				kept = append(kept, e)
+			}
+		}
+		if found {
+			affected = append(affected, target)
+			if len(kept) == 0 {
+				delete(state.Fragments, target)
+			} else {
+				state.Fragments[target] = kept
+			}
+		}
+	}
+	sort.Strings(affected)
+	return affected
+}

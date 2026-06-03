@@ -17,6 +17,7 @@ func TestGenerateCliffToml_Content(t *testing.T) {
 	}
 	if gf == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	content := string(gf.Content)
@@ -86,6 +87,7 @@ func TestGenerateCliffToml_Metadata(t *testing.T) {
 	}
 	if gf == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	if gf.Path != "cliff.toml" {

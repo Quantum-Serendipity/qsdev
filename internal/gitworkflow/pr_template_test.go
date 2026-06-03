@@ -15,6 +15,7 @@ func TestGeneratePRTemplate_EmptyAnswers(t *testing.T) {
 	}
 	if f == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 	if f.Path != ".github/pull_request_template.md" {
 		t.Errorf("path = %q, want .github/pull_request_template.md", f.Path)

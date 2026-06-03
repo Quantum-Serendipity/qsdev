@@ -33,6 +33,7 @@ func TestGenerateNixHardeningGuide_Enabled(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected non-nil GeneratedFile, got nil")
+		return
 	}
 
 	if got.Path != "docs/nix-conf-hardening.md" {

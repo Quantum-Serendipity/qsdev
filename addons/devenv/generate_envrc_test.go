@@ -14,6 +14,7 @@ func TestGenerateEnvrc_DirenvEnabled(t *testing.T) {
 
 	if got == nil {
 		t.Fatal("expected non-nil GeneratedFile when Direnv is enabled")
+		return
 	}
 	if got.Path != ".envrc" {
 		t.Errorf("Path = %q, want %q", got.Path, ".envrc")
@@ -53,6 +54,7 @@ func TestGenerateEnvrc_ContentValid(t *testing.T) {
 
 	if got == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	content := string(got.Content)

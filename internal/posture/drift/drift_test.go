@@ -49,6 +49,7 @@ func TestDetect_Aggregation(t *testing.T) {
 
 	if report == nil {
 		t.Fatal("expected non-nil report")
+		return
 	}
 
 	// Should have 6 categories.
@@ -89,6 +90,7 @@ func TestDetect_EmptyState(t *testing.T) {
 
 	if report == nil {
 		t.Fatal("expected non-nil report")
+		return
 	}
 
 	if report.BySeverity == nil {

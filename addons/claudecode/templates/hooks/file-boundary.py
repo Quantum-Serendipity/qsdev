@@ -51,7 +51,7 @@ def audit_log(entry: dict) -> None:
         with open(AUDIT_LOG, "a") as f:
             f.write(json.dumps(entry) + "\n")
     except OSError:
-        pass
+        pass  # Audit logging must not interrupt hook decisions.
 
 
 def deny(reason: str, target: str, cwd: str) -> None:
@@ -84,7 +84,7 @@ def is_safe_path(resolved: str) -> bool:
             if resolved == safe_resolved or resolved.startswith(safe_resolved + "/"):
                 return True
         except (OSError, ValueError):
-            pass
+            pass  # Skip invalid safe paths; continue checking others.
     return False
 
 

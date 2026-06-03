@@ -57,7 +57,7 @@ def audit_log(entry: dict) -> None:
         with open(AUDIT_LOG, "a") as f:
             f.write(json.dumps(entry) + "\n")
     except OSError:
-        pass
+        pass  # Audit logging must not interrupt hook decisions.
 
 
 def deny(category: str, reason: str, remediation: str, command: str) -> None:
@@ -285,7 +285,7 @@ def check_cross_environment(command: str, cwd: str) -> tuple[str, str] | None:
                             "Restrict file operations to the current project tree.",
                         )
             except (OSError, ValueError):
-                pass
+                pass  # Skip unresolvable paths; continue scanning.
 
     return None
 

@@ -46,7 +46,7 @@ def audit_log(entry: dict) -> None:
         with open(AUDIT_LOG, "a") as f:
             f.write(json.dumps(entry) + "\n")
     except OSError:
-        pass
+        pass  # Audit logging must not interrupt hook decisions.
 
 
 def main() -> None:

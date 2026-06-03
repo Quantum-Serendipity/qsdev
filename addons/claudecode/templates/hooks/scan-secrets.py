@@ -85,7 +85,7 @@ def audit_log(entry: dict) -> None:
         with open(AUDIT_LOG, "a") as f:
             f.write(json.dumps(entry) + "\n")
     except OSError:
-        pass
+        pass  # Audit logging must not interrupt hook decisions.
 
 
 def get_patterns() -> list[re.Pattern]:
@@ -101,8 +101,8 @@ def get_patterns() -> list[re.Pattern]:
     for p in raw:
         try:
             compiled.append(re.compile(p))
-        except re.error:
-            pass
+        except re.error as err:
+            audit_log({"event": "pattern_compile_error", "hook": "credential-scan", "pattern": p, "error": str(err)})
     return compiled
 
 

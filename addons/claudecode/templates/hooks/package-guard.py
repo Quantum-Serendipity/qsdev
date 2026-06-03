@@ -201,7 +201,7 @@ def soc2_audit_log(entry: dict) -> None:
         with open(SOC2_AUDIT_FILE, "a") as f:
             f.write(json.dumps(entry) + "\n")
     except OSError:
-        pass
+        pass  # SOC2 audit logging is best-effort; must not block hook decisions.
 
 
 def is_in_lockfile(package_name: str, ecosystem: str) -> Optional[bool]:
@@ -238,7 +238,7 @@ def is_in_lockfile(package_name: str, ecosystem: str) -> Optional[bool]:
                 content = lockpath.read_text(errors="replace")
                 return search_term.lower() in content.lower()
         except OSError:
-            pass
+            pass  # Unreadable lockfiles are treated as not determinable.
 
     return None
 

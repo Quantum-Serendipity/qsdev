@@ -165,6 +165,36 @@ func TestApplyFixes_SELinuxSuffix(t *testing.T) {
 	}
 }
 
+func TestApplyFixes_SELinuxSuffix_ThreePartVolume(t *testing.T) {
+	t.Parallel()
+	path := writeTempCompose(t, `services:
+  app:
+    image: docker.io/library/nginx:latest
+    volumes:
+      - ./data:/data:rw
+`)
+	issues := []MigrationIssue{{
+		Category:    CategorySELinux,
+		Severity:    SeverityInfo,
+		File:        path,
+		Service:     "app",
+		AutoFixable: true,
+		Fix:         &MigrationFix{},
+	}}
+
+	out, err := ApplyFixes(path, issues)
+	if err != nil {
+		t.Fatalf("ApplyFixes() error = %v", err)
+	}
+	result := string(out)
+	if !strings.Contains(result, "./data:/data:rw,Z") {
+		t.Errorf("expected comma-separated SELinux option, got:\n%s", result)
+	}
+	if strings.Contains(result, "./data:/data:rw:Z") {
+		t.Errorf("should not use colon-separated SELinux option, got:\n%s", result)
+	}
+}
+
 func TestApplyFixes_CommentPreservation(t *testing.T) {
 	t.Parallel()
 	path := writeTempCompose(t, `# Top comment
@@ -333,5 +363,63 @@ func TestApplyFixes_NoApplicableIssues(t *testing.T) {
 	// Should return original content unchanged.
 	if !strings.Contains(string(out), "docker.io/library/nginx:latest") {
 		t.Errorf("content was unexpectedly modified:\n%s", out)
+	}
+}
+
+func TestApplyFixes_NonExistentFile(t *testing.T) {
+	t.Parallel()
+	_, err := ApplyFixes("/nonexistent/docker-compose.yml", []MigrationIssue{{
+		File:        "/nonexistent/docker-compose.yml",
+		AutoFixable: true,
+		Fix:         &MigrationFix{},
+	}})
+	if err == nil {
+		t.Fatal("expected error for non-existent file")
+	}
+	if !strings.Contains(err.Error(), "reading") {
+		t.Errorf("error should mention reading, got: %v", err)
+	}
+}
+
+func TestApplyFixes_InvalidYAML(t *testing.T) {
+	t.Parallel()
+	path := writeTempCompose(t, `{{{invalid yaml`)
+	_, err := ApplyFixes(path, []MigrationIssue{{
+		File:        path,
+		AutoFixable: true,
+		Fix:         &MigrationFix{},
+	}})
+	if err == nil {
+		t.Fatal("expected error for invalid YAML")
+	}
+	if !strings.Contains(err.Error(), "parsing") {
+		t.Errorf("error should mention parsing, got: %v", err)
+	}
+}
+
+func TestApplyFixes_MapStylePortRemap(t *testing.T) {
+	t.Parallel()
+	path := writeTempCompose(t, `services:
+  web:
+    image: docker.io/library/nginx:latest
+    ports:
+      - published: 80
+        target: 80
+`)
+	issues := []MigrationIssue{{
+		Category:    CategoryPrivPorts,
+		Severity:    SeverityWarning,
+		File:        path,
+		Service:     "web",
+		AutoFixable: true,
+		Fix:         &MigrationFix{},
+	}}
+
+	out, err := ApplyFixes(path, issues)
+	if err != nil {
+		t.Fatalf("ApplyFixes() error = %v", err)
+	}
+	if !strings.Contains(string(out), "8080") {
+		t.Errorf("expected remapped port 8080 in output:\n%s", out)
 	}
 }

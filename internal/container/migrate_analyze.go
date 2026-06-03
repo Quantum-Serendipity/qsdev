@@ -292,14 +292,14 @@ func checkPrivilegedPorts(serviceName string, svc map[string]any, filePath strin
 }
 
 // extractHostPort parses a port entry and returns the host port, or 0.
+// Bare integers (e.g. `- 80`) are container-only ports in Docker Compose
+// and do not map to a host port.
 func extractHostPort(entry any) int {
 	switch v := entry.(type) {
 	case string:
 		return parseHostPortFromString(v)
-	case int:
-		return v
-	case float64:
-		return int(v)
+	case int, float64:
+		return 0
 	case map[string]any:
 		if pub, ok := v["published"]; ok {
 			switch p := pub.(type) {
@@ -413,7 +413,6 @@ func checkSELinuxLabels(serviceName string, svc map[string]any, filePath string,
 				continue
 			}
 		}
-		// Two-part bind mount without options.
 		issues = append(issues, MigrationIssue{
 			Category:    CategorySELinux,
 			Severity:    SeverityInfo,
@@ -422,13 +421,22 @@ func checkSELinuxLabels(serviceName string, svc map[string]any, filePath string,
 			Description: fmt.Sprintf("service %q bind mount %q lacks SELinux label (:Z); containers may not be able to access the volume", serviceName, vol),
 			AutoFixable: true,
 			Fix: &MigrationFix{
-				Description: fmt.Sprintf("append :Z to bind mount %q", vol),
+				Description: fmt.Sprintf("add SELinux label to bind mount %q", vol),
 				YAMLPath:    fmt.Sprintf("services.%s.volumes", serviceName),
-				YAMLValue:   vol + ":Z",
+				YAMLValue:   appendSELinuxOption(vol),
 			},
 		})
 	}
 	return issues
+}
+
+func appendSELinuxOption(vol string) string {
+	parts := strings.Split(vol, ":")
+	if len(parts) >= 3 {
+		parts[len(parts)-1] = parts[len(parts)-1] + ",Z"
+		return strings.Join(parts, ":")
+	}
+	return vol + ":Z"
 }
 
 // extractStringList extracts a []string from a map key that holds either

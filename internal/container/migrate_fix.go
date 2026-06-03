@@ -121,10 +121,25 @@ func applyPortRemap(doc *yaml.Node, serviceName string) error {
 	for _, item := range portsNode.Content {
 		if item.Kind == yaml.ScalarNode {
 			item.Value = remapPort(item.Value)
+		} else if item.Kind == yaml.MappingNode {
+			remapMappingPort(item)
 		}
 	}
 
 	return nil
+}
+
+// remapMappingPort remaps the "published" key in a map-style port entry.
+func remapMappingPort(node *yaml.Node) {
+	_, pubNode := findMappingKey(node, "published")
+	if pubNode == nil || pubNode.Kind != yaml.ScalarNode {
+		return
+	}
+	n, err := strconv.Atoi(pubNode.Value)
+	if err != nil || n <= 0 || n >= 1024 {
+		return
+	}
+	pubNode.Value = strconv.Itoa(n + 8000)
 }
 
 // remapPort remaps a port string's host port if it is below 1024.
@@ -210,8 +225,12 @@ func applySELinuxSuffix(doc *yaml.Node, serviceName string) error {
 			if strings.Contains(opts, "z") || strings.Contains(opts, "Z") {
 				continue
 			}
+			// Append Z to existing options as comma-separated.
+			parts[len(parts)-1] = parts[len(parts)-1] + ",Z"
+			item.Value = strings.Join(parts, ":")
+		} else {
+			item.Value = vol + ":Z"
 		}
-		item.Value = vol + ":Z"
 	}
 
 	return nil

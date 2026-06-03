@@ -70,10 +70,10 @@ automatically selected based on available kernel capabilities.`,
 			}
 
 			if len(result.Stdout) > 0 {
-				os.Stdout.Write(result.Stdout)
+				_, _ = os.Stdout.Write(result.Stdout)
 			}
 			if len(result.Stderr) > 0 {
-				os.Stderr.Write(result.Stderr)
+				_, _ = os.Stderr.Write(result.Stderr)
 			}
 
 			if result.ExitCode != 0 {

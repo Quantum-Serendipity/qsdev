@@ -141,15 +141,45 @@ func TestMapDetectionToDefaults_DotNet(t *testing.T) {
 	}
 }
 
-func TestMapDetectionToDefaults_Docker(t *testing.T) {
+func TestMapDetectionToDefaults_Container(t *testing.T) {
 	detected := types.DetectedProject{HasDockerfile: true}
-	answers := devinit.ExportMapDetectionToDefaults(detected, "/tmp/dockerproject")
+	answers := devinit.ExportMapDetectionToDefaults(detected, "/tmp/containerproject")
 
 	if len(answers.Languages) != 1 {
 		t.Fatalf("expected 1 language, got %d", len(answers.Languages))
 	}
-	if answers.Languages[0].Name != "docker" {
-		t.Errorf("expected language name %q, got %q", "docker", answers.Languages[0].Name)
+	if answers.Languages[0].Name != "container" {
+		t.Errorf("expected language name %q, got %q", "container", answers.Languages[0].Name)
+	}
+}
+
+func TestMapDetectionToDefaults_ContainerWithRuntimeAndOSFamily(t *testing.T) {
+	detected := types.DetectedProject{
+		HasDockerfile:    true,
+		ContainerRuntime: "podman-rootless",
+		OSFamily:         "nixos",
+	}
+	answers := devinit.ExportMapDetectionToDefaults(detected, "/tmp/podmanproject")
+
+	if len(answers.Languages) != 1 {
+		t.Fatalf("expected 1 language, got %d", len(answers.Languages))
+	}
+	lc := answers.Languages[0]
+	hasRuntime := false
+	hasOSFamily := false
+	for _, e := range lc.Extras {
+		if e == "container_runtime=podman-rootless" {
+			hasRuntime = true
+		}
+		if e == "os_family=nixos" {
+			hasOSFamily = true
+		}
+	}
+	if !hasRuntime {
+		t.Errorf("Extras missing container_runtime, got %v", lc.Extras)
+	}
+	if !hasOSFamily {
+		t.Errorf("Extras missing os_family, got %v", lc.Extras)
 	}
 }
 
@@ -184,7 +214,7 @@ func TestMapDetectionToDefaults_MultiLanguage(t *testing.T) {
 	for _, lang := range answers.Languages {
 		names[lang.Name] = true
 	}
-	for _, expected := range []string{"go", "javascript", "docker"} {
+	for _, expected := range []string{"go", "javascript", "container"} {
 		if !names[expected] {
 			t.Errorf("expected language %q in results", expected)
 		}

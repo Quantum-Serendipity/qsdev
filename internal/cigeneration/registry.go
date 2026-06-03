@@ -145,11 +145,11 @@ func (g *GitleaksContributor) CISteps(cfg GenerateConfig) []CIStep {
 
 // ContainerSecurityContributor adds SBOM generation, vulnerability scanning,
 // and cosign verification steps to the container-security job.
-// Only active when HasDocker is true.
+// Only active when HasContainerModule is true.
 type ContainerSecurityContributor struct{}
 
 func (c *ContainerSecurityContributor) CISteps(cfg GenerateConfig) []CIStep {
-	if !cfg.HasDocker {
+	if !cfg.HasContainerModule {
 		return nil
 	}
 	return []CIStep{
@@ -267,8 +267,8 @@ func activeJobIDs(cfg GenerateConfig) []CIJobID {
 	jobs = append(jobs, JobSecretScan)
 	// vulnerability-scan: always active (osv-scanner)
 	jobs = append(jobs, JobVulnerabilityScan)
-	// container-security: only with Docker
-	if cfg.HasDocker {
+	// container-security: only with container module
+	if cfg.HasContainerModule {
 		jobs = append(jobs, JobContainerSecurity)
 	}
 	// security-review: only with Claude Code

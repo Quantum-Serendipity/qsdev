@@ -154,8 +154,8 @@ func TestGeneratePRTemplate_DockerfileDetected(t *testing.T) {
 	}
 
 	content := string(f.Content)
-	if !strings.Contains(content, "Docker image builds") {
-		t.Error("content missing Docker build checklist item")
+	if !strings.Contains(content, "Container image builds") {
+		t.Error("content missing container build checklist item")
 	}
 	if !strings.Contains(content, "Image scanned for vulnerabilities") {
 		t.Error("content missing Docker scan checklist item")

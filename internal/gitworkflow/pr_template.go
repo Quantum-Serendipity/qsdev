@@ -60,7 +60,7 @@ func GeneratePRTemplate(answers types.WizardAnswers) (*types.GeneratedFile, erro
 
 	// Docker section if Dockerfile detected.
 	if answers.Detected.HasDockerfile {
-		b.WriteString("- [ ] Docker image builds\n")
+		b.WriteString("- [ ] Container image builds\n")
 		b.WriteString("- [ ] Image scanned for vulnerabilities\n")
 	}
 

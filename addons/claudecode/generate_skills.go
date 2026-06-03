@@ -99,7 +99,7 @@ var languageToRules = map[string][]string{
 	"rust":       {"rust-conventions.md"},
 	"java":       {"java-conventions.md"},
 	"dotnet":     {"dotnet-conventions.md"},
-	"docker":     {"docker-conventions.md"},
+	"container":  {"docker-conventions.md"},
 	"terraform":  {"terraform-conventions.md"},
 }
 

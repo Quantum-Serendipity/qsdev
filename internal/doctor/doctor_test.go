@@ -8,7 +8,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 )
 
-func TestRunAllChecksReturns15Results(t *testing.T) {
+func TestRunAllChecksReturns17Results(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -21,8 +21,8 @@ func TestRunAllChecksReturns15Results(t *testing.T) {
 	}
 
 	results := RunAllChecks(ctx, osInfo)
-	if len(results) != 15 {
-		t.Errorf("RunAllChecks returned %d results, want 15", len(results))
+	if len(results) != 17 {
+		t.Errorf("RunAllChecks returned %d results, want 17", len(results))
 	}
 }
 

@@ -9,7 +9,8 @@ const (
 	NameRust       = "rust"
 	NameJava       = "java"
 	NameDotnet     = "dotnet"
-	NameDocker     = "docker"
+	NameContainer  = "container"
+	NameDocker     = NameContainer // Deprecated: use NameContainer.
 	NameTerraform  = "terraform"
 	NameRuby       = "ruby"
 	NamePHP        = "php"

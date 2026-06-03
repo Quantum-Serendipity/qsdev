@@ -12,19 +12,19 @@ import (
 // profile's update configuration.
 func (p *InfraProfile) generateRenovateJSON() types.GeneratedFile {
 	type packageRule struct {
-		MatchUpdateTypes    []string `json:"matchUpdateTypes,omitempty"`
-		MinimumReleaseAge   string   `json:"minimumReleaseAge,omitempty"`
-		AutomergeType       string   `json:"automergeType,omitempty"`
-		Automerge           bool     `json:"automerge,omitempty"`
-		MatchManagers       []string `json:"matchManagers,omitempty"`
-		MatchCategories     []string `json:"matchCategories,omitempty"`
-		Labels              []string `json:"labels,omitempty"`
-		MatchDepTypes       []string `json:"matchDepTypes,omitempty"`
+		MatchUpdateTypes  []string `json:"matchUpdateTypes,omitempty"`
+		MinimumReleaseAge string   `json:"minimumReleaseAge,omitempty"`
+		AutomergeType     string   `json:"automergeType,omitempty"`
+		Automerge         bool     `json:"automerge,omitempty"`
+		MatchManagers     []string `json:"matchManagers,omitempty"`
+		MatchCategories   []string `json:"matchCategories,omitempty"`
+		Labels            []string `json:"labels,omitempty"`
+		MatchDepTypes     []string `json:"matchDepTypes,omitempty"`
 	}
 
 	type renovateConfig struct {
-		Schema      string        `json:"$schema"`
-		Extends     []string      `json:"extends"`
+		Schema       string        `json:"$schema"`
+		Extends      []string      `json:"extends"`
 		PackageRules []packageRule `json:"packageRules,omitempty"`
 	}
 
@@ -94,7 +94,7 @@ func ecosystemToRenovateManager(eco string) string {
 		return "maven"
 	case "nuget":
 		return "nuget"
-	case "docker":
+	case "container":
 		return "dockerfile"
 	case "terraform":
 		return "terraform"

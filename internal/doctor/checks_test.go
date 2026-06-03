@@ -254,7 +254,41 @@ func TestParseDirenvVersion(t *testing.T) {
 
 func TestDefaultChecksCount(t *testing.T) {
 	checks := DefaultChecks()
-	if len(checks) != 15 {
-		t.Errorf("DefaultChecks() returned %d checks, want 15", len(checks))
+	if len(checks) != 17 {
+		t.Errorf("DefaultChecks() returned %d checks, want 17", len(checks))
+	}
+}
+
+func TestParseSyftVersion(t *testing.T) {
+	tc := findCheck(t, "syft")
+	tests := []struct {
+		raw, want string
+	}{
+		{"syft 1.4.1", "1.4.1"},
+		{"1.3.0", "1.3.0"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := tc.ParseVersion(tt.raw)
+		if got != tt.want {
+			t.Errorf("syft ParseVersion(%q) = %q, want %q", tt.raw, got, tt.want)
+		}
+	}
+}
+
+func TestParseGrypeVersion(t *testing.T) {
+	tc := findCheck(t, "grype")
+	tests := []struct {
+		raw, want string
+	}{
+		{"grype 0.79.4", "0.79.4"},
+		{"0.78.0", "0.78.0"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := tc.ParseVersion(tt.raw)
+		if got != tt.want {
+			t.Errorf("grype ParseVersion(%q) = %q, want %q", tt.raw, got, tt.want)
+		}
 	}
 }

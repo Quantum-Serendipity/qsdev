@@ -50,7 +50,7 @@ func (p *InfraProfile) generateDependabotYML() types.GeneratedFile {
 	for _, u := range cfg.Updates {
 		seen[u.PackageEcosystem] = true
 	}
-	for _, extra := range []string{"docker", "terraform"} {
+	for _, extra := range []string{"container", "terraform"} {
 		depEco := ecosystemToDependabotEcosystem(extra)
 		if depEco != "" && !seen[depEco] {
 			cfg.Updates = append(cfg.Updates, updateEntry{
@@ -93,7 +93,7 @@ func ecosystemToDependabotEcosystem(eco string) string {
 		return "maven"
 	case "nuget":
 		return "nuget"
-	case "docker":
+	case "container":
 		return "docker"
 	case "terraform":
 		return "terraform"

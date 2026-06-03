@@ -493,6 +493,12 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 		allow = append(allow, allowStandardBuildTestLint...)
 		allow = append(allow, allowFrozenLockfileInstalls...)
 		allow = append(allow, allowPermissiveExtra...)
+
+		// Add Podman commands to permissive allow list when Podman is detected.
+		if answers.Detected.ContainerRuntime == "podman-rootless" || answers.Detected.ContainerRuntime == "podman-rootful" {
+			allow = append(allow, `Bash(podman *)`)
+		}
+
 		deny = append(deny, baseDeny...)
 		deny = append(deny, ecosystemDeny...)
 		ask = append(ask, askStandardBase...)

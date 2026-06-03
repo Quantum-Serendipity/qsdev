@@ -69,9 +69,14 @@ func MapDetectionToDefaults(detected types.DetectedProject, projectRoot string) 
 	}
 
 	if detected.HasDockerfile {
-		answers.Languages = append(answers.Languages, types.LanguageChoice{
-			Name: "docker",
-		})
+		dc := types.LanguageChoice{Name: "container"}
+		if detected.ContainerRuntime != "" {
+			dc.Extras = append(dc.Extras, "container_runtime="+detected.ContainerRuntime)
+		}
+		if detected.OSFamily != "" {
+			dc.Extras = append(dc.Extras, "os_family="+detected.OSFamily)
+		}
+		answers.Languages = append(answers.Languages, dc)
 	}
 
 	if detected.HasTerraform {

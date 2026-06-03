@@ -191,10 +191,10 @@ func TestAggregateDetections_Dotnet(t *testing.T) {
 	}
 }
 
-func TestAggregateDetections_Docker(t *testing.T) {
+func TestAggregateDetections_Container(t *testing.T) {
 	r := newTestRegistry(t,
 		&ecosystem.MockModule{
-			NameVal: "docker",
+			NameVal: "container",
 			DetectResult: ecosystem.DetectionResult{
 				Detected:   true,
 				Confidence: ecosystem.ConfidenceCertain,
@@ -296,7 +296,7 @@ func TestAggregateDetections_MultipleEcosystems(t *testing.T) {
 			},
 		},
 		&ecosystem.MockModule{
-			NameVal: "docker",
+			NameVal: "container",
 			DetectResult: ecosystem.DetectionResult{
 				Detected:   true,
 				Confidence: ecosystem.ConfidenceCertain,
@@ -326,11 +326,11 @@ func TestAggregateDetections_MultipleEcosystems(t *testing.T) {
 		t.Error("HasCargoToml should be false (rust not detected)")
 	}
 
-	// 4 entries: go, javascript, node (alias for javascript), docker
+	// 4 entries: go, javascript, node (alias for javascript), container
 	if len(p.Ecosystems) != 4 {
 		t.Errorf("Ecosystems count = %d, want 4", len(p.Ecosystems))
 	}
-	for _, name := range []string{"go", "javascript", "node", "docker"} {
+	for _, name := range []string{"go", "javascript", "node", "container"} {
 		if !p.Ecosystems[name] {
 			t.Errorf("Ecosystems[%s] should be true", name)
 		}

@@ -178,7 +178,7 @@ func TestValidateAnswers_ValidPermissionPresets(t *testing.T) {
 }
 
 func TestValidateAnswers_AllValidLanguages(t *testing.T) {
-	for _, lang := range []string{"go", "javascript", "python", "rust", "java", "dotnet", "docker", "terraform"} {
+	for _, lang := range []string{"go", "javascript", "python", "rust", "java", "dotnet", "container", "terraform"} {
 		t.Run(lang, func(t *testing.T) {
 			answers := types.WizardAnswers{
 				Languages: []types.LanguageChoice{{Name: lang}},

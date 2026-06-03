@@ -26,7 +26,7 @@ var allLanguages = []struct {
 	{"rust", "Rust"},
 	{"java", "Java/Kotlin"},
 	{"dotnet", "C#/.NET"},
-	{"docker", "Docker"},
+	{"container", "Containers"},
 	{"terraform", "Terraform/OpenTofu"},
 	{"php", "PHP"},
 	{"ruby", "Ruby"},
@@ -120,7 +120,7 @@ func DetectionAnnotation(name string, detected types.DetectedProject) string {
 		if detected.HasCsproj {
 			return "(detected: *.csproj)"
 		}
-	case "docker":
+	case "container":
 		if detected.HasDockerfile {
 			return "(detected: Dockerfile)"
 		}

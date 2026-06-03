@@ -92,7 +92,7 @@ func TestValidLanguages(t *testing.T) {
 		"rust":       true,
 		"java":       true,
 		"dotnet":     true,
-		"docker":     true,
+		"container":  true,
 		"terraform":  true,
 	}
 

@@ -121,7 +121,7 @@ func TestDetect_MultiLanguageProject(t *testing.T) {
 	}
 
 	// Ecosystems map
-	expectedEcosystems := []string{"go", "node", "python", "rust", "docker", "terraform"}
+	expectedEcosystems := []string{"go", "node", "python", "rust", "container", "terraform"}
 	for _, eco := range expectedEcosystems {
 		if !dp.Ecosystems[eco] {
 			t.Errorf("expected Ecosystems[%q]=true", eco)

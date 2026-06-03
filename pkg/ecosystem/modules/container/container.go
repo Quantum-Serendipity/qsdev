@@ -1,9 +1,8 @@
-// Package docker implements the Docker / Containerfiles ecosystem module for
-// qsdev. It detects Dockerfiles, Containerfiles, and
-// docker-compose manifests, generates devenv.nix fragments with container
-// tooling, and provides hadolint linting, image scanning, and signing CI
-// commands alongside Claude Code deny rules.
-package docker
+// Package container implements the container ecosystem module for qsdev. It
+// detects Dockerfiles, Containerfiles, and compose manifests, generates
+// devenv.nix fragments with container tooling, and provides hadolint linting,
+// image scanning, and signing CI commands alongside Claude Code deny rules.
+package container
 
 import (
 	"bytes"
@@ -25,19 +24,19 @@ func init() {
 	ecosystem.MustRegisterModule(&Module{})
 }
 
-// Module implements ecosystem.EcosystemModule for Docker / Containerfiles.
+// Module implements ecosystem.EcosystemModule for containers.
 type Module struct{}
 
 // Name returns the canonical ecosystem identifier.
-func (m *Module) Name() string { return "docker" }
+func (m *Module) Name() string { return "container" }
 
 // DisplayName returns the human-readable label.
-func (m *Module) DisplayName() string { return "Docker / Containerfiles" }
+func (m *Module) DisplayName() string { return "Containers" }
 
 // Tier returns the implementation priority tier.
 func (m *Module) Tier() int { return 1 }
 
-// Detect scans projectRoot for Docker-related files and returns a
+// Detect scans projectRoot for container-related files and returns a
 // DetectionResult with accumulated evidence.
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	var (
@@ -60,7 +59,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	// Probable indicators.
-	for _, name := range []string{"docker-compose.yml", "docker-compose.yaml"} {
+	for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yaml"} {
 		if fileutil.FileExists(projectRoot, name) {
 			evidence = append(evidence, name+" found")
 			hasCompose = true
@@ -72,6 +71,13 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 	if fileutil.FileExists(projectRoot, ".dockerignore") {
 		evidence = append(evidence, ".dockerignore found")
+		if confidence < ecosystem.ConfidenceProbable {
+			confidence = ecosystem.ConfidenceProbable
+		}
+		detected = true
+	}
+	if fileutil.FileExists(projectRoot, ".containerignore") {
+		evidence = append(evidence, ".containerignore found")
 		if confidence < ecosystem.ConfidenceProbable {
 			confidence = ecosystem.ConfidenceProbable
 		}
@@ -101,21 +107,47 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 }
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for Docker tooling. Docker has no devenv.sh language module, so only
-// packages are added.
-func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
+// for container tooling. Podman runtimes get podman/buildah/skopeo; Docker
+// runtimes get docker. Both get hadolint and dive.
+func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
+	rt := config.Extras["container_runtime"]
+
 	var b strings.Builder
-	b.WriteString("  packages = with pkgs; [\n")
-	b.WriteString("    docker\n")
-	b.WriteString("    hadolint\n")
-	b.WriteString("    dive\n")
-	b.WriteString("  ];\n")
+	switch rt {
+	case "podman-rootless", "podman-rootful":
+		b.WriteString("  packages = with pkgs; [\n")
+		b.WriteString("    podman\n")
+		b.WriteString("    podman-compose\n")
+		b.WriteString("    buildah\n")
+		b.WriteString("    skopeo\n")
+		b.WriteString("    hadolint\n")
+		b.WriteString("    dive\n")
+		b.WriteString("  ];\n")
+		b.WriteString("\n")
+		b.WriteString("  env.DOCKER_HOST = \"unix://${XDG_RUNTIME_DIR:-/run/user/1000}/podman/podman.sock\";\n")
+	default: // "docker" or empty — backward compatible
+		b.WriteString("  packages = with pkgs; [\n")
+		b.WriteString("    docker\n")
+		b.WriteString("    hadolint\n")
+		b.WriteString("    dive\n")
+		b.WriteString("  ];\n")
+	}
 	return b.String(), nil
 }
 
 // DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Docker does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
+// Podman on NixOS adds the quadlet-nix input for systemd integration.
+func (m *Module) DevenvYamlInputs(config ecosystem.ModuleConfig) []ecosystem.DevenvInput {
+	rt := config.Extras["container_runtime"]
+	osFamily := config.Extras["os_family"]
+
+	if (rt == "podman-rootless" || rt == "podman-rootful") && osFamily == "nixos" {
+		return []ecosystem.DevenvInput{
+			{
+				URL: "github:SEIAROTg/quadlet-nix",
+			},
+		}
+	}
 	return nil
 }
 
@@ -184,7 +216,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 	}
 }
 
-// PreCommitHooks returns pre-commit hook definitions for the Docker ecosystem.
+// PreCommitHooks returns pre-commit hook definitions for the container ecosystem.
 func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	return []ecosystem.HookConfig{
 		{
@@ -202,16 +234,36 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 	}
 }
 
-// DenyRules returns Claude Code deny-rule patterns for the Docker ecosystem.
-// Prevents uncontrolled image pulls that could introduce untrusted images.
-func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	return []string{
-		"Bash(docker pull *)",
+// DenyRules returns Claude Code deny-rule patterns for the container ecosystem.
+// Prevents uncontrolled image pulls and, for Podman, blocks privileged
+// containers and Docker socket mounts.
+func (m *Module) DenyRules(config ecosystem.ModuleConfig) []string {
+	rt := config.Extras["container_runtime"]
+	switch rt {
+	case "podman-rootless", "podman-rootful":
+		return []string{
+			"Bash(docker run -v /var/run/docker.sock*)",
+			"Bash(docker pull *)",
+			"Bash(podman run --privileged *)",
+		}
+	default:
+		return []string{
+			"Bash(docker pull *)",
+		}
 	}
 }
 
-// CICommands returns CI pipeline commands for the Docker ecosystem.
-func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
+// CICommands returns CI pipeline commands for the container ecosystem.
+// Commands are runtime-aware: Podman runtimes use `podman`, Docker uses `docker`.
+func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
+	rt := config.Extras["container_runtime"]
+	imgCmd := "docker"
+	buildCmd := "docker"
+	if rt == "podman-rootless" || rt == "podman-rootful" {
+		imgCmd = "podman"
+		buildCmd = "podman"
+	}
+
 	return []ecosystem.CICommand{
 		{
 			Name:        "hadolint",
@@ -220,33 +272,38 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 			Phase:       ecosystem.CIPhaseScan,
 		},
 		{
-			Name:        "docker-build",
-			Command:     "docker build --no-cache .",
+			Name:        "container-build",
+			Command:     buildCmd + " build --no-cache .",
 			Description: "Build container image without layer cache to verify reproducibility",
 			Phase:       ecosystem.CIPhaseScan,
 		},
 		{
-			Name:        "trivy-image",
-			Command:     "trivy image --severity HIGH,CRITICAL --exit-code 1 $(docker images -q | head -1)",
-			Description: "Scan container image for OS and library vulnerabilities with Trivy (note: Trivy's maintainer Aqua Security suffered a supply-chain compromise in March 2026 — pin to a verified hash and monitor advisories)",
+			Name:        "syft-sbom",
+			Command:     fmt.Sprintf("syft scan $(%s images -q | head -1) -o spdx-json=sbom.spdx.json", imgCmd),
+			Description: "Generate SPDX SBOM from container image with Syft",
+			Phase:       ecosystem.CIPhaseScan,
+		},
+		{
+			Name:        "grype-scan",
+			Command:     "grype sbom:sbom.spdx.json --fail-on high",
+			Description: "Scan SBOM for vulnerabilities with Grype",
 			Phase:       ecosystem.CIPhaseScan,
 		},
 		{
 			Name:        "cosign-verify",
-			Command:     "cosign verify --key cosign.pub $(docker images --format '{{.Repository}}:{{.Tag}}' | head -1)",
+			Command:     fmt.Sprintf("cosign verify --key cosign.pub $(%s images --format '{{.Repository}}:{{.Tag}}' | head -1)", imgCmd),
 			Description: "Verify container image signature with cosign",
 			Phase:       ecosystem.CIPhaseScan,
 		},
 	}
 }
 
-// PackageManagers returns metadata about Docker's package management.
-// Docker is not a package manager, so this returns nil.
+// PackageManagers returns nil — containers are not a package manager.
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return nil
 }
 
-// WizardFields returns additional wizard form fields for Docker configuration.
+// WizardFields returns additional wizard form fields for container configuration.
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return []ecosystem.WizardField{
 		{
@@ -259,15 +316,21 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
-// VerificationCommands returns project verification commands for the Docker ecosystem.
-func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+// VerificationCommands returns project verification commands for the container
+// ecosystem. Build commands use the detected runtime.
+func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	rt := config.Extras["container_runtime"]
+	buildCmd := "docker build ."
+	if rt == "podman-rootless" || rt == "podman-rootful" {
+		buildCmd = "podman build ."
+	}
 	return ecosystem.VerificationCommands{
-		Build: []string{"docker build ."},
+		Build: []string{buildCmd},
 		Lint:  []string{"hadolint Dockerfile"},
 	}
 }
 
-// ManifestFiles returns manifest file metadata for the Docker ecosystem.
+// ManifestFiles returns manifest file metadata for the container ecosystem.
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	return nil
 }
@@ -279,7 +342,7 @@ func (m *Module) SecretDeclarations(_ ecosystem.ModuleConfig) []ecosystem.Secret
 			Name:        "DOCKER_REGISTRY_TOKEN",
 			Description: "Authentication token for private Docker registry",
 			Required:    true,
-			Source:      "docker",
+			Source:      "container",
 		},
 	}
 }
@@ -288,4 +351,3 @@ func (m *Module) SecretDeclarations(_ ecosystem.ModuleConfig) []ecosystem.Secret
 func (m *Module) SemgrepRuleSets() []string {
 	return []string{"p/dockerfile"}
 }
-

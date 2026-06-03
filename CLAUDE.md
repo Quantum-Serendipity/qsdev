@@ -133,3 +133,4 @@ Four completed research spikes are in `internal-docs/research-spikes/` (local-on
 ## Commit Conventions
 
 Do not include `Co-Authored-By` lines in commit messages.
+Do not include `🤖 Generated with [Claude Code]` or similar attribution lines in commit messages or PR descriptions.

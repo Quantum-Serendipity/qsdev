@@ -52,7 +52,7 @@ def write_entry(entry: dict) -> None:
         with open(AUDIT_FILE, "a") as f:
             f.write(json.dumps(entry) + "\n")
     except OSError:
-        pass
+        print("warning: failed to write SOC2 audit entry", file=sys.stderr)
 
 
 def handle_session_start(input_data: dict) -> None:

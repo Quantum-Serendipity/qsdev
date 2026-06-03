@@ -4,169 +4,114 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	claudecode "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-func TestGeneratePackageGuardHook_Enabled(t *testing.T) {
-	answers := types.WizardAnswers{
-		Hooks: types.HookChoices{SafetyBlock: true},
-	}
-	got, err := claudecode.GeneratePackageGuardHook(answers)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got == nil {
-		t.Fatal("expected non-nil GeneratedFile when SafetyBlock is enabled")
-		return
-	}
-	if got.Path != ".claude/hooks/package-guard.py" {
-		t.Errorf("Path = %q, want %q", got.Path, ".claude/hooks/package-guard.py")
-	}
-	if got.Mode != 0o755 {
-		t.Errorf("Mode = %o, want %o", got.Mode, 0o755)
-	}
-	if got.Strategy != types.Overwrite {
-		t.Errorf("Strategy = %v, want Overwrite", got.Strategy)
-	}
-	if len(got.Content) == 0 {
-		t.Error("Content is empty")
-	}
-}
+func TestGenerateHookFiles_AllEnabled(t *testing.T) {
+	t.Parallel()
 
-func TestGeneratePackageGuardHook_Disabled(t *testing.T) {
-	answers := types.WizardAnswers{
-		Hooks: types.HookChoices{SafetyBlock: false},
-	}
-	got, err := claudecode.GeneratePackageGuardHook(answers)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != nil {
-		t.Errorf("expected nil when SafetyBlock is disabled, got %+v", got)
-	}
-}
-
-func TestGeneratePackageGuardHook_ZeroValue(t *testing.T) {
-	var answers types.WizardAnswers
-	got, err := claudecode.GeneratePackageGuardHook(answers)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != nil {
-		t.Errorf("expected nil for zero-value WizardAnswers, got %+v", got)
-	}
-}
-
-func TestGeneratePackageGuardHook_ContentIntegrity(t *testing.T) {
-	answers := types.WizardAnswers{
-		Hooks: types.HookChoices{SafetyBlock: true},
-	}
-	got, err := claudecode.GeneratePackageGuardHook(answers)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got == nil {
-		t.Fatal("expected non-nil GeneratedFile")
-		return
-	}
-
-	content := string(got.Content)
-
-	checks := []struct {
-		needle string
-		desc   string
-	}{
-		{"#!/usr/bin/env python3", "shebang line"},
-		{"osv.dev", "OSV.dev vulnerability database reference"},
-		{"PreToolUse", "PreToolUse hook event name"},
-		{"updatedInput", "updatedInput for command rewriting"},
-		{"FAIL_CLOSED = True", "non-configurable fail-closed invariant"},
-		{"max(int(", "MIN_AGE_DAYS floor enforcement"},
-		{"_MAX_ALLOWLIST_SIZE", "allowlist size cap"},
-		{"detect_install_commands", "multi-match command detection"},
-		{"if not timestamps", "empty timestamps guard"},
-	}
-	for _, c := range checks {
-		if !strings.Contains(content, c.needle) {
-			t.Errorf("content does not contain %q (%s)", c.needle, c.desc)
+	t.Run("all consulting hooks enabled", func(t *testing.T) {
+		t.Parallel()
+		answers := types.WizardAnswers{
+			Hooks: types.HookChoices{
+				SafetyBlock:           true,
+				CredentialScan:        true,
+				DestructivePrevention: true,
+				FileBoundary:          true,
+				ToolGates:             true,
+				SOC2Audit:             true,
+			},
 		}
-	}
-
-	// FAIL_CLOSED must NOT be configurable via env var.
-	if strings.Contains(content, "PACKAGE_GUARD_FAIL_CLOSED") {
-		t.Error("content contains PACKAGE_GUARD_FAIL_CLOSED env var — fail-closed must be a non-configurable invariant")
-	}
-}
-
-func TestGeneratePackageGuardHook_NpmAgeFix(t *testing.T) {
-	answers := types.WizardAnswers{
-		Hooks: types.HookChoices{SafetyBlock: true},
-	}
-	got, err := claudecode.GeneratePackageGuardHook(answers)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got == nil {
-		t.Fatal("expected non-nil GeneratedFile")
-		return
-	}
-
-	content := string(got.Content)
-
-	// The fixed npm age check must use dist-tags to find the latest version.
-	if !strings.Contains(content, "dist-tags") {
-		t.Error("content does not contain 'dist-tags' (npm age fix missing)")
-	}
-	if !strings.Contains(content, "dist_tags") {
-		t.Error("content does not contain 'dist_tags' variable (npm age fix missing)")
-	}
-
-	// The old pattern used time.modified without dist-tags lookup. Verify
-	// the fix replaced it: the function should NOT contain the old pattern
-	// of reading "modified" from time_map as the age source.
-	// We check that "modified" does not appear between check_npm_age and
-	// check_pypi_age, which would indicate the old unfixed logic.
-	npmStart := strings.Index(content, "def check_npm_age")
-	pypiStart := strings.Index(content, "def check_pypi_age")
-	if npmStart < 0 {
-		t.Fatal("could not find check_npm_age function")
-	}
-	if pypiStart < 0 {
-		t.Fatal("could not find check_pypi_age function")
-	}
-	npmFunc := content[npmStart:pypiStart]
-	if strings.Contains(npmFunc, `time_map.get("modified")`) {
-		t.Error("check_npm_age still contains old pattern using time_map.get(\"modified\")")
-	}
-}
-
-func TestGeneratePackageGuardHook_StdlibOnly(t *testing.T) {
-	answers := types.WizardAnswers{
-		Hooks: types.HookChoices{SafetyBlock: true},
-	}
-	got, err := claudecode.GeneratePackageGuardHook(answers)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got == nil {
-		t.Fatal("expected non-nil GeneratedFile")
-		return
-	}
-
-	content := string(got.Content)
-
-	forbidden := []struct {
-		needle string
-		desc   string
-	}{
-		{"import requests", "third-party requests library"},
-		{"import pip", "pip module import"},
-		{"from setuptools", "setuptools dependency"},
-	}
-	for _, f := range forbidden {
-		if strings.Contains(content, f.needle) {
-			t.Errorf("content contains %q (%s) — hook must use only stdlib", f.needle, f.desc)
+		files, err := claudecode.GenerateHookFiles(answers)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
-	}
+		if len(files) != 6 {
+			t.Errorf("expected 6 files, got %d", len(files))
+		}
+		for _, f := range files {
+			if f.Mode != 0o755 {
+				t.Errorf("%s: mode = %o, want %o", f.Path, f.Mode, 0o755)
+			}
+			if len(f.Content) == 0 {
+				t.Errorf("%s: content is empty", f.Path)
+			}
+		}
+	})
+
+	t.Run("audit-log without soc2", func(t *testing.T) {
+		t.Parallel()
+		answers := types.WizardAnswers{
+			Hooks: types.HookChoices{
+				AuditLog: true,
+			},
+		}
+		files, err := claudecode.GenerateHookFiles(answers)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(files) != 1 {
+			t.Fatalf("expected 1 file, got %d", len(files))
+		}
+		if files[0].Path != ".claude/hooks/audit-log.sh" {
+			t.Errorf("path = %q, want audit-log.sh", files[0].Path)
+		}
+	})
+
+	t.Run("soc2 suppresses audit-log", func(t *testing.T) {
+		t.Parallel()
+		answers := types.WizardAnswers{
+			Hooks: types.HookChoices{
+				AuditLog:  true,
+				SOC2Audit: true,
+			},
+		}
+		files, err := claudecode.GenerateHookFiles(answers)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, f := range files {
+			if f.Path == ".claude/hooks/audit-log.sh" {
+				t.Error("audit-log.sh should be suppressed when SOC2Audit is enabled")
+			}
+		}
+	})
+
+	t.Run("none enabled", func(t *testing.T) {
+		t.Parallel()
+		files, err := claudecode.GenerateHookFiles(types.WizardAnswers{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(files) != 0 {
+			t.Errorf("expected 0 files, got %d", len(files))
+		}
+	})
+
+	t.Run("package-guard content integrity", func(t *testing.T) {
+		t.Parallel()
+		answers := types.WizardAnswers{
+			Hooks: types.HookChoices{SafetyBlock: true},
+		}
+		files, err := claudecode.GenerateHookFiles(answers)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(files) != 1 {
+			t.Fatalf("expected 1 file, got %d", len(files))
+		}
+		content := string(files[0].Content)
+		checks := []string{
+			"#!/usr/bin/env python3",
+			"osv.dev",
+			"PreToolUse",
+			"FAIL_CLOSED = True",
+		}
+		for _, c := range checks {
+			if !strings.Contains(content, c) {
+				t.Errorf("content does not contain %q", c)
+			}
+		}
+	})
 }

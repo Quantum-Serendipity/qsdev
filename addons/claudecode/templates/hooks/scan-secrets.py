@@ -29,7 +29,7 @@ DEFAULT_PATTERNS: list[str] = [
     # AWS access key IDs
     r'AKIA[0-9A-Z]{16}',
     # AWS secret/session token assignments
-    r'aws[_-]?(secret[_-]?access[_-]?key|session[_-]?token)\s*[=:]\s*[A-Za-z0-9/+=]{20,}',
+    r'(?i)aws[_-]?(secret[_-]?access[_-]?key|session[_-]?token)\s*[=:]\s*[A-Za-z0-9/+=]{20,}',
     # GitHub personal access tokens and secrets
     r'gh[ps]_[A-Za-z0-9_]{36,}',
     # GitLab personal access tokens
@@ -41,15 +41,15 @@ DEFAULT_PATTERNS: list[str] = [
     # JWT tokens (three base64url segments)
     r'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}',
     # Database connection strings with credentials
-    r"""(mongodb(\+srv)?|postgres(ql)?|mysql|redis)://[^\s"']{10,}""",
+    r"""(mongodb(\+srv)?|postgres(ql)?|mysql|redis)://[^\s"':]+:[^\s"'@]+@[^\s"']{5,}""",
     # Slack API tokens
-    r'xox[bpras]-[A-Za-z0-9-]{10,}',
+    r'xox[bprase]-[A-Za-z0-9-]{10,}',
     # Stripe secret keys
     r'sk_(live|test)_[A-Za-z0-9]{20,}',
     # SendGrid API keys
     r'SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}',
     # Generic secret/password assignments
-    r"""(password|passwd|secret|token|credential)\s*[=:]\s*["'][^\s"']{8,}["']""",
+    r"""(?i)(password|passwd|secret|token|credential)\s*[=:]\s*["'][^\s"']{8,}["']""",
 ]
 
 KNOWN_EXAMPLES: set[str] = {

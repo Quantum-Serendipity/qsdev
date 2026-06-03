@@ -120,6 +120,33 @@ FILESYSTEM_PATTERNS: list[tuple[re.Pattern, str, str]] = [
 ]
 
 
+def check_rm_danger(command: str) -> tuple[str, str] | None:
+    """Check for rm with recursive+force targeting root/home, handling all flag forms."""
+    rm_match = re.search(r'\brm\s+(.*)', command)
+    if not rm_match:
+        return None
+    rm_args = rm_match.group(1)
+
+    has_recursive = bool(
+        re.search(r'(^|\s)-[a-zA-Z]*r', rm_args)
+        or re.search(r'--recursive\b', rm_args)
+    )
+    has_force = bool(
+        re.search(r'(^|\s)-[a-zA-Z]*f', rm_args)
+        or re.search(r'--force\b', rm_args)
+    )
+    has_dangerous_path = bool(
+        re.search(r'(^|\s)(\/|~\/|\$HOME\b|\$\{HOME\})', rm_args)
+    )
+
+    if has_recursive and has_force and has_dangerous_path:
+        return (
+            "Recursive forced deletion of root/home directory detected.",
+            "Use targeted rm on specific files or directories within the project.",
+        )
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Category 2: Git force operations
 # ---------------------------------------------------------------------------
@@ -183,13 +210,13 @@ DB_PATTERNS: list[tuple[re.Pattern, str, str]] = [
 
 def check_delete_without_where(command: str) -> tuple[str, str] | None:
     """Detect bare DELETE FROM without WHERE clause."""
-    # Match DELETE FROM <table> but NOT followed by WHERE
-    match = re.search(r'\bDELETE\s+FROM\s+\S+', command, re.IGNORECASE)
-    if match and not re.search(r'\bWHERE\b', command, re.IGNORECASE):
-        return (
-            "DELETE FROM without WHERE clause — deletes all rows.",
-            "Add a WHERE clause to target specific rows, or use TRUNCATE if intended.",
-        )
+    for stmt in command.split(';'):
+        match = re.search(r'\bDELETE\s+FROM\s+\S+', stmt, re.IGNORECASE)
+        if match and not re.search(r'\bWHERE\b', stmt, re.IGNORECASE):
+            return (
+                "DELETE FROM without WHERE clause — deletes all rows.",
+                "Add a WHERE clause to target specific rows, or use TRUNCATE if intended.",
+            )
     return None
 
 
@@ -320,6 +347,10 @@ def main() -> None:
     for pattern, reason, remediation in FILESYSTEM_PATTERNS:
         if pattern.search(command):
             deny("Filesystem Destruction", reason, remediation, command)
+
+    result = check_rm_danger(command)
+    if result:
+        deny("Filesystem Destruction", result[0], result[1], command)
 
     # Category 2: Git
     result = check_git_force(command)

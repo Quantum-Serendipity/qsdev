@@ -2,6 +2,7 @@ package claudecode_test
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	claudecode "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
@@ -396,5 +397,55 @@ func TestHooksCmd_ListJSON(t *testing.T) {
 	}
 	if sub.Name() != "list" {
 		t.Errorf("subcommand name = %q, want list", sub.Name())
+	}
+}
+
+func TestDefaultHookRegistry_AllTemplatesExist(t *testing.T) {
+	t.Parallel()
+	r := claudecode.ExportDefaultHookRegistry()
+	defs := r.Definitions()
+
+	const prefix = `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/`
+	seen := make(map[string]bool)
+
+	for _, d := range defs {
+		idx := strings.Index(d.Command, prefix)
+		if idx < 0 {
+			continue
+		}
+		rest := d.Command[idx+len(prefix):]
+		scriptName := strings.Fields(rest)[0]
+
+		if seen[scriptName] {
+			continue
+		}
+		seen[scriptName] = true
+
+		templatePath := "templates/hooks/" + scriptName
+		_, err := claudecode.ExportTemplateFS.ReadFile(templatePath)
+		if err != nil {
+			t.Errorf("hook %q (event=%s) references template %q that does not exist: %v",
+				d.Owner, d.Event, templatePath, err)
+		}
+	}
+
+	if len(seen) == 0 {
+		t.Error("no hook templates found to validate")
+	}
+}
+
+func TestSecretPatterns_MatchPythonHook(t *testing.T) {
+	t.Parallel()
+
+	pyContent, err := claudecode.ExportTemplateFS.ReadFile("templates/hooks/scan-secrets.py")
+	if err != nil {
+		t.Fatalf("reading scan-secrets.py: %v", err)
+	}
+	content := string(pyContent)
+
+	for i, goPattern := range claudecode.ExportDefaultSecretPatterns {
+		if !strings.Contains(content, goPattern) {
+			t.Errorf("Go pattern [%d] %q not found in scan-secrets.py (patterns may be out of sync)", i, goPattern)
+		}
 	}
 }

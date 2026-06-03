@@ -94,4 +94,6 @@ var (
 	ExportDefaultHookRegistry = defaultHookRegistry
 	ExportBuildHookStatuses   = buildHookStatuses
 	ExportHooksCmd            = hooksCmd
+	ExportTemplateFS          = templateFS
+	ExportGenerateHookFiles   = GenerateHookFiles
 )

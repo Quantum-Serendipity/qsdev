@@ -482,12 +482,12 @@ func addHookCmd() *cobra.Command {
 				return fmt.Errorf("unknown hook preset %q; valid presets: %v", hookName, validHookPresets)
 			}
 
-			// Warn about presets that have no generated output yet.
+			// Reject presets that have no generated output yet.
 			switch hookName {
 			case "auto-format":
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Note: auto-format hook preset is not yet implemented. The setting will be saved but no hook files are generated.")
+				return fmt.Errorf("hook preset %q is not yet implemented; it will be available in a future release", hookName)
 			case "pre-commit":
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Note: pre-commit hook preset is managed by devenv, not Claude Code. Use '%s devenv init' with git hooks enabled.\n", branding.Get().AppName)
+				return fmt.Errorf("hook preset %q is managed by devenv, not Claude Code; use '%s devenv init' with git hooks enabled", hookName, branding.Get().AppName)
 			}
 
 			projectRoot, err := cmdutil.ProjectRoot()

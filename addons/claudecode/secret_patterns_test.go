@@ -54,6 +54,12 @@ func TestSecretPatterns_PositiveMatches(t *testing.T) {
 		{"Password assignment", 11, `password = "supersecretpassword123"`},
 		{"Secret assignment", 11, `secret: "my_very_secret_value_here"`},
 		{"Token assignment", 11, `token = "abcdefghijklmnopqrstuvwxyz"`},
+		{"AWS secret key UPPERCASE", 1, "AWS_SECRET_ACCESS_KEY = wJalrXUtnFEMI/K7MDENG/bPxRfiCYzzzzzz"},
+		{"AWS session token UPPERCASE", 1, "AWS_SESSION_TOKEN: ABCDEFGHIJKLMNOPQRSTzzzz"},
+		{"PASSWORD uppercase", 11, `PASSWORD = "supersecretpassword123"`},
+		{"SECRET uppercase", 11, `SECRET: "my_very_secret_value_here"`},
+		{"TOKEN uppercase", 11, `TOKEN = "abcdefghijklmnopqrstuvwxyz"`},
+		{"Slack enterprise token", 8, "xoxe-AAAAAAAAAA-AAAAAAAAAAAAA"},
 	}
 
 	for _, tt := range tests {
@@ -84,6 +90,9 @@ func TestSecretPatterns_NegativeMatches(t *testing.T) {
 		{"Not a private key", 5, "-----BEGIN CERTIFICATE-----"},
 		{"Short JWT", 6, "eyJ.eyJ.abc"},
 		{"HTTP URL not DB", 7, "https://example.com/api/endpoint"},
+		{"PostgreSQL no credentials", 7, "postgres://localhost:5432/testdb"},
+		{"Redis no credentials", 7, "redis://localhost:6379"},
+		{"MongoDB no credentials", 7, "mongodb://localhost:27017/mydb"},
 		{"Slack wrong prefix", 8, "xoxx-not-a-token"},
 		{"Stripe wrong prefix", 9, "pk_live_ABCDEFGHIJKLMNOPQRSTUVWXYZabcde"},
 		{"Short Stripe key", 9, "sk_live_short"},

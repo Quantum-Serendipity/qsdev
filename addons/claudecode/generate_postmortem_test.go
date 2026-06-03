@@ -33,6 +33,7 @@ func TestGeneratePostmortemSkill_GoProject(t *testing.T) {
 
 	if skillFile == nil {
 		t.Fatal("expected postmortem skill file")
+		return
 	}
 
 	content := string(skillFile.Content)
@@ -74,6 +75,7 @@ func TestGeneratePostmortemSkill_MultiLanguage(t *testing.T) {
 
 	if skillFile == nil {
 		t.Fatal("expected postmortem skill file")
+		return
 	}
 
 	content := string(skillFile.Content)
@@ -129,6 +131,7 @@ func TestGeneratePostmortemSkill_PreservesBaseSkillStructure(t *testing.T) {
 
 	if skillFile == nil {
 		t.Fatal("expected postmortem skill file")
+		return
 	}
 
 	content := string(skillFile.Content)

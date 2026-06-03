@@ -922,6 +922,11 @@ hook_presets:
     - safety-block
     - pre-commit
     - audit-log
+    - credential-scan
+    - destructive-prevention
+    - soc2-audit
+    - file-boundary
+    - tool-gates
 security_levels:
     - baseline
     - enhanced

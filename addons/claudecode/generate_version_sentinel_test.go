@@ -52,6 +52,7 @@ func TestVersionSentinelIgnore_GoProject(t *testing.T) {
 
 	if ignoreFile == nil {
 		t.Fatal("expected .version-sentinel/ignore file for Go project (VS doesn't cover go.mod)")
+		return
 	}
 
 	content := string(ignoreFile.Content)
@@ -105,6 +106,7 @@ func TestVersionSentinelRecoverySkill(t *testing.T) {
 
 	if skillFile == nil {
 		t.Fatal("expected version-sentinel recovery skill")
+		return
 	}
 
 	content := string(skillFile.Content)
@@ -143,6 +145,7 @@ func TestVersionSentinelIgnore_GoAndJsProject(t *testing.T) {
 
 	if ignoreFile == nil {
 		t.Fatal("expected ignore file for Go+JS project (go.mod is uncovered)")
+		return
 	}
 
 	content := string(ignoreFile.Content)

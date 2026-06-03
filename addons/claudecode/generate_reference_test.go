@@ -18,6 +18,7 @@ func TestGenerateQsdevReference_NotNil(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected non-nil result")
+		return
 	}
 	if got.Path != ".claude/qsdev-reference.md" {
 		t.Errorf("Path = %q, want %q", got.Path, ".claude/qsdev-reference.md")

@@ -114,10 +114,15 @@ func NewDetectedProject() DetectedProject {
 
 // HookChoices represents the user's selections for Claude Code automation hooks.
 type HookChoices struct {
-	AutoFormat  bool `yaml:"auto_format"  json:"auto_format"`
-	SafetyBlock bool `yaml:"safety_block" json:"safety_block"`
-	PreCommit   bool `yaml:"pre_commit"   json:"pre_commit"`
-	AuditLog    bool `yaml:"audit_log"    json:"audit_log"`
+	AutoFormat            bool `yaml:"auto_format"             json:"auto_format"`
+	SafetyBlock           bool `yaml:"safety_block"            json:"safety_block"`
+	PreCommit             bool `yaml:"pre_commit"              json:"pre_commit"`
+	AuditLog              bool `yaml:"audit_log"               json:"audit_log"`
+	CredentialScan        bool `yaml:"credential_scan"         json:"credential_scan"`
+	DestructivePrevention bool `yaml:"destructive_prevention"  json:"destructive_prevention"`
+	SOC2Audit             bool `yaml:"soc2_audit"              json:"soc2_audit"`
+	FileBoundary          bool `yaml:"file_boundary"           json:"file_boundary"`
+	ToolGates             bool `yaml:"tool_gates"              json:"tool_gates"`
 }
 
 // GeneratedFile represents a single file to be written by the generation pipeline.

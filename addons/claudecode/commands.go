@@ -46,6 +46,7 @@ func claudeCmd() *cobra.Command {
 		addSkillCmd(),
 		addHookCmd(),
 		listSkillsCmd(),
+		hooksCmd(),
 	)
 
 	return cmd
@@ -481,12 +482,12 @@ func addHookCmd() *cobra.Command {
 				return fmt.Errorf("unknown hook preset %q; valid presets: %v", hookName, validHookPresets)
 			}
 
-			// Warn about presets that have no generated output yet.
+			// Reject presets that have no generated output yet.
 			switch hookName {
 			case "auto-format":
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Note: auto-format hook preset is not yet implemented. The setting will be saved but no hook files are generated.")
+				return fmt.Errorf("hook preset %q is not yet implemented; it will be available in a future release", hookName)
 			case "pre-commit":
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Note: pre-commit hook preset is managed by devenv, not Claude Code. Use '%s devenv init' with git hooks enabled.\n", branding.Get().AppName)
+				return fmt.Errorf("hook preset %q is managed by devenv, not Claude Code; use '%s devenv init' with git hooks enabled", hookName, branding.Get().AppName)
 			}
 
 			projectRoot, err := cmdutil.ProjectRoot()
@@ -645,5 +646,15 @@ func hookPresetToChoices(name string, hooks *types.HookChoices) {
 		hooks.PreCommit = true
 	case "audit-log":
 		hooks.AuditLog = true
+	case "credential-scan":
+		hooks.CredentialScan = true
+	case "destructive-prevention":
+		hooks.DestructivePrevention = true
+	case "soc2-audit":
+		hooks.SOC2Audit = true
+	case "file-boundary":
+		hooks.FileBoundary = true
+	case "tool-gates":
+		hooks.ToolGates = true
 	}
 }

@@ -1097,10 +1097,10 @@ func TestValidationAccessors(t *testing.T) {
 	t.Run("HookPresets", func(t *testing.T) {
 		t.Parallel()
 		presets := cat.HookPresets()
-		if len(presets) != 4 {
-			t.Errorf("HookPresets() count = %d, want 4", len(presets))
+		if len(presets) != 9 {
+			t.Errorf("HookPresets() count = %d, want 9", len(presets))
 		}
-		for _, p := range []string{"auto-format", "safety-block", "pre-commit", "audit-log"} {
+		for _, p := range []string{"auto-format", "safety-block", "pre-commit", "audit-log", "credential-scan", "destructive-prevention", "soc2-audit", "file-boundary", "tool-gates"} {
 			if !containsStr(presets, p) {
 				t.Errorf("HookPresets() should contain %q", p)
 			}

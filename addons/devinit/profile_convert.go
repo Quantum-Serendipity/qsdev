@@ -58,6 +58,16 @@ func hooksFromStrings(hooks []string) types.HookChoices {
 			hc.PreCommit = true
 		case "audit-log":
 			hc.AuditLog = true
+		case "credential-scan":
+			hc.CredentialScan = true
+		case "destructive-prevention":
+			hc.DestructivePrevention = true
+		case "soc2-audit":
+			hc.SOC2Audit = true
+		case "file-boundary":
+			hc.FileBoundary = true
+		case "tool-gates":
+			hc.ToolGates = true
 		}
 	}
 	return hc

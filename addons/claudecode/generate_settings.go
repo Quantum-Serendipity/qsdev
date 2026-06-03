@@ -579,41 +579,10 @@ func buildSandbox(cfg Config) *SandboxConfig {
 }
 
 // buildHooks returns the hooks map based on enabled hook presets.
+// It delegates to the default HookRegistry which evaluates each registered
+// hook's EnabledFunc against the provided answers.
 func buildHooks(answers types.WizardAnswers) map[string][]HookMatcher {
-	hooks := make(map[string][]HookMatcher)
-
-	if answers.Hooks.SafetyBlock {
-		hooks["PreToolUse"] = append(hooks["PreToolUse"], HookMatcher{
-			Matcher: "Bash",
-			Hooks: []HookEntry{
-				{
-					Type:          "command",
-					Command:       `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/package-guard.py`,
-					Timeout:       30,
-					StatusMessage: "Checking package install safety...",
-				},
-			},
-		})
-	}
-
-	if answers.Hooks.AuditLog {
-		hooks["PostToolUse"] = append(hooks["PostToolUse"], HookMatcher{
-			Matcher: "*",
-			Hooks: []HookEntry{
-				{
-					Type:          "command",
-					Command:       `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/audit-log.sh`,
-					Timeout:       5,
-					StatusMessage: "Logging tool action...",
-				},
-			},
-		})
-	}
-
-	if len(hooks) == 0 {
-		return nil
-	}
-	return hooks
+	return defaultHookRegistry().BuildHooksMap(answers)
 }
 
 // GenerateSettings produces a .claude/settings.json file from the wizard

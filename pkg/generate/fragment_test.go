@@ -422,6 +422,61 @@ func TestResolve_ComposeMergeYAML(t *testing.T) {
 	}
 }
 
+func TestResolve_ComposeMergeJSON_ThreeFragments(t *testing.T) {
+	t.Parallel()
+
+	low := `{"shared": "low", "only_low": true}`
+	mid := `{"shared": "mid", "only_mid": true, "nested": {"a": 1}}`
+	high := `{"shared": "high", "nested": {"a": 2, "b": 3}}`
+
+	a := NewFragmentAccumulator()
+	a.Add(types.FragmentEntry{
+		Source: "low", Target: "config.json",
+		Content: []byte(low), Priority: 100,
+		ComposeMode: types.ComposeMergeJSON,
+	})
+	a.Add(types.FragmentEntry{
+		Source: "mid", Target: "config.json",
+		Content: []byte(mid), Priority: 300,
+		ComposeMode: types.ComposeMergeJSON,
+	})
+	a.Add(types.FragmentEntry{
+		Source: "high", Target: "config.json",
+		Content: []byte(high), Priority: 500,
+		ComposeMode: types.ComposeMergeJSON,
+	})
+
+	files, err := a.Resolve()
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(files[0].Content, &result); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+
+	if got := result["shared"]; got != "high" {
+		t.Fatalf("expected shared=high, got %v", got)
+	}
+	if got := result["only_low"]; got != true {
+		t.Fatalf("expected only_low=true, got %v", got)
+	}
+	if got := result["only_mid"]; got != true {
+		t.Fatalf("expected only_mid=true, got %v", got)
+	}
+	nested, ok := result["nested"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested to be map, got %T", result["nested"])
+	}
+	if got := nested["a"]; got != float64(2) {
+		t.Fatalf("expected nested.a=2, got %v", got)
+	}
+	if got := nested["b"]; got != float64(3) {
+		t.Fatalf("expected nested.b=3, got %v", got)
+	}
+}
+
 func TestResolve_DeterministicOrdering(t *testing.T) {
 	t.Parallel()
 

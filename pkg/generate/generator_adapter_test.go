@@ -121,3 +121,18 @@ func TestGeneratorAdapter_DefaultMode(t *testing.T) {
 		t.Fatalf("expected default mode 0644, got %o", fragments[0].Mode)
 	}
 }
+
+func TestGeneratorAdapter_NilFiles(t *testing.T) {
+	t.Parallel()
+
+	gen := &mockGenerator{files: nil, err: nil}
+	adapter := NewGeneratorAdapter("testgen", gen)
+
+	fragments, err := adapter.Produce(types.WizardAnswers{})
+	if err != nil {
+		t.Fatalf("Produce failed: %v", err)
+	}
+	if len(fragments) != 0 {
+		t.Fatalf("expected 0 fragments for nil generator output, got %d", len(fragments))
+	}
+}

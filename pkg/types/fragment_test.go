@@ -2,6 +2,7 @@ package types_test
 
 import (
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -229,5 +230,21 @@ func TestFragmentLedgerEntry_YAMLRoundTrip(t *testing.T) {
 	}
 	if got.Reason != original.Reason {
 		t.Errorf("Reason: got %q, want %q", got.Reason, original.Reason)
+	}
+}
+
+func TestFragmentEntry_SortKey_OverflowPriority(t *testing.T) {
+	t.Parallel()
+
+	f := types.FragmentEntry{
+		Source:   "test",
+		Target:   "file.txt",
+		Priority: types.PriorityCeiling + 1,
+	}
+	key := f.SortKey()
+	// Priority > PriorityCeiling produces a negative inverted value in the sort
+	// key, causing such fragments to sort before all valid-priority fragments.
+	if !strings.Contains(key, "-") {
+		t.Fatalf("expected negative value in sort key for overflow priority, got %q", key)
 	}
 }

@@ -229,3 +229,44 @@ func TestDeterministic_100FragmentStability(t *testing.T) {
 		}
 	}
 }
+
+func TestDeterministicYAML_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"name":    "test",
+		"count":   42,
+		"enabled": true,
+		"nested": map[string]any{
+			"inner": "value",
+			"list":  []any{"a", "b", "c"},
+		},
+	}
+
+	data, err := DeterministicYAML(input)
+	if err != nil {
+		t.Fatalf("DeterministicYAML failed: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("YAML output does not parse back: %v", err)
+	}
+
+	if parsed["name"] != "test" {
+		t.Errorf("name: got %v, want test", parsed["name"])
+	}
+	if parsed["count"] != 42 {
+		t.Errorf("count: got %v, want 42", parsed["count"])
+	}
+	if parsed["enabled"] != true {
+		t.Errorf("enabled: got %v, want true", parsed["enabled"])
+	}
+	nested, ok := parsed["nested"].(map[string]any)
+	if !ok {
+		t.Fatalf("nested: expected map, got %T", parsed["nested"])
+	}
+	if nested["inner"] != "value" {
+		t.Errorf("nested.inner: got %v, want value", nested["inner"])
+	}
+}

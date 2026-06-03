@@ -153,6 +153,36 @@ func TestMapDetectionToDefaults_Container(t *testing.T) {
 	}
 }
 
+func TestMapDetectionToDefaults_ContainerWithRuntimeAndOSFamily(t *testing.T) {
+	detected := types.DetectedProject{
+		HasDockerfile:    true,
+		ContainerRuntime: "podman-rootless",
+		OSFamily:         "nixos",
+	}
+	answers := devinit.ExportMapDetectionToDefaults(detected, "/tmp/podmanproject")
+
+	if len(answers.Languages) != 1 {
+		t.Fatalf("expected 1 language, got %d", len(answers.Languages))
+	}
+	lc := answers.Languages[0]
+	hasRuntime := false
+	hasOSFamily := false
+	for _, e := range lc.Extras {
+		if e == "container_runtime=podman-rootless" {
+			hasRuntime = true
+		}
+		if e == "os_family=nixos" {
+			hasOSFamily = true
+		}
+	}
+	if !hasRuntime {
+		t.Errorf("Extras missing container_runtime, got %v", lc.Extras)
+	}
+	if !hasOSFamily {
+		t.Errorf("Extras missing os_family, got %v", lc.Extras)
+	}
+}
+
 func TestMapDetectionToDefaults_Terraform(t *testing.T) {
 	detected := types.DetectedProject{HasTerraform: true}
 	answers := devinit.ExportMapDetectionToDefaults(detected, "/tmp/tfproject")

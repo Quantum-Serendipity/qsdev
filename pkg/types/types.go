@@ -211,7 +211,14 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 			a.Languages = append(a.Languages, LanguageChoice{Name: "dotnet"})
 		}
 		if detected.HasDockerfile {
-			a.Languages = append(a.Languages, LanguageChoice{Name: "container"})
+			lc := LanguageChoice{Name: "container"}
+			if detected.ContainerRuntime != "" {
+				lc.Extras = append(lc.Extras, "container_runtime="+detected.ContainerRuntime)
+			}
+			if detected.OSFamily != "" {
+				lc.Extras = append(lc.Extras, "os_family="+detected.OSFamily)
+			}
+			a.Languages = append(a.Languages, lc)
 		}
 		if detected.HasTerraform {
 			a.Languages = append(a.Languages, LanguageChoice{Name: "terraform"})

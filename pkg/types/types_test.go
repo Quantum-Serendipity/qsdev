@@ -428,6 +428,43 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 		}
 	})
 
+	t.Run("FillDefaults propagates container runtime and os_family", func(t *testing.T) {
+		a := types.WizardAnswers{}
+		detected := types.DetectedProject{
+			HasDockerfile:    true,
+			ContainerRuntime: "podman-rootless",
+			OSFamily:         "nixos",
+		}
+		a.FillDefaults(detected)
+
+		var containerLC *types.LanguageChoice
+		for i := range a.Languages {
+			if a.Languages[i].Name == "container" {
+				containerLC = &a.Languages[i]
+				break
+			}
+		}
+		if containerLC == nil {
+			t.Fatal("expected container language choice")
+		}
+		hasRuntime := false
+		hasOSFamily := false
+		for _, e := range containerLC.Extras {
+			if e == "container_runtime=podman-rootless" {
+				hasRuntime = true
+			}
+			if e == "os_family=nixos" {
+				hasOSFamily = true
+			}
+		}
+		if !hasRuntime {
+			t.Errorf("Extras missing container_runtime, got %v", containerLC.Extras)
+		}
+		if !hasOSFamily {
+			t.Errorf("Extras missing os_family, got %v", containerLC.Extras)
+		}
+	})
+
 	t.Run("no default permission level when claude disabled", func(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: false}
 		a.FillDefaults(types.DetectedProject{})

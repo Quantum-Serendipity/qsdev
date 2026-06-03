@@ -22,6 +22,7 @@ type Report struct {
 	Shell              ShellInfo         `json:"shell"`
 	PackageMgrs        []PkgMgrInfo      `json:"package_managers"`
 	ContainerRuntime   *ContainerSection `json:"container_runtime,omitempty"`
+	SandboxRuntime     *SandboxSection   `json:"sandbox_runtime,omitempty"`
 	RequiredTools      []ToolEntry       `json:"required_tools"`
 	OptionalTools      []ToolEntry       `json:"optional_tools"`
 	Recommendations    []string          `json:"recommendations,omitempty"`
@@ -31,6 +32,11 @@ type Report struct {
 // SetContainerSection attaches a container runtime check result to the report.
 func (r *Report) SetContainerSection(cs *ContainerSection) {
 	r.ContainerRuntime = cs
+}
+
+// SetSandboxSection attaches a hook sandbox check result to the report.
+func (r *Report) SetSandboxSection(ss *SandboxSection) {
+	r.SandboxRuntime = ss
 }
 
 // SystemInfo captures OS-level details for the report.
@@ -223,6 +229,11 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 		formatContainerSection(w, r.ContainerRuntime, okSym, warnSym, failSym)
 	}
 
+	// Hook Sandbox
+	if r.SandboxRuntime != nil && r.SandboxRuntime.Detected {
+		formatSandboxSection(w, r.SandboxRuntime, okSym, warnSym, failSym)
+	}
+
 	// Required Tools
 	if len(r.RequiredTools) > 0 {
 		fmt.Fprintln(w, "Required Tools")
@@ -303,6 +314,25 @@ func formatContainerSection(w io.Writer, cs *ContainerSection, okSym, warnSym, f
 	if len(cs.Warnings) > 0 {
 		fmt.Fprintln(w)
 		for _, warn := range cs.Warnings {
+			fmt.Fprintf(w, "  %s %s\n", warnSym, warn)
+		}
+	}
+	fmt.Fprintln(w)
+}
+
+func formatSandboxSection(w io.Writer, ss *SandboxSection, okSym, warnSym, _ string) {
+	fmt.Fprintln(w, "Hook Sandbox")
+	fmt.Fprintf(w, "  %-14s %s (%s)\n", "Tier:", ss.Tier, ss.SecurityLevel)
+	for _, item := range ss.Items {
+		sym := okSym
+		if item.Status == "warn" {
+			sym = warnSym
+		}
+		fmt.Fprintf(w, "  %-14s %s %s\n", item.Label+":", sym, item.Summary)
+	}
+	if len(ss.Warnings) > 0 {
+		fmt.Fprintln(w)
+		for _, warn := range ss.Warnings {
 			fmt.Fprintf(w, "  %s %s\n", warnSym, warn)
 		}
 	}

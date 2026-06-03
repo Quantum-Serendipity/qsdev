@@ -586,9 +586,41 @@ func buildSandbox(cfg Config) *SandboxConfig {
 
 // buildHooks returns the hooks map based on enabled hook presets.
 // It delegates to the default HookRegistry which evaluates each registered
-// hook's EnabledFunc against the provided answers.
+// hook's EnabledFunc against the provided answers. When sandbox is enabled,
+// hook commands are wrapped with "qsdev sandbox exec".
 func buildHooks(answers types.WizardAnswers) map[string][]HookMatcher {
-	return defaultHookRegistry().BuildHooksMap(answers)
+	registry := defaultHookRegistry()
+	hooks := registry.BuildHooksMap(answers)
+	if hooks != nil && answers.Hooks.SandboxEnabled {
+		hooks = wrapHooksForSandbox(hooks, registry)
+	}
+	return hooks
+}
+
+// wrapHooksForSandbox prefixes each hook command with "qsdev sandbox exec
+// --category <cat> --" so hooks run inside the sandbox. The category is
+// looked up from the registry's SandboxCategory field.
+func wrapHooksForSandbox(hooks map[string][]HookMatcher, registry *HookRegistry) map[string][]HookMatcher {
+	catMap := make(map[string]string)
+	for _, def := range registry.Definitions() {
+		if def.SandboxCategory != "" {
+			catMap[def.Command] = def.SandboxCategory
+		}
+	}
+
+	for event, matchers := range hooks {
+		for i, m := range matchers {
+			for j, h := range m.Hooks {
+				cat := catMap[h.Command]
+				if cat == "" {
+					cat = "linter"
+				}
+				hooks[event][i].Hooks[j].Command = fmt.Sprintf(
+					`qsdev sandbox exec --category %s -- %s`, cat, h.Command)
+			}
+		}
+	}
+	return hooks
 }
 
 // GenerateSettings produces a .claude/settings.json file from the wizard

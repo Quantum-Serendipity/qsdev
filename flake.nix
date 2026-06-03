@@ -52,6 +52,14 @@
           "-X" "github.com/Quantum-Serendipity/qsdev/internal/version.date=${date}"
           "-X" "github.com/Quantum-Serendipity/qsdev/internal/version.builtBy=nix"
         ];
+
+        sandboxPkgs = if pkgs.stdenv.isLinux then {
+          ll-restrict = import ./nix/ll-restrict { inherit pkgs; };
+          seccomp-profiles = import ./nix/seccomp-profiles { inherit pkgs; };
+        } else {
+          ll-restrict = null;
+          seccomp-profiles = null;
+        };
       in
       {
         packages = rec {
@@ -70,7 +78,10 @@
 
             env.CGO_ENABLED = "0";
 
-            inherit ldflags;
+            ldflags = ldflags ++ pkgs.lib.optionals (sandboxPkgs.ll-restrict != null) [
+              "-X" "github.com/Quantum-Serendipity/qsdev/internal/sandbox.llRestrictPath=${sandboxPkgs.ll-restrict}/bin/ll-restrict"
+              "-X" "github.com/Quantum-Serendipity/qsdev/internal/sandbox.seccompFilterPath=${sandboxPkgs.seccomp-profiles.filter}/hook-blocklist.bpf"
+            ];
             flags = [ "-trimpath" ];
 
             subPackages = [ "cmd/qsdev" ];
@@ -88,7 +99,8 @@
 
             postFixup = ''
               wrapProgram $out/bin/qsdev \
-                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git ]}
+                --prefix PATH : ${pkgs.lib.makeBinPath ([ pkgs.git ]
+                  ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ])}
             '';
 
             meta = with pkgs.lib; {
@@ -100,6 +112,9 @@
           };
 
           default = qsdev;
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          inherit (sandboxPkgs) ll-restrict;
+          seccomp-filter = sandboxPkgs.seccomp-profiles.filter;
         };
 
       });

@@ -126,6 +126,7 @@ type HookChoices struct {
 	SOC2Audit             bool `yaml:"soc2_audit"              json:"soc2_audit"`
 	FileBoundary          bool `yaml:"file_boundary"           json:"file_boundary"`
 	ToolGates             bool `yaml:"tool_gates"              json:"tool_gates"`
+	SandboxEnabled        bool `yaml:"sandbox_enabled"         json:"sandbox_enabled"`
 }
 
 // GeneratedFile represents a single file to be written by the generation pipeline.

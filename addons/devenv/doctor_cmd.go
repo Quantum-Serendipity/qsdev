@@ -13,6 +13,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/container"
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 )
 
@@ -48,9 +49,13 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 	osInfo := sysinfo.DetectOS()
 
 	var containerSection *doctor.ContainerSection
+	var sandboxSection *doctor.SandboxSection
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		containerSection = doctor.RunContainerCheck(ctx, &container.ExecProber{}, osInfo)
+	})
+	wg.Go(func() {
+		sandboxSection = doctor.RunSandboxCheck(ctx, &sandbox.ExecSandboxProber{})
 	})
 
 	checks := doctor.RunAllChecks(ctx, osInfo)
@@ -58,6 +63,7 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 
 	report := doctor.BuildReport(osInfo, checks, "0.1.0")
 	report.SetContainerSection(containerSection)
+	report.SetSandboxSection(sandboxSection)
 	slog.Info("doctor check complete",
 		"required_tools", len(report.RequiredTools),
 		"optional_tools", len(report.OptionalTools),

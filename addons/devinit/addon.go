@@ -59,6 +59,7 @@ func initialize() error {
 		updateCmd(),
 		teardownCmd(),
 		containerCmd(),
+		sandboxCmd(),
 		defaults.Command(),
 	)
 	return nil

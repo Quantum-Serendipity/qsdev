@@ -16,15 +16,21 @@ import (
 
 // Report is the top-level output of qsdev doctor.
 type Report struct {
-	QsdevVersion        string       `json:"qsdev_version"`
-	Timestamp          string       `json:"timestamp"`
-	System             SystemInfo   `json:"system"`
-	Shell              ShellInfo    `json:"shell"`
-	PackageMgrs        []PkgMgrInfo `json:"package_managers"`
-	RequiredTools      []ToolEntry  `json:"required_tools"`
-	OptionalTools      []ToolEntry  `json:"optional_tools"`
-	Recommendations    []string     `json:"recommendations,omitempty"`
-	AllRequiredPresent bool         `json:"all_required_present"`
+	QsdevVersion       string            `json:"qsdev_version"`
+	Timestamp          string            `json:"timestamp"`
+	System             SystemInfo        `json:"system"`
+	Shell              ShellInfo         `json:"shell"`
+	PackageMgrs        []PkgMgrInfo      `json:"package_managers"`
+	ContainerRuntime   *ContainerSection `json:"container_runtime,omitempty"`
+	RequiredTools      []ToolEntry       `json:"required_tools"`
+	OptionalTools      []ToolEntry       `json:"optional_tools"`
+	Recommendations    []string          `json:"recommendations,omitempty"`
+	AllRequiredPresent bool              `json:"all_required_present"`
+}
+
+// SetContainerSection attaches a container runtime check result to the report.
+func (r *Report) SetContainerSection(cs *ContainerSection) {
+	r.ContainerRuntime = cs
 }
 
 // SystemInfo captures OS-level details for the report.
@@ -67,7 +73,7 @@ type ToolEntry struct {
 func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, qsdevVersion string) *Report {
 	r := &Report{
 		QsdevVersion: qsdevVersion,
-		Timestamp:   time.Now().UTC().Format(time.RFC3339),
+		Timestamp:    time.Now().UTC().Format(time.RFC3339),
 		System: SystemInfo{
 			OS:          capitalOS(osInfo.OS),
 			Distro:      osInfo.Distro,
@@ -212,6 +218,11 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 	}
 	fmt.Fprintln(w)
 
+	// Container Runtime
+	if r.ContainerRuntime != nil && r.ContainerRuntime.Detected {
+		formatContainerSection(w, r.ContainerRuntime, okSym, warnSym, failSym)
+	}
+
 	// Required Tools
 	if len(r.RequiredTools) > 0 {
 		fmt.Fprintln(w, "Required Tools")
@@ -268,6 +279,34 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 		}
 		fmt.Fprintln(w)
 	}
+}
+
+func formatContainerSection(w io.Writer, cs *ContainerSection, okSym, warnSym, failSym string) {
+	fmt.Fprintln(w, "Container Runtime")
+	fmt.Fprintf(w, "  %-14s %s\n", "Runtime:", cs.Runtime)
+	if cs.SocketPath != "" {
+		fmt.Fprintf(w, "  %-14s %s\n", "Socket:", cs.SocketPath)
+	}
+	if cs.ComposeMethod != "" && cs.ComposeMethod != "none" {
+		fmt.Fprintf(w, "  %-14s %s\n", "Compose:", cs.ComposeMethod)
+	}
+	for _, item := range cs.Items {
+		sym := okSym
+		switch item.Status {
+		case "warn":
+			sym = warnSym
+		case "error":
+			sym = failSym
+		}
+		fmt.Fprintf(w, "  %-14s %s %s\n", item.Label+":", sym, item.Summary)
+	}
+	if len(cs.Warnings) > 0 {
+		fmt.Fprintln(w)
+		for _, warn := range cs.Warnings {
+			fmt.Fprintf(w, "  %s %s\n", warnSym, warn)
+		}
+	}
+	fmt.Fprintln(w)
 }
 
 func capitalOS(os string) string {

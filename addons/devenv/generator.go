@@ -96,6 +96,15 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 		files = append(files, *nixHardeningFile)
 	}
 
+	// 5b. NixOS Podman rootless guide (Podman + NixOS auto-detected)
+	podmanGuide, err := GenerateNixosPodmanGuide(answers)
+	if err != nil {
+		return nil, fmt.Errorf("generating nixos-podman-rootless guide: %w", err)
+	}
+	if podmanGuide != nil {
+		files = append(files, *podmanGuide)
+	}
+
 	// 6. Profile-driven configs (CI workflow, Renovate/Dependabot, security docs)
 	// Requires tier >= Standard: these are opinionated workflow configs.
 	t := tier.Resolve(answers.Tier, answers.PermissionLevel, answers.MCPServers)

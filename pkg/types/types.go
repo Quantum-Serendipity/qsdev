@@ -87,6 +87,8 @@ type DetectedProject struct {
 	HasCsproj        bool   `yaml:"has_csproj"       json:"has_csproj"`
 	HasDockerfile    bool   `yaml:"has_dockerfile"      json:"has_dockerfile"`
 	ContainerRuntime string `yaml:"container_runtime"   json:"container_runtime"`
+	OSFamily         string `yaml:"os_family"            json:"os_family"`
+	Username         string `yaml:"username"             json:"username"`
 	HasTerraform     bool   `yaml:"has_terraform"       json:"has_terraform"`
 
 	// Forward-compatible extensibility: new ecosystem modules can register

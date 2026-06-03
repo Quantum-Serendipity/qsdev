@@ -58,6 +58,7 @@ func initialize() error {
 		outdatedCmd(),
 		updateCmd(),
 		teardownCmd(),
+		containerCmd(),
 		defaults.Command(),
 	)
 	return nil

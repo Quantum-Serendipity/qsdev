@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/container"
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 )
@@ -44,8 +46,18 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 	}
 
 	osInfo := sysinfo.DetectOS()
+
+	var containerSection *doctor.ContainerSection
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		containerSection = doctor.RunContainerCheck(ctx, &container.ExecProber{}, osInfo)
+	})
+
 	checks := doctor.RunAllChecks(ctx, osInfo)
+	wg.Wait()
+
 	report := doctor.BuildReport(osInfo, checks, "0.1.0")
+	report.SetContainerSection(containerSection)
 	slog.Info("doctor check complete",
 		"required_tools", len(report.RequiredTools),
 		"optional_tools", len(report.OptionalTools),

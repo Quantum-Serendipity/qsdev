@@ -371,18 +371,12 @@ services:
 	if err != nil {
 		t.Fatalf("Analyze() error = %v", err)
 	}
-	// An integer port like "80" is a container port, not a host mapping.
-	// extractHostPort returns the int directly, but parseHostPortFromString
-	// treats single values as container-only. For integer entries, they are
-	// host port bindings.
-	found := false
+	// A bare integer port like "80" is a container-only port in Docker Compose
+	// (Docker assigns a random high host port). No privileged port warning expected.
 	for _, issue := range report.Issues {
 		if issue.Category == CategoryPrivPorts {
-			found = true
+			t.Error("bare integer port should not trigger privileged port warning")
 		}
-	}
-	if !found {
-		t.Error("expected privileged port issue for integer port 80")
 	}
 }
 

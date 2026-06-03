@@ -15,12 +15,12 @@ func TestClaudeCmd_HasSubcommands(t *testing.T) {
 	cmd := claudecode.ExportClaudeCmd()
 	subs := cmd.Commands()
 
-	if len(subs) != 5 {
+	if len(subs) != 6 {
 		names := make([]string, len(subs))
 		for i, s := range subs {
 			names[i] = s.Name()
 		}
-		t.Fatalf("expected 5 subcommands, got %d: %v", len(subs), names)
+		t.Fatalf("expected 6 subcommands, got %d: %v", len(subs), names)
 	}
 
 	expected := map[string]bool{
@@ -29,6 +29,7 @@ func TestClaudeCmd_HasSubcommands(t *testing.T) {
 		"add-skill":   false,
 		"add-hook":    false,
 		"list-skills": false,
+		"hooks":       false,
 	}
 
 	for _, sub := range subs {

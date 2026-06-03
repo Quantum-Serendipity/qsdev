@@ -21,6 +21,7 @@ func TestGenerateMcpJson_SingleKnownServer(t *testing.T) {
 	}
 	if gf == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	var mcp claudecode.McpJSON
@@ -55,6 +56,7 @@ func TestGenerateMcpJson_MultipleServers(t *testing.T) {
 	}
 	if gf == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	var mcp claudecode.McpJSON
@@ -96,6 +98,7 @@ func TestGenerateMcpJson_CustomServerFromConfig(t *testing.T) {
 	}
 	if gf == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	var mcp claudecode.McpJSON
@@ -143,6 +146,7 @@ func TestGenerateMcpJson_WizardAndCustomCombined(t *testing.T) {
 	}
 	if gf == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	var mcp claudecode.McpJSON
@@ -275,6 +279,7 @@ func TestGenerateMcpJson_FileMetadata(t *testing.T) {
 	}
 	if gf == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	if gf.Path != ".mcp.json" {
@@ -300,6 +305,7 @@ func TestGenerateMcpJson_FetchServer(t *testing.T) {
 	}
 	if gf == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	var mcp claudecode.McpJSON
@@ -335,6 +341,7 @@ func TestGenerateMcpJson_SocketServer(t *testing.T) {
 	}
 	if gf == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	var mcp claudecode.McpJSON
@@ -369,6 +376,7 @@ func TestGenerateMcpJson_Context7Server(t *testing.T) {
 	}
 	if gf == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	var mcp claudecode.McpJSON
@@ -404,6 +412,7 @@ func TestGenerateMcpJson_Context7AndGitHub(t *testing.T) {
 	}
 	if gf == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	var mcp claudecode.McpJSON

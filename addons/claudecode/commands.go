@@ -46,6 +46,7 @@ func claudeCmd() *cobra.Command {
 		addSkillCmd(),
 		addHookCmd(),
 		listSkillsCmd(),
+		hooksCmd(),
 	)
 
 	return cmd
@@ -645,5 +646,15 @@ func hookPresetToChoices(name string, hooks *types.HookChoices) {
 		hooks.PreCommit = true
 	case "audit-log":
 		hooks.AuditLog = true
+	case "credential-scan":
+		hooks.CredentialScan = true
+	case "destructive-prevention":
+		hooks.DestructivePrevention = true
+	case "soc2-audit":
+		hooks.SOC2Audit = true
+	case "file-boundary":
+		hooks.FileBoundary = true
+	case "tool-gates":
+		hooks.ToolGates = true
 	}
 }

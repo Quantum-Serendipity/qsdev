@@ -43,10 +43,10 @@ func TestPermissionPresetsReturns5(t *testing.T) {
 	}
 }
 
-func TestHookPresetsReturns4(t *testing.T) {
+func TestHookPresetsReturns9(t *testing.T) {
 	presets := HookPresets()
-	if len(presets) != 4 {
-		t.Errorf("HookPresets() returned %d entries, want 4", len(presets))
+	if len(presets) != 9 {
+		t.Errorf("HookPresets() returned %d entries, want 9", len(presets))
 	}
 }
 

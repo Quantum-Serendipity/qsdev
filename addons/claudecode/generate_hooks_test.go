@@ -18,6 +18,7 @@ func TestGeneratePackageGuardHook_Enabled(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected non-nil GeneratedFile when SafetyBlock is enabled")
+		return
 	}
 	if got.Path != ".claude/hooks/package-guard.py" {
 		t.Errorf("Path = %q, want %q", got.Path, ".claude/hooks/package-guard.py")
@@ -67,6 +68,7 @@ func TestGeneratePackageGuardHook_ContentIntegrity(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	content := string(got.Content)
@@ -107,6 +109,7 @@ func TestGeneratePackageGuardHook_NpmAgeFix(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	content := string(got.Content)
@@ -148,6 +151,7 @@ func TestGeneratePackageGuardHook_StdlibOnly(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	content := string(got.Content)

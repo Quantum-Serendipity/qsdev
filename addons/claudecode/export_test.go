@@ -59,16 +59,39 @@ type ExportUpdateSummary = UpdateSummary
 // ExportContains exposes the contains helper for external tests.
 var ExportContains = sliceutil.Contains
 
-var ExportLoadQsdevOpsManifest    = loadQsdevOpsManifest
-var ExportDeployOperationSkills  = deployOperationSkills
-var ExportLoadAgentManifest      = loadAgentManifest
-var ExportDeployAgents           = deployAgents
+var ExportLoadQsdevOpsManifest = loadQsdevOpsManifest
+var ExportDeployOperationSkills = deployOperationSkills
+var ExportLoadAgentManifest = loadAgentManifest
+var ExportDeployAgents = deployAgents
 var ExportLoadConsultingSkillManifest = loadConsultingSkillManifest
-var ExportDeployWorkflowSkills   = deployWorkflowSkills
+var ExportDeployWorkflowSkills = deployWorkflowSkills
 
-type ExportQsdevOpsManifest       = QsdevOpsManifest
-type ExportQsdevOpsEntry          = QsdevOpsEntry
-type ExportAgentManifest         = AgentManifest
-type ExportAgentEntry            = AgentEntry
+type ExportQsdevOpsManifest = QsdevOpsManifest
+type ExportQsdevOpsEntry = QsdevOpsEntry
+type ExportAgentManifest = AgentManifest
+type ExportAgentEntry = AgentEntry
 type ExportConsultingSkillManifest = ConsultingSkillManifest
-type ExportConsultingSkillEntry  = ConsultingSkillEntry
+type ExportConsultingSkillEntry = ConsultingSkillEntry
+
+// Hook registry exports for external tests.
+type ExportHookDefinition = HookDefinition
+type ExportHookStatus = HookStatus
+
+// ExportDefaultSecretPatterns exposes DefaultSecretPatterns for external tests.
+var ExportDefaultSecretPatterns = DefaultSecretPatterns
+
+// ExportPlaceholderIndicators exposes PlaceholderIndicators for external tests.
+var ExportPlaceholderIndicators = PlaceholderIndicators
+
+const (
+	ExportTierProject = TierProject
+	ExportTierTeam    = TierTeam
+	ExportTierOrg     = TierOrg
+)
+
+var (
+	ExportNewHookRegistry     = NewHookRegistry
+	ExportDefaultHookRegistry = defaultHookRegistry
+	ExportBuildHookStatuses   = buildHookStatuses
+	ExportHooksCmd            = hooksCmd
+)

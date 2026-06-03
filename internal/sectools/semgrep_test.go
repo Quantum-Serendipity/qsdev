@@ -4,12 +4,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/internal/sectools"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 
 	// Import modules so they register with the default registry.
-	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/docker"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/container"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/dotnet"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/golang"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/java"

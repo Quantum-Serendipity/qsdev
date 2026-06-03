@@ -8,9 +8,9 @@ import (
 
 func TestGenerateWorkflow_AllTools(t *testing.T) {
 	cfg := GenerateConfig{
-		Platform:      PlatformGitHubActions,
-		HasDocker:     true,
-		HasClaudeCode: true,
+		Platform:           PlatformGitHubActions,
+		HasContainerModule: true,
+		HasClaudeCode:      true,
 	}
 	registry := DefaultStepRegistry()
 
@@ -79,9 +79,9 @@ func TestGenerateWorkflow_MinimalTools(t *testing.T) {
 
 func TestGenerateWorkflow_NoDocker(t *testing.T) {
 	cfg := GenerateConfig{
-		Platform:      PlatformGitHubActions,
-		HasDocker:     false,
-		HasClaudeCode: true,
+		Platform:           PlatformGitHubActions,
+		HasContainerModule: false,
+		HasClaudeCode:      true,
 	}
 	registry := DefaultStepRegistry()
 
@@ -96,7 +96,7 @@ func TestGenerateWorkflow_NoDocker(t *testing.T) {
 	content := string(files[0].Content)
 
 	if strings.Contains(content, "container-security:") {
-		t.Error("container-security job should not be present when HasDocker=false")
+		t.Error("container-security job should not be present when HasContainerModule=false")
 	}
 
 	// Other jobs should still be present.
@@ -107,9 +107,9 @@ func TestGenerateWorkflow_NoDocker(t *testing.T) {
 
 func TestGenerateWorkflow_NoClaude(t *testing.T) {
 	cfg := GenerateConfig{
-		Platform:      PlatformGitHubActions,
-		HasDocker:     true,
-		HasClaudeCode: false,
+		Platform:           PlatformGitHubActions,
+		HasContainerModule: true,
+		HasClaudeCode:      false,
 	}
 	registry := DefaultStepRegistry()
 
@@ -134,15 +134,15 @@ func TestGenerateWorkflow_NoClaude(t *testing.T) {
 
 	// Other jobs should still be present.
 	if !strings.Contains(content, "container-security:") {
-		t.Error("container-security job should be present when HasDocker=true")
+		t.Error("container-security job should be present when HasContainerModule=true")
 	}
 }
 
 func TestGenerateWorkflow_SHAPinned(t *testing.T) {
 	cfg := GenerateConfig{
-		Platform:      PlatformGitHubActions,
-		HasDocker:     true,
-		HasClaudeCode: true,
+		Platform:           PlatformGitHubActions,
+		HasContainerModule: true,
+		HasClaudeCode:      true,
 	}
 	registry := DefaultStepRegistry()
 
@@ -172,9 +172,9 @@ func TestGenerateWorkflow_SHAPinned(t *testing.T) {
 
 func TestGenerateWorkflow_HardenRunnerFirst(t *testing.T) {
 	cfg := GenerateConfig{
-		Platform:      PlatformGitHubActions,
-		HasDocker:     true,
-		HasClaudeCode: true,
+		Platform:           PlatformGitHubActions,
+		HasContainerModule: true,
+		HasClaudeCode:      true,
 	}
 	registry := DefaultStepRegistry()
 
@@ -224,9 +224,9 @@ func TestGenerateWorkflow_PlatformNone(t *testing.T) {
 
 func TestGenerateWorkflow_GitLab(t *testing.T) {
 	cfg := GenerateConfig{
-		Platform:      PlatformGitLabCI,
-		HasDocker:     true,
-		HasClaudeCode: true,
+		Platform:           PlatformGitLabCI,
+		HasContainerModule: true,
+		HasClaudeCode:      true,
 	}
 	registry := DefaultStepRegistry()
 
@@ -261,9 +261,9 @@ func TestGenerateWorkflow_GitLab(t *testing.T) {
 func TestGenerateWorkflow_Permissions(t *testing.T) {
 	t.Run("with docker has id-token", func(t *testing.T) {
 		cfg := GenerateConfig{
-			Platform:      PlatformGitHubActions,
-			HasDocker:     true,
-			HasClaudeCode: false,
+			Platform:           PlatformGitHubActions,
+			HasContainerModule: true,
+			HasClaudeCode:      false,
 		}
 		registry := DefaultStepRegistry()
 
@@ -280,9 +280,9 @@ func TestGenerateWorkflow_Permissions(t *testing.T) {
 
 	t.Run("with claude has pull-requests", func(t *testing.T) {
 		cfg := GenerateConfig{
-			Platform:      PlatformGitHubActions,
-			HasDocker:     false,
-			HasClaudeCode: true,
+			Platform:           PlatformGitHubActions,
+			HasContainerModule: false,
+			HasClaudeCode:      true,
 		}
 		registry := DefaultStepRegistry()
 
@@ -322,9 +322,9 @@ func TestGenerateWorkflow_ScheduleTrigger(t *testing.T) {
 
 func TestGenerateWorkflow_JobConditions(t *testing.T) {
 	cfg := GenerateConfig{
-		Platform:      PlatformGitHubActions,
-		HasDocker:     false,
-		HasClaudeCode: true,
+		Platform:           PlatformGitHubActions,
+		HasContainerModule: false,
+		HasClaudeCode:      true,
 	}
 	registry := DefaultStepRegistry()
 
@@ -387,9 +387,9 @@ func TestActionRef_Comment(t *testing.T) {
 
 func TestGenerateWorkflow_GitLabNoDocker(t *testing.T) {
 	cfg := GenerateConfig{
-		Platform:      PlatformGitLabCI,
-		HasDocker:     false,
-		HasClaudeCode: false,
+		Platform:           PlatformGitLabCI,
+		HasContainerModule: false,
+		HasClaudeCode:      false,
 	}
 	registry := DefaultStepRegistry()
 

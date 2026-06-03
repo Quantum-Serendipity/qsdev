@@ -1,4 +1,4 @@
-package docker_test
+package container_test
 
 import (
 	"os"
@@ -9,29 +9,29 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/docker"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/container"
 )
 
 // Compile-time interface compliance.
-var _ ecosystem.EcosystemModule = (*docker.Module)(nil)
+var _ ecosystem.EcosystemModule = (*container.Module)(nil)
 
-func newModule() *docker.Module {
-	return &docker.Module{}
+func newModule() *container.Module {
+	return &container.Module{}
 }
 
 // ---------- Name / DisplayName / Tier ----------
 
 func TestName(t *testing.T) {
 	m := newModule()
-	if got := m.Name(); got != "docker" {
-		t.Errorf("Name() = %q, want %q", got, "docker")
+	if got := m.Name(); got != "container" {
+		t.Errorf("Name() = %q, want %q", got, "container")
 	}
 }
 
 func TestDisplayName(t *testing.T) {
 	m := newModule()
-	if got := m.DisplayName(); got != "Docker / Containerfiles" {
-		t.Errorf("DisplayName() = %q, want %q", got, "Docker / Containerfiles")
+	if got := m.DisplayName(); got != "Containers" {
+		t.Errorf("DisplayName() = %q, want %q", got, "Containers")
 	}
 }
 
@@ -291,9 +291,10 @@ func TestDenyRules(t *testing.T) {
 // ---------- CICommands ----------
 
 func TestCICommands(t *testing.T) {
+	t.Parallel()
 	cmds := newModule().CICommands(ecosystem.ModuleConfig{})
-	if len(cmds) != 4 {
-		t.Fatalf("expected 4 CI commands, got %d", len(cmds))
+	if len(cmds) != 5 {
+		t.Fatalf("expected 5 CI commands, got %d", len(cmds))
 	}
 
 	names := make(map[string]ecosystem.CICommand, len(cmds))
@@ -311,16 +312,80 @@ func TestCICommands(t *testing.T) {
 	if _, ok := names["hadolint"]; !ok {
 		t.Error("missing hadolint CI command")
 	}
-	if _, ok := names["docker-build"]; !ok {
-		t.Error("missing docker-build CI command")
+	if _, ok := names["container-build"]; !ok {
+		t.Error("missing container-build CI command")
 	}
-	if trivy, ok := names["trivy-image"]; !ok {
-		t.Error("missing trivy-image CI command")
-	} else if !strings.Contains(trivy.Description, "March 2026") {
-		t.Error("trivy-image description should mention March 2026 compromise")
+	if _, ok := names["syft-sbom"]; !ok {
+		t.Error("missing syft-sbom CI command")
+	}
+	if _, ok := names["grype-scan"]; !ok {
+		t.Error("missing grype-scan CI command")
 	}
 	if _, ok := names["cosign-verify"]; !ok {
 		t.Error("missing cosign-verify CI command")
+	}
+
+	// trivy-image should be absent (replaced by syft-sbom + grype-scan).
+	if _, ok := names["trivy-image"]; ok {
+		t.Error("trivy-image should be absent — replaced by syft-sbom + grype-scan")
+	}
+}
+
+func TestCICommands_DockerRuntime(t *testing.T) {
+	t.Parallel()
+	cfg := ecosystem.ModuleConfig{
+		Extras: map[string]string{"container_runtime": "docker"},
+	}
+	cmds := newModule().CICommands(cfg)
+
+	for _, c := range cmds {
+		if strings.Contains(c.Command, "podman") {
+			t.Errorf("command %q should use docker, not podman: %s", c.Name, c.Command)
+		}
+	}
+
+	names := make(map[string]ecosystem.CICommand, len(cmds))
+	for _, c := range cmds {
+		names[c.Name] = c
+	}
+	if build, ok := names["container-build"]; ok {
+		if !strings.HasPrefix(build.Command, "docker ") {
+			t.Errorf("container-build should start with 'docker ', got %q", build.Command)
+		}
+	}
+}
+
+func TestCICommands_PodmanRuntime(t *testing.T) {
+	t.Parallel()
+	for _, rt := range []string{"podman-rootless", "podman-rootful"} {
+		t.Run(rt, func(t *testing.T) {
+			t.Parallel()
+			cfg := ecosystem.ModuleConfig{
+				Extras: map[string]string{"container_runtime": rt},
+			}
+			cmds := newModule().CICommands(cfg)
+
+			names := make(map[string]ecosystem.CICommand, len(cmds))
+			for _, c := range cmds {
+				names[c.Name] = c
+			}
+
+			if build, ok := names["container-build"]; ok {
+				if !strings.HasPrefix(build.Command, "podman ") {
+					t.Errorf("container-build should start with 'podman ', got %q", build.Command)
+				}
+			}
+			if sbom, ok := names["syft-sbom"]; ok {
+				if !strings.Contains(sbom.Command, "podman images") {
+					t.Errorf("syft-sbom should use 'podman images', got %q", sbom.Command)
+				}
+			}
+			if cosign, ok := names["cosign-verify"]; ok {
+				if !strings.Contains(cosign.Command, "podman images") {
+					t.Errorf("cosign-verify should use 'podman images', got %q", cosign.Command)
+				}
+			}
+		})
 	}
 }
 
@@ -349,6 +414,199 @@ func TestWizardFields(t *testing.T) {
 	}
 	if f.Default != "docker.io,gcr.io,ghcr.io" {
 		t.Errorf("field Default = %q, want docker.io,gcr.io,ghcr.io", f.Default)
+	}
+}
+
+// ---------- DevenvNixFragment (runtime-aware) ----------
+
+func TestDevenvNixFragment_DockerRuntime(t *testing.T) {
+	t.Parallel()
+	cfg := ecosystem.ModuleConfig{
+		Extras: map[string]string{"container_runtime": "docker"},
+	}
+	frag, err := newModule().DevenvNixFragment(cfg)
+	if err != nil {
+		t.Fatalf("DevenvNixFragment error: %v", err)
+	}
+	for _, pkg := range []string{"docker", "hadolint", "dive"} {
+		if !strings.Contains(frag, pkg) {
+			t.Errorf("fragment missing package %q", pkg)
+		}
+	}
+	if strings.Contains(frag, "podman") {
+		t.Error("Docker runtime fragment should not contain podman")
+	}
+}
+
+func TestDevenvNixFragment_PodmanRuntime(t *testing.T) {
+	t.Parallel()
+	cfg := ecosystem.ModuleConfig{
+		Extras: map[string]string{"container_runtime": "podman-rootless"},
+	}
+	frag, err := newModule().DevenvNixFragment(cfg)
+	if err != nil {
+		t.Fatalf("DevenvNixFragment error: %v", err)
+	}
+	for _, pkg := range []string{"podman", "podman-compose", "buildah", "skopeo", "hadolint", "dive"} {
+		if !strings.Contains(frag, pkg) {
+			t.Errorf("fragment missing package %q", pkg)
+		}
+	}
+	if !strings.Contains(frag, "DOCKER_HOST") {
+		t.Error("Podman fragment should set DOCKER_HOST env var")
+	}
+	if strings.Contains(frag, "    docker\n") {
+		t.Error("Podman runtime fragment should not contain docker package")
+	}
+}
+
+func TestDevenvNixFragment_NoRuntime(t *testing.T) {
+	t.Parallel()
+	frag, err := newModule().DevenvNixFragment(ecosystem.ModuleConfig{})
+	if err != nil {
+		t.Fatalf("DevenvNixFragment error: %v", err)
+	}
+	// Should fall through to docker (backward compat).
+	if !strings.Contains(frag, "docker") {
+		t.Error("no-runtime fragment should default to docker packages")
+	}
+	if strings.Contains(frag, "podman") {
+		t.Error("no-runtime fragment should not contain podman")
+	}
+}
+
+// ---------- DevenvYamlInputs (runtime-aware) ----------
+
+func TestDevenvYamlInputs_PodmanNixOS(t *testing.T) {
+	t.Parallel()
+	cfg := ecosystem.ModuleConfig{
+		Extras: map[string]string{
+			"container_runtime": "podman-rootless",
+			"os_family":         "nixos",
+		},
+	}
+	inputs := newModule().DevenvYamlInputs(cfg)
+	if len(inputs) != 1 {
+		t.Fatalf("expected 1 input, got %d", len(inputs))
+	}
+	if !strings.Contains(inputs[0].URL, "quadlet-nix") {
+		t.Errorf("input URL should reference quadlet-nix, got %q", inputs[0].URL)
+	}
+}
+
+func TestDevenvYamlInputs_PodmanNonNixOS(t *testing.T) {
+	t.Parallel()
+	cfg := ecosystem.ModuleConfig{
+		Extras: map[string]string{
+			"container_runtime": "podman-rootless",
+			"os_family":         "ubuntu",
+		},
+	}
+	inputs := newModule().DevenvYamlInputs(cfg)
+	if len(inputs) != 0 {
+		t.Errorf("expected nil/empty inputs for non-NixOS Podman, got %d", len(inputs))
+	}
+}
+
+func TestDevenvYamlInputs_Docker(t *testing.T) {
+	t.Parallel()
+	cfg := ecosystem.ModuleConfig{
+		Extras: map[string]string{"container_runtime": "docker"},
+	}
+	inputs := newModule().DevenvYamlInputs(cfg)
+	if len(inputs) != 0 {
+		t.Errorf("expected nil/empty inputs for Docker, got %d", len(inputs))
+	}
+}
+
+// ---------- VerificationCommands (runtime-aware) ----------
+
+func TestVerificationCommands_DockerRuntime(t *testing.T) {
+	t.Parallel()
+	cfg := ecosystem.ModuleConfig{
+		Extras: map[string]string{"container_runtime": "docker"},
+	}
+	vc := newModule().VerificationCommands(cfg)
+	if len(vc.Build) != 1 || vc.Build[0] != "docker build ." {
+		t.Errorf("Build = %v, want [docker build .]", vc.Build)
+	}
+}
+
+func TestVerificationCommands_PodmanRuntime(t *testing.T) {
+	t.Parallel()
+	cfg := ecosystem.ModuleConfig{
+		Extras: map[string]string{"container_runtime": "podman-rootless"},
+	}
+	vc := newModule().VerificationCommands(cfg)
+	if len(vc.Build) != 1 || vc.Build[0] != "podman build ." {
+		t.Errorf("Build = %v, want [podman build .]", vc.Build)
+	}
+}
+
+// ---------- DenyRules (runtime-aware) ----------
+
+func TestDenyRules_DockerRuntime(t *testing.T) {
+	t.Parallel()
+	cfg := ecosystem.ModuleConfig{
+		Extras: map[string]string{"container_runtime": "docker"},
+	}
+	rules := newModule().DenyRules(cfg)
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 deny rule for docker, got %d: %v", len(rules), rules)
+	}
+	if rules[0] != "Bash(docker pull *)" {
+		t.Errorf("deny rule = %q, want %q", rules[0], "Bash(docker pull *)")
+	}
+}
+
+func TestDenyRules_PodmanRuntime(t *testing.T) {
+	t.Parallel()
+	for _, rt := range []string{"podman-rootless", "podman-rootful"} {
+		t.Run(rt, func(t *testing.T) {
+			t.Parallel()
+			cfg := ecosystem.ModuleConfig{
+				Extras: map[string]string{"container_runtime": rt},
+			}
+			rules := newModule().DenyRules(cfg)
+			if len(rules) != 3 {
+				t.Fatalf("expected 3 deny rules for podman, got %d: %v", len(rules), rules)
+			}
+
+			hasSocketBlock := false
+			hasDockerPull := false
+			hasPrivileged := false
+			for _, r := range rules {
+				if strings.Contains(r, "docker.sock") {
+					hasSocketBlock = true
+				}
+				if r == "Bash(docker pull *)" {
+					hasDockerPull = true
+				}
+				if r == "Bash(podman run --privileged *)" {
+					hasPrivileged = true
+				}
+			}
+			if !hasSocketBlock {
+				t.Error("missing docker.sock mount block rule")
+			}
+			if !hasDockerPull {
+				t.Error("missing docker pull deny rule")
+			}
+			if !hasPrivileged {
+				t.Error("missing podman privileged deny rule")
+			}
+		})
+	}
+}
+
+func TestDenyRules_NoRuntime(t *testing.T) {
+	t.Parallel()
+	rules := newModule().DenyRules(ecosystem.ModuleConfig{})
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 deny rule for no runtime (default), got %d: %v", len(rules), rules)
+	}
+	if rules[0] != "Bash(docker pull *)" {
+		t.Errorf("deny rule = %q, want %q", rules[0], "Bash(docker pull *)")
 	}
 }
 

@@ -74,19 +74,20 @@ type ServiceChoice struct {
 // existing configuration files, and git state. It seeds WizardAnswers.Detected
 // and drives auto-detection of ecosystems during init and join.
 type DetectedProject struct {
-	HasGoMod       bool   `yaml:"has_go_mod"       json:"has_go_mod"`
-	GoVersion      string `yaml:"go_version"       json:"go_version"`
-	HasPackageJSON bool   `yaml:"has_package_json" json:"has_package_json"`
-	NodeVersion    string `yaml:"node_version"     json:"node_version"`
-	PackageManager string `yaml:"package_manager"  json:"package_manager"`
-	HasCargoToml   bool   `yaml:"has_cargo_toml"   json:"has_cargo_toml"`
-	HasPyProject   bool   `yaml:"has_py_project"   json:"has_py_project"`
-	PythonVersion  string `yaml:"python_version"   json:"python_version"`
-	HasPomXML      bool   `yaml:"has_pom_xml"      json:"has_pom_xml"`
-	HasBuildGradle bool   `yaml:"has_build_gradle" json:"has_build_gradle"`
-	HasCsproj      bool   `yaml:"has_csproj"       json:"has_csproj"`
-	HasDockerfile  bool   `yaml:"has_dockerfile"   json:"has_dockerfile"`
-	HasTerraform   bool   `yaml:"has_terraform"    json:"has_terraform"`
+	HasGoMod         bool   `yaml:"has_go_mod"       json:"has_go_mod"`
+	GoVersion        string `yaml:"go_version"       json:"go_version"`
+	HasPackageJSON   bool   `yaml:"has_package_json" json:"has_package_json"`
+	NodeVersion      string `yaml:"node_version"     json:"node_version"`
+	PackageManager   string `yaml:"package_manager"  json:"package_manager"`
+	HasCargoToml     bool   `yaml:"has_cargo_toml"   json:"has_cargo_toml"`
+	HasPyProject     bool   `yaml:"has_py_project"   json:"has_py_project"`
+	PythonVersion    string `yaml:"python_version"   json:"python_version"`
+	HasPomXML        bool   `yaml:"has_pom_xml"      json:"has_pom_xml"`
+	HasBuildGradle   bool   `yaml:"has_build_gradle" json:"has_build_gradle"`
+	HasCsproj        bool   `yaml:"has_csproj"       json:"has_csproj"`
+	HasDockerfile    bool   `yaml:"has_dockerfile"      json:"has_dockerfile"`
+	ContainerRuntime string `yaml:"container_runtime"   json:"container_runtime"`
+	HasTerraform     bool   `yaml:"has_terraform"       json:"has_terraform"`
 
 	// Forward-compatible extensibility: new ecosystem modules can register
 	// presence here without requiring struct changes.
@@ -208,7 +209,7 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 			a.Languages = append(a.Languages, LanguageChoice{Name: "dotnet"})
 		}
 		if detected.HasDockerfile {
-			a.Languages = append(a.Languages, LanguageChoice{Name: "docker"})
+			a.Languages = append(a.Languages, LanguageChoice{Name: "container"})
 		}
 		if detected.HasTerraform {
 			a.Languages = append(a.Languages, LanguageChoice{Name: "terraform"})

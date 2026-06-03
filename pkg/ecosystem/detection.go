@@ -240,7 +240,7 @@ func aggregateDetections(results map[string]DetectionResult) types.DetectedProje
 		case NameDotnet:
 			p.HasCsproj = true
 
-		case NameDocker:
+		case NameContainer, "docker":
 			p.HasDockerfile = true
 
 		case NameTerraform:

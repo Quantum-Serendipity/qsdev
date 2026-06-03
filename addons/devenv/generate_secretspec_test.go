@@ -182,8 +182,8 @@ func TestGenerateSecretSpecToml_ServicesAndModulesCombined(t *testing.T) {
 
 	mod := &mockSecretDeclarerModule{
 		MockModule: ecosystem.MockModule{
-			NameVal:        "docker",
-			DisplayNameVal: "Docker",
+			NameVal:        "container",
+			DisplayNameVal: "Containers",
 			TierVal:        1,
 		},
 		secrets: []ecosystem.SecretDecl{
@@ -191,7 +191,7 @@ func TestGenerateSecretSpecToml_ServicesAndModulesCombined(t *testing.T) {
 				Name:        "DOCKER_REGISTRY_TOKEN",
 				Description: "Docker registry token",
 				Required:    true,
-				Source:      "docker",
+				Source:      "container",
 			},
 		},
 	}
@@ -202,7 +202,7 @@ func TestGenerateSecretSpecToml_ServicesAndModulesCombined(t *testing.T) {
 			{Name: "redis"},
 		},
 		Languages: []types.LanguageChoice{
-			{Name: "docker"},
+			{Name: "container"},
 		},
 	}
 

@@ -31,7 +31,7 @@ type CIStep struct {
 	With            map[string]string // action inputs
 	Run             string            // shell command (alternative to Uses)
 	Env             map[string]string
-	Order           int  // lower runs first
+	Order           int // lower runs first
 	Condition       string
 	ContinueOnError bool
 }
@@ -44,8 +44,8 @@ type CIPermission struct {
 
 // GenerateConfig carries the user's selections into the generation pipeline.
 type GenerateConfig struct {
-	Platform      CIPlatform
-	EnabledTools  []string
-	HasDocker     bool
-	HasClaudeCode bool
+	Platform           CIPlatform
+	EnabledTools       []string
+	HasContainerModule bool
+	HasClaudeCode      bool
 }

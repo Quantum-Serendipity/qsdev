@@ -20,7 +20,7 @@ type ToolCheck struct {
 	Notes        func(osInfo *sysinfo.OSInfo) string
 }
 
-// DefaultChecks returns the 15-tool registry used by qsdev doctor.
+// DefaultChecks returns the 17-tool registry used by qsdev doctor.
 func DefaultChecks() []ToolCheck {
 	return []ToolCheck{
 		{
@@ -244,6 +244,24 @@ func DefaultChecks() []ToolCheck {
 			ParseVersion: func(raw string) string {
 				// "Python 3.11.7" → "3.11.7"
 				return extractLastField(raw, "Python ")
+			},
+			AutoInstall: alwaysInstallable,
+		},
+		{
+			Name:        "syft",
+			Binary:      "syft",
+			VersionFlag: "version",
+			ParseVersion: func(raw string) string {
+				return extractLastField(raw, "syft ")
+			},
+			AutoInstall: alwaysInstallable,
+		},
+		{
+			Name:        "grype",
+			Binary:      "grype",
+			VersionFlag: "version",
+			ParseVersion: func(raw string) string {
+				return extractLastField(raw, "grype ")
 			},
 			AutoInstall: alwaysInstallable,
 		},

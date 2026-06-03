@@ -73,12 +73,12 @@ func TestAllSortedByTierThenName(t *testing.T) {
 		&ecosystem.MockModule{NameVal: "go", TierVal: 1},
 		&ecosystem.MockModule{NameVal: "python", TierVal: 1},
 		&ecosystem.MockModule{NameVal: "zig", TierVal: 3},
-		&ecosystem.MockModule{NameVal: "docker", TierVal: 2},
+		&ecosystem.MockModule{NameVal: "container", TierVal: 2},
 		&ecosystem.MockModule{NameVal: "javascript", TierVal: 1},
 	)
 
 	all := r.All()
-	wantOrder := []string{"go", "javascript", "python", "docker", "terraform", "zig"}
+	wantOrder := []string{"go", "javascript", "python", "container", "terraform", "zig"}
 
 	if len(all) != len(wantOrder) {
 		t.Fatalf("All() returned %d modules, want %d", len(all), len(wantOrder))
@@ -94,7 +94,7 @@ func TestByTierFiltering(t *testing.T) {
 	r := newTestRegistry(t,
 		&ecosystem.MockModule{NameVal: "go", TierVal: 1},
 		&ecosystem.MockModule{NameVal: "python", TierVal: 1},
-		&ecosystem.MockModule{NameVal: "docker", TierVal: 2},
+		&ecosystem.MockModule{NameVal: "container", TierVal: 2},
 		&ecosystem.MockModule{NameVal: "terraform", TierVal: 2},
 		&ecosystem.MockModule{NameVal: "zig", TierVal: 3},
 	)
@@ -111,8 +111,8 @@ func TestByTierFiltering(t *testing.T) {
 	if len(tier2) != 2 {
 		t.Fatalf("ByTier(2) returned %d modules, want 2", len(tier2))
 	}
-	if tier2[0].Name() != "docker" || tier2[1].Name() != "terraform" {
-		t.Errorf("ByTier(2) = [%q, %q], want [docker, terraform]", tier2[0].Name(), tier2[1].Name())
+	if tier2[0].Name() != "container" || tier2[1].Name() != "terraform" {
+		t.Errorf("ByTier(2) = [%q, %q], want [container, terraform]", tier2[0].Name(), tier2[1].Name())
 	}
 
 	tier3 := r.ByTier(3)
@@ -130,11 +130,11 @@ func TestNamesSorted(t *testing.T) {
 	r := newTestRegistry(t,
 		&ecosystem.MockModule{NameVal: "python"},
 		&ecosystem.MockModule{NameVal: "go"},
-		&ecosystem.MockModule{NameVal: "docker"},
+		&ecosystem.MockModule{NameVal: "container"},
 	)
 
 	names := r.Names()
-	want := []string{"docker", "go", "python"}
+	want := []string{"container", "go", "python"}
 	if len(names) != len(want) {
 		t.Fatalf("Names() returned %d, want %d", len(names), len(want))
 	}
@@ -179,8 +179,8 @@ func TestDetectAllDelegation(t *testing.T) {
 			Confidence: ecosystem.ConfidenceAbsent,
 		},
 	}
-	docker := &ecosystem.MockModule{
-		NameVal: "docker",
+	ctr := &ecosystem.MockModule{
+		NameVal: "container",
 		TierVal: 2,
 		DetectResult: ecosystem.DetectionResult{
 			Detected:   true,
@@ -189,7 +189,7 @@ func TestDetectAllDelegation(t *testing.T) {
 		},
 	}
 
-	r := newTestRegistry(t, goMod, python, docker)
+	r := newTestRegistry(t, goMod, python, ctr)
 	summary := r.DetectAll("/tmp/project")
 
 	if len(summary.Results) != 3 {
@@ -218,8 +218,8 @@ func TestDetectAllDelegation(t *testing.T) {
 	if !summary.Project.Ecosystems["go"] {
 		t.Error("Ecosystems[go] should be true")
 	}
-	if !summary.Project.Ecosystems["docker"] {
-		t.Error("Ecosystems[docker] should be true")
+	if !summary.Project.Ecosystems["container"] {
+		t.Error("Ecosystems[container] should be true")
 	}
 	if summary.Project.Ecosystems["python"] {
 		t.Error("Ecosystems[python] should be false")

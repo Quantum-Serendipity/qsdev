@@ -21,7 +21,7 @@ func fullWizardAnswers() types.WizardAnswers {
 			GoVersion:    "1.22.5",
 			IsGitRepo:    true,
 			RemoteURL:    "git@github.com:org/repo.git",
-			Ecosystems:   map[string]bool{"go": true, "docker": true},
+			Ecosystems:   map[string]bool{"go": true, "container": true},
 			HasClaudeDir: true,
 		},
 		Languages: []types.LanguageChoice{
@@ -179,7 +179,7 @@ func TestDetectedProjectRoundTrip(t *testing.T) {
 		HasPyProject:   true,
 		PythonVersion:  "3.12",
 		HasDockerfile:  true,
-		Ecosystems:     map[string]bool{"go": true, "python": true, "docker": true},
+		Ecosystems:     map[string]bool{"go": true, "python": true, "container": true},
 		HasDevenvNix:   true,
 		IsGitRepo:      true,
 		RemoteURL:      "git@github.com:org/repo.git",
@@ -421,7 +421,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 		for _, l := range a.Languages {
 			names[l.Name] = true
 		}
-		for _, expected := range []string{"rust", "java", "dotnet", "docker", "terraform"} {
+		for _, expected := range []string{"rust", "java", "dotnet", "container", "terraform"} {
 			if !names[expected] {
 				t.Errorf("missing expected language %q", expected)
 			}

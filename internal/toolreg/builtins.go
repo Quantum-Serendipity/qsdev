@@ -90,6 +90,10 @@ func builtinBehaviors() map[string]ToolBehavior {
 				return d.HasDockerfile
 			},
 			GenerateFunc: func(a types.WizardAnswers) ([]types.GeneratedFile, error) {
+				syft, err := sectools.GenerateSyftYaml(a)
+				if err != nil {
+					return nil, err
+				}
 				grype, err := sectools.GenerateGrypeYaml(a)
 				if err != nil {
 					return nil, err
@@ -98,7 +102,7 @@ func builtinBehaviors() map[string]ToolBehavior {
 				if err != nil {
 					return nil, err
 				}
-				return []types.GeneratedFile{*grype, *cosign}, nil
+				return []types.GeneratedFile{*syft, *grype, *cosign}, nil
 			},
 		},
 		"license-compliance": {

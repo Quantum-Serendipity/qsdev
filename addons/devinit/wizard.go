@@ -23,8 +23,8 @@ type formState struct {
 
 	selectedServices []string
 
-	direnv       bool
-	gitHooks     []string
+	direnv        bool
+	gitHooks      []string
 	extraPackages string // comma-separated input
 
 	claudeCode      bool
@@ -442,11 +442,11 @@ func mapFormToAnswers(fs *formState, projectRoot, projectName string, detected t
 		answers.MCPServers = fs.mcpServers
 		answers.AgentTools = types.AgentToolsAnswers{
 			PostmortemEnabled:    fs.agentPostmortem,
-			VersionSentinel:     fs.agentVersionSentinel,
+			VersionSentinel:      fs.agentVersionSentinel,
 			VersionSentinelHours: 24,
-			SembleEnabled:       fs.agentSemble,
-			SembleMode:          fs.agentSembleMode,
-			SembleTextFiles:     fs.agentSembleTextFiles,
+			SembleEnabled:        fs.agentSemble,
+			SembleMode:           fs.agentSembleMode,
+			SembleTextFiles:      fs.agentSembleTextFiles,
 		}
 	} else {
 		answers.Skills = nil
@@ -515,7 +515,7 @@ func languageLabel(name string) string {
 		"rust":       "Rust",
 		"java":       "Java/Kotlin",
 		"dotnet":     "C#/.NET",
-		"docker":     "Docker",
+		"container":  "Containers",
 		"terraform":  "Terraform/OpenTofu",
 	}
 	if l, ok := labels[name]; ok {

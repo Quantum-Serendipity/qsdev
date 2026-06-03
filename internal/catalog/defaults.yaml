@@ -874,7 +874,7 @@ languages:
         - rust
         - java
         - dotnet
-        - docker
+        - container
         - terraform
         - php
         - ruby
@@ -902,7 +902,7 @@ languages:
         - rust
         - java
         - dotnet
-        - docker
+        - container
         - terraform
 services:
     - postgres

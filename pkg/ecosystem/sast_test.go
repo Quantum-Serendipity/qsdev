@@ -6,7 +6,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 
 	// Import all Tier 1 modules to ensure they are registered.
-	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/docker"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/container"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/dotnet"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/golang"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/java"
@@ -19,7 +19,7 @@ import (
 func TestTier1ModulesImplementSASTModule(t *testing.T) {
 	tier1Names := []string{
 		"go", "javascript", "python", "rust",
-		"java", "dotnet", "docker", "terraform",
+		"java", "dotnet", "container", "terraform",
 	}
 
 	reg := ecosystem.DefaultRegistry()
@@ -53,7 +53,7 @@ func TestSASTModuleRuleSetsContent(t *testing.T) {
 		{"rust", []string{"p/rust", "p/owasp-top-ten"}},
 		{"java", []string{"p/java", "p/kotlin", "p/spring", "p/owasp-top-ten"}},
 		{"dotnet", []string{"p/csharp", "p/owasp-top-ten"}},
-		{"docker", []string{"p/dockerfile"}},
+		{"container", []string{"p/dockerfile"}},
 		{"terraform", []string{"p/terraform", "p/terraform-aws"}},
 	}
 

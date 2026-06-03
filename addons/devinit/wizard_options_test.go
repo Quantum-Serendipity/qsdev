@@ -104,9 +104,9 @@ func TestDetectionAnnotation_DotNet(t *testing.T) {
 	}
 }
 
-func TestDetectionAnnotation_Docker(t *testing.T) {
+func TestDetectionAnnotation_Container(t *testing.T) {
 	detected := types.DetectedProject{HasDockerfile: true}
-	ann := devinit.ExportDetectionAnnotation("docker", detected)
+	ann := devinit.ExportDetectionAnnotation("container", detected)
 	if ann != "(detected: Dockerfile)" {
 		t.Errorf("expected %q, got %q", "(detected: Dockerfile)", ann)
 	}
@@ -122,7 +122,7 @@ func TestDetectionAnnotation_Terraform(t *testing.T) {
 
 func TestDetectionAnnotation_NotDetected(t *testing.T) {
 	detected := types.DetectedProject{}
-	for _, lang := range []string{"go", "javascript", "python", "rust", "java", "dotnet", "docker", "terraform"} {
+	for _, lang := range []string{"go", "javascript", "python", "rust", "java", "dotnet", "container", "terraform"} {
 		ann := devinit.ExportDetectionAnnotation(lang, detected)
 		if ann != "" {
 			t.Errorf("expected empty annotation for undetected %q, got %q", lang, ann)
@@ -219,7 +219,7 @@ func TestPreSelectedLanguages(t *testing.T) {
 	if len(selected) != 3 {
 		t.Fatalf("expected 3 pre-selected, got %d: %v", len(selected), selected)
 	}
-	expected := map[string]bool{"go": true, "rust": true, "docker": true}
+	expected := map[string]bool{"go": true, "rust": true, "container": true}
 	for _, s := range selected {
 		if !expected[s] {
 			t.Errorf("unexpected pre-selected language %q", s)
@@ -241,7 +241,7 @@ func TestQuickPathSummary_GoWithDirenvAndClaude(t *testing.T) {
 		Languages: []types.LanguageChoice{
 			{Name: "go", Version: "1.24"},
 		},
-		Direnv:    true,
+		Direnv:     true,
 		ClaudeCode: true,
 	}
 	summary := devinit.ExportQuickPathSummary(answers)

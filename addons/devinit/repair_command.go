@@ -74,9 +74,10 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 
 	// If reset or there are findings, regenerate fresh files.
 	freshFiles := make(map[string]types.GeneratedFile)
+	var freshFragments []types.FragmentEntry
 	if opts.Reset || driftReport.TotalFindings > 0 {
 		var genErr error
-		freshFiles, genErr = regenerateFreshFiles(answers)
+		freshFiles, freshFragments, genErr = regenerateFreshFiles(answers)
 		if genErr != nil {
 			return genErr
 		}
@@ -92,6 +93,9 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 	if !opts.DryRun && len(result.Fixed) > 0 {
 		updatedState.QsdevVersion = version.Info().Version
 		updatedState.LastRun = time.Now().UTC()
+		if len(freshFragments) > 0 {
+			updatedState.Fragments = state.RecordFragments(freshFragments)
+		}
 		if err := state.SaveStateToFile(stateFile, *updatedState); err != nil {
 			return fmt.Errorf("saving state: %w", err)
 		}
@@ -150,7 +154,7 @@ func (e *repairExitErr) ExitCode() int { return e.code }
 
 // regenerateFreshFiles runs both generators via fragment accumulation to produce
 // a map of path to fresh GeneratedFile. Returns an error only if generation fails entirely.
-func regenerateFreshFiles(answers types.WizardAnswers) (map[string]types.GeneratedFile, error) {
+func regenerateFreshFiles(answers types.WizardAnswers) (map[string]types.GeneratedFile, []types.FragmentEntry, error) {
 	accResult, err := runAccumulator(answers, struct {
 		ClaudeOnly bool
 		DevenvOnly bool
@@ -158,7 +162,7 @@ func regenerateFreshFiles(answers types.WizardAnswers) (map[string]types.Generat
 		ClaudeOnly: answers.MergeMode == "claude-only",
 	})
 	if err != nil {
-		return nil, fmt.Errorf("generating files for repair: %w", err)
+		return nil, nil, fmt.Errorf("generating files for repair: %w", err)
 	}
 
 	freshFiles := make(map[string]types.GeneratedFile, len(accResult.allFiles))
@@ -167,8 +171,8 @@ func regenerateFreshFiles(answers types.WizardAnswers) (map[string]types.Generat
 	}
 
 	if len(freshFiles) == 0 {
-		return nil, fmt.Errorf("all generators failed; cannot determine expected file state for repair")
+		return nil, nil, fmt.Errorf("all generators failed; cannot determine expected file state for repair")
 	}
 
-	return freshFiles, nil
+	return freshFiles, accResult.fragments, nil
 }

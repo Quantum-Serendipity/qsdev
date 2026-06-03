@@ -2,6 +2,7 @@ package generate
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 
 	"gopkg.in/yaml.v3"
@@ -12,7 +13,7 @@ import (
 func DeterministicJSON(v any) ([]byte, error) {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("marshaling JSON: %w", err)
 	}
 	return append(data, '\n'), nil
 }
@@ -57,6 +58,8 @@ func sortMapKeys(v any) any {
 	}
 }
 
+// valueToNode converts a Go value to a yaml.Node via marshal round-trip.
+// Returns an empty scalar on error as a defensive fallback.
 func valueToNode(v any) *yaml.Node {
 	if n, ok := v.(*yaml.Node); ok {
 		return n

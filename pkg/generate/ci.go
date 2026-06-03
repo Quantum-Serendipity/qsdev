@@ -34,7 +34,7 @@ func (p *CIFragmentProducer) Produce(_ types.WizardAnswers) ([]types.FragmentEnt
 			Source:      "ci-generation",
 			Target:      file.Path,
 			Content:     file.Content,
-			Priority:    500,
+			Priority:    types.PriorityCIWorkflow,
 			ComposeMode: types.ComposeReplace,
 			Strategy:    file.Strategy,
 			Mode:        file.Mode,

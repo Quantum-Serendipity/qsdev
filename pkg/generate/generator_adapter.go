@@ -32,7 +32,7 @@ func (a *GeneratorAdapter) Produce(answers types.WizardAnswers) ([]types.Fragmen
 			Source:      a.name,
 			Target:      f.Path,
 			Content:     f.Content,
-			Priority:    1000,
+			Priority:    types.PriorityGeneratorDefault,
 			ComposeMode: types.ComposeReplace,
 			Strategy:    f.Strategy,
 			Mode:        mode,

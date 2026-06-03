@@ -66,7 +66,7 @@ type HookRegistration struct {
 }
 
 // LifecycleHookRegistry stores and executes lifecycle hooks. A nil registry
-// is safe to call Execute on (it returns nil).
+// is safe to call Execute on (it returns nil). Not safe for concurrent use.
 type LifecycleHookRegistry struct {
 	hooks []HookRegistration
 }

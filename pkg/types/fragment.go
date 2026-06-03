@@ -18,6 +18,19 @@ const (
 	ComposeMergeYAML                    // Key-level YAML map merge.
 )
 
+const (
+	// PriorityCeiling is the maximum supported priority value. SortKey inverts
+	// priorities using this ceiling so higher-priority fragments sort first.
+	PriorityCeiling = 99999
+
+	// PriorityGeneratorDefault is the default for fragments produced by legacy
+	// Generator adapters (devenv, claudecode).
+	PriorityGeneratorDefault = 1000
+
+	// PriorityCIWorkflow is the priority for CI workflow fragments.
+	PriorityCIWorkflow = 500
+)
+
 var composeModeNames = [...]string{
 	ComposeReplace:   "replace",
 	ComposeAppend:    "append",
@@ -76,7 +89,7 @@ type FragmentEntry struct {
 // SortKey returns a composite sort key ensuring deterministic fragment ordering.
 // Priority is inverted so higher-priority fragments sort first.
 func (f FragmentEntry) SortKey() string {
-	return fmt.Sprintf("%s|%s|%05d|%s", f.Source, f.Target, 99999-f.Priority, f.Tag)
+	return fmt.Sprintf("%s|%s|%05d|%s", f.Source, f.Target, PriorityCeiling-f.Priority, f.Tag)
 }
 
 // FragmentProvenance records metadata about how and when a fragment was produced.

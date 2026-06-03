@@ -14,7 +14,7 @@ import (
 )
 
 // FragmentAccumulator collects fragments from multiple producers and resolves
-// them into a final set of GeneratedFile entries.
+// them into a final set of GeneratedFile entries. Not safe for concurrent use.
 type FragmentAccumulator struct {
 	producers     map[string]types.FragmentProducer
 	producerOrder []string
@@ -242,6 +242,8 @@ func resolveGroup(target string, group []types.FragmentEntry) (types.GeneratedFi
 	}
 }
 
+// resolveSection merges fragments using section markers. A fragment with
+// Tag=="" is the base document; if multiple exist the last in sort order wins.
 func resolveSection(group []types.FragmentEntry) ([]byte, error) {
 	// Find the base fragment (empty tag).
 	var baseContent []byte

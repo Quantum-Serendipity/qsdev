@@ -140,12 +140,13 @@ type GeneratedFile struct {
 // GeneratedState tracks what files were generated and their hashes,
 // enabling modification detection on subsequent runs.
 type GeneratedState struct {
-	LastRun             time.Time            `yaml:"last_run"              json:"last_run"`
-	QsdevVersion        string               `yaml:"qsdev_version,omitempty" json:"qsdev_version,omitempty"`
-	Files               map[string]FileState `yaml:"files"                 json:"files"`
-	TemplateVersion     string               `yaml:"template_version"      json:"template_version"`
-	SkillLibraryVersion string               `yaml:"skill_library_version" json:"skill_library_version"`
-	EnabledTools        map[string]bool      `yaml:"enabled_tools,omitempty" json:"enabled_tools,omitempty"`
+	LastRun             time.Time                        `yaml:"last_run"              json:"last_run"`
+	QsdevVersion        string                           `yaml:"qsdev_version,omitempty" json:"qsdev_version,omitempty"`
+	Files               map[string]FileState             `yaml:"files"                 json:"files"`
+	TemplateVersion     string                           `yaml:"template_version"      json:"template_version"`
+	SkillLibraryVersion string                           `yaml:"skill_library_version" json:"skill_library_version"`
+	EnabledTools        map[string]bool                  `yaml:"enabled_tools,omitempty" json:"enabled_tools,omitempty"`
+	Fragments           map[string][]FragmentLedgerEntry `yaml:"fragments,omitempty"     json:"fragments,omitempty"`
 }
 
 // FileState tracks a single generated file's hash and merge strategy.

@@ -2,19 +2,14 @@ package devinit
 
 import (
 	"fmt"
-	"log/slog"
 	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
-	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
-	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/repair"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
@@ -153,43 +148,25 @@ func (e *repairExitErr) Error() string {
 
 func (e *repairExitErr) ExitCode() int { return e.code }
 
-// regenerateFreshFiles runs both generators to produce a map of path to fresh
-// GeneratedFile. Individual generator failures are logged as warnings so repair
-// can proceed with partial results. Returns an error only if ALL generators fail.
+// regenerateFreshFiles runs both generators via fragment accumulation to produce
+// a map of path to fresh GeneratedFile. Returns an error only if generation fails entirely.
 func regenerateFreshFiles(answers types.WizardAnswers) (map[string]types.GeneratedFile, error) {
-	freshFiles := make(map[string]types.GeneratedFile)
-	registry := ecosystem.DefaultRegistry()
-	var genErrors int
-
-	// Generate devenv files (unless claude-only mode).
-	if answers.MergeMode != "claude-only" {
-		gen := devenv.NewDevenvGenerator(registry, devenv.WithProfileRegistry(profile.DefaultProfileRegistry()))
-		files, err := gen.Generate(answers)
-		if err != nil {
-			slog.Warn("devenv generator failed during repair", "error", err)
-			genErrors++
-		} else {
-			for _, f := range files {
-				freshFiles[f.Path] = f
-			}
-		}
+	accResult, err := runAccumulator(answers, struct {
+		ClaudeOnly bool
+		DevenvOnly bool
+	}{
+		ClaudeOnly: answers.MergeMode == "claude-only",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("generating files for repair: %w", err)
 	}
 
-	// Generate Claude Code files.
-	if answers.ClaudeCode {
-		gen := claudecode.NewClaudeCodeGenerator(registry, claudecode.CurrentConfig())
-		files, err := gen.Generate(answers)
-		if err != nil {
-			slog.Warn("claudecode generator failed during repair", "error", err)
-			genErrors++
-		} else {
-			for _, f := range files {
-				freshFiles[f.Path] = f
-			}
-		}
+	freshFiles := make(map[string]types.GeneratedFile, len(accResult.allFiles))
+	for _, f := range accResult.allFiles {
+		freshFiles[f.Path] = f
 	}
 
-	if len(freshFiles) == 0 && genErrors > 0 {
+	if len(freshFiles) == 0 {
 		return nil, fmt.Errorf("all generators failed; cannot determine expected file state for repair")
 	}
 

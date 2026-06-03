@@ -99,6 +99,7 @@ func TestSOC2Framework_CC61Layers(t *testing.T) {
 	}
 	if cc61 == nil {
 		t.Fatal("CC6.1 not found")
+		return
 	}
 
 	if len(cc61.Layers) != 2 {
@@ -127,6 +128,7 @@ func TestSOC2Framework_CC68HasThreePrimaryLayers(t *testing.T) {
 	}
 	if cc68 == nil {
 		t.Fatal("CC6.8 not found")
+		return
 	}
 
 	primaryCount := 0
@@ -153,6 +155,7 @@ func TestSOC2Framework_CC72HasNoLayers(t *testing.T) {
 	}
 	if cc72 == nil {
 		t.Fatal("CC7.2 not found")
+		return
 	}
 
 	if len(cc72.Layers) != 0 {

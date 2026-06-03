@@ -283,6 +283,7 @@ func TestCheckVersionRatchet_Older(t *testing.T) {
 	warn := CheckVersionRatchet("1.0.0", "2.0.0")
 	if warn == nil {
 		t.Fatal("older version should produce warning")
+		return
 	}
 	if warn.CurrentVersion != "1.0.0" {
 		t.Errorf("CurrentVersion = %q, want 1.0.0", warn.CurrentVersion)

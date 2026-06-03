@@ -13,16 +13,13 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
-	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/repair"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
-	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func stateFilePath() string {
@@ -241,36 +238,17 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		}
 	}
 
-	// Create a shared ecosystem registry for both generators.
-	registry := ecosystem.DefaultRegistry()
-
-	var allFiles []types.GeneratedFile
-	devenvGenerated := false
-	claudeGenerated := false
-
-	// l. Generate devenv files (if not --claude-only).
-	if !opts.ClaudeOnly {
-		gen := devenv.NewDevenvGenerator(registry, devenv.WithProfileRegistry(profile.DefaultProfileRegistry()))
-		files, err := gen.Generate(answers)
-		if err != nil {
-			return fmt.Errorf("generating devenv files: %w", err)
-		}
-		allFiles = append(allFiles, files...)
-		devenvGenerated = len(files) > 0
-		slog.Info("devenv files generated", "count", len(files))
+	// l-m. Generate files via fragment accumulation.
+	accResult, err := runAccumulator(answers, struct {
+		ClaudeOnly bool
+		DevenvOnly bool
+	}{ClaudeOnly: opts.ClaudeOnly, DevenvOnly: opts.DevenvOnly})
+	if err != nil {
+		return fmt.Errorf("generating files: %w", err)
 	}
-
-	// m. Generate Claude Code files (if not --devenv-only and Claude Code enabled).
-	if !opts.DevenvOnly && answers.ClaudeCode {
-		gen := claudecode.NewClaudeCodeGenerator(registry, claudecode.CurrentConfig())
-		files, err := gen.Generate(answers)
-		if err != nil {
-			return fmt.Errorf("generating Claude Code files: %w", err)
-		}
-		allFiles = append(allFiles, files...)
-		claudeGenerated = len(files) > 0
-		slog.Info("claude code files generated", "count", len(files))
-	}
+	allFiles := accResult.allFiles
+	devenvGenerated := accResult.devenvGenerated
+	claudeGenerated := accResult.claudeGenerated
 
 	// n. Dry-run: preview and return.
 	if opts.DryRun {
@@ -294,6 +272,7 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	genState := state.RecordFiles(successfulFiles)
 	genState.QsdevVersion = version.Info().Version
 	genState.EnabledTools = answers.EnabledTools
+	genState.Fragments = state.RecordFragments(accResult.fragments)
 	stateFile := filepath.Join(projectRoot, stateFilePath())
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)

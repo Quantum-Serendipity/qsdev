@@ -23,6 +23,7 @@ func TestGenerateSecretSpecToml_WithServices(t *testing.T) {
 	}
 	if gf == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	content := string(gf.Content)
@@ -104,6 +105,7 @@ func TestGenerateSecretSpecToml_Dedup(t *testing.T) {
 	}
 	if gf == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	content := string(gf.Content)
@@ -159,6 +161,7 @@ func TestGenerateSecretSpecToml_WithTerraformSecrets(t *testing.T) {
 	}
 	if gf == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	content := string(gf.Content)
@@ -209,6 +212,7 @@ func TestGenerateSecretSpecToml_ServicesAndModulesCombined(t *testing.T) {
 	}
 	if gf == nil {
 		t.Fatal("expected non-nil GeneratedFile")
+		return
 	}
 
 	content := string(gf.Content)

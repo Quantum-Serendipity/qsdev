@@ -10,17 +10,14 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
-	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
-	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/update"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // register all modules
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -97,27 +94,17 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 		}
 	}
 
-	// 5. Generate new files from both generators using saved answers.
-	registry := ecosystem.DefaultRegistry()
-	var allFiles []types.GeneratedFile
-
-	if !answers.ClaudeCode || answers.MergeMode != "claude-only" {
-		gen := devenv.NewDevenvGenerator(registry, devenv.WithProfileRegistry(profile.DefaultProfileRegistry()))
-		files, err := gen.Generate(answers)
-		if err != nil {
-			return fmt.Errorf("generating devenv files: %w", err)
-		}
-		allFiles = append(allFiles, files...)
+	// 5. Generate new files via fragment accumulation.
+	accResult, err := runAccumulator(answers, struct {
+		ClaudeOnly bool
+		DevenvOnly bool
+	}{
+		ClaudeOnly: answers.ClaudeCode && answers.MergeMode == "claude-only",
+	})
+	if err != nil {
+		return fmt.Errorf("generating files: %w", err)
 	}
-
-	if answers.ClaudeCode {
-		gen := claudecode.NewClaudeCodeGenerator(registry, claudecode.CurrentConfig())
-		files, err := gen.Generate(answers)
-		if err != nil {
-			return fmt.Errorf("generating Claude Code files: %w", err)
-		}
-		allFiles = append(allFiles, files...)
-	}
+	allFiles := accResult.allFiles
 
 	// 6. Build update plan.
 	plan := buildUpdatePlan(allFiles, modStatus, existingState, opts)
@@ -159,6 +146,7 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	}
 	newState.QsdevVersion = version.Info().Version
 	newState.EnabledTools = answers.EnabledTools
+	newState.Fragments = state.RecordFragments(accResult.fragments)
 	// Preserve state entries for files we didn't touch.
 	for path, fs := range existingState.Files {
 		if _, written := newState.Files[path]; !written {

@@ -35,6 +35,7 @@ func TestAggregateTaskDefinitions_SingleEcosystem(t *testing.T) {
 	testTask := findTask(tasks, "test")
 	if testTask == nil {
 		t.Fatal("test task not found")
+		return
 	}
 	if len(testTask.DependsOn) != 1 || testTask.DependsOn[0] != "build" {
 		t.Errorf("test.DependsOn = %v, want [build]", testTask.DependsOn)
@@ -111,6 +112,7 @@ func TestAggregateTaskDefinitions_SecurityScan(t *testing.T) {
 	secTask := findTask(tasks, "security-scan")
 	if secTask == nil {
 		t.Fatal("security-scan task not found when semgrep is enabled")
+		return
 	}
 
 	if len(secTask.Commands) != 1 || secTask.Commands[0] != "semgrep --config auto --error ." {
@@ -150,6 +152,7 @@ func TestAggregateTaskDefinitions_Dedup(t *testing.T) {
 	testTask := findTask(tasks, "test")
 	if testTask == nil {
 		t.Fatal("test task not found")
+		return
 	}
 
 	if len(testTask.Commands) != 1 {
@@ -197,6 +200,7 @@ func TestAggregateTaskDefinitions_SecurityScanBothTools(t *testing.T) {
 	secTask := findTask(tasks, "security-scan")
 	if secTask == nil {
 		t.Fatal("security-scan task not found")
+		return
 	}
 
 	if len(secTask.Commands) != 2 {

@@ -42,6 +42,7 @@ tools:
 	}
 	if cfg == nil {
 		t.Fatal("expected non-nil config")
+		return
 	}
 	if len(cfg.ExtraPackages) != 2 {
 		t.Errorf("expected 2 extra packages, got %d", len(cfg.ExtraPackages))

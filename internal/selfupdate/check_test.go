@@ -44,12 +44,13 @@ func TestCheckForUpdate_NewerVersionAvailable(t *testing.T) {
 	defer func() { apiBaseURL = oldBase }()
 
 	cfg := testConfig(t)
-	release, err := CheckForUpdate(context.Background(), cfg,"1.0.0")
+	release, err := CheckForUpdate(context.Background(), cfg, "1.0.0")
 	if err != nil {
 		t.Fatalf("CheckForUpdate() error: %v", err)
 	}
 	if release == nil {
 		t.Fatal("expected a release, got nil")
+		return
 	}
 	if release.Version != "2.0.0" {
 		t.Errorf("Version = %q, want %q", release.Version, "2.0.0")
@@ -76,7 +77,7 @@ func TestCheckForUpdate_AlreadyUpToDate(t *testing.T) {
 	defer func() { apiBaseURL = oldBase }()
 
 	cfg := testConfig(t)
-	release, err := CheckForUpdate(context.Background(), cfg,"1.0.0")
+	release, err := CheckForUpdate(context.Background(), cfg, "1.0.0")
 	if err != nil {
 		t.Fatalf("CheckForUpdate() error: %v", err)
 	}
@@ -89,7 +90,7 @@ func TestCheckForUpdate_DevVersion(t *testing.T) {
 	cfg := testConfig(t)
 
 	for _, ver := range []string{"", "dev", "(devel)"} {
-		release, err := CheckForUpdate(context.Background(), cfg,ver)
+		release, err := CheckForUpdate(context.Background(), cfg, ver)
 		if err != nil {
 			t.Errorf("CheckForUpdate(%q) error: %v", ver, err)
 		}
@@ -120,7 +121,7 @@ func TestCheckForUpdate_CacheHit(t *testing.T) {
 	cfg := testConfig(t)
 
 	// First call should hit the API.
-	release, err := CheckForUpdate(context.Background(), cfg,"1.0.0")
+	release, err := CheckForUpdate(context.Background(), cfg, "1.0.0")
 	if err != nil {
 		t.Fatalf("first CheckForUpdate() error: %v", err)
 	}
@@ -132,7 +133,7 @@ func TestCheckForUpdate_CacheHit(t *testing.T) {
 	}
 
 	// Second call should use cache.
-	release2, err := CheckForUpdate(context.Background(), cfg,"1.0.0")
+	release2, err := CheckForUpdate(context.Background(), cfg, "1.0.0")
 	if err != nil {
 		t.Fatalf("second CheckForUpdate() error: %v", err)
 	}
@@ -166,7 +167,7 @@ func TestCheckForUpdate_CacheExpired(t *testing.T) {
 	cfg.CheckInterval = 1 * time.Millisecond // Very short interval for testing.
 
 	// First call.
-	_, err := CheckForUpdate(context.Background(), cfg,"1.0.0")
+	_, err := CheckForUpdate(context.Background(), cfg, "1.0.0")
 	if err != nil {
 		t.Fatalf("first CheckForUpdate() error: %v", err)
 	}
@@ -175,7 +176,7 @@ func TestCheckForUpdate_CacheExpired(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 
 	// Second call should hit API again because cache expired.
-	_, err = CheckForUpdate(context.Background(), cfg,"1.0.0")
+	_, err = CheckForUpdate(context.Background(), cfg, "1.0.0")
 	if err != nil {
 		t.Fatalf("second CheckForUpdate() error: %v", err)
 	}
@@ -203,7 +204,7 @@ func TestCheckForUpdate_CacheUpToDate(t *testing.T) {
 	cfg := testConfig(t)
 
 	// First call caches "1.0.0" as latest.
-	release, err := CheckForUpdate(context.Background(), cfg,"1.0.0")
+	release, err := CheckForUpdate(context.Background(), cfg, "1.0.0")
 	if err != nil {
 		t.Fatalf("CheckForUpdate() error: %v", err)
 	}
@@ -212,7 +213,7 @@ func TestCheckForUpdate_CacheUpToDate(t *testing.T) {
 	}
 
 	// Second call should read cache and still return nil.
-	release2, err := CheckForUpdate(context.Background(), cfg,"1.0.0")
+	release2, err := CheckForUpdate(context.Background(), cfg, "1.0.0")
 	if err != nil {
 		t.Fatalf("cached CheckForUpdate() error: %v", err)
 	}
@@ -237,7 +238,7 @@ func TestCheckForUpdate_GithubTokenInjected(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "ghp_testtoken123")
 
 	cfg := testConfig(t)
-	_, _ = CheckForUpdate(context.Background(), cfg,"0.9.0")
+	_, _ = CheckForUpdate(context.Background(), cfg, "0.9.0")
 
 	if gotAuth != "Bearer ghp_testtoken123" {
 		t.Errorf("Authorization header = %q, want %q", gotAuth, "Bearer ghp_testtoken123")
@@ -260,7 +261,7 @@ func TestCheckForUpdate_NoGithubToken(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
 
 	cfg := testConfig(t)
-	_, _ = CheckForUpdate(context.Background(), cfg,"0.9.0")
+	_, _ = CheckForUpdate(context.Background(), cfg, "0.9.0")
 
 	if gotAuth != "" {
 		t.Errorf("Authorization header should be empty when no token, got %q", gotAuth)
@@ -279,7 +280,7 @@ func TestCheckForUpdate_NoReleases(t *testing.T) {
 	defer func() { apiBaseURL = oldBase }()
 
 	cfg := testConfig(t)
-	release, err := CheckForUpdate(context.Background(), cfg,"1.0.0")
+	release, err := CheckForUpdate(context.Background(), cfg, "1.0.0")
 	if err != nil {
 		t.Fatalf("expected no error for 404 (no releases), got: %v", err)
 	}
@@ -300,7 +301,7 @@ func TestCheckForUpdate_APIError(t *testing.T) {
 	defer func() { apiBaseURL = oldBase }()
 
 	cfg := testConfig(t)
-	_, err := CheckForUpdate(context.Background(), cfg,"1.0.0")
+	_, err := CheckForUpdate(context.Background(), cfg, "1.0.0")
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}
@@ -329,7 +330,7 @@ func TestFetchRelease(t *testing.T) {
 	defer func() { apiBaseURL = oldBase }()
 
 	cfg := testConfig(t)
-	release, err := FetchRelease(context.Background(), cfg,"v1.5.0")
+	release, err := FetchRelease(context.Background(), cfg, "v1.5.0")
 	if err != nil {
 		t.Fatalf("FetchRelease() error: %v", err)
 	}

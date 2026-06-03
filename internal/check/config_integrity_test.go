@@ -35,6 +35,7 @@ func TestCheckConfigIntegrity_ValidConfig(t *testing.T) {
 
 	if configExists == nil {
 		t.Fatal("expected config_exists result")
+		return
 	}
 	if configExists.Status != StatusPass {
 		t.Errorf("config_exists.Status = %s, want %s", configExists.Status, StatusPass)
@@ -93,7 +94,7 @@ func TestCheckConfigIntegrity_InvalidProfile(t *testing.T) {
 	ctx := CheckContext{
 		QsdevConfig: &types.QsdevConfig{
 			Version: 1,
-			Profile:       "unknown-profile",
+			Profile: "unknown-profile",
 		},
 		ProfileNames: []string{"go-web", "ts-fullstack"},
 	}

@@ -261,9 +261,11 @@ func TestLoadFile_ValidYAML(t *testing.T) {
 	}
 	if pf == nil {
 		t.Fatal("expected non-nil policy file")
+		return
 	}
 	if pf.Conformance.Custom == nil {
 		t.Fatal("expected custom conformance")
+		return
 	}
 	if pf.Conformance.Custom.Name != "strict" {
 		t.Errorf("name: got %q, want %q", pf.Conformance.Custom.Name, "strict")
@@ -301,6 +303,7 @@ func TestLoadFile_EmptyFile(t *testing.T) {
 	}
 	if pf == nil {
 		t.Fatal("expected non-nil policy file")
+		return
 	}
 	if pf.Conformance.Custom != nil {
 		t.Error("expected nil custom conformance for empty file")

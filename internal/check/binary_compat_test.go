@@ -10,8 +10,8 @@ func TestCheckBinaryCompatibility_VersionSatisfied(t *testing.T) {
 	ctx := CheckContext{
 		BinaryVersion: "1.5.0",
 		QsdevConfig: &types.QsdevConfig{
-			Version: 1,
-			QsdevVersion:   ">=1.0.0",
+			Version:      1,
+			QsdevVersion: ">=1.0.0",
 		},
 	}
 
@@ -27,6 +27,7 @@ func TestCheckBinaryCompatibility_VersionSatisfied(t *testing.T) {
 
 	if versionResult == nil {
 		t.Fatal("expected qsdev_version_constraint result")
+		return
 	}
 	if versionResult.Status != StatusPass {
 		t.Errorf("Status = %s, want %s; Message: %s", versionResult.Status, StatusPass, versionResult.Message)
@@ -37,8 +38,8 @@ func TestCheckBinaryCompatibility_VersionNotSatisfied(t *testing.T) {
 	ctx := CheckContext{
 		BinaryVersion: "0.9.0",
 		QsdevConfig: &types.QsdevConfig{
-			Version: 1,
-			QsdevVersion:   ">=1.0.0",
+			Version:      1,
+			QsdevVersion: ">=1.0.0",
 		},
 	}
 
@@ -54,6 +55,7 @@ func TestCheckBinaryCompatibility_VersionNotSatisfied(t *testing.T) {
 
 	if versionResult == nil {
 		t.Fatal("expected qsdev_version_constraint result")
+		return
 	}
 	if versionResult.Status != StatusFail {
 		t.Errorf("Status = %s, want %s", versionResult.Status, StatusFail)
@@ -83,6 +85,7 @@ func TestCheckBinaryCompatibility_NoConstraint(t *testing.T) {
 
 	if versionResult == nil {
 		t.Fatal("expected qsdev_version_constraint result")
+		return
 	}
 	if versionResult.Status != StatusPass {
 		t.Errorf("Status = %s, want %s", versionResult.Status, StatusPass)
@@ -127,6 +130,7 @@ func TestCheckBinaryCompatibility_UnsupportedSchemaVersion(t *testing.T) {
 
 	if schemaResult == nil {
 		t.Fatal("expected config_schema_version result")
+		return
 	}
 	if schemaResult.Status != StatusFail {
 		t.Errorf("Status = %s, want %s", schemaResult.Status, StatusFail)
@@ -156,6 +160,7 @@ func TestCheckBinaryCompatibility_SupportedSchemaVersion(t *testing.T) {
 
 	if schemaResult == nil {
 		t.Fatal("expected config_schema_version result")
+		return
 	}
 	if schemaResult.Status != StatusPass {
 		t.Errorf("Status = %s, want %s", schemaResult.Status, StatusPass)
@@ -166,8 +171,8 @@ func TestCheckBinaryCompatibility_DevVersion(t *testing.T) {
 	ctx := CheckContext{
 		BinaryVersion: "dev",
 		QsdevConfig: &types.QsdevConfig{
-			Version: 1,
-			QsdevVersion:   ">=99.0.0",
+			Version:      1,
+			QsdevVersion: ">=99.0.0",
 		},
 	}
 
@@ -183,6 +188,7 @@ func TestCheckBinaryCompatibility_DevVersion(t *testing.T) {
 
 	if versionResult == nil {
 		t.Fatal("expected qsdev_version_constraint result")
+		return
 	}
 	// "dev" version always passes constraints.
 	if versionResult.Status != StatusPass {

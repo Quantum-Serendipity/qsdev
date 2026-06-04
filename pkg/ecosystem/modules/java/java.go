@@ -101,8 +101,8 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 // for JVM language support with the appropriate JDK and build tools.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
 	jdkPkg := jdkPackage(config.Version)
-	buildTool := config.Extras["build_tool"]
-	kotlin := config.Extras["kotlin"] == "true"
+	buildTool := config.Extra("build_tool", "")
+	kotlin := config.Extra("kotlin", "") == "true"
 
 	var b strings.Builder
 
@@ -134,7 +134,7 @@ func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvIn
 // SecurityConfigs returns generated security configuration files for Maven
 // and/or Gradle based on the detected build tool.
 func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {
-	buildTool := config.Extras["build_tool"]
+	buildTool := config.Extra("build_tool", "")
 	var files []types.GeneratedFile
 
 	if buildTool == "maven" || buildTool == "both" {
@@ -214,7 +214,7 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 		},
 	}
 
-	if config.Extras["kotlin"] == "true" {
+	if config.Extra("kotlin", "") == "true" {
 		hooks = append(hooks, ecosystem.HookConfig{
 			ID:            "ktlint",
 			Name:          "ktlint",
@@ -235,7 +235,7 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 // DenyRules returns Claude Code deny-rule patterns for the JVM ecosystem.
 // Rules are included conditionally based on the detected build tool.
 func (m *Module) DenyRules(config ecosystem.ModuleConfig) []string {
-	buildTool := config.Extras["build_tool"]
+	buildTool := config.Extra("build_tool", "")
 	var rules []string
 
 	if buildTool == "maven" || buildTool == "both" {
@@ -257,7 +257,7 @@ func (m *Module) DenyRules(config ecosystem.ModuleConfig) []string {
 
 // CICommands returns CI pipeline commands for the JVM ecosystem.
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
-	buildTool := config.Extras["build_tool"]
+	buildTool := config.Extra("build_tool", "")
 	var cmds []ecosystem.CICommand
 
 	if buildTool == "maven" || buildTool == "both" {
@@ -350,10 +350,7 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 
 // VerificationCommands returns project verification commands for the JVM ecosystem.
 func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.VerificationCommands {
-	bt := config.Extras["build_tool"]
-	if bt == "" {
-		bt = "maven"
-	}
+	bt := config.Extra("build_tool", "maven")
 	switch bt {
 	case "gradle":
 		return ecosystem.VerificationCommands{
@@ -370,10 +367,7 @@ func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.V
 
 // ManifestFiles returns manifest file metadata for the JVM ecosystem.
 func (m *Module) ManifestFiles(config ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
-	bt := config.Extras["build_tool"]
-	if bt == "" {
-		bt = "maven"
-	}
+	bt := config.Extra("build_tool", "maven")
 	switch bt {
 	case "gradle":
 		return []ecosystem.ManifestFileInfo{

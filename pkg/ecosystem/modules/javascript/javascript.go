@@ -132,7 +132,7 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	}
 
 	// TypeScript support.
-	if config.Extras["typescript"] == "true" {
+	if config.Extra("typescript", "") == "true" {
 		b.WriteString("\n  languages.typescript.enable = true;\n")
 	}
 

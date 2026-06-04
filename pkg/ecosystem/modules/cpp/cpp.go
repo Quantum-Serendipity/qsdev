@@ -119,7 +119,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
 	var pkgs []string
 
-	buildSystem := config.Extras["build_system"]
+	buildSystem := config.Extra("build_system", "")
 	switch buildSystem {
 	case "cmake":
 		pkgs = append(pkgs, "cmake", "gnumake")
@@ -129,7 +129,7 @@ func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
 		pkgs = append(pkgs, "gnumake")
 	}
 
-	if config.Extras["build_cache"] == "sccache" {
+	if config.Extra("build_cache", "") == "sccache" {
 		pkgs = append(pkgs, "sccache")
 	}
 
@@ -154,7 +154,7 @@ func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvIn
 // SecurityConfigs returns generated security configuration files for the
 // detected C/C++ package manager.
 func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {
-	pm := config.Extras["package_manager"]
+	pm := config.Extra("package_manager", "")
 
 	switch pm {
 	case "conan":
@@ -240,7 +240,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // Rules are conditional on the detected package manager; if none is detected,
 // both conan and vcpkg rules are included.
 func (m *Module) DenyRules(config ecosystem.ModuleConfig) []string {
-	pm := config.Extras["package_manager"]
+	pm := config.Extra("package_manager", "")
 
 	switch pm {
 	case "conan":
@@ -264,7 +264,7 @@ func (m *Module) DenyRules(config ecosystem.ModuleConfig) []string {
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
 	var cmds []ecosystem.CICommand
 
-	buildSystem := config.Extras["build_system"]
+	buildSystem := config.Extra("build_system", "")
 
 	switch buildSystem {
 	case "cmake":
@@ -291,7 +291,7 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 	}
 
 	// Conan lock verify if conan is the package manager.
-	pm := config.Extras["package_manager"]
+	pm := config.Extra("package_manager", "")
 	if pm == "conan" {
 		cmds = append(cmds, ecosystem.CICommand{
 			Name:        "conan-lock-verify",

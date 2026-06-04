@@ -119,17 +119,15 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 	content.WriteString("# registry mirror for provider supply chain security.\n\n")
 	content.WriteString("disable_checkpoint = true\n")
 
-	if config.Extras != nil {
-		if mirror, ok := config.Extras["registry_mirror"]; ok && mirror != "" {
-			content.WriteString("\nprovider_installation {\n")
-			content.WriteString("  network_mirror {\n")
-			fmt.Fprintf(&content, "    url = %q\n", mirror)
-			content.WriteString("  }\n")
-			content.WriteString("  direct {\n")
-			content.WriteString("    exclude = [\"registry.terraform.io/*/*\"]\n")
-			content.WriteString("  }\n")
-			content.WriteString("}\n")
-		}
+	if mirror := config.Extra("registry_mirror", ""); mirror != "" {
+		content.WriteString("\nprovider_installation {\n")
+		content.WriteString("  network_mirror {\n")
+		fmt.Fprintf(&content, "    url = %q\n", mirror)
+		content.WriteString("  }\n")
+		content.WriteString("  direct {\n")
+		content.WriteString("    exclude = [\"registry.terraform.io/*/*\"]\n")
+		content.WriteString("  }\n")
+		content.WriteString("}\n")
 	}
 
 	return []types.GeneratedFile{

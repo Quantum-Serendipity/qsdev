@@ -73,10 +73,8 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 // DevenvNixFragment returns a Nix fragment that enables Rust in devenv.sh.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
 	channel := "stable"
-	if config.Extras != nil {
-		if ch, ok := config.Extras["channel"]; ok && ch != "" {
-			channel = ch
-		}
+	if ch := config.Extra("channel", ""); ch != "" {
+		channel = ch
 	}
 	if channel == "stable" && config.Version != "" {
 		channel = config.Version
@@ -114,7 +112,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 		fmt.Fprintf(&content, "registry = \"%s\"\n", config.RegistryProxy)
 	}
 
-	if config.Extras != nil && config.Extras["build_cache"] == "sccache" {
+	if config.Extra("build_cache", "") == "sccache" {
 		content.WriteString("\n[build]\n")
 		content.WriteString("# Use sccache as the rustc wrapper for shared build caching.\n")
 		content.WriteString("rustc-wrapper = \"sccache\"\n")

@@ -118,10 +118,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 // Mill projects need the mill package; sbt projects get sbt via the
 // languages.scala.sbt.enable fragment.
 func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
-	buildTool := config.Extras["build_tool"]
-	if buildTool == "" {
-		buildTool = "sbt"
-	}
+	buildTool := config.Extra("build_tool", "sbt")
 	if buildTool == "mill" {
 		return []string{"mill"}
 	}
@@ -131,15 +128,9 @@ func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for Scala language support with the appropriate JDK and build tool.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
-	buildTool := config.Extras["build_tool"]
-	if buildTool == "" {
-		buildTool = "sbt"
-	}
+	buildTool := config.Extra("build_tool", "sbt")
 
-	jdkVer := config.Extras["jdk_version"]
-	if jdkVer == "" {
-		jdkVer = "21"
-	}
+	jdkVer := config.Extra("jdk_version", "21")
 
 	jdkPkg := jdkPackage(jdkVer)
 

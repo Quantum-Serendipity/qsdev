@@ -25,46 +25,13 @@ import (
 // runJoin sets up a local development environment from an existing .qsdev.yaml.
 // This is the "join" path for new team members cloning a project.
 func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
-	// 1. Parse project config.
-	cfgFile := branding.Get().ConfigFile
-	cfgPath := filepath.Join(projectRoot, cfgFile)
-	cfg, err := qsdevconfig.ParseQsdevConfig(cfgPath)
+	// 1. Build answers from config, detection, and optional overrides.
+	answers, err := buildJoinAnswers(cmd, opts, projectRoot)
 	if err != nil {
-		return fmt.Errorf("parsing %s: %w", cfgFile, err)
+		return err
 	}
 
-	// 2. Run detection.
-	detected := detect.Detect(projectRoot)
-
-	// 3. Convert config to answers for the generation pipeline.
-	answers := configToAnswers(cfg, detected, projectRoot)
-
-	// 3b. If --answers-file is set, merge file answers over config answers.
-	if opts.AnswersFile != "" {
-		fileAnswers, err := LoadAnswersFile(opts.AnswersFile)
-		if err != nil {
-			return err
-		}
-		fileAnswers.ProjectRoot = projectRoot
-		fileAnswers.ProjectName = filepath.Base(projectRoot)
-
-		flagSet := NewFlagSet(cmd)
-		changed := flagSetToChangedMap(flagSet, cmd)
-		flagAnswers, err := AnswersFromFlags(opts, projectRoot)
-		if err != nil {
-			return err
-		}
-		answers = MergeFileWithFlags(fileAnswers, flagAnswers, changed)
-
-		if err := ValidateAnswersFileCompleteness(answers); err != nil {
-			return err
-		}
-
-		answers.Confirmed = true
-		answers.Detected = detected
-	}
-
-	// 4. Auto-install missing prerequisites if --yes, otherwise warn.
+	// 2. Auto-install missing prerequisites if --yes, otherwise warn.
 	prereqs := CheckPrerequisites(cmd.Context())
 	hasMissingPrereqs := prereqs.HasMissing()
 	if hasMissingPrereqs {
@@ -83,15 +50,7 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		}
 	}
 
-	// 5. Validate answers.
-	if err := ValidateAnswers(answers); err != nil {
-		return err
-	}
-
-	// 5b. Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
-	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
-
-	// 6. Generate files via fragment accumulation.
+	// 3. Generate files via fragment accumulation.
 	accResult, err := runAccumulator(answers, struct {
 		ClaudeOnly bool
 		DevenvOnly bool
@@ -100,14 +59,12 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		return fmt.Errorf("generating files: %w", err)
 	}
 	allFiles := accResult.allFiles
-	devenvGenerated := accResult.devenvGenerated
-	claudeGenerated := accResult.claudeGenerated
 
-	// 7. Generate local config template (only if it doesn't exist).
+	// 4. Generate local config template (only if it doesn't exist).
 	localCfg := branding.Get().LocalConfig
 	localConfigPath := filepath.Join(projectRoot, localCfg)
 	if _, err := os.Stat(localConfigPath); os.IsNotExist(err) {
-		localContent := GenerateLocalConfigTemplate(answers, detected)
+		localContent := GenerateLocalConfigTemplate(answers, answers.Detected)
 		allFiles = append(allFiles, types.GeneratedFile{
 			Path:    localCfg,
 			Content: localContent,
@@ -115,19 +72,100 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		})
 	}
 
-	// 8. Ensure local config is in .gitignore.
+	// 5. Ensure local config is in .gitignore.
 	if err := EnsureGitignoreEntry(projectRoot, localCfg); err != nil {
 		return fmt.Errorf("updating .gitignore: %w", err)
 	}
 
-	// 9. Dry-run: preview and return.
+	// 6. Dry-run: preview and return.
 	if opts.DryRun {
 		preview := generate.PreviewFiles(allFiles, nil, projectRoot)
 		_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
 		return nil
 	}
 
-	// 10. Write files.
+	// 7. Write files and record results.
+	if err := writeJoinResults(cmd, opts, projectRoot, answers, accResult, allFiles); err != nil {
+		return err
+	}
+
+	// 8. Print join-specific summary.
+	if !opts.Quiet {
+		if hasMissingPrereqs {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nNext: run '%s devenv setup --yes' to install missing prerequisites (nix, devenv, direnv).\n", branding.Get().AppName)
+		}
+	}
+
+	return nil
+}
+
+// buildJoinAnswers parses the project config, runs detection, converts to
+// wizard answers, and optionally merges answers-file overrides.
+func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) (types.WizardAnswers, error) {
+	// Parse project config.
+	cfgFile := branding.Get().ConfigFile
+	cfgPath := filepath.Join(projectRoot, cfgFile)
+	cfg, err := qsdevconfig.ParseQsdevConfig(cfgPath)
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("parsing %s: %w", cfgFile, err)
+	}
+
+	// Run detection.
+	detected := detect.Detect(projectRoot)
+
+	// Convert config to answers for the generation pipeline.
+	answers := configToAnswers(cfg, detected, projectRoot)
+
+	// If --answers-file is set, merge file answers over config answers.
+	if opts.AnswersFile != "" {
+		fileAnswers, err := LoadAnswersFile(opts.AnswersFile)
+		if err != nil {
+			return types.WizardAnswers{}, err
+		}
+		fileAnswers.ProjectRoot = projectRoot
+		fileAnswers.ProjectName = filepath.Base(projectRoot)
+
+		flagSet := NewFlagSet(cmd)
+		changed := flagSetToChangedMap(flagSet, cmd)
+		flagAnswers, err := AnswersFromFlags(opts, projectRoot)
+		if err != nil {
+			return types.WizardAnswers{}, err
+		}
+		answers = MergeFileWithFlags(fileAnswers, flagAnswers, changed)
+
+		if err := ValidateAnswersFileCompleteness(answers); err != nil {
+			return types.WizardAnswers{}, err
+		}
+
+		answers.Confirmed = true
+		answers.Detected = detected
+	}
+
+	// Validate answers.
+	if err := ValidateAnswers(answers); err != nil {
+		return types.WizardAnswers{}, err
+	}
+
+	// Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
+	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
+
+	return answers, nil
+}
+
+// writeJoinResults writes generated files, records state, saves answers, and
+// prints the join summary.
+func writeJoinResults(
+	cmd *cobra.Command,
+	opts InitOptions,
+	projectRoot string,
+	answers types.WizardAnswers,
+	accResult accumulatorResult,
+	allFiles []types.GeneratedFile,
+) error {
+	devenvGenerated := accResult.devenvGenerated
+	claudeGenerated := accResult.claudeGenerated
+
+	// Write files.
 	result, err := generate.WriteFiles(allFiles, generate.PipelineOptions{
 		ProjectRoot: projectRoot,
 	})
@@ -135,7 +173,7 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		return fmt.Errorf("writing files: %w", err)
 	}
 
-	// 11. Record state with QsdevVersion (only for successfully written files).
+	// Record state with QsdevVersion (only for successfully written files).
 	successfulFiles := result.SuccessfulFiles(allFiles)
 	genState := state.RecordFiles(successfulFiles)
 	genState.QsdevVersion = version.Info().Version
@@ -155,7 +193,7 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 			result.Failed, len(successfulFiles), details.String())
 	}
 
-	// 12. Save answers.
+	// Save answers.
 	if err := saveAnswers(projectRoot, answers); err != nil {
 		return fmt.Errorf("saving answers: %w", err)
 	}
@@ -170,15 +208,11 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		}
 	}
 
-	// 13. Print join-specific summary.
+	// Print join-specific summary.
 	if !opts.Quiet {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Joined project successfully from %s configuration.\n", branding.Get().ConfigFile)
 		_, _ = fmt.Fprint(cmd.OutOrStdout(), postGenerationMessage(answers, devenvGenerated, claudeGenerated))
-
-		if hasMissingPrereqs {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nNext: run '%s devenv setup --yes' to install missing prerequisites (nix, devenv, direnv).\n", branding.Get().AppName)
-		}
 	}
 
 	return nil

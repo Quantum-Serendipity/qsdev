@@ -15,10 +15,14 @@ type Manager struct {
 }
 
 // NewManager returns a Manager rooted at the cgroup user slice for uid.
-func NewManager(uid string) *Manager {
+// The uid must be a non-negative integer; an error is returned otherwise.
+func NewManager(uid string) (*Manager, error) {
+	if _, err := strconv.Atoi(uid); err != nil {
+		return nil, fmt.Errorf("invalid UID %q: must be a non-negative integer", uid)
+	}
 	return &Manager{
 		basePath: "/sys/fs/cgroup/user.slice/user-" + uid + ".slice",
-	}
+	}, nil
 }
 
 // ScopePath returns the full path to a named cgroup scope directory.

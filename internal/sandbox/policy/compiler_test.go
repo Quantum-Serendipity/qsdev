@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -207,7 +208,7 @@ func TestCompilePolicy_MissingFile(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "nonexistent.nix")
 
-	spec, err := CompilePolicy(path)
+	spec, err := CompilePolicy(context.Background(), path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

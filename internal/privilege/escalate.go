@@ -21,14 +21,12 @@ func ElevatedExec(ctx context.Context, name string, args ...string) error {
 	}
 
 	// Special handling for PowerShell Start-Process on Windows.
-	// Single quotes in PowerShell are escaped by doubling them.
 	if tool == "powershell" {
 		quoted := make([]string, len(args))
 		for i, a := range args {
-			escaped := strings.ReplaceAll(a, "'", "''")
-			quoted[i] = "'" + escaped + "'"
+			quoted[i] = "'" + escapePowerShellArg(a) + "'"
 		}
-		escapedName := strings.ReplaceAll(name, "'", "''")
+		escapedName := escapePowerShellArg(name)
 		psCmd := fmt.Sprintf("Start-Process -Verb RunAs -Wait -FilePath '%s' -ArgumentList %s",
 			escapedName, strings.Join(quoted, ","))
 		c := exec.CommandContext(ctx, "powershell", "-NoProfile", "-Command", psCmd)
@@ -46,6 +44,16 @@ func ElevatedExec(ctx context.Context, name string, args ...string) error {
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	return c.Run()
+}
+
+// escapePowerShellArg escapes a string for safe use inside a PowerShell
+// single-quoted string literal. Handles single quotes and metacharacters
+// that could enable command injection (backticks, dollar signs).
+func escapePowerShellArg(s string) string {
+	s = strings.ReplaceAll(s, "'", "''")
+	s = strings.ReplaceAll(s, "`", "``")
+	s = strings.ReplaceAll(s, "$", "`$")
+	return s
 }
 
 // BatchElevatedInstall runs a single elevated package install command

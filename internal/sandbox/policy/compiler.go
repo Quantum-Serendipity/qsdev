@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,12 +12,15 @@ import (
 
 // CompilePolicy reads and evaluates a Nix policy file, returning the resulting
 // PolicySpec. If policyPath does not exist, it returns DefaultPolicy.
-func CompilePolicy(policyPath string) (*PolicySpec, error) {
+func CompilePolicy(ctx context.Context, policyPath string) (*PolicySpec, error) {
 	if _, err := os.Stat(policyPath); os.IsNotExist(err) {
 		return DefaultPolicy(), nil
 	}
 
-	out, err := exec.Command("nix", "eval", "--json", "-f", policyPath).Output()
+	evalCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(evalCtx, "nix", "eval", "--json", "-f", policyPath).Output()
 	if err != nil {
 		return nil, fmt.Errorf("evaluating policy %s: %w", policyPath, err)
 	}
@@ -46,7 +50,7 @@ func NewCachedPolicy(path string) *cachedPolicy {
 // Get returns the cached PolicySpec, recompiling if the file has been modified
 // since the last call. If the file does not exist, DefaultPolicy is returned
 // and cached until a file appears.
-func (c *cachedPolicy) Get() (*PolicySpec, error) {
+func (c *cachedPolicy) Get(ctx context.Context) (*PolicySpec, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -66,7 +70,7 @@ func (c *cachedPolicy) Get() (*PolicySpec, error) {
 		return c.spec, nil
 	}
 
-	spec, err := CompilePolicy(c.path)
+	spec, err := CompilePolicy(ctx, c.path)
 	if err != nil {
 		return nil, err
 	}

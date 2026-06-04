@@ -34,11 +34,25 @@ func TestNewManager(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			m := NewManager(tt.uid)
+			m, err := NewManager(tt.uid)
+			if err != nil {
+				t.Fatalf("NewManager(%q) unexpected error: %v", tt.uid, err)
+			}
 			if m.basePath != tt.wantBasePath {
 				t.Errorf("NewManager(%q).basePath = %q, want %q", tt.uid, m.basePath, tt.wantBasePath)
 			}
 		})
+	}
+}
+
+func TestNewManager_InvalidUID(t *testing.T) {
+	t.Parallel()
+
+	for _, uid := range []string{"abc", "../etc", "", "1000/../../root"} {
+		_, err := NewManager(uid)
+		if err == nil {
+			t.Errorf("NewManager(%q) expected error for non-numeric UID", uid)
+		}
 	}
 }
 
@@ -68,7 +82,10 @@ func TestManagerScopePath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			m := NewManager(tt.uid)
+			m, err := NewManager(tt.uid)
+			if err != nil {
+				t.Fatalf("NewManager(%q) unexpected error: %v", tt.uid, err)
+			}
 			got := m.ScopePath(tt.scopeName)
 			if got != tt.want {
 				t.Errorf("ScopePath(%q) = %q, want %q", tt.scopeName, got, tt.want)
@@ -186,7 +203,10 @@ func TestCreateScopePathConstruction(t *testing.T) {
 	// We cannot actually create cgroup directories in tests, but we can
 	// verify that the manager constructs the expected scope path from uid
 	// and scope name.
-	m := NewManager("1000")
+	m, err := NewManager("1000")
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
 	limits := sandbox.DefaultResourceLimits()
 
 	// Verify the scope path that would be created.

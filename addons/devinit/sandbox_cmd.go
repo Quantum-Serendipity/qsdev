@@ -48,7 +48,7 @@ automatically selected based on available kernel capabilities.`,
 
 			cat := sandbox.ParseHookCategory(category)
 
-			spec, err := policy.CompilePolicy(policyPath)
+			spec, err := policy.CompilePolicy(ctx, policyPath)
 			if err != nil {
 				slog.Warn("policy compilation failed, using defaults", "error", err)
 				spec = policy.DefaultPolicy()

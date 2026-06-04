@@ -13,10 +13,10 @@ import (
 type CheckCategory string
 
 const (
-	CategoryBinaryCompat   CheckCategory = "binary_compatibility"
+	CategoryBinaryCompat    CheckCategory = "binary_compatibility"
 	CategoryConfigIntegrity CheckCategory = "config_integrity"
-	CategoryRequiredTools  CheckCategory = "required_tools"
-	CategoryFileState      CheckCategory = "generated_file_state"
+	CategoryRequiredTools   CheckCategory = "required_tools"
+	CategoryFileState       CheckCategory = "generated_file_state"
 	CategorySecurityHarden  CheckCategory = "security_hardening"
 	CategoryDenyConflicts   CheckCategory = "deny_rule_conflicts"
 )
@@ -83,14 +83,15 @@ const (
 
 // CheckResult represents the outcome of a single check.
 type CheckResult struct {
-	Category    CheckCategory `json:"category"`
-	Name        string        `json:"name"`
-	Status      CheckStatus   `json:"status"`
-	Severity    CheckSeverity `json:"severity"`
-	Message     string        `json:"message"`
-	Remediation string        `json:"remediation,omitempty"`
-	FilePath    string        `json:"file_path,omitempty"`
-	AutoFixable bool          `json:"auto_fixable"`
+	Category    CheckCategory     `json:"category"`
+	Name        string            `json:"name"`
+	Status      CheckStatus       `json:"status"`
+	Severity    CheckSeverity     `json:"severity"`
+	Message     string            `json:"message"`
+	Remediation string            `json:"remediation,omitempty"`
+	FilePath    string            `json:"file_path,omitempty"`
+	AutoFixable bool              `json:"auto_fixable"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
 // CheckReport is the complete output of a check run.
@@ -153,11 +154,11 @@ const (
 // CheckContext provides all dependencies for running checks.
 // Constructed by the command layer to avoid circular imports.
 type CheckContext struct {
-	ProjectRoot       string
-	BinaryVersion     string
-	QsdevConfig        *types.QsdevConfig
-	ToolNames         []string
-	ProfileNames      []string
+	ProjectRoot          string
+	BinaryVersion        string
+	QsdevConfig          *types.QsdevConfig
+	ToolNames            []string
+	ProfileNames         []string
 	RequiredDenyRules    []string
 	StateFile            string
 	DenyRules            []string

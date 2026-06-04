@@ -211,6 +211,7 @@ func checkDenyRules(ctx CheckContext) []CheckResult {
 			FilePath:    ".claude/settings.json",
 			Remediation: "Run 'qsdev check --auto-fix' to add missing deny rules",
 			AutoFixable: true,
+			Metadata:    map[string]string{"rule": rule},
 		})
 	}
 

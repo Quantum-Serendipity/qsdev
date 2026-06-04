@@ -18,8 +18,10 @@ func ApplyAutoFixes(results []CheckResult, projectRoot string) []CheckResult {
 	var ruleIndices []int
 	for i, r := range updated {
 		if r.AutoFixable && r.Name == "deny_rule_missing" {
-			missingRules = append(missingRules, r.Message[len("Required deny rule missing: "):])
-			ruleIndices = append(ruleIndices, i)
+			if rule, ok := r.Metadata["rule"]; ok {
+				missingRules = append(missingRules, rule)
+				ruleIndices = append(ruleIndices, i)
+			}
 		}
 	}
 

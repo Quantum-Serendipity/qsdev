@@ -8,6 +8,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// neverAutoRepairFile is exempt from all automatic repair actions regardless
+// of merge strategy or CLI flags.
+const neverAutoRepairFile = "devenv.nix"
+
 // classifyFindings maps drift findings from a posture DriftReport into
 // concrete RepairActions. The classification rules depend on the file's merge
 // strategy (from genState) and the drift category.
@@ -59,7 +63,7 @@ func classifyFileModification(f drift.Finding, genState types.GeneratedState, op
 	file := f.Subject
 
 	// devenv.nix is NEVER auto-modified regardless of strategy or flags.
-	if file == "devenv.nix" {
+	if file == neverAutoRepairFile {
 		return RepairAction{
 			File:        file,
 			Category:    CategoryFileDrift,

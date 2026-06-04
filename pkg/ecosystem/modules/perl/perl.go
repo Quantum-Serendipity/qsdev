@@ -163,12 +163,6 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	}
 }
 
-// WizardFields returns additional wizard form fields for Perl configuration.
-// Perl does not require any wizard fields.
-func (m *Module) WizardFields() []ecosystem.WizardField {
-	return nil
-}
-
 // VerificationCommands returns an empty set. Perl does not define standard
 // verification commands at the module level.
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {

@@ -244,14 +244,3 @@ func TestSecurityConfigs(t *testing.T) {
 		t.Errorf("SecurityConfigs() = %v, want nil", files)
 	}
 }
-
-// --- WizardFields tests ---
-
-func TestWizardFields(t *testing.T) {
-	m := newModule()
-	fields := m.WizardFields()
-
-	if fields != nil {
-		t.Errorf("WizardFields() = %v, want nil", fields)
-	}
-}

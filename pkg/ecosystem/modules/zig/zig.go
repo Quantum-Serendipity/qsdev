@@ -104,13 +104,6 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 	}
 }
 
-// DenyRules returns Claude Code deny-rule patterns for the Zig ecosystem.
-// Zig's content-addressed model (mandatory SHA256 hashes) prevents supply
-// chain attacks by design, so no deny rules are needed.
-func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	return nil
-}
-
 // CICommands returns CI pipeline commands for the Zig ecosystem.
 func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 	return []ecosystem.CICommand{
@@ -136,19 +129,8 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	}
 }
 
-// WizardFields returns additional wizard form fields for Zig configuration.
-// Zig does not require any wizard fields.
-func (m *Module) WizardFields() []ecosystem.WizardField {
-	return nil
-}
-
 // VerificationCommands returns an empty set. Zig does not define standard
 // verification commands at the module level.
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
-}
-
-// ManifestFiles returns nil. Zig does not use a traditional manifest file.
-func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
-	return nil
 }

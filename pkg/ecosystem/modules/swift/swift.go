@@ -147,12 +147,6 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	}
 }
 
-// WizardFields returns additional wizard form fields for Swift configuration.
-// Swift does not require any additional wizard fields.
-func (m *Module) WizardFields() []ecosystem.WizardField {
-	return nil
-}
-
 // VerificationCommands returns build and test commands for Swift projects.
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{

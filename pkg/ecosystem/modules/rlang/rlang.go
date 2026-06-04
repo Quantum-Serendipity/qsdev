@@ -149,13 +149,6 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 	return nil
 }
 
-// DenyRules returns Claude Code deny-rule patterns for the R ecosystem.
-// In data science contexts, direct package installation is expected workflow,
-// so no deny rules are applied.
-func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	return nil
-}
-
 // CICommands returns CI pipeline commands for the R ecosystem.
 func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 	return []ecosystem.CICommand{
@@ -187,19 +180,8 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	}
 }
 
-// WizardFields returns additional wizard form fields for R configuration.
-// R does not require any wizard fields.
-func (m *Module) WizardFields() []ecosystem.WizardField {
-	return nil
-}
-
 // VerificationCommands returns an empty set. R does not define standard
 // verification commands at the module level.
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
-}
-
-// ManifestFiles returns nil. R does not use a traditional manifest file.
-func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
-	return nil
 }

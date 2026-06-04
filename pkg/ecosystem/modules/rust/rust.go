@@ -150,13 +150,6 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 	}
 }
 
-// DenyRules returns Claude Code deny-rule patterns for Rust.
-func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	// Package install commands (cargo add/install) are handled by base ask rules +
-	// package-guard hook. Return empty — no Rust-specific hard-deny patterns.
-	return nil
-}
-
 // CICommands returns CI pipeline commands for Rust.
 func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 	return []ecosystem.CICommand{

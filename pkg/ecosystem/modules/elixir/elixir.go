@@ -11,8 +11,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.DenyRuleProvider = (*Module)(nil)
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -129,12 +131,6 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 			AgeGatingSupport:     false,
 		},
 	}
-}
-
-// WizardFields returns additional wizard form fields for Elixir configuration.
-// Elixir does not require any additional wizard fields.
-func (m *Module) WizardFields() []ecosystem.WizardField {
-	return nil
 }
 
 // VerificationCommands returns build, test, and format commands for Elixir projects.

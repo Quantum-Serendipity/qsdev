@@ -159,20 +159,10 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	}
 }
 
-// WizardFields returns nil. Helm does not require additional wizard fields.
-func (m *Module) WizardFields() []ecosystem.WizardField {
-	return nil
-}
-
 // VerificationCommands returns an empty set. Helm does not define standard
 // verification commands at the module level.
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
-}
-
-// ManifestFiles returns nil. Helm does not use a traditional manifest file.
-func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
-	return nil
 }
 
 // parseChartVersion reads Chart.yaml and extracts the version field using a

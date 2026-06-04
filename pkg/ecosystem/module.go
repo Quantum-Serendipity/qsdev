@@ -30,11 +30,6 @@ type EcosystemModule interface {
 	// Returning nil means no pre-commit hooks are contributed by this module.
 	PreCommitHooks(config ModuleConfig) []HookConfig
 
-	// DenyRules returns Claude Code deny-rule patterns for this ecosystem
-	// (e.g. "npm install --ignore-scripts"). Returning nil means no deny
-	// rules are needed for this ecosystem.
-	DenyRules(config ModuleConfig) []string
-
 	// CICommands returns CI pipeline commands for this ecosystem. Returning nil
 	// means this ecosystem contributes no CI steps.
 	CICommands(config ModuleConfig) []CICommand
@@ -42,21 +37,10 @@ type EcosystemModule interface {
 	// PackageManagers returns metadata about the ecosystem's package managers.
 	PackageManagers() []PackageManagerInfo
 
-	// WizardFields returns additional wizard form fields this ecosystem needs.
-	// Returning nil means the ecosystem requires no extra user input beyond
-	// language selection.
-	WizardFields() []WizardField
-
 	// VerificationCommands returns the build/test/lint/typecheck/format commands
 	// for this ecosystem. Used by agent-postmortem-skill to inject project-specific
 	// verification steps. A zero-value result means no verification commands apply.
 	VerificationCommands(config ModuleConfig) VerificationCommands
-
-	// ManifestFiles returns metadata about dependency manifest and lock files
-	// for this ecosystem. Used by Version-Sentinel integration to determine
-	// which files can be guarded. Returning nil means there are no manifest
-	// files for this ecosystem.
-	ManifestFiles(config ModuleConfig) []ManifestFileInfo
 }
 
 // PackageProvider is an optional interface that ecosystem modules can
@@ -72,4 +56,25 @@ type PackageProvider interface {
 // do not need extra flake inputs simply omit this interface.
 type DevenvYamlInputProvider interface {
 	DevenvYamlInputs(config ModuleConfig) []DevenvInput
+}
+
+// WizardFieldProvider is an optional interface that ecosystem modules can
+// implement to contribute additional wizard form fields. Modules that require
+// no extra user input simply omit this interface.
+type WizardFieldProvider interface {
+	WizardFields() []WizardField
+}
+
+// ManifestFileProvider is an optional interface that ecosystem modules can
+// implement to declare dependency manifest and lock files. Used by
+// Version-Sentinel integration to determine which files can be guarded.
+type ManifestFileProvider interface {
+	ManifestFiles(config ModuleConfig) []ManifestFileInfo
+}
+
+// DenyRuleProvider is an optional interface that ecosystem modules can
+// implement to contribute Claude Code deny-rule patterns. Modules that
+// need no deny rules simply omit this interface.
+type DenyRuleProvider interface {
+	DenyRules(config ModuleConfig) []string
 }

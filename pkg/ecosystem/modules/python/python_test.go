@@ -482,18 +482,6 @@ func TestPreCommitHooks(t *testing.T) {
 	}
 }
 
-// --- DenyRules tests ---
-
-func TestDenyRules(t *testing.T) {
-	m := &python.Module{}
-	rules := m.DenyRules(ecosystem.ModuleConfig{})
-
-	// Package install commands moved to base ask rules + package-guard hook.
-	if len(rules) != 0 {
-		t.Fatalf("DenyRules() returned %d rules, want 0 (installs handled by ask rules)", len(rules))
-	}
-}
-
 // --- CICommands tests ---
 
 func TestCICommands_Pip(t *testing.T) {

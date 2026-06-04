@@ -161,15 +161,6 @@ func TestDevenvNixFragment_VersionMapping(t *testing.T) {
 	}
 }
 
-func TestDenyRules(t *testing.T) {
-	m := &php.Module{}
-	rules := m.DenyRules(ecosystem.ModuleConfig{})
-
-	if len(rules) != 0 {
-		t.Fatalf("DenyRules() returned %d rules, want 0 (installs handled by ask rules)", len(rules))
-	}
-}
-
 func TestPreCommitHooks(t *testing.T) {
 	m := &php.Module{}
 	hooks := m.PreCommitHooks(ecosystem.ModuleConfig{})

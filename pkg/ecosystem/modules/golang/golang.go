@@ -20,6 +20,8 @@ import (
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
+var _ ecosystem.WizardFieldProvider = (*Module)(nil)
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -144,14 +146,6 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			NixPackage:    "govulncheck",
 		},
 	}
-}
-
-// DenyRules returns Claude Code deny-rule patterns for the Go ecosystem.
-// These prevent direct dependency modification outside of controlled workflows.
-func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	// Package install commands (go get/install) are handled by base ask rules +
-	// package-guard hook. Return empty — no Go-specific hard-deny patterns.
-	return nil
 }
 
 // CICommands returns CI pipeline commands for the Go ecosystem.

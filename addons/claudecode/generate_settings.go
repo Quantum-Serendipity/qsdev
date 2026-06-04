@@ -150,8 +150,12 @@ func collectEcosystemDenyRules(answers types.WizardAnswers, registry *ecosystem.
 		if !ok {
 			continue
 		}
+		drp, ok := mod.(ecosystem.DenyRuleProvider)
+		if !ok {
+			continue
+		}
 		cfg := ecosystem.ToModuleConfig(lang)
-		rules = append(rules, mod.DenyRules(cfg)...)
+		rules = append(rules, drp.DenyRules(cfg)...)
 	}
 	return sliceutil.Dedup(rules)
 }

@@ -216,15 +216,6 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 	}
 }
 
-// DenyRules returns Claude Code deny-rule patterns for the Python ecosystem.
-// These prevent direct dependency installation outside of controlled workflows.
-// Note: uv sync and poetry install (lockfile-based installs) are intentionally allowed.
-func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	// Package install commands (pip/uv/poetry) are handled by base ask rules +
-	// package-guard hook. Return empty — no Python-specific hard-deny patterns.
-	return nil
-}
-
 // CICommands returns CI pipeline commands for the Python ecosystem.
 // Commands vary based on the configured package manager.
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {

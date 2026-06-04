@@ -111,13 +111,6 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 	}
 }
 
-// DenyRules returns Claude Code deny-rule patterns for the Clojure ecosystem.
-// Clojure uses config-file based dependency management, so no deny rules
-// are needed.
-func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	return nil
-}
-
 // CICommands returns CI pipeline commands for the Clojure ecosystem.
 // Commands vary based on the configured build tool.
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
@@ -183,9 +176,4 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 // verification commands at the module level.
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
-}
-
-// ManifestFiles returns nil. Clojure does not use a traditional manifest file.
-func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
-	return nil
 }

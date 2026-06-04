@@ -273,15 +273,6 @@ func TestPreCommitHooks(t *testing.T) {
 	}
 }
 
-func TestDenyRules(t *testing.T) {
-	m := &golang.Module{}
-	rules := m.DenyRules(ecosystem.ModuleConfig{})
-
-	if len(rules) != 0 {
-		t.Fatalf("DenyRules() returned %d rules, want 0 (installs handled by ask rules)", len(rules))
-	}
-}
-
 func TestCICommands(t *testing.T) {
 	m := &golang.Module{}
 	cmds := m.CICommands(ecosystem.ModuleConfig{})

@@ -180,14 +180,6 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 	}
 }
 
-// DenyRules returns Claude Code deny-rule patterns for the PHP ecosystem.
-// These prevent direct dependency modification outside of controlled workflows.
-func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	// Package install commands (composer) are handled by base ask rules +
-	// package-guard hook. Return empty — no PHP-specific hard-deny patterns.
-	return nil
-}
-
 // CICommands returns CI pipeline commands for the PHP ecosystem.
 func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 	return []ecosystem.CICommand{

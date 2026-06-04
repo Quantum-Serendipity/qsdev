@@ -54,7 +54,7 @@ func (m *MockModule) PreCommitHooks(config ModuleConfig) []HookConfig {
 	return m.PreCommitHooksVal
 }
 
-func (m *MockModule) DenyRules(config ModuleConfig) []string {
+func (m *MockModule) DenyRules(_ ModuleConfig) []string {
 	return m.DenyRulesVal
 }
 
@@ -70,12 +70,12 @@ func (m *MockModule) WizardFields() []WizardField {
 	return m.WizardFieldsVal
 }
 
-func (m *MockModule) VerificationCommands(_ ModuleConfig) VerificationCommands {
-	return m.VerificationCommandsVal
-}
-
 func (m *MockModule) ManifestFiles(_ ModuleConfig) []ManifestFileInfo {
 	return m.ManifestFilesVal
+}
+
+func (m *MockModule) VerificationCommands(_ ModuleConfig) VerificationCommands {
+	return m.VerificationCommandsVal
 }
 
 func (m *MockModule) DevenvPackages(_ ModuleConfig) []string {

@@ -266,11 +266,20 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
-// VerificationCommands returns build and test commands for Scala projects.
-func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
-	return ecosystem.VerificationCommands{
-		Build: []string{"sbt compile"},
-		Test:  []string{"sbt test"},
+// VerificationCommands returns build and test commands for Scala projects,
+// switching on the configured build tool (sbt or mill).
+func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	switch config.Extra("build_tool", "sbt") {
+	case "mill":
+		return ecosystem.VerificationCommands{
+			Build: []string{"mill __.compile"},
+			Test:  []string{"mill __.test"},
+		}
+	default:
+		return ecosystem.VerificationCommands{
+			Build: []string{"sbt compile"},
+			Test:  []string{"sbt test"},
+		}
 	}
 }
 

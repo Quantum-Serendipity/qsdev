@@ -194,11 +194,20 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
-// VerificationCommands returns build and test commands for Haskell projects.
-func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
-	return ecosystem.VerificationCommands{
-		Build: []string{"cabal build"},
-		Test:  []string{"cabal test"},
+// VerificationCommands returns build and test commands for Haskell projects,
+// switching on the configured build tool (cabal or stack).
+func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	switch config.Extra("build_tool", "cabal") {
+	case "stack":
+		return ecosystem.VerificationCommands{
+			Build: []string{"stack build"},
+			Test:  []string{"stack test"},
+		}
+	default:
+		return ecosystem.VerificationCommands{
+			Build: []string{"cabal build"},
+			Test:  []string{"cabal test"},
+		}
 	}
 }
 

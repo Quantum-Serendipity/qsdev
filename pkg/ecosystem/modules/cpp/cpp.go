@@ -368,12 +368,27 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
-// VerificationCommands returns build and test commands for C/C++ projects
-// using CMake as the default build system.
-func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
-	return ecosystem.VerificationCommands{
-		Build: []string{"cmake --build build"},
-		Test:  []string{"ctest --test-dir build"},
+// VerificationCommands returns build and test commands for C/C++ projects,
+// switching on the configured build system (cmake, meson, or make).
+func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	switch config.Extra("build_system", "cmake") {
+	case "cmake":
+		return ecosystem.VerificationCommands{
+			Build: []string{"cmake --build build"},
+			Test:  []string{"ctest --test-dir build"},
+		}
+	case "meson":
+		return ecosystem.VerificationCommands{
+			Build: []string{"meson compile -C build"},
+			Test:  []string{"meson test -C build"},
+		}
+	case "make":
+		return ecosystem.VerificationCommands{
+			Build: []string{"make"},
+			Test:  []string{"make test"},
+		}
+	default:
+		return ecosystem.VerificationCommands{}
 	}
 }
 

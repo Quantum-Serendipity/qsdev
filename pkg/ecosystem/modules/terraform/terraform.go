@@ -293,12 +293,14 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
-// VerificationCommands returns project verification commands for the Terraform/OpenTofu ecosystem.
-func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+// VerificationCommands returns project verification commands for the
+// Terraform/OpenTofu ecosystem, using the correct binary for the variant.
+func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	bin := binaryName(config.Extra("variant", "terraform"))
 	return ecosystem.VerificationCommands{
-		Test:   []string{"terraform validate"},
+		Test:   []string{bin + " validate"},
 		Lint:   []string{"tflint"},
-		Format: []string{"terraform fmt -check"},
+		Format: []string{bin + " fmt -check"},
 	}
 }
 

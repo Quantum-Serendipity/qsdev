@@ -348,14 +348,19 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
-// VerificationCommands returns project verification commands for the JVM ecosystem.
+// VerificationCommands returns project verification commands for the JVM
+// ecosystem, switching on the configured build tool (maven, gradle, or both).
 func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.VerificationCommands {
-	bt := config.Extra("build_tool", "maven")
-	switch bt {
+	switch config.Extra("build_tool", "maven") {
 	case "gradle":
 		return ecosystem.VerificationCommands{
-			Build: []string{"gradle build"},
-			Test:  []string{"gradle test"},
+			Build: []string{"./gradlew build"},
+			Test:  []string{"./gradlew test"},
+		}
+	case "both":
+		return ecosystem.VerificationCommands{
+			Build: []string{"mvn compile", "./gradlew build"},
+			Test:  []string{"mvn test", "./gradlew test"},
 		}
 	default:
 		return ecosystem.VerificationCommands{

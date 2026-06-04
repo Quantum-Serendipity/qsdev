@@ -1,0 +1,99 @@
+rules:
+  - id: qsdev.core.python.ssrf-fastapi-http-request
+    message: >-
+      User-controlled data from a FastAPI endpoint is used as a URL in an HTTP
+      request. This may allow Server-Side Request Forgery (SSRF), enabling an
+      attacker to make requests to internal services. Validate the URL against
+      an allowlist of permitted hosts.
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-918
+      owasp: A10:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [fastapi]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM, ...):
+                ...
+          - pattern-not-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM: BackgroundTasks, ...):
+                ...
+          - pattern-not-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM: Response, ...):
+                ...
+          - focus-metavariable: $PARAM
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: httpx.get($URL, ...)
+              - pattern: httpx.post($URL, ...)
+              - pattern: httpx.put($URL, ...)
+              - pattern: httpx.delete($URL, ...)
+              - pattern: httpx.patch($URL, ...)
+              - pattern: httpx.request($METHOD, $URL, ...)
+              - pattern: requests.get($URL, ...)
+              - pattern: requests.post($URL, ...)
+              - pattern: requests.put($URL, ...)
+              - pattern: requests.delete($URL, ...)
+              - pattern: requests.request($METHOD, $URL, ...)
+              - pattern: urllib.request.urlopen($URL, ...)
+              - pattern: urllib.request.Request($URL, ...)
+          - focus-metavariable: $URL
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+
+  - id: qsdev.core.python.ssrf-fastapi-request-object
+    message: >-
+      Data from the FastAPI/Starlette Request object is used as a URL in an
+      outbound HTTP request. This may enable SSRF attacks against internal
+      services. Validate URLs against a strict allowlist before making requests.
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-918
+      owasp: A10:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [fastapi]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - pattern-either:
+          - pattern: await $REQ.json()
+          - pattern: await $REQ.body()
+          - pattern: $REQ.query_params[...]
+          - pattern: $REQ.query_params.get(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: httpx.get($URL, ...)
+              - pattern: httpx.post($URL, ...)
+              - pattern: httpx.put($URL, ...)
+              - pattern: httpx.delete($URL, ...)
+              - pattern: httpx.request($METHOD, $URL, ...)
+              - pattern: requests.get($URL, ...)
+              - pattern: requests.post($URL, ...)
+              - pattern: requests.put($URL, ...)
+              - pattern: requests.delete($URL, ...)
+              - pattern: requests.request($METHOD, $URL, ...)
+              - pattern: urllib.request.urlopen($URL, ...)
+          - focus-metavariable: $URL

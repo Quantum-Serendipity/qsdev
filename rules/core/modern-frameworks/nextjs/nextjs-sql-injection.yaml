@@ -1,0 +1,249 @@
+rules:
+  - id: qsdev.core.typescript.sqli-nextjs-server-action-prisma
+    message: >-
+      User-controlled data from a Server Action form submission flows into a
+      Prisma raw SQL query without parameterization. This can lead to SQL
+      injection. Use Prisma's tagged template syntax (e.g.,
+      `$queryRaw\`SELECT * FROM users WHERE id = ${id}\``) which automatically
+      parameterizes values, or use `Prisma.sql` for dynamic query building.
+    languages: [typescript, javascript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      technology: [nextjs, prisma]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - pattern: $FD.get(...)
+      - pattern: $FD.getAll(...)
+      - patterns:
+          - pattern-inside: |
+              "use server"
+              ...
+          - pattern-inside: |
+              async function $FUNC($PARAM, ...) {
+                ...
+              }
+          - focus-metavariable: $PARAM
+      - patterns:
+          - pattern-inside: |
+              async function $FUNC($PARAM, ...) {
+                "use server";
+                ...
+              }
+          - focus-metavariable: $PARAM
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $PRISMA.$queryRawUnsafe($QUERY, ...)
+              - pattern: $PRISMA.$executeRawUnsafe($QUERY, ...)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern-either:
+              - pattern: $PRISMA.$queryRaw("..." + $EXPR + "...")
+              - pattern: $PRISMA.$executeRaw("..." + $EXPR + "...")
+              - pattern: $PRISMA.$queryRaw(`...${$EXPR}...`)
+              - pattern: $PRISMA.$executeRaw(`...${$EXPR}...`)
+          - focus-metavariable: $EXPR
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: parseFloat(...)
+      - pattern: Number(...)
+      - pattern: $SCHEMA.parse(...)
+      - pattern: $SCHEMA.safeParse(...)
+      - pattern: Prisma.sql`...`
+
+  - id: qsdev.core.typescript.sqli-nextjs-route-handler-prisma
+    message: >-
+      User input from a Next.js Route Handler request reaches a Prisma raw SQL
+      query. Use tagged template literals with $queryRaw or Prisma.sql for safe
+      parameterization.
+    languages: [typescript, javascript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [nextjs, prisma]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              export async function $METHOD($REQUEST, ...) {
+                ...
+              }
+          - pattern-either:
+              - pattern: $REQUEST.json()
+              - pattern: $REQUEST.formData()
+              - pattern: $REQUEST.text()
+              - pattern: await $REQUEST.json()
+              - pattern: await $REQUEST.formData()
+              - pattern: await $REQUEST.text()
+      - patterns:
+          - pattern-inside: |
+              export async function $METHOD($REQUEST, ...) {
+                ...
+              }
+          - pattern-either:
+              - pattern: $REQUEST.nextUrl.searchParams
+              - pattern: $REQUEST.nextUrl.searchParams.get(...)
+      - patterns:
+          - pattern-inside: |
+              export async function $METHOD($REQUEST, { params, ... }) {
+                ...
+              }
+          - pattern: params
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $PRISMA.$queryRawUnsafe($QUERY, ...)
+              - pattern: $PRISMA.$executeRawUnsafe($QUERY, ...)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern-either:
+              - pattern: $PRISMA.$queryRaw("..." + $EXPR + "...")
+              - pattern: $PRISMA.$executeRaw("..." + $EXPR + "...")
+              - pattern: $PRISMA.$queryRaw(`...${$EXPR}...`)
+              - pattern: $PRISMA.$executeRaw(`...${$EXPR}...`)
+          - focus-metavariable: $EXPR
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: parseFloat(...)
+      - pattern: Number(...)
+      - pattern: $SCHEMA.parse(...)
+      - pattern: Prisma.sql`...`
+
+  - id: qsdev.core.typescript.sqli-nextjs-server-action-drizzle
+    message: >-
+      User-controlled data from a Server Action flows into Drizzle's sql.raw()
+      function, which does not parameterize its input. This can lead to SQL
+      injection. Use Drizzle's sql tagged template (sql`...`) which
+      automatically parameterizes interpolated values, or use placeholder()
+      for prepared statements.
+    languages: [typescript, javascript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      technology: [nextjs, drizzle]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - pattern: $FD.get(...)
+      - pattern: $FD.getAll(...)
+      - patterns:
+          - pattern-inside: |
+              "use server"
+              ...
+          - pattern-inside: |
+              async function $FUNC($PARAM, ...) { ... }
+          - focus-metavariable: $PARAM
+      - patterns:
+          - pattern-inside: |
+              async function $FUNC($PARAM, ...) {
+                "use server";
+                ...
+              }
+          - focus-metavariable: $PARAM
+    pattern-sinks:
+      - patterns:
+          - pattern: sql.raw($QUERY)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern: $DB.execute($QUERY)
+          - pattern-not: $DB.execute(sql`...`)
+          - focus-metavariable: $QUERY
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: parseFloat(...)
+      - pattern: Number(...)
+      - pattern: sql`...`
+      - pattern: placeholder(...)
+      - pattern: $SCHEMA.parse(...)
+
+  - id: qsdev.core.typescript.sqli-nextjs-route-handler-direct
+    message: >-
+      User input from a Next.js Route Handler reaches a database query via
+      string concatenation or interpolation. This is a SQL injection
+      vulnerability. Use parameterized queries (e.g., $1 placeholders with a
+      values array for pg, or ? placeholders for mysql2) instead of string
+      interpolation.
+    languages: [typescript, javascript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [nextjs]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              export async function $METHOD($REQUEST, ...) { ... }
+          - pattern-either:
+              - pattern: $REQUEST.json()
+              - pattern: $REQUEST.formData()
+              - pattern: $REQUEST.text()
+              - pattern: await $REQUEST.json()
+              - pattern: await $REQUEST.formData()
+              - pattern: await $REQUEST.text()
+              - pattern: $REQUEST.nextUrl.searchParams
+              - pattern: $REQUEST.nextUrl.searchParams.get(...)
+      - patterns:
+          - pattern-inside: |
+              export async function $METHOD($REQ, { params, ... }) { ... }
+          - pattern: params
+      - pattern: $FD.get(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  "$SQLSTR" + $EXPR
+              - pattern-inside: |
+                  "$SQLSTR".concat($EXPR)
+              - pattern: |
+                  `$SQLSTR${$EXPR}...`
+          - metavariable-regex:
+              metavariable: $SQLSTR
+              regex: .*\b(?i)(select|delete|insert|create|update\s+.+\sset|alter|drop)\b.*
+          - focus-metavariable: $EXPR
+      - patterns:
+          - pattern-either:
+              - pattern: $CLIENT.query($QUERY, ...)
+              - pattern: $POOL.query($QUERY, ...)
+          - focus-metavariable: $QUERY
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: parseFloat(...)
+      - pattern: Number(...)
+      - pattern: $SCHEMA.parse(...)
+      - pattern: $SCHEMA.safeParse(...)

@@ -1,0 +1,87 @@
+rules:
+  - id: qsdev.core.python.path-traversal-fastapi
+    message: >-
+      User-controlled data from a FastAPI endpoint is used in a file path
+      operation. This may allow path traversal, enabling an attacker to read
+      or write arbitrary files. Use os.path.basename() to strip directory
+      components, or validate the resolved path against an allowed directory.
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-22
+      owasp: A01:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: HIGH
+      technology: [fastapi]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM, ...):
+                ...
+          - pattern-not-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM: BackgroundTasks, ...):
+                ...
+          - pattern-not-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM: Response, ...):
+                ...
+          - focus-metavariable: $PARAM
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: open($PATH, ...)
+              - pattern: aiofiles.open($PATH, ...)
+              - pattern: pathlib.Path($PATH)
+              - pattern: Path($PATH)
+              - pattern: os.path.join(..., $PATH, ...)
+              - pattern: FileResponse($PATH, ...)
+          - focus-metavariable: $PATH
+    pattern-sanitizers:
+      - pattern: os.path.basename(...)
+      - pattern: int(...)
+      - pattern: float(...)
+
+  - id: qsdev.core.python.path-traversal-fastapi-upload-filename
+    message: >-
+      The filename from an uploaded file (UploadFile.filename) is used in a file
+      path operation without sanitization. The filename is client-controlled and
+      may contain path traversal sequences (e.g., ../../etc/passwd). Use
+      os.path.basename() or generate a server-side filename.
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-22
+      owasp: A01:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      technology: [fastapi]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - pattern: $FILE.filename
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: open($PATH, ...)
+              - pattern: aiofiles.open($PATH, ...)
+              - pattern: pathlib.Path($PATH)
+              - pattern: Path($PATH)
+              - pattern: os.path.join(..., $PATH, ...)
+              - pattern: FileResponse($PATH, ...)
+          - focus-metavariable: $PATH
+    pattern-sanitizers:
+      - pattern: os.path.basename(...)

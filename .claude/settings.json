@@ -75,6 +75,14 @@
       "Bash(bun install --frozen-lockfile *)"
     ],
     "deny": [
+      "Edit(devenv.nix)",
+      "Write(devenv.nix)",
+      "Edit(devenv.yaml)",
+      "Write(devenv.yaml)",
+      "Edit(flake.nix)",
+      "Write(flake.nix)",
+      "Edit(flake.lock)",
+      "Write(flake.lock)",
       "Bash(npx *)",
       "Bash(nix-env -i *)",
       "Bash(nix-env --install *)",

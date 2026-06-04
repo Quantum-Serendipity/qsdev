@@ -1,0 +1,59 @@
+rules:
+  - id: qsdev.core.typescript.ssrf-nextjs-route-handler
+    message: >-
+      User-controlled data flows into a fetch() URL in a Next.js Route Handler.
+      An attacker could manipulate this to make the server send requests to
+      internal services or arbitrary hosts (SSRF). Validate the URL against an
+      allowlist of permitted hosts before making the request.
+    languages: [typescript, javascript]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-918
+      owasp: A10:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [nextjs]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              export async function $METHOD($REQUEST, ...) { ... }
+          - pattern-either:
+              - pattern: $REQUEST.json()
+              - pattern: $REQUEST.text()
+              - pattern: await $REQUEST.json()
+              - pattern: await $REQUEST.text()
+              - pattern: $REQUEST.nextUrl.searchParams.get(...)
+      - patterns:
+          - pattern-inside: |
+              export async function $METHOD($REQUEST, { params, ... }) { ... }
+          - pattern: params
+      - pattern: $FD.get(...)
+      - pattern: headers().get(...)
+      - patterns:
+          - pattern-inside: |
+              export default async function $PAGE({ searchParams, ... }) { ... }
+          - pattern: searchParams
+    pattern-sinks:
+      - patterns:
+          - pattern: fetch($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern-either:
+              - pattern: axios.get($URL, ...)
+              - pattern: axios.post($URL, ...)
+              - pattern: axios.put($URL, ...)
+              - pattern: axios.delete($URL, ...)
+              - pattern: axios($URL, ...)
+          - focus-metavariable: $URL
+    pattern-sanitizers:
+      - patterns:
+          - pattern: new URL($INPUT)
+          - focus-metavariable: $INPUT
+        by-side-effect: true

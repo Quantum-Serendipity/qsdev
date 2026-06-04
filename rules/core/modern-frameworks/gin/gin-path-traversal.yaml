@@ -1,0 +1,52 @@
+rules:
+  - id: qsdev.core.go.path-traversal-gin
+    message: >-
+      User input from Gin request is used in a file system path. An attacker
+      could use path traversal sequences (../) to access files outside the
+      intended directory. Use filepath.Base() to strip directory components,
+      or validate that the resolved path starts with the intended base directory.
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-22
+      owasp: A01:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [gin]
+    pattern-sources:
+      - pattern-either:
+          - pattern: "($CTX : *gin.Context).Param(...)"
+          - pattern: "($CTX : *gin.Context).Query(...)"
+          - pattern: "($CTX : *gin.Context).DefaultQuery(...)"
+          - pattern: "($CTX : *gin.Context).PostForm(...)"
+          - pattern: "($CTX : *gin.Context).Cookie(...)"
+      - patterns:
+          - pattern-either:
+              - pattern: "($CTX : *gin.Context).ShouldBindJSON($BOUND)"
+              - pattern: "($CTX : *gin.Context).ShouldBind($BOUND)"
+          - focus-metavariable: $BOUND
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: os.Open($PATH)
+              - pattern: os.OpenFile($PATH, ...)
+              - pattern: os.ReadFile($PATH)
+              - pattern: os.Create($PATH)
+              - pattern: os.WriteFile($PATH, ...)
+              - pattern: os.Remove($PATH)
+              - pattern: os.RemoveAll($PATH)
+              - pattern: os.MkdirAll($PATH, ...)
+              - pattern: ioutil.ReadFile($PATH)
+              - pattern: "($CTX : *gin.Context).File($PATH)"
+              - pattern: "($CTX : *gin.Context).FileAttachment($PATH, ...)"
+          - focus-metavariable: $PATH
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: filepath.Base(...)
+          - pattern: path.Base(...)
+          - pattern: strconv.Atoi(...)
+          - pattern: strconv.ParseInt(...)

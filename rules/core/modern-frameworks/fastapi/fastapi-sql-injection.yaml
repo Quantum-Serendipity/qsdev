@@ -1,0 +1,161 @@
+rules:
+  - id: qsdev.core.python.sqli-fastapi-sqlalchemy
+    message: >-
+      User-controlled data from a FastAPI route handler is used to construct a SQL
+      query via string formatting. This is vulnerable to SQL injection. Use
+      parameterized queries with SQLAlchemy bindparams or ORM methods instead.
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: HIGH
+      technology: [fastapi, sqlalchemy]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM, ...):
+                ...
+          - pattern-not-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM: BackgroundTasks, ...):
+                ...
+          - pattern-not-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM: Response, ...):
+                ...
+          - focus-metavariable: $PARAM
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: text($QUERY)
+              - pattern: sqlalchemy.text($QUERY)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern: $SESSION.execute($QUERY, ...)
+          - pattern-not: $SESSION.execute(text(...), ...)
+          - focus-metavariable: $QUERY
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+      - pattern: bool(...)
+
+  - id: qsdev.core.python.sqli-fastapi-fstring
+    message: >-
+      User-controlled data from a FastAPI endpoint is interpolated into a SQL query
+      string using an f-string or format(). This is vulnerable to SQL injection.
+      Use parameterized queries instead.
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: LOW
+      impact: HIGH
+      likelihood: HIGH
+      technology: [fastapi]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM, ...):
+                ...
+          - pattern-not-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM: BackgroundTasks, ...):
+                ...
+          - pattern-not-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM: Response, ...):
+                ...
+          - focus-metavariable: $PARAM
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: |
+                  f"$SQLSTR{$EXPR}..."
+              - pattern: |
+                  "$SQLSTR" % $EXPR
+              - pattern: |
+                  "$SQLSTR".format(..., $EXPR, ...)
+              - pattern: |
+                  "$SQLSTR" + $EXPR
+          - metavariable-regex:
+              metavariable: $SQLSTR
+              regex: .*\b(?i)(select|delete|insert|create|update|drop|alter|truncate)\b.*
+          - focus-metavariable: $EXPR
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+
+  - id: qsdev.core.python.sqli-fastapi-request-object
+    message: >-
+      Data accessed directly from the FastAPI/Starlette Request object is used to
+      construct a SQL query. The Request object bypasses Pydantic validation,
+      making this especially dangerous. Use parameterized queries.
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      technology: [fastapi, sqlalchemy]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - pattern-either:
+          - pattern: await $REQ.body()
+          - pattern: await $REQ.json()
+          - pattern: await $REQ.form()
+          - pattern: $REQ.query_params
+          - pattern: $REQ.query_params[...]
+          - pattern: $REQ.query_params.get(...)
+          - pattern: $REQ.path_params
+          - pattern: $REQ.path_params[...]
+          - pattern: $REQ.headers[...]
+          - pattern: $REQ.headers.get(...)
+          - pattern: $REQ.cookies[...]
+          - pattern: $REQ.cookies.get(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: text($QUERY)
+              - pattern: sqlalchemy.text($QUERY)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern: $SESSION.execute($QUERY, ...)
+          - pattern-not: $SESSION.execute(text(...), ...)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern-either:
+              - pattern: |
+                  f"$SQLSTR{$EXPR}..."
+              - pattern: |
+                  "$SQLSTR" % $EXPR
+              - pattern: |
+                  "$SQLSTR".format(..., $EXPR, ...)
+          - metavariable-regex:
+              metavariable: $SQLSTR
+              regex: .*\b(?i)(select|delete|insert|create|update|drop|alter|truncate)\b.*
+          - focus-metavariable: $EXPR

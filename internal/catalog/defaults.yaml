@@ -579,6 +579,22 @@ tools:
               ownership: shared
               section_id: license-compliance
               section_content: "- **License Compliance** checks dependencies against SPDX allowlist/blocklist policies."
+    opengrep:
+        display_name: OpenGrep SAST
+        category: security
+        description: Taint-focused static analysis via OpenGrep with custom security rules
+        default_policy: opt-in
+        nix_expr: '(pkgs.callPackage ./nix/opengrep {})'
+        owned_files:
+            - path: .opengrep/config.yaml
+              ownership: exclusive
+            - path: devenv.nix
+              ownership: shared
+              section_id: opengrep
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: opengrep
+              section_content: "- **OpenGrep SAST** provides taint-focused security analysis with custom rules."
     otel-config:
         display_name: OpenTelemetry Configuration
         category: infrastructure
@@ -954,3 +970,439 @@ tool_categories:
       display_name: Developer Experience
     - id: infrastructure
       display_name: Infrastructure
+
+# ---------------------------------------------------------------------------
+# Permission rules — deny, allow, and ask rule sets for Claude Code presets
+# ---------------------------------------------------------------------------
+permission_deny_rules:
+    npx:
+        - "Bash(npx *)"
+    nix:
+        - "Bash(nix-env -i *)"
+        - "Bash(nix-env --install *)"
+        - "Bash(nix-env -e *)"
+        - "Bash(nix-env --erase *)"
+        - "Bash(nix-env --uninstall *)"
+        - "Bash(nix profile install *)"
+        - "Bash(nix profile remove *)"
+        - "Bash(cachix use *)"
+    system:
+        - "Bash(apt install *)"
+        - "Bash(apt-get install *)"
+        - "Bash(apt remove *)"
+        - "Bash(apt-get remove *)"
+        - "Bash(brew install *)"
+        - "Bash(brew uninstall *)"
+        - "Bash(pacman -S *)"
+        - "Bash(pacman -R *)"
+        - "Bash(dnf install *)"
+        - "Bash(yum install *)"
+        - "Bash(apk add *)"
+        - "Bash(snap install *)"
+    pipe_to_shell:
+        - "Bash(curl * | bash *)"
+        - "Bash(curl * | bash)"
+        - "Bash(curl * | sh *)"
+        - "Bash(curl * | sh)"
+        - "Bash(wget * | bash *)"
+        - "Bash(wget * | bash)"
+        - "Bash(wget * | sh *)"
+        - "Bash(wget * | sh)"
+    shell_wrapping:
+        - "Bash(bash -c *npm install*)"
+        - "Bash(bash -c *pip install*)"
+        - "Bash(bash -c *cargo install*)"
+        - "Bash(bash -c *go get*)"
+        - "Bash(bash -c *gem install*)"
+        - "Bash(bash -c *nix-env*)"
+        - "Bash(sh -c *npm install*)"
+        - "Bash(sh -c *pip install*)"
+        - "Bash(sh -c *cargo install*)"
+        - "Bash(sh -c *go get*)"
+        - "Bash(sh -c *gem install*)"
+        - "Bash(sh -c *nix-env*)"
+        - "Bash(zsh -c *npm install*)"
+        - "Bash(zsh -c *pip install*)"
+        - "Bash(zsh -c *cargo install*)"
+        - "Bash(zsh -c *go get*)"
+        - "Bash(zsh -c *gem install*)"
+        - "Bash(zsh -c *nix-env*)"
+        - "Bash(dash -c *npm install*)"
+        - "Bash(dash -c *pip install*)"
+        - "Bash(dash -c *cargo install*)"
+        - "Bash(dash -c *go get*)"
+        - "Bash(dash -c *gem install*)"
+        - "Bash(dash -c *nix-env*)"
+    env_command_prefix:
+        - "Bash(env npm install *)"
+        - "Bash(env pip install *)"
+        - "Bash(env pip3 install *)"
+        - "Bash(env cargo install *)"
+        - "Bash(env nix-env *)"
+        - "Bash(command npm install *)"
+        - "Bash(command pip install *)"
+        - "Bash(command pip3 install *)"
+        - "Bash(command cargo install *)"
+        - "Bash(command nix-env *)"
+    sudo_prefix:
+        - "Bash(sudo npm install *)"
+        - "Bash(sudo pip install *)"
+        - "Bash(sudo pip3 install *)"
+        - "Bash(sudo apt install *)"
+        - "Bash(sudo apt-get install *)"
+        - "Bash(sudo pacman -S *)"
+        - "Bash(sudo nix-env *)"
+        - "Bash(sudo gem install *)"
+    subprocess_escape:
+        - "Bash(python -c *subprocess*)"
+        - "Bash(python3 -c *subprocess*)"
+        - "Bash(python -c *import os*)"
+        - "Bash(python3 -c *import os*)"
+        - "Bash(node -e *child_process*)"
+        - "Bash(node -e *execSync*)"
+        - "Bash(node -e *spawn*)"
+        - "Bash(ruby -e *system*)"
+        - "Bash(perl -e *system*)"
+    eval_xargs:
+        - "Bash(eval *npm install*)"
+        - "Bash(eval *pip install*)"
+        - "Bash(eval *cargo*)"
+        - "Bash(eval *nix-env*)"
+        - "Bash(xargs npm install *)"
+        - "Bash(xargs pip install *)"
+        - "Bash(xargs cargo install *)"
+    destructive_ops:
+        - "Bash(git push --force *)"
+        - "Bash(git push * --force)"
+        - "Bash(git reset --hard *)"
+        - "Bash(rm -rf *)"
+        - "Read(./.env)"
+        - "Read(./.env.*)"
+        - "Read(./secrets/**)"
+    sandbox_config_edits:
+        - "Edit(devenv.nix)"
+        - "Write(devenv.nix)"
+        - "Edit(devenv.yaml)"
+        - "Write(devenv.yaml)"
+        - "Edit(flake.nix)"
+        - "Write(flake.nix)"
+        - "Edit(flake.lock)"
+        - "Write(flake.lock)"
+
+# Supply chain deny sets are all sets except destructive_ops and sandbox_config_edits.
+permission_supply_chain_deny_sets:
+    - npx
+    - nix
+    - system
+    - pipe_to_shell
+    - shell_wrapping
+    - env_command_prefix
+    - sudo_prefix
+    - subprocess_escape
+    - eval_xargs
+
+# All base deny sets include supply chain + destructive_ops + sandbox_config_edits.
+permission_all_deny_sets:
+    - npx
+    - nix
+    - system
+    - pipe_to_shell
+    - shell_wrapping
+    - env_command_prefix
+    - sudo_prefix
+    - subprocess_escape
+    - eval_xargs
+    - destructive_ops
+    - sandbox_config_edits
+
+permission_allow_rules:
+    minimal:
+        - "Read(*)"
+    minimal_bash_build_test:
+        - "Bash(go build *)"
+        - "Bash(go build)"
+        - "Bash(go test *)"
+        - "Bash(go test)"
+        - "Bash(cargo build *)"
+        - "Bash(cargo build)"
+        - "Bash(cargo test *)"
+        - "Bash(cargo test)"
+        - "Bash(npm test *)"
+        - "Bash(npm test)"
+        - "Bash(npm run build *)"
+    standard_base:
+        - "Read(*)"
+        - "Edit(*)"
+        - "Write(*)"
+        - "Bash(git *)"
+    standard_build_test_lint:
+        - "Bash(npm test *)"
+        - "Bash(npm test)"
+        - "Bash(npm run build *)"
+        - "Bash(go build *)"
+        - "Bash(go build)"
+        - "Bash(go test *)"
+        - "Bash(go test)"
+        - "Bash(cargo build *)"
+        - "Bash(cargo build)"
+        - "Bash(cargo test *)"
+        - "Bash(cargo test)"
+        - "Bash(nix develop *)"
+        - "Bash(nix develop)"
+        - "Bash(nix flake check *)"
+        - "Bash(nix flake show *)"
+        - "Bash(devenv shell *)"
+        - "Bash(devenv shell)"
+        - "Bash(npm list *)"
+        - "Bash(npm ls *)"
+        - "Bash(npm outdated *)"
+        - "Bash(npm audit *)"
+        - "Bash(npm view *)"
+        - "Bash(npm info *)"
+        - "Bash(pip list *)"
+        - "Bash(pip show *)"
+        - "Bash(pip freeze *)"
+        - "Bash(pip-audit *)"
+        - "Bash(cargo audit *)"
+        - "Bash(vulnix *)"
+        - "Bash(nix flake info *)"
+        - "Bash(nix flake metadata *)"
+    frozen_lockfile_installs:
+        - "Bash(npm ci)"
+        - "Bash(npm ci *)"
+        - "Bash(pnpm install --frozen-lockfile)"
+        - "Bash(pnpm install --frozen-lockfile *)"
+        - "Bash(yarn install --immutable)"
+        - "Bash(yarn install --immutable *)"
+        - "Bash(bun install --frozen-lockfile)"
+        - "Bash(bun install --frozen-lockfile *)"
+    permissive_extra:
+        - "Bash(make *)"
+        - "Bash(docker *)"
+
+permission_ask_rules:
+    js_package_managers:
+        - "Bash(npm install *)"
+        - "Bash(npm install)"
+        - "Bash(npm i *)"
+        - "Bash(npm i)"
+        - "Bash(npm add *)"
+        - "Bash(npm add)"
+        - "Bash(npm update *)"
+        - "Bash(npm update)"
+        - "Bash(npm uninstall *)"
+        - "Bash(npm uninstall)"
+        - "Bash(npm remove *)"
+        - "Bash(npm remove)"
+        - "Bash(yarn add *)"
+        - "Bash(yarn install *)"
+        - "Bash(yarn install)"
+        - "Bash(yarn upgrade *)"
+        - "Bash(yarn remove *)"
+        - "Bash(pnpm add *)"
+        - "Bash(pnpm install *)"
+        - "Bash(pnpm install)"
+        - "Bash(pnpm update *)"
+        - "Bash(pnpm update)"
+        - "Bash(pnpm remove *)"
+        - "Bash(bun add *)"
+        - "Bash(bun install *)"
+        - "Bash(bun install)"
+        - "Bash(bun remove *)"
+    python:
+        - "Bash(pip install *)"
+        - "Bash(pip install)"
+        - "Bash(pip3 install *)"
+        - "Bash(pip3 install)"
+        - "Bash(pip uninstall *)"
+        - "Bash(pip3 uninstall *)"
+        - "Bash(python -m pip install *)"
+        - "Bash(python3 -m pip install *)"
+        - "Bash(python -m pip uninstall *)"
+        - "Bash(python3 -m pip uninstall *)"
+        - "Bash(pipx install *)"
+        - "Bash(pipx uninstall *)"
+        - "Bash(uv pip install *)"
+        - "Bash(uv pip install)"
+        - "Bash(uv add *)"
+        - "Bash(uv sync *)"
+        - "Bash(uv sync)"
+        - "Bash(uv remove *)"
+    rust:
+        - "Bash(cargo add *)"
+        - "Bash(cargo install *)"
+        - "Bash(cargo install)"
+    go:
+        - "Bash(go get *)"
+        - "Bash(go install *)"
+    ruby:
+        - "Bash(gem install *)"
+        - "Bash(bundle install *)"
+        - "Bash(bundle install)"
+        - "Bash(bundle add *)"
+        - "Bash(bundle update *)"
+        - "Bash(bundle update)"
+    php:
+        - "Bash(composer require *)"
+        - "Bash(composer install *)"
+        - "Bash(composer install)"
+        - "Bash(composer update *)"
+        - "Bash(composer update)"
+    code_execution:
+        - "Bash(npm run *)"
+        - "Bash(npm start *)"
+        - "Bash(npm start)"
+        - "Bash(yarn run *)"
+        - "Bash(pnpm run *)"
+        - "Bash(bun run *)"
+        - "Bash(go run *)"
+        - "Bash(cargo run *)"
+        - "Bash(cargo run)"
+        - "Bash(bundle exec *)"
+        - "Bash(composer run-script *)"
+        - "Bash(nix run *)"
+        - "Bash(nix shell *)"
+        - "Bash(nix build *)"
+        - "Bash(nix build)"
+    standard_base:
+        - "Bash(nix flake update *)"
+        - "Bash(nix flake update)"
+    minimal_base:
+        - "Bash(nix flake update *)"
+        - "Bash(nix flake update)"
+
+# All package install ask sets (for assembling the full package ask list).
+permission_package_ask_sets:
+    - js_package_managers
+    - python
+    - rust
+    - go
+    - ruby
+    - php
+
+# Permission presets define which allow/deny/ask sets compose each preset.
+permission_preset_defs:
+    minimal:
+        default_mode: plan
+        disable_bypass_mode: disable
+        allow_sets:
+            - minimal
+            - minimal_bash_build_test
+            - frozen_lockfile_installs
+        deny_sets:
+            - npx
+            - nix
+            - system
+            - pipe_to_shell
+            - shell_wrapping
+            - env_command_prefix
+            - sudo_prefix
+            - subprocess_escape
+            - eval_xargs
+            - destructive_ops
+            - sandbox_config_edits
+        ask_sets:
+            - minimal_base
+            - code_execution
+            - js_package_managers
+            - python
+            - rust
+            - go
+            - ruby
+            - php
+    standard:
+        default_mode: default
+        disable_bypass_mode: disable
+        allow_sets:
+            - standard_base
+            - standard_build_test_lint
+            - frozen_lockfile_installs
+        deny_sets:
+            - npx
+            - nix
+            - system
+            - pipe_to_shell
+            - shell_wrapping
+            - env_command_prefix
+            - sudo_prefix
+            - subprocess_escape
+            - eval_xargs
+            - destructive_ops
+            - sandbox_config_edits
+        ask_sets:
+            - standard_base
+            - code_execution
+            - js_package_managers
+            - python
+            - rust
+            - go
+            - ruby
+            - php
+    permissive:
+        default_mode: default
+        disable_bypass_mode: disable
+        allow_sets:
+            - standard_base
+            - standard_build_test_lint
+            - frozen_lockfile_installs
+            - permissive_extra
+        deny_sets:
+            - npx
+            - nix
+            - system
+            - pipe_to_shell
+            - shell_wrapping
+            - env_command_prefix
+            - sudo_prefix
+            - subprocess_escape
+            - eval_xargs
+            - destructive_ops
+            - sandbox_config_edits
+        ask_sets:
+            - standard_base
+            - code_execution
+            - js_package_managers
+            - python
+            - rust
+            - go
+            - ruby
+            - php
+    supply-chain-only:
+        allow_sets: []
+        deny_sets:
+            - npx
+            - nix
+            - system
+            - pipe_to_shell
+            - shell_wrapping
+            - env_command_prefix
+            - sudo_prefix
+            - subprocess_escape
+            - eval_xargs
+        ask_sets:
+            - js_package_managers
+            - python
+            - rust
+            - go
+            - ruby
+            - php
+    custom:
+        deny_sets:
+            - npx
+            - nix
+            - system
+            - pipe_to_shell
+            - shell_wrapping
+            - env_command_prefix
+            - sudo_prefix
+            - subprocess_escape
+            - eval_xargs
+            - destructive_ops
+            - sandbox_config_edits
+        ask_sets:
+            - js_package_managers
+            - python
+            - rust
+            - go
+            - ruby
+            - php

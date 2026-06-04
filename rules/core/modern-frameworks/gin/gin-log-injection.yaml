@@ -1,0 +1,43 @@
+rules:
+  - id: qsdev.core.go.log-injection-gin
+    message: >-
+      User input from Gin request is written to log output without
+      sanitization. An attacker could inject fake log entries by including
+      newline characters. Use structured logging (zap, zerolog, logrus) with
+      typed fields instead of format-string logging with user input.
+    languages: [go]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-117
+      owasp: A09:2021
+      category: security
+      subcategory: audit
+      confidence: MEDIUM
+      impact: LOW
+      likelihood: MEDIUM
+      technology: [gin]
+    pattern-sources:
+      - pattern-either:
+          - pattern: "($CTX : *gin.Context).Param(...)"
+          - pattern: "($CTX : *gin.Context).Query(...)"
+          - pattern: "($CTX : *gin.Context).DefaultQuery(...)"
+          - pattern: "($CTX : *gin.Context).PostForm(...)"
+          - pattern: "($CTX : *gin.Context).GetHeader(...)"
+          - pattern: "($CTX : *gin.Context).Cookie(...)"
+      - patterns:
+          - pattern-either:
+              - pattern: "($CTX : *gin.Context).ShouldBindJSON($BOUND)"
+              - pattern: "($CTX : *gin.Context).ShouldBind($BOUND)"
+          - focus-metavariable: $BOUND
+    pattern-sinks:
+      - pattern-either:
+          - pattern: log.Printf($FMT, ...)
+          - pattern: log.Println(...)
+          - pattern: log.Print(...)
+          - pattern: log.Fatalf($FMT, ...)
+          - pattern: fmt.Fprintf(os.Stderr, ...)
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: strconv.Atoi(...)
+          - pattern: strconv.ParseInt(...)

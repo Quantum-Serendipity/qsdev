@@ -1,0 +1,42 @@
+rules:
+  - id: qsdev.core.go.header-injection-gin
+    message: >-
+      User input from Gin request is used as a response header value. While
+      Go's net/http prevents CRLF injection since Go 1.7, tainted header
+      values can still cause issues with CORS, caching, and content-type
+      headers. Validate or sanitize header values before setting them.
+    languages: [go]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-113
+      owasp: A03:2021
+      category: security
+      subcategory: audit
+      confidence: MEDIUM
+      impact: MEDIUM
+      likelihood: LOW
+      technology: [gin]
+    pattern-sources:
+      - pattern-either:
+          - pattern: "($CTX : *gin.Context).Param(...)"
+          - pattern: "($CTX : *gin.Context).Query(...)"
+          - pattern: "($CTX : *gin.Context).PostForm(...)"
+          - pattern: "($CTX : *gin.Context).GetHeader(...)"
+          - pattern: "($CTX : *gin.Context).Cookie(...)"
+      - patterns:
+          - pattern-either:
+              - pattern: "($CTX : *gin.Context).ShouldBindJSON($BOUND)"
+              - pattern: "($CTX : *gin.Context).ShouldBind($BOUND)"
+          - focus-metavariable: $BOUND
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: "($CTX : *gin.Context).Header($KEY, $VALUE)"
+              - pattern: "($CTX : *gin.Context).Writer.Header().Set($KEY, $VALUE)"
+              - pattern: "($CTX : *gin.Context).Writer.Header().Add($KEY, $VALUE)"
+          - focus-metavariable: $VALUE
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: strconv.Atoi(...)
+          - pattern: strconv.ParseInt(...)

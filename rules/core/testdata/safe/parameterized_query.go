@@ -1,0 +1,52 @@
+//go:build ignore
+
+package safe
+
+import (
+	"database/sql"
+	"fmt"
+	"net/http"
+	"strconv"
+)
+
+func SearchUsersHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+
+		// SAFE: parameterized query with placeholder
+		rows, err := db.Query("SELECT id, email FROM users WHERE name = $1", name)
+		if err != nil {
+			http.Error(w, "query failed", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var id int
+			var email string
+			_ = rows.Scan(&id, &email)
+			fmt.Fprintf(w, "id=%d email=%s\n", id, email)
+		}
+	}
+}
+
+func GetUserByIDHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.URL.Query().Get("id")
+
+		// SAFE: integer conversion sanitizes input
+		id, err := strconv.Atoi(idStr)
+		if err != nil {
+			http.Error(w, "invalid id", http.StatusBadRequest)
+			return
+		}
+
+		var email string
+		err = db.QueryRow("SELECT email FROM users WHERE id = $1", id).Scan(&email)
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		fmt.Fprintf(w, "email=%s\n", email)
+	}
+}

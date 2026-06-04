@@ -1,0 +1,367 @@
+rules:
+  - id: qsdev.core.typescript.sqli-prisma-query-raw-unsafe
+    message: >-
+      User-controlled data flows into `$queryRawUnsafe`, which executes a raw
+      SQL string without parameterization. This enables SQL injection. Use
+      Prisma's tagged template syntax instead:
+      `prisma.$queryRaw\`SELECT * FROM users WHERE id = ${id}\`` which
+      automatically parameterizes interpolated values.
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: HIGH
+      technology: [prisma]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ... (..., $REQ, ...) { ... }
+              - pattern-inside: (..., $REQ, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+              - pattern: $REQ.params
+              - pattern: $REQ.cookies
+              - pattern: $REQ.headers
+    pattern-sinks:
+      - patterns:
+          - pattern: $PRISMA.$queryRawUnsafe($QUERY, ...)
+          - focus-metavariable: $QUERY
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: parseFloat(...)
+
+  - id: qsdev.core.typescript.sqli-prisma-execute-raw-unsafe
+    message: >-
+      User-controlled data flows into `$executeRawUnsafe`, which executes a raw
+      SQL mutation string without parameterization. This enables SQL injection
+      in INSERT, UPDATE, or DELETE operations. Use Prisma's tagged template
+      syntax instead:
+      `prisma.$executeRaw\`UPDATE users SET name = ${name} WHERE id = ${id}\``
+      which automatically parameterizes interpolated values.
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: HIGH
+      technology: [prisma]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ... (..., $REQ, ...) { ... }
+              - pattern-inside: (..., $REQ, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+              - pattern: $REQ.params
+              - pattern: $REQ.cookies
+              - pattern: $REQ.headers
+    pattern-sinks:
+      - patterns:
+          - pattern: $PRISMA.$executeRawUnsafe($QUERY, ...)
+          - focus-metavariable: $QUERY
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: parseFloat(...)
+
+  - id: qsdev.core.typescript.sqli-prisma-raw-string-concat
+    message: >-
+      A SQL query string is being constructed via string concatenation or
+      template literal interpolation with user-controlled data, then passed to
+      a Prisma raw query method. This is vulnerable to SQL injection. Use
+      Prisma's tagged template syntax instead.
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      technology: [prisma]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ... (..., $REQ, ...) { ... }
+              - pattern-inside: (..., $REQ, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+              - pattern: $REQ.params
+              - pattern: $REQ.cookies
+              - pattern: $REQ.headers
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  "$SQLSTR" + $EXPR
+              - pattern-inside: |
+                  "$SQLSTR".concat($EXPR)
+              - pattern-inside: |
+                  `$SQLSTR${$EXPR}...`
+          - metavariable-regex:
+              metavariable: $SQLSTR
+              regex: .*\b(?i)(select|delete|insert|create|update|alter|drop)\b.*
+          - focus-metavariable: $EXPR
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: parseFloat(...)
+
+  - id: qsdev.core.typescript.sqli-prisma-raw-bypass
+    message: >-
+      User-controlled data flows into `Prisma.raw()`, which passes the string
+      directly into the SQL query without escaping or parameterization. This
+      enables SQL injection even within a tagged template literal.
+      `Prisma.raw()` should only be used with fully trusted strings. For
+      user-controlled values, use standard tagged template interpolation which
+      parameterizes automatically.
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      technology: [prisma]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ... (..., $REQ, ...) { ... }
+              - pattern-inside: (..., $REQ, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+              - pattern: $REQ.params
+              - pattern: $REQ.cookies
+              - pattern: $REQ.headers
+    pattern-sinks:
+      - patterns:
+          - pattern: Prisma.raw($RAW_INPUT)
+          - focus-metavariable: $RAW_INPUT
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: parseFloat(...)
+
+  - id: qsdev.core.typescript.sqli-prisma-transaction
+    message: >-
+      User-controlled data flows into a raw SQL query inside a Prisma
+      `$transaction` callback. SQL injection inside a transaction is
+      especially dangerous because the injected SQL executes within the same
+      transactional context, potentially corrupting atomicity guarantees. Use
+      tagged template syntax instead.
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [prisma]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ... (..., $REQ, ...) { ... }
+              - pattern-inside: (..., $REQ, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+              - pattern: $REQ.params
+              - pattern: $REQ.cookies
+              - pattern: $REQ.headers
+    pattern-sinks:
+      - patterns:
+          - pattern-inside: |
+              $CLIENT.$transaction(async ($TX) => { ... })
+          - pattern-either:
+              - patterns:
+                  - pattern: $TX.$queryRawUnsafe($QUERY, ...)
+                  - focus-metavariable: $QUERY
+              - patterns:
+                  - pattern: $TX.$executeRawUnsafe($QUERY, ...)
+                  - focus-metavariable: $QUERY
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: parseFloat(...)
+
+  - id: qsdev.core.typescript.nosqli-prisma-mongodb-raw
+    message: >-
+      User-controlled data flows into a Prisma MongoDB raw command
+      ($runCommandRaw, findRaw, or aggregateRaw). This can enable NoSQL
+      injection, allowing an attacker to modify the database command structure
+      or extract unauthorized data. Validate and sanitize all user input
+      before including it in raw MongoDB commands.
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-943
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [prisma, mongodb]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ... (..., $REQ, ...) { ... }
+              - pattern-inside: (..., $REQ, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+              - pattern: $REQ.params
+              - pattern: $REQ.cookies
+              - pattern: $REQ.headers
+    pattern-sinks:
+      - patterns:
+          - pattern: $PRISMA.$runCommandRaw($CMD)
+          - focus-metavariable: $CMD
+      - patterns:
+          - pattern: $MODEL.findRaw($ARGS)
+          - focus-metavariable: $ARGS
+      - patterns:
+          - pattern: $MODEL.aggregateRaw($ARGS)
+          - focus-metavariable: $ARGS
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: parseFloat(...)
+
+  - id: qsdev.core.typescript.sqli-prisma-dynamic-query-object
+    message: >-
+      An unsanitized user-controlled object is passed directly as a `where`
+      or `orderBy` parameter to a Prisma Client query. While Prisma
+      parameterizes all values in standard queries (preventing SQL injection),
+      allowing users to control the entire query structure enables information
+      disclosure through boolean-based probing and field enumeration.
+      Validate and allowlist the fields users can query against.
+    languages: [javascript, typescript]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-943
+      owasp: A01:2021
+      category: security
+      subcategory: audit
+      confidence: LOW
+      impact: MEDIUM
+      likelihood: MEDIUM
+      technology: [prisma]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ... (..., $REQ, ...) { ... }
+              - pattern-inside: (..., $REQ, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+              - pattern: $REQ.params
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: "$MODEL.findMany({..., where: $WHERE, ...})"
+              - pattern: "$MODEL.findFirst({..., where: $WHERE, ...})"
+              - pattern: "$MODEL.findUnique({..., where: $WHERE, ...})"
+              - pattern: "$MODEL.updateMany({..., where: $WHERE, ...})"
+              - pattern: "$MODEL.deleteMany({..., where: $WHERE, ...})"
+              - pattern: "$MODEL.count({..., where: $WHERE, ...})"
+          - focus-metavariable: $WHERE
+      - patterns:
+          - pattern-either:
+              - pattern: "$MODEL.findMany({..., orderBy: $ORDER, ...})"
+              - pattern: "$MODEL.findFirst({..., orderBy: $ORDER, ...})"
+          - focus-metavariable: $ORDER
+
+  - id: qsdev.core.typescript.sqli-prisma-json-parse-raw
+    message: >-
+      User input is parsed with `JSON.parse()` and flows into a Prisma raw
+      query. If the parsed value is used to construct a SQL query string, this
+      enables SQL injection. Validate the parsed structure against an expected
+      schema before using it in any query.
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [prisma]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ... (..., $REQ, ...) { ... }
+              - pattern-inside: (..., $REQ, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+              - pattern: $REQ.params
+    pattern-sinks:
+      - patterns:
+          - pattern: $PRISMA.$queryRawUnsafe($QUERY, ...)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern: $PRISMA.$executeRawUnsafe($QUERY, ...)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern: $PRISMA.$runCommandRaw($CMD)
+          - focus-metavariable: $CMD
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)

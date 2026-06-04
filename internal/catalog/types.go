@@ -224,3 +224,23 @@ type ToolCategoryDef struct {
 	ID          string `yaml:"id"`
 	DisplayName string `yaml:"display_name"`
 }
+
+// PermissionRulesFile represents the permission_rules section of defaults.yaml.
+type PermissionRulesFile struct {
+	DenyRules           map[string][]string            `yaml:"permission_deny_rules"`
+	SupplyChainDenySets []string                       `yaml:"permission_supply_chain_deny_sets"`
+	AllDenySets         []string                       `yaml:"permission_all_deny_sets"`
+	AllowRules          map[string][]string            `yaml:"permission_allow_rules"`
+	AskRules            map[string][]string            `yaml:"permission_ask_rules"`
+	PackageAskSets      []string                       `yaml:"permission_package_ask_sets"`
+	PresetDefs          map[string]PermissionPresetDef `yaml:"permission_preset_defs"`
+}
+
+// PermissionPresetDef defines a permission preset's composition.
+type PermissionPresetDef struct {
+	DefaultMode       string   `yaml:"default_mode,omitempty"`
+	DisableBypassMode string   `yaml:"disable_bypass_mode,omitempty"`
+	AllowSets         []string `yaml:"allow_sets"`
+	DenySets          []string `yaml:"deny_sets"`
+	AskSets           []string `yaml:"ask_sets"`
+}

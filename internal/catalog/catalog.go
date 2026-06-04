@@ -19,6 +19,7 @@ type Catalog struct {
 	hookTiers       HookTiersFile
 	derivations     DerivationsFile
 	validation      ValidationFile
+	permissionRules PermissionRulesFile
 }
 
 var (
@@ -340,6 +341,91 @@ func (c *Catalog) SecurityLevels() []string {
 func (c *Catalog) DataClassifications() []string {
 	out := make([]string, len(c.validation.DataClassifications))
 	copy(out, c.validation.DataClassifications)
+	return out
+}
+
+// --- Permission rule accessors ---
+
+// PermissionDenyRules returns the deny rules for a named set.
+func (c *Catalog) PermissionDenyRules(setName string) []string {
+	rules, ok := c.permissionRules.DenyRules[setName]
+	if !ok {
+		return nil
+	}
+	out := make([]string, len(rules))
+	copy(out, rules)
+	return out
+}
+
+// AllPermissionDenyRules returns all deny rules from all deny sets listed
+// in permission_all_deny_sets, concatenated and deduplicated.
+func (c *Catalog) AllPermissionDenyRules() []string {
+	var rules []string
+	for _, setName := range c.permissionRules.AllDenySets {
+		rules = append(rules, c.PermissionDenyRules(setName)...)
+	}
+	return dedup(rules)
+}
+
+// SupplyChainDenyRules returns deny rules from the supply chain deny sets.
+func (c *Catalog) SupplyChainDenyRules() []string {
+	var rules []string
+	for _, setName := range c.permissionRules.SupplyChainDenySets {
+		rules = append(rules, c.PermissionDenyRules(setName)...)
+	}
+	return dedup(rules)
+}
+
+// PermissionAllowRules returns the allow rules for a named set.
+func (c *Catalog) PermissionAllowRules(setName string) []string {
+	rules, ok := c.permissionRules.AllowRules[setName]
+	if !ok {
+		return nil
+	}
+	out := make([]string, len(rules))
+	copy(out, rules)
+	return out
+}
+
+// PermissionAskRules returns the ask rules for a named set.
+func (c *Catalog) PermissionAskRules(setName string) []string {
+	rules, ok := c.permissionRules.AskRules[setName]
+	if !ok {
+		return nil
+	}
+	out := make([]string, len(rules))
+	copy(out, rules)
+	return out
+}
+
+// AllPackageInstallAskRules returns all package install ask rules.
+func (c *Catalog) AllPackageInstallAskRules() []string {
+	var rules []string
+	for _, setName := range c.permissionRules.PackageAskSets {
+		rules = append(rules, c.PermissionAskRules(setName)...)
+	}
+	return dedup(rules)
+}
+
+// PermissionPreset returns the preset definition for a named preset.
+func (c *Catalog) PermissionPreset(name string) (PermissionPresetDef, bool) {
+	d, ok := c.permissionRules.PresetDefs[name]
+	return d, ok
+}
+
+// dedup removes duplicate strings preserving first-seen order.
+func dedup(ss []string) []string {
+	if len(ss) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(ss))
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		if _, ok := seen[s]; !ok {
+			seen[s] = struct{}{}
+			out = append(out, s)
+		}
+	}
 	return out
 }
 

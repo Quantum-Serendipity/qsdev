@@ -1,0 +1,45 @@
+rules:
+  - id: qsdev.core.python.redirect-fastapi-open-redirect
+    message: >-
+      User-controlled data from a FastAPI endpoint is used as the URL in a
+      RedirectResponse. This may allow open redirect attacks, where an attacker
+      tricks users into visiting a malicious site via a trusted URL. Validate
+      the redirect target against an allowlist of permitted domains.
+    languages: [python]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-601
+      owasp: A01:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: LOW
+      likelihood: MEDIUM
+      technology: [fastapi]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM, ...):
+                ...
+          - pattern-not-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM: BackgroundTasks, ...):
+                ...
+          - pattern-not-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM: Response, ...):
+                ...
+          - focus-metavariable: $PARAM
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: RedirectResponse($URL, ...)
+              - pattern: RedirectResponse(url=$URL, ...)
+          - focus-metavariable: $URL
+    pattern-sanitizers:
+      - pattern: int(...)

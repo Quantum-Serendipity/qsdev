@@ -1,0 +1,105 @@
+rules:
+  - id: qsdev.core.typescript.ssrf-http-client
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      User-controlled input flows into an HTTP client URL, enabling
+      Server-Side Request Forgery (SSRF). Validate the URL against an
+      allowlist of permitted hosts/schemes before making the request.
+      Never allow requests to internal network addresses (127.0.0.1,
+      10.x, 169.254.169.254, etc.).
+    mode: taint
+    pattern-sources:
+      - pattern: req.query
+      - pattern: req.params
+      - pattern: req.body
+    pattern-sinks:
+      - pattern: fetch($URL, ...)
+      - pattern: axios.get($URL, ...)
+      - pattern: axios.post($URL, ...)
+      - pattern: axios($URL, ...)
+      - pattern: "axios({url: $URL, ...})"
+      - pattern: got($URL, ...)
+      - pattern: got.get($URL, ...)
+    pattern-sanitizers:
+      - pattern: new URL($URL).hostname
+    metadata:
+      category: security
+      subcategory: ssrf
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-918
+      owasp: "A10:2021"
+      technology: [node, express]
+
+  - id: qsdev.core.python.ssrf-http-client
+    languages: [python]
+    severity: ERROR
+    message: >
+      User-controlled input flows into an HTTP client URL, enabling
+      Server-Side Request Forgery (SSRF). Validate the URL against an
+      allowlist of permitted hosts/schemes before making the request.
+      Never allow requests to internal network addresses.
+    mode: taint
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.args[...]
+      - pattern: request.form.get(...)
+      - pattern: request.form[...]
+      - pattern: request.GET.get(...)
+      - pattern: request.GET[...]
+      - pattern: request.POST.get(...)
+      - pattern: request.POST[...]
+    pattern-sinks:
+      - pattern: requests.get($URL, ...)
+      - pattern: requests.post($URL, ...)
+      - pattern: requests.request($METHOD, $URL, ...)
+      - pattern: httpx.get($URL, ...)
+      - pattern: httpx.post($URL, ...)
+      - pattern: urllib.request.urlopen($URL)
+    pattern-sanitizers:
+      - pattern: urllib.parse.urlparse(...)
+    metadata:
+      category: security
+      subcategory: ssrf
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-918
+      owasp: "A10:2021"
+      technology: [python, flask, django]
+
+  - id: qsdev.core.go.ssrf-http-client
+    languages: [go]
+    severity: ERROR
+    message: >
+      User-controlled input flows into an HTTP client URL, enabling
+      Server-Side Request Forgery (SSRF). Parse the URL with url.Parse()
+      and validate the hostname against an allowlist before making the
+      request. Block requests to private/internal IP ranges.
+    mode: taint
+    pattern-sources:
+      - pattern: $R.URL.Query().Get(...)
+      - pattern: $R.FormValue(...)
+      - pattern: $R.PostFormValue(...)
+      - pattern: $C.Query(...)
+      - pattern: $C.Param(...)
+    pattern-sinks:
+      - pattern: http.Get($URL)
+      - pattern: http.Post($URL, ...)
+      - pattern: http.NewRequest($METHOD, $URL, ...)
+      - pattern: http.NewRequestWithContext($CTX, $METHOD, $URL, ...)
+      - pattern: $CLIENT.Get($URL)
+      - pattern: $CLIENT.Post($URL, ...)
+    pattern-sanitizers:
+      - pattern: url.Parse(...)
+    metadata:
+      category: security
+      subcategory: ssrf
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-918
+      owasp: "A10:2021"
+      technology: [go]

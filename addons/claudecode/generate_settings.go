@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -47,402 +48,10 @@ type HookEntry struct {
 	StatusMessage string `json:"statusMessage,omitempty"`
 }
 
-// ---------------------------------------------------------------------------
-// Base deny rules — categorized slices from the reference deny rules document.
-// These block dangerous patterns that should never execute.
-// ---------------------------------------------------------------------------
-
-// denyNpx blocks npx which runs arbitrary remote code.
-var denyNpx = []string{
-	`Bash(npx *)`,
-}
-
-// ---------------------------------------------------------------------------
-// Ask rules — package install operations gated by the PreToolUse hook.
-// These trigger the package-guard hook which does age-gating + vulnerability
-// checks, allowing safe packages through while denying unsafe ones.
-// ---------------------------------------------------------------------------
-
-// askJSPackageManagers are JS package install commands routed to the hook.
-var askJSPackageManagers = []string{
-	`Bash(npm install *)`,
-	`Bash(npm install)`,
-	`Bash(npm i *)`,
-	`Bash(npm i)`,
-	`Bash(npm add *)`,
-	`Bash(npm add)`,
-	`Bash(npm update *)`,
-	`Bash(npm update)`,
-	`Bash(npm uninstall *)`,
-	`Bash(npm uninstall)`,
-	`Bash(npm remove *)`,
-	`Bash(npm remove)`,
-	`Bash(yarn add *)`,
-	`Bash(yarn install *)`,
-	`Bash(yarn install)`,
-	`Bash(yarn upgrade *)`,
-	`Bash(yarn remove *)`,
-	`Bash(pnpm add *)`,
-	`Bash(pnpm install *)`,
-	`Bash(pnpm install)`,
-	`Bash(pnpm update *)`,
-	`Bash(pnpm update)`,
-	`Bash(pnpm remove *)`,
-	`Bash(bun add *)`,
-	`Bash(bun install *)`,
-	`Bash(bun install)`,
-	`Bash(bun remove *)`,
-}
-
-// askPython are Python package install commands routed to the hook.
-var askPython = []string{
-	`Bash(pip install *)`,
-	`Bash(pip install)`,
-	`Bash(pip3 install *)`,
-	`Bash(pip3 install)`,
-	`Bash(pip uninstall *)`,
-	`Bash(pip3 uninstall *)`,
-	`Bash(python -m pip install *)`,
-	`Bash(python3 -m pip install *)`,
-	`Bash(python -m pip uninstall *)`,
-	`Bash(python3 -m pip uninstall *)`,
-	`Bash(pipx install *)`,
-	`Bash(pipx uninstall *)`,
-	`Bash(uv pip install *)`,
-	`Bash(uv pip install)`,
-	`Bash(uv add *)`,
-	`Bash(uv sync *)`,
-	`Bash(uv sync)`,
-	`Bash(uv remove *)`,
-}
-
-// askRust are Rust package install commands routed to the hook.
-var askRust = []string{
-	`Bash(cargo add *)`,
-	`Bash(cargo install *)`,
-	`Bash(cargo install)`,
-}
-
-// askGo are Go package install commands routed to the hook.
-var askGo = []string{
-	`Bash(go get *)`,
-	`Bash(go install *)`,
-}
-
-// askRuby are Ruby package install commands routed to the hook.
-var askRuby = []string{
-	`Bash(gem install *)`,
-	`Bash(bundle install *)`,
-	`Bash(bundle install)`,
-	`Bash(bundle add *)`,
-	`Bash(bundle update *)`,
-	`Bash(bundle update)`,
-}
-
-// askPHP are PHP package install commands routed to the hook.
-var askPHP = []string{
-	`Bash(composer require *)`,
-	`Bash(composer install *)`,
-	`Bash(composer install)`,
-	`Bash(composer update *)`,
-	`Bash(composer update)`,
-}
-
-// denyNix blocks nix-env imperative installs, nix profile, and cachix use.
-var denyNix = []string{
-	`Bash(nix-env -i *)`,
-	`Bash(nix-env --install *)`,
-	`Bash(nix-env -e *)`,
-	`Bash(nix-env --erase *)`,
-	`Bash(nix-env --uninstall *)`,
-	`Bash(nix profile install *)`,
-	`Bash(nix profile remove *)`,
-	`Bash(cachix use *)`,
-}
-
-// denySystem blocks apt, brew, pacman, dnf, yum, apk, and snap.
-var denySystem = []string{
-	`Bash(apt install *)`,
-	`Bash(apt-get install *)`,
-	`Bash(apt remove *)`,
-	`Bash(apt-get remove *)`,
-	`Bash(brew install *)`,
-	`Bash(brew uninstall *)`,
-	`Bash(pacman -S *)`,
-	`Bash(pacman -R *)`,
-	`Bash(dnf install *)`,
-	`Bash(yum install *)`,
-	`Bash(apk add *)`,
-	`Bash(snap install *)`,
-}
-
-// denyPipeToShell blocks curl|bash, curl|sh, wget|bash, wget|sh patterns.
-var denyPipeToShell = []string{
-	`Bash(curl * | bash *)`,
-	`Bash(curl * | bash)`,
-	`Bash(curl * | sh *)`,
-	`Bash(curl * | sh)`,
-	`Bash(wget * | bash *)`,
-	`Bash(wget * | bash)`,
-	`Bash(wget * | sh *)`,
-	`Bash(wget * | sh)`,
-}
-
-// denyShellWrapping blocks bash -c, sh -c, zsh -c, dash -c wrapping of install commands.
-var denyShellWrapping = []string{
-	`Bash(bash -c *npm install*)`,
-	`Bash(bash -c *pip install*)`,
-	`Bash(bash -c *cargo install*)`,
-	`Bash(bash -c *go get*)`,
-	`Bash(bash -c *gem install*)`,
-	`Bash(bash -c *nix-env*)`,
-	`Bash(sh -c *npm install*)`,
-	`Bash(sh -c *pip install*)`,
-	`Bash(sh -c *cargo install*)`,
-	`Bash(sh -c *go get*)`,
-	`Bash(sh -c *gem install*)`,
-	`Bash(sh -c *nix-env*)`,
-	`Bash(zsh -c *npm install*)`,
-	`Bash(zsh -c *pip install*)`,
-	`Bash(zsh -c *cargo install*)`,
-	`Bash(zsh -c *go get*)`,
-	`Bash(zsh -c *gem install*)`,
-	`Bash(zsh -c *nix-env*)`,
-	`Bash(dash -c *npm install*)`,
-	`Bash(dash -c *pip install*)`,
-	`Bash(dash -c *cargo install*)`,
-	`Bash(dash -c *go get*)`,
-	`Bash(dash -c *gem install*)`,
-	`Bash(dash -c *nix-env*)`,
-}
-
-// denyEnvCommandPrefix blocks env and command prefix bypasses.
-var denyEnvCommandPrefix = []string{
-	`Bash(env npm install *)`,
-	`Bash(env pip install *)`,
-	`Bash(env pip3 install *)`,
-	`Bash(env cargo install *)`,
-	`Bash(env nix-env *)`,
-	`Bash(command npm install *)`,
-	`Bash(command pip install *)`,
-	`Bash(command pip3 install *)`,
-	`Bash(command cargo install *)`,
-	`Bash(command nix-env *)`,
-}
-
-// denySudoPrefix blocks sudo-prefixed install commands.
-var denySudoPrefix = []string{
-	`Bash(sudo npm install *)`,
-	`Bash(sudo pip install *)`,
-	`Bash(sudo pip3 install *)`,
-	`Bash(sudo apt install *)`,
-	`Bash(sudo apt-get install *)`,
-	`Bash(sudo pacman -S *)`,
-	`Bash(sudo nix-env *)`,
-	`Bash(sudo gem install *)`,
-}
-
-// denySubprocessEscape blocks interpreter-based subprocess escapes.
-var denySubprocessEscape = []string{
-	`Bash(python -c *subprocess*)`,
-	`Bash(python3 -c *subprocess*)`,
-	`Bash(python -c *import os*)`,
-	`Bash(python3 -c *import os*)`,
-	`Bash(node -e *child_process*)`,
-	`Bash(node -e *execSync*)`,
-	`Bash(node -e *spawn*)`,
-	`Bash(ruby -e *system*)`,
-	`Bash(perl -e *system*)`,
-}
-
-// denyEvalXargs blocks eval and xargs-based indirect execution.
-var denyEvalXargs = []string{
-	`Bash(eval *npm install*)`,
-	`Bash(eval *pip install*)`,
-	`Bash(eval *cargo*)`,
-	`Bash(eval *nix-env*)`,
-	`Bash(xargs npm install *)`,
-	`Bash(xargs pip install *)`,
-	`Bash(xargs cargo install *)`,
-}
-
-// denyDestructiveOps blocks dangerous git, filesystem, and secret-reading operations.
-var denyDestructiveOps = []string{
-	`Bash(git push --force *)`,
-	`Bash(git push * --force)`,
-	`Bash(git reset --hard *)`,
-	`Bash(rm -rf *)`,
-	`Read(./.env)`,
-	`Read(./.env.*)`,
-	`Read(./secrets/**)`,
-}
-
 // AllBaseDenyRules returns the full deny rule list. Exported for use by
 // the check command to verify deny rule coverage.
 func AllBaseDenyRules() []string {
-	return allBaseDenyRules()
-}
-
-func allBaseDenyRules() []string {
-	var rules []string
-	rules = append(rules, supplyChainDenyRules()...)
-	rules = append(rules, denyDestructiveOps...)
-	return rules
-}
-
-// supplyChainDenyRules returns deny rules that prevent supply chain attacks:
-// bypassing the package guard, running arbitrary remote code, using system
-// package managers outside the sandbox. Excludes workflow guardrails
-// (destructive git ops, rm -rf, .env reads).
-func supplyChainDenyRules() []string {
-	var rules []string
-	rules = append(rules, denyNpx...)
-	rules = append(rules, denyNix...)
-	rules = append(rules, denySystem...)
-	rules = append(rules, denyPipeToShell...)
-	rules = append(rules, denyShellWrapping...)
-	rules = append(rules, denyEnvCommandPrefix...)
-	rules = append(rules, denySudoPrefix...)
-	rules = append(rules, denySubprocessEscape...)
-	rules = append(rules, denyEvalXargs...)
-	return rules
-}
-
-// allPackageInstallAskRules returns the package install rules that should
-// be in the ask list, gated by the PreToolUse package-guard hook.
-func allPackageInstallAskRules() []string {
-	var rules []string
-	rules = append(rules, askJSPackageManagers...)
-	rules = append(rules, askPython...)
-	rules = append(rules, askRust...)
-	rules = append(rules, askGo...)
-	rules = append(rules, askRuby...)
-	rules = append(rules, askPHP...)
-	return rules
-}
-
-// ---------------------------------------------------------------------------
-// Allow rules for Standard and Permissive presets.
-// ---------------------------------------------------------------------------
-
-// allowMinimal is the baseline allow set for the minimal preset.
-var allowMinimal = []string{
-	`Read(*)`,
-}
-
-// allowMinimalBashBuildTest provides Bash-wrapped build/test commands for minimal.
-var allowMinimalBashBuildTest = []string{
-	`Bash(go build *)`,
-	`Bash(go build)`,
-	`Bash(go test *)`,
-	`Bash(go test)`,
-	`Bash(cargo build *)`,
-	`Bash(cargo build)`,
-	`Bash(cargo test *)`,
-	`Bash(cargo test)`,
-	`Bash(npm test *)`,
-	`Bash(npm test)`,
-	`Bash(npm run build *)`,
-}
-
-// allowStandardBase provides the standard preset's core allow rules.
-var allowStandardBase = []string{
-	`Read(*)`,
-	`Edit(*)`,
-	`Write(*)`,
-	`Bash(git *)`,
-}
-
-// allowStandardBuildTestLint provides build, test, lint, and read-only commands.
-var allowStandardBuildTestLint = []string{
-	// JS build/test (npm run/start moved to askCodeExecution)
-	`Bash(npm test *)`,
-	`Bash(npm test)`,
-	`Bash(npm run build *)`,
-	// Go build/test (go run moved to askCodeExecution)
-	`Bash(go build *)`,
-	`Bash(go build)`,
-	`Bash(go test *)`,
-	`Bash(go test)`,
-	// Rust build/test (cargo run moved to askCodeExecution)
-	`Bash(cargo build *)`,
-	`Bash(cargo build)`,
-	`Bash(cargo test *)`,
-	`Bash(cargo test)`,
-	// Nix development (nix build/run/shell moved to askCodeExecution)
-	`Bash(nix develop *)`,
-	`Bash(nix develop)`,
-	`Bash(nix flake check *)`,
-	`Bash(nix flake show *)`,
-	`Bash(devenv shell *)`,
-	`Bash(devenv shell)`,
-	// Read-only / informational
-	`Bash(npm list *)`,
-	`Bash(npm ls *)`,
-	`Bash(npm outdated *)`,
-	`Bash(npm audit *)`,
-	`Bash(npm view *)`,
-	`Bash(npm info *)`,
-	`Bash(pip list *)`,
-	`Bash(pip show *)`,
-	`Bash(pip freeze *)`,
-	`Bash(pip-audit *)`,
-	`Bash(cargo audit *)`,
-	`Bash(vulnix *)`,
-	`Bash(nix flake info *)`,
-	`Bash(nix flake metadata *)`,
-}
-
-// askCodeExecution lists commands that can execute arbitrary code and require
-// user confirmation. These run project scripts, compile+execute source, or
-// fetch and execute remote code (nix flakes).
-var askCodeExecution = []string{
-	`Bash(npm run *)`,
-	`Bash(npm start *)`,
-	`Bash(npm start)`,
-	`Bash(yarn run *)`,
-	`Bash(pnpm run *)`,
-	`Bash(bun run *)`,
-	`Bash(go run *)`,
-	`Bash(cargo run *)`,
-	`Bash(cargo run)`,
-	`Bash(bundle exec *)`,
-	`Bash(composer run-script *)`,
-	`Bash(nix run *)`,
-	`Bash(nix shell *)`,
-	`Bash(nix build *)`,
-	`Bash(nix build)`,
-}
-
-// allowFrozenLockfileInstalls provides pre-approved frozen lockfile installs
-// that cannot modify dependencies — safe to run without hook intervention.
-var allowFrozenLockfileInstalls = []string{
-	`Bash(npm ci)`,
-	`Bash(npm ci *)`,
-	`Bash(pnpm install --frozen-lockfile)`,
-	`Bash(pnpm install --frozen-lockfile *)`,
-	`Bash(yarn install --immutable)`,
-	`Bash(yarn install --immutable *)`,
-	`Bash(bun install --frozen-lockfile)`,
-	`Bash(bun install --frozen-lockfile *)`,
-}
-
-// allowPermissiveExtra provides the additional rules for the permissive preset.
-var allowPermissiveExtra = []string{
-	`Bash(make *)`,
-	`Bash(docker *)`,
-}
-
-// askStandardBase provides non-package ask rules for standard and permissive presets.
-var askStandardBase = []string{
-	`Bash(nix flake update *)`,
-	`Bash(nix flake update)`,
-}
-
-// askMinimalBase provides non-package ask rules for the minimal preset.
-var askMinimalBase = []string{
-	`Bash(nix flake update *)`,
-	`Bash(nix flake update)`,
+	return catalog.Default().AllPermissionDenyRules()
 }
 
 // ---------------------------------------------------------------------------
@@ -452,65 +61,46 @@ var askMinimalBase = []string{
 // buildPermissions constructs the Permissions struct based on the selected
 // permission preset, wizard answers, ecosystem registry, and addon config.
 func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, registry *ecosystem.Registry, cfg Config) Permissions {
-	baseDeny := allBaseDenyRules()
+	cat := catalog.Default()
 	ecosystemDeny := collectEcosystemDenyRules(answers, registry)
 
-	var allow []string
-	var deny []string
-	var ask []string
-	var defaultMode string
-	var disableBypass string
+	presetName := string(preset)
+	presetDef, ok := cat.PermissionPreset(presetName)
+	if !ok {
+		// Fall back to standard if preset not found.
+		presetDef, _ = cat.PermissionPreset("standard")
+	}
 
-	packageAskRules := allPackageInstallAskRules()
+	// Assemble allow rules from preset's allow sets.
+	var allow []string
+	for _, setName := range presetDef.AllowSets {
+		allow = append(allow, cat.PermissionAllowRules(setName)...)
+	}
+
+	// Assemble deny rules from preset's deny sets.
+	var deny []string
+	for _, setName := range presetDef.DenySets {
+		deny = append(deny, cat.PermissionDenyRules(setName)...)
+	}
+
+	// Assemble ask rules from preset's ask sets.
+	var ask []string
+	for _, setName := range presetDef.AskSets {
+		ask = append(ask, cat.PermissionAskRules(setName)...)
+	}
+
+	// Always add ecosystem deny rules.
+	deny = append(deny, ecosystemDeny...)
 
 	switch preset {
-	case PermissionPresetMinimal:
-		allow = append(allow, allowMinimal...)
-		allow = append(allow, allowMinimalBashBuildTest...)
-		allow = append(allow, allowFrozenLockfileInstalls...)
-		deny = append(deny, baseDeny...)
-		deny = append(deny, ecosystemDeny...)
-		ask = append(ask, askMinimalBase...)
-		ask = append(ask, askCodeExecution...)
-		ask = append(ask, packageAskRules...)
-		defaultMode = "plan"
-		disableBypass = "disable"
-
-	case PermissionPresetStandard:
-		allow = append(allow, allowStandardBase...)
-		allow = append(allow, allowStandardBuildTestLint...)
-		allow = append(allow, allowFrozenLockfileInstalls...)
-		deny = append(deny, baseDeny...)
-		deny = append(deny, ecosystemDeny...)
-		ask = append(ask, askStandardBase...)
-		ask = append(ask, askCodeExecution...)
-		ask = append(ask, packageAskRules...)
-		defaultMode = "default"
-		disableBypass = "disable"
-
 	case PermissionPresetPermissive:
-		allow = append(allow, allowStandardBase...)
-		allow = append(allow, allowStandardBuildTestLint...)
-		allow = append(allow, allowFrozenLockfileInstalls...)
-		allow = append(allow, allowPermissiveExtra...)
-
 		// Add Podman commands to permissive allow list when Podman is detected.
 		if answers.Detected.ContainerRuntime == "podman-rootless" || answers.Detected.ContainerRuntime == "podman-rootful" {
 			allow = append(allow, `Bash(podman *)`)
 		}
 
-		deny = append(deny, baseDeny...)
-		deny = append(deny, ecosystemDeny...)
-		ask = append(ask, askStandardBase...)
-		ask = append(ask, askCodeExecution...)
-		ask = append(ask, packageAskRules...)
-		defaultMode = "default"
-		disableBypass = "disable"
-
 	case PermissionPresetSupplyChainOnly:
-		deny = append(deny, supplyChainDenyRules()...)
-		deny = append(deny, ecosystemDeny...)
-		ask = append(ask, packageAskRules...)
+		// Supply-chain-only returns early with no defaultMode/disableBypass.
 		return Permissions{
 			Allow: []string{},
 			Deny:  sliceutil.Dedup(deny),
@@ -518,13 +108,9 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 		}
 
 	case PermissionPresetCustom:
-		// Custom: allow only what's in ExtraAllowPatterns.
-		allow = append(allow, cfg.ExtraAllowPatterns...)
-		deny = append(deny, baseDeny...)
-		deny = append(deny, ecosystemDeny...)
+		// Custom: allow only what's in ExtraAllowPatterns (not preset sets).
+		allow = cfg.ExtraAllowPatterns
 		deny = append(deny, cfg.ExtraDenyPatterns...)
-		ask = append(ask, packageAskRules...)
-		// Return early — don't append extras again below.
 		return Permissions{
 			Allow: sliceutil.Dedup(allow),
 			Deny:  sliceutil.Dedup(deny),
@@ -532,7 +118,7 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 		}
 	}
 
-	// For non-custom presets, append extra patterns from config.
+	// For non-custom, non-supply-chain-only presets, append extra patterns from config.
 	allow = append(allow, cfg.ExtraAllowPatterns...)
 	deny = append(deny, cfg.ExtraDenyPatterns...)
 
@@ -543,11 +129,11 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 	if len(ask) > 0 {
 		perms.Ask = sliceutil.Dedup(ask)
 	}
-	if defaultMode != "" {
-		perms.DefaultMode = defaultMode
+	if presetDef.DefaultMode != "" {
+		perms.DefaultMode = presetDef.DefaultMode
 	}
-	if disableBypass != "" {
-		perms.DisableBypassPermissionsMode = disableBypass
+	if presetDef.DisableBypassMode != "" {
+		perms.DisableBypassPermissionsMode = presetDef.DisableBypassMode
 	}
 	return perms
 }

@@ -1,0 +1,40 @@
+rules:
+  - id: qsdev.core.go.redirect-gin-open-redirect
+    message: >-
+      User input from Gin request is used as the redirect URL in c.Redirect().
+      An attacker could redirect users to a phishing site. Validate that the
+      redirect URL is relative (starts with /) or belongs to an allowlisted
+      domain.
+    languages: [go]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-601
+      owasp: A01:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: LOW
+      likelihood: MEDIUM
+      technology: [gin]
+    pattern-sources:
+      - pattern-either:
+          - pattern: "($CTX : *gin.Context).Param(...)"
+          - pattern: "($CTX : *gin.Context).Query(...)"
+          - pattern: "($CTX : *gin.Context).DefaultQuery(...)"
+          - pattern: "($CTX : *gin.Context).PostForm(...)"
+          - pattern: "($CTX : *gin.Context).GetHeader(...)"
+          - pattern: "($CTX : *gin.Context).Cookie(...)"
+      - patterns:
+          - pattern-either:
+              - pattern: "($CTX : *gin.Context).ShouldBindJSON($BOUND)"
+              - pattern: "($CTX : *gin.Context).ShouldBind($BOUND)"
+          - focus-metavariable: $BOUND
+    pattern-sinks:
+      - patterns:
+          - pattern: "($CTX : *gin.Context).Redirect($CODE, $URL)"
+          - focus-metavariable: $URL
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: strconv.Atoi(...)
+          - pattern: strconv.ParseInt(...)

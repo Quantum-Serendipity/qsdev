@@ -1,0 +1,75 @@
+rules:
+  - id: qsdev.core.typescript.ssrf-nestjs-http-service
+    message: >-
+      User-controlled input is used as a URL in an HTTP request via NestJS
+      HttpService or fetch(). This can lead to Server-Side Request Forgery
+      (SSRF), allowing attackers to make requests to internal services. Validate
+      and allowlist URLs before making requests.
+    languages: [typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-918
+      owasp: A10:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [nestjs]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Body(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Param(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Query(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $HTTP.get($URL, ...)
+              - pattern: $HTTP.post($URL, ...)
+              - pattern: $HTTP.put($URL, ...)
+              - pattern: $HTTP.delete($URL, ...)
+              - pattern: $HTTP.patch($URL, ...)
+              - pattern: $HTTP.head($URL, ...)
+              - pattern: "$HTTP.request({ ..., url: $URL, ... })"
+              - pattern: $HTTP.axiosRef.get($URL, ...)
+              - pattern: $HTTP.axiosRef.post($URL, ...)
+          - pattern-not: $HTTP.get("...", ...)
+          - pattern-not: $HTTP.post("...", ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: fetch($URL, ...)
+          - pattern-not: fetch("...", ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern-either:
+              - pattern: http.get($URL, ...)
+              - pattern: https.get($URL, ...)
+              - pattern: http.request($URL, ...)
+              - pattern: https.request($URL, ...)
+          - focus-metavariable: $URL
+    pattern-sanitizers:
+      - pattern: new URL(...)

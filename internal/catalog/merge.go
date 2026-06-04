@@ -51,6 +51,15 @@ func MergeCatalogs(base, overlay *Catalog) *Catalog {
 	// Validation: overlay replaces if non-empty.
 	result.validation = mergeValidation(base.validation, overlay.validation)
 
+	// Permission rules: merge maps, overlay slices win if non-empty.
+	result.permissionRules.DenyRules = mergeStringSliceMap(base.permissionRules.DenyRules, overlay.permissionRules.DenyRules)
+	result.permissionRules.SupplyChainDenySets = mergeStringSlice(base.permissionRules.SupplyChainDenySets, overlay.permissionRules.SupplyChainDenySets)
+	result.permissionRules.AllDenySets = mergeStringSlice(base.permissionRules.AllDenySets, overlay.permissionRules.AllDenySets)
+	result.permissionRules.AllowRules = mergeStringSliceMap(base.permissionRules.AllowRules, overlay.permissionRules.AllowRules)
+	result.permissionRules.AskRules = mergeStringSliceMap(base.permissionRules.AskRules, overlay.permissionRules.AskRules)
+	result.permissionRules.PackageAskSets = mergeStringSlice(base.permissionRules.PackageAskSets, overlay.permissionRules.PackageAskSets)
+	result.permissionRules.PresetDefs = mergeMap(base.permissionRules.PresetDefs, overlay.permissionRules.PresetDefs)
+
 	return result
 }
 

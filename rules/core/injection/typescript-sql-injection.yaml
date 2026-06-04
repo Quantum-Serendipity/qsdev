@@ -1,0 +1,88 @@
+rules:
+  - id: qsdev.core.typescript.sqli-knex-raw
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      User-controlled input flows into knex.raw() without parameterization.
+      Use knex.raw('SELECT * FROM users WHERE id = ?', [userId]) with
+      binding parameters instead of string interpolation or concatenation.
+    mode: taint
+    pattern-sources:
+      - pattern: req.query
+      - pattern: req.params
+      - pattern: req.body
+    pattern-sinks:
+      - pattern: knex.raw($QUERY)
+      - pattern: $KNEX.raw($QUERY)
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: knex.raw("...", $BINDINGS)
+    metadata:
+      category: security
+      subcategory: sqli
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-89
+      owasp: "A03:2021"
+      technology: [express, knex]
+
+  - id: qsdev.core.typescript.sqli-sequelize-query
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      User-controlled input flows into sequelize.query() without bind
+      parameters. Use sequelize.query('SELECT * FROM users WHERE id = ?',
+      { replacements: [userId] }) or use Sequelize model methods with
+      where clauses instead.
+    mode: taint
+    pattern-sources:
+      - pattern: req.query
+      - pattern: req.params
+      - pattern: req.body
+    pattern-sinks:
+      - pattern: sequelize.query($QUERY)
+      - pattern: $SEQ.query($QUERY)
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: "sequelize.query(\"...\", { replacements: $BIND })"
+    metadata:
+      category: security
+      subcategory: sqli
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-89
+      owasp: "A03:2021"
+      technology: [express, sequelize]
+
+  - id: qsdev.core.typescript.sqli-prisma-raw-unsafe
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      User-controlled input flows into Prisma $queryRawUnsafe() or
+      $executeRawUnsafe(). Use the tagged template versions $queryRaw or
+      $executeRaw instead, which automatically parameterize inputs:
+      prisma.$queryRaw`SELECT * FROM users WHERE id = ${userId}`
+    mode: taint
+    pattern-sources:
+      - pattern: req.query
+      - pattern: req.params
+      - pattern: req.body
+    pattern-sinks:
+      - pattern: $PRISMA.$queryRawUnsafe($QUERY, ...)
+      - pattern: $PRISMA.$executeRawUnsafe($QUERY, ...)
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+    metadata:
+      category: security
+      subcategory: sqli
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-89
+      owasp: "A03:2021"
+      technology: [express, prisma]

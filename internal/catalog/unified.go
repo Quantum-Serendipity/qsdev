@@ -50,6 +50,15 @@ type UnifiedDefaults struct {
 	DataClassifications []string             `yaml:"data_classifications,omitempty"`
 	PackageManagers     map[string][]string  `yaml:"package_managers,omitempty"`
 	ToolCategories      []ToolCategoryDef    `yaml:"tool_categories,omitempty"`
+
+	// Permission rules
+	PermissionDenyRules           map[string][]string            `yaml:"permission_deny_rules,omitempty"`
+	PermissionSupplyChainDenySets []string                       `yaml:"permission_supply_chain_deny_sets,omitempty"`
+	PermissionAllDenySets         []string                       `yaml:"permission_all_deny_sets,omitempty"`
+	PermissionAllowRules          map[string][]string            `yaml:"permission_allow_rules,omitempty"`
+	PermissionAskRules            map[string][]string            `yaml:"permission_ask_rules,omitempty"`
+	PermissionPackageAskSets      []string                       `yaml:"permission_package_ask_sets,omitempty"`
+	PermissionPresetDefs          map[string]PermissionPresetDef `yaml:"permission_preset_defs,omitempty"`
 }
 
 // ToCatalog maps each UnifiedDefaults field to the corresponding Catalog field,
@@ -100,6 +109,15 @@ func (u *UnifiedDefaults) ToCatalog() *Catalog {
 	cat.validation.PackageManagers = u.PackageManagers
 	cat.validation.ToolCategories = u.ToolCategories
 
+	// Permission rules
+	cat.permissionRules.DenyRules = u.PermissionDenyRules
+	cat.permissionRules.SupplyChainDenySets = u.PermissionSupplyChainDenySets
+	cat.permissionRules.AllDenySets = u.PermissionAllDenySets
+	cat.permissionRules.AllowRules = u.PermissionAllowRules
+	cat.permissionRules.AskRules = u.PermissionAskRules
+	cat.permissionRules.PackageAskSets = u.PermissionPackageAskSets
+	cat.permissionRules.PresetDefs = u.PermissionPresetDefs
+
 	return cat
 }
 
@@ -149,6 +167,15 @@ func (c *Catalog) ToUnified() *UnifiedDefaults {
 	u.PackageManagers = c.validation.PackageManagers
 	u.ToolCategories = c.validation.ToolCategories
 
+	// Permission rules
+	u.PermissionDenyRules = c.permissionRules.DenyRules
+	u.PermissionSupplyChainDenySets = c.permissionRules.SupplyChainDenySets
+	u.PermissionAllDenySets = c.permissionRules.AllDenySets
+	u.PermissionAllowRules = c.permissionRules.AllowRules
+	u.PermissionAskRules = c.permissionRules.AskRules
+	u.PermissionPackageAskSets = c.permissionRules.PackageAskSets
+	u.PermissionPresetDefs = c.permissionRules.PresetDefs
+
 	return u
 }
 
@@ -161,6 +188,9 @@ func SectionNames() []string {
 		"tier_to_enabled_tools", "default_mcp_servers", "default_agent_tools",
 		"languages", "services", "permission_presets", "hook_presets",
 		"security_levels", "data_classifications", "package_managers", "tool_categories",
+		"permission_deny_rules", "permission_supply_chain_deny_sets",
+		"permission_all_deny_sets", "permission_allow_rules", "permission_ask_rules",
+		"permission_package_ask_sets", "permission_preset_defs",
 	}
 }
 

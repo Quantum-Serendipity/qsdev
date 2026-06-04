@@ -1,0 +1,176 @@
+rules:
+  - id: qsdev.core.typescript.sqli-sveltekit-prisma-load
+    message: >-
+      User-controlled data from SvelteKit load function parameters flows into
+      a Prisma raw query. Use parameterized queries (tagged template literals
+      with Prisma.sql) or validate/sanitize the input.
+    languages: [typescript, javascript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      technology: [sveltekit, prisma]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  export const load = async ({..., params, ...}) => { ... }
+              - pattern-inside: |
+                  export function load({..., params, ...}) { ... }
+          - pattern: params
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  export const load = async ({..., url, ...}) => { ... }
+              - pattern-inside: |
+                  export function load({..., url, ...}) { ... }
+          - pattern: url.searchParams
+    pattern-sinks:
+      - patterns:
+          - pattern: $PRISMA.$queryRawUnsafe($QUERY, ...)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern: $PRISMA.$executeRawUnsafe($QUERY, ...)
+          - focus-metavariable: $QUERY
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: parseFloat(...)
+      - pattern: Number(...)
+      - pattern: $SCHEMA.parse(...)
+
+  - id: qsdev.core.typescript.sqli-sveltekit-form-action
+    message: >-
+      User-controlled form data from a SvelteKit action flows into a raw SQL
+      query. Use parameterized queries or validate the input.
+    languages: [typescript, javascript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      technology: [sveltekit]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              export const actions = {
+                ...
+                $ACTION: async ({..., request, ...}) => {
+                  ...
+                }
+                ...
+              }
+          - pattern: request.formData()
+    pattern-sinks:
+      - patterns:
+          - pattern: $PRISMA.$queryRawUnsafe($QUERY, ...)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern: $PRISMA.$executeRawUnsafe($QUERY, ...)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern: $CLIENT.query($QUERY, ...)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern: sql.raw($QUERY)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern: |
+              `$SQLSTR${$EXPR}...`
+          - metavariable-regex:
+              metavariable: $SQLSTR
+              regex: .*\b(?i)(select|delete|insert|create|update|drop|alter)\b.*
+          - focus-metavariable: $EXPR
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: parseFloat(...)
+      - pattern: Number(...)
+      - pattern: $SCHEMA.parse(...)
+      - pattern: Prisma.sql`...`
+      - pattern: sql`...`
+
+  - id: qsdev.core.typescript.sqli-sveltekit-cookie
+    message: >-
+      Cookie data from a SvelteKit server entry point flows into a raw SQL
+      query. Cookie values are user-controlled and must not be used in raw
+      queries. Use parameterized queries or validate the input.
+    languages: [typescript, javascript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [sveltekit]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  export const load = async ({..., cookies, ...}) => { ... }
+              - pattern-inside: |
+                  export function load({..., cookies, ...}) { ... }
+          - pattern: cookies
+      - patterns:
+          - pattern-inside: |
+              export const actions = {
+                ...
+                $ACTION: async ({..., cookies, ...}) => {
+                  ...
+                }
+                ...
+              }
+          - pattern: cookies
+      - patterns:
+          - pattern-inside: |
+              export const handle = async ({event, ...}) => { ... }
+          - pattern: event.cookies
+    pattern-sinks:
+      - patterns:
+          - pattern: $PRISMA.$queryRawUnsafe($QUERY, ...)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern: $PRISMA.$executeRawUnsafe($QUERY, ...)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern: sql.raw($QUERY)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern: $CLIENT.query($QUERY, ...)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern: |
+              `$SQLSTR${$EXPR}...`
+          - metavariable-regex:
+              metavariable: $SQLSTR
+              regex: .*\b(?i)(select|delete|insert|create|update|drop|alter)\b.*
+          - focus-metavariable: $EXPR
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: parseFloat(...)
+      - pattern: Number(...)
+      - pattern: $SCHEMA.parse(...)
+      - pattern: Prisma.sql`...`
+      - pattern: sql`...`

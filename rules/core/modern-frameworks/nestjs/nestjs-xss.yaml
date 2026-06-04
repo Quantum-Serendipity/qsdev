@@ -1,0 +1,78 @@
+rules:
+  - id: qsdev.core.typescript.xss-nestjs-template-render
+    message: >-
+      User-controlled input from a NestJS parameter decorator is passed to a
+      template rendering context. If the template uses unescaped output (e.g.,
+      {{{variable}}} in Handlebars, <%- variable %> in EJS), this leads to XSS.
+      Ensure all user data is escaped in templates or sanitized before rendering.
+    languages: [typescript]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-79
+      owasp: A03:2021
+      category: security
+      subcategory: audit
+      confidence: LOW
+      impact: MEDIUM
+      likelihood: LOW
+      technology: [nestjs]
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Query(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Param(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Body(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Headers(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                @Render(...)
+                $METHOD(...) { ... }
+                ...
+              }
+          - pattern: |
+              return { ..., $KEY: $VALUE, ... }
+          - focus-metavariable: $VALUE
+      - patterns:
+          - pattern: "$RES.render($TEMPLATE, { ..., $KEY: $VALUE, ... })"
+          - focus-metavariable: $VALUE
+      - patterns:
+          - pattern-either:
+              - pattern: $RES.send("..." + $EXPR + ...)
+              - pattern: $RES.send(`...${$EXPR}...`)
+          - focus-metavariable: $EXPR
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: DOMPurify.sanitize(...)
+          - pattern: $SANITIZE.sanitize(...)
+          - pattern: escape(...)
+          - pattern: encodeURIComponent(...)

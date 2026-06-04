@@ -123,6 +123,76 @@ func TestTrialCmd_FailsWhenPathExists(t *testing.T) {
 	}
 }
 
+func TestValidateBranchName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		branch  string
+		wantErr bool
+	}{
+		{name: "valid simple", branch: "feature-branch", wantErr: false},
+		{name: "valid with slash", branch: "feature/branch", wantErr: false},
+		{name: "valid with dots", branch: "v1.2.3", wantErr: false},
+		{name: "valid with underscore", branch: "my_branch", wantErr: false},
+		{name: "valid alphanumeric", branch: "abc123", wantErr: false},
+		{name: "valid qsdev-trial", branch: "qsdev-trial", wantErr: false},
+		{name: "empty", branch: "", wantErr: true},
+		{name: "too long", branch: strings.Repeat("a", 251), wantErr: true},
+		{name: "max length ok", branch: strings.Repeat("a", 250), wantErr: false},
+		{name: "starts with dot", branch: ".hidden", wantErr: true},
+		{name: "starts with dash", branch: "-flag", wantErr: true},
+		{name: "starts with slash", branch: "/bad", wantErr: true},
+		{name: "contains space", branch: "my branch", wantErr: true},
+		{name: "contains double dot", branch: "a..b", wantErr: true},
+		{name: "contains tilde", branch: "a~1", wantErr: true},
+		{name: "contains caret", branch: "a^1", wantErr: true},
+		{name: "contains colon", branch: "a:b", wantErr: true},
+		{name: "ends with .lock", branch: "branch.lock", wantErr: true},
+		{name: "ends with slash", branch: "branch/", wantErr: true},
+		{name: "shell injection attempt", branch: "$(whoami)", wantErr: true},
+		{name: "semicolon injection", branch: "branch;rm -rf /", wantErr: true},
+		{name: "backtick injection", branch: "branch`id`", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateBranchName(tt.branch)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateBranchName(%q) error = %v, wantErr = %v", tt.branch, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestTrialCmd_RejectsInvalidBranchName(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatalf("setup .git: %v", err)
+	}
+
+	origDir, _ := os.Getwd()
+	defer func() { _ = os.Chdir(origDir) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	cmd := trialCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--branch", "$(whoami)", "--path", "/tmp/nonexistent-trial"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid branch name, got nil")
+	}
+	if !strings.Contains(err.Error(), "validating branch name") {
+		t.Errorf("error = %q, want it to contain 'validating branch name'", err.Error())
+	}
+}
+
 func TestIsGitRepo(t *testing.T) {
 	t.Run("directory with .git dir", func(t *testing.T) {
 		dir := t.TempDir()

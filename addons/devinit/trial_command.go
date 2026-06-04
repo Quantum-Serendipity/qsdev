@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -43,6 +45,26 @@ Happy with it? Merge the branch. Not for you? Delete the worktree.`,
 	return cmd
 }
 
+var validBranchRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/-]*$`)
+
+func validateBranchName(name string) error {
+	if len(name) == 0 {
+		return fmt.Errorf("branch name cannot be empty")
+	}
+	if len(name) > 250 {
+		return fmt.Errorf("branch name too long")
+	}
+	if !validBranchRe.MatchString(name) {
+		return fmt.Errorf("invalid branch name %q", name)
+	}
+	if strings.Contains(name, "..") || strings.Contains(name, "~") ||
+		strings.Contains(name, "^") || strings.Contains(name, ":") ||
+		strings.HasSuffix(name, ".lock") || strings.HasSuffix(name, "/") {
+		return fmt.Errorf("invalid branch name %q: contains forbidden sequence", name)
+	}
+	return nil
+}
+
 func runTrial(cmd *cobra.Command, opts TrialOptions) error {
 	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
@@ -68,6 +90,10 @@ func runTrial(cmd *cobra.Command, opts TrialOptions) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "  Branch:   %s\n", opts.Branch)
 		fmt.Fprintf(cmd.OutOrStdout(), "  Action:   %s init --yes --force\n", branding.Get().AppName)
 		return nil
+	}
+
+	if err := validateBranchName(opts.Branch); err != nil {
+		return fmt.Errorf("validating branch name: %w", err)
 	}
 
 	if _, err := os.Stat(worktreePath); err == nil {

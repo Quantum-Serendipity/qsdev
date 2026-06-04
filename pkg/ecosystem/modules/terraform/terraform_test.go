@@ -532,14 +532,6 @@ func TestTier(t *testing.T) {
 	}
 }
 
-func TestDevenvYamlInputs(t *testing.T) {
-	m := newModule()
-	inputs := m.DevenvYamlInputs(ecosystem.ModuleConfig{})
-	if inputs != nil {
-		t.Errorf("expected nil DevenvYamlInputs, got %v", inputs)
-	}
-}
-
 // --- helpers ---
 
 func containsEvidence(evidence []string, substr string) bool {

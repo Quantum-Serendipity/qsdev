@@ -125,12 +125,6 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	return b.String(), nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Java does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns generated security configuration files for Maven
 // and/or Gradle based on the detected build tool.
 func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {

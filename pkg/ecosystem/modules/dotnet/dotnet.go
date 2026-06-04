@@ -100,11 +100,6 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
   };`, pkg), nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml (none for .NET).
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns security-hardened configuration files for .NET.
 func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {
 	return []types.GeneratedFile{

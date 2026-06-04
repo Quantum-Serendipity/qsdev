@@ -140,12 +140,6 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	return b.String(), nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Python does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns generated security configuration files.
 // For pip, it generates a security-hardened pip.conf. For uv and poetry,
 // security is enforced via CI commands, so no config files are needed.

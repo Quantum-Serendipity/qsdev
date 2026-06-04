@@ -88,12 +88,6 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return b.String(), nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Clojure does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns generated security configuration files.
 // Clojure does not produce additional security config files.
 func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {

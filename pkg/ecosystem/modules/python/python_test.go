@@ -348,16 +348,6 @@ func TestDevenvNixFragment_CustomVersion(t *testing.T) {
 	assertNotContains(t, fragment, `version = "3.12"`)
 }
 
-// --- DevenvYamlInputs tests ---
-
-func TestDevenvYamlInputs(t *testing.T) {
-	m := &python.Module{}
-	inputs := m.DevenvYamlInputs(ecosystem.ModuleConfig{})
-	if inputs != nil {
-		t.Errorf("DevenvYamlInputs() = %v, want nil", inputs)
-	}
-}
-
 // --- SecurityConfigs tests ---
 
 func TestSecurityConfigs_Pip(t *testing.T) {

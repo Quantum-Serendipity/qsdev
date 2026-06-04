@@ -21,10 +21,6 @@ type EcosystemModule interface {
 	// DevenvNixFragment returns a Nix code fragment to include in devenv.nix.
 	DevenvNixFragment(config ModuleConfig) (string, error)
 
-	// DevenvYamlInputs returns additional flake inputs for devenv.yaml. Returning
-	// nil means this ecosystem needs no extra flake inputs.
-	DevenvYamlInputs(config ModuleConfig) []DevenvInput
-
 	// SecurityConfigs returns generated security configuration files
 	// (e.g. .npmrc, pip.conf, cargo config). Returning nil indicates no
 	// security configs are needed for this ecosystem.
@@ -69,4 +65,11 @@ type EcosystemModule interface {
 // not prefixed with "pkgs.".
 type PackageProvider interface {
 	DevenvPackages(config ModuleConfig) []string
+}
+
+// DevenvYamlInputProvider is an optional interface that ecosystem modules can
+// implement to contribute additional flake inputs to devenv.yaml. Modules that
+// do not need extra flake inputs simply omit this interface.
+type DevenvYamlInputProvider interface {
+	DevenvYamlInputs(config ModuleConfig) []DevenvInput
 }

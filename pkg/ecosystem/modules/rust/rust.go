@@ -87,11 +87,6 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
   };`, ecosystem.NixEscapeString(channel)), nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml (none for Rust).
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns security-hardened configuration files for Rust.
 func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {
 	var content strings.Builder

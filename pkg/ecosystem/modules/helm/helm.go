@@ -89,12 +89,6 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "", nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Helm does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns nil. OCI registry configuration is
 // infrastructure-profile dependent and not handled at the module level.
 func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {

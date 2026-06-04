@@ -77,12 +77,6 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "", nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Shell does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns nil. Shell has no package manager that requires
 // security configuration.
 func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {

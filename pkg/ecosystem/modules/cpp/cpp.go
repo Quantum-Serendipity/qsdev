@@ -146,12 +146,6 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "  languages.cplusplus.enable = true;\n", nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// C/C++ does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns generated security configuration files for the
 // detected C/C++ package manager.
 func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {

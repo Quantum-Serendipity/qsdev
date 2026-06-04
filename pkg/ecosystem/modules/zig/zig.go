@@ -79,12 +79,6 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "  languages.zig.enable = true;\n", nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Zig does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns generated security configuration files.
 // Zig's content-addressed build system (mandatory SHA256 hashes in
 // build.zig.zon) provides integrity by design, so no additional security
@@ -158,4 +152,3 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	return nil
 }
-

@@ -101,12 +101,6 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "  languages.dart.enable = true;\n", nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Dart does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns generated security configuration files.
 // pubspec.lock contains SHA256 hashes; no additional config files are needed.
 func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {

@@ -100,12 +100,6 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "", nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// PowerShell does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns generated security configuration files.
 // PSGallery has no age-gating and no install-script blocking, so no security
 // configuration files are generated.

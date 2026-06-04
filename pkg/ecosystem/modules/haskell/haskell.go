@@ -96,12 +96,6 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	return b.String(), nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Haskell does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns generated security configuration files.
 // Haskell does not produce additional security config files.
 func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {

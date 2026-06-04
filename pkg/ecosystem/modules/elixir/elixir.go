@@ -69,12 +69,6 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "  languages.elixir.enable = true;\n", nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Elixir does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns generated security configuration files.
 // Elixir relies on mix.lock for integrity; no additional config files are needed.
 func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {
@@ -156,4 +150,3 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	return []ecosystem.ManifestFileInfo{{Path: "mix.exs", Ecosystem: "hex", LockFile: "mix.lock", LockFilePolicy: ecosystem.LockFilePolicyRequired}}
 }
-

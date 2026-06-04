@@ -98,12 +98,6 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	return b.String(), nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Terraform/OpenTofu does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns a .terraformrc file with security-hardened settings.
 // The configuration disables Terraform checkpoint telemetry and optionally
 // configures a registry mirror for provider installations.

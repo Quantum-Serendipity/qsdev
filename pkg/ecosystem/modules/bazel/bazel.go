@@ -85,12 +85,6 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "", nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Bazel does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns a security-hardened .bazelrc configuration file.
 func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {
 	bazelrc := "# Security-hardened Bazel configuration.\n" +

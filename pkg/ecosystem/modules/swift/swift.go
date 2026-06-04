@@ -87,12 +87,6 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return b.String(), nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Swift does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns generated security configuration files.
 // Swift relies on Package.resolved for integrity; no additional config needed.
 func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {
@@ -171,4 +165,3 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	return []ecosystem.ManifestFileInfo{{Path: "Package.swift", Ecosystem: "spm", LockFile: "Package.resolved", LockFilePolicy: ecosystem.LockFilePolicyRecommended}}
 }
-

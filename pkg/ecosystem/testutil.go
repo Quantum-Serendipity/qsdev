@@ -42,7 +42,7 @@ func (m *MockModule) DevenvNixFragment(config ModuleConfig) (string, error) {
 	return m.DevenvNixFragmentVal, m.DevenvNixFragmentErr
 }
 
-func (m *MockModule) DevenvYamlInputs(config ModuleConfig) []DevenvInput {
+func (m *MockModule) DevenvYamlInputs(_ ModuleConfig) []DevenvInput {
 	return m.DevenvYamlInputsVal
 }
 

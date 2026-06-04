@@ -20,6 +20,7 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.SecretDeclarer = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
+var _ ecosystem.DevenvYamlInputProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})

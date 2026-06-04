@@ -831,16 +831,6 @@ func TestWizardFields(t *testing.T) {
 	}
 }
 
-// --- DevenvYamlInputs tests ---
-
-func TestDevenvYamlInputs(t *testing.T) {
-	m := &javascript.Module{}
-	inputs := m.DevenvYamlInputs(ecosystem.ModuleConfig{})
-	if inputs != nil {
-		t.Errorf("DevenvYamlInputs() = %v, want nil", inputs)
-	}
-}
-
 // --- Registration tests ---
 
 func TestRegistration(t *testing.T) {

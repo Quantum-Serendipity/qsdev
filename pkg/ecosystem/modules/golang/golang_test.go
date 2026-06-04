@@ -238,14 +238,6 @@ func TestDevenvNixFragment_RegistryProxyPreservesExisting(t *testing.T) {
 	}
 }
 
-func TestDevenvYamlInputs(t *testing.T) {
-	m := &golang.Module{}
-	inputs := m.DevenvYamlInputs(ecosystem.ModuleConfig{})
-	if inputs != nil {
-		t.Errorf("DevenvYamlInputs() = %v, want nil", inputs)
-	}
-}
-
 func TestSecurityConfigs(t *testing.T) {
 	m := &golang.Module{}
 	configs := m.SecurityConfigs(ecosystem.ModuleConfig{})

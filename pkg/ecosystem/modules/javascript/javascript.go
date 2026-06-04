@@ -139,12 +139,6 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	return b.String(), nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// JavaScript does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // PreCommitHooks returns pre-commit hook definitions for the JavaScript/TypeScript ecosystem.
 func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	return []ecosystem.HookConfig{

@@ -321,18 +321,6 @@ func TestDevenvNixFragment_DefaultVersion(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// DevenvYamlInputs test
-// ---------------------------------------------------------------------------
-
-func TestDevenvYamlInputs(t *testing.T) {
-	m := &java.Module{}
-	inputs := m.DevenvYamlInputs(ecosystem.ModuleConfig{})
-	if inputs != nil {
-		t.Errorf("DevenvYamlInputs() = %v, want nil", inputs)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // SecurityConfigs tests
 // ---------------------------------------------------------------------------
 

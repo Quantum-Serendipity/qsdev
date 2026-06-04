@@ -136,12 +136,6 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "  languages.r.enable = true;\n", nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// R does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns generated security configuration files.
 // CRAN has no signing mechanism, so no security configuration files are generated.
 func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {
@@ -209,4 +203,3 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	return nil
 }
-

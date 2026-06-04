@@ -99,12 +99,6 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	return b.String(), nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// PHP does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns a security-hardened Composer configuration file.
 func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {
 	type composerRepo struct {

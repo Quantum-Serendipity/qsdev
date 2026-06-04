@@ -39,7 +39,7 @@ func (a *Apt) IsInstalled(ctx context.Context, pkg string) bool {
 		return false
 	}
 	// dpkg -l output has "ii" prefix for installed packages.
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		if strings.HasPrefix(line, "ii") {
 			return true
 		}

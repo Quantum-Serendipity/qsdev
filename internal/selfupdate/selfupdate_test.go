@@ -39,6 +39,15 @@ func TestReleaseConstruction(t *testing.T) {
 	if r.Version != "1.2.3" {
 		t.Errorf("Version = %q, want %q", r.Version, "1.2.3")
 	}
+	if r.TagName != "v1.2.3" {
+		t.Errorf("TagName = %q, want %q", r.TagName, "v1.2.3")
+	}
+	if r.URL != "https://github.com/example/repo/releases/tag/v1.2.3" {
+		t.Errorf("URL = %q, want %q", r.URL, "https://github.com/example/repo/releases/tag/v1.2.3")
+	}
+	if r.Body != "Some release notes" {
+		t.Errorf("Body = %q, want %q", r.Body, "Some release notes")
+	}
 	if len(r.Assets) != 2 {
 		t.Errorf("len(Assets) = %d, want 2", len(r.Assets))
 	}

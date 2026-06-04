@@ -3,6 +3,7 @@ package perl_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -61,7 +62,7 @@ func TestDetect_Cpanfile(t *testing.T) {
 	if r.Confidence != ecosystem.ConfidenceCertain {
 		t.Errorf("Confidence = %v, want Certain", r.Confidence)
 	}
-	if !containsStr(r.Evidence, "cpanfile found") {
+	if !slices.Contains(r.Evidence, "cpanfile found") {
 		t.Errorf("Evidence = %v, want to contain %q", r.Evidence, "cpanfile found")
 	}
 }
@@ -131,15 +132,4 @@ func TestDevenvNixFragment(t *testing.T) {
 	if !strings.Contains(frag, "perl") {
 		t.Errorf("fragment missing perl reference:\n%s", frag)
 	}
-}
-
-// --- helpers ---
-
-func containsStr(ss []string, target string) bool {
-	for _, s := range ss {
-		if s == target {
-			return true
-		}
-	}
-	return false
 }

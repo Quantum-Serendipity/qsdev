@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -63,7 +64,7 @@ func TestDetect_Csproj(t *testing.T) {
 	if r.Confidence != ecosystem.ConfidenceCertain {
 		t.Errorf("Confidence = %v, want Certain", r.Confidence)
 	}
-	if !containsStr(r.Evidence, "*.csproj") {
+	if !slices.Contains(r.Evidence, "*.csproj") {
 		t.Errorf("Evidence = %v, want to contain %q", r.Evidence, "*.csproj")
 	}
 	if r.SuggestedConfig.PackageManager != "nuget" {
@@ -86,7 +87,7 @@ func TestDetect_Fsproj(t *testing.T) {
 	if r.Confidence != ecosystem.ConfidenceCertain {
 		t.Errorf("Confidence = %v, want Certain", r.Confidence)
 	}
-	if !containsStr(r.Evidence, "*.fsproj") {
+	if !slices.Contains(r.Evidence, "*.fsproj") {
 		t.Errorf("Evidence = %v, want to contain %q", r.Evidence, "*.fsproj")
 	}
 	if r.SuggestedConfig.Extras["has_fsharp"] != "true" {
@@ -109,7 +110,7 @@ func TestDetect_Sln(t *testing.T) {
 	if r.Confidence != ecosystem.ConfidenceCertain {
 		t.Errorf("Confidence = %v, want Certain", r.Confidence)
 	}
-	if !containsStr(r.Evidence, "*.sln") {
+	if !slices.Contains(r.Evidence, "*.sln") {
 		t.Errorf("Evidence = %v, want to contain %q", r.Evidence, "*.sln")
 	}
 }
@@ -129,7 +130,7 @@ func TestDetect_DirectoryBuildProps(t *testing.T) {
 	if r.Confidence != ecosystem.ConfidenceCertain {
 		t.Errorf("Confidence = %v, want Certain", r.Confidence)
 	}
-	if !containsStr(r.Evidence, "Directory.Build.props") {
+	if !slices.Contains(r.Evidence, "Directory.Build.props") {
 		t.Errorf("Evidence = %v, want to contain %q", r.Evidence, "Directory.Build.props")
 	}
 }
@@ -150,7 +151,7 @@ func TestDetect_GlobalJSON(t *testing.T) {
 	if r.Confidence != ecosystem.ConfidenceCertain {
 		t.Errorf("Confidence = %v, want Certain", r.Confidence)
 	}
-	if !containsStr(r.Evidence, "global.json") {
+	if !slices.Contains(r.Evidence, "global.json") {
 		t.Errorf("Evidence = %v, want to contain %q", r.Evidence, "global.json")
 	}
 	if r.SuggestedConfig.Version != "8" {
@@ -236,7 +237,7 @@ func TestDetect_MultipleIndicators(t *testing.T) {
 	// Should have evidence for all indicators.
 	expectedEvidence := []string{"*.csproj", "*.fsproj", "*.sln", "global.json"}
 	for _, ev := range expectedEvidence {
-		if !containsStr(r.Evidence, ev) {
+		if !slices.Contains(r.Evidence, ev) {
 			t.Errorf("Evidence = %v, missing %q", r.Evidence, ev)
 		}
 	}
@@ -366,7 +367,7 @@ func TestSecurityConfigs_NugetConfig(t *testing.T) {
 	}
 
 	// Verify it parses as valid XML.
-	if err := xml.Unmarshal(nugetConfig.Content, new(interface{})); err != nil {
+	if err := xml.Unmarshal(nugetConfig.Content, new(any)); err != nil {
 		t.Errorf("nuget.config is not valid XML: %v", err)
 	}
 
@@ -548,7 +549,7 @@ func TestSecurityConfigs_DirectoryBuildProps(t *testing.T) {
 	}
 
 	// Verify it parses as valid XML.
-	if err := xml.Unmarshal(buildProps.Content, new(interface{})); err != nil {
+	if err := xml.Unmarshal(buildProps.Content, new(any)); err != nil {
 		t.Errorf("Directory.Build.props is not valid XML: %v", err)
 	}
 
@@ -728,7 +729,7 @@ func TestSecurityConfigs_NugetConfig_RegistryProxyPreservesExisting(t *testing.T
 	}
 
 	// Verify it still parses as valid XML.
-	if err := xml.Unmarshal(nugetConfig.Content, new(interface{})); err != nil {
+	if err := xml.Unmarshal(nugetConfig.Content, new(any)); err != nil {
 		t.Errorf("nuget.config with proxy is not valid XML: %v", err)
 	}
 }
@@ -894,15 +895,4 @@ func TestDevenvYamlInputs_ReturnsNil(t *testing.T) {
 	if inputs != nil {
 		t.Errorf("DevenvYamlInputs() = %v, want nil", inputs)
 	}
-}
-
-// --- helpers ---
-
-func containsStr(ss []string, target string) bool {
-	for _, s := range ss {
-		if s == target {
-			return true
-		}
-	}
-	return false
 }

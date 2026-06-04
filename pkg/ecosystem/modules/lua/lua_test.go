@@ -3,6 +3,7 @@ package lua_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -61,7 +62,7 @@ func TestDetect_Rockspec(t *testing.T) {
 	if r.Confidence != ecosystem.ConfidenceCertain {
 		t.Errorf("Confidence = %v, want Certain", r.Confidence)
 	}
-	if !containsStr(r.Evidence, "*.rockspec files found") {
+	if !slices.Contains(r.Evidence, "*.rockspec files found") {
 		t.Errorf("Evidence = %v, want to contain %q", r.Evidence, "*.rockspec files found")
 	}
 }
@@ -134,15 +135,4 @@ func TestDevenvNixFragment(t *testing.T) {
 	if !strings.Contains(frag, "lua") {
 		t.Errorf("fragment missing lua reference:\n%s", frag)
 	}
-}
-
-// --- helpers ---
-
-func containsStr(ss []string, target string) bool {
-	for _, s := range ss {
-		if s == target {
-			return true
-		}
-	}
-	return false
 }

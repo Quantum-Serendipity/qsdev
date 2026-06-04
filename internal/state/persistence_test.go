@@ -161,7 +161,7 @@ func TestSavedYAMLStructure(t *testing.T) {
 	}
 
 	// Verify it can be parsed as raw YAML with expected structure.
-	var raw2 map[string]interface{}
+	var raw2 map[string]any
 	if err := yaml.Unmarshal(raw, &raw2); err != nil {
 		t.Fatalf("re-parsing saved YAML: %v", err)
 	}

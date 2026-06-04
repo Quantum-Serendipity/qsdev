@@ -267,7 +267,7 @@ func parseToolchainToml(path string) string {
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		if matches := channelRegexp.FindStringSubmatch(line); len(matches) == 2 {
 			return matches[1]
 		}

@@ -133,7 +133,7 @@ func DetectCapabilities(ctx context.Context, prober Prober, info *RuntimeInfo) (
 
 	// NFS detection: parse /proc/mounts for nfs/nfs4 entries.
 	if data, err := prober.ReadFile("/proc/mounts"); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
+		for line := range strings.SplitSeq(string(data), "\n") {
 			fields := strings.Fields(line)
 			if len(fields) >= 3 {
 				fsType := fields[2]
@@ -149,7 +149,7 @@ func DetectCapabilities(ctx context.Context, prober Prober, info *RuntimeInfo) (
 	username := prober.CurrentUser()
 	if username != "" {
 		if data, err := prober.ReadFile("/etc/subuid"); err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
+			for line := range strings.SplitSeq(string(data), "\n") {
 				if strings.HasPrefix(line, username+":") {
 					caps.UserNamespaceConfigured = true
 					break

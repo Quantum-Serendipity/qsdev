@@ -2,6 +2,7 @@ package claudecode_test
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
@@ -32,12 +33,7 @@ func mustUnmarshalSettings(t *testing.T, gf *types.GeneratedFile) claudecode.Set
 
 // containsRule checks whether a string slice contains the given rule.
 func containsRule(rules []string, rule string) bool {
-	for _, r := range rules {
-		if r == rule {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(rules, rule)
 }
 
 func TestGenerateSettings_MinimalPreset(t *testing.T) {
@@ -522,7 +518,7 @@ func TestGenerateSettings_ValidJSONRoundTrip(t *testing.T) {
 	gf := mustGenerateSettings(t, answers, reg, claudecode.WithSandbox(true))
 
 	// Unmarshal into generic map to verify JSON validity.
-	var generic map[string]interface{}
+	var generic map[string]any
 	if err := json.Unmarshal(gf.Content, &generic); err != nil {
 		t.Fatalf("JSON unmarshal to generic map failed: %v", err)
 	}

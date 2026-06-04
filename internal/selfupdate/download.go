@@ -182,7 +182,7 @@ func verifyChecksum(archivePath, archiveName, checksumsPath string) error {
 // findChecksum parses a checksums.txt file and returns the hash for the
 // given filename. The expected format is "hash  filename" per line.
 func findChecksum(checksums, filename string) (string, error) {
-	for _, line := range strings.Split(checksums, "\n") {
+	for line := range strings.SplitSeq(checksums, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

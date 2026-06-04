@@ -49,21 +49,6 @@ func generateVersionSentinelFiles(answers types.WizardAnswers, registry *ecosyst
 }
 
 func collectManifestCoverage(answers types.WizardAnswers, registry *ecosystem.Registry) ecosystem.ManifestCoverageReport {
-	var modules []ecosystem.EcosystemModule
-	configFor := func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
-		for _, lang := range answers.Languages {
-			if lang.Name == mod.Name() {
-				return ecosystem.ToModuleConfig(lang)
-			}
-		}
-		return ecosystem.ModuleConfig{}
-	}
-
-	for _, lang := range answers.Languages {
-		if mod, ok := registry.ByName(lang.Name); ok {
-			modules = append(modules, mod)
-		}
-	}
-
+	modules, configFor := resolveLanguageModules(answers, registry)
 	return ecosystem.AggregateManifestCoverage(modules, configFor)
 }

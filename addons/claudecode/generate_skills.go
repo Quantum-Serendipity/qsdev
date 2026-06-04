@@ -3,8 +3,6 @@ package claudecode
 import (
 	"fmt"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -24,17 +22,7 @@ type SkillEntry struct {
 
 // loadManifest reads and parses the skill manifest from the embedded filesystem.
 func loadManifest() (*SkillManifest, error) {
-	data, err := templateFS.ReadFile("templates/skills/manifest.yaml")
-	if err != nil {
-		return nil, fmt.Errorf("reading skill manifest: %w", err)
-	}
-
-	var manifest SkillManifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		return nil, fmt.Errorf("parsing skill manifest: %w", err)
-	}
-
-	return &manifest, nil
+	return loadYAMLManifest[SkillManifest]("templates/skills/manifest.yaml")
 }
 
 // deploySkills reads the selected skill files from the embedded filesystem and

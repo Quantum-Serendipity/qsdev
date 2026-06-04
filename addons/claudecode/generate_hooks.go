@@ -1,110 +1,78 @@
 package claudecode
 
 import (
-	"fmt"
-
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // GenerateHookFiles returns GeneratedFile entries for all enabled hook presets.
 func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
+	specs := []hookFileSpec{
+		{
+			enabled:      answers.Hooks.SafetyBlock,
+			templatePath: "templates/hooks/package-guard.py",
+			outputPath:   ".claude/hooks/package-guard.py",
+			mode:         0o755,
+			strategy:     types.Overwrite,
+			owner:        "attach-guard",
+		},
+		{
+			enabled:      answers.Hooks.CredentialScan,
+			templatePath: "templates/hooks/scan-secrets.py",
+			outputPath:   ".claude/hooks/scan-secrets.py",
+			mode:         0o755,
+			strategy:     types.Overwrite,
+			owner:        "credential-scan",
+		},
+		{
+			enabled:      answers.Hooks.DestructivePrevention,
+			templatePath: "templates/hooks/block-destructive.py",
+			outputPath:   ".claude/hooks/block-destructive.py",
+			mode:         0o755,
+			strategy:     types.Overwrite,
+			owner:        "destructive-prevention",
+		},
+		{
+			enabled:      answers.Hooks.FileBoundary,
+			templatePath: "templates/hooks/file-boundary.py",
+			outputPath:   ".claude/hooks/file-boundary.py",
+			mode:         0o755,
+			strategy:     types.Overwrite,
+			owner:        "file-boundary",
+		},
+		{
+			enabled:      answers.Hooks.ToolGates,
+			templatePath: "templates/hooks/tool-gates.py",
+			outputPath:   ".claude/hooks/tool-gates.py",
+			mode:         0o755,
+			strategy:     types.Overwrite,
+			owner:        "tool-gates",
+		},
+		{
+			enabled:      answers.Hooks.SOC2Audit,
+			templatePath: "templates/hooks/soc2-audit-log.py",
+			outputPath:   ".claude/hooks/soc2-audit-log.py",
+			mode:         0o755,
+			strategy:     types.Overwrite,
+			owner:        "soc2-audit",
+		},
+		{
+			enabled:      answers.Hooks.AuditLog && !answers.Hooks.SOC2Audit,
+			templatePath: "templates/hooks/audit-log.sh",
+			outputPath:   ".claude/hooks/audit-log.sh",
+			mode:         0o755,
+			strategy:     types.Overwrite,
+		},
+	}
+
 	var files []types.GeneratedFile
-
-	if answers.Hooks.SafetyBlock {
-		content, err := templateFS.ReadFile("templates/hooks/package-guard.py")
+	for _, spec := range specs {
+		f, err := generateHookFile(spec)
 		if err != nil {
-			return nil, fmt.Errorf("reading package-guard hook: %w", err)
+			return nil, err
 		}
-		files = append(files, types.GeneratedFile{
-			Path:     ".claude/hooks/package-guard.py",
-			Content:  content,
-			Mode:     0o755,
-			Strategy: types.Overwrite,
-			Owner:    "attach-guard",
-		})
-	}
-
-	if answers.Hooks.CredentialScan {
-		content, err := templateFS.ReadFile("templates/hooks/scan-secrets.py")
-		if err != nil {
-			return nil, fmt.Errorf("reading credential scan hook: %w", err)
+		if f != nil {
+			files = append(files, *f)
 		}
-		files = append(files, types.GeneratedFile{
-			Path:     ".claude/hooks/scan-secrets.py",
-			Content:  content,
-			Mode:     0o755,
-			Strategy: types.Overwrite,
-			Owner:    "credential-scan",
-		})
-	}
-
-	if answers.Hooks.DestructivePrevention {
-		content, err := templateFS.ReadFile("templates/hooks/block-destructive.py")
-		if err != nil {
-			return nil, fmt.Errorf("reading destructive prevention hook: %w", err)
-		}
-		files = append(files, types.GeneratedFile{
-			Path:     ".claude/hooks/block-destructive.py",
-			Content:  content,
-			Mode:     0o755,
-			Strategy: types.Overwrite,
-			Owner:    "destructive-prevention",
-		})
-	}
-
-	if answers.Hooks.FileBoundary {
-		content, err := templateFS.ReadFile("templates/hooks/file-boundary.py")
-		if err != nil {
-			return nil, fmt.Errorf("reading file boundary hook: %w", err)
-		}
-		files = append(files, types.GeneratedFile{
-			Path:     ".claude/hooks/file-boundary.py",
-			Content:  content,
-			Mode:     0o755,
-			Strategy: types.Overwrite,
-			Owner:    "file-boundary",
-		})
-	}
-
-	if answers.Hooks.ToolGates {
-		content, err := templateFS.ReadFile("templates/hooks/tool-gates.py")
-		if err != nil {
-			return nil, fmt.Errorf("reading tool gates hook: %w", err)
-		}
-		files = append(files, types.GeneratedFile{
-			Path:     ".claude/hooks/tool-gates.py",
-			Content:  content,
-			Mode:     0o755,
-			Strategy: types.Overwrite,
-			Owner:    "tool-gates",
-		})
-	}
-
-	if answers.Hooks.SOC2Audit {
-		content, err := templateFS.ReadFile("templates/hooks/soc2-audit-log.py")
-		if err != nil {
-			return nil, fmt.Errorf("reading SOC 2 audit hook: %w", err)
-		}
-		files = append(files, types.GeneratedFile{
-			Path:     ".claude/hooks/soc2-audit-log.py",
-			Content:  content,
-			Mode:     0o755,
-			Strategy: types.Overwrite,
-			Owner:    "soc2-audit",
-		})
-	}
-
-	if answers.Hooks.AuditLog && !answers.Hooks.SOC2Audit {
-		content, err := templateFS.ReadFile("templates/hooks/audit-log.sh")
-		if err != nil {
-			return nil, fmt.Errorf("reading audit-log hook: %w", err)
-		}
-		files = append(files, types.GeneratedFile{
-			Path:     ".claude/hooks/audit-log.sh",
-			Content:  content,
-			Mode:     0o755,
-			Strategy: types.Overwrite,
-		})
 	}
 
 	return files, nil

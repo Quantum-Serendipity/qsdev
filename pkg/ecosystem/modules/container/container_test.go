@@ -14,6 +14,7 @@ import (
 
 // Compile-time interface compliance.
 var _ ecosystem.EcosystemModule = (*container.Module)(nil)
+var _ ecosystem.PackageProvider = (*container.Module)(nil)
 
 func newModule() *container.Module {
 	return &container.Module{}
@@ -162,20 +163,73 @@ func TestDetect_Empty(t *testing.T) {
 	}
 }
 
+// ---------- DevenvPackages ----------
+
+func TestDevenvPackages_Docker(t *testing.T) {
+	t.Parallel()
+	cfg := ecosystem.ModuleConfig{
+		Extras: map[string]string{"container_runtime": "docker"},
+	}
+	pkgs := newModule().DevenvPackages(cfg)
+	want := []string{"docker", "hadolint", "dive"}
+	if len(pkgs) != len(want) {
+		t.Fatalf("DevenvPackages(docker) = %v, want %v", pkgs, want)
+	}
+	for i, w := range want {
+		if pkgs[i] != w {
+			t.Errorf("DevenvPackages(docker)[%d] = %q, want %q", i, pkgs[i], w)
+		}
+	}
+}
+
+func TestDevenvPackages_Podman(t *testing.T) {
+	t.Parallel()
+	for _, rt := range []string{"podman-rootless", "podman-rootful"} {
+		t.Run(rt, func(t *testing.T) {
+			t.Parallel()
+			cfg := ecosystem.ModuleConfig{
+				Extras: map[string]string{"container_runtime": rt},
+			}
+			pkgs := newModule().DevenvPackages(cfg)
+			want := []string{"podman", "podman-compose", "buildah", "skopeo", "hadolint", "dive"}
+			if len(pkgs) != len(want) {
+				t.Fatalf("DevenvPackages(%s) = %v, want %v", rt, pkgs, want)
+			}
+			for i, w := range want {
+				if pkgs[i] != w {
+					t.Errorf("DevenvPackages(%s)[%d] = %q, want %q", rt, i, pkgs[i], w)
+				}
+			}
+		})
+	}
+}
+
+func TestDevenvPackages_NoRuntime(t *testing.T) {
+	t.Parallel()
+	pkgs := newModule().DevenvPackages(ecosystem.ModuleConfig{})
+	// Default should be docker packages.
+	want := []string{"docker", "hadolint", "dive"}
+	if len(pkgs) != len(want) {
+		t.Fatalf("DevenvPackages(default) = %v, want %v", pkgs, want)
+	}
+	for i, w := range want {
+		if pkgs[i] != w {
+			t.Errorf("DevenvPackages(default)[%d] = %q, want %q", i, pkgs[i], w)
+		}
+	}
+}
+
 // ---------- DevenvNixFragment ----------
 
 func TestDevenvNixFragment(t *testing.T) {
+	t.Parallel()
 	frag, err := newModule().DevenvNixFragment(ecosystem.ModuleConfig{})
 	if err != nil {
 		t.Fatalf("DevenvNixFragment error: %v", err)
 	}
-	for _, pkg := range []string{"docker", "hadolint", "dive"} {
-		if !strings.Contains(frag, pkg) {
-			t.Errorf("fragment missing package %q", pkg)
-		}
-	}
-	if !strings.Contains(frag, "packages = with pkgs;") {
-		t.Error("fragment missing 'packages = with pkgs;' preamble")
+	// Default (docker) fragment should be empty — packages are via DevenvPackages.
+	if frag != "" {
+		t.Errorf("default fragment should be empty, got %q", frag)
 	}
 }
 
@@ -428,13 +482,9 @@ func TestDevenvNixFragment_DockerRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DevenvNixFragment error: %v", err)
 	}
-	for _, pkg := range []string{"docker", "hadolint", "dive"} {
-		if !strings.Contains(frag, pkg) {
-			t.Errorf("fragment missing package %q", pkg)
-		}
-	}
-	if strings.Contains(frag, "podman") {
-		t.Error("Docker runtime fragment should not contain podman")
+	// Docker fragment should be empty — packages provided via DevenvPackages.
+	if frag != "" {
+		t.Errorf("Docker runtime fragment should be empty, got %q", frag)
 	}
 }
 
@@ -447,16 +497,12 @@ func TestDevenvNixFragment_PodmanRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DevenvNixFragment error: %v", err)
 	}
-	for _, pkg := range []string{"podman", "podman-compose", "buildah", "skopeo", "hadolint", "dive"} {
-		if !strings.Contains(frag, pkg) {
-			t.Errorf("fragment missing package %q", pkg)
-		}
-	}
 	if !strings.Contains(frag, "DOCKER_HOST") {
 		t.Error("Podman fragment should set DOCKER_HOST env var")
 	}
-	if strings.Contains(frag, "    docker\n") {
-		t.Error("Podman runtime fragment should not contain docker package")
+	// Fragment should NOT contain packages — those are in DevenvPackages.
+	if strings.Contains(frag, "packages") {
+		t.Error("Podman fragment should not contain packages block")
 	}
 }
 
@@ -466,12 +512,9 @@ func TestDevenvNixFragment_NoRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DevenvNixFragment error: %v", err)
 	}
-	// Should fall through to docker (backward compat).
-	if !strings.Contains(frag, "docker") {
-		t.Error("no-runtime fragment should default to docker packages")
-	}
-	if strings.Contains(frag, "podman") {
-		t.Error("no-runtime fragment should not contain podman")
+	// Default (docker) fragment should be empty.
+	if frag != "" {
+		t.Errorf("no-runtime fragment should be empty, got %q", frag)
 	}
 }
 

@@ -12,8 +12,9 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.PackageProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -73,10 +74,15 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 }
 
+// DevenvPackages returns the Nix packages required for the Bazel ecosystem.
+func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
+	return []string{"bazel_7", "buildifier"}
+}
+
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for Bazel support. Bazel uses packages rather than a languages.bazel setting.
+// for Bazel support. Packages are provided via DevenvPackages.
 func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
-	return "  packages = with pkgs; [ bazel_7 buildifier ];\n", nil
+	return "", nil
 }
 
 // DevenvYamlInputs returns additional flake inputs for devenv.yaml.
@@ -179,4 +185,3 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	return nil
 }
-

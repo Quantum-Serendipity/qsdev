@@ -17,6 +17,7 @@ import (
 
 // Compile-time interface compliance check.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.PackageProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -85,18 +86,19 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 }
 
-// DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for Dart language support. When Flutter is detected, the Flutter package
-// is added as well.
-func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
-	var b strings.Builder
-	b.WriteString("  languages.dart.enable = true;\n")
-
+// DevenvPackages returns Nix packages required by the Dart module.
+// Flutter projects get the flutter package.
+func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
 	if config.Extras["flutter"] == "true" {
-		b.WriteString("  packages = [ pkgs.flutter ];\n")
+		return []string{"flutter"}
 	}
+	return nil
+}
 
-	return b.String(), nil
+// DevenvNixFragment returns the Nix code fragment to include in devenv.nix
+// for Dart language support.
+func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
+	return "  languages.dart.enable = true;\n", nil
 }
 
 // DevenvYamlInputs returns additional flake inputs for devenv.yaml.
@@ -193,4 +195,3 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	return []ecosystem.ManifestFileInfo{{Path: "pubspec.yaml", Ecosystem: "pub", LockFile: "pubspec.lock", LockFilePolicy: ecosystem.LockFilePolicyRequired}}
 }
-

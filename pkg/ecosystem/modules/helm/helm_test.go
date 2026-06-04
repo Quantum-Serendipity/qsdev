@@ -10,8 +10,9 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/helm"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*helm.Module)(nil)
+var _ ecosystem.PackageProvider = (*helm.Module)(nil)
 
 func TestName(t *testing.T) {
 	m := &helm.Module{}
@@ -121,6 +122,21 @@ func TestDetect_EmptyDir(t *testing.T) {
 	}
 }
 
+func TestDevenvPackages(t *testing.T) {
+	m := &helm.Module{}
+	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{})
+
+	expected := []string{"kubernetes-helm", "kubeconform"}
+	if len(pkgs) != len(expected) {
+		t.Fatalf("DevenvPackages() returned %d packages, want %d", len(pkgs), len(expected))
+	}
+	for i, pkg := range pkgs {
+		if pkg != expected[i] {
+			t.Errorf("DevenvPackages()[%d] = %q, want %q", i, pkg, expected[i])
+		}
+	}
+}
+
 func TestDevenvNixFragment(t *testing.T) {
 	m := &helm.Module{}
 	fragment, err := m.DevenvNixFragment(ecosystem.ModuleConfig{})
@@ -128,19 +144,8 @@ func TestDevenvNixFragment(t *testing.T) {
 		t.Fatalf("DevenvNixFragment() returned error: %v", err)
 	}
 
-	if fragment == "" {
-		t.Fatal("DevenvNixFragment() returned empty string")
-	}
-
-	requiredStrings := []string{
-		"kubernetes-helm",
-		"kubeconform",
-		"packages",
-	}
-	for _, s := range requiredStrings {
-		if !strings.Contains(fragment, s) {
-			t.Errorf("DevenvNixFragment() missing %q\ngot:\n%s", s, fragment)
-		}
+	if fragment != "" {
+		t.Errorf("DevenvNixFragment() = %q, want empty string (packages moved to DevenvPackages)", fragment)
 	}
 }
 

@@ -117,10 +117,12 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 			return nil, fmt.Errorf("generating Nix fragment for %s: %w", lang.Name, err)
 		}
 
-		data.LanguageFragments = append(data.LanguageFragments, LanguageFragment{
-			DisplayName: mod.DisplayName(),
-			NixFragment: fragment,
-		})
+		if strings.TrimSpace(fragment) != "" {
+			data.LanguageFragments = append(data.LanguageFragments, LanguageFragment{
+				DisplayName: mod.DisplayName(),
+				NixFragment: fragment,
+			})
+		}
 
 		// Collect hooks from each module.
 		for _, hook := range mod.PreCommitHooks(cfg) {

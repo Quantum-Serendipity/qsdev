@@ -22,6 +22,7 @@ import (
 
 // Compile-time interface compliance check.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.PackageProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -113,6 +114,20 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 }
 
+// DevenvPackages returns Nix packages required by the Scala module.
+// Mill projects need the mill package; sbt projects get sbt via the
+// languages.scala.sbt.enable fragment.
+func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
+	buildTool := config.Extras["build_tool"]
+	if buildTool == "" {
+		buildTool = "sbt"
+	}
+	if buildTool == "mill" {
+		return []string{"mill"}
+	}
+	return nil
+}
+
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for Scala language support with the appropriate JDK and build tool.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
@@ -136,11 +151,6 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 		b.WriteString("    sbt.enable = true;\n")
 	}
 	b.WriteString("  };\n")
-
-	if buildTool == "mill" {
-		b.WriteString("\n")
-		b.WriteString("  packages = [ pkgs.mill ];\n")
-	}
 
 	b.WriteString("\n")
 	b.WriteString("  languages.java = {\n")

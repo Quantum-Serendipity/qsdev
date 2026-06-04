@@ -18,6 +18,7 @@ func newModule() *bazel.Module {
 
 func TestInterfaceCompliance(t *testing.T) {
 	var _ ecosystem.EcosystemModule = (*bazel.Module)(nil)
+	var _ ecosystem.PackageProvider = (*bazel.Module)(nil)
 }
 
 // --- Basic metadata ---
@@ -82,16 +83,33 @@ func TestDetect_NotPresent(t *testing.T) {
 	}
 }
 
+// --- DevenvPackages tests ---
+
+func TestDevenvPackages(t *testing.T) {
+	m := newModule()
+	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{})
+
+	expected := []string{"bazel_7", "buildifier"}
+	if len(pkgs) != len(expected) {
+		t.Fatalf("DevenvPackages() returned %d packages, want %d", len(pkgs), len(expected))
+	}
+	for i, pkg := range pkgs {
+		if pkg != expected[i] {
+			t.Errorf("DevenvPackages()[%d] = %q, want %q", i, pkg, expected[i])
+		}
+	}
+}
+
 // --- DevenvNixFragment tests ---
 
-func TestDevenvNixFragment_NonEmpty(t *testing.T) {
+func TestDevenvNixFragment_Empty(t *testing.T) {
 	m := newModule()
 	frag, err := m.DevenvNixFragment(ecosystem.ModuleConfig{})
 	if err != nil {
 		t.Fatalf("DevenvNixFragment() error: %v", err)
 	}
-	if frag == "" {
-		t.Error("DevenvNixFragment() returned empty string")
+	if frag != "" {
+		t.Errorf("DevenvNixFragment() = %q, want empty string (packages moved to DevenvPackages)", frag)
 	}
 }
 

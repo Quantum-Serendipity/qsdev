@@ -19,6 +19,7 @@ import (
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.SecretDeclarer = (*Module)(nil)
+var _ ecosystem.PackageProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -106,33 +107,30 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 }
 
-// DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for container tooling. Podman runtimes get podman/buildah/skopeo; Docker
-// runtimes get docker. Both get hadolint and dive.
-func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
+// DevenvPackages returns the Nix packages required for the configured
+// container runtime. Docker gets docker/hadolint/dive; Podman gets
+// podman/podman-compose/buildah/skopeo/hadolint/dive.
+func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
 	rt := config.Extras["container_runtime"]
-
-	var b strings.Builder
 	switch rt {
 	case "podman-rootless", "podman-rootful":
-		b.WriteString("  packages = with pkgs; [\n")
-		b.WriteString("    podman\n")
-		b.WriteString("    podman-compose\n")
-		b.WriteString("    buildah\n")
-		b.WriteString("    skopeo\n")
-		b.WriteString("    hadolint\n")
-		b.WriteString("    dive\n")
-		b.WriteString("  ];\n")
-		b.WriteString("\n")
-		b.WriteString("  env.DOCKER_HOST = \"unix://${XDG_RUNTIME_DIR:-/run/user/1000}/podman/podman.sock\";\n")
+		return []string{"podman", "podman-compose", "buildah", "skopeo", "hadolint", "dive"}
 	default: // "docker" or empty — backward compatible
-		b.WriteString("  packages = with pkgs; [\n")
-		b.WriteString("    docker\n")
-		b.WriteString("    hadolint\n")
-		b.WriteString("    dive\n")
-		b.WriteString("  ];\n")
+		return []string{"docker", "hadolint", "dive"}
 	}
-	return b.String(), nil
+}
+
+// DevenvNixFragment returns the Nix code fragment to include in devenv.nix
+// for container tooling. Podman runtimes set env.DOCKER_HOST; Docker runtimes
+// produce an empty fragment (packages are provided via DevenvPackages).
+func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
+	rt := config.Extras["container_runtime"]
+	switch rt {
+	case "podman-rootless", "podman-rootful":
+		return "  env.DOCKER_HOST = \"unix://${XDG_RUNTIME_DIR:-/run/user/1000}/podman/podman.sock\";\n", nil
+	default:
+		return "", nil
+	}
 }
 
 // DevenvYamlInputs returns additional flake inputs for devenv.yaml.

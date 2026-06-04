@@ -86,6 +86,9 @@ func createPolyglotFixture(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte("{\"name\":\"test\",\"version\":\"1.0.0\"}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM alpine:3.19\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return dir
 }
 
@@ -515,6 +518,33 @@ func TestIntegration_PolyglotDetection(t *testing.T) {
 	requireFileExists(t, dir, "devenv.nix")
 	requireFileContains(t, dir, "devenv.nix", "languages.go")
 	requireFileContains(t, dir, "devenv.nix", "languages.javascript")
+}
+
+func TestIntegration_PolyglotDetection_NoDuplicatePackages(t *testing.T) {
+	dir := createPolyglotFixture(t)
+	output, err := executeInitCmd(t, dir, "--yes", "--force")
+	if err != nil {
+		t.Fatalf("init failed: %v\nOutput: %s", err, output)
+	}
+
+	devenvNix := readFileContent(t, dir, "devenv.nix")
+
+	count := strings.Count(devenvNix, "packages =")
+	if count != 1 {
+		t.Errorf("devenv.nix has %d 'packages =' occurrences, want exactly 1:\n%s", count, devenvNix)
+	}
+
+	for _, pkg := range []string{"docker", "hadolint", "dive"} {
+		if !strings.Contains(devenvNix, pkg) {
+			t.Errorf("devenv.nix missing container package %q", pkg)
+		}
+	}
+	if !strings.Contains(devenvNix, "languages.go") {
+		t.Error("devenv.nix missing Go language configuration")
+	}
+	if !strings.Contains(devenvNix, "languages.javascript") {
+		t.Error("devenv.nix missing JavaScript language configuration")
+	}
 }
 
 func TestIntegration_CrossFileConsistency_Go(t *testing.T) {

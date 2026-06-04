@@ -441,8 +441,8 @@ func TestDefaultQsdevConfig(t *testing.T) {
 	if cfg.Security.ScriptBlocking == nil || !*cfg.Security.ScriptBlocking {
 		t.Error("Security.ScriptBlocking should be true")
 	}
-	if cfg.Security.LockEnforce == nil || !*cfg.Security.LockEnforce {
-		t.Error("Security.LockEnforce should be true")
+	if cfg.Security.LockEnforcement == nil || !*cfg.Security.LockEnforcement {
+		t.Error("Security.LockEnforcement should be true")
 	}
 	if cfg.Security.VulnScanning == nil || !*cfg.Security.VulnScanning {
 		t.Error("Security.VulnScanning should be true")
@@ -490,7 +490,7 @@ func TestValidateQsdevConfig_ProfileValidation(t *testing.T) {
 
 func TestValidateQsdevConfig_QsdevVersionValidation(t *testing.T) {
 	cfg := &types.QsdevConfig{
-		Version:     1,
+		Version:      1,
 		QsdevVersion: "not a valid constraint !!!",
 	}
 

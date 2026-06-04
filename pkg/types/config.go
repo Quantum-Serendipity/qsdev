@@ -40,11 +40,11 @@ type ServiceConfig struct {
 
 // SecurityConfig holds security posture settings in .qsdev.yaml.
 type SecurityConfig struct {
-	Level          string `yaml:"level,omitempty"`
-	AgeGating      *bool  `yaml:"age_gating,omitempty"`
-	ScriptBlocking *bool  `yaml:"script_blocking,omitempty"`
-	LockEnforce    *bool  `yaml:"lock_enforcement,omitempty"`
-	VulnScanning   *bool  `yaml:"vuln_scanning,omitempty"`
+	Level           string `yaml:"level,omitempty"`
+	AgeGating       *bool  `yaml:"age_gating,omitempty"`
+	ScriptBlocking  *bool  `yaml:"script_blocking,omitempty"`
+	LockEnforcement *bool  `yaml:"lock_enforcement,omitempty"`
+	VulnScanning    *bool  `yaml:"vuln_scanning,omitempty"`
 }
 
 // ToolsConfig controls which optional tools are enabled/disabled in .qsdev.yaml.

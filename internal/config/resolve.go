@@ -106,7 +106,7 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 	// Security boolean pointers: pointer bool merge.
 	result.Security.AgeGating = mergePointerBool(base.Security.AgeGating, overlay.Security.AgeGating)
 	result.Security.ScriptBlocking = mergePointerBool(base.Security.ScriptBlocking, overlay.Security.ScriptBlocking)
-	result.Security.LockEnforce = mergePointerBool(base.Security.LockEnforce, overlay.Security.LockEnforce)
+	result.Security.LockEnforcement = mergePointerBool(base.Security.LockEnforcement, overlay.Security.LockEnforcement)
 	result.Security.VulnScanning = mergePointerBool(base.Security.VulnScanning, overlay.Security.VulnScanning)
 
 	// Tools.Enabled: union.
@@ -219,7 +219,7 @@ func enforceSecurityFloor(resolved, project *types.QsdevConfig) []FloorViolation
 	// Cannot set security bools to false when project set them to true.
 	violations = append(violations, enforceBoolFloor(&resolved.Security.AgeGating, project.Security.AgeGating, "security.age_gating")...)
 	violations = append(violations, enforceBoolFloor(&resolved.Security.ScriptBlocking, project.Security.ScriptBlocking, "security.script_blocking")...)
-	violations = append(violations, enforceBoolFloor(&resolved.Security.LockEnforce, project.Security.LockEnforce, "security.lock_enforcement")...)
+	violations = append(violations, enforceBoolFloor(&resolved.Security.LockEnforcement, project.Security.LockEnforcement, "security.lock_enforcement")...)
 	violations = append(violations, enforceBoolFloor(&resolved.Security.VulnScanning, project.Security.VulnScanning, "security.vuln_scanning")...)
 
 	// Client blocked MCP: union-only, never removed.
@@ -316,11 +316,11 @@ func cloneQsdevConfig(cfg *types.QsdevConfig) *types.QsdevConfig {
 		Tier:         cfg.Tier,
 		Profile:      cfg.Profile,
 		Security: types.SecurityConfig{
-			Level:          cfg.Security.Level,
-			AgeGating:      cloneBoolPtr(cfg.Security.AgeGating),
-			ScriptBlocking: cloneBoolPtr(cfg.Security.ScriptBlocking),
-			LockEnforce:    cloneBoolPtr(cfg.Security.LockEnforce),
-			VulnScanning:   cloneBoolPtr(cfg.Security.VulnScanning),
+			Level:           cfg.Security.Level,
+			AgeGating:       cloneBoolPtr(cfg.Security.AgeGating),
+			ScriptBlocking:  cloneBoolPtr(cfg.Security.ScriptBlocking),
+			LockEnforcement: cloneBoolPtr(cfg.Security.LockEnforcement),
+			VulnScanning:    cloneBoolPtr(cfg.Security.VulnScanning),
 		},
 		ClaudeCode: types.ClaudeCodeConfig{
 			Enabled:         cloneBoolPtr(cfg.ClaudeCode.Enabled),

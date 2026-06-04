@@ -101,11 +101,11 @@ func ComplianceLevelToConfig(level string) *types.QsdevConfig {
 	t := true
 	return &types.QsdevConfig{
 		Security: types.SecurityConfig{
-			Level:          level,
-			AgeGating:      &t,
-			ScriptBlocking: boolPtr(profile.ScriptBlocking),
-			LockEnforce:    &t,
-			VulnScanning:   &t,
+			Level:           level,
+			AgeGating:       &t,
+			ScriptBlocking:  boolPtr(profile.ScriptBlocking),
+			LockEnforcement: &t,
+			VulnScanning:    &t,
 		},
 		Tools: types.ToolsConfig{
 			Enabled: profile.RequiredPreCommitHooks,

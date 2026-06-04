@@ -186,12 +186,18 @@ func runEdit(cmd *cobra.Command) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "Created %s\n", path)
 	}
 
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vi"
+	editorEnv := os.Getenv("EDITOR")
+	if editorEnv == "" {
+		editorEnv = "vi"
 	}
+	editorParts := strings.Fields(editorEnv)
+	editorBin := editorParts[0]
+	if _, err := exec.LookPath(editorBin); err != nil {
+		return fmt.Errorf("editor %q not found in PATH: %w", editorBin, err)
+	}
+	editorArgs := append(editorParts[1:], path)
 
-	editorCmd := exec.Command(editor, path)
+	editorCmd := exec.Command(editorBin, editorArgs...)
 	editorCmd.Stdin = os.Stdin
 	editorCmd.Stdout = os.Stdout
 	editorCmd.Stderr = os.Stderr

@@ -84,7 +84,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 // for Haskell language support. When Stack is the build tool, Stack integration
 // is also enabled.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
-	buildTool := resolveBuildTool(config)
+	buildTool := config.Extra("build_tool", "cabal")
 
 	var b strings.Builder
 	b.WriteString("  languages.haskell.enable = true;\n")
@@ -138,7 +138,7 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 // CICommands returns CI pipeline commands for the Haskell ecosystem.
 // Commands vary based on the configured build tool.
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
-	buildTool := resolveBuildTool(config)
+	buildTool := config.Extra("build_tool", "cabal")
 
 	if buildTool == "stack" {
 		return []ecosystem.CICommand{
@@ -206,14 +206,3 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	return []ecosystem.ManifestFileInfo{{Path: "*.cabal", Ecosystem: "cabal", LockFile: "cabal.project.freeze", LockFilePolicy: ecosystem.LockFilePolicyRecommended}}
 }
-
-// resolveBuildTool reads the build_tool from config.Extras, defaulting to "cabal".
-func resolveBuildTool(config ecosystem.ModuleConfig) string {
-	if config.Extras != nil {
-		if bt, ok := config.Extras["build_tool"]; ok && bt != "" {
-			return bt
-		}
-	}
-	return "cabal"
-}
-

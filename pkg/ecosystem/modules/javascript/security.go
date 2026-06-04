@@ -14,10 +14,7 @@ import (
 // detected (or user-selected) package manager. Only one PM-specific config
 // is generated per invocation.
 func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {
-	pm := config.PackageManager
-	if pm == "" {
-		pm = "npm"
-	}
+	pm := config.PM("npm")
 
 	switch pm {
 	case "npm":

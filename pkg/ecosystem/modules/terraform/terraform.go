@@ -83,7 +83,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for Terraform or OpenTofu language support.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
-	variant := resolveVariant(config)
+	variant := config.Extra("variant", "terraform")
 
 	var b strings.Builder
 	b.WriteString("  languages.")
@@ -144,7 +144,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 // PreCommitHooks returns pre-commit hook definitions for the Terraform/OpenTofu
 // ecosystem, including format checking, validation, linting, and security scanning.
 func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookConfig {
-	variant := resolveVariant(config)
+	variant := config.Extra("variant", "terraform")
 	binary := binaryName(variant)
 
 	return []ecosystem.HookConfig{
@@ -199,7 +199,7 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 // For Terraform, rules deny direct terraform init and apply without plan.
 // For OpenTofu, rules cover both the tofu and terraform binaries.
 func (m *Module) DenyRules(config ecosystem.ModuleConfig) []string {
-	variant := resolveVariant(config)
+	variant := config.Extra("variant", "terraform")
 
 	rules := []string{
 		"Bash(terraform init *)",
@@ -221,7 +221,7 @@ func (m *Module) DenyRules(config ecosystem.ModuleConfig) []string {
 // CICommands returns CI pipeline commands for Terraform/OpenTofu,
 // covering initialization, validation, planning, linting, and security scanning.
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
-	variant := resolveVariant(config)
+	variant := config.Extra("variant", "terraform")
 	binary := binaryName(variant)
 
 	return []ecosystem.CICommand{
@@ -336,16 +336,6 @@ func (m *Module) SecretDeclarations(_ ecosystem.ModuleConfig) []ecosystem.Secret
 
 // --- helpers ---
 
-// resolveVariant extracts the variant from config extras, defaulting to "terraform".
-func resolveVariant(config ecosystem.ModuleConfig) string {
-	if config.Extras != nil {
-		if v, ok := config.Extras["variant"]; ok && v != "" {
-			return v
-		}
-	}
-	return "terraform"
-}
-
 // binaryName returns the CLI binary name for the given variant.
 func binaryName(variant string) string {
 	if variant == "opentofu" {
@@ -358,4 +348,3 @@ func binaryName(variant string) string {
 func (m *Module) SemgrepRuleSets() []string {
 	return []string{"p/terraform", "p/terraform-aws"}
 }
-

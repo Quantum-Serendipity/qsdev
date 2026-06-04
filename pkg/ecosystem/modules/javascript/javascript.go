@@ -107,10 +107,7 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	major := extractMajorVersion(config.Version)
 	nodePkg := nodeNixPackage(major)
 
-	pm := config.PackageManager
-	if pm == "" {
-		pm = "npm"
-	}
+	pm := config.PM("npm")
 
 	var b strings.Builder
 	b.WriteString("  languages.javascript = {\n")
@@ -195,10 +192,7 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 // CICommands returns CI pipeline commands for the JavaScript/TypeScript ecosystem.
 // The frozen install command depends on the detected package manager.
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
-	pm := config.PackageManager
-	if pm == "" {
-		pm = "npm"
-	}
+	pm := config.PM("npm")
 
 	var installCmd string
 	switch pm {
@@ -291,10 +285,7 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 
 // VerificationCommands returns project verification commands for the JavaScript/TypeScript ecosystem.
 func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.VerificationCommands {
-	pm := config.PackageManager
-	if pm == "" {
-		pm = "npm"
-	}
+	pm := config.PM("npm")
 	vc := ecosystem.VerificationCommands{
 		Build:  []string{pm + " run build"},
 		Test:   []string{pm + " test"},
@@ -309,10 +300,7 @@ func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.V
 
 // ManifestFiles returns manifest file metadata for the JavaScript/TypeScript ecosystem.
 func (m *Module) ManifestFiles(config ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
-	pm := config.PackageManager
-	if pm == "" {
-		pm = "npm"
-	}
+	pm := config.PM("npm")
 	info := ecosystem.ManifestFileInfo{
 		Path:           "package.json",
 		Ecosystem:      pm,

@@ -120,10 +120,7 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 		version = "3.12"
 	}
 
-	pm := config.PackageManager
-	if pm == "" {
-		pm = "pip"
-	}
+	pm := config.PM("pip")
 
 	var b strings.Builder
 	b.WriteString("  languages.python = {\n")
@@ -152,10 +149,7 @@ func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvIn
 // For pip, it generates a security-hardened pip.conf. For uv and poetry,
 // security is enforced via CI commands, so no config files are needed.
 func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {
-	pm := config.PackageManager
-	if pm == "" {
-		pm = "pip"
-	}
+	pm := config.PM("pip")
 
 	if pm != "pip" {
 		return nil
@@ -239,10 +233,7 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 // CICommands returns CI pipeline commands for the Python ecosystem.
 // Commands vary based on the configured package manager.
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
-	pm := config.PackageManager
-	if pm == "" {
-		pm = "pip"
-	}
+	pm := config.PM("pip")
 
 	var cmds []ecosystem.CICommand
 
@@ -356,10 +347,7 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 
 // ManifestFiles returns manifest file metadata for the Python ecosystem.
 func (m *Module) ManifestFiles(config ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
-	pm := config.PackageManager
-	if pm == "" {
-		pm = "pip"
-	}
+	pm := config.PM("pip")
 	var manifests []ecosystem.ManifestFileInfo
 	switch pm {
 	case "pip":

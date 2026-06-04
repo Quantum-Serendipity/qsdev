@@ -60,6 +60,25 @@ type ModuleConfig struct {
 	RegistryProxy  string            `yaml:"registry_proxy"  json:"registry_proxy"`
 }
 
+// PM returns the configured PackageManager, falling back to defaultPM if empty.
+func (c ModuleConfig) PM(defaultPM string) string {
+	if c.PackageManager != "" {
+		return c.PackageManager
+	}
+	return defaultPM
+}
+
+// Extra returns the value of the given Extras key, falling back to defaultVal
+// if the key is absent, empty, or Extras is nil.
+func (c ModuleConfig) Extra(key, defaultVal string) string {
+	if c.Extras != nil {
+		if v, ok := c.Extras[key]; ok && v != "" {
+			return v
+		}
+	}
+	return defaultVal
+}
+
 // DevenvInput represents a devenv.sh input (flake reference) to be added
 // to devenv.yaml.
 type DevenvInput struct {

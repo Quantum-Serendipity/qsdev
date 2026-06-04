@@ -12,6 +12,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
@@ -247,7 +248,7 @@ func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot st
 
 	if opts.Yes {
 		answers.Confirmed = true
-		answers.FillDefaults(detected)
+		answers.FillDefaults(detected, catalog.MustDefault())
 	}
 
 	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())

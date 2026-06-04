@@ -327,7 +327,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 			HasPyProject:   true,
 			PythonVersion:  "3.12",
 		}
-		a.FillDefaults(detected)
+		a.FillDefaults(detected, catalog.MustDefault())
 
 		if len(a.Languages) != 3 {
 			t.Fatalf("expected 3 languages, got %d: %+v", len(a.Languages), a.Languages)
@@ -351,7 +351,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 			HasGoMod:  true,
 			GoVersion: "1.24",
 		}
-		a.FillDefaults(detected)
+		a.FillDefaults(detected, catalog.MustDefault())
 
 		if len(a.Languages) != 1 {
 			t.Fatalf("expected 1 language (preserved), got %d", len(a.Languages))
@@ -363,7 +363,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 
 	t.Run("fills default permission level for claude code", func(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: true}
-		a.FillDefaults(types.DetectedProject{})
+		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
 		if a.PermissionLevel != "standard" {
 			t.Errorf("expected permission level 'standard', got %q", a.PermissionLevel)
@@ -372,7 +372,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 
 	t.Run("preserves existing permission level", func(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: true, PermissionLevel: "minimal"}
-		a.FillDefaults(types.DetectedProject{})
+		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
 		if a.PermissionLevel != "minimal" {
 			t.Errorf("expected permission level 'minimal', got %q", a.PermissionLevel)
@@ -381,7 +381,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 
 	t.Run("fills default hooks for claude code", func(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: true}
-		a.FillDefaults(types.DetectedProject{})
+		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
 		if !a.Hooks.SafetyBlock {
 			t.Error("expected SafetyBlock to be true")
@@ -393,7 +393,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 			ClaudeCode: true,
 			Hooks:      types.HookChoices{AutoFormat: true},
 		}
-		a.FillDefaults(types.DetectedProject{})
+		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
 		if a.Hooks.SafetyBlock {
 			t.Error("expected SafetyBlock to remain false when other hooks are set")
@@ -412,7 +412,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 			HasDockerfile: true,
 			HasTerraform:  true,
 		}
-		a.FillDefaults(detected)
+		a.FillDefaults(detected, catalog.MustDefault())
 
 		if len(a.Languages) != 5 {
 			t.Fatalf("expected 5 languages, got %d: %+v", len(a.Languages), a.Languages)
@@ -435,7 +435,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 			ContainerRuntime: "podman-rootless",
 			OSFamily:         "nixos",
 		}
-		a.FillDefaults(detected)
+		a.FillDefaults(detected, catalog.MustDefault())
 
 		var containerLC *types.LanguageChoice
 		for i := range a.Languages {
@@ -467,7 +467,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 
 	t.Run("no default permission level when claude disabled", func(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: false}
-		a.FillDefaults(types.DetectedProject{})
+		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
 		if a.PermissionLevel != "" {
 			t.Errorf("expected empty permission level when claude disabled, got %q", a.PermissionLevel)
@@ -478,7 +478,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 		a := types.WizardAnswers{
 			Languages: []types.LanguageChoice{{Name: "go"}},
 		}
-		a.FillDefaults(types.DetectedProject{HasGoMod: true, GoVersion: "1.26.3"})
+		a.FillDefaults(types.DetectedProject{HasGoMod: true, GoVersion: "1.26.3"}, catalog.MustDefault())
 
 		if a.Languages[0].Version != "1.26.3" {
 			t.Errorf("expected Go version 1.26.3 from detection, got %q", a.Languages[0].Version)
@@ -489,7 +489,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 		a := types.WizardAnswers{
 			Languages: []types.LanguageChoice{{Name: "go", Version: "1.24"}},
 		}
-		a.FillDefaults(types.DetectedProject{HasGoMod: true, GoVersion: "1.26.3"})
+		a.FillDefaults(types.DetectedProject{HasGoMod: true, GoVersion: "1.26.3"}, catalog.MustDefault())
 
 		if a.Languages[0].Version != "1.24" {
 			t.Errorf("expected explicit Go version 1.24 preserved, got %q", a.Languages[0].Version)
@@ -500,7 +500,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 		a := types.WizardAnswers{
 			Languages: []types.LanguageChoice{{Name: "javascript"}},
 		}
-		a.FillDefaults(types.DetectedProject{HasPackageJSON: true, NodeVersion: "22", PackageManager: "pnpm"})
+		a.FillDefaults(types.DetectedProject{HasPackageJSON: true, NodeVersion: "22", PackageManager: "pnpm"}, catalog.MustDefault())
 
 		if a.Languages[0].Version != "22" {
 			t.Errorf("expected JS version 22 from detection, got %q", a.Languages[0].Version)
@@ -512,7 +512,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 
 	t.Run("derives ComplianceLevel from Tier full", func(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: true, Tier: "full"}
-		a.FillDefaults(types.DetectedProject{})
+		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
 		if a.ComplianceLevel != "strict" {
 			t.Errorf("expected ComplianceLevel 'strict' for full tier, got %q", a.ComplianceLevel)
@@ -521,7 +521,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 
 	t.Run("derives ComplianceLevel from Tier standard", func(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: true, Tier: "standard"}
-		a.FillDefaults(types.DetectedProject{})
+		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
 		if a.ComplianceLevel != "enhanced" {
 			t.Errorf("expected ComplianceLevel 'enhanced' for standard tier, got %q", a.ComplianceLevel)
@@ -530,7 +530,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 
 	t.Run("preserves explicit ComplianceLevel over Tier", func(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: true, Tier: "full", ComplianceLevel: "strict"}
-		a.FillDefaults(types.DetectedProject{})
+		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
 		if a.ComplianceLevel != "strict" {
 			t.Errorf("expected explicit ComplianceLevel 'strict' preserved, got %q", a.ComplianceLevel)
@@ -539,7 +539,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 
 	t.Run("derives EnabledTools from Tier full", func(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: true, Tier: "full"}
-		a.FillDefaults(types.DetectedProject{})
+		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
 		for _, tool := range []string{"semgrep", "gitleaks", "secretspec"} {
 			if !a.EnabledTools[tool] {
@@ -554,7 +554,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 			Tier:         "full",
 			EnabledTools: map[string]bool{"custom": true},
 		}
-		a.FillDefaults(types.DetectedProject{})
+		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
 		if !a.EnabledTools["custom"] {
 			t.Error("expected existing EnabledTools[\"custom\"] preserved")
@@ -566,7 +566,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 
 	t.Run("catalog-backed agent tool defaults", func(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: true, Tier: "full"}
-		a.FillDefaults(types.DetectedProject{})
+		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
 		cat := catalog.MustDefault()
 		defaults := cat.DefaultAgentToolConfig()
@@ -590,7 +590,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 
 	t.Run("catalog-backed MCP server defaults", func(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: true, Tier: "full"}
-		a.FillDefaults(types.DetectedProject{})
+		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
 		want := catalog.MustDefault().DefaultMCPServers()
 		if !reflect.DeepEqual(a.MCPServers, want) {
@@ -605,7 +605,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 				continue // early return path, tested separately
 			}
 			a := types.WizardAnswers{ClaudeCode: true, Tier: tier}
-			a.FillDefaults(types.DetectedProject{})
+			a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 			if a.ComplianceLevel != wantLevel {
 				t.Errorf("Tier %q: ComplianceLevel = %q, want %q", tier, a.ComplianceLevel, wantLevel)
 			}
@@ -619,7 +619,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 				continue // early return path, tested separately
 			}
 			a := types.WizardAnswers{ClaudeCode: true, Tier: tier}
-			a.FillDefaults(types.DetectedProject{})
+			a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 			for _, tool := range wantTools {
 				if !a.EnabledTools[tool] {
 					t.Errorf("Tier %q: EnabledTools missing %q", tier, tool)
@@ -633,7 +633,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 
 	t.Run("supply-chain-only early return skips catalog agent defaults", func(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: true, Tier: "supply-chain-only"}
-		a.FillDefaults(types.DetectedProject{})
+		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
 		if len(a.MCPServers) != 0 {
 			t.Errorf("supply-chain-only should skip MCP defaults, got %v", a.MCPServers)

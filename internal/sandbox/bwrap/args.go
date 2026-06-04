@@ -20,6 +20,14 @@ func BuildArgs(cfg *sandbox.SandboxConfig, _ sandbox.DegradationTier) ([]string,
 		if err := ValidateMountPath(m.Source); err != nil {
 			return nil, fmt.Errorf("validating mount source: %w", err)
 		}
+		if err := ValidateMountPath(m.Target); err != nil {
+			return nil, fmt.Errorf("validating mount target: %w", err)
+		}
+	}
+	for _, p := range cfg.NixStorePaths {
+		if err := ValidateMountPath(p); err != nil {
+			return nil, fmt.Errorf("validating nix store path: %w", err)
+		}
 	}
 
 	var args []string

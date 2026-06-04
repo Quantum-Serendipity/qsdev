@@ -2,33 +2,18 @@ package policy
 
 import (
 	"log/slog"
-	"os"
-	"path/filepath"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
 )
 
 // DefaultPolicy returns a PolicySpec with sensible security defaults suitable
 // for most projects. Credential directories are denied, network is blocked,
 // and the five standard hook categories are pre-configured.
 func DefaultPolicy() *PolicySpec {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "/home/unknown"
-	}
-
 	return &PolicySpec{
 		Filesystem: FilesystemPolicy{
-			Deny: []string{
-				filepath.Join(home, ".ssh"),
-				filepath.Join(home, ".gnupg"),
-				filepath.Join(home, ".aws"),
-				filepath.Join(home, ".azure"),
-				filepath.Join(home, ".config", "gcloud"),
-				filepath.Join(home, ".kube"),
-				filepath.Join(home, ".docker", "config.json"),
-				filepath.Join(home, ".netrc"),
-			},
+			Deny: denylist.AllDenyPaths(),
 		},
 		Network: NetworkPolicySpec{
 			Mode:    "deny",

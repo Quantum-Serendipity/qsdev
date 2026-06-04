@@ -43,6 +43,11 @@ func TestValidateMountDecl(t *testing.T) {
 			wantErr: "root filesystem",
 		},
 		{
+			name:    "root filesystem target",
+			mount:   MountDecl{Source: "/data", Target: "/", ReadOnly: true},
+			wantErr: "root filesystem",
+		},
+		{
 			name:    "deny /etc/shadow source",
 			mount:   MountDecl{Source: "/etc/shadow", Target: "/tmp/shadow", ReadOnly: true},
 			wantErr: "overlaps sensitive path",

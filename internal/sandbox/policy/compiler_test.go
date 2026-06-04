@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
 )
 
 func TestDefaultPolicy_HasAllCategories(t *testing.T) {
@@ -65,12 +66,23 @@ func TestDefaultPolicy_DenyPaths(t *testing.T) {
 	}
 
 	for _, suffix := range expectedSuffixes {
-		t.Run(suffix, func(t *testing.T) {
+		t.Run("home/"+suffix, func(t *testing.T) {
 			t.Parallel()
 
 			full := filepath.Join(home, suffix)
 			if !denied[full] {
 				t.Errorf("expected %q in deny list", full)
+			}
+		})
+	}
+
+	// System-sensitive paths must also be present.
+	for _, syspath := range denylist.SystemDenyPaths() {
+		t.Run("system"+syspath, func(t *testing.T) {
+			t.Parallel()
+
+			if !denied[syspath] {
+				t.Errorf("expected system path %q in deny list", syspath)
 			}
 		})
 	}

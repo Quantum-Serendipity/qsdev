@@ -149,6 +149,25 @@ func TestBuildArgs(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "valid nix store paths pass validation",
+			cfg: sandbox.SandboxConfig{
+				ProjectDir:    "/home/user/project",
+				HookCategory:  sandbox.CategoryLinter,
+				Network:       sandbox.NetworkPolicy{Mode: "deny"},
+				NixStorePaths: []string{"/nix/store/abc-go", "/nix/store/def-node"},
+			},
+			tier: sandbox.TierFull,
+			check: func(t *testing.T, args []string) {
+				t.Helper()
+				for _, p := range []string{"/nix/store/abc-go", "/nix/store/def-node"} {
+					want := []string{"--ro-bind", p, p}
+					if !containsSequence(args, want) {
+						t.Errorf("expected --ro-bind for nix path %s", p)
+					}
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -160,6 +179,74 @@ func TestBuildArgs(t *testing.T) {
 			}
 			tt.check(t, args)
 		})
+	}
+}
+
+func TestBuildArgs_RejectsDeniedMountTarget(t *testing.T) {
+	t.Parallel()
+
+	cfg := sandbox.SandboxConfig{
+		ProjectDir:   "/home/user/project",
+		HookCategory: sandbox.CategoryFormatter,
+		Network:      sandbox.NetworkPolicy{Mode: "deny"},
+		Mounts: []sandbox.MountSpec{
+			{Source: "/data/safe", Target: "/etc/shadow", ReadOnly: true},
+		},
+	}
+
+	_, err := BuildArgs(&cfg, sandbox.TierFull)
+	if err == nil {
+		t.Error("expected error for denied mount target /etc/shadow, got nil")
+	}
+}
+
+func TestBuildArgs_RejectsDeniedMountSource(t *testing.T) {
+	t.Parallel()
+
+	cfg := sandbox.SandboxConfig{
+		ProjectDir:   "/home/user/project",
+		HookCategory: sandbox.CategoryFormatter,
+		Network:      sandbox.NetworkPolicy{Mode: "deny"},
+		Mounts: []sandbox.MountSpec{
+			{Source: "/etc/shadow", Target: "/mnt/shadow", ReadOnly: true},
+		},
+	}
+
+	_, err := BuildArgs(&cfg, sandbox.TierFull)
+	if err == nil {
+		t.Error("expected error for denied mount source /etc/shadow, got nil")
+	}
+}
+
+func TestBuildArgs_RejectsDeniedNixStorePath(t *testing.T) {
+	t.Parallel()
+
+	cfg := sandbox.SandboxConfig{
+		ProjectDir:    "/home/user/project",
+		HookCategory:  sandbox.CategoryLinter,
+		Network:       sandbox.NetworkPolicy{Mode: "deny"},
+		NixStorePaths: []string{"/etc/shadow"},
+	}
+
+	_, err := BuildArgs(&cfg, sandbox.TierFull)
+	if err == nil {
+		t.Error("expected error for denied nix store path /etc/shadow, got nil")
+	}
+}
+
+func TestBuildArgs_RejectsRelativeNixStorePath(t *testing.T) {
+	t.Parallel()
+
+	cfg := sandbox.SandboxConfig{
+		ProjectDir:    "/home/user/project",
+		HookCategory:  sandbox.CategoryLinter,
+		Network:       sandbox.NetworkPolicy{Mode: "deny"},
+		NixStorePaths: []string{"relative/path"},
+	}
+
+	_, err := BuildArgs(&cfg, sandbox.TierFull)
+	if err == nil {
+		t.Error("expected error for relative nix store path, got nil")
 	}
 }
 

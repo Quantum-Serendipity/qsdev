@@ -47,13 +47,10 @@ func ElevatedExec(ctx context.Context, name string, args ...string) error {
 }
 
 // escapePowerShellArg escapes a string for safe use inside a PowerShell
-// single-quoted string literal. Handles single quotes and metacharacters
-// that could enable command injection (backticks, dollar signs).
+// single-quoted string literal. In PowerShell, single-quoted strings are
+// literal — only the single quote itself needs escaping (doubled: ”).
 func escapePowerShellArg(s string) string {
-	s = strings.ReplaceAll(s, "'", "''")
-	s = strings.ReplaceAll(s, "`", "``")
-	s = strings.ReplaceAll(s, "$", "`$")
-	return s
+	return strings.ReplaceAll(s, "'", "''")
 }
 
 // BatchElevatedInstall runs a single elevated package install command

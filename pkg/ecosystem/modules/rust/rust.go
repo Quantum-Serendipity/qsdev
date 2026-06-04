@@ -84,7 +84,7 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
     enable = true;
     channel = "%s";
     components = [ "rustfmt" "clippy" ];
-  };`, channel), nil
+  };`, ecosystem.NixEscapeString(channel)), nil
 }
 
 // DevenvYamlInputs returns additional flake inputs for devenv.yaml (none for Rust).
@@ -109,7 +109,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 		content.WriteString("\n[source.crates-io]\n")
 		content.WriteString("replace-with = \"corporate-proxy\"\n")
 		content.WriteString("\n[source.corporate-proxy]\n")
-		fmt.Fprintf(&content, "registry = \"%s\"\n", config.RegistryProxy)
+		fmt.Fprintf(&content, "registry = \"%s\"\n", ecosystem.TOMLEscapeString(config.RegistryProxy))
 	}
 
 	if config.Extra("build_cache", "") == "sccache" {

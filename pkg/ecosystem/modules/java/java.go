@@ -457,7 +457,7 @@ func buildInitGradle(proxyURL string) string {
 	b.WriteString("            }\n")
 	b.WriteString("        }\n")
 	b.WriteString("        maven {\n")
-	fmt.Fprintf(&b, "            url '%s'\n", proxyURL)
+	fmt.Fprintf(&b, "            url '%s'\n", ecosystem.GradleEscapeString(proxyURL))
 	b.WriteString("        }\n")
 	b.WriteString("    }\n")
 	b.WriteString("}\n")

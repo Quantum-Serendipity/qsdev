@@ -167,7 +167,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 	b.WriteString("\n")
 	b.WriteString("[global]\n")
 	if config.RegistryProxy != "" {
-		fmt.Fprintf(&b, "index-url = %s\n", config.RegistryProxy)
+		fmt.Fprintf(&b, "index-url = %s\n", ecosystem.INIEscapeValue(config.RegistryProxy))
 	}
 	b.WriteString("require-hashes = true\n")
 	b.WriteString("only-binary = :all:\n")

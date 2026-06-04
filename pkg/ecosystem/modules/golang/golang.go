@@ -79,7 +79,7 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	b.WriteString("  # Enforce module-aware mode — prevents unvetted dependency additions\n")
 	b.WriteString("  env.GOFLAGS = \"-mod=readonly\";\n")
 	if config.RegistryProxy != "" {
-		fmt.Fprintf(&b, "  env.GOPROXY = \"%s,direct\";\n", config.RegistryProxy)
+		fmt.Fprintf(&b, "  env.GOPROXY = \"%s,direct\";\n", ecosystem.NixEscapeString(config.RegistryProxy))
 	}
 	b.WriteString("  # Ensure all modules are verified via the Go checksum database\n")
 	b.WriteString("  env.GONOSUMCHECK = \"\";\n")

@@ -39,7 +39,7 @@ func npmSecurityConfig(registryProxy string) types.GeneratedFile {
 	b.WriteString("# Requires: npm >= 11.10.0 for min-release-age support (Feb 2026)\n")
 	b.WriteString("\n")
 	if registryProxy != "" {
-		fmt.Fprintf(&b, "registry=%s\n", registryProxy)
+		fmt.Fprintf(&b, "registry=%s\n", ecosystem.INIEscapeValue(registryProxy))
 	}
 	b.WriteString("# Pin exact versions to prevent unexpected updates\n")
 	b.WriteString("save-exact=true\n")

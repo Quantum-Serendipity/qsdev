@@ -1,4 +1,5 @@
 //go:build ignore
+
 package vulnerable
 
 import (
@@ -24,8 +25,7 @@ func SearchUsersHandler(db *sql.DB) http.HandlerFunc {
 			var id int
 			var email string
 			_ = rows.Scan(&id, &email)
-			fmt.Fprintf(w, "id=%d email=%s
-", id, email)
+			fmt.Fprintf(w, "id=%d email=%s\n", id, email)
 		}
 	}
 }

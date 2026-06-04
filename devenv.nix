@@ -50,8 +50,14 @@
     shellcheck.enable = true;
     statix.enable = true;
     # Enhanced hooks (language-aware, from ecosystem modules)
-    gofmt.enable = true;
-    govet.enable = true;
+    gofmt = {
+      enable = true;
+      excludes = [ "rules/core/testdata/" ];
+    };
+    govet = {
+      enable = true;
+      excludes = [ "rules/core/testdata/" ];
+    };
     # Specialized hooks (custom definitions)
     staticcheck = {
       enable = true;

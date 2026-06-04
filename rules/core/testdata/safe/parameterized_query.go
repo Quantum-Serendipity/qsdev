@@ -1,4 +1,5 @@
 //go:build ignore
+
 package safe
 
 import (
@@ -24,8 +25,7 @@ func SearchUsersHandler(db *sql.DB) http.HandlerFunc {
 			var id int
 			var email string
 			_ = rows.Scan(&id, &email)
-			fmt.Fprintf(w, "id=%d email=%s
-", id, email)
+			fmt.Fprintf(w, "id=%d email=%s\n", id, email)
 		}
 	}
 }
@@ -47,7 +47,6 @@ func GetUserByIDHandler(db *sql.DB) http.HandlerFunc {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		fmt.Fprintf(w, "email=%s
-", email)
+		fmt.Fprintf(w, "email=%s\n", email)
 	}
 }

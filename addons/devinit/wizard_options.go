@@ -224,6 +224,18 @@ func lockfileForPM(pm string) string {
 	}
 }
 
+// DetectedEcosystemCount returns the number of ecosystems that were detected
+// in the given project scan results.
+func DetectedEcosystemCount(detected types.DetectedProject) int {
+	count := 0
+	for _, lang := range allLanguages {
+		if DetectionAnnotation(lang.Value, detected) != "" {
+			count++
+		}
+	}
+	return count
+}
+
 // PreSelectedLanguages returns the list of language values that should be
 // pre-selected in the wizard based on detection results.
 func PreSelectedLanguages(detected types.DetectedProject) []string {
@@ -249,7 +261,10 @@ func QuickPathSummary(defaults types.WizardAnswers) string {
 		parts = append(parts, label)
 	}
 
-	// Always include devenv.sh since that's the core of the tool
+	for _, svc := range defaults.Services {
+		parts = append(parts, serviceLabel(svc.Name))
+	}
+
 	parts = append(parts, "devenv.sh")
 
 	if defaults.Direnv {

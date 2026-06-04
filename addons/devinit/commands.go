@@ -3,9 +3,11 @@ package devinit
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
@@ -216,9 +218,18 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	// i2. Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
 	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
 
+	// i3. In non-interactive mode, bail if answers are incomplete.
+	if opts.Yes && !answers.IsComplete() {
+		missing := incompleteAnswersMessage(answers)
+		return fmt.Errorf("non-interactive mode (--yes) requires complete answers; missing:\n%s\nProvide --lang, --profile, or run in a project with detectable language files", missing)
+	}
+
 	// j. Run wizard for missing answers.
 	if !answers.IsComplete() && !opts.Yes {
-		wizardAnswers, err := RunWizard(projectRoot, detected, answers, flagSet)
+		if !term.IsTerminal(os.Stdin.Fd()) {
+			return fmt.Errorf("stdin is not a terminal; use --yes or --profile for non-interactive mode")
+		}
+		wizardAnswers, err := RunWizard(projectRoot, detected, answers, flagSet, opts.Theme)
 		if err != nil {
 			return fmt.Errorf("running wizard: %w", err)
 		}
@@ -264,6 +275,10 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	})
 	if err != nil {
 		return fmt.Errorf("writing files: %w", err)
+	}
+
+	if missing := generate.VerifyWritten(result, projectRoot); len(missing) > 0 {
+		slog.Warn("post-generation verification: some files not found on disk", "missing", missing)
 	}
 
 	// p. Save state immediately after write, recording only successfully
@@ -336,8 +351,10 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	}
 
 	// t. Print summary + post-generation message.
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
-	_, _ = fmt.Fprint(cmd.OutOrStdout(), postGenerationMessage(answers, devenvGenerated, claudeGenerated))
+	if !opts.Quiet {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
+		_, _ = fmt.Fprint(cmd.OutOrStdout(), postGenerationMessage(answers, devenvGenerated, claudeGenerated))
+	}
 
 	return nil
 }

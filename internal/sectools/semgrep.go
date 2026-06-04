@@ -12,35 +12,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// defaultSemgrepExcludes lists paths excluded from Semgrep scanning.
-// Covers vendored deps, build output, caches, and virtual environments
-// across all supported ecosystems.
-var defaultSemgrepExcludes = []string{
-	"vendor/",
-	"node_modules/",
-	"third_party/",
-	"dist/",
-	"build/",
-	"out/",
-	"target/",
-	".next/",
-	".nuxt/",
-	".devenv/",
-	".direnv/",
-	"result",
-	"__pycache__/",
-	".venv/",
-	"venv/",
-	".tox/",
-	".egg-info/",
-	".cache/",
-	".pytest_cache/",
-	"coverage/",
-	".coverage/",
-	"testdata/",
-	"fixtures/",
-}
-
 // GenerateSemgrepYml produces a .semgrep.yml configuration file. It collects
 // rule sets from all ecosystem modules implementing SASTModule, deduplicates
 // them, and generates a YAML configuration with path exclusions.
@@ -64,7 +35,7 @@ func GenerateSemgrepYml(answers types.WizardAnswers, registry *ecosystem.Registr
 	}
 	b.WriteString("\npaths:\n")
 	b.WriteString("  exclude:\n")
-	for _, p := range defaultSemgrepExcludes {
+	for _, p := range defaultScanExcludes {
 		fmt.Fprintf(&b, "    - %s\n", p)
 	}
 

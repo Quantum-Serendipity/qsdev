@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/bwrap"
 )
 
 // SystemdRunBackend implements sandbox.SandboxBackend using systemd-run --user
@@ -89,7 +90,8 @@ func (s *SystemdRunBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 	cmd.Stderr = &stderr
 
 	if cfg.Environment != nil {
-		for k, v := range cfg.Environment {
+		filtered := bwrap.FilterEnvironment(cfg.Environment, cfg.HookCategory)
+		for k, v := range filtered {
 			cmd.Env = append(cmd.Env, k+"="+v)
 		}
 	}

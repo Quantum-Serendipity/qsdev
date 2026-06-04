@@ -22,6 +22,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func stateFilePath() string {
@@ -125,10 +126,7 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 
 // runCreate is the original init flow for creating a project from scratch.
 func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
-	// c. Build FlagSet to track which flags were explicitly set.
 	flagSet := NewFlagSet(cmd)
-
-	// d. Run detection.
 	detected := detect.Detect(projectRoot)
 	slog.Debug("ecosystem detection complete",
 		"ecosystems", len(detected.Ecosystems),
@@ -142,105 +140,17 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		fmt.Fprintln(cmd.ErrOrStderr())
 	}
 
-	// d2. Auto-install missing prerequisites if --yes, otherwise warn.
-	// Skip for --dry-run: preview should not have side effects.
-	if !opts.ClaudeOnly && !opts.DryRun {
-		prereqs := CheckPrerequisites(cmd.Context())
-		if prereqs.HasMissing() {
-			if opts.Yes {
-				if err := devenv.AutoSetupPrerequisites(cmd.Context(), cmd.ErrOrStderr()); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: prerequisite installation failed: %v\n", err)
-					fmt.Fprintf(cmd.ErrOrStderr(), "Run '%s devenv setup' manually after init.\n\n", branding.Get().AppName)
-				}
-			} else {
-				fmt.Fprintln(cmd.ErrOrStderr(), "Note: some prerequisites are missing:")
-				prereqs.PrintReport(cmd.ErrOrStderr())
-				fmt.Fprintf(cmd.ErrOrStderr(), "Run '%s devenv setup' after init to install them.\n", branding.Get().AppName)
-				fmt.Fprintln(cmd.ErrOrStderr())
-			}
-		}
-	}
+	warnOrInstallPrereqs(cmd, opts)
 
-	// e. Build answers from flags.
-	answers, err := AnswersFromFlags(opts, projectRoot)
+	answers, err := buildAnswersFromInputs(cmd, opts, projectRoot, detected, flagSet)
 	if err != nil {
 		return err
 	}
-
-	// e2. If --answers-file is set, load from file and merge with CLI flag overrides.
-	if opts.AnswersFile != "" {
-		fileAnswers, err := LoadAnswersFile(opts.AnswersFile)
-		if err != nil {
-			return err
-		}
-		fileAnswers.ProjectRoot = projectRoot
-		fileAnswers.ProjectName = filepath.Base(projectRoot)
-
-		changed := flagSetToChangedMap(flagSet, cmd)
-		answers = MergeFileWithFlags(fileAnswers, answers, changed)
-
-		if err := ValidateAnswersFileCompleteness(answers); err != nil {
-			return err
-		}
-
-		answers.Confirmed = true
-		answers.Detected = detected
+	if !answers.Confirmed {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Cancelled.")
+		return nil
 	}
 
-	// f. If --profile set, load profile and merge.
-	if opts.ProfileName != "" {
-		if profileRegistry == nil {
-			profileRegistry = DefaultProjectProfileRegistry()
-		}
-		p, ok := profileRegistry.Get(opts.ProfileName)
-		if !ok {
-			return fmt.Errorf("unknown profile %q; use --list-profiles to see available profiles", opts.ProfileName)
-		}
-		profileAnswers := ProfileToAnswers(p, projectRoot, filepath.Base(projectRoot))
-		changed := flagSetToChangedMap(flagSet, cmd)
-		answers = MergeProfileWithFlags(profileAnswers, answers, changed)
-	}
-
-	// g. Set detected results on answers.
-	answers.Detected = detected
-
-	// h. Validate answers.
-	if err := ValidateAnswers(answers); err != nil {
-		return err
-	}
-
-	// i. Fill defaults (agent tools, MCP servers, etc.) for any unset fields.
-	if opts.Yes {
-		answers.Confirmed = true
-		answers.FillDefaults(detected)
-	}
-
-	// i2. Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
-	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
-
-	// i3. In non-interactive mode, bail if answers are incomplete.
-	if opts.Yes && !answers.IsComplete() {
-		missing := incompleteAnswersMessage(answers)
-		return fmt.Errorf("non-interactive mode (--yes) requires complete answers; missing:\n%s\nProvide --lang, --profile, or run in a project with detectable language files", missing)
-	}
-
-	// j. Run wizard for missing answers.
-	if !answers.IsComplete() && !opts.Yes {
-		if !term.IsTerminal(os.Stdin.Fd()) {
-			return fmt.Errorf("stdin is not a terminal; use --yes or --profile for non-interactive mode")
-		}
-		wizardAnswers, err := RunWizard(projectRoot, detected, answers, flagSet, opts.Theme)
-		if err != nil {
-			return fmt.Errorf("running wizard: %w", err)
-		}
-		if !wizardAnswers.Confirmed {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Cancelled.")
-			return nil
-		}
-		answers = wizardAnswers
-	}
-
-	// k. Check for existing configs unless --force.
 	if !opts.Force {
 		existing := DetectExistingConfig(detected)
 		if existing.NeedsMergeMode() {
@@ -249,7 +159,6 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		}
 	}
 
-	// l-m. Generate files via fragment accumulation.
 	accResult, err := runAccumulator(answers, struct {
 		ClaudeOnly bool
 		DevenvOnly bool
@@ -257,19 +166,113 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	if err != nil {
 		return fmt.Errorf("generating files: %w", err)
 	}
-	allFiles := accResult.allFiles
-	devenvGenerated := accResult.devenvGenerated
-	claudeGenerated := accResult.claudeGenerated
 
-	// n. Dry-run: preview and return.
 	if opts.DryRun {
-		preview := generate.PreviewFiles(allFiles, nil, projectRoot)
+		preview := generate.PreviewFiles(accResult.allFiles, nil, projectRoot)
 		_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
 		return nil
 	}
 
-	// o. Write files to disk.
-	result, err := generate.WriteFiles(allFiles, generate.PipelineOptions{
+	if err := writeAndRecordResults(cmd, opts, projectRoot, answers, accResult); err != nil {
+		return err
+	}
+
+	return finalizeProject(cmd, opts, answers, projectRoot, accResult.devenvGenerated, accResult.claudeGenerated)
+}
+
+func warnOrInstallPrereqs(cmd *cobra.Command, opts InitOptions) {
+	if opts.ClaudeOnly || opts.DryRun {
+		return
+	}
+	prereqs := CheckPrerequisites(cmd.Context())
+	if !prereqs.HasMissing() {
+		return
+	}
+	if opts.Yes {
+		if err := devenv.AutoSetupPrerequisites(cmd.Context(), cmd.ErrOrStderr()); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: prerequisite installation failed: %v\n", err)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Run '%s devenv setup' manually after init.\n\n", branding.Get().AppName)
+		}
+	} else {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Note: some prerequisites are missing:")
+		prereqs.PrintReport(cmd.ErrOrStderr())
+		fmt.Fprintf(cmd.ErrOrStderr(), "Run '%s devenv setup' after init to install them.\n", branding.Get().AppName)
+		fmt.Fprintln(cmd.ErrOrStderr())
+	}
+}
+
+func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot string, detected types.DetectedProject, flagSet *FlagSet) (types.WizardAnswers, error) {
+	answers, err := AnswersFromFlags(opts, projectRoot)
+	if err != nil {
+		return types.WizardAnswers{}, err
+	}
+
+	if opts.AnswersFile != "" {
+		fileAnswers, err := LoadAnswersFile(opts.AnswersFile)
+		if err != nil {
+			return types.WizardAnswers{}, err
+		}
+		fileAnswers.ProjectRoot = projectRoot
+		fileAnswers.ProjectName = filepath.Base(projectRoot)
+
+		changed := flagSetToChangedMap(flagSet, cmd)
+		answers = MergeFileWithFlags(fileAnswers, answers, changed)
+
+		if err := ValidateAnswersFileCompleteness(answers); err != nil {
+			return types.WizardAnswers{}, err
+		}
+
+		answers.Confirmed = true
+		answers.Detected = detected
+	}
+
+	if opts.ProfileName != "" {
+		if profileRegistry == nil {
+			profileRegistry = DefaultProjectProfileRegistry()
+		}
+		p, ok := profileRegistry.Get(opts.ProfileName)
+		if !ok {
+			return types.WizardAnswers{}, fmt.Errorf("unknown profile %q; use --list-profiles to see available profiles", opts.ProfileName)
+		}
+		profileAnswers := ProfileToAnswers(p, projectRoot, filepath.Base(projectRoot))
+		changed := flagSetToChangedMap(flagSet, cmd)
+		answers = MergeProfileWithFlags(profileAnswers, answers, changed)
+	}
+
+	answers.Detected = detected
+
+	if err := ValidateAnswers(answers); err != nil {
+		return types.WizardAnswers{}, err
+	}
+
+	if opts.Yes {
+		answers.Confirmed = true
+		answers.FillDefaults(detected)
+	}
+
+	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
+
+	if opts.Yes && !answers.IsComplete() {
+		missing := incompleteAnswersMessage(answers)
+		return types.WizardAnswers{}, fmt.Errorf("non-interactive mode (--yes) requires complete answers; missing:\n%s\nProvide --lang, --profile, or run in a project with detectable language files", missing)
+	}
+
+	if !answers.IsComplete() && !opts.Yes {
+		if !term.IsTerminal(os.Stdin.Fd()) {
+			return types.WizardAnswers{}, fmt.Errorf("stdin is not a terminal; use --yes or --profile for non-interactive mode")
+		}
+		wizardAnswers, err := RunWizard(projectRoot, detected, answers, flagSet, opts.Theme)
+		if err != nil {
+			return types.WizardAnswers{}, fmt.Errorf("running wizard: %w", err)
+		}
+		answers = wizardAnswers
+	}
+
+	return answers, nil
+}
+
+func writeAndRecordResults(cmd *cobra.Command, opts InitOptions, projectRoot string, answers types.WizardAnswers, accResult accumulatorResult) error {
+	result, err := generate.WriteFiles(accResult.allFiles, generate.PipelineOptions{
 		ProjectRoot:      projectRoot,
 		SectionMergeFunc: merge.SectionMarkers,
 	})
@@ -281,9 +284,7 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		slog.Warn("post-generation verification: some files not found on disk", "missing", missing)
 	}
 
-	// p. Save state immediately after write, recording only successfully
-	// written files so partial writes leave a recoverable state.
-	successfulFiles := result.SuccessfulFiles(allFiles)
+	successfulFiles := result.SuccessfulFiles(accResult.allFiles)
 	genState := state.RecordFiles(successfulFiles)
 	genState.QsdevVersion = version.Info().Version
 	genState.EnabledTools = answers.EnabledTools
@@ -308,38 +309,41 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 			result.Failed, len(successfulFiles), details.String())
 	}
 
-	// q. Save unified answers.
 	if err := saveAnswers(projectRoot, answers); err != nil {
 		return fmt.Errorf("saving answers: %w", err)
 	}
 
-	// Also save per-addon answers so each addon's update command works.
-	if devenvGenerated {
+	if accResult.devenvGenerated {
 		if err := devenv.SaveAnswers(projectRoot, answers); err != nil {
 			return fmt.Errorf("saving devenv answers: %w", err)
 		}
 	}
-	if claudeGenerated {
+	if accResult.claudeGenerated {
 		if err := claudecode.SaveAnswers(projectRoot, answers); err != nil {
 			return fmt.Errorf("saving Claude Code answers: %w", err)
 		}
 	}
 
-	// r. Generate project config.
+	if !opts.Quiet {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
+	}
+
+	return nil
+}
+
+func finalizeProject(cmd *cobra.Command, opts InitOptions, answers types.WizardAnswers, projectRoot string, devenvGenerated, claudeGenerated bool) error {
 	qsdevCfg := buildQsdevConfig(answers, version.Info().Version)
 	qsdevCfgPath := filepath.Join(projectRoot, branding.Get().ConfigFile)
 	if err := writeQsdevConfig(qsdevCfgPath, qsdevCfg); err != nil {
 		return fmt.Errorf("writing %s: %w", branding.Get().ConfigFile, err)
 	}
 
-	// s. Add managed directories to .gitignore.
 	for _, entry := range []string{".devinit/", "." + branding.Get().AppName + "/", ".direnv/", ".devenv/"} {
 		if err := EnsureGitignoreEntry(projectRoot, entry); err != nil {
 			slog.Warn("could not update .gitignore", "entry", entry, "error", err)
 		}
 	}
 
-	// s2. Add ecosystem-specific .gitignore entries (build artifacts, secrets).
 	var langNames []string
 	for _, lc := range answers.Languages {
 		langNames = append(langNames, lc.Name)
@@ -350,9 +354,7 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		}
 	}
 
-	// t. Print summary + post-generation message.
 	if !opts.Quiet {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
 		_, _ = fmt.Fprint(cmd.OutOrStdout(), postGenerationMessage(answers, devenvGenerated, claudeGenerated))
 	}
 

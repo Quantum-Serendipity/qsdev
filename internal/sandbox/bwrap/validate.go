@@ -30,24 +30,25 @@ var mountDenyHomePaths = []string{
 }
 
 // ValidateMountPath checks that a path is safe to use as a bind-mount source
-// or target inside a sandbox. It rejects relative paths, symlinks that resolve
-// to a different location, and paths on the deny list.
+// or target inside a sandbox. It rejects relative paths and paths on the deny
+// list (checking both the literal path and its symlink-resolved form).
 func ValidateMountPath(path string) error {
 	if !filepath.IsAbs(path) {
 		return fmt.Errorf("mount path must be absolute: %q", path)
 	}
 
-	clean := filepath.Clean(path)
-
-	// Resolve symlinks and check the resolved path against deny-lists too.
-	resolved, err := filepath.EvalSymlinks(path)
-	if err == nil {
-		clean = filepath.Clean(resolved)
+	candidates := []string{filepath.Clean(path)}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		if r := filepath.Clean(resolved); r != candidates[0] {
+			candidates = append(candidates, r)
+		}
 	}
 
-	for _, deny := range mountDenyPaths {
-		if clean == deny || strings.HasPrefix(clean, deny+"/") {
-			return fmt.Errorf("mount path %q is denied: overlaps sensitive path %q", path, deny)
+	for _, clean := range candidates {
+		for _, deny := range mountDenyPaths {
+			if clean == deny || strings.HasPrefix(clean, deny+"/") {
+				return fmt.Errorf("mount path %q is denied: overlaps sensitive path %q", path, deny)
+			}
 		}
 	}
 
@@ -56,10 +57,12 @@ func ValidateMountPath(path string) error {
 		home = u.HomeDir
 	}
 	if home != "" {
-		for _, rel := range mountDenyHomePaths {
-			deny := filepath.Join(home, rel)
-			if clean == deny || strings.HasPrefix(clean, deny+"/") {
-				return fmt.Errorf("mount path %q is denied: overlaps sensitive path %q", path, deny)
+		for _, clean := range candidates {
+			for _, rel := range mountDenyHomePaths {
+				deny := filepath.Join(home, rel)
+				if clean == deny || strings.HasPrefix(clean, deny+"/") {
+					return fmt.Errorf("mount path %q is denied: overlaps sensitive path %q", path, deny)
+				}
 			}
 		}
 	}

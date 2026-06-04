@@ -127,7 +127,7 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	rt := config.Extra("container_runtime", "")
 	switch rt {
 	case "podman-rootless", "podman-rootful":
-		return "  env.DOCKER_HOST = \"unix://${XDG_RUNTIME_DIR:-/run/user/1000}/podman/podman.sock\";\n", nil
+		return "  env.DOCKER_HOST = \"unix://${XDG_RUNTIME_DIR}/podman/podman.sock\";\n", nil
 	default:
 		return "", nil
 	}

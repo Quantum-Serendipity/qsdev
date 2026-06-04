@@ -213,9 +213,10 @@ func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *eco
 				rawEntry := false
 
 				if hook.NixPackage != "" {
-					binary := strings.SplitN(hook.Entry, " ", 2)[0]
+					parts := strings.SplitN(hook.Entry, " ", 2)
+					binary := parts[0]
 					args := ""
-					if parts := strings.SplitN(hook.Entry, " ", 2); len(parts) > 1 {
+					if len(parts) > 1 {
 						args = " " + parts[1]
 					}
 					entry = fmt.Sprintf(`"${pkgs.%s}/bin/%s%s"`, hook.NixPackage, binary, args)

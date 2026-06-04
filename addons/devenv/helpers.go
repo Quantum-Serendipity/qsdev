@@ -1,8 +1,9 @@
 package devenv
 
 import (
-	"os"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
 )
 
 // inputKeyFromURL derives an input name from a Nix flake URL by extracting
@@ -15,13 +16,7 @@ func inputKeyFromURL(url string) string {
 	return url
 }
 
-// isAccessible returns true when ACCESSIBLE or NO_COLOR env var is set.
+// isAccessible delegates to termutil.IsAccessible.
 func isAccessible() bool {
-	if os.Getenv("ACCESSIBLE") != "" {
-		return true
-	}
-	if os.Getenv("NO_COLOR") != "" {
-		return true
-	}
-	return false
+	return termutil.IsAccessible()
 }

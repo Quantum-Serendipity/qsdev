@@ -3,6 +3,7 @@ package devinit
 import (
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -245,8 +246,8 @@ var ExportMapFormToAnswers = mapFormToAnswers
 // ExportParseExtraPackages exposes parseExtraPackages for external tests.
 var ExportParseExtraPackages = parseExtraPackages
 
-// ExportIsAccessible exposes isAccessible for external tests.
-var ExportIsAccessible = isAccessible
+// ExportIsAccessible delegates to termutil.IsAccessible for external tests.
+var ExportIsAccessible = termutil.IsAccessible
 
 // ExportResolveTheme exposes resolveTheme for external tests.
 var ExportResolveTheme = resolveTheme

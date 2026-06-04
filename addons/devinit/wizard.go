@@ -2,13 +2,13 @@ package devinit
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -206,7 +206,7 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 			Placeholder("e.g. 1.24").
 			Value(&fs.goVersion),
 	).WithHideFunc(func() bool {
-		return fs.quickChoice == "yes" || !ecosystem.ContainsStr(fs.selectedLanguages, "go")
+		return fs.quickChoice == "yes" || !sliceutil.Contains(fs.selectedLanguages, "go")
 	})
 
 	jsVersionGroup := huh.NewGroup(
@@ -215,7 +215,7 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 			Placeholder("e.g. 22").
 			Value(&fs.jsVersion),
 	).WithHideFunc(func() bool {
-		return fs.quickChoice == "yes" || !ecosystem.ContainsStr(fs.selectedLanguages, "javascript")
+		return fs.quickChoice == "yes" || !sliceutil.Contains(fs.selectedLanguages, "javascript")
 	})
 
 	pythonVersionGroup := huh.NewGroup(
@@ -224,7 +224,7 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 			Placeholder("e.g. 3.12").
 			Value(&fs.pythonVersion),
 	).WithHideFunc(func() bool {
-		return fs.quickChoice == "yes" || !ecosystem.ContainsStr(fs.selectedLanguages, "python")
+		return fs.quickChoice == "yes" || !sliceutil.Contains(fs.selectedLanguages, "python")
 	})
 
 	// --- Group 3: Services ---
@@ -415,7 +415,7 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 		securityGroup,
 		confirmGroup,
 	).WithTheme(resolveTheme(themeName)).
-		WithAccessible(isAccessible())
+		WithAccessible(termutil.IsAccessible())
 
 	return form
 }
@@ -513,20 +513,6 @@ func parseExtraPackages(input string) []string {
 		return nil
 	}
 	return result
-}
-
-// isAccessible returns true when ACCESSIBLE, NO_COLOR, or TERM=dumb is set.
-func isAccessible() bool {
-	if os.Getenv("ACCESSIBLE") != "" {
-		return true
-	}
-	if os.Getenv("NO_COLOR") != "" {
-		return true
-	}
-	if os.Getenv("TERM") == "dumb" {
-		return true
-	}
-	return false
 }
 
 // flagSetHasAny returns true when any relevant flag was explicitly set.

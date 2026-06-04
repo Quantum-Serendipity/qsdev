@@ -2,6 +2,9 @@ package catalog
 
 import "fmt"
 
+// maxInheritanceDepth is the maximum allowed tier inheritance chain length.
+const maxInheritanceDepth = 10
+
 // CatalogError describes a validation problem in the loaded catalog.
 type CatalogError struct {
 	File    string
@@ -61,7 +64,7 @@ func (c *Catalog) validateTiers() []CatalogError {
 func (c *Catalog) checkTierCycle(start string) error {
 	visited := make(map[string]bool)
 	current := start
-	for i := 0; i < 10; i++ {
+	for i := 0; i < maxInheritanceDepth; i++ {
 		def, ok := c.tiers.Tiers[current]
 		if !ok || def.Inherits == "" {
 			return nil
@@ -72,7 +75,7 @@ func (c *Catalog) checkTierCycle(start string) error {
 		visited[current] = true
 		current = def.Inherits
 	}
-	return fmt.Errorf("inheritance chain exceeds maximum depth of 10")
+	return fmt.Errorf("inheritance chain exceeds maximum depth of %d", maxInheritanceDepth)
 }
 
 func (c *Catalog) validateProfiles() []CatalogError {

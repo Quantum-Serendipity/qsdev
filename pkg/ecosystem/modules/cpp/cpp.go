@@ -18,6 +18,7 @@ import (
 // Compile-time interface compliance check.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
+var _ ecosystem.SASTModule = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -395,4 +396,9 @@ func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.V
 // ManifestFiles returns the CMakeLists.txt manifest file for C/C++ projects.
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	return []ecosystem.ManifestFileInfo{{Path: "CMakeLists.txt", Ecosystem: "cmake", LockFilePolicy: ecosystem.LockFilePolicyNone}}
+}
+
+// SemgrepRuleSets returns Semgrep rule set identifiers relevant to C/C++ projects.
+func (m *Module) SemgrepRuleSets() []string {
+	return []string{"p/cpp"}
 }

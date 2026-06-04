@@ -2,6 +2,13 @@ package posture
 
 import "math"
 
+// Aggregate score weights for the three scoring dimensions.
+const (
+	weightDefense   = 0.40
+	weightConfig    = 0.30
+	weightDepHealth = 0.30
+)
+
 // WeightMultiplier returns the numeric weight for a LayerWeight.
 func WeightMultiplier(w LayerWeight) float64 {
 	switch w {
@@ -72,7 +79,7 @@ func ComputeTierRelativeDefenseScore(layers []DefenseLayer, currentTier int) flo
 
 // ComputeAggregateScore combines three layer scores with 40/30/30 weighting.
 func ComputeAggregateScore(defense, config, deps float64) AggregateScore {
-	total := defense*0.40 + config*0.30 + deps*0.30
+	total := defense*weightDefense + config*weightConfig + deps*weightDepHealth
 	return AggregateScore{
 		Total:     math.Round(total*10) / 10,
 		Grade:     ScoreToGrade(total),

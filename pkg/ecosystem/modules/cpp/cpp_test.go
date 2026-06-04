@@ -12,6 +12,7 @@ import (
 
 // Compile-time interface compliance check.
 var _ ecosystem.EcosystemModule = (*cpp.Module)(nil)
+var _ ecosystem.PackageProvider = (*cpp.Module)(nil)
 
 func TestName(t *testing.T) {
 	m := &cpp.Module{}
@@ -114,18 +115,85 @@ func TestDevenvNixFragment(t *testing.T) {
 	if !strings.Contains(fragment, "languages.cplusplus") {
 		t.Errorf("DevenvNixFragment() missing %q\ngot:\n%s", "languages.cplusplus", fragment)
 	}
+	// Fragment should not contain packages — those are in DevenvPackages.
+	if strings.Contains(fragment, "packages") {
+		t.Errorf("DevenvNixFragment() should not contain packages block\ngot:\n%s", fragment)
+	}
 }
 
-func TestDevenvNixFragment_CMakePackages(t *testing.T) {
+// --- DevenvPackages tests ---
+
+func TestDevenvPackages_CMake(t *testing.T) {
+	t.Parallel()
 	m := &cpp.Module{}
-	fragment, err := m.DevenvNixFragment(ecosystem.ModuleConfig{
+	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{
 		Extras: map[string]string{"build_system": "cmake"},
 	})
-	if err != nil {
-		t.Fatalf("DevenvNixFragment() returned error: %v", err)
+	want := []string{"cmake", "gnumake"}
+	if len(pkgs) != len(want) {
+		t.Fatalf("DevenvPackages(cmake) = %v, want %v", pkgs, want)
 	}
-	if !strings.Contains(fragment, "pkgs.cmake") {
-		t.Errorf("DevenvNixFragment(cmake) should contain pkgs.cmake\ngot:\n%s", fragment)
+	for i, w := range want {
+		if pkgs[i] != w {
+			t.Errorf("DevenvPackages(cmake)[%d] = %q, want %q", i, pkgs[i], w)
+		}
+	}
+}
+
+func TestDevenvPackages_Meson(t *testing.T) {
+	t.Parallel()
+	m := &cpp.Module{}
+	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{
+		Extras: map[string]string{"build_system": "meson"},
+	})
+	want := []string{"meson", "ninja"}
+	if len(pkgs) != len(want) {
+		t.Fatalf("DevenvPackages(meson) = %v, want %v", pkgs, want)
+	}
+	for i, w := range want {
+		if pkgs[i] != w {
+			t.Errorf("DevenvPackages(meson)[%d] = %q, want %q", i, pkgs[i], w)
+		}
+	}
+}
+
+func TestDevenvPackages_Make(t *testing.T) {
+	t.Parallel()
+	m := &cpp.Module{}
+	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{
+		Extras: map[string]string{"build_system": "make"},
+	})
+	if len(pkgs) != 1 || pkgs[0] != "gnumake" {
+		t.Errorf("DevenvPackages(make) = %v, want [gnumake]", pkgs)
+	}
+}
+
+func TestDevenvPackages_WithSccache(t *testing.T) {
+	t.Parallel()
+	m := &cpp.Module{}
+	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{
+		Extras: map[string]string{
+			"build_system": "cmake",
+			"build_cache":  "sccache",
+		},
+	})
+	want := []string{"cmake", "gnumake", "sccache"}
+	if len(pkgs) != len(want) {
+		t.Fatalf("DevenvPackages(cmake+sccache) = %v, want %v", pkgs, want)
+	}
+	for i, w := range want {
+		if pkgs[i] != w {
+			t.Errorf("DevenvPackages(cmake+sccache)[%d] = %q, want %q", i, pkgs[i], w)
+		}
+	}
+}
+
+func TestDevenvPackages_NoBuildSystem(t *testing.T) {
+	t.Parallel()
+	m := &cpp.Module{}
+	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{})
+	if pkgs != nil {
+		t.Errorf("DevenvPackages(no build system) = %v, want nil", pkgs)
 	}
 }
 

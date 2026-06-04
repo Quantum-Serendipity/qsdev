@@ -292,10 +292,10 @@ func TestIntegration_SecurityHardenedDefaults(t *testing.T) {
 	settingsContent := readFileContent(t, dir, ".claude/settings.json")
 	// Check representative deny rules from different categories.
 	denyChecks := []string{
-		"npm install",  // JS package managers
-		"pip install",  // Python
-		"curl",         // pipe-to-shell (partial match in deny rules)
-		"rm -rf",       // destructive ops
+		"npm install", // JS package managers
+		"pip install", // Python
+		"curl",        // pipe-to-shell (partial match in deny rules)
+		"rm -rf",      // destructive ops
 	}
 	for _, check := range denyChecks {
 		if !strings.Contains(settingsContent, check) {
@@ -407,5 +407,50 @@ func TestIntegration_UpdateCommand_ThreeWayMerge_Settings(t *testing.T) {
 	// Original generated rules should still be present.
 	if !strings.Contains(updatedSettings, "Read(*)") {
 		t.Error("generated allow rules should still be present")
+	}
+}
+
+func createPolyglotFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte("{\"name\":\"test\",\"version\":\"1.0.0\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM alpine:3.19\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestIntegration_PolyglotDetection_NoDuplicatePackages(t *testing.T) {
+	dir := createPolyglotFixture(t)
+
+	output, err := executeInitCmd(t, dir, "--yes", "--force")
+	if err != nil {
+		t.Fatalf("init failed: %v\nOutput: %s", err, output)
+	}
+
+	devenvNix := readFileContent(t, dir, "devenv.nix")
+
+	// The generated devenv.nix must have exactly one packages attribute.
+	count := strings.Count(devenvNix, "packages =")
+	if count != 1 {
+		t.Errorf("devenv.nix has %d 'packages =' occurrences, want exactly 1:\n%s", count, devenvNix)
+	}
+
+	// All three ecosystems' packages should be in the single packages line.
+	for _, pkg := range []string{"docker", "hadolint", "dive"} {
+		if !strings.Contains(devenvNix, pkg) {
+			t.Errorf("devenv.nix missing container package %q", pkg)
+		}
+	}
+	if !strings.Contains(devenvNix, "languages.go") {
+		t.Error("devenv.nix missing Go language configuration")
+	}
+	if !strings.Contains(devenvNix, "languages.javascript") {
+		t.Error("devenv.nix missing JavaScript language configuration")
 	}
 }

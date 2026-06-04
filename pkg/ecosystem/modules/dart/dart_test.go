@@ -18,6 +18,7 @@ func newModule() *dart.Module {
 
 func TestInterfaceCompliance(t *testing.T) {
 	var _ ecosystem.EcosystemModule = (*dart.Module)(nil)
+	var _ ecosystem.PackageProvider = (*dart.Module)(nil)
 }
 
 // --- Basic metadata ---
@@ -82,6 +83,39 @@ func TestDetect_NotPresent(t *testing.T) {
 	}
 }
 
+// --- DevenvPackages tests ---
+
+func TestDevenvPackages_NoFlutter(t *testing.T) {
+	t.Parallel()
+	m := newModule()
+	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{
+		Extras: map[string]string{"flutter": "false"},
+	})
+	if pkgs != nil {
+		t.Errorf("DevenvPackages(no flutter) = %v, want nil", pkgs)
+	}
+}
+
+func TestDevenvPackages_WithFlutter(t *testing.T) {
+	t.Parallel()
+	m := newModule()
+	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{
+		Extras: map[string]string{"flutter": "true"},
+	})
+	if len(pkgs) != 1 || pkgs[0] != "flutter" {
+		t.Errorf("DevenvPackages(flutter) = %v, want [flutter]", pkgs)
+	}
+}
+
+func TestDevenvPackages_Default(t *testing.T) {
+	t.Parallel()
+	m := newModule()
+	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{})
+	if pkgs != nil {
+		t.Errorf("DevenvPackages(default) = %v, want nil", pkgs)
+	}
+}
+
 // --- DevenvNixFragment tests ---
 
 func TestDevenvNixFragment_NonEmpty(t *testing.T) {
@@ -92,6 +126,27 @@ func TestDevenvNixFragment_NonEmpty(t *testing.T) {
 	}
 	if frag == "" {
 		t.Error("DevenvNixFragment() returned empty string")
+	}
+	if !containsSubstr([]string{frag}, "languages.dart.enable = true") {
+		t.Errorf("fragment missing languages.dart.enable = true:\n%s", frag)
+	}
+	// Fragment should not contain packages — those are in DevenvPackages.
+	if containsSubstr([]string{frag}, "packages") {
+		t.Errorf("fragment should not contain packages block:\n%s", frag)
+	}
+}
+
+func TestDevenvNixFragment_FlutterNoPackages(t *testing.T) {
+	m := newModule()
+	frag, err := m.DevenvNixFragment(ecosystem.ModuleConfig{
+		Extras: map[string]string{"flutter": "true"},
+	})
+	if err != nil {
+		t.Fatalf("DevenvNixFragment() error: %v", err)
+	}
+	// Even with flutter=true, packages should not be in the fragment.
+	if containsSubstr([]string{frag}, "packages") {
+		t.Errorf("flutter fragment should not contain packages block:\n%s", frag)
 	}
 }
 

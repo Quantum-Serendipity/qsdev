@@ -18,8 +18,9 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.PackageProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -77,12 +78,15 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 }
 
+// DevenvPackages returns the Nix packages required for the Helm ecosystem.
+func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
+	return []string{"kubernetes-helm", "kubeconform"}
+}
+
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for Helm support. Helm uses a packages-based approach (no languages.helm module).
+// for Helm support. Packages are provided via DevenvPackages.
 func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
-	var b strings.Builder
-	b.WriteString("  packages = with pkgs; [ kubernetes-helm kubeconform ];\n")
-	return b.String(), nil
+	return "", nil
 }
 
 // DevenvYamlInputs returns additional flake inputs for devenv.yaml.

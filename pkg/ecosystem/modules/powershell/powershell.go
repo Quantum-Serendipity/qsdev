@@ -14,15 +14,15 @@ package powershell
 
 import (
 	"path/filepath"
-	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.PackageProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -86,13 +86,15 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 }
 
+// DevenvPackages returns the Nix packages required for the PowerShell ecosystem.
+func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
+	return []string{"powershell"}
+}
+
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for PowerShell support. PowerShell has no devenv.sh languages module, so
-// the package is added directly.
+// for PowerShell support. Packages are provided via DevenvPackages.
 func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
-	var b strings.Builder
-	b.WriteString("  packages = with pkgs; [ powershell ];\n")
-	return b.String(), nil
+	return "", nil
 }
 
 // DevenvYamlInputs returns additional flake inputs for devenv.yaml.
@@ -163,4 +165,3 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	return nil
 }
-

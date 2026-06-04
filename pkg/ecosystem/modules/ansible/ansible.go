@@ -13,8 +13,9 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.PackageProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -77,12 +78,15 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	return result
 }
 
+// DevenvPackages returns the Nix packages required for the Ansible ecosystem.
+func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
+	return []string{"ansible", "ansible-lint"}
+}
+
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for Ansible support. Uses a packages-based approach.
+// for Ansible support. Packages are provided via DevenvPackages.
 func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
-	var b strings.Builder
-	b.WriteString("  packages = with pkgs; [ ansible ansible-lint ];\n")
-	return b.String(), nil
+	return "", nil
 }
 
 // DevenvYamlInputs returns additional flake inputs for devenv.yaml.
@@ -182,4 +186,3 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	return nil
 }
-

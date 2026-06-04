@@ -3,7 +3,6 @@ package powershell_test
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -19,6 +18,7 @@ func newModule() *powershell.Module {
 
 func TestInterfaceCompliance(t *testing.T) {
 	var _ ecosystem.EcosystemModule = (*powershell.Module)(nil)
+	var _ ecosystem.PackageProvider = (*powershell.Module)(nil)
 }
 
 // --- Basic metadata ---
@@ -117,6 +117,23 @@ func TestDetect_NotPresent(t *testing.T) {
 	}
 }
 
+// --- DevenvPackages tests ---
+
+func TestDevenvPackages(t *testing.T) {
+	m := newModule()
+	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{})
+
+	expected := []string{"powershell"}
+	if len(pkgs) != len(expected) {
+		t.Fatalf("DevenvPackages() returned %d packages, want %d", len(pkgs), len(expected))
+	}
+	for i, pkg := range pkgs {
+		if pkg != expected[i] {
+			t.Errorf("DevenvPackages()[%d] = %q, want %q", i, pkg, expected[i])
+		}
+	}
+}
+
 // --- DevenvNixFragment tests ---
 
 func TestDevenvNixFragment(t *testing.T) {
@@ -125,11 +142,8 @@ func TestDevenvNixFragment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DevenvNixFragment() error: %v", err)
 	}
-	if frag == "" {
-		t.Error("DevenvNixFragment() returned empty string")
-	}
-	if !strings.Contains(frag, "powershell") {
-		t.Errorf("fragment missing powershell reference:\n%s", frag)
+	if frag != "" {
+		t.Errorf("DevenvNixFragment() = %q, want empty string (packages moved to DevenvPackages)", frag)
 	}
 }
 

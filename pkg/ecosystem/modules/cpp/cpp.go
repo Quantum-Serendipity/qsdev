@@ -6,7 +6,6 @@
 package cpp
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -17,6 +16,7 @@ import (
 
 // Compile-time interface compliance check.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.PackageProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -113,39 +113,35 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	return result
 }
 
-// DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for C/C++ language support with build-system-appropriate packages.
-func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
-	var b strings.Builder
-	b.WriteString("  languages.cplusplus.enable = true;\n")
-	b.WriteString("\n")
-
-	// Build system packages.
-	buildSystem := config.Extras["build_system"]
+// DevenvPackages returns Nix packages required by the C/C++ module based
+// on the configured build system and optional build cache.
+func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
 	var pkgs []string
+
+	buildSystem := config.Extras["build_system"]
 	switch buildSystem {
 	case "cmake":
-		pkgs = append(pkgs, "pkgs.cmake", "pkgs.gnumake")
+		pkgs = append(pkgs, "cmake", "gnumake")
 	case "meson":
-		pkgs = append(pkgs, "pkgs.meson", "pkgs.ninja")
+		pkgs = append(pkgs, "meson", "ninja")
 	case "make":
-		pkgs = append(pkgs, "pkgs.gnumake")
+		pkgs = append(pkgs, "gnumake")
 	}
 
-	// Optional build cache.
 	if config.Extras["build_cache"] == "sccache" {
-		pkgs = append(pkgs, "pkgs.sccache")
+		pkgs = append(pkgs, "sccache")
 	}
 
-	if len(pkgs) > 0 {
-		b.WriteString("  packages = [\n")
-		for _, pkg := range pkgs {
-			fmt.Fprintf(&b, "    %s\n", pkg)
-		}
-		b.WriteString("  ];\n")
+	if len(pkgs) == 0 {
+		return nil
 	}
+	return pkgs
+}
 
-	return b.String(), nil
+// DevenvNixFragment returns the Nix code fragment to include in devenv.nix
+// for C/C++ language support.
+func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
+	return "  languages.cplusplus.enable = true;\n", nil
 }
 
 // DevenvYamlInputs returns additional flake inputs for devenv.yaml.
@@ -384,4 +380,3 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	return []ecosystem.ManifestFileInfo{{Path: "CMakeLists.txt", Ecosystem: "cmake", LockFilePolicy: ecosystem.LockFilePolicyNone}}
 }
-

@@ -19,6 +19,7 @@ func newModule() *shell.Module {
 
 func TestInterfaceCompliance(t *testing.T) {
 	var _ ecosystem.EcosystemModule = (*shell.Module)(nil)
+	var _ ecosystem.PackageProvider = (*shell.Module)(nil)
 }
 
 // --- Basic metadata ---
@@ -148,24 +149,33 @@ func TestDetect_NotPresent(t *testing.T) {
 	}
 }
 
+// --- DevenvPackages tests ---
+
+func TestDevenvPackages(t *testing.T) {
+	m := newModule()
+	pkgs := m.DevenvPackages(ecosystem.ModuleConfig{})
+
+	expected := []string{"shellcheck", "shfmt"}
+	if len(pkgs) != len(expected) {
+		t.Fatalf("DevenvPackages() returned %d packages, want %d", len(pkgs), len(expected))
+	}
+	for i, pkg := range pkgs {
+		if pkg != expected[i] {
+			t.Errorf("DevenvPackages()[%d] = %q, want %q", i, pkg, expected[i])
+		}
+	}
+}
+
 // --- DevenvNixFragment tests ---
 
-func TestDevenvNixFragment_NonEmpty(t *testing.T) {
+func TestDevenvNixFragment_Empty(t *testing.T) {
 	m := newModule()
-	config := ecosystem.ModuleConfig{}
-
-	frag, err := m.DevenvNixFragment(config)
+	frag, err := m.DevenvNixFragment(ecosystem.ModuleConfig{})
 	if err != nil {
 		t.Fatalf("DevenvNixFragment() error: %v", err)
 	}
-	if frag == "" {
-		t.Error("DevenvNixFragment() returned empty string")
-	}
-	if !strings.Contains(frag, "shellcheck") {
-		t.Errorf("fragment missing shellcheck:\n%s", frag)
-	}
-	if !strings.Contains(frag, "shfmt") {
-		t.Errorf("fragment missing shfmt:\n%s", frag)
+	if frag != "" {
+		t.Errorf("DevenvNixFragment() = %q, want empty string (packages moved to DevenvPackages)", frag)
 	}
 }
 

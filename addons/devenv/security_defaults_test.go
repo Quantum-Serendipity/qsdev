@@ -10,7 +10,7 @@ import (
 func TestDefaultBasePackages_MatchesCatalog(t *testing.T) {
 	t.Parallel()
 	got := defaultBasePackages()
-	want := catalog.Default().BasePackages()
+	want := catalog.MustDefault().BasePackages()
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("defaultBasePackages() = %v, want catalog.BasePackages() = %v", got, want)
 	}
@@ -19,7 +19,7 @@ func TestDefaultBasePackages_MatchesCatalog(t *testing.T) {
 func TestDefaultSecurityHooks_MatchesCatalog(t *testing.T) {
 	t.Parallel()
 	got := defaultSecurityHooks()
-	want := catalog.Default().SecurityHooks()
+	want := catalog.MustDefault().SecurityHooks()
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("defaultSecurityHooks() = %v, want catalog.SecurityHooks() = %v", got, want)
 	}
@@ -28,7 +28,7 @@ func TestDefaultSecurityHooks_MatchesCatalog(t *testing.T) {
 func TestDefaultUnsetEnvVars_MatchesCatalog(t *testing.T) {
 	t.Parallel()
 	got := defaultUnsetEnvVars()
-	want := catalog.Default().UnsetVars()
+	want := catalog.MustDefault().UnsetVars()
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("defaultUnsetEnvVars() = %v, want catalog.UnsetVars() = %v", got, want)
 	}
@@ -37,7 +37,7 @@ func TestDefaultUnsetEnvVars_MatchesCatalog(t *testing.T) {
 func TestDefaultCleanKeep_MatchesCatalog(t *testing.T) {
 	t.Parallel()
 	got := defaultCleanKeep()
-	want := catalog.Default().KeepVars()
+	want := catalog.MustDefault().KeepVars()
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("defaultCleanKeep() = %v, want catalog.KeepVars() = %v", got, want)
 	}
@@ -46,7 +46,7 @@ func TestDefaultCleanKeep_MatchesCatalog(t *testing.T) {
 func TestDefaultSpecializedHooks_MatchesCatalog(t *testing.T) {
 	t.Parallel()
 	got := defaultSpecializedHooks()
-	catHooks := catalog.Default().CustomHooks()
+	catHooks := catalog.MustDefault().CustomHooks()
 
 	if len(got) != len(catHooks) {
 		t.Fatalf("defaultSpecializedHooks() count = %d, want catalog.CustomHooks() count = %d", len(got), len(catHooks))

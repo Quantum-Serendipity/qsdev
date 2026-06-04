@@ -262,35 +262,35 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 
 	// Default agent tools when Claude is enabled — only if user hasn't configured any.
 	if a.ClaudeCode && !a.AgentTools.PostmortemEnabled && !a.AgentTools.VersionSentinel && !a.AgentTools.SembleEnabled {
-		defaults := catalog.Default().DefaultAgentToolConfig()
+		defaults := catalog.MustDefault().DefaultAgentToolConfig()
 		a.AgentTools.PostmortemEnabled = defaults.PostmortemEnabled
 		a.AgentTools.VersionSentinel = defaults.VersionSentinel
 		a.AgentTools.SembleEnabled = defaults.SembleEnabled
 	}
 	if a.ClaudeCode {
 		if a.AgentTools.VersionSentinelHours == 0 {
-			a.AgentTools.VersionSentinelHours = catalog.Default().DefaultAgentToolConfig().VersionSentinelHours
+			a.AgentTools.VersionSentinelHours = catalog.MustDefault().DefaultAgentToolConfig().VersionSentinelHours
 		}
 		if a.AgentTools.SembleMode == "" {
-			a.AgentTools.SembleMode = catalog.Default().DefaultAgentToolConfig().SembleMode
+			a.AgentTools.SembleMode = catalog.MustDefault().DefaultAgentToolConfig().SembleMode
 		}
 	}
 
 	// Default MCP servers when Claude Code is enabled and none are configured.
 	if a.ClaudeCode && len(a.MCPServers) == 0 {
-		a.MCPServers = append(a.MCPServers, catalog.Default().DefaultMCPServers()...)
+		a.MCPServers = append(a.MCPServers, catalog.MustDefault().DefaultMCPServers()...)
 	}
 
 	// Derive ComplianceLevel from Tier when not explicitly set.
 	if a.ComplianceLevel == "" && a.Tier != "" {
-		if level, ok := catalog.Default().TierToCompliance()[a.Tier]; ok {
+		if level, ok := catalog.MustDefault().TierToCompliance()[a.Tier]; ok {
 			a.ComplianceLevel = level
 		}
 	}
 
 	// Derive EnabledTools from Tier when not explicitly set.
 	if a.EnabledTools == nil && a.Tier != "" {
-		if tools, ok := catalog.Default().TierToEnabledTools()[a.Tier]; ok && len(tools) > 0 {
+		if tools, ok := catalog.MustDefault().TierToEnabledTools()[a.Tier]; ok && len(tools) > 0 {
 			a.EnabledTools = make(map[string]bool, len(tools))
 			for _, t := range tools {
 				a.EnabledTools[t] = true

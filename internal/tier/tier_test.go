@@ -39,7 +39,7 @@ func TestParseTier_Invalid(t *testing.T) {
 
 func TestTierString_Roundtrip(t *testing.T) {
 	t.Parallel()
-	for _, name := range catalog.Default().TierOrder() {
+	for _, name := range catalog.MustDefault().TierOrder() {
 		tier, err := ParseTier(name)
 		if err != nil {
 			t.Fatal(err)

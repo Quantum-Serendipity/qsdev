@@ -11,7 +11,7 @@ func BuildFromCatalog() *Registry {
 		tools: make(map[string]*Tool),
 	}
 
-	cat := catalog.Default()
+	cat := catalog.MustDefault()
 	for name, def := range cat.Tools() {
 		t := Tool{
 			Name:          name,

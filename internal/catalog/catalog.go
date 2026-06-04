@@ -26,6 +26,7 @@ var (
 	mu             sync.Mutex
 	defaultOnce    sync.Once
 	defaultCat     *Catalog
+	defaultErr     error
 	projectRootDir string
 )
 
@@ -39,7 +40,7 @@ func SetProjectRoot(root string) {
 
 // Default returns the lazily-initialized global catalog loaded from
 // embedded defaults, with optional org and project overrides.
-func Default() *Catalog {
+func Default() (*Catalog, error) {
 	defaultOnce.Do(func() {
 		mu.Lock()
 		root := projectRootDir
@@ -54,13 +55,20 @@ func Default() *Catalog {
 			opts = append(opts, WithProjectConfigFile(projFile))
 		}
 
-		var err error
-		defaultCat, err = Load(opts...)
-		if err != nil {
-			panic(fmt.Sprintf("catalog: failed to load: %v", err))
-		}
+		defaultCat, defaultErr = Load(opts...)
 	})
-	return defaultCat
+	return defaultCat, defaultErr
+}
+
+// MustDefault returns the lazily-initialized global catalog, panicking
+// if loading fails. Use this in init-time accessors where returning an
+// error is impractical.
+func MustDefault() *Catalog {
+	cat, err := Default()
+	if err != nil {
+		panic(fmt.Sprintf("catalog: failed to load: %v", err))
+	}
+	return cat
 }
 
 // ResetDefault clears the cached default catalog, forcing the next
@@ -69,6 +77,7 @@ func ResetDefault() {
 	mu.Lock()
 	defaultOnce = sync.Once{}
 	defaultCat = nil
+	defaultErr = nil
 	projectRootDir = ""
 	mu.Unlock()
 }

@@ -568,7 +568,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: true, Tier: "full"}
 		a.FillDefaults(types.DetectedProject{})
 
-		cat := catalog.Default()
+		cat := catalog.MustDefault()
 		defaults := cat.DefaultAgentToolConfig()
 
 		if a.AgentTools.PostmortemEnabled != defaults.PostmortemEnabled {
@@ -592,14 +592,14 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: true, Tier: "full"}
 		a.FillDefaults(types.DetectedProject{})
 
-		want := catalog.Default().DefaultMCPServers()
+		want := catalog.MustDefault().DefaultMCPServers()
 		if !reflect.DeepEqual(a.MCPServers, want) {
 			t.Errorf("MCPServers = %v, want %v", a.MCPServers, want)
 		}
 	})
 
 	t.Run("catalog-backed tier-to-compliance derivation", func(t *testing.T) {
-		tierMap := catalog.Default().TierToCompliance()
+		tierMap := catalog.MustDefault().TierToCompliance()
 		for tier, wantLevel := range tierMap {
 			if tier == "supply-chain-only" {
 				continue // early return path, tested separately
@@ -613,7 +613,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 	})
 
 	t.Run("catalog-backed tier-to-enabled-tools derivation", func(t *testing.T) {
-		tierTools := catalog.Default().TierToEnabledTools()
+		tierTools := catalog.MustDefault().TierToEnabledTools()
 		for tier, wantTools := range tierTools {
 			if tier == "supply-chain-only" {
 				continue // early return path, tested separately

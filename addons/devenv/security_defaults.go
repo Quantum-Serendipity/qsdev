@@ -11,40 +11,40 @@ import (
 // defaultUnsetEnvVars returns the canonical list of credential-bearing
 // environment variables stripped from the devenv shell.
 func defaultUnsetEnvVars() []string {
-	return catalog.Default().UnsetVars()
+	return catalog.MustDefault().UnsetVars()
 }
 
 // defaultSecurityHooks returns the built-in git-hooks.nix hooks that are
 // always enabled for security scanning.
 func defaultSecurityHooks() []string {
-	return catalog.Default().SecurityHooks()
+	return catalog.MustDefault().SecurityHooks()
 }
 
 // defaultBasePackages returns the minimal set of packages always included.
 func defaultBasePackages() []string {
-	return catalog.Default().BasePackages()
+	return catalog.MustDefault().BasePackages()
 }
 
 // defaultCleanKeep returns the allowlist of environment variables that pass
 // through when clean.enabled is true.
 func defaultCleanKeep() []string {
-	return catalog.Default().KeepVars()
+	return catalog.MustDefault().KeepVars()
 }
 
 // defaultToolNixPackages returns the tool→Nix package map from the catalog.
 func defaultToolNixPackages() map[string]string {
-	return catalog.Default().ToolNixPackages()
+	return catalog.MustDefault().ToolNixPackages()
 }
 
 // defaultToolNixExprs returns the tool→Nix expression map from the catalog.
 func defaultToolNixExprs() map[string]string {
-	return catalog.Default().ToolNixExprs()
+	return catalog.MustDefault().ToolNixExprs()
 }
 
 // defaultSpecializedHooks returns the specialized custom security hooks that
 // are always present. These use custom Nix expressions for advanced checks.
 func defaultSpecializedHooks() []CustomHookData {
-	cat := catalog.Default()
+	cat := catalog.MustDefault()
 	defs := cat.CustomHooks()
 
 	hooks := make([]CustomHookData, 0, len(defs))

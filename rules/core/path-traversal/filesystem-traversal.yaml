@@ -1,0 +1,113 @@
+rules:
+  - id: qsdev.core.typescript.path-traversal-fs
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      User-controlled input flows into a filesystem operation, enabling
+      path traversal attacks. Use path.basename() to strip directory
+      components, or resolve the path and verify it falls within an
+      expected base directory using path.resolve() before accessing files.
+    mode: taint
+    pattern-sources:
+      - pattern: req.query
+      - pattern: req.params
+      - pattern: req.body
+    pattern-sinks:
+      - pattern: fs.readFile($PATH, ...)
+      - pattern: fs.readFileSync($PATH, ...)
+      - pattern: fs.createReadStream($PATH, ...)
+      - pattern: fs.writeFile($PATH, ...)
+      - pattern: fs.writeFileSync($PATH, ...)
+      - pattern: fs.unlink($PATH, ...)
+      - pattern: fs.unlinkSync($PATH)
+      - pattern: fs.promises.readFile($PATH, ...)
+      - pattern: fs.promises.writeFile($PATH, ...)
+    pattern-sanitizers:
+      - pattern: path.basename(...)
+      - pattern: path.resolve(...)
+    metadata:
+      category: security
+      subcategory: path-traversal
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-22
+      owasp: "A01:2021"
+      technology: [node]
+
+  - id: qsdev.core.python.path-traversal-fs
+    languages: [python]
+    severity: ERROR
+    message: >
+      User-controlled input flows into a filesystem operation, enabling
+      path traversal attacks. Use os.path.basename() to strip directory
+      components, or resolve the path with os.path.realpath() and verify
+      it starts with the expected base directory before accessing files.
+    mode: taint
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.args[...]
+      - pattern: request.form.get(...)
+      - pattern: request.form[...]
+      - pattern: request.GET.get(...)
+      - pattern: request.GET[...]
+      - pattern: request.POST.get(...)
+      - pattern: request.POST[...]
+    pattern-sinks:
+      - pattern: open($PATH, ...)
+      - pattern: pathlib.Path($PATH).read_text(...)
+      - pattern: pathlib.Path($PATH).read_bytes()
+      - pattern: pathlib.Path($PATH).write_text(...)
+      - pattern: pathlib.Path($PATH).open(...)
+      - pattern: os.remove($PATH)
+      - pattern: shutil.copy($PATH, ...)
+    pattern-sanitizers:
+      - pattern: os.path.basename(...)
+      - pattern: os.path.realpath(...)
+      - pattern: pathlib.Path(...).resolve()
+    metadata:
+      category: security
+      subcategory: path-traversal
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-22
+      owasp: "A01:2021"
+      technology: [python]
+
+  - id: qsdev.core.go.path-traversal-fs
+    languages: [go]
+    severity: ERROR
+    message: >
+      User-controlled input flows into a filesystem operation, enabling
+      path traversal attacks. Use filepath.Base() to strip directory
+      components, or use filepath.Clean() and verify the result is within
+      an expected base directory before accessing files.
+    mode: taint
+    pattern-sources:
+      - pattern: $R.URL.Query().Get(...)
+      - pattern: $R.FormValue(...)
+      - pattern: $R.PostFormValue(...)
+      - pattern: $C.Query(...)
+      - pattern: $C.Param(...)
+    pattern-sinks:
+      - pattern: os.Open($PATH)
+      - pattern: os.ReadFile($PATH)
+      - pattern: os.Create($PATH)
+      - pattern: os.WriteFile($PATH, ...)
+      - pattern: os.Remove($PATH)
+      - pattern: os.OpenFile($PATH, ...)
+      - pattern: ioutil.ReadFile($PATH)
+    pattern-sanitizers:
+      - pattern: filepath.Base(...)
+      - pattern: filepath.Clean(...)
+      - pattern: filepath.Abs(...)
+    metadata:
+      category: security
+      subcategory: path-traversal
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-22
+      owasp: "A01:2021"
+      technology: [go]

@@ -1,0 +1,60 @@
+rules:
+  - id: qsdev.core.typescript.cmdi-sveltekit
+    message: >-
+      User-controlled data from a SvelteKit server entry point flows into a
+      command execution function. Use parameterized APIs (execFile with
+      argument arrays) or validate/sanitize the input.
+    languages: [typescript, javascript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-78
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [sveltekit]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  export const load = async ({..., params, ...}) => { ... }
+              - pattern-inside: |
+                  export function load({..., params, ...}) { ... }
+          - pattern: params
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  export const load = async ({..., url, ...}) => { ... }
+              - pattern-inside: |
+                  export function load({..., url, ...}) { ... }
+          - pattern: url.searchParams
+      - patterns:
+          - pattern-inside: |
+              export const actions = {
+                ...
+                $ACTION: async ({..., request, ...}) => {
+                  ...
+                }
+                ...
+              }
+          - pattern: request.formData()
+      - patterns:
+          - pattern-inside: |
+              export const handle = async ({event, resolve}) => { ... }
+          - pattern: event.request
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: exec($CMD, ...)
+              - pattern: execSync($CMD, ...)
+              - pattern: $CP.exec($CMD, ...)
+              - pattern: $CP.execSync($CMD, ...)
+          - focus-metavariable: $CMD
+    pattern-sanitizers:
+      - pattern: $SCHEMA.parse(...)

@@ -1,0 +1,134 @@
+rules:
+  - id: qsdev.core.typescript.path-traversal-nestjs
+    message: >-
+      User-controlled input from a NestJS parameter decorator is used in a file
+      system operation. This can lead to path traversal, allowing attackers to
+      read or write arbitrary files. Use path.resolve() with a base directory
+      and validate the resolved path starts with the expected prefix.
+    languages: [typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-22
+      owasp: A01:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [nestjs]
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Param(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Query(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Body(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @UploadedFile(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: fs.readFile($PATH, ...)
+              - pattern: fs.readFileSync($PATH, ...)
+              - pattern: fs.createReadStream($PATH, ...)
+              - pattern: fs.writeFile($PATH, ...)
+              - pattern: fs.writeFileSync($PATH, ...)
+              - pattern: fs.access($PATH, ...)
+              - pattern: fs.stat($PATH, ...)
+              - pattern: fs.statSync($PATH, ...)
+              - pattern: fs.unlink($PATH, ...)
+              - pattern: fs.unlinkSync($PATH, ...)
+              - pattern: $FSPROMISES.readFile($PATH, ...)
+              - pattern: $FSPROMISES.writeFile($PATH, ...)
+              - pattern: $FSPROMISES.unlink($PATH, ...)
+          - focus-metavariable: $PATH
+    pattern-sanitizers:
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @$DECORATOR(..., ParseIntPipe) $PARAM, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $PARAM
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @$DECORATOR(..., ParseUUIDPipe) $PARAM, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $PARAM
+
+  - id: qsdev.core.typescript.path-traversal-nestjs-file-upload
+    message: >-
+      An uploaded file's original name is used to construct a file system path.
+      Attackers can craft filenames like "../../etc/passwd" to write files
+      outside the intended directory. Use a generated filename (e.g., UUID) or
+      strip path separators from the original name.
+    languages: [typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-22
+      owasp: A01:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [nestjs, multer]
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @UploadedFile(...) $FILE, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $FILE
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @UploadedFiles(...) $FILES, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $FILES
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: fs.writeFile($PATH, ...)
+              - pattern: fs.writeFileSync($PATH, ...)
+              - pattern: fs.createWriteStream($PATH, ...)
+              - pattern: $FSPROMISES.writeFile($PATH, ...)
+              - pattern: path.join(..., $PATH, ...)
+              - pattern: path.resolve(..., $PATH, ...)
+          - focus-metavariable: $PATH
+    pattern-sanitizers:
+      - pattern: path.basename(...)

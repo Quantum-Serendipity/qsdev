@@ -1,0 +1,65 @@
+rules:
+  - id: qsdev.core.typescript.redirect-sveltekit-open-redirect
+    message: >-
+      User-controlled data is used as the redirect target in a SvelteKit
+      redirect() call. An attacker can craft a URL that redirects users to
+      a malicious site. Validate the redirect target against an allowlist
+      of permitted paths or origins.
+    languages: [typescript, javascript]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-601
+      owasp: A01:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: MEDIUM
+      likelihood: MEDIUM
+      technology: [sveltekit]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  export const load = async ({..., url, ...}) => { ... }
+              - pattern-inside: |
+                  export function load({..., url, ...}) { ... }
+          - pattern: url.searchParams
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  export const load = async ({..., params, ...}) => { ... }
+              - pattern-inside: |
+                  export function load({..., params, ...}) { ... }
+          - pattern: params
+      - patterns:
+          - pattern-inside: |
+              export const actions = {
+                ...
+                $ACTION: async ({..., request, ...}) => {
+                  ...
+                }
+                ...
+              }
+          - pattern: request.formData()
+      - patterns:
+          - pattern-inside: |
+              export const actions = {
+                ...
+                $ACTION: async ({..., url, ...}) => {
+                  ...
+                }
+                ...
+              }
+          - pattern: url.searchParams
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: redirect($STATUS, $LOCATION)
+              - pattern: throw redirect($STATUS, $LOCATION)
+          - focus-metavariable: $LOCATION
+    pattern-sanitizers:
+      - pattern: new URL($INPUT, $BASE)

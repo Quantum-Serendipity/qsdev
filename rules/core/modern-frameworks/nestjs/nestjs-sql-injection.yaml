@@ -1,0 +1,268 @@
+rules:
+  - id: qsdev.core.typescript.sqli-nestjs-body-typeorm
+    message: >-
+      User input from @Body() is used in a raw TypeORM query via string
+      concatenation or template literal interpolation. This can lead to SQL
+      injection. Use parameterized queries instead:
+      `manager.query("SELECT * FROM users WHERE id = $1", [id])`.
+    languages: [typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: HIGH
+      technology: [nestjs, typeorm]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Body(...) $INPUT, ...) {
+                  ...
+                }
+                ...
+              }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  "..." + $EXPR
+              - pattern-inside: |
+                  "...".concat($EXPR)
+              - pattern: |
+                  `$SQLSTR${$EXPR}...`
+          - metavariable-regex:
+              metavariable: $SQLSTR
+              regex: .*\b(?i)(select|delete|insert|create|update|drop|alter)\b.*
+          - focus-metavariable: $EXPR
+      - patterns:
+          - pattern: $MANAGER.query($QUERY, ...)
+          - pattern-not: $MANAGER.query("...", ...)
+          - focus-metavariable: $QUERY
+    pattern-sanitizers:
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Body(..., ParseIntPipe) $PARAM, ...) {
+                  ...
+                }
+                ...
+              }
+          - focus-metavariable: $PARAM
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+
+  - id: qsdev.core.typescript.sqli-nestjs-all-sources
+    message: >-
+      User-controlled input from a NestJS parameter decorator reaches a raw SQL
+      query. This can lead to SQL injection. Use parameterized queries or an ORM
+      query builder with bound parameters.
+    languages: [typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: HIGH
+      technology: [nestjs]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Body(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Param(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Query(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Req() $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Request() $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  "..." + $EXPR
+              - pattern-inside: |
+                  "...".concat($EXPR)
+              - pattern: |
+                  `$SQLSTR${$EXPR}...`
+          - metavariable-regex:
+              metavariable: $SQLSTR
+              regex: .*\b(?i)(select|delete|insert|create|update|drop|alter)\b.*
+          - focus-metavariable: $EXPR
+      - patterns:
+          - pattern: $MANAGER.query($QUERY, ...)
+          - pattern-not: $MANAGER.query("...", ...)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern-either:
+              - pattern: $QB.where("..." + $EXPR + ...)
+              - pattern: $QB.where(`...${$EXPR}...`)
+              - pattern: $QB.andWhere("..." + $EXPR + ...)
+              - pattern: $QB.andWhere(`...${$EXPR}...`)
+              - pattern: $QB.orWhere("..." + $EXPR + ...)
+              - pattern: $QB.orWhere(`...${$EXPR}...`)
+          - focus-metavariable: $EXPR
+    pattern-sanitizers:
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @$DECORATOR(..., ParseIntPipe) $PARAM, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $PARAM
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @$DECORATOR(..., ParseUUIDPipe) $PARAM, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $PARAM
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @$DECORATOR(..., ParseBoolPipe) $PARAM, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $PARAM
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: parseFloat(...)
+
+  - id: qsdev.core.typescript.sqli-nestjs-service-intrafile
+    message: >-
+      A string parameter in an @Injectable() NestJS service is used in a raw
+      SQL query. If this parameter receives user-controlled input from a
+      controller, this is a SQL injection vulnerability. Use parameterized
+      queries instead.
+    languages: [typescript]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: LOW
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [nestjs, typeorm]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Body(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Param(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Query(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              @Injectable()
+              class $SERVICE {
+                ...
+                $METHOD(..., $PARAM: string, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $PARAM
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  "..." + $EXPR
+              - pattern-inside: |
+                  "...".concat($EXPR)
+              - pattern: |
+                  `$SQLSTR${$EXPR}...`
+          - metavariable-regex:
+              metavariable: $SQLSTR
+              regex: .*\b(?i)(select|delete|insert|create|update|drop|alter)\b.*
+          - focus-metavariable: $EXPR
+      - patterns:
+          - pattern: $MANAGER.query($QUERY, ...)
+          - pattern-not: $MANAGER.query("...", ...)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern-either:
+              - pattern: $QB.where("..." + $EXPR + ...)
+              - pattern: $QB.where(`...${$EXPR}...`)
+              - pattern: $QB.andWhere("..." + $EXPR + ...)
+              - pattern: $QB.andWhere(`...${$EXPR}...`)
+          - focus-metavariable: $EXPR
+      - patterns:
+          - pattern-either:
+              - pattern: $KNEX.raw("..." + $EXPR + ...)
+              - pattern: $KNEX.raw(`...${$EXPR}...`)
+          - focus-metavariable: $EXPR
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: parseFloat(...)

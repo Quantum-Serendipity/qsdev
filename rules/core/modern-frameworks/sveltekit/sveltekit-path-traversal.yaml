@@ -1,0 +1,51 @@
+rules:
+  - id: qsdev.core.typescript.path-traversal-sveltekit
+    message: >-
+      User-controlled data from a SvelteKit server entry point is used in a
+      file system path. Use path.basename() to strip directory components,
+      or validate against an allowlist of permitted paths.
+    languages: [typescript, javascript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-22
+      owasp: A01:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [sveltekit]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  export const load = async ({..., params, ...}) => { ... }
+              - pattern-inside: |
+                  export function load({..., params, ...}) { ... }
+          - pattern: params
+      - patterns:
+          - pattern-inside: |
+              export const actions = {
+                ...
+                $ACTION: async ({..., request, ...}) => {
+                  ...
+                }
+                ...
+              }
+          - pattern: request.formData()
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $FS.readFile($PATH, ...)
+              - pattern: $FS.readFileSync($PATH, ...)
+              - pattern: $FS.createReadStream($PATH, ...)
+              - pattern: $FS.writeFile($PATH, ...)
+              - pattern: $FS.writeFileSync($PATH, ...)
+          - focus-metavariable: $PATH
+    pattern-sanitizers:
+      - pattern: path.basename(...)
+      - pattern: $SCHEMA.parse(...)

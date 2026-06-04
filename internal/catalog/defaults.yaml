@@ -579,6 +579,22 @@ tools:
               ownership: shared
               section_id: license-compliance
               section_content: "- **License Compliance** checks dependencies against SPDX allowlist/blocklist policies."
+    opengrep:
+        display_name: OpenGrep SAST
+        category: security
+        description: Taint-focused static analysis via OpenGrep with custom security rules
+        default_policy: opt-in
+        nix_expr: '(pkgs.callPackage ./nix/opengrep {})'
+        owned_files:
+            - path: .opengrep/config.yaml
+              ownership: exclusive
+            - path: devenv.nix
+              ownership: shared
+              section_id: opengrep
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: opengrep
+              section_content: "- **OpenGrep SAST** provides taint-focused security analysis with custom rules."
     otel-config:
         display_name: OpenTelemetry Configuration
         category: infrastructure

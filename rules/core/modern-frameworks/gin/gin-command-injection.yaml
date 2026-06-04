@@ -1,0 +1,89 @@
+rules:
+  - id: qsdev.core.go.cmdi-gin-shell
+    message: >-
+      User input from Gin request is passed to a shell command via
+      exec.Command with sh/bash -c. This allows arbitrary command execution.
+      Avoid shell invocation entirely -- use exec.Command with separate
+      arguments: `exec.Command("myprogram", "--flag", userInput)`.
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-78
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [gin]
+    pattern-sources:
+      - pattern-either:
+          - pattern: "($CTX : *gin.Context).Param(...)"
+          - pattern: "($CTX : *gin.Context).Query(...)"
+          - pattern: "($CTX : *gin.Context).DefaultQuery(...)"
+          - pattern: "($CTX : *gin.Context).PostForm(...)"
+          - pattern: "($CTX : *gin.Context).DefaultPostForm(...)"
+          - pattern: "($CTX : *gin.Context).GetHeader(...)"
+          - pattern: "($CTX : *gin.Context).GetRawData()"
+          - pattern: "($CTX : *gin.Context).Cookie(...)"
+      - patterns:
+          - pattern-either:
+              - pattern: "($CTX : *gin.Context).ShouldBindJSON($BOUND)"
+              - pattern: "($CTX : *gin.Context).ShouldBind($BOUND)"
+          - focus-metavariable: $BOUND
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command("sh", "-c", $CMD)
+              - pattern: exec.Command("bash", "-c", $CMD)
+              - pattern: exec.Command("/bin/sh", "-c", $CMD)
+              - pattern: exec.Command("/bin/bash", "-c", $CMD)
+              - pattern: exec.CommandContext($CTX2, "sh", "-c", $CMD)
+              - pattern: exec.CommandContext($CTX2, "bash", "-c", $CMD)
+              - pattern: exec.CommandContext($CTX2, "/bin/sh", "-c", $CMD)
+              - pattern: exec.CommandContext($CTX2, "/bin/bash", "-c", $CMD)
+          - focus-metavariable: $CMD
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: strconv.Atoi(...)
+          - pattern: strconv.ParseInt(...)
+
+  - id: qsdev.core.go.cmdi-gin-direct
+    message: >-
+      User input from Gin request is used as the command name in
+      exec.Command. An attacker could execute arbitrary binaries.
+      Validate the command against an allowlist of permitted programs.
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-78
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [gin]
+    pattern-sources:
+      - pattern-either:
+          - pattern: "($CTX : *gin.Context).Param(...)"
+          - pattern: "($CTX : *gin.Context).Query(...)"
+          - pattern: "($CTX : *gin.Context).PostForm(...)"
+          - pattern: "($CTX : *gin.Context).GetRawData()"
+      - patterns:
+          - pattern-either:
+              - pattern: "($CTX : *gin.Context).ShouldBindJSON($BOUND)"
+              - pattern: "($CTX : *gin.Context).ShouldBind($BOUND)"
+          - focus-metavariable: $BOUND
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command($CMD, ...)
+              - pattern: exec.CommandContext($CTX2, $CMD, ...)
+          - focus-metavariable: $CMD
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: strconv.Atoi(...)
+          - pattern: strconv.ParseInt(...)

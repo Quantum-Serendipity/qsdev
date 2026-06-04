@@ -1,0 +1,31 @@
+//go:build ignore
+package vulnerable
+
+import (
+	"database/sql"
+	"fmt"
+	"net/http"
+)
+
+func SearchUsersHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+
+		// VULNERABLE: string concatenation in SQL query
+		query := fmt.Sprintf("SELECT id, email FROM users WHERE name = '%s'", name)
+		rows, err := db.Query(query)
+		if err != nil {
+			http.Error(w, "query failed", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var id int
+			var email string
+			_ = rows.Scan(&id, &email)
+			fmt.Fprintf(w, "id=%d email=%s
+", id, email)
+		}
+	}
+}

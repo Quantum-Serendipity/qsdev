@@ -1,0 +1,70 @@
+rules:
+  - id: qsdev.core.typescript.cmdi-nextjs-server-action
+    message: >-
+      User input from a Server Action reaches a shell command execution
+      function. This allows arbitrary command execution on the server. Use
+      execFile() with an argument array instead of exec(), or validate and
+      sanitize the input against a strict allowlist.
+    languages: [typescript, javascript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-78
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [nextjs]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - pattern: $FD.get(...)
+      - pattern: $FD.getAll(...)
+      - patterns:
+          - pattern-inside: |
+              "use server"
+              ...
+          - pattern-inside: |
+              async function $FUNC($PARAM, ...) { ... }
+          - focus-metavariable: $PARAM
+      - patterns:
+          - pattern-inside: |
+              async function $FUNC($PARAM, ...) {
+                "use server";
+                ...
+              }
+          - focus-metavariable: $PARAM
+      - patterns:
+          - pattern-inside: |
+              export async function $METHOD($REQUEST, ...) { ... }
+          - pattern-either:
+              - pattern: $REQUEST.json()
+              - pattern: await $REQUEST.json()
+              - pattern: $REQUEST.nextUrl.searchParams.get(...)
+      - pattern: headers().get(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: exec($CMD, ...)
+              - pattern: execSync($CMD, ...)
+              - pattern: child_process.exec($CMD, ...)
+              - pattern: child_process.execSync($CMD, ...)
+          - focus-metavariable: $CMD
+      - patterns:
+          - pattern-either:
+              - pattern: exec(`...${$EXPR}...`, ...)
+              - pattern: execSync(`...${$EXPR}...`, ...)
+          - focus-metavariable: $EXPR
+      - patterns:
+          - pattern: "spawn($CMD, ..., { shell: true, ...}, ...)"
+          - focus-metavariable: $CMD
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - patterns:
+          - pattern: $REGEX.test($INPUT)
+          - focus-metavariable: $INPUT
+        by-side-effect: true

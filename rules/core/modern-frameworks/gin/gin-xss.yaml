@@ -1,0 +1,94 @@
+rules:
+  - id: qsdev.core.go.xss-gin-template-html-bypass
+    message: >-
+      User input from Gin request is passed to template.HTML(), which
+      bypasses Go's html/template auto-escaping. An attacker could inject
+      arbitrary HTML and JavaScript. Remove the template.HTML() conversion
+      and let the template engine escape the value automatically.
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-79
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: MEDIUM
+      likelihood: HIGH
+      technology: [gin]
+    pattern-sources:
+      - pattern-either:
+          - pattern: "($CTX : *gin.Context).Param(...)"
+          - pattern: "($CTX : *gin.Context).Query(...)"
+          - pattern: "($CTX : *gin.Context).DefaultQuery(...)"
+          - pattern: "($CTX : *gin.Context).PostForm(...)"
+          - pattern: "($CTX : *gin.Context).DefaultPostForm(...)"
+          - pattern: "($CTX : *gin.Context).GetHeader(...)"
+          - pattern: "($CTX : *gin.Context).GetRawData()"
+          - pattern: "($CTX : *gin.Context).Cookie(...)"
+      - patterns:
+          - pattern-either:
+              - pattern: "($CTX : *gin.Context).ShouldBindJSON($BOUND)"
+              - pattern: "($CTX : *gin.Context).ShouldBind($BOUND)"
+          - focus-metavariable: $BOUND
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: template.HTML($INPUT)
+              - pattern: template.HTMLAttr($INPUT)
+              - pattern: template.JS($INPUT)
+              - pattern: template.JSStr($INPUT)
+              - pattern: template.CSS($INPUT)
+              - pattern: template.URL($INPUT)
+          - focus-metavariable: $INPUT
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: strconv.Atoi(...)
+          - pattern: strconv.ParseInt(...)
+          - pattern: strconv.ParseFloat(...)
+
+  - id: qsdev.core.go.xss-gin-direct-response
+    message: >-
+      User input from Gin request is written directly to the response writer,
+      bypassing template auto-escaping. If the response Content-Type is
+      text/html, this is a cross-site scripting vulnerability. Use c.HTML()
+      with template rendering instead of writing raw HTML to the response.
+    languages: [go]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-79
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: MEDIUM
+      likelihood: MEDIUM
+      technology: [gin]
+    pattern-sources:
+      - pattern-either:
+          - pattern: "($CTX : *gin.Context).Param(...)"
+          - pattern: "($CTX : *gin.Context).Query(...)"
+          - pattern: "($CTX : *gin.Context).PostForm(...)"
+          - pattern: "($CTX : *gin.Context).GetHeader(...)"
+          - pattern: "($CTX : *gin.Context).GetRawData()"
+          - pattern: "($CTX : *gin.Context).Cookie(...)"
+      - patterns:
+          - pattern-either:
+              - pattern: "($CTX : *gin.Context).ShouldBindJSON($BOUND)"
+              - pattern: "($CTX : *gin.Context).ShouldBind($BOUND)"
+          - focus-metavariable: $BOUND
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: "($CTX : *gin.Context).Writer.WriteString($HTML)"
+              - pattern: "($CTX : *gin.Context).Writer.Write($HTML)"
+              - pattern: "fmt.Fprintf(($CTX : *gin.Context).Writer, $HTML, ...)"
+              - pattern: "($CTX : *gin.Context).Data($CODE, \"text/html\", $HTML)"
+          - focus-metavariable: $HTML
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: strconv.Atoi(...)
+          - pattern: strconv.ParseInt(...)
+          - pattern: html.EscapeString(...)

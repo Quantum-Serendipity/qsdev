@@ -1,0 +1,110 @@
+rules:
+  - id: qsdev.core.typescript.redirect-nextjs-open-redirect
+    message: >-
+      User-controlled data flows into a redirect destination. An attacker could
+      craft a URL that redirects users to a malicious site, enabling phishing
+      attacks. Validate the redirect URL against an allowlist of permitted
+      destinations, or ensure it is a relative path that cannot redirect
+      externally.
+    languages: [typescript, javascript]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-601
+      owasp: A01:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: MEDIUM
+      likelihood: MEDIUM
+      technology: [nextjs]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              export default async function $PAGE({ searchParams, ... }) { ... }
+          - pattern: searchParams
+      - patterns:
+          - pattern-inside: |
+              export async function $METHOD($REQUEST, ...) { ... }
+          - pattern-either:
+              - pattern: $REQUEST.nextUrl.searchParams.get(...)
+              - pattern: $REQUEST.json()
+              - pattern: await $REQUEST.json()
+      - pattern: $FD.get(...)
+      - pattern: headers().get(...)
+      - patterns:
+          - pattern-inside: |
+              export function middleware($REQUEST, ...) { ... }
+          - pattern-either:
+              - pattern: $REQUEST.nextUrl.searchParams.get(...)
+              - pattern: $REQUEST.nextUrl.pathname
+    pattern-sinks:
+      - patterns:
+          - pattern: redirect($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: permanentRedirect($URL)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: NextResponse.redirect($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: NextResponse.rewrite($URL, ...)
+          - focus-metavariable: $URL
+    pattern-sanitizers:
+      - patterns:
+          - pattern: $URL.startsWith("/")
+          - focus-metavariable: $URL
+        by-side-effect: true
+      - pattern: new URL($INPUT, $BASE)
+
+  - id: qsdev.core.typescript.redirect-nextjs-middleware
+    message: >-
+      User-controlled URL data from the request flows into
+      NextResponse.redirect() or NextResponse.rewrite() in middleware. An
+      attacker could manipulate query parameters or the URL path to redirect
+      users to a malicious external site. Validate the destination URL against
+      an allowlist or ensure it is a relative path.
+    languages: [typescript, javascript]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-601
+      owasp: A01:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: MEDIUM
+      likelihood: MEDIUM
+      technology: [nextjs]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              export function middleware($REQUEST, ...) { ... }
+          - pattern-either:
+              - pattern: $REQUEST.nextUrl
+              - pattern: $REQUEST.nextUrl.searchParams
+              - pattern: $REQUEST.nextUrl.searchParams.get(...)
+              - pattern: $REQUEST.nextUrl.pathname
+              - pattern: $REQUEST.url
+              - pattern: $REQUEST.headers.get(...)
+              - pattern: $REQUEST.cookies.get(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: NextResponse.redirect($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: NextResponse.rewrite($URL, ...)
+          - focus-metavariable: $URL
+    pattern-sanitizers:
+      - patterns:
+          - pattern: $URL.startsWith("/")
+          - focus-metavariable: $URL
+        by-side-effect: true
+      - pattern: new URL($INPUT, $BASE)

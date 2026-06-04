@@ -1,0 +1,52 @@
+rules:
+  - id: qsdev.core.typescript.header-injection-sveltekit
+    message: >-
+      User-controlled data is used as a response header value in SvelteKit's
+      setHeaders(). This could enable header injection or response splitting.
+      Validate or sanitize the header value.
+    languages: [typescript, javascript]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-113
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: MEDIUM
+      likelihood: LOW
+      technology: [sveltekit]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  export const load = async ({..., params, ...}) => { ... }
+              - pattern-inside: |
+                  export function load({..., params, ...}) { ... }
+          - pattern: params
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  export const load = async ({..., url, ...}) => { ... }
+              - pattern-inside: |
+                  export function load({..., url, ...}) { ... }
+          - pattern: url.searchParams
+      - patterns:
+          - pattern-inside: |
+              export const actions = {
+                ...
+                $ACTION: async ({..., request, ...}) => {
+                  ...
+                }
+                ...
+              }
+          - pattern: request.formData()
+    pattern-sinks:
+      - patterns:
+          - pattern: "setHeaders({..., $HEADER: $VALUE, ...})"
+          - focus-metavariable: $VALUE
+    pattern-sanitizers:
+      - pattern: $SCHEMA.parse(...)

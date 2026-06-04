@@ -1,0 +1,51 @@
+rules:
+  - id: qsdev.core.python.deserialization-fastapi-unsafe
+    message: >-
+      User-controlled data from a FastAPI endpoint is passed to pickle.loads()
+      or yaml.load() without SafeLoader. Deserializing untrusted data can lead
+      to arbitrary code execution. Use yaml.safe_load() instead of yaml.load(),
+      and avoid pickle entirely for untrusted data.
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-502
+      owasp: A08:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [fastapi]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM, ...):
+                ...
+          - pattern-not-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM: BackgroundTasks, ...):
+                ...
+          - pattern-not-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM: Response, ...):
+                ...
+          - focus-metavariable: $PARAM
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: pickle.loads($DATA, ...)
+              - pattern: pickle.load($DATA, ...)
+          - focus-metavariable: $DATA
+      - patterns:
+          - pattern: yaml.load($DATA, ...)
+          - pattern-not: yaml.load($DATA, Loader=yaml.SafeLoader)
+          - pattern-not: yaml.load($DATA, Loader=yaml.CSafeLoader)
+          - focus-metavariable: $DATA
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)

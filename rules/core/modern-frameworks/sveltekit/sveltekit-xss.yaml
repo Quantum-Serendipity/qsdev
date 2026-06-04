@@ -1,0 +1,27 @@
+rules:
+  - id: qsdev.core.typescript.xss-sveltekit-html-directive
+    mode: search
+    languages: [generic]
+    severity: WARNING
+    message: >-
+      Found {@html} directive with a variable that may contain user-controlled
+      data. The {@html} directive renders raw HTML without escaping. Sanitize
+      with DOMPurify.sanitize() before rendering. NOTE: This is a regex-based
+      rule that cannot perform taint tracking. It flags ALL {@html} usage
+      except when wrapped in a sanitize() call. For taint-aware detection,
+      scan compiled Svelte output instead.
+    metadata:
+      cwe: CWE-79
+      owasp: A03:2021
+      category: security
+      subcategory: audit
+      confidence: LOW
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [sveltekit, svelte]
+    paths:
+      include:
+        - "**/*.svelte"
+    patterns:
+      - pattern-regex: '\{@html\s+[^}]+\}'
+      - pattern-not-regex: '\{@html\s+(?:DOMPurify\.)?sanitize\([^}]+\)\}'

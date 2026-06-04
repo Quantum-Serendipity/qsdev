@@ -1,0 +1,71 @@
+rules:
+  - id: qsdev.core.typescript.nosqli-nestjs-mongodb
+    message: >-
+      User-controlled input from a NestJS parameter decorator is passed directly
+      as a MongoDB query filter. Attackers can inject MongoDB operators ($gt,
+      $ne, $where, $regex) to bypass authentication or extract data. Sanitize
+      input by explicitly constructing query objects with known fields, or use
+      mongo-sanitize to strip $ operators.
+    languages: [typescript]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-943
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: LOW
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [nestjs, mongoose, mongodb]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Body(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Query(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Param(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $MODEL.find($QUERY, ...)
+              - pattern: $MODEL.findOne($QUERY, ...)
+              - pattern: $MODEL.findById($QUERY, ...)
+              - pattern: $MODEL.findOneAndUpdate($QUERY, ...)
+              - pattern: $MODEL.findOneAndDelete($QUERY, ...)
+              - pattern: $MODEL.updateOne($QUERY, ...)
+              - pattern: $MODEL.updateMany($QUERY, ...)
+              - pattern: $MODEL.deleteOne($QUERY, ...)
+              - pattern: $MODEL.deleteMany($QUERY, ...)
+              - pattern: $MODEL.countDocuments($QUERY, ...)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern-either:
+              - pattern: "$MODEL.find({ $where: $EXPR, ... })"
+              - pattern: "$MODEL.findOne({ $where: $EXPR, ... })"
+          - focus-metavariable: $EXPR
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: String(...)

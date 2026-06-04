@@ -1,0 +1,97 @@
+rules:
+  - id: qsdev.core.go.sqli-database-sql
+    languages: [go]
+    severity: ERROR
+    message: >
+      User-controlled input flows into database/sql Query() or Exec()
+      without parameterization. Use placeholder parameters instead:
+      db.Query("SELECT * FROM users WHERE id = $1", userID) or
+      db.QueryRow("SELECT name FROM users WHERE id = ?", id).
+    mode: taint
+    pattern-sources:
+      - pattern: $R.URL.Query().Get(...)
+      - pattern: $R.FormValue(...)
+      - pattern: $R.PostFormValue(...)
+    pattern-sinks:
+      - pattern: $DB.Query($QUERY)
+      - pattern: $DB.QueryRow($QUERY)
+      - pattern: $DB.Exec($QUERY)
+      - pattern: $DB.QueryContext($CTX, $QUERY)
+      - pattern: $DB.ExecContext($CTX, $QUERY)
+    pattern-sanitizers:
+      - pattern: strconv.Atoi(...)
+      - pattern: strconv.ParseInt(...)
+      - pattern: strconv.ParseFloat(...)
+    metadata:
+      category: security
+      subcategory: sqli
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-89
+      owasp: "A03:2021"
+      technology: [database-sql]
+
+  - id: qsdev.core.go.sqli-gorm-raw
+    languages: [go]
+    severity: ERROR
+    message: >
+      User-controlled input flows into GORM Raw() without parameterization.
+      Use GORM's built-in query builder or pass parameters:
+      db.Raw("SELECT * FROM users WHERE id = ?", userID).Scan(&user)
+      or use db.Where("id = ?", id).Find(&users).
+    mode: taint
+    pattern-sources:
+      - pattern: $R.URL.Query().Get(...)
+      - pattern: $R.FormValue(...)
+      - pattern: $R.PostFormValue(...)
+    pattern-sinks:
+      - pattern: $DB.Raw($QUERY)
+      - pattern: $DB.Exec($QUERY)
+      - pattern: $DB.Where($QUERY)
+    pattern-sanitizers:
+      - pattern: strconv.Atoi(...)
+      - pattern: strconv.ParseInt(...)
+      - pattern: strconv.ParseFloat(...)
+    metadata:
+      category: security
+      subcategory: sqli
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-89
+      owasp: "A03:2021"
+      technology: [gorm]
+
+  - id: qsdev.core.go.sqli-gin-handler
+    languages: [go]
+    severity: ERROR
+    message: >
+      User-controlled input from a Gin handler flows into a SQL query
+      without parameterization. Use placeholder parameters:
+      db.Query("SELECT * FROM users WHERE id = ?", c.Query("id"))
+      with proper binding, or use an ORM with parameterized methods.
+    mode: taint
+    pattern-sources:
+      - pattern: $C.Query(...)
+      - pattern: $C.Param(...)
+      - pattern: $C.PostForm(...)
+      - pattern: $C.DefaultQuery(...)
+    pattern-sinks:
+      - pattern: $DB.Query($QUERY)
+      - pattern: $DB.QueryRow($QUERY)
+      - pattern: $DB.Exec($QUERY)
+      - pattern: $DB.Raw($QUERY)
+    pattern-sanitizers:
+      - pattern: strconv.Atoi(...)
+      - pattern: strconv.ParseInt(...)
+      - pattern: strconv.ParseFloat(...)
+    metadata:
+      category: security
+      subcategory: sqli
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-89
+      owasp: "A03:2021"
+      technology: [gin, database-sql]

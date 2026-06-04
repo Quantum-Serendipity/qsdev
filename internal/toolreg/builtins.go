@@ -85,6 +85,15 @@ func builtinBehaviors() map[string]ToolBehavior {
 				return []types.GeneratedFile{*f}, nil
 			},
 		},
+		"opengrep": {
+			GenerateFunc: func(a types.WizardAnswers) ([]types.GeneratedFile, error) {
+				f, err := sectools.GenerateOpengrepConfigYaml(a)
+				if err != nil {
+					return nil, err
+				}
+				return []types.GeneratedFile{*f}, nil
+			},
+		},
 		"container-security": {
 			DetectFunc: func(d types.DetectedProject) bool {
 				return d.HasDockerfile

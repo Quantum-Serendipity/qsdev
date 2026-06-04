@@ -1,0 +1,64 @@
+rules:
+  - id: qsdev.core.typescript.jwt-decode-no-verify
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      jwt.decode() does not verify the token signature and must never be
+      used to trust token claims. Use jwt.verify(token, secret, {
+      algorithms: ['HS256'] }) with an explicit algorithm allowlist to
+      validate the token before using its claims.
+    patterns:
+      - pattern: jwt.decode($TOKEN)
+      - pattern: jwt.decode($TOKEN, $OPTS)
+    metadata:
+      category: security
+      subcategory: auth
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-347
+      owasp: "A02:2021"
+      technology: [jsonwebtoken]
+
+  - id: qsdev.core.typescript.jwt-verify-none-algorithm
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      jwt.verify() with algorithms: ['none'] disables signature
+      verification, allowing attackers to forge tokens. Always specify
+      a concrete algorithm such as algorithms: ['HS256'] or
+      algorithms: ['RS256'].
+    patterns:
+      - pattern: "jwt.verify($TOKEN, $SECRET, {algorithms: ['none']})"
+      - pattern: "jwt.verify($TOKEN, $SECRET, {algorithms: [\"none\"]})"
+    metadata:
+      category: security
+      subcategory: auth
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-347
+      owasp: "A02:2021"
+      technology: [jsonwebtoken]
+
+  - id: qsdev.core.python.jwt-decode-no-verify
+    languages: [python]
+    severity: ERROR
+    message: >
+      jwt.decode() with verify_signature=False skips signature validation,
+      allowing attackers to forge tokens. Always verify signatures:
+      jwt.decode(token, key, algorithms=["HS256"]) with an explicit
+      algorithm list.
+    patterns:
+      - pattern: "jwt.decode($TOKEN, options={\"verify_signature\": False})"
+      - pattern: "jwt.decode($TOKEN, ..., options={\"verify_signature\": False})"
+      - pattern: "jwt.decode($TOKEN, ..., options={\"verify_signature\": False}, ...)"
+    metadata:
+      category: security
+      subcategory: auth
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-347
+      owasp: "A02:2021"
+      technology: [pyjwt]

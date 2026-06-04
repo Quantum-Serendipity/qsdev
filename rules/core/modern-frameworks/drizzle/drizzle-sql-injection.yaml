@@ -1,0 +1,424 @@
+rules:
+  - id: qsdev.core.typescript.sqli-drizzle-sql-raw
+    message: >-
+      User-controlled data flows into `sql.raw()`, which embeds it directly
+      into a SQL query without parameterization. This is a SQL injection
+      vulnerability. Use the `sql` tagged template literal instead:
+      `sql\`... ${value} ...\`` auto-parameterizes interpolated values.
+      For dynamic identifiers (table/column names), validate against an
+      allowlist before passing to `sql.raw()`.
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      technology: [drizzle-orm]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              function $HANDLER($REQ, $RES, ...) { ... }
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.cookies
+              - pattern: $REQ.headers
+      - patterns:
+          - pattern-inside: |
+              ($REQ, $RES, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+      - patterns:
+          - pattern-inside: |
+              async function $FUNC($INPUT, ...) { ... }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              async ($INPUT, ...) => { ... }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern: sql.raw($QUERY)
+          - focus-metavariable: $QUERY
+    pattern-sanitizers:
+      - patterns:
+          - pattern-either:
+              - pattern: $ALLOWLIST.includes($X)
+              - pattern: $ALLOWLIST.indexOf($X) !== -1
+              - pattern: $ALLOWLIST.has($X)
+          - focus-metavariable: $X
+        by-side-effect: true
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: parseFloat(...)
+
+  - id: qsdev.core.typescript.sqli-drizzle-raw-execute
+    message: >-
+      User-controlled data is concatenated into a SQL string passed to
+      `db.execute()`. This bypasses Drizzle's parameterization and creates a
+      SQL injection vulnerability. Use `db.execute(sql\`...\`)` with the `sql`
+      tagged template literal, which auto-parameterizes interpolated values.
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [drizzle-orm]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              function $HANDLER($REQ, $RES, ...) { ... }
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+      - patterns:
+          - pattern-inside: |
+              ($REQ, $RES, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+      - patterns:
+          - pattern-inside: |
+              async function $FUNC($INPUT, ...) { ... }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern: $DB.execute($QUERY)
+          - pattern-not: $DB.execute(sql`...`)
+          - focus-metavariable: $QUERY
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+
+  - id: qsdev.core.typescript.sqli-drizzle-raw-where
+    message: >-
+      User-controlled data flows into `sql.raw()` inside a `.where()` clause,
+      creating a SQL injection vulnerability. Use Drizzle's query builder
+      operators like `eq()`, `like()`, `gt()`, etc., or use the `sql` tagged
+      template literal: `.where(sql\`column = ${value}\`)`. Both approaches
+      auto-parameterize values.
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      technology: [drizzle-orm]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              function $HANDLER($REQ, $RES, ...) { ... }
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.cookies
+      - patterns:
+          - pattern-inside: |
+              ($REQ, $RES, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+      - patterns:
+          - pattern-inside: |
+              async function $FUNC($INPUT, ...) { ... }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              async ($INPUT, ...) => { ... }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern: sql.raw($QUERY)
+          - focus-metavariable: $QUERY
+          - pattern-inside: |
+              $Q.where(...)
+    pattern-sanitizers:
+      - patterns:
+          - pattern-either:
+              - pattern: $ALLOWLIST.includes($X)
+              - pattern: $ALLOWLIST.has($X)
+          - focus-metavariable: $X
+        by-side-effect: true
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+
+  - id: qsdev.core.typescript.sqli-drizzle-dynamic-identifier
+    message: >-
+      User-controlled data is used as a dynamic SQL identifier (table or
+      column name) via `sql.raw()`. SQL parameterization does not work for
+      identifiers, so `sql.raw()` is the correct mechanism, but the input
+      MUST be validated against an allowlist of known table/column names.
+      Without validation, this enables SQL injection through identifier
+      manipulation.
+    languages: [javascript, typescript]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [drizzle-orm]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              function $HANDLER($REQ, $RES, ...) { ... }
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+      - patterns:
+          - pattern-inside: |
+              ($REQ, $RES, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+      - patterns:
+          - pattern-inside: |
+              async function $FUNC($INPUT, ...) { ... }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              async ($INPUT, ...) => { ... }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern: sql.raw($IDENT)
+          - focus-metavariable: $IDENT
+    pattern-sanitizers:
+      - patterns:
+          - pattern-either:
+              - pattern: $ALLOWLIST.includes($X)
+              - pattern: $ALLOWLIST.indexOf($X) !== -1
+              - pattern: $ALLOWLIST.has($X)
+          - focus-metavariable: $X
+        by-side-effect: true
+      - patterns:
+          - pattern: $REGEX.test($X)
+          - focus-metavariable: $X
+        by-side-effect: true
+
+  - id: qsdev.core.typescript.sqli-drizzle-raw-join
+    message: >-
+      User-controlled data flows into `sql.raw()` fragments that are combined
+      via `sql.join()`. Each `sql.raw()` call with user input is a SQL
+      injection vector. Build fragments using the `sql` tagged template
+      literal instead, which parameterizes the value while allowing custom
+      SQL expressions.
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [drizzle-orm]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              function $HANDLER($REQ, $RES, ...) { ... }
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+      - patterns:
+          - pattern-inside: |
+              ($REQ, $RES, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+      - patterns:
+          - pattern-inside: |
+              async function $FUNC($INPUT, ...) { ... }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              async ($INPUT, ...) => { ... }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern: sql.raw($QUERY)
+          - focus-metavariable: $QUERY
+    pattern-propagators:
+      - pattern: $ARR.push($ELEM)
+        from: $ELEM
+        to: $ARR
+    pattern-sanitizers:
+      - patterns:
+          - pattern-either:
+              - pattern: $ALLOWLIST.includes($X)
+              - pattern: $ALLOWLIST.has($X)
+          - focus-metavariable: $X
+        by-side-effect: true
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+
+  - id: qsdev.core.typescript.sqli-drizzle-raw-in-template
+    message: >-
+      User-controlled data flows into `sql.raw()` which is nested inside a
+      `sql` tagged template literal. While `sql\`... ${value} ...\``
+      auto-parameterizes plain values, `sql\`... ${sql.raw(value)} ...\``
+      embeds the value verbatim. Remove the `sql.raw()` wrapper to use
+      parameterization. If you need a dynamic identifier (table/column name),
+      validate against an allowlist first.
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      technology: [drizzle-orm]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              function $HANDLER($REQ, $RES, ...) { ... }
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.cookies
+              - pattern: $REQ.headers
+      - patterns:
+          - pattern-inside: |
+              ($REQ, $RES, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+      - patterns:
+          - pattern-inside: |
+              async function $FUNC($INPUT, ...) { ... }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              async ($INPUT, ...) => { ... }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern: sql.raw($VALUE)
+          - focus-metavariable: $VALUE
+    pattern-sanitizers:
+      - patterns:
+          - pattern-either:
+              - pattern: $ALLOWLIST.includes($X)
+              - pattern: $ALLOWLIST.indexOf($X) !== -1
+              - pattern: $ALLOWLIST.has($X)
+          - focus-metavariable: $X
+        by-side-effect: true
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: parseFloat(...)
+
+  - id: qsdev.core.typescript.sqli-drizzle-raw-append
+    message: >-
+      User-controlled data flows into `sql.raw()` within a dynamically
+      constructed SQL query (via `sql.append()`, `sql.empty()`, or
+      `sql.fromList()`). Use the `sql` tagged template literal for each
+      fragment to ensure values are parameterized. Only use `sql.raw()` for
+      static SQL keywords or allowlist-validated identifiers.
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [drizzle-orm]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              function $HANDLER($REQ, $RES, ...) { ... }
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+      - patterns:
+          - pattern-inside: |
+              ($REQ, $RES, ...) => { ... }
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+      - patterns:
+          - pattern-inside: |
+              async function $FUNC($INPUT, ...) { ... }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              async ($INPUT, ...) => { ... }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern: sql.raw($QUERY)
+          - focus-metavariable: $QUERY
+    pattern-sanitizers:
+      - patterns:
+          - pattern-either:
+              - pattern: $ALLOWLIST.includes($X)
+              - pattern: $ALLOWLIST.has($X)
+          - focus-metavariable: $X
+        by-side-effect: true
+      - pattern: parseInt(...)
+      - pattern: Number(...)

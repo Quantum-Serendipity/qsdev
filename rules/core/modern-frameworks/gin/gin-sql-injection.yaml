@@ -1,0 +1,171 @@
+rules:
+  - id: qsdev.core.go.sqli-gin-gorm-raw
+    message: >-
+      User input from Gin request is used to construct a raw GORM SQL query.
+      This can lead to SQL injection. Use parameterized queries instead:
+      `db.Raw("SELECT * FROM users WHERE id = ?", userInput)` rather than
+      string concatenation or fmt.Sprintf.
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      technology: [gin, gorm]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - pattern-either:
+          - pattern: "($CTX : *gin.Context).Param(...)"
+          - pattern: "($CTX : *gin.Context).Query(...)"
+          - pattern: "($CTX : *gin.Context).DefaultQuery(...)"
+          - pattern: "($CTX : *gin.Context).PostForm(...)"
+          - pattern: "($CTX : *gin.Context).DefaultPostForm(...)"
+          - pattern: "($CTX : *gin.Context).GetHeader(...)"
+          - pattern: "($CTX : *gin.Context).GetRawData()"
+          - pattern: "($CTX : *gin.Context).Cookie(...)"
+          - pattern: "($CTX : *gin.Context).Request.URL"
+      - patterns:
+          - pattern-either:
+              - pattern: "($CTX : *gin.Context).ShouldBindJSON($BOUND)"
+              - pattern: "($CTX : *gin.Context).ShouldBind($BOUND)"
+              - pattern: "($CTX : *gin.Context).ShouldBindQuery($BOUND)"
+              - pattern: "($CTX : *gin.Context).ShouldBindUri($BOUND)"
+              - pattern: "($CTX : *gin.Context).BindJSON($BOUND)"
+              - pattern: "($CTX : *gin.Context).Bind($BOUND)"
+          - focus-metavariable: $BOUND
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.Raw($QUERY, ...)
+              - pattern: $DB.Exec($QUERY, ...)
+          - focus-metavariable: $QUERY
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: strconv.Atoi(...)
+          - pattern: strconv.ParseInt(...)
+          - pattern: strconv.ParseUint(...)
+          - pattern: strconv.ParseFloat(...)
+    pattern-propagators:
+      - pattern: $BUILDER.WriteString($S)
+        from: $S
+        to: $BUILDER
+
+  - id: qsdev.core.go.sqli-gin-gorm-chain
+    message: >-
+      User input from Gin request flows into a GORM chainable method that
+      accepts raw SQL. Use struct or map conditions instead:
+      `db.Where(&User{Name: name})` or `db.Where("name = ?", name)` with
+      parameterized placeholders.
+    languages: [go]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [gin, gorm]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - pattern-either:
+          - pattern: "($CTX : *gin.Context).Param(...)"
+          - pattern: "($CTX : *gin.Context).Query(...)"
+          - pattern: "($CTX : *gin.Context).DefaultQuery(...)"
+          - pattern: "($CTX : *gin.Context).PostForm(...)"
+          - pattern: "($CTX : *gin.Context).DefaultPostForm(...)"
+          - pattern: "($CTX : *gin.Context).GetHeader(...)"
+          - pattern: "($CTX : *gin.Context).Cookie(...)"
+      - patterns:
+          - pattern-either:
+              - pattern: "($CTX : *gin.Context).ShouldBindJSON($BOUND)"
+              - pattern: "($CTX : *gin.Context).ShouldBind($BOUND)"
+              - pattern: "($CTX : *gin.Context).ShouldBindQuery($BOUND)"
+          - focus-metavariable: $BOUND
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.Where($QUERY, ...)
+              - pattern: $DB.Or($QUERY, ...)
+              - pattern: $DB.Not($QUERY, ...)
+              - pattern: $DB.Having($QUERY, ...)
+              - pattern: $DB.Order($QUERY)
+              - pattern: $DB.Group($QUERY)
+              - pattern: $DB.Select($QUERY, ...)
+              - pattern: $DB.Distinct($QUERY, ...)
+              - pattern: $DB.Pluck($QUERY, ...)
+              - pattern: $DB.Joins($QUERY, ...)
+          - focus-metavariable: $QUERY
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: strconv.Atoi(...)
+          - pattern: strconv.ParseInt(...)
+          - pattern: strconv.ParseUint(...)
+
+  - id: qsdev.core.go.sqli-gin-database-sql
+    message: >-
+      User input from Gin request is used to construct a SQL query string
+      passed to database/sql. Use parameterized queries with placeholder
+      arguments: `db.Query("SELECT * FROM users WHERE id = $1", id)`.
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-89
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      technology: [gin]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - pattern-either:
+          - pattern: "($CTX : *gin.Context).Param(...)"
+          - pattern: "($CTX : *gin.Context).Query(...)"
+          - pattern: "($CTX : *gin.Context).DefaultQuery(...)"
+          - pattern: "($CTX : *gin.Context).PostForm(...)"
+          - pattern: "($CTX : *gin.Context).DefaultPostForm(...)"
+          - pattern: "($CTX : *gin.Context).GetHeader(...)"
+          - pattern: "($CTX : *gin.Context).GetRawData()"
+          - pattern: "($CTX : *gin.Context).Cookie(...)"
+      - patterns:
+          - pattern-either:
+              - pattern: "($CTX : *gin.Context).ShouldBindJSON($BOUND)"
+              - pattern: "($CTX : *gin.Context).ShouldBind($BOUND)"
+          - focus-metavariable: $BOUND
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.Query($QUERY, ...)
+              - pattern: $DB.QueryRow($QUERY, ...)
+              - pattern: $DB.Exec($QUERY, ...)
+              - pattern: $DB.QueryContext($CTX2, $QUERY, ...)
+              - pattern: $DB.ExecContext($CTX2, $QUERY, ...)
+              - pattern: $DB.Prepare($QUERY)
+              - pattern: $DB.PrepareContext($CTX2, $QUERY)
+          - focus-metavariable: $QUERY
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: strconv.Atoi(...)
+          - pattern: strconv.ParseInt(...)
+          - pattern: strconv.ParseUint(...)
+          - pattern: strconv.ParseFloat(...)
+    pattern-propagators:
+      - pattern: $BUILDER.WriteString($S)
+        from: $S
+        to: $BUILDER

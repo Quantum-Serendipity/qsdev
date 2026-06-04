@@ -1,0 +1,99 @@
+rules:
+  - id: qsdev.core.python.sqli-sqlalchemy-text
+    languages: [python]
+    severity: ERROR
+    message: >
+      User-controlled input flows into SQLAlchemy text() without bound
+      parameters. Use text("SELECT * FROM users WHERE id = :id").bindparams(id=user_id)
+      or ORM query methods with filter() instead of string formatting.
+    mode: taint
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.args[...]
+      - pattern: request.form.get(...)
+      - pattern: request.form[...]
+      - pattern: request.json.get(...)
+      - pattern: request.json[...]
+    pattern-sinks:
+      - pattern: text($QUERY)
+      - pattern: $DB.execute($QUERY)
+      - pattern: $SESSION.execute($QUERY)
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+      - pattern: text("...").bindparams(...)
+    metadata:
+      category: security
+      subcategory: sqli
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-89
+      owasp: "A03:2021"
+      technology: [flask, sqlalchemy]
+
+  - id: qsdev.core.python.sqli-django-raw
+    languages: [python]
+    severity: ERROR
+    message: >
+      User-controlled input flows into Django raw() or extra() without
+      parameterization. Use Model.objects.raw('SELECT * FROM app_model
+      WHERE id = %s', [user_id]) with parameter binding, or use the
+      Django ORM queryset API (filter, exclude, annotate) instead.
+    mode: taint
+    pattern-sources:
+      - pattern: request.GET.get(...)
+      - pattern: request.GET[...]
+      - pattern: request.POST.get(...)
+      - pattern: request.POST[...]
+      - pattern: request.data.get(...)
+      - pattern: request.data[...]
+    pattern-sinks:
+      - pattern: $MODEL.objects.raw($QUERY)
+      - pattern: $QS.extra(where=[$QUERY])
+      - pattern: "$QS.extra(select={...: $QUERY})"
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+    metadata:
+      category: security
+      subcategory: sqli
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-89
+      owasp: "A03:2021"
+      technology: [django]
+
+  - id: qsdev.core.python.sqli-cursor-execute
+    languages: [python]
+    severity: ERROR
+    message: >
+      User-controlled input flows into cursor.execute() via string
+      formatting. Use parameterized queries instead:
+      cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+    mode: taint
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.args[...]
+      - pattern: request.form.get(...)
+      - pattern: request.form[...]
+      - pattern: request.GET.get(...)
+      - pattern: request.GET[...]
+      - pattern: request.POST.get(...)
+      - pattern: request.POST[...]
+    pattern-sinks:
+      - pattern: $CURSOR.execute($QUERY)
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+      - pattern: $CURSOR.execute("...", $PARAMS)
+    metadata:
+      category: security
+      subcategory: sqli
+      confidence: HIGH
+      impact: HIGH
+      likelihood: HIGH
+      cwe: CWE-89
+      owasp: "A03:2021"
+      technology: [python]

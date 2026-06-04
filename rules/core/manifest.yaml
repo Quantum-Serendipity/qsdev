@@ -1,0 +1,82 @@
+# OpenGrep Rule Manifest — auto-generated index of all qsdev core taint rules
+# Total: 96 rules across 48 files covering 7 frameworks and 3 languages
+#
+# Rule ID convention: qsdev.core.<language>.<vulnerability>-<framework>
+# Languages: typescript, python, go
+# Vulnerability categories: sqli, cmdi, ssrf, path-traversal, xss, jwt, nosqli,
+#   redirect, header-injection, log-injection, deserialization, ldapi, ssti
+
+categories:
+  injection:
+    description: SQL injection, command injection, template injection
+    files:
+      - injection/typescript-sql-injection.yaml
+      - injection/python-sql-injection.yaml
+      - injection/go-sql-injection.yaml
+      - injection/command-injection.yaml
+
+  ssrf:
+    description: Server-side request forgery via HTTP clients
+    files:
+      - ssrf/http-client-ssrf.yaml
+
+  path-traversal:
+    description: Filesystem path traversal via user input
+    files:
+      - path-traversal/filesystem-traversal.yaml
+
+  auth:
+    description: JWT and authentication bypass patterns
+    files:
+      - auth/jwt-taint.yaml
+
+  modern-frameworks:
+    description: Framework-specific taint rules for Next.js, FastAPI, Gin, NestJS, SvelteKit, Prisma, Drizzle
+    nextjs:
+      - modern-frameworks/nextjs/nextjs-sql-injection.yaml
+      - modern-frameworks/nextjs/nextjs-xss.yaml
+      - modern-frameworks/nextjs/nextjs-ssrf.yaml
+      - modern-frameworks/nextjs/nextjs-command-injection.yaml
+      - modern-frameworks/nextjs/nextjs-path-traversal.yaml
+      - modern-frameworks/nextjs/nextjs-open-redirect.yaml
+      - modern-frameworks/nextjs/nextjs-header-injection.yaml
+    fastapi:
+      - modern-frameworks/fastapi/fastapi-sql-injection.yaml
+      - modern-frameworks/fastapi/fastapi-command-injection.yaml
+      - modern-frameworks/fastapi/fastapi-ssrf.yaml
+      - modern-frameworks/fastapi/fastapi-path-traversal.yaml
+      - modern-frameworks/fastapi/fastapi-xss.yaml
+      - modern-frameworks/fastapi/fastapi-deserialization.yaml
+      - modern-frameworks/fastapi/fastapi-ldap-injection.yaml
+      - modern-frameworks/fastapi/fastapi-open-redirect.yaml
+    gin:
+      - modern-frameworks/gin/gin-sql-injection.yaml
+      - modern-frameworks/gin/gin-command-injection.yaml
+      - modern-frameworks/gin/gin-ssrf.yaml
+      - modern-frameworks/gin/gin-path-traversal.yaml
+      - modern-frameworks/gin/gin-xss.yaml
+      - modern-frameworks/gin/gin-open-redirect.yaml
+      - modern-frameworks/gin/gin-header-injection.yaml
+      - modern-frameworks/gin/gin-log-injection.yaml
+    nestjs:
+      - modern-frameworks/nestjs/nestjs-sql-injection.yaml
+      - modern-frameworks/nestjs/nestjs-command-injection.yaml
+      - modern-frameworks/nestjs/nestjs-ssrf.yaml
+      - modern-frameworks/nestjs/nestjs-path-traversal.yaml
+      - modern-frameworks/nestjs/nestjs-open-redirect.yaml
+      - modern-frameworks/nestjs/nestjs-xss.yaml
+      - modern-frameworks/nestjs/nestjs-nosql-injection.yaml
+      - modern-frameworks/nestjs/nestjs-header-injection.yaml
+      - modern-frameworks/nestjs/nestjs-log-injection.yaml
+    sveltekit:
+      - modern-frameworks/sveltekit/sveltekit-sql-injection.yaml
+      - modern-frameworks/sveltekit/sveltekit-ssrf.yaml
+      - modern-frameworks/sveltekit/sveltekit-command-injection.yaml
+      - modern-frameworks/sveltekit/sveltekit-path-traversal.yaml
+      - modern-frameworks/sveltekit/sveltekit-open-redirect.yaml
+      - modern-frameworks/sveltekit/sveltekit-header-injection.yaml
+      - modern-frameworks/sveltekit/sveltekit-xss.yaml
+    prisma:
+      - modern-frameworks/prisma/prisma-sql-injection.yaml
+    drizzle:
+      - modern-frameworks/drizzle/drizzle-sql-injection.yaml

@@ -1,0 +1,91 @@
+rules:
+  - id: qsdev.core.typescript.ssrf-sveltekit-fetch-load
+    message: >-
+      User-controlled data from SvelteKit load function parameters is used as
+      a fetch URL, enabling Server-Side Request Forgery (SSRF). SvelteKit's
+      enhanced fetch carries the user's session cookies, amplifying the risk.
+      Validate the URL against an allowlist of permitted hosts.
+    languages: [typescript, javascript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-918
+      owasp: A10:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [sveltekit]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  export const load = async ({..., params, ...}) => { ... }
+              - pattern-inside: |
+                  export function load({..., params, ...}) { ... }
+          - pattern: params
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  export const load = async ({..., url, ...}) => { ... }
+              - pattern-inside: |
+                  export function load({..., url, ...}) { ... }
+          - pattern: url.searchParams
+    pattern-sinks:
+      - patterns:
+          - pattern: fetch($URL, ...)
+          - focus-metavariable: $URL
+    pattern-sanitizers:
+      - pattern: new URL($INPUT, $BASE)
+
+  - id: qsdev.core.typescript.ssrf-sveltekit-form-action
+    message: >-
+      User-controlled form data from a SvelteKit action is used as a fetch
+      URL. This enables Server-Side Request Forgery. Validate the URL against
+      an allowlist of permitted hosts before fetching.
+    languages: [typescript, javascript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-918
+      owasp: A10:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [sveltekit]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              export const actions = {
+                ...
+                $ACTION: async ({..., request, ...}) => {
+                  ...
+                }
+                ...
+              }
+          - pattern: request.formData()
+      - patterns:
+          - pattern-inside: |
+              export const actions = {
+                ...
+                $ACTION: async ({..., url, ...}) => {
+                  ...
+                }
+                ...
+              }
+          - pattern: url.searchParams
+    pattern-sinks:
+      - patterns:
+          - pattern: fetch($URL, ...)
+          - focus-metavariable: $URL
+    pattern-sanitizers:
+      - pattern: new URL($INPUT, $BASE)

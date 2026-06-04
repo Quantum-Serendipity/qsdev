@@ -1,0 +1,47 @@
+rules:
+  - id: qsdev.core.typescript.header-injection-nextjs
+    message: >-
+      User-controlled data flows into a response header value. An attacker
+      could inject header separators (CRLF sequences) to split the response,
+      add arbitrary headers, or manipulate caching behavior. Validate and
+      sanitize header values before setting them.
+    languages: [typescript, javascript]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-113
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: MEDIUM
+      likelihood: LOW
+      technology: [nextjs]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - pattern: $FD.get(...)
+      - patterns:
+          - pattern-inside: |
+              export async function $METHOD($REQUEST, ...) { ... }
+          - pattern-either:
+              - pattern: $REQUEST.json()
+              - pattern: await $REQUEST.json()
+              - pattern: $REQUEST.nextUrl.searchParams.get(...)
+      - pattern: headers().get(...)
+      - pattern: cookies().get(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $RESPONSE.headers.set($NAME, $VALUE)
+              - pattern: $RESPONSE.headers.append($NAME, $VALUE)
+          - focus-metavariable: $VALUE
+      - patterns:
+          - pattern: "new NextResponse($BODY, { headers: { ..., $KEY: $VALUE, ... }, ... })"
+          - focus-metavariable: $VALUE
+    pattern-sanitizers:
+      - patterns:
+          - pattern: $INPUT.replace(...)
+          - focus-metavariable: $INPUT
+        by-side-effect: true

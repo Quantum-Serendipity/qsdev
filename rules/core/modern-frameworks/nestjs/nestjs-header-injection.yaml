@@ -1,0 +1,51 @@
+rules:
+  - id: qsdev.core.typescript.header-injection-nestjs
+    message: >-
+      User-controlled input is used in an HTTP response header value. This can
+      lead to HTTP header injection or response splitting if the input contains
+      CRLF characters. Validate and sanitize header values by stripping
+      newline characters.
+    languages: [typescript]
+    severity: WARNING
+    mode: taint
+    metadata:
+      cwe: CWE-113
+      owasp: A03:2021
+      category: security
+      subcategory: audit
+      confidence: LOW
+      impact: MEDIUM
+      likelihood: LOW
+      technology: [nestjs]
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Query(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Body(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Param(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $RES.setHeader($NAME, $VALUE)
+              - pattern: $RES.header($NAME, $VALUE)
+              - pattern: $RES.set($NAME, $VALUE)
+          - focus-metavariable: $VALUE

@@ -1,0 +1,66 @@
+rules:
+  - id: qsdev.core.typescript.log-injection-nestjs
+    message: >-
+      User-controlled input from a NestJS parameter decorator is written to a
+      log without sanitization. Attackers can inject fake log entries or ANSI
+      escape sequences to tamper with log analysis, hide malicious activity, or
+      exploit log viewing tools. Strip or encode newlines and control characters
+      before logging.
+    languages: [typescript]
+    severity: INFO
+    mode: taint
+    metadata:
+      cwe: CWE-117
+      owasp: A09:2021
+      category: security
+      subcategory: audit
+      confidence: LOW
+      impact: LOW
+      likelihood: LOW
+      technology: [nestjs]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Body(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Query(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Param(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Headers(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $LOGGER.log($MSG, ...)
+          - pattern: $LOGGER.error($MSG, ...)
+          - pattern: $LOGGER.warn($MSG, ...)
+          - pattern: $LOGGER.debug($MSG, ...)
+          - pattern: $LOGGER.verbose($MSG, ...)
+          - pattern: console.log($MSG, ...)
+          - pattern: console.error($MSG, ...)
+          - pattern: console.warn($MSG, ...)

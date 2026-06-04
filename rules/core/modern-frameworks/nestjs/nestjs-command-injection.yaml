@@ -1,0 +1,83 @@
+rules:
+  - id: qsdev.core.typescript.cmdi-nestjs
+    message: >-
+      User-controlled input from a NestJS parameter decorator is passed to a
+      shell command execution function. This can lead to command injection. Use
+      execFile() or spawn() without shell:true, or sanitize input with a
+      strict allowlist.
+    languages: [typescript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-78
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: HIGH
+      technology: [nestjs]
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Body(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Param(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @Query(...) $INPUT, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: exec($CMD, ...)
+              - pattern: execSync($CMD, ...)
+              - pattern: $CP.exec($CMD, ...)
+              - pattern: $CP.execSync($CMD, ...)
+          - pattern-not: exec("...", ...)
+          - pattern-not: execSync("...", ...)
+          - focus-metavariable: $CMD
+      - patterns:
+          - pattern-either:
+              - pattern: exec("..." + $EXPR + ..., ...)
+              - pattern: exec(`...${$EXPR}...`, ...)
+              - pattern: execSync("..." + $EXPR + ..., ...)
+              - pattern: execSync(`...${$EXPR}...`, ...)
+          - focus-metavariable: $EXPR
+      - patterns:
+          - pattern-either:
+              - pattern: "spawn($CMD, ..., { ..., shell: true, ... })"
+              - pattern: "$CP.spawn($CMD, ..., { ..., shell: true, ... })"
+          - focus-metavariable: $CMD
+    pattern-sanitizers:
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @$DECORATOR(..., ParseIntPipe) $PARAM, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $PARAM
+      - patterns:
+          - pattern-inside: |
+              class $CONTROLLER {
+                ...
+                $METHOD(..., @$DECORATOR(..., ParseUUIDPipe) $PARAM, ...) { ... }
+                ...
+              }
+          - focus-metavariable: $PARAM

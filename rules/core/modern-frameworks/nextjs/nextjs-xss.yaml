@@ -1,0 +1,105 @@
+rules:
+  - id: qsdev.core.typescript.xss-nextjs-server-action-dangerouslysetinnerhtml
+    message: >-
+      User-controlled data from a Server Action flows into
+      dangerouslySetInnerHTML, which renders raw HTML without escaping. This
+      leads to Cross-Site Scripting (XSS). Sanitize the HTML with DOMPurify
+      or sanitize-html before rendering, or use normal JSX rendering which
+      auto-escapes by default.
+    languages: [typescript, javascript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-79
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [nextjs, react]
+    pattern-sources:
+      - pattern: $FD.get(...)
+      - pattern: $FD.getAll(...)
+      - patterns:
+          - pattern-inside: |
+              "use server"
+              ...
+          - pattern-inside: |
+              async function $FUNC($PARAM, ...) { ... }
+          - focus-metavariable: $PARAM
+      - pattern: headers()
+      - pattern: cookies()
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: "<$TAG dangerouslySetInnerHTML={{__html: $PAYLOAD}} />"
+              - pattern: "<$TAG dangerouslySetInnerHTML={{__html: $PAYLOAD}} ></$TAG>"
+          - focus-metavariable: $PAYLOAD
+      - patterns:
+          - pattern: "({__html: $PAYLOAD})"
+          - focus-metavariable: $PAYLOAD
+    pattern-sanitizers:
+      - pattern: DOMPurify.sanitize(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  import $S from "dompurify"
+                  ...
+              - pattern-inside: |
+                  import $S from "isomorphic-dompurify"
+                  ...
+          - pattern: $S.sanitize(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  import $S from "sanitize-html"
+                  ...
+              - pattern-inside: |
+                  const $S = require("sanitize-html")
+                  ...
+          - pattern: $S(...)
+
+  - id: qsdev.core.typescript.xss-nextjs-client-searchparams
+    message: >-
+      User-controlled search parameters from useSearchParams() flow into
+      dangerouslySetInnerHTML. This allows an attacker to inject arbitrary HTML
+      and JavaScript via crafted URL parameters. Use normal JSX rendering which
+      auto-escapes values, or sanitize with DOMPurify before rendering as HTML.
+    languages: [typescript, javascript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-79
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [nextjs, react]
+    pattern-sources:
+      - pattern: useSearchParams()
+      - pattern: useSearchParams().get(...)
+      - pattern: useSearchParams().getAll(...)
+      - pattern: useSearchParams().toString()
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: "<$TAG dangerouslySetInnerHTML={{__html: $PAYLOAD}} />"
+              - pattern: "<$TAG dangerouslySetInnerHTML={{__html: $PAYLOAD}} ></$TAG>"
+          - focus-metavariable: $PAYLOAD
+      - patterns:
+          - pattern: "({__html: $PAYLOAD})"
+          - focus-metavariable: $PAYLOAD
+    pattern-sanitizers:
+      - pattern: DOMPurify.sanitize(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  import $S from "dompurify"
+                  ...
+              - pattern-inside: |
+                  import $S from "isomorphic-dompurify"
+                  ...
+          - pattern: $S.sanitize(...)

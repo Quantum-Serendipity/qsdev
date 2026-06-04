@@ -1,0 +1,68 @@
+rules:
+  - id: qsdev.core.typescript.path-traversal-nextjs
+    message: >-
+      User-controlled input flows into a file system operation without path
+      validation. An attacker could use directory traversal sequences (../) to
+      read or write arbitrary files on the server. Use path.resolve() combined
+      with a startsWith() check against a base directory, or use
+      path.basename() to strip directory components.
+    languages: [typescript, javascript]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-22
+      owasp: A01:2021
+      category: security
+      subcategory: vuln
+      confidence: HIGH
+      impact: HIGH
+      likelihood: MEDIUM
+      technology: [nextjs]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - pattern: $FD.get(...)
+      - patterns:
+          - pattern-inside: |
+              "use server"
+              ...
+          - pattern-inside: |
+              async function $FUNC($PARAM, ...) { ... }
+          - focus-metavariable: $PARAM
+      - patterns:
+          - pattern-inside: |
+              export async function $METHOD($REQUEST, ...) { ... }
+          - pattern-either:
+              - pattern: $REQUEST.json()
+              - pattern: await $REQUEST.json()
+              - pattern: $REQUEST.nextUrl.searchParams.get(...)
+      - patterns:
+          - pattern-inside: |
+              export default async function $PAGE({ params, ... }) { ... }
+          - pattern: params
+      - patterns:
+          - pattern-inside: |
+              export async function $METHOD($REQ, { params, ... }) { ... }
+          - pattern: params
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: fs.readFile($PATH, ...)
+              - pattern: fs.readFileSync($PATH, ...)
+              - pattern: fs.createReadStream($PATH, ...)
+              - pattern: fs.promises.readFile($PATH, ...)
+              - pattern: fs.writeFile($PATH, ...)
+              - pattern: fs.writeFileSync($PATH, ...)
+              - pattern: fs.createWriteStream($PATH, ...)
+              - pattern: fs.promises.writeFile($PATH, ...)
+              - pattern: fs.unlink($PATH, ...)
+              - pattern: fs.unlinkSync($PATH)
+          - focus-metavariable: $PATH
+    pattern-sanitizers:
+      - pattern: path.basename(...)
+      - patterns:
+          - pattern: $RESOLVED.startsWith($BASEDIR)
+          - focus-metavariable: $RESOLVED
+        by-side-effect: true
+      - pattern: $SCHEMA.parse(...)

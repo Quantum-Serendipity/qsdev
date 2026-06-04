@@ -1,0 +1,47 @@
+rules:
+  - id: qsdev.core.python.ldapi-fastapi-injection
+    message: >-
+      User-controlled data from a FastAPI endpoint is used in an LDAP search
+      filter without sanitization. This may allow LDAP injection, enabling an
+      attacker to modify the query logic. Use ldap3.utils.dn.escape_rdn() or
+      parameterized filter construction.
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    metadata:
+      cwe: CWE-90
+      owasp: A03:2021
+      category: security
+      subcategory: vuln
+      confidence: MEDIUM
+      impact: HIGH
+      likelihood: LOW
+      technology: [fastapi, ldap3]
+    options:
+      taint_assume_safe_booleans: true
+      taint_assume_safe_numbers: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM, ...):
+                ...
+          - pattern-not-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM: BackgroundTasks, ...):
+                ...
+          - pattern-not-inside: |
+              @$APP.$METHOD($ROUTE, ...)
+              def $FUNC(..., $PARAM: Response, ...):
+                ...
+          - focus-metavariable: $PARAM
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $CONN.search($BASE, $FILTER, ...)
+              - pattern: $CONN.search(search_base=$BASE, search_filter=$FILTER, ...)
+          - focus-metavariable: $FILTER
+    pattern-sanitizers:
+      - pattern: ldap3.utils.dn.escape_rdn(...)
+      - pattern: int(...)
+      - pattern: float(...)

@@ -23,6 +23,7 @@ type Catalog struct {
 }
 
 var (
+	mu             sync.Mutex
 	defaultOnce    sync.Once
 	defaultCat     *Catalog
 	projectRootDir string
@@ -31,19 +32,25 @@ var (
 // SetProjectRoot configures the project-level override path.
 // Must be called before Default() is first accessed.
 func SetProjectRoot(root string) {
+	mu.Lock()
 	projectRootDir = root
+	mu.Unlock()
 }
 
 // Default returns the lazily-initialized global catalog loaded from
 // embedded defaults, with optional org and project overrides.
 func Default() *Catalog {
 	defaultOnce.Do(func() {
+		mu.Lock()
+		root := projectRootDir
+		mu.Unlock()
+
 		var opts []LoadOption
 
 		if orgFile := OrgConfigFile(); orgFile != "" {
 			opts = append(opts, WithOrgConfigFile(orgFile))
 		}
-		if projFile := ProjectConfigFile(projectRootDir); projFile != "" {
+		if projFile := ProjectConfigFile(root); projFile != "" {
 			opts = append(opts, WithProjectConfigFile(projFile))
 		}
 
@@ -59,9 +66,11 @@ func Default() *Catalog {
 // ResetDefault clears the cached default catalog, forcing the next
 // call to Default() to reload. Intended for testing only.
 func ResetDefault() {
+	mu.Lock()
 	defaultOnce = sync.Once{}
 	defaultCat = nil
 	projectRootDir = ""
+	mu.Unlock()
 }
 
 // --- Tier accessors ---

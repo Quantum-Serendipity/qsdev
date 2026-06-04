@@ -73,7 +73,7 @@ func evalDefense(parts []string, op, rhs string, report *posture.PostureReport) 
 	}
 
 	layerName := parts[1]
-	layer := findLayerByName(report.Defense.Layers, layerName)
+	layer := posture.FindLayerByName(report.Defense.Layers, layerName)
 	if layer == nil {
 		return false, fmt.Errorf("unknown defense layer: %q", layerName)
 	}
@@ -190,15 +190,4 @@ func compareFloat(actual float64, op string, expected float64) (bool, error) {
 	default:
 		return false, fmt.Errorf("unsupported operator for float comparison: %q", op)
 	}
-}
-
-// findLayerByName returns a pointer to the layer with the given name,
-// or nil if not found.
-func findLayerByName(layers []posture.DefenseLayer, name string) *posture.DefenseLayer {
-	for i, l := range layers {
-		if l.Name == name {
-			return &layers[i]
-		}
-	}
-	return nil
 }

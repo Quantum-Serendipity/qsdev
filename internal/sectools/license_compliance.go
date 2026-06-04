@@ -39,13 +39,26 @@ var reviewSPDX = []string{
 	"Artistic-2.0",
 }
 
-// scancodeExcludePaths lists paths excluded from license scanning.
-var scancodeExcludePaths = []string{
-	"vendor/",
-	"node_modules/",
-	".devenv/",
-	"dist/",
-	"testdata/",
+// scancodeExcludePaths returns paths excluded from license scanning.
+// It reuses defaultScanExcludes for entries shared with other scanners,
+// keeping this function for scancode-only additions (currently none).
+func scancodeExcludePaths() []string {
+	// All scancode excludes are covered by defaultScanExcludes.
+	// Filter to the subset relevant for license scanning.
+	relevant := map[string]bool{
+		"vendor/":       true,
+		"node_modules/": true,
+		".devenv/":      true,
+		"dist/":         true,
+		"testdata/":     true,
+	}
+	var paths []string
+	for _, p := range defaultScanExcludes {
+		if relevant[p] {
+			paths = append(paths, p)
+		}
+	}
+	return paths
 }
 
 // GenerateScancodeYml produces a .scancode.yml configuration file with
@@ -72,7 +85,7 @@ func GenerateScancodeYml(_ types.WizardAnswers) (*types.GeneratedFile, error) {
 
 	b.WriteString("\npaths:\n")
 	b.WriteString("  exclude:\n")
-	for _, p := range scancodeExcludePaths {
+	for _, p := range scancodeExcludePaths() {
 		fmt.Fprintf(&b, "    - %s\n", p)
 	}
 

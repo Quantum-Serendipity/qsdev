@@ -181,7 +181,7 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return []ecosystem.WizardField{
 		{
-			Key:         "haskell_build_tool",
+			Key:         "build_tool",
 			Label:       "Build tool",
 			Description: "Select the Haskell build tool for this project",
 			Type:        ecosystem.FieldTypeSelect,

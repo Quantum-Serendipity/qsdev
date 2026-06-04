@@ -384,6 +384,22 @@ func (m *Module) ManifestFiles(config ecosystem.ModuleConfig) []ecosystem.Manife
 				LockFilePolicy: ecosystem.LockFilePolicyRecommended,
 			},
 		}
+	case "both":
+		return []ecosystem.ManifestFileInfo{
+			{
+				Path:           "pom.xml",
+				Ecosystem:      "maven",
+				VSSupported:    false,
+				LockFilePolicy: ecosystem.LockFilePolicyNone,
+			},
+			{
+				Path:           "build.gradle",
+				Ecosystem:      "gradle",
+				VSSupported:    false,
+				LockFile:       "gradle.lockfile",
+				LockFilePolicy: ecosystem.LockFilePolicyRecommended,
+			},
+		}
 	default:
 		return []ecosystem.ManifestFileInfo{
 			{

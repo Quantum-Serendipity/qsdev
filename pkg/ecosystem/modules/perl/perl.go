@@ -181,8 +181,14 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 	return ecosystem.VerificationCommands{}
 }
 
-// ManifestFiles returns nil. Perl does not use a traditional manifest file.
+// ManifestFiles returns the cpanfile manifest for Perl projects.
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
-	return nil
+	return []ecosystem.ManifestFileInfo{
+		{
+			Path:           "cpanfile",
+			Ecosystem:      "cpan",
+			LockFile:       "cpanfile.snapshot",
+			LockFilePolicy: ecosystem.LockFilePolicyRecommended,
+		},
+	}
 }
-

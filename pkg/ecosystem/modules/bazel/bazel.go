@@ -64,7 +64,6 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		evidence = append(evidence, "WORKSPACE.bazel found")
 	}
 	if hasBazelrc {
-		confidence = ecosystem.ConfidenceCertain
 		evidence = append(evidence, ".bazelrc found")
 	}
 

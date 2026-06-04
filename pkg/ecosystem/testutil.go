@@ -2,6 +2,14 @@ package ecosystem
 
 import "github.com/Quantum-Serendipity/qsdev/pkg/types"
 
+// Compile-time interface compliance checks.
+var _ EcosystemModule = (*MockModule)(nil)
+var _ DevenvYamlInputProvider = (*MockModule)(nil)
+var _ DenyRuleProvider = (*MockModule)(nil)
+var _ WizardFieldProvider = (*MockModule)(nil)
+var _ ManifestFileProvider = (*MockModule)(nil)
+var _ PackageProvider = (*MockModule)(nil)
+
 // MockModule is a configurable implementation of EcosystemModule for testing.
 // Each field corresponds to the return value of the matching interface method.
 type MockModule struct {

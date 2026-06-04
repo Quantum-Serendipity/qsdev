@@ -152,7 +152,10 @@ func TestBuildArgs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			args := BuildArgs(&tt.cfg, tt.tier)
+			args, err := BuildArgs(&tt.cfg, tt.tier)
+			if err != nil {
+				t.Fatalf("BuildArgs returned unexpected error: %v", err)
+			}
 			tt.check(t, args)
 		})
 	}

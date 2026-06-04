@@ -59,7 +59,7 @@ func TestInitCmd_HasCorrectUseAndFlags(t *testing.T) {
 func TestInitCmd_DryRun(t *testing.T) {
 	dir := t.TempDir()
 
-	output, err := executeInitCmd(t, dir, "--yes", "--dry-run")
+	output, err := executeInitCmd(t, dir, "--lang", "go", "--yes", "--dry-run")
 	if err != nil {
 		t.Fatalf("dry-run failed: %v\nOutput: %s", err, output)
 	}
@@ -243,13 +243,13 @@ func TestInitCmd_RequiresWizardOrYes(t *testing.T) {
 	dir := t.TempDir()
 
 	// Without --yes and without a complete set of flags, the wizard will
-	// attempt to run. In a test environment without a TTY, this results in
-	// a "running wizard" error (wrapping the TTY open failure).
+	// attempt to run. In a test environment without a TTY, the terminal
+	// detection guard returns an error before the wizard starts.
 	_, err := executeInitCmd(t, dir)
 	if err == nil {
 		t.Error("expected error when neither --yes nor complete flags provided")
 	}
-	if err != nil && !strings.Contains(err.Error(), "running wizard") {
+	if err != nil && !strings.Contains(err.Error(), "stdin is not a terminal") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -284,5 +284,75 @@ func TestInitCmd_SavesPerAddonAnswers(t *testing.T) {
 	claudeAnswers := filepath.Join(dir, ".claude", ".qsdev-claude-answers.yaml")
 	if _, err := os.Stat(claudeAnswers); os.IsNotExist(err) {
 		t.Error(".claude/.qsdev-claude-answers.yaml was not created")
+	}
+}
+
+func TestInitCmd_Quiet(t *testing.T) {
+	dir := t.TempDir()
+
+	output, err := executeInitCmd(t, dir, "--lang", "go", "--yes", "--quiet")
+	if err != nil {
+		t.Fatalf("init --quiet failed: %v\nOutput: %s", err, output)
+	}
+
+	if strings.Contains(output, "Next steps") {
+		t.Error("--quiet should suppress post-generation summary, but output contains 'Next steps'")
+	}
+
+	devenvNix := filepath.Join(dir, "devenv.nix")
+	if _, err := os.Stat(devenvNix); os.IsNotExist(err) {
+		t.Error("devenv.nix was not created with --quiet")
+	}
+}
+
+func TestInitCmd_DryRunWithNonInteractive(t *testing.T) {
+	dir := t.TempDir()
+
+	output, err := executeInitCmd(t, dir, "--profile", "go-web", "--yes", "--dry-run")
+	if err != nil {
+		t.Fatalf("init --yes --dry-run failed: %v\nOutput: %s", err, output)
+	}
+
+	if output == "" {
+		t.Error("dry-run produced no output")
+	}
+
+	devenvNix := filepath.Join(dir, "devenv.nix")
+	if _, err := os.Stat(devenvNix); !os.IsNotExist(err) {
+		t.Error("devenv.nix should not exist after --dry-run")
+	}
+}
+
+func TestInitCmd_AnswersFilePlusYes(t *testing.T) {
+	dir := t.TempDir()
+
+	answersContent := `languages:
+  - name: go
+    version: "1.24"
+direnv: true
+claude_code: true
+permission_level: standard
+`
+	answersPath := filepath.Join(dir, "answers.yaml")
+	if err := os.WriteFile(answersPath, []byte(answersContent), 0o644); err != nil {
+		t.Fatalf("writing answers file: %v", err)
+	}
+
+	output, err := executeInitCmd(t, dir, "--answers-file", answersPath, "--yes")
+	if err != nil {
+		t.Fatalf("init --answers-file --yes failed: %v\nOutput: %s", err, output)
+	}
+
+	devenvNix := filepath.Join(dir, "devenv.nix")
+	if _, err := os.Stat(devenvNix); os.IsNotExist(err) {
+		t.Error("devenv.nix was not created")
+	}
+
+	content, err := os.ReadFile(devenvNix)
+	if err != nil {
+		t.Fatalf("reading devenv.nix: %v", err)
+	}
+	if !strings.Contains(string(content), "go") {
+		t.Error("devenv.nix does not contain 'go'")
 	}
 }

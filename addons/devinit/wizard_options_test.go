@@ -236,6 +236,115 @@ func TestPreSelectedLanguages_None(t *testing.T) {
 	}
 }
 
+func TestDetectedEcosystemCount_MultipleEcosystems(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		detected types.DetectedProject
+		want     int
+	}{
+		{
+			name: "Go + Python + Docker",
+			detected: types.DetectedProject{
+				HasGoMod:      true,
+				HasPyProject:  true,
+				HasDockerfile: true,
+			},
+			want: 3,
+		},
+		{
+			name: "Just Go",
+			detected: types.DetectedProject{
+				HasGoMod: true,
+			},
+			want: 1,
+		},
+		{
+			name:     "Nothing detected",
+			detected: types.DetectedProject{},
+			want:     0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := devinit.ExportDetectedEcosystemCount(tt.detected)
+			if got != tt.want {
+				t.Errorf("DetectedEcosystemCount() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectedEcosystemCount_AllTier1(t *testing.T) {
+	t.Parallel()
+
+	detected := types.DetectedProject{
+		HasGoMod:       true,
+		HasPackageJSON: true,
+		HasPyProject:   true,
+		HasCargoToml:   true,
+		HasPomXML:      true,
+		HasCsproj:      true,
+		HasDockerfile:  true,
+		HasTerraform:   true,
+	}
+	got := devinit.ExportDetectedEcosystemCount(detected)
+	if got != 8 {
+		t.Errorf("DetectedEcosystemCount() = %d, want 8 (all Tier 1)", got)
+	}
+}
+
+func TestDetectionAnnotation_All27Ecosystems(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		lang     string
+		detected types.DetectedProject
+	}{
+		{"go", "go", types.DetectedProject{HasGoMod: true}},
+		{"javascript", "javascript", types.DetectedProject{HasPackageJSON: true}},
+		{"python", "python", types.DetectedProject{HasPyProject: true}},
+		{"rust", "rust", types.DetectedProject{HasCargoToml: true}},
+		{"java", "java", types.DetectedProject{HasPomXML: true}},
+		{"dotnet", "dotnet", types.DetectedProject{HasCsproj: true}},
+		{"container", "container", types.DetectedProject{HasDockerfile: true}},
+		{"terraform", "terraform", types.DetectedProject{HasTerraform: true}},
+		{"php", "php", types.DetectedProject{Ecosystems: map[string]bool{"php": true}}},
+		{"ruby", "ruby", types.DetectedProject{Ecosystems: map[string]bool{"ruby": true}}},
+		{"scala", "scala", types.DetectedProject{Ecosystems: map[string]bool{"scala": true}}},
+		{"cpp", "cpp", types.DetectedProject{Ecosystems: map[string]bool{"cpp": true}}},
+		{"helm", "helm", types.DetectedProject{Ecosystems: map[string]bool{"helm": true}}},
+		{"ansible", "ansible", types.DetectedProject{Ecosystems: map[string]bool{"ansible": true}}},
+		{"shell", "shell", types.DetectedProject{Ecosystems: map[string]bool{"shell": true}}},
+		{"elixir", "elixir", types.DetectedProject{Ecosystems: map[string]bool{"elixir": true}}},
+		{"dart", "dart", types.DetectedProject{Ecosystems: map[string]bool{"dart": true}}},
+		{"swift", "swift", types.DetectedProject{Ecosystems: map[string]bool{"swift": true}}},
+		{"haskell", "haskell", types.DetectedProject{Ecosystems: map[string]bool{"haskell": true}}},
+		{"clojure", "clojure", types.DetectedProject{Ecosystems: map[string]bool{"clojure": true}}},
+		{"bazel", "bazel", types.DetectedProject{Ecosystems: map[string]bool{"bazel": true}}},
+		{"nix", "nix", types.DetectedProject{Ecosystems: map[string]bool{"nix": true}}},
+		{"perl", "perl", types.DetectedProject{Ecosystems: map[string]bool{"perl": true}}},
+		{"r", "r", types.DetectedProject{Ecosystems: map[string]bool{"r": true}}},
+		{"lua", "lua", types.DetectedProject{Ecosystems: map[string]bool{"lua": true}}},
+		{"zig", "zig", types.DetectedProject{Ecosystems: map[string]bool{"zig": true}}},
+		{"powershell", "powershell", types.DetectedProject{Ecosystems: map[string]bool{"powershell": true}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ann := devinit.ExportDetectionAnnotation(tt.lang, tt.detected)
+			if ann == "" {
+				t.Errorf("DetectionAnnotation(%q) returned empty string, want non-empty annotation", tt.lang)
+			}
+		})
+	}
+}
+
 func TestQuickPathSummary_GoWithDirenvAndClaude(t *testing.T) {
 	answers := types.WizardAnswers{
 		Languages: []types.LanguageChoice{
@@ -306,5 +415,27 @@ func TestQuickPathSummary_NoDirenvNoClaude(t *testing.T) {
 	expected := "Rust + devenv.sh"
 	if summary != expected {
 		t.Errorf("expected %q, got %q", expected, summary)
+	}
+}
+
+func TestQuickPathSummary_WithServices(t *testing.T) {
+	t.Parallel()
+
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{
+			{Name: "go", Version: "1.24"},
+		},
+		Services: []types.ServiceChoice{
+			{Name: "postgres"},
+			{Name: "redis"},
+		},
+	}
+	summary := devinit.ExportQuickPathSummary(answers)
+
+	if !strings.Contains(summary, "PostgreSQL") {
+		t.Errorf("summary should contain 'PostgreSQL', got %q", summary)
+	}
+	if !strings.Contains(summary, "Redis") {
+		t.Errorf("summary should contain 'Redis', got %q", summary)
 	}
 }

@@ -86,6 +86,12 @@ type InitOptions struct {
 
 	// Mode override
 	Mode string
+
+	// TUI
+	Theme string
+
+	// Output
+	Quiet bool
 }
 
 // RegisterInitFlags registers all flags for the qsdev init command.
@@ -140,6 +146,12 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 
 	// Mode override flag.
 	cmd.Flags().StringVar(&opts.Mode, "mode", "", "Override auto-detected mode: create, join, update, repair")
+
+	// TUI flag.
+	cmd.Flags().StringVar(&opts.Theme, "theme", "dracula", "TUI theme (charm, dracula, catppuccin, base16, default)")
+
+	// Output flag.
+	cmd.Flags().BoolVarP(&opts.Quiet, "quiet", "q", false, "Suppress post-generation summary")
 
 	// Mark mutually exclusive flags.
 	cmd.MarkFlagsMutuallyExclusive("devenv-only", "claude-only")

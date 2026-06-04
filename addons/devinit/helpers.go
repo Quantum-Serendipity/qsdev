@@ -39,6 +39,7 @@ func postGenerationMessage(answers types.WizardAnswers, devenvGenerated, claudeG
 	}
 
 	if claudeGenerated {
+		steps = append(steps, "Review CLAUDE.md to customize project documentation.")
 		steps = append(steps, fmt.Sprintf("Run '%s list' to see available tools and '%s enable <tool>' to add more.", branding.Get().AppName, branding.Get().AppName))
 	}
 
@@ -65,5 +66,16 @@ func postGenerationMessage(answers types.WizardAnswers, devenvGenerated, claudeG
 		}
 	}
 
+	return b.String()
+}
+
+func incompleteAnswersMessage(answers types.WizardAnswers) string {
+	var b strings.Builder
+	if len(answers.Languages) == 0 {
+		fmt.Fprintln(&b, "  - languages")
+	}
+	if answers.ClaudeCode && answers.PermissionLevel == "" {
+		fmt.Fprintln(&b, "  - permission level")
+	}
 	return b.String()
 }

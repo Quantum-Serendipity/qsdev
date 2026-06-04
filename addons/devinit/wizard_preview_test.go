@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devinit"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestBuildPlanPreview_BasicDevenv(t *testing.T) {
@@ -129,5 +130,70 @@ func TestBuildPlanPreview_NoDirenv(t *testing.T) {
 
 	if strings.Contains(preview, ".envrc") {
 		t.Error("preview should not mention .envrc when direnv is disabled")
+	}
+}
+
+func TestBuildPlanPreview_WithNixHardeningGuide(t *testing.T) {
+	t.Parallel()
+
+	fs := devinit.NewExportFormState(
+		devinit.WithSelectedLanguages([]string{"go"}),
+		devinit.WithNixHardeningGuide(true),
+	)
+
+	preview := devinit.ExportBuildPlanPreview(fs)
+
+	if !strings.Contains(preview, "nix-hardening.md") {
+		t.Error("preview should mention nix-hardening.md when nix hardening guide is enabled")
+	}
+}
+
+func TestBuildPlanPreview_WithoutNixHardeningGuide(t *testing.T) {
+	t.Parallel()
+
+	fs := devinit.NewExportFormState(
+		devinit.WithSelectedLanguages([]string{"go"}),
+		devinit.WithNixHardeningGuide(false),
+	)
+
+	preview := devinit.ExportBuildPlanPreview(fs)
+
+	if strings.Contains(preview, "nix-hardening.md") {
+		t.Error("preview should not mention nix-hardening.md when nix hardening guide is disabled")
+	}
+}
+
+func TestBuildDetailedDefaults_GoProject(t *testing.T) {
+	t.Parallel()
+
+	detected := types.DetectedProject{
+		HasGoMod:  true,
+		GoVersion: "1.24",
+	}
+	defaults := devinit.ExportMapDetectionToDefaults(detected, "/tmp/project")
+
+	output := devinit.ExportBuildDetailedDefaults(detected, defaults)
+
+	if !strings.Contains(output, "Go") {
+		t.Error("output should contain Go language")
+	}
+	if !strings.Contains(output, "1.24") {
+		t.Error("output should contain Go version 1.24")
+	}
+	if !strings.Contains(output, "direnv") {
+		t.Error("output should mention direnv")
+	}
+}
+
+func TestBuildDetailedDefaults_EmptyDetection(t *testing.T) {
+	t.Parallel()
+
+	detected := types.DetectedProject{}
+	defaults := devinit.ExportMapDetectionToDefaults(detected, "/tmp/project")
+
+	output := devinit.ExportBuildDetailedDefaults(detected, defaults)
+
+	if !strings.Contains(output, "(none") {
+		t.Errorf("output should contain '(none' for empty languages, got:\n%s", output)
 	}
 }

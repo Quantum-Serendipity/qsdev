@@ -85,7 +85,7 @@ func profileDefToConfig(def catalog.ProfileDef) *types.QsdevConfig {
 		cfg.Security.Level = def.Security.Level
 		cfg.Security.AgeGating = def.Security.AgeGating
 		cfg.Security.ScriptBlocking = def.Security.ScriptBlocking
-		cfg.Security.LockEnforce = def.Security.LockEnforcement
+		cfg.Security.LockEnforcement = def.Security.LockEnforcement
 		cfg.Security.VulnScanning = def.Security.VulnScanning
 	}
 

@@ -45,15 +45,15 @@ func MergeInferredTools(answers *types.WizardAnswers, registry *Registry) {
 // whether a tool was effectively enabled before the lifecycle system existed.
 func isToolImplicitlyEnabled(tool *Tool, answers *types.WizardAnswers) bool {
 	switch tool.Name {
-	case "attach-guard":
+	case ToolAttachGuard:
 		return answers.Hooks.SafetyBlock
-	case "agent-postmortem":
+	case ToolAgentPostmortem:
 		return answers.AgentTools.PostmortemEnabled
-	case "version-sentinel":
+	case ToolVersionSentinel:
 		return answers.AgentTools.VersionSentinel
-	case "semble":
+	case ToolSemble:
 		return answers.AgentTools.SembleEnabled
-	case "trail-of-bits-skills":
+	case ToolTrailOfBitsSkills:
 		return slices.Contains(answers.Skills, "security-review")
 	default:
 		// For tools added in Phase 12+, they weren't present in pre-lifecycle

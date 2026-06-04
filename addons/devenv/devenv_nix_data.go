@@ -2,6 +2,7 @@ package devenv
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,6 +60,15 @@ type CustomHookData struct {
 	PassFilenames bool
 }
 
+// languageHookResult holds the collected fragments and hooks from ecosystem modules.
+type languageHookResult struct {
+	Fragments     []LanguageFragment
+	BuiltInHooks  []string
+	CustomHooks   []CustomHookData
+	ExtraPackages []string
+	SeenHookIDs   map[string]bool
+}
+
 // BuildDevenvNixData assembles all template data from wizard answers and ecosystem
 // modules. It calls into each selected module to collect Nix fragments and hooks,
 // then merges them with security defaults.
@@ -74,122 +84,29 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data.Packages = append(data.Packages, basePkgs...)
 	data.Packages = append(data.Packages, answers.ExtraPackages...)
 
-	// 2. Environment variables: always include the security-hardened flag.
-	data.EnvVars = make(map[string]string, len(answers.EnvVars)+6)
-	data.EnvVars["DEVENV_SECURITY_HARDENED"] = "true"
-
-	// Context environment variables.
-	prefix := branding.Get().EnvPrefix
-	projectName := answers.ProjectName
-	if projectName == "" {
-		projectName = "unknown"
-	}
-	data.EnvVars[prefix+"PROJECT_NAME"] = projectName
-
-	securityProfile := answers.ComplianceLevel
-	if securityProfile == "" {
-		securityProfile = "standard"
-	}
-	data.EnvVars[prefix+"SECURITY_PROFILE"] = securityProfile
-
-	data.EnvVars[prefix+"VERSION"] = version.Info().Version
-	data.EnvVars[prefix+"ECOSYSTEMS"] = buildEcosystemsList(answers)
-	data.EnvVars[prefix+"TOOL_COUNT"] = strconv.Itoa(countEnabledTools(answers))
-
-	for k, v := range answers.EnvVars {
-		data.EnvVars[k] = v
-	}
+	// 2. Environment variables.
+	data.EnvVars = buildEnvVars(answers)
 
 	// 3. Unset env vars: credential-bearing variables.
 	data.UnsetEnvVars = defaultUnsetEnvVars()
 
-	// 4. Language fragments from ecosystem modules.
-	seenHookIDs := make(map[string]bool)
-	for _, lang := range answers.Languages {
-		mod, ok := registry.ByName(lang.Name)
-		if !ok {
-			return nil, fmt.Errorf("unknown language module: %q", lang.Name)
-		}
-
-		cfg := ecosystem.ToModuleConfigWithProxy(lang, answers.Infrastructure)
-		fragment, err := mod.DevenvNixFragment(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("generating Nix fragment for %s: %w", lang.Name, err)
-		}
-
-		if strings.TrimSpace(fragment) != "" {
-			data.LanguageFragments = append(data.LanguageFragments, LanguageFragment{
-				DisplayName: mod.DisplayName(),
-				NixFragment: fragment,
-			})
-		}
-
-		// Collect hooks from each module.
-		for _, hook := range mod.PreCommitHooks(cfg) {
-			if seenHookIDs[hook.ID] {
-				continue
-			}
-			seenHookIDs[hook.ID] = true
-
-			if hook.BuiltIn {
-				data.BuiltInHooks = append(data.BuiltInHooks, hook.ID)
-			} else {
-				entry := hook.Entry
-				rawEntry := false
-
-				if hook.NixPackage != "" {
-					binary := strings.SplitN(hook.Entry, " ", 2)[0]
-					args := ""
-					if parts := strings.SplitN(hook.Entry, " ", 2); len(parts) > 1 {
-						args = " " + parts[1]
-					}
-					entry = fmt.Sprintf(`"${pkgs.%s}/bin/%s%s"`, hook.NixPackage, binary, args)
-					rawEntry = true
-					data.Packages = append(data.Packages, hook.NixPackage)
-				}
-
-				data.CustomHooks = append(data.CustomHooks, CustomHookData{
-					ID:            hook.ID,
-					Name:          hook.Name,
-					Description:   hook.Description,
-					Entry:         entry,
-					RawEntry:      rawEntry,
-					Language:      hook.Language,
-					Types:         hook.Types,
-					Stages:        hook.Stages,
-					Files:         hook.Files,
-					PassFilenames: hook.PassFilenames,
-				})
-			}
-		}
+	// 4. Language fragments and hooks from ecosystem modules.
+	hookResult, err := collectLanguageFragmentsAndHooks(answers, registry)
+	if err != nil {
+		return nil, err
 	}
+	data.LanguageFragments = hookResult.Fragments
+	data.BuiltInHooks = hookResult.BuiltInHooks
+	data.CustomHooks = hookResult.CustomHooks
+	data.Packages = append(data.Packages, hookResult.ExtraPackages...)
 
 	// 4b. Collect packages from modules that implement PackageProvider.
-	for _, lang := range answers.Languages {
-		mod, ok := registry.ByName(lang.Name)
-		if !ok {
-			continue
-		}
-		if pp, ok := mod.(ecosystem.PackageProvider); ok {
-			cfg := ecosystem.ToModuleConfigWithProxy(lang, answers.Infrastructure)
-			data.Packages = append(data.Packages, pp.DevenvPackages(cfg)...)
-		}
-	}
+	data.Packages = append(data.Packages, collectModulePackages(answers, registry)...)
 
 	// 4c. Collect packages for enabled tools that need binaries on PATH.
-	nixPkgs := defaultToolNixPackages()
-	nixExprs := defaultToolNixExprs()
-	for toolName, enabled := range answers.EnabledTools {
-		if !enabled {
-			continue
-		}
-		if nixPkg, ok := nixPkgs[toolName]; ok {
-			data.Packages = append(data.Packages, nixPkg)
-		}
-		if expr, ok := nixExprs[toolName]; ok {
-			data.PackageExprs = append(data.PackageExprs, expr)
-		}
-	}
+	toolPkgs, toolExprs := collectToolPackages(answers)
+	data.Packages = append(data.Packages, toolPkgs...)
+	data.PackageExprs = append(data.PackageExprs, toolExprs...)
 
 	// 5. Services.
 	for _, svc := range answers.Services {
@@ -203,7 +120,8 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	// 6. Security hooks are always present.
 	data.SecurityHooks = defaultSecurityHooks()
 
-	// Specialized security custom hooks (always present).
+	// Specialized security custom hooks (always present), deduped against ecosystem hooks.
+	seenHookIDs := hookResult.SeenHookIDs
 	for _, hook := range defaultSpecializedHooks() {
 		if !seenHookIDs[hook.ID] {
 			seenHookIDs[hook.ID] = true
@@ -219,6 +137,151 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data.EnterTest = buildEnterTestScript()
 
 	// 9. Task definitions from ecosystem modules.
+	data.Tasks = collectTaskDefinitions(answers, registry)
+
+	// Sort built-in hooks for deterministic output.
+	sort.Strings(data.BuiltInHooks)
+
+	return data, nil
+}
+
+// buildEnvVars assembles the environment variable map from wizard answers.
+// It always includes the security-hardened flag, context env vars (prefix,
+// project name, security profile, version, ecosystems list, tool count),
+// and user-supplied env vars.
+func buildEnvVars(answers types.WizardAnswers) map[string]string {
+	envVars := make(map[string]string, len(answers.EnvVars)+6)
+	envVars["DEVENV_SECURITY_HARDENED"] = "true"
+
+	prefix := branding.Get().EnvPrefix
+	projectName := answers.ProjectName
+	if projectName == "" {
+		projectName = "unknown"
+	}
+	envVars[prefix+"PROJECT_NAME"] = projectName
+
+	securityProfile := answers.ComplianceLevel
+	if securityProfile == "" {
+		securityProfile = "standard"
+	}
+	envVars[prefix+"SECURITY_PROFILE"] = securityProfile
+
+	envVars[prefix+"VERSION"] = version.Info().Version
+	envVars[prefix+"ECOSYSTEMS"] = buildEcosystemsList(answers)
+	envVars[prefix+"TOOL_COUNT"] = strconv.Itoa(countEnabledTools(answers))
+
+	maps.Copy(envVars, answers.EnvVars)
+	return envVars
+}
+
+// collectLanguageFragmentsAndHooks iterates over selected languages, generates
+// their Nix fragments, and collects pre-commit hooks (both built-in and custom).
+func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *ecosystem.Registry) (languageHookResult, error) {
+	result := languageHookResult{
+		SeenHookIDs: make(map[string]bool),
+	}
+
+	for _, lang := range answers.Languages {
+		mod, ok := registry.ByName(lang.Name)
+		if !ok {
+			return result, fmt.Errorf("unknown language module: %q", lang.Name)
+		}
+
+		cfg := ecosystem.ToModuleConfigWithProxy(lang, answers.Infrastructure)
+		fragment, err := mod.DevenvNixFragment(cfg)
+		if err != nil {
+			return result, fmt.Errorf("generating Nix fragment for %s: %w", lang.Name, err)
+		}
+
+		if strings.TrimSpace(fragment) != "" {
+			result.Fragments = append(result.Fragments, LanguageFragment{
+				DisplayName: mod.DisplayName(),
+				NixFragment: fragment,
+			})
+		}
+
+		for _, hook := range mod.PreCommitHooks(cfg) {
+			if result.SeenHookIDs[hook.ID] {
+				continue
+			}
+			result.SeenHookIDs[hook.ID] = true
+
+			if hook.BuiltIn {
+				result.BuiltInHooks = append(result.BuiltInHooks, hook.ID)
+			} else {
+				entry := hook.Entry
+				rawEntry := false
+
+				if hook.NixPackage != "" {
+					parts := strings.SplitN(hook.Entry, " ", 2)
+					binary := parts[0]
+					args := ""
+					if len(parts) > 1 {
+						args = " " + parts[1]
+					}
+					entry = fmt.Sprintf(`"${pkgs.%s}/bin/%s%s"`, hook.NixPackage, binary, args)
+					rawEntry = true
+					result.ExtraPackages = append(result.ExtraPackages, hook.NixPackage)
+				}
+
+				result.CustomHooks = append(result.CustomHooks, CustomHookData{
+					ID:            hook.ID,
+					Name:          hook.Name,
+					Description:   hook.Description,
+					Entry:         entry,
+					RawEntry:      rawEntry,
+					Language:      hook.Language,
+					Types:         hook.Types,
+					Stages:        hook.Stages,
+					Files:         hook.Files,
+					PassFilenames: hook.PassFilenames,
+				})
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// collectModulePackages gathers Nix packages from ecosystem modules that
+// implement the PackageProvider interface.
+func collectModulePackages(answers types.WizardAnswers, registry *ecosystem.Registry) []string {
+	var pkgs []string
+	for _, lang := range answers.Languages {
+		mod, ok := registry.ByName(lang.Name)
+		if !ok {
+			continue
+		}
+		if pp, ok := mod.(ecosystem.PackageProvider); ok {
+			cfg := ecosystem.ToModuleConfigWithProxy(lang, answers.Infrastructure)
+			pkgs = append(pkgs, pp.DevenvPackages(cfg)...)
+		}
+	}
+	return pkgs
+}
+
+// collectToolPackages returns Nix package names and raw Nix expressions for
+// enabled tools that need binaries on PATH.
+func collectToolPackages(answers types.WizardAnswers) (pkgs []string, exprs []string) {
+	nixPkgs := defaultToolNixPackages()
+	nixExprs := defaultToolNixExprs()
+	for toolName, enabled := range answers.EnabledTools {
+		if !enabled {
+			continue
+		}
+		if nixPkg, ok := nixPkgs[toolName]; ok {
+			pkgs = append(pkgs, nixPkg)
+		}
+		if expr, ok := nixExprs[toolName]; ok {
+			exprs = append(exprs, expr)
+		}
+	}
+	return pkgs, exprs
+}
+
+// collectTaskDefinitions builds development task definitions from ecosystem
+// modules registered in the given registry.
+func collectTaskDefinitions(answers types.WizardAnswers, registry *ecosystem.Registry) []ecosystem.TaskDefinition {
 	var modules []ecosystem.EcosystemModule
 	configForFunc := func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
 		for _, lang := range answers.Languages {
@@ -233,12 +296,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 			modules = append(modules, mod)
 		}
 	}
-	data.Tasks = ecosystem.AggregateTaskDefinitions(modules, configForFunc, answers.EnabledTools)
-
-	// Sort built-in hooks for deterministic output.
-	sort.Strings(data.BuiltInHooks)
-
-	return data, nil
+	return ecosystem.AggregateTaskDefinitions(modules, configForFunc, answers.EnabledTools)
 }
 
 // buildEcosystemsList returns a sorted, comma-separated list of selected

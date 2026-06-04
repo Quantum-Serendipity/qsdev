@@ -210,7 +210,7 @@ func pathHasPrefix(resolved, root string) bool {
 
 // containsPathTraversal checks whether a file path contains ".." components.
 func containsPathTraversal(path string) bool {
-	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+	for part := range strings.SplitSeq(filepath.ToSlash(path), "/") {
 		if part == ".." {
 			return true
 		}

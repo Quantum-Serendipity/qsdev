@@ -15,7 +15,7 @@ func init() {
 
 func builtinBehaviors() map[string]ToolBehavior {
 	return map[string]ToolBehavior{
-		"version-sentinel": {
+		ToolVersionSentinel: {
 			EnableFunc: func(a *types.WizardAnswers) {
 				a.AgentTools.VersionSentinel = true
 				if a.AgentTools.VersionSentinelHours == 0 {
@@ -55,7 +55,7 @@ func builtinBehaviors() map[string]ToolBehavior {
 				}
 			},
 		},
-		"semble": {
+		ToolSemble: {
 			EnableFunc: func(a *types.WizardAnswers) {
 				a.AgentTools.SembleEnabled = true
 				if a.AgentTools.SembleMode == "" {
@@ -64,7 +64,7 @@ func builtinBehaviors() map[string]ToolBehavior {
 			},
 			DisableFunc: func(a *types.WizardAnswers) {
 				a.AgentTools.SembleEnabled = false
-				a.MCPServers = removeStr(a.MCPServers, "semble")
+				a.MCPServers = removeStr(a.MCPServers, ToolSemble)
 			},
 		},
 		"semgrep": {

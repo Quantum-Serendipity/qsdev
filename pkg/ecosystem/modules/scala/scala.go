@@ -118,10 +118,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 // Mill projects need the mill package; sbt projects get sbt via the
 // languages.scala.sbt.enable fragment.
 func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
-	buildTool := config.Extras["build_tool"]
-	if buildTool == "" {
-		buildTool = "sbt"
-	}
+	buildTool := config.Extra("build_tool", "sbt")
 	if buildTool == "mill" {
 		return []string{"mill"}
 	}
@@ -131,15 +128,9 @@ func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for Scala language support with the appropriate JDK and build tool.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
-	buildTool := config.Extras["build_tool"]
-	if buildTool == "" {
-		buildTool = "sbt"
-	}
+	buildTool := config.Extra("build_tool", "sbt")
 
-	jdkVer := config.Extras["jdk_version"]
-	if jdkVer == "" {
-		jdkVer = "21"
-	}
+	jdkVer := config.Extra("jdk_version", "21")
 
 	jdkPkg := jdkPackage(jdkVer)
 
@@ -275,11 +266,20 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
-// VerificationCommands returns build and test commands for Scala projects.
-func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
-	return ecosystem.VerificationCommands{
-		Build: []string{"sbt compile"},
-		Test:  []string{"sbt test"},
+// VerificationCommands returns build and test commands for Scala projects,
+// switching on the configured build tool (sbt or mill).
+func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	switch config.Extra("build_tool", "sbt") {
+	case "mill":
+		return ecosystem.VerificationCommands{
+			Build: []string{"mill __.compile"},
+			Test:  []string{"mill __.test"},
+		}
+	default:
+		return ecosystem.VerificationCommands{
+			Build: []string{"sbt compile"},
+			Test:  []string{"sbt test"},
+		}
 	}
 }
 

@@ -253,7 +253,7 @@ func TestDevenvNixFragment_PNPM(t *testing.T) {
 		t.Errorf("expected pnpm.enable, got:\n%s", fragment)
 	}
 	// Ensure the standalone npm enable line is absent (pnpm.enable contains "npm.enable" as substring)
-	for _, line := range strings.Split(fragment, "\n") {
+	for line := range strings.SplitSeq(fragment, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "npm.enable = true;" {
 			t.Errorf("pnpm config should not enable npm separately, got line: %q", line)
@@ -326,7 +326,7 @@ func TestDevenvNixFragment_VersionMapping(t *testing.T) {
 		{">=20", "pkgs.nodejs_20"},
 		{"v22.1.0", "pkgs.nodejs_22"},
 		{"^24.0.0", "pkgs.nodejs_24"},
-		{"", "pkgs.nodejs_22"}, // default
+		{"", "pkgs.nodejs_22"},       // default
 		{"16.0.0", "pkgs.nodejs_22"}, // unmapped -> default
 	}
 

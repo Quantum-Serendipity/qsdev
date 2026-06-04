@@ -83,6 +83,9 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		Detected:   true,
 		Confidence: confidence,
 		Evidence:   evidence,
+		SuggestedConfig: ecosystem.ModuleConfig{
+			Extras: make(map[string]string),
+		},
 	}
 }
 

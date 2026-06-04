@@ -73,26 +73,3 @@ func ExtrasMap(extras []string) map[string]string {
 	}
 	return m
 }
-
-// ContainsStr checks whether a string slice includes the given value.
-func ContainsStr(slice []string, val string) bool {
-	for _, s := range slice {
-		if s == val {
-			return true
-		}
-	}
-	return false
-}
-
-// DedupStrings returns a new slice with duplicates removed, preserving order.
-func DedupStrings(items []string) []string {
-	seen := make(map[string]bool, len(items))
-	result := make([]string, 0, len(items))
-	for _, item := range items {
-		if !seen[item] {
-			seen[item] = true
-			result = append(result, item)
-		}
-	}
-	return result
-}

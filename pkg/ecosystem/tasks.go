@@ -1,5 +1,7 @@
 package ecosystem
 
+import "github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+
 // TaskDefinition represents a standard development task composed of commands
 // from one or more ecosystem modules.
 type TaskDefinition struct {
@@ -48,7 +50,7 @@ func AggregateTaskDefinitions(
 	var result []TaskDefinition
 	for _, name := range order {
 		t := tasks[name]
-		t.Commands = DedupStrings(t.Commands)
+		t.Commands = sliceutil.Dedup(t.Commands)
 		if len(t.Commands) > 0 {
 			result = append(result, *t)
 		}

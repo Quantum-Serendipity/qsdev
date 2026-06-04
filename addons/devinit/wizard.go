@@ -2,13 +2,13 @@ package devinit
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -150,15 +150,31 @@ func RunWizard(projectRoot string, detected types.DetectedProject, partial types
 	return mapFormToAnswers(fs, projectRoot, projectName, detected), nil
 }
 
-// buildWizardForm constructs the huh form with 6 groups.
+// buildWizardForm constructs the huh form from extracted group builders.
 func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *FlagSet, themeName string) *huh.Form {
 	defaults := MapDetectionToDefaults(detected, "")
 	summary := QuickPathSummary(defaults)
-
 	anyFlagExplicit := flagSetHasAny(flagSet)
 
-	// --- Group 1: Quick Selection ---
-	quickGroup := huh.NewGroup(
+	groups := []*huh.Group{
+		buildQuickSelectGroup(summary, anyFlagExplicit, fs),
+		buildShowDefaultsGroup(detected, defaults, fs),
+	}
+	groups = append(groups, buildLanguageGroups(detected, fs)...)
+	groups = append(groups,
+		buildServicesGroup(fs),
+		buildSecurityGroup(fs),
+	)
+	groups = append(groups, buildClaudeCodeGroups(fs)...)
+	groups = append(groups, buildConfirmGroup(fs))
+
+	return huh.NewForm(groups...).
+		WithTheme(resolveTheme(themeName)).
+		WithAccessible(termutil.IsAccessible())
+}
+
+func buildQuickSelectGroup(summary string, anyFlagExplicit bool, fs *formState) *huh.Group {
+	return huh.NewGroup(
 		huh.NewSelect[string]().
 			Title("Quick setup detected your project").
 			Description("We detected your project configuration. Would you like to use these defaults?").
@@ -169,9 +185,10 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 			).
 			Value(&fs.quickChoice),
 	).WithHideFunc(func() bool { return anyFlagExplicit })
+}
 
-	// --- Group 1b: Show Defaults ---
-	showDefaultsGroup := huh.NewGroup(
+func buildShowDefaultsGroup(detected types.DetectedProject, defaults types.WizardAnswers, fs *formState) *huh.Group {
+	return huh.NewGroup(
 		huh.NewNote().
 			Title("Default Configuration Details").
 			Description(buildDetailedDefaults(detected, defaults)),
@@ -183,8 +200,9 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 			).
 			Value(&fs.quickChoice),
 	).WithHideFunc(func() bool { return fs.quickChoice != "show" })
+}
 
-	// --- Group 2: Languages & Runtimes ---
+func buildLanguageGroups(detected types.DetectedProject, fs *formState) []*huh.Group {
 	langOptions := BuildLanguageOptions(detected)
 	langOpts := make([]huh.Option[string], len(langOptions))
 	for i, lo := range langOptions {
@@ -199,14 +217,13 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 			Value(&fs.selectedLanguages),
 	).WithHideFunc(func() bool { return fs.quickChoice == "yes" })
 
-	// Version input groups — each hidden unless the corresponding language is selected.
 	goVersionGroup := huh.NewGroup(
 		huh.NewInput().
 			Title("Go version").
 			Placeholder("e.g. 1.24").
 			Value(&fs.goVersion),
 	).WithHideFunc(func() bool {
-		return fs.quickChoice == "yes" || !ecosystem.ContainsStr(fs.selectedLanguages, "go")
+		return fs.quickChoice == "yes" || !sliceutil.Contains(fs.selectedLanguages, "go")
 	})
 
 	jsVersionGroup := huh.NewGroup(
@@ -215,7 +232,7 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 			Placeholder("e.g. 22").
 			Value(&fs.jsVersion),
 	).WithHideFunc(func() bool {
-		return fs.quickChoice == "yes" || !ecosystem.ContainsStr(fs.selectedLanguages, "javascript")
+		return fs.quickChoice == "yes" || !sliceutil.Contains(fs.selectedLanguages, "javascript")
 	})
 
 	pythonVersionGroup := huh.NewGroup(
@@ -224,10 +241,13 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 			Placeholder("e.g. 3.12").
 			Value(&fs.pythonVersion),
 	).WithHideFunc(func() bool {
-		return fs.quickChoice == "yes" || !ecosystem.ContainsStr(fs.selectedLanguages, "python")
+		return fs.quickChoice == "yes" || !sliceutil.Contains(fs.selectedLanguages, "python")
 	})
 
-	// --- Group 3: Services ---
+	return []*huh.Group{langGroup, goVersionGroup, jsVersionGroup, pythonVersionGroup}
+}
+
+func buildServicesGroup(fs *formState) *huh.Group {
 	serviceOpts := []huh.Option[string]{
 		huh.NewOption("PostgreSQL", "postgres"),
 		huh.NewOption("Redis", "redis"),
@@ -237,22 +257,23 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 		huh.NewOption("RabbitMQ", "rabbitmq"),
 	}
 
-	servicesGroup := huh.NewGroup(
+	return huh.NewGroup(
 		huh.NewMultiSelect[string]().
 			Title("Services").
 			Description("Select development services to include.").
 			Options(serviceOpts...).
 			Value(&fs.selectedServices),
 	).WithHideFunc(func() bool { return fs.quickChoice == "yes" })
+}
 
-	// --- Group 4: Dev Environment ---
+func buildSecurityGroup(fs *formState) *huh.Group {
 	hookOpts := []huh.Option[string]{
 		huh.NewOption("pre-commit", "pre-commit"),
 		huh.NewOption("pre-push", "pre-push"),
 		huh.NewOption("commit-msg", "commit-msg"),
 	}
 
-	securityGroup := huh.NewGroup(
+	return huh.NewGroup(
 		huh.NewConfirm().
 			Title("Enable direnv integration?").
 			Description("Automatically activates the dev environment when entering the project directory.").
@@ -276,8 +297,9 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 			Negative("No").
 			Value(&fs.nixHardeningGuide),
 	).WithHideFunc(func() bool { return fs.quickChoice == "yes" })
+}
 
-	// --- Group 5: Claude Code ---
+func buildClaudeCodeGroups(fs *formState) []*huh.Group {
 	claudeEnableGroup := huh.NewGroup(
 		huh.NewConfirm().
 			Title("Enable Claude Code?").
@@ -367,7 +389,6 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 	aiDetailGroup := huh.NewGroup(aiDetailFields...).
 		WithHideFunc(func() bool { return fs.quickChoice == "yes" || !fs.claudeCode })
 
-	// --- Group 5b: Semble Details ---
 	sembleModeOpts := []huh.Option[string]{
 		huh.NewOption("MCP server", "mcp"),
 		huh.NewOption("Sub-agent", "subagent"),
@@ -389,8 +410,11 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 		return fs.quickChoice == "yes" || !fs.claudeCode || !fs.agentSemble
 	})
 
-	// --- Group 6: Preview & Confirm ---
-	confirmGroup := huh.NewGroup(
+	return []*huh.Group{claudeEnableGroup, aiDetailGroup, sembleDetailGroup}
+}
+
+func buildConfirmGroup(fs *formState) *huh.Group {
+	return huh.NewGroup(
 		huh.NewNote().
 			Title("Plan Preview").
 			Description(buildPlanPreview(fs)),
@@ -400,24 +424,6 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 			Negative("No, cancel").
 			Value(&fs.confirmed),
 	)
-
-	form := huh.NewForm(
-		quickGroup,
-		showDefaultsGroup,
-		langGroup,
-		goVersionGroup,
-		jsVersionGroup,
-		pythonVersionGroup,
-		servicesGroup,
-		claudeEnableGroup,
-		aiDetailGroup,
-		sembleDetailGroup,
-		securityGroup,
-		confirmGroup,
-	).WithTheme(resolveTheme(themeName)).
-		WithAccessible(isAccessible())
-
-	return form
 }
 
 // mapFormToAnswers converts formState into WizardAnswers.
@@ -513,20 +519,6 @@ func parseExtraPackages(input string) []string {
 		return nil
 	}
 	return result
-}
-
-// isAccessible returns true when ACCESSIBLE, NO_COLOR, or TERM=dumb is set.
-func isAccessible() bool {
-	if os.Getenv("ACCESSIBLE") != "" {
-		return true
-	}
-	if os.Getenv("NO_COLOR") != "" {
-		return true
-	}
-	if os.Getenv("TERM") == "dumb" {
-		return true
-	}
-	return false
 }
 
 // flagSetHasAny returns true when any relevant flag was explicitly set.

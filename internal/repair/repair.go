@@ -2,12 +2,14 @@ package repair
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -126,19 +128,35 @@ func executeRepair(
 	return action
 }
 
-// copyState returns a deep-enough copy of genState for safe mutation
-// of the Files map.
+// copyState returns a deep copy of genState so callers can mutate the
+// returned value without affecting the original.
 func copyState(genState types.GeneratedState) types.GeneratedState {
 	cp := genState
+
+	// Deep copy Files, including the BaseContent byte slice in each entry.
 	cp.Files = make(map[string]types.FileState, len(genState.Files))
 	for k, v := range genState.Files {
+		if v.BaseContent != nil {
+			bc := make([]byte, len(v.BaseContent))
+			copy(bc, v.BaseContent)
+			v.BaseContent = bc
+		}
 		cp.Files[k] = v
 	}
+
+	// Deep copy EnabledTools.
 	if genState.EnabledTools != nil {
 		cp.EnabledTools = make(map[string]bool, len(genState.EnabledTools))
-		for k, v := range genState.EnabledTools {
-			cp.EnabledTools[k] = v
+		maps.Copy(cp.EnabledTools, genState.EnabledTools)
+	}
+
+	// Deep copy Fragments (each value is a slice of ledger entries).
+	if genState.Fragments != nil {
+		cp.Fragments = make(map[string][]types.FragmentLedgerEntry, len(genState.Fragments))
+		for k, v := range genState.Fragments {
+			cp.Fragments[k] = slices.Clone(v)
 		}
 	}
+
 	return cp
 }

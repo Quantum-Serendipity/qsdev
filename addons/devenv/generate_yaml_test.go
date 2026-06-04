@@ -7,6 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -22,9 +23,9 @@ func mustGenerate(t *testing.T, answers types.WizardAnswers, registry *ecosystem
 }
 
 // helper to unmarshal the generated YAML (skipping the comment header).
-func mustUnmarshal(t *testing.T, gf *types.GeneratedFile) map[string]interface{} {
+func mustUnmarshal(t *testing.T, gf *types.GeneratedFile) map[string]any {
 	t.Helper()
-	var m map[string]interface{}
+	var m map[string]any
 	if err := yaml.Unmarshal(gf.Content, &m); err != nil {
 		t.Fatalf("YAML unmarshal failed: %v\nContent:\n%s", err, string(gf.Content))
 	}
@@ -76,11 +77,11 @@ func TestBasicGoProject(t *testing.T) {
 	}
 
 	// Verify nixpkgs input.
-	inputs, ok := m["inputs"].(map[string]interface{})
+	inputs, ok := m["inputs"].(map[string]any)
 	if !ok {
 		t.Fatal("inputs should be a map")
 	}
-	nixpkgs, ok := inputs["nixpkgs"].(map[string]interface{})
+	nixpkgs, ok := inputs["nixpkgs"].(map[string]any)
 	if !ok {
 		t.Fatal("inputs.nixpkgs should be a map")
 	}
@@ -89,14 +90,14 @@ func TestBasicGoProject(t *testing.T) {
 	}
 
 	// Verify clean section.
-	clean, ok := m["clean"].(map[string]interface{})
+	clean, ok := m["clean"].(map[string]any)
 	if !ok {
 		t.Fatal("clean should be a map")
 	}
 	if clean["enabled"] != true {
 		t.Errorf("clean.enabled should be true, got %v", clean["enabled"])
 	}
-	keep, ok := clean["keep"].([]interface{})
+	keep, ok := clean["keep"].([]any)
 	if !ok {
 		t.Fatal("clean.keep should be a list")
 	}
@@ -105,14 +106,14 @@ func TestBasicGoProject(t *testing.T) {
 	}
 
 	// Verify permitted_*_packages are present as empty lists.
-	unfree, ok := m["permitted_unfree_packages"].([]interface{})
+	unfree, ok := m["permitted_unfree_packages"].([]any)
 	if !ok {
 		t.Fatal("permitted_unfree_packages should be a list")
 	}
 	if len(unfree) != 0 {
 		t.Errorf("permitted_unfree_packages should be empty, got %v", unfree)
 	}
-	insecure, ok := m["permitted_insecure_packages"].([]interface{})
+	insecure, ok := m["permitted_insecure_packages"].([]any)
 	if !ok {
 		t.Fatal("permitted_insecure_packages should be a list")
 	}
@@ -164,8 +165,8 @@ func TestWithGitHooksInputPresent(t *testing.T) {
 	gf := mustGenerate(t, answers, reg)
 	m := mustUnmarshal(t, gf)
 
-	inputs := m["inputs"].(map[string]interface{})
-	gitHooks, ok := inputs["git-hooks"].(map[string]interface{})
+	inputs := m["inputs"].(map[string]any)
+	gitHooks, ok := inputs["git-hooks"].(map[string]any)
 	if !ok {
 		t.Fatal("git-hooks input should be present when GitHooks are set")
 	}
@@ -179,11 +180,11 @@ func TestWithGitHooksInputPresent(t *testing.T) {
 	}
 
 	// git-hooks should have nested inputs.nixpkgs.follows = "nixpkgs".
-	subInputs, ok := gitHooks["inputs"].(map[string]interface{})
+	subInputs, ok := gitHooks["inputs"].(map[string]any)
 	if !ok {
 		t.Fatal("git-hooks should have nested inputs for sub-input follows")
 	}
-	nixpkgsSub, ok := subInputs["nixpkgs"].(map[string]interface{})
+	nixpkgsSub, ok := subInputs["nixpkgs"].(map[string]any)
 	if !ok {
 		t.Fatal("git-hooks.inputs should have nixpkgs sub-input")
 	}
@@ -209,7 +210,7 @@ func TestWithoutExplicitHooksStillHasGitHooksInput(t *testing.T) {
 	m := mustUnmarshal(t, gf)
 
 	// git-hooks input should always be present because security hooks are mandatory.
-	inputs := m["inputs"].(map[string]interface{})
+	inputs := m["inputs"].(map[string]any)
 	if _, ok := inputs["git-hooks"]; !ok {
 		t.Error("git-hooks input should always be present (security hooks are mandatory)")
 	}
@@ -233,7 +234,7 @@ func TestGitHooksInferredFromModulePreCommitHooks(t *testing.T) {
 	gf := mustGenerate(t, answers, reg)
 	m := mustUnmarshal(t, gf)
 
-	inputs := m["inputs"].(map[string]interface{})
+	inputs := m["inputs"].(map[string]any)
 	if _, ok := inputs["git-hooks"]; !ok {
 		t.Error("git-hooks input should be present when module has PreCommitHooks")
 	}
@@ -259,8 +260,8 @@ func TestEcosystemModuleInputsMerged(t *testing.T) {
 	gf := mustGenerate(t, answers, reg)
 	m := mustUnmarshal(t, gf)
 
-	inputs := m["inputs"].(map[string]interface{})
-	pythonInput, ok := inputs["nixpkgs-python"].(map[string]interface{})
+	inputs := m["inputs"].(map[string]any)
+	pythonInput, ok := inputs["nixpkgs-python"].(map[string]any)
 	if !ok {
 		t.Fatal("nixpkgs-python input should be present from ecosystem module")
 	}
@@ -272,11 +273,11 @@ func TestEcosystemModuleInputsMerged(t *testing.T) {
 		t.Error("nixpkgs-python must not have top-level follows")
 	}
 	// Should have nested inputs.nixpkgs.follows = "nixpkgs".
-	subInputs, ok := pythonInput["inputs"].(map[string]interface{})
+	subInputs, ok := pythonInput["inputs"].(map[string]any)
 	if !ok {
 		t.Fatal("nixpkgs-python should have nested inputs for sub-input follows")
 	}
-	nixpkgsSub, ok := subInputs["nixpkgs"].(map[string]interface{})
+	nixpkgsSub, ok := subInputs["nixpkgs"].(map[string]any)
 	if !ok {
 		t.Fatal("nixpkgs-python.inputs should have nixpkgs sub-input")
 	}
@@ -304,8 +305,8 @@ func TestEcosystemInputDoesNotOverrideNixpkgs(t *testing.T) {
 	gf := mustGenerate(t, answers, reg)
 	m := mustUnmarshal(t, gf)
 
-	inputs := m["inputs"].(map[string]interface{})
-	nixpkgs := inputs["nixpkgs"].(map[string]interface{})
+	inputs := m["inputs"].(map[string]any)
+	nixpkgs := inputs["nixpkgs"].(map[string]any)
 	// The hardened nixpkgs URL should not be overridden by ecosystem input.
 	if nixpkgs["url"] != "github:NixOS/nixpkgs/nixpkgs-unstable" {
 		t.Errorf("nixpkgs URL was overridden by ecosystem input: %v", nixpkgs["url"])
@@ -330,7 +331,7 @@ func TestYAMLRoundTrip(t *testing.T) {
 	gf := mustGenerate(t, answers, reg)
 
 	// Unmarshal and re-marshal to verify round-trip stability.
-	var first map[string]interface{}
+	var first map[string]any
 	if err := yaml.Unmarshal(gf.Content, &first); err != nil {
 		t.Fatalf("first unmarshal failed: %v", err)
 	}
@@ -338,7 +339,7 @@ func TestYAMLRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-marshal failed: %v", err)
 	}
-	var second map[string]interface{}
+	var second map[string]any
 	if err := yaml.Unmarshal(remarshaled, &second); err != nil {
 		t.Fatalf("second unmarshal failed: %v", err)
 	}
@@ -372,7 +373,7 @@ func TestSecurityDefaultsWithEmptyAnswers(t *testing.T) {
 		t.Errorf("allow_broken should be false with empty answers, got %v", m["allow_broken"])
 	}
 
-	clean := m["clean"].(map[string]interface{})
+	clean := m["clean"].(map[string]any)
 	if clean["enabled"] != true {
 		t.Errorf("clean.enabled should be true with empty answers")
 	}
@@ -391,7 +392,7 @@ func TestSecurityDefaultsWithEmptyAnswers(t *testing.T) {
 	}
 
 	// nixpkgs input must be present.
-	inputs := m["inputs"].(map[string]interface{})
+	inputs := m["inputs"].(map[string]any)
 	if _, ok := inputs["nixpkgs"]; !ok {
 		t.Error("nixpkgs input must be present")
 	}
@@ -435,7 +436,7 @@ func TestNilRegistryHandledGracefully(t *testing.T) {
 	}
 
 	// git-hooks should be present even with nil registry (security hooks are mandatory).
-	inputs := m["inputs"].(map[string]interface{})
+	inputs := m["inputs"].(map[string]any)
 	if _, ok := inputs["git-hooks"]; !ok {
 		t.Error("git-hooks should be present even with nil registry (security hooks are mandatory)")
 	}
@@ -453,7 +454,7 @@ func TestNilRegistryWithExplicitGitHooks(t *testing.T) {
 	m := mustUnmarshal(t, gf)
 
 	// git-hooks SHOULD be present because explicit hooks were requested.
-	inputs := m["inputs"].(map[string]interface{})
+	inputs := m["inputs"].(map[string]any)
 	if _, ok := inputs["git-hooks"]; !ok {
 		t.Error("git-hooks should be present when explicit GitHooks are set, even with nil registry")
 	}
@@ -465,7 +466,7 @@ func TestHeaderCommentPresent(t *testing.T) {
 	gf := mustGenerate(t, answers, reg)
 	content := string(gf.Content)
 
-	if !strings.HasPrefix(content, "# Generated by qsdev init") {
+	if !strings.HasPrefix(content, "# "+branding.GeneratedBy()+" init") {
 		t.Error("YAML should start with header comment")
 	}
 	if !strings.Contains(content, "devenv.sh/reference/yaml-options") {
@@ -553,7 +554,7 @@ func TestMultipleEcosystemInputs(t *testing.T) {
 	gf := mustGenerate(t, answers, reg)
 	m := mustUnmarshal(t, gf)
 
-	inputs := m["inputs"].(map[string]interface{})
+	inputs := m["inputs"].(map[string]any)
 	if _, ok := inputs["nixpkgs-python"]; !ok {
 		t.Error("nixpkgs-python input should be present")
 	}

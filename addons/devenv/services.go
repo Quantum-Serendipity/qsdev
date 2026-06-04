@@ -3,6 +3,7 @@ package devenv
 import (
 	"fmt"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -37,7 +38,7 @@ func buildPostgres(svc types.ServiceChoice) ServiceTemplateData {
 
 	if v := svc.Version; v != "" {
 		data.ConfigLines = append(data.ConfigLines,
-			fmt.Sprintf("package = pkgs.postgresql_%s;", v))
+			fmt.Sprintf("package = pkgs.postgresql_%s;", ecosystem.NixEscapeString(v)))
 	}
 
 	if db := svc.Settings["initial_db"]; db != "" {
@@ -56,7 +57,7 @@ func buildRedis(svc types.ServiceChoice) ServiceTemplateData {
 
 	if port := svc.Settings["port"]; port != "" {
 		data.ConfigLines = append(data.ConfigLines,
-			fmt.Sprintf("port = %s;", port))
+			fmt.Sprintf("port = %s;", ecosystem.NixEscapeString(port)))
 	}
 
 	return data

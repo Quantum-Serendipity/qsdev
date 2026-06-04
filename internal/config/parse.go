@@ -230,11 +230,11 @@ func DefaultQsdevConfig() *types.QsdevConfig {
 	return &types.QsdevConfig{
 		Version: types.ConfigVersionCurrent,
 		Security: types.SecurityConfig{
-			Level:          "enhanced",
-			AgeGating:      &t,
-			ScriptBlocking: &t,
-			LockEnforce:    &t,
-			VulnScanning:   &t,
+			Level:           "enhanced",
+			AgeGating:       &t,
+			ScriptBlocking:  &t,
+			LockEnforcement: &t,
+			VulnScanning:    &t,
 		},
 		ClaudeCode: types.ClaudeCodeConfig{
 			Enabled:         &enabled,

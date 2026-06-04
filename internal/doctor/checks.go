@@ -41,13 +41,9 @@ func DefaultChecks() []ToolCheck {
 			Required:    true,
 			ParseVersion: func(raw string) string {
 				// "go version go1.22.3 linux/amd64" → "1.22.3"
-				parts := strings.Fields(raw)
-				for _, p := range parts {
-					if strings.HasPrefix(p, "go") && len(p) > 2 {
-						v := strings.TrimPrefix(p, "go")
-						if len(v) > 0 && v[0] >= '0' && v[0] <= '9' {
-							return v
-						}
+				for p := range strings.FieldsSeq(raw) {
+					if v, ok := strings.CutPrefix(p, "go"); ok && len(v) > 0 && v[0] >= '0' && v[0] <= '9' {
+						return v
 					}
 				}
 				return ""
@@ -162,10 +158,9 @@ func DefaultChecks() []ToolCheck {
 			Required:    false,
 			ParseVersion: func(raw string) string {
 				// Multiline output: version is on the line starting with "version:"
-				for _, line := range strings.Split(raw, "\n") {
-					line = strings.TrimSpace(line)
-					if strings.HasPrefix(line, "version:") {
-						return strings.TrimSpace(strings.TrimPrefix(line, "version:"))
+				for line := range strings.SplitSeq(raw, "\n") {
+					if val, ok := strings.CutPrefix(strings.TrimSpace(line), "version:"); ok {
+						return strings.TrimSpace(val)
 					}
 				}
 				return ""
@@ -213,8 +208,8 @@ func DefaultChecks() []ToolCheck {
 			ParseVersion: func(raw string) string {
 				// "jq-1.7.1" → "1.7.1"
 				raw = strings.TrimSpace(raw)
-				if strings.HasPrefix(raw, "jq-") {
-					return strings.TrimPrefix(raw, "jq-")
+				if val, ok := strings.CutPrefix(raw, "jq-"); ok {
+					return val
 				}
 				return raw
 			},
@@ -280,8 +275,8 @@ func extractLastField(raw, prefix string) string {
 	if raw == "" {
 		return ""
 	}
-	if strings.HasPrefix(raw, prefix) {
-		return strings.TrimSpace(strings.TrimPrefix(raw, prefix))
+	if val, ok := strings.CutPrefix(raw, prefix); ok {
+		return strings.TrimSpace(val)
 	}
 	// Fallback: take the last field
 	parts := strings.Fields(raw)

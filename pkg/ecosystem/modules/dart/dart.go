@@ -89,7 +89,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 // DevenvPackages returns Nix packages required by the Dart module.
 // Flutter projects get the flutter package.
 func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
-	if config.Extras["flutter"] == "true" {
+	if config.Extra("flutter", "") == "true" {
 		return []string{"flutter"}
 	}
 	return nil

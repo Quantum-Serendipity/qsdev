@@ -55,6 +55,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		evidence = append(evidence, "*.rockspec files found")
 		confidence = ecosystem.ConfidenceCertain
 		detected = true
+		pm = "luarocks"
 	}
 	if fileutil.FileExists(projectRoot, "lux.toml") {
 		evidence = append(evidence, "lux.toml found")
@@ -190,4 +191,3 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	return nil
 }
-

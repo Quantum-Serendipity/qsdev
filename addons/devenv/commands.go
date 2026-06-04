@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -295,38 +296,15 @@ func addServiceCmd() *cobra.Command {
 				})
 			}
 
-			// Generate files.
-			registry := ecosystem.DefaultRegistry()
-			gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
-			files, err := gen.Generate(answers)
-			if err != nil {
-				return fmt.Errorf("generating files: %w", err)
-			}
-
-			// Dry-run: show preview and exit.
-			if dryRun {
-				preview := generate.PreviewFiles(files, nil, projectRoot)
-				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
-				return nil
-			}
-
-			// Write files to disk.
-			result, err := generate.WriteFiles(files, generate.PipelineOptions{
-				ProjectRoot: projectRoot,
+			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
+				projectRoot: projectRoot,
+				dryRun:      dryRun,
 			})
 			if err != nil {
-				return fmt.Errorf("writing files: %w", err)
+				return err
 			}
-
-			// Save state and answers.
-			successfulFiles := result.SuccessfulFiles(files)
-			genState := state.RecordFiles(successfulFiles)
-			stateFile := filepath.Join(projectRoot, statePath())
-			if err := state.SaveStateToFile(stateFile, genState); err != nil {
-				return fmt.Errorf("saving state: %w", err)
-			}
-			if err := saveAnswers(projectRoot, answers); err != nil {
-				return fmt.Errorf("saving answers: %w", err)
+			if result == nil {
+				return nil // dry-run
 			}
 
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added service %q.\n%s\n", serviceName, result.Summary())
@@ -388,38 +366,15 @@ func addLanguageCmd() *cobra.Command {
 				})
 			}
 
-			// Generate files.
-			registry := ecosystem.DefaultRegistry()
-			gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
-			files, err := gen.Generate(answers)
-			if err != nil {
-				return fmt.Errorf("generating files: %w", err)
-			}
-
-			// Dry-run: show preview and exit.
-			if dryRun {
-				preview := generate.PreviewFiles(files, nil, projectRoot)
-				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
-				return nil
-			}
-
-			// Write files to disk.
-			result, err := generate.WriteFiles(files, generate.PipelineOptions{
-				ProjectRoot: projectRoot,
+			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
+				projectRoot: projectRoot,
+				dryRun:      dryRun,
 			})
 			if err != nil {
-				return fmt.Errorf("writing files: %w", err)
+				return err
 			}
-
-			// Save state and answers.
-			successfulFiles := result.SuccessfulFiles(files)
-			genState := state.RecordFiles(successfulFiles)
-			stateFile := filepath.Join(projectRoot, statePath())
-			if err := state.SaveStateToFile(stateFile, genState); err != nil {
-				return fmt.Errorf("saving state: %w", err)
-			}
-			if err := saveAnswers(projectRoot, answers); err != nil {
-				return fmt.Errorf("saving answers: %w", err)
+			if result == nil {
+				return nil // dry-run
 			}
 
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added language %q.\n%s\n", langName, result.Summary())
@@ -474,34 +429,15 @@ func addPackageCmd() *cobra.Command {
 				return fmt.Errorf("no new packages to add")
 			}
 
-			registry := ecosystem.DefaultRegistry()
-			gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
-			files, err := gen.Generate(answers)
-			if err != nil {
-				return fmt.Errorf("generating files: %w", err)
-			}
-
-			if dryRun {
-				preview := generate.PreviewFiles(files, nil, projectRoot)
-				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
-				return nil
-			}
-
-			result, err := generate.WriteFiles(files, generate.PipelineOptions{
-				ProjectRoot: projectRoot,
+			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
+				projectRoot: projectRoot,
+				dryRun:      dryRun,
 			})
 			if err != nil {
-				return fmt.Errorf("writing files: %w", err)
+				return err
 			}
-
-			successfulFiles := result.SuccessfulFiles(files)
-			genState := state.RecordFiles(successfulFiles)
-			stateFile := filepath.Join(projectRoot, statePath())
-			if err := state.SaveStateToFile(stateFile, genState); err != nil {
-				return fmt.Errorf("saving state: %w", err)
-			}
-			if err := saveAnswers(projectRoot, answers); err != nil {
-				return fmt.Errorf("saving answers: %w", err)
+			if result == nil {
+				return nil // dry-run
 			}
 
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added package(s): %s\n%s\n", strings.Join(added, ", "), result.Summary())
@@ -554,38 +490,16 @@ func removePackageCmd() *cobra.Command {
 			}
 			answers.ExtraPackages = kept
 
-			registry := ecosystem.DefaultRegistry()
-			gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
-			files, err := gen.Generate(answers)
-			if err != nil {
-				return fmt.Errorf("generating files: %w", err)
-			}
-
-			if dryRun {
-				preview := generate.PreviewFiles(files, nil, projectRoot)
-				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
-				return nil
-			}
-
-			stateFile := filepath.Join(projectRoot, statePath())
-			oldState, _ := state.LoadStateFromFile(stateFile)
-
-			result, err := generate.WriteFiles(files, generate.PipelineOptions{
-				ProjectRoot: projectRoot,
+			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
+				projectRoot: projectRoot,
+				dryRun:      dryRun,
+				cleanup:     true,
 			})
 			if err != nil {
-				return fmt.Errorf("writing files: %w", err)
+				return err
 			}
-
-			cleanupOrphanedFiles(cmd, oldState, files, projectRoot)
-
-			successfulFiles := result.SuccessfulFiles(files)
-			genState := state.RecordFiles(successfulFiles)
-			if err := state.SaveStateToFile(stateFile, genState); err != nil {
-				return fmt.Errorf("saving state: %w", err)
-			}
-			if err := saveAnswers(projectRoot, answers); err != nil {
-				return fmt.Errorf("saving answers: %w", err)
+			if result == nil {
+				return nil // dry-run
 			}
 
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed package(s): %s\n%s\n", strings.Join(removed, ", "), result.Summary())
@@ -628,41 +542,20 @@ func addOverlayCmd() *cobra.Command {
 				return err
 			}
 
-			for _, existing := range answers.Overlays {
-				if existing == overlayPath {
-					return fmt.Errorf("overlay %q is already configured", overlayPath)
-				}
+			if slices.Contains(answers.Overlays, overlayPath) {
+				return fmt.Errorf("overlay %q is already configured", overlayPath)
 			}
 			answers.Overlays = append(answers.Overlays, overlayPath)
 
-			registry := ecosystem.DefaultRegistry()
-			gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
-			files, err := gen.Generate(answers)
-			if err != nil {
-				return fmt.Errorf("generating files: %w", err)
-			}
-
-			if dryRun {
-				preview := generate.PreviewFiles(files, nil, projectRoot)
-				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
-				return nil
-			}
-
-			result, err := generate.WriteFiles(files, generate.PipelineOptions{
-				ProjectRoot: projectRoot,
+			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
+				projectRoot: projectRoot,
+				dryRun:      dryRun,
 			})
 			if err != nil {
-				return fmt.Errorf("writing files: %w", err)
+				return err
 			}
-
-			successfulFiles := result.SuccessfulFiles(files)
-			genState := state.RecordFiles(successfulFiles)
-			stateFile := filepath.Join(projectRoot, statePath())
-			if err := state.SaveStateToFile(stateFile, genState); err != nil {
-				return fmt.Errorf("saving state: %w", err)
-			}
-			if err := saveAnswers(projectRoot, answers); err != nil {
-				return fmt.Errorf("saving answers: %w", err)
+			if result == nil {
+				return nil // dry-run
 			}
 
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added overlay: %s\n%s\n", overlayPath, result.Summary())
@@ -710,34 +603,16 @@ func removeOverlayCmd() *cobra.Command {
 			}
 			answers.Overlays = kept
 
-			registry := ecosystem.DefaultRegistry()
-			gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
-			files, err := gen.Generate(answers)
-			if err != nil {
-				return fmt.Errorf("generating files: %w", err)
-			}
-
-			if dryRun {
-				preview := generate.PreviewFiles(files, nil, projectRoot)
-				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
-				return nil
-			}
-
-			result, err := generate.WriteFiles(files, generate.PipelineOptions{
-				ProjectRoot: projectRoot,
+			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
+				projectRoot: projectRoot,
+				dryRun:      dryRun,
+				cleanup:     true,
 			})
 			if err != nil {
-				return fmt.Errorf("writing files: %w", err)
+				return err
 			}
-
-			successfulFiles := result.SuccessfulFiles(files)
-			genState := state.RecordFiles(successfulFiles)
-			stateFile := filepath.Join(projectRoot, statePath())
-			if err := state.SaveStateToFile(stateFile, genState); err != nil {
-				return fmt.Errorf("saving state: %w", err)
-			}
-			if err := saveAnswers(projectRoot, answers); err != nil {
-				return fmt.Errorf("saving answers: %w", err)
+			if result == nil {
+				return nil // dry-run
 			}
 
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed overlay: %s\n%s\n", overlayPath, result.Summary())
@@ -786,38 +661,16 @@ func removeServiceCmd() *cobra.Command {
 			}
 			answers.Services = kept
 
-			registry := ecosystem.DefaultRegistry()
-			gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
-			files, err := gen.Generate(answers)
-			if err != nil {
-				return fmt.Errorf("generating files: %w", err)
-			}
-
-			if dryRun {
-				preview := generate.PreviewFiles(files, nil, projectRoot)
-				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
-				return nil
-			}
-
-			stateFile := filepath.Join(projectRoot, statePath())
-			oldState, _ := state.LoadStateFromFile(stateFile)
-
-			result, err := generate.WriteFiles(files, generate.PipelineOptions{
-				ProjectRoot: projectRoot,
+			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
+				projectRoot: projectRoot,
+				dryRun:      dryRun,
+				cleanup:     true,
 			})
 			if err != nil {
-				return fmt.Errorf("writing files: %w", err)
+				return err
 			}
-
-			cleanupOrphanedFiles(cmd, oldState, files, projectRoot)
-
-			successfulFiles := result.SuccessfulFiles(files)
-			genState := state.RecordFiles(successfulFiles)
-			if err := state.SaveStateToFile(stateFile, genState); err != nil {
-				return fmt.Errorf("saving state: %w", err)
-			}
-			if err := saveAnswers(projectRoot, answers); err != nil {
-				return fmt.Errorf("saving answers: %w", err)
+			if result == nil {
+				return nil // dry-run
 			}
 
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed service %q.\n%s\n", serviceName, result.Summary())
@@ -865,38 +718,16 @@ func removeLanguageCmd() *cobra.Command {
 			}
 			answers.Languages = kept
 
-			registry := ecosystem.DefaultRegistry()
-			gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
-			files, err := gen.Generate(answers)
-			if err != nil {
-				return fmt.Errorf("generating files: %w", err)
-			}
-
-			if dryRun {
-				preview := generate.PreviewFiles(files, nil, projectRoot)
-				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
-				return nil
-			}
-
-			stateFile := filepath.Join(projectRoot, statePath())
-			oldState, _ := state.LoadStateFromFile(stateFile)
-
-			result, err := generate.WriteFiles(files, generate.PipelineOptions{
-				ProjectRoot: projectRoot,
+			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
+				projectRoot: projectRoot,
+				dryRun:      dryRun,
+				cleanup:     true,
 			})
 			if err != nil {
-				return fmt.Errorf("writing files: %w", err)
+				return err
 			}
-
-			cleanupOrphanedFiles(cmd, oldState, files, projectRoot)
-
-			successfulFiles := result.SuccessfulFiles(files)
-			genState := state.RecordFiles(successfulFiles)
-			if err := state.SaveStateToFile(stateFile, genState); err != nil {
-				return fmt.Errorf("saving state: %w", err)
-			}
-			if err := saveAnswers(projectRoot, answers); err != nil {
-				return fmt.Errorf("saving answers: %w", err)
+			if result == nil {
+				return nil // dry-run
 			}
 
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed language %q.\n%s\n", langName, result.Summary())
@@ -907,6 +738,64 @@ func removeLanguageCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
 
 	return cmd
+}
+
+// regenerateOpts controls regenerateAndPersist behavior.
+type regenerateOpts struct {
+	projectRoot string
+	dryRun      bool
+	cleanup     bool // load old state and remove orphaned files after write
+}
+
+// regenerateAndPersist generates files from answers, writes them to disk, and
+// persists both state and answers. For remove commands, set cleanup=true to
+// detect and delete orphaned files that are no longer produced.
+func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, opts regenerateOpts) (*generate.WriteResult, error) {
+	registry := ecosystem.DefaultRegistry()
+	gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
+	files, err := gen.Generate(answers)
+	if err != nil {
+		return nil, fmt.Errorf("generating files: %w", err)
+	}
+
+	// Dry-run: show preview and exit.
+	if opts.dryRun {
+		preview := generate.PreviewFiles(files, nil, opts.projectRoot)
+		_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
+		return nil, nil
+	}
+
+	// Load old state before writing so we can detect orphans.
+	stateFile := filepath.Join(opts.projectRoot, statePath())
+	var oldState types.GeneratedState
+	if opts.cleanup {
+		oldState, _ = state.LoadStateFromFile(stateFile)
+	}
+
+	// Write files to disk.
+	result, err := generate.WriteFiles(files, generate.PipelineOptions{
+		ProjectRoot: opts.projectRoot,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("writing files: %w", err)
+	}
+
+	// Cleanup orphaned files from prior generation.
+	if opts.cleanup {
+		cleanupOrphanedFiles(cmd, oldState, files, opts.projectRoot)
+	}
+
+	// Save state and answers.
+	successfulFiles := result.SuccessfulFiles(files)
+	genState := state.RecordFiles(successfulFiles)
+	if err := state.SaveStateToFile(stateFile, genState); err != nil {
+		return nil, fmt.Errorf("saving state: %w", err)
+	}
+	if err := saveAnswers(opts.projectRoot, answers); err != nil {
+		return nil, fmt.Errorf("saving answers: %w", err)
+	}
+
+	return &result, nil
 }
 
 // buildAnswersFromFlags constructs a WizardAnswers from CLI flag values.

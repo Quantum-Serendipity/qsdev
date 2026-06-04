@@ -7,32 +7,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-var defaultOpengrepExcludes = []string{
-	"vendor/",
-	"node_modules/",
-	"third_party/",
-	"dist/",
-	"build/",
-	"out/",
-	"target/",
-	".next/",
-	".nuxt/",
-	".devenv/",
-	".direnv/",
-	"result",
-	"__pycache__/",
-	".venv/",
-	"venv/",
-	".tox/",
-	".egg-info/",
-	".cache/",
-	".pytest_cache/",
-	"coverage/",
-	".coverage/",
-	"testdata/",
-	"fixtures/",
-}
-
 // GenerateOpengrepConfigYaml produces a .opengrep/config.yaml configuration
 // file. It specifies rule paths, path exclusions, severity threshold, and
 // timeout for OpenGrep scans.
@@ -43,7 +17,7 @@ func GenerateOpengrepConfigYaml(_ types.WizardAnswers) (*types.GeneratedFile, er
 	b.WriteString("rules:\n")
 	b.WriteString("  - rules/core\n")
 	b.WriteString("\nexclude:\n")
-	for _, p := range defaultOpengrepExcludes {
+	for _, p := range defaultScanExcludes {
 		fmt.Fprintf(&b, "  - %s\n", p)
 	}
 	b.WriteString("\nseverity: warning\n")

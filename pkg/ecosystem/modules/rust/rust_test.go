@@ -3,6 +3,7 @@ package rust_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -61,7 +62,7 @@ func TestDetect_CargoToml(t *testing.T) {
 	if r.Confidence != ecosystem.ConfidenceCertain {
 		t.Errorf("Confidence = %v, want Certain", r.Confidence)
 	}
-	if !containsStr(r.Evidence, "Cargo.toml") {
+	if !slices.Contains(r.Evidence, "Cargo.toml") {
 		t.Errorf("Evidence = %v, want to contain %q", r.Evidence, "Cargo.toml")
 	}
 	if ch := r.SuggestedConfig.Extras["channel"]; ch != "stable" {
@@ -87,10 +88,10 @@ func TestDetect_WithCargoLock(t *testing.T) {
 	if r.Confidence != ecosystem.ConfidenceCertain {
 		t.Errorf("Confidence = %v, want Certain", r.Confidence)
 	}
-	if !containsStr(r.Evidence, "Cargo.toml") {
+	if !slices.Contains(r.Evidence, "Cargo.toml") {
 		t.Errorf("Evidence should contain Cargo.toml")
 	}
-	if !containsStr(r.Evidence, "Cargo.lock") {
+	if !slices.Contains(r.Evidence, "Cargo.lock") {
 		t.Errorf("Evidence should contain Cargo.lock")
 	}
 }
@@ -539,15 +540,4 @@ func TestWizardFields(t *testing.T) {
 	if !values["nightly"] {
 		t.Error("missing option value nightly")
 	}
-}
-
-// --- helpers ---
-
-func containsStr(ss []string, target string) bool {
-	for _, s := range ss {
-		if s == target {
-			return true
-		}
-	}
-	return false
 }

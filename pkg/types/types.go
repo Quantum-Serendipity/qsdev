@@ -298,27 +298,4 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 		}
 	}
 
-	// Derive ComplianceLevel from Tier when not explicitly set.
-	if a.ComplianceLevel == "" && a.Tier != "" {
-		switch a.Tier {
-		case "supply-chain-only":
-			a.ComplianceLevel = "baseline"
-		case "standard":
-			a.ComplianceLevel = "standard"
-		case "full":
-			a.ComplianceLevel = "enhanced"
-		}
-	}
-
-	// Derive EnabledTools from Tier when not explicitly set.
-	if a.EnabledTools == nil && a.Tier != "" {
-		switch a.Tier {
-		case "standard":
-			a.EnabledTools = map[string]bool{"gitleaks": true}
-		case "full":
-			a.EnabledTools = map[string]bool{
-				"semgrep": true, "gitleaks": true, "secretspec": true,
-			}
-		}
-	}
 }

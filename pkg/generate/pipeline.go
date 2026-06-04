@@ -157,8 +157,8 @@ func PreviewFiles(files []types.GeneratedFile, state *types.GeneratedState, proj
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%-40s  %-10s  %s\n", "File", "Action", "Size")
-	b.WriteString(strings.Repeat("-", 60) + "\n")
+	fmt.Fprintf(&b, "%-40s  %-10s  %-16s  %-12s  %s\n", "File", "Action", "Strategy", "Owner", "Size")
+	b.WriteString(strings.Repeat("-", 90) + "\n")
 
 	for _, file := range files {
 		action := "create"
@@ -174,7 +174,11 @@ func PreviewFiles(files []types.GeneratedFile, state *types.GeneratedState, proj
 		}
 
 		size := formatSize(len(file.Content))
-		fmt.Fprintf(&b, "%-40s  %-10s  %s\n", file.Path, action, size)
+		owner := file.Owner
+		if owner == "" {
+			owner = "-"
+		}
+		fmt.Fprintf(&b, "%-40s  %-10s  %-16s  %-12s  %s\n", file.Path, action, file.Strategy, owner, size)
 	}
 
 	return b.String()
@@ -212,6 +216,22 @@ func containsPathTraversal(path string) bool {
 		}
 	}
 	return false
+}
+
+// VerifyWritten checks that files reported as created or updated by WriteFiles
+// actually exist on disk. It returns the relative paths of any missing files.
+func VerifyWritten(result WriteResult, projectRoot string) []string {
+	var missing []string
+	for _, fr := range result.Files {
+		if fr.Action != ActionCreated && fr.Action != ActionUpdated {
+			continue
+		}
+		path := filepath.Join(projectRoot, fr.Path)
+		if _, err := os.Stat(path); err != nil {
+			missing = append(missing, fr.Path)
+		}
+	}
+	return missing
 }
 
 // formatSize returns a human-readable file size string.

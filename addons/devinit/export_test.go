@@ -1,6 +1,10 @@
 package devinit
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
+)
 
 // ExportLanguageSpec re-exports LanguageSpec for external tests.
 type ExportLanguageSpec = LanguageSpec
@@ -80,6 +84,9 @@ var (
 
 	// ExportPreSelectedLanguages exposes PreSelectedLanguages for external tests.
 	ExportPreSelectedLanguages = PreSelectedLanguages
+
+	// ExportDetectedEcosystemCount exposes DetectedEcosystemCount for external tests.
+	ExportDetectedEcosystemCount = DetectedEcosystemCount
 
 	// ExportQuickPathSummary exposes QuickPathSummary for external tests.
 	ExportQuickPathSummary = QuickPathSummary
@@ -241,11 +248,19 @@ var ExportParseExtraPackages = parseExtraPackages
 // ExportIsAccessible exposes isAccessible for external tests.
 var ExportIsAccessible = isAccessible
 
+// ExportResolveTheme exposes resolveTheme for external tests.
+var ExportResolveTheme = resolveTheme
+
 // ExportBuildWizardForm exposes buildWizardForm for external tests.
 var ExportBuildWizardForm = buildWizardForm
 
 // ExportBuildPlanPreview exposes buildPlanPreview for external tests.
 var ExportBuildPlanPreview = buildPlanPreview
+
+// ExportBuildDetailedDefaults exposes buildDetailedDefaults for external tests.
+var ExportBuildDetailedDefaults = func(detected types.DetectedProject, defaults types.WizardAnswers) string {
+	return buildDetailedDefaults(detected, defaults)
+}
 
 // NewExportFormState constructs a formState with the given options for external tests.
 func NewExportFormState(opts ...func(*formState)) *formState {
@@ -334,4 +349,9 @@ func WithMCPServers(v []string) func(*formState) {
 // WithConfirmed sets confirmed on formState.
 func WithConfirmed(v bool) func(*formState) {
 	return func(fs *formState) { fs.confirmed = v }
+}
+
+// WithNixHardeningGuide sets nixHardeningGuide on formState.
+func WithNixHardeningGuide(v bool) func(*formState) {
+	return func(fs *formState) { fs.nixHardeningGuide = v }
 }

@@ -23,9 +23,10 @@ type formState struct {
 
 	selectedServices []string
 
-	direnv        bool
-	gitHooks      []string
-	extraPackages string // comma-separated input
+	direnv            bool
+	gitHooks          []string
+	extraPackages     string // comma-separated input
+	nixHardeningGuide bool
 
 	claudeCode      bool
 	permissionLevel string
@@ -43,10 +44,28 @@ type formState struct {
 	confirmed bool
 }
 
+// resolveTheme maps a theme name to a huh theme.
+func resolveTheme(name string) *huh.Theme {
+	switch name {
+	case "charm":
+		return huh.ThemeCharm()
+	case "dracula":
+		return huh.ThemeDracula()
+	case "catppuccin":
+		return huh.ThemeCatppuccin()
+	case "base16":
+		return huh.ThemeBase16()
+	case "default", "":
+		return huh.ThemeDracula()
+	default:
+		return huh.ThemeDracula()
+	}
+}
+
 // RunWizard runs the interactive huh form, collecting user choices.
 // It pre-populates defaults from detection and any partial flag answers.
 // Returns the fully populated WizardAnswers.
-func RunWizard(projectRoot string, detected types.DetectedProject, partial types.WizardAnswers, flagSet *FlagSet) (types.WizardAnswers, error) {
+func RunWizard(projectRoot string, detected types.DetectedProject, partial types.WizardAnswers, flagSet *FlagSet, themeName string) (types.WizardAnswers, error) {
 	defaults := MapDetectionToDefaults(detected, projectRoot)
 	projectName := defaults.ProjectName
 
@@ -120,7 +139,7 @@ func RunWizard(projectRoot string, detected types.DetectedProject, partial types
 		fs.agentSembleMode = partial.AgentTools.SembleMode
 	}
 
-	form := buildWizardForm(detected, fs, flagSet)
+	form := buildWizardForm(detected, fs, flagSet, themeName)
 	if err := form.Run(); err != nil {
 		if err == huh.ErrUserAborted {
 			return types.WizardAnswers{Confirmed: false}, nil
@@ -132,7 +151,7 @@ func RunWizard(projectRoot string, detected types.DetectedProject, partial types
 }
 
 // buildWizardForm constructs the huh form with 6 groups.
-func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *FlagSet) *huh.Form {
+func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *FlagSet, themeName string) *huh.Form {
 	defaults := MapDetectionToDefaults(detected, "")
 	summary := QuickPathSummary(defaults)
 
@@ -145,10 +164,25 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 			Description("We detected your project configuration. Would you like to use these defaults?").
 			Options(
 				huh.NewOption("Yes — "+summary, "yes"),
+				huh.NewOption("Show me what the defaults include", "show"),
 				huh.NewOption("No, let me customize", "customize"),
 			).
 			Value(&fs.quickChoice),
 	).WithHideFunc(func() bool { return anyFlagExplicit })
+
+	// --- Group 1b: Show Defaults ---
+	showDefaultsGroup := huh.NewGroup(
+		huh.NewNote().
+			Title("Default Configuration Details").
+			Description(buildDetailedDefaults(detected, defaults)),
+		huh.NewSelect[string]().
+			Title("How would you like to proceed?").
+			Options(
+				huh.NewOption("Accept these defaults", "yes"),
+				huh.NewOption("Customize", "customize"),
+			).
+			Value(&fs.quickChoice),
+	).WithHideFunc(func() bool { return fs.quickChoice != "show" })
 
 	// --- Group 2: Languages & Runtimes ---
 	langOptions := BuildLanguageOptions(detected)
@@ -218,7 +252,7 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 		huh.NewOption("commit-msg", "commit-msg"),
 	}
 
-	devEnvGroup := huh.NewGroup(
+	securityGroup := huh.NewGroup(
 		huh.NewConfirm().
 			Title("Enable direnv integration?").
 			Description("Automatically activates the dev environment when entering the project directory.").
@@ -235,6 +269,12 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 			Description("Comma-separated list of additional packages to include.").
 			Placeholder("e.g. jq, ripgrep, fd").
 			Value(&fs.extraPackages),
+		huh.NewConfirm().
+			Title("Generate Nix hardening guide?").
+			Description("Creates nix-hardening.md with security best practices for your Nix configuration.").
+			Affirmative("Yes").
+			Negative("No").
+			Value(&fs.nixHardeningGuide),
 	).WithHideFunc(func() bool { return fs.quickChoice == "yes" })
 
 	// --- Group 5: Claude Code ---
@@ -268,7 +308,7 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 		huh.NewOption("Socket", "socket"),
 	}
 
-	claudeDetailFields := []huh.Field{
+	aiDetailFields := []huh.Field{
 		huh.NewSelect[string]().
 			Title("Permission level").
 			Description("Controls which tools Claude Code is allowed to use.").
@@ -289,7 +329,7 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 	}
 
 	if len(skillOpts) > 0 {
-		claudeDetailFields = append(claudeDetailFields,
+		aiDetailFields = append(aiDetailFields,
 			huh.NewMultiSelect[string]().
 				Title("Skills").
 				Description("Select skills to install for Claude Code.").
@@ -298,25 +338,12 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 		)
 	}
 
-	claudeDetailFields = append(claudeDetailFields,
+	aiDetailFields = append(aiDetailFields,
 		huh.NewMultiSelect[string]().
 			Title("MCP servers").
 			Description("Select Model Context Protocol servers to configure.").
 			Options(mcpOpts...).
 			Value(&fs.mcpServers),
-	)
-
-	claudeDetailGroup := huh.NewGroup(claudeDetailFields...).
-		WithHideFunc(func() bool { return fs.quickChoice == "yes" || !fs.claudeCode })
-
-	// --- Group 5b: AI Agent Tools ---
-	sembleModeOpts := []huh.Option[string]{
-		huh.NewOption("MCP server", "mcp"),
-		huh.NewOption("Sub-agent", "subagent"),
-		huh.NewOption("Both", "both"),
-	}
-
-	agentToolsGroup := huh.NewGroup(
 		huh.NewConfirm().
 			Title("Agent-postmortem skill").
 			Description("Require evidence-backed verification before claiming tasks done").
@@ -335,7 +362,17 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 			Affirmative("Yes").
 			Negative("No").
 			Value(&fs.agentSemble),
-	).WithHideFunc(func() bool { return fs.quickChoice == "yes" || !fs.claudeCode })
+	)
+
+	aiDetailGroup := huh.NewGroup(aiDetailFields...).
+		WithHideFunc(func() bool { return fs.quickChoice == "yes" || !fs.claudeCode })
+
+	// --- Group 5b: Semble Details ---
+	sembleModeOpts := []huh.Option[string]{
+		huh.NewOption("MCP server", "mcp"),
+		huh.NewOption("Sub-agent", "subagent"),
+		huh.NewOption("Both", "both"),
+	}
 
 	sembleDetailGroup := huh.NewGroup(
 		huh.NewSelect[string]().
@@ -366,18 +403,18 @@ func buildWizardForm(detected types.DetectedProject, fs *formState, flagSet *Fla
 
 	form := huh.NewForm(
 		quickGroup,
+		showDefaultsGroup,
 		langGroup,
 		goVersionGroup,
 		jsVersionGroup,
 		pythonVersionGroup,
 		servicesGroup,
-		devEnvGroup,
 		claudeEnableGroup,
-		claudeDetailGroup,
-		agentToolsGroup,
+		aiDetailGroup,
 		sembleDetailGroup,
+		securityGroup,
 		confirmGroup,
-	).WithTheme(huh.ThemeDracula()).
+	).WithTheme(resolveTheme(themeName)).
 		WithAccessible(isAccessible())
 
 	return form
@@ -436,6 +473,8 @@ func mapFormToAnswers(fs *formState, projectRoot, projectName string, detected t
 		SafetyBlock: fs.safetyBlock,
 	}
 
+	answers.NixHardeningGuide = fs.nixHardeningGuide
+
 	// Claude Code details (only when enabled).
 	if fs.claudeCode {
 		answers.Skills = fs.skills
@@ -476,12 +515,15 @@ func parseExtraPackages(input string) []string {
 	return result
 }
 
-// isAccessible returns true when ACCESSIBLE or NO_COLOR env var is set.
+// isAccessible returns true when ACCESSIBLE, NO_COLOR, or TERM=dumb is set.
 func isAccessible() bool {
 	if os.Getenv("ACCESSIBLE") != "" {
 		return true
 	}
 	if os.Getenv("NO_COLOR") != "" {
+		return true
+	}
+	if os.Getenv("TERM") == "dumb" {
 		return true
 	}
 	return false

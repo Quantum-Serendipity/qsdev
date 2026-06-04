@@ -270,8 +270,86 @@ func TestBuildWizardForm_ReturnsNonNil(t *testing.T) {
 	_ = cmd.ParseFlags(nil)
 	flagSet := devinit.ExportNewFlagSet(cmd)
 
-	form := devinit.ExportBuildWizardForm(detected, fs, flagSet)
+	form := devinit.ExportBuildWizardForm(detected, fs, flagSet, "dracula")
 	if form == nil {
 		t.Fatal("buildWizardForm returned nil")
+	}
+}
+
+func TestResolveTheme_AllNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+	}{
+		{"charm"},
+		{"dracula"},
+		{"catppuccin"},
+		{"base16"},
+		{"default"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			theme := devinit.ExportResolveTheme(tt.name)
+			if theme == nil {
+				t.Errorf("resolveTheme(%q) returned nil", tt.name)
+			}
+		})
+	}
+}
+
+func TestResolveTheme_UnknownFallback(t *testing.T) {
+	t.Parallel()
+
+	theme := devinit.ExportResolveTheme("foobar")
+	if theme == nil {
+		t.Error("resolveTheme(\"foobar\") returned nil, expected Dracula fallback")
+	}
+}
+
+func TestMapFormToAnswers_NixHardeningGuide(t *testing.T) {
+	t.Parallel()
+
+	detected := types.DetectedProject{}
+
+	fs := devinit.NewExportFormState(
+		devinit.WithQuickChoice("customize"),
+		devinit.WithConfirmed(true),
+		devinit.WithSelectedLanguages([]string{"go"}),
+		devinit.WithNixHardeningGuide(true),
+	)
+
+	answers := devinit.ExportMapFormToAnswers(fs, "/tmp/project", "myproject", detected)
+
+	if !answers.NixHardeningGuide {
+		t.Error("expected NixHardeningGuide=true")
+	}
+}
+
+func TestIsAccessible_TermDumb(t *testing.T) {
+	origTerm := os.Getenv("TERM")
+	origAccessible := os.Getenv("ACCESSIBLE")
+	origNoColor := os.Getenv("NO_COLOR")
+	os.Unsetenv("ACCESSIBLE")
+	os.Unsetenv("NO_COLOR")
+	os.Setenv("TERM", "dumb")
+	t.Cleanup(func() {
+		if origTerm != "" {
+			os.Setenv("TERM", origTerm)
+		} else {
+			os.Unsetenv("TERM")
+		}
+		if origAccessible != "" {
+			os.Setenv("ACCESSIBLE", origAccessible)
+		}
+		if origNoColor != "" {
+			os.Setenv("NO_COLOR", origNoColor)
+		}
+	})
+
+	if !devinit.ExportIsAccessible() {
+		t.Error("isAccessible() = false, want true when TERM=dumb")
 	}
 }

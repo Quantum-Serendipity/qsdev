@@ -318,6 +318,106 @@ func TestProjectName_FallbackToDirectory(t *testing.T) {
 	}
 }
 
+func TestMapDetectionToDefaults_PolyglotProject(t *testing.T) {
+	t.Parallel()
+
+	detected := types.DetectedProject{
+		HasGoMod:       true,
+		GoVersion:      "1.24",
+		HasPackageJSON: true,
+		NodeVersion:    "22",
+		PackageManager: "pnpm",
+		HasDockerfile:  true,
+		HasTerraform:   true,
+	}
+	answers := devinit.ExportMapDetectionToDefaults(detected, "/tmp/polyglot")
+
+	if len(answers.Languages) != 4 {
+		t.Fatalf("expected 4 languages, got %d", len(answers.Languages))
+	}
+
+	nameMap := make(map[string]types.LanguageChoice)
+	for _, lang := range answers.Languages {
+		nameMap[lang.Name] = lang
+	}
+
+	for _, expected := range []string{"go", "javascript", "container", "terraform"} {
+		if _, ok := nameMap[expected]; !ok {
+			t.Errorf("expected language %q in results, got names: %v", expected, nameMap)
+		}
+	}
+
+	if nameMap["go"].Version != "1.24" {
+		t.Errorf("expected Go version %q, got %q", "1.24", nameMap["go"].Version)
+	}
+	if nameMap["javascript"].Version != "22" {
+		t.Errorf("expected JavaScript version %q, got %q", "22", nameMap["javascript"].Version)
+	}
+	if nameMap["javascript"].PackageManager != "pnpm" {
+		t.Errorf("expected package manager %q, got %q", "pnpm", nameMap["javascript"].PackageManager)
+	}
+}
+
+func TestMapDetectionToDefaults_EmptyProject(t *testing.T) {
+	t.Parallel()
+
+	detected := types.DetectedProject{}
+	answers := devinit.ExportMapDetectionToDefaults(detected, "/tmp/emptyproj")
+
+	if len(answers.Languages) != 0 {
+		t.Errorf("expected 0 languages for empty detection, got %d", len(answers.Languages))
+	}
+	if answers.ProjectName != "emptyproj" {
+		t.Errorf("expected project name %q from base path, got %q", "emptyproj", answers.ProjectName)
+	}
+}
+
+func TestMapDetectionToDefaults_JavaDualBuild(t *testing.T) {
+	t.Parallel()
+
+	detected := types.DetectedProject{
+		HasPomXML:      true,
+		HasBuildGradle: true,
+	}
+	answers := devinit.ExportMapDetectionToDefaults(detected, "/tmp/javadual")
+
+	if len(answers.Languages) != 1 {
+		t.Fatalf("expected 1 language (java), got %d", len(answers.Languages))
+	}
+	lang := answers.Languages[0]
+	if lang.Name != "java" {
+		t.Errorf("expected language name %q, got %q", "java", lang.Name)
+	}
+	hasBoth := false
+	for _, extra := range lang.Extras {
+		if extra == "build_tool=both" {
+			hasBoth = true
+		}
+	}
+	if !hasBoth {
+		t.Errorf("expected Extras to contain %q, got %v", "build_tool=both", lang.Extras)
+	}
+}
+
+func TestPreSelectedLanguages_AllTier1(t *testing.T) {
+	t.Parallel()
+
+	detected := types.DetectedProject{
+		HasGoMod:       true,
+		HasPackageJSON: true,
+		HasPyProject:   true,
+		HasCargoToml:   true,
+		HasPomXML:      true,
+		HasCsproj:      true,
+		HasDockerfile:  true,
+		HasTerraform:   true,
+	}
+	selected := devinit.ExportPreSelectedLanguages(detected)
+	if len(selected) != 8 {
+		t.Errorf("expected 8 pre-selected languages for all Tier 1, got %d: %v", len(selected), selected)
+	}
+}
+
 func TestExtractRepoName(t *testing.T) {
 	tests := []struct {
 		name string

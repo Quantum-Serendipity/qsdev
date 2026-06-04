@@ -1,6 +1,7 @@
 package devinit
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -38,6 +39,84 @@ func requireFileContains(t *testing.T, dir, relPath, substr string) {
 	content := readFileContent(t, dir, relPath)
 	if !strings.Contains(content, substr) {
 		t.Errorf("file %s does not contain %q (len=%d)", relPath, substr, len(content))
+	}
+}
+
+// --- Fixture Helpers ---
+
+func createGoFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func createNodeFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte("{\"name\":\"test\",\"version\":\"1.0.0\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte("{\"name\":\"test\",\"lockfileVersion\":3}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func createPythonFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[project]\nname = \"test\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func createPolyglotFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte("{\"name\":\"test\",\"version\":\"1.0.0\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM alpine:3.19\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func createExistingConfigFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "devenv.nix"), []byte("{ pkgs, ... }: { }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".claude", "settings.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// --- Content Validation Helpers ---
+
+func assertValidJSON(t *testing.T, dir, relPath string) {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(dir, relPath))
+	if err != nil {
+		t.Fatalf("reading %s: %v", relPath, err)
+	}
+	if !json.Valid(content) {
+		t.Errorf("file %s is not valid JSON", relPath)
 	}
 }
 
@@ -410,24 +489,39 @@ func TestIntegration_UpdateCommand_ThreeWayMerge_Settings(t *testing.T) {
 	}
 }
 
-func createPolyglotFixture(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
-		t.Fatal(err)
+func TestIntegration_NodeDetection(t *testing.T) {
+	dir := createNodeFixture(t)
+	output, err := executeInitCmd(t, dir, "--yes", "--force")
+	if err != nil {
+		t.Fatalf("init failed: %v\nOutput: %s", err, output)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte("{\"name\":\"test\",\"version\":\"1.0.0\"}\n"), 0o644); err != nil {
-		t.Fatal(err)
+	requireFileExists(t, dir, "devenv.nix")
+	requireFileContains(t, dir, "devenv.nix", "languages.javascript")
+}
+
+func TestIntegration_PythonDetection(t *testing.T) {
+	dir := createPythonFixture(t)
+	output, err := executeInitCmd(t, dir, "--yes", "--force")
+	if err != nil {
+		t.Fatalf("init failed: %v\nOutput: %s", err, output)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM alpine:3.19\n"), 0o644); err != nil {
-		t.Fatal(err)
+	requireFileExists(t, dir, "devenv.nix")
+	requireFileContains(t, dir, "devenv.nix", "languages.python")
+}
+
+func TestIntegration_PolyglotDetection(t *testing.T) {
+	dir := createPolyglotFixture(t)
+	output, err := executeInitCmd(t, dir, "--yes", "--force")
+	if err != nil {
+		t.Fatalf("init failed: %v\nOutput: %s", err, output)
 	}
-	return dir
+	requireFileExists(t, dir, "devenv.nix")
+	requireFileContains(t, dir, "devenv.nix", "languages.go")
+	requireFileContains(t, dir, "devenv.nix", "languages.javascript")
 }
 
 func TestIntegration_PolyglotDetection_NoDuplicatePackages(t *testing.T) {
 	dir := createPolyglotFixture(t)
-
 	output, err := executeInitCmd(t, dir, "--yes", "--force")
 	if err != nil {
 		t.Fatalf("init failed: %v\nOutput: %s", err, output)
@@ -435,13 +529,11 @@ func TestIntegration_PolyglotDetection_NoDuplicatePackages(t *testing.T) {
 
 	devenvNix := readFileContent(t, dir, "devenv.nix")
 
-	// The generated devenv.nix must have exactly one packages attribute.
 	count := strings.Count(devenvNix, "packages =")
 	if count != 1 {
 		t.Errorf("devenv.nix has %d 'packages =' occurrences, want exactly 1:\n%s", count, devenvNix)
 	}
 
-	// All three ecosystems' packages should be in the single packages line.
 	for _, pkg := range []string{"docker", "hadolint", "dive"} {
 		if !strings.Contains(devenvNix, pkg) {
 			t.Errorf("devenv.nix missing container package %q", pkg)
@@ -452,5 +544,73 @@ func TestIntegration_PolyglotDetection_NoDuplicatePackages(t *testing.T) {
 	}
 	if !strings.Contains(devenvNix, "languages.javascript") {
 		t.Error("devenv.nix missing JavaScript language configuration")
+	}
+}
+
+func TestIntegration_CrossFileConsistency_Go(t *testing.T) {
+	dir := createGoFixture(t)
+	_, err := executeInitCmd(t, dir, "--yes", "--force")
+	if err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+	requireFileContains(t, dir, "devenv.nix", "languages.go")
+	requireFileExists(t, dir, "CLAUDE.md")
+	assertValidJSON(t, dir, ".claude/settings.json")
+	requireFileExists(t, dir, ".claude/rules/go-conventions.md")
+}
+
+func TestIntegration_IdempotentRerun(t *testing.T) {
+	dir := createGoFixture(t)
+	_, err := executeInitCmd(t, dir, "--yes", "--force")
+	if err != nil {
+		t.Fatalf("first init failed: %v", err)
+	}
+
+	firstDevenv := readFileContent(t, dir, "devenv.nix")
+	firstClaude := readFileContent(t, dir, "CLAUDE.md")
+
+	_, err = executeInitCmd(t, dir, "--yes", "--force")
+	if err != nil {
+		t.Fatalf("second init failed: %v", err)
+	}
+
+	secondDevenv := readFileContent(t, dir, "devenv.nix")
+	secondClaude := readFileContent(t, dir, "CLAUDE.md")
+
+	if firstDevenv != secondDevenv {
+		t.Error("devenv.nix content changed between runs")
+	}
+	if firstClaude != secondClaude {
+		t.Error("CLAUDE.md content changed between runs")
+	}
+}
+
+func TestIntegration_AllProfiles_Smoke(t *testing.T) {
+	profiles := []string{
+		"go-web", "ts-fullstack", "ts-backend", "python-data", "python-web",
+		"rust-cli", "rust-web", "java-web", "elixir-web", "dotnet-web",
+	}
+	for _, profile := range profiles {
+		t.Run(profile, func(t *testing.T) {
+			dir := t.TempDir()
+			_, err := executeInitCmd(t, dir, "--profile", profile, "--yes")
+			if err != nil {
+				t.Fatalf("init --profile %s failed: %v", profile, err)
+			}
+			requireFileExists(t, dir, "devenv.nix")
+			requireFileExists(t, dir, ".claude/settings.json")
+			assertValidJSON(t, dir, ".claude/settings.json")
+		})
+	}
+}
+
+func TestIntegration_ExistingConfig_NoForce(t *testing.T) {
+	dir := createExistingConfigFixture(t)
+	_, err := executeInitCmd(t, dir, "--lang", "go", "--yes")
+	if err == nil {
+		t.Error("expected error when existing config found without --force")
+	}
+	if err != nil && !strings.Contains(err.Error(), "existing configuration") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }

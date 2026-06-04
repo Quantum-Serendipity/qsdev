@@ -94,6 +94,91 @@ func TestRedactString_URLWithCredentials(t *testing.T) {
 	}
 }
 
+func TestRedactString_AzureAccountKey(t *testing.T) {
+	t.Parallel()
+	r := NewRedactor()
+	input := "AccountKey=dGhpcyBpcyBhIHRlc3QgYmFzZTY0IGVuY29kZWQga2V5IGZvcg=="
+	got := r.RedactString(input)
+	if got == input {
+		t.Errorf("Azure account key was not redacted: %s", got)
+	}
+}
+
+func TestRedactString_GCPAPIKey(t *testing.T) {
+	t.Parallel()
+	r := NewRedactor()
+	input := "key AIzaSyA1234567890abcdefghijklmnopqrstuvw"
+	got := r.RedactString(input)
+	if got == input {
+		t.Errorf("GCP API key was not redacted: %s", got)
+	}
+}
+
+func TestRedactString_MongoDBURI(t *testing.T) {
+	t.Parallel()
+	r := NewRedactor()
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"standard", "mongodb://admin:s3cret@cluster.example.com:27017/db"},
+		{"srv", "mongodb+srv://user:pass123@cluster.mongodb.net/mydb"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := r.RedactString(tt.input)
+			if got == tt.input {
+				t.Errorf("MongoDB URI was not redacted: %s", got)
+			}
+		})
+	}
+}
+
+func TestRedactString_VaultToken(t *testing.T) {
+	t.Parallel()
+	r := NewRedactor()
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"service", "token hvs.ABCDEFGHIJKLMNOPQRSTUVWXyz"},
+		{"batch", "token hvb.ABCDEFGHIJKLMNOPQRSTUVWXyz"},
+		{"recovery", "token hvr.ABCDEFGHIJKLMNOPQRSTUVWXyz"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := r.RedactString(tt.input)
+			if got == tt.input {
+				t.Errorf("Vault token was not redacted: %s", got)
+			}
+		})
+	}
+}
+
+func TestRedactString_SlackToken(t *testing.T) {
+	t.Parallel()
+	r := NewRedactor()
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"bot", "token xoxb-123456789-abcdefghij"},
+		{"user", "token xoxp-123456789-abcdefghij"},
+		{"app", "token xoxa-123456789-abcdefghij"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := r.RedactString(tt.input)
+			if got == tt.input {
+				t.Errorf("Slack token was not redacted: %s", got)
+			}
+		})
+	}
+}
+
 func TestRedactString_SafeValues(t *testing.T) {
 	r := NewRedactor()
 	safe := []string{

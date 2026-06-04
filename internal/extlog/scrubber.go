@@ -72,5 +72,9 @@ func (s *Scrubber) Scrub(line string) string {
 		line = strings.ReplaceAll(line, s.projectRoot, ".")
 	}
 
+	// Second-pass redaction catches credential patterns that may emerge after
+	// path substitution (e.g. a home-dir prefix was masking the pattern boundary).
+	line = s.redactor.RedactString(line)
+
 	return line
 }

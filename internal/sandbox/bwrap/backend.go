@@ -71,7 +71,7 @@ func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 
-	err := cmd.Run()
+	err = cmd.Run()
 	duration := time.Since(execStart)
 
 	exitCode := 0

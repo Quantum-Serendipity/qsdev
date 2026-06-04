@@ -37,12 +37,13 @@ func ValidateMountPath(path string) error {
 		return fmt.Errorf("mount path must be absolute: %q", path)
 	}
 
-	resolved, err := filepath.EvalSymlinks(path)
-	if err == nil && resolved != path {
-		return fmt.Errorf("mount path %q resolves to %q via symlink; use the resolved path directly", path, resolved)
-	}
-
 	clean := filepath.Clean(path)
+
+	// Resolve symlinks and check the resolved path against deny-lists too.
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		clean = filepath.Clean(resolved)
+	}
 
 	for _, deny := range mountDenyPaths {
 		if clean == deny || strings.HasPrefix(clean, deny+"/") {

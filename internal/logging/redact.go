@@ -49,6 +49,11 @@ func compileValuePatterns() []*regexp.Regexp {
 		`npm_[A-Za-z0-9]{36,}`,
 		`eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+`,
 		`-----BEGIN\s+(?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----`,
+		`AccountKey=[A-Za-z0-9+/=]{44,}`,
+		`AIza[A-Za-z0-9_-]{35}`,
+		`mongodb(?:\+srv)?://[^:]+:[^@\s]+@[^\s]+`,
+		`hv[sbr]\.[A-Za-z0-9_-]{24,}`,
+		`xox[bpras]-[A-Za-z0-9-]{10,}`,
 	}
 
 	compiled := make([]*regexp.Regexp, 0, len(patterns))

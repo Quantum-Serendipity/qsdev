@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -101,6 +102,10 @@ func ToSandboxConfig(spec *PolicySpec, category sandbox.HookCategory, hookName s
 		cfg.Network.Mode = catPolicy.Network
 
 		for _, m := range catPolicy.ExtraMounts {
+			if err := ValidateMountDecl(m); err != nil {
+				slog.Warn("skipping invalid category mount", "category", effectiveCategory, "error", err)
+				continue
+			}
 			cfg.Mounts = append(cfg.Mounts, sandbox.MountSpec{
 				Source:   m.Source,
 				Target:   m.Target,
@@ -116,6 +121,10 @@ func ToSandboxConfig(spec *PolicySpec, category sandbox.HookCategory, hookName s
 		}
 
 		for _, m := range override.ExtraMounts {
+			if err := ValidateMountDecl(m); err != nil {
+				slog.Warn("skipping invalid override mount", "hook", hookName, "error", err)
+				continue
+			}
 			cfg.Mounts = append(cfg.Mounts, sandbox.MountSpec{
 				Source:   m.Source,
 				Target:   m.Target,

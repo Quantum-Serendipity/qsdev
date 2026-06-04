@@ -1,5 +1,7 @@
 package ecosystem
 
+import "github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+
 // ManifestCoverageReport summarizes manifest file coverage across detected
 // ecosystems, partitioned by Version-Sentinel support status.
 type ManifestCoverageReport struct {
@@ -31,11 +33,11 @@ func AggregateVerificationCommands(
 		agg.Format = append(agg.Format, vc.Format...)
 	}
 
-	agg.Build = DedupStrings(agg.Build)
-	agg.Test = DedupStrings(agg.Test)
-	agg.Lint = DedupStrings(agg.Lint)
-	agg.TypeCheck = DedupStrings(agg.TypeCheck)
-	agg.Format = DedupStrings(agg.Format)
+	agg.Build = sliceutil.Dedup(agg.Build)
+	agg.Test = sliceutil.Dedup(agg.Test)
+	agg.Lint = sliceutil.Dedup(agg.Lint)
+	agg.TypeCheck = sliceutil.Dedup(agg.TypeCheck)
+	agg.Format = sliceutil.Dedup(agg.Format)
 
 	return agg
 }

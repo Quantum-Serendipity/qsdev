@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -73,14 +72,4 @@ func ExtrasMap(extras []string) map[string]string {
 		}
 	}
 	return m
-}
-
-// Deprecated: ContainsStr delegates to sliceutil.Contains.
-func ContainsStr(slice []string, val string) bool {
-	return sliceutil.Contains(slice, val)
-}
-
-// Deprecated: DedupStrings delegates to sliceutil.Dedup.
-func DedupStrings(items []string) []string {
-	return sliceutil.Dedup(items)
 }

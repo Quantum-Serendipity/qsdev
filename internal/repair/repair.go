@@ -2,6 +2,7 @@ package repair
 
 import (
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -96,9 +97,7 @@ func executeRepair(
 
 		// Prune old backups, keeping the 5 most recent.
 		if err := pruneBackups(projectRoot, action.File, 5); err != nil {
-			// Non-fatal: log but continue.
-			action.Error = fmt.Errorf("pruning backups for %s: %w", action.File, err)
-			return action
+			slog.Warn("pruning backups", "file", action.File, "error", err)
 		}
 	}
 

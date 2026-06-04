@@ -6,13 +6,14 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// DefenseLayerNames lists the canonical names of all 10 defense layers.
+// DefenseLayerNames lists the canonical names of all 10 defense layers,
+// ordered to match AssessDefenseLayers.
 var DefenseLayerNames = [...]string{
+	"pretooluse-hooks",
 	"age-gating",
 	"install-script-blocking",
 	"lock-file-enforcement",
 	"vulnerability-scanning",
-	"pretooluse-hooks",
 	"nix-hardening",
 	"sast",
 	"secrets-scanning",

@@ -29,11 +29,6 @@ func DetectionAbsent() DetectionResult {
 	}
 }
 
-// SimpleNixFragment returns a basic Nix fragment that enables a single language.
-func SimpleNixFragment(langName string) string {
-	return fmt.Sprintf("  languages.%s.enable = true;\n", langName)
-}
-
 // ToModuleConfig converts a LanguageChoice from wizard answers into a
 // ModuleConfig suitable for passing to EcosystemModule methods.
 func ToModuleConfig(lang types.LanguageChoice) ModuleConfig {

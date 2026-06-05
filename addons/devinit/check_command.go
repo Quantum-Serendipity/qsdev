@@ -15,6 +15,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func checkCmd() *cobra.Command {
@@ -101,7 +102,14 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 
 	// Auto-fix if requested.
 	if autoFix {
-		report.Checks = check.ApplyAutoFixes(report.Checks, projectRoot)
+		var regen check.RegenerateFunc
+		if answers, err := loadAnswersOrEmpty(projectRoot); err == nil && answers.ProjectName != "" {
+			regen = func(_ string) (map[string]types.GeneratedFile, error) {
+				freshFiles, _, err := regenerateFreshFiles(answers)
+				return freshFiles, err
+			}
+		}
+		report.Checks = check.ApplyAutoFixes(report.Checks, projectRoot, regen)
 		// Rebuild summary after fixes.
 		report = check.BuildReport(report.Checks, report.Version, report.Project)
 	}

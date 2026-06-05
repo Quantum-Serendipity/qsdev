@@ -3,13 +3,24 @@ package check
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+// RegenerateFunc produces a fresh set of generated files from saved project
+// answers. Injected by the command layer to avoid circular imports.
+type RegenerateFunc func(projectRoot string) (map[string]types.GeneratedFile, error)
 
 // ApplyAutoFixes attempts to fix each AutoFixable result. It returns an
 // updated copy of the results slice with fixed results changed to StatusPass.
-func ApplyAutoFixes(results []CheckResult, projectRoot string) []CheckResult {
+//
+// regenerate is an optional callback for restoring deleted generated files.
+// Pass nil when regeneration is not available.
+func ApplyAutoFixes(results []CheckResult, projectRoot string, regenerate RegenerateFunc) []CheckResult {
 	updated := make([]CheckResult, len(results))
 	copy(updated, results)
 
@@ -35,7 +46,62 @@ func ApplyAutoFixes(results []CheckResult, projectRoot string) []CheckResult {
 		}
 	}
 
+	updated = fixDeletedFiles(updated, projectRoot, regenerate)
+
 	return updated
+}
+
+// fixDeletedFiles restores deleted generated files using the regenerate callback.
+func fixDeletedFiles(results []CheckResult, projectRoot string, regenerate RegenerateFunc) []CheckResult {
+	if regenerate == nil {
+		return results
+	}
+
+	var deletedIndices []int
+	for i, r := range results {
+		if r.AutoFixable && strings.HasPrefix(r.Name, "file_exists_") {
+			if _, ok := r.Metadata["file"]; ok {
+				deletedIndices = append(deletedIndices, i)
+			}
+		}
+	}
+	if len(deletedIndices) == 0 {
+		return results
+	}
+
+	freshFiles, err := regenerate(projectRoot)
+	if err != nil {
+		slog.Warn("auto-fix: regeneration failed", "error", err)
+		return results
+	}
+
+	for _, idx := range deletedIndices {
+		relPath := results[idx].Metadata["file"]
+		fresh, ok := freshFiles[relPath]
+		if !ok {
+			continue
+		}
+
+		absPath := filepath.Join(projectRoot, relPath)
+		if dir := filepath.Dir(absPath); dir != "." {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				continue
+			}
+		}
+
+		mode := fresh.Mode
+		if mode == 0 {
+			mode = 0o644
+		}
+		if err := os.WriteFile(absPath, fresh.Content, mode); err != nil {
+			continue
+		}
+
+		results[idx].Status = StatusPass
+		results[idx].Message = "Auto-fixed: " + results[idx].Message
+		results[idx].AutoFixable = false
+	}
+	return results
 }
 
 // fixDenyRules reads .claude/settings.json, adds missing deny rules, and

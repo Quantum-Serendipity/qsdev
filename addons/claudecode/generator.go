@@ -84,7 +84,37 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 	}
 	files = append(files, ruleFiles...)
 
-	// Gate 2: tier >= Full for MCP, agents, skills, workflows, AlwaysOn tools
+	// 4b. AlwaysOn tool configs (Standard+): security tools that must be
+	// present regardless of tier.
+	reg := toolreg.DefaultRegistry()
+	alreadyHandled := map[string]bool{
+		"attach-guard":         true,
+		"agent-postmortem":     true,
+		"version-sentinel":     true,
+		"semble":               true,
+		"trail-of-bits-skills": true,
+	}
+	for _, tool := range reg.All() {
+		if tool.Default != toolreg.AlwaysOn {
+			continue
+		}
+		if alreadyHandled[tool.Name] {
+			continue
+		}
+		if tool.GenerateFunc == nil {
+			continue
+		}
+		toolFiles, err := tool.GenerateFunc(answers)
+		if err != nil {
+			return nil, fmt.Errorf("generating %s files: %w", tool.Name, err)
+		}
+		for i := range toolFiles {
+			toolFiles[i].Owner = tool.Name
+		}
+		files = append(files, toolFiles...)
+	}
+
+	// Gate 2: tier >= Full for MCP, agents, skills, workflows
 	if t < tier.Full {
 		return files, nil
 	}
@@ -178,17 +208,12 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		files = append(files, *refFile)
 	}
 
-	// 15. Tool generation: AlwaysOn + explicitly enabled tools.
-	reg := toolreg.DefaultRegistry()
-	alreadyHandled := map[string]bool{
-		"attach-guard":         true,
-		"agent-postmortem":     true,
-		"version-sentinel":     true,
-		"semble":               true,
-		"trail-of-bits-skills": true,
-	}
+	// 15. Tool generation: explicitly enabled (opt-in) tools.
 	for _, tool := range reg.All() {
 		if alreadyHandled[tool.Name] {
+			continue
+		}
+		if tool.Default == toolreg.AlwaysOn {
 			continue
 		}
 		if strings.HasPrefix(tool.Name, "consulting-agent-") ||
@@ -198,8 +223,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		if tool.GenerateFunc == nil {
 			continue
 		}
-		shouldGenerate := tool.Default == toolreg.AlwaysOn || answers.EnabledTools[tool.Name]
-		if !shouldGenerate {
+		if !answers.EnabledTools[tool.Name] {
 			continue
 		}
 		toolFiles, err := tool.GenerateFunc(answers)

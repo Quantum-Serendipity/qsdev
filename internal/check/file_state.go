@@ -94,7 +94,9 @@ func checkGeneratedFiles(ctx CheckContext) []CheckResult {
 				Severity:    SeverityHigh,
 				Message:     fmt.Sprintf("Generated file %s has been deleted", relPath),
 				FilePath:    relPath,
-				Remediation: "Run 'qsdev init' to regenerate the file",
+				Remediation: "Run 'qsdev check --auto-fix' or 'qsdev repair' to restore",
+				AutoFixable: true,
+				Metadata:    map[string]string{"file": relPath},
 			})
 		case types.Unknown:
 			if fs.Error != nil {

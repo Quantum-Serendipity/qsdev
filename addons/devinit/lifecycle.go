@@ -27,22 +27,9 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 		return err
 	}
 
-	registry := toolreg.DefaultRegistry()
-
-	// Load saved answers (empty if no prior init).
-	answers, err := loadAnswersOrEmpty(projectRoot)
+	answers, tool, err := loadToolForEnable(projectRoot, toolName)
 	if err != nil {
-		return fmt.Errorf("loading answers: %w", err)
-	}
-	answers.ProjectRoot = projectRoot
-
-	// Migrate legacy projects that lack EnabledTools.
-	toolreg.InferEnabledTools(&answers, registry)
-
-	// Look up the tool.
-	tool, ok := registry.ByName(toolName)
-	if !ok {
-		return fmt.Errorf("unknown tool %q; use '%s list' to see available tools", toolName, branding.Get().AppName)
+		return err
 	}
 
 	// Already enabled — no-op.
@@ -52,7 +39,7 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 	}
 
 	// Validate prerequisites and conflicts.
-	if err := toolreg.ValidateEnable(registry, toolName, answers.EnabledTools); err != nil {
+	if err := toolreg.ValidateEnable(toolreg.DefaultRegistry(), toolName, answers.EnabledTools); err != nil {
 		return err
 	}
 
@@ -68,12 +55,63 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 		return nil
 	}
 
+	writtenFiles, err := writeToolFiles(tool, toolName, projectRoot, answers)
+	if err != nil {
+		return err
+	}
+
+	stateFile := filepath.Join(projectRoot, stateFilePath())
+	if err := saveEnableState(stateFile, toolName, writtenFiles); err != nil {
+		return err
+	}
+
+	// Save updated answers.
+	if err := saveAnswers(projectRoot, answers); err != nil {
+		return fmt.Errorf("saving answers: %w", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Enabled %q.\n", tool.DisplayName)
+	if len(writtenFiles) > 0 {
+		printWrittenFiles(cmd, writtenFiles, "wrote")
+	} else {
+		fmt.Fprintf(cmd.OutOrStdout(), "  No files generated (tool enabled but no output needed for current project configuration).\n")
+	}
+	return nil
+}
+
+// loadToolForEnable loads saved answers, infers enabled tools, and looks up
+// the named tool in the registry.
+func loadToolForEnable(projectRoot, toolName string) (types.WizardAnswers, *toolreg.Tool, error) {
+	registry := toolreg.DefaultRegistry()
+
+	// Load saved answers (empty if no prior init).
+	answers, err := loadAnswersOrEmpty(projectRoot)
+	if err != nil {
+		return types.WizardAnswers{}, nil, fmt.Errorf("loading answers: %w", err)
+	}
+	answers.ProjectRoot = projectRoot
+
+	// Migrate legacy projects that lack EnabledTools.
+	toolreg.InferEnabledTools(&answers, registry)
+
+	// Look up the tool.
+	tool, ok := registry.ByName(toolName)
+	if !ok {
+		return types.WizardAnswers{}, nil, fmt.Errorf("unknown tool %q; use '%s list' to see available tools", toolName, branding.Get().AppName)
+	}
+
+	return answers, tool, nil
+}
+
+// writeToolFiles generates and writes both exclusive and shared files for a
+// tool enable operation.
+func writeToolFiles(tool *toolreg.Tool, toolName, projectRoot string, answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 	// Generate and write exclusive files.
 	var writtenFiles []types.GeneratedFile
 	if tool.GenerateFunc != nil {
 		generated, err := tool.GenerateFunc(answers)
 		if err != nil {
-			return fmt.Errorf("generating files for %q: %w", toolName, err)
+			return nil, fmt.Errorf("generating files for %q: %w", toolName, err)
 		}
 		for _, f := range generated {
 			absPath := filepath.Join(projectRoot, f.Path)
@@ -82,7 +120,7 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 				mode = 0o644
 			}
 			if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
-				return fmt.Errorf("writing %s: %w", f.Path, err)
+				return nil, fmt.Errorf("writing %s: %w", f.Path, err)
 			}
 			f.Owner = toolName
 			writtenFiles = append(writtenFiles, f)
@@ -97,15 +135,15 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 		}
 		content, err := contentFunc(answers)
 		if err != nil {
-			return fmt.Errorf("generating shared content for %s section %q: %w", sf.Path, sf.SectionID, err)
+			return nil, fmt.Errorf("generating shared content for %s section %q: %w", sf.Path, sf.SectionID, err)
 		}
 		updated, err := applySurgery(projectRoot, sf.Path, sf.SectionID, content, true)
 		if err != nil {
-			return fmt.Errorf("inserting section %q into %s: %w", sf.SectionID, sf.Path, err)
+			return nil, fmt.Errorf("inserting section %q into %s: %w", sf.SectionID, sf.Path, err)
 		}
 		absPath := filepath.Join(projectRoot, sf.Path)
 		if err := fileutil.WriteFileAtomic(absPath, updated, 0o644); err != nil {
-			return fmt.Errorf("writing %s: %w", sf.Path, err)
+			return nil, fmt.Errorf("writing %s: %w", sf.Path, err)
 		}
 		writtenFiles = append(writtenFiles, types.GeneratedFile{
 			Path:    sf.Path,
@@ -115,8 +153,12 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 		})
 	}
 
-	// Update state.
-	stateFile := filepath.Join(projectRoot, stateFilePath())
+	return writtenFiles, nil
+}
+
+// saveEnableState loads the current state file, records newly written files,
+// marks the tool as enabled, and persists the updated state.
+func saveEnableState(stateFile, toolName string, writtenFiles []types.GeneratedFile) error {
 	existingState, err := state.LoadStateFromFile(stateFile)
 	if err != nil {
 		return fmt.Errorf("loading state: %w", err)
@@ -136,18 +178,6 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 	existingState.LastRun = time.Now().UTC()
 	if err := state.SaveStateToFile(stateFile, existingState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
-	}
-
-	// Save updated answers.
-	if err := saveAnswers(projectRoot, answers); err != nil {
-		return fmt.Errorf("saving answers: %w", err)
-	}
-
-	fmt.Fprintf(cmd.OutOrStdout(), "Enabled %q.\n", tool.DisplayName)
-	if len(writtenFiles) > 0 {
-		printWrittenFiles(cmd, writtenFiles, "wrote")
-	} else {
-		fmt.Fprintf(cmd.OutOrStdout(), "  No files generated (tool enabled but no output needed for current project configuration).\n")
 	}
 	return nil
 }
@@ -215,6 +245,27 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	}
 	answers.EnabledTools[toolName] = false
 
+	if err := removeToolFiles(tool, projectRoot, existingState); err != nil {
+		return err
+	}
+
+	if err := saveDisableState(stateFile, toolName, existingState); err != nil {
+		return err
+	}
+
+	// Save updated answers.
+	if err := saveAnswers(projectRoot, answers); err != nil {
+		return fmt.Errorf("saving answers: %w", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Disabled %q.\n", tool.DisplayName)
+	return nil
+}
+
+// removeToolFiles removes exclusive files from disk and removes shared file
+// sections owned by the tool. It mutates existingState in place to reflect
+// the removals.
+func removeToolFiles(tool *toolreg.Tool, projectRoot string, existingState types.GeneratedState) error {
 	// Remove exclusive files.
 	for _, ef := range tool.ExclusiveFiles() {
 		absPath := filepath.Join(projectRoot, ef.Path)
@@ -246,7 +297,12 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 		}
 	}
 
-	// Update state.
+	return nil
+}
+
+// saveDisableState marks the tool as disabled in the state, updates the
+// timestamp, and persists the state to disk.
+func saveDisableState(stateFile, toolName string, existingState types.GeneratedState) error {
 	if existingState.EnabledTools == nil {
 		existingState.EnabledTools = make(map[string]bool)
 	}
@@ -255,13 +311,6 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	if err := state.SaveStateToFile(stateFile, existingState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
 	}
-
-	// Save updated answers.
-	if err := saveAnswers(projectRoot, answers); err != nil {
-		return fmt.Errorf("saving answers: %w", err)
-	}
-
-	fmt.Fprintf(cmd.OutOrStdout(), "Disabled %q.\n", tool.DisplayName)
 	return nil
 }
 

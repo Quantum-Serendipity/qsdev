@@ -64,37 +64,30 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 		return err
 	}
 
-	// 1. Load saved answers — fail if none exist.
-	answers, err := loadAnswers(projectRoot)
+	// 1. Load answers, refresh detection, infer tools.
+	answers, err := loadAndRefreshForUpdate(projectRoot)
 	if err != nil {
 		return err
 	}
 
-	// 2. Refresh detection.
-	answers.Detected = detect.Detect(projectRoot)
-	answers.ProjectRoot = projectRoot
-
-	// 2b. Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
-	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
-
-	// 3. Load stored state.
+	// 2. Load stored state.
 	stateFile := filepath.Join(projectRoot, stateFilePath())
 	existingState, err := state.LoadStateFromFile(stateFile)
 	if err != nil {
 		return fmt.Errorf("loading state: %w", err)
 	}
 
-	// 4. Check modification status of all stored files.
+	// 3. Check modification status of all stored files.
 	modStatus := state.CheckModified(existingState, projectRoot)
 
-	// 4b. Version ratchet check — warn if current binary is older than last run.
+	// 3b. Version ratchet check — warn if current binary is older than last run.
 	if !opts.Force {
 		if ratchet := qsdevconfig.CheckVersionRatchet(version.Info().Version, existingState.QsdevVersion); ratchet != nil {
 			return ratchet
 		}
 	}
 
-	// 5. Generate new files via fragment accumulation.
+	// 4. Generate new files via fragment accumulation.
 	accResult, err := runAccumulator(answers, struct {
 		ClaudeOnly bool
 		DevenvOnly bool
@@ -106,32 +99,88 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	}
 	allFiles := accResult.allFiles
 
-	// 6. Build update plan.
+	// 5. Build update plan.
 	plan := buildUpdatePlan(allFiles, modStatus, existingState, opts)
 
-	// 7. Preview.
+	// 6. Preview.
 	if opts.DryRun {
 		previewUpdatePlan(plan, cmd.OutOrStdout())
 		return nil
 	}
 
-	// 8. Show plan summary.
+	// 7. Show plan summary.
 	previewUpdatePlan(plan, cmd.OutOrStdout())
 
-	// 9. Execute plan.
+	// 8. Execute plan.
 	writtenFiles, nixResult, err := executeUpdatePlan(plan, projectRoot, opts)
 	if err != nil {
 		return fmt.Errorf("executing update: %w", err)
 	}
 
-	// 10. If nix sidecar was created, show instructions.
+	// 9. If nix sidecar was created, show instructions.
 	if nixResult != nil && nixResult.Action == update.NixSidecarCreated {
 		fmt.Fprintln(cmd.OutOrStdout())
 		fmt.Fprintln(cmd.OutOrStdout(), nixResult.DiffOutput)
 		fmt.Fprintln(cmd.OutOrStdout(), nixResult.Message)
 	}
 
-	// 11. Save updated state.
+	// 10. Save state and answers.
+	if err := saveUpdateResults(plan, writtenFiles, existingState, answers, accResult, stateFile, projectRoot); err != nil {
+		return err
+	}
+
+	// 11. Print version diff summary if applicable.
+	vDiff := claudecode.CompareVersions(existingState.TemplateVersion, existingState.SkillLibraryVersion)
+	if vDiff.NeedsUpdate() {
+		summary := claudecode.BuildUpdateSummary(existingState, allFiles, vDiff)
+		fmt.Fprintln(cmd.OutOrStdout(), summary.String())
+	}
+
+	// 12. Print result summary.
+	created, updated, skipped := 0, 0, 0
+	for _, fp := range plan.Files {
+		switch fp.Action {
+		case UpdateActionCreate:
+			created++
+		case UpdateActionRegenerate, UpdateActionMerge:
+			updated++
+		case UpdateActionSkip, UpdateActionSidecar:
+			skipped++
+		}
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "\nUpdate complete: %d created, %d updated, %d skipped.\n", created, updated, skipped)
+
+	return nil
+}
+
+// loadAndRefreshForUpdate loads saved answers, refreshes ecosystem detection,
+// and augments enabled tools with inferred entries.
+func loadAndRefreshForUpdate(projectRoot string) (types.WizardAnswers, error) {
+	answers, err := loadAnswers(projectRoot)
+	if err != nil {
+		return types.WizardAnswers{}, err
+	}
+
+	// Refresh detection.
+	answers.Detected = detect.Detect(projectRoot)
+	answers.ProjectRoot = projectRoot
+
+	// Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
+	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
+
+	return answers, nil
+}
+
+// saveUpdateResults persists the new state (merging written and skipped files)
+// and re-saves answers after an update execution.
+func saveUpdateResults(
+	plan UpdatePlan,
+	writtenFiles []types.GeneratedFile,
+	existingState types.GeneratedState,
+	answers types.WizardAnswers,
+	accResult accumulatorResult,
+	stateFile, projectRoot string,
+) error {
 	// Merge: new state for written files + old state for skipped files.
 	newState := state.RecordFiles(writtenFiles)
 	// Correct BaseContent for merged ThreeWayMerge files: store the
@@ -162,31 +211,10 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 		return fmt.Errorf("saving state: %w", err)
 	}
 
-	// 12. Re-save answers (detection may have changed).
+	// Re-save answers (detection may have changed).
 	if err := saveAnswers(projectRoot, answers); err != nil {
 		return fmt.Errorf("saving answers: %w", err)
 	}
-
-	// 13. Print version diff summary if applicable.
-	vDiff := claudecode.CompareVersions(existingState.TemplateVersion, existingState.SkillLibraryVersion)
-	if vDiff.NeedsUpdate() {
-		summary := claudecode.BuildUpdateSummary(existingState, allFiles, vDiff)
-		fmt.Fprintln(cmd.OutOrStdout(), summary.String())
-	}
-
-	// 14. Print result summary.
-	created, updated, skipped := 0, 0, 0
-	for _, fp := range plan.Files {
-		switch fp.Action {
-		case UpdateActionCreate:
-			created++
-		case UpdateActionRegenerate, UpdateActionMerge:
-			updated++
-		case UpdateActionSkip, UpdateActionSidecar:
-			skipped++
-		}
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "\nUpdate complete: %d created, %d updated, %d skipped.\n", created, updated, skipped)
 
 	return nil
 }

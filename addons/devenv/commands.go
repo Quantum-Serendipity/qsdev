@@ -47,14 +47,14 @@ func devenvCmd() *cobra.Command {
 	cmd.AddCommand(
 		initCmd(),
 		updateCmd(),
-		addServiceCmd(),
-		addLanguageCmd(),
-		addPackageCmd(),
-		addOverlayCmd(),
-		removeServiceCmd(),
-		removeLanguageCmd(),
-		removePackageCmd(),
-		removeOverlayCmd(),
+		makeAddCmd(serviceSpec(true)),
+		makeAddCmd(languageSpec(true)),
+		makeAddCmd(packageSpec(true)),
+		makeAddCmd(overlaySpec(true)),
+		makeRemoveCmd(serviceSpec(false)),
+		makeRemoveCmd(languageSpec(false)),
+		makeRemoveCmd(packageSpec(false)),
+		makeRemoveCmd(overlaySpec(false)),
 		doctorCmd(),
 		setupCmd(),
 		changelogCmd(),
@@ -248,161 +248,63 @@ func updateCmd() *cobra.Command {
 	return cmd
 }
 
-func addServiceCmd() *cobra.Command {
-	var (
-		force  bool
-		dryRun bool
-	)
+// itemSpec parameterizes the differences between add/remove commands for
+// services, languages, packages, and overlays. The factory functions
+// makeAddCmd and makeRemoveCmd use it to build cobra.Commands with
+// identical control flow but type-specific behavior.
+type itemSpec struct {
+	singular  string   // "service", "language", "package", "overlay"
+	use       string   // cobra Use field
+	short     string   // cobra Short description
+	long      string   // cobra Long description
+	validArgs []string // for shell completion (nil if not applicable)
+	multiArg  bool     // true if the command accepts multiple args
+	hasForce  bool     // true if the add command supports --force
 
-	cmd := &cobra.Command{
-		Use:       "add-service <name>",
-		Short:     "Add a development service to the environment",
-		Long:      "Add a service (database, cache, queue) to the existing devenv configuration.",
-		Args:      cobra.ExactArgs(1),
-		ValidArgs: validServices,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			serviceName := args[0]
-
-			// Validate service name.
-			if !validation.IsValidService(serviceName) {
-				return fmt.Errorf("unknown service %q; valid services: %v", serviceName, validServices)
-			}
-
-			projectRoot, err := cmdutil.ProjectRoot()
-			if err != nil {
-				return err
-			}
-
-			// Load saved answers.
-			answers, err := loadAnswers(projectRoot)
-			if err != nil {
-				return err
-			}
-
-			// Check for duplicate (skip when --force is set).
-			alreadyPresent := false
-			for _, svc := range answers.Services {
-				if svc.Name == serviceName {
-					alreadyPresent = true
-					break
-				}
-			}
-			if alreadyPresent && !force {
-				return fmt.Errorf("service %q is already configured; use --force to overwrite", serviceName)
-			}
-			if !alreadyPresent {
-				answers.Services = append(answers.Services, types.ServiceChoice{
-					Name: serviceName,
-				})
-			}
-
-			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
-				projectRoot: projectRoot,
-				dryRun:      dryRun,
-			})
-			if err != nil {
-				return err
-			}
-			if result == nil {
-				return nil // dry-run
-			}
-
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added service %q.\n%s\n", serviceName, result.Summary())
-			return nil
-		},
-	}
-
-	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing files")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
-
-	return cmd
+	// validate checks whether name is an acceptable value. Return nil to skip.
+	validate func(name string, projectRoot string) error
+	// contains reports whether name is already present in answers.
+	contains func(a *types.WizardAnswers, name string) bool
+	// add appends name to the appropriate slice in answers.
+	add func(a *types.WizardAnswers, name string)
+	// remove filters name out of the appropriate slice. Returns true if found.
+	remove func(a *types.WizardAnswers, name string) bool
+	// postMessage is printed after a successful add or remove (empty to skip).
+	postMessage string
 }
 
-func addLanguageCmd() *cobra.Command {
+// makeAddCmd builds a cobra.Command that adds one or more items to the devenv
+// configuration using the behavior described by spec.
+func makeAddCmd(spec itemSpec) *cobra.Command {
 	var (
 		force  bool
 		dryRun bool
 	)
 
-	cmd := &cobra.Command{
-		Use:       "add-language <name>",
-		Short:     "Add a language ecosystem to the environment",
-		Long:      "Add a language/platform ecosystem module to the existing devenv configuration.",
-		Args:      cobra.ExactArgs(1),
-		ValidArgs: validLanguages,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			langName := args[0]
-
-			// Validate language name.
-			if !validation.IsValidLanguage(langName) {
-				return fmt.Errorf("unknown language %q; valid languages: %v", langName, validLanguages)
-			}
-
-			projectRoot, err := cmdutil.ProjectRoot()
-			if err != nil {
-				return err
-			}
-
-			// Load saved answers.
-			answers, err := loadAnswers(projectRoot)
-			if err != nil {
-				return err
-			}
-
-			// Check for duplicate (skip when --force is set).
-			alreadyPresent := false
-			for _, lang := range answers.Languages {
-				if lang.Name == langName {
-					alreadyPresent = true
-					break
-				}
-			}
-			if alreadyPresent && !force {
-				return fmt.Errorf("language %q is already configured; use --force to overwrite", langName)
-			}
-			if !alreadyPresent {
-				answers.Languages = append(answers.Languages, types.LanguageChoice{
-					Name: langName,
-				})
-			}
-
-			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
-				projectRoot: projectRoot,
-				dryRun:      dryRun,
-			})
-			if err != nil {
-				return err
-			}
-			if result == nil {
-				return nil // dry-run
-			}
-
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added language %q.\n%s\n", langName, result.Summary())
-			return nil
-		},
+	argsValidator := cobra.ExactArgs(1)
+	if spec.multiArg {
+		argsValidator = cobra.MinimumNArgs(1)
 	}
 
-	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing files")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
-
-	return cmd
-}
-
-func addPackageCmd() *cobra.Command {
-	var (
-		force  bool
-		dryRun bool
-	)
-
 	cmd := &cobra.Command{
-		Use:   "add-package <name> [name...]",
-		Short: "Add system packages to the development environment",
-		Long:  "Add Nix packages (e.g., imagemagick, ffmpeg, jq) to the devenv shell without editing Nix files.",
-		Args:  cobra.MinimumNArgs(1),
+		Use:       spec.use,
+		Short:     spec.short,
+		Long:      spec.long,
+		Args:      argsValidator,
+		ValidArgs: spec.validArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
 				return err
+			}
+
+			// Validate all arguments before loading state.
+			if spec.validate != nil {
+				for _, name := range args {
+					if err := spec.validate(name, projectRoot); err != nil {
+						return err
+					}
+				}
 			}
 
 			answers, err := loadAnswers(projectRoot)
@@ -410,23 +312,32 @@ func addPackageCmd() *cobra.Command {
 				return err
 			}
 
-			existing := make(map[string]bool)
-			for _, p := range answers.ExtraPackages {
-				existing[p] = true
-			}
+			// Collect the names that are actually new.
 			var added []string
-			for _, pkg := range args {
-				if existing[pkg] && !force {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Package %q already configured (use --force to re-add)\n", pkg)
+			for _, name := range args {
+				if spec.contains(&answers, name) {
+					if !force {
+						if spec.multiArg {
+							_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+								"Package %q already configured (use --force to re-add)\n", name)
+							continue
+						}
+						if spec.hasForce {
+							return fmt.Errorf("%s %q is already configured; use --force to overwrite", spec.singular, name)
+						}
+						return fmt.Errorf("%s %q is already configured", spec.singular, name)
+					}
+					// --force on a duplicate: skip the append but count as success.
 					continue
 				}
-				if !existing[pkg] {
-					answers.ExtraPackages = append(answers.ExtraPackages, pkg)
-					added = append(added, pkg)
-				}
+				spec.add(&answers, name)
+				added = append(added, name)
 			}
 			if len(added) == 0 {
-				return fmt.Errorf("no new packages to add")
+				if spec.multiArg {
+					return fmt.Errorf("no new packages to add")
+				}
+				// Single-arg with --force on existing item: still regenerate.
 			}
 
 			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
@@ -440,26 +351,44 @@ func addPackageCmd() *cobra.Command {
 				return nil // dry-run
 			}
 
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added package(s): %s\n%s\n", strings.Join(added, ", "), result.Summary())
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Run 'direnv allow' or re-enter 'devenv shell' to activate.")
+			if spec.multiArg {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added package(s): %s\n%s\n",
+					strings.Join(added, ", "), result.Summary())
+			} else {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added %s %q.\n%s\n",
+					spec.singular, args[0], result.Summary())
+			}
+			if spec.postMessage != "" {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), spec.postMessage)
+			}
 			return nil
 		},
 	}
 
-	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing configuration")
+	if spec.hasForce {
+		cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing configuration")
+	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
 
 	return cmd
 }
 
-func removePackageCmd() *cobra.Command {
+// makeRemoveCmd builds a cobra.Command that removes one or more items from
+// the devenv configuration using the behavior described by spec.
+func makeRemoveCmd(spec itemSpec) *cobra.Command {
 	var dryRun bool
 
+	argsValidator := cobra.ExactArgs(1)
+	if spec.multiArg {
+		argsValidator = cobra.MinimumNArgs(1)
+	}
+
 	cmd := &cobra.Command{
-		Use:   "remove-package <name> [name...]",
-		Short: "Remove system packages from the development environment",
-		Long:  "Remove previously added Nix packages from the devenv shell.",
-		Args:  cobra.MinimumNArgs(1),
+		Use:       spec.use,
+		Short:     spec.short,
+		Long:      spec.long,
+		Args:      argsValidator,
+		ValidArgs: spec.validArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
@@ -471,24 +400,18 @@ func removePackageCmd() *cobra.Command {
 				return err
 			}
 
-			toRemove := make(map[string]bool)
-			for _, pkg := range args {
-				toRemove[pkg] = true
-			}
-
-			var kept []string
 			var removed []string
-			for _, p := range answers.ExtraPackages {
-				if toRemove[p] {
-					removed = append(removed, p)
-				} else {
-					kept = append(kept, p)
+			for _, name := range args {
+				if spec.remove(&answers, name) {
+					removed = append(removed, name)
 				}
 			}
 			if len(removed) == 0 {
-				return fmt.Errorf("none of the specified packages are configured")
+				if spec.multiArg {
+					return fmt.Errorf("none of the specified packages are configured")
+				}
+				return fmt.Errorf("%s %q is not configured", spec.singular, args[0])
 			}
-			answers.ExtraPackages = kept
 
 			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
 				projectRoot: projectRoot,
@@ -502,8 +425,16 @@ func removePackageCmd() *cobra.Command {
 				return nil // dry-run
 			}
 
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed package(s): %s\n%s\n", strings.Join(removed, ", "), result.Summary())
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Run 'direnv allow' or re-enter 'devenv shell' to activate.")
+			if spec.multiArg {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed package(s): %s\n%s\n",
+					strings.Join(removed, ", "), result.Summary())
+			} else {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed %s %q.\n%s\n",
+					spec.singular, args[0], result.Summary())
+			}
+			if spec.postMessage != "" {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), spec.postMessage)
+			}
 			return nil
 		},
 	}
@@ -513,231 +444,195 @@ func removePackageCmd() *cobra.Command {
 	return cmd
 }
 
-func addOverlayCmd() *cobra.Command {
-	var dryRun bool
-
-	cmd := &cobra.Command{
-		Use:   "add-overlay <path>",
-		Short: "Add a Nix overlay to the development environment",
-		Long:  "Register a Nix overlay file (e.g. ./nix/go-overlay.nix) so it persists across qsdev updates.",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.ProjectRoot()
-			if err != nil {
-				return err
+// serviceSpec returns the itemSpec for service add/remove commands.
+func serviceSpec(add bool) itemSpec {
+	s := itemSpec{
+		singular:  "service",
+		validArgs: validServices,
+		hasForce:  add,
+		validate: func(name string, _ string) error {
+			if !validation.IsValidService(name) {
+				return fmt.Errorf("unknown service %q; valid services: %v", name, validServices)
 			}
-
-			overlayPath := args[0]
-
-			absOverlay := overlayPath
-			if !filepath.IsAbs(overlayPath) {
-				absOverlay = filepath.Join(projectRoot, overlayPath)
-			}
-			if _, err := os.Stat(absOverlay); err != nil {
-				return fmt.Errorf("overlay file not found: %s", overlayPath)
-			}
-
-			answers, err := loadAnswers(projectRoot)
-			if err != nil {
-				return err
-			}
-
-			if slices.Contains(answers.Overlays, overlayPath) {
-				return fmt.Errorf("overlay %q is already configured", overlayPath)
-			}
-			answers.Overlays = append(answers.Overlays, overlayPath)
-
-			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
-				projectRoot: projectRoot,
-				dryRun:      dryRun,
-			})
-			if err != nil {
-				return err
-			}
-			if result == nil {
-				return nil // dry-run
-			}
-
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added overlay: %s\n%s\n", overlayPath, result.Summary())
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Run 'direnv allow' or re-enter 'devenv shell' to activate.")
 			return nil
 		},
-	}
-
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
-
-	return cmd
-}
-
-func removeOverlayCmd() *cobra.Command {
-	var dryRun bool
-
-	cmd := &cobra.Command{
-		Use:   "remove-overlay <path>",
-		Short: "Remove a Nix overlay from the development environment",
-		Long:  "Unregister a Nix overlay file so it is no longer included in devenv.nix.",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.ProjectRoot()
-			if err != nil {
-				return err
-			}
-
-			answers, err := loadAnswers(projectRoot)
-			if err != nil {
-				return err
-			}
-
-			overlayPath := args[0]
-			found := false
-			var kept []string
-			for _, o := range answers.Overlays {
-				if o == overlayPath {
-					found = true
-				} else {
-					kept = append(kept, o)
+		contains: func(a *types.WizardAnswers, name string) bool {
+			for _, svc := range a.Services {
+				if svc.Name == name {
+					return true
 				}
 			}
-			if !found {
-				return fmt.Errorf("overlay %q is not configured", overlayPath)
-			}
-			answers.Overlays = kept
-
-			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
-				projectRoot: projectRoot,
-				dryRun:      dryRun,
-				cleanup:     true,
-			})
-			if err != nil {
-				return err
-			}
-			if result == nil {
-				return nil // dry-run
-			}
-
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed overlay: %s\n%s\n", overlayPath, result.Summary())
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Run 'direnv allow' or re-enter 'devenv shell' to activate.")
-			return nil
+			return false
 		},
-	}
-
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
-
-	return cmd
-}
-
-func removeServiceCmd() *cobra.Command {
-	var dryRun bool
-
-	cmd := &cobra.Command{
-		Use:       "remove-service <name>",
-		Short:     "Remove a service from the development environment",
-		Long:      "Remove a previously added service (database, cache, queue) from the devenv configuration.",
-		Args:      cobra.ExactArgs(1),
-		ValidArgs: validServices,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			serviceName := args[0]
-			projectRoot, err := cmdutil.ProjectRoot()
-			if err != nil {
-				return err
-			}
-
-			answers, err := loadAnswers(projectRoot)
-			if err != nil {
-				return err
-			}
-
+		add: func(a *types.WizardAnswers, name string) {
+			a.Services = append(a.Services, types.ServiceChoice{Name: name})
+		},
+		remove: func(a *types.WizardAnswers, name string) bool {
 			found := false
 			var kept []types.ServiceChoice
-			for _, svc := range answers.Services {
-				if svc.Name == serviceName {
+			for _, svc := range a.Services {
+				if svc.Name == name {
 					found = true
 				} else {
 					kept = append(kept, svc)
 				}
 			}
-			if !found {
-				return fmt.Errorf("service %q is not configured", serviceName)
-			}
-			answers.Services = kept
-
-			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
-				projectRoot: projectRoot,
-				dryRun:      dryRun,
-				cleanup:     true,
-			})
-			if err != nil {
-				return err
-			}
-			if result == nil {
-				return nil // dry-run
-			}
-
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed service %q.\n%s\n", serviceName, result.Summary())
-			return nil
+			a.Services = kept
+			return found
 		},
 	}
-
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
-
-	return cmd
+	if add {
+		s.use = "add-service <name>"
+		s.short = "Add a development service to the environment"
+		s.long = "Add a service (database, cache, queue) to the existing devenv configuration."
+	} else {
+		s.use = "remove-service <name>"
+		s.short = "Remove a service from the development environment"
+		s.long = "Remove a previously added service (database, cache, queue) from the devenv configuration."
+	}
+	return s
 }
 
-func removeLanguageCmd() *cobra.Command {
-	var dryRun bool
-
-	cmd := &cobra.Command{
-		Use:       "remove-language <name>",
-		Short:     "Remove a language ecosystem from the environment",
-		Long:      "Remove a previously added language/platform ecosystem from the devenv configuration.",
-		Args:      cobra.ExactArgs(1),
-		ValidArgs: validLanguages,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			langName := args[0]
-			projectRoot, err := cmdutil.ProjectRoot()
-			if err != nil {
-				return err
+// languageSpec returns the itemSpec for language add/remove commands.
+func languageSpec(add bool) itemSpec {
+	s := itemSpec{
+		singular:  "language",
+		validArgs: validLanguages,
+		hasForce:  add,
+		validate: func(name string, _ string) error {
+			if !validation.IsValidLanguage(name) {
+				return fmt.Errorf("unknown language %q; valid languages: %v", name, validLanguages)
 			}
-
-			answers, err := loadAnswers(projectRoot)
-			if err != nil {
-				return err
+			return nil
+		},
+		contains: func(a *types.WizardAnswers, name string) bool {
+			for _, lang := range a.Languages {
+				if lang.Name == name {
+					return true
+				}
 			}
-
+			return false
+		},
+		add: func(a *types.WizardAnswers, name string) {
+			a.Languages = append(a.Languages, types.LanguageChoice{Name: name})
+		},
+		remove: func(a *types.WizardAnswers, name string) bool {
 			found := false
 			var kept []types.LanguageChoice
-			for _, lang := range answers.Languages {
-				if lang.Name == langName {
+			for _, lang := range a.Languages {
+				if lang.Name == name {
 					found = true
 				} else {
 					kept = append(kept, lang)
 				}
 			}
-			if !found {
-				return fmt.Errorf("language %q is not configured", langName)
-			}
-			answers.Languages = kept
-
-			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
-				projectRoot: projectRoot,
-				dryRun:      dryRun,
-				cleanup:     true,
-			})
-			if err != nil {
-				return err
-			}
-			if result == nil {
-				return nil // dry-run
-			}
-
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed language %q.\n%s\n", langName, result.Summary())
-			return nil
+			a.Languages = kept
+			return found
 		},
 	}
+	if add {
+		s.use = "add-language <name>"
+		s.short = "Add a language ecosystem to the environment"
+		s.long = "Add a language/platform ecosystem module to the existing devenv configuration."
+	} else {
+		s.use = "remove-language <name>"
+		s.short = "Remove a language ecosystem from the environment"
+		s.long = "Remove a previously added language/platform ecosystem from the devenv configuration."
+	}
+	return s
+}
 
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
+const devenvActivateMessage = "Run 'direnv allow' or re-enter 'devenv shell' to activate."
 
-	return cmd
+// packageSpec returns the itemSpec for package add/remove commands.
+func packageSpec(add bool) itemSpec {
+	s := itemSpec{
+		singular:    "package",
+		multiArg:    true,
+		hasForce:    add,
+		postMessage: devenvActivateMessage,
+		contains: func(a *types.WizardAnswers, name string) bool {
+			for _, p := range a.ExtraPackages {
+				if p == name {
+					return true
+				}
+			}
+			return false
+		},
+		add: func(a *types.WizardAnswers, name string) {
+			a.ExtraPackages = append(a.ExtraPackages, name)
+		},
+		remove: func(a *types.WizardAnswers, name string) bool {
+			found := false
+			var kept []string
+			for _, p := range a.ExtraPackages {
+				if p == name {
+					found = true
+				} else {
+					kept = append(kept, p)
+				}
+			}
+			a.ExtraPackages = kept
+			return found
+		},
+	}
+	if add {
+		s.use = "add-package <name> [name...]"
+		s.short = "Add system packages to the development environment"
+		s.long = "Add Nix packages (e.g., imagemagick, ffmpeg, jq) to the devenv shell without editing Nix files."
+	} else {
+		s.use = "remove-package <name> [name...]"
+		s.short = "Remove system packages from the development environment"
+		s.long = "Remove previously added Nix packages from the devenv shell."
+	}
+	return s
+}
+
+// overlaySpec returns the itemSpec for overlay add/remove commands.
+func overlaySpec(add bool) itemSpec {
+	s := itemSpec{
+		singular:    "overlay",
+		postMessage: devenvActivateMessage,
+		contains: func(a *types.WizardAnswers, name string) bool {
+			return slices.Contains(a.Overlays, name)
+		},
+		add: func(a *types.WizardAnswers, name string) {
+			a.Overlays = append(a.Overlays, name)
+		},
+		remove: func(a *types.WizardAnswers, name string) bool {
+			found := false
+			var kept []string
+			for _, o := range a.Overlays {
+				if o == name {
+					found = true
+				} else {
+					kept = append(kept, o)
+				}
+			}
+			a.Overlays = kept
+			return found
+		},
+	}
+	if add {
+		s.use = "add-overlay <path>"
+		s.short = "Add a Nix overlay to the development environment"
+		s.long = "Register a Nix overlay file (e.g. ./nix/go-overlay.nix) so it persists across qsdev updates."
+		s.validate = func(name string, projectRoot string) error {
+			absOverlay := name
+			if !filepath.IsAbs(name) {
+				absOverlay = filepath.Join(projectRoot, name)
+			}
+			if _, err := os.Stat(absOverlay); err != nil {
+				return fmt.Errorf("overlay file not found: %s", name)
+			}
+			return nil
+		}
+	} else {
+		s.use = "remove-overlay <path>"
+		s.short = "Remove a Nix overlay from the development environment"
+		s.long = "Unregister a Nix overlay file so it is no longer included in devenv.nix."
+	}
+	return s
 }
 
 // regenerateOpts controls regenerateAndPersist behavior.

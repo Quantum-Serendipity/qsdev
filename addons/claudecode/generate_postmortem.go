@@ -43,22 +43,7 @@ func generatePostmortemSkill(answers types.WizardAnswers, registry *ecosystem.Re
 }
 
 func collectVerificationCommands(answers types.WizardAnswers, registry *ecosystem.Registry) []string {
-	var modules []ecosystem.EcosystemModule
-	configFor := func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
-		for _, lang := range answers.Languages {
-			if lang.Name == mod.Name() {
-				return ecosystem.ToModuleConfig(lang)
-			}
-		}
-		return ecosystem.ModuleConfig{}
-	}
-
-	for _, lang := range answers.Languages {
-		if mod, ok := registry.ByName(lang.Name); ok {
-			modules = append(modules, mod)
-		}
-	}
-
+	modules, configFor := resolveLanguageModules(answers, registry)
 	agg := ecosystem.AggregateVerificationCommands(modules, configFor)
 	return sliceutil.Dedup(agg.All())
 }

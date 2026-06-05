@@ -3,8 +3,6 @@ package claudecode
 import (
 	"fmt"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -24,17 +22,7 @@ type AgentEntry struct {
 
 // loadAgentManifest reads and parses the agent manifest from the embedded filesystem.
 func loadAgentManifest() (*AgentManifest, error) {
-	data, err := templateFS.ReadFile("templates/agents/manifest.yaml")
-	if err != nil {
-		return nil, fmt.Errorf("reading agent manifest: %w", err)
-	}
-
-	var manifest AgentManifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		return nil, fmt.Errorf("parsing agent manifest: %w", err)
-	}
-
-	return &manifest, nil
+	return loadYAMLManifest[AgentManifest]("templates/agents/manifest.yaml")
 }
 
 // deployAgents reads the selected agent files from the embedded filesystem and

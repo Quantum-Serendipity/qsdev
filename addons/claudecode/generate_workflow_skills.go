@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"sort"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -26,17 +24,7 @@ type ConsultingSkillEntry struct {
 // loadConsultingSkillManifest reads and parses the consulting skill manifest
 // from the embedded filesystem.
 func loadConsultingSkillManifest() (*ConsultingSkillManifest, error) {
-	data, err := templateFS.ReadFile("templates/skills/consulting-manifest.yaml")
-	if err != nil {
-		return nil, fmt.Errorf("reading consulting skill manifest: %w", err)
-	}
-
-	var manifest ConsultingSkillManifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		return nil, fmt.Errorf("parsing consulting skill manifest: %w", err)
-	}
-
-	return &manifest, nil
+	return loadYAMLManifest[ConsultingSkillManifest]("templates/skills/consulting-manifest.yaml")
 }
 
 // deployWorkflowSkills deploys consulting workflow skills based on the enabled

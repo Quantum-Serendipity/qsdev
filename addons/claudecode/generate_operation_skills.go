@@ -3,8 +3,6 @@ package claudecode
 import (
 	"fmt"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -25,17 +23,7 @@ type QsdevOpsEntry struct {
 // loadQsdevOpsManifest reads and parses the qsdev-ops skill manifest from the
 // embedded filesystem.
 func loadQsdevOpsManifest() (*QsdevOpsManifest, error) {
-	data, err := templateFS.ReadFile("templates/skills/qsdev-ops-manifest.yaml")
-	if err != nil {
-		return nil, fmt.Errorf("reading qsdev-ops manifest: %w", err)
-	}
-
-	var manifest QsdevOpsManifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		return nil, fmt.Errorf("parsing qsdev-ops manifest: %w", err)
-	}
-
-	return &manifest, nil
+	return loadYAMLManifest[QsdevOpsManifest]("templates/skills/qsdev-ops-manifest.yaml")
 }
 
 // deployOperationSkills reads the qsdev operation skill files from the embedded

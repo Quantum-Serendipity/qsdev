@@ -21,7 +21,10 @@ type ProfileSummary struct {
 // with a deprecation warning. Returns an error listing available profiles
 // if the name is not found.
 func GetBuiltInProfile(name string) (*types.QsdevConfig, error) {
-	cat := catalog.Default()
+	cat, err := catalog.Default()
+	if err != nil {
+		return nil, fmt.Errorf("loading catalog: %w", err)
+	}
 	aliases := cat.ProfileAliases()
 
 	if alias, ok := aliases[name]; ok {
@@ -45,7 +48,7 @@ func GetBuiltInProfile(name string) (*types.QsdevConfig, error) {
 
 // ListBuiltInProfiles returns summaries of all built-in profiles, sorted by name.
 func ListBuiltInProfiles() []ProfileSummary {
-	profiles := catalog.Default().Profiles()
+	profiles := catalog.MustDefault().Profiles()
 	var result []ProfileSummary
 	for name, def := range profiles {
 		result = append(result, ProfileSummary{
@@ -62,7 +65,7 @@ func ListBuiltInProfiles() []ProfileSummary {
 // ResolveProfileAlias returns the canonical profile name, resolving any legacy
 // alias. The second return value is true if the name was an alias.
 func ResolveProfileAlias(name string) (string, bool) {
-	aliases := catalog.Default().ProfileAliases()
+	aliases := catalog.MustDefault().ProfileAliases()
 	if alias, ok := aliases[name]; ok {
 		return alias, true
 	}

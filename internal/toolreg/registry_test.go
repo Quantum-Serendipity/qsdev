@@ -181,7 +181,7 @@ func TestDefaultRegistry_Singleton(t *testing.T) {
 func TestYAMLRegistryCorrespondence(t *testing.T) {
 	t.Parallel()
 	reg := DefaultRegistry()
-	yamlTools := catalog.Default().Tools()
+	yamlTools := catalog.MustDefault().Tools()
 
 	for name := range yamlTools {
 		if _, ok := reg.ByName(name); !ok {
@@ -202,7 +202,7 @@ func TestYAMLRegistryCorrespondence(t *testing.T) {
 
 func TestBridgeMetadataFidelity(t *testing.T) {
 	t.Parallel()
-	cat := catalog.Default()
+	cat := catalog.MustDefault()
 	reg := DefaultRegistry()
 
 	opsPrefix := branding.Get().AppName + "-"

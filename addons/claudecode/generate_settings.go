@@ -51,7 +51,7 @@ type HookEntry struct {
 // AllBaseDenyRules returns the full deny rule list. Exported for use by
 // the check command to verify deny rule coverage.
 func AllBaseDenyRules() []string {
-	return catalog.Default().AllPermissionDenyRules()
+	return catalog.MustDefault().AllPermissionDenyRules()
 }
 
 // ---------------------------------------------------------------------------
@@ -61,7 +61,7 @@ func AllBaseDenyRules() []string {
 // buildPermissions constructs the Permissions struct based on the selected
 // permission preset, wizard answers, ecosystem registry, and addon config.
 func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, registry *ecosystem.Registry, cfg Config) Permissions {
-	cat := catalog.Default()
+	cat := catalog.MustDefault()
 	ecosystemDeny := collectEcosystemDenyRules(answers, registry)
 
 	presetName := string(preset)

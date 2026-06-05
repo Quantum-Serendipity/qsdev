@@ -270,7 +270,7 @@ func TestBuildDevenvNixData_CatalogBasePackages(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	catPkgs := catalog.Default().BasePackages()
+	catPkgs := catalog.MustDefault().BasePackages()
 	for _, want := range catPkgs {
 		if !slices.Contains(data.Packages, want) {
 			t.Errorf("data.Packages missing catalog base package %q", want)
@@ -286,7 +286,7 @@ func TestBuildDevenvNixData_CatalogSecurityHooks(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	catHooks := catalog.Default().SecurityHooks()
+	catHooks := catalog.MustDefault().SecurityHooks()
 	for _, want := range catHooks {
 		if !slices.Contains(data.SecurityHooks, want) {
 			t.Errorf("data.SecurityHooks missing catalog hook %q", want)
@@ -302,7 +302,7 @@ func TestBuildDevenvNixData_CatalogCustomHooks(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	catCustom := catalog.Default().CustomHooks()
+	catCustom := catalog.MustDefault().CustomHooks()
 	catIDs := make(map[string]bool, len(catCustom))
 	for _, h := range catCustom {
 		catIDs[h.ID] = true
@@ -334,7 +334,7 @@ func TestBuildDevenvNixData_FillDefaultsThenBuild(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	cat := catalog.Default()
+	cat := catalog.MustDefault()
 
 	wantCompliance := cat.TierToCompliance()["full"]
 	if got := data.EnvVars["QSDEV_SECURITY_PROFILE"]; got != wantCompliance {

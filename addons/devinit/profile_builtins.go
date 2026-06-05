@@ -49,7 +49,7 @@ func DefaultProjectProfileRegistry() *ProjectProfileRegistry {
 }
 
 func catalogProfile(name string) Profile {
-	cat := catalog.Default()
+	cat := catalog.MustDefault()
 	def, ok := cat.ProjectProfile(name)
 	if !ok {
 		return Profile{}

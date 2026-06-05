@@ -161,7 +161,7 @@ func TestIsValidCoreLanguage(t *testing.T) {
 
 func TestDelegationFunctions_MatchCatalog(t *testing.T) {
 	t.Parallel()
-	cat := catalog.Default()
+	cat := catalog.MustDefault()
 
 	tests := []struct {
 		name string

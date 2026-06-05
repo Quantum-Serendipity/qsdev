@@ -19,6 +19,9 @@ import (
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.SecretDeclarer = (*Module)(nil)
+var _ ecosystem.DenyRuleProvider = (*Module)(nil)
+var _ ecosystem.WizardFieldProvider = (*Module)(nil)
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -96,12 +99,6 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	}
 	b.WriteString("  };\n")
 	return b.String(), nil
-}
-
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Terraform/OpenTofu does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
 }
 
 // SecurityConfigs returns a .terraformrc file with security-hardened settings.

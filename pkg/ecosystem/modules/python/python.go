@@ -19,8 +19,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.WizardFieldProvider = (*Module)(nil)
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -140,12 +142,6 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	return b.String(), nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Python does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns generated security configuration files.
 // For pip, it generates a security-hardened pip.conf. For uv and poetry,
 // security is enforced via CI commands, so no config files are needed.
@@ -220,15 +216,6 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			BuiltIn:       true,
 		},
 	}
-}
-
-// DenyRules returns Claude Code deny-rule patterns for the Python ecosystem.
-// These prevent direct dependency installation outside of controlled workflows.
-// Note: uv sync and poetry install (lockfile-based installs) are intentionally allowed.
-func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	// Package install commands (pip/uv/poetry) are handled by base ask rules +
-	// package-guard hook. Return empty — no Python-specific hard-deny patterns.
-	return nil
 }
 
 // CICommands returns CI pipeline commands for the Python ecosystem.

@@ -15,10 +15,13 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
+var _ ecosystem.DenyRuleProvider = (*Module)(nil)
+var _ ecosystem.WizardFieldProvider = (*Module)(nil)
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -144,12 +147,6 @@ func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
 // for C/C++ language support.
 func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "  languages.cplusplus.enable = true;\n", nil
-}
-
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// C/C++ does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
 }
 
 // SecurityConfigs returns generated security configuration files for the

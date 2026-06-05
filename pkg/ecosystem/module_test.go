@@ -100,9 +100,6 @@ func TestMockModuleDetectFnOverridesResult(t *testing.T) {
 func TestMockModuleNilReturnValues(t *testing.T) {
 	m := &ecosystem.MockModule{NameVal: "empty"}
 
-	if inputs := m.DevenvYamlInputs(ecosystem.ModuleConfig{}); inputs != nil {
-		t.Errorf("DevenvYamlInputs() = %v, want nil", inputs)
-	}
 	if configs := m.SecurityConfigs(ecosystem.ModuleConfig{}); configs != nil {
 		t.Errorf("SecurityConfigs() = %v, want nil", configs)
 	}

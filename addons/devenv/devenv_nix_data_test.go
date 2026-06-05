@@ -327,7 +327,7 @@ func TestBuildDevenvNixData_FillDefaultsThenBuild(t *testing.T) {
 		Tier:        "full",
 		ProjectName: "integration-test",
 	}
-	answers.FillDefaults(types.DetectedProject{})
+	answers.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
 	data, err := BuildDevenvNixData(answers, reg)
 	if err != nil {

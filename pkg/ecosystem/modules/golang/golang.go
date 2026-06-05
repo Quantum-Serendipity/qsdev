@@ -20,6 +20,8 @@ import (
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
+var _ ecosystem.WizardFieldProvider = (*Module)(nil)
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -88,12 +90,6 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	return b.String(), nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Go does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns generated security configuration files.
 // Go's security settings are handled via environment variables in DevenvNixFragment.
 func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {
@@ -150,14 +146,6 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			NixPackage:    "govulncheck",
 		},
 	}
-}
-
-// DenyRules returns Claude Code deny-rule patterns for the Go ecosystem.
-// These prevent direct dependency modification outside of controlled workflows.
-func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	// Package install commands (go get/install) are handled by base ask rules +
-	// package-guard hook. Return empty — no Go-specific hard-deny patterns.
-	return nil
 }
 
 // CICommands returns CI pipeline commands for the Go ecosystem.

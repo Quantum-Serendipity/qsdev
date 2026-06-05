@@ -3,8 +3,6 @@ package types
 import (
 	"os"
 	"time"
-
-	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 )
 
 // WizardAnswers holds user selections and detected project state from the init wizard.
@@ -183,10 +181,24 @@ func (a *WizardAnswers) IsComplete() bool {
 	return true
 }
 
+// DefaultsProvider supplies catalog-driven default values for FillDefaults.
+// This interface decouples pkg/types from internal/catalog, allowing tests to
+// inject mock defaults and breaking the architectural inversion.
+type DefaultsProvider interface {
+	DefaultPostmortem() bool
+	DefaultVersionSentinel() bool
+	DefaultVersionSentinelHours() int
+	DefaultSembleEnabled() bool
+	DefaultSembleMode() string
+	DefaultMCPServers() []string
+	TierCompliance(tier string) string
+	TierEnabledTools(tier string) []string
+}
+
 // FillDefaults populates empty user-configurable fields from detection results
-// and hardcoded defaults. The Detected field is always set from the provided
-// detection results regardless of prior value.
-func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
+// and catalog-driven defaults. The Detected field is always set from the
+// provided detection results regardless of prior value.
+func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults DefaultsProvider) {
 	if a.EnvVars == nil {
 		a.EnvVars = make(map[string]string)
 	}
@@ -262,35 +274,34 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject) {
 
 	// Default agent tools when Claude is enabled — only if user hasn't configured any.
 	if a.ClaudeCode && !a.AgentTools.PostmortemEnabled && !a.AgentTools.VersionSentinel && !a.AgentTools.SembleEnabled {
-		defaults := catalog.MustDefault().DefaultAgentToolConfig()
-		a.AgentTools.PostmortemEnabled = defaults.PostmortemEnabled
-		a.AgentTools.VersionSentinel = defaults.VersionSentinel
-		a.AgentTools.SembleEnabled = defaults.SembleEnabled
+		a.AgentTools.PostmortemEnabled = defaults.DefaultPostmortem()
+		a.AgentTools.VersionSentinel = defaults.DefaultVersionSentinel()
+		a.AgentTools.SembleEnabled = defaults.DefaultSembleEnabled()
 	}
 	if a.ClaudeCode {
 		if a.AgentTools.VersionSentinelHours == 0 {
-			a.AgentTools.VersionSentinelHours = catalog.MustDefault().DefaultAgentToolConfig().VersionSentinelHours
+			a.AgentTools.VersionSentinelHours = defaults.DefaultVersionSentinelHours()
 		}
 		if a.AgentTools.SembleMode == "" {
-			a.AgentTools.SembleMode = catalog.MustDefault().DefaultAgentToolConfig().SembleMode
+			a.AgentTools.SembleMode = defaults.DefaultSembleMode()
 		}
 	}
 
 	// Default MCP servers when Claude Code is enabled and none are configured.
 	if a.ClaudeCode && len(a.MCPServers) == 0 {
-		a.MCPServers = append(a.MCPServers, catalog.MustDefault().DefaultMCPServers()...)
+		a.MCPServers = append(a.MCPServers, defaults.DefaultMCPServers()...)
 	}
 
 	// Derive ComplianceLevel from Tier when not explicitly set.
 	if a.ComplianceLevel == "" && a.Tier != "" {
-		if level, ok := catalog.MustDefault().TierToCompliance()[a.Tier]; ok {
+		if level := defaults.TierCompliance(a.Tier); level != "" {
 			a.ComplianceLevel = level
 		}
 	}
 
 	// Derive EnabledTools from Tier when not explicitly set.
 	if a.EnabledTools == nil && a.Tier != "" {
-		if tools, ok := catalog.MustDefault().TierToEnabledTools()[a.Tier]; ok && len(tools) > 0 {
+		if tools := defaults.TierEnabledTools(a.Tier); len(tools) > 0 {
 			a.EnabledTools = make(map[string]bool, len(tools))
 			for _, t := range tools {
 				a.EnabledTools[t] = true

@@ -6,7 +6,10 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+var _ types.DefaultsProvider = (*Catalog)(nil)
 
 func loadTestCatalog(t *testing.T) *Catalog {
 	t.Helper()

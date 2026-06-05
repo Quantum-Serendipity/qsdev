@@ -79,12 +79,6 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "  languages.zig.enable = true;\n", nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Zig does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns generated security configuration files.
 // Zig's content-addressed build system (mandatory SHA256 hashes in
 // build.zig.zon) provides integrity by design, so no additional security
@@ -108,13 +102,6 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			BuiltIn:       true,
 		},
 	}
-}
-
-// DenyRules returns Claude Code deny-rule patterns for the Zig ecosystem.
-// Zig's content-addressed model (mandatory SHA256 hashes) prevents supply
-// chain attacks by design, so no deny rules are needed.
-func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	return nil
 }
 
 // CICommands returns CI pipeline commands for the Zig ecosystem.
@@ -142,20 +129,8 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	}
 }
 
-// WizardFields returns additional wizard form fields for Zig configuration.
-// Zig does not require any wizard fields.
-func (m *Module) WizardFields() []ecosystem.WizardField {
-	return nil
-}
-
 // VerificationCommands returns an empty set. Zig does not define standard
 // verification commands at the module level.
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
 }
-
-// ManifestFiles returns nil. Zig does not use a traditional manifest file.
-func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
-	return nil
-}
-

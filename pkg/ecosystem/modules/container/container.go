@@ -20,6 +20,9 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.SecretDeclarer = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
+var _ ecosystem.DevenvYamlInputProvider = (*Module)(nil)
+var _ ecosystem.WizardFieldProvider = (*Module)(nil)
+var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -326,11 +329,6 @@ func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.V
 		Build: []string{buildCmd},
 		Lint:  []string{"hadolint Dockerfile"},
 	}
-}
-
-// ManifestFiles returns manifest file metadata for the container ecosystem.
-func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
-	return nil
 }
 
 // SecretDeclarations returns the secrets required by a Docker project.

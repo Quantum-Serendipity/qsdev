@@ -2,6 +2,14 @@ package ecosystem
 
 import "github.com/Quantum-Serendipity/qsdev/pkg/types"
 
+// Compile-time interface compliance checks.
+var _ EcosystemModule = (*MockModule)(nil)
+var _ DevenvYamlInputProvider = (*MockModule)(nil)
+var _ DenyRuleProvider = (*MockModule)(nil)
+var _ WizardFieldProvider = (*MockModule)(nil)
+var _ ManifestFileProvider = (*MockModule)(nil)
+var _ PackageProvider = (*MockModule)(nil)
+
 // MockModule is a configurable implementation of EcosystemModule for testing.
 // Each field corresponds to the return value of the matching interface method.
 type MockModule struct {
@@ -42,7 +50,7 @@ func (m *MockModule) DevenvNixFragment(config ModuleConfig) (string, error) {
 	return m.DevenvNixFragmentVal, m.DevenvNixFragmentErr
 }
 
-func (m *MockModule) DevenvYamlInputs(config ModuleConfig) []DevenvInput {
+func (m *MockModule) DevenvYamlInputs(_ ModuleConfig) []DevenvInput {
 	return m.DevenvYamlInputsVal
 }
 
@@ -54,7 +62,7 @@ func (m *MockModule) PreCommitHooks(config ModuleConfig) []HookConfig {
 	return m.PreCommitHooksVal
 }
 
-func (m *MockModule) DenyRules(config ModuleConfig) []string {
+func (m *MockModule) DenyRules(_ ModuleConfig) []string {
 	return m.DenyRulesVal
 }
 
@@ -70,12 +78,12 @@ func (m *MockModule) WizardFields() []WizardField {
 	return m.WizardFieldsVal
 }
 
-func (m *MockModule) VerificationCommands(_ ModuleConfig) VerificationCommands {
-	return m.VerificationCommandsVal
-}
-
 func (m *MockModule) ManifestFiles(_ ModuleConfig) []ManifestFileInfo {
 	return m.ManifestFilesVal
+}
+
+func (m *MockModule) VerificationCommands(_ ModuleConfig) VerificationCommands {
+	return m.VerificationCommandsVal
 }
 
 func (m *MockModule) DevenvPackages(_ ModuleConfig) []string {

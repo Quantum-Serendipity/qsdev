@@ -100,12 +100,6 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "  languages.perl.enable = true;\n", nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Perl does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns generated security configuration files.
 // CPAN has no signing mechanism, so no security configuration files are generated.
 func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {
@@ -167,12 +161,6 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 			AgeGatingSupport:     false,
 		},
 	}
-}
-
-// WizardFields returns additional wizard form fields for Perl configuration.
-// Perl does not require any wizard fields.
-func (m *Module) WizardFields() []ecosystem.WizardField {
-	return nil
 }
 
 // VerificationCommands returns an empty set. Perl does not define standard

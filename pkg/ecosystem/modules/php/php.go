@@ -20,8 +20,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.WizardFieldProvider = (*Module)(nil)
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -97,12 +99,6 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	b.WriteString("  languages.php.enable = true;\n")
 	fmt.Fprintf(&b, "  languages.php.package = pkgs.%s;\n", pkg)
 	return b.String(), nil
-}
-
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// PHP does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
 }
 
 // SecurityConfigs returns a security-hardened Composer configuration file.
@@ -184,14 +180,6 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			BuiltIn:       false,
 		},
 	}
-}
-
-// DenyRules returns Claude Code deny-rule patterns for the PHP ecosystem.
-// These prevent direct dependency modification outside of controlled workflows.
-func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	// Package install commands (composer) are handled by base ask rules +
-	// package-guard hook. Return empty — no PHP-specific hard-deny patterns.
-	return nil
 }
 
 // CICommands returns CI pipeline commands for the PHP ecosystem.

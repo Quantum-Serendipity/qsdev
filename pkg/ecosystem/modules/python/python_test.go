@@ -348,16 +348,6 @@ func TestDevenvNixFragment_CustomVersion(t *testing.T) {
 	assertNotContains(t, fragment, `version = "3.12"`)
 }
 
-// --- DevenvYamlInputs tests ---
-
-func TestDevenvYamlInputs(t *testing.T) {
-	m := &python.Module{}
-	inputs := m.DevenvYamlInputs(ecosystem.ModuleConfig{})
-	if inputs != nil {
-		t.Errorf("DevenvYamlInputs() = %v, want nil", inputs)
-	}
-}
-
 // --- SecurityConfigs tests ---
 
 func TestSecurityConfigs_Pip(t *testing.T) {
@@ -489,18 +479,6 @@ func TestPreCommitHooks(t *testing.T) {
 		if hook.Description == "" {
 			t.Errorf("hooks[%d].Description should not be empty", i)
 		}
-	}
-}
-
-// --- DenyRules tests ---
-
-func TestDenyRules(t *testing.T) {
-	m := &python.Module{}
-	rules := m.DenyRules(ecosystem.ModuleConfig{})
-
-	// Package install commands moved to base ask rules + package-guard hook.
-	if len(rules) != 0 {
-		t.Fatalf("DenyRules() returned %d rules, want 0 (installs handled by ask rules)", len(rules))
 	}
 }
 

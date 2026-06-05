@@ -51,7 +51,11 @@ func AggregateManifestCoverage(
 	var report ManifestCoverageReport
 
 	for _, mod := range modules {
-		manifests := mod.ManifestFiles(configFor(mod))
+		mfp, ok := mod.(ManifestFileProvider)
+		if !ok {
+			continue
+		}
+		manifests := mfp.ManifestFiles(configFor(mod))
 		for _, m := range manifests {
 			report.AllManifests = append(report.AllManifests, m)
 			if m.VSSupported {

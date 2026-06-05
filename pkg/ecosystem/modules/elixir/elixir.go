@@ -11,8 +11,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.DenyRuleProvider = (*Module)(nil)
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -67,12 +69,6 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 // for Elixir language support.
 func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "  languages.elixir.enable = true;\n", nil
-}
-
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Elixir does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
 }
 
 // SecurityConfigs returns generated security configuration files.
@@ -137,12 +133,6 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	}
 }
 
-// WizardFields returns additional wizard form fields for Elixir configuration.
-// Elixir does not require any additional wizard fields.
-func (m *Module) WizardFields() []ecosystem.WizardField {
-	return nil
-}
-
 // VerificationCommands returns build, test, and format commands for Elixir projects.
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{
@@ -156,4 +146,3 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	return []ecosystem.ManifestFileInfo{{Path: "mix.exs", Ecosystem: "hex", LockFile: "mix.lock", LockFilePolicy: ecosystem.LockFilePolicyRequired}}
 }
-

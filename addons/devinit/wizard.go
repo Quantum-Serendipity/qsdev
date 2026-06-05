@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -441,7 +442,7 @@ func mapFormToAnswers(fs *formState, projectRoot, projectName string, detected t
 
 	// On quick path, fill from detection defaults.
 	if fs.quickChoice == "yes" {
-		answers.FillDefaults(detected)
+		answers.FillDefaults(detected, catalog.MustDefault())
 		answers.Confirmed = fs.confirmed
 		return answers
 	}

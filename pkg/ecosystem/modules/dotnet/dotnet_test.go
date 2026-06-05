@@ -886,13 +886,3 @@ func TestWizardFields(t *testing.T) {
 		t.Error("option value \"6\" should not be present (EOL)")
 	}
 }
-
-// --- DevenvYamlInputs tests ---
-
-func TestDevenvYamlInputs_ReturnsNil(t *testing.T) {
-	m := newModule()
-	inputs := m.DevenvYamlInputs(ecosystem.ModuleConfig{})
-	if inputs != nil {
-		t.Errorf("DevenvYamlInputs() = %v, want nil", inputs)
-	}
-}

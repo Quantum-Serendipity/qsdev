@@ -136,12 +136,6 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "  languages.r.enable = true;\n", nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// R does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns generated security configuration files.
 // CRAN has no signing mechanism, so no security configuration files are generated.
 func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {
@@ -152,13 +146,6 @@ func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile
 // R formatting/linting tools (styler, lintr) are R packages, not standalone
 // CLIs, so no pre-commit hooks are provided.
 func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
-	return nil
-}
-
-// DenyRules returns Claude Code deny-rule patterns for the R ecosystem.
-// In data science contexts, direct package installation is expected workflow,
-// so no deny rules are applied.
-func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	return nil
 }
 
@@ -193,20 +180,8 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	}
 }
 
-// WizardFields returns additional wizard form fields for R configuration.
-// R does not require any wizard fields.
-func (m *Module) WizardFields() []ecosystem.WizardField {
-	return nil
-}
-
 // VerificationCommands returns an empty set. R does not define standard
 // verification commands at the module level.
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
 }
-
-// ManifestFiles returns nil. R does not use a traditional manifest file.
-func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
-	return nil
-}
-

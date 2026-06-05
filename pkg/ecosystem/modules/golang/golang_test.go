@@ -238,14 +238,6 @@ func TestDevenvNixFragment_RegistryProxyPreservesExisting(t *testing.T) {
 	}
 }
 
-func TestDevenvYamlInputs(t *testing.T) {
-	m := &golang.Module{}
-	inputs := m.DevenvYamlInputs(ecosystem.ModuleConfig{})
-	if inputs != nil {
-		t.Errorf("DevenvYamlInputs() = %v, want nil", inputs)
-	}
-}
-
 func TestSecurityConfigs(t *testing.T) {
 	m := &golang.Module{}
 	configs := m.SecurityConfigs(ecosystem.ModuleConfig{})
@@ -278,15 +270,6 @@ func TestPreCommitHooks(t *testing.T) {
 		if len(hook.Types) != 1 || hook.Types[0] != "go" {
 			t.Errorf("hooks[%d].Types = %v, want [\"go\"]", i, hook.Types)
 		}
-	}
-}
-
-func TestDenyRules(t *testing.T) {
-	m := &golang.Module{}
-	rules := m.DenyRules(ecosystem.ModuleConfig{})
-
-	if len(rules) != 0 {
-		t.Fatalf("DenyRules() returned %d rules, want 0 (installs handled by ask rules)", len(rules))
 	}
 }
 

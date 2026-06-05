@@ -9,8 +9,11 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.DenyRuleProvider = (*Module)(nil)
+var _ ecosystem.WizardFieldProvider = (*Module)(nil)
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -137,12 +140,6 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	}
 
 	return b.String(), nil
-}
-
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// JavaScript does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
 }
 
 // PreCommitHooks returns pre-commit hook definitions for the JavaScript/TypeScript ecosystem.

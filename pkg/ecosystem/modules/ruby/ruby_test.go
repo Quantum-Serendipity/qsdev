@@ -201,17 +201,6 @@ func TestPreCommitHooks(t *testing.T) {
 	}
 }
 
-// --- DenyRules tests ---
-
-func TestDenyRules(t *testing.T) {
-	m := newModule()
-	rules := m.DenyRules(ecosystem.ModuleConfig{})
-
-	if len(rules) != 0 {
-		t.Fatalf("DenyRules() returned %d rules, want 0 (installs handled by ask rules)", len(rules))
-	}
-}
-
 // --- CICommands tests ---
 
 func TestCICommands(t *testing.T) {

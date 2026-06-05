@@ -18,8 +18,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.WizardFieldProvider = (*Module)(nil)
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -93,12 +95,6 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return b.String(), nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Ruby does not require any additional inputs.
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns security-hardened Bundler and RubyGems configuration files.
 func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {
 	bundleConfig := "# Security-hardened Bundler configuration.\n" +
@@ -147,14 +143,6 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			BuiltIn:       true,
 		},
 	}
-}
-
-// DenyRules returns Claude Code deny-rule patterns for the Ruby ecosystem.
-// These prevent direct dependency modification outside of controlled workflows.
-func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	// Package install commands (gem/bundle) are handled by base ask rules +
-	// package-guard hook. Return empty — no Ruby-specific hard-deny patterns.
-	return nil
 }
 
 // CICommands returns CI pipeline commands for the Ruby ecosystem.

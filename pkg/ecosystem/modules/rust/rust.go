@@ -17,8 +17,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.WizardFieldProvider = (*Module)(nil)
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 
 // Module is the stateless Rust ecosystem module.
 type Module struct{}
@@ -87,11 +89,6 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
   };`, ecosystem.NixEscapeString(channel)), nil
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml (none for Rust).
-func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	return nil
-}
-
 // SecurityConfigs returns security-hardened configuration files for Rust.
 func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {
 	var content strings.Builder
@@ -153,13 +150,6 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			BuiltIn:     true,
 		},
 	}
-}
-
-// DenyRules returns Claude Code deny-rule patterns for Rust.
-func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	// Package install commands (cargo add/install) are handled by base ask rules +
-	// package-guard hook. Return empty — no Rust-specific hard-deny patterns.
-	return nil
 }
 
 // CICommands returns CI pipeline commands for Rust.

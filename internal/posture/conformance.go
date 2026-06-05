@@ -154,7 +154,7 @@ func evaluateEnhanced(
 		Reason: boolReason(licenseEnabled, "license compliance enabled", "license compliance not enabled"),
 	})
 
-	ageGating := findLayerByName(defense.Layers, "age-gating")
+	ageGating := FindLayerByName(defense.Layers, "age-gating")
 	ageGatingOK := ageGating != nil && ageGating.Status == LayerEnabled
 	checks = append(checks, ConformanceCheck{
 		Name:   "age-gating-configured",
@@ -178,7 +178,9 @@ func evaluateEnhanced(
 	return checks
 }
 
-func findLayerByName(layers []DefenseLayer, name string) *DefenseLayer {
+// FindLayerByName returns a pointer to the layer with the given name,
+// or nil if not found.
+func FindLayerByName(layers []DefenseLayer, name string) *DefenseLayer {
 	for i := range layers {
 		if layers[i].Name == name {
 			return &layers[i]

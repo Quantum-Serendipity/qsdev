@@ -9,16 +9,23 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 )
 
+// cpuPeriodMicroseconds is the fixed CPU period used in cgroup cpu.max values.
+const cpuPeriodMicroseconds = 100_000
+
 // Manager creates and removes cgroup scopes for sandboxed hook execution.
 type Manager struct {
 	basePath string // e.g., /sys/fs/cgroup/user.slice/user-1000.slice
 }
 
 // NewManager returns a Manager rooted at the cgroup user slice for uid.
-func NewManager(uid string) *Manager {
+// The uid must be a non-negative integer; an error is returned otherwise.
+func NewManager(uid string) (*Manager, error) {
+	if _, err := strconv.Atoi(uid); err != nil {
+		return nil, fmt.Errorf("invalid UID %q: must be a non-negative integer", uid)
+	}
 	return &Manager{
 		basePath: "/sys/fs/cgroup/user.slice/user-" + uid + ".slice",
-	}
+	}, nil
 }
 
 // ScopePath returns the full path to a named cgroup scope directory.
@@ -69,8 +76,8 @@ func formatPIDsMax(maxPIDs int) []byte {
 }
 
 // formatCPUMax formats the cpu.max cgroup control value as "<quota> <period>".
-// The quota is CPUQuotaPercent * 1000 and the period is always 100000.
+// The quota is CPUQuotaPercent * 1000 and the period is always cpuPeriodMicroseconds.
 func formatCPUMax(cpuQuotaPercent int) []byte {
 	quota := cpuQuotaPercent * 1000
-	return []byte(strconv.Itoa(quota) + " 100000")
+	return []byte(strconv.Itoa(quota) + " " + strconv.Itoa(cpuPeriodMicroseconds))
 }

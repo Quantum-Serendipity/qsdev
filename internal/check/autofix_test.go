@@ -35,6 +35,7 @@ func TestApplyAutoFixes_DenyRules(t *testing.T) {
 			Severity:    SeverityMedium,
 			Message:     "Required deny rule missing: Bash(git push --force *)",
 			AutoFixable: true,
+			Metadata:    map[string]string{"rule": `Bash(git push --force *)`},
 		},
 		{
 			Name:     "other_check",

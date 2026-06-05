@@ -236,67 +236,6 @@ func TestPreSelectedLanguages_None(t *testing.T) {
 	}
 }
 
-func TestDetectedEcosystemCount_MultipleEcosystems(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		detected types.DetectedProject
-		want     int
-	}{
-		{
-			name: "Go + Python + Docker",
-			detected: types.DetectedProject{
-				HasGoMod:      true,
-				HasPyProject:  true,
-				HasDockerfile: true,
-			},
-			want: 3,
-		},
-		{
-			name: "Just Go",
-			detected: types.DetectedProject{
-				HasGoMod: true,
-			},
-			want: 1,
-		},
-		{
-			name:     "Nothing detected",
-			detected: types.DetectedProject{},
-			want:     0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := devinit.ExportDetectedEcosystemCount(tt.detected)
-			if got != tt.want {
-				t.Errorf("DetectedEcosystemCount() = %d, want %d", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestDetectedEcosystemCount_AllTier1(t *testing.T) {
-	t.Parallel()
-
-	detected := types.DetectedProject{
-		HasGoMod:       true,
-		HasPackageJSON: true,
-		HasPyProject:   true,
-		HasCargoToml:   true,
-		HasPomXML:      true,
-		HasCsproj:      true,
-		HasDockerfile:  true,
-		HasTerraform:   true,
-	}
-	got := devinit.ExportDetectedEcosystemCount(detected)
-	if got != 8 {
-		t.Errorf("DetectedEcosystemCount() = %d, want 8 (all Tier 1)", got)
-	}
-}
-
 func TestDetectionAnnotation_All27Ecosystems(t *testing.T) {
 	t.Parallel()
 

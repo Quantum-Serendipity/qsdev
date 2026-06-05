@@ -73,22 +73,6 @@ func TestInjectLandlock_Unavailable(t *testing.T) {
 	}
 }
 
-func TestExpandDenyPaths(t *testing.T) {
-	t.Parallel()
-	paths := expandDenyPaths()
-	if len(paths) == 0 {
-		t.Error("expected non-empty deny paths")
-	}
-	for _, p := range paths {
-		if p == "" {
-			t.Error("found empty deny path")
-		}
-		if p[0] == '~' {
-			t.Errorf("tilde not expanded in path: %s", p)
-		}
-	}
-}
-
 func assertContains(t *testing.T, s []string, want string) {
 	t.Helper()
 	if !slices.Contains(s, want) {

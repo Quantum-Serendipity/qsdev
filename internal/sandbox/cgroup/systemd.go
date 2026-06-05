@@ -58,7 +58,7 @@ func BuildArgs(cfg *sandbox.SandboxConfig) []string {
 		args = append(args, "-p", "TasksMax="+strconv.Itoa(cfg.Resources.MaxPIDs))
 	}
 
-	if cfg.Resources.CPUQuotaPercent > 0 {
+	if cfg.Resources.CPUQuotaPercent > 0 && cfg.Resources.CPUQuotaPercent <= 10000 {
 		args = append(args, "-p", "CPUQuota="+strconv.Itoa(cfg.Resources.CPUQuotaPercent)+"%")
 	}
 

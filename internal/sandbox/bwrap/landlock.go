@@ -1,24 +1,8 @@
 package bwrap
 
 import (
-	"os/user"
-	"path/filepath"
-
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 )
-
-// credentialDenyPaths are paths that hooks must never read, regardless of
-// policy. Paths starting with ~ are expanded to the user's home directory.
-var credentialDenyPaths = []string{
-	"~/.ssh",
-	"~/.gnupg",
-	"~/.aws",
-	"~/.azure",
-	"~/.config/gcloud",
-	"~/.kube",
-	"~/.docker/config.json",
-	"~/.netrc",
-}
 
 // PrepareLandlockFlags builds the ll-restrict CLI flags for the given config.
 // Returns nil if ll-restrict is unavailable.
@@ -80,22 +64,4 @@ func InjectLandlock(hookCmd []string, cfg *sandbox.SandboxConfig) []string {
 	result = append(result, "--")
 	result = append(result, hookCmd...)
 	return result
-}
-
-// expandDenyPaths resolves ~ in credential deny paths to the user's home.
-func expandDenyPaths() []string {
-	home := ""
-	if u, err := user.Current(); err == nil {
-		home = u.HomeDir
-	}
-
-	paths := make([]string, 0, len(credentialDenyPaths))
-	for _, p := range credentialDenyPaths {
-		if len(p) > 0 && p[0] == '~' && home != "" {
-			paths = append(paths, filepath.Join(home, p[1:]))
-		} else {
-			paths = append(paths, p)
-		}
-	}
-	return paths
 }

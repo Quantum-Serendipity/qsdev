@@ -3,8 +3,10 @@
 package privilege
 
 import (
+	"context"
 	"os"
 	"os/exec"
+	"time"
 )
 
 func NeedsElevation() bool {
@@ -21,12 +23,15 @@ func DetectElevationTool() string {
 }
 
 func HasCachedCredentials() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	tool := DetectElevationTool()
 	switch tool {
 	case "sudo":
-		return exec.Command("sudo", "-n", "true").Run() == nil
+		return exec.CommandContext(ctx, "sudo", "-n", "true").Run() == nil
 	case "doas":
-		return exec.Command("doas", "-n", "true").Run() == nil
+		return exec.CommandContext(ctx, "doas", "-n", "true").Run() == nil
 	default:
 		return false
 	}

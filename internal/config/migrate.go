@@ -44,13 +44,6 @@ func MigrateConfig(raw map[string]any, fromVersion int) (map[string]any, error) 
 			continue
 		}
 
-		// Verify there's no gap in the chain.
-		if m.FromVersion != current {
-			return nil, fmt.Errorf(
-				"migration chain gap: expected migration from version %d but found %d",
-				current, m.FromVersion)
-		}
-
 		migrated, err := m.Migrate(raw)
 		if err != nil {
 			return nil, fmt.Errorf("migration v%d -> v%d (%s): %w",

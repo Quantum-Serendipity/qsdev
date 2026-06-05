@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,7 +58,9 @@ func DoUpdate(ctx context.Context, cfg Config, release *Release) error {
 	// Clean up stale backup from previous update (Windows can't delete running binaries).
 	backupPath := currentPath + ".bak"
 	if _, statErr := os.Stat(backupPath); statErr == nil {
-		os.Remove(backupPath)
+		if err := os.Remove(backupPath); err != nil {
+			slog.Warn("removing stale backup", "path", backupPath, "error", err)
+		}
 	}
 
 	// Create backup.
@@ -68,14 +71,18 @@ func DoUpdate(ctx context.Context, cfg Config, release *Release) error {
 	// Copy new binary to original path.
 	if err := copyFile(newBinaryPath, currentPath, currentMode); err != nil {
 		// Restore backup on copy failure.
-		_ = os.Rename(backupPath, currentPath)
+		if renameErr := os.Rename(backupPath, currentPath); renameErr != nil {
+			slog.Warn("restoring backup after copy failure", "error", renameErr)
+		}
 		return fmt.Errorf("installing new binary: %w", err)
 	}
 
 	// Verify the new binary runs.
 	if err := verifyBinary(ctx, currentPath); err != nil {
 		// Restore backup on verification failure.
-		_ = os.Remove(currentPath)
+		if rmErr := os.Remove(currentPath); rmErr != nil {
+			slog.Warn("removing failed binary", "error", rmErr)
+		}
 		if restoreErr := os.Rename(backupPath, currentPath); restoreErr != nil {
 			return fmt.Errorf("verification failed and restore also failed: %w", errors.Join(err, restoreErr))
 		}
@@ -83,7 +90,9 @@ func DoUpdate(ctx context.Context, cfg Config, release *Release) error {
 	}
 
 	// Success — remove backup.
-	_ = os.Remove(backupPath)
+	if err := os.Remove(backupPath); err != nil {
+		slog.Warn("removing backup after successful update", "error", err)
+	}
 
 	// Print changelog summary.
 	fmt.Fprintf(os.Stderr, "Successfully updated to %s\n", release.Version)

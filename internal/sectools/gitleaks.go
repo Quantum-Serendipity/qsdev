@@ -8,12 +8,25 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// defaultGitleaksAllowPaths lists paths excluded from Gitleaks secret scanning.
-var defaultGitleaksAllowPaths = []string{
-	"vendor/",
-	"node_modules/",
-	".devenv/",
-	"testdata/",
+// gitleaksAllowPaths returns paths excluded from Gitleaks secret scanning.
+// It reuses defaultScanExcludes for entries shared with other scanners,
+// keeping this list for gitleaks-only additions (currently none).
+func gitleaksAllowPaths() []string {
+	// All gitleaks excludes are covered by defaultScanExcludes.
+	// Filter to the subset relevant for secret scanning.
+	relevant := map[string]bool{
+		"vendor/":       true,
+		"node_modules/": true,
+		".devenv/":      true,
+		"testdata/":     true,
+	}
+	var paths []string
+	for _, p := range defaultScanExcludes {
+		if relevant[p] {
+			paths = append(paths, p)
+		}
+	}
+	return paths
 }
 
 // GenerateGitleaksToml produces a .gitleaks.toml configuration file with a
@@ -28,7 +41,7 @@ func GenerateGitleaksToml(_ types.WizardAnswers) (*types.GeneratedFile, error) {
 	b.WriteString("  description = \"Allowlisted paths and patterns\"\n")
 	b.WriteString("  regexes = []\n")
 	b.WriteString("  paths = [\n")
-	for _, p := range defaultGitleaksAllowPaths {
+	for _, p := range gitleaksAllowPaths() {
 		fmt.Fprintf(&b, "    %q,\n", p)
 	}
 	b.WriteString("  ]\n")

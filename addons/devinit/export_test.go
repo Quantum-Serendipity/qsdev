@@ -86,9 +86,6 @@ var (
 	// ExportPreSelectedLanguages exposes PreSelectedLanguages for external tests.
 	ExportPreSelectedLanguages = PreSelectedLanguages
 
-	// ExportDetectedEcosystemCount exposes DetectedEcosystemCount for external tests.
-	ExportDetectedEcosystemCount = DetectedEcosystemCount
-
 	// ExportQuickPathSummary exposes QuickPathSummary for external tests.
 	ExportQuickPathSummary = QuickPathSummary
 

@@ -37,13 +37,34 @@ Flags explicitly set on the command line always take precedence over profile def
 
 | Profile | When to Use |
 |---------|-------------|
-| `consulting-default` | Multi-client consulting shops; enhanced security (semgrep, gitleaks, secretspec) |
-| `startup-github` | GitHub-native; baseline security, minimal overhead |
-| `enterprise` | Regulated environments; strict security, audit logging, SBOM |
+| `consulting-default` | Multi-client consulting shops; Nexus proxy, OSV + Socket scanning, Renovate with 3-day age gate |
+| `startup-github` | GitHub-native; GitHub Packages, OSV + Socket scanning, Dependabot |
+| `enterprise` | Regulated environments; Artifactory, Snyk + Socket scanning, Renovate with 7-day age gate, Cosign signing |
 
 ```bash
 qsdev init --profile go-web --infra-profile enterprise --yes
 ```
+
+### Compliance Levels
+
+Each security tier maps to a compliance level that controls age-gating thresholds, required hooks, and SBOM policy:
+
+| Level | Age Gate | Required Hooks | SBOM Policy |
+|-------|---------|----------------|-------------|
+| `baseline` | 72 hours | ripsecrets, gitleaks | Off |
+| `enhanced` | 168 hours (1 week) | ripsecrets, gitleaks, semgrep | On release |
+| `strict` | 336 hours (2 weeks) | ripsecrets, gitleaks, semgrep, license-compliance | Every build |
+
+### Container Runtime
+
+qsdev auto-detects whether your project uses Docker or Podman and generates runtime-specific configs:
+
+```bash
+qsdev container detect     # Show detected runtime and capabilities
+qsdev container migrate    # Analyze compose files for Docker-to-Podman compatibility
+```
+
+When Podman is detected, qsdev generates rootless-aware configurations, blocks Docker socket mounts, and adds Podman-specific deny rules. On NixOS, it generates a Podman rootless setup guide at `docs/nixos-podman-rootless.md`.
 
 ## Configuring Security Policies
 
@@ -108,7 +129,7 @@ Six built-in skills are available for Claude Code workflows:
 | `deploy` | Deploy to staging/production via CI pipeline | No |
 | `review-pr` | Structured pull request review with checklist | No |
 | `security-review` | Security-focused code review with OWASP checks | No |
-| `generate-tests` | Generate comprehensive test suites for existing code | No |
+| `generate-tests` | Generate test suites for existing code | No |
 | `refactor` | Refactor code for clarity, performance, and maintainability | No |
 | `db-migration` | Create safe, reversible database schema migrations | Go, Python, JavaScript |
 
@@ -133,14 +154,21 @@ qsdev claude list-skills
 
 ## Configuring Hooks
 
-Four hook presets control Claude Code runtime behavior:
+Hook presets control Claude Code runtime behavior:
 
 | Hook | Effect |
 |------|--------|
 | `safety-block` | Installs `package-guard.py` as a PreToolUse hook; intercepts package install commands in real-time |
+| `credential-scan` | Scans Write/Edit operations for credentials before they reach disk |
+| `destructive-prevention` | Blocks destructive Bash commands (rm -rf, git push --force, etc.) |
+| `file-boundary` | Prevents Write/Edit/Read operations outside the project tree |
+| `tool-gates` | Enforces per-tool approval policies on all tool invocations |
+| `soc2-audit` | Logs session start/end, tool invocations, and checkpoints for SOC 2 compliance (4-event audit trail with monthly rotation) |
 | `auto-format` | Runs formatters after file writes |
 | `pre-commit` | Runs pre-commit checks before git operations |
-| `audit-log` | Logs all tool invocations for compliance auditing |
+| `audit-log` | Logs all tool invocations for compliance auditing (simpler alternative to soc2-audit) |
+
+All hooks run inside the sandbox when available (see `qsdev sandbox status`).
 
 ```bash
 # At init time

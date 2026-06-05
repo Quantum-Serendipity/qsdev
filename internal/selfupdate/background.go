@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -43,9 +44,10 @@ func BackgroundCheck(currentVersion string) <-chan string {
 		case release := <-done:
 			if release != nil {
 				app := branding.Get().AppName
+				cur := strings.TrimPrefix(currentVersion, "v")
 				notice := fmt.Sprintf(
-					"A new version of %s is available: %s (current: %s)\nRun '%s self-update' to update.",
-					app, release.Version, currentVersion, app,
+					"A new version of %s is available: v%s (current: v%s)\nRun '%s self-update' to update.",
+					app, release.Version, cur, app,
 				)
 				ch <- notice
 			}

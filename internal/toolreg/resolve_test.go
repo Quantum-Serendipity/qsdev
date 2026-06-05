@@ -1,6 +1,7 @@
 package toolreg
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -129,7 +130,7 @@ func TestValidateEnable_UnknownTool(t *testing.T) {
 
 func TestValidateDisable_Success(t *testing.T) {
 	reg := newTestRegistry(
-		Tool{Name: "standalone", Category: CategorySecurity},
+		Tool{Name: "standalone", Category: CategorySecurity, Default: OptIn},
 	)
 	enabled := map[string]bool{"standalone": true}
 
@@ -141,8 +142,8 @@ func TestValidateDisable_Success(t *testing.T) {
 
 func TestValidateDisable_NoDependents(t *testing.T) {
 	reg := newTestRegistry(
-		Tool{Name: "base", Category: CategorySecurity},
-		Tool{Name: "unrelated", Category: CategoryDevEx},
+		Tool{Name: "base", Category: CategorySecurity, Default: OptIn},
+		Tool{Name: "unrelated", Category: CategoryDevEx, Default: OptIn},
 	)
 	enabled := map[string]bool{"base": true, "unrelated": true}
 
@@ -154,8 +155,8 @@ func TestValidateDisable_NoDependents(t *testing.T) {
 
 func TestValidateDisable_DependentEnabled(t *testing.T) {
 	reg := newTestRegistry(
-		Tool{Name: "base", Category: CategorySecurity},
-		Tool{Name: "addon", Category: CategorySecurity, Prerequisites: []string{"base"}},
+		Tool{Name: "base", Category: CategorySecurity, Default: OptIn},
+		Tool{Name: "addon", Category: CategorySecurity, Default: OptIn, Prerequisites: []string{"base"}},
 	)
 	enabled := map[string]bool{"base": true, "addon": true}
 
@@ -173,8 +174,8 @@ func TestValidateDisable_DependentEnabled(t *testing.T) {
 
 func TestValidateDisable_DependentNotEnabled(t *testing.T) {
 	reg := newTestRegistry(
-		Tool{Name: "base", Category: CategorySecurity},
-		Tool{Name: "addon", Category: CategorySecurity, Prerequisites: []string{"base"}},
+		Tool{Name: "base", Category: CategorySecurity, Default: OptIn},
+		Tool{Name: "addon", Category: CategorySecurity, Default: OptIn, Prerequisites: []string{"base"}},
 	)
 	// addon exists but is not enabled, so disabling base should be fine.
 	enabled := map[string]bool{"base": true}
@@ -187,9 +188,9 @@ func TestValidateDisable_DependentNotEnabled(t *testing.T) {
 
 func TestValidateDisable_MultipleDependents(t *testing.T) {
 	reg := newTestRegistry(
-		Tool{Name: "base", Category: CategorySecurity},
-		Tool{Name: "child-a", Category: CategorySecurity, Prerequisites: []string{"base"}},
-		Tool{Name: "child-b", Category: CategoryDevEx, Prerequisites: []string{"base"}},
+		Tool{Name: "base", Category: CategorySecurity, Default: OptIn},
+		Tool{Name: "child-a", Category: CategorySecurity, Default: OptIn, Prerequisites: []string{"base"}},
+		Tool{Name: "child-b", Category: CategoryDevEx, Default: OptIn, Prerequisites: []string{"base"}},
 	)
 	enabled := map[string]bool{"base": true, "child-a": true, "child-b": true}
 
@@ -202,6 +203,25 @@ func TestValidateDisable_MultipleDependents(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "child-b") {
 		t.Fatalf("expected error mentioning child-b, got %q", err.Error())
+	}
+}
+
+func TestValidateDisable_AlwaysOn(t *testing.T) {
+	reg := newTestRegistry(
+		Tool{Name: "always-tool", Category: CategorySecurity, Default: AlwaysOn},
+	)
+	enabled := map[string]bool{"always-tool": true}
+
+	err := ValidateDisable(reg, "always-tool", enabled)
+	if err == nil {
+		t.Fatal("expected error for always-on tool, got nil")
+	}
+	var alwaysOnErr *AlwaysOnError
+	if !errors.As(err, &alwaysOnErr) {
+		t.Fatalf("expected AlwaysOnError, got %T: %v", err, err)
+	}
+	if alwaysOnErr.ToolName != "always-tool" {
+		t.Fatalf("expected tool name %q, got %q", "always-tool", alwaysOnErr.ToolName)
 	}
 }
 

@@ -544,7 +544,7 @@ tools:
         owned_files:
             - path: .mcp.json
               ownership: shared
-              section_id: github-mcp
+              section_id: github
             - path: CLAUDE.md
               ownership: shared
               section_id: github-mcp
@@ -613,7 +613,7 @@ tools:
         owned_files:
             - path: .mcp.json
               ownership: shared
-              section_id: postgres-mcp
+              section_id: postgres
             - path: CLAUDE.md
               ownership: shared
               section_id: postgres-mcp
@@ -691,7 +691,7 @@ tools:
         owned_files:
             - path: .mcp.json
               ownership: shared
-              section_id: socket-dev-mcp
+              section_id: socket
             - path: CLAUDE.md
               ownership: shared
               section_id: socket-dev-mcp

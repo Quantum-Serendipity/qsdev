@@ -1,6 +1,9 @@
 package toolreg
 
-import "github.com/Quantum-Serendipity/qsdev/internal/catalog"
+import (
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
+)
 
 // BuildFromCatalog creates a Registry pre-loaded with tool metadata from
 // the YAML catalog. Tools get declarative fields (name, display name,
@@ -35,6 +38,20 @@ func BuildFromCatalog() *Registry {
 		if def.ToggleField != "" {
 			t.EnableFunc = toggleEnableFunc(def.ToggleField)
 			t.DisableFunc = toggleDisableFunc(def.ToggleField)
+		}
+
+		// Auto-populate SharedContent from catalog section_content values.
+		// Tools with dynamic templates override these via AttachBehavior.
+		for _, owned := range t.OwnedFiles {
+			if owned.Ownership == Shared && owned.SectionID != "" && owned.SectionContent != "" {
+				if t.SharedContent == nil {
+					t.SharedContent = make(map[string]SharedContentFunc)
+				}
+				content := owned.SectionContent
+				t.SharedContent[owned.SectionID] = func(_ types.WizardAnswers) ([]byte, error) {
+					return []byte(content), nil
+				}
+			}
 		}
 
 		r.tools[name] = &t

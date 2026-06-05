@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -155,7 +156,7 @@ func runFullUpdate(cmd *cobra.Command, opts FullUpdateOptions) error {
 func runSelfUpdateStage(opts FullUpdateOptions) StageResult {
 	_ = opts // reserved for future use (e.g. auto-apply)
 
-	currentVersion := version.Info().Version
+	currentVersion := strings.TrimPrefix(version.Info().Version, "v")
 
 	// Skip for dev builds.
 	if currentVersion == "" || currentVersion == "dev" || currentVersion == "(devel)" {

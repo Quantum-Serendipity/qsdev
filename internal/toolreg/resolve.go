@@ -31,11 +31,26 @@ func ValidateEnable(registry *Registry, toolName string, enabledTools map[string
 	return nil
 }
 
-// ValidateDisable checks that disabling toolName is valid — no other
-// enabled tool lists it as a prerequisite.
+// AlwaysOnError is returned when attempting to disable a tool that has
+// always-on policy. The caller may bypass this with --force.
+type AlwaysOnError struct {
+	ToolName string
+}
+
+func (e *AlwaysOnError) Error() string {
+	return fmt.Sprintf("cannot disable %q: tool has always-on policy; use --force to override", e.ToolName)
+}
+
+// ValidateDisable checks that disabling toolName is valid — the tool must
+// not be always-on (unless forced) and no other enabled tool may depend on it.
 func ValidateDisable(registry *Registry, toolName string, enabledTools map[string]bool) error {
-	if _, ok := registry.ByName(toolName); !ok {
+	tool, ok := registry.ByName(toolName)
+	if !ok {
 		return fmt.Errorf("unknown tool %q; use 'qsdev list' to see available tools", toolName)
+	}
+
+	if tool.Default == AlwaysOn {
+		return &AlwaysOnError{ToolName: toolName}
 	}
 
 	var dependents []string

@@ -87,18 +87,8 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 	// 4b. AlwaysOn tool configs (Standard+): security tools that must be
 	// present regardless of tier.
 	reg := toolreg.DefaultRegistry()
-	alreadyHandled := map[string]bool{
-		"attach-guard":         true,
-		"agent-postmortem":     true,
-		"version-sentinel":     true,
-		"semble":               true,
-		"trail-of-bits-skills": true,
-	}
 	for _, tool := range reg.All() {
 		if tool.Default != toolreg.AlwaysOn {
-			continue
-		}
-		if alreadyHandled[tool.Name] {
 			continue
 		}
 		if tool.GenerateFunc == nil {
@@ -209,8 +199,16 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 	}
 
 	// 15. Tool generation: explicitly enabled (opt-in) tools.
+	// Derive already-generated set from Owner fields to avoid re-generating
+	// tools handled by specialized code above.
+	alreadyGenerated := make(map[string]bool, len(files))
+	for _, f := range files {
+		if f.Owner != "" {
+			alreadyGenerated[f.Owner] = true
+		}
+	}
 	for _, tool := range reg.All() {
-		if alreadyHandled[tool.Name] {
+		if alreadyGenerated[tool.Name] {
 			continue
 		}
 		if tool.Default == toolreg.AlwaysOn {

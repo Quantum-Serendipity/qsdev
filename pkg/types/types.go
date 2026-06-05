@@ -236,6 +236,20 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 		if detected.HasTerraform {
 			a.Languages = append(a.Languages, LanguageChoice{Name: "terraform"})
 		}
+
+		// Tier 2+ ecosystems: add any detected ecosystem not covered above.
+		tier1Names := map[string]bool{
+			"go": true, "javascript": true, "python": true,
+			"rust": true, "java": true, "dotnet": true,
+			"container": true, "terraform": true,
+			"node": true, "docker": true,
+		}
+		for name := range detected.Ecosystems {
+			if tier1Names[name] {
+				continue
+			}
+			a.Languages = append(a.Languages, LanguageChoice{Name: name})
+		}
 	}
 
 	// Merge detected versions into existing language entries that lack one.

@@ -145,7 +145,12 @@ func (r *Registry) AttachBehavior(name string, b ToolBehavior) {
 		t.GenerateFunc = b.GenerateFunc
 	}
 	if b.SharedContent != nil {
-		t.SharedContent = b.SharedContent
+		if t.SharedContent == nil {
+			t.SharedContent = make(map[string]SharedContentFunc)
+		}
+		for k, v := range b.SharedContent {
+			t.SharedContent[k] = v
+		}
 	}
 	if b.SectionDataFunc != nil {
 		t.SectionDataFunc = b.SectionDataFunc

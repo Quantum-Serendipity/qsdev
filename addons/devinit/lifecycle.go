@@ -1,6 +1,7 @@
 package devinit
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -211,9 +212,14 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 		return nil
 	}
 
-	// Validate that no other enabled tool depends on this one.
+	// Validate that the tool can be disabled.
 	if err := toolreg.ValidateDisable(registry, toolName, answers.EnabledTools); err != nil {
-		return err
+		var alwaysOnErr *toolreg.AlwaysOnError
+		if errors.As(err, &alwaysOnErr) && opts.Force {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: disabling always-on tool %q.\n", toolName)
+		} else {
+			return err
+		}
 	}
 
 	// Load state and check for user modifications on owned files.
@@ -318,6 +324,17 @@ func saveDisableState(stateFile, toolName string, existingState types.GeneratedS
 func runList(cmd *cobra.Command, opts listOptions) error {
 	registry := toolreg.DefaultRegistry()
 
+	// Load project state for enabled/disabled display.
+	projectRoot, _ := cmdutil.ProjectRoot()
+	var enabledTools map[string]bool
+	if projectRoot != "" {
+		if ans, err := loadAnswersOrEmpty(projectRoot); err == nil {
+			ans.ProjectRoot = projectRoot
+			toolreg.InferEnabledTools(&ans, registry)
+			enabledTools = ans.EnabledTools
+		}
+	}
+
 	var tools []*toolreg.Tool
 	if opts.Category != "" {
 		cat := toolreg.ToolCategory(opts.Category)
@@ -326,7 +343,7 @@ func runList(cmd *cobra.Command, opts listOptions) error {
 			fmt.Fprintf(cmd.OutOrStdout(), "No tools found in category %q.\n", opts.Category)
 			return nil
 		}
-		printToolGroup(cmd, cat, tools)
+		printToolGroup(cmd, cat, tools, enabledTools)
 		return nil
 	}
 
@@ -339,7 +356,7 @@ func runList(cmd *cobra.Command, opts listOptions) error {
 	// Group by category, preserving sort order from registry.All().
 	groups := groupByCategory(tools)
 	for _, g := range groups {
-		printToolGroup(cmd, g.category, g.tools)
+		printToolGroup(cmd, g.category, g.tools, enabledTools)
 		fmt.Fprintln(cmd.OutOrStdout())
 	}
 	return nil
@@ -368,7 +385,7 @@ func groupByCategory(tools []*toolreg.Tool) []categoryGroup {
 	return groups
 }
 
-func printToolGroup(cmd *cobra.Command, cat toolreg.ToolCategory, tools []*toolreg.Tool) {
+func printToolGroup(cmd *cobra.Command, cat toolreg.ToolCategory, tools []*toolreg.Tool, enabledTools map[string]bool) {
 	fmt.Fprintf(cmd.OutOrStdout(), "%s:\n", cat.DisplayName())
 
 	// Sort by name within category for consistent output.
@@ -380,7 +397,15 @@ func printToolGroup(cmd *cobra.Command, cat toolreg.ToolCategory, tools []*toolr
 
 	for _, t := range sorted {
 		defaultStr := t.Default.String()
-		fmt.Fprintf(cmd.OutOrStdout(), "  %-25s  %-15s  %s\n", t.Name, "("+defaultStr+")", t.Description)
+		stateStr := ""
+		if enabledTools != nil {
+			if enabledTools[t.Name] {
+				stateStr = "[enabled]  "
+			} else {
+				stateStr = "[disabled] "
+			}
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "  %-25s  %-15s  %s%s\n", t.Name, "("+defaultStr+")", stateStr, t.Description)
 	}
 }
 

@@ -2,6 +2,7 @@ package claudecode
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
@@ -177,7 +178,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		files = append(files, *refFile)
 	}
 
-	// 15. AlwaysOn tool generation (semgrep, gitleaks, etc.)
+	// 15. Tool generation: AlwaysOn + explicitly enabled tools.
 	reg := toolreg.DefaultRegistry()
 	alreadyHandled := map[string]bool{
 		"attach-guard":         true,
@@ -187,13 +188,18 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		"trail-of-bits-skills": true,
 	}
 	for _, tool := range reg.All() {
-		if tool.Default != toolreg.AlwaysOn {
-			continue
-		}
 		if alreadyHandled[tool.Name] {
 			continue
 		}
+		if strings.HasPrefix(tool.Name, "consulting-agent-") ||
+			strings.HasPrefix(tool.Name, "consulting-workflow-") {
+			continue
+		}
 		if tool.GenerateFunc == nil {
+			continue
+		}
+		shouldGenerate := tool.Default == toolreg.AlwaysOn || answers.EnabledTools[tool.Name]
+		if !shouldGenerate {
 			continue
 		}
 		toolFiles, err := tool.GenerateFunc(answers)

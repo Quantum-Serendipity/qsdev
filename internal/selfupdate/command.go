@@ -3,6 +3,7 @@ package selfupdate
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -65,8 +66,8 @@ during the update and restored if anything goes wrong.`,
 				return nil
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Updating from %s to %s...\n",
-				currentVersion, release.Version)
+			fmt.Fprintf(cmd.OutOrStdout(), "Updating from v%s to v%s...\n",
+				strings.TrimPrefix(currentVersion, "v"), release.Version)
 
 			if err := DoUpdate(ctx, cfg, release); err != nil {
 				return err

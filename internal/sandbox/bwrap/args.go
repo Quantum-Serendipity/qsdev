@@ -1,13 +1,35 @@
 package bwrap
 
 import (
+	"fmt"
+
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 )
 
 // BuildArgs constructs the bwrap command-line arguments for the given sandbox
 // configuration and degradation tier. The returned slice does NOT include
-// "bwrap" itself; the caller prepends that.
-func BuildArgs(cfg *sandbox.SandboxConfig, _ sandbox.DegradationTier) []string {
+// "bwrap" itself; the caller prepends that. It validates all mount source paths
+// and the project directory before constructing arguments.
+func BuildArgs(cfg *sandbox.SandboxConfig, _ sandbox.DegradationTier) ([]string, error) {
+	if cfg.ProjectDir != "" {
+		if err := ValidateMountPath(cfg.ProjectDir); err != nil {
+			return nil, fmt.Errorf("validating project dir: %w", err)
+		}
+	}
+	for _, m := range cfg.Mounts {
+		if err := ValidateMountPath(m.Source); err != nil {
+			return nil, fmt.Errorf("validating mount source: %w", err)
+		}
+		if err := ValidateMountPath(m.Target); err != nil {
+			return nil, fmt.Errorf("validating mount target: %w", err)
+		}
+	}
+	for _, p := range cfg.NixStorePaths {
+		if err := ValidateMountPath(p); err != nil {
+			return nil, fmt.Errorf("validating nix store path: %w", err)
+		}
+	}
+
 	var args []string
 
 	// 1. Namespace flags.
@@ -60,5 +82,5 @@ func BuildArgs(cfg *sandbox.SandboxConfig, _ sandbox.DegradationTier) []string {
 		args = append(args, "--ro-bind", p, p)
 	}
 
-	return args
+	return args, nil
 }

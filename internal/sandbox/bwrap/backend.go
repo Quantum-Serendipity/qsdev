@@ -47,7 +47,10 @@ func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 
 	setupStart := time.Now()
 
-	args := BuildArgs(cfg, b.tier)
+	args, err := BuildArgs(cfg, b.tier)
+	if err != nil {
+		return nil, fmt.Errorf("building sandbox args: %w", err)
+	}
 
 	// Append the hook command after the bwrap args.
 	args = append(args, "--")
@@ -68,7 +71,7 @@ func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 
-	err := cmd.Run()
+	err = cmd.Run()
 	duration := time.Since(execStart)
 
 	exitCode := 0

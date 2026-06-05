@@ -1,33 +1,19 @@
 package policy
 
 import (
-	"os"
-	"path/filepath"
+	"log/slog"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
 )
 
 // DefaultPolicy returns a PolicySpec with sensible security defaults suitable
 // for most projects. Credential directories are denied, network is blocked,
 // and the five standard hook categories are pre-configured.
 func DefaultPolicy() *PolicySpec {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "/home/unknown"
-	}
-
 	return &PolicySpec{
 		Filesystem: FilesystemPolicy{
-			Deny: []string{
-				filepath.Join(home, ".ssh"),
-				filepath.Join(home, ".gnupg"),
-				filepath.Join(home, ".aws"),
-				filepath.Join(home, ".azure"),
-				filepath.Join(home, ".config", "gcloud"),
-				filepath.Join(home, ".kube"),
-				filepath.Join(home, ".docker", "config.json"),
-				filepath.Join(home, ".netrc"),
-			},
+			Deny: denylist.AllDenyPaths(),
 		},
 		Network: NetworkPolicySpec{
 			Mode:    "deny",
@@ -101,6 +87,10 @@ func ToSandboxConfig(spec *PolicySpec, category sandbox.HookCategory, hookName s
 		cfg.Network.Mode = catPolicy.Network
 
 		for _, m := range catPolicy.ExtraMounts {
+			if err := ValidateMountDecl(m); err != nil {
+				slog.Warn("skipping invalid category mount", "category", effectiveCategory, "error", err)
+				continue
+			}
 			cfg.Mounts = append(cfg.Mounts, sandbox.MountSpec{
 				Source:   m.Source,
 				Target:   m.Target,
@@ -116,6 +106,10 @@ func ToSandboxConfig(spec *PolicySpec, category sandbox.HookCategory, hookName s
 		}
 
 		for _, m := range override.ExtraMounts {
+			if err := ValidateMountDecl(m); err != nil {
+				slog.Warn("skipping invalid override mount", "hook", hookName, "error", err)
+				continue
+			}
 			cfg.Mounts = append(cfg.Mounts, sandbox.MountSpec{
 				Source:   m.Source,
 				Target:   m.Target,

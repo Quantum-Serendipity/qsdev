@@ -64,6 +64,10 @@ StepSecurity Harden-Runner provides egress traffic monitoring and policy enforce
 for GitHub Actions workflows. It detects compromised actions, credential exfiltration,
 and unauthorized network access during CI builds.
 
+### OpenGrep (opt-in)
+
+OpenGrep provides taint-focused static analysis with 96 custom rules targeting injection flaws, deserialization, and authentication bypasses across 7 frameworks. Enable with `qsdev enable opengrep`.
+
 ## References
 
 - [Socket.dev](https://socket.dev/) — Behavioral supply chain analysis

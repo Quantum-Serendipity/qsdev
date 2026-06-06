@@ -4,14 +4,20 @@ Planned enhancements for the v1 release cycle. Items are grouped by theme and or
 
 The full implementation plan spans 71 phases across 8 depth levels. This roadmap covers the publicly visible features; see the internal implementation plan for phase dependencies, unit estimates, and parallelization strategy.
 
-## Foundation Enhancements
+## Recently Shipped
 
-Features that improve the already-shipped MVP core.
+Features delivered since MVP:
 
-- **Fragment-based orchestration** — Modules produce typed Fragment objects instead of directly writing to shared files; an orchestrator merges fragments with priority ordering and security floor enforcement
-- **Golden-file test infrastructure** — Snapshot-based testing for all generated configuration files
-- **CI template generation** — Security-hardened GitHub Actions workflows generated from ecosystem detection, with SHA-pinned action refs and `permissions: {}` defaults
-- **DX polish** — `qsdev repair` with backup-before-modify, `qsdev info` for subsecond project context, `qsdev outdated` for cross-ecosystem dependency freshness, improved error messages and shell completion
+- **Fragment-based orchestration** (P15) — Modules produce typed Fragment objects with 5 compose modes (replace, append, section, merge-JSON, merge-YAML); an orchestrator merges fragments with priority ordering and security floor enforcement
+- **Managed hook policies** (P16) — Declarative hook registry with 3-tier deployment hierarchy (project, team, org), credential scanning, destructive operation prevention, SOC 2 audit logging, and dependency oversight hooks
+- **Container runtime modernization** (P17) — Docker ecosystem module renamed to "container" with runtime-agnostic support for Docker and Podman rootless; `qsdev container detect` and `qsdev container migrate` for Docker-to-Podman migration analysis
+- **Hook execution sandboxing** (P18) — Bubblewrap-based sandbox with Landlock filesystem restriction and seccomp-BPF syscall filtering; 5 degradation tiers from full isolation to unsandboxed; `qsdev sandbox exec` and `qsdev sandbox status` commands
+- **Multi-framework shared primitives** (P19) — 7 Go interfaces (DetectionAdapter, ConfigRenderer, HookDeployer, etc.) abstracting all AI framework addons for future multi-framework support
+- **OpenGrep custom rule library** (P20) — 96 taint-focused security rules covering 7 frameworks (Next.js, FastAPI, Gin, NestJS, SvelteKit, Prisma, Drizzle) across TypeScript, Python, and Go
+- **Wizard & orchestration refinements** (P21) — `--theme` flag (charm, dracula, catppuccin, base16, default), `--quiet` flag, terminal detection guard, AI tools form consolidation
+- **Golden-file test infrastructure** — Snapshot-based testing for generated configuration files with `GOLDEN_UPDATE=1` support
+- **CI template generation** — Security-hardened GitHub Actions workflows with SHA-pinned action refs and `permissions: {}` defaults
+- **DX polish** — `qsdev repair` with backup-before-modify, `qsdev info` for subsecond project context, `qsdev outdated` for cross-ecosystem dependency freshness, `qsdev check --auto-fix` for deleted files and deny rules, background self-update checks
 
 ## Security & Supply Chain
 
@@ -22,8 +28,6 @@ Deepening the 10-layer defense stack.
 - **Interactive bypass system** — Configuration-guard rules with `qsdev hook bypass-next` for authorized overrides, shadow-mode calibration for safe rule rollout, circuit breaker pattern
 - **SBOM and attestation** — Dual-format SBOMs (SPDX 2.3 + CycloneDX 1.5) via Syft, cosign keyless signing, govulncheck OpenVEX output, SLSA Build Level 2 compliance; `qsdev sbom` CLI command
 - **Consolidated security binary** — Single `qsdev-hook` binary replacing Python hook scripts, with <50ms PreToolUse execution and advanced evasion detection (base64, shell expansion, indirect writes)
-- **Hook execution sandboxing** — Bubblewrap-based 7-layer sandbox (user/mount/PID/network/IPC namespaces) with Landlock LSM and seccomp-BPF syscall filtering
-- **OpenGrep custom rule library** — ~160–220 custom security rules (core taint-focused + pattern rules) with OpenGrep Nix packaging
 - **Cache poisoning defense** — CREEP detection rules for CI caches, branch-scoped isolation (restore-only for PRs), OIDC sub claim enforcement
 - **Content signing for MCP** — Minisign Ed25519 signing for documentation, Unicode normalization, datamarking for prompt injection defense
 
@@ -42,7 +46,6 @@ New capabilities for understanding vulnerability impact.
 
 Expanding AI framework support and agent capabilities.
 
-- **Multi-framework shared primitives** — 7 Go interfaces (DetectionAdapter, ConfigRenderer, HookDeployer, etc.) abstracting all AI framework addons
 - **Universal MCP server** — Single `qsdev mcp serve` command serving 8+ AI frameworks with CWD-based project detection and framework auto-detection
 - **AI config portability** — `qsdev init --portable` generating AGENTS.md; `.qsdev/ai-config.yaml` canonical format compiling to 9 targets (Claude, AGENTS.md, Cursor, Windsurf, Copilot, Gemini CLI, Amazon Q/Kiro, Aider, Continue.dev)
 - **LSP default configuration library** — Pre-configured LSP settings for 22 language servers, PreToolUse hook redirecting grep-on-symbols to LSP tools
@@ -57,7 +60,6 @@ Expanding AI framework support and agent capabilities.
 - **Cloud credential isolation** — Per-project AWS, GCP, and Azure CLI credential scoping with 3-layer fail-safe (environment separation, credential file masking, agent deny rules)
 - **Kubernetes ecosystem modules** — kubectl, enhanced Helm module, kubescape security scanning with per-project KUBECONFIG enforcement
 - **Expanded service detection** — Kafka, MinIO, Mailpit, Keycloak, NATS (11 total services, up from 6)
-- **Container runtime modernization** — Podman rootless as default backend, `ContainerRuntime` Go abstraction, `qsdev container migrate` tooling
 
 ## Developer Experience
 
@@ -75,7 +77,6 @@ Expanding AI framework support and agent capabilities.
 ## Consulting & Team Management
 
 - **Encrypted client profiles** — `qsdev profile create/switch/list/delete` with sops+age encryption for client secrets and profile-scoped compliance enforcement
-- **Consulting enforcement hooks** — 6 hook configs: credential scanning, destructive-op prevention, SOC 2 audit logging, dependency oversight, file boundary enforcement, tool approval gates
 - **Observability and analytics** — JSONL event hub, OpenTelemetry sidecar, ccusage integration for per-model cost tracking; `qsdev observe` CLI
 - **Consulting lifecycle management** — 6-phase teardown protocol covering 10 artifact layers, tamper-evident audit logs, cost governance with Stop hook budget enforcement
 - **Bot identity and team knowledge** — 5-layer bot identity verification, git-monorepo team vault distributing 10 functional knowledge packs

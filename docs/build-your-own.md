@@ -202,8 +202,12 @@ go build -ldflags "-X main.version=1.2.3 -X main.commit=$(git rev-parse --short 
 
 By importing qsdev, your tool ships with:
 
-- **27 ecosystem modules** — Go, JavaScript/TypeScript, Python, Rust, Java, .NET, Ruby, PHP, Swift, Scala, Elixir, Haskell, Zig, C/C++, Dart, Clojure, Lua, Perl, R, Shell, PowerShell, Nix, Docker, Terraform, Helm, Ansible, Bazel
+- **27 ecosystem modules** — Go, JavaScript/TypeScript, Python, Rust, Java, .NET, Ruby, PHP, Swift, Scala, Elixir, Haskell, Zig, C/C++, Dart, Clojure, Lua, Perl, R, Shell, PowerShell, Nix, Containers, Terraform, Helm, Ansible, Bazel
 - **Supply chain security** — lockfile enforcement, age-gating, registry pinning, deny rules per ecosystem
 - **AI agent configuration** — Claude Code permissions, PreToolUse hooks, skill scaffolding
 - **devenv.sh generation** — languages, services, packages, pre-commit hooks, all from one config
+- **Fragment accumulation** — multi-addon file composition with 5 merge modes (replace, append, section, merge-JSON, merge-YAML)
+- **Lifecycle hooks** — PostCollect and PostResolve hooks for custom addon integration
+- **Tool behavior system** — two-phase tool registration: YAML catalog for metadata, Go functions (EnableFunc, DisableFunc, GenerateFunc, DetectFunc) for behavior
+- **Hook execution sandboxing** — bubblewrap + landlock + seccomp isolation with 5 degradation tiers
 - **Self-update** — GitHub release checking, in-place binary update

@@ -279,7 +279,7 @@ If `devenv test` reports credential variables are set:
 
 ### MCP server "unknown" error
 
-Seven built-in MCP servers are recognized: `github`, `filesystem`, `postgres`, `fetch`, `socket`, `semble`, `context7`. Custom servers must be added by editing `.mcp.json` directly after generation.
+qsdev configures 4 AlwaysOn MCP servers: `context7`, `github`, `socket`, `semble`. Claude Code itself recognizes additional servers (`filesystem`, `postgres`, `fetch`) but qsdev does not manage them. Custom servers must be added by editing `.mcp.json` directly after generation.
 
 ### Corrupted or drifted configuration files
 
@@ -290,3 +290,9 @@ qsdev repair
 ```
 
 This restores managed files to their expected state while preserving your customizations in merge-strategy files.
+
+Alternatively, `qsdev check --auto-fix` can restore deleted generated files and add missing deny rules in a single pass.
+
+### Docker module renamed to container
+
+The `docker` ecosystem module was renamed to `container` to support both Docker and Podman. Existing `.qsdev.yaml` files with `name: docker` are handled transparently — no manual migration is needed.

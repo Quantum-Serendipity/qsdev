@@ -102,7 +102,7 @@ The generated `devenv.yaml` enforces:
 
 The generated `devenv.nix` additionally:
 
-- **Unsets 37 credential-bearing variables** — AWS, GCP, Azure, GitHub, GitLab, Docker, database, secrets management, and generic API keys.
+- **Unsets 38 credential-bearing variables** — AWS, GCP, Azure, GitHub, GitLab, Docker, database, secrets management, and generic API keys.
 - **Sets `DEVENV_SECURITY_HARDENED=true`** — A sentinel flag verified by `devenv test`.
 - **Installs security pre-commit hooks** — ripsecrets, check-added-large-files, no-commit-to-branch, check-merge-conflict, shellcheck, statix.
 - **Installs custom hooks** — lock-file-audit and nix-secrets-check (detects hardcoded credentials in `.nix` files).
@@ -114,6 +114,8 @@ Semgrep runs as an AlwaysOn tool in the Claude Code environment, providing stati
 - Detects dangerous code patterns (command injection, path traversal, unsafe deserialization).
 - Custom rule sets per ecosystem are included in the generated configuration.
 - Also runs in CI via the generated security-scan workflow.
+
+**OpenGrep** (opt-in via `qsdev enable opengrep`) adds 96 taint-focused rules targeting injection flaws, deserialization, and authentication bypasses across 7 frameworks: Next.js, FastAPI, Gin, NestJS, SvelteKit, Prisma, and Drizzle.
 
 ### Layer 8: Secrets Scanning (ripsecrets + gitleaks)
 
@@ -128,11 +130,12 @@ Both are configured automatically during `qsdev init`. No manual setup required.
 
 ### Layer 9: Container Security
 
-When a Dockerfile is detected in the project, qsdev generates:
+When a Dockerfile or Containerfile is detected, qsdev generates runtime-aware security configs for both Docker and Podman:
 
 - **Hadolint configuration** — Linting rules for Dockerfile best practices (no `latest` tags, no root user, etc.).
-- **Trivy / Grype scanning** — CI workflow steps that scan built images for OS and library vulnerabilities.
+- **Syft SBOM generation + Grype vulnerability scanning** — CI workflow steps that produce a software bill of materials and scan built images for OS and library vulnerabilities. (Trivy was removed after the March 2026 supply chain compromise.)
 - **Base image pinning** — Generated Dockerfiles pin base images to digest, not tag.
+- **Runtime-aware deny rules** — In Podman mode, Docker socket mount commands are blocked to prevent accidental privilege escalation.
 
 ### Layer 10: License Compliance
 
@@ -141,6 +144,20 @@ Generated CI configuration includes license scanning that:
 - Detects non-permissive licenses (GPL, AGPL, SSPL) in transitive dependencies.
 - Generates a license report as part of SBOM output.
 - Blocks merges when policy-violating licenses are introduced (configurable per infrastructure profile).
+
+## Hook Execution Isolation
+
+Hooks run inside a sandboxed environment that restricts filesystem access, network, and syscalls. The sandbox degrades gracefully based on available kernel features:
+
+| Tier | Isolation | Requires |
+|------|-----------|----------|
+| Full | Bubblewrap + Landlock + seccomp-BPF + cgroups v2 | Linux 5.13+, bwrap |
+| BwrapWithoutLandlock | Bubblewrap + seccomp-BPF | Linux, bwrap |
+| BwrapWithoutSeccomp | Bubblewrap namespaces only | Linux, bwrap |
+| SystemdRun | systemd-run resource limits | systemd |
+| Unsandboxed | No isolation (macOS, minimal Linux) | — |
+
+Run `qsdev sandbox status` to see the active tier on your system. Five hook category profiles (linter, formatter, network-linter, generator, test-runner) control which resources each hook type can access.
 
 ## Security Spectrum Positioning
 
@@ -159,7 +176,7 @@ Development security exists on a spectrum from zero configuration to full lockdo
 | 6 | Process Isolation | VM per project; ephemeral environments; network partitioning | 10–20% permanent |
 | 7 | Full Lockdown | Air-gapped; HSMs; mandatory multi-person approval | 20–40% permanent |
 
-`qsdev init` delivers **Tiers 2–5 comprehensively** in under two minutes.
+`qsdev init` delivers **Tiers 2–5** in under two minutes.
 
 ### Why Tiers 4–5 (Not Higher)
 
@@ -198,7 +215,7 @@ qsdev eliminates the configuration barrier by generating correct, ecosystem-spec
 | Raw Nix | 4 (reproducibility only) | No security configuration, no ecosystem modules |
 | Manual Claude Code hooks | 5 (partial) | No supply chain integration, no self-protection harness |
 
-qsdev is the only tool spanning Tiers 2–5 comprehensively across 27 ecosystems with integrated AI agent security.
+qsdev is the only tool spanning Tiers 2–5 across 27 ecosystems with integrated AI agent security.
 
 ## Permission Model
 

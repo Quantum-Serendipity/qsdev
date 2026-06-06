@@ -28,6 +28,11 @@ Ecosystem-specific files only appear when that language is selected.
 | `renovate.json` or `.github/dependabot.yml` | Automated dependency updates with age-gating | `overwrite` |
 | `.github/workflows/security-scan.yml` | CI vulnerability scanning workflow | `overwrite` |
 | `docs/security-overview.md` | Human-readable security posture documentation | `overwrite` |
+| `.syft.yaml` | Syft SBOM scanner configuration | `overwrite` |
+| `.grype.yaml` | Grype vulnerability scanner configuration | `overwrite` |
+| `.hadolint.yaml` | Dockerfile linting rules (when container detected) | `overwrite` |
+| `.cosign/policy.yaml` | Container image signing policy (when container-security enabled) | `overwrite` |
+| `.qsdev/policy.nix` | Hook sandbox policies with 5 category profiles | `overwrite` |
 
 ## Merge Strategies
 
@@ -258,7 +263,7 @@ This Python script is the runtime complement to the static ask rules. It receive
 | `deploy.md` | Deploy to staging/production via CI pipeline |
 | `review-pr.md` | Structured pull request review with checklist |
 | `security-review.md` | Security-focused code review with OWASP checks |
-| `generate-tests.md` | Generate comprehensive test suites for existing code |
+| `generate-tests.md` | Generate test suites for existing code |
 | `refactor.md` | Refactor code for clarity, performance, and maintainability |
 | `db-migration.md` | Create safe, reversible database schema migrations |
 

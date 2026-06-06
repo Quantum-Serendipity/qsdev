@@ -18,6 +18,8 @@ qsdev detects your stack and generates a complete environment with supply-chain 
 - Detects your stack across 27 ecosystems and generates a complete, working [devenv.sh](https://devenv.sh) environment
 - Ships with 10 layers of supply-chain defense (age-gating, install-script blocking, lockfile enforcement, vuln scanning, SAST, secrets detection, etc.) configured out of the box
 - Sets up Claude Code with deny rules, operation skills, hooks, and MCP servers so your AI agent can't `curl | sh` or install unvetted packages
+- `qsdev check --auto-fix` repairs drifted configs and restores deleted files automatically
+- Hooks run inside a sandbox (bubblewrap + landlock + seccomp) with graceful degradation on systems that lack kernel support
 - `qsdev teardown` removes everything cleanly. The generated configs are standard files you own
 - `qsdev status` gives you a real security score and grade, not a checkbox
 - Commit `.qsdev.yaml` and teammates run `qsdev init --mode join` for identical environments
@@ -63,9 +65,11 @@ devenv.yaml                 # Environment inputs
 .claude/hooks/package-guard.py  # Package install interception
 .claude/skills/             # Operation skills for AI-assisted workflows
 .claude/rules/              # Language-specific convention rules
+.qsdev/policy.nix           # Hook sandbox policies
 .mcp.json                   # MCP server configuration
 CLAUDE.md                   # Project context for AI agents
 .npmrc / pip.conf / ...     # Per-ecosystem security configs
+.syft.yaml / .grype.yaml    # SBOM + vulnerability scanner configs
 .gitignore                  # Updated entries
 ```
 
@@ -125,7 +129,7 @@ The installer handles all dependencies automatically — no manual setup require
 
 | Ecosystems | Coverage |
 |-----------|----------|
-| Go, JavaScript/TypeScript, Python, Rust, Java/Kotlin, .NET, Docker, Terraform | Full supply-chain hardening |
+| Go, JavaScript/TypeScript, Python, Rust, Java/Kotlin, .NET, Containers, Terraform | Full supply-chain hardening |
 | PHP, Ruby, Scala, C/C++, Shell, Helm, Ansible | Security configs + deny rules |
 | Elixir, Dart, Swift, Haskell, Clojure, Bazel, Nix, Perl, R, Lua, Zig, PowerShell | Packages + deny rules |
 
@@ -138,6 +142,8 @@ The installer handles all dependencies automatically — no manual setup require
 | [Nix](https://nixos.org) | Reproducible, hermetic package resolution |
 | [direnv](https://direnv.net) | Auto-activates the environment on `cd` |
 | [pre-commit](https://pre-commit.com) | Lockfile checks, formatting, linting hooks |
+| [Socket.dev](https://socket.dev) | Behavioral supply chain analysis via MCP |
+| [Podman](https://podman.io) | Rootless container runtime (auto-detected alongside Docker) |
 
 ## Commands
 
@@ -146,12 +152,14 @@ qsdev init                    # Generate complete secure environment
 qsdev init --profile go-web   # Use a project-type preset
 qsdev status                  # Security posture assessment (score + grade)
 qsdev check                   # CI enforcement (config integrity, hardening)
+qsdev check --auto-fix        # Fix drifted configs automatically
 qsdev update                  # Update configs + devenv inputs
 qsdev repair                  # Fix corrupted or drifted files
 qsdev teardown                # Remove all qsdev configuration (clean exit)
 qsdev enable <tool>           # Enable a security/AI tool
 qsdev disable <tool>          # Disable a tool
 qsdev list                    # Show all available tools
+qsdev trial                   # Evaluate in an isolated git worktree
 ```
 
 <details>
@@ -163,7 +171,7 @@ qsdev list                    # Show all available tools
 |---------|-------------|
 | `init` | Generate complete secure environment (wizard + detection + generation) |
 | `status` | Security posture assessment with score and grade |
-| `check` | CI enforcement checks (JSON, SARIF, JUnit output) |
+| `check` | CI enforcement checks (JSON, SARIF, JUnit output). `--auto-fix` repairs issues |
 | `info` | Project status at a glance (cached, instant) |
 | `repair` | Fix corrupted or drifted config files |
 | `update` | Update binary + configs + devenv inputs |
@@ -174,6 +182,10 @@ qsdev list                    # Show all available tools
 | `list` | List all available tools |
 | `evidence` | Generate compliance evidence (SOC2, HIPAA, ASVS) |
 | `team-report` | Aggregate posture across multiple projects |
+| `trial` | Evaluate qsdev in an isolated git worktree |
+| `scaffold-instance` | Create a white-label fork of qsdev |
+| `self-update` | Update the qsdev binary to the latest release |
+| `completion` | Generate shell completions (bash, zsh, fish, powershell) |
 
 ### devenv subcommands
 
@@ -184,7 +196,9 @@ qsdev list                    # Show all available tools
 | `devenv add-language <name>` | Add a language ecosystem |
 | `devenv add-service <name>` | Add a service (postgres, redis, etc.) |
 | `devenv add-package <name>` | Add system packages |
-| `devenv remove-language/service/package` | Remove components |
+| `devenv add-overlay <path>` | Add a Nix overlay |
+| `devenv remove-language/service/package/overlay` | Remove components |
+| `devenv changelog` | Generate changelog with git-cliff |
 
 ### claude subcommands
 
@@ -194,6 +208,21 @@ qsdev list                    # Show all available tools
 | `claude add-skill <name>` | Add a skill |
 | `claude add-hook <name>` | Enable a hook preset |
 | `claude list-skills` | List available skills |
+| `claude hooks list` | List registered hooks with deployment tier and status |
+
+### sandbox subcommands
+
+| Command | Description |
+|---------|-------------|
+| `sandbox exec -- CMD` | Run a command inside the hook sandbox |
+| `sandbox status` | Display sandbox capabilities and degradation tier |
+
+### container subcommands
+
+| Command | Description |
+|---------|-------------|
+| `container detect` | Detect active container runtime and capabilities |
+| `container migrate` | Analyze compose files for Docker-to-Podman compatibility. `--auto-fix` applies fixes |
 
 </details>
 
@@ -220,9 +249,9 @@ Infrastructure profiles control organization-wide policy:
 
 | Profile | Focus |
 |---------|-------|
-| `consulting-default` | Enhanced security (semgrep, gitleaks, Nexus proxy, Renovate) |
-| `startup-github` | GitHub-native, baseline security, minimal overhead |
-| `enterprise` | Strict security, Artifactory, audit logging, SBOM signing |
+| `consulting-default` | Nexus proxy, OSV + Socket scanning, Renovate with 3-day age gate, Syft SBOM |
+| `startup-github` | GitHub Packages, OSV + Socket scanning, Dependabot, Turborepo |
+| `enterprise` | Artifactory, Snyk + Socket scanning, Renovate with 7-day age gate, Cosign SBOM signing |
 
 ## What qsdev is NOT
 
@@ -231,7 +260,7 @@ qsdev generates configuration files. It doesn't:
 - Run your environment ([devenv.sh](https://devenv.sh) does that)
 - Manage runtime versions (Nix handles that declaratively)
 - Run tasks (use Make, Just, or devenv tasks)
-- Manage containers or deploy anything
+- Run containers or deploy anything (container commands analyze and migrate configs, not start services)
 - Scaffold application code
 - Configure your entire IDE (just `.editorconfig` and VS Code extension recs)
 

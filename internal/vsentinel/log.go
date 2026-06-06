@@ -8,12 +8,16 @@ import (
 	"os"
 )
 
-func LogVersionEvent(logPath string, event VersionEvent) error {
+func LogVersionEvent(logPath string, event VersionEvent) (err error) {
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("opening log file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("closing log file: %w", cerr)
+		}
+	}()
 
 	data, err := json.Marshal(event)
 	if err != nil {

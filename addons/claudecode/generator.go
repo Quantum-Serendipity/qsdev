@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -116,15 +117,17 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 	}
 	files = append(files, skillFiles...)
 
-	// 6. Inject agent-tool MCP servers when enabled.
-	if answers.AgentTools.PostmortemEnabled {
-		if !sliceutil.Contains(answers.MCPServers, "agent-postmortem") {
-			answers.MCPServers = append(answers.MCPServers, "agent-postmortem")
+	// 6. Auto-inject MCP servers for enabled tools that declare mcp_server_name.
+	cat := catalog.MustDefault()
+	for name, def := range cat.Tools() {
+		if def.MCPServerName == "" {
+			continue
 		}
-	}
-	if answers.AgentTools.VersionSentinel {
-		if !sliceutil.Contains(answers.MCPServers, "version-sentinel") {
-			answers.MCPServers = append(answers.MCPServers, "version-sentinel")
+		if !answers.EnabledTools[name] {
+			continue
+		}
+		if !sliceutil.Contains(answers.MCPServers, def.MCPServerName) {
+			answers.MCPServers = append(answers.MCPServers, def.MCPServerName)
 		}
 	}
 

@@ -316,6 +316,7 @@ tools:
         description: Verification skill requiring agents to validate changes against build/test/lint after implementation
         default_policy: always-on
         toggle_field: agent_tools.postmortem_enabled
+        mcp_server_name: agent-postmortem
         owned_files:
             - path: .claude/skills/agent-postmortem/SKILL.md
               ownership: exclusive
@@ -728,6 +729,7 @@ tools:
         category: ai-agent
         description: Guards dependency version changes in manifest files, requiring agents to justify bumps
         default_policy: always-on
+        mcp_server_name: version-sentinel
         owned_files:
             - path: .claude/skills/version-sentinel/SKILL.md
               ownership: exclusive

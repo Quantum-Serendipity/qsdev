@@ -17,10 +17,17 @@ func GenerateVersionSentinelFiles(answers types.WizardAnswers, registry *ecosyst
 	return generateVersionSentinelFiles(answers, registry)
 }
 
-// GenerateSembleFiles is an exported wrapper around generateSembleFiles
+// GenerateSembleFiles is an exported wrapper around generateSembleConfig
 // for use by the tool lifecycle system.
 func GenerateSembleFiles(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
-	return generateSembleFiles(answers)
+	sr, err := generateSembleConfig(answers)
+	if err != nil {
+		return nil, err
+	}
+	if sr == nil {
+		return nil, nil
+	}
+	return sr.Files, nil
 }
 
 // DeployOperationSkills is an exported wrapper around deployOperationSkills

@@ -56,6 +56,14 @@ func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, erro
 			owner:        "soc2-audit",
 		},
 		{
+			enabled:      answers.AgentTools.SembleEnabled,
+			templatePath: "templates/hooks/semble-analytics.sh",
+			outputPath:   ".claude/hooks/semble-analytics.sh",
+			mode:         0o755,
+			strategy:     types.Overwrite,
+			owner:        "semble",
+		},
+		{
 			enabled:      answers.Hooks.AuditLog && !answers.Hooks.SOC2Audit,
 			templatePath: "templates/hooks/audit-log.sh",
 			outputPath:   ".claude/hooks/audit-log.sh",

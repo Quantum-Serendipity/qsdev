@@ -15,9 +15,10 @@ type McpJSON struct {
 
 // MCPServerEntry represents a single MCP server entry in .mcp.json.
 type MCPServerEntry struct {
-	Command string            `json:"command"`
-	Args    []string          `json:"args"`
-	Env     map[string]string `json:"env,omitempty"`
+	Command     string            `json:"command"`
+	Args        []string          `json:"args"`
+	Env         map[string]string `json:"env,omitempty"`
+	RequiredEnv []string          `json:"-"`
 }
 
 // knownMCPServers maps well-known server names to their default templates.
@@ -46,12 +47,21 @@ var knownMCPServers = map[string]MCPServerEntry{
 		Env:     map[string]string{"SOCKET_SECURITY_API_KEY": "${SOCKET_SECURITY_API_KEY}"},
 	},
 	"semble": {
-		Command: "uvx",
-		Args:    []string{"--from", "semble[mcp]", "semble"},
+		Command:     "uvx",
+		Args:        []string{"--from", "semble[mcp]", "semble"},
+		RequiredEnv: []string{"SEMBLE_API_KEY"},
 	},
 	"context7": {
 		Command: "npx",
 		Args:    []string{"-y", "@upstash/context7-mcp"},
+	},
+	"agent-postmortem": {
+		Command: "qsdev",
+		Args:    []string{"mcp", "agent-postmortem"},
+	},
+	"version-sentinel": {
+		Command: "qsdev",
+		Args:    []string{"mcp", "version-sentinel"},
 	},
 }
 
@@ -83,12 +93,6 @@ func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedF
 			Env:     srv.Env,
 		}
 		mcp.MCPServers[srv.Name] = entry
-	}
-
-	// Apply semble text-files flag if enabled.
-	if entry, ok := mcp.MCPServers["semble"]; ok && answers.AgentTools.SembleTextFiles {
-		entry.Args = append(append([]string{}, entry.Args...), "--include-text-files")
-		mcp.MCPServers["semble"] = entry
 	}
 
 	jsonBytes, err := json.MarshalIndent(mcp, "", "  ")

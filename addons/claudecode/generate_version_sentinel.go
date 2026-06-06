@@ -45,6 +45,14 @@ func generateVersionSentinelFiles(answers types.WizardAnswers, registry *ecosyst
 		})
 	}
 
+	// Seed events.jsonl for MCP server history tool.
+	files = append(files, types.GeneratedFile{
+		Path:     ".version-sentinel/events.jsonl",
+		Content:  []byte{},
+		Mode:     0o644,
+		Strategy: types.LibraryManaged,
+	})
+
 	return files, nil
 }
 

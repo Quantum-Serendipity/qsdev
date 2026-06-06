@@ -319,6 +319,9 @@ tools:
         owned_files:
             - path: .claude/skills/agent-postmortem/SKILL.md
               ownership: exclusive
+            - path: .mcp.json
+              ownership: shared
+              section_id: agent-postmortem
             - path: CLAUDE.md
               ownership: shared
               section_id: agent-postmortem
@@ -730,6 +733,11 @@ tools:
               ownership: exclusive
             - path: .version-sentinel/ignore
               ownership: exclusive
+            - path: .version-sentinel/events.jsonl
+              ownership: exclusive
+            - path: .mcp.json
+              ownership: shared
+              section_id: version-sentinel
             - path: CLAUDE.md
               ownership: shared
               section_id: version-sentinel

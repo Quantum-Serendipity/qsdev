@@ -140,7 +140,7 @@ func (p *MCPProcess) Close() error {
 	case err := <-done:
 		return err
 	case <-time.After(3 * time.Second):
-		p.cmd.Process.Kill()
+		_ = p.cmd.Process.Kill()
 		<-done
 		return fmt.Errorf("server did not exit within 3s, killed")
 	}

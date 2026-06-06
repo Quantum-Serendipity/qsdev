@@ -81,7 +81,7 @@ func TestValidateConfig(t *testing.T) {
 				"ok-env": {
 					Name:    "ok-env",
 					Command: "bash",
-					Env:     map[string]string{"H": "${HOME}"},
+					Env:     map[string]string{"P": "${PATH}"},
 				},
 			},
 			wantCount: 0,

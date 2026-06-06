@@ -164,31 +164,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		files = append(files, *mcpFile)
 	}
 
-	// 8. Agent postmortem skill
-	if answers.AgentTools.PostmortemEnabled {
-		postmortemFile, err := generatePostmortemSkill(answers, g.registry)
-		if err != nil {
-			return nil, fmt.Errorf("generating postmortem skill: %w", err)
-		}
-		if postmortemFile != nil {
-			postmortemFile.Owner = "agent-postmortem"
-			files = append(files, *postmortemFile)
-		}
-	}
-
-	// 9. Version-Sentinel config
-	if answers.AgentTools.VersionSentinel {
-		vsFiles, err := generateVersionSentinelFiles(answers, g.registry)
-		if err != nil {
-			return nil, fmt.Errorf("generating version-sentinel config: %w", err)
-		}
-		for i := range vsFiles {
-			vsFiles[i].Owner = "version-sentinel"
-		}
-		files = append(files, vsFiles...)
-	}
-
-	// 10. qsdev operation skills
+	// 8. qsdev operation skills
 	qsdevOpsFiles, err := deployOperationSkills(answers)
 	if err != nil {
 		return nil, fmt.Errorf("generating qsdev-ops skills: %w", err)

@@ -88,13 +88,16 @@
 
             doCheck = false;
 
-            nativeBuildInputs = [ pkgs.git pkgs.installShellFiles pkgs.makeWrapper ];
+            nativeBuildInputs = [ pkgs.git pkgs.installShellFiles pkgs.makeWrapper pkgs.syft ];
 
             postInstall = ''
               installShellCompletion --cmd qsdev \
                 --bash <($out/bin/qsdev completion bash) \
                 --zsh  <($out/bin/qsdev completion zsh) \
                 --fish <($out/bin/qsdev completion fish)
+
+              mkdir -p $out/share/sbom
+              ${pkgs.syft}/bin/syft dir:. -o cyclonedx-json=$out/share/sbom/qsdev.cdx.json
             '';
 
             postFixup = ''
@@ -117,5 +120,16 @@
           seccomp-filter = sandboxPkgs.seccomp-profiles.filter;
         };
 
+        devShells.default = pkgs.mkShell {
+          buildInputs = [
+            go
+            pkgs.git
+            pkgs.goreleaser
+            pkgs.golangci-lint
+            pkgs.gopls
+            pkgs.delve
+            pkgs.syft
+          ];
+        };
       });
 }

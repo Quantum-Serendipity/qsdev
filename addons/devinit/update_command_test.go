@@ -30,10 +30,17 @@ func TestStageStatus_String(t *testing.T) {
 	}
 }
 
+func newTestCmd() (*cobra.Command, *bytes.Buffer) {
+	cmd := &cobra.Command{}
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	return cmd, buf
+}
+
 func TestRunSelfUpdateStage_DevBuild(t *testing.T) {
-	// In test context, version.Info().Version returns "dev",
-	// so runSelfUpdateStage should skip.
-	result := runSelfUpdateStage(FullUpdateOptions{})
+	cmd, _ := newTestCmd()
+	result := runSelfUpdateStage(cmd, FullUpdateOptions{})
 
 	if result.Status != StageSkipped {
 		t.Errorf("expected StageSkipped for dev build, got %v", result.Status)
@@ -47,14 +54,9 @@ func TestRunSelfUpdateStage_DevBuild(t *testing.T) {
 }
 
 func TestRunDevenvInputStage_NotInstalled(t *testing.T) {
-	// Set PATH to an empty directory so devenv is not found.
 	t.Setenv("PATH", t.TempDir())
 
-	cmd := &cobra.Command{}
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-
+	cmd, _ := newTestCmd()
 	result := runDevenvInputStage(cmd, FullUpdateOptions{})
 
 	if result.Status != StageSkipped {
@@ -69,20 +71,13 @@ func TestRunDevenvInputStage_NotInstalled(t *testing.T) {
 }
 
 func TestRunDevenvInputStage_DryRun(t *testing.T) {
-	cmd := &cobra.Command{}
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-
+	cmd, _ := newTestCmd()
 	result := runDevenvInputStage(cmd, FullUpdateOptions{DryRun: true})
 
 	if result.Status != StageSkipped {
 		t.Errorf("expected StageSkipped for dry-run, got %v", result.Status)
 	}
-	// If devenv is not on PATH, the "not installed" check fires before dry-run.
-	// Either way the status should be StageSkipped. We check the appropriate message.
 	if strings.Contains(result.Message, "devenv not installed") {
-		// devenv not on PATH — that check fires first; still StageSkipped, which is fine.
 		return
 	}
 	if !strings.Contains(result.Message, "dry-run") {
@@ -120,32 +115,22 @@ func TestRunFullUpdate_SelectiveStages(t *testing.T) {
 		},
 	}
 
-	// Set PATH to empty dir so devenv is not found (avoids running real devenv).
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("PATH", t.TempDir())
 
-			cmd := &cobra.Command{}
-			var buf bytes.Buffer
-			cmd.SetOut(&buf)
-			cmd.SetErr(&buf)
-
-			// We don't check the error here because the config stage will fail
-			// (no saved state file) — we just want to verify which stages ran.
+			cmd, buf := newTestCmd()
 			_ = runFullUpdate(cmd, tt.opts)
 
 			output := buf.String()
 
-			// Verify expected stages appear in the summary.
 			for _, stage := range tt.expectStages {
 				if !strings.Contains(output, stage) {
 					t.Errorf("expected output to contain stage %q, got:\n%s", stage, output)
 				}
 			}
 
-			// Verify excluded stages do not appear in the summary.
 			for _, stage := range tt.excludeStages {
-				// Check that the stage name doesn't appear in the "Update Summary:" section.
 				summaryIdx := strings.Index(output, "Update Summary:")
 				if summaryIdx >= 0 {
 					summary := output[summaryIdx:]
@@ -159,20 +144,13 @@ func TestRunFullUpdate_SelectiveStages(t *testing.T) {
 }
 
 func TestRunFullUpdate_AllStages(t *testing.T) {
-	// Set PATH to empty dir so devenv is not found.
 	t.Setenv("PATH", t.TempDir())
 
-	cmd := &cobra.Command{}
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-
-	// Default options = all three stages.
+	cmd, buf := newTestCmd()
 	err := runFullUpdate(cmd, FullUpdateOptions{})
 
 	output := buf.String()
 
-	// All three stages should appear in the output.
 	allStages := []string{"Self-update", "Config regeneration", "Devenv inputs"}
 	for _, stage := range allStages {
 		if !strings.Contains(output, stage) {
@@ -180,8 +158,6 @@ func TestRunFullUpdate_AllStages(t *testing.T) {
 		}
 	}
 
-	// The config stage will fail (no saved answers file in test context),
-	// so we expect an error.
 	if err == nil {
 		t.Error("expected error from runFullUpdate (config stage should fail), got nil")
 	}
@@ -189,7 +165,6 @@ func TestRunFullUpdate_AllStages(t *testing.T) {
 		t.Errorf("unexpected error message: %v", err)
 	}
 
-	// Verify the progress indicators are present (e.g. "[1/3]", "[2/3]", "[3/3]").
 	if !strings.Contains(output, "[1/3]") {
 		t.Errorf("expected progress indicator [1/3] in output, got:\n%s", output)
 	}
@@ -200,8 +175,106 @@ func TestRunFullUpdate_AllStages(t *testing.T) {
 		t.Errorf("expected progress indicator [3/3] in output, got:\n%s", output)
 	}
 
-	// Verify summary section exists.
 	if !strings.Contains(output, "Update Summary:") {
 		t.Errorf("expected 'Update Summary:' in output, got:\n%s", output)
+	}
+}
+
+func TestIsMinorBump(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		oldVer string
+		newVer string
+		want   bool
+	}{
+		{"0.7.0", "0.7.1", false},
+		{"0.7.2", "0.7.3", false},
+		{"0.7.0", "0.8.0", true},
+		{"0.7.3", "0.8.0", true},
+		{"1.0.0", "2.0.0", true},
+		{"1.0.0", "1.1.0", true},
+		{"1.0.0", "1.0.1", false},
+		{"v0.7.0", "v0.7.1", false},
+		{"v0.7.0", "v0.8.0", true},
+		{"0.7.0", "0.7.0", false},
+		{"1.0", "1.1", true},
+		{"1.0", "1.0", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.oldVer+"→"+tt.newVer, func(t *testing.T) {
+			t.Parallel()
+			got := isMinorBump(tt.oldVer, tt.newVer)
+			if got != tt.want {
+				t.Errorf("isMinorBump(%q, %q) = %v, want %v", tt.oldVer, tt.newVer, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseMajorMinor(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input     string
+		wantMajor int
+		wantMinor int
+	}{
+		{"0.7.3", 0, 7},
+		{"1.2.3", 1, 2},
+		{"v1.2.3", 1, 2},
+		{"10.20.30", 10, 20},
+		{"1.0", 1, 0},
+		{"1", 1, 0},
+		{"", 0, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			major, minor := parseMajorMinor(tt.input)
+			if major != tt.wantMajor || minor != tt.wantMinor {
+				t.Errorf("parseMajorMinor(%q) = (%d, %d), want (%d, %d)",
+					tt.input, major, minor, tt.wantMajor, tt.wantMinor)
+			}
+		})
+	}
+}
+
+func TestUpdateCmd_CheckFlag(t *testing.T) {
+	cmd := updateCmd()
+	if err := cmd.Flags().Set("check", "true"); err != nil {
+		t.Fatalf("failed to set --check flag: %v", err)
+	}
+
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	// In test context, version is "dev", so check-only prints skip message.
+	err := cmd.RunE(cmd, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Dev build") {
+		t.Errorf("expected dev build skip message, got: %s", output)
+	}
+}
+
+func TestUpdateCmd_HasExpectedFlags(t *testing.T) {
+	cmd := updateCmd()
+
+	expectedFlags := []string{
+		"dry-run", "force", "self-only", "configs-only",
+		"deps-only", "check", "changelog",
+	}
+
+	for _, name := range expectedFlags {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("expected flag --%s to be registered", name)
+		}
 	}
 }

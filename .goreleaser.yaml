@@ -131,6 +131,14 @@ brews:
       bash_completion.install "completions/qsdev.bash" => "qsdev"
       zsh_completion.install "completions/qsdev.zsh" => "_qsdev"
       fish_completion.install "completions/qsdev.fish"
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/qsdev version")
+    caveats: |
+      To verify your environment:
+        qsdev doctor
+
+      To initialize a project:
+        qsdev init
 
 scoops:
   - name: qsdev
@@ -143,7 +151,8 @@ scoops:
       token: "{{ .Env.SCOOP_TAP_GITHUB_TOKEN }}"
 
 sboms:
-  - artifacts: archive
+  - id: spdx
+    artifacts: archive
     cmd: syft
     args:
       - "$artifact"
@@ -151,6 +160,16 @@ sboms:
       - "spdx-json=$document"
     documents:
       - "{{ .ArtifactName }}.spdx.json"
+
+  - id: cyclonedx
+    artifacts: archive
+    cmd: syft
+    args:
+      - "$artifact"
+      - "--output"
+      - "cyclonedx-json=$document"
+    documents:
+      - "{{ .ArtifactName }}.cdx.json"
 
 signs:
   - id: gpg

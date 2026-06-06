@@ -46,7 +46,7 @@ func BackgroundCheck(currentVersion string) <-chan string {
 				app := branding.Get().AppName
 				cur := strings.TrimPrefix(currentVersion, "v")
 				notice := fmt.Sprintf(
-					"A new version of %s is available: v%s (current: v%s)\nRun '%s self-update' to update.",
+					"A new version of %s is available: v%s (current: v%s)\nRun '%s update' to update.",
 					app, release.Version, cur, app,
 				)
 				ch <- notice

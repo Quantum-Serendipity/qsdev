@@ -19,13 +19,16 @@ func Command() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "self-update",
-		Short: "Update qsdev to the latest version",
+		Use:    "self-update",
+		Short:  "Update qsdev to the latest version",
+		Hidden: true,
 		Long: `Check for and install the latest version of qsdev.
 
 By default, checks GitHub for a newer release and, if found, downloads it,
 verifies its checksum, and replaces the current binary. A backup is created
-during the update and restored if anything goes wrong.`,
+during the update and restored if anything goes wrong.
+
+Prefer 'qsdev update' which coordinates binary updates with config regeneration.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := DefaultConfig()
@@ -54,7 +57,7 @@ during the update and restored if anything goes wrong.`,
 					release, err = CheckForUpdate(ctx, cfg, currentVersion)
 				} else {
 					// Force: skip cache, just fetch latest.
-					release, err = fetchLatestRelease(ctx, cfg)
+					release, err = FetchLatestRelease(ctx, cfg)
 				}
 				if err != nil {
 					return fmt.Errorf("checking for updates: %w", err)

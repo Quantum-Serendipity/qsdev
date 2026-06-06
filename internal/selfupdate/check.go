@@ -57,6 +57,7 @@ var errReleaseNotFound = errors.New("release not found")
 //   - the current version is already up-to-date
 //   - a recent cache entry indicates we checked recently
 //   - the current version string is empty or "dev"
+//
 // stripBuildMeta removes semver build metadata (everything after "+") so that
 // version comparison works correctly. "0.3.0+cee1fee" → "0.3.0".
 func stripBuildMeta(v string) string {
@@ -96,7 +97,7 @@ func CheckForUpdate(ctx context.Context, cfg Config, currentVersion string) (*Re
 	}
 
 	// Fetch latest release from GitHub.
-	release, err := fetchLatestRelease(ctx, cfg)
+	release, err := FetchLatestRelease(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -130,9 +131,9 @@ func FetchRelease(ctx context.Context, cfg Config, tag string) (*Release, error)
 	return doFetchRelease(ctx, cfg, url)
 }
 
-// fetchLatestRelease fetches the latest release from GitHub.
+// FetchLatestRelease fetches the latest release from GitHub.
 // Returns nil, nil if no releases exist (404).
-func fetchLatestRelease(ctx context.Context, cfg Config) (*Release, error) {
+func FetchLatestRelease(ctx context.Context, cfg Config) (*Release, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest",
 		apiBaseURL, cfg.GitHubOwner, cfg.GitHubRepo)
 

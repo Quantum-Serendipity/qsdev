@@ -130,7 +130,7 @@ jobs:
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: check
+          args: check --deprecated
 
       - name: Run GoReleaser (snapshot)
         uses: goreleaser/goreleaser-action@1a80836c5c9d9e5755a25cb59ec6f45a3b5f41a8 # v7.2.1

@@ -38,7 +38,8 @@ builds:
 
 archives:
   - id: bin-archives
-    format: tar.gz
+    formats:
+      - tar.gz
     name_template: >-
       qsdev_{{- .Version }}_
       {{- if eq .Os "darwin" }}Darwin

@@ -118,7 +118,7 @@ nfpms:
         file_info:
           mode: 0644
 
-brews:
+homebrew_casks:
   - name: qsdev
     repository:
       owner: Quantum-Serendipity
@@ -127,13 +127,12 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/Quantum-Serendipity/qsdev
     description: "Secure developer environment bootstrapping tool"
-    install: |
-      bin.install "qsdev"
-      bash_completion.install "completions/qsdev.bash" => "qsdev"
-      zsh_completion.install "completions/qsdev.zsh" => "_qsdev"
-      fish_completion.install "completions/qsdev.fish"
-    test: |
-      assert_match version.to_s, shell_output("#{bin}/qsdev version")
+    binaries:
+      - qsdev
+    completions:
+      bash: completions/qsdev.bash
+      zsh: completions/qsdev.zsh
+      fish: completions/qsdev.fish
     caveats: |
       To verify your environment:
         qsdev doctor

@@ -47,16 +47,19 @@
     check-added-large-files.enable = true;
     no-commit-to-branch.enable = true;
     check-merge-conflicts.enable = true;
-    shellcheck.enable = true;
+    shellcheck = {
+      enable = true;
+      excludes = [ "vendor/" ];
+    };
     statix.enable = true;
     # Enhanced hooks (language-aware, from ecosystem modules)
     gofmt = {
       enable = true;
-      excludes = [ "rules/core/testdata/" ];
+      excludes = [ "rules/core/testdata/" "vendor/" ];
     };
     govet = {
       enable = true;
-      excludes = [ "rules/core/testdata/" ];
+      excludes = [ "rules/core/testdata/" "vendor/" ];
     };
     # Specialized hooks (custom definitions)
     staticcheck = {
@@ -68,6 +71,7 @@
       types = [ "go" ];
       stages = [ "pre-commit" ];
       pass_filenames = false;
+      excludes = [ "vendor/" ];
     };
     govulncheck = {
       enable = true;
@@ -78,6 +82,7 @@
       types = [ "go" ];
       stages = [ "pre-commit" ];
       pass_filenames = false;
+      excludes = [ "vendor/" ];
     };
     lock-file-audit = {
       enable = true;

@@ -298,8 +298,8 @@ func TestBuildHookStatuses(t *testing.T) {
 	}
 
 	statuses := claudecode.ExportBuildHookStatuses(r, answers)
-	if len(statuses) != 10 {
-		t.Fatalf("expected 10 statuses, got %d", len(statuses))
+	if len(statuses) != 11 {
+		t.Fatalf("expected 11 statuses, got %d", len(statuses))
 	}
 
 	if statuses[0].Name != "package-guard" || !statuses[0].Enabled {
@@ -322,8 +322,11 @@ func TestBuildHookStatuses(t *testing.T) {
 			t.Errorf("statuses[%d]: want soc2-audit/disabled, got %s/%v", i, statuses[i].Name, statuses[i].Enabled)
 		}
 	}
-	if statuses[9].Name != "audit-log" || statuses[9].Enabled {
-		t.Errorf("statuses[9]: want audit-log/disabled, got %s/%v", statuses[9].Name, statuses[9].Enabled)
+	if statuses[9].Name != "semble" || statuses[9].Enabled {
+		t.Errorf("statuses[9]: want semble/disabled, got %s/%v", statuses[9].Name, statuses[9].Enabled)
+	}
+	if statuses[10].Name != "audit-log" || statuses[10].Enabled {
+		t.Errorf("statuses[10]: want audit-log/disabled, got %s/%v", statuses[10].Name, statuses[10].Enabled)
 	}
 }
 

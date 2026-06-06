@@ -23,6 +23,7 @@ type Report struct {
 	PackageMgrs        []PkgMgrInfo      `json:"package_managers"`
 	ContainerRuntime   *ContainerSection `json:"container_runtime,omitempty"`
 	SandboxRuntime     *SandboxSection   `json:"sandbox_runtime,omitempty"`
+	MCPServers         *MCPSection       `json:"mcp_servers,omitempty"`
 	RequiredTools      []ToolEntry       `json:"required_tools"`
 	OptionalTools      []ToolEntry       `json:"optional_tools"`
 	Recommendations    []string          `json:"recommendations,omitempty"`
@@ -37,6 +38,26 @@ func (r *Report) SetContainerSection(cs *ContainerSection) {
 // SetSandboxSection attaches a hook sandbox check result to the report.
 func (r *Report) SetSandboxSection(ss *SandboxSection) {
 	r.SandboxRuntime = ss
+}
+
+// MCPSection holds MCP server health check results for the doctor report.
+type MCPSection struct {
+	Detected bool            `json:"detected"`
+	Servers  []MCPServerInfo `json:"servers"`
+	Warnings []string        `json:"warnings,omitempty"`
+}
+
+// MCPServerInfo summarises a single MCP server's health status.
+type MCPServerInfo struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Tools  int    `json:"tools"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// SetMCPSection attaches MCP server health check results to the report.
+func (r *Report) SetMCPSection(ms *MCPSection) {
+	r.MCPServers = ms
 }
 
 // SystemInfo captures OS-level details for the report.
@@ -232,6 +253,28 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 	// Hook Sandbox
 	if r.SandboxRuntime != nil && r.SandboxRuntime.Detected {
 		formatSandboxSection(w, r.SandboxRuntime, okSym, warnSym, failSym)
+	}
+
+	// MCP Servers
+	if r.MCPServers != nil && r.MCPServers.Detected {
+		fmt.Fprintln(w, "MCP Servers")
+		for _, srv := range r.MCPServers.Servers {
+			sym := okSym
+			switch srv.Status {
+			case "degraded":
+				sym = warnSym
+			case "unreachable", "misconfigured":
+				sym = failSym
+			}
+			fmt.Fprintf(w, "  %-20s %s %s (tools: %d)\n", srv.Name, sym, srv.Status, srv.Tools)
+			if srv.Detail != "" {
+				fmt.Fprintf(w, "    %s\n", srv.Detail)
+			}
+		}
+		for _, warn := range r.MCPServers.Warnings {
+			fmt.Fprintf(w, "  %s %s\n", warnSym, warn)
+		}
+		fmt.Fprintln(w)
 	}
 
 	// Required Tools

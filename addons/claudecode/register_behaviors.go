@@ -5,7 +5,9 @@ import (
 	"fmt"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -13,6 +15,7 @@ func init() {
 	r := toolreg.DefaultRegistry()
 
 	registerMCPServerContent(r)
+	registerAgentToolGenerators(r)
 	registerConsultingAgentGenerators(r)
 	registerConsultingWorkflowGenerators(r)
 }
@@ -52,6 +55,35 @@ func mcpServerContentFunc(serverName string) toolreg.SharedContentFunc {
 		}
 		return json.Marshal(entry)
 	}
+}
+
+func registerAgentToolGenerators(r *toolreg.Registry) {
+	r.AttachBehavior("agent-postmortem", toolreg.ToolBehavior{
+		GenerateFunc: func(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
+			if resolveTier(answers) < tier.Full {
+				return nil, nil
+			}
+			registry := ecosystem.DefaultRegistry()
+			f, err := generatePostmortemSkill(answers, registry)
+			if err != nil {
+				return nil, err
+			}
+			if f == nil {
+				return nil, nil
+			}
+			return []types.GeneratedFile{*f}, nil
+		},
+	})
+
+	r.AttachBehavior("version-sentinel", toolreg.ToolBehavior{
+		GenerateFunc: func(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
+			if resolveTier(answers) < tier.Full {
+				return nil, nil
+			}
+			registry := ecosystem.DefaultRegistry()
+			return generateVersionSentinelFiles(answers, registry)
+		},
+	})
 }
 
 func registerConsultingAgentGenerators(r *toolreg.Registry) {

@@ -235,6 +235,17 @@ func defaultHookRegistry() *HookRegistry {
 	})
 
 	r.Register(HookDefinition{
+		Owner:           "semble",
+		Event:           "PostToolUse",
+		Matcher:         "mcp__semble__*",
+		Command:         `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/semble-analytics.sh`,
+		Timeout:         5,
+		StatusMessage:   "Logging search analytics...",
+		SandboxCategory: "generator",
+		EnabledFunc:     func(a types.WizardAnswers) bool { return a.AgentTools.SembleEnabled },
+	})
+
+	r.Register(HookDefinition{
 		Owner:           "audit-log",
 		Event:           "PostToolUse",
 		Matcher:         "*",

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -116,15 +117,46 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 	}
 	files = append(files, skillFiles...)
 
-	// 6. Inject semble into MCP servers if enabled.
-	if answers.AgentTools.SembleEnabled && (answers.AgentTools.SembleMode == "mcp" || answers.AgentTools.SembleMode == "both" || answers.AgentTools.SembleMode == "") {
-		if !sliceutil.Contains(answers.MCPServers, "semble") {
-			answers.MCPServers = append(answers.MCPServers, "semble")
+	// 6. Auto-inject MCP servers for enabled tools that declare mcp_server_name.
+	cat := catalog.MustDefault()
+	for name, def := range cat.Tools() {
+		if def.MCPServerName == "" {
+			continue
+		}
+		if !answers.EnabledTools[name] {
+			continue
+		}
+		if !sliceutil.Contains(answers.MCPServers, def.MCPServerName) {
+			answers.MCPServers = append(answers.MCPServers, def.MCPServerName)
+		}
+	}
+
+	var sembleOverride *MCPServerConfig
+	if answers.AgentTools.SembleEnabled {
+		sr, err := generateSembleConfig(answers)
+		if err != nil {
+			return nil, fmt.Errorf("generating semble config: %w", err)
+		}
+		if sr != nil {
+			for _, name := range sr.MCPServers {
+				if !sliceutil.Contains(answers.MCPServers, name) {
+					answers.MCPServers = append(answers.MCPServers, name)
+				}
+			}
+			for i := range sr.Files {
+				sr.Files[i].Owner = "semble"
+			}
+			files = append(files, sr.Files...)
+			sembleOverride = sr.Override
 		}
 	}
 
 	// 7. MCP config
-	mcpFile, err := GenerateMcpJson(answers, g.cfg)
+	mcpCfg := g.cfg
+	if sembleOverride != nil {
+		mcpCfg.MCPServers = append(append([]MCPServerConfig{}, mcpCfg.MCPServers...), *sembleOverride)
+	}
+	mcpFile, err := GenerateMcpJson(answers, mcpCfg)
 	if err != nil {
 		return nil, fmt.Errorf("generating MCP config: %w", err)
 	}
@@ -132,43 +164,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		files = append(files, *mcpFile)
 	}
 
-	// 8. Agent postmortem skill
-	if answers.AgentTools.PostmortemEnabled {
-		postmortemFile, err := generatePostmortemSkill(answers, g.registry)
-		if err != nil {
-			return nil, fmt.Errorf("generating postmortem skill: %w", err)
-		}
-		if postmortemFile != nil {
-			postmortemFile.Owner = "agent-postmortem"
-			files = append(files, *postmortemFile)
-		}
-	}
-
-	// 9. Version-Sentinel config
-	if answers.AgentTools.VersionSentinel {
-		vsFiles, err := generateVersionSentinelFiles(answers, g.registry)
-		if err != nil {
-			return nil, fmt.Errorf("generating version-sentinel config: %w", err)
-		}
-		for i := range vsFiles {
-			vsFiles[i].Owner = "version-sentinel"
-		}
-		files = append(files, vsFiles...)
-	}
-
-	// 10. Semble sub-agent
-	if answers.AgentTools.SembleEnabled && (answers.AgentTools.SembleMode == "subagent" || answers.AgentTools.SembleMode == "both") {
-		sembleFiles, err := generateSembleFiles(answers)
-		if err != nil {
-			return nil, fmt.Errorf("generating semble config: %w", err)
-		}
-		for i := range sembleFiles {
-			sembleFiles[i].Owner = "semble"
-		}
-		files = append(files, sembleFiles...)
-	}
-
-	// 11. qsdev operation skills
+	// 8. qsdev operation skills
 	qsdevOpsFiles, err := deployOperationSkills(answers)
 	if err != nil {
 		return nil, fmt.Errorf("generating qsdev-ops skills: %w", err)

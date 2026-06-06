@@ -1,0 +1,17 @@
+pkgbase = qsdev-bin
+	pkgdesc = Secure developer environment bootstrapping tool
+	pkgver = 0.7.3
+	pkgrel = 1
+	url = https://github.com/Quantum-Serendipity/qsdev
+	arch = x86_64
+	arch = aarch64
+	license = Apache-2.0
+	depends = git
+	provides = qsdev
+	conflicts = qsdev
+	source_x86_64 = https://github.com/Quantum-Serendipity/qsdev/releases/download/v0.7.3/qsdev_0.7.3_Linux_x86_64.tar.gz
+	sha256sums_x86_64 = SKIP
+	source_aarch64 = https://github.com/Quantum-Serendipity/qsdev/releases/download/v0.7.3/qsdev_0.7.3_Linux_arm64.tar.gz
+	sha256sums_aarch64 = SKIP
+
+pkgname = qsdev-bin

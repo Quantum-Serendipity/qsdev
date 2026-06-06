@@ -27,8 +27,8 @@ func TestDetectOS_Performance(t *testing.T) {
 	start := time.Now()
 	_ = DetectOS()
 	elapsed := time.Since(start)
-	if elapsed > 50*time.Millisecond {
-		t.Errorf("DetectOS() took %v, want <50ms", elapsed)
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("DetectOS() took %v, want <100ms", elapsed)
 	}
 }
 

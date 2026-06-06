@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -58,6 +60,8 @@ type FullUpdateOptions struct {
 	SelfOnly    bool
 	ConfigsOnly bool
 	DepsOnly    bool
+	Check       bool
+	Changelog   bool
 }
 
 func updateCmd() *cobra.Command {
@@ -67,23 +71,69 @@ func updateCmd() *cobra.Command {
 		Short: "Update qsdev binary, project configs, and devenv inputs",
 		Long: `Perform a coordinated update in up to three stages:
 
-  Stage 1: Check for qsdev binary updates (informational only)
+  Stage 1: Update qsdev binary to the latest version
   Stage 2: Regenerate project configuration files from saved answers
   Stage 3: Update devenv flake inputs (nix packages)
 
-Does NOT update application dependencies (use Renovate for that).
+Use --check to see available updates without installing.
 Use stage-specific flags to run only one stage.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if opts.Check {
+				return runCheckOnly(cmd, opts)
+			}
 			return runFullUpdate(cmd, opts)
 		},
 	}
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview changes without writing")
-	cmd.Flags().BoolVar(&opts.Force, "force", false, "Force overwrite of modified files")
-	cmd.Flags().BoolVar(&opts.SelfOnly, "self-only", false, "Only check for binary updates")
+	cmd.Flags().BoolVar(&opts.Force, "force", false, "Force update even if already up to date")
+	cmd.Flags().BoolVar(&opts.SelfOnly, "self-only", false, "Only update the binary")
 	cmd.Flags().BoolVar(&opts.ConfigsOnly, "configs-only", false, "Only regenerate config files")
 	cmd.Flags().BoolVar(&opts.DepsOnly, "deps-only", false, "Only update devenv inputs")
+	cmd.Flags().BoolVar(&opts.Check, "check", false, "Check for updates without installing")
+	cmd.Flags().BoolVar(&opts.Changelog, "changelog", false, "Show release notes (use with --check)")
 	return cmd
+}
+
+func runCheckOnly(cmd *cobra.Command, opts FullUpdateOptions) error {
+	w := cmd.OutOrStdout()
+
+	currentVersion := strings.TrimPrefix(version.Info().Version, "v")
+	if currentVersion == "" || currentVersion == "dev" || currentVersion == "(devel)" {
+		fmt.Fprintln(w, "Dev build — version check skipped.")
+		return nil
+	}
+
+	cfg := selfupdate.DefaultConfig()
+	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+	defer cancel()
+
+	var release *selfupdate.Release
+	var err error
+	if opts.Force {
+		release, err = selfupdate.FetchLatestRelease(ctx, cfg)
+	} else {
+		release, err = selfupdate.CheckForUpdate(ctx, cfg, currentVersion)
+	}
+	if err != nil {
+		return fmt.Errorf("checking for updates: %w", err)
+	}
+
+	if release == nil {
+		fmt.Fprintf(w, "Already up to date (v%s).\n", currentVersion)
+		return nil
+	}
+
+	fmt.Fprintf(w, "Update available: v%s → v%s\n", currentVersion, release.Version)
+	fmt.Fprintf(w, "Release: %s\n", release.URL)
+
+	if opts.Changelog && release.Body != "" {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, release.Body)
+	}
+
+	fmt.Fprintf(w, "\nRun '%s update' to install.\n", branding.Get().AppName)
+	return nil
 }
 
 func runFullUpdate(cmd *cobra.Command, opts FullUpdateOptions) error {
@@ -112,7 +162,7 @@ func runFullUpdate(cmd *cobra.Command, opts FullUpdateOptions) error {
 	if runSelf {
 		stage++
 		fmt.Fprintf(w, "[%d/%d] Checking for binary updates...\n", stage, total)
-		results = append(results, runSelfUpdateStage(opts))
+		results = append(results, runSelfUpdateStage(cmd, opts))
 	}
 
 	if runConfigs {
@@ -153,12 +203,9 @@ func runFullUpdate(cmd *cobra.Command, opts FullUpdateOptions) error {
 	return nil
 }
 
-func runSelfUpdateStage(opts FullUpdateOptions) StageResult {
-	_ = opts // reserved for future use (e.g. auto-apply)
-
+func runSelfUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult {
 	currentVersion := strings.TrimPrefix(version.Info().Version, "v")
 
-	// Skip for dev builds.
 	if currentVersion == "" || currentVersion == "dev" || currentVersion == "(devel)" {
 		return StageResult{
 			Name:    "Self-update",
@@ -168,7 +215,16 @@ func runSelfUpdateStage(opts FullUpdateOptions) StageResult {
 	}
 
 	cfg := selfupdate.DefaultConfig()
-	release, err := selfupdate.CheckForUpdate(context.Background(), cfg, currentVersion)
+	ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
+	defer cancel()
+
+	var release *selfupdate.Release
+	var err error
+	if opts.Force {
+		release, err = selfupdate.FetchLatestRelease(ctx, cfg)
+	} else {
+		release, err = selfupdate.CheckForUpdate(ctx, cfg, currentVersion)
+	}
 	if err != nil {
 		return StageResult{
 			Name:    "Self-update",
@@ -186,10 +242,33 @@ func runSelfUpdateStage(opts FullUpdateOptions) StageResult {
 		}
 	}
 
+	if opts.DryRun {
+		return StageResult{
+			Name:    "Self-update",
+			Status:  StageSuccess,
+			Message: fmt.Sprintf("would update v%s → v%s", currentVersion, release.Version),
+		}
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "  Updating v%s → v%s...\n", currentVersion, release.Version)
+	if err := selfupdate.DoUpdate(ctx, cfg, release); err != nil {
+		return StageResult{
+			Name:    "Self-update",
+			Status:  StageFailed,
+			Message: err.Error(),
+			Err:     err,
+		}
+	}
+
+	msg := fmt.Sprintf("v%s → v%s", currentVersion, release.Version)
+	if isMinorBump(currentVersion, release.Version) {
+		msg += fmt.Sprintf(". Run '%s update --configs-only' in active projects to regenerate configs.", branding.Get().AppName)
+	}
+
 	return StageResult{
 		Name:    "Self-update",
 		Status:  StageSuccess,
-		Message: fmt.Sprintf("v%s available (current: v%s). Run '%s self-update' to install.", release.Version, currentVersion, branding.Get().AppName),
+		Message: msg,
 	}
 }
 
@@ -259,4 +338,24 @@ func runDevenvInputStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult
 		Status:  StageSuccess,
 		Message: "devenv inputs updated",
 	}
+}
+
+// isMinorBump returns true if the major or minor version component changed.
+func isMinorBump(oldVer, newVer string) bool {
+	oldMajor, oldMinor := parseMajorMinor(oldVer)
+	newMajor, newMinor := parseMajorMinor(newVer)
+	return oldMajor != newMajor || oldMinor != newMinor
+}
+
+func parseMajorMinor(v string) (int, int) {
+	v = strings.TrimPrefix(v, "v")
+	parts := strings.SplitN(v, ".", 3)
+	major, minor := 0, 0
+	if len(parts) >= 1 {
+		major, _ = strconv.Atoi(parts[0])
+	}
+	if len(parts) >= 2 {
+		minor, _ = strconv.Atoi(parts[1])
+	}
+	return major, minor
 }

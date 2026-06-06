@@ -74,3 +74,15 @@ jobs:
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: dist/*.tar.gz, dist/*.zip, dist/*.deb, dist/*.rpm, dist/*.apk
+
+      - name: Attest SPDX SBOMs
+        uses: actions/attest-sbom@cbfd0027ae731a5892db25ecd226930d7ffd19eb # v2.1.0
+        with:
+          subject-path: dist/*.tar.gz, dist/*.zip
+          sbom-path: dist/*.spdx.json
+
+      - name: Attest CycloneDX SBOMs
+        uses: actions/attest-sbom@cbfd0027ae731a5892db25ecd226930d7ffd19eb # v2.1.0
+        with:
+          subject-path: dist/*.tar.gz, dist/*.zip
+          sbom-path: dist/*.cdx.json

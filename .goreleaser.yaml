@@ -38,7 +38,8 @@ builds:
 
 archives:
   - id: bin-archives
-    format: tar.gz
+    formats:
+      - tar.gz
     name_template: >-
       qsdev_{{- .Version }}_
       {{- if eq .Os "darwin" }}Darwin
@@ -117,7 +118,7 @@ nfpms:
         file_info:
           mode: 0644
 
-brews:
+homebrew_casks:
   - name: qsdev
     repository:
       owner: Quantum-Serendipity
@@ -126,11 +127,18 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/Quantum-Serendipity/qsdev
     description: "Secure developer environment bootstrapping tool"
-    install: |
-      bin.install "qsdev"
-      bash_completion.install "completions/qsdev.bash" => "qsdev"
-      zsh_completion.install "completions/qsdev.zsh" => "_qsdev"
-      fish_completion.install "completions/qsdev.fish"
+    binaries:
+      - qsdev
+    completions:
+      bash: completions/qsdev.bash
+      zsh: completions/qsdev.zsh
+      fish: completions/qsdev.fish
+    caveats: |
+      To verify your environment:
+        qsdev doctor
+
+      To initialize a project:
+        qsdev init
 
 scoops:
   - name: qsdev
@@ -143,7 +151,8 @@ scoops:
       token: "{{ .Env.SCOOP_TAP_GITHUB_TOKEN }}"
 
 sboms:
-  - artifacts: archive
+  - id: spdx
+    artifacts: archive
     cmd: syft
     args:
       - "$artifact"
@@ -151,6 +160,16 @@ sboms:
       - "spdx-json=$document"
     documents:
       - "{{ .ArtifactName }}.spdx.json"
+
+  - id: cyclonedx
+    artifacts: archive
+    cmd: syft
+    args:
+      - "$artifact"
+      - "--output"
+      - "cyclonedx-json=$document"
+    documents:
+      - "{{ .ArtifactName }}.cdx.json"
 
 signs:
   - id: gpg

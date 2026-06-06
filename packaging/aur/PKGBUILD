@@ -1,0 +1,31 @@
+# shellcheck shell=bash disable=SC2034,SC2154
+# Maintainer: Quantum Serendipity Software <colin.rushton@quantumserendipitysoftware.com>
+pkgname=qsdev-bin
+pkgver=0.7.3
+pkgrel=1
+pkgdesc='Secure developer environment bootstrapping tool'
+arch=('x86_64' 'aarch64')
+url='https://github.com/Quantum-Serendipity/qsdev'
+license=('Apache-2.0')
+depends=('git')
+provides=('qsdev')
+conflicts=('qsdev')
+
+source_x86_64=("${url}/releases/download/v${pkgver}/qsdev_${pkgver}_Linux_x86_64.tar.gz")
+source_aarch64=("${url}/releases/download/v${pkgver}/qsdev_${pkgver}_Linux_arm64.tar.gz")
+
+# Updated by update-pkgbuild.sh during releases.
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+    install -Dm755 qsdev "${pkgdir}/usr/bin/qsdev"
+
+    # Shell completions
+    install -Dm644 completions/qsdev.bash \
+        "${pkgdir}/usr/share/bash-completion/completions/qsdev"
+    install -Dm644 completions/qsdev.zsh \
+        "${pkgdir}/usr/share/zsh/site-functions/_qsdev"
+    install -Dm644 completions/qsdev.fish \
+        "${pkgdir}/usr/share/fish/vendor_completions.d/qsdev.fish"
+}

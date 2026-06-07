@@ -322,9 +322,10 @@ func TestDefaultDocsDataDir(t *testing.T) {
 	// Cannot use t.Parallel because subtests call t.Setenv.
 
 	t.Run("XDG_DATA_HOME", func(t *testing.T) {
-		t.Setenv("XDG_DATA_HOME", "/custom/data")
+		xdg := filepath.Join("custom", "data")
+		t.Setenv("XDG_DATA_HOME", xdg)
 		got := DefaultDocsDataDir()
-		want := "/custom/data/qsdev/docs"
+		want := filepath.Join(xdg, "qsdev", "docs")
 		if got != want {
 			t.Errorf("DefaultDocsDataDir() = %q, want %q", got, want)
 		}

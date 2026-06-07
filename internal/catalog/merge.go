@@ -1,5 +1,7 @@
 package catalog
 
+import "maps"
+
 // MergeCatalogs merges an overlay catalog into a base catalog.
 // Non-empty overlay fields override or extend the base. For map fields,
 // overlay entries are added or replace base entries with the same key.
@@ -22,6 +24,9 @@ func MergeCatalogs(base, overlay *Catalog) *Catalog {
 
 	// Tools: merge maps.
 	result.tools.Tools = mergeMap(base.tools.Tools, overlay.tools.Tools)
+
+	// MCP Servers: merge maps.
+	result.mcpServers = mergeMap(base.mcpServers, overlay.mcpServers)
 
 	// Security: merge lists and sub-structures.
 	result.security.Hooks.Default = mergeStringSlice(base.security.Hooks.Default, overlay.security.Hooks.Default)
@@ -69,12 +74,8 @@ func mergeMap[V any](base, overlay map[string]V) map[string]V {
 		return nil
 	}
 	out := make(map[string]V, len(base)+len(overlay))
-	for k, v := range base {
-		out[k] = v
-	}
-	for k, v := range overlay {
-		out[k] = v
-	}
+	maps.Copy(out, base)
+	maps.Copy(out, overlay)
 	return out
 }
 
@@ -84,12 +85,8 @@ func mergeStringMap(base, overlay map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(base)+len(overlay))
-	for k, v := range base {
-		out[k] = v
-	}
-	for k, v := range overlay {
-		out[k] = v
-	}
+	maps.Copy(out, base)
+	maps.Copy(out, overlay)
 	return out
 }
 

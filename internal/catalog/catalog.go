@@ -3,6 +3,7 @@ package catalog
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 )
@@ -20,6 +21,7 @@ type Catalog struct {
 	derivations     DerivationsFile
 	validation      ValidationFile
 	permissionRules PermissionRulesFile
+	mcpServers      map[string]MCPServerDef
 }
 
 var (
@@ -107,9 +109,7 @@ func (c *Catalog) TierOrder() []string {
 // TierDefs returns a copy of all tier definitions.
 func (c *Catalog) TierDefs() map[string]TierDef {
 	out := make(map[string]TierDef, len(c.tiers.Tiers))
-	for k, v := range c.tiers.Tiers {
-		out[k] = v
-	}
+	maps.Copy(out, c.tiers.Tiers)
 	return out
 }
 
@@ -124,9 +124,7 @@ func (c *Catalog) TierDef(name string) (TierDef, bool) {
 // ComplianceLevels returns a copy of all compliance level definitions.
 func (c *Catalog) ComplianceLevels() map[string]ComplianceLevelDef {
 	out := make(map[string]ComplianceLevelDef, len(c.compliance.Levels))
-	for k, v := range c.compliance.Levels {
-		out[k] = v
-	}
+	maps.Copy(out, c.compliance.Levels)
 	return out
 }
 
@@ -141,9 +139,7 @@ func (c *Catalog) ComplianceLevel(name string) (ComplianceLevelDef, bool) {
 // Profiles returns a copy of all tier-based profiles.
 func (c *Catalog) Profiles() map[string]ProfileDef {
 	out := make(map[string]ProfileDef, len(c.profiles.Profiles))
-	for k, v := range c.profiles.Profiles {
-		out[k] = v
-	}
+	maps.Copy(out, c.profiles.Profiles)
 	return out
 }
 
@@ -156,9 +152,7 @@ func (c *Catalog) Profile(name string) (ProfileDef, bool) {
 // ProfileAliases returns a copy of the profile alias map.
 func (c *Catalog) ProfileAliases() map[string]string {
 	out := make(map[string]string, len(c.profiles.Aliases))
-	for k, v := range c.profiles.Aliases {
-		out[k] = v
-	}
+	maps.Copy(out, c.profiles.Aliases)
 	return out
 }
 
@@ -167,9 +161,7 @@ func (c *Catalog) ProfileAliases() map[string]string {
 // ProjectProfiles returns a copy of all project-type profiles.
 func (c *Catalog) ProjectProfiles() map[string]ProjectProfileDef {
 	out := make(map[string]ProjectProfileDef, len(c.projectProfiles.Profiles))
-	for k, v := range c.projectProfiles.Profiles {
-		out[k] = v
-	}
+	maps.Copy(out, c.projectProfiles.Profiles)
 	return out
 }
 
@@ -184,9 +176,7 @@ func (c *Catalog) ProjectProfile(name string) (ProjectProfileDef, bool) {
 // Tools returns a copy of all tool definitions.
 func (c *Catalog) Tools() map[string]ToolDef {
 	out := make(map[string]ToolDef, len(c.tools.Tools))
-	for k, v := range c.tools.Tools {
-		out[k] = v
-	}
+	maps.Copy(out, c.tools.Tools)
 	return out
 }
 
@@ -218,6 +208,31 @@ func (c *Catalog) ToolNixExprs() map[string]string {
 		}
 	}
 	return out
+}
+
+// --- MCP Server accessors ---
+
+// MCPServers returns a copy of all MCP server definitions.
+func (c *Catalog) MCPServers() map[string]MCPServerDef {
+	out := make(map[string]MCPServerDef, len(c.mcpServers))
+	maps.Copy(out, c.mcpServers)
+	return out
+}
+
+// MCPServer returns the definition for a named MCP server.
+func (c *Catalog) MCPServer(name string) (MCPServerDef, bool) {
+	d, ok := c.mcpServers[name]
+	return d, ok
+}
+
+// MCPServerNames returns all MCP server names sorted alphabetically.
+func (c *Catalog) MCPServerNames() []string {
+	names := make([]string, 0, len(c.mcpServers))
+	for k := range c.mcpServers {
+		names = append(names, k)
+	}
+	slices.Sort(names)
+	return names
 }
 
 // --- Security accessors ---
@@ -282,9 +297,7 @@ func (c *Catalog) HookTiers() map[string][]string {
 // TierToCompliance returns the tier→compliance level mapping.
 func (c *Catalog) TierToCompliance() map[string]string {
 	out := make(map[string]string, len(c.derivations.TierToCompliance))
-	for k, v := range c.derivations.TierToCompliance {
-		out[k] = v
-	}
+	maps.Copy(out, c.derivations.TierToCompliance)
 	return out
 }
 

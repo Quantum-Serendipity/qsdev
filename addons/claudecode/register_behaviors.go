@@ -18,6 +18,7 @@ func init() {
 	registerAgentToolGenerators(r)
 	registerConsultingAgentGenerators(r)
 	registerConsultingWorkflowGenerators(r)
+	registerDocToolBehaviors(r)
 }
 
 func registerMCPServerContent(r *toolreg.Registry) {
@@ -49,9 +50,18 @@ func registerMCPServerContent(r *toolreg.Registry) {
 
 func mcpServerContentFunc(serverName string) toolreg.SharedContentFunc {
 	return func(_ types.WizardAnswers) ([]byte, error) {
-		entry, ok := knownMCPServers[serverName]
+		cat, err := catalog.Default()
+		if err != nil {
+			return nil, fmt.Errorf("loading catalog for MCP server %q: %w", serverName, err)
+		}
+		def, ok := cat.MCPServer(serverName)
 		if !ok {
 			return nil, fmt.Errorf("unknown MCP server %q", serverName)
+		}
+		entry := MCPServerEntry{
+			Command: def.Command,
+			Args:    def.Args,
+			Env:     def.Env,
 		}
 		return json.Marshal(entry)
 	}
@@ -138,4 +148,35 @@ func registerConsultingWorkflowGenerators(r *toolreg.Registry) {
 			},
 		})
 	}
+}
+
+func registerDocToolBehaviors(r *toolreg.Registry) {
+	r.AttachBehavior("local-docs-devdocs", toolreg.ToolBehavior{
+		DetectFunc: func(d types.DetectedProject) bool {
+			return d.HasGoMod || d.HasPackageJSON || d.HasPyProject ||
+				d.HasCargoToml || d.HasPomXML || d.HasBuildGradle || d.HasCsproj
+		},
+	})
+
+	r.AttachBehavior("mcp-nixos", toolreg.ToolBehavior{
+		DetectFunc: func(d types.DetectedProject) bool {
+			return d.HasDevenvNix
+		},
+	})
+
+	r.AttachBehavior("lookup-docs", toolreg.ToolBehavior{
+		GenerateFunc: func(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
+			if resolveTier(answers) < tier.Full {
+				return nil, nil
+			}
+			f, err := generateLookupDocsSkill(answers)
+			if err != nil {
+				return nil, err
+			}
+			if f == nil {
+				return nil, nil
+			}
+			return []types.GeneratedFile{*f}, nil
+		},
+	})
 }

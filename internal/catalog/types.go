@@ -225,6 +225,20 @@ type ToolCategoryDef struct {
 	DisplayName string `yaml:"display_name"`
 }
 
+// MCPServerDef defines declarative execution and lifecycle metadata for an MCP server.
+type MCPServerDef struct {
+	DisplayName   string            `yaml:"display_name"`
+	Category      string            `yaml:"category"`
+	Description   string            `yaml:"description"`
+	Command       string            `yaml:"command"`
+	Args          []string          `yaml:"args,omitempty"`
+	Env           map[string]string `yaml:"env,omitempty"`
+	RequiredEnv   []string          `yaml:"required_env,omitempty"`
+	Transport     string            `yaml:"transport,omitempty"`
+	InstallMethod string            `yaml:"install_method,omitempty"`
+	PackageName   string            `yaml:"package_name,omitempty"`
+}
+
 // PermissionRulesFile represents the permission_rules section of defaults.yaml.
 type PermissionRulesFile struct {
 	DenyRules           map[string][]string            `yaml:"permission_deny_rules"`

@@ -38,7 +38,7 @@ type WizardAnswers struct {
 	ConfigVersion      int               `yaml:"config_version,omitempty"   json:"config_version,omitempty"`
 	ComplianceLevel    string            `yaml:"compliance_level,omitempty"  json:"compliance_level,omitempty"`
 	ModelSize          string            `yaml:"model_size,omitempty"        json:"model_size,omitempty"`
-	Infrastructure     InfraConfig       `yaml:"infrastructure,omitempty"    json:"infrastructure,omitempty"`
+	Infrastructure     InfraConfig       `yaml:"infrastructure"              json:"infrastructure"`
 	Overlays           []string          `yaml:"overlays,omitempty"          json:"overlays,omitempty"`
 }
 
@@ -140,6 +140,15 @@ type GeneratedFile struct {
 	Owner          string        `yaml:"owner,omitempty" json:"owner,omitempty"`
 }
 
+// McpServerState tracks the lifecycle state of an installed MCP server.
+type McpServerState struct {
+	InstalledVersion  string     `yaml:"installed_version,omitempty"  json:"installed_version,omitempty"`
+	InstallMethod     string     `yaml:"install_method,omitempty"     json:"install_method,omitempty"`
+	LastHealthCheck   *time.Time `yaml:"last_health_check,omitempty"  json:"last_health_check,omitempty"`
+	LastHealthStatus  string     `yaml:"last_health_status,omitempty" json:"last_health_status,omitempty"`
+	DataCorpusVersion string     `yaml:"data_corpus_version,omitempty" json:"data_corpus_version,omitempty"`
+}
+
 // GeneratedState tracks what files were generated and their hashes,
 // enabling modification detection on subsequent runs.
 type GeneratedState struct {
@@ -150,6 +159,7 @@ type GeneratedState struct {
 	SkillLibraryVersion string                           `yaml:"skill_library_version" json:"skill_library_version"`
 	EnabledTools        map[string]bool                  `yaml:"enabled_tools,omitempty" json:"enabled_tools,omitempty"`
 	Fragments           map[string][]FragmentLedgerEntry `yaml:"fragments,omitempty"     json:"fragments,omitempty"`
+	McpServers          map[string]McpServerState        `yaml:"mcp_servers,omitempty"    json:"mcp_servers,omitempty"`
 }
 
 // FileState tracks a single generated file's hash and merge strategy.

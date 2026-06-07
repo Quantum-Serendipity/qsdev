@@ -1,0 +1,61 @@
+---
+name: lookup-docs
+description: Look up documentation using prioritized local-first sources with web fallback
+disable-model-invocation: true
+allowed-tools: Bash(qsdev *){{ range .DocSources }}{{ if .Available }} mcp__{{ .ServerName }}(*){{ end }}{{ end }}
+arguments:
+  - query
+argument-hint: "How do I use Go's sync.WaitGroup?"
+---
+
+# Documentation Lookup
+
+When answering documentation questions, query sources in priority order. Always tag your sources.
+
+## Live Server Status
+
+Run this to check which documentation servers are available:
+
+```
+!qsdev mcp status --json 2>/dev/null || echo '{"servers": []}'
+```
+
+## Routing Priority
+{{ range .DocSources }}
+### Priority {{ .Priority }}: {{ .Name }} {{ .Tag }}
+{{ if .Available -}}
+**Status:** Available
+**Use for:** {{ .UseCase }}
+
+Query the `{{ .ServerName }}` MCP server. Tag all information from this source with {{ .Tag }}.
+{{ else -}}
+**Status:** Unavailable (server `{{ .ServerName }}` not configured)
+
+Skip this source and proceed to the next priority level.
+{{ end -}}
+{{ end }}
+
+## Source Tagging Protocol
+
+Every piece of information retrieved MUST be tagged with its source:
+
+- **[DevDocs]** — Official API/library reference from DevDocs
+- **[Stack Exchange]** — Community Q&A from Stack Exchange via ZIM
+- **[man page]** — System manual pages for CLI tools and POSIX utilities
+- **[NixOS]** — NixOS/Nix configuration options and package metadata
+- **[Web]** — Web-fetched documentation via Context7
+
+## Degradation Rules
+
+1. Try sources in priority order (1 through 5)
+2. If a source is unavailable or returns no results, move to the next
+3. If a source returns partial results, note this and supplement from the next source
+4. Always prefer local/offline sources over web when both have the answer
+5. If no local source has the answer, use [Web] fallback
+
+## Response Format
+
+1. State which source(s) you consulted
+2. Tag each piece of information with its source tag
+3. If you had to fall back to a lower-priority source, explain why
+4. Synthesize information from multiple sources when they complement each other

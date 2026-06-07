@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 )
@@ -136,6 +137,8 @@ func loadMCPServers(projectRoot string) (map[string]mcphealth.ServerConfig, erro
 		return nil, fmt.Errorf("parsing .mcp.json: %w", err)
 	}
 
+	cat, catErr := catalog.Default()
+
 	servers := make(map[string]mcphealth.ServerConfig, len(mcp.MCPServers))
 	for name, entry := range mcp.MCPServers {
 		cfg := mcphealth.ServerConfig{
@@ -144,8 +147,10 @@ func loadMCPServers(projectRoot string) (map[string]mcphealth.ServerConfig, erro
 			Args:    entry.Args,
 			Env:     entry.Env,
 		}
-		if known, ok := knownMCPServers[name]; ok {
-			cfg.RequiredEnv = known.RequiredEnv
+		if catErr == nil {
+			if def, ok := cat.MCPServer(name); ok {
+				cfg.RequiredEnv = def.RequiredEnv
+			}
 		}
 		servers[name] = cfg
 	}

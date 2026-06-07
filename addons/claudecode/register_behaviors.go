@@ -18,6 +18,7 @@ func init() {
 	registerAgentToolGenerators(r)
 	registerConsultingAgentGenerators(r)
 	registerConsultingWorkflowGenerators(r)
+	registerDocToolBehaviors(r)
 }
 
 func registerMCPServerContent(r *toolreg.Registry) {
@@ -138,4 +139,35 @@ func registerConsultingWorkflowGenerators(r *toolreg.Registry) {
 			},
 		})
 	}
+}
+
+func registerDocToolBehaviors(r *toolreg.Registry) {
+	r.AttachBehavior("local-docs-devdocs", toolreg.ToolBehavior{
+		DetectFunc: func(d types.DetectedProject) bool {
+			return d.HasGoMod || d.HasPackageJSON || d.HasPyProject ||
+				d.HasCargoToml || d.HasPomXML || d.HasBuildGradle || d.HasCsproj
+		},
+	})
+
+	r.AttachBehavior("mcp-nixos", toolreg.ToolBehavior{
+		DetectFunc: func(d types.DetectedProject) bool {
+			return d.HasDevenvNix
+		},
+	})
+
+	r.AttachBehavior("lookup-docs", toolreg.ToolBehavior{
+		GenerateFunc: func(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
+			if resolveTier(answers) < tier.Full {
+				return nil, nil
+			}
+			f, err := generateLookupDocsSkill(answers)
+			if err != nil {
+				return nil, err
+			}
+			if f == nil {
+				return nil, nil
+			}
+			return []types.GeneratedFile{*f}, nil
+		},
+	})
 }

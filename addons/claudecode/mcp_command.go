@@ -24,6 +24,11 @@ func mcpCmd() *cobra.Command {
 
 	cmd.AddCommand(mcpStatusCmd())
 	cmd.AddCommand(mcpListCmd())
+	cmd.AddCommand(mcpGradeCmd())
+	cmd.AddCommand(mcpInstallCmd())
+	cmd.AddCommand(mcpUpdateCmd())
+	cmd.AddCommand(mcpRemoveCmd())
+	cmd.AddCommand(mcpHealthCmd())
 	return cmd
 }
 

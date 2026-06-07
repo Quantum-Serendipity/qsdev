@@ -63,6 +63,28 @@ var knownMCPServers = map[string]MCPServerEntry{
 		Command: "qsdev",
 		Args:    []string{"mcp", "version-sentinel"},
 	},
+	"local-docs-devdocs": {
+		Command: "npx",
+		Args:    []string{"devdocs-mcp-server"},
+		Env:     map[string]string{"DEVDOCS_DATA_DIR": "${HOME}/.local/share/qsdev/docs/devdocs"},
+	},
+	"local-docs-zim": {
+		Command: "openzim-mcp",
+		Env: map[string]string{
+			"OPENZIM_MCP_ZIM_DIR":   "${HOME}/.local/share/qsdev/docs/zim",
+			"OPENZIM_MCP_TOOL_MODE": "simple",
+			"OPENZIM_MCP_CACHE_TTL": "3600",
+			"OPENZIM_MCP_LOG_LEVEL": "WARNING",
+		},
+	},
+	"man-pages": {
+		Command: "uvx",
+		Args:    []string{"man-mcp-server"},
+	},
+	"mcp-nixos": {
+		Command: "uvx",
+		Args:    []string{"mcp-nixos"},
+	},
 }
 
 // GenerateMcpJson produces a .mcp.json file from the wizard answers and addon

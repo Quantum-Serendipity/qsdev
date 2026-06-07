@@ -748,6 +748,74 @@ tools:
                 {{- if .Uncovered }}
                 - Version-Sentinel does NOT cover: {{ join ", " .Uncovered }}. Review these manually.
                 {{- end }}
+    local-docs-devdocs:
+        display_name: DevDocs Local Documentation
+        category: ai-agent
+        description: Local DevDocs documentation server for offline API reference lookups
+        default_policy: on-when-detected
+        mcp_server_name: local-docs-devdocs
+        owned_files:
+            - path: .mcp.json
+              ownership: shared
+              section_id: local-docs-devdocs
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: local-docs-devdocs
+              section_content: "- **DevDocs** local documentation available for offline API reference (official docs, high trust)."
+    local-docs-zim:
+        display_name: Stack Exchange ZIM Documentation
+        category: ai-agent
+        description: openzim-mcp server for offline Stack Exchange documentation via ZIM files
+        default_policy: opt-in
+        mcp_server_name: local-docs-zim
+        owned_files:
+            - path: .mcp.json
+              ownership: shared
+              section_id: local-docs-zim
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: local-docs-zim
+              section_content: "- **Stack Exchange ZIM** offline Q&A available (community content, medium trust)."
+    man-pages:
+        display_name: Man Pages MCP
+        category: ai-agent
+        description: Local man page documentation server for system command reference
+        default_policy: opt-in
+        mcp_server_name: man-pages
+        owned_files:
+            - path: .mcp.json
+              ownership: shared
+              section_id: man-pages
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: man-pages
+              section_content: "- **Man Pages** local system documentation available (high trust)."
+    mcp-nixos:
+        display_name: MCP-NixOS Documentation
+        category: ai-agent
+        description: NixOS documentation server for Nix packages, options, and Home Manager
+        default_policy: opt-in
+        mcp_server_name: mcp-nixos
+        owned_files:
+            - path: .mcp.json
+              ownership: shared
+              section_id: mcp-nixos
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: mcp-nixos
+              section_content: "- **MCP-NixOS** provides Nix packages, options, and Home Manager documentation (online dependency)."
+    lookup-docs:
+        display_name: Documentation Lookup Routing
+        category: ai-agent
+        description: Prioritized documentation lookup routing through local sources with web fallback
+        default_policy: opt-in
+        owned_files:
+            - path: .claude/skills/lookup-docs/SKILL.md
+              ownership: exclusive
+            - path: CLAUDE.md
+              ownership: shared
+              section_id: lookup-docs
+              section_content: "- **lookup-docs** skill routes documentation queries through prioritized local-first sources."
 security_hooks:
     - ripsecrets
     - check-added-large-files

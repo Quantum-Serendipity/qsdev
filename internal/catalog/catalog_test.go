@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -172,7 +173,7 @@ func TestResolveTier_Standard(t *testing.T) {
 		t.Errorf("claude_code.permission_level = %q, want %q",
 			resolved.ClaudeCode.PermissionLevel, "standard")
 	}
-	if !containsStr(resolved.Tools.Enabled, "gitleaks") {
+	if !slices.Contains(resolved.Tools.Enabled, "gitleaks") {
 		t.Errorf("tools.enabled = %v, should contain gitleaks", resolved.Tools.Enabled)
 	}
 }
@@ -188,11 +189,11 @@ func TestResolveTier_Full(t *testing.T) {
 		t.Errorf("security.level = %q, want %q", resolved.Security.Level, "enhanced")
 	}
 	for _, tool := range []string{"semgrep", "gitleaks", "secretspec"} {
-		if !containsStr(resolved.Tools.Enabled, tool) {
+		if !slices.Contains(resolved.Tools.Enabled, tool) {
 			t.Errorf("tools.enabled = %v, should contain %q", resolved.Tools.Enabled, tool)
 		}
 	}
-	if !containsStr(resolved.ClaudeCode.MCPServers, "context7") {
+	if !slices.Contains(resolved.ClaudeCode.MCPServers, "context7") {
 		t.Errorf("mcp_servers = %v, should contain context7", resolved.ClaudeCode.MCPServers)
 	}
 }
@@ -302,7 +303,7 @@ func TestProfile_FullTools(t *testing.T) {
 		t.Fatal("full profile has nil tools")
 	}
 	for _, tool := range []string{"semgrep", "gitleaks", "secretspec"} {
-		if !containsStr(p.Tools.Enabled, tool) {
+		if !slices.Contains(p.Tools.Enabled, tool) {
 			t.Errorf("full profile tools = %v, should contain %q", p.Tools.Enabled, tool)
 		}
 	}
@@ -364,8 +365,8 @@ func TestTools_Count(t *testing.T) {
 	t.Parallel()
 	cat := loadTestCatalog(t)
 	tools := cat.Tools()
-	if len(tools) < 37 {
-		t.Errorf("expected at least 37 tools, got %d", len(tools))
+	if len(tools) < 42 {
+		t.Errorf("expected at least 42 tools, got %d", len(tools))
 	}
 }
 
@@ -425,7 +426,7 @@ func TestUnsetVars_ContainsKnownCredentials(t *testing.T) {
 	cat := loadTestCatalog(t)
 	vars := cat.UnsetVars()
 	for _, v := range []string{"AWS_SECRET_ACCESS_KEY", "GITHUB_TOKEN", "VAULT_TOKEN", "DATABASE_PASSWORD"} {
-		if !containsStr(vars, v) {
+		if !slices.Contains(vars, v) {
 			t.Errorf("UnsetVars() should contain %q", v)
 		}
 	}
@@ -473,7 +474,7 @@ func TestHookTiers_BaselineHooks(t *testing.T) {
 	tiers := cat.HookTiers()
 	baseline := tiers["baseline"]
 	for _, h := range []string{"ripsecrets", "gitleaks", "check-added-large-files"} {
-		if !containsStr(baseline, h) {
+		if !slices.Contains(baseline, h) {
 			t.Errorf("baseline hooks should contain %q, got %v", h, baseline)
 		}
 	}
@@ -514,7 +515,7 @@ func TestTierToEnabledTools(t *testing.T) {
 	}
 	fullTools := m["full"]
 	for _, tool := range []string{"semgrep", "gitleaks", "secretspec"} {
-		if !containsStr(fullTools, tool) {
+		if !slices.Contains(fullTools, tool) {
 			t.Errorf("full tools = %v, should contain %q", fullTools, tool)
 		}
 	}
@@ -587,7 +588,7 @@ func TestLanguages(t *testing.T) {
 		t.Errorf("Languages() count = %d, want >= 27", len(langs))
 	}
 	for _, l := range []string{"go", "javascript", "python", "rust"} {
-		if !containsStr(langs, l) {
+		if !slices.Contains(langs, l) {
 			t.Errorf("Languages() should contain %q", l)
 		}
 	}
@@ -726,15 +727,6 @@ func TestUnsetVars_SupersetOfKnownCredentialVars(t *testing.T) {
 			t.Errorf("secrets.KnownCredentialVars contains %q but security.yaml unset_vars does not", v)
 		}
 	}
-}
-
-func containsStr(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 func newMinimalCatalog() *Catalog {
@@ -926,10 +918,10 @@ func TestResolveTier_ThreeLevelInheritance(t *testing.T) {
 		t.Errorf("security.level = %q, want enhanced (full's override)", resolved.Security.Level)
 	}
 
-	if !containsStr(resolved.Tools.Enabled, "gitleaks") {
+	if !slices.Contains(resolved.Tools.Enabled, "gitleaks") {
 		t.Error("full should inherit gitleaks from standard")
 	}
-	if !containsStr(resolved.Tools.Enabled, "semgrep") {
+	if !slices.Contains(resolved.Tools.Enabled, "semgrep") {
 		t.Error("full should have semgrep from its own definition")
 	}
 
@@ -943,7 +935,7 @@ func TestResolveTier_ThreeLevelInheritance(t *testing.T) {
 		t.Errorf("gitleaks appears %d times, want 1 (deduplication)", gitleaksCount)
 	}
 
-	if !containsStr(resolved.ClaudeCode.MCPServers, "context7") {
+	if !slices.Contains(resolved.ClaudeCode.MCPServers, "context7") {
 		t.Error("full should have context7 MCP server")
 	}
 }
@@ -1067,7 +1059,7 @@ func TestValidationAccessors(t *testing.T) {
 			t.Errorf("KeepVars() count = %d, want >= 5", len(vars))
 		}
 		for _, v := range []string{"TERM", "HOME", "USER"} {
-			if !containsStr(vars, v) {
+			if !slices.Contains(vars, v) {
 				t.Errorf("KeepVars() should contain %q", v)
 			}
 		}
@@ -1104,7 +1096,7 @@ func TestValidationAccessors(t *testing.T) {
 			t.Errorf("HookPresets() count = %d, want 9", len(presets))
 		}
 		for _, p := range []string{"auto-format", "safety-block", "pre-commit", "audit-log", "credential-scan", "destructive-prevention", "soc2-audit", "file-boundary", "tool-gates"} {
-			if !containsStr(presets, p) {
+			if !slices.Contains(presets, p) {
 				t.Errorf("HookPresets() should contain %q", p)
 			}
 		}
@@ -1177,7 +1169,7 @@ func TestEndToEnd_TierToComplianceChain(t *testing.T) {
 		}
 	}
 	for _, expected := range []string{"semgrep", "gitleaks", "secretspec"} {
-		if !containsStr(enabledTools, expected) {
+		if !slices.Contains(enabledTools, expected) {
 			t.Errorf("full tier enabled tools %v should contain %q", enabledTools, expected)
 		}
 	}

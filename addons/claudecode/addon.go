@@ -35,5 +35,6 @@ func CurrentConfig() Config {
 func initialize() error {
 	instance.AddCommands(claudeCmd())
 	instance.AddCommands(mcpCmd())
+	instance.AddCommands(docsCmd())
 	return nil
 }

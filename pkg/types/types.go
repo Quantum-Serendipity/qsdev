@@ -2,6 +2,7 @@ package types
 
 import (
 	"os"
+	"slices"
 	"time"
 )
 
@@ -250,6 +251,17 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 			}
 			a.Languages = append(a.Languages, LanguageChoice{Name: name})
 		}
+
+		// Cloud co-detection: when cloud + K8s/Helm co-occur, set extras for auth plugins.
+		hasK8s := detected.Ecosystems["helm"] || detected.Ecosystems["container"]
+		if hasK8s {
+			for i := range a.Languages {
+				switch a.Languages[i].Name {
+				case "gcp", "azure":
+					a.Languages[i].Extras = appendUnique(a.Languages[i].Extras, "k8s=true")
+				}
+			}
+		}
 	}
 
 	// Merge detected versions into existing language entries that lack one.
@@ -323,4 +335,12 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 		}
 	}
 
+}
+
+// appendUnique appends val to slice only if it is not already present.
+func appendUnique(slice []string, val string) []string {
+	if slices.Contains(slice, val) {
+		return slice
+	}
+	return append(slice, val)
 }

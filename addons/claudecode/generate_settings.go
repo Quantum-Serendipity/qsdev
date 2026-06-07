@@ -160,13 +160,39 @@ func collectEcosystemDenyRules(answers types.WizardAnswers, registry *ecosystem.
 	return sliceutil.Dedup(rules)
 }
 
+// collectEcosystemReadDenyRules iterates the selected languages, looks up each
+// module in the registry, and aggregates their ReadDenyRules output.
+func collectEcosystemReadDenyRules(answers types.WizardAnswers, registry *ecosystem.Registry) []string {
+	if registry == nil {
+		return nil
+	}
+	var rules []string
+	for _, lang := range answers.Languages {
+		mod, ok := registry.ByName(lang.Name)
+		if !ok {
+			continue
+		}
+		rdrp, ok := mod.(ecosystem.ReadDenyRuleProvider)
+		if !ok {
+			continue
+		}
+		cfg := ecosystem.ToModuleConfig(lang)
+		rules = append(rules, rdrp.ReadDenyRules(cfg)...)
+	}
+	return sliceutil.Dedup(rules)
+}
+
 // buildSandbox returns a SandboxConfig when sandbox is enabled, or nil otherwise.
-func buildSandbox(cfg Config) *SandboxConfig {
+func buildSandbox(cfg Config, answers types.WizardAnswers, registry *ecosystem.Registry) *SandboxConfig {
 	if !cfg.SandboxEnabled {
 		return nil
 	}
+	readDeny := collectEcosystemReadDenyRules(answers, registry)
 	sandbox := &SandboxConfig{
 		WriteDeny: []string{"/etc", "/usr"},
+	}
+	if len(readDeny) > 0 {
+		sandbox.ReadDeny = readDeny
 	}
 	if len(cfg.AllowedDomains) > 0 {
 		sandbox.NetAllow = cfg.AllowedDomains
@@ -236,7 +262,7 @@ func GenerateSettings(answers types.WizardAnswers, registry *ecosystem.Registry,
 
 	settings := SettingsJSON{
 		Permissions: buildPermissions(preset, answers, registry, cfg),
-		Sandbox:     buildSandbox(cfg),
+		Sandbox:     buildSandbox(cfg, answers, registry),
 		Hooks:       buildHooks(answers),
 	}
 

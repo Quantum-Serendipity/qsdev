@@ -20,7 +20,7 @@ type ToolCheck struct {
 	Notes        func(osInfo *sysinfo.OSInfo) string
 }
 
-// DefaultChecks returns the 17-tool registry used by qsdev doctor.
+// DefaultChecks returns the 20-tool registry used by qsdev doctor.
 func DefaultChecks() []ToolCheck {
 	return []ToolCheck{
 		{
@@ -257,6 +257,54 @@ func DefaultChecks() []ToolCheck {
 			VersionFlag: "version",
 			ParseVersion: func(raw string) string {
 				return extractLastField(raw, "grype ")
+			},
+			AutoInstall: alwaysInstallable,
+		},
+		{
+			Name:        "aws-cli",
+			Binary:      "aws",
+			VersionFlag: "--version",
+			Required:    false,
+			ParseVersion: func(raw string) string {
+				// "aws-cli/2.15.0 Python/3.11.6 ..." → "2.15.0"
+				for _, part := range strings.Fields(raw) {
+					if v, ok := strings.CutPrefix(part, "aws-cli/"); ok {
+						return v
+					}
+				}
+				return ""
+			},
+			AutoInstall: alwaysInstallable,
+		},
+		{
+			Name:        "gcloud",
+			Binary:      "gcloud",
+			VersionFlag: "version",
+			Required:    false,
+			ParseVersion: func(raw string) string {
+				// "Google Cloud SDK 462.0.1\n..." → "462.0.1"
+				for line := range strings.SplitSeq(raw, "\n") {
+					if val, ok := strings.CutPrefix(strings.TrimSpace(line), "Google Cloud SDK "); ok {
+						return strings.TrimSpace(val)
+					}
+				}
+				return ""
+			},
+			AutoInstall: alwaysInstallable,
+		},
+		{
+			Name:        "az",
+			Binary:      "az",
+			VersionFlag: "version",
+			Required:    false,
+			ParseVersion: func(raw string) string {
+				// "azure-cli 2.58.0\n..." → "2.58.0"
+				for line := range strings.SplitSeq(raw, "\n") {
+					if val, ok := strings.CutPrefix(strings.TrimSpace(line), "azure-cli"); ok {
+						return strings.TrimSpace(val)
+					}
+				}
+				return ""
 			},
 			AutoInstall: alwaysInstallable,
 		},

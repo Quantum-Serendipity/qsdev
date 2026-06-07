@@ -32,4 +32,7 @@ const (
 	NameZig        = "zig"
 	NamePowerShell = "powershell"
 	NameKotlin     = "kotlin"
+	NameAWS        = "aws"
+	NameGCP        = "gcp"
+	NameAzure      = "azure"
 )

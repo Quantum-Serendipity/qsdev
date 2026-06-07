@@ -254,8 +254,8 @@ func TestParseDirenvVersion(t *testing.T) {
 
 func TestDefaultChecksCount(t *testing.T) {
 	checks := DefaultChecks()
-	if len(checks) != 17 {
-		t.Errorf("DefaultChecks() returned %d checks, want 17", len(checks))
+	if len(checks) != 20 {
+		t.Errorf("DefaultChecks() returned %d checks, want 20", len(checks))
 	}
 }
 

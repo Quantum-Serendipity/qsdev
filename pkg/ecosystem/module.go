@@ -78,3 +78,18 @@ type ManifestFileProvider interface {
 type DenyRuleProvider interface {
 	DenyRules(config ModuleConfig) []string
 }
+
+// ReadDenyRuleProvider is an optional interface that ecosystem modules can
+// implement to contribute Claude Code sandbox ReadDeny patterns. These block
+// the agent from reading credential files on the local filesystem. Modules
+// that need no read deny rules simply omit this interface.
+type ReadDenyRuleProvider interface {
+	ReadDenyRules(config ModuleConfig) []string
+}
+
+// DoctorCheckProvider is an optional interface that ecosystem modules can
+// implement to contribute doctor health checks. Each check is an independent
+// validation that runs during "qsdev doctor".
+type DoctorCheckProvider interface {
+	DoctorChecks(config ModuleConfig) []DoctorCheck
+}

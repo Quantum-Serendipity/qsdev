@@ -24,6 +24,7 @@ type Report struct {
 	ContainerRuntime   *ContainerSection `json:"container_runtime,omitempty"`
 	SandboxRuntime     *SandboxSection   `json:"sandbox_runtime,omitempty"`
 	MCPServers         *MCPSection       `json:"mcp_servers,omitempty"`
+	CloudProviders     *CloudSection     `json:"cloud_providers,omitempty"`
 	RequiredTools      []ToolEntry       `json:"required_tools"`
 	OptionalTools      []ToolEntry       `json:"optional_tools"`
 	Recommendations    []string          `json:"recommendations,omitempty"`
@@ -58,6 +59,26 @@ type MCPServerInfo struct {
 // SetMCPSection attaches MCP server health check results to the report.
 func (r *Report) SetMCPSection(ms *MCPSection) {
 	r.MCPServers = ms
+}
+
+// CloudSection holds cloud provider CLI check results for the doctor report.
+type CloudSection struct {
+	Detected  bool                `json:"detected"`
+	Providers []CloudProviderInfo `json:"providers"`
+	Warnings  []string            `json:"warnings,omitempty"`
+}
+
+// CloudProviderInfo summarises a single cloud provider CLI's status.
+type CloudProviderInfo struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	Status      string `json:"status"`
+	Detail      string `json:"detail,omitempty"`
+}
+
+// SetCloudSection attaches cloud provider CLI check results to the report.
+func (r *Report) SetCloudSection(cs *CloudSection) {
+	r.CloudProviders = cs
 }
 
 // SystemInfo captures OS-level details for the report.
@@ -277,6 +298,11 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 		fmt.Fprintln(w)
 	}
 
+	// Cloud Providers
+	if r.CloudProviders != nil && r.CloudProviders.Detected {
+		formatCloudSection(w, r.CloudProviders, okSym, warnSym, failSym)
+	}
+
 	// Required Tools
 	if len(r.RequiredTools) > 0 {
 		fmt.Fprintln(w, "Required Tools")
@@ -378,6 +404,27 @@ func formatSandboxSection(w io.Writer, ss *SandboxSection, okSym, warnSym, _ str
 		for _, warn := range ss.Warnings {
 			fmt.Fprintf(w, "  %s %s\n", warnSym, warn)
 		}
+	}
+	fmt.Fprintln(w)
+}
+
+func formatCloudSection(w io.Writer, cs *CloudSection, okSym, warnSym, failSym string) {
+	fmt.Fprintln(w, "Cloud Providers")
+	for _, p := range cs.Providers {
+		sym := okSym
+		switch p.Status {
+		case "degraded":
+			sym = warnSym
+		case "missing", "misconfigured":
+			sym = failSym
+		}
+		fmt.Fprintf(w, "  %-20s %s %s\n", p.DisplayName, sym, p.Status)
+		if p.Detail != "" {
+			fmt.Fprintf(w, "    %s\n", p.Detail)
+		}
+	}
+	for _, warn := range cs.Warnings {
+		fmt.Fprintf(w, "  %s %s\n", warnSym, warn)
 	}
 	fmt.Fprintln(w)
 }

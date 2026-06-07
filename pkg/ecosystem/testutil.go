@@ -9,6 +9,7 @@ var _ DenyRuleProvider = (*MockModule)(nil)
 var _ WizardFieldProvider = (*MockModule)(nil)
 var _ ManifestFileProvider = (*MockModule)(nil)
 var _ PackageProvider = (*MockModule)(nil)
+var _ ReadDenyRuleProvider = (*MockModule)(nil)
 
 // MockModule is a configurable implementation of EcosystemModule for testing.
 // Each field corresponds to the return value of the matching interface method.
@@ -27,6 +28,7 @@ type MockModule struct {
 	SecurityConfigsVal      []types.GeneratedFile
 	PreCommitHooksVal       []HookConfig
 	DenyRulesVal            []string
+	ReadDenyRulesVal        []string
 	CICommandsVal           []CICommand
 	PackageManagersVal      []PackageManagerInfo
 	WizardFieldsVal         []WizardField
@@ -64,6 +66,10 @@ func (m *MockModule) PreCommitHooks(config ModuleConfig) []HookConfig {
 
 func (m *MockModule) DenyRules(_ ModuleConfig) []string {
 	return m.DenyRulesVal
+}
+
+func (m *MockModule) ReadDenyRules(_ ModuleConfig) []string {
+	return m.ReadDenyRulesVal
 }
 
 func (m *MockModule) CICommands(config ModuleConfig) []CICommand {

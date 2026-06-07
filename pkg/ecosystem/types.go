@@ -297,3 +297,13 @@ func (p *LockFilePolicy) UnmarshalText(text []byte) error {
 	}
 	return fmt.Errorf("unknown lock file policy: %q", string(text))
 }
+
+// DoctorCheck describes a single health check contributed by an ecosystem module.
+type DoctorCheck struct {
+	Name        string `yaml:"name"        json:"name"`
+	Description string `yaml:"description" json:"description"`
+	Command     string `yaml:"command"     json:"command"`
+	EnvCheck    string `yaml:"env_check"   json:"env_check"`
+	Timeout     int    `yaml:"timeout"     json:"timeout"`
+	Provider    string `yaml:"provider"    json:"provider"`
+}

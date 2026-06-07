@@ -7,6 +7,8 @@ package modules
 
 import (
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/ansible"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/aws"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/azure"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/bazel"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/clojure"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/container"
@@ -14,6 +16,7 @@ import (
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/dart"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/dotnet"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/elixir"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/gcp"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/golang"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/haskell"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/helm"

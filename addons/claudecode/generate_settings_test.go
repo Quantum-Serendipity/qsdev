@@ -822,6 +822,101 @@ func TestGenerateSettings_SupplyChainOnlyPreset(t *testing.T) {
 	}
 }
 
+func TestGenerateSettings_CloudAWSReadDeny(t *testing.T) {
+	t.Parallel()
+
+	reg := newTestRegistry(t, &ecosystem.MockModule{
+		NameVal:        "aws",
+		DisplayNameVal: "AWS",
+		TierVal:        2,
+		ReadDenyRulesVal: []string{
+			"~/.aws/credentials",
+			"~/.aws/sso/cache",
+		},
+		DenyRulesVal: []string{
+			"Bash(aws configure set *)",
+		},
+	})
+
+	answers := types.WizardAnswers{
+		PermissionLevel: "standard",
+		Languages: []types.LanguageChoice{
+			{Name: "aws"},
+		},
+	}
+	gf := mustGenerateSettings(t, answers, reg, claudecode.WithSandbox(true))
+	s := mustUnmarshalSettings(t, gf)
+
+	if s.Sandbox == nil {
+		t.Fatal("sandbox should be present when enabled")
+	}
+	if !containsRule(s.Sandbox.ReadDeny, "~/.aws/credentials") {
+		t.Error("sandbox readDeny should contain ~/.aws/credentials")
+	}
+	if !containsRule(s.Sandbox.ReadDeny, "~/.aws/sso/cache") {
+		t.Error("sandbox readDeny should contain ~/.aws/sso/cache")
+	}
+}
+
+func TestGenerateSettings_CloudAWSWithoutSandbox(t *testing.T) {
+	t.Parallel()
+
+	reg := newTestRegistry(t, &ecosystem.MockModule{
+		NameVal:        "aws",
+		DisplayNameVal: "AWS",
+		TierVal:        2,
+		ReadDenyRulesVal: []string{
+			"~/.aws/credentials",
+		},
+	})
+
+	answers := types.WizardAnswers{
+		PermissionLevel: "standard",
+		Languages: []types.LanguageChoice{
+			{Name: "aws"},
+		},
+	}
+	gf := mustGenerateSettings(t, answers, reg)
+	s := mustUnmarshalSettings(t, gf)
+
+	if s.Sandbox != nil {
+		t.Errorf("sandbox should be nil when not enabled, got %+v", s.Sandbox)
+	}
+}
+
+func TestGenerateSettings_CloudBashDenyRules(t *testing.T) {
+	t.Parallel()
+
+	reg := newTestRegistry(t, &ecosystem.MockModule{
+		NameVal:        "aws",
+		DisplayNameVal: "AWS",
+		TierVal:        2,
+		DenyRulesVal: []string{
+			"Bash(aws configure set *)",
+			"Bash(aws iam create-access-key *)",
+		},
+		ReadDenyRulesVal: []string{
+			"~/.aws/credentials",
+		},
+	})
+
+	answers := types.WizardAnswers{
+		PermissionLevel: "standard",
+		Languages: []types.LanguageChoice{
+			{Name: "aws"},
+		},
+	}
+	gf := mustGenerateSettings(t, answers, reg)
+	s := mustUnmarshalSettings(t, gf)
+
+	if !containsRule(s.Permissions.Deny, "Bash(aws configure set *)") {
+		t.Error("deny should contain cloud-specific rule Bash(aws configure set *)")
+	}
+	if !containsRule(s.Permissions.Deny, "Bash(aws iam create-access-key *)") {
+		t.Error("deny should contain cloud-specific rule Bash(aws iam create-access-key *)")
+	}
+}
+
 // containsStr checks if s contains substr.
 func containsStr(s, substr string) bool {
 	return len(s) >= len(substr) && searchStr(s, substr)

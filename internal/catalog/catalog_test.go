@@ -606,8 +606,8 @@ func TestServices(t *testing.T) {
 	t.Parallel()
 	cat := loadTestCatalog(t)
 	svcs := cat.Services()
-	if len(svcs) != 6 {
-		t.Errorf("Services() count = %d, want 6", len(svcs))
+	if len(svcs) != 11 {
+		t.Errorf("Services() count = %d, want 11", len(svcs))
 	}
 }
 

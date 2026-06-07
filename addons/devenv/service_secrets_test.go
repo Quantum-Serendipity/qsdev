@@ -118,6 +118,94 @@ func TestServiceSecretDeclarations_RabbitMQ(t *testing.T) {
 	}
 }
 
+func TestServiceSecretDeclarations_Kafka(t *testing.T) {
+	decls := devenv.ServiceSecretDeclarations("kafka")
+	if len(decls) != 1 {
+		t.Fatalf("expected 1 declaration for kafka, got %d", len(decls))
+	}
+	if decls[0].Name != "KAFKA_BOOTSTRAP_SERVERS" {
+		t.Errorf("expected KAFKA_BOOTSTRAP_SERVERS, got %q", decls[0].Name)
+	}
+	if !decls[0].Required {
+		t.Error("expected KAFKA_BOOTSTRAP_SERVERS to be Required")
+	}
+	if decls[0].AutoGenerate {
+		t.Error("expected KAFKA_BOOTSTRAP_SERVERS to not AutoGenerate")
+	}
+	if decls[0].Source != "kafka" {
+		t.Errorf("expected Source kafka, got %q", decls[0].Source)
+	}
+}
+
+func TestServiceSecretDeclarations_MinIO(t *testing.T) {
+	decls := devenv.ServiceSecretDeclarations("minio")
+	if len(decls) != 2 {
+		t.Fatalf("expected 2 declarations for minio, got %d", len(decls))
+	}
+
+	if decls[0].Name != "MINIO_ROOT_PASSWORD" {
+		t.Errorf("expected MINIO_ROOT_PASSWORD, got %q", decls[0].Name)
+	}
+	if !decls[0].AutoGenerate {
+		t.Error("expected MINIO_ROOT_PASSWORD to AutoGenerate")
+	}
+	if decls[0].GenerateSpec == nil {
+		t.Fatal("expected MINIO_ROOT_PASSWORD to have GenerateSpec")
+	}
+	if decls[0].GenerateSpec.Length != 32 {
+		t.Errorf("expected GenerateSpec.Length 32, got %d", decls[0].GenerateSpec.Length)
+	}
+	if decls[0].GenerateSpec.Charset != "alphanumeric" {
+		t.Errorf("expected Charset alphanumeric, got %q", decls[0].GenerateSpec.Charset)
+	}
+
+	if decls[1].Name != "AWS_SECRET_ACCESS_KEY" {
+		t.Errorf("expected AWS_SECRET_ACCESS_KEY, got %q", decls[1].Name)
+	}
+	if !decls[1].Required {
+		t.Error("expected AWS_SECRET_ACCESS_KEY to be Required")
+	}
+	if decls[1].AutoGenerate {
+		t.Error("expected AWS_SECRET_ACCESS_KEY to not AutoGenerate")
+	}
+}
+
+func TestServiceSecretDeclarations_Keycloak(t *testing.T) {
+	decls := devenv.ServiceSecretDeclarations("keycloak")
+	if len(decls) != 1 {
+		t.Fatalf("expected 1 declaration for keycloak, got %d", len(decls))
+	}
+	if decls[0].Name != "KEYCLOAK_ADMIN_PASSWORD" {
+		t.Errorf("expected KEYCLOAK_ADMIN_PASSWORD, got %q", decls[0].Name)
+	}
+	if !decls[0].AutoGenerate {
+		t.Error("expected KEYCLOAK_ADMIN_PASSWORD to AutoGenerate")
+	}
+	if decls[0].GenerateSpec == nil {
+		t.Fatal("expected KEYCLOAK_ADMIN_PASSWORD to have GenerateSpec")
+	}
+	if decls[0].GenerateSpec.Length != 32 {
+		t.Errorf("expected GenerateSpec.Length 32, got %d", decls[0].GenerateSpec.Length)
+	}
+	if decls[0].GenerateSpec.Charset != "alphanumeric" {
+		t.Errorf("expected Charset alphanumeric, got %q", decls[0].GenerateSpec.Charset)
+	}
+}
+
+func TestServiceSecretDeclarations_Mailpit(t *testing.T) {
+	decls := devenv.ServiceSecretDeclarations("mailpit")
+	if decls != nil {
+		t.Errorf("expected nil for mailpit, got %v", decls)
+	}
+}
+
+func TestServiceSecretDeclarations_NATS(t *testing.T) {
+	decls := devenv.ServiceSecretDeclarations("nats")
+	if decls != nil {
+		t.Errorf("expected nil for nats, got %v", decls)
+	}
+}
+
 func TestServiceSecretDeclarations_UnknownService(t *testing.T) {
 	decls := devenv.ServiceSecretDeclarations("mongodb")
 	if decls != nil {

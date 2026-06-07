@@ -937,6 +937,11 @@ services:
     - mongodb
     - elasticsearch
     - rabbitmq
+    - kafka
+    - minio
+    - mailpit
+    - keycloak
+    - nats
 permission_presets:
     - minimal
     - standard

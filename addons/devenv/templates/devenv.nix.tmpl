@@ -43,6 +43,13 @@
   };
 {{- end}}
 {{- end}}
+{{- if .ServiceScripts}}
+
+  # Service convenience scripts
+{{- range .ServiceScripts}}
+  scripts.{{ .Name }}.exec = {{ nixString .Exec }};
+{{- end}}
+{{- end}}
 {{- if .GitHooksEnabled}}
 
   # Git hooks — managed by prek (devenv 1.11+ default hook runner).

@@ -249,7 +249,7 @@ func TestValidateAnswers_TierInMultipleErrors(t *testing.T) {
 }
 
 func TestValidateAnswers_AllValidServices(t *testing.T) {
-	for _, svc := range []string{"postgres", "redis", "mysql", "mongodb", "elasticsearch", "rabbitmq"} {
+	for _, svc := range []string{"postgres", "redis", "mysql", "mongodb", "elasticsearch", "rabbitmq", "kafka", "minio", "mailpit", "keycloak", "nats"} {
 		t.Run(svc, func(t *testing.T) {
 			answers := types.WizardAnswers{
 				Services: []types.ServiceChoice{{Name: svc}},

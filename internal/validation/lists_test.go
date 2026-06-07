@@ -29,10 +29,10 @@ func TestCoreLanguagesAreSubsetOfLanguages(t *testing.T) {
 	}
 }
 
-func TestServicesReturns6(t *testing.T) {
+func TestServicesReturns11(t *testing.T) {
 	svcs := Services()
-	if len(svcs) != 6 {
-		t.Errorf("Services() returned %d entries, want 6", len(svcs))
+	if len(svcs) != 11 {
+		t.Errorf("Services() returned %d entries, want 11", len(svcs))
 	}
 }
 

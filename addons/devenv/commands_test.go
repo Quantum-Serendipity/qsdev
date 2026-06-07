@@ -70,6 +70,11 @@ func TestValidServices(t *testing.T) {
 		"mongodb":       true,
 		"elasticsearch": true,
 		"rabbitmq":      true,
+		"kafka":         true,
+		"minio":         true,
+		"mailpit":       true,
+		"keycloak":      true,
+		"nats":          true,
 	}
 
 	services := devenv.ExportValidServices

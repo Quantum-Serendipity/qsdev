@@ -29,6 +29,7 @@ type DevenvNixTemplateData struct {
 	EnterShell        string                     // Shell script body for enterShell.
 	EnterTest         string                     // Test script body for enterTest.
 	Tasks             []ecosystem.TaskDefinition // Development task definitions from ecosystem modules.
+	ServiceScripts    []ServiceScript            // Convenience scripts from services.
 }
 
 // LanguageFragment holds a pre-rendered Nix code block from an ecosystem module.
@@ -39,9 +40,17 @@ type LanguageFragment struct {
 
 // ServiceTemplateData holds structured data for rendering a service block in devenv.nix.
 type ServiceTemplateData struct {
-	DisplayName string   // Human-readable name (e.g. "PostgreSQL").
-	NixName     string   // Nix attribute name (e.g. "postgres").
-	ConfigLines []string // Nix attribute lines inside the service block.
+	DisplayName string            // Human-readable name (e.g. "PostgreSQL").
+	NixName     string            // Nix attribute name (e.g. "postgres").
+	ConfigLines []string          // Nix attribute lines inside the service block.
+	EnvVars     map[string]string // Service-specific env vars merged into the global env block.
+	Scripts     []ServiceScript   // Convenience scripts (e.g. open-keycloak).
+}
+
+// ServiceScript defines a convenience script emitted as scripts.<Name>.exec in devenv.nix.
+type ServiceScript struct {
+	Name string // Script name (e.g. "open-keycloak").
+	Exec string // Shell command body.
 }
 
 // CustomHookData holds all fields needed to render a custom pre-commit hook
@@ -115,6 +124,10 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 			return nil, fmt.Errorf("configuring service %s: %w", svc.Name, err)
 		}
 		data.Services = append(data.Services, svcData)
+		for k, v := range svcData.EnvVars {
+			data.EnvVars[k] = v
+		}
+		data.ServiceScripts = append(data.ServiceScripts, svcData.Scripts...)
 	}
 
 	// 6. Security hooks are always present.

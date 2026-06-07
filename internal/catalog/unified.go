@@ -24,6 +24,9 @@ type UnifiedDefaults struct {
 	// Tools
 	Tools map[string]ToolDef `yaml:"tools,omitempty"`
 
+	// MCP Servers
+	MCPServers map[string]MCPServerDef `yaml:"mcp_servers,omitempty"`
+
 	// Security
 	SecurityHooks []string        `yaml:"security_hooks,omitempty"`
 	BasePackages  []string        `yaml:"base_packages,omitempty"`
@@ -77,6 +80,9 @@ func (u *UnifiedDefaults) ToCatalog() *Catalog {
 
 	// Tools
 	cat.tools.Tools = u.Tools
+
+	// MCP Servers
+	cat.mcpServers = u.MCPServers
 
 	// Security
 	cat.security.Hooks.Default = u.SecurityHooks
@@ -138,6 +144,9 @@ func (c *Catalog) ToUnified() *UnifiedDefaults {
 	// Tools
 	u.Tools = c.tools.Tools
 
+	// MCP Servers
+	u.MCPServers = c.mcpServers
+
 	// Security
 	u.SecurityHooks = c.security.Hooks.Default
 	u.BasePackages = c.security.BasePackages
@@ -183,7 +192,7 @@ func (c *Catalog) ToUnified() *UnifiedDefaults {
 func SectionNames() []string {
 	return []string{
 		"tiers", "compliance", "profiles", "profile_aliases", "project_profiles",
-		"tools", "security_hooks", "base_packages", "unset_vars", "keep_vars",
+		"tools", "mcp_servers", "security_hooks", "base_packages", "unset_vars", "keep_vars",
 		"custom_hooks", "hook_tier_order", "hook_tiers", "tier_to_compliance",
 		"tier_to_enabled_tools", "default_mcp_servers", "default_agent_tools",
 		"languages", "services", "permission_presets", "hook_presets",

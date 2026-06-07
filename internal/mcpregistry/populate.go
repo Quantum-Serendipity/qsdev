@@ -6,18 +6,87 @@ import (
 )
 
 // buildDefault creates and populates the default MCP server registry from
-// built-in definitions, catalog metadata, and embedded MCP server providers.
+// catalog-driven definitions, catalog tool metadata, and embedded MCP server providers.
 func buildDefault() *McpServerRegistry {
 	r := NewRegistry()
 
-	for _, def := range knownServers {
-		r.MustRegister(def)
+	cat, err := catalog.Default()
+	if err == nil {
+		for name, def := range cat.MCPServers() {
+			r.MustRegister(catalogDefToRegistryDef(name, def))
+		}
 	}
 
 	enrichFromCatalog(r)
 	populateFromEmbeddedProviders(r)
 
 	return r
+}
+
+// catalogDefToRegistryDef converts a catalog MCPServerDef into a McpServerDefinition.
+func catalogDefToRegistryDef(name string, def catalog.MCPServerDef) McpServerDefinition {
+	return McpServerDefinition{
+		Name:          name,
+		DisplayName:   def.DisplayName,
+		Category:      parseMcpCategory(def.Category),
+		Description:   def.Description,
+		Command:       def.Command,
+		Args:          def.Args,
+		Env:           def.Env,
+		RequiredEnv:   def.RequiredEnv,
+		Transport:     parseMcpTransport(def.Transport),
+		Source:        SourceBuiltin,
+		InstallMethod: parseMcpInstallMethod(def.InstallMethod),
+		PackageName:   def.PackageName,
+	}
+}
+
+// parseMcpCategory maps a YAML category string to the typed McpCategory constant.
+func parseMcpCategory(s string) McpCategory {
+	switch s {
+	case "documentation":
+		return CategoryDocumentation
+	case "security":
+		return CategorySecurity
+	case "integration":
+		return CategoryIntegration
+	case "agent":
+		return CategoryAgent
+	case "infrastructure":
+		return CategoryInfrastructure
+	default:
+		return McpCategory(s)
+	}
+}
+
+// parseMcpTransport maps a YAML transport string to the typed McpTransport constant.
+func parseMcpTransport(s string) McpTransport {
+	switch s {
+	case "stdio", "":
+		return TransportStdio
+	case "sse":
+		return TransportSSE
+	case "http":
+		return TransportHTTP
+	default:
+		return McpTransport(s)
+	}
+}
+
+// parseMcpInstallMethod maps a YAML install_method string to the typed McpInstallMethod constant.
+func parseMcpInstallMethod(s string) McpInstallMethod {
+	switch s {
+	case "uv-tool":
+		return InstallUvTool
+	case "npm-global":
+		return InstallNpmGlobal
+	case "nix-package":
+		return InstallNixPackage
+	case "manual":
+		return InstallManual
+	default:
+		return InstallManual
+	}
 }
 
 // enrichFromCatalog cross-references the registry with the tool catalog.

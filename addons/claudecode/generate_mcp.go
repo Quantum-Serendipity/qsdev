@@ -3,8 +3,9 @@ package claudecode
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
+	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -21,77 +22,16 @@ type MCPServerEntry struct {
 	RequiredEnv []string          `json:"-"`
 }
 
-// knownMCPServers maps well-known server names to their default templates.
-var knownMCPServers = map[string]MCPServerEntry{
-	"github": {
-		Command: "npx",
-		Args:    []string{"@anthropic-ai/mcp-github"},
-		Env:     map[string]string{"GITHUB_TOKEN": "${GITHUB_TOKEN}"},
-	},
-	"filesystem": {
-		Command: "npx",
-		Args:    []string{"@anthropic-ai/mcp-filesystem"},
-	},
-	"postgres": {
-		Command: "npx",
-		Args:    []string{"@anthropic-ai/mcp-postgres"},
-		Env:     map[string]string{"DATABASE_URL": "${DATABASE_URL}"},
-	},
-	"fetch": {
-		Command: "npx",
-		Args:    []string{"@anthropic-ai/mcp-fetch"},
-	},
-	"socket": {
-		Command: "npx",
-		Args:    []string{"@anthropic-ai/mcp-socket"},
-		Env:     map[string]string{"SOCKET_SECURITY_API_KEY": "${SOCKET_SECURITY_API_KEY}"},
-	},
-	"semble": {
-		Command:     "uvx",
-		Args:        []string{"--from", "semble[mcp]", "semble"},
-		RequiredEnv: []string{"SEMBLE_API_KEY"},
-	},
-	"context7": {
-		Command: "npx",
-		Args:    []string{"-y", "@upstash/context7-mcp"},
-	},
-	"agent-postmortem": {
-		Command: "qsdev",
-		Args:    []string{"mcp", "agent-postmortem"},
-	},
-	"version-sentinel": {
-		Command: "qsdev",
-		Args:    []string{"mcp", "version-sentinel"},
-	},
-	"local-docs-devdocs": {
-		Command: "npx",
-		Args:    []string{"devdocs-mcp-server"},
-		Env:     map[string]string{"DEVDOCS_DATA_DIR": "${HOME}/.local/share/qsdev/docs/devdocs"},
-	},
-	"local-docs-zim": {
-		Command: "openzim-mcp",
-		Env: map[string]string{
-			"OPENZIM_MCP_ZIM_DIR":   "${HOME}/.local/share/qsdev/docs/zim",
-			"OPENZIM_MCP_TOOL_MODE": "simple",
-			"OPENZIM_MCP_CACHE_TTL": "3600",
-			"OPENZIM_MCP_LOG_LEVEL": "WARNING",
-		},
-	},
-	"man-pages": {
-		Command: "uvx",
-		Args:    []string{"man-mcp-server"},
-	},
-	"mcp-nixos": {
-		Command: "uvx",
-		Args:    []string{"mcp-nixos"},
-	},
-}
-
 // GenerateMcpJson produces a .mcp.json file from the wizard answers and addon
 // configuration. It returns nil, nil when no MCP servers are requested.
 func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedFile, error) {
 	if len(answers.MCPServers) == 0 && len(cfg.MCPServers) == 0 {
 		return nil, nil
+	}
+
+	cat, err := catalog.Default()
+	if err != nil {
+		return nil, fmt.Errorf("loading catalog for MCP server definitions: %w", err)
 	}
 
 	mcp := McpJSON{
@@ -100,11 +40,15 @@ func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedF
 
 	// Populate from wizard-selected known servers.
 	for _, name := range answers.MCPServers {
-		tmpl, ok := knownMCPServers[name]
+		def, ok := cat.MCPServer(name)
 		if !ok {
-			return nil, fmt.Errorf("unknown MCP server %q: must be one of %s", name, knownServerNames())
+			return nil, fmt.Errorf("unknown MCP server %q: must be one of %s", name, mcpServerNameList(cat))
 		}
-		mcp.MCPServers[name] = tmpl
+		mcp.MCPServers[name] = MCPServerEntry{
+			Command: def.Command,
+			Args:    def.Args,
+			Env:     def.Env,
+		}
 	}
 
 	// Populate from config-provided servers (overrides wizard on collision).
@@ -133,21 +77,14 @@ func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedF
 	}, nil
 }
 
-// knownServerNames returns a sorted, comma-separated list of known server
-// names for use in error messages.
-func knownServerNames() string {
-	names := make([]string, 0, len(knownMCPServers))
-	for k := range knownMCPServers {
-		names = append(names, k)
-	}
-	sort.Strings(names)
+// mcpServerNameList returns a sorted, comma-separated list of known server
+// names from the catalog for use in error messages.
+func mcpServerNameList(cat *catalog.Catalog) string {
+	names := cat.MCPServerNames()
 
-	out := ""
-	for i, n := range names {
-		if i > 0 {
-			out += ", "
-		}
-		out += fmt.Sprintf("%q", n)
+	var parts []string
+	for _, n := range names {
+		parts = append(parts, fmt.Sprintf("%q", n))
 	}
-	return out
+	return strings.Join(parts, ", ")
 }

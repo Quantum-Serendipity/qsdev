@@ -816,6 +816,128 @@ tools:
               ownership: shared
               section_id: lookup-docs
               section_content: "- **lookup-docs** skill routes documentation queries through prioritized local-first sources."
+mcp_servers:
+    github:
+        display_name: "GitHub MCP"
+        category: integration
+        description: "GitHub repository and issue management"
+        command: npx
+        args: ["@anthropic-ai/mcp-github"]
+        env:
+            GITHUB_TOKEN: "${GITHUB_TOKEN}"
+        transport: stdio
+        install_method: npm-global
+        package_name: "@anthropic-ai/mcp-github"
+    filesystem:
+        display_name: "Filesystem MCP"
+        category: integration
+        description: "Local filesystem access"
+        command: npx
+        args: ["@anthropic-ai/mcp-filesystem"]
+        transport: stdio
+    postgres:
+        display_name: "PostgreSQL MCP"
+        category: integration
+        description: "PostgreSQL database access"
+        command: npx
+        args: ["@anthropic-ai/mcp-postgres"]
+        env:
+            DATABASE_URL: "${DATABASE_URL}"
+        transport: stdio
+    fetch:
+        display_name: "Fetch MCP"
+        category: integration
+        description: "HTTP fetch for web content retrieval"
+        command: npx
+        args: ["@anthropic-ai/mcp-fetch"]
+        transport: stdio
+    socket:
+        display_name: "Socket.dev Security"
+        category: security
+        description: "Supply chain security analysis of dependencies"
+        command: npx
+        args: ["@anthropic-ai/mcp-socket"]
+        env:
+            SOCKET_SECURITY_API_KEY: "${SOCKET_SECURITY_API_KEY}"
+        required_env: ["SOCKET_SECURITY_API_KEY"]
+        transport: stdio
+        install_method: npm-global
+        package_name: "@anthropic-ai/mcp-socket"
+    semble:
+        display_name: "Semble Semantic Search"
+        category: agent
+        description: "Semantic code search across repositories"
+        command: uvx
+        args: ["--from", "semble[mcp]", "semble"]
+        required_env: ["SEMBLE_API_KEY"]
+        transport: stdio
+        install_method: uv-tool
+        package_name: "semble[mcp]"
+    context7:
+        display_name: "Context7"
+        category: agent
+        description: "Library documentation lookups via web"
+        command: npx
+        args: ["-y", "@upstash/context7-mcp"]
+        transport: stdio
+        install_method: npm-global
+        package_name: "@upstash/context7-mcp"
+    agent-postmortem:
+        display_name: "Agent Postmortem"
+        category: agent
+        description: "Session analysis and failure pattern detection"
+        command: qsdev
+        args: ["mcp", "agent-postmortem"]
+        transport: stdio
+    version-sentinel:
+        display_name: "Version Sentinel"
+        category: agent
+        description: "Dependency version monitoring and drift detection"
+        command: qsdev
+        args: ["mcp", "version-sentinel"]
+        transport: stdio
+    local-docs-devdocs:
+        display_name: "DevDocs Local Documentation"
+        category: documentation
+        description: "Local DevDocs documentation server for offline API reference"
+        command: npx
+        args: ["devdocs-mcp-server"]
+        env:
+            DEVDOCS_DATA_DIR: "${HOME}/.local/share/qsdev/docs/devdocs"
+        transport: stdio
+        install_method: npm-global
+        package_name: "devdocs-mcp-server"
+    local-docs-zim:
+        display_name: "Stack Exchange ZIM Documentation"
+        category: documentation
+        description: "openzim-mcp server for offline Stack Exchange via ZIM files"
+        command: openzim-mcp
+        env:
+            OPENZIM_MCP_ZIM_DIR: "${HOME}/.local/share/qsdev/docs/zim"
+            OPENZIM_MCP_TOOL_MODE: "simple"
+            OPENZIM_MCP_CACHE_TTL: "3600"
+            OPENZIM_MCP_LOG_LEVEL: "WARNING"
+        transport: stdio
+        install_method: uv-tool
+        package_name: "openzim-mcp"
+    man-pages:
+        display_name: "Man Pages MCP"
+        category: documentation
+        description: "Local man page documentation for system commands"
+        command: uvx
+        args: ["man-mcp-server"]
+        transport: stdio
+        install_method: uv-tool
+        package_name: "man-mcp-server"
+    mcp-nixos:
+        display_name: "MCP-NixOS Documentation"
+        category: documentation
+        description: "NixOS packages, options, and Home Manager documentation"
+        command: uvx
+        args: ["mcp-nixos"]
+        transport: stdio
+        install_method: uv-tool
+        package_name: "mcp-nixos"
 security_hooks:
     - ripsecrets
     - check-added-large-files

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -29,11 +30,18 @@ func generateSembleConfig(answers types.WizardAnswers) (*sembleResult, error) {
 		result.MCPServers = append(result.MCPServers, "semble")
 
 		if answers.AgentTools.SembleTextFiles {
-			entry := knownMCPServers["semble"]
+			cat, err := catalog.Default()
+			if err != nil {
+				return nil, fmt.Errorf("loading catalog for semble config: %w", err)
+			}
+			def, ok := cat.MCPServer("semble")
+			if !ok {
+				return nil, fmt.Errorf("semble MCP server not found in catalog")
+			}
 			result.Override = &MCPServerConfig{
 				Name:    "semble",
-				Command: entry.Command,
-				Args:    append(append([]string{}, entry.Args...), "--include-text-files"),
+				Command: def.Command,
+				Args:    append(append([]string{}, def.Args...), "--include-text-files"),
 			}
 		}
 	}

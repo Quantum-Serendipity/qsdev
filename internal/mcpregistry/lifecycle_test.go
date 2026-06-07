@@ -108,9 +108,23 @@ func TestInstall(t *testing.T) {
 func TestInstall_NixPackage(t *testing.T) {
 	t.Parallel()
 
-	// Temporarily add a nix-package entry for testing.
-	knownServerInstalls["test-nix"] = serverInstallInfo{InstallNixPackage, "test-pkg"}
-	defer delete(knownServerInstalls, "test-nix")
+	// Register a temporary nix-package server for testing.
+	reg := DefaultRegistry()
+	testDef := McpServerDefinition{
+		Name:          "test-nix-lifecycle",
+		DisplayName:   "Test Nix",
+		Command:       "test",
+		Transport:     TransportStdio,
+		Source:        SourceBuiltin,
+		InstallMethod: InstallNixPackage,
+		PackageName:   "test-pkg",
+	}
+	_ = reg.Register(testDef)
+	t.Cleanup(func() {
+		reg.mu.Lock()
+		delete(reg.servers, "test-nix-lifecycle")
+		reg.mu.Unlock()
+	})
 
 	runner := &mockRunner{}
 	state := &types.GeneratedState{
@@ -118,7 +132,7 @@ func TestInstall_NixPackage(t *testing.T) {
 	}
 	lc := newTestLifecycle(runner, state)
 
-	result, err := lc.Install(context.Background(), "test-nix")
+	result, err := lc.Install(context.Background(), "test-nix-lifecycle")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -50,9 +50,18 @@ func registerMCPServerContent(r *toolreg.Registry) {
 
 func mcpServerContentFunc(serverName string) toolreg.SharedContentFunc {
 	return func(_ types.WizardAnswers) ([]byte, error) {
-		entry, ok := knownMCPServers[serverName]
+		cat, err := catalog.Default()
+		if err != nil {
+			return nil, fmt.Errorf("loading catalog for MCP server %q: %w", serverName, err)
+		}
+		def, ok := cat.MCPServer(serverName)
 		if !ok {
 			return nil, fmt.Errorf("unknown MCP server %q", serverName)
+		}
+		entry := MCPServerEntry{
+			Command: def.Command,
+			Args:    def.Args,
+			Env:     def.Env,
 		}
 		return json.Marshal(entry)
 	}

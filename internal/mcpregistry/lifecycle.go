@@ -46,21 +46,25 @@ type RemoveResult struct {
 }
 
 // Install provisions an MCP server binary using the method specified in
-// knownServerInstalls and records the result in generated state.
+// the registry definition and records the result in generated state.
 func (lc *McpLifecycle) Install(ctx context.Context, serverName string) (*InstallResult, error) {
-	info, ok := knownServerInstalls[serverName]
+	def, ok := DefaultRegistry().Get(serverName)
 	if !ok {
+		return nil, fmt.Errorf("unknown server %q", serverName)
+	}
+
+	if def.InstallMethod == InstallManual && def.PackageName == "" {
 		return nil, fmt.Errorf("unknown server %q", serverName)
 	}
 
 	result := &InstallResult{
 		ServerName: serverName,
-		Method:     info.Method,
+		Method:     def.InstallMethod,
 	}
 
-	switch info.Method {
+	switch def.InstallMethod {
 	case InstallUvTool:
-		out, err := lc.CmdRunner.Run(ctx, "uv", "tool", "install", info.PackageName)
+		out, err := lc.CmdRunner.Run(ctx, "uv", "tool", "install", def.PackageName)
 		if err != nil {
 			result.Error = fmt.Sprintf("uv tool install failed: %v: %s", err, out)
 		} else {
@@ -68,7 +72,7 @@ func (lc *McpLifecycle) Install(ctx context.Context, serverName string) (*Instal
 			result.Version = "latest"
 		}
 	case InstallNpmGlobal:
-		out, err := lc.CmdRunner.Run(ctx, "npm", "install", "-g", info.PackageName)
+		out, err := lc.CmdRunner.Run(ctx, "npm", "install", "-g", def.PackageName)
 		if err != nil {
 			result.Error = fmt.Sprintf("npm install -g failed: %v: %s", err, out)
 		} else {
@@ -83,7 +87,7 @@ func (lc *McpLifecycle) Install(ctx context.Context, serverName string) (*Instal
 		return result, nil
 	}
 
-	if err := lc.updateServerState(serverName, info.Method, "latest"); err != nil {
+	if err := lc.updateServerState(serverName, def.InstallMethod, "latest"); err != nil {
 		return result, fmt.Errorf("saving state for %q: %w", serverName, err)
 	}
 
@@ -92,8 +96,12 @@ func (lc *McpLifecycle) Install(ctx context.Context, serverName string) (*Instal
 
 // Update upgrades an installed MCP server to its latest version.
 func (lc *McpLifecycle) Update(ctx context.Context, serverName string) (*UpdateResult, error) {
-	info, ok := knownServerInstalls[serverName]
+	def, ok := DefaultRegistry().Get(serverName)
 	if !ok {
+		return nil, fmt.Errorf("unknown server %q", serverName)
+	}
+
+	if def.InstallMethod == InstallManual && def.PackageName == "" {
 		return nil, fmt.Errorf("unknown server %q", serverName)
 	}
 
@@ -112,9 +120,9 @@ func (lc *McpLifecycle) Update(ctx context.Context, serverName string) (*UpdateR
 		}
 	}
 
-	switch info.Method {
+	switch def.InstallMethod {
 	case InstallUvTool:
-		out, err := lc.CmdRunner.Run(ctx, "uv", "tool", "upgrade", info.PackageName)
+		out, err := lc.CmdRunner.Run(ctx, "uv", "tool", "upgrade", def.PackageName)
 		if err != nil {
 			result.Error = fmt.Sprintf("uv tool upgrade failed: %v: %s", err, out)
 		} else {
@@ -122,7 +130,7 @@ func (lc *McpLifecycle) Update(ctx context.Context, serverName string) (*UpdateR
 			result.NewVersion = "latest"
 		}
 	case InstallNpmGlobal:
-		out, err := lc.CmdRunner.Run(ctx, "npm", "update", "-g", info.PackageName)
+		out, err := lc.CmdRunner.Run(ctx, "npm", "update", "-g", def.PackageName)
 		if err != nil {
 			result.Error = fmt.Sprintf("npm update -g failed: %v: %s", err, out)
 		} else {
@@ -137,7 +145,7 @@ func (lc *McpLifecycle) Update(ctx context.Context, serverName string) (*UpdateR
 		return result, nil
 	}
 
-	if err := lc.updateServerState(serverName, info.Method, "latest"); err != nil {
+	if err := lc.updateServerState(serverName, def.InstallMethod, "latest"); err != nil {
 		return result, fmt.Errorf("saving state for %q: %w", serverName, err)
 	}
 
@@ -168,8 +176,12 @@ func (lc *McpLifecycle) UpdateAll(ctx context.Context) ([]*UpdateResult, error) 
 
 // Remove uninstalls an MCP server and removes it from generated state.
 func (lc *McpLifecycle) Remove(ctx context.Context, serverName string) (*RemoveResult, error) {
-	info, ok := knownServerInstalls[serverName]
+	def, ok := DefaultRegistry().Get(serverName)
 	if !ok {
+		return nil, fmt.Errorf("unknown server %q", serverName)
+	}
+
+	if def.InstallMethod == InstallManual && def.PackageName == "" {
 		return nil, fmt.Errorf("unknown server %q", serverName)
 	}
 
@@ -177,16 +189,16 @@ func (lc *McpLifecycle) Remove(ctx context.Context, serverName string) (*RemoveR
 		ServerName: serverName,
 	}
 
-	switch info.Method {
+	switch def.InstallMethod {
 	case InstallUvTool:
-		out, err := lc.CmdRunner.Run(ctx, "uv", "tool", "uninstall", info.PackageName)
+		out, err := lc.CmdRunner.Run(ctx, "uv", "tool", "uninstall", def.PackageName)
 		if err != nil {
 			result.Error = fmt.Sprintf("uv tool uninstall failed: %v: %s", err, out)
 		} else {
 			result.Removed = true
 		}
 	case InstallNpmGlobal:
-		out, err := lc.CmdRunner.Run(ctx, "npm", "uninstall", "-g", info.PackageName)
+		out, err := lc.CmdRunner.Run(ctx, "npm", "uninstall", "-g", def.PackageName)
 		if err != nil {
 			result.Error = fmt.Sprintf("npm uninstall -g failed: %v: %s", err, out)
 		} else {

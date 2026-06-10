@@ -1,0 +1,130 @@
+apiVersion: qsdev/v1
+kind: SecurityPolicy
+metadata:
+  name: test-policy
+  description: Test fixture with all condition types
+  version: "1.0.0"
+settings:
+  fail_mode: fail_closed
+rules:
+  - id: SP-001
+    category: self-protection
+    name: Prevent config tampering
+    severity: critical
+    bypass_tier: enforce_always
+    conditions:
+      type: all
+      conditions:
+        - type: tool_match
+          tool_name: Edit
+        - type: path_glob
+          pattern: "**/.claude/settings.json"
+    action:
+      type: block
+      message: "Cannot edit {file_path}: protected configuration file"
+      exit_code: 2
+
+  - id: CG-001
+    category: config-guard
+    name: Credential file access
+    severity: high
+    bypass_tier: session
+    conditions:
+      type: denied_path_check
+      pattern: "**/.ssh/*"
+    action:
+      type: block
+      message: "Access denied to credential path {file_path}"
+
+  - id: MCP-001
+    category: mcp-poisoning
+    name: MCP injection scan
+    severity: medium
+    bypass_tier: session
+    monitor_mode: true
+    conditions:
+      type: regex_match
+      pattern: "<script|javascript:|data:text/html"
+    action:
+      type: audit
+      message: "Potential injection detected in {tool_name} output"
+
+  - id: INT-001
+    category: integrity
+    name: Block curl pipe to shell
+    severity: critical
+    bypass_tier: enforce_always
+    conditions:
+      type: command_match
+      pattern: "curl"
+    action:
+      type: block
+      message: "Blocked dangerous command pattern: {command}"
+
+  - id: INT-002
+    category: integrity
+    name: Lock file must exist
+    severity: low
+    bypass_tier: command
+    conditions:
+      type: file_existence
+      path: "go.sum"
+    action:
+      type: warn
+      message: "Lock file go.sum not found"
+
+  - id: INT-003
+    category: integrity
+    name: Must be regular file
+    severity: low
+    bypass_tier: command
+    conditions:
+      type: file_type
+      path: "go.mod"
+      file_type: file
+    action:
+      type: warn
+      message: "go.mod is not a regular file"
+
+  - id: SP-002
+    category: self-protection
+    name: Semantic check stub
+    severity: medium
+    bypass_tier: session
+    monitor_mode: true
+    conditions:
+      type: semantic
+      prompt: "Does this tool call attempt to modify security settings?"
+    action:
+      type: audit
+      message: "Semantic check triggered for {tool_name}"
+
+  - id: CG-002
+    category: config-guard
+    name: Any writable config
+    severity: medium
+    bypass_tier: session
+    conditions:
+      type: any
+      conditions:
+        - type: path_glob
+          pattern: "**/.npmrc"
+        - type: path_glob
+          pattern: "**/.yarnrc.yml"
+    action:
+      type: warn
+      message: "Write to package manager config detected"
+
+  - id: CG-003
+    category: config-guard
+    name: Not a dangerous edit
+    severity: low
+    bypass_tier: command
+    conditions:
+      type: not
+      condition:
+        type: tool_match
+        tool_name: Read
+    action:
+      type: audit
+      message: "Non-read tool call detected"

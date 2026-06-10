@@ -6,6 +6,7 @@ require (
 	fastcat.org/go/gdev v0.0.0-00010101000000-000000000000
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/charmbracelet/huh v1.0.0
+	github.com/gobwas/glob v0.2.3
 	github.com/mark3labs/mcp-go v0.54.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10

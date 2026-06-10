@@ -37,7 +37,7 @@ func TestRenderJSON_SchemaVersionPresent(t *testing.T) {
 	}
 
 	// Should contain the current SchemaVersion, not the old one.
-	if !strings.Contains(string(data), `"schemaVersion": "1.0.0"`) {
+	if !strings.Contains(string(data), `"schemaVersion": "`+posture.SchemaVersion+`"`) {
 		t.Errorf("expected schemaVersion %q in output, got:\n%s", posture.SchemaVersion, string(data))
 	}
 	if strings.Contains(string(data), `"old-version"`) {
@@ -59,7 +59,7 @@ func TestRenderJSON_EmptyReport(t *testing.T) {
 	}
 
 	// Verify SchemaVersion was set.
-	if !strings.Contains(string(data), `"schemaVersion": "1.0.0"`) {
+	if !strings.Contains(string(data), `"schemaVersion": "`+posture.SchemaVersion+`"`) {
 		t.Error("SchemaVersion not set in empty report output")
 	}
 }

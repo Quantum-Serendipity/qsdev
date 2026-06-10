@@ -1,0 +1,14 @@
+apiVersion: qsdev/v1
+kind: SecurityPolicy
+metadata:
+  name: malformed
+rules:
+  - category: self-protection
+    name: Missing ID
+    severity: critical
+    bypass_tier: enforce_always
+    conditions:
+      type: tool_match
+      tool_name: Edit
+    action:
+      type: block

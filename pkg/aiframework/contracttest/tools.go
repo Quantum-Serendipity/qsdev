@@ -63,6 +63,7 @@ func TestToolAdapter(t *testing.T, adapter aiframework.ToolAdapter, fixtures Con
 		}
 		if artifacts == nil {
 			t.Fatal("InjectCredentials() returned nil")
+			return
 		}
 		for _, f := range artifacts.GeneratedFiles {
 			content := string(f.Content)

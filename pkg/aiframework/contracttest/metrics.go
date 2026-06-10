@@ -31,6 +31,7 @@ func TestMetricsProvider(t *testing.T, provider aiframework.MetricsProvider, fix
 		}
 		if report == nil {
 			t.Fatal("CollectHealth() returned nil")
+			return
 		}
 		status := report.OverallStatus.String()
 		if status == "unknown" {

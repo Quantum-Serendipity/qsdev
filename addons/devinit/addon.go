@@ -60,6 +60,9 @@ func initialize() error {
 		teardownCmd(),
 		containerCmd(),
 		sandboxCmd(),
+		enforceCmd(),
+		sessionCmd(),
+		policyCmd(),
 		defaults.Command(),
 	)
 	return nil

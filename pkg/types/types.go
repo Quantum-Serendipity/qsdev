@@ -126,6 +126,7 @@ type HookChoices struct {
 	FileBoundary          bool `yaml:"file_boundary"           json:"file_boundary"`
 	ToolGates             bool `yaml:"tool_gates"              json:"tool_gates"`
 	SandboxEnabled        bool `yaml:"sandbox_enabled"         json:"sandbox_enabled"`
+	SecurityEnforcement   bool `yaml:"security_enforcement"    json:"security_enforcement"`
 }
 
 // GeneratedFile represents a single file to be written by the generation pipeline.

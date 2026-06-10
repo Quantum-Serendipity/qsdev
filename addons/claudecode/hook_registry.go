@@ -1,6 +1,9 @@
 package claudecode
 
-import "github.com/Quantum-Serendipity/qsdev/pkg/types"
+import (
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
+)
 
 // HookDeploymentTier controls which settings file a hook is generated into.
 type HookDeploymentTier int
@@ -254,6 +257,28 @@ func defaultHookRegistry() *HookRegistry {
 		StatusMessage:   "Logging tool action...",
 		SandboxCategory: "generator",
 		EnabledFunc:     func(a types.WizardAnswers) bool { return a.Hooks.AuditLog && !a.Hooks.SOC2Audit },
+	})
+
+	enforceApp := branding.Get().AppName
+
+	r.Register(HookDefinition{
+		Owner:         "security-enforcement",
+		Event:         "PreToolUse",
+		Matcher:       "*",
+		Command:       enforceApp + " enforce --hook PreToolUse",
+		Timeout:       5,
+		StatusMessage: "Evaluating security policy...",
+		EnabledFunc:   func(a types.WizardAnswers) bool { return a.Hooks.SecurityEnforcement },
+	})
+
+	r.Register(HookDefinition{
+		Owner:         "security-enforcement",
+		Event:         "PostToolUse",
+		Matcher:       "mcp__*",
+		Command:       enforceApp + " enforce --hook PostToolUse",
+		Timeout:       5,
+		StatusMessage: "Applying MCP security hardening...",
+		EnabledFunc:   func(a types.WizardAnswers) bool { return a.Hooks.SecurityEnforcement },
 	})
 
 	return r

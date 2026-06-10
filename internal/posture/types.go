@@ -3,12 +3,13 @@ package posture
 import (
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/sarif"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 )
 
 // SchemaVersion is the current version of the PostureReport schema.
-const SchemaVersion = "1.0.0"
+const SchemaVersion = "1.1.0"
 
 // LayerStatus enumerates defense layer states.
 type LayerStatus string
@@ -42,20 +43,23 @@ type ReportTierInfo struct {
 // PostureReport is the top-level structure containing the complete security
 // posture assessment of a project.
 type PostureReport struct {
-	SchemaVersion string            `json:"schemaVersion"`
-	GeneratedAt   time.Time         `json:"generatedAt"`
-	QsdevVersion  string            `json:"qsdevVersion"`
-	ProjectPath   string            `json:"projectPath"`
-	ProjectName   string            `json:"projectName"`
-	Tier          ReportTierInfo    `json:"tier"`
-	Score         AggregateScore    `json:"score"`
-	Conformance   ConformanceResult `json:"conformance"`
-	Defense       DefenseCoverage   `json:"defense"`
-	Config        ConfigHealth      `json:"config"`
-	Dependencies  DependencyHealth  `json:"dependencies"`
-	Drift         drift.Report      `json:"drift"`
-	Tools         []ToolStatus      `json:"tools"`
-	Ecosystems    []EcosystemStatus `json:"ecosystems"`
+	SchemaVersion      string                    `json:"schemaVersion"`
+	GeneratedAt        time.Time                 `json:"generatedAt"`
+	QsdevVersion       string                    `json:"qsdevVersion"`
+	ProjectPath        string                    `json:"projectPath"`
+	ProjectName        string                    `json:"projectName"`
+	Tier               ReportTierInfo            `json:"tier"`
+	Score              AggregateScore            `json:"score"`
+	Conformance        ConformanceResult         `json:"conformance"`
+	Defense            DefenseCoverage           `json:"defense"`
+	Config             ConfigHealth              `json:"config"`
+	Dependencies       DependencyHealth          `json:"dependencies"`
+	Drift              drift.Report              `json:"drift"`
+	Tools              []ToolStatus              `json:"tools"`
+	Ecosystems         []EcosystemStatus         `json:"ecosystems"`
+	PolicyPosture      *sarif.PolicyPosture      `json:"policyPosture,omitempty"`
+	PackageRiskPosture *sarif.PackageRiskPosture `json:"packageRiskPosture,omitempty"`
+	McpTrustPosture    *sarif.McpTrustPosture    `json:"mcpTrustPosture,omitempty"`
 }
 
 // AggregateScore holds the overall security posture grade and sub-scores.

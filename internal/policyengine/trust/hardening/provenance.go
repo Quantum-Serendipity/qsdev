@@ -17,7 +17,7 @@ type ProvenanceEntry struct {
 	Detections  int       `json:"detections"`
 }
 
-func LogProvenance(path string, entry ProvenanceEntry) error {
+func LogProvenance(path string, entry ProvenanceEntry) (err error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating provenance log directory: %w", err)
@@ -27,7 +27,11 @@ func LogProvenance(path string, entry ProvenanceEntry) error {
 	if err != nil {
 		return fmt.Errorf("opening provenance log: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing provenance log: %w", cerr)
+		}
+	}()
 
 	data, err := json.Marshal(entry)
 	if err != nil {

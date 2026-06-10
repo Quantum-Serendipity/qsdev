@@ -85,7 +85,8 @@ func canonicalizePath(path string) string {
 func matchDenyPattern(path, pattern string) bool {
 	if prefix, ok := strings.CutSuffix(pattern, "/*"); ok {
 		prefix = canonicalizePath(prefix)
-		return strings.HasPrefix(path, prefix+"/") || path == prefix
+		sep := string(filepath.Separator)
+		return strings.HasPrefix(path, prefix+sep) || path == prefix
 	}
 
 	canonPattern := canonicalizePath(pattern)

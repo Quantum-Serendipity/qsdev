@@ -37,8 +37,8 @@ func ensureInit() error {
 			{filepath.Join(home, ".claude", "settings.json"), "claude-settings"},
 			{filepath.Join(home, ".claude", "settings.local.json"), "claude-settings"},
 			{filepath.Join(home, ".claude", "managed-settings.json"), "claude-settings"},
-			{"/etc/gdev" + string(filepath.Separator), "system-config"},
-			{"/etc/claude-code" + string(filepath.Separator), "system-config"},
+			{"/etc/gdev/", "system-config"},
+			{"/etc/claude-code/", "system-config"},
 		}
 
 		protectedSuffixes = []protectedEntry{

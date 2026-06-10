@@ -85,9 +85,10 @@ var sp002 = Rule{
 		if ctx.ToolName != "Read" {
 			return Allow, ""
 		}
+		normalizedPath := filepath.ToSlash(ctx.CanonicalPath)
 		sensitiveFragments := []string{"/policy/", "/trust.yaml", "/session-state.json", "managed-settings.json"}
 		for _, frag := range sensitiveFragments {
-			if strings.Contains(ctx.CanonicalPath, frag) {
+			if strings.Contains(normalizedPath, frag) {
 				protected, _ := canon.IsProtected(ctx.CanonicalPath)
 				if protected {
 					return Deny, "read of sensitive security config: " + ctx.CanonicalPath

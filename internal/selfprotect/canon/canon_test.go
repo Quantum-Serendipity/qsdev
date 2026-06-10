@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sync"
 	"testing"
 )
 
@@ -335,15 +334,9 @@ func TestIsProtected_McpJson(t *testing.T) {
 	}
 }
 
-// resetProtectedPaths forces re-initialization of the protected path list.
-// This ensures tests pick up the current home directory and don't depend on
-// init ordering.
+// resetProtectedPaths ensures the protected path list is initialized.
 func resetProtectedPaths(t *testing.T) {
 	t.Helper()
-	initOnce = sync.Once{}
-	protectedPrefixes = nil
-	protectedSuffixes = nil
-	initErr = nil
 	if err := ensureInit(); err != nil {
 		t.Fatalf("initializing protected paths: %v", err)
 	}

@@ -1,6 +1,7 @@
 package evasion
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -170,8 +171,9 @@ func checkProcRoot(toolName string, command string, filePath string) (bool, stri
 
 // containsProtectedPath reports whether s contains any protected path pattern.
 func containsProtectedPath(s string) bool {
+	normalized := filepath.ToSlash(s)
 	for _, p := range protectedPathPatterns {
-		if strings.Contains(s, p) {
+		if strings.Contains(normalized, p) {
 			return true
 		}
 	}

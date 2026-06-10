@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -31,6 +32,7 @@ var (
 )
 
 func containsProtectedPathStr(s string) bool {
+	normalized := filepath.ToSlash(s)
 	patterns := []string{
 		".qsdev/",
 		".gdev/",
@@ -41,7 +43,7 @@ func containsProtectedPathStr(s string) bool {
 		".claude/hooks/",
 	}
 	for _, p := range patterns {
-		if strings.Contains(s, p) {
+		if strings.Contains(normalized, p) {
 			return true
 		}
 	}
@@ -53,9 +55,10 @@ func isWriteOrEdit(toolName string) bool {
 }
 
 func isMCPConfigPath(path string) bool {
-	return strings.HasSuffix(path, ".mcp.json") ||
-		strings.HasSuffix(path, ".cursor/mcp.json") ||
-		strings.HasSuffix(path, ".vscode/mcp.json")
+	normalized := filepath.ToSlash(path)
+	return strings.HasSuffix(normalized, ".mcp.json") ||
+		strings.Contains(normalized, ".cursor/mcp.json") ||
+		strings.Contains(normalized, ".vscode/mcp.json")
 }
 
 var sp001 = Rule{

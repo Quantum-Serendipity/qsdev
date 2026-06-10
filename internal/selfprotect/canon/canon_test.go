@@ -3,6 +3,7 @@ package canon
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 )
@@ -106,6 +107,9 @@ func TestCanonicalize_NonExistentPath(t *testing.T) {
 
 func TestCanonicalize_SymlinkResolution(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks require elevated privileges on Windows")
+	}
 
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target")
@@ -141,6 +145,9 @@ func TestCanonicalize_SymlinkResolution(t *testing.T) {
 
 func TestCanonicalize_SymlinkToNonExistent(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks require elevated privileges on Windows")
+	}
 
 	dir := t.TempDir()
 	target := filepath.Join(dir, "real")
@@ -215,15 +222,35 @@ func TestIsProtected(t *testing.T) {
 			true, "claude-settings",
 		},
 		{
-			"system config etc gdev",
-			"/etc/gdev/config.yaml",
-			true, "system-config",
+			"random unprotected etc path",
+			"/etc/something-else/file.txt",
+			false, "",
 		},
-		{
-			"system config etc claude-code",
-			"/etc/claude-code/policy.json",
-			true, "system-config",
-		},
+	}
+
+	if runtime.GOOS != "windows" {
+		tests = append(tests,
+			struct {
+				name     string
+				path     string
+				wantProt bool
+				wantCat  string
+			}{"system config etc gdev", "/etc/gdev/config.yaml", true, "system-config"},
+			struct {
+				name     string
+				path     string
+				wantProt bool
+				wantCat  string
+			}{"system config etc claude-code", "/etc/claude-code/policy.json", true, "system-config"},
+		)
+	}
+
+	tests = append(tests, []struct {
+		name     string
+		path     string
+		wantProt bool
+		wantCat  string
+	}{
 		{
 			"audit dir",
 			filepath.Join(home, ".qsdev", "audit", "log.json"),
@@ -249,7 +276,7 @@ func TestIsProtected(t *testing.T) {
 			filepath.Join(home, ".claude", "other-file"),
 			false, "",
 		},
-	}
+	}...)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

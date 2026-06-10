@@ -112,6 +112,7 @@ func TestGenerateNixosPodmanGuide_PodmanRootfulNixOS(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected non-nil GeneratedFile for podman-rootful, got nil")
+		return
 	}
 	if got.Path != "docs/nixos-podman-rootless.md" {
 		t.Errorf("Path = %q, want %q", got.Path, "docs/nixos-podman-rootless.md")
@@ -135,6 +136,7 @@ func TestGenerateNixosPodmanGuide_ContainsUsername(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected non-nil GeneratedFile, got nil")
+		return
 	}
 
 	content := string(got.Content)
@@ -160,6 +162,7 @@ func TestGenerateNixosPodmanGuide_ContainsAllSections(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected non-nil GeneratedFile, got nil")
+		return
 	}
 
 	content := string(got.Content)
@@ -198,6 +201,7 @@ func TestGenerateNixosPodmanGuide_FallbackUsername(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected non-nil GeneratedFile, got nil")
+		return
 	}
 
 	content := string(got.Content)

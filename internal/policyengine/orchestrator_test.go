@@ -284,6 +284,7 @@ func TestPostureSnapshot(t *testing.T) {
 
 	if posture == nil {
 		t.Fatal("expected non-nil PolicyPosture")
+		return
 	}
 	if posture.RulesTotal != 3 {
 		t.Errorf("expected RulesTotal=3, got %d", posture.RulesTotal)

@@ -237,6 +237,7 @@ func TestCacheManager(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected cached score, got nil")
+		return
 	}
 	if got.Score != 85 {
 		t.Errorf("cached score = %d, want 85", got.Score)

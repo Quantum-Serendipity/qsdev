@@ -227,6 +227,7 @@ func TestFindingFromRiskScore(t *testing.T) {
 			}
 			if result == nil {
 				t.Fatal("expected non-nil result")
+				return
 			}
 			if result.RuleID != tt.wantRuleID {
 				t.Errorf("ruleID = %q, want %q", result.RuleID, tt.wantRuleID)

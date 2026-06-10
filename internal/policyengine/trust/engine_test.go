@@ -277,6 +277,7 @@ func TestNewMcpTrustEngineWithBadPath(t *testing.T) {
 	engine := NewMcpTrustEngine("/nonexistent/path/trust.yaml")
 	if engine == nil {
 		t.Fatal("engine should not be nil")
+		return
 	}
 	if engine.config == nil {
 		t.Fatal("config should not be nil")

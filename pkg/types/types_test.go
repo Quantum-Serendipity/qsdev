@@ -446,6 +446,7 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 		}
 		if containerLC == nil {
 			t.Fatal("expected container language choice")
+			return
 		}
 		hasRuntime := false
 		hasOSFamily := false

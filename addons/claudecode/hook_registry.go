@@ -135,6 +135,18 @@ func (r *HookRegistry) Definitions() []HookDefinition {
 func defaultHookRegistry() *HookRegistry {
 	r := NewHookRegistry()
 
+	selfprotectApp := branding.Get().AppName
+
+	r.Register(HookDefinition{
+		Owner:         "self-protection",
+		Event:         "PreToolUse",
+		Matcher:       "*",
+		Command:       selfprotectApp + " selfprotect",
+		Timeout:       10,
+		StatusMessage: "Checking self-protection rules...",
+		EnabledFunc:   func(a types.WizardAnswers) bool { return a.Hooks.SelfProtection },
+	})
+
 	guardCmd := `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/package-guard.py`
 
 	r.Register(HookDefinition{

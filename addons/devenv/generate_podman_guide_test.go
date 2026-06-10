@@ -79,6 +79,7 @@ func TestGenerateNixosPodmanGuide_PodmanRootlessNixOS(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected non-nil GeneratedFile, got nil")
+		return
 	}
 	if got.Path != "docs/nixos-podman-rootless.md" {
 		t.Errorf("Path = %q, want %q", got.Path, "docs/nixos-podman-rootless.md")

@@ -3,6 +3,7 @@ package fileutil
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -32,6 +33,9 @@ func TestCopyFile(t *testing.T) {
 
 func TestCopyFilePermissions(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not support Unix file permission bits")
+	}
 
 	src := filepath.Join(t.TempDir(), "src.sh")
 	dst := filepath.Join(t.TempDir(), "dst.sh")

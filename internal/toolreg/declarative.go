@@ -3,6 +3,7 @@ package toolreg
 import (
 	"slices"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -16,7 +17,7 @@ func mcpEnableFunc(serverName string) func(*types.WizardAnswers) {
 
 func mcpDisableFunc(serverName string) func(*types.WizardAnswers) {
 	return func(a *types.WizardAnswers) {
-		a.MCPServers = removeStr(a.MCPServers, serverName)
+		a.MCPServers = sliceutil.Remove(a.MCPServers, serverName)
 	}
 }
 
@@ -30,7 +31,7 @@ func skillEnableFunc(skillName string) func(*types.WizardAnswers) {
 
 func skillDisableFunc(skillName string) func(*types.WizardAnswers) {
 	return func(a *types.WizardAnswers) {
-		a.Skills = removeStr(a.Skills, skillName)
+		a.Skills = sliceutil.Remove(a.Skills, skillName)
 	}
 }
 

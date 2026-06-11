@@ -23,6 +23,7 @@ var _ ecosystem.PackageProvider = (*Module)(nil)
 var _ ecosystem.DevenvYamlInputProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.DenyRuleProvider = (*Module)(nil)
+var _ ecosystem.SASTModule = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})

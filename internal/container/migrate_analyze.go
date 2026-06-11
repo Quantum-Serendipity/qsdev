@@ -272,7 +272,7 @@ func checkPrivilegedPorts(serviceName string, svc map[string]any, filePath strin
 	for _, portEntry := range portsList {
 		hostPort := extractHostPort(portEntry)
 		if hostPort > 0 && hostPort < 1024 {
-			remapped := hostPort + 8000
+			remapped := hostPort + portRemapOffset
 			issues = append(issues, MigrationIssue{
 				Category:    CategoryPrivPorts,
 				Severity:    SeverityWarning,

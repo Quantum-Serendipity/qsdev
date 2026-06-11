@@ -63,7 +63,7 @@ func TestBuildDefault_KnownServerProperties(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			def, ok := r.Get(tt.name)
+			def, ok := r.ByName(tt.name)
 			if !ok {
 				t.Fatalf("server %q not found in registry", tt.name)
 			}

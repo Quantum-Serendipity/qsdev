@@ -1,6 +1,9 @@
 package toolreg
 
-import "github.com/Quantum-Serendipity/qsdev/pkg/types"
+import (
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
+)
 
 // consultingWorkflowNames lists all consulting workflow skill names in
 // a stable order.
@@ -21,15 +24,11 @@ func init() {
 		toolKey := "consulting-workflow-" + name
 		b := ToolBehavior{
 			EnableFunc: func(a *types.WizardAnswers) {
-				if a.EnabledTools == nil {
-					a.EnabledTools = make(map[string]bool)
-				}
+				ensureEnabledTools(a)
 				a.EnabledTools[toolKey] = true
 			},
 			DisableFunc: func(a *types.WizardAnswers) {
-				if a.EnabledTools == nil {
-					a.EnabledTools = make(map[string]bool)
-				}
+				ensureEnabledTools(a)
 				a.EnabledTools[toolKey] = false
 			},
 		}
@@ -40,7 +39,7 @@ func init() {
 				if innerEnable != nil {
 					innerEnable(a)
 				}
-				a.Skills = removeStr(a.Skills, "review-pr")
+				a.Skills = sliceutil.Remove(a.Skills, "review-pr")
 			}
 		}
 

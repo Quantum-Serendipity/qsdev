@@ -53,9 +53,9 @@ func TestRegistry_RegisterAndGet(t *testing.T) {
 		t.Fatalf("Register() returned unexpected error: %v", err)
 	}
 
-	got, ok := r.Get("context7")
+	got, ok := r.ByName("context7")
 	if !ok {
-		t.Fatal("Get() returned false for registered server")
+		t.Fatal("ByName() returned false for registered server")
 	}
 	if got.Name != "context7" {
 		t.Errorf("Name = %q, want %q", got.Name, "context7")
@@ -117,7 +117,7 @@ func TestRegistry_MustRegister_Panics(t *testing.T) {
 	r.MustRegister(def)
 }
 
-func TestRegistry_List_SortedByName(t *testing.T) {
+func TestRegistry_All_SortedByName(t *testing.T) {
 	t.Parallel()
 
 	r := NewRegistry()
@@ -125,19 +125,19 @@ func TestRegistry_List_SortedByName(t *testing.T) {
 	r.MustRegister(testDef("alpha", CategorySecurity))
 	r.MustRegister(testDef("middle", CategoryDocumentation))
 
-	list := r.List()
+	list := r.All()
 	if len(list) != 3 {
-		t.Fatalf("List() returned %d items, want 3", len(list))
+		t.Fatalf("All() returned %d items, want 3", len(list))
 	}
 	want := []string{"alpha", "middle", "zebra"}
 	for i, def := range list {
 		if def.Name != want[i] {
-			t.Errorf("List()[%d].Name = %q, want %q", i, def.Name, want[i])
+			t.Errorf("All()[%d].Name = %q, want %q", i, def.Name, want[i])
 		}
 	}
 }
 
-func TestRegistry_ListByCategory(t *testing.T) {
+func TestRegistry_ByCategory(t *testing.T) {
 	t.Parallel()
 
 	r := NewRegistry()
@@ -161,18 +161,18 @@ func TestRegistry_ListByCategory(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			result := r.ListByCategory(tt.cat)
+			result := r.ByCategory(tt.cat)
 			if len(result) != tt.wantLen {
-				t.Errorf("ListByCategory(%q) returned %d items, want %d", tt.cat, len(result), tt.wantLen)
+				t.Errorf("ByCategory(%q) returned %d items, want %d", tt.cat, len(result), tt.wantLen)
 			}
 			if tt.wantLen > 0 && result[0].Name != tt.wantName {
-				t.Errorf("ListByCategory(%q)[0].Name = %q, want %q", tt.cat, result[0].Name, tt.wantName)
+				t.Errorf("ByCategory(%q)[0].Name = %q, want %q", tt.cat, result[0].Name, tt.wantName)
 			}
 		})
 	}
 }
 
-func TestRegistry_ListHealthy(t *testing.T) {
+func TestRegistry_AllHealthy(t *testing.T) {
 	t.Parallel()
 
 	r := NewRegistry()
@@ -196,15 +196,15 @@ func TestRegistry_ListHealthy(t *testing.T) {
 	})
 	// "unknown" has no health result
 
-	result := r.ListHealthy()
+	result := r.AllHealthy()
 	if len(result) != 2 {
-		t.Fatalf("ListHealthy() returned %d items, want 2", len(result))
+		t.Fatalf("AllHealthy() returned %d items, want 2", len(result))
 	}
 	if result[0].Name != "healthy-a" {
-		t.Errorf("ListHealthy()[0].Name = %q, want %q", result[0].Name, "healthy-a")
+		t.Errorf("AllHealthy()[0].Name = %q, want %q", result[0].Name, "healthy-a")
 	}
 	if result[1].Name != "healthy-b" {
-		t.Errorf("ListHealthy()[1].Name = %q, want %q", result[1].Name, "healthy-b")
+		t.Errorf("AllHealthy()[1].Name = %q, want %q", result[1].Name, "healthy-b")
 	}
 }
 
@@ -290,14 +290,14 @@ func TestRegistry_Count(t *testing.T) {
 	}
 }
 
-func TestRegistry_Get_NotFound(t *testing.T) {
+func TestRegistry_ByName_NotFound(t *testing.T) {
 	t.Parallel()
 
 	r := NewRegistry()
 	r.MustRegister(testDef("exists", CategorySecurity))
 
-	_, ok := r.Get("nonexistent")
+	_, ok := r.ByName("nonexistent")
 	if ok {
-		t.Error("Get() returned true for nonexistent server")
+		t.Error("ByName() returned true for nonexistent server")
 	}
 }

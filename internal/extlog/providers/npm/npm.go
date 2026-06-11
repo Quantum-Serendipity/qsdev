@@ -74,7 +74,7 @@ func (p *Provider) Discover(_, homeDir string, since time.Time) ([]extlog.LogFil
 var npmLineRe = regexp.MustCompile(`^(\d+)\s+(silly|verbose|info|http|timing|warn|error)\s+(.*)$`)
 
 func (p *Provider) Parse(r io.Reader, sourceFile string) ([]extlog.LogEntry, error) {
-	fileMtime := fileModTime(sourceFile)
+	fileMtime := extlog.FileModTime(sourceFile)
 	scanner := bufio.NewScanner(r)
 	var entries []extlog.LogEntry
 	lineNo := 0
@@ -118,12 +118,4 @@ func mapNpmLevel(raw string) extlog.LogLevel {
 	default:
 		return extlog.LevelUnknown
 	}
-}
-
-func fileModTime(path string) time.Time {
-	info, err := os.Stat(path)
-	if err != nil {
-		return time.Time{}
-	}
-	return info.ModTime()
 }

@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 const (
@@ -15,8 +17,6 @@ const (
 	sigstoreBundleName = "checksums.txt.sigstore.json"
 
 	expectedOIDCIssuer = "https://token.actions.githubusercontent.com"
-
-	sigstoreIdentityPrefix = "https://github.com/Quantum-Serendipity/qsdev/.github/workflows/release.yml@refs/tags/"
 )
 
 // VerificationResult describes the outcome of Sigstore verification.
@@ -68,7 +68,9 @@ func verifySigstoreBundleImpl(ctx context.Context, release *Release, checksumsPa
 	}
 
 	// Construct the expected certificate identity from the release tag.
-	expectedIdentity := sigstoreIdentityPrefix + release.TagName
+	b := branding.Get()
+	identityPrefix := "https://github.com/" + b.GitHubOwner + "/" + b.GitHubRepo + "/.github/workflows/release.yml@refs/tags/"
+	expectedIdentity := identityPrefix + release.TagName
 
 	// Run cosign verify-blob.
 	var stdout, stderr bytes.Buffer

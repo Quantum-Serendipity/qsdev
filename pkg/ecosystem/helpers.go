@@ -45,7 +45,7 @@ func ToModuleConfigWithProxy(lang types.LanguageChoice, infra types.InfraConfig)
 	cfg := ToModuleConfig(lang)
 	proxyKey := ProxyKeyForLanguage(lang.Name, lang.PackageManager)
 	if proxyKey != "" {
-		cfg.RegistryProxy = ResolveProxyURL(infra.RegistryProxy, infra.RegistryProxyOverrides, proxyKey)
+		cfg.RegistryProxy = ResolveProxyURL(infra.RegistryProxy, infra.RegistryProxyOverrides, proxyKey, infra.RegistryProxyPaths)
 	}
 	return cfg
 }

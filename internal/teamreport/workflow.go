@@ -72,7 +72,7 @@ func GenerateTeamWorkflow() string {
 	// Step: Install qsdev.
 	b.WriteString("      - name: Install qsdev\n")
 	b.WriteString("        run: |\n")
-	b.WriteString("          curl -sSfL https://raw.githubusercontent.com/Quantum-Serendipity/qsdev/main/install.sh | sh\n")
+	fmt.Fprintf(&b, "          curl -sSfL %s | sh\n", branding.InstallScriptURL())
 	b.WriteString("          echo \"$HOME/.local/bin\" >> $GITHUB_PATH\n\n")
 
 	// Step: Aggregate reports.

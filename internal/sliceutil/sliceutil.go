@@ -1,15 +1,5 @@
 package sliceutil
 
-// Contains checks whether a string slice includes the given value.
-func Contains(slice []string, val string) bool {
-	for _, s := range slice {
-		if s == val {
-			return true
-		}
-	}
-	return false
-}
-
 // Dedup returns a new slice with duplicates removed, preserving order.
 func Dedup(items []string) []string {
 	seen := make(map[string]bool, len(items))

@@ -12,15 +12,11 @@ func init() {
 		toolName := "consulting-agent-" + name
 		r.AttachBehavior(toolName, ToolBehavior{
 			EnableFunc: func(a *types.WizardAnswers) {
-				if a.EnabledTools == nil {
-					a.EnabledTools = make(map[string]bool)
-				}
+				ensureEnabledTools(a)
 				a.EnabledTools[toolName] = true
 			},
 			DisableFunc: func(a *types.WizardAnswers) {
-				if a.EnabledTools == nil {
-					a.EnabledTools = make(map[string]bool)
-				}
+				ensureEnabledTools(a)
 				a.EnabledTools[toolName] = false
 			},
 		})

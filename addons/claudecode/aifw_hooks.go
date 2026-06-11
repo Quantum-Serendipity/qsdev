@@ -3,7 +3,6 @@ package claudecode
 import (
 	"context"
 
-	claudecodeaddon "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -28,7 +27,7 @@ func (a *Adapter) Protocol() aiframework.HookProtocol {
 func (a *Adapter) Deploy(_ context.Context, hooks []aiframework.HookPolicy) ([]types.GeneratedFile, error) {
 	choices := hookPoliciesToChoices(hooks)
 	answers := types.WizardAnswers{Hooks: choices}
-	return claudecodeaddon.GenerateHookFiles(answers)
+	return GenerateHookFiles(answers)
 }
 
 func (a *Adapter) Undeploy(_ context.Context, _ string) error {

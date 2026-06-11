@@ -1,12 +1,12 @@
 package teamreport
 
 import (
-	"fmt"
 	"math"
 	"sort"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/timeutil"
 )
 
 // medianFloat64 returns the median of a sorted slice of float64 values.
@@ -23,47 +23,10 @@ func medianFloat64(sorted []float64) float64 {
 	return (sorted[n/2-1] + sorted[n/2]) / 2.0
 }
 
-// relativeTime formats a time.Time as a human-readable relative duration
-// string such as "1h ago", "3d ago", "2m ago" (months), etc.
+// relativeTime formats a time.Time as a compact human-readable relative
+// duration string such as "1h ago", "3d ago", "1mo ago".
 func relativeTime(t time.Time) string {
-	now := time.Now().UTC()
-	d := now.Sub(t)
-
-	if d < 0 {
-		return "in the future"
-	}
-
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		mins := int(d.Minutes())
-		if mins == 1 {
-			return "1 min ago"
-		}
-		return fmt.Sprintf("%d min ago", mins)
-	case d < 24*time.Hour:
-		hours := int(d.Hours())
-		if hours == 1 {
-			return "1h ago"
-		}
-		return fmt.Sprintf("%dh ago", hours)
-	case d < 30*24*time.Hour:
-		days := int(d.Hours() / 24)
-		if days == 1 {
-			return "1d ago"
-		}
-		return fmt.Sprintf("%dd ago", days)
-	default:
-		months := int(d.Hours() / (24 * 30))
-		if months == 0 {
-			months = 1
-		}
-		if months == 1 {
-			return "1mo ago"
-		}
-		return fmt.Sprintf("%dmo ago", months)
-	}
+	return timeutil.RelativeTimeShort(t)
 }
 
 // scoreToGrade delegates to posture.ScoreToGrade for consistent grading.

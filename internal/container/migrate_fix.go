@@ -9,6 +9,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const portRemapOffset = 8000
+
 // ApplyFixes reads a compose file, applies all auto-fixable issues targeting
 // it, and returns the modified YAML bytes. It uses the yaml.v3 Node API to
 // preserve comments and formatting.
@@ -140,7 +142,7 @@ func remapMappingPort(node *yaml.Node) {
 	if err != nil || n <= 0 || n >= 1024 {
 		return
 	}
-	pubNode.Value = strconv.Itoa(n + 8000)
+	pubNode.Value = strconv.Itoa(n + portRemapOffset)
 }
 
 // remapPort remaps a port string's host port if it is below 1024.
@@ -158,13 +160,13 @@ func remapPort(portStr string) string {
 		// host:container
 		hostPort, err := strconv.Atoi(parts[0])
 		if err == nil && hostPort > 0 && hostPort < 1024 {
-			parts[0] = strconv.Itoa(hostPort + 8000)
+			parts[0] = strconv.Itoa(hostPort + portRemapOffset)
 		}
 	case 3:
 		// ip:host:container
 		hostPort, err := strconv.Atoi(parts[1])
 		if err == nil && hostPort > 0 && hostPort < 1024 {
-			parts[1] = strconv.Itoa(hostPort + 8000)
+			parts[1] = strconv.Itoa(hostPort + portRemapOffset)
 		}
 	}
 

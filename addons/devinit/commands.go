@@ -248,10 +248,18 @@ func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot st
 
 	if opts.Yes {
 		answers.Confirmed = true
-		answers.FillDefaults(detected, catalog.MustDefault())
+		cat, err := catalog.Default()
+		if err != nil {
+			return types.WizardAnswers{}, fmt.Errorf("loading catalog for defaults: %w", err)
+		}
+		answers.FillDefaults(detected, cat)
 	}
 
-	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
+	treg, err := toolreg.Default()
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("loading tool registry: %w", err)
+	}
+	toolreg.MergeInferredTools(&answers, treg)
 
 	if opts.Yes && !answers.IsComplete() {
 		missing := incompleteAnswersMessage(answers)

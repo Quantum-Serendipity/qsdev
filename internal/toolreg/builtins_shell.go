@@ -12,15 +12,11 @@ func init() {
 
 	r.AttachBehavior("starship-integration", ToolBehavior{
 		EnableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
+			ensureEnabledTools(a)
 			a.EnabledTools["starship-integration"] = true
 		},
 		DisableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
+			ensureEnabledTools(a)
 			a.EnabledTools["starship-integration"] = false
 		},
 		GenerateFunc: func(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
@@ -39,15 +35,11 @@ func init() {
 
 	r.AttachBehavior("otel-config", ToolBehavior{
 		EnableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
+			ensureEnabledTools(a)
 			a.EnabledTools["otel-config"] = true
 		},
 		DisableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
+			ensureEnabledTools(a)
 			a.EnabledTools["otel-config"] = false
 		},
 		SharedContent: map[string]SharedContentFunc{

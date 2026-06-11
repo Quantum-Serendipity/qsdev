@@ -22,6 +22,7 @@ var _ ecosystem.SecretDeclarer = (*Module)(nil)
 var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
+var _ ecosystem.SASTModule = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})

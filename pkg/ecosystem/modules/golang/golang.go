@@ -22,6 +22,7 @@ var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
+var _ ecosystem.SASTModule = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})

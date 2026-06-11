@@ -1,20 +1,36 @@
 package toolreg
 
 import (
+	"fmt"
+
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+// BuildFromCatalogE creates a Registry pre-loaded with tool metadata from
+// the YAML catalog. Returns an error if the catalog cannot be loaded.
+func BuildFromCatalogE() (*Registry, error) {
+	cat, err := catalog.Default()
+	if err != nil {
+		return nil, fmt.Errorf("loading catalog: %w", err)
+	}
+	return buildRegistryFromCatalog(cat), nil
+}
 
 // BuildFromCatalog creates a Registry pre-loaded with tool metadata from
 // the YAML catalog. Tools get declarative fields (name, display name,
 // category, description, default policy, owned files) from YAML. Behavioral
 // functions (EnableFunc, etc.) are attached later via AttachBehavior.
 func BuildFromCatalog() *Registry {
+	cat := catalog.MustDefault()
+	return buildRegistryFromCatalog(cat)
+}
+
+func buildRegistryFromCatalog(cat *catalog.Catalog) *Registry {
 	r := &Registry{
 		tools: make(map[string]*Tool),
 	}
 
-	cat := catalog.MustDefault()
 	for name, def := range cat.Tools() {
 		t := Tool{
 			Name:          name,

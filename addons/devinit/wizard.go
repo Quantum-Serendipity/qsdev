@@ -2,13 +2,13 @@ package devinit
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
-	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -224,7 +224,7 @@ func buildLanguageGroups(detected types.DetectedProject, fs *formState) []*huh.G
 			Placeholder("e.g. 1.24").
 			Value(&fs.goVersion),
 	).WithHideFunc(func() bool {
-		return fs.quickChoice == "yes" || !sliceutil.Contains(fs.selectedLanguages, "go")
+		return fs.quickChoice == "yes" || !slices.Contains(fs.selectedLanguages, "go")
 	})
 
 	jsVersionGroup := huh.NewGroup(
@@ -233,7 +233,7 @@ func buildLanguageGroups(detected types.DetectedProject, fs *formState) []*huh.G
 			Placeholder("e.g. 22").
 			Value(&fs.jsVersion),
 	).WithHideFunc(func() bool {
-		return fs.quickChoice == "yes" || !sliceutil.Contains(fs.selectedLanguages, "javascript")
+		return fs.quickChoice == "yes" || !slices.Contains(fs.selectedLanguages, "javascript")
 	})
 
 	pythonVersionGroup := huh.NewGroup(
@@ -242,7 +242,7 @@ func buildLanguageGroups(detected types.DetectedProject, fs *formState) []*huh.G
 			Placeholder("e.g. 3.12").
 			Value(&fs.pythonVersion),
 	).WithHideFunc(func() bool {
-		return fs.quickChoice == "yes" || !sliceutil.Contains(fs.selectedLanguages, "python")
+		return fs.quickChoice == "yes" || !slices.Contains(fs.selectedLanguages, "python")
 	})
 
 	return []*huh.Group{langGroup, goVersionGroup, jsVersionGroup, pythonVersionGroup}

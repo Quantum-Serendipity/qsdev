@@ -3,7 +3,6 @@ package claudecode
 import (
 	"context"
 
-	claudecodeaddon "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -19,7 +18,7 @@ func (a *Adapter) GenerateMCPConfig(_ context.Context, servers []aiframework.MCP
 	cfg := a.cfg
 
 	for _, s := range servers {
-		cfg.MCPServers = append(cfg.MCPServers, claudecodeaddon.MCPServerConfig{
+		cfg.MCPServers = append(cfg.MCPServers, MCPServerConfig{
 			Name:    s.Name,
 			Command: s.Command,
 			Args:    s.Args,
@@ -27,7 +26,7 @@ func (a *Adapter) GenerateMCPConfig(_ context.Context, servers []aiframework.MCP
 		})
 	}
 
-	gf, err := claudecodeaddon.GenerateMcpJson(answers, cfg)
+	gf, err := GenerateMcpJson(answers, cfg)
 	if err != nil {
 		return nil, err
 	}

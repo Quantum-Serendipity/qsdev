@@ -52,7 +52,7 @@ var (
 )
 
 func (p *Provider) Parse(r io.Reader, sourceFile string) ([]extlog.LogEntry, error) {
-	fileMtime := fileModTime(sourceFile)
+	fileMtime := extlog.FileModTime(sourceFile)
 	scanner := bufio.NewScanner(r)
 	var entries []extlog.LogEntry
 	lineNo := 0
@@ -119,12 +119,4 @@ func mapGenericLevel(raw string) extlog.LogLevel {
 	default:
 		return extlog.LevelUnknown
 	}
-}
-
-func fileModTime(path string) time.Time {
-	info, err := os.Stat(path)
-	if err != nil {
-		return time.Time{}
-	}
-	return info.ModTime()
 }

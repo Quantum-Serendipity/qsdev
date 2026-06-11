@@ -6,6 +6,8 @@ import (
 	"maps"
 	"slices"
 	"sync"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 )
 
 // Catalog holds all loaded configuration data. It is populated once
@@ -395,7 +397,7 @@ func (c *Catalog) AllPermissionDenyRules() []string {
 	for _, setName := range c.permissionRules.AllDenySets {
 		rules = append(rules, c.PermissionDenyRules(setName)...)
 	}
-	return dedup(rules)
+	return sliceutil.Dedup(rules)
 }
 
 // SupplyChainDenyRules returns deny rules from the supply chain deny sets.
@@ -404,7 +406,7 @@ func (c *Catalog) SupplyChainDenyRules() []string {
 	for _, setName := range c.permissionRules.SupplyChainDenySets {
 		rules = append(rules, c.PermissionDenyRules(setName)...)
 	}
-	return dedup(rules)
+	return sliceutil.Dedup(rules)
 }
 
 // PermissionAllowRules returns the allow rules for a named set.
@@ -435,29 +437,13 @@ func (c *Catalog) AllPackageInstallAskRules() []string {
 	for _, setName := range c.permissionRules.PackageAskSets {
 		rules = append(rules, c.PermissionAskRules(setName)...)
 	}
-	return dedup(rules)
+	return sliceutil.Dedup(rules)
 }
 
 // PermissionPreset returns the preset definition for a named preset.
 func (c *Catalog) PermissionPreset(name string) (PermissionPresetDef, bool) {
 	d, ok := c.permissionRules.PresetDefs[name]
 	return d, ok
-}
-
-// dedup removes duplicate strings preserving first-seen order.
-func dedup(ss []string) []string {
-	if len(ss) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(ss))
-	out := make([]string, 0, len(ss))
-	for _, s := range ss {
-		if _, ok := seen[s]; !ok {
-			seen[s] = struct{}{}
-			out = append(out, s)
-		}
-	}
-	return out
 }
 
 // --- DefaultsProvider implementation (satisfies types.DefaultsProvider) ---

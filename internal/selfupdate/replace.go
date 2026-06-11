@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -69,7 +70,7 @@ func DoUpdate(ctx context.Context, cfg Config, release *Release) error {
 	}
 
 	// Copy new binary to original path.
-	if err := copyFile(newBinaryPath, currentPath, currentMode); err != nil {
+	if err := fileutil.CopyFile(newBinaryPath, currentPath, currentMode); err != nil {
 		// Restore backup on copy failure.
 		if renameErr := os.Rename(backupPath, currentPath); renameErr != nil {
 			slog.Warn("restoring backup after copy failure", "error", renameErr)
@@ -115,26 +116,6 @@ func resolveExecutable(path string) (string, error) {
 		return path, nil
 	}
 	return resolved, nil
-}
-
-// copyFile copies src to dst with the given permissions.
-func copyFile(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	return out.Close()
 }
 
 // verifyBinary runs the binary with "version" to confirm it executes.

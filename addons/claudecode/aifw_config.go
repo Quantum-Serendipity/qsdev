@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	claudecodeaddon "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -26,10 +25,10 @@ func (a *Adapter) Render(_ context.Context, input *aiframework.PolicyInput) ([]t
 	cfg := a.cfg
 
 	if input.Permissions != nil && input.Permissions.Preset != "" {
-		cfg.DefaultPermissions = claudecodeaddon.PermissionPreset(input.Permissions.Preset)
+		cfg.DefaultPermissions = PermissionPreset(input.Permissions.Preset)
 	}
 
-	settings, err := claudecodeaddon.GenerateSettings(answers, a.registry, cfg)
+	settings, err := GenerateSettings(answers, a.registry, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("generating settings: %w", err)
 	}

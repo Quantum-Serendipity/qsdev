@@ -13,9 +13,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
 )
 
-func TestCopyFile(t *testing.T) {
+func TestCopyFileShared(t *testing.T) {
 	tmpDir := t.TempDir()
 	src := filepath.Join(tmpDir, "src")
 	dst := filepath.Join(tmpDir, "dst")
@@ -24,8 +26,8 @@ func TestCopyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := copyFile(src, dst, 0o755); err != nil {
-		t.Fatalf("copyFile() error: %v", err)
+	if err := fileutil.CopyFile(src, dst, 0o755); err != nil {
+		t.Fatalf("fileutil.CopyFile() error: %v", err)
 	}
 
 	data, err := os.ReadFile(dst)
@@ -190,10 +192,10 @@ func TestDoUpdate_RenameAndCopy(t *testing.T) {
 	}
 
 	// Test copy.
-	if err := copyFile(newPath, currentBinary, 0o755); err != nil {
+	if err := fileutil.CopyFile(newPath, currentBinary, 0o755); err != nil {
 		// Rollback.
 		os.Rename(backupPath, currentBinary)
-		t.Fatalf("copyFile() error: %v", err)
+		t.Fatalf("fileutil.CopyFile() error: %v", err)
 	}
 
 	// Verify new binary was installed.
@@ -229,7 +231,7 @@ func TestDoUpdate_RollbackOnCopyFailure(t *testing.T) {
 	}
 
 	// Simulate copy failure by trying to copy from nonexistent source.
-	err := copyFile("/nonexistent/path", original, 0o755)
+	err := fileutil.CopyFile("/nonexistent/path", original, 0o755)
 	if err == nil {
 		t.Fatal("expected copy error")
 	}

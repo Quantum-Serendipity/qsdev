@@ -32,22 +32,7 @@ var (
 )
 
 func containsProtectedPathStr(s string) bool {
-	normalized := filepath.ToSlash(s)
-	patterns := []string{
-		".qsdev/",
-		".gdev/",
-		".claude/settings",
-		".claude/managed-settings",
-		"/etc/gdev/",
-		"/etc/claude-code/",
-		".claude/hooks/",
-	}
-	for _, p := range patterns {
-		if strings.Contains(normalized, p) {
-			return true
-		}
-	}
-	return false
+	return canon.ContainsProtectedPath(s)
 }
 
 func isWriteOrEdit(toolName string) bool {

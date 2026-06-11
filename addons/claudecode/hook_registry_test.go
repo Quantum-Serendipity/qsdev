@@ -298,37 +298,40 @@ func TestBuildHookStatuses(t *testing.T) {
 	}
 
 	statuses := claudecode.ExportBuildHookStatuses(r, answers)
-	if len(statuses) != 13 {
-		t.Fatalf("expected 13 statuses, got %d", len(statuses))
+	if len(statuses) != 14 {
+		t.Fatalf("expected 14 statuses, got %d", len(statuses))
 	}
 
-	if statuses[0].Name != "package-guard" || !statuses[0].Enabled {
-		t.Errorf("statuses[0]: want package-guard/enabled, got %s/%v", statuses[0].Name, statuses[0].Enabled)
+	if statuses[0].Name != "self-protection" || statuses[0].Enabled {
+		t.Errorf("statuses[0]: want self-protection/disabled (no ClaudeCode), got %s/%v", statuses[0].Name, statuses[0].Enabled)
 	}
-	if statuses[1].Name != "credential-scan" || statuses[1].Enabled {
-		t.Errorf("statuses[1]: want credential-scan/disabled, got %s/%v", statuses[1].Name, statuses[1].Enabled)
+	if statuses[1].Name != "package-guard" || !statuses[1].Enabled {
+		t.Errorf("statuses[1]: want package-guard/enabled, got %s/%v", statuses[1].Name, statuses[1].Enabled)
 	}
-	if statuses[2].Name != "destructive-prevention" || statuses[2].Enabled {
-		t.Errorf("statuses[2]: want destructive-prevention/disabled, got %s/%v", statuses[2].Name, statuses[2].Enabled)
+	if statuses[2].Name != "credential-scan" || statuses[2].Enabled {
+		t.Errorf("statuses[2]: want credential-scan/disabled, got %s/%v", statuses[2].Name, statuses[2].Enabled)
 	}
-	if statuses[3].Name != "file-boundary" || statuses[3].Enabled {
-		t.Errorf("statuses[3]: want file-boundary/disabled, got %s/%v", statuses[3].Name, statuses[3].Enabled)
+	if statuses[3].Name != "destructive-prevention" || statuses[3].Enabled {
+		t.Errorf("statuses[3]: want destructive-prevention/disabled, got %s/%v", statuses[3].Name, statuses[3].Enabled)
 	}
-	if statuses[4].Name != "tool-gates" || statuses[4].Enabled {
-		t.Errorf("statuses[4]: want tool-gates/disabled, got %s/%v", statuses[4].Name, statuses[4].Enabled)
+	if statuses[4].Name != "file-boundary" || statuses[4].Enabled {
+		t.Errorf("statuses[4]: want file-boundary/disabled, got %s/%v", statuses[4].Name, statuses[4].Enabled)
 	}
-	for i := 5; i <= 8; i++ {
+	if statuses[5].Name != "tool-gates" || statuses[5].Enabled {
+		t.Errorf("statuses[5]: want tool-gates/disabled, got %s/%v", statuses[5].Name, statuses[5].Enabled)
+	}
+	for i := 6; i <= 9; i++ {
 		if statuses[i].Name != "soc2-audit" || statuses[i].Enabled {
 			t.Errorf("statuses[%d]: want soc2-audit/disabled, got %s/%v", i, statuses[i].Name, statuses[i].Enabled)
 		}
 	}
-	if statuses[9].Name != "semble" || statuses[9].Enabled {
-		t.Errorf("statuses[9]: want semble/disabled, got %s/%v", statuses[9].Name, statuses[9].Enabled)
+	if statuses[10].Name != "semble" || statuses[10].Enabled {
+		t.Errorf("statuses[10]: want semble/disabled, got %s/%v", statuses[10].Name, statuses[10].Enabled)
 	}
-	if statuses[10].Name != "audit-log" || statuses[10].Enabled {
-		t.Errorf("statuses[10]: want audit-log/disabled, got %s/%v", statuses[10].Name, statuses[10].Enabled)
+	if statuses[11].Name != "audit-log" || statuses[11].Enabled {
+		t.Errorf("statuses[11]: want audit-log/disabled, got %s/%v", statuses[11].Name, statuses[11].Enabled)
 	}
-	for i := 11; i <= 12; i++ {
+	for i := 12; i <= 13; i++ {
 		if statuses[i].Name != "security-enforcement" || statuses[i].Enabled {
 			t.Errorf("statuses[%d]: want security-enforcement/disabled, got %s/%v", i, statuses[i].Name, statuses[i].Enabled)
 		}

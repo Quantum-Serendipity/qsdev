@@ -127,6 +127,7 @@ type HookChoices struct {
 	ToolGates             bool `yaml:"tool_gates"              json:"tool_gates"`
 	SandboxEnabled        bool `yaml:"sandbox_enabled"         json:"sandbox_enabled"`
 	SecurityEnforcement   bool `yaml:"security_enforcement"    json:"security_enforcement"`
+	SelfProtection        bool `yaml:"self_protection"         json:"self_protection"`
 }
 
 // GeneratedFile represents a single file to be written by the generation pipeline.
@@ -298,6 +299,11 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 	// in "standard" here would mask the tier's intent.
 	if a.ClaudeCode && a.PermissionLevel == "" && a.Tier == "" {
 		a.PermissionLevel = "standard"
+	}
+
+	// Self-protection is always on when Claude is enabled.
+	if a.ClaudeCode {
+		a.Hooks.SelfProtection = true
 	}
 
 	// Default hooks when Claude is enabled.

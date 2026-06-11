@@ -60,6 +60,7 @@ func initialize() error {
 		teardownCmd(),
 		containerCmd(),
 		sandboxCmd(),
+		selfprotectCmd(),
 		enforceCmd(),
 		sessionCmd(),
 		policyCmd(),

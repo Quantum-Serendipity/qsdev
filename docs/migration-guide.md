@@ -142,7 +142,7 @@ The generated `.claude/settings.json` uses the `three-way-merge` strategy. To ad
 
 ### Preserving Custom MCP Servers
 
-`.mcp.json` also uses `three-way-merge`. Custom MCP server entries you add will be preserved during updates, as long as they do not conflict with built-in server names (`github`, `filesystem`, `postgres`, `fetch`, `socket`).
+`.mcp.json` also uses `three-way-merge`. Custom MCP server entries you add will be preserved during updates, as long as they do not conflict with built-in server names (`context7`, `github`, `semble`, `socket`). Documentation servers (`local-docs-devdocs`, `local-docs-zim`, `man-pages`, `mcp-nixos`) may also be present if enabled via `qsdev docs enable` — avoid conflicting with these names as well.
 
 To add a custom server after initial setup:
 
@@ -234,6 +234,20 @@ devenv shell        # manual activation
 
 No additional `qsdev init` is needed for team members -- the committed files configure their environment.
 
+## Updating from Earlier Versions
+
+If your project was initialized before qsdev 0.7.0, running `qsdev update` introduces several new components:
+
+**Policy engine files** — `qsdev update` adds `.qsdev/policy/` with YAML security policy definitions. The policy engine evaluates tool calls against these rules. Existing allowlisted packages remain allowed.
+
+**Self-protection hook** — The `qsdev selfprotect` binary now runs as the first PreToolUse hook, evaluating 18 rules against tool calls. Existing custom hooks are not affected but run after self-protection.
+
+**Cloud deny rules** — If AWS, GCP, or Azure CLI tools are detected in your project, new deny rules are added to `.claude/settings.json` restricting credential file access and authentication commands. The three-way merge preserves your custom rules.
+
+**New MCP servers** — `agent-postmortem` and `version-sentinel` are embedded MCP servers available via `qsdev mcp <name>`. They do not appear in `.mcp.json` but are available through the CLI.
+
+**Documentation servers** — Local documentation is now available via `qsdev docs enable`. Documentation MCP servers are opt-in and do not activate automatically.
+
 ## Common Issues
 
 ### `devenv.nix already exists; use --force to overwrite`
@@ -279,7 +293,7 @@ If `devenv test` reports credential variables are set:
 
 ### MCP server "unknown" error
 
-qsdev configures 4 AlwaysOn MCP servers: `context7`, `github`, `socket`, `semble`. Claude Code itself recognizes additional servers (`filesystem`, `postgres`, `fetch`) but qsdev does not manage them. Custom servers must be added by editing `.mcp.json` directly after generation.
+qsdev configures 4 default MCP servers in `.mcp.json`: `context7`, `github`, `socket`, `semble`. Additional servers (`agent-postmortem`, `version-sentinel`, `local-docs-devdocs`, `local-docs-zim`, `man-pages`, `mcp-nixos`) activate based on tool enablement and project detection. Custom servers can be added by editing `.mcp.json` directly after generation — the three-way merge preserves custom entries on update.
 
 ### Corrupted or drifted configuration files
 
@@ -292,6 +306,18 @@ qsdev repair
 This restores managed files to their expected state while preserving your customizations in merge-strategy files.
 
 Alternatively, `qsdev check --auto-fix` can restore deleted generated files and add missing deny rules in a single pass.
+
+### Self-protection rule blocked a tool call
+
+Exit code 2 from a PreToolUse hook indicates a self-protection denial. Review the output to see which rule triggered. Self-protection rules (SP-001 through SP-014, MCP-001/002/005, INT-001) use `bypass_tier: enforce_always` and cannot be bypassed. If a legitimate operation is blocked, check whether the tool call is writing to or reading from a protected path.
+
+### Cloud deny rules appeared after update
+
+When `qsdev update` detects AWS, GCP, or Azure project files, it adds deny rules blocking credential file access and authentication commands. Cloud CLIs remain available for read-only operations. To use cloud authentication within the agent, configure per-project credential isolation through the cloud ecosystem module's environment variables.
+
+### Policy warnings on existing dependencies
+
+The package risk scoring system may flag existing dependencies with risk grades on first evaluation. Run `qsdev policy check` to review findings. Low-grade packages are not blocked by default — only policy rules with `block` actions take effect. Use `qsdev policy list` to see which rules are active and their severity levels.
 
 ### Docker module renamed to container
 

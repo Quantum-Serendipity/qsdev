@@ -15,15 +15,15 @@ qsdev detects your stack and generates a complete environment with supply-chain 
 
 ## Why qsdev
 
-- Detects your stack across 27 ecosystems and generates a complete, working [devenv.sh](https://devenv.sh) environment
-- Ships with 10 layers of supply-chain defense (age-gating, install-script blocking, lockfile enforcement, vuln scanning, SAST, secrets detection, etc.) configured out of the box
-- Sets up Claude Code with deny rules, operation skills, hooks, and MCP servers so your AI agent can't `curl | sh` or install unvetted packages
+- Detects your stack across 30 ecosystems and generates a complete, working [devenv.sh](https://devenv.sh) environment
+- Ships with 14 layers of defense (age-gating, install-script blocking, lockfile enforcement, vuln scanning, SAST, secrets detection, cloud credential isolation, policy engine, risk scoring, agent self-protection) configured out of the box
+- Sets up Claude Code with deny rules, operation skills, hooks, MCP servers, a policy engine, and 18 self-protection rules so your AI agent can't `curl | sh`, install unvetted packages, or tamper with its own guardrails
 - `qsdev check --auto-fix` repairs drifted configs and restores deleted files automatically
 - Hooks run inside a sandbox (bubblewrap + landlock + seccomp) with graceful degradation on systems that lack kernel support
 - `qsdev teardown` removes everything cleanly. The generated configs are standard files you own
 - `qsdev status` gives you a real security score and grade, not a checkbox
 - Commit `.qsdev.yaml` and teammates run `qsdev init --mode join` for identical environments
-- `qsdev update` preserves your modifications via three-way merge
+- `qsdev update` performs binary self-update, config regeneration, and devenv input updates in one command, preserving your modifications via three-way merge
 - 10 project profiles (`go-web`, `ts-fullstack`, `python-web`, etc.) and 3 infrastructure tiers (`consulting-default`, `startup-github`, `enterprise`)
 
 ## Quick Start
@@ -36,6 +36,8 @@ curl -fsSL https://raw.githubusercontent.com/Quantum-Serendipity/qsdev/main/scri
 cd your-project
 qsdev init --yes
 ```
+
+The installer verifies downloads with SHA-256 checksums and Sigstore cosign (when cosign is available). On Apple Silicon under Rosetta 2, it detects translation and downloads the native arm64 binary. Flags: `--verify-only` (check an existing install), `--no-verify` (skip verification), `--force-arch` (override architecture detection).
 
 ## Try It Out
 
@@ -67,6 +69,7 @@ devenv.yaml                 # Environment inputs
 .claude/rules/              # Language-specific convention rules
 .qsdev/policy.nix           # Hook sandbox policies
 .mcp.json                   # MCP server configuration
+.qsdev/policy/              # YAML security policies (policy engine)
 CLAUDE.md                   # Project context for AI agents
 .npmrc / pip.conf / ...     # Per-ecosystem security configs
 .syft.yaml / .grype.yaml    # SBOM + vulnerability scanner configs
@@ -117,6 +120,12 @@ scoop bucket add qsdev https://github.com/Quantum-Serendipity/scoop-bucket
 scoop install qsdev
 ```
 
+### AUR (Arch Linux)
+
+```bash
+yay -S qsdev-bin
+```
+
 ### Binary downloads
 
 Pre-built binaries for Linux (amd64, arm64), macOS (amd64, arm64), and Windows (amd64) are available on the [Releases page](https://github.com/Quantum-Serendipity/qsdev/releases).
@@ -130,6 +139,7 @@ The installer handles all dependencies automatically — no manual setup require
 | Ecosystems | Coverage |
 |-----------|----------|
 | Go, JavaScript/TypeScript, Python, Rust, Java/Kotlin, .NET, Containers, Terraform | Full supply-chain hardening |
+| AWS, GCP, Azure | Cloud CLI detection + 3-layer credential isolation |
 | PHP, Ruby, Scala, C/C++, Shell, Helm, Ansible | Security configs + deny rules |
 | Elixir, Dart, Swift, Haskell, Clojure, Bazel, Nix, Perl, R, Lua, Zig, PowerShell | Packages + deny rules |
 
@@ -144,6 +154,25 @@ The installer handles all dependencies automatically — no manual setup require
 | [pre-commit](https://pre-commit.com) | Lockfile checks, formatting, linting hooks |
 | [Socket.dev](https://socket.dev) | Behavioral supply chain analysis via MCP |
 | [Podman](https://podman.io) | Rootless container runtime (auto-detected alongside Docker) |
+| [Sigstore](https://sigstore.dev) | Binary and SBOM verification via cosign |
+
+## Available Services
+
+`qsdev devenv add-service <name>` adds pre-configured development services. All services bind to localhost with configurable ports and export environment variables.
+
+| Service | Description |
+|---------|-------------|
+| PostgreSQL | Relational database |
+| Redis | In-memory cache and message broker |
+| MySQL | Relational database |
+| MongoDB | Document database |
+| Elasticsearch | Search and analytics engine |
+| RabbitMQ | Message broker (AMQP) |
+| Kafka | Event streaming (KRaft mode default, ZooKeeper fallback) |
+| MinIO | S3-compatible object storage |
+| Mailpit | Email testing (SMTP capture + web UI) |
+| Keycloak | Identity and access management |
+| NATS | High-performance messaging with optional JetStream persistence |
 
 ## Commands
 
@@ -153,7 +182,7 @@ qsdev init --profile go-web   # Use a project-type preset
 qsdev status                  # Security posture assessment (score + grade)
 qsdev check                   # CI enforcement (config integrity, hardening)
 qsdev check --auto-fix        # Fix drifted configs automatically
-qsdev update                  # Update configs + devenv inputs
+qsdev update                  # Update binary + configs + devenv inputs
 qsdev repair                  # Fix corrupted or drifted files
 qsdev teardown                # Remove all qsdev configuration (clean exit)
 qsdev enable <tool>           # Enable a security/AI tool
@@ -174,7 +203,7 @@ qsdev trial                   # Evaluate in an isolated git worktree
 | `check` | CI enforcement checks (JSON, SARIF, JUnit output). `--auto-fix` repairs issues |
 | `info` | Project status at a glance (cached, instant) |
 | `repair` | Fix corrupted or drifted config files |
-| `update` | Update binary + configs + devenv inputs |
+| `update` | Update binary + configs + devenv inputs. Flags: `--check`, `--changelog`, `--dry-run`, `--force`, `--self-only`, `--configs-only`, `--deps-only` |
 | `outdated` | Check for outdated dependencies across ecosystems |
 | `teardown` | Remove all qsdev configuration from project |
 | `enable <tool>` | Enable a tool |
@@ -184,7 +213,7 @@ qsdev trial                   # Evaluate in an isolated git worktree
 | `team-report` | Aggregate posture across multiple projects |
 | `trial` | Evaluate qsdev in an isolated git worktree |
 | `scaffold-instance` | Create a white-label fork of qsdev |
-| `self-update` | Update the qsdev binary to the latest release |
+| `self-update` | Hidden alias for `update --self-only` |
 | `completion` | Generate shell completions (bash, zsh, fish, powershell) |
 
 ### devenv subcommands
@@ -223,6 +252,46 @@ qsdev trial                   # Evaluate in an isolated git worktree
 |---------|-------------|
 | `container detect` | Detect active container runtime and capabilities |
 | `container migrate` | Analyze compose files for Docker-to-Podman compatibility. `--auto-fix` applies fixes |
+
+### mcp subcommands
+
+| Command | Description |
+|---------|-------------|
+| `mcp status` | Health and connectivity check for configured MCP servers |
+| `mcp list` | List configured MCP servers |
+| `mcp grade [name]` | Compliance grade (basic/standard/secure/verified/attested) |
+| `mcp install <name>` | Install an MCP server from the registry |
+| `mcp update [name]` | Update an installed MCP server (`--all` for all) |
+| `mcp remove <name>` | Remove an MCP server |
+| `mcp health` | Run health probes on all configured servers |
+
+### docs subcommands
+
+| Command | Description |
+|---------|-------------|
+| `docs download` | Download documentation sets for offline use (`--devdocs`, `--zim`) |
+| `docs status` | Show installed documentation sets and disk usage |
+| `docs outdated` | Check for newer versions of installed documentation |
+| `docs update` | Update outdated documentation sets |
+| `docs clean` | Remove downloaded documentation sets |
+| `docs enable <set>` | Enable a documentation set |
+| `docs disable <set>` | Disable a documentation set |
+
+### policy subcommands
+
+| Command | Description |
+|---------|-------------|
+| `policy check` | Evaluate security policy posture. Supports `--sarif` output |
+| `policy list` | List all rules in the loaded security policy |
+| `policy show <id>` | Show details for a specific policy rule |
+
+### session subcommands
+
+| Command | Description |
+|---------|-------------|
+| `session allow <rule-ids>` | Enable session bypass for specific policy rules |
+| `session clear` | Remove all session bypass overrides |
+| `session list` | List active session bypass overrides |
 
 </details>
 

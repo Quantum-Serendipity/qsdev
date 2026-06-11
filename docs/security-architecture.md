@@ -19,7 +19,7 @@
 
 ## Defense Layers
 
-qsdev implements 10 layers of supply-chain defense.
+qsdev implements 14 layers of defense across supply chain, environment, and agent security.
 
 | # | Layer | Catches |
 |---|-------|---------|
@@ -33,6 +33,10 @@ qsdev implements 10 layers of supply-chain defense.
 | 8 | Secrets scanning (ripsecrets + gitleaks) | Credentials committed to source |
 | 9 | Container security | Vulnerable base images, misconfigurations |
 | 10 | License compliance | Non-permissive transitive dependencies |
+| 11 | Cloud credential isolation | Cross-project credential leakage |
+| 12 | Policy engine | Policy violations and unsafe tool invocations |
+| 13 | Package and MCP risk scoring | Unvetted packages and untrusted MCP servers |
+| 14 | Agent self-protection | Tampering with guardrails, config, and audit trail |
 
 ### Layer 1: Age-Gating
 
@@ -145,7 +149,102 @@ Generated CI configuration includes license scanning that:
 - Generates a license report as part of SBOM output.
 - Blocks merges when policy-violating licenses are introduced (configurable per infrastructure profile).
 
+### Layer 11: Cloud Credential Isolation
+
+When AWS, GCP, or Azure project files are detected, qsdev generates a 3-layer credential isolation configuration:
+
+| Layer | Mechanism | Effect |
+|-------|-----------|--------|
+| Environment separation | Per-project credential variables in devenv.nix | Prevents ambient credential access across projects |
+| Credential file masking | Read-deny rules for credential file paths | Blocks agent access to stored credentials |
+| Agent deny rules | Claude Code deny rules for auth CLI commands | Prevents credential refresh or modification |
+
+Detection triggers:
+
+| Provider | Indicators |
+|----------|-----------|
+| AWS | `cdk.json`, `samconfig.toml`, SAM templates, Terraform `aws` provider, `serverless.yml` |
+| GCP | `cloudbuild.yaml`, `firebase.json`, `app.yaml`, Terraform `google`/`google-beta` provider |
+| Azure | `azure-pipelines.yml`, `.bicep` files, `azure.yaml`, Terraform `azurerm` provider |
+
+Cloud CLIs remain available for read-only operations. Authentication and credential modification commands are denied. `qsdev devenv doctor` includes a CloudProviders section verifying CLI availability and isolation status for each detected provider.
+
+### Layer 12: Policy Engine
+
+YAML-based security policies define fine-grained rules evaluated at tool invocation time. Each rule specifies conditions, an action, a severity level, and a bypass tier.
+
+**Condition types** (10): `tool_match`, `path_glob`, `regex_match`, `command_match`, `file_existence`, `file_type`, `denied_path_check`, `semantic`, `all`, `any`, `not`.
+
+**Actions** (4): `block` (exit 2), `warn` (exit 0 + finding), `audit` (exit 0 + monitored finding), `prompt` (interactive approval, falls back to block without a terminal).
+
+**Bypass tiers** (3):
+- `enforce_always` — Cannot be bypassed. Used for self-protection rules.
+- `session` — Can be bypassed with `qsdev session allow <rule-id>` for the current session.
+- `command` — Can be bypassed per-invocation.
+
+Policy evaluation runs in under 50 microseconds per rule. Output is available in human-readable, JSON, and SARIF 2.1.0 formats.
+
+```bash
+qsdev policy check              # Human-readable posture summary
+qsdev policy check --sarif      # SARIF 2.1.0 output for CI integration
+qsdev policy list               # List all active rules
+qsdev policy show <rule-id>     # Inspect a specific rule
+```
+
+### Layer 13: Package and MCP Risk Scoring
+
+**Package risk scoring** evaluates packages across 28 probes in 6 weighted categories:
+
+| Category | Weight | What it measures |
+|----------|-------:|-----------------|
+| Vulnerability | 0.35 | CVE counts by severity, EPSS score, KEV listing, reachability |
+| Behavioral | 0.20 | Typosquatting, install scripts, network at install, obfuscation |
+| Publication | 0.15 | Package age, release frequency, changelog presence |
+| Maintainer | 0.12 | Maintainer count, publisher switching, 2FA status |
+| Provenance | 0.10 | SLSA level, Sigstore signature, npm provenance, checksum |
+| Popularity | 0.08 | Download count, dependent count |
+
+Probes produce a weighted score mapped to a letter grade (A through F). Grade ceilings prevent strong popularity or provenance from masking critical vulnerability findings. Unavailable signals are excluded from the denominator rather than penalized.
+
+**MCP trust scoring** evaluates MCP servers across 9 probes in 3 categories:
+
+| Category | Weight | Probes |
+|----------|-------:|--------|
+| Content origin | 0.45 | Source verification, npm registry checks, content signing |
+| Installation and update | 0.30 | Update mechanism safety, pinned version, offline capability |
+| Vulnerability and attestation | 0.25 | Known vulnerability databases, user attestation |
+
+Trust scores feed a 3-tier model (high / medium / low trust) and drive confused deputy mitigation via cross-tool deny rule projection.
+
+### Layer 14: Agent Self-Protection
+
+Self-protection runs as the first PreToolUse hook, before all other hooks. It blocks the AI agent from tampering with its own guardrails, security configuration, or audit trail.
+
+**18 Tier 1 enforce-always rules** across 5 categories:
+
+| Category | Rule IDs | What it protects |
+|----------|----------|------------------|
+| Config protection | SP-001–SP-008 | Config file writes/reads/deletes, symlinks, path traversal, /proc reads, copy/redirect, env var manipulation |
+| MCP integrity | MCP-001, MCP-002, MCP-005 | Tool description injection, cross-tool protected path access, server config tampering |
+| Binary integrity | INT-001 | Modification of security binaries in `.qsdev/bin/` |
+| Bypass prevention | SP-011–SP-014 | Bypass variable exports, bypass commands, audit trail writes, CLI security control commands |
+| Process protection | SP-009–SP-010 | Process management targeting qsdev/claude, hook script modification |
+
+All 18 rules use deny-override combining: if any rule denies, the tool call is blocked. All rules are evaluated on every call; multiple denials are collected and reported.
+
+**Evasion detection** runs alongside the rule set and catches:
+- Base64-to-shell pipelines (`base64 -d | bash`)
+- Printf hex-escape-to-shell pipelines
+- Eval with variable expansion
+- Hard links to protected paths
+- `/dev/fd/` and `/proc/self/fd/` file descriptor tricks
+- `/proc/self/root/` and `/proc/PID/root/` traversal
+
+**Path canonicalization** resolves all file paths through `canon.Canonicalize` before rule evaluation, preventing relative-path and symlink-based evasion.
+
 ## Hook Execution Isolation
+
+The self-protection layer (Layer 14) runs as the first PreToolUse hook. It evaluates before package-guard, credential-scan, and all other hooks. Guardrail-tampering attempts are blocked before any other hook logic executes.
 
 Hooks run inside a sandboxed environment that restricts filesystem access, network, and syscalls. The sandbox degrades gracefully based on available kernel features:
 
@@ -215,7 +314,7 @@ qsdev eliminates the configuration barrier by generating correct, ecosystem-spec
 | Raw Nix | 4 (reproducibility only) | No security configuration, no ecosystem modules |
 | Manual Claude Code hooks | 5 (partial) | No supply chain integration, no self-protection harness |
 
-qsdev is the only tool spanning Tiers 2–5 across 27 ecosystems with integrated AI agent security.
+qsdev is the only tool spanning Tiers 2–5 across 30 ecosystems with integrated AI agent security.
 
 ## Permission Model
 
@@ -325,7 +424,7 @@ This validates:
 
 Run `devenv test` in CI to continuously verify that security controls have not been disabled.
 
-For a full security posture assessment including all 10 layers:
+For a full security posture assessment including all 14 layers:
 
 ```bash
 qsdev status
@@ -338,7 +437,7 @@ This outputs a score (0–100), letter grade, and per-layer breakdown showing wh
 ### Hook Bypass Vectors
 
 - **Aliases and functions** — Shell aliases (`alias npm='npm'`) or functions that wrap install commands are not caught by pattern-based rules.
-- **Encoded commands** — Base64-encoded or hex-encoded commands piped to decoders are not blocked.
+- **Encoded commands** — Base64-to-shell and printf-hex-to-shell patterns are detected by the evasion layer (Layer 14). Novel encoding schemes not covered by the current pattern set remain a potential bypass.
 - **Indirect execution via scripts** — Running a script file that internally calls install commands bypasses the PreToolUse hook.
 - **New package managers** — Rules must be updated when new package managers emerge.
 
@@ -356,6 +455,11 @@ This outputs a score (0–100), letter grade, and per-layer breakdown showing wh
 
 - **Runtime dependencies** — The system hardens the development environment and CI pipeline. It does not scan or constrain runtime container images or deployed artifacts beyond build-time scanning.
 - **Secret management** — Credential stripping prevents accidental exposure in the dev shell but does not replace a proper secret management system (Vault, AWS Secrets Manager, etc.).
+
+### Policy Engine Limitations
+
+- **Semantic conditions** — The `semantic` condition type is defined in the schema but not yet implemented. Rules using it always evaluate to false.
+- **Prompt action** — Interactive prompting falls back to block when stdin is not a terminal (e.g., in CI). Full interactive approval is deferred to a future release.
 
 ## Further Reading
 

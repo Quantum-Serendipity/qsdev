@@ -21,7 +21,10 @@ func CopyFile(src, dst string, mode os.FileMode) error {
 	}
 
 	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+		if closeErr := out.Close(); closeErr != nil {
+			os.Remove(dst)
+			return fmt.Errorf("copying to %s: %w (also failed to close: %v)", dst, err, closeErr)
+		}
 		os.Remove(dst)
 		return fmt.Errorf("copying to %s: %w", dst, err)
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
 )
@@ -71,9 +72,9 @@ func runEnforce(cmd *cobra.Command, hookEvent string) error {
 
 	switch hookEvent {
 	case "PreToolUse":
-		exitCode := orchestrator.RunPreToolUse(evalCtx)
-		if exitCode != 0 {
-			os.Exit(exitCode)
+		code := orchestrator.RunPreToolUse(evalCtx)
+		if code != 0 {
+			return exitcode.New(code, "policy enforcement blocked tool call (exit code %d)", code)
 		}
 	case "PostToolUse":
 		output, _ := orchestrator.RunPostToolUse(evalCtx, input.ToolOutput)

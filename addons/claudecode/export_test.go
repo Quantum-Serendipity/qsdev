@@ -1,7 +1,8 @@
 package claudecode
 
 import (
-	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"slices"
+
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -57,7 +58,7 @@ type ExportVersionDiff = VersionDiff
 type ExportUpdateSummary = UpdateSummary
 
 // ExportContains exposes the contains helper for external tests.
-var ExportContains = sliceutil.Contains
+var ExportContains = slices.Contains[[]string, string]
 
 var ExportLoadQsdevOpsManifest = loadQsdevOpsManifest
 var ExportDeployOperationSkills = deployOperationSkills

@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/policy"
 )
@@ -77,7 +78,7 @@ automatically selected based on available kernel capabilities.`,
 			}
 
 			if result.ExitCode != 0 {
-				os.Exit(result.ExitCode)
+				return exitcode.New(result.ExitCode, "sandboxed command exited with code %d", result.ExitCode)
 			}
 
 			return nil

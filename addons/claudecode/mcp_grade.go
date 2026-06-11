@@ -51,7 +51,7 @@ plus its own criteria to be satisfied.`,
 
 			// Get known servers from the registry.
 			registry := mcpregistry.DefaultRegistry()
-			knownDefs := registry.List()
+			knownDefs := registry.All()
 
 			// Build merged map: registry definitions enriched with config data.
 			merged := make(map[string]*mcpregistry.McpServerDefinition)

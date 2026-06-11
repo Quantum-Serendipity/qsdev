@@ -26,7 +26,11 @@ type TierInfo struct {
 
 // ParseTier converts a string to a Tier. Returns an error for unknown values.
 func ParseTier(s string) (Tier, error) {
-	defs := catalog.MustDefault().TierDefs()
+	cat, err := catalog.Default()
+	if err != nil {
+		return 0, fmt.Errorf("loading catalog: %w", err)
+	}
+	defs := cat.TierDefs()
 	def, ok := defs[s]
 	if !ok {
 		return 0, fmt.Errorf("unknown tier %q; valid tiers: supply-chain-only, standard, full", s)
@@ -36,7 +40,11 @@ func ParseTier(s string) (Tier, error) {
 
 // String returns the canonical name for the tier.
 func (t Tier) String() string {
-	for name, def := range catalog.MustDefault().TierDefs() {
+	cat, err := catalog.Default()
+	if err != nil {
+		return fmt.Sprintf("tier(%d)", int(t))
+	}
+	for name, def := range cat.TierDefs() {
 		if Tier(def.Order) == t {
 			return name
 		}
@@ -46,9 +54,12 @@ func (t Tier) String() string {
 
 // DefaultPermissionPreset returns the permission preset implied by this tier.
 func (t Tier) DefaultPermissionPreset() string {
-	for _, def := range catalog.MustDefault().TierDefs() {
-		if Tier(def.Order) == t && def.DefaultPermissionPreset != "" {
-			return def.DefaultPermissionPreset
+	cat, err := catalog.Default()
+	if err == nil {
+		for _, def := range cat.TierDefs() {
+			if Tier(def.Order) == t && def.DefaultPermissionPreset != "" {
+				return def.DefaultPermissionPreset
+			}
 		}
 	}
 	if t <= SupplyChainOnly {
@@ -60,7 +71,10 @@ func (t Tier) DefaultPermissionPreset() string {
 // AllTiers returns information about every tier in order.
 // Backed by internal/catalog/defaults/tiers.yaml.
 func AllTiers() []TierInfo {
-	cat := catalog.MustDefault()
+	cat, err := catalog.Default()
+	if err != nil {
+		return nil
+	}
 	order := cat.TierOrder()
 	defs := cat.TierDefs()
 
@@ -78,7 +92,11 @@ func AllTiers() []TierInfo {
 
 // NextTier returns the next tier above current, or false if already at max.
 func NextTier(current string) (string, bool) {
-	order := catalog.MustDefault().TierOrder()
+	cat, err := catalog.Default()
+	if err != nil {
+		return "", false
+	}
+	order := cat.TierOrder()
 	for i, name := range order {
 		if name == current && i+1 < len(order) {
 			return order[i+1], true
@@ -90,7 +108,11 @@ func NextTier(current string) (string, bool) {
 // Position returns the 1-based position of the named tier in the ordering,
 // or 0 if the tier is not recognized.
 func Position(name string) int {
-	for i, t := range catalog.MustDefault().TierOrder() {
+	cat, err := catalog.Default()
+	if err != nil {
+		return 0
+	}
+	for i, t := range cat.TierOrder() {
 		if t == name {
 			return i + 1
 		}
@@ -100,7 +122,11 @@ func Position(name string) int {
 
 // Total returns the number of defined tiers.
 func Total() int {
-	return len(catalog.MustDefault().TierOrder())
+	cat, err := catalog.Default()
+	if err != nil {
+		return 0
+	}
+	return len(cat.TierOrder())
 }
 
 // Resolve determines the effective tier from an explicit tier string,

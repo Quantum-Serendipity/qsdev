@@ -15,7 +15,6 @@ import (
 )
 
 const (
-	exitOK             = 0
 	exitFindings       = 1
 	exitNotInitialized = 2
 )

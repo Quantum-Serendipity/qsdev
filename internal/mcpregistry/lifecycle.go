@@ -48,7 +48,7 @@ type RemoveResult struct {
 // Install provisions an MCP server binary using the method specified in
 // the registry definition and records the result in generated state.
 func (lc *McpLifecycle) Install(ctx context.Context, serverName string) (*InstallResult, error) {
-	def, ok := DefaultRegistry().Get(serverName)
+	def, ok := DefaultRegistry().ByName(serverName)
 	if !ok {
 		return nil, fmt.Errorf("unknown server %q", serverName)
 	}
@@ -96,7 +96,7 @@ func (lc *McpLifecycle) Install(ctx context.Context, serverName string) (*Instal
 
 // Update upgrades an installed MCP server to its latest version.
 func (lc *McpLifecycle) Update(ctx context.Context, serverName string) (*UpdateResult, error) {
-	def, ok := DefaultRegistry().Get(serverName)
+	def, ok := DefaultRegistry().ByName(serverName)
 	if !ok {
 		return nil, fmt.Errorf("unknown server %q", serverName)
 	}
@@ -176,7 +176,7 @@ func (lc *McpLifecycle) UpdateAll(ctx context.Context) ([]*UpdateResult, error) 
 
 // Remove uninstalls an MCP server and removes it from generated state.
 func (lc *McpLifecycle) Remove(ctx context.Context, serverName string) (*RemoveResult, error) {
-	def, ok := DefaultRegistry().Get(serverName)
+	def, ok := DefaultRegistry().ByName(serverName)
 	if !ok {
 		return nil, fmt.Errorf("unknown server %q", serverName)
 	}

@@ -65,7 +65,7 @@ func (p *Provider) Discover(projectRoot, _ string, since time.Time) ([]extlog.Lo
 }
 
 func (p *Provider) Parse(r io.Reader, sourceFile string) ([]extlog.LogEntry, error) {
-	fileMtime := fileModTime(sourceFile)
+	fileMtime := extlog.FileModTime(sourceFile)
 	scanner := bufio.NewScanner(r)
 	var entries []extlog.LogEntry
 	lineNo := 0
@@ -101,12 +101,4 @@ func detectLevel(line string) extlog.LogLevel {
 	default:
 		return extlog.LevelInfo
 	}
-}
-
-func fileModTime(path string) time.Time {
-	info, err := os.Stat(path)
-	if err != nil {
-		return time.Time{}
-	}
-	return info.ModTime()
 }

@@ -22,7 +22,10 @@ func FilterHooksByTier(hooks []string, tier string) []string {
 
 // allowedHooksForTier builds the set of hooks allowed at the given tier level.
 func allowedHooksForTier(tier string) map[string]bool {
-	cat := catalog.MustDefault()
+	cat, err := catalog.Default()
+	if err != nil {
+		return nil
+	}
 	hookTiers := cat.HookTiers()
 	tierOrder := cat.HookTierOrder()
 

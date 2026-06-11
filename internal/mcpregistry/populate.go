@@ -105,7 +105,7 @@ func enrichFromCatalog(r *McpServerRegistry) {
 			continue
 		}
 
-		def, ok := r.Get(tool.MCPServerName)
+		def, ok := r.ByName(tool.MCPServerName)
 		if !ok {
 			continue
 		}
@@ -124,7 +124,7 @@ func enrichFromCatalog(r *McpServerRegistry) {
 // via mcpserver.DefaultRegistry().Register() at init time are included.
 func populateFromEmbeddedProviders(r *McpServerRegistry) {
 	for _, p := range mcpserver.DefaultRegistry().All() {
-		if _, exists := r.Get(p.Name()); exists {
+		if _, exists := r.ByName(p.Name()); exists {
 			continue
 		}
 

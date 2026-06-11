@@ -2,10 +2,10 @@ package claudecode
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
-	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -126,7 +126,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		if !answers.EnabledTools[name] {
 			continue
 		}
-		if !sliceutil.Contains(answers.MCPServers, def.MCPServerName) {
+		if !slices.Contains(answers.MCPServers, def.MCPServerName) {
 			answers.MCPServers = append(answers.MCPServers, def.MCPServerName)
 		}
 	}
@@ -139,7 +139,7 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		}
 		if sr != nil {
 			for _, name := range sr.MCPServers {
-				if !sliceutil.Contains(answers.MCPServers, name) {
+				if !slices.Contains(answers.MCPServers, name) {
 					answers.MCPServers = append(answers.MCPServers, name)
 				}
 			}

@@ -22,7 +22,10 @@ func init() {
 }
 
 func registerMCPServerContent(r *toolreg.Registry) {
-	cat := catalog.MustDefault()
+	cat, err := catalog.Default()
+	if err != nil {
+		return
+	}
 	for name, def := range cat.Tools() {
 		if def.MCPServerName == "" {
 			continue

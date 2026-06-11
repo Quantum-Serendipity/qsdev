@@ -2,6 +2,7 @@ package toolreg
 
 import (
 	"github.com/Quantum-Serendipity/qsdev/internal/sectools"
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -64,7 +65,7 @@ func builtinBehaviors() map[string]ToolBehavior {
 			},
 			DisableFunc: func(a *types.WizardAnswers) {
 				a.AgentTools.SembleEnabled = false
-				a.MCPServers = removeStr(a.MCPServers, ToolSemble)
+				a.MCPServers = sliceutil.Remove(a.MCPServers, ToolSemble)
 			},
 		},
 		"semgrep": {
@@ -128,14 +129,4 @@ func builtinBehaviors() map[string]ToolBehavior {
 			},
 		},
 	}
-}
-
-func removeStr(ss []string, s string) []string {
-	var result []string
-	for _, v := range ss {
-		if v != s {
-			result = append(result, v)
-		}
-	}
-	return result
 }

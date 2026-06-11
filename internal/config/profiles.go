@@ -48,7 +48,11 @@ func GetBuiltInProfile(name string) (*types.QsdevConfig, error) {
 
 // ListBuiltInProfiles returns summaries of all built-in profiles, sorted by name.
 func ListBuiltInProfiles() []ProfileSummary {
-	profiles := catalog.MustDefault().Profiles()
+	cat, err := catalog.Default()
+	if err != nil {
+		return nil
+	}
+	profiles := cat.Profiles()
 	var result []ProfileSummary
 	for name, def := range profiles {
 		result = append(result, ProfileSummary{
@@ -65,7 +69,11 @@ func ListBuiltInProfiles() []ProfileSummary {
 // ResolveProfileAlias returns the canonical profile name, resolving any legacy
 // alias. The second return value is true if the name was an alias.
 func ResolveProfileAlias(name string) (string, bool) {
-	aliases := catalog.MustDefault().ProfileAliases()
+	cat, err := catalog.Default()
+	if err != nil {
+		return name, false
+	}
+	aliases := cat.ProfileAliases()
 	if alias, ok := aliases[name]; ok {
 		return alias, true
 	}

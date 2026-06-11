@@ -171,20 +171,34 @@ type ToolBehavior struct {
 
 var (
 	defaultRegistryOnce sync.Once
-	defaultRegistry     *Registry
+	defaultRegistryVal  *Registry
+	defaultRegistryErr  error
 )
 
-// DefaultRegistry returns the lazily-initialized singleton tool registry.
-// Tools from the YAML catalog are pre-loaded with their declarative metadata.
-func DefaultRegistry() *Registry {
+// Default returns the lazily-initialized singleton tool registry and any
+// error that occurred during initialization. Callers that can propagate
+// errors should prefer this over DefaultRegistry.
+func Default() (*Registry, error) {
 	defaultRegistryOnce.Do(func() {
-		defaultRegistry = BuildFromCatalog()
+		defaultRegistryVal, defaultRegistryErr = BuildFromCatalogE()
 	})
-	return defaultRegistry
+	return defaultRegistryVal, defaultRegistryErr
+}
+
+// DefaultRegistry returns the lazily-initialized singleton tool registry.
+// It panics if the catalog fails to load. Callers that can propagate
+// errors should prefer Default() instead.
+func DefaultRegistry() *Registry {
+	r, err := Default()
+	if err != nil {
+		panic(fmt.Sprintf("toolreg: failed to build registry: %v", err))
+	}
+	return r
 }
 
 // ResetDefaultRegistry clears the cached registry. For testing only.
 func ResetDefaultRegistry() {
 	defaultRegistryOnce = sync.Once{}
-	defaultRegistry = nil
+	defaultRegistryVal = nil
+	defaultRegistryErr = nil
 }

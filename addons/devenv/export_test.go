@@ -1,7 +1,8 @@
 package devenv
 
 import (
-	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"slices"
+
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -27,7 +28,7 @@ var ExportValidLanguages = validLanguages
 
 // ExportContains exposes contains for external tests.
 var ExportContains = func(slice []string, val string) bool {
-	return sliceutil.Contains(slice, val)
+	return slices.Contains(slice, val)
 }
 
 // ExportAnswersPath exposes answersPath for external tests.

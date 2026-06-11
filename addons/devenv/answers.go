@@ -1,6 +1,8 @@
 package devenv
 
 import (
+	"log/slog"
+
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -22,7 +24,9 @@ func saveAnswers(projectRoot string, a types.WizardAnswers) error {
 	if err := answers.SaveToDir(projectRoot, ".devenv", answersFile(), a); err != nil {
 		return err
 	}
-	_ = answers.SavePrimary(projectRoot, a)
+	if err := answers.SavePrimary(projectRoot, a); err != nil {
+		slog.Warn("saving primary answers", "error", err)
+	}
 	return nil
 }
 

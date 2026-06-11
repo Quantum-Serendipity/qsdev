@@ -6,19 +6,18 @@ import (
 	"path/filepath"
 	"testing"
 
-	claudecodeaddon "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
-	claudecodeadapter "github.com/Quantum-Serendipity/qsdev/pkg/aiframework/adapters/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework/contracttest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-func newTestAdapter() *claudecodeadapter.Adapter {
-	cfg := claudecodeaddon.Config{
-		DefaultPermissions: claudecodeaddon.PermissionPresetStandard,
+func newTestAdapter() *claudecode.Adapter {
+	cfg := claudecode.Config{
+		DefaultPermissions: claudecode.PermissionPresetStandard,
 	}
-	return claudecodeadapter.New(cfg, nil)
+	return claudecode.New(cfg, nil)
 }
 
 func TestDetect_PresentRoot(t *testing.T) {

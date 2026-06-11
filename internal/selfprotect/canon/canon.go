@@ -170,3 +170,29 @@ func IsProtected(canonicalPath string) (bool, string) {
 
 	return false, ""
 }
+
+// protectedSubstringPatterns are path fragments used by ContainsProtectedPath
+// to detect protected path references in raw command strings. This is the
+// union of all patterns previously in evasion.containsProtectedPath and
+// rules.containsProtectedPathStr.
+var protectedSubstringPatterns = []string{
+	".claude/",
+	".qsdev/",
+	".gdev/",
+	"/etc/gdev/",
+	"/etc/claude-code/",
+}
+
+// ContainsProtectedPath reports whether s contains any protected path
+// fragment. Unlike IsProtected (which checks a canonical path against known
+// prefixes/suffixes), this performs a substring search on raw text such as
+// shell commands where the path may appear anywhere in the string.
+func ContainsProtectedPath(s string) bool {
+	normalized := filepath.ToSlash(s)
+	for _, p := range protectedSubstringPatterns {
+		if strings.Contains(normalized, p) {
+			return true
+		}
+	}
+	return false
+}

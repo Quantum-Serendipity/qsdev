@@ -51,7 +51,11 @@ type HookEntry struct {
 // AllBaseDenyRules returns the full deny rule list. Exported for use by
 // the check command to verify deny rule coverage.
 func AllBaseDenyRules() []string {
-	return catalog.MustDefault().AllPermissionDenyRules()
+	cat, err := catalog.Default()
+	if err != nil {
+		return nil
+	}
+	return cat.AllPermissionDenyRules()
 }
 
 // ---------------------------------------------------------------------------
@@ -60,8 +64,11 @@ func AllBaseDenyRules() []string {
 
 // buildPermissions constructs the Permissions struct based on the selected
 // permission preset, wizard answers, ecosystem registry, and addon config.
-func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, registry *ecosystem.Registry, cfg Config) Permissions {
-	cat := catalog.MustDefault()
+func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, registry *ecosystem.Registry, cfg Config) (Permissions, error) {
+	cat, err := catalog.Default()
+	if err != nil {
+		return Permissions{}, fmt.Errorf("loading catalog for permissions: %w", err)
+	}
 	ecosystemDeny := collectEcosystemDenyRules(answers, registry)
 
 	presetName := string(preset)
@@ -105,7 +112,7 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 			Allow: []string{},
 			Deny:  sliceutil.Dedup(deny),
 			Ask:   sliceutil.Dedup(ask),
-		}
+		}, nil
 
 	case PermissionPresetCustom:
 		// Custom: allow only what's in ExtraAllowPatterns (not preset sets).
@@ -115,7 +122,7 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 			Allow: sliceutil.Dedup(allow),
 			Deny:  sliceutil.Dedup(deny),
 			Ask:   sliceutil.Dedup(ask),
-		}
+		}, nil
 	}
 
 	// For non-custom, non-supply-chain-only presets, append extra patterns from config.
@@ -135,7 +142,7 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 	if presetDef.DisableBypassMode != "" {
 		perms.DisableBypassPermissionsMode = presetDef.DisableBypassMode
 	}
-	return perms
+	return perms, nil
 }
 
 // collectEcosystemDenyRules iterates the selected languages, looks up each
@@ -260,8 +267,13 @@ func GenerateSettings(answers types.WizardAnswers, registry *ecosystem.Registry,
 		preset = PermissionPreset(t.DefaultPermissionPreset())
 	}
 
+	perms, err := buildPermissions(preset, answers, registry, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("building permissions: %w", err)
+	}
+
 	settings := SettingsJSON{
-		Permissions: buildPermissions(preset, answers, registry, cfg),
+		Permissions: perms,
 		Sandbox:     buildSandbox(cfg, answers, registry),
 		Hooks:       buildHooks(answers),
 	}

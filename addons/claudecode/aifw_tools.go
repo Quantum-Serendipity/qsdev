@@ -3,7 +3,6 @@ package claudecode
 import (
 	"context"
 
-	claudecodeaddon "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -13,7 +12,7 @@ func (a *Adapter) EnforcementTier() aiframework.EnforcementTier {
 }
 
 func (a *Adapter) TranslatePermissions(_ context.Context, policy *aiframework.PermissionPolicy) (*aiframework.PermissionArtifacts, error) {
-	denyRules := claudecodeaddon.AllBaseDenyRules()
+	denyRules := AllBaseDenyRules()
 
 	for _, r := range policy.DenyRules {
 		denyRules = append(denyRules, r.Pattern)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/check"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -100,7 +101,7 @@ const (
 // RenderSARIF produces a SARIF 2.1.0 JSON document from a PostureReport.
 func RenderSARIF(report *posture.PostureReport) ([]byte, error) {
 	log := sarifLog{
-		Schema:  "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+		Schema:  check.SARIFSchemaURL,
 		Version: "2.1.0",
 		Runs: []sarifRun{
 			{

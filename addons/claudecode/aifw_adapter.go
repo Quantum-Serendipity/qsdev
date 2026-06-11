@@ -1,19 +1,18 @@
 package claudecode
 
 import (
-	claudecodeaddon "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 // Adapter implements all seven aiframework interfaces for Claude Code.
 type Adapter struct {
-	cfg      claudecodeaddon.Config
+	cfg      Config
 	registry *ecosystem.Registry
 }
 
 // New returns an Adapter wired to the given addon config and ecosystem registry.
-func New(cfg claudecodeaddon.Config, registry *ecosystem.Registry) *Adapter {
+func New(cfg Config, registry *ecosystem.Registry) *Adapter {
 	return &Adapter{cfg: cfg, registry: registry}
 }
 

@@ -1,0 +1,364 @@
+package branding
+
+import (
+	"strings"
+	"sync"
+	"testing"
+)
+
+func resetToDefault(t *testing.T) {
+	t.Helper()
+	d := Default()
+	active.Store(&d)
+}
+
+func TestDefault(t *testing.T) {
+	t.Parallel()
+
+	d := Default()
+
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"AppName", d.AppName, "qsdev"},
+		{"ConfigFile", d.ConfigFile, ".qsdev.yaml"},
+		{"LocalConfig", d.LocalConfig, ".qsdev.local.yaml"},
+		{"StateDir", d.StateDir, ".devinit"},
+		{"EnvLogVar", d.EnvLogVar, "QSDEV_LOG"},
+		{"EnvLogDirVar", d.EnvLogDirVar, "QSDEV_LOG_DIR"},
+		{"EnvNoUpdate", d.EnvNoUpdate, "QSDEV_NO_UPDATE_CHECK"},
+		{"EnvPrefix", d.EnvPrefix, "QSDEV_"},
+		{"LogFilePrefix", d.LogFilePrefix, "qsdev-"},
+		{"TempPrefix", d.TempPrefix, ".qsdev-tmp-"},
+		{"GitHubOwner", d.GitHubOwner, "Quantum-Serendipity"},
+		{"GitHubRepo", d.GitHubRepo, "qsdev"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.got != tt.want {
+				t.Errorf("Default().%s = %q, want %q", tt.name, tt.got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetReturnsDefaultBeforeSet(t *testing.T) {
+	resetToDefault(t)
+
+	got := Get()
+	want := Default()
+
+	if got != want {
+		t.Errorf("Get() before Set() returned %+v, want %+v", got, want)
+	}
+}
+
+func TestSetFullConfig(t *testing.T) {
+	resetToDefault(t)
+
+	cfg := Config{
+		AppName:       "myapp",
+		ConfigFile:    ".myapp.yaml",
+		LocalConfig:   ".myapp.local.yaml",
+		StateDir:      ".myapp-state",
+		EnvLogVar:     "MYAPP_LOG",
+		EnvLogDirVar:  "MYAPP_LOG_DIR",
+		EnvNoUpdate:   "MYAPP_NO_UPDATE",
+		EnvPrefix:     "MYAPP_",
+		LogFilePrefix: "myapp-",
+		TempPrefix:    ".myapp-tmp-",
+		GitHubOwner:   "my-org",
+		GitHubRepo:    "my-repo",
+	}
+	Set(cfg)
+
+	got := Get()
+
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"AppName", got.AppName, "myapp"},
+		{"ConfigFile", got.ConfigFile, ".myapp.yaml"},
+		{"LocalConfig", got.LocalConfig, ".myapp.local.yaml"},
+		{"StateDir", got.StateDir, ".myapp-state"},
+		{"EnvLogVar", got.EnvLogVar, "MYAPP_LOG"},
+		{"EnvLogDirVar", got.EnvLogDirVar, "MYAPP_LOG_DIR"},
+		{"EnvNoUpdate", got.EnvNoUpdate, "MYAPP_NO_UPDATE"},
+		{"EnvPrefix", got.EnvPrefix, "MYAPP_"},
+		{"LogFilePrefix", got.LogFilePrefix, "myapp-"},
+		{"TempPrefix", got.TempPrefix, ".myapp-tmp-"},
+		{"GitHubOwner", got.GitHubOwner, "my-org"},
+		{"GitHubRepo", got.GitHubRepo, "my-repo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Errorf("Get().%s = %q, want %q", tt.name, tt.got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSetPartialConfig(t *testing.T) {
+	resetToDefault(t)
+
+	// Set only AppName and GitHubOwner; all others should remain default.
+	Set(Config{
+		AppName:     "partial",
+		GitHubOwner: "partial-org",
+	})
+
+	got := Get()
+	d := Default()
+
+	// Changed fields.
+	if got.AppName != "partial" {
+		t.Errorf("AppName = %q, want %q", got.AppName, "partial")
+	}
+	if got.GitHubOwner != "partial-org" {
+		t.Errorf("GitHubOwner = %q, want %q", got.GitHubOwner, "partial-org")
+	}
+
+	// Unchanged fields should retain defaults.
+	unchanged := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"ConfigFile", got.ConfigFile, d.ConfigFile},
+		{"LocalConfig", got.LocalConfig, d.LocalConfig},
+		{"StateDir", got.StateDir, d.StateDir},
+		{"EnvLogVar", got.EnvLogVar, d.EnvLogVar},
+		{"EnvLogDirVar", got.EnvLogDirVar, d.EnvLogDirVar},
+		{"EnvNoUpdate", got.EnvNoUpdate, d.EnvNoUpdate},
+		{"EnvPrefix", got.EnvPrefix, d.EnvPrefix},
+		{"LogFilePrefix", got.LogFilePrefix, d.LogFilePrefix},
+		{"TempPrefix", got.TempPrefix, d.TempPrefix},
+		{"GitHubRepo", got.GitHubRepo, d.GitHubRepo},
+	}
+
+	for _, tt := range unchanged {
+		t.Run("unchanged_"+tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Errorf("Get().%s = %q, want default %q", tt.name, tt.got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSetMultiplePartialCalls(t *testing.T) {
+	resetToDefault(t)
+
+	// First call: set AppName.
+	Set(Config{AppName: "first"})
+	// Second call: set GitHubRepo only.
+	Set(Config{GitHubRepo: "second-repo"})
+
+	got := Get()
+	if got.AppName != "first" {
+		t.Errorf("AppName = %q after second Set, want %q", got.AppName, "first")
+	}
+	if got.GitHubRepo != "second-repo" {
+		t.Errorf("GitHubRepo = %q, want %q", got.GitHubRepo, "second-repo")
+	}
+	// Defaults should be preserved for fields not set in either call.
+	d := Default()
+	if got.EnvPrefix != d.EnvPrefix {
+		t.Errorf("EnvPrefix = %q, want default %q", got.EnvPrefix, d.EnvPrefix)
+	}
+}
+
+func TestSetEmptyStringsDoNotOverwrite(t *testing.T) {
+	resetToDefault(t)
+
+	Set(Config{AppName: "custom"})
+	// Pass a zero-value Config — nothing should change.
+	Set(Config{})
+
+	got := Get()
+	if got.AppName != "custom" {
+		t.Errorf("AppName = %q after Set(Config{}), want %q (should not overwrite with empty)", got.AppName, "custom")
+	}
+}
+
+func TestGeneratedBy(t *testing.T) {
+	resetToDefault(t)
+
+	Set(Config{AppName: "testapp"})
+	want := "Generated by testapp"
+	got := GeneratedBy()
+	if got != want {
+		t.Errorf("GeneratedBy() = %q, want %q", got, want)
+	}
+}
+
+func TestGeneratedByDefault(t *testing.T) {
+	resetToDefault(t)
+
+	want := "Generated by qsdev"
+	got := GeneratedBy()
+	if got != want {
+		t.Errorf("GeneratedBy() = %q, want %q", got, want)
+	}
+}
+
+func TestConcurrentAccess(t *testing.T) {
+	resetToDefault(t)
+
+	const goroutines = 100
+	const iterations = 50
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines + 1)
+
+	// One goroutine continuously calls Set.
+	go func() {
+		defer wg.Done()
+		for range iterations {
+			Set(Config{
+				AppName:     "concurrent",
+				GitHubOwner: "concurrent-org",
+			})
+		}
+	}()
+
+	// Multiple goroutines continuously call Get.
+	for range goroutines {
+		go func() {
+			defer wg.Done()
+			for range iterations {
+				cfg := Get()
+				// The AppName must be either the default or "concurrent",
+				// never a torn read.
+				if cfg.AppName != "qsdev" && cfg.AppName != "concurrent" {
+					t.Errorf("unexpected AppName during concurrent access: %q", cfg.AppName)
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+func TestConcurrentSetAndGeneratedBy(t *testing.T) {
+	resetToDefault(t)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for range 100 {
+			Set(Config{AppName: "racer"})
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for range 100 {
+			s := GeneratedBy()
+			if !strings.HasPrefix(s, "Generated by ") {
+				t.Errorf("GeneratedBy() returned malformed string: %q", s)
+			}
+		}
+	}()
+
+	wg.Wait()
+}
+
+func TestSetVeryLongStrings(t *testing.T) {
+	resetToDefault(t)
+
+	long := strings.Repeat("a", 10000)
+	Set(Config{
+		AppName:       long,
+		ConfigFile:    long,
+		LocalConfig:   long,
+		StateDir:      long,
+		EnvLogVar:     long,
+		EnvLogDirVar:  long,
+		EnvNoUpdate:   long,
+		EnvPrefix:     long,
+		LogFilePrefix: long,
+		TempPrefix:    long,
+		GitHubOwner:   long,
+		GitHubRepo:    long,
+	})
+
+	got := Get()
+	if len(got.AppName) != 10000 {
+		t.Errorf("AppName length = %d, want 10000", len(got.AppName))
+	}
+	if got.AppName != long {
+		t.Error("AppName content mismatch for very long string")
+	}
+	if got.GitHubRepo != long {
+		t.Error("GitHubRepo content mismatch for very long string")
+	}
+}
+
+func TestSetSpecialCharacterStrings(t *testing.T) {
+	resetToDefault(t)
+
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{"unicode", "éèê☃\U0001f600"},
+		{"newlines", "line1\nline2\nline3"},
+		{"tabs", "col1\tcol2\tcol3"},
+		{"null_byte", "before\x00after"},
+		{"spaces", "  leading and trailing  "},
+		{"path_separators", "/usr/local/bin\\Windows\\System32"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetToDefault(t)
+			Set(Config{AppName: tt.value})
+			got := Get()
+			if got.AppName != tt.value {
+				t.Errorf("AppName = %q, want %q", got.AppName, tt.value)
+			}
+		})
+	}
+}
+
+func TestGetReturnsCopy(t *testing.T) {
+	resetToDefault(t)
+
+	Set(Config{AppName: "original"})
+	cfg1 := Get()
+	cfg2 := Get()
+
+	// Modifying the returned struct should not affect subsequent Get calls.
+	cfg1.AppName = "modified"
+	cfg3 := Get()
+
+	if cfg3.AppName != "original" {
+		t.Errorf("Get() returned a reference instead of a copy: AppName = %q after external modification", cfg3.AppName)
+	}
+	if cfg2.AppName != "original" {
+		t.Errorf("earlier Get() result was modified: AppName = %q", cfg2.AppName)
+	}
+}
+
+func TestConfigZeroValue(t *testing.T) {
+	t.Parallel()
+
+	// Verify that Config is a value type: the zero value has all empty strings.
+	var zero Config
+	if zero.AppName != "" {
+		t.Errorf("zero Config.AppName = %q, want empty", zero.AppName)
+	}
+	if zero.GitHubRepo != "" {
+		t.Errorf("zero Config.GitHubRepo = %q, want empty", zero.GitHubRepo)
+	}
+}

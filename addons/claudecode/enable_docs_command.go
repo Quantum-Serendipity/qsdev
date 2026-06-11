@@ -23,7 +23,7 @@ project's MCP server list. After enabling, run 'qsdev docs download' to
 fetch the documentation data.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			registry := mcpregistry.DefaultRegistry()
-			docServers := registry.ListByCategory(mcpregistry.CategoryDocumentation)
+			docServers := registry.ByCategory(mcpregistry.CategoryDocumentation)
 
 			if len(docServers) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "No documentation servers available in the registry.")
@@ -71,7 +71,7 @@ Downloaded documentation data is preserved; use 'qsdev docs clean' to
 remove it.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			registry := mcpregistry.DefaultRegistry()
-			docServers := registry.ListByCategory(mcpregistry.CategoryDocumentation)
+			docServers := registry.ByCategory(mcpregistry.CategoryDocumentation)
 
 			if len(docServers) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "No documentation servers to disable.")

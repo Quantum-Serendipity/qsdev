@@ -12,15 +12,11 @@ func init() {
 
 	r.AttachBehavior("pr-templates", ToolBehavior{
 		EnableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
+			ensureEnabledTools(a)
 			a.EnabledTools["pr-templates"] = true
 		},
 		DisableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
+			ensureEnabledTools(a)
 			a.EnabledTools["pr-templates"] = false
 		},
 		GenerateFunc: func(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
@@ -34,15 +30,11 @@ func init() {
 
 	r.AttachBehavior("branch-naming", ToolBehavior{
 		EnableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
+			ensureEnabledTools(a)
 			a.EnabledTools["branch-naming"] = true
 		},
 		DisableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
+			ensureEnabledTools(a)
 			a.EnabledTools["branch-naming"] = false
 		},
 		SharedContent: map[string]SharedContentFunc{
@@ -52,15 +44,11 @@ func init() {
 
 	r.AttachBehavior("commit-ticket", ToolBehavior{
 		EnableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
+			ensureEnabledTools(a)
 			a.EnabledTools["commit-ticket"] = true
 		},
 		DisableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
+			ensureEnabledTools(a)
 			a.EnabledTools["commit-ticket"] = false
 		},
 		SharedContent: map[string]SharedContentFunc{
@@ -70,15 +58,11 @@ func init() {
 
 	r.AttachBehavior("pr-labels", ToolBehavior{
 		EnableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
+			ensureEnabledTools(a)
 			a.EnabledTools["pr-labels"] = true
 		},
 		DisableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
+			ensureEnabledTools(a)
 			a.EnabledTools["pr-labels"] = false
 		},
 		GenerateFunc: func(answers types.WizardAnswers) ([]types.GeneratedFile, error) {

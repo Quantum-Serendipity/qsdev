@@ -41,15 +41,11 @@ func qsdevSkillTool(name, displayName, description string) Tool {
 			{Path: ".claude/skills/" + name + "/SKILL.md", Ownership: Exclusive},
 		},
 		EnableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
+			ensureEnabledTools(a)
 			a.EnabledTools[name] = true
 		},
 		DisableFunc: func(a *types.WizardAnswers) {
-			if a.EnabledTools == nil {
-				a.EnabledTools = make(map[string]bool)
-			}
+			ensureEnabledTools(a)
 			a.EnabledTools[name] = false
 		},
 	}

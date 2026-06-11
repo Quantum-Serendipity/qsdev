@@ -46,7 +46,10 @@ func GetComplianceLevels() map[string]ComplianceProfile {
 }
 
 func buildComplianceLevels() map[string]ComplianceProfile {
-	cat := catalog.MustDefault()
+	cat, err := catalog.Default()
+	if err != nil {
+		return nil
+	}
 	defs := cat.ComplianceLevels()
 
 	result := make(map[string]ComplianceProfile, len(defs))

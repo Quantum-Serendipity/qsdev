@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -95,7 +96,7 @@ func ClassifyFiles(genState types.GeneratedState, projectRoot string, registry *
 			}
 			if isShared {
 				cf.Ownership = toolreg.Shared
-				cf.SectionIDs = dedup(sectionIDs)
+				cf.SectionIDs = sliceutil.Dedup(sectionIDs)
 			} else {
 				cf.Ownership = toolreg.Exclusive
 			}
@@ -105,17 +106,4 @@ func ClassifyFiles(genState types.GeneratedState, projectRoot string, registry *
 	}
 
 	return classified
-}
-
-// dedup removes duplicate strings while preserving order.
-func dedup(ss []string) []string {
-	seen := make(map[string]bool, len(ss))
-	var result []string
-	for _, s := range ss {
-		if !seen[s] {
-			seen[s] = true
-			result = append(result, s)
-		}
-	}
-	return result
 }

@@ -46,16 +46,16 @@ func (r *McpServerRegistry) MustRegister(def McpServerDefinition) {
 	}
 }
 
-// Get returns the server definition for the given name and whether it was found.
-func (r *McpServerRegistry) Get(name string) (*McpServerDefinition, bool) {
+// ByName returns the server definition for the given name and whether it was found.
+func (r *McpServerRegistry) ByName(name string) (*McpServerDefinition, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	def, ok := r.servers[name]
 	return def, ok
 }
 
-// List returns all registered server definitions sorted by name.
-func (r *McpServerRegistry) List() []*McpServerDefinition {
+// All returns all registered server definitions sorted by name.
+func (r *McpServerRegistry) All() []*McpServerDefinition {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -69,8 +69,8 @@ func (r *McpServerRegistry) List() []*McpServerDefinition {
 	return result
 }
 
-// ListByCategory returns all servers in the given category, sorted by name.
-func (r *McpServerRegistry) ListByCategory(cat McpCategory) []*McpServerDefinition {
+// ByCategory returns all servers in the given category, sorted by name.
+func (r *McpServerRegistry) ByCategory(cat McpCategory) []*McpServerDefinition {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -86,9 +86,9 @@ func (r *McpServerRegistry) ListByCategory(cat McpCategory) []*McpServerDefiniti
 	return result
 }
 
-// ListHealthy returns servers whose cached health status is healthy, sorted
+// AllHealthy returns servers whose cached health status is healthy, sorted
 // by name. Servers without a cached health result are excluded.
-func (r *McpServerRegistry) ListHealthy() []*McpServerDefinition {
+func (r *McpServerRegistry) AllHealthy() []*McpServerDefinition {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

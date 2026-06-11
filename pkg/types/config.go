@@ -66,6 +66,7 @@ type ClaudeCodeConfig struct {
 type InfraConfig struct {
 	RegistryProxy          string            `yaml:"registry_proxy,omitempty"`
 	RegistryProxyOverrides map[string]string `yaml:"registry_proxy_overrides,omitempty"`
+	RegistryProxyPaths     map[string]string `yaml:"registry_proxy_paths,omitempty"`
 	NixCache               string            `yaml:"nix_cache,omitempty"`
 	BuildCache             string            `yaml:"build_cache,omitempty"`
 }

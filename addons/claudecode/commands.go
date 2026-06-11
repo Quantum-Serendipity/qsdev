@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
-	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -390,7 +390,7 @@ func addSkillCmd() *cobra.Command {
 			}
 
 			// Check for duplicate.
-			if sliceutil.Contains(answers.Skills, skillName) {
+			if slices.Contains(answers.Skills, skillName) {
 				return fmt.Errorf("skill %q is already configured", skillName)
 			}
 

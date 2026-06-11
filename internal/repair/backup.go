@@ -2,13 +2,13 @@ package repair
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -23,8 +23,9 @@ func backupDir(projectRoot string) string {
 func createBackup(projectRoot, relPath string) (string, error) {
 	srcPath := filepath.Join(projectRoot, relPath)
 
-	// Verify source exists.
-	if _, err := os.Stat(srcPath); err != nil {
+	// Verify source exists and capture permissions.
+	srcInfo, err := os.Stat(srcPath)
+	if err != nil {
 		return "", fmt.Errorf("backup source %s: %w", srcPath, err)
 	}
 
@@ -38,7 +39,7 @@ func createBackup(projectRoot, relPath string) (string, error) {
 	backupName := fmt.Sprintf("%s.%s.bak", base, timestamp)
 	backupPath := filepath.Join(dir, backupName)
 
-	if err := copyFile(srcPath, backupPath); err != nil {
+	if err := fileutil.CopyFile(srcPath, backupPath, srcInfo.Mode()); err != nil {
 		return "", fmt.Errorf("copying %s to %s: %w", srcPath, backupPath, err)
 	}
 
@@ -88,35 +89,5 @@ func pruneBackups(projectRoot, relPath string, keep int) error {
 		}
 	}
 
-	return nil
-}
-
-// copyFile copies src to dst, preserving the original file permissions.
-func copyFile(src, dst string) error {
-	srcFile, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("opening source %s: %w", src, err)
-	}
-	defer srcFile.Close()
-
-	srcInfo, err := srcFile.Stat()
-	if err != nil {
-		return fmt.Errorf("stat source %s: %w", src, err)
-	}
-
-	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode())
-	if err != nil {
-		return fmt.Errorf("creating destination %s: %w", dst, err)
-	}
-
-	_, copyErr := io.Copy(dstFile, srcFile)
-	closeErr := dstFile.Close()
-
-	if copyErr != nil {
-		return fmt.Errorf("copying to %s: %w", dst, copyErr)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("closing %s: %w", dst, closeErr)
-	}
 	return nil
 }

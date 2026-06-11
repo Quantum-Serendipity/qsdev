@@ -4,26 +4,6 @@ import (
 	"testing"
 )
 
-func TestContains(t *testing.T) {
-	tests := []struct {
-		slice []string
-		val   string
-		want  bool
-	}{
-		{[]string{"a", "b", "c"}, "b", true},
-		{[]string{"a", "b", "c"}, "d", false},
-		{nil, "a", false},
-		{[]string{}, "a", false},
-		{[]string{"a"}, "a", true},
-	}
-	for _, tt := range tests {
-		got := Contains(tt.slice, tt.val)
-		if got != tt.want {
-			t.Errorf("Contains(%v, %q) = %v, want %v", tt.slice, tt.val, got, tt.want)
-		}
-	}
-}
-
 func TestDedup(t *testing.T) {
 	tests := []struct {
 		input []string

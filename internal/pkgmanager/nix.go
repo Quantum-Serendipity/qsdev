@@ -3,13 +3,14 @@ package pkgmanager
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // Nix implements PackageManager for the Nix package manager.
 // When isNixOS is true, Install returns an error suggesting declarative
 // configuration instead of imperative installs.
 type Nix struct {
-	runner CommandRunner
+	runner  CommandRunner
 	isNixOS bool
 }
 
@@ -53,25 +54,7 @@ func (n *Nix) IsInstalled(ctx context.Context, pkg string) bool {
 		return false
 	}
 	// Check if the package name appears in the profile listing.
-	return containsWord(string(out), pkg)
+	return strings.Contains(string(out), pkg)
 }
 
 func (n *Nix) SearchCmd() string { return "nix search nixpkgs" }
-
-// containsWord checks if s contains word as a substring.
-func containsWord(s, word string) bool {
-	return len(word) > 0 && len(s) > 0 && contains(s, word)
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}

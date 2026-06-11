@@ -1,9 +1,9 @@
 package evasion
 
 import (
-	"path/filepath"
 	"regexp"
-	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
 )
 
 // Pre-compiled regexes for obfuscation detection.
@@ -18,16 +18,6 @@ var (
 	reLnCommand = regexp.MustCompile(`\bln\b`)
 	reLnSymlink = regexp.MustCompile(`\bln\s+(-\w*s\w*\s+|--symbolic\s+)`)
 )
-
-// protectedPathPatterns are path fragments that identify protected configuration.
-var protectedPathPatterns = []string{
-	`.claude/`,
-	`.qsdev/`,
-	`.gdev/`,
-	`/etc/gdev/`,
-	`/etc/claude-code/`,
-	`.qsdev/audit/`,
-}
 
 // Pre-compiled regexes for file descriptor tricks.
 var (
@@ -98,7 +88,7 @@ func checkHardlink(command string) (bool, string) {
 	}
 
 	// Check whether the command references a protected path.
-	if containsProtectedPath(command) {
+	if canon.ContainsProtectedPath(command) {
 		return true, "hardlink creation targeting protected path"
 	}
 
@@ -126,10 +116,10 @@ func checkFDTricks(toolName string, command string, filePath string) (bool, stri
 		if reProcSelfFD.MatchString(command) {
 			return true, "proc self fd path in command"
 		}
-		if reProcSubst.MatchString(command) && containsProtectedPath(command) {
+		if reProcSubst.MatchString(command) && canon.ContainsProtectedPath(command) {
 			return true, "process substitution targeting protected path"
 		}
-		if reExecFDRedir.MatchString(command) && containsProtectedPath(command) {
+		if reExecFDRedir.MatchString(command) && canon.ContainsProtectedPath(command) {
 			return true, "fd redirection targeting protected path"
 		}
 	}
@@ -167,15 +157,4 @@ func checkProcRoot(toolName string, command string, filePath string) (bool, stri
 	}
 
 	return false, ""
-}
-
-// containsProtectedPath reports whether s contains any protected path pattern.
-func containsProtectedPath(s string) bool {
-	normalized := filepath.ToSlash(s)
-	for _, p := range protectedPathPatterns {
-		if strings.Contains(normalized, p) {
-			return true
-		}
-	}
-	return false
 }

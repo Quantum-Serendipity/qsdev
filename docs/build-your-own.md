@@ -30,7 +30,7 @@ import (
     "github.com/Quantum-Serendipity/qsdev/addons/devinit"
     "github.com/Quantum-Serendipity/qsdev/instance"
     "github.com/Quantum-Serendipity/qsdev/pkg/branding"
-    _ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // all 27 ecosystems
+    _ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // all 30 ecosystems
 )
 
 func main() {
@@ -146,7 +146,7 @@ instance.AddEcosystemModules(&InternalToolModule{})
 
 ### Choosing which built-in modules to include
 
-Import all 27 at once:
+Import all 30 at once:
 
 ```go
 _ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules"
@@ -202,7 +202,7 @@ go build -ldflags "-X main.version=1.2.3 -X main.commit=$(git rev-parse --short 
 
 By importing qsdev, your tool ships with:
 
-- **27 ecosystem modules** — Go, JavaScript/TypeScript, Python, Rust, Java, .NET, Ruby, PHP, Swift, Scala, Elixir, Haskell, Zig, C/C++, Dart, Clojure, Lua, Perl, R, Shell, PowerShell, Nix, Containers, Terraform, Helm, Ansible, Bazel
+- **30 ecosystem modules** — Go, JavaScript/TypeScript, Python, Rust, Java, .NET, Ruby, PHP, Swift, Scala, Elixir, Haskell, Zig, C/C++, Dart, Clojure, Lua, Perl, R, Shell, PowerShell, Nix, Containers, Terraform, Helm, Ansible, Bazel, AWS, GCP, Azure
 - **Supply chain security** — lockfile enforcement, age-gating, registry pinning, deny rules per ecosystem
 - **AI agent configuration** — Claude Code permissions, PreToolUse hooks, skill scaffolding
 - **devenv.sh generation** — languages, services, packages, pre-commit hooks, all from one config

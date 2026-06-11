@@ -18,15 +18,19 @@ Features delivered since MVP:
 - **Golden-file test infrastructure** — Snapshot-based testing for generated configuration files with `GOLDEN_UPDATE=1` support
 - **CI template generation** — Security-hardened GitHub Actions workflows with SHA-pinned action refs and `permissions: {}` defaults
 - **DX polish** — `qsdev repair` with backup-before-modify, `qsdev info` for subsecond project context, `qsdev outdated` for cross-ecosystem dependency freshness, `qsdev check --auto-fix` for deleted files and deny rules, background self-update checks
+- **Distribution & self-bootstrapping** (P22) — Redesigned `qsdev update` with 3-stage coordinated update (binary + configs + devenv inputs) and 7 flags (--check, --changelog, --dry-run, --force, --self-only, --configs-only, --deps-only); install script hardening with Sigstore cosign verification, Rosetta 2 detection, and musl detection; AUR PKGBUILD; dual-format SBOMs (SPDX + CycloneDX)
+- **AI agent tooling** (P23) — Agent-postmortem and version-sentinel embedded MCP servers; `qsdev mcp status` and `qsdev mcp list` diagnostic commands; pluggable MCPServerProvider architecture with catalog-driven auto-injection
+- **Cloud CLI detection** (P24) — AWS, GCP, and Azure ecosystem modules with auto-detection from project files (CDK, SAM, Terraform providers, cloud CLI configs); 3-layer credential isolation (environment separation, credential file masking, agent deny rules)
+- **Service template expansion** (P25) — Kafka (KRaft/ZooKeeper), MinIO, Mailpit, Keycloak, and NATS service templates with configurable ports, auto-exported environment variables, and localhost-only binding; 12 total services
+- **MCP registry & documentation pipeline** (P26) — MCP server registry with 5-level compliance grading; `qsdev mcp grade/install/update/remove/health` lifecycle commands; `qsdev docs` pipeline with DevDocs and ZIM offline documentation; 4 documentation MCP servers; lookup-docs skill with 5-source priority routing
+- **Security pattern library & policy engine** (P27) — YAML-based policy engine with 10 condition types, 4 action types, and 3-tier bypass model; 28-probe package risk scoring with A-F grades; 9-probe MCP trust scoring; `qsdev policy check/list/show` and `qsdev session allow/clear/list` commands; SARIF 2.1.0 output
+- **Agent self-protection** (P28) — 18 Tier 1 enforce-always rules across config protection, MCP integrity, binary integrity, and bypass prevention; evasion detection for base64-to-shell, hex encoding, hardlinks, and /proc tricks; path canonicalization; runs as first PreToolUse hook with fail-closed semantics
 
 ## Security & Supply Chain
 
-Deepening the 10-layer defense stack.
+Deepening the 14-layer defense stack.
 
-- **Native security policy engine** — YAML-based policy engine with 10 condition types, 4 action types, 28-probe package risk scoring (A–F grades), and 3-tier MCP trust scoring with confused deputy mitigation; <1ms evaluation
-- **Agent self-protection rules** — 18+ absolute deny rules compiled into a Go binary PreToolUse hook with fail-closed semantics (exit code 2), path canonicalization, symlink resolution, and gate-dodging detection
 - **Interactive bypass system** — Configuration-guard rules with `qsdev hook bypass-next` for authorized overrides, shadow-mode calibration for safe rule rollout, circuit breaker pattern
-- **SBOM and attestation** — Dual-format SBOMs (SPDX 2.3 + CycloneDX 1.5) via Syft, cosign keyless signing, govulncheck OpenVEX output, SLSA Build Level 2 compliance; `qsdev sbom` CLI command
 - **Consolidated security binary** — Single `qsdev-hook` binary replacing Python hook scripts, with <50ms PreToolUse execution and advanced evasion detection (base64, shell expansion, indirect writes)
 - **Cache poisoning defense** — CREEP detection rules for CI caches, branch-scoped isolation (restore-only for PRs), OIDC sub claim enforcement
 - **Content signing for MCP** — Minisign Ed25519 signing for documentation, Unicode normalization, datamarking for prompt injection defense
@@ -57,9 +61,7 @@ Expanding AI framework support and agent capabilities.
 
 ## Cloud & Infrastructure
 
-- **Cloud credential isolation** — Per-project AWS, GCP, and Azure CLI credential scoping with 3-layer fail-safe (environment separation, credential file masking, agent deny rules)
 - **Kubernetes ecosystem modules** — kubectl, enhanced Helm module, kubescape security scanning with per-project KUBECONFIG enforcement
-- **Expanded service detection** — Kafka, MinIO, Mailpit, Keycloak, NATS (11 total services, up from 6)
 
 ## Developer Experience
 
@@ -68,11 +70,6 @@ Expanding AI framework support and agent capabilities.
 - **Copier template integration** — `qsdev init --from` for templated project scaffolding with registry support
 - **Config integrity analysis** — 7-format semantic diff engine (YAML, JSON, TOML, INI, Dockerfile, Shell, Nix) with ~50 threat detection rules and SARIF output
 - **Config vault** — Git-based config versioning at `.qsdev/config-store/` with `qsdev vault snapshot/restore/diff/log`, environment branches, sops+age encryption
-
-## MCP & Documentation
-
-- **MCP server registry** — `McpServerRegistry` with auto-detection, 5-level compliance grading, and 40-tool ceiling; `qsdev mcp list/health/grade` commands
-- **Local documentation pipeline** — Local-first docs via DevDocs, openzim-mcp, man-mcp-server with SKILL.md routing layer for documentation priority ordering
 
 ## Consulting & Team Management
 
@@ -84,14 +81,14 @@ Expanding AI framework support and agent capabilities.
 
 ## Ecosystem Expansion
 
-- **Ecosystem module hardening** — Production-quality 5-level confidence scoring, lockfile generation/enforcement, and expanded security configs for all 27 modules across 4 tiers
+- **Ecosystem module hardening** — Production-quality 5-level confidence scoring, lockfile generation/enforcement, and expanded security configs for all 30 modules across 4 tiers
 - **Niche tool integrations** — SpotBugs (Java static analysis), Dockle (container CIS), buf (Protobuf), Spectral (OpenAPI linting), Atlas (database migrations), Granted (AWS multi-account)
 - **External addon ecosystem** — `qsdev addons` CLI (16 commands) for git-repo-as-index addon registry with exec-based plugin protocol
 - **Code quality stack** — ast-grep structural search MCP server, codebase-memory-mcp call graph navigation, post-tool quality pipeline
 
 ## Distribution & Adoption
 
-- **Cross-platform validation** — E2E testing of all 27 ecosystem modules across Linux, macOS, and Windows
+- **Cross-platform validation** — E2E testing of all 30 ecosystem modules across Linux, macOS, and Windows
 - **Adoption materials** — Elevator pitch playbook (4 audience variants) with ROI framework, timed demo script, README generation template
 - **Internationalization** — Project Fluent i18n with `--locale` flag, AI-batch seeded translations (ja, zh-Hans, es, fr, de, pt-BR, ko)
 

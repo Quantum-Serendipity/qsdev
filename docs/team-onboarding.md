@@ -180,16 +180,106 @@ qsdev claude add-hook audit-log
 
 ## Configuring MCP Servers
 
-Four AlwaysOn MCP servers are configured by default:
+MCP servers are configured by default or activated based on project detection:
 
-| Server | Purpose |
-|--------|---------|
-| `context7` | Library documentation lookup |
-| `github` | GitHub API integration |
-| `socket` | Package security analysis |
-| `semble` | Semantic code search |
+| Server | Purpose | Activation |
+|--------|---------|------------|
+| `context7` | Library documentation lookup | Default |
+| `github` | GitHub API integration | Default |
+| `socket` | Package security analysis | Default |
+| `semble` | Semantic code search | Default |
+| `agent-postmortem` | Session analysis and failure patterns | Default |
+| `version-sentinel` | Dependency version monitoring | Default |
+| `local-docs-devdocs` | Offline DevDocs API references | On when detected |
+| `local-docs-zim` | Offline Stack Exchange via ZIM | Opt-in |
+| `man-pages` | Local man page documentation | Opt-in |
+| `mcp-nixos` | NixOS packages and options | Opt-in |
 
 These are included automatically during `qsdev init`. No additional flags are needed.
+
+Use `qsdev mcp grade` to check compliance levels and `qsdev mcp health` to verify connectivity:
+
+```bash
+qsdev mcp grade                # Show compliance grades for all servers
+qsdev mcp grade context7       # Grade a specific server
+qsdev mcp install <name>       # Install a server from the registry
+qsdev mcp health               # Health check all configured servers
+```
+
+## Managing Security Policies
+
+qsdev generates YAML security policies in `.qsdev/policy/`. These define fine-grained rules for what the AI agent can and cannot do, beyond the static deny/ask rules in `.claude/settings.json`.
+
+### Inspecting Policies
+
+```bash
+qsdev policy list                      # List all rules
+qsdev policy show <rule-id>            # Show rule details
+qsdev policy check                     # Evaluate posture
+qsdev policy check --sarif             # SARIF output for CI dashboards
+qsdev policy check --audit-level high  # Fail only on high+ severity
+```
+
+### Session Bypass
+
+Some rules support session-level bypass for temporary exceptions:
+
+```bash
+qsdev session allow RULE-001 RULE-002   # Bypass specific rules
+qsdev session list                       # Show active bypasses
+qsdev session clear                      # Remove all bypasses
+```
+
+Rules with `bypass_tier: enforce_always` (all 18 self-protection rules) cannot be bypassed. Rules with `bypass_tier: session` require per-session approval. Rules with `bypass_tier: command` can be bypassed per-invocation.
+
+## Cloud Ecosystem Coverage
+
+When AWS, GCP, or Azure project files are detected (CDK, SAM, Terraform providers, CLI config files, etc.), qsdev generates cloud-specific security configuration with 3 layers of credential isolation:
+
+1. **Environment separation** — Cloud credential variables are unset in the devenv shell, preventing ambient credential access across projects.
+2. **Credential file masking** — Read-deny rules block agent access to `~/.aws/credentials`, `~/.config/gcloud/`, and `~/.azure/`.
+3. **Agent deny rules** — Authentication and credential modification commands (`aws configure`, `gcloud auth login`, `az login`) are denied.
+
+Cloud CLIs remain available for read-only operations like listing resources or describing infrastructure.
+
+`qsdev devenv doctor` includes a CloudProviders section verifying CLI availability and isolation status for each detected provider.
+
+## Available Services
+
+Project profiles include services by default (usually PostgreSQL and Redis). Add services individually:
+
+```bash
+qsdev devenv add-service kafka
+qsdev devenv add-service minio
+```
+
+All 12 services bind to localhost with configurable ports:
+
+| Service | Notes |
+|---------|-------|
+| PostgreSQL | |
+| Redis | |
+| MySQL | |
+| MongoDB | |
+| Elasticsearch | |
+| RabbitMQ | |
+| Kafka | KRaft mode by default, ZooKeeper fallback available |
+| MinIO | S3-compatible API, exports AWS_ENDPOINT_URL |
+| Mailpit | SMTP capture with web UI |
+| Keycloak | Identity provider with admin console, exports OIDC env vars |
+| NATS | Pub/sub and request/reply with optional JetStream persistence |
+
+## Local Documentation Pipeline
+
+For teams working in restricted network environments or wanting faster documentation lookups, qsdev supports a local documentation corpus:
+
+```bash
+qsdev docs download      # Download DevDocs + ZIM archives
+qsdev docs status        # Show installed documentation sets
+qsdev docs enable go     # Enable a documentation set
+```
+
+Downloaded documentation is served through MCP servers (local-docs-devdocs, local-docs-zim) and routed by the lookup-docs skill, which queries 5 sources in priority order: local DevDocs, Stack Exchange ZIM, man pages, mcp-nixos, Context7 (web fallback).
 
 ## Rolling Out to a Team
 
@@ -226,11 +316,15 @@ This detects the committed `.qsdev.yaml` and reproduces an identical environment
 
 ### Step 4: Ongoing Updates
 
-When new template versions or skill library updates are available:
+The update command runs three stages: binary self-update, config regeneration, and devenv input update. Run all stages or target specific ones:
 
 ```bash
-qsdev update --dry-run   # preview changes
-qsdev update             # apply
+qsdev update --check         # Check for available updates
+qsdev update --dry-run       # Preview all changes
+qsdev update                 # Run all three stages
+qsdev update --self-only     # Update only the binary
+qsdev update --configs-only  # Regenerate configs only
+qsdev update --deps-only     # Update devenv inputs only
 ```
 
 The update workflow respects user modifications via three-way merge. Files you have customized are merged intelligently rather than overwritten.
@@ -291,7 +385,7 @@ This ensures consistent security policies, tooling versions, and Claude Code per
 | `qsdev init --mode join` | Join an existing team environment |
 | `qsdev status` | Security posture assessment (score + grade) |
 | `qsdev check` | CI enforcement (config integrity, hardening) |
-| `qsdev update` | Update configs + devenv inputs |
+| `qsdev update` | Update binary + configs + devenv inputs (3-stage coordinated update) |
 | `qsdev enable <tool>` | Enable a security/AI tool |
 | `qsdev disable <tool>` | Disable a tool |
 | `qsdev list` | Show all available tools |
@@ -300,3 +394,12 @@ This ensures consistent security policies, tooling versions, and Claude Code per
 | `qsdev claude add-skill <name>` | Add a Claude Code skill |
 | `qsdev claude add-hook <name>` | Enable a hook preset |
 | `qsdev claude list-skills` | List available skills |
+| `qsdev mcp status` | MCP server health and connectivity |
+| `qsdev mcp grade` | MCP server compliance grading |
+| `qsdev mcp install <name>` | Install an MCP server |
+| `qsdev docs download` | Download local documentation sets |
+| `qsdev docs status` | Show installed documentation |
+| `qsdev policy check` | Evaluate security policy posture |
+| `qsdev policy list` | List security policy rules |
+| `qsdev session allow <ids>` | Enable session bypass for rules |
+| `qsdev session clear` | Remove session bypass overrides |

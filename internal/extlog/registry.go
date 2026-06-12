@@ -38,7 +38,7 @@ func (r *Registry) All() []LogProvider {
 
 // ByName returns a provider by name.
 func (r *Registry) ByName(name string) (LogProvider, bool) {
-	return r.Registry.Get(name)
+	return r.Get(name)
 }
 
 // DetectAll returns providers that found available logs.

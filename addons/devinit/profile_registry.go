@@ -40,7 +40,7 @@ func (r *ProjectProfileRegistry) Get(name string) (Profile, bool) {
 // List returns summaries of all registered profiles in insertion order.
 func (r *ProjectProfileRegistry) List() []ProfileSummary {
 	names := r.Registry.Names() // insertion order due to WithInsertionOrder
-	items := r.Registry.All()
+	items := r.All()
 	list := make([]ProfileSummary, 0, len(names))
 	for _, name := range names {
 		p := items[name]

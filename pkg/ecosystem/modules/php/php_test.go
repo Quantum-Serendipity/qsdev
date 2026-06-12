@@ -13,26 +13,8 @@ import (
 // Compile-time interface compliance check.
 var _ ecosystem.EcosystemModule = (*php.Module)(nil)
 
-func TestName(t *testing.T) {
-	m := &php.Module{}
-	if got := m.Name(); got != "php" {
-		t.Errorf("Name() = %q, want %q", got, "php")
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	m := &php.Module{}
-	got := m.DisplayName()
-	if !strings.Contains(got, "PHP") {
-		t.Errorf("DisplayName() = %q, want it to contain %q", got, "PHP")
-	}
-}
-
-func TestTier(t *testing.T) {
-	m := &php.Module{}
-	if got := m.Tier(); got != 2 {
-		t.Errorf("Tier() = %d, want %d", got, 2)
-	}
+func TestModuleIdentity(t *testing.T) {
+	ecosystem.AssertModuleIdentity(t, &php.Module{}, "php", "PHP", 2)
 }
 
 func TestDetect_ComposerJsonPresent(t *testing.T) {

@@ -22,25 +22,8 @@ func newModule() *container.Module {
 
 // ---------- Name / DisplayName / Tier ----------
 
-func TestName(t *testing.T) {
-	m := newModule()
-	if got := m.Name(); got != "container" {
-		t.Errorf("Name() = %q, want %q", got, "container")
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	m := newModule()
-	if got := m.DisplayName(); got != "Containers" {
-		t.Errorf("DisplayName() = %q, want %q", got, "Containers")
-	}
-}
-
-func TestTier(t *testing.T) {
-	m := newModule()
-	if got := m.Tier(); got != 1 {
-		t.Errorf("Tier() = %d, want 1", got)
-	}
+func TestModuleIdentity(t *testing.T) {
+	ecosystem.AssertModuleIdentity(t, newModule(), "container", "Containers", 1)
 }
 
 // ---------- Detect ----------

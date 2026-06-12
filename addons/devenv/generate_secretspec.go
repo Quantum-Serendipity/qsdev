@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -82,7 +83,7 @@ func GenerateSecretSpecToml(answers types.WizardAnswers, registry *ecosystem.Reg
 	return &types.GeneratedFile{
 		Path:     "secretspec.toml",
 		Content:  []byte(b.String()),
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 		Owner:    "secretspec",
 	}, nil

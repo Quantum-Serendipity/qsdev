@@ -71,11 +71,6 @@ type McpTrustPosture struct {
 	ProjectedDenyRuleCount int
 }
 
-type DenyRule struct {
-	Pattern string
-	Type    string
-}
-
 type TrustConfig struct {
 	Servers map[string]TrustServerEntry `yaml:"servers"`
 }

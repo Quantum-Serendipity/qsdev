@@ -148,7 +148,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 		{
 			Path:     "." + branding.Get().AppName + "/composer-security.json",
 			Content:  content,
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 		},
 	}

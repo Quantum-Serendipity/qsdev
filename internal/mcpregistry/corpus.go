@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 // DocSetType classifies a documentation set by its format.
@@ -126,7 +128,7 @@ func (m *DocsCorpusManager) LoadManifest() (*DocsManifest, error) {
 
 // SaveManifest writes the manifest atomically to disk.
 func (m *DocsCorpusManager) SaveManifest(manifest *DocsManifest) error {
-	if err := os.MkdirAll(m.DataDir, 0o755); err != nil {
+	if err := os.MkdirAll(m.DataDir, fileutil.ModeDirDefault); err != nil {
 		return fmt.Errorf("creating data dir: %w", err)
 	}
 
@@ -136,7 +138,7 @@ func (m *DocsCorpusManager) SaveManifest(manifest *DocsManifest) error {
 	}
 
 	tmp := m.manifestPath() + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing temp manifest: %w", err)
 	}
 
@@ -152,7 +154,7 @@ func (m *DocsCorpusManager) SaveManifest(manifest *DocsManifest) error {
 // meta.json) and records it in the manifest.
 func (m *DocsCorpusManager) DownloadDevDocs(ctx context.Context, slug string) error {
 	dir := filepath.Join(m.DataDir, "devdocs", slug)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fileutil.ModeDirDefault); err != nil {
 		return fmt.Errorf("creating devdocs dir for %q: %w", slug, err)
 	}
 
@@ -197,7 +199,7 @@ func (m *DocsCorpusManager) DownloadDevDocs(ctx context.Context, slug string) er
 // the expected value in the catalog entry.
 func (m *DocsCorpusManager) DownloadZIM(ctx context.Context, entry ZIMEntry) error {
 	dir := filepath.Join(m.DataDir, "zim")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fileutil.ModeDirDefault); err != nil {
 		return fmt.Errorf("creating zim dir: %w", err)
 	}
 

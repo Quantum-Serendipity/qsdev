@@ -362,7 +362,7 @@ func executeUpdatePlan(
 		absPath := filepath.Join(projectRoot, fp.Path)
 		mode := fp.NewMode
 		if mode == 0 {
-			mode = 0o644
+			mode = fileutil.ModeReadWrite
 		}
 
 		switch fp.Action {

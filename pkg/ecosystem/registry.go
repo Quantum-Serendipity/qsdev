@@ -4,44 +4,41 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/registry"
 )
 
 // Registry is a thread-safe collection of EcosystemModule implementations.
 // Modules are registered by name and can be queried individually or in bulk.
 type Registry struct {
-	mu      sync.RWMutex
-	modules map[string]EcosystemModule
+	*registry.Registry[EcosystemModule]
 }
 
 // NewRegistry creates an empty Registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		modules: make(map[string]EcosystemModule),
+		Registry: registry.New[EcosystemModule](
+			registry.WithEntityName("ecosystem module"),
+		),
 	}
 }
 
 // Register adds a module to the registry. It returns an error if a module
 // with the same Name() is already registered.
 func (r *Registry) Register(m EcosystemModule) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	name := m.Name()
-	if _, exists := r.modules[name]; exists {
-		return fmt.Errorf("ecosystem module %q is already registered", name)
+	err := r.Registry.Register(m.Name(), m)
+	if err != nil {
+		return fmt.Errorf("ecosystem module %q is already registered", m.Name())
 	}
-	r.modules[name] = m
 	return nil
 }
 
 // All returns every registered module, sorted by tier (ascending) then
 // name (alphabetical) within each tier.
 func (r *Registry) All() []EcosystemModule {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	mods := make([]EcosystemModule, 0, len(r.modules))
-	for _, m := range r.modules {
+	items := r.Registry.All()
+	mods := make([]EcosystemModule, 0, len(items))
+	for _, m := range items {
 		mods = append(mods, m)
 	}
 	sort.Slice(mods, func(i, j int) bool {
@@ -55,11 +52,9 @@ func (r *Registry) All() []EcosystemModule {
 
 // ByTier returns all modules with the given tier, sorted by name.
 func (r *Registry) ByTier(tier int) []EcosystemModule {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
+	items := r.Registry.All()
 	var mods []EcosystemModule
-	for _, m := range r.modules {
+	for _, m := range items {
 		if m.Tier() == tier {
 			mods = append(mods, m)
 		}
@@ -72,23 +67,18 @@ func (r *Registry) ByTier(tier int) []EcosystemModule {
 
 // ByName looks up a single module by its canonical name.
 func (r *Registry) ByName(name string) (EcosystemModule, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	m, ok := r.modules[name]
-	return m, ok
+	return r.Registry.Get(name)
 }
 
 // DetectAll runs every registered module's Detect method against root and
 // returns a DetectionSummary containing the raw results plus an aggregated
 // DetectedProject.
 func (r *Registry) DetectAll(root string) *DetectionSummary {
-	r.mu.RLock()
-	mods := make([]EcosystemModule, 0, len(r.modules))
-	for _, m := range r.modules {
+	items := r.Registry.All()
+	mods := make([]EcosystemModule, 0, len(items))
+	for _, m := range items {
 		mods = append(mods, m)
 	}
-	r.mu.RUnlock()
 
 	results := make(map[string]DetectionResult, len(mods))
 	for _, m := range mods {
@@ -113,23 +103,12 @@ func (r *Registry) DetectWithEnvironment(root string) *DetectionSummary {
 
 // Names returns the sorted list of all registered module names.
 func (r *Registry) Names() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	names := make([]string, 0, len(r.modules))
-	for name := range r.modules {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return r.Registry.Names()
 }
 
 // Count returns the number of registered modules.
 func (r *Registry) Count() int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	return len(r.modules)
+	return r.Registry.Count()
 }
 
 var (

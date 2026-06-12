@@ -26,25 +26,8 @@ func TestInterfaceCompliance(t *testing.T) {
 
 // --- Basic metadata ---
 
-func TestName(t *testing.T) {
-	m := newModule()
-	if got := m.Name(); got != "dotnet" {
-		t.Errorf("Name() = %q, want %q", got, "dotnet")
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	m := newModule()
-	if got := m.DisplayName(); got != "C#/.NET" {
-		t.Errorf("DisplayName() = %q, want %q", got, "C#/.NET")
-	}
-}
-
-func TestTier(t *testing.T) {
-	m := newModule()
-	if got := m.Tier(); got != 1 {
-		t.Errorf("Tier() = %d, want %d", got, 1)
-	}
+func TestModuleIdentity(t *testing.T) {
+	ecosystem.AssertModuleIdentity(t, newModule(), "dotnet", "C#/.NET", 1)
 }
 
 // --- Detection tests ---

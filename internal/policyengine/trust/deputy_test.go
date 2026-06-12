@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
 )
 
 func TestCheckAccess(t *testing.T) {
@@ -16,7 +18,7 @@ func TestCheckAccess(t *testing.T) {
 		t.Fatalf("creating test file: %v", err)
 	}
 
-	denyRules := []DenyRule{
+	denyRules := []policy.DenyRule{
 		{Pattern: tmpDir + "/*", Type: "path"},
 	}
 
@@ -24,7 +26,7 @@ func TestCheckAccess(t *testing.T) {
 		name      string
 		tool      string
 		args      map[string]string
-		rules     []DenyRule
+		rules     []policy.DenyRule
 		wantBlock bool
 	}{
 		{
@@ -106,7 +108,7 @@ func TestCheckAccessPathCanonicalization(t *testing.T) {
 		t.Fatalf("creating test file: %v", err)
 	}
 
-	denyRules := []DenyRule{
+	denyRules := []policy.DenyRule{
 		{Pattern: tmpDir + "/*", Type: "path"},
 	}
 
@@ -124,7 +126,7 @@ func TestCheckAccessPathCanonicalization(t *testing.T) {
 func TestCheckAccessEmptyArgs(t *testing.T) {
 	t.Parallel()
 
-	denyRules := []DenyRule{{Pattern: "/secret/*", Type: "path"}}
+	denyRules := []policy.DenyRule{{Pattern: "/secret/*", Type: "path"}}
 
 	blocked, _ := CheckAccess("mcp__filesystem__read_file", nil, denyRules)
 	if blocked {
@@ -146,7 +148,7 @@ func TestCheckAccessExactPathMatch(t *testing.T) {
 		t.Fatalf("creating test file: %v", err)
 	}
 
-	denyRules := []DenyRule{
+	denyRules := []policy.DenyRule{
 		{Pattern: exactFile, Type: "path"},
 	}
 

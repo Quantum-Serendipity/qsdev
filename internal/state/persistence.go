@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 	"gopkg.in/yaml.v3"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // LoadStateFromFile reads and unmarshals a GeneratedState from the YAML file
@@ -48,7 +50,7 @@ func SaveStateToFile(path string, state types.GeneratedState) error {
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fileutil.ModeDirDefault); err != nil {
 		return fmt.Errorf("creating state directory %s: %w", dir, err)
 	}
 
@@ -71,7 +73,7 @@ func SaveStateToFile(path string, state types.GeneratedState) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("closing temp state file %s: %w", tmpPath, err)
 	}
-	if err := os.Chmod(tmpPath, 0o644); err != nil {
+	if err := os.Chmod(tmpPath, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("setting permissions on temp state file %s: %w", tmpPath, err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {

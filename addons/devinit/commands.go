@@ -228,10 +228,7 @@ func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot st
 	}
 
 	if opts.ProfileName != "" {
-		if profileRegistry == nil {
-			profileRegistry = DefaultProjectProfileRegistry()
-		}
-		p, ok := profileRegistry.Get(opts.ProfileName)
+		p, ok := ensureProfileRegistry().Get(opts.ProfileName)
 		if !ok {
 			return types.WizardAnswers{}, fmt.Errorf("unknown profile %q; use --list-profiles to see available profiles", opts.ProfileName)
 		}
@@ -380,10 +377,7 @@ func runRepair(cmd *cobra.Command, opts InitOptions, _ string, _ *ModeDetectionR
 
 // listProfiles prints all available project-type profiles and returns.
 func listProfiles(cmd *cobra.Command) error {
-	if profileRegistry == nil {
-		profileRegistry = DefaultProjectProfileRegistry()
-	}
-	profiles := profileRegistry.List()
+	profiles := ensureProfileRegistry().List()
 	if len(profiles) == 0 {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No profiles available.")
 		return nil

@@ -23,25 +23,8 @@ func TestInterfaceCompliance(t *testing.T) {
 
 // --- Basic metadata ---
 
-func TestName(t *testing.T) {
-	m := newModule()
-	if got := m.Name(); got != "r" {
-		t.Errorf("Name() = %q, want %q", got, "r")
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	m := newModule()
-	if got := m.DisplayName(); got != "R" {
-		t.Errorf("DisplayName() = %q, want %q", got, "R")
-	}
-}
-
-func TestTier(t *testing.T) {
-	m := newModule()
-	if got := m.Tier(); got != 4 {
-		t.Errorf("Tier() = %d, want %d", got, 4)
-	}
+func TestModuleIdentity(t *testing.T) {
+	ecosystem.AssertModuleIdentity(t, newModule(), "r", "R", 4)
 }
 
 // --- Detection tests ---
@@ -153,4 +136,3 @@ func TestDevenvNixFragment(t *testing.T) {
 		t.Errorf("fragment missing r reference:\n%s", frag)
 	}
 }
-

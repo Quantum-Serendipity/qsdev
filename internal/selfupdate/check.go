@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 var httpClient = &http.Client{
@@ -216,12 +217,12 @@ func loadCache(cfg Config) (*cachedCheck, error) {
 
 // saveCache writes the update check result to the cache file.
 func saveCache(cfg Config, c *cachedCheck) error {
-	if err := os.MkdirAll(cfg.CacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.CacheDir, fileutil.ModeDirDefault); err != nil {
 		return err
 	}
 	data, err := json.Marshal(c)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(cacheFile(cfg), data, 0o644)
+	return os.WriteFile(cacheFile(cfg), data, fileutil.ModeReadWrite)
 }

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 type CacheManager struct {
@@ -50,7 +52,7 @@ func (c *CacheManager) Get(ecosystem, name, version string) (*PackageScore, erro
 }
 
 func (c *CacheManager) Put(score *PackageScore) error {
-	if err := os.MkdirAll(c.baseDir, 0o755); err != nil {
+	if err := os.MkdirAll(c.baseDir, fileutil.ModeDirDefault); err != nil {
 		return fmt.Errorf("creating cache directory: %w", err)
 	}
 
@@ -60,7 +62,7 @@ func (c *CacheManager) Put(score *PackageScore) error {
 	}
 
 	path := c.cachePath(string(score.Ecosystem), score.PackageName, score.PackageVersion)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing cache file: %w", err)
 	}
 

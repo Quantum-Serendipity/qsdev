@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -47,7 +48,7 @@ func GenerateCommitlintConfig() (*types.GeneratedFile, error) {
 	return &types.GeneratedFile{
 		Path:     ".commitlintrc.yml",
 		Content:  []byte(b.String()),
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 		Owner:    "commitlint",
 	}, nil

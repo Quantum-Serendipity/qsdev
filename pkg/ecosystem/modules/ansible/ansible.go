@@ -105,7 +105,7 @@ func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile
 		{
 			Path:     ".ansible-security.cfg",
 			Content:  []byte(b.String()),
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 		},
 	}

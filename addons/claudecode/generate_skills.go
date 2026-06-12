@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -58,7 +59,7 @@ func deploySkills(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 		files = append(files, types.GeneratedFile{
 			Path:     ".claude/skills/" + name + ".md",
 			Content:  content,
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.LibraryManaged,
 		})
 	}
@@ -117,7 +118,7 @@ func deployRules(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 		files = append(files, types.GeneratedFile{
 			Path:     ".claude/rules/" + name,
 			Content:  content,
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.LibraryManaged,
 		})
 	}

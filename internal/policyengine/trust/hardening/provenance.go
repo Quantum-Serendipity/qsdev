@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 type ProvenanceEntry struct {
@@ -19,11 +21,11 @@ type ProvenanceEntry struct {
 
 func LogProvenance(path string, entry ProvenanceEntry) (err error) {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fileutil.ModeDirDefault); err != nil {
 		return fmt.Errorf("creating provenance log directory: %w", err)
 	}
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, fileutil.ModeReadWrite)
 	if err != nil {
 		return fmt.Errorf("opening provenance log: %w", err)
 	}

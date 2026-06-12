@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 // BadgeJSON represents a shields.io endpoint badge JSON structure.
@@ -78,7 +79,7 @@ func RenderBadge(report *posture.PostureReport, variant string) ([]byte, error) 
 // RenderAllBadges writes all three badge variants to the given output directory.
 // Files are named: badge-score.json, badge-conformance.json, badge-defense.json.
 func RenderAllBadges(report *posture.PostureReport, outputDir string) error {
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+	if err := os.MkdirAll(outputDir, fileutil.ModeDirDefault); err != nil {
 		return fmt.Errorf("creating badge output directory: %w", err)
 	}
 
@@ -89,7 +90,7 @@ func RenderAllBadges(report *posture.PostureReport, outputDir string) error {
 			return fmt.Errorf("rendering %s badge: %w", v, err)
 		}
 		path := filepath.Join(outputDir, fmt.Sprintf("badge-%s.json", v))
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+		if err := os.WriteFile(path, data, fileutil.ModeReadWrite); err != nil {
 			return fmt.Errorf("writing %s badge: %w", v, err)
 		}
 	}

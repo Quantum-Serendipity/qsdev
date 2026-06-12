@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -72,7 +73,7 @@ func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedF
 	return &types.GeneratedFile{
 		Path:     ".mcp.json",
 		Content:  jsonBytes,
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.ThreeWayMerge,
 	}, nil
 }

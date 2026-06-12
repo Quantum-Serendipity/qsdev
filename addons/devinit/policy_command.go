@@ -11,6 +11,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/sarif"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 func policyCmd() *cobra.Command {
@@ -212,7 +213,7 @@ func loadPolicyEngine() (*policy.PolicyEngine, error) {
 }
 
 func writeOutputFile(path string, data []byte) error {
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing output file: %w", err)
 	}
 	return nil

@@ -1,6 +1,7 @@
 package claudecode
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -36,7 +37,10 @@ func mcpStatusCmd() *cobra.Command {
 				return nil
 			}
 
-			report := mcphealth.CheckAll(servers, 10*time.Second)
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			report := mcphealth.CheckAll(ctx, servers)
 
 			if jsonOutput {
 				data, err := json.MarshalIndent(report, "", "  ")

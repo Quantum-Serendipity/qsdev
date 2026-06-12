@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 // CaptureWriter tees output to a capture file alongside the original writer.
@@ -23,14 +24,14 @@ type CaptureWriter struct {
 // New creates a CaptureWriter that writes to both original and a new file
 // in captureDir named "{provider}-{timestamp}.log".
 func New(original io.Writer, captureDir, provider string) (*CaptureWriter, error) {
-	if err := os.MkdirAll(captureDir, 0o755); err != nil {
+	if err := os.MkdirAll(captureDir, fileutil.ModeDirDefault); err != nil {
 		return nil, fmt.Errorf("creating capture dir: %w", err)
 	}
 
 	filename := fmt.Sprintf("%s-%s.log", provider, time.Now().Format("2006-01-02T15-04-05"))
 	path := filepath.Join(captureDir, filename)
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, fileutil.ModeReadWrite)
 	if err != nil {
 		return nil, fmt.Errorf("opening capture file: %w", err)
 	}

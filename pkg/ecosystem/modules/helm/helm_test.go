@@ -14,26 +14,8 @@ import (
 var _ ecosystem.EcosystemModule = (*helm.Module)(nil)
 var _ ecosystem.PackageProvider = (*helm.Module)(nil)
 
-func TestName(t *testing.T) {
-	m := &helm.Module{}
-	if got := m.Name(); got != "helm" {
-		t.Errorf("Name() = %q, want %q", got, "helm")
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	m := &helm.Module{}
-	got := m.DisplayName()
-	if !strings.Contains(got, "Helm") {
-		t.Errorf("DisplayName() = %q, want it to contain %q", got, "Helm")
-	}
-}
-
-func TestTier(t *testing.T) {
-	m := &helm.Module{}
-	if got := m.Tier(); got != 2 {
-		t.Errorf("Tier() = %d, want %d", got, 2)
-	}
+func TestModuleIdentity(t *testing.T) {
+	ecosystem.AssertModuleIdentity(t, &helm.Module{}, "helm", "Helm", 2)
 }
 
 func TestDetect_ChartYamlPresent(t *testing.T) {

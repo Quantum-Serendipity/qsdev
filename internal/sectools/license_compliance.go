@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -92,7 +93,7 @@ func GenerateScancodeYml(_ types.WizardAnswers) (*types.GeneratedFile, error) {
 	return &types.GeneratedFile{
 		Path:     ".scancode.yml",
 		Content:  []byte(b.String()),
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 		Owner:    "license-compliance",
 	}, nil
@@ -117,7 +118,7 @@ func GenerateLicenseExceptionsYml() (*types.GeneratedFile, error) {
 	return &types.GeneratedFile{
 		Path:     ".license-exceptions.yml",
 		Content:  []byte(b.String()),
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Skip,
 		Owner:    "license-compliance",
 	}, nil

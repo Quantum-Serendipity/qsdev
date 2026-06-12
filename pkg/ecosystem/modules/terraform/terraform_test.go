@@ -511,25 +511,8 @@ func TestWizardFields(t *testing.T) {
 
 // --- Metadata tests ---
 
-func TestName(t *testing.T) {
-	m := newModule()
-	if got := m.Name(); got != "terraform" {
-		t.Errorf("Name() = %q, want %q", got, "terraform")
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	m := newModule()
-	if got := m.DisplayName(); got != "Terraform/OpenTofu" {
-		t.Errorf("DisplayName() = %q, want %q", got, "Terraform/OpenTofu")
-	}
-}
-
-func TestTier(t *testing.T) {
-	m := newModule()
-	if got := m.Tier(); got != 1 {
-		t.Errorf("Tier() = %d, want 1", got)
-	}
+func TestModuleIdentity(t *testing.T) {
+	ecosystem.AssertModuleIdentity(t, newModule(), "terraform", "Terraform/OpenTofu", 1)
 }
 
 // --- helpers ---

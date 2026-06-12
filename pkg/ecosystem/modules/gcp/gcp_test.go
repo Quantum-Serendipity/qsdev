@@ -263,25 +263,9 @@ func TestDoctorChecks(t *testing.T) {
 
 // ---------- Identity ----------
 
-func TestName(t *testing.T) {
+func TestModuleIdentity(t *testing.T) {
 	t.Parallel()
-	if got := newModule().Name(); got != "gcp" {
-		t.Errorf("Name() = %q, want gcp", got)
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	t.Parallel()
-	if got := newModule().DisplayName(); got != "Google Cloud CLI" {
-		t.Errorf("DisplayName() = %q, want %q", got, "Google Cloud CLI")
-	}
-}
-
-func TestTier(t *testing.T) {
-	t.Parallel()
-	if got := newModule().Tier(); got != 2 {
-		t.Errorf("Tier() = %d, want 2", got)
-	}
+	ecosystem.AssertModuleIdentity(t, newModule(), "gcp", "Google Cloud CLI", 2)
 }
 
 // ---------- Nil returns ----------

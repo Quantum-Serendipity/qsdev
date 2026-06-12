@@ -1,6 +1,7 @@
 package mcphealth
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -14,7 +15,10 @@ func TestCheckServer_MissingBinary(t *testing.T) {
 		Args:    []string{"--stdio"},
 	}
 
-	h := CheckServer(cfg, 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	h := CheckServer(ctx, cfg)
 
 	if h.Name != "nonexistent" {
 		t.Errorf("name = %q, want %q", h.Name, "nonexistent")
@@ -37,7 +41,10 @@ func TestCheckServer_Prerequisites(t *testing.T) {
 		RequiredEnv: []string{"QSDEV_TEST_MISSING_SECRET_XYZ_999"},
 	}
 
-	h := CheckServer(cfg, 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	h := CheckServer(ctx, cfg)
 
 	if h.Status != StatusDegraded {
 		t.Errorf("status = %q, want %q", h.Status, StatusDegraded)
@@ -59,7 +66,10 @@ func TestCheckServer_Prerequisites(t *testing.T) {
 func TestCheckAll_EmptyServers(t *testing.T) {
 	t.Parallel()
 
-	report := CheckAll(map[string]ServerConfig{}, 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	report := CheckAll(ctx, map[string]ServerConfig{})
 
 	if report.TotalCount != 0 {
 		t.Errorf("total = %d, want 0", report.TotalCount)
@@ -90,7 +100,10 @@ func TestCheckAll_MixedResults(t *testing.T) {
 		},
 	}
 
-	report := CheckAll(servers, 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	report := CheckAll(ctx, servers)
 
 	if report.TotalCount != 2 {
 		t.Errorf("total = %d, want 2", report.TotalCount)

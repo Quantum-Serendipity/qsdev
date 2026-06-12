@@ -204,7 +204,10 @@ health status, tool counts, and response times.`,
 				return nil
 			}
 
-			report := mcphealth.CheckAll(servers, 10*time.Second)
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			report := mcphealth.CheckAll(ctx, servers)
 
 			if jsonOutput {
 				data, err := json.MarshalIndent(report, "", "  ")

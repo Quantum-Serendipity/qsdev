@@ -24,26 +24,8 @@ func TestInterfaceCompliance(t *testing.T) {
 
 // --- Basic metadata ---
 
-func TestName(t *testing.T) {
-	m := newModule()
-	if got := m.Name(); got != "shell" {
-		t.Errorf("Name() = %q, want %q", got, "shell")
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	m := newModule()
-	got := m.DisplayName()
-	if !strings.Contains(got, "Shell") && !strings.Contains(got, "Bash") {
-		t.Errorf("DisplayName() = %q, want it to contain %q or %q", got, "Shell", "Bash")
-	}
-}
-
-func TestTier(t *testing.T) {
-	m := newModule()
-	if got := m.Tier(); got != 2 {
-		t.Errorf("Tier() = %d, want %d", got, 2)
-	}
+func TestModuleIdentity(t *testing.T) {
+	ecosystem.AssertModuleIdentity(t, newModule(), "shell", "Bash/Shell", 2)
 }
 
 // --- Detection tests ---

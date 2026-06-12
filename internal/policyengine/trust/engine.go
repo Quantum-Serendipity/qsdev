@@ -5,6 +5,8 @@ import (
 	"os"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 type McpTrustEngine struct {
@@ -108,7 +110,7 @@ func aggregateScore(categories []CategoryScore) int {
 		total += cat.Weight * cat.Score
 	}
 
-	score := int(total / 100 * 100)
+	score := int(total)
 	return max(0, min(score, 100))
 }
 
@@ -169,7 +171,7 @@ func SaveTrustConfig(path string, config *TrustConfig) error {
 		return fmt.Errorf("marshaling trust config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing trust config: %w", err)
 	}
 

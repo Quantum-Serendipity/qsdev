@@ -3,6 +3,7 @@ package sectools
 import (
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -22,7 +23,7 @@ func GenerateSyftYaml(_ types.WizardAnswers) (*types.GeneratedFile, error) {
 	return &types.GeneratedFile{
 		Path:     ".syft.yaml",
 		Content:  []byte(b.String()),
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 		Owner:    "container-security",
 	}, nil

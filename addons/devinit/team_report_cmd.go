@@ -9,6 +9,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/teamreport"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 func teamReportCmd() *cobra.Command {
@@ -124,7 +125,7 @@ func runTeamReport(cmd *cobra.Command, opts teamReportOptions) error {
 	aggOpts := teamreport.AggregateOptions{
 		Threshold:     opts.threshold,
 		IncludeTrends: opts.trend,
-		QsdevVersion:   version.Info().Version,
+		QsdevVersion:  version.Info().Version,
 	}
 	if opts.trend {
 		aggOpts.HistoryFile = opts.historyFile
@@ -170,7 +171,7 @@ func runTeamReport(cmd *cobra.Command, opts teamReportOptions) error {
 
 	// Write output.
 	if opts.output != "" {
-		if err := os.WriteFile(opts.output, rendered, 0o644); err != nil {
+		if err := os.WriteFile(opts.output, rendered, fileutil.ModeReadWrite); err != nil {
 			return fmt.Errorf("writing output to %s: %w", opts.output, err)
 		}
 		fmt.Fprintf(cmd.ErrOrStderr(), "Report written to %s\n", opts.output)
@@ -188,7 +189,7 @@ func runGenerateWorkflow(cmd *cobra.Command, output string) error {
 	content := workflow + "\n---\n\n# Per-project steps (add to each project's CI workflow):\n\n" + perProject
 
 	if output != "" {
-		if err := os.WriteFile(output, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(output, []byte(content), fileutil.ModeReadWrite); err != nil {
 			return fmt.Errorf("writing workflow to %s: %w", output, err)
 		}
 		fmt.Fprintf(cmd.ErrOrStderr(), "Workflow written to %s\n", output)

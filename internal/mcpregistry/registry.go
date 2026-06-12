@@ -6,35 +6,32 @@ import (
 	"sync"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
+	"github.com/Quantum-Serendipity/qsdev/internal/registry"
 )
 
 // McpServerRegistry is a thread-safe collection of MCP server definitions
 // and their cached health results.
 type McpServerRegistry struct {
-	mu      sync.RWMutex
-	servers map[string]*McpServerDefinition
-	health  map[string]*HealthResult
+	*registry.Registry[*McpServerDefinition]
+
+	healthMu sync.RWMutex
+	health   map[string]*HealthResult
 }
 
 // NewRegistry creates an empty MCP server registry with initialized maps.
 func NewRegistry() *McpServerRegistry {
 	return &McpServerRegistry{
-		servers: make(map[string]*McpServerDefinition),
-		health:  make(map[string]*HealthResult),
+		Registry: registry.New[*McpServerDefinition](
+			registry.WithEntityName("mcp server"),
+		),
+		health: make(map[string]*HealthResult),
 	}
 }
 
 // Register adds an MCP server definition to the registry. Returns an error
 // if a server with the same name is already registered.
 func (r *McpServerRegistry) Register(def McpServerDefinition) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if _, exists := r.servers[def.Name]; exists {
-		return fmt.Errorf("mcp server %q already registered", def.Name)
-	}
-	r.servers[def.Name] = &def
-	return nil
+	return r.Registry.Register(def.Name, &def)
 }
 
 // MustRegister adds an MCP server definition to the registry and panics
@@ -48,19 +45,14 @@ func (r *McpServerRegistry) MustRegister(def McpServerDefinition) {
 
 // ByName returns the server definition for the given name and whether it was found.
 func (r *McpServerRegistry) ByName(name string) (*McpServerDefinition, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	def, ok := r.servers[name]
-	return def, ok
+	return r.Registry.Get(name)
 }
 
 // All returns all registered server definitions sorted by name.
 func (r *McpServerRegistry) All() []*McpServerDefinition {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	result := make([]*McpServerDefinition, 0, len(r.servers))
-	for _, def := range r.servers {
+	items := r.Registry.All()
+	result := make([]*McpServerDefinition, 0, len(items))
+	for _, def := range items {
 		result = append(result, def)
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -71,11 +63,9 @@ func (r *McpServerRegistry) All() []*McpServerDefinition {
 
 // ByCategory returns all servers in the given category, sorted by name.
 func (r *McpServerRegistry) ByCategory(cat McpCategory) []*McpServerDefinition {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
+	items := r.Registry.All()
 	var result []*McpServerDefinition
-	for _, def := range r.servers {
+	for _, def := range items {
 		if def.Category == cat {
 			result = append(result, def)
 		}
@@ -89,11 +79,13 @@ func (r *McpServerRegistry) ByCategory(cat McpCategory) []*McpServerDefinition {
 // AllHealthy returns servers whose cached health status is healthy, sorted
 // by name. Servers without a cached health result are excluded.
 func (r *McpServerRegistry) AllHealthy() []*McpServerDefinition {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	items := r.Registry.All()
+
+	r.healthMu.RLock()
+	defer r.healthMu.RUnlock()
 
 	var result []*McpServerDefinition
-	for name, def := range r.servers {
+	for name, def := range items {
 		hr, ok := r.health[name]
 		if !ok || hr.ServerHealth == nil {
 			continue
@@ -110,35 +102,25 @@ func (r *McpServerRegistry) AllHealthy() []*McpServerDefinition {
 
 // Names returns all registered server names sorted alphabetically.
 func (r *McpServerRegistry) Names() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	names := make([]string, 0, len(r.servers))
-	for name := range r.servers {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return r.Registry.Names()
 }
 
 // Count returns the number of registered servers.
 func (r *McpServerRegistry) Count() int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return len(r.servers)
+	return r.Registry.Count()
 }
 
 // SetHealth updates the cached health result for the named server.
 func (r *McpServerRegistry) SetHealth(name string, result *HealthResult) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.healthMu.Lock()
+	defer r.healthMu.Unlock()
 	r.health[name] = result
 }
 
 // GetHealth retrieves the cached health result for the named server.
 func (r *McpServerRegistry) GetHealth(name string) (*HealthResult, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	r.healthMu.RLock()
+	defer r.healthMu.RUnlock()
 	hr, ok := r.health[name]
 	return hr, ok
 }

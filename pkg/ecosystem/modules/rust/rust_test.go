@@ -24,25 +24,8 @@ func TestInterfaceCompliance(t *testing.T) {
 
 // --- Basic metadata ---
 
-func TestName(t *testing.T) {
-	m := newModule()
-	if got := m.Name(); got != "rust" {
-		t.Errorf("Name() = %q, want %q", got, "rust")
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	m := newModule()
-	if got := m.DisplayName(); got != "Rust" {
-		t.Errorf("DisplayName() = %q, want %q", got, "Rust")
-	}
-}
-
-func TestTier(t *testing.T) {
-	m := newModule()
-	if got := m.Tier(); got != 1 {
-		t.Errorf("Tier() = %d, want %d", got, 1)
-	}
+func TestModuleIdentity(t *testing.T) {
+	ecosystem.AssertModuleIdentity(t, newModule(), "rust", "Rust", 1)
 }
 
 // --- Detection tests ---

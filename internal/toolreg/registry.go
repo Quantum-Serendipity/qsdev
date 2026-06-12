@@ -5,32 +5,28 @@ import (
 	"log/slog"
 	"sort"
 	"sync"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/registry"
 )
 
 // Registry is a thread-safe collection of Tool definitions.
 type Registry struct {
-	mu    sync.RWMutex
-	tools map[string]*Tool
+	*registry.Registry[*Tool]
 }
 
 // NewRegistry creates an empty tool registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		tools: make(map[string]*Tool),
+		Registry: registry.New[*Tool](
+			registry.WithEntityName("tool"),
+		),
 	}
 }
 
 // Register adds a tool to the registry. Returns an error if a tool with
 // the same name is already registered.
 func (r *Registry) Register(t Tool) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if _, exists := r.tools[t.Name]; exists {
-		return fmt.Errorf("tool %q already registered", t.Name)
-	}
-	r.tools[t.Name] = &t
-	return nil
+	return r.Registry.Register(t.Name, &t)
 }
 
 // MustRegister adds a tool to the registry and panics if registration fails.
@@ -43,19 +39,14 @@ func (r *Registry) MustRegister(t Tool) {
 
 // ByName returns the tool with the given name.
 func (r *Registry) ByName(name string) (*Tool, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	t, ok := r.tools[name]
-	return t, ok
+	return r.Registry.Get(name)
 }
 
 // All returns all registered tools sorted by category then name.
 func (r *Registry) All() []*Tool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	result := make([]*Tool, 0, len(r.tools))
-	for _, t := range r.tools {
+	items := r.Registry.All()
+	result := make([]*Tool, 0, len(items))
+	for _, t := range items {
 		result = append(result, t)
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -69,11 +60,9 @@ func (r *Registry) All() []*Tool {
 
 // ByCategory returns all tools in the given category, sorted by name.
 func (r *Registry) ByCategory(cat ToolCategory) []*Tool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
+	items := r.Registry.All()
 	var result []*Tool
-	for _, t := range r.tools {
+	for _, t := range items {
 		if t.Category == cat {
 			result = append(result, t)
 		}
@@ -86,22 +75,12 @@ func (r *Registry) ByCategory(cat ToolCategory) []*Tool {
 
 // Names returns all registered tool names, sorted alphabetically.
 func (r *Registry) Names() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	names := make([]string, 0, len(r.tools))
-	for name := range r.tools {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return r.Registry.Names()
 }
 
 // Count returns the number of registered tools.
 func (r *Registry) Count() int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return len(r.tools)
+	return r.Registry.Count()
 }
 
 func categoryOrder(c ToolCategory) int {
@@ -124,36 +103,33 @@ func categoryOrder(c ToolCategory) int {
 // YAML provides declarative metadata, Go code provides function hooks.
 // If the tool name is not in the registry, this is a no-op.
 func (r *Registry) AttachBehavior(name string, b ToolBehavior) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	t, ok := r.tools[name]
-	if !ok {
+	found := r.Registry.Modify(name, func(t *Tool) {
+		if b.EnableFunc != nil {
+			t.EnableFunc = b.EnableFunc
+		}
+		if b.DisableFunc != nil {
+			t.DisableFunc = b.DisableFunc
+		}
+		if b.DetectFunc != nil {
+			t.DetectFunc = b.DetectFunc
+		}
+		if b.GenerateFunc != nil {
+			t.GenerateFunc = b.GenerateFunc
+		}
+		if b.SharedContent != nil {
+			if t.SharedContent == nil {
+				t.SharedContent = make(map[string]SharedContentFunc)
+			}
+			for k, v := range b.SharedContent {
+				t.SharedContent[k] = v
+			}
+		}
+		if b.SectionDataFunc != nil {
+			t.SectionDataFunc = b.SectionDataFunc
+		}
+	})
+	if !found {
 		slog.Warn("AttachBehavior called for unknown tool", "tool", name)
-		return
-	}
-	if b.EnableFunc != nil {
-		t.EnableFunc = b.EnableFunc
-	}
-	if b.DisableFunc != nil {
-		t.DisableFunc = b.DisableFunc
-	}
-	if b.DetectFunc != nil {
-		t.DetectFunc = b.DetectFunc
-	}
-	if b.GenerateFunc != nil {
-		t.GenerateFunc = b.GenerateFunc
-	}
-	if b.SharedContent != nil {
-		if t.SharedContent == nil {
-			t.SharedContent = make(map[string]SharedContentFunc)
-		}
-		for k, v := range b.SharedContent {
-			t.SharedContent[k] = v
-		}
-	}
-	if b.SectionDataFunc != nil {
-		t.SectionDataFunc = b.SectionDataFunc
 	}
 }
 

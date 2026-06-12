@@ -87,12 +87,12 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for Ruby language support with Bundler enabled.
 func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
-	var b strings.Builder
-	b.WriteString("  languages.ruby = {\n")
-	b.WriteString("    enable = true;\n")
-	b.WriteString("    bundler.enable = true;\n")
-	b.WriteString("  };\n")
-	return b.String(), nil
+	return ecosystem.BuildLanguageFragment(ecosystem.NixLangConfig{
+		EnablePath: "languages.ruby",
+		Properties: []ecosystem.NixProperty{
+			{Key: "bundler.enable", Value: "true"},
+		},
+	}), nil
 }
 
 // SecurityConfigs returns security-hardened Bundler and RubyGems configuration files.
@@ -116,13 +116,13 @@ func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile
 		{
 			Path:     ".bundle/config",
 			Content:  []byte(bundleConfig),
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 		},
 		{
 			Path:     ".gemrc",
 			Content:  []byte(gemrc),
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 		},
 	}

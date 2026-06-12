@@ -6,6 +6,29 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// CheckName is a typed string identifying a conformance check.
+type CheckName = string
+
+// Baseline conformance check names.
+const (
+	CheckLockFilesPresent    CheckName = "lock-files-present"
+	CheckNoCriticalVulns     CheckName = "no-critical-vulns"
+	CheckClaudeMDPresent     CheckName = "claude-md-present"
+	CheckSettingsJSONPresent CheckName = "settings-json-present"
+	CheckHighWeightLayersOn  CheckName = "high-weight-layers-enabled"
+	CheckPreCommitHooks      CheckName = "pre-commit-hooks"
+)
+
+// Enhanced conformance check names.
+const (
+	CheckNoHighVulns            CheckName = "no-high-vulns"
+	CheckSASTEnabled            CheckName = "sast-enabled"
+	CheckSecretsScanningEnabled CheckName = "secrets-scanning-enabled"
+	CheckLicenseComplianceOn    CheckName = "license-compliance-enabled"
+	CheckAgeGatingConfigured    CheckName = "age-gating-configured"
+	CheckCIWorkflowsGenerated   CheckName = "ci-workflows-generated"
+)
+
 // EvaluateConformance checks baseline and enhanced conformance.
 func EvaluateConformance(
 	defense DefenseCoverage,
@@ -61,28 +84,28 @@ func evaluateBaseline(
 		}
 	}
 	checks = append(checks, ConformanceCheck{
-		Name:   "lock-files-present",
+		Name:   CheckLockFilesPresent,
 		Pass:   allLocked,
 		Reason: boolReason(allLocked, "all detected ecosystems have lock files", "some ecosystems missing lock files"),
 	})
 
 	noCritical := deps.Totals.Critical == 0
 	checks = append(checks, ConformanceCheck{
-		Name:   "no-critical-vulns",
+		Name:   CheckNoCriticalVulns,
 		Pass:   noCritical,
 		Reason: boolReason(noCritical, "no critical vulnerabilities", "critical vulnerabilities found"),
 	})
 
 	_, hasClaudeMD := genState.Files["CLAUDE.md"]
 	checks = append(checks, ConformanceCheck{
-		Name:   "claude-md-present",
+		Name:   CheckClaudeMDPresent,
 		Pass:   hasClaudeMD,
 		Reason: boolReason(hasClaudeMD, "CLAUDE.md present in generated state", "CLAUDE.md not found in generated state"),
 	})
 
 	_, hasSettings := genState.Files[".claude/settings.json"]
 	checks = append(checks, ConformanceCheck{
-		Name:   "settings-json-present",
+		Name:   CheckSettingsJSONPresent,
 		Pass:   hasSettings,
 		Reason: boolReason(hasSettings, "settings.json present in generated state", "settings.json not found in generated state"),
 	})
@@ -97,7 +120,7 @@ func evaluateBaseline(
 		}
 	}
 	checks = append(checks, ConformanceCheck{
-		Name:   "high-weight-layers-enabled",
+		Name:   CheckHighWeightLayersOn,
 		Pass:   highLayersOK,
 		Reason: boolReason(highLayersOK, "all high/critical defense layers enabled", "some high/critical defense layers not enabled"),
 	})
@@ -110,7 +133,7 @@ func evaluateBaseline(
 		}
 	}
 	checks = append(checks, ConformanceCheck{
-		Name:   "pre-commit-hooks",
+		Name:   CheckPreCommitHooks,
 		Pass:   hasPreCommit,
 		Reason: boolReason(hasPreCommit, "pre-commit hooks configured", "no pre-commit hooks found in generated state"),
 	})
@@ -128,28 +151,28 @@ func evaluateEnhanced(
 
 	noHighVulns := deps.Totals.High == 0
 	checks = append(checks, ConformanceCheck{
-		Name:   "no-high-vulns",
+		Name:   CheckNoHighVulns,
 		Pass:   noHighVulns,
 		Reason: boolReason(noHighVulns, "no high vulnerabilities", "high vulnerabilities found"),
 	})
 
 	semgrepEnabled := enabledTools["semgrep"]
 	checks = append(checks, ConformanceCheck{
-		Name:   "sast-enabled",
+		Name:   CheckSASTEnabled,
 		Pass:   semgrepEnabled,
 		Reason: boolReason(semgrepEnabled, "semgrep SAST enabled", "semgrep not enabled"),
 	})
 
 	gitleaksEnabled := enabledTools["gitleaks"]
 	checks = append(checks, ConformanceCheck{
-		Name:   "secrets-scanning-enabled",
+		Name:   CheckSecretsScanningEnabled,
 		Pass:   gitleaksEnabled,
 		Reason: boolReason(gitleaksEnabled, "gitleaks secrets scanning enabled", "gitleaks not enabled"),
 	})
 
 	licenseEnabled := enabledTools["license-compliance"]
 	checks = append(checks, ConformanceCheck{
-		Name:   "license-compliance-enabled",
+		Name:   CheckLicenseComplianceOn,
 		Pass:   licenseEnabled,
 		Reason: boolReason(licenseEnabled, "license compliance enabled", "license compliance not enabled"),
 	})
@@ -157,7 +180,7 @@ func evaluateEnhanced(
 	ageGating := FindLayerByName(defense.Layers, "age-gating")
 	ageGatingOK := ageGating != nil && ageGating.Status == LayerEnabled
 	checks = append(checks, ConformanceCheck{
-		Name:   "age-gating-configured",
+		Name:   CheckAgeGatingConfigured,
 		Pass:   ageGatingOK,
 		Reason: boolReason(ageGatingOK, "age-gating configured", "age-gating not configured"),
 	})
@@ -170,7 +193,7 @@ func evaluateEnhanced(
 		}
 	}
 	checks = append(checks, ConformanceCheck{
-		Name:   "ci-workflows-generated",
+		Name:   CheckCIWorkflowsGenerated,
 		Pass:   ciGenerated,
 		Reason: boolReason(ciGenerated, "CI workflows generated", "no CI workflows in generated state"),
 	})

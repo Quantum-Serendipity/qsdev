@@ -1,21 +1,22 @@
 package profile
 
 import (
-	"fmt"
 	"sort"
-	"sync"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/registry"
 )
 
 // ProfileRegistry is a thread-safe store of named InfraProfiles.
 type ProfileRegistry struct {
-	mu       sync.RWMutex
-	profiles map[string]*InfraProfile
+	*registry.Registry[*InfraProfile]
 }
 
 // NewProfileRegistry creates an empty ProfileRegistry.
 func NewProfileRegistry() *ProfileRegistry {
 	return &ProfileRegistry{
-		profiles: make(map[string]*InfraProfile),
+		Registry: registry.New[*InfraProfile](
+			registry.WithEntityName("profile"),
+		),
 	}
 }
 
@@ -33,32 +34,19 @@ func DefaultProfileRegistry() *ProfileRegistry {
 // Register adds a profile to the registry. It returns an error if a profile
 // with the same name is already registered.
 func (r *ProfileRegistry) Register(p *InfraProfile) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if _, exists := r.profiles[p.Name]; exists {
-		return fmt.Errorf("profile %q already registered", p.Name)
-	}
-	r.profiles[p.Name] = p
-	return nil
+	return r.Registry.Register(p.Name, p)
 }
 
 // Get retrieves a profile by name. The boolean reports whether it was found.
 func (r *ProfileRegistry) Get(name string) (*InfraProfile, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	p, ok := r.profiles[name]
-	return p, ok
+	return r.Registry.Get(name)
 }
 
 // List returns all registered profiles sorted alphabetically by name.
 func (r *ProfileRegistry) List() []*InfraProfile {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	list := make([]*InfraProfile, 0, len(r.profiles))
-	for _, p := range r.profiles {
+	items := r.Registry.All()
+	list := make([]*InfraProfile, 0, len(items))
+	for _, p := range items {
 		list = append(list, p)
 	}
 	sort.Slice(list, func(i, j int) bool {

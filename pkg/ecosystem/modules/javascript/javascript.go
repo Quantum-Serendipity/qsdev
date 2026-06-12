@@ -178,13 +178,8 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	// Package install commands (npm/pnpm/yarn/bun add/install) are handled by
 	// base ask rules + package-guard hook. Only hard-deny patterns here that
 	// must never execute regardless of hook validation.
-	return []string{
-		"Bash(npx *)",
-		"Bash(curl * | sh*)",
-		"Bash(curl * | bash*)",
-		"Bash(wget * | sh*)",
-		"Bash(wget * | bash*)",
-	}
+	rules := []string{"Bash(npx *)"}
+	return append(rules, ecosystem.PipeToShellDenyRules()...)
 }
 
 // CICommands returns CI pipeline commands for the JavaScript/TypeScript ecosystem.

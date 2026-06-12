@@ -13,6 +13,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 // Session represents a single CLI invocation's logging context.
@@ -49,7 +50,7 @@ func Init(cfg Config) (*Session, error) {
 	}
 
 	logDir := ResolveLogDir(cfg.ProjectRoot, cfg.ProjectScoped)
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
+	if err := os.MkdirAll(logDir, fileutil.ModeDirDefault); err != nil {
 		return nil, fmt.Errorf("creating log directory %s: %w", logDir, err)
 	}
 
@@ -62,7 +63,7 @@ func Init(cfg Config) (*Session, error) {
 	)
 
 	logPath := filepath.Join(logDir, filename)
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, fileutil.ModeReadWrite)
 	if err != nil {
 		return nil, fmt.Errorf("opening log file %s: %w", logPath, err)
 	}

@@ -55,5 +55,5 @@ func EnsureGitignoreEntry(projectRoot, entry string) error {
 	b.WriteString(entry)
 	b.WriteByte('\n')
 
-	return fileutil.WriteFileAtomic(gitignorePath, []byte(b.String()), 0o644)
+	return fileutil.WriteFileAtomic(gitignorePath, []byte(b.String()), fileutil.ModeReadWrite)
 }

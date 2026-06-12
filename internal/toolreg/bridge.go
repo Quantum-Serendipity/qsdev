@@ -27,9 +27,7 @@ func BuildFromCatalog() *Registry {
 }
 
 func buildRegistryFromCatalog(cat *catalog.Catalog) *Registry {
-	r := &Registry{
-		tools: make(map[string]*Tool),
-	}
+	r := NewRegistry()
 
 	for name, def := range cat.Tools() {
 		t := Tool{
@@ -70,7 +68,9 @@ func buildRegistryFromCatalog(cat *catalog.Catalog) *Registry {
 			}
 		}
 
-		r.tools[name] = &t
+		// Use Register which stores &t. Errors should not occur since
+		// catalog tool names are unique, but ignore them defensively.
+		_ = r.Register(t)
 	}
 
 	return r

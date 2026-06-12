@@ -9,6 +9,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/container"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 func containerCmd() *cobra.Command {
@@ -115,7 +116,7 @@ func runContainerMigrate(ctx context.Context, cmd *cobra.Command, dryRun, autoFi
 			if err != nil {
 				return fmt.Errorf("applying fixes to %s: %w", file, err)
 			}
-			if err := os.WriteFile(file, fixed, 0o644); err != nil {
+			if err := os.WriteFile(file, fixed, fileutil.ModeReadWrite); err != nil {
 				return fmt.Errorf("writing fixed file %s: %w", file, err)
 			}
 		}

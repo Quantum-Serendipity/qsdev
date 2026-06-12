@@ -104,10 +104,8 @@ func (o *SecurityOrchestrator) safeConfusedDeputyCheck(ctx *policy.EvalContext) 
 		}
 	}()
 
-	policyDenyRules := o.policy.FilePathDenyRules()
-	trustDenyRules := policyToTrustDenyRules(policyDenyRules)
-
-	blocked, _ := o.trust.CheckAccess(ctx.ToolName, ctx.ToolInput, trustDenyRules)
+	denyRules := o.policy.FilePathDenyRules()
+	blocked, _ := o.trust.CheckAccess(ctx.ToolName, ctx.ToolInput, denyRules)
 	if blocked {
 		return 2
 	}
@@ -118,17 +116,6 @@ func (o *SecurityOrchestrator) resolveServerTier(serverName string) trust.TrustT
 	info := &trust.McpServerInfo{Name: serverName}
 	score := o.trust.ScoreServer(info)
 	return score.Tier
-}
-
-func policyToTrustDenyRules(rules []policy.DenyRule) []trust.DenyRule {
-	out := make([]trust.DenyRule, len(rules))
-	for i, r := range rules {
-		out[i] = trust.DenyRule{
-			Pattern: r.Pattern,
-			Type:    r.Type,
-		}
-	}
-	return out
 }
 
 func extractServerName(toolName string) string {

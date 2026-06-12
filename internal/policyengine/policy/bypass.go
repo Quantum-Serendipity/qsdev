@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 type FileSessionStateReader struct {
@@ -43,7 +45,7 @@ func (r *StaticSessionStateReader) SessionOverrides() []string {
 
 func SaveSessionOverrides(path string, overrides []string) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fileutil.ModeDirDefault); err != nil {
 		return fmt.Errorf("creating session state directory: %w", err)
 	}
 
@@ -56,7 +58,7 @@ func SaveSessionOverrides(path string, overrides []string) error {
 		return fmt.Errorf("marshaling session state: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing session state: %w", err)
 	}
 

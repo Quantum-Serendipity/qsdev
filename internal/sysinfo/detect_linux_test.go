@@ -8,6 +8,7 @@ import (
 )
 
 func TestDetectOS_Linux(t *testing.T) {
+	t.Parallel()
 	info := DetectOS()
 	if info.OS != "linux" {
 		t.Errorf("DetectOS().OS = %q, want \"linux\"", info.OS)
@@ -33,6 +34,7 @@ func TestDetectOS_Performance(t *testing.T) {
 }
 
 func TestDetectOS_FamilyIsValid(t *testing.T) {
+	t.Parallel()
 	info := DetectOS()
 	validFamilies := map[string]bool{
 		"debian":  true,
@@ -51,6 +53,7 @@ func TestDetectOS_FamilyIsValid(t *testing.T) {
 }
 
 func TestDetectOS_ShellIsDetected(t *testing.T) {
+	t.Parallel()
 	info := DetectOS()
 	if info.Shell == "" {
 		t.Error("DetectOS().Shell is empty")
@@ -61,8 +64,55 @@ func TestDetectOS_ShellIsDetected(t *testing.T) {
 }
 
 func TestDetectOS_KernelIsSet(t *testing.T) {
+	t.Parallel()
 	info := DetectOS()
 	if info.Kernel == "" {
 		t.Error("DetectOS().Kernel is empty on Linux")
+	}
+}
+
+func TestDetectOS_DistroIsSet(t *testing.T) {
+	t.Parallel()
+	info := DetectOS()
+	if info.Distro == "" {
+		t.Error("DetectOS().Distro is empty on Linux")
+	}
+}
+
+func TestDetectOS_PrettyNameIsSet(t *testing.T) {
+	t.Parallel()
+	info := DetectOS()
+	if info.PrettyName == "" {
+		t.Error("DetectOS().PrettyName is empty on Linux")
+	}
+}
+
+func TestDetectOS_PackageManagerIsSet(t *testing.T) {
+	t.Parallel()
+	info := DetectOS()
+	if info.PackageManager == "" {
+		t.Error("DetectOS().PackageManager is empty on Linux")
+	}
+}
+
+func TestDetectOS_Idempotent(t *testing.T) {
+	t.Parallel()
+	info1 := DetectOS()
+	info2 := DetectOS()
+
+	if info1.OS != info2.OS {
+		t.Errorf("OS mismatch: %q vs %q", info1.OS, info2.OS)
+	}
+	if info1.Arch != info2.Arch {
+		t.Errorf("Arch mismatch: %q vs %q", info1.Arch, info2.Arch)
+	}
+	if info1.Family != info2.Family {
+		t.Errorf("Family mismatch: %q vs %q", info1.Family, info2.Family)
+	}
+	if info1.Distro != info2.Distro {
+		t.Errorf("Distro mismatch: %q vs %q", info1.Distro, info2.Distro)
+	}
+	if info1.PackageManager != info2.PackageManager {
+		t.Errorf("PackageManager mismatch: %q vs %q", info1.PackageManager, info2.PackageManager)
 	}
 }

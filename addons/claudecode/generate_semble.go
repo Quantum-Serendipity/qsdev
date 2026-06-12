@@ -5,6 +5,7 @@ import (
 	"os/exec"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -54,7 +55,7 @@ func generateSembleConfig(answers types.WizardAnswers) (*sembleResult, error) {
 		result.Files = append(result.Files, types.GeneratedFile{
 			Path:     ".claude/agents/semble-search.md",
 			Content:  content,
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.LibraryManaged,
 		})
 	}

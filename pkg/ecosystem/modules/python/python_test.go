@@ -14,25 +14,8 @@ import (
 // Compile-time interface compliance check.
 var _ ecosystem.EcosystemModule = (*python.Module)(nil)
 
-func TestName(t *testing.T) {
-	m := &python.Module{}
-	if got := m.Name(); got != "python" {
-		t.Errorf("Name() = %q, want %q", got, "python")
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	m := &python.Module{}
-	if got := m.DisplayName(); got != "Python" {
-		t.Errorf("DisplayName() = %q, want %q", got, "Python")
-	}
-}
-
-func TestTier(t *testing.T) {
-	m := &python.Module{}
-	if got := m.Tier(); got != 1 {
-		t.Errorf("Tier() = %d, want %d", got, 1)
-	}
+func TestModuleIdentity(t *testing.T) {
+	ecosystem.AssertModuleIdentity(t, &python.Module{}, "python", "Python", 1)
 }
 
 // --- Detection tests ---

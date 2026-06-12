@@ -132,27 +132,32 @@ func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
 // for Scala language support with the appropriate JDK and build tool.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
 	buildTool := config.Extra("build_tool", "sbt")
-
 	jdkVer := config.Extra("jdk_version", "21")
-
 	jdkPkg := jdkPackage(jdkVer)
 
-	var b strings.Builder
-
-	b.WriteString("  languages.scala = {\n")
-	b.WriteString("    enable = true;\n")
+	var scalaProps []ecosystem.NixProperty
 	if buildTool == "sbt" {
-		b.WriteString("    sbt.enable = true;\n")
+		scalaProps = append(scalaProps, ecosystem.NixProperty{
+			Key: "sbt.enable", Value: "true",
+		})
 	}
-	b.WriteString("  };\n")
 
-	b.WriteString("\n")
-	b.WriteString("  languages.java = {\n")
-	b.WriteString("    enable = true;\n")
-	fmt.Fprintf(&b, "    jdk.package = pkgs.%s;\n", jdkPkg)
-	b.WriteString("  };\n")
+	javaBlock := ecosystem.BuildLanguageFragment(ecosystem.NixLangConfig{
+		EnablePath: "languages.java",
+		Properties: []ecosystem.NixProperty{
+			{Key: "jdk.package", Value: "pkgs." + jdkPkg},
+		},
+	})
 
-	return b.String(), nil
+	cfg := ecosystem.NixLangConfig{
+		EnablePath: "languages.scala",
+		Properties: scalaProps,
+		ExtraBlocks: []string{
+			javaBlock,
+		},
+	}
+
+	return ecosystem.BuildLanguageFragment(cfg), nil
 }
 
 // SecurityConfigs returns security plugin recommendations for sbt.
@@ -170,7 +175,7 @@ addSbtPlugin("net.vonbuchholtz" % "sbt-dependency-check" % "5.1.0")
 		{
 			Path:     "." + branding.Get().AppName + "/sbt-security-plugins.sbt",
 			Content:  []byte(content),
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 		},
 	}

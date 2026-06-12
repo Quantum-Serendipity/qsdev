@@ -120,7 +120,7 @@ func TestRenderText_FixModeOnlyRemediation(t *testing.T) {
 			Baseline: posture.ConformanceLevel{
 				Pass: false,
 				Checks: []posture.ConformanceCheck{
-					{Name: "claude-md-present", Pass: false, Reason: "CLAUDE.md not found"},
+					{Name: posture.CheckClaudeMDPresent, Pass: false, Reason: "CLAUDE.md not found"},
 				},
 			},
 			Enhanced: posture.ConformanceLevel{Checks: []posture.ConformanceCheck{}},

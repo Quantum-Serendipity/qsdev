@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 func completionMarkerStart() string { return "# " + branding.Get().AppName + ": shell completions" }
@@ -121,11 +122,11 @@ func writeCompletionFile(path string, genFn func(*bytes.Buffer) error) error {
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fileutil.ModeDirDefault); err != nil {
 		return fmt.Errorf("creating completion directory %s: %w", dir, err)
 	}
 
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(path, buf.Bytes(), fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing completion file %s: %w", path, err)
 	}
 	return nil
@@ -144,7 +145,7 @@ func spliceRCFile(rcFile string, contentLine string) error {
 		completionMarkerEnd(),
 	)
 
-	if err := os.MkdirAll(filepath.Dir(rcFile), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(rcFile), fileutil.ModeDirDefault); err != nil {
 		return fmt.Errorf("creating parent directory for %s: %w", rcFile, err)
 	}
 
@@ -169,7 +170,7 @@ func spliceRCFileMulti(rcFile string, lines ...string) error {
 
 	editor := textedit.SpliceRange(spliceArgs...)
 
-	if err := os.MkdirAll(filepath.Dir(rcFile), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(rcFile), fileutil.ModeDirDefault); err != nil {
 		return fmt.Errorf("creating parent directory for %s: %w", rcFile, err)
 	}
 

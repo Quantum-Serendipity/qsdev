@@ -9,6 +9,50 @@ const (
 	weightDepHealth = 0.30
 )
 
+// Grade threshold constants define the minimum rounded integer score for each
+// letter grade. ScoreToGrade walks the table top-down, returning the first
+// grade whose threshold is met.
+const (
+	GradeThresholdAPlus  = 97
+	GradeThresholdA      = 93
+	GradeThresholdAMinus = 90
+	GradeThresholdBPlus  = 87
+	GradeThresholdB      = 83
+	GradeThresholdBMinus = 80
+	GradeThresholdCPlus  = 77
+	GradeThresholdC      = 73
+	GradeThresholdCMinus = 70
+	GradeThresholdDPlus  = 67
+	GradeThresholdD      = 63
+	GradeThresholdDMinus = 60
+)
+
+// gradeEntry maps a minimum score threshold to its letter grade.
+type gradeEntry struct {
+	threshold int
+	grade     string
+}
+
+// gradeTable is ordered from highest to lowest threshold.
+var gradeTable = []gradeEntry{
+	{GradeThresholdAPlus, "A+"},
+	{GradeThresholdA, "A"},
+	{GradeThresholdAMinus, "A-"},
+	{GradeThresholdBPlus, "B+"},
+	{GradeThresholdB, "B"},
+	{GradeThresholdBMinus, "B-"},
+	{GradeThresholdCPlus, "C+"},
+	{GradeThresholdC, "C"},
+	{GradeThresholdCMinus, "C-"},
+	{GradeThresholdDPlus, "D+"},
+	{GradeThresholdD, "D"},
+	{GradeThresholdDMinus, "D-"},
+}
+
+// partialLayerScoreDivisor is the denominator when computing partial layer
+// contribution (Score / 10).
+const partialLayerScoreDivisor = 10.0
+
 // WeightMultiplier returns the numeric weight for a LayerWeight.
 func WeightMultiplier(w LayerWeight) float64 {
 	switch w {
@@ -39,7 +83,7 @@ func ComputeDefenseScore(layers []DefenseLayer) float64 {
 		case LayerEnabled:
 			earnedWeight += w
 		case LayerPartial:
-			earnedWeight += w * float64(l.Score) / 10.0
+			earnedWeight += w * float64(l.Score) / partialLayerScoreDivisor
 		}
 	}
 	if totalWeight == 0 {
@@ -68,7 +112,7 @@ func ComputeTierRelativeDefenseScore(layers []DefenseLayer, currentTier int) flo
 		case LayerEnabled:
 			earnedWeight += w
 		case LayerPartial:
-			earnedWeight += w * float64(l.Score) / 10.0
+			earnedWeight += w * float64(l.Score) / partialLayerScoreDivisor
 		}
 	}
 	if totalWeight == 0 {
@@ -93,32 +137,10 @@ func ComputeAggregateScore(defense, config, deps float64) AggregateScore {
 // 89.5 rounds to 90 = "A-", 89.4 rounds to 89 = "B+"
 func ScoreToGrade(score float64) string {
 	rounded := int(math.Round(score))
-	switch {
-	case rounded >= 97:
-		return "A+"
-	case rounded >= 93:
-		return "A"
-	case rounded >= 90:
-		return "A-"
-	case rounded >= 87:
-		return "B+"
-	case rounded >= 83:
-		return "B"
-	case rounded >= 80:
-		return "B-"
-	case rounded >= 77:
-		return "C+"
-	case rounded >= 73:
-		return "C"
-	case rounded >= 70:
-		return "C-"
-	case rounded >= 67:
-		return "D+"
-	case rounded >= 63:
-		return "D"
-	case rounded >= 60:
-		return "D-"
-	default:
-		return "F"
+	for _, entry := range gradeTable {
+		if rounded >= entry.threshold {
+			return entry.grade
+		}
 	}
+	return "F"
 }

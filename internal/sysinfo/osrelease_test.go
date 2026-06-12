@@ -7,6 +7,8 @@ import (
 )
 
 func TestParseOSRelease(t *testing.T) {
+	t.Parallel()
+
 	type fixture struct {
 		name    string
 		content string
@@ -294,6 +296,7 @@ VERSION_ID=1.0
 
 	for _, tc := range fixtures {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			path := filepath.Join(dir, "os-release")
 			if err := os.WriteFile(path, []byte(tc.content), 0o644); err != nil {
@@ -316,14 +319,141 @@ VERSION_ID=1.0
 	}
 
 	t.Run("nonexistent file returns empty map", func(t *testing.T) {
+		t.Parallel()
 		got := parseOSRelease("/nonexistent/path/os-release")
 		if len(got) != 0 {
 			t.Errorf("expected empty map, got %v", got)
 		}
 	})
+
+	t.Run("empty file returns empty map", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "os-release")
+		if err := os.WriteFile(path, []byte(""), 0o644); err != nil {
+			t.Fatalf("failed to write fixture: %v", err)
+		}
+		got := parseOSRelease(path)
+		if len(got) != 0 {
+			t.Errorf("expected empty map, got %v", got)
+		}
+	})
+
+	t.Run("only comments and blank lines", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "os-release")
+		content := "# comment1\n\n# comment2\n\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("failed to write fixture: %v", err)
+		}
+		got := parseOSRelease(path)
+		if len(got) != 0 {
+			t.Errorf("expected empty map, got %v", got)
+		}
+	})
+
+	t.Run("line without equals sign is skipped", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "os-release")
+		content := "NAME=\"Good\"\nBADLINE\nID=test\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("failed to write fixture: %v", err)
+		}
+		got := parseOSRelease(path)
+		if len(got) != 2 {
+			t.Errorf("expected 2 keys, got %d: %v", len(got), got)
+		}
+		if got["NAME"] != "Good" {
+			t.Errorf("NAME = %q, want %q", got["NAME"], "Good")
+		}
+		if got["ID"] != "test" {
+			t.Errorf("ID = %q, want %q", got["ID"], "test")
+		}
+	})
+
+	t.Run("empty value", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "os-release")
+		content := "EMPTY_KEY=\nID=test\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("failed to write fixture: %v", err)
+		}
+		got := parseOSRelease(path)
+		if got["EMPTY_KEY"] != "" {
+			t.Errorf("EMPTY_KEY = %q, want empty", got["EMPTY_KEY"])
+		}
+	})
+
+	t.Run("value with equals sign", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "os-release")
+		content := "URL=\"https://example.com/?foo=bar\"\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("failed to write fixture: %v", err)
+		}
+		got := parseOSRelease(path)
+		if got["URL"] != "https://example.com/?foo=bar" {
+			t.Errorf("URL = %q, want %q", got["URL"], "https://example.com/?foo=bar")
+		}
+	})
+
+	t.Run("mismatched quotes are not stripped", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "os-release")
+		content := "NAME=\"MismatchedSingle'\nID='MismatchedDouble\"\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("failed to write fixture: %v", err)
+		}
+		got := parseOSRelease(path)
+		if got["NAME"] != "\"MismatchedSingle'" {
+			t.Errorf("NAME = %q, want %q", got["NAME"], "\"MismatchedSingle'")
+		}
+		if got["ID"] != "'MismatchedDouble\"" {
+			t.Errorf("ID = %q, want %q", got["ID"], "'MismatchedDouble\"")
+		}
+	})
+
+	t.Run("whitespace around line is trimmed", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "os-release")
+		content := "  NAME=\"Trimmed\"  \n  ID=test  \n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("failed to write fixture: %v", err)
+		}
+		got := parseOSRelease(path)
+		if got["NAME"] != "Trimmed" {
+			t.Errorf("NAME = %q, want %q", got["NAME"], "Trimmed")
+		}
+		if got["ID"] != "test" {
+			t.Errorf("ID = %q, want %q", got["ID"], "test")
+		}
+	})
+
+	t.Run("single char quoted value", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "os-release")
+		// A single-char value in quotes: "x" should yield "x" (length 1, not stripped)
+		content := "V=\"x\"\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("failed to write fixture: %v", err)
+		}
+		got := parseOSRelease(path)
+		if got["V"] != "x" {
+			t.Errorf("V = %q, want %q", got["V"], "x")
+		}
+	})
 }
 
 func TestDetermineFamily(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name   string
 		id     string
@@ -361,10 +491,25 @@ func TestDetermineFamily(t *testing.T) {
 		{name: "empty id and idlike", id: "", idLike: "", want: "unknown"},
 		{name: "unknown id with debian-like", id: "kali", idLike: "debian", want: "debian"},
 		{name: "unknown id with arch-like", id: "artix", idLike: "arch", want: "arch"},
+
+		// ID takes priority over ID_LIKE.
+		{name: "ubuntu ignores idlike", id: "ubuntu", idLike: "rhel", want: "debian"},
+		{name: "fedora ignores idlike", id: "fedora", idLike: "debian", want: "rhel"},
+		{name: "nixos ignores idlike", id: "nixos", idLike: "debian", want: "nixos"},
+
+		// ID_LIKE with opensuse.
+		{name: "sles via opensuse idlike", id: "sles_sap", idLike: "opensuse", want: "suse"},
+
+		// ID_LIKE containing rhel.
+		{name: "centos via idlike rhel", id: "centos", idLike: "rhel fedora", want: "rhel"},
+
+		// Unknown ID with unknown ID_LIKE.
+		{name: "custom os with custom idlike", id: "myos", idLike: "myparent", want: "unknown"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got := determineFamily(tc.id, tc.idLike)
 			if got != tc.want {
 				t.Errorf("determineFamily(%q, %q) = %q, want %q", tc.id, tc.idLike, got, tc.want)

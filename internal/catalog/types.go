@@ -7,17 +7,17 @@ type TiersFile struct {
 
 // TierDef defines a single security tier.
 type TierDef struct {
-	Order                   int             `yaml:"order"`
-	Inherits                string          `yaml:"inherits,omitempty"`
-	Description             string          `yaml:"description"`
-	DefaultPermissionPreset string          `yaml:"default_permission_preset"`
-	Security                *TierSecurity   `yaml:"security,omitempty"`
-	Tools                   *TierTools      `yaml:"tools,omitempty"`
-	ClaudeCode              *TierClaudeCode `yaml:"claude_code,omitempty"`
+	Order                   int               `yaml:"order"`
+	Inherits                string            `yaml:"inherits,omitempty"`
+	Description             string            `yaml:"description"`
+	DefaultPermissionPreset string            `yaml:"default_permission_preset"`
+	Security                *SecurityConfig   `yaml:"security,omitempty"`
+	Tools                   *ToolsConfig      `yaml:"tools,omitempty"`
+	ClaudeCode              *ClaudeCodeConfig `yaml:"claude_code,omitempty"`
 }
 
-// TierSecurity holds security settings within a tier definition.
-type TierSecurity struct {
+// SecurityConfig holds security settings shared by tiers and profiles.
+type SecurityConfig struct {
 	Level           string `yaml:"level,omitempty"`
 	AgeGating       *bool  `yaml:"age_gating,omitempty"`
 	ScriptBlocking  *bool  `yaml:"script_blocking,omitempty"`
@@ -25,13 +25,13 @@ type TierSecurity struct {
 	VulnScanning    *bool  `yaml:"vuln_scanning,omitempty"`
 }
 
-// TierTools holds tool configuration within a tier definition.
-type TierTools struct {
+// ToolsConfig holds tool configuration shared by tiers and profiles.
+type ToolsConfig struct {
 	Enabled []string `yaml:"enabled"`
 }
 
-// TierClaudeCode holds Claude Code settings within a tier definition.
-type TierClaudeCode struct {
+// ClaudeCodeConfig holds Claude Code settings shared by tiers and profiles.
+type ClaudeCodeConfig struct {
 	Enabled         *bool    `yaml:"enabled,omitempty"`
 	PermissionLevel string   `yaml:"permission_level,omitempty"`
 	MCPServers      []string `yaml:"mcp_servers,omitempty"`
@@ -63,32 +63,11 @@ type ProfilesFile struct {
 
 // ProfileDef defines a tier-based infrastructure profile.
 type ProfileDef struct {
-	Tier        string             `yaml:"tier"`
-	Description string             `yaml:"description"`
-	Security    *ProfileSecurity   `yaml:"security,omitempty"`
-	Tools       *ProfileTools      `yaml:"tools,omitempty"`
-	ClaudeCode  *ProfileClaudeCode `yaml:"claude_code,omitempty"`
-}
-
-// ProfileSecurity holds security settings within a profile.
-type ProfileSecurity struct {
-	Level           string `yaml:"level,omitempty"`
-	AgeGating       *bool  `yaml:"age_gating,omitempty"`
-	ScriptBlocking  *bool  `yaml:"script_blocking,omitempty"`
-	LockEnforcement *bool  `yaml:"lock_enforcement,omitempty"`
-	VulnScanning    *bool  `yaml:"vuln_scanning,omitempty"`
-}
-
-// ProfileTools holds tool settings within a profile.
-type ProfileTools struct {
-	Enabled []string `yaml:"enabled"`
-}
-
-// ProfileClaudeCode holds Claude Code settings within a profile.
-type ProfileClaudeCode struct {
-	Enabled         *bool    `yaml:"enabled,omitempty"`
-	PermissionLevel string   `yaml:"permission_level,omitempty"`
-	MCPServers      []string `yaml:"mcp_servers,omitempty"`
+	Tier        string            `yaml:"tier"`
+	Description string            `yaml:"description"`
+	Security    *SecurityConfig   `yaml:"security,omitempty"`
+	Tools       *ToolsConfig      `yaml:"tools,omitempty"`
+	ClaudeCode  *ClaudeCodeConfig `yaml:"claude_code,omitempty"`
 }
 
 // ProjectProfilesFile represents the project_profiles.yaml schema.

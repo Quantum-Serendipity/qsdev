@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -23,7 +24,7 @@ func generateVersionSentinelFiles(answers types.WizardAnswers, registry *ecosyst
 	files = append(files, types.GeneratedFile{
 		Path:     ".claude/skills/version-sentinel/SKILL.md",
 		Content:  skillContent,
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.LibraryManaged,
 	})
 
@@ -40,7 +41,7 @@ func generateVersionSentinelFiles(answers types.WizardAnswers, registry *ecosyst
 		files = append(files, types.GeneratedFile{
 			Path:     ".version-sentinel/ignore",
 			Content:  []byte(strings.Join(lines, "\n")),
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.LibraryManaged,
 		})
 	}
@@ -49,7 +50,7 @@ func generateVersionSentinelFiles(answers types.WizardAnswers, registry *ecosyst
 	files = append(files, types.GeneratedFile{
 		Path:     ".version-sentinel/events.jsonl",
 		Content:  []byte{},
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.LibraryManaged,
 	})
 

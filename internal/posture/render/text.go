@@ -360,17 +360,17 @@ func renderFix(report *posture.PostureReport, w io.Writer) error {
 // conformance check.
 func conformanceRemediation(checkName string) string {
 	switch checkName {
-	case "lock-files-present":
+	case posture.CheckLockFilesPresent:
 		return "Run your package manager's install/lock command to generate lock files"
-	case "no-critical-vulns":
+	case posture.CheckNoCriticalVulns:
 		return "Run qsdev check --scan to identify and remediate critical vulnerabilities"
-	case "claude-md-present":
+	case posture.CheckClaudeMDPresent:
 		return "Run qsdev init to generate CLAUDE.md"
-	case "settings-json-present":
+	case posture.CheckSettingsJSONPresent:
 		return "Run qsdev init to generate .claude/settings.json"
-	case "high-weight-layers-enabled":
+	case posture.CheckHighWeightLayersOn:
 		return "Run qsdev enable attach-guard to enable critical defense layers"
-	case "pre-commit-hooks":
+	case posture.CheckPreCommitHooks:
 		return "Run qsdev init to configure pre-commit hooks"
 	default:
 		return ""

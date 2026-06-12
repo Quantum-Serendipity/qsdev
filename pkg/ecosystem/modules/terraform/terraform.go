@@ -132,7 +132,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 		{
 			Path:     ".terraformrc",
 			Content:  []byte(content.String()),
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 		},
 	}

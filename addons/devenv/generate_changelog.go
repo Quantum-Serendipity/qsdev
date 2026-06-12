@@ -3,6 +3,7 @@ package devenv
 import (
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -67,7 +68,7 @@ func GenerateCliffToml(_ types.WizardAnswers) (*types.GeneratedFile, error) {
 	return &types.GeneratedFile{
 		Path:     "cliff.toml",
 		Content:  []byte(b.String()),
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 		Owner:    "changelog",
 	}, nil

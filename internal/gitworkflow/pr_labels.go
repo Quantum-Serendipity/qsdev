@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cigeneration"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -84,13 +85,13 @@ func GenerateLabelerConfig(answers types.WizardAnswers) ([]types.GeneratedFile, 
 		{
 			Path:     ".github/labeler.yml",
 			Content:  []byte(lb.String()),
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 		},
 		{
 			Path:     ".github/workflows/labeler.yml",
 			Content:  []byte(wf.String()),
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 		},
 	}, nil

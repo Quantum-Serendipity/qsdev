@@ -73,22 +73,39 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for Go language support with supply-chain security hardening.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
-	var b strings.Builder
-	b.WriteString("  languages.go = {\n")
-	b.WriteString("    enable = true;\n")
-	fmt.Fprintf(&b, "    package = %s;\n", goVersionToNixPackage(config.Version))
-	b.WriteString("  };\n")
-	b.WriteString("\n")
-	b.WriteString("  # Enforce module-aware mode — prevents unvetted dependency additions\n")
-	b.WriteString("  env.GOFLAGS = \"-mod=readonly\";\n")
-	if config.RegistryProxy != "" {
-		fmt.Fprintf(&b, "  env.GOPROXY = \"%s,direct\";\n", ecosystem.NixEscapeString(config.RegistryProxy))
+	envVars := []ecosystem.NixEnvVar{
+		{
+			Key:     "GOFLAGS",
+			Value:   `"-mod=readonly"`,
+			Comment: "Enforce module-aware mode — prevents unvetted dependency additions",
+		},
 	}
-	b.WriteString("  # Ensure all modules are verified via the Go checksum database\n")
-	b.WriteString("  env.GONOSUMCHECK = \"\";\n")
-	b.WriteString("  # Ensure all modules use the Go notary for transparency\n")
-	b.WriteString("  env.GONOSUMDB = \"\";\n")
-	return b.String(), nil
+	if config.RegistryProxy != "" {
+		envVars = append(envVars, ecosystem.NixEnvVar{
+			Key:   "GOPROXY",
+			Value: fmt.Sprintf(`"%s,direct"`, ecosystem.NixEscapeString(config.RegistryProxy)),
+		})
+	}
+	envVars = append(envVars,
+		ecosystem.NixEnvVar{
+			Key:     "GONOSUMCHECK",
+			Value:   `""`,
+			Comment: "Ensure all modules are verified via the Go checksum database",
+		},
+		ecosystem.NixEnvVar{
+			Key:     "GONOSUMDB",
+			Value:   `""`,
+			Comment: "Ensure all modules use the Go notary for transparency",
+		},
+	)
+
+	return ecosystem.BuildLanguageFragment(ecosystem.NixLangConfig{
+		EnablePath: "languages.go",
+		Properties: []ecosystem.NixProperty{
+			{Key: "package", Value: goVersionToNixPackage(config.Version)},
+		},
+		EnvVars: envVars,
+	}), nil
 }
 
 // SecurityConfigs returns generated security configuration files.

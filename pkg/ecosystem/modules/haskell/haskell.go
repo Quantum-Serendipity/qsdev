@@ -8,7 +8,6 @@ package haskell
 
 import (
 	"path/filepath"
-	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -89,14 +88,18 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
 	buildTool := config.Extra("build_tool", "cabal")
 
-	var b strings.Builder
-	b.WriteString("  languages.haskell.enable = true;\n")
-	if buildTool == "stack" {
-		b.WriteString("  languages.haskell.stack.enable = true;\n")
+	cfg := ecosystem.NixLangConfig{
+		EnablePath: "languages.haskell",
 	}
-	b.WriteString("  # NOTE: cabal.project.freeze is NOT a true lockfile — it pins\n")
-	b.WriteString("  # versions but does not record content hashes.\n")
-	return b.String(), nil
+	if buildTool == "stack" {
+		cfg.ExtraBlocks = append(cfg.ExtraBlocks,
+			"  languages.haskell.stack.enable = true;\n")
+	}
+	cfg.ExtraBlocks = append(cfg.ExtraBlocks,
+		"  # NOTE: cabal.project.freeze is NOT a true lockfile — it pins\n"+
+			"  # versions but does not record content hashes.\n")
+
+	return ecosystem.BuildLanguageFragment(cfg), nil
 }
 
 // SecurityConfigs returns generated security configuration files.

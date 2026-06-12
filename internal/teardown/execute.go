@@ -8,6 +8,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/surgery"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 // Execute carries out the teardown plan, removing files, cleaning shared
@@ -115,7 +116,7 @@ func cleanSharedFile(projectRoot, relPath string, registry *toolreg.Registry) er
 		}
 	}
 
-	return os.WriteFile(absPath, updated, 0o644)
+	return os.WriteFile(absPath, updated, fileutil.ModeReadWrite)
 }
 
 // applySurgeryRemove dispatches to the correct surgery remove function based

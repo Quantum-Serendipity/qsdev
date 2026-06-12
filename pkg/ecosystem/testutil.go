@@ -1,6 +1,27 @@
 package ecosystem
 
-import "github.com/Quantum-Serendipity/qsdev/pkg/types"
+import (
+	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
+)
+
+// AssertModuleIdentity checks the three identity properties (Name, DisplayName,
+// Tier) of an EcosystemModule. It is intended for cross-package use in module
+// test files to eliminate boilerplate.
+func AssertModuleIdentity(t *testing.T, m EcosystemModule, wantName, wantDisplay string, wantTier int) {
+	t.Helper()
+
+	if got := m.Name(); got != wantName {
+		t.Errorf("Name() = %q, want %q", got, wantName)
+	}
+	if got := m.DisplayName(); got != wantDisplay {
+		t.Errorf("DisplayName() = %q, want %q", got, wantDisplay)
+	}
+	if got := m.Tier(); got != wantTier {
+		t.Errorf("Tier() = %d, want %d", got, wantTier)
+	}
+}
 
 // Compile-time interface compliance checks.
 var _ EcosystemModule = (*MockModule)(nil)

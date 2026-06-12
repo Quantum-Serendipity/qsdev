@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 // cpuPeriodMicroseconds is the fixed CPU period used in cgroup cpu.max values.
@@ -38,19 +39,19 @@ func (m *Manager) ScopePath(name string) string {
 func (m *Manager) CreateScope(name string, limits sandbox.ResourceLimits) (string, error) {
 	scopePath := m.ScopePath(name)
 
-	if err := os.MkdirAll(scopePath, 0o755); err != nil {
+	if err := os.MkdirAll(scopePath, fileutil.ModeDirDefault); err != nil {
 		return "", fmt.Errorf("creating cgroup scope directory: %w", err)
 	}
 
-	if err := os.WriteFile(path.Join(scopePath, "memory.max"), formatMemoryMax(limits.MemoryBytes), 0o644); err != nil {
+	if err := os.WriteFile(path.Join(scopePath, "memory.max"), formatMemoryMax(limits.MemoryBytes), fileutil.ModeReadWrite); err != nil {
 		return "", fmt.Errorf("writing memory.max: %w", err)
 	}
 
-	if err := os.WriteFile(path.Join(scopePath, "pids.max"), formatPIDsMax(limits.MaxPIDs), 0o644); err != nil {
+	if err := os.WriteFile(path.Join(scopePath, "pids.max"), formatPIDsMax(limits.MaxPIDs), fileutil.ModeReadWrite); err != nil {
 		return "", fmt.Errorf("writing pids.max: %w", err)
 	}
 
-	if err := os.WriteFile(path.Join(scopePath, "cpu.max"), formatCPUMax(limits.CPUQuotaPercent), 0o644); err != nil {
+	if err := os.WriteFile(path.Join(scopePath, "cpu.max"), formatCPUMax(limits.CPUQuotaPercent), fileutil.ModeReadWrite); err != nil {
 		return "", fmt.Errorf("writing cpu.max: %w", err)
 	}
 

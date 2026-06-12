@@ -120,7 +120,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 		{
 			Path:           ".cargo/config.toml",
 			Content:        []byte(content.String()),
-			Mode:           0o644,
+			Mode:           fileutil.ModeReadWrite,
 			Strategy:       types.Overwrite,
 			SkipValidation: true,
 		},

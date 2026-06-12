@@ -9,9 +9,9 @@ type ResolvedTier struct {
 	Order                   int
 	Description             string
 	DefaultPermissionPreset string
-	Security                TierSecurity
-	Tools                   TierTools
-	ClaudeCode              TierClaudeCode
+	Security                SecurityConfig
+	Tools                   ToolsConfig
+	ClaudeCode              ClaudeCodeConfig
 }
 
 // ResolveTier resolves a tier by name, recursively applying inheritance.

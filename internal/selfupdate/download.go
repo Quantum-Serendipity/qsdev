@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 const (
@@ -225,7 +226,7 @@ func extractFromTarGz(archivePath, binaryName, destPath string) error {
 			if header.Size > maxExtractSize {
 				return fmt.Errorf("entry %s size %d exceeds maximum %d", header.Name, header.Size, maxExtractSize)
 			}
-			out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+			out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fileutil.ModeExecutable)
 			if err != nil {
 				return fmt.Errorf("creating output file %s: %w", destPath, err)
 			}
@@ -264,7 +265,7 @@ func extractFromZip(archivePath, binaryName, destPath string) error {
 			}
 			defer src.Close()
 
-			out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+			out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fileutil.ModeExecutable)
 			if err != nil {
 				return fmt.Errorf("creating output file %s: %w", destPath, err)
 			}

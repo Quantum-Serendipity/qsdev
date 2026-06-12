@@ -493,31 +493,9 @@ func TestVerificationCommands_Empty(t *testing.T) {
 
 // --- Metadata tests ---
 
-func TestName(t *testing.T) {
+func TestModuleIdentity(t *testing.T) {
 	t.Parallel()
-
-	m := newModule()
-	if got := m.Name(); got != "aws" {
-		t.Errorf("Name() = %q, want %q", got, "aws")
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	t.Parallel()
-
-	m := newModule()
-	if got := m.DisplayName(); got != "AWS CLI" {
-		t.Errorf("DisplayName() = %q, want %q", got, "AWS CLI")
-	}
-}
-
-func TestTier(t *testing.T) {
-	t.Parallel()
-
-	m := newModule()
-	if got := m.Tier(); got != 2 {
-		t.Errorf("Tier() = %d, want 2", got)
-	}
+	ecosystem.AssertModuleIdentity(t, newModule(), "aws", "AWS CLI", 2)
 }
 
 // --- helpers ---

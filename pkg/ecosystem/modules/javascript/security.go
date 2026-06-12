@@ -2,13 +2,14 @@ package javascript
 
 import (
 	"fmt"
-	"os"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
-	"gopkg.in/yaml.v3"
 )
 
 // SecurityConfigs returns generated security configuration files for the
@@ -55,7 +56,7 @@ func npmSecurityConfig(registryProxy string) types.GeneratedFile {
 	return types.GeneratedFile{
 		Path:     ".npmrc",
 		Content:  []byte(b.String()),
-		Mode:     os.FileMode(0o644),
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 	}
 }
@@ -123,7 +124,7 @@ func pnpmSecurityConfig(registryProxy string) types.GeneratedFile {
 	return types.GeneratedFile{
 		Path:     "pnpm-workspace.yaml",
 		Content:  content,
-		Mode:     os.FileMode(0o644),
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 	}
 }
@@ -190,7 +191,7 @@ func yarnSecurityConfig(registryProxy string) types.GeneratedFile {
 	return types.GeneratedFile{
 		Path:     ".yarnrc.yml",
 		Content:  content,
-		Mode:     os.FileMode(0o644),
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 	}
 }
@@ -209,7 +210,7 @@ func bunSecurityConfig() types.GeneratedFile {
 	return types.GeneratedFile{
 		Path:     "bunfig.toml",
 		Content:  []byte(b.String()),
-		Mode:     os.FileMode(0o644),
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 	}
 }

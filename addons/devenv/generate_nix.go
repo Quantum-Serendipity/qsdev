@@ -3,8 +3,9 @@ package devenv
 import (
 	"fmt"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -29,7 +30,7 @@ func GenerateDevenvNix(answers types.WizardAnswers, registry *ecosystem.Registry
 	return &types.GeneratedFile{
 		Path:     "devenv.nix",
 		Content:  content,
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.ManualMerge,
 	}, nil
 }

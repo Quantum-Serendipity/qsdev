@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 const historySchemaVersion = "1.0.0"
@@ -59,7 +61,7 @@ func SaveHistory(path string, store *HistoryStore) error {
 	}
 
 	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing history file: %w", err)
 	}
 	return nil

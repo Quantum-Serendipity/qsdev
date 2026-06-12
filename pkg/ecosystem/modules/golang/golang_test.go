@@ -13,25 +13,8 @@ import (
 // Compile-time interface compliance check.
 var _ ecosystem.EcosystemModule = (*golang.Module)(nil)
 
-func TestName(t *testing.T) {
-	m := &golang.Module{}
-	if got := m.Name(); got != "go" {
-		t.Errorf("Name() = %q, want %q", got, "go")
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	m := &golang.Module{}
-	if got := m.DisplayName(); got != "Go" {
-		t.Errorf("DisplayName() = %q, want %q", got, "Go")
-	}
-}
-
-func TestTier(t *testing.T) {
-	m := &golang.Module{}
-	if got := m.Tier(); got != 1 {
-		t.Errorf("Tier() = %d, want %d", got, 1)
-	}
+func TestModuleIdentity(t *testing.T) {
+	ecosystem.AssertModuleIdentity(t, &golang.Module{}, "go", "Go", 1)
 }
 
 func TestDetect_GoModPresent(t *testing.T) {

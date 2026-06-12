@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -69,7 +70,7 @@ func GenerateNixHardeningGuide(answers types.WizardAnswers) (*types.GeneratedFil
 	return &types.GeneratedFile{
 		Path:     "docs/nix-conf-hardening.md",
 		Content:  content,
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 	}, nil
 }

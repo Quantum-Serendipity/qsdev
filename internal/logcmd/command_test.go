@@ -757,6 +757,7 @@ func TestCommandTree(t *testing.T) {
 		f := cmd.PersistentFlags().Lookup("global")
 		if f == nil {
 			t.Fatal("expected --global persistent flag")
+			return
 		}
 		if f.DefValue != "false" {
 			t.Errorf("--global default = %q, want %q", f.DefValue, "false")

@@ -39,7 +39,7 @@ func (r *Registry) MustRegister(t Tool) {
 
 // ByName returns the tool with the given name.
 func (r *Registry) ByName(name string) (*Tool, bool) {
-	return r.Registry.Get(name)
+	return r.Get(name)
 }
 
 // All returns all registered tools sorted by category then name.
@@ -103,7 +103,7 @@ func categoryOrder(c ToolCategory) int {
 // YAML provides declarative metadata, Go code provides function hooks.
 // If the tool name is not in the registry, this is a no-op.
 func (r *Registry) AttachBehavior(name string, b ToolBehavior) {
-	found := r.Registry.Modify(name, func(t *Tool) {
+	found := r.Modify(name, func(t *Tool) {
 		if b.EnableFunc != nil {
 			t.EnableFunc = b.EnableFunc
 		}

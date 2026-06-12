@@ -45,7 +45,7 @@ func (r *McpServerRegistry) MustRegister(def McpServerDefinition) {
 
 // ByName returns the server definition for the given name and whether it was found.
 func (r *McpServerRegistry) ByName(name string) (*McpServerDefinition, bool) {
-	return r.Registry.Get(name)
+	return r.Get(name)
 }
 
 // All returns all registered server definitions sorted by name.

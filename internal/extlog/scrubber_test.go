@@ -250,6 +250,7 @@ func TestNewScrubberInitialization(t *testing.T) {
 
 	if s == nil {
 		t.Fatal("NewScrubber returned nil")
+		return
 	}
 	if s.homeDir != "/home/user" {
 		t.Errorf("homeDir = %q, want %q", s.homeDir, "/home/user")

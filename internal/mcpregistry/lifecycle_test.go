@@ -121,7 +121,7 @@ func TestInstall_NixPackage(t *testing.T) {
 	}
 	_ = reg.Register(testDef)
 	t.Cleanup(func() {
-		reg.Registry.Delete("test-nix-lifecycle")
+		reg.Delete("test-nix-lifecycle")
 	})
 
 	runner := &mockRunner{}

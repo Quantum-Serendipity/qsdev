@@ -67,7 +67,7 @@ func (r *Registry) ByTier(tier int) []EcosystemModule {
 
 // ByName looks up a single module by its canonical name.
 func (r *Registry) ByName(name string) (EcosystemModule, bool) {
-	return r.Registry.Get(name)
+	return r.Get(name)
 }
 
 // DetectAll runs every registered module's Detect method against root and

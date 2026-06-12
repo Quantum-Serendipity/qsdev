@@ -105,7 +105,7 @@ func enrichFromCatalog(r *McpServerRegistry) {
 			continue
 		}
 
-		r.Registry.Modify(tool.MCPServerName, func(def *McpServerDefinition) {
+		r.Modify(tool.MCPServerName, func(def *McpServerDefinition) {
 			def.ToolRegName = toolName
 			if def.DisplayName == "" {
 				def.DisplayName = tool.DisplayName

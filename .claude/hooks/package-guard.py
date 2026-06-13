@@ -77,6 +77,23 @@ DENYLIST: set[str] = {p.strip() for p in _env_denylist.split(",") if p.strip()} 
     *(),  # empty spread — keeps this a set literal, not a dict
 }
 
+# Team-level allowlist: packages pre-approved by the consulting firm.
+# Packages in this list bypass vulnerability and age checks entirely.
+_env_team_allowlist = os.environ.get("PACKAGE_GUARD_TEAM_ALLOWLIST", "")
+TEAM_ALLOWLIST: set[str] = {p.strip() for p in _env_team_allowlist.split(",") if p.strip()}
+
+# Team-level denylist: packages blocked by consulting firm policy.
+# Checked before all other checks (including per-project allowlist).
+_env_team_denylist = os.environ.get("PACKAGE_GUARD_TEAM_DENYLIST", "")
+TEAM_DENYLIST: set[str] = {p.strip() for p in _env_team_denylist.split(",") if p.strip()}
+
+# New-dependency gate: controls behavior for packages not in the project lockfile.
+# "deny" = block new deps, "ask" = flag for review, "allow" = permit (default).
+NEW_DEP_GATE: str = os.environ.get("PACKAGE_GUARD_NEW_DEP_GATE", "allow")
+
+# SOC 2 audit trail: when enabled, log dependency decisions to a separate file.
+SOC2_AUDIT_ENABLED: bool = os.environ.get("PACKAGE_GUARD_SOC2_AUDIT", "").lower() == "true"
+
 # Timeout per individual API call in seconds.
 API_TIMEOUT: int = 10
 
@@ -84,6 +101,12 @@ API_TIMEOUT: int = 10
 AUDIT_LOG: Path = Path(
     os.environ.get("CLAUDE_PROJECT_DIR", "/tmp")
 ) / ".claude" / "hook-audit.log"
+
+# SOC 2 dependency audit trail.
+SOC2_AUDIT_DIR: Path = Path(
+    os.environ.get("CLAUDE_AUDIT_DIR", os.path.expanduser("~/.claude/audit"))
+)
+SOC2_AUDIT_FILE: Path = SOC2_AUDIT_DIR / f"dependency-changes-{datetime.now(timezone.utc).strftime('%Y-%m')}.jsonl"
 
 # ---------------------------------------------------------------------------
 # Package manager detection patterns
@@ -166,6 +189,58 @@ def audit_log(entry: dict) -> None:
     except OSError:
         # Logging failure must not block the hook decision.
         pass
+
+
+def soc2_audit_log(entry: dict) -> None:
+    """Append a dependency decision to the SOC 2 audit trail when enabled."""
+    if not SOC2_AUDIT_ENABLED:
+        return
+    try:
+        SOC2_AUDIT_DIR.mkdir(parents=True, exist_ok=True)
+        entry["timestamp"] = datetime.now(timezone.utc).isoformat()
+        with open(SOC2_AUDIT_FILE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass  # SOC2 audit logging is best-effort; must not block hook decisions.
+
+
+def is_in_lockfile(package_name: str, ecosystem: str) -> Optional[bool]:
+    """
+    Check if a package appears in a project lockfile.
+    Returns True if found, False if lockfile exists but package is missing,
+    None if no lockfile is detected (skip check).
+    """
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR", ".")
+    lower_name = package_name.lower()
+    lockfiles: list[tuple[str, str]] = []
+
+    if ecosystem == "npm":
+        lockfiles = [
+            ("package-lock.json", lower_name),
+            ("yarn.lock", package_name),
+            ("pnpm-lock.yaml", package_name),
+        ]
+    elif ecosystem == "PyPI":
+        lockfiles = [
+            ("requirements.txt", lower_name),
+            ("Pipfile.lock", f'"{package_name}"'),
+            ("uv.lock", lower_name),
+        ]
+    elif ecosystem == "crates.io":
+        lockfiles = [
+            ("Cargo.lock", f'name = "{package_name}"'),
+        ]
+
+    for filename, search_term in lockfiles:
+        lockpath = Path(project_dir) / filename
+        try:
+            if lockpath.exists():
+                content = lockpath.read_text(errors="replace")
+                return search_term.lower() in content.lower()
+        except OSError:
+            pass  # Unreadable lockfiles are treated as not determinable.
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -446,6 +521,17 @@ def validate_package(
     Validate a single package. Returns (decision, reason).
     decision is one of: "allow", "deny", "ask"
     """
+    # 0a. Team denylist (checked before everything).
+    if package_name.lower() in {d.lower() for d in TEAM_DENYLIST}:
+        return "deny", f"Package '{package_name}' is on the team denylist per consulting policy."
+
+    # 0b. Team allowlist (pre-approved, bypass vuln/age checks).
+    if TEAM_ALLOWLIST:
+        if package_name.lower() in {a.lower() for a in TEAM_ALLOWLIST}:
+            return "allow", f"Package '{package_name}' is team-approved (pre-approved bypass)."
+        # If team allowlist is non-empty and package not in it, deny.
+        return "deny", f"Package '{package_name}' is not on the team-approved list."
+
     # 1. Check denylist.
     if package_name.lower() in {d.lower() for d in DENYLIST}:
         return "deny", f"Package '{package_name}' is on the explicit denylist."
@@ -586,10 +672,35 @@ def main() -> None:
             checked_packages.append(pkg_name)
             decision, reason = validate_package(pkg_name, ecosystem, manager, version)
 
+            is_new = None
+            if decision == "allow" and NEW_DEP_GATE != "allow":
+                in_lock = is_in_lockfile(pkg_name, ecosystem)
+                if in_lock is False:
+                    is_new = True
+                    gate_msg = (
+                        f"New dependency '{pkg_name}' not found in project lockfile. "
+                        f"Add to team allowlist or lockfile first."
+                    )
+                    if NEW_DEP_GATE == "deny":
+                        decision, reason = "deny", gate_msg
+                    elif NEW_DEP_GATE == "ask":
+                        decision, reason = "ask", gate_msg
+                elif in_lock is True:
+                    is_new = False
+
             if decision == "deny":
                 deny_reasons.append(reason)
             elif decision == "ask":
                 ask_reasons.append(reason)
+
+            soc2_audit_log({
+                "package_name": pkg_name,
+                "ecosystem": ecosystem,
+                "version": version or "",
+                "decision": decision,
+                "reason": reason,
+                "is_new_dependency": is_new,
+            })
 
         needs_safety_flags.append(manager)
 

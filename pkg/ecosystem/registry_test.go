@@ -61,7 +61,7 @@ func TestRegisterDuplicateReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on duplicate Register, got nil")
 	}
-	wantMsg := `ecosystem module "go" is already registered`
+	wantMsg := `ecosystem module "go" already registered`
 	if err.Error() != wantMsg {
 		t.Errorf("error = %q, want %q", err.Error(), wantMsg)
 	}

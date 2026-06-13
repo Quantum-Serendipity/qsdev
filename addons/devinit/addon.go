@@ -38,20 +38,17 @@ var (
 	profileRegistryOnce sync.Once
 )
 
-// ensureProfileRegistry lazily initializes profileRegistry with the built-in
-// defaults if it was not already set by the addon lifecycle (initialize).
 func ensureProfileRegistry() *ProjectProfileRegistry {
 	profileRegistryOnce.Do(func() {
-		if profileRegistry == nil {
-			profileRegistry = DefaultProjectProfileRegistry()
-		}
+		profileRegistry = DefaultProjectProfileRegistry()
 	})
 	return profileRegistry
 }
 
 func initialize() error {
-	profileRegistry = DefaultProjectProfileRegistry()
-	profileRegistryOnce.Do(func() {}) // mark as done so ensureProfileRegistry is a no-op
+	profileRegistryOnce.Do(func() {
+		profileRegistry = DefaultProjectProfileRegistry()
+	})
 	for name, p := range addon.Config.Profiles {
 		if err := profileRegistry.Register(name, p); err != nil {
 			slog.Warn("failed to register profile", "name", name, "error", err)

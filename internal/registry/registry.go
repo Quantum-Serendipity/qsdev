@@ -7,6 +7,7 @@ package registry
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 	"sync"
 )
@@ -125,9 +126,7 @@ func (r *Registry[T]) All() map[string]T {
 	defer r.mu.RUnlock()
 
 	out := make(map[string]T, len(r.items))
-	for k, v := range r.items {
-		out[k] = v
-	}
+	maps.Copy(out, r.items)
 	return out
 }
 
@@ -152,9 +151,7 @@ func (r *Registry[T]) Range(fn func(key string, item T) bool) {
 }
 
 // Modify looks up the item for key and, if found, calls fn while holding
-// the write lock. This is useful when T is a pointer type and the caller
-// needs to mutate the pointed-to value atomically. Returns false if key
-// was not found.
+// the write lock. Returns false if key was not found.
 func (r *Registry[T]) Modify(key string, fn func(item T)) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -164,6 +161,7 @@ func (r *Registry[T]) Modify(key string, fn func(item T)) bool {
 		return false
 	}
 	fn(item)
+	r.items[key] = item
 	return true
 }
 

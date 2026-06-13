@@ -360,19 +360,13 @@ func mergeFile(f types.GeneratedFile, storedState types.GeneratedState, projectR
 // commands. The factory function makeAddItemCmd uses it to build a
 // cobra.Command with identical control flow but type-specific behavior.
 type addItemSpec struct {
-	use       string   // cobra Use field
-	short     string   // cobra Short description
-	long      string   // cobra Long description
-	validArgs []string // for shell completion (nil if not applicable)
+	use       string
+	short     string
+	long      string
+	validArgs []string
 
-	// validate checks whether name is acceptable before loading answers.
-	// Return nil to accept.
-	validate func(name string) error
-	// mutate applies the item to the answers. Return an error to reject
-	// (e.g. duplicate detection).
-	mutate func(a *types.WizardAnswers, name string) error
-	// successMsg formats the message printed after a successful add.
-	// It receives the item name and the count of files written.
+	validate   func(name string) error
+	mutate     func(a *types.WizardAnswers, name string) error
 	successMsg func(name string, filesWritten int) string
 }
 
@@ -439,6 +433,8 @@ func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, proje
 		return 0, fmt.Errorf("loading state: %w", err)
 	}
 
+	diskStatus := state.CheckModified(existingState, projectRoot)
+
 	// Only write files that are new or whose content changed.
 	var writtenFiles []types.GeneratedFile
 	for _, f := range files {
@@ -454,8 +450,6 @@ func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, proje
 				continue
 			}
 
-			// File content changed — check if user modified it.
-			diskStatus := state.CheckModified(existingState, projectRoot)
 			if ds, found := diskStatus[f.Path]; found && ds.Status == types.Modified {
 				merged, mergeErr := mergeFile(f, existingState, projectRoot)
 				if mergeErr != nil {

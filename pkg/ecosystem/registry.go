@@ -1,7 +1,6 @@
 package ecosystem
 
 import (
-	"fmt"
 	"sort"
 	"sync"
 
@@ -26,11 +25,7 @@ func NewRegistry() *Registry {
 // Register adds a module to the registry. It returns an error if a module
 // with the same Name() is already registered.
 func (r *Registry) Register(m EcosystemModule) error {
-	err := r.Registry.Register(m.Name(), m)
-	if err != nil {
-		return fmt.Errorf("ecosystem module %q is already registered", m.Name())
-	}
-	return nil
+	return r.Registry.Register(m.Name(), m)
 }
 
 // All returns every registered module, sorted by tier (ascending) then

@@ -358,7 +358,7 @@ func renderFix(report *posture.PostureReport, w io.Writer) error {
 
 // conformanceRemediation returns a suggested remediation for a failed
 // conformance check.
-func conformanceRemediation(checkName string) string {
+func conformanceRemediation(checkName posture.CheckName) string {
 	switch checkName {
 	case posture.CheckLockFilesPresent:
 		return "Run your package manager's install/lock command to generate lock files"

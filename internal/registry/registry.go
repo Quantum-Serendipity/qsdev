@@ -130,6 +130,19 @@ func (r *Registry[T]) All() map[string]T {
 	return out
 }
 
+// Values returns all registered values as a slice. The order is
+// non-deterministic; callers that need ordering should sort the result.
+func (r *Registry[T]) Values() []T {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	out := make([]T, 0, len(r.items))
+	for _, v := range r.items {
+		out = append(out, v)
+	}
+	return out
+}
+
 // Count returns the number of registered items.
 func (r *Registry[T]) Count() int {
 	r.mu.RLock()

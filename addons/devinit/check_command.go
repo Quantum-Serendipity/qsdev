@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
@@ -154,21 +155,17 @@ func isMachineReadableFormat(f check.OutputFormat) bool {
 }
 
 // criticalDenyRules returns the deny rules that are considered critical and
-// must always be present in .claude/settings.json. This is a focused subset
-// of the full deny rule set — the most dangerous operations that agents must
-// never perform without explicit human approval.
+// must always be present in .claude/settings.json. Sourced from the catalog's
+// destructive_ops and pipe_to_shell deny sets to stay in sync with generated
+// settings and avoid hardcoded duplication.
 func criticalDenyRules() []string {
-	return []string{
-		`Bash(git push --force *)`,
-		`Bash(git push * --force)`,
-		`Bash(git reset --hard *)`,
-		`Bash(rm -rf *)`,
-		`Read(./.env)`,
-		`Read(./.env.*)`,
-		`Read(./secrets/**)`,
-		`Bash(curl * | bash *)`,
-		`Bash(curl * | bash)`,
-		`Bash(curl * | sh *)`,
-		`Bash(curl * | sh)`,
+	cat, err := catalog.Default()
+	if err != nil {
+		return nil
 	}
+	var rules []string
+	for _, setName := range []string{"destructive_ops", "pipe_to_shell"} {
+		rules = append(rules, cat.PermissionDenyRules(setName)...)
+	}
+	return rules
 }

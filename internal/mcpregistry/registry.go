@@ -50,11 +50,7 @@ func (r *McpServerRegistry) ByName(name string) (*McpServerDefinition, bool) {
 
 // All returns all registered server definitions sorted by name.
 func (r *McpServerRegistry) All() []*McpServerDefinition {
-	items := r.Registry.All()
-	result := make([]*McpServerDefinition, 0, len(items))
-	for _, def := range items {
-		result = append(result, def)
-	}
+	result := r.Values()
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].Name < result[j].Name
 	})
@@ -63,9 +59,8 @@ func (r *McpServerRegistry) All() []*McpServerDefinition {
 
 // ByCategory returns all servers in the given category, sorted by name.
 func (r *McpServerRegistry) ByCategory(cat McpCategory) []*McpServerDefinition {
-	items := r.Registry.All()
 	var result []*McpServerDefinition
-	for _, def := range items {
+	for _, def := range r.Values() {
 		if def.Category == cat {
 			result = append(result, def)
 		}
@@ -79,14 +74,12 @@ func (r *McpServerRegistry) ByCategory(cat McpCategory) []*McpServerDefinition {
 // AllHealthy returns servers whose cached health status is healthy, sorted
 // by name. Servers without a cached health result are excluded.
 func (r *McpServerRegistry) AllHealthy() []*McpServerDefinition {
-	items := r.Registry.All()
-
 	r.healthMu.RLock()
 	defer r.healthMu.RUnlock()
 
 	var result []*McpServerDefinition
-	for name, def := range items {
-		hr, ok := r.health[name]
+	for _, def := range r.Values() {
+		hr, ok := r.health[def.Name]
 		if !ok || hr.ServerHealth == nil {
 			continue
 		}

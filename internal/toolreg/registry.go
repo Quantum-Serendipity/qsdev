@@ -44,11 +44,7 @@ func (r *Registry) ByName(name string) (*Tool, bool) {
 
 // All returns all registered tools sorted by category then name.
 func (r *Registry) All() []*Tool {
-	items := r.Registry.All()
-	result := make([]*Tool, 0, len(items))
-	for _, t := range items {
-		result = append(result, t)
-	}
+	result := r.Values()
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].Category != result[j].Category {
 			return categoryOrder(result[i].Category) < categoryOrder(result[j].Category)
@@ -60,9 +56,8 @@ func (r *Registry) All() []*Tool {
 
 // ByCategory returns all tools in the given category, sorted by name.
 func (r *Registry) ByCategory(cat ToolCategory) []*Tool {
-	items := r.Registry.All()
 	var result []*Tool
-	for _, t := range items {
+	for _, t := range r.Values() {
 		if t.Category == cat {
 			result = append(result, t)
 		}

@@ -74,7 +74,7 @@ func (r *FrameworkRegistry) Get(id string) (*Framework, bool) {
 
 // List returns information about all registered frameworks, sorted by ID.
 func (r *FrameworkRegistry) List() []FrameworkInfo {
-	items := r.All()
+	items := r.Values()
 	infos := make([]FrameworkInfo, 0, len(items))
 	for _, f := range items {
 		infos = append(infos, FrameworkInfo{

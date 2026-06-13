@@ -113,43 +113,8 @@ func GenerateLocalTemplate(projectRoot string, resolved *types.QsdevConfig) erro
 	return fileutil.WriteFileAtomic(path, []byte(sb.String()), fileutil.ModeReadWrite)
 }
 
-// EnsureGitignoreEntry reads the .gitignore file in projectRoot, checks for
-// an exact line match of entry, and appends it with a section comment if
-// missing. Creates the .gitignore file if it doesn't exist. The write is atomic.
+// EnsureGitignoreEntry ensures that entry appears in the .gitignore file at
+// projectRoot. It delegates to the canonical implementation in pkg/fileutil.
 func EnsureGitignoreEntry(projectRoot, entry string) error {
-	gitignorePath := filepath.Join(projectRoot, ".gitignore")
-
-	var lines []string
-	data, err := os.ReadFile(gitignorePath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("reading .gitignore: %w", err)
-	}
-
-	if err == nil {
-		content := string(data)
-		lines = strings.Split(content, "\n")
-
-		// Check for exact line match.
-		for _, line := range lines {
-			if strings.TrimSpace(line) == entry {
-				return nil // Already present.
-			}
-		}
-	}
-
-	// Append the entry with a section comment.
-	var b strings.Builder
-	if len(data) > 0 {
-		b.Write(data)
-		// Ensure trailing newline before our section.
-		if !strings.HasSuffix(string(data), "\n") {
-			b.WriteString("\n")
-		}
-		b.WriteString("\n")
-	}
-	b.WriteString("# qsdev local configuration\n")
-	b.WriteString(entry)
-	b.WriteString("\n")
-
-	return fileutil.WriteFileAtomic(gitignorePath, []byte(b.String()), fileutil.ModeReadWrite)
+	return fileutil.EnsureGitignoreEntry(projectRoot, entry)
 }

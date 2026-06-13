@@ -7,7 +7,7 @@ import (
 )
 
 // CheckName is a typed string identifying a conformance check.
-type CheckName = string
+type CheckName string
 
 // Baseline conformance check names.
 const (

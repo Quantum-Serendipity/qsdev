@@ -1,24 +1,24 @@
 package posture
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // DefenseLayerNames lists the canonical names of all 10 defense layers,
-// ordered to match AssessDefenseLayers.
-var DefenseLayerNames = [...]string{
-	"pretooluse-hooks",
-	"age-gating",
-	"install-script-blocking",
-	"lock-file-enforcement",
-	"vulnerability-scanning",
-	"nix-hardening",
-	"sast",
-	"secrets-scanning",
-	"container-security",
-	"license-compliance",
+// derived from layerTable in init() to prevent drift.
+var DefenseLayerNames [10]string
+
+func init() {
+	if len(layerTable) != len(DefenseLayerNames) {
+		panic(fmt.Sprintf("posture: layerTable has %d entries but DefenseLayerNames expects %d",
+			len(layerTable), len(DefenseLayerNames)))
+	}
+	for i, spec := range layerTable {
+		DefenseLayerNames[i] = spec.Name
+	}
 }
 
 // assessmentInput bundles all inputs needed by layer assessment functions.

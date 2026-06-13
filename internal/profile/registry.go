@@ -44,11 +44,7 @@ func (r *ProfileRegistry) Get(name string) (*InfraProfile, bool) {
 
 // List returns all registered profiles sorted alphabetically by name.
 func (r *ProfileRegistry) List() []*InfraProfile {
-	items := r.All()
-	list := make([]*InfraProfile, 0, len(items))
-	for _, p := range items {
-		list = append(list, p)
-	}
+	list := r.Values()
 	sort.Slice(list, func(i, j int) bool {
 		return list[i].Name < list[j].Name
 	})

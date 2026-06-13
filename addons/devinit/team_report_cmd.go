@@ -2,7 +2,6 @@ package devinit
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -171,7 +170,7 @@ func runTeamReport(cmd *cobra.Command, opts teamReportOptions) error {
 
 	// Write output.
 	if opts.output != "" {
-		if err := os.WriteFile(opts.output, rendered, fileutil.ModeReadWrite); err != nil {
+		if err := fileutil.WriteFileAtomic(opts.output, rendered, fileutil.ModeReadWrite); err != nil {
 			return fmt.Errorf("writing output to %s: %w", opts.output, err)
 		}
 		fmt.Fprintf(cmd.ErrOrStderr(), "Report written to %s\n", opts.output)
@@ -189,7 +188,7 @@ func runGenerateWorkflow(cmd *cobra.Command, output string) error {
 	content := workflow + "\n---\n\n# Per-project steps (add to each project's CI workflow):\n\n" + perProject
 
 	if output != "" {
-		if err := os.WriteFile(output, []byte(content), fileutil.ModeReadWrite); err != nil {
+		if err := fileutil.WriteFileAtomic(output, []byte(content), fileutil.ModeReadWrite); err != nil {
 			return fmt.Errorf("writing workflow to %s: %w", output, err)
 		}
 		fmt.Fprintf(cmd.ErrOrStderr(), "Workflow written to %s\n", output)

@@ -3,7 +3,6 @@ package devinit
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -213,7 +212,7 @@ func loadPolicyEngine() (*policy.PolicyEngine, error) {
 }
 
 func writeOutputFile(path string, data []byte) error {
-	if err := os.WriteFile(path, data, fileutil.ModeReadWrite); err != nil {
+	if err := fileutil.WriteFileAtomic(path, data, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing output file: %w", err)
 	}
 	return nil

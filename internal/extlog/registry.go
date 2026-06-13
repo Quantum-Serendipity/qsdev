@@ -28,12 +28,7 @@ func (r *Registry) Register(p LogProvider) {
 
 // All returns all registered providers.
 func (r *Registry) All() []LogProvider {
-	items := r.Registry.All()
-	result := make([]LogProvider, 0, len(items))
-	for _, p := range items {
-		result = append(result, p)
-	}
-	return result
+	return r.Values()
 }
 
 // ByName returns a provider by name.
@@ -43,9 +38,8 @@ func (r *Registry) ByName(name string) (LogProvider, bool) {
 
 // DetectAll returns providers that found available logs.
 func (r *Registry) DetectAll(projectRoot, homeDir string) []LogProvider {
-	items := r.Registry.All()
 	var available []LogProvider
-	for _, p := range items {
+	for _, p := range r.Values() {
 		if p.Detect(projectRoot, homeDir) {
 			available = append(available, p)
 		}

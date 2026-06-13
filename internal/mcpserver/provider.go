@@ -55,16 +55,10 @@ func (r *Registry) Get(name string) (Provider, bool) {
 
 // All returns all registered providers sorted by name.
 func (r *Registry) All() []Provider {
-	items := r.Registry.All()
-	names := make([]string, 0, len(items))
-	for name := range items {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	result := make([]Provider, 0, len(names))
-	for _, name := range names {
-		result = append(result, items[name])
-	}
+	result := r.Values()
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name() < result[j].Name()
+	})
 	return result
 }
 

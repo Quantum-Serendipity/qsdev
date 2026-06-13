@@ -116,7 +116,7 @@ func runContainerMigrate(ctx context.Context, cmd *cobra.Command, dryRun, autoFi
 			if err != nil {
 				return fmt.Errorf("applying fixes to %s: %w", file, err)
 			}
-			if err := os.WriteFile(file, fixed, fileutil.ModeReadWrite); err != nil {
+			if err := fileutil.WriteFileAtomic(file, fixed, fileutil.ModeReadWrite); err != nil {
 				return fmt.Errorf("writing fixed file %s: %w", file, err)
 			}
 		}

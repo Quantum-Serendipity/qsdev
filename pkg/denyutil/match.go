@@ -25,6 +25,9 @@ func ParseToolPattern(pattern string) (string, string) {
 }
 
 // GlobMatchArgs checks if the deny rule's args pattern matches the operation's args.
+// Wildcards (*) match any substring. Multiple wildcards are supported:
+// prefix ("foo *"), suffix ("* bar"), embedded ("foo * bar"), and
+// combinations ("*foo*bar*") all work as expected.
 func GlobMatchArgs(denyArgs, opArgs string) bool {
 	if denyArgs == "" && opArgs == "" {
 		return true
@@ -41,16 +44,37 @@ func GlobMatchArgs(denyArgs, opArgs string) bool {
 		return true
 	}
 
-	if strings.Contains(denyArgs, "*") && !strings.HasSuffix(denyArgs, "*") {
+	if !strings.Contains(denyArgs, "*") {
 		return false
 	}
 
-	if prefix, ok := strings.CutSuffix(denyArgs, "*"); ok {
-		if opPrefix, hasWild := strings.CutSuffix(opArgs, "*"); hasWild {
-			return strings.HasPrefix(opPrefix, prefix)
-		}
-		return strings.HasPrefix(opArgs, prefix)
+	// When the operation itself contains wildcards, compare the deny
+	// pattern's prefix against the operation's prefix so that a broader
+	// operation (e.g. "git push *") does not match a narrower deny rule
+	// (e.g. "git push --force *").
+	if strings.Contains(opArgs, "*") {
+		denyPrefix, _ := strings.CutSuffix(denyArgs, "*")
+		opPrefix, _ := strings.CutSuffix(opArgs, "*")
+		return strings.HasPrefix(opPrefix, denyPrefix)
 	}
 
-	return false
+	segments := strings.Split(denyArgs, "*")
+	pos := 0
+	for i, seg := range segments {
+		if seg == "" {
+			continue
+		}
+		idx := strings.Index(opArgs[pos:], seg)
+		if idx < 0 {
+			return false
+		}
+		if i == 0 && idx != 0 {
+			return false
+		}
+		pos += idx + len(seg)
+	}
+	if !strings.HasSuffix(denyArgs, "*") {
+		return pos == len(opArgs)
+	}
+	return true
 }

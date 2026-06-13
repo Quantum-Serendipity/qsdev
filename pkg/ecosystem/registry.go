@@ -31,11 +31,7 @@ func (r *Registry) Register(m EcosystemModule) error {
 // All returns every registered module, sorted by tier (ascending) then
 // name (alphabetical) within each tier.
 func (r *Registry) All() []EcosystemModule {
-	items := r.Registry.All()
-	mods := make([]EcosystemModule, 0, len(items))
-	for _, m := range items {
-		mods = append(mods, m)
-	}
+	mods := r.Values()
 	sort.Slice(mods, func(i, j int) bool {
 		if mods[i].Tier() != mods[j].Tier() {
 			return mods[i].Tier() < mods[j].Tier()
@@ -47,9 +43,8 @@ func (r *Registry) All() []EcosystemModule {
 
 // ByTier returns all modules with the given tier, sorted by name.
 func (r *Registry) ByTier(tier int) []EcosystemModule {
-	items := r.Registry.All()
 	var mods []EcosystemModule
-	for _, m := range items {
+	for _, m := range r.Values() {
 		if m.Tier() == tier {
 			mods = append(mods, m)
 		}
@@ -69,12 +64,7 @@ func (r *Registry) ByName(name string) (EcosystemModule, bool) {
 // returns a DetectionSummary containing the raw results plus an aggregated
 // DetectedProject.
 func (r *Registry) DetectAll(root string) *DetectionSummary {
-	items := r.Registry.All()
-	mods := make([]EcosystemModule, 0, len(items))
-	for _, m := range items {
-		mods = append(mods, m)
-	}
-
+	mods := r.Values()
 	results := make(map[string]DetectionResult, len(mods))
 	for _, m := range mods {
 		results[m.Name()] = m.Detect(root)

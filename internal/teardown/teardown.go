@@ -11,6 +11,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -77,7 +78,7 @@ func Teardown(
 				fmt.Fprintf(w, "Warning: could not marshal posture report: %v\n", err)
 			} else {
 				reportPath = filepath.Join(opts.ProjectRoot, "."+branding.Get().AppName+"-posture-final.json")
-				if err := os.WriteFile(reportPath, reportJSON, 0o644); err != nil {
+				if err := os.WriteFile(reportPath, reportJSON, fileutil.ModeReadWrite); err != nil {
 					fmt.Fprintf(w, "Warning: could not write posture report: %v\n", err)
 					reportPath = ""
 				}

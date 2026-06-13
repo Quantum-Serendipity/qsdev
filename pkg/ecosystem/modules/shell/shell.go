@@ -114,12 +114,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // DenyRules returns Claude Code deny-rule patterns for the Shell ecosystem.
 // These prevent pipe-to-shell execution patterns which are common attack vectors.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	return []string{
-		"Bash(curl * | sh*)",
-		"Bash(curl * | bash*)",
-		"Bash(wget * | sh*)",
-		"Bash(wget * | bash*)",
-	}
+	return ecosystem.PipeToShellDenyRules()
 }
 
 // CICommands returns CI pipeline commands for the Shell ecosystem.

@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/xml"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -95,10 +94,12 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
 	pkg := sdkVersionToNixPackage(config.Version)
 
-	return fmt.Sprintf(`  languages.dotnet = {
-    enable = true;
-    package = pkgs.%s;
-  };`, pkg), nil
+	return ecosystem.BuildLanguageFragment(ecosystem.NixLangConfig{
+		EnablePath: "languages.dotnet",
+		Properties: []ecosystem.NixProperty{
+			{Key: "package", Value: "pkgs." + pkg},
+		},
+	}), nil
 }
 
 // SecurityConfigs returns security-hardened configuration files for .NET.
@@ -107,14 +108,14 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 		{
 			Path:           "nuget.config",
 			Content:        buildNugetConfig(config.RegistryProxy),
-			Mode:           0o644,
+			Mode:           fileutil.ModeReadWrite,
 			Strategy:       types.Overwrite,
 			SkipValidation: true,
 		},
 		{
 			Path:           "Directory.Build.props",
 			Content:        buildDirectoryBuildProps(),
-			Mode:           0o644,
+			Mode:           fileutil.ModeReadWrite,
 			Strategy:       types.Skip,
 			SkipValidation: true,
 		},

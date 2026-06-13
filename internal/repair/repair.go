@@ -104,7 +104,7 @@ func executeRepair(
 	// Determine file mode.
 	mode := fresh.Mode
 	if mode == 0 {
-		mode = 0o644
+		mode = fileutil.ModeReadWrite
 	}
 
 	// Write the fresh content atomically.

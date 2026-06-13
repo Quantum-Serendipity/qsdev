@@ -178,7 +178,7 @@ func conanSecurityConfig() types.GeneratedFile {
 	return types.GeneratedFile{
 		Path:     ".conan2/profiles/security",
 		Content:  []byte(b.String()),
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 	}
 }
@@ -199,7 +199,7 @@ func vcpkgSecurityConfig() types.GeneratedFile {
 	return types.GeneratedFile{
 		Path:     "vcpkg-configuration.json",
 		Content:  []byte(b.String()),
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 	}
 }

@@ -14,26 +14,8 @@ import (
 var _ ecosystem.EcosystemModule = (*cpp.Module)(nil)
 var _ ecosystem.PackageProvider = (*cpp.Module)(nil)
 
-func TestName(t *testing.T) {
-	m := &cpp.Module{}
-	if got := m.Name(); got != "cpp" {
-		t.Errorf("Name() = %q, want %q", got, "cpp")
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	m := &cpp.Module{}
-	got := m.DisplayName()
-	if !strings.Contains(got, "C/C++") {
-		t.Errorf("DisplayName() = %q, want it to contain %q", got, "C/C++")
-	}
-}
-
-func TestTier(t *testing.T) {
-	m := &cpp.Module{}
-	if got := m.Tier(); got != 2 {
-		t.Errorf("Tier() = %d, want %d", got, 2)
-	}
+func TestModuleIdentity(t *testing.T) {
+	ecosystem.AssertModuleIdentity(t, &cpp.Module{}, "cpp", "C/C++", 2)
 }
 
 func TestDetect_CMakeListsPresent(t *testing.T) {

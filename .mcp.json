@@ -1,5 +1,12 @@
 {
   "mcpServers": {
+    "agent-postmortem": {
+      "command": "qsdev",
+      "args": [
+        "mcp",
+        "agent-postmortem"
+      ]
+    },
     "context7": {
       "command": "npx",
       "args": [
@@ -14,6 +21,15 @@
       ],
       "env": {
         "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    },
+    "local-docs-devdocs": {
+      "command": "npx",
+      "args": [
+        "devdocs-mcp-server"
+      ],
+      "env": {
+        "DEVDOCS_DATA_DIR": "${HOME}/.local/share/qsdev/docs/devdocs"
       }
     },
     "semble": {
@@ -32,6 +48,13 @@
       "env": {
         "SOCKET_SECURITY_API_KEY": "${SOCKET_SECURITY_API_KEY}"
       }
+    },
+    "version-sentinel": {
+      "command": "qsdev",
+      "args": [
+        "mcp",
+        "version-sentinel"
+      ]
     }
   }
 }

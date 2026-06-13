@@ -4,6 +4,7 @@ package sectools
 import (
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -23,7 +24,7 @@ func GenerateGrypeYaml(_ types.WizardAnswers) (*types.GeneratedFile, error) {
 	return &types.GeneratedFile{
 		Path:     ".grype.yaml",
 		Content:  []byte(b.String()),
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 		Owner:    "container-security",
 	}, nil
@@ -54,7 +55,7 @@ func GenerateCosignPolicy(_ types.WizardAnswers) (*types.GeneratedFile, error) {
 	return &types.GeneratedFile{
 		Path:     ".cosign/policy.yaml",
 		Content:  []byte(b.String()),
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 		Owner:    "container-security",
 	}, nil

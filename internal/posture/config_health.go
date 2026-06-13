@@ -2,6 +2,15 @@ package posture
 
 import "github.com/Quantum-Serendipity/qsdev/pkg/types"
 
+// Config file scoring constants.
+const (
+	// ConfigScoreCurrent is the score for a file that matches its generated state.
+	ConfigScoreCurrent = 100.0
+	// ConfigScoreDrifted is the score for a machine-owned file that was modified
+	// or a file that is outdated.
+	ConfigScoreDrifted = 50.0
+)
+
 // FileCategory returns "machine-owned" or "human-edited" based on MergeStrategy.
 func FileCategory(strategy types.MergeStrategy) string {
 	switch strategy {
@@ -25,22 +34,22 @@ func FileCategory(strategy types.MergeStrategy) string {
 //   - corrupt:  0%
 func ComputeConfigScore(files []ConfigFileInfo) float64 {
 	if len(files) == 0 {
-		return 100.0
+		return ConfigScoreCurrent
 	}
 
 	var total float64
 	for _, f := range files {
 		switch f.State {
 		case "current":
-			total += 100.0
+			total += ConfigScoreCurrent
 		case "modified":
 			if f.Category == "human-edited" {
-				total += 100.0
+				total += ConfigScoreCurrent
 			} else {
-				total += 50.0
+				total += ConfigScoreDrifted
 			}
 		case "outdated":
-			total += 50.0
+			total += ConfigScoreDrifted
 		case "missing", "corrupt":
 			// 0 points
 		}

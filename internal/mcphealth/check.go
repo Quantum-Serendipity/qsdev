@@ -1,6 +1,7 @@
 package mcphealth
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,7 +15,9 @@ var initializeParams = json.RawMessage(`{"protocolVersion":"2025-03-26","capabil
 var toolsListParams = json.RawMessage(`{}`)
 
 // CheckServer probes a single MCP server and returns its health status.
-func CheckServer(cfg ServerConfig, timeout time.Duration) *ServerHealth {
+// The provided context controls cancellation and timeout; callers should use
+// context.WithTimeout to enforce a deadline.
+func CheckServer(ctx context.Context, cfg ServerConfig) *ServerHealth {
 	h := &ServerHealth{Name: cfg.Name}
 
 	prereqs := checkPrerequisites(cfg)
@@ -44,40 +47,47 @@ func CheckServer(cfg ServerConfig, timeout time.Duration) *ServerHealth {
 	}
 	defer proc.Close()
 
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
+	type probeResult struct {
+		status    string
+		err       string
+		toolCount int
+	}
 
+	ch := make(chan probeResult, 1)
+	go func() {
 		if _, err := proc.SendRequest(1, "initialize", initializeParams); err != nil {
-			h.Status = StatusUnreachable
-			h.Error = fmt.Sprintf("initialize: %s", err)
+			ch <- probeResult{status: StatusUnreachable, err: fmt.Sprintf("initialize: %s", err)}
 			return
 		}
 
 		result, err := proc.SendRequest(2, "tools/list", toolsListParams)
 		if err != nil {
-			h.Status = StatusUnreachable
-			h.Error = fmt.Sprintf("tools/list: %s", err)
+			ch <- probeResult{status: StatusUnreachable, err: fmt.Sprintf("tools/list: %s", err)}
 			return
 		}
 
-		h.ToolCount = countTools(result)
-		h.Status = StatusHealthy
+		ch <- probeResult{status: StatusHealthy, toolCount: countTools(result)}
 	}()
 
+	var r probeResult
 	select {
-	case <-done:
-	case <-time.After(timeout):
-		h.Status = StatusUnreachable
-		h.Error = "health check timed out"
+	case r = <-ch:
+	case <-ctx.Done():
+		r = probeResult{status: StatusUnreachable, err: "health check timed out"}
 	}
+
+	h.Status = r.status
+	h.Error = r.err
+	h.ToolCount = r.toolCount
 
 	h.ResponseMs = time.Since(start).Milliseconds()
 	return h
 }
 
 // CheckAll probes all servers in parallel and returns an aggregated report.
-func CheckAll(servers map[string]ServerConfig, timeout time.Duration) *HealthReport {
+// The provided context controls cancellation and timeout for each individual
+// server check.
+func CheckAll(ctx context.Context, servers map[string]ServerConfig) *HealthReport {
 	report := &HealthReport{
 		TotalCount: len(servers),
 		CheckedAt:  time.Now(),
@@ -101,7 +111,7 @@ func CheckAll(servers map[string]ServerConfig, timeout time.Duration) *HealthRep
 		wg.Add(1)
 		go func(idx int, cfg ServerConfig) {
 			defer wg.Done()
-			h := CheckServer(cfg, timeout)
+			h := CheckServer(ctx, cfg)
 			results[idx] = *h
 		}(i, servers[name])
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -42,7 +43,7 @@ func GenerateNixosPodmanGuide(answers types.WizardAnswers) (*types.GeneratedFile
 	return &types.GeneratedFile{
 		Path:     "docs/nixos-podman-rootless.md",
 		Content:  content,
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 	}, nil
 }

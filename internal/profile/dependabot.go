@@ -1,11 +1,12 @@
 package profile
 
 import (
-	"os"
 	"strings"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 	"gopkg.in/yaml.v3"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // generateDependabotYML produces a .github/dependabot.yml GeneratedFile from
@@ -72,7 +73,7 @@ func (p *InfraProfile) generateDependabotYML() types.GeneratedFile {
 	return types.GeneratedFile{
 		Path:     ".github/dependabot.yml",
 		Content:  []byte(buf.String()),
-		Mode:     os.FileMode(0o644),
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 	}
 }

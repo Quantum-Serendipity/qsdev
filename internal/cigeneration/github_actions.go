@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -72,7 +73,7 @@ func (g *GitHubActionsGenerator) Generate(cfg GenerateConfig, steps map[CIJobID]
 		{
 			Path:     ".github/workflows/security.yml",
 			Content:  []byte(content),
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 			Owner:    "ci-generation",
 		},

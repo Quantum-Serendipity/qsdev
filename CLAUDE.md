@@ -79,6 +79,9 @@ golangci-lint run
 <!-- qsdev:gitleaks -->
 - **Gitleaks** scans for leaked secrets in git history and staged commits.
 <!-- /qsdev:gitleaks -->
+<!-- qsdev:local-docs-devdocs -->
+- **DevDocs** local documentation available for offline API reference (official docs, high trust).
+<!-- /qsdev:local-docs-devdocs -->
 <!-- qsdev:secretspec -->
 - **Secret Specification** declares required secrets for services and ecosystem modules.
 <!-- /qsdev:secretspec -->

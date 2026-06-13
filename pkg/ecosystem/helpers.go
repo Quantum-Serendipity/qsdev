@@ -50,6 +50,18 @@ func ToModuleConfigWithProxy(lang types.LanguageChoice, infra types.InfraConfig)
 	return cfg
 }
 
+// PipeToShellDenyRules returns deny-rule patterns that block pipe-to-shell
+// execution. These patterns are common supply chain attack vectors and are
+// shared across multiple ecosystem modules.
+func PipeToShellDenyRules() []string {
+	return []string{
+		"Bash(curl * | sh*)",
+		"Bash(curl * | bash*)",
+		"Bash(wget * | sh*)",
+		"Bash(wget * | bash*)",
+	}
+}
+
 // ExtrasMap converts a []string of extras from LanguageChoice into a
 // map[string]string for ModuleConfig.Extras. Each string is either:
 //   - "key=value" → map[key] = value

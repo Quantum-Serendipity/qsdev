@@ -16,8 +16,8 @@
     QSDEV_ECOSYSTEMS = "go";
     QSDEV_PROJECT_NAME = "qsdev";
     QSDEV_SECURITY_PROFILE = "enhanced";
-    QSDEV_TOOL_COUNT = "22";
-    QSDEV_VERSION = "v0.7.2-0.20260521220409-c97fcb68bdaa";
+    QSDEV_TOOL_COUNT = "23";
+    QSDEV_VERSION = "v0.7.4-7-g952bd4f";
   };
 
   # Credential-bearing variables stripped from the shell
@@ -47,20 +47,11 @@
     check-added-large-files.enable = true;
     no-commit-to-branch.enable = true;
     check-merge-conflicts.enable = true;
-    shellcheck = {
-      enable = true;
-      excludes = [ "vendor/" ];
-    };
+    shellcheck.enable = true;
     statix.enable = true;
     # Enhanced hooks (language-aware, from ecosystem modules)
-    gofmt = {
-      enable = true;
-      excludes = [ "rules/core/testdata/" "vendor/" ];
-    };
-    govet = {
-      enable = true;
-      excludes = [ "rules/core/testdata/" "vendor/" ];
-    };
+    gofmt.enable = true;
+    govet.enable = true;
     # Specialized hooks (custom definitions)
     staticcheck = {
       enable = true;
@@ -71,7 +62,6 @@
       types = [ "go" ];
       stages = [ "pre-commit" ];
       pass_filenames = false;
-      excludes = [ "vendor/" ];
     };
     govulncheck = {
       enable = true;
@@ -82,7 +72,6 @@
       types = [ "go" ];
       stages = [ "pre-commit" ];
       pass_filenames = false;
-      excludes = [ "vendor/" ];
     };
     lock-file-audit = {
       enable = true;

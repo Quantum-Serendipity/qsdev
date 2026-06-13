@@ -118,7 +118,7 @@ func writeToolFiles(tool *toolreg.Tool, toolName, projectRoot string, answers ty
 			absPath := filepath.Join(projectRoot, f.Path)
 			mode := f.Mode
 			if mode == 0 {
-				mode = 0o644
+				mode = fileutil.ModeReadWrite
 			}
 			if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
 				return nil, fmt.Errorf("writing %s: %w", f.Path, err)
@@ -143,13 +143,13 @@ func writeToolFiles(tool *toolreg.Tool, toolName, projectRoot string, answers ty
 			return nil, fmt.Errorf("inserting section %q into %s: %w", sf.SectionID, sf.Path, err)
 		}
 		absPath := filepath.Join(projectRoot, sf.Path)
-		if err := fileutil.WriteFileAtomic(absPath, updated, 0o644); err != nil {
+		if err := fileutil.WriteFileAtomic(absPath, updated, fileutil.ModeReadWrite); err != nil {
 			return nil, fmt.Errorf("writing %s: %w", sf.Path, err)
 		}
 		writtenFiles = append(writtenFiles, types.GeneratedFile{
 			Path:    sf.Path,
 			Content: updated,
-			Mode:    0o644,
+			Mode:    fileutil.ModeReadWrite,
 			Owner:   toolName,
 		})
 	}
@@ -292,13 +292,13 @@ func removeToolFiles(tool *toolreg.Tool, projectRoot string, existingState types
 			continue
 		}
 		absPath := filepath.Join(projectRoot, sf.Path)
-		if err := fileutil.WriteFileAtomic(absPath, updated, 0o644); err != nil {
+		if err := fileutil.WriteFileAtomic(absPath, updated, fileutil.ModeReadWrite); err != nil {
 			return fmt.Errorf("writing %s: %w", sf.Path, err)
 		}
 		// Update the state hash for the shared file.
 		existingState.Files[sf.Path] = types.FileState{
 			Hash:  state.ComputeHash(updated),
-			Mode:  0o644,
+			Mode:  fileutil.ModeReadWrite,
 			Owner: existingState.Files[sf.Path].Owner,
 		}
 	}

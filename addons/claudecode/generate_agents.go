@@ -3,6 +3,7 @@ package claudecode
 import (
 	"fmt"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -54,7 +55,7 @@ func deployAgents(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 		files = append(files, types.GeneratedFile{
 			Path:     ".claude/agents/" + a.Name + ".md",
 			Content:  content,
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.LibraryManaged,
 			Owner:    toolKey,
 		})

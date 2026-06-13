@@ -7,6 +7,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -289,7 +290,7 @@ func GenerateSettings(answers types.WizardAnswers, registry *ecosystem.Registry,
 	return &types.GeneratedFile{
 		Path:     ".claude/settings.json",
 		Content:  jsonBytes,
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.ThreeWayMerge,
 	}, nil
 }

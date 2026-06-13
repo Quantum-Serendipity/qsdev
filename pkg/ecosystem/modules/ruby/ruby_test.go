@@ -23,26 +23,8 @@ func TestInterfaceCompliance(t *testing.T) {
 
 // --- Basic metadata ---
 
-func TestName(t *testing.T) {
-	m := newModule()
-	if got := m.Name(); got != "ruby" {
-		t.Errorf("Name() = %q, want %q", got, "ruby")
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	m := newModule()
-	got := m.DisplayName()
-	if !strings.Contains(got, "Ruby") {
-		t.Errorf("DisplayName() = %q, want it to contain %q", got, "Ruby")
-	}
-}
-
-func TestTier(t *testing.T) {
-	m := newModule()
-	if got := m.Tier(); got != 2 {
-		t.Errorf("Tier() = %d, want %d", got, 2)
-	}
+func TestModuleIdentity(t *testing.T) {
+	ecosystem.AssertModuleIdentity(t, newModule(), "ruby", "Ruby", 2)
 }
 
 // --- Detection tests ---

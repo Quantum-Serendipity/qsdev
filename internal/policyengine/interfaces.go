@@ -20,7 +20,7 @@ type PackageRiskScorer interface {
 }
 
 type McpTrustEvaluator interface {
-	CheckAccess(toolName string, toolArgs json.RawMessage, denyRules []trust.DenyRule) (blocked bool, reason string)
+	CheckAccess(toolName string, toolArgs json.RawMessage, denyRules []policy.DenyRule) (blocked bool, reason string)
 	ApplyHardening(serverName string, tier trust.TrustTier, output string) string
 	ScoreServer(info *trust.McpServerInfo) trust.TrustScore
 }

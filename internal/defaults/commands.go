@@ -68,7 +68,7 @@ func runInit(cmd *cobra.Command, force bool) error {
 		return fmt.Errorf("generating defaults template: %w", err)
 	}
 
-	if err := fileutil.WriteFileAtomic(path, content, 0o644); err != nil {
+	if err := fileutil.WriteFileAtomic(path, content, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing defaults file: %w", err)
 	}
 
@@ -180,7 +180,7 @@ func runEdit(cmd *cobra.Command) error {
 		if err != nil {
 			return fmt.Errorf("generating defaults template: %w", err)
 		}
-		if err := fileutil.WriteFileAtomic(path, content, 0o644); err != nil {
+		if err := fileutil.WriteFileAtomic(path, content, fileutil.ModeReadWrite); err != nil {
 			return fmt.Errorf("writing defaults file: %w", err)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Created %s\n", path)

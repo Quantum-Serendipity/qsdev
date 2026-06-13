@@ -1,9 +1,9 @@
 package evidence
 
 import (
-	"fmt"
 	"sort"
-	"sync"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/registry"
 )
 
 // Framework defines a compliance framework with its controls.
@@ -44,37 +44,28 @@ type FrameworkInfo struct {
 
 // FrameworkRegistry is a thread-safe registry of compliance frameworks.
 type FrameworkRegistry struct {
-	mu         sync.RWMutex
-	frameworks map[string]Framework
+	*registry.Registry[Framework]
 }
 
 // NewFrameworkRegistry creates an empty FrameworkRegistry.
 func NewFrameworkRegistry() *FrameworkRegistry {
 	return &FrameworkRegistry{
-		frameworks: make(map[string]Framework),
+		Registry: registry.New[Framework](
+			registry.WithEntityName("framework"),
+		),
 	}
 }
 
 // Register adds a framework to the registry. Returns an error if a
 // framework with the same ID is already registered.
 func (r *FrameworkRegistry) Register(f Framework) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if _, exists := r.frameworks[f.ID]; exists {
-		return fmt.Errorf("framework %q is already registered", f.ID)
-	}
-	r.frameworks[f.ID] = f
-	return nil
+	return r.Registry.Register(f.ID, f)
 }
 
 // Get retrieves a framework by ID. Returns the framework and true if
 // found, or a zero Framework and false otherwise.
 func (r *FrameworkRegistry) Get(id string) (*Framework, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	f, ok := r.frameworks[id]
+	f, ok := r.Registry.Get(id)
 	if !ok {
 		return nil, false
 	}
@@ -83,11 +74,9 @@ func (r *FrameworkRegistry) Get(id string) (*Framework, bool) {
 
 // List returns information about all registered frameworks, sorted by ID.
 func (r *FrameworkRegistry) List() []FrameworkInfo {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	infos := make([]FrameworkInfo, 0, len(r.frameworks))
-	for _, f := range r.frameworks {
+	items := r.Values()
+	infos := make([]FrameworkInfo, 0, len(items))
+	for _, f := range items {
 		infos = append(infos, FrameworkInfo{
 			ID:          f.ID,
 			Name:        f.Name,

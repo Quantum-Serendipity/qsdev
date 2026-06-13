@@ -162,6 +162,7 @@ func TestRunContainerCheck_PodmanRootlessClean(t *testing.T) {
 	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
+		return
 	}
 	if !cs.Detected {
 		t.Error("Detected = false, want true")
@@ -196,11 +197,13 @@ func TestRunContainerCheck_PodmanRootlessGPU(t *testing.T) {
 	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
+		return
 	}
 
 	gpu := findItem(cs, "GPU")
 	if gpu == nil {
 		t.Fatal("missing GPU item")
+		return
 	}
 	if gpu.Status != "warn" {
 		t.Errorf("GPU status = %q, want %q", gpu.Status, "warn")
@@ -222,11 +225,13 @@ func TestRunContainerCheck_PodmanRootlessNFS(t *testing.T) {
 	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
+		return
 	}
 
 	nfs := findItem(cs, "NFS")
 	if nfs == nil {
 		t.Fatal("missing NFS item")
+		return
 	}
 	if nfs.Status != "warn" {
 		t.Errorf("NFS status = %q, want %q", nfs.Status, "warn")
@@ -246,6 +251,7 @@ func TestRunContainerCheck_PodmanRootlessBothGPUNFS(t *testing.T) {
 	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
+		return
 	}
 
 	gpu := findItem(cs, "GPU")
@@ -270,11 +276,13 @@ func TestRunContainerCheck_PodmanRootlessNoSubuid(t *testing.T) {
 	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
+		return
 	}
 
 	userns := findItem(cs, "User NS")
 	if userns == nil {
 		t.Fatal("missing User NS item")
+		return
 	}
 	if userns.Status != "error" {
 		t.Errorf("User NS status = %q, want %q", userns.Status, "error")
@@ -296,11 +304,13 @@ func TestRunContainerCheck_PodmanRootlessNoSubuidNixOS(t *testing.T) {
 	cs := RunContainerCheck(ctx, prober, nixosOSInfo())
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
+		return
 	}
 
 	userns := findItem(cs, "User NS")
 	if userns == nil {
 		t.Fatal("missing User NS item")
+		return
 	}
 	if userns.Status != "error" {
 		t.Errorf("User NS status = %q, want %q", userns.Status, "error")
@@ -337,6 +347,7 @@ func TestRunContainerCheck_DockerRuntime(t *testing.T) {
 	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
+		return
 	}
 
 	if cs.RuntimeName != "docker" {
@@ -386,6 +397,7 @@ func TestRunContainerCheck_PodmanRootful(t *testing.T) {
 	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
+		return
 	}
 	if cs.Rootless {
 		t.Error("Rootless = true, want false")
@@ -401,6 +413,7 @@ func TestRunContainerCheck_PodmanRootful(t *testing.T) {
 	gpu := findItem(cs, "GPU")
 	if gpu == nil {
 		t.Fatal("missing GPU item")
+		return
 	}
 	if gpu.Status != "ok" {
 		t.Errorf("GPU status = %q, want %q for rootful", gpu.Status, "ok")
@@ -408,6 +421,7 @@ func TestRunContainerCheck_PodmanRootful(t *testing.T) {
 	nfs := findItem(cs, "NFS")
 	if nfs == nil {
 		t.Fatal("missing NFS item")
+		return
 	}
 	if nfs.Status != "ok" {
 		t.Errorf("NFS status = %q, want %q for rootful", nfs.Status, "ok")
@@ -427,11 +441,13 @@ func TestRunContainerCheck_CgroupsV1(t *testing.T) {
 	cs := RunContainerCheck(ctx, prober, defaultOSInfo())
 	if cs == nil {
 		t.Fatal("expected non-nil ContainerSection")
+		return
 	}
 
 	cgroups := findItem(cs, "Cgroups")
 	if cgroups == nil {
 		t.Fatal("missing Cgroups item")
+		return
 	}
 	if cgroups.Status != "warn" {
 		t.Errorf("Cgroups status = %q, want %q", cgroups.Status, "warn")

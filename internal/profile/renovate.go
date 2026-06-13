@@ -3,8 +3,8 @@ package profile
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -74,7 +74,7 @@ func (p *InfraProfile) generateRenovateJSON() types.GeneratedFile {
 	return types.GeneratedFile{
 		Path:     "renovate.json",
 		Content:  data,
-		Mode:     os.FileMode(0o644),
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 	}
 }

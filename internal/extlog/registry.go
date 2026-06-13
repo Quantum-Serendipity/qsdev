@@ -2,53 +2,44 @@ package extlog
 
 import (
 	"sync"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/registry"
 )
 
 // Registry is a thread-safe collection of LogProvider implementations.
 type Registry struct {
-	mu        sync.RWMutex
-	providers map[string]LogProvider
+	*registry.Registry[LogProvider]
 }
 
 // NewRegistry creates an empty Registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		providers: make(map[string]LogProvider),
+		Registry: registry.New[LogProvider](
+			registry.WithDuplicatePolicy(registry.AllowOverwrite),
+			registry.WithEntityName("log provider"),
+		),
 	}
 }
 
 // Register adds a provider. Duplicate names are silently overwritten.
 func (r *Registry) Register(p LogProvider) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.providers[p.Name()] = p
+	_ = r.Registry.Register(p.Name(), p)
 }
 
 // All returns all registered providers.
 func (r *Registry) All() []LogProvider {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	result := make([]LogProvider, 0, len(r.providers))
-	for _, p := range r.providers {
-		result = append(result, p)
-	}
-	return result
+	return r.Values()
 }
 
 // ByName returns a provider by name.
 func (r *Registry) ByName(name string) (LogProvider, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	p, ok := r.providers[name]
-	return p, ok
+	return r.Get(name)
 }
 
 // DetectAll returns providers that found available logs.
 func (r *Registry) DetectAll(projectRoot, homeDir string) []LogProvider {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
 	var available []LogProvider
-	for _, p := range r.providers {
+	for _, p := range r.Values() {
 		if p.Detect(projectRoot, homeDir) {
 			available = append(available, p)
 		}

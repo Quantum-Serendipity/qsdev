@@ -83,11 +83,13 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 		channel = config.Version
 	}
 
-	return fmt.Sprintf(`  languages.rust = {
-    enable = true;
-    channel = "%s";
-    components = [ "rustfmt" "clippy" ];
-  };`, ecosystem.NixEscapeString(channel)), nil
+	return ecosystem.BuildLanguageFragment(ecosystem.NixLangConfig{
+		EnablePath: "languages.rust",
+		Properties: []ecosystem.NixProperty{
+			{Key: "channel", Value: ecosystem.NixString(channel)},
+			{Key: "components", Value: `[ "rustfmt" "clippy" ]`},
+		},
+	}), nil
 }
 
 // SecurityConfigs returns security-hardened configuration files for Rust.
@@ -120,7 +122,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 		{
 			Path:           ".cargo/config.toml",
 			Content:        []byte(content.String()),
-			Mode:           0o644,
+			Mode:           fileutil.ModeReadWrite,
 			Strategy:       types.Overwrite,
 			SkipValidation: true,
 		},

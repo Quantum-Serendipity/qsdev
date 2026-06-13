@@ -10,6 +10,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 // LoadScopeFile reads and validates a scope file from the given path.
@@ -59,7 +60,7 @@ func CollectFromScope(scopePath string) ([]*posture.PostureReport, []string, err
 
 	for _, proj := range scope.Projects {
 		projectDir := filepath.Join(tmpDir, sanitizeRepoName(proj.Repo))
-		if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		if err := os.MkdirAll(projectDir, fileutil.ModeDirDefault); err != nil {
 			warnings = append(warnings, fmt.Sprintf("failed to create dir for %s: %v", proj.Repo, err))
 			continue
 		}

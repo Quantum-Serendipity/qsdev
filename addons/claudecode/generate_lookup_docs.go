@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -53,7 +54,7 @@ func generateLookupDocsSkill(answers types.WizardAnswers) (*types.GeneratedFile,
 	return &types.GeneratedFile{
 		Path:    ".claude/skills/lookup-docs/SKILL.md",
 		Content: content,
-		Mode:    0o644,
+		Mode:    fileutil.ModeReadWrite,
 		Owner:   "lookup-docs",
 	}, nil
 }

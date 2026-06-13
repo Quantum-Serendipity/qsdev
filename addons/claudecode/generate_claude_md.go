@@ -13,6 +13,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -209,7 +210,7 @@ func GenerateClaudeMd(answers types.WizardAnswers, registry *ecosystem.Registry)
 	return &types.GeneratedFile{
 		Path:     "CLAUDE.md",
 		Content:  content,
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.SectionMarker,
 	}, nil
 }

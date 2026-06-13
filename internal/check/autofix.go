@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -83,17 +84,11 @@ func fixDeletedFiles(results []CheckResult, projectRoot string, regenerate Regen
 		}
 
 		absPath := filepath.Join(projectRoot, relPath)
-		if dir := filepath.Dir(absPath); dir != "." {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				continue
-			}
-		}
-
 		mode := fresh.Mode
 		if mode == 0 {
-			mode = 0o644
+			mode = fileutil.ModeReadWrite
 		}
-		if err := os.WriteFile(absPath, fresh.Content, mode); err != nil {
+		if err := fileutil.WriteFileAtomic(absPath, fresh.Content, mode); err != nil {
 			continue
 		}
 
@@ -159,7 +154,7 @@ func fixDenyRules(projectRoot string, missingRules []string) error {
 	}
 	out = append(out, '\n')
 
-	if err := os.WriteFile(settingsPath, out, 0o644); err != nil {
+	if err := fileutil.WriteFileAtomic(settingsPath, out, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing settings.json: %w", err)
 	}
 

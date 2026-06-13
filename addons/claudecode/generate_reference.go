@@ -6,6 +6,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -68,7 +69,7 @@ func GenerateQsdevReference(answers types.WizardAnswers, registry *ecosystem.Reg
 	return &types.GeneratedFile{
 		Path:     ".claude/qsdev-reference.md",
 		Content:  []byte(b.String()),
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.LibraryManaged,
 	}, nil
 }

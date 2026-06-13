@@ -1,6 +1,7 @@
 package claudecode
 
 import (
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -11,7 +12,7 @@ func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, erro
 			enabled:      answers.Hooks.SafetyBlock,
 			templatePath: "templates/hooks/package-guard.py",
 			outputPath:   ".claude/hooks/package-guard.py",
-			mode:         0o755,
+			mode:         fileutil.ModeExecutable,
 			strategy:     types.Overwrite,
 			owner:        "attach-guard",
 		},
@@ -19,7 +20,7 @@ func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, erro
 			enabled:      answers.Hooks.CredentialScan,
 			templatePath: "templates/hooks/scan-secrets.py",
 			outputPath:   ".claude/hooks/scan-secrets.py",
-			mode:         0o755,
+			mode:         fileutil.ModeExecutable,
 			strategy:     types.Overwrite,
 			owner:        "credential-scan",
 		},
@@ -27,7 +28,7 @@ func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, erro
 			enabled:      answers.Hooks.DestructivePrevention,
 			templatePath: "templates/hooks/block-destructive.py",
 			outputPath:   ".claude/hooks/block-destructive.py",
-			mode:         0o755,
+			mode:         fileutil.ModeExecutable,
 			strategy:     types.Overwrite,
 			owner:        "destructive-prevention",
 		},
@@ -35,7 +36,7 @@ func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, erro
 			enabled:      answers.Hooks.FileBoundary,
 			templatePath: "templates/hooks/file-boundary.py",
 			outputPath:   ".claude/hooks/file-boundary.py",
-			mode:         0o755,
+			mode:         fileutil.ModeExecutable,
 			strategy:     types.Overwrite,
 			owner:        "file-boundary",
 		},
@@ -43,7 +44,7 @@ func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, erro
 			enabled:      answers.Hooks.ToolGates,
 			templatePath: "templates/hooks/tool-gates.py",
 			outputPath:   ".claude/hooks/tool-gates.py",
-			mode:         0o755,
+			mode:         fileutil.ModeExecutable,
 			strategy:     types.Overwrite,
 			owner:        "tool-gates",
 		},
@@ -51,7 +52,7 @@ func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, erro
 			enabled:      answers.Hooks.SOC2Audit,
 			templatePath: "templates/hooks/soc2-audit-log.py",
 			outputPath:   ".claude/hooks/soc2-audit-log.py",
-			mode:         0o755,
+			mode:         fileutil.ModeExecutable,
 			strategy:     types.Overwrite,
 			owner:        "soc2-audit",
 		},
@@ -59,7 +60,7 @@ func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, erro
 			enabled:      answers.AgentTools.SembleEnabled,
 			templatePath: "templates/hooks/semble-analytics.sh",
 			outputPath:   ".claude/hooks/semble-analytics.sh",
-			mode:         0o755,
+			mode:         fileutil.ModeExecutable,
 			strategy:     types.Overwrite,
 			owner:        "semble",
 		},
@@ -67,7 +68,7 @@ func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, erro
 			enabled:      answers.Hooks.AuditLog && !answers.Hooks.SOC2Audit,
 			templatePath: "templates/hooks/audit-log.sh",
 			outputPath:   ".claude/hooks/audit-log.sh",
-			mode:         0o755,
+			mode:         fileutil.ModeExecutable,
 			strategy:     types.Overwrite,
 		},
 	}

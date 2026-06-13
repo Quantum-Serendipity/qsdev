@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -57,7 +58,7 @@ func (g *GitLabCIGenerator) Generate(cfg GenerateConfig, steps map[CIJobID][]CIS
 		{
 			Path:     ".gitlab-ci.yml",
 			Content:  []byte(content),
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 			Owner:    "ci-generation",
 		},

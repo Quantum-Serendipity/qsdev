@@ -14,25 +14,8 @@ import (
 var _ ecosystem.EcosystemModule = (*ansible.Module)(nil)
 var _ ecosystem.PackageProvider = (*ansible.Module)(nil)
 
-func TestName(t *testing.T) {
-	m := &ansible.Module{}
-	if got := m.Name(); got != "ansible" {
-		t.Errorf("Name() = %q, want %q", got, "ansible")
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	m := &ansible.Module{}
-	if got := m.DisplayName(); got != "Ansible" {
-		t.Errorf("DisplayName() = %q, want %q", got, "Ansible")
-	}
-}
-
-func TestTier(t *testing.T) {
-	m := &ansible.Module{}
-	if got := m.Tier(); got != 2 {
-		t.Errorf("Tier() = %d, want %d", got, 2)
-	}
+func TestModuleIdentity(t *testing.T) {
+	ecosystem.AssertModuleIdentity(t, &ansible.Module{}, "ansible", "Ansible", 2)
 }
 
 func TestDetect_AnsibleCfgPresent(t *testing.T) {

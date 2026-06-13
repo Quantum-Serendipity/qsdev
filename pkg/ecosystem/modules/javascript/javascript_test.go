@@ -14,25 +14,8 @@ import (
 // Compile-time interface compliance check.
 var _ ecosystem.EcosystemModule = (*javascript.Module)(nil)
 
-func TestName(t *testing.T) {
-	m := &javascript.Module{}
-	if got := m.Name(); got != "javascript" {
-		t.Errorf("Name() = %q, want %q", got, "javascript")
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	m := &javascript.Module{}
-	if got := m.DisplayName(); got != "JavaScript/TypeScript" {
-		t.Errorf("DisplayName() = %q, want %q", got, "JavaScript/TypeScript")
-	}
-}
-
-func TestTier(t *testing.T) {
-	m := &javascript.Module{}
-	if got := m.Tier(); got != 1 {
-		t.Errorf("Tier() = %d, want %d", got, 1)
-	}
+func TestModuleIdentity(t *testing.T) {
+	ecosystem.AssertModuleIdentity(t, &javascript.Module{}, "javascript", "JavaScript/TypeScript", 1)
 }
 
 // --- Detection tests ---

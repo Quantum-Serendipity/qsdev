@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"text/template"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -32,7 +33,7 @@ func (p *InfraProfile) generateSecurityScanWorkflow() types.GeneratedFile {
 		return types.GeneratedFile{
 			Path:     ".github/workflows/security-scan.yml",
 			Content:  []byte("# Error: could not load workflow template\n"),
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 		}
 	}
@@ -42,7 +43,7 @@ func (p *InfraProfile) generateSecurityScanWorkflow() types.GeneratedFile {
 		return types.GeneratedFile{
 			Path:     ".github/workflows/security-scan.yml",
 			Content:  []byte(fmt.Sprintf("# Error parsing template: %v\n", err)),
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 		}
 	}
@@ -52,7 +53,7 @@ func (p *InfraProfile) generateSecurityScanWorkflow() types.GeneratedFile {
 		return types.GeneratedFile{
 			Path:     ".github/workflows/security-scan.yml",
 			Content:  []byte(fmt.Sprintf("# Error rendering template: %v\n", err)),
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 		}
 	}
@@ -60,7 +61,7 @@ func (p *InfraProfile) generateSecurityScanWorkflow() types.GeneratedFile {
 	return types.GeneratedFile{
 		Path:     ".github/workflows/security-scan.yml",
 		Content:  buf.Bytes(),
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 	}
 }

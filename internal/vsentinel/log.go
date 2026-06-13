@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 func LogVersionEvent(logPath string, event VersionEvent) (err error) {
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, fileutil.ModeReadWrite)
 	if err != nil {
 		return fmt.Errorf("opening log file: %w", err)
 	}

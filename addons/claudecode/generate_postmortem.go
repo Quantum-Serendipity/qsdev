@@ -3,9 +3,10 @@ package claudecode
 import (
 	"fmt"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -37,7 +38,7 @@ func generatePostmortemSkill(answers types.WizardAnswers, registry *ecosystem.Re
 	return &types.GeneratedFile{
 		Path:     ".claude/skills/agent-postmortem/SKILL.md",
 		Content:  content,
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.LibraryManaged,
 	}, nil
 }

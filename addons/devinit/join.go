@@ -18,6 +18,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -68,7 +69,7 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		allFiles = append(allFiles, types.GeneratedFile{
 			Path:    localCfg,
 			Content: localContent,
-			Mode:    0o644,
+			Mode:    fileutil.ModeReadWrite,
 		})
 	}
 

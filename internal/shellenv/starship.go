@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -49,7 +50,7 @@ func GenerateStarshipToml(answers types.WizardAnswers) (*types.GeneratedFile, er
 	return &types.GeneratedFile{
 		Path:     ".starship.toml",
 		Content:  []byte(s.String()),
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 	}, nil
 }

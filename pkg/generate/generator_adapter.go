@@ -3,6 +3,7 @@ package generate
 import (
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -26,7 +27,7 @@ func (a *GeneratorAdapter) Produce(answers types.WizardAnswers) ([]types.Fragmen
 	for i, f := range files {
 		mode := f.Mode
 		if mode == 0 {
-			mode = 0o644
+			mode = fileutil.ModeReadWrite
 		}
 		entries[i] = types.FragmentEntry{
 			Source:      a.name,

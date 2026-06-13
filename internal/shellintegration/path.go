@@ -11,6 +11,7 @@ import (
 	"fastcat.org/go/gdev/addons/bootstrap/textedit"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 func pathMarkerStart() string { return "# " + branding.Get().AppName + ": PATH setup" }
@@ -38,7 +39,7 @@ func EnsurePath(dir string, shell string, rcFile string) error {
 	)
 
 	// Ensure parent directory exists (the RC file may not exist yet).
-	if err := os.MkdirAll(filepath.Dir(rcFile), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(rcFile), fileutil.ModeDirDefault); err != nil {
 		return fmt.Errorf("creating parent directory for %s: %w", rcFile, err)
 	}
 

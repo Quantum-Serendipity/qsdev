@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -187,7 +188,7 @@ func resolveGroup(target string, group []types.FragmentEntry) (types.GeneratedFi
 
 	mode := highest.Mode
 	if mode == 0 {
-		mode = 0o644
+		mode = fileutil.ModeReadWrite
 	}
 
 	base := types.GeneratedFile{

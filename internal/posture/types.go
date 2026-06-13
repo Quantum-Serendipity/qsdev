@@ -87,9 +87,9 @@ type ConformanceLevel struct {
 
 // ConformanceCheck represents a single conformance check with its result.
 type ConformanceCheck struct {
-	Name   string `json:"name"`
-	Pass   bool   `json:"pass"`
-	Reason string `json:"reason,omitempty"`
+	Name   CheckName `json:"name"`
+	Pass   bool      `json:"pass"`
+	Reason string    `json:"reason,omitempty"`
 }
 
 // DefenseCoverage summarizes which defense layers are active and the

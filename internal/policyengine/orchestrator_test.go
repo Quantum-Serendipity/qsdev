@@ -50,12 +50,12 @@ func (m *mockRiskScorer) ScoreAll(packages []risk.PackageInfo) risk.DependencyHe
 }
 
 type mockTrustEvaluator struct {
-	checkAccessFunc    func(string, json.RawMessage, []trust.DenyRule) (bool, string)
+	checkAccessFunc    func(string, json.RawMessage, []policy.DenyRule) (bool, string)
 	applyHardeningFunc func(string, trust.TrustTier, string) string
 	scoreServerFunc    func(*trust.McpServerInfo) trust.TrustScore
 }
 
-func (m *mockTrustEvaluator) CheckAccess(toolName string, toolArgs json.RawMessage, denyRules []trust.DenyRule) (bool, string) {
+func (m *mockTrustEvaluator) CheckAccess(toolName string, toolArgs json.RawMessage, denyRules []policy.DenyRule) (bool, string) {
 	if m.checkAccessFunc != nil {
 		return m.checkAccessFunc(toolName, toolArgs, denyRules)
 	}
@@ -112,7 +112,7 @@ func TestRunPreToolUse_ConfusedDeputyBlock(t *testing.T) {
 	pe.denyRules = []policy.DenyRule{{Pattern: "/secret/*", Type: "path"}}
 
 	te := &mockTrustEvaluator{
-		checkAccessFunc: func(_ string, _ json.RawMessage, _ []trust.DenyRule) (bool, string) {
+		checkAccessFunc: func(_ string, _ json.RawMessage, _ []policy.DenyRule) (bool, string) {
 			return true, "confused deputy: access denied"
 		},
 	}
@@ -134,7 +134,7 @@ func TestRunPreToolUse_AllAllow(t *testing.T) {
 
 	pe := newAllowPolicyEvaluator()
 	te := &mockTrustEvaluator{
-		checkAccessFunc: func(_ string, _ json.RawMessage, _ []trust.DenyRule) (bool, string) {
+		checkAccessFunc: func(_ string, _ json.RawMessage, _ []policy.DenyRule) (bool, string) {
 			return false, ""
 		},
 	}
@@ -174,7 +174,7 @@ func TestRunPreToolUse_TrustPanic(t *testing.T) {
 
 	pe := newAllowPolicyEvaluator()
 	te := &mockTrustEvaluator{
-		checkAccessFunc: func(_ string, _ json.RawMessage, _ []trust.DenyRule) (bool, string) {
+		checkAccessFunc: func(_ string, _ json.RawMessage, _ []policy.DenyRule) (bool, string) {
 			panic("simulated trust engine explosion")
 		},
 	}
@@ -198,7 +198,7 @@ func TestRunPreToolUse_NonMCPTool(t *testing.T) {
 
 	trustCalled := false
 	te := &mockTrustEvaluator{
-		checkAccessFunc: func(_ string, _ json.RawMessage, _ []trust.DenyRule) (bool, string) {
+		checkAccessFunc: func(_ string, _ json.RawMessage, _ []policy.DenyRule) (bool, string) {
 			trustCalled = true
 			return true, "should not reach"
 		},

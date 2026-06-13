@@ -1,39 +1,243 @@
 package posture
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // DefenseLayerNames lists the canonical names of all 10 defense layers,
-// ordered to match AssessDefenseLayers.
-var DefenseLayerNames = [...]string{
-	"pretooluse-hooks",
-	"age-gating",
-	"install-script-blocking",
-	"lock-file-enforcement",
-	"vulnerability-scanning",
-	"nix-hardening",
-	"sast",
-	"secrets-scanning",
-	"container-security",
-	"license-compliance",
+// derived from layerTable in init() to prevent drift.
+var DefenseLayerNames [10]string
+
+func init() {
+	if len(layerTable) != len(DefenseLayerNames) {
+		panic(fmt.Sprintf("posture: layerTable has %d entries but DefenseLayerNames expects %d",
+			len(layerTable), len(DefenseLayerNames)))
+	}
+	for i, spec := range layerTable {
+		DefenseLayerNames[i] = spec.Name
+	}
+}
+
+// assessmentInput bundles all inputs needed by layer assessment functions.
+type assessmentInput struct {
+	EnabledTools map[string]bool
+	Detected     types.DetectedProject
+	GenState     types.GeneratedState
+}
+
+// layerSpec defines one defense layer's metadata and assessment logic.
+type layerSpec struct {
+	Name    string
+	Weight  LayerWeight
+	MinTier int
+	Assess  func(input assessmentInput) (status LayerStatus, score int, reason string)
+}
+
+// layerTable is the data-driven table of all 10 defense layers.
+var layerTable = []layerSpec{
+	{
+		Name:    "pretooluse-hooks",
+		Weight:  WeightCritical,
+		MinTier: 1,
+		Assess: func(input assessmentInput) (LayerStatus, int, string) {
+			attachGuardEnabled := input.EnabledTools["attach-guard"]
+			_, hasPackageGuard := input.GenState.Files[".claude/hooks/package-guard.py"]
+
+			if attachGuardEnabled && hasPackageGuard {
+				return LayerEnabled, 0, "attach-guard enabled and package-guard.py present"
+			}
+			if attachGuardEnabled || hasPackageGuard {
+				if !attachGuardEnabled {
+					return LayerPartial, 5, "package-guard.py present but attach-guard not enabled"
+				}
+				return LayerPartial, 5, "attach-guard enabled but package-guard.py not in state"
+			}
+			return LayerDisabled, 0, "attach-guard not enabled"
+		},
+	},
+	{
+		Name:    "age-gating",
+		Weight:  WeightHigh,
+		MinTier: 2,
+		Assess: func(input assessmentInput) (LayerStatus, int, string) {
+			if !input.EnabledTools["attach-guard"] {
+				return LayerDisabled, 0, "attach-guard not enabled; age-gating requires it"
+			}
+			// Age-gating is built into package-guard.py (MIN_AGE_DAYS). When the
+			// guard script is present and attach-guard is enabled, age-gating is active.
+			_, hasPackageGuard := input.GenState.Files[".claude/hooks/package-guard.py"]
+			if hasPackageGuard {
+				return LayerEnabled, 0, "package-guard.py enforces publication age checks"
+			}
+			return LayerDisabled, 0, "package-guard.py not found in generated state"
+		},
+	},
+	{
+		Name:    "install-script-blocking",
+		Weight:  WeightHigh,
+		MinTier: 1,
+		Assess: func(input assessmentInput) (LayerStatus, int, string) {
+			if input.EnabledTools["attach-guard"] {
+				return LayerEnabled, 0, "attach-guard blocks unverified install scripts"
+			}
+			return LayerDisabled, 0, "attach-guard not enabled"
+		},
+	},
+	{
+		Name:    "lock-file-enforcement",
+		Weight:  WeightHigh,
+		MinTier: 1,
+		Assess: func(input assessmentInput) (LayerStatus, int, string) {
+			// Check if lock file enforcement is configured through generated state.
+			// Look for pre-commit config or lock-related configs.
+			hasLockEnforcement := false
+			for path := range input.GenState.Files {
+				if strings.Contains(path, "lock") || strings.Contains(path, ".pre-commit-config") {
+					hasLockEnforcement = true
+					break
+				}
+			}
+
+			if input.EnabledTools["attach-guard"] && hasLockEnforcement {
+				return LayerEnabled, 0, "lock file enforcement configured"
+			}
+			if input.EnabledTools["attach-guard"] || hasLockEnforcement {
+				return LayerPartial, 5, "partial lock file enforcement"
+			}
+			return LayerDisabled, 0, "no lock file enforcement configured"
+		},
+	},
+	{
+		Name:    "vulnerability-scanning",
+		Weight:  WeightHigh,
+		MinTier: 1,
+		Assess: func(input assessmentInput) (LayerStatus, int, string) {
+			// Check for vulnerability scanning configs (grype, socket-dev, etc.)
+			hasVulnConfig := false
+			for path := range input.GenState.Files {
+				if strings.Contains(path, ".grype") || strings.Contains(path, "vuln") {
+					hasVulnConfig = true
+					break
+				}
+			}
+
+			if input.EnabledTools["container-security"] || input.EnabledTools["socket-dev-mcp"] || hasVulnConfig {
+				return LayerEnabled, 0, "vulnerability scanning configured"
+			}
+			return LayerDisabled, 0, "no vulnerability scanning configured"
+		},
+	},
+	{
+		Name:    "nix-hardening",
+		Weight:  WeightMedium,
+		MinTier: 3,
+		Assess: func(input assessmentInput) (LayerStatus, int, string) {
+			// Check if devenv.nix exists in generated state (implies NixHardeningGuide was applied).
+			_, hasDevenvNix := input.GenState.Files["devenv.nix"]
+			if hasDevenvNix {
+				return LayerEnabled, 0, "devenv.nix present with hardening configuration"
+			}
+			return LayerDisabled, 0, "devenv.nix not in generated state"
+		},
+	},
+	{
+		Name:    "sast",
+		Weight:  WeightMedium,
+		MinTier: 3,
+		Assess: func(input assessmentInput) (LayerStatus, int, string) {
+			semgrepEnabled := input.EnabledTools["semgrep"]
+			_, hasSemgrepYml := input.GenState.Files[".semgrep.yml"]
+
+			if semgrepEnabled && hasSemgrepYml {
+				return LayerEnabled, 0, "semgrep enabled and .semgrep.yml present"
+			}
+			if semgrepEnabled || hasSemgrepYml {
+				if !semgrepEnabled {
+					return LayerPartial, 5, ".semgrep.yml present but semgrep not enabled"
+				}
+				return LayerPartial, 5, "semgrep enabled but .semgrep.yml not in state"
+			}
+			return LayerDisabled, 0, "semgrep not enabled"
+		},
+	},
+	{
+		Name:    "secrets-scanning",
+		Weight:  WeightMedium,
+		MinTier: 2,
+		Assess: func(input assessmentInput) (LayerStatus, int, string) {
+			gitleaksEnabled := input.EnabledTools["gitleaks"]
+			ripsecrets := input.EnabledTools["ripsecrets"]
+			if !ripsecrets {
+				_, hasPreCommit := input.GenState.Files[".pre-commit-config.yaml"]
+				ripsecrets = hasPreCommit
+			}
+
+			if gitleaksEnabled && ripsecrets {
+				return LayerEnabled, 10, "both gitleaks and ripsecrets enabled"
+			}
+			if gitleaksEnabled || ripsecrets {
+				if gitleaksEnabled {
+					return LayerPartial, 5, "gitleaks enabled; ripsecrets not enabled"
+				}
+				return LayerPartial, 5, "ripsecrets enabled; gitleaks not enabled"
+			}
+			return LayerDisabled, 0, "no secrets scanning enabled"
+		},
+	},
+	{
+		Name:    "container-security",
+		Weight:  WeightMedium,
+		MinTier: 3,
+		Assess: func(input assessmentInput) (LayerStatus, int, string) {
+			if !input.Detected.HasDockerfile {
+				return LayerNotApplicable, 0, "no Dockerfile detected"
+			}
+			if input.EnabledTools["container-security"] {
+				return LayerEnabled, 0, "container security scanning enabled"
+			}
+			return LayerDisabled, 0, "container security not enabled despite Dockerfile present"
+		},
+	},
+	{
+		Name:    "license-compliance",
+		Weight:  WeightLow,
+		MinTier: 3,
+		Assess: func(input assessmentInput) (LayerStatus, int, string) {
+			if input.EnabledTools["license-compliance"] {
+				return LayerEnabled, 0, "license compliance scanning enabled"
+			}
+			return LayerDisabled, 0, "license compliance not enabled"
+		},
+	},
+}
+
+// assessLayer evaluates a single defense layer from its spec and input.
+func assessLayer(spec layerSpec, input assessmentInput) DefenseLayer {
+	status, score, reason := spec.Assess(input)
+	return DefenseLayer{
+		Name:    spec.Name,
+		Weight:  spec.Weight,
+		MinTier: spec.MinTier,
+		Status:  status,
+		Score:   score,
+		Reason:  reason,
+	}
 }
 
 // AssessDefenseLayers evaluates all 10 defense layers.
 func AssessDefenseLayers(enabledTools map[string]bool, detected types.DetectedProject, genState types.GeneratedState, currentTier int) DefenseCoverage {
-	layers := []DefenseLayer{
-		assessPreToolUseHooks(enabledTools, genState),
-		assessAgeGating(enabledTools, genState),
-		assessInstallScriptBlocking(enabledTools),
-		assessLockFileEnforcement(enabledTools, genState),
-		assessVulnScanning(enabledTools, genState),
-		assessNixHardening(genState),
-		assessSAST(enabledTools, genState),
-		assessSecretsScanning(enabledTools, genState),
-		assessContainerSecurity(enabledTools, detected),
-		assessLicenseCompliance(enabledTools),
+	input := assessmentInput{
+		EnabledTools: enabledTools,
+		Detected:     detected,
+		GenState:     genState,
+	}
+
+	layers := make([]DefenseLayer, len(layerTable))
+	for i, spec := range layerTable {
+		layers[i] = assessLayer(spec, input)
 	}
 
 	score := ComputeTierRelativeDefenseScore(layers, currentTier)
@@ -56,252 +260,4 @@ func AssessDefenseLayers(enabledTools map[string]bool, detected types.DetectedPr
 		Enabled: enabled,
 		Total:   total,
 	}
-}
-
-func assessPreToolUseHooks(enabledTools map[string]bool, genState types.GeneratedState) DefenseLayer {
-	layer := DefenseLayer{
-		Name:    "pretooluse-hooks",
-		Weight:  WeightCritical,
-		MinTier: 1,
-	}
-
-	attachGuardEnabled := enabledTools["attach-guard"]
-	_, hasPackageGuard := genState.Files[".claude/hooks/package-guard.py"]
-
-	if attachGuardEnabled && hasPackageGuard {
-		layer.Status = LayerEnabled
-		layer.Reason = "attach-guard enabled and package-guard.py present"
-	} else if attachGuardEnabled || hasPackageGuard {
-		layer.Status = LayerPartial
-		layer.Score = 5
-		if !attachGuardEnabled {
-			layer.Reason = "package-guard.py present but attach-guard not enabled"
-		} else {
-			layer.Reason = "attach-guard enabled but package-guard.py not in state"
-		}
-	} else {
-		layer.Status = LayerDisabled
-		layer.Reason = "attach-guard not enabled"
-	}
-	return layer
-}
-
-func assessAgeGating(enabledTools map[string]bool, genState types.GeneratedState) DefenseLayer {
-	layer := DefenseLayer{
-		Name:    "age-gating",
-		Weight:  WeightHigh,
-		MinTier: 2,
-	}
-
-	if !enabledTools["attach-guard"] {
-		layer.Status = LayerDisabled
-		layer.Reason = "attach-guard not enabled; age-gating requires it"
-		return layer
-	}
-
-	// Age-gating is built into package-guard.py (MIN_AGE_DAYS). When the
-	// guard script is present and attach-guard is enabled, age-gating is active.
-	_, hasPackageGuard := genState.Files[".claude/hooks/package-guard.py"]
-	if hasPackageGuard {
-		layer.Status = LayerEnabled
-		layer.Reason = "package-guard.py enforces publication age checks"
-	} else {
-		layer.Status = LayerDisabled
-		layer.Reason = "package-guard.py not found in generated state"
-	}
-	return layer
-}
-
-func assessInstallScriptBlocking(enabledTools map[string]bool) DefenseLayer {
-	layer := DefenseLayer{
-		Name:    "install-script-blocking",
-		Weight:  WeightHigh,
-		MinTier: 1,
-	}
-
-	if enabledTools["attach-guard"] {
-		layer.Status = LayerEnabled
-		layer.Reason = "attach-guard blocks unverified install scripts"
-	} else {
-		layer.Status = LayerDisabled
-		layer.Reason = "attach-guard not enabled"
-	}
-	return layer
-}
-
-func assessLockFileEnforcement(enabledTools map[string]bool, genState types.GeneratedState) DefenseLayer {
-	layer := DefenseLayer{
-		Name:    "lock-file-enforcement",
-		Weight:  WeightHigh,
-		MinTier: 1,
-	}
-
-	// Check if lock file enforcement is configured through generated state.
-	// Look for pre-commit config or lock-related configs.
-	hasLockEnforcement := false
-	for path := range genState.Files {
-		if strings.Contains(path, "lock") || strings.Contains(path, ".pre-commit-config") {
-			hasLockEnforcement = true
-			break
-		}
-	}
-
-	if enabledTools["attach-guard"] && hasLockEnforcement {
-		layer.Status = LayerEnabled
-		layer.Reason = "lock file enforcement configured"
-	} else if enabledTools["attach-guard"] || hasLockEnforcement {
-		layer.Status = LayerPartial
-		layer.Score = 5
-		layer.Reason = "partial lock file enforcement"
-	} else {
-		layer.Status = LayerDisabled
-		layer.Reason = "no lock file enforcement configured"
-	}
-	return layer
-}
-
-func assessVulnScanning(enabledTools map[string]bool, genState types.GeneratedState) DefenseLayer {
-	layer := DefenseLayer{
-		Name:    "vulnerability-scanning",
-		Weight:  WeightHigh,
-		MinTier: 1,
-	}
-
-	// Check for vulnerability scanning configs (grype, socket-dev, etc.)
-	hasVulnConfig := false
-	for path := range genState.Files {
-		if strings.Contains(path, ".grype") || strings.Contains(path, "vuln") {
-			hasVulnConfig = true
-			break
-		}
-	}
-
-	if enabledTools["container-security"] || enabledTools["socket-dev-mcp"] || hasVulnConfig {
-		layer.Status = LayerEnabled
-		layer.Reason = "vulnerability scanning configured"
-	} else {
-		layer.Status = LayerDisabled
-		layer.Reason = "no vulnerability scanning configured"
-	}
-	return layer
-}
-
-func assessNixHardening(genState types.GeneratedState) DefenseLayer {
-	layer := DefenseLayer{
-		Name:    "nix-hardening",
-		Weight:  WeightMedium,
-		MinTier: 3,
-	}
-
-	// Check if devenv.nix exists in generated state (implies NixHardeningGuide was applied).
-	_, hasDevenvNix := genState.Files["devenv.nix"]
-	if hasDevenvNix {
-		layer.Status = LayerEnabled
-		layer.Reason = "devenv.nix present with hardening configuration"
-	} else {
-		layer.Status = LayerDisabled
-		layer.Reason = "devenv.nix not in generated state"
-	}
-	return layer
-}
-
-func assessSAST(enabledTools map[string]bool, genState types.GeneratedState) DefenseLayer {
-	layer := DefenseLayer{
-		Name:    "sast",
-		Weight:  WeightMedium,
-		MinTier: 3,
-	}
-
-	semgrepEnabled := enabledTools["semgrep"]
-	_, hasSemgrepYml := genState.Files[".semgrep.yml"]
-
-	if semgrepEnabled && hasSemgrepYml {
-		layer.Status = LayerEnabled
-		layer.Reason = "semgrep enabled and .semgrep.yml present"
-	} else if semgrepEnabled || hasSemgrepYml {
-		layer.Status = LayerPartial
-		layer.Score = 5
-		if !semgrepEnabled {
-			layer.Reason = ".semgrep.yml present but semgrep not enabled"
-		} else {
-			layer.Reason = "semgrep enabled but .semgrep.yml not in state"
-		}
-	} else {
-		layer.Status = LayerDisabled
-		layer.Reason = "semgrep not enabled"
-	}
-	return layer
-}
-
-func assessSecretsScanning(enabledTools map[string]bool, genState types.GeneratedState) DefenseLayer {
-	layer := DefenseLayer{
-		Name:    "secrets-scanning",
-		Weight:  WeightMedium,
-		MinTier: 2,
-	}
-
-	gitleaksEnabled := enabledTools["gitleaks"]
-	ripsecrets := enabledTools["ripsecrets"]
-	if !ripsecrets {
-		_, hasPreCommit := genState.Files[".pre-commit-config.yaml"]
-		ripsecrets = hasPreCommit
-	}
-
-	if gitleaksEnabled && ripsecrets {
-		layer.Status = LayerEnabled
-		layer.Score = 10
-		layer.Reason = "both gitleaks and ripsecrets enabled"
-	} else if gitleaksEnabled || ripsecrets {
-		layer.Status = LayerPartial
-		layer.Score = 5
-		if gitleaksEnabled {
-			layer.Reason = "gitleaks enabled; ripsecrets not enabled"
-		} else {
-			layer.Reason = "ripsecrets enabled; gitleaks not enabled"
-		}
-	} else {
-		layer.Status = LayerDisabled
-		layer.Reason = "no secrets scanning enabled"
-	}
-	return layer
-}
-
-func assessContainerSecurity(enabledTools map[string]bool, detected types.DetectedProject) DefenseLayer {
-	layer := DefenseLayer{
-		Name:    "container-security",
-		Weight:  WeightMedium,
-		MinTier: 3,
-	}
-
-	if !detected.HasDockerfile {
-		layer.Status = LayerNotApplicable
-		layer.Reason = "no Dockerfile detected"
-		return layer
-	}
-
-	if enabledTools["container-security"] {
-		layer.Status = LayerEnabled
-		layer.Reason = "container security scanning enabled"
-	} else {
-		layer.Status = LayerDisabled
-		layer.Reason = "container security not enabled despite Dockerfile present"
-	}
-	return layer
-}
-
-func assessLicenseCompliance(enabledTools map[string]bool) DefenseLayer {
-	layer := DefenseLayer{
-		Name:    "license-compliance",
-		Weight:  WeightLow,
-		MinTier: 3,
-	}
-
-	if enabledTools["license-compliance"] {
-		layer.Status = LayerEnabled
-		layer.Reason = "license compliance scanning enabled"
-	} else {
-		layer.Status = LayerDisabled
-		layer.Reason = "license compliance not enabled"
-	}
-	return layer
 }

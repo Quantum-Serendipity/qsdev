@@ -1,9 +1,13 @@
 package trust
 
-import "strings"
+import (
+	"strings"
 
-func GenerateDenyRuleProjections(denyRules []DenyRule, tierAssignments map[string]TrustTier) []DenyRule {
-	var projected []DenyRule
+	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
+)
+
+func GenerateDenyRuleProjections(denyRules []policy.DenyRule, tierAssignments map[string]TrustTier) []policy.DenyRule {
+	var projected []policy.DenyRule
 
 	for _, rule := range denyRules {
 		if rule.Type != "path" {
@@ -18,14 +22,14 @@ func GenerateDenyRuleProjections(denyRules []DenyRule, tierAssignments map[strin
 				tier = Tier3Fallback
 			}
 
-			toolRule := DenyRule{
+			toolRule := policy.DenyRule{
 				Pattern: rule.Pattern,
 				Type:    "tool",
 			}
 
 			if tier == Tier3Fallback {
 				projected = append(projected, rule)
-				projected = append(projected, DenyRule{
+				projected = append(projected, policy.DenyRule{
 					Pattern: equiv.FirstPartyTool + "(" + rule.Pattern + ")",
 					Type:    "tool",
 				})

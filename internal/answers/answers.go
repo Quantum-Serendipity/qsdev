@@ -26,7 +26,7 @@ func SaveToDir(projectRoot, dir, filename string, answers types.WizardAnswers) e
 	}
 
 	path := filepath.Join(projectRoot, dir, filename)
-	if err := fileutil.WriteFileAtomic(path, data, 0o644); err != nil {
+	if err := fileutil.WriteFileAtomic(path, data, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing answers file: %w", err)
 	}
 

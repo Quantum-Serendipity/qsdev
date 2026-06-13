@@ -95,16 +95,16 @@ func runScaffold(cmd *cobra.Command, appName string, opts ScaffoldOptions) error
 	}
 
 	files := []struct {
-		path    string
-		tmpl    string
-		mode    os.FileMode
+		path string
+		tmpl string
+		mode os.FileMode
 	}{
-		{filepath.Join("cmd", appName, "main.go"), scaffoldMainGoTmpl, 0o644},
-		{"go.mod", scaffoldGoModTmpl, 0o644},
-		{"Makefile", scaffoldMakefileTmpl, 0o644},
-		{".goreleaser.yaml", scaffoldGoreleaserTmpl, 0o644},
-		{"README.md", scaffoldReadmeTmpl, 0o644},
-		{".gitignore", scaffoldGitignoreTmpl, 0o644},
+		{filepath.Join("cmd", appName, "main.go"), scaffoldMainGoTmpl, fileutil.ModeReadWrite},
+		{"go.mod", scaffoldGoModTmpl, fileutil.ModeReadWrite},
+		{"Makefile", scaffoldMakefileTmpl, fileutil.ModeReadWrite},
+		{".goreleaser.yaml", scaffoldGoreleaserTmpl, fileutil.ModeReadWrite},
+		{"README.md", scaffoldReadmeTmpl, fileutil.ModeReadWrite},
+		{".gitignore", scaffoldGitignoreTmpl, fileutil.ModeReadWrite},
 	}
 
 	for _, f := range files {
@@ -113,7 +113,7 @@ func runScaffold(cmd *cobra.Command, appName string, opts ScaffoldOptions) error
 			return fmt.Errorf("rendering %s: %w", f.path, err)
 		}
 		fullPath := filepath.Join(opts.OutputDir, f.path)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(fullPath), fileutil.ModeDirDefault); err != nil {
 			return fmt.Errorf("creating directory for %s: %w", f.path, err)
 		}
 		if err := fileutil.WriteFileAtomic(fullPath, content, f.mode); err != nil {

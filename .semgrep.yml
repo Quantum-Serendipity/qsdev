@@ -6,26 +6,26 @@ rules:
 
 paths:
   exclude:
-    - vendor/
-    - node_modules/
-    - third_party/
-    - dist/
     - build/
+    - dist/
     - out/
+    - result
     - target/
+    - .cache/
+    - .pytest_cache/
+    - __pycache__/
+    - .coverage/
+    - coverage/
     - .next/
     - .nuxt/
     - .devenv/
     - .direnv/
-    - result
-    - __pycache__/
+    - fixtures/
+    - testdata/
+    - node_modules/
+    - third_party/
+    - vendor/
+    - .egg-info/
+    - .tox/
     - .venv/
     - venv/
-    - .tox/
-    - .egg-info/
-    - .cache/
-    - .pytest_cache/
-    - coverage/
-    - .coverage/
-    - testdata/
-    - fixtures/

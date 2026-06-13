@@ -7,8 +7,8 @@ title = "gitleaks config"
   description = "Allowlisted paths and patterns"
   regexes = []
   paths = [
-    "vendor/",
-    "node_modules/",
     ".devenv/",
     "testdata/",
+    "node_modules/",
+    "vendor/",
   ]

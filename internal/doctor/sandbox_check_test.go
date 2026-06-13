@@ -74,6 +74,7 @@ func TestRunSandboxCheck_FullSupport(t *testing.T) {
 
 	if section == nil {
 		t.Fatal("expected non-nil section")
+		return
 	}
 	if !section.Detected {
 		t.Error("expected Detected = true")
@@ -97,6 +98,7 @@ func TestRunSandboxCheck_NoBwrap(t *testing.T) {
 
 	if section == nil {
 		t.Fatal("expected non-nil section")
+		return
 	}
 	if section.Tier != "unsandboxed" {
 		t.Errorf("Tier = %q, want %q", section.Tier, "unsandboxed")

@@ -41,7 +41,7 @@ type NixUpdateOptions struct {
 // UpdateDevenvNix implements the devenv.nix update strategy.
 func UpdateDevenvNix(opts NixUpdateOptions) (*NixUpdateResult, error) {
 	if opts.NewMode == 0 {
-		opts.NewMode = 0o644
+		opts.NewMode = fileutil.ModeReadWrite
 	}
 
 	absPath := filepath.Join(opts.ProjectRoot, opts.FilePath)

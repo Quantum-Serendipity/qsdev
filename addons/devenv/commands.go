@@ -552,12 +552,7 @@ func packageSpec(add bool) itemSpec {
 		hasForce:    add,
 		postMessage: devenvActivateMessage,
 		contains: func(a *types.WizardAnswers, name string) bool {
-			for _, p := range a.ExtraPackages {
-				if p == name {
-					return true
-				}
-			}
-			return false
+			return slices.Contains(a.ExtraPackages, name)
 		},
 		add: func(a *types.WizardAnswers, name string) {
 			a.ExtraPackages = append(a.ExtraPackages, name)

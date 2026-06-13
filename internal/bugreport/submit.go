@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 const browserMaxLen = 8000
@@ -74,7 +75,7 @@ func SaveToFile(title, body string) (string, error) {
 		home = os.TempDir()
 	}
 	dir := filepath.Join(home, "."+branding.Get().AppName)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fileutil.ModeDirDefault); err != nil {
 		return "", err
 	}
 
@@ -82,7 +83,7 @@ func SaveToFile(title, body string) (string, error) {
 	path := filepath.Join(dir, filename)
 
 	content := fmt.Sprintf("# %s\n\n%s", title, body)
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), fileutil.ModeReadWrite); err != nil {
 		return "", err
 	}
 	return path, nil

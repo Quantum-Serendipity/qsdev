@@ -156,7 +156,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 		files = append(files, types.GeneratedFile{
 			Path:     ".mvn/settings.xml",
 			Content:  content,
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 		})
 	}
@@ -166,7 +166,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 		files = append(files, types.GeneratedFile{
 			Path:     "gradle.properties",
 			Content:  []byte(content),
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 		})
 
@@ -175,7 +175,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 			files = append(files, types.GeneratedFile{
 				Path:     "init.gradle",
 				Content:  []byte(initGradle),
-				Mode:     0o644,
+				Mode:     fileutil.ModeReadWrite,
 				Strategy: types.Overwrite,
 			})
 		}

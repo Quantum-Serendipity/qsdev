@@ -90,7 +90,7 @@ func TestEvaluateConformance_BaselineFail_NoCLAUDEMD(t *testing.T) {
 
 	found := false
 	for _, c := range result.Baseline.Checks {
-		if c.Name == "claude-md-present" {
+		if c.Name == CheckClaudeMDPresent {
 			found = true
 			if c.Pass {
 				t.Error("claude-md-present should have failed")
@@ -500,7 +500,7 @@ func TestEvaluateConformance_EnhancedPass_CIWorkflows(t *testing.T) {
 
 	found := false
 	for _, c := range result.Enhanced.Checks {
-		if c.Name == "ci-workflows-generated" {
+		if c.Name == CheckCIWorkflowsGenerated {
 			found = true
 			if !c.Pass {
 				t.Error("ci-workflows-generated should pass when workflow file exists")
@@ -547,7 +547,7 @@ func TestEvaluateConformance_EnhancedFail_NoCIWorkflows(t *testing.T) {
 
 	found := false
 	for _, c := range result.Enhanced.Checks {
-		if c.Name == "ci-workflows-generated" {
+		if c.Name == CheckCIWorkflowsGenerated {
 			found = true
 			if c.Pass {
 				t.Error("ci-workflows-generated should fail when no workflow files exist")
@@ -590,7 +590,7 @@ func TestEvaluateConformance_BaselinePass_NALockFile(t *testing.T) {
 	result := EvaluateConformance(defense, deps, map[string]bool{}, genState)
 
 	for _, c := range result.Baseline.Checks {
-		if c.Name == "lock-files-present" {
+		if c.Name == CheckLockFilesPresent {
 			if !c.Pass {
 				t.Error("lock-files-present should pass when only n/a lockfiles are non-missing")
 			}

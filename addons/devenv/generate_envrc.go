@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -27,7 +28,7 @@ func GenerateEnvrc(answers types.WizardAnswers) *types.GeneratedFile {
 	return &types.GeneratedFile{
 		Path:     ".envrc",
 		Content:  []byte(envrcContent()),
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Skip,
 	}
 }

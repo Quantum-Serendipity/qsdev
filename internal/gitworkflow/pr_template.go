@@ -3,6 +3,7 @@ package gitworkflow
 import (
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -73,7 +74,7 @@ func GeneratePRTemplate(answers types.WizardAnswers) (*types.GeneratedFile, erro
 	return &types.GeneratedFile{
 		Path:     ".github/pull_request_template.md",
 		Content:  []byte(b.String()),
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 	}, nil
 }

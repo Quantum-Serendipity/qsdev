@@ -8,6 +8,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -118,7 +119,7 @@ func registerConsultingAgentGenerators(r *toolreg.Registry) {
 				return []types.GeneratedFile{{
 					Path:    ".claude/agents/" + agentName + ".md",
 					Content: content,
-					Mode:    0o644,
+					Mode:    fileutil.ModeReadWrite,
 					Owner:   toolKey,
 				}}, nil
 			},
@@ -145,7 +146,7 @@ func registerConsultingWorkflowGenerators(r *toolreg.Registry) {
 				return []types.GeneratedFile{{
 					Path:    ".claude/skills/" + skillName + "/SKILL.md",
 					Content: content,
-					Mode:    0o644,
+					Mode:    fileutil.ModeReadWrite,
 					Owner:   toolKey,
 				}}, nil
 			},

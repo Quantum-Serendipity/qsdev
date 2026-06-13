@@ -3,6 +3,7 @@ package claudecode
 import (
 	"fmt"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -54,7 +55,7 @@ func deployOperationSkills(answers types.WizardAnswers) ([]types.GeneratedFile, 
 		files = append(files, types.GeneratedFile{
 			Path:     ".claude/skills/" + entry.Name + "/SKILL.md",
 			Content:  content,
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.LibraryManaged,
 			Owner:    entry.Name,
 		})

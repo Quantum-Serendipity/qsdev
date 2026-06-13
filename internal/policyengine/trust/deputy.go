@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
 )
 
 type ToolEquivalence struct {
@@ -20,7 +22,7 @@ var crossToolEquivalence = map[string]ToolEquivalence{
 	"mcp__filesystem__edit_file":         {FirstPartyTool: "Edit", PathArgField: "path"},
 }
 
-func CheckAccess(toolName string, toolArgs json.RawMessage, denyRules []DenyRule) (blocked bool, reason string) {
+func CheckAccess(toolName string, toolArgs json.RawMessage, denyRules []policy.DenyRule) (blocked bool, reason string) {
 	equiv, ok := crossToolEquivalence[toolName]
 	if !ok {
 		return false, ""

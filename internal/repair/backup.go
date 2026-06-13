@@ -10,6 +10,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	pkgfileutil "github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 // backupDir returns the path to the backup directory within a project.
@@ -30,7 +31,7 @@ func createBackup(projectRoot, relPath string) (string, error) {
 	}
 
 	dir := backupDir(projectRoot)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, pkgfileutil.ModeDirDefault); err != nil {
 		return "", fmt.Errorf("creating backup dir %s: %w", dir, err)
 	}
 

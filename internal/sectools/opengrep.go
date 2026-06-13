@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -26,7 +27,7 @@ func GenerateOpengrepConfigYaml(_ types.WizardAnswers) (*types.GeneratedFile, er
 	return &types.GeneratedFile{
 		Path:     ".opengrep/config.yaml",
 		Content:  []byte(b.String()),
-		Mode:     0o644,
+		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 		Owner:    "opengrep",
 	}, nil

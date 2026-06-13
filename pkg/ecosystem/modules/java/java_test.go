@@ -14,25 +14,8 @@ import (
 // Compile-time interface compliance check.
 var _ ecosystem.EcosystemModule = (*java.Module)(nil)
 
-func TestName(t *testing.T) {
-	m := &java.Module{}
-	if got := m.Name(); got != "java" {
-		t.Errorf("Name() = %q, want %q", got, "java")
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	m := &java.Module{}
-	if got := m.DisplayName(); got != "Java/Kotlin (JVM)" {
-		t.Errorf("DisplayName() = %q, want %q", got, "Java/Kotlin (JVM)")
-	}
-}
-
-func TestTier(t *testing.T) {
-	m := &java.Module{}
-	if got := m.Tier(); got != 1 {
-		t.Errorf("Tier() = %d, want %d", got, 1)
-	}
+func TestModuleIdentity(t *testing.T) {
+	ecosystem.AssertModuleIdentity(t, &java.Module{}, "java", "Java/Kotlin (JVM)", 1)
 }
 
 // ---------------------------------------------------------------------------

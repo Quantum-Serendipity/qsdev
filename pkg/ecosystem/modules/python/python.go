@@ -126,21 +126,23 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 
 	pm := config.PM("pip")
 
-	var b strings.Builder
-	b.WriteString("  languages.python = {\n")
-	b.WriteString("    enable = true;\n")
-	fmt.Fprintf(&b, "    version = %q;\n", version)
+	props := []ecosystem.NixProperty{
+		{Key: "version", Value: fmt.Sprintf("%q", version)},
+	}
 
 	switch pm {
 	case "uv":
-		b.WriteString("    uv.enable = true;\n")
+		props = append(props, ecosystem.NixProperty{Key: "uv.enable", Value: "true"})
 	case "poetry":
-		b.WriteString("    poetry.enable = true;\n")
+		props = append(props, ecosystem.NixProperty{Key: "poetry.enable", Value: "true"})
 	}
 
-	b.WriteString("    venv.enable = true;\n")
-	b.WriteString("  };\n")
-	return b.String(), nil
+	props = append(props, ecosystem.NixProperty{Key: "venv.enable", Value: "true"})
+
+	return ecosystem.BuildLanguageFragment(ecosystem.NixLangConfig{
+		EnablePath: "languages.python",
+		Properties: props,
+	}), nil
 }
 
 // SecurityConfigs returns generated security configuration files.
@@ -174,7 +176,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 		{
 			Path:     "pip.conf",
 			Content:  []byte(content),
-			Mode:     0o644,
+			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,
 		},
 	}

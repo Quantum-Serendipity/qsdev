@@ -68,7 +68,10 @@ func MergeMcpJson(base, theirs, ours []byte) ([]byte, error) {
 				// User deleted it — respect deletion.
 				continue
 			}
-			if !serverEqual(theirsEntry, baseEntry) {
+			if isEmptyServer(theirsEntry) && !isEmptyServer(oursEntry) {
+				// Theirs was corrupted to empty — use ours.
+				result.MCPServers[name] = oursEntry
+			} else if !serverEqual(theirsEntry, baseEntry) {
 				// User modified it — keep theirs version.
 				result.MCPServers[name] = theirsEntry
 			} else {
@@ -106,6 +109,12 @@ func MergeMcpJson(base, theirs, ours []byte) ([]byte, error) {
 		return nil, fmt.Errorf("marshaling merged mcp.json: %w", err)
 	}
 	return append(out, '\n'), nil
+}
+
+// isEmptyServer returns true if the entry has no meaningful fields set.
+// An empty object is never a valid user customization — it's corruption.
+func isEmptyServer(s mcpServerEntry) bool {
+	return s.Command == "" && s.URL == "" && s.Type == "" && len(s.Args) == 0 && len(s.Env) == 0
 }
 
 // serverEqual returns true if two mcpServerEntry values are equal.

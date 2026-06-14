@@ -821,13 +821,12 @@ mcp_servers:
         display_name: "GitHub MCP"
         category: integration
         description: "GitHub repository and issue management"
-        command: npx
-        args: ["@anthropic-ai/mcp-github"]
+        command: github-mcp-server
+        args: ["stdio"]
         env:
             GITHUB_TOKEN: "${GITHUB_TOKEN}"
         transport: stdio
-        install_method: npm-global
-        package_name: "@anthropic-ai/mcp-github"
+        nix_package: "github-mcp-server"
     filesystem:
         display_name: "Filesystem MCP"
         category: integration
@@ -893,14 +892,12 @@ mcp_servers:
     local-docs-devdocs:
         display_name: "DevDocs Local Documentation"
         category: documentation
-        description: "Local DevDocs documentation server for offline API reference"
+        description: "Version-aware DevDocs documentation with local caching"
         command: npx
-        args: ["devdocs-mcp-server"]
-        env:
-            DEVDOCS_DATA_DIR: "${HOME}/.local/share/qsdev/docs/devdocs"
+        args: ["-y", "@madhan-g-p/devdocs-mcp-server"]
         transport: stdio
         install_method: npm-global
-        package_name: "devdocs-mcp-server"
+        package_name: "@madhan-g-p/devdocs-mcp-server"
     local-docs-zim:
         display_name: "Stack Exchange ZIM Documentation"
         category: documentation
@@ -942,32 +939,7 @@ docs_corpus:
         java: ["openjdk~21"]
         dotnet: ["dotnet~8"]
         terraform: ["terraform"]
-    zim_archives:
-        - slug: "unix.stackexchange.com_en_all_2026-02"
-          display_name: "Unix & Linux Stack Exchange"
-          url: "https://download.kiwix.org/zim/stack_exchange/unix.stackexchange.com_en_all_2026-02.zim"
-          size_bytes: 850000000
-          ecosystems: ["go", "python", "rust", "javascript"]
-        - slug: "serverfault.com_en_all_2026-02"
-          display_name: "Server Fault"
-          url: "https://download.kiwix.org/zim/stack_exchange/serverfault.com_en_all_2026-02.zim"
-          size_bytes: 750000000
-          ecosystems: ["go", "python", "rust", "javascript"]
-        - slug: "softwareengineering.stackexchange.com_en_all_2026-02"
-          display_name: "Software Engineering SE"
-          url: "https://download.kiwix.org/zim/stack_exchange/softwareengineering.stackexchange.com_en_all_2026-02.zim"
-          size_bytes: 450000000
-          ecosystems: ["go", "python", "rust", "javascript"]
-        - slug: "devops.stackexchange.com_en_all_2026-02"
-          display_name: "DevOps SE"
-          url: "https://download.kiwix.org/zim/stack_exchange/devops.stackexchange.com_en_all_2026-02.zim"
-          size_bytes: 200000000
-          ecosystems: ["go", "python", "rust", "javascript"]
-        - slug: "dba.stackexchange.com_en_all_2026-02"
-          display_name: "DBA SE"
-          url: "https://download.kiwix.org/zim/stack_exchange/dba.stackexchange.com_en_all_2026-02.zim"
-          size_bytes: 400000000
-          ecosystems: ["go", "python", "rust", "javascript"]
+    zim_archives: []
 security_hooks:
     - ripsecrets
     - check-added-large-files

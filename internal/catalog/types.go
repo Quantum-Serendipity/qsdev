@@ -217,6 +217,7 @@ type MCPServerDef struct {
 	Transport     string            `yaml:"transport,omitempty"`
 	InstallMethod string            `yaml:"install_method,omitempty"`
 	PackageName   string            `yaml:"package_name,omitempty"`
+	NixPackage    string            `yaml:"nix_package,omitempty"`
 }
 
 // PermissionRulesFile represents the permission_rules section of defaults.yaml.

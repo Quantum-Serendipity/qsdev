@@ -54,6 +54,9 @@ type UnifiedDefaults struct {
 	PackageManagers     map[string][]string  `yaml:"package_managers,omitempty"`
 	ToolCategories      []ToolCategoryDef    `yaml:"tool_categories,omitempty"`
 
+	// Docs Corpus
+	DocsCorpus *DocsCorpusConfig `yaml:"docs_corpus,omitempty"`
+
 	// Permission rules
 	PermissionDenyRules           map[string][]string            `yaml:"permission_deny_rules,omitempty"`
 	PermissionSupplyChainDenySets []string                       `yaml:"permission_supply_chain_deny_sets,omitempty"`
@@ -114,6 +117,11 @@ func (u *UnifiedDefaults) ToCatalog() *Catalog {
 	cat.validation.DataClassifications = u.DataClassifications
 	cat.validation.PackageManagers = u.PackageManagers
 	cat.validation.ToolCategories = u.ToolCategories
+
+	// Docs Corpus
+	if u.DocsCorpus != nil {
+		cat.docsCorpus = *u.DocsCorpus
+	}
 
 	// Permission rules
 	cat.permissionRules.DenyRules = u.PermissionDenyRules
@@ -176,6 +184,10 @@ func (c *Catalog) ToUnified() *UnifiedDefaults {
 	u.PackageManagers = c.validation.PackageManagers
 	u.ToolCategories = c.validation.ToolCategories
 
+	// Docs Corpus
+	dc := c.docsCorpus
+	u.DocsCorpus = &dc
+
 	// Permission rules
 	u.PermissionDenyRules = c.permissionRules.DenyRules
 	u.PermissionSupplyChainDenySets = c.permissionRules.SupplyChainDenySets
@@ -197,6 +209,7 @@ func SectionNames() []string {
 		"tier_to_enabled_tools", "default_mcp_servers", "default_agent_tools",
 		"languages", "services", "permission_presets", "hook_presets",
 		"security_levels", "data_classifications", "package_managers", "tool_categories",
+		"docs_corpus",
 		"permission_deny_rules", "permission_supply_chain_deny_sets",
 		"permission_all_deny_sets", "permission_allow_rules", "permission_ask_rules",
 		"permission_package_ask_sets", "permission_preset_defs",

@@ -230,6 +230,22 @@ type PermissionRulesFile struct {
 	PresetDefs          map[string]PermissionPresetDef `yaml:"permission_preset_defs"`
 }
 
+// DocsCorpusConfig holds configuration for offline documentation downloads.
+type DocsCorpusConfig struct {
+	DevDocsBaseURL string              `yaml:"devdocs_base_url"`
+	DevDocsSlugs   map[string][]string `yaml:"devdocs_slugs"`
+	ZIMArchives    []ZIMArchiveDef     `yaml:"zim_archives"`
+}
+
+// ZIMArchiveDef defines a ZIM archive available for local documentation.
+type ZIMArchiveDef struct {
+	Slug        string   `yaml:"slug"`
+	DisplayName string   `yaml:"display_name"`
+	URL         string   `yaml:"url"`
+	SizeBytes   int64    `yaml:"size_bytes"`
+	Ecosystems  []string `yaml:"ecosystems"`
+}
+
 // PermissionPresetDef defines a permission preset's composition.
 type PermissionPresetDef struct {
 	DefaultMode       string   `yaml:"default_mode,omitempty"`

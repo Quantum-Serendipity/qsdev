@@ -151,8 +151,12 @@ func (m *DocsCorpusManager) SaveManifest(manifest *DocsManifest) error {
 }
 
 // DownloadDevDocs fetches a DevDocs documentation set (index.json, db.json,
-// meta.json) and records it in the manifest.
-func (m *DocsCorpusManager) DownloadDevDocs(ctx context.Context, slug string) error {
+// meta.json) and records it in the manifest. The baseURL parameter specifies
+// the DevDocs CDN root (e.g. "https://documents.devdocs.io").
+func (m *DocsCorpusManager) DownloadDevDocs(ctx context.Context, slug, baseURL string) error {
+	if baseURL == "" {
+		baseURL = "https://documents.devdocs.io"
+	}
 	dir := filepath.Join(m.DataDir, "devdocs", slug)
 	if err := os.MkdirAll(dir, fileutil.ModeDirDefault); err != nil {
 		return fmt.Errorf("creating devdocs dir for %q: %w", slug, err)
@@ -164,7 +168,7 @@ func (m *DocsCorpusManager) DownloadDevDocs(ctx context.Context, slug string) er
 	combinedHasher := sha256.New()
 
 	for _, f := range files {
-		url := fmt.Sprintf("https://devdocs.io/docs/%s/%s", slug, f)
+		url := fmt.Sprintf("%s/%s/%s", baseURL, slug, f)
 		destPath := filepath.Join(dir, f)
 
 		size, hash, err := m.downloadFile(ctx, url, destPath)
@@ -259,16 +263,16 @@ func (m *DocsCorpusManager) DownloadZIM(ctx context.Context, entry ZIMEntry) err
 	return m.SaveManifest(manifest)
 }
 
-// CheckOutdated compares installed ZIM entries against the builtin catalog
+// CheckOutdated compares installed ZIM entries against the provided catalog
 // and returns entries that have newer versions available.
-func (m *DocsCorpusManager) CheckOutdated() ([]OutdatedEntry, error) {
+func (m *DocsCorpusManager) CheckOutdated(zimEntries []ZIMEntry) ([]OutdatedEntry, error) {
 	manifest, err := m.LoadManifest()
 	if err != nil {
 		return nil, fmt.Errorf("loading manifest: %w", err)
 	}
 
 	var outdated []OutdatedEntry
-	for _, catalogEntry := range BuiltinZIMCatalog {
+	for _, catalogEntry := range zimEntries {
 		key := "zim:" + catalogEntry.Slug
 		installed, ok := manifest.DocSets[key]
 		if !ok {

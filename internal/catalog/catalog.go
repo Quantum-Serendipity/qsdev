@@ -19,6 +19,7 @@ type Catalog struct {
 	validation      ValidationFile
 	permissionRules PermissionRulesFile
 	mcpServers      map[string]MCPServerDef
+	docsCorpus      DocsCorpusConfig
 }
 
 var (

@@ -299,7 +299,7 @@ func collectToolPackages(answers types.WizardAnswers) (pkgs []string, exprs []st
 // mcpServerNixDeps maps MCP server install methods to the Nix packages
 // needed at runtime (e.g. uvx comes from the uv package).
 var mcpServerNixDeps = map[string]string{
-	"uv-tool": "pkgs.uv",
+	"uv-tool": "uv",
 }
 
 // collectMCPPackages returns Nix packages required by the selected MCP servers.

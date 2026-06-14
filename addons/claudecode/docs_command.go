@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 )
 
@@ -53,15 +54,25 @@ download only one type.`,
 			)
 			ctx := cmd.Context()
 
+			cat, err := catalog.Default()
+			if err != nil {
+				return fmt.Errorf("loading catalog: %w", err)
+			}
+
 			downloadZIM := !devdocsOnly
 			downloadDevDocs := !zimOnly
 
 			if downloadDevDocs {
+				baseURL := cat.DevDocsBaseURL()
+				slugs := cat.DevDocsSlugs()
+				if len(slugs) == 0 {
+					slugs = mcpregistry.LanguageToDevDocsSlugs
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), "Downloading DevDocs documentation sets...")
-				for lang, slugs := range mcpregistry.LanguageToDevDocsSlugs {
-					for _, slug := range slugs {
+				for lang, langSlugs := range slugs {
+					for _, slug := range langSlugs {
 						fmt.Fprintf(cmd.OutOrStdout(), "  %s (%s)...", slug, lang)
-						if err := mgr.DownloadDevDocs(ctx, slug); err != nil {
+						if err := mgr.DownloadDevDocs(ctx, slug, baseURL); err != nil {
 							fmt.Fprintf(cmd.OutOrStdout(), " FAILED: %s\n", err)
 							continue
 						}
@@ -72,7 +83,7 @@ download only one type.`,
 
 			if downloadZIM {
 				fmt.Fprintln(cmd.OutOrStdout(), "Downloading ZIM archives...")
-				if err := downloadZIMEntries(ctx, cmd, mgr); err != nil {
+				if err := downloadZIMEntries(ctx, cmd, mgr, cat); err != nil {
 					return err
 				}
 			}
@@ -88,8 +99,9 @@ download only one type.`,
 	return cmd
 }
 
-func downloadZIMEntries(ctx context.Context, cmd *cobra.Command, mgr *mcpregistry.DocsCorpusManager) error {
-	for _, entry := range mcpregistry.BuiltinZIMCatalog {
+func downloadZIMEntries(ctx context.Context, cmd *cobra.Command, mgr *mcpregistry.DocsCorpusManager, cat *catalog.Catalog) error {
+	entries := catalogZIMEntries(cat)
+	for _, entry := range entries {
 		fmt.Fprintf(cmd.OutOrStdout(), "  %s...", entry.DisplayName)
 		if err := mgr.DownloadZIM(ctx, entry); err != nil {
 			fmt.Fprintf(cmd.OutOrStdout(), " FAILED: %s\n", err)
@@ -167,7 +179,12 @@ func docsOutdatedCmd() *cobra.Command {
 				http.DefaultClient,
 			)
 
-			outdated, err := mgr.CheckOutdated()
+			cat, err := catalog.Default()
+			if err != nil {
+				return fmt.Errorf("loading catalog: %w", err)
+			}
+
+			outdated, err := mgr.CheckOutdated(catalogZIMEntries(cat))
 			if err != nil {
 				return err
 			}
@@ -203,7 +220,13 @@ func docsUpdateCmd() *cobra.Command {
 			)
 			ctx := cmd.Context()
 
-			outdated, err := mgr.CheckOutdated()
+			cat, err := catalog.Default()
+			if err != nil {
+				return fmt.Errorf("loading catalog: %w", err)
+			}
+
+			zimEntries := catalogZIMEntries(cat)
+			outdated, err := mgr.CheckOutdated(zimEntries)
 			if err != nil {
 				return err
 			}
@@ -213,14 +236,14 @@ func docsUpdateCmd() *cobra.Command {
 				return nil
 			}
 
+			baseURL := cat.DevDocsBaseURL()
 			fmt.Fprintf(cmd.OutOrStdout(), "Updating %d documentation set(s)...\n", len(outdated))
 
 			for _, o := range outdated {
 				fmt.Fprintf(cmd.OutOrStdout(), "  %s...", o.Slug)
 				switch o.Type {
 				case mcpregistry.DocSetZIM:
-					// Find the matching catalog entry to get the full URL.
-					for _, entry := range mcpregistry.BuiltinZIMCatalog {
+					for _, entry := range zimEntries {
 						if entry.Slug == o.AvailableVersion {
 							if err := mgr.DownloadZIM(ctx, entry); err != nil {
 								fmt.Fprintf(cmd.OutOrStdout(), " FAILED: %s\n", err)
@@ -231,7 +254,7 @@ func docsUpdateCmd() *cobra.Command {
 						}
 					}
 				case mcpregistry.DocSetDevDocs:
-					if err := mgr.DownloadDevDocs(ctx, o.Slug); err != nil {
+					if err := mgr.DownloadDevDocs(ctx, o.Slug, baseURL); err != nil {
 						fmt.Fprintf(cmd.OutOrStdout(), " FAILED: %s\n", err)
 						continue
 					}
@@ -244,6 +267,24 @@ func docsUpdateCmd() *cobra.Command {
 	}
 
 	return cmd
+}
+
+func catalogZIMEntries(cat *catalog.Catalog) []mcpregistry.ZIMEntry {
+	defs := cat.ZIMArchives()
+	if len(defs) == 0 {
+		return mcpregistry.BuiltinZIMCatalog
+	}
+	entries := make([]mcpregistry.ZIMEntry, len(defs))
+	for i, d := range defs {
+		entries[i] = mcpregistry.ZIMEntry{
+			Slug:        d.Slug,
+			DisplayName: d.DisplayName,
+			URL:         d.URL,
+			SizeBytes:   d.SizeBytes,
+			Ecosystems:  d.Ecosystems,
+		}
+	}
+	return entries
 }
 
 func docsCleanCmd() *cobra.Command {

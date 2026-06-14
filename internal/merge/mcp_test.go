@@ -431,6 +431,108 @@ func TestMergeMcpJson_EmptyServers(t *testing.T) {
 	}
 }
 
+func TestMergeMcpJson_EmptyTheirsRecovery(t *testing.T) {
+	base := []byte(`{
+  "mcpServers": {
+    "socket": {
+      "type": "http",
+      "url": "https://mcp.socket.dev/"
+    }
+  }
+}`)
+	theirs := []byte(`{
+  "mcpServers": {
+    "socket": {}
+  }
+}`)
+	ours := []byte(`{
+  "mcpServers": {
+    "socket": {
+      "type": "http",
+      "url": "https://mcp.socket.dev/"
+    }
+  }
+}`)
+
+	got, err := MergeMcpJson(base, theirs, ours)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var parsed mcpJSON
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+
+	s, ok := parsed.MCPServers["socket"]
+	if !ok {
+		t.Fatal("expected socket server in result")
+	}
+	if s.Type != "http" {
+		t.Errorf("expected type 'http', got %q", s.Type)
+	}
+	if s.URL != "https://mcp.socket.dev/" {
+		t.Errorf("expected url 'https://mcp.socket.dev/', got %q", s.URL)
+	}
+}
+
+func TestMergeMcpJson_HTTPTransportPreserved(t *testing.T) {
+	base := []byte(`{
+  "mcpServers": {
+    "socket": {
+      "type": "http",
+      "url": "https://mcp.socket.dev/"
+    },
+    "github": {
+      "command": "gh",
+      "args": ["mcp"]
+    }
+  }
+}`)
+	theirs := []byte(`{
+  "mcpServers": {
+    "socket": {
+      "type": "http",
+      "url": "https://mcp.socket.dev/"
+    },
+    "github": {
+      "command": "gh",
+      "args": ["mcp"]
+    }
+  }
+}`)
+	ours := []byte(`{
+  "mcpServers": {
+    "socket": {
+      "type": "http",
+      "url": "https://mcp.socket.dev/v2"
+    },
+    "github": {
+      "command": "gh",
+      "args": ["mcp", "--verbose"]
+    }
+  }
+}`)
+
+	got, err := MergeMcpJson(base, theirs, ours)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var parsed mcpJSON
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+
+	s := parsed.MCPServers["socket"]
+	if s.Type != "http" {
+		t.Errorf("expected type 'http', got %q", s.Type)
+	}
+	if s.URL != "https://mcp.socket.dev/v2" {
+		t.Errorf("expected updated URL from ours, got %q", s.URL)
+	}
+}
+
 func TestMergeMcpJson_OutputIsValidJSON(t *testing.T) {
 	base := []byte(`{
   "mcpServers": {

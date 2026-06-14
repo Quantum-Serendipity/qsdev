@@ -31,7 +31,7 @@ func TestBuildDefault_KnownServerProperties(t *testing.T) {
 			name:        "github",
 			wantDisplay: "GitHub MCP",
 			wantCat:     CategoryIntegration,
-			wantCmd:     "npx",
+			wantCmd:     "github-mcp-server",
 		},
 		{
 			name:        "context7",

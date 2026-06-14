@@ -52,7 +52,7 @@ func TestInstall(t *testing.T) {
 		{
 			name:        "NpmGlobal",
 			serverName:  "local-docs-devdocs",
-			wantCmd:     []string{"npm", "install", "-g", "devdocs-mcp-server"},
+			wantCmd:     []string{"npm", "install", "-g", "@madhan-g-p/devdocs-mcp-server"},
 			wantInstall: true,
 		},
 		{

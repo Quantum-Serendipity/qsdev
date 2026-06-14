@@ -33,10 +33,10 @@ func TestGenerateMcpJson_SingleKnownServer(t *testing.T) {
 	if !ok {
 		t.Fatal("expected 'github' key in mcpServers")
 	}
-	if entry.Command != "npx" {
-		t.Errorf("expected command 'npx', got %q", entry.Command)
+	if entry.Command != "github-mcp-server" {
+		t.Errorf("expected command 'github-mcp-server', got %q", entry.Command)
 	}
-	if len(entry.Args) != 1 || entry.Args[0] != "@anthropic-ai/mcp-github" {
+	if len(entry.Args) != 1 || entry.Args[0] != "stdio" {
 		t.Errorf("unexpected args: %v", entry.Args)
 	}
 	if entry.Env["GITHUB_TOKEN"] != "${GITHUB_TOKEN}" {

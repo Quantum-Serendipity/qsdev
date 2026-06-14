@@ -320,6 +320,10 @@ func collectMCPPackages(answers types.WizardAnswers) []string {
 			seen[nixPkg] = true
 			pkgs = append(pkgs, nixPkg)
 		}
+		if def.NixPackage != "" && !seen[def.NixPackage] {
+			seen[def.NixPackage] = true
+			pkgs = append(pkgs, def.NixPackage)
+		}
 	}
 	return pkgs
 }

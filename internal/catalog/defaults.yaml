@@ -932,6 +932,42 @@ mcp_servers:
         transport: stdio
         install_method: uv-tool
         package_name: "mcp-nixos"
+docs_corpus:
+    devdocs_base_url: "https://documents.devdocs.io"
+    devdocs_slugs:
+        go: ["go"]
+        javascript: ["javascript", "node~22_lts"]
+        python: ["python~3.12"]
+        rust: ["rust"]
+        java: ["openjdk~21"]
+        dotnet: ["dotnet~8"]
+        terraform: ["terraform"]
+    zim_archives:
+        - slug: "unix.stackexchange.com_en_all_2026-02"
+          display_name: "Unix & Linux Stack Exchange"
+          url: "https://download.kiwix.org/zim/stack_exchange/unix.stackexchange.com_en_all_2026-02.zim"
+          size_bytes: 850000000
+          ecosystems: ["go", "python", "rust", "javascript"]
+        - slug: "serverfault.com_en_all_2026-02"
+          display_name: "Server Fault"
+          url: "https://download.kiwix.org/zim/stack_exchange/serverfault.com_en_all_2026-02.zim"
+          size_bytes: 750000000
+          ecosystems: ["go", "python", "rust", "javascript"]
+        - slug: "softwareengineering.stackexchange.com_en_all_2026-02"
+          display_name: "Software Engineering SE"
+          url: "https://download.kiwix.org/zim/stack_exchange/softwareengineering.stackexchange.com_en_all_2026-02.zim"
+          size_bytes: 450000000
+          ecosystems: ["go", "python", "rust", "javascript"]
+        - slug: "devops.stackexchange.com_en_all_2026-02"
+          display_name: "DevOps SE"
+          url: "https://download.kiwix.org/zim/stack_exchange/devops.stackexchange.com_en_all_2026-02.zim"
+          size_bytes: 200000000
+          ecosystems: ["go", "python", "rust", "javascript"]
+        - slug: "dba.stackexchange.com_en_all_2026-02"
+          display_name: "DBA SE"
+          url: "https://download.kiwix.org/zim/stack_exchange/dba.stackexchange.com_en_all_2026-02.zim"
+          size_bytes: 400000000
+          ecosystems: ["go", "python", "rust", "javascript"]
 security_hooks:
     - ripsecrets
     - check-added-large-files

@@ -103,14 +103,14 @@ func TestDownloadDevDocs_CreatesFiles(t *testing.T) {
 
 	client := &mockHTTPClient{
 		responses: map[string]*http.Response{
-			"https://devdocs.io/docs/go/index.json": makeResponse(`{"entries":[]}`),
-			"https://devdocs.io/docs/go/db.json":    makeResponse(`{"content":"test"}`),
-			"https://devdocs.io/docs/go/meta.json":  makeResponse(`{"name":"Go"}`),
+			"https://documents.devdocs.io/go/index.json": makeResponse(`{"entries":[]}`),
+			"https://documents.devdocs.io/go/db.json":    makeResponse(`{"content":"test"}`),
+			"https://documents.devdocs.io/go/meta.json":  makeResponse(`{"name":"Go"}`),
 		},
 	}
 
 	mgr := NewDocsCorpusManager(dir, client)
-	if err := mgr.DownloadDevDocs(context.Background(), slug); err != nil {
+	if err := mgr.DownloadDevDocs(context.Background(), slug, "https://documents.devdocs.io"); err != nil {
 		t.Fatalf("DownloadDevDocs: %v", err)
 	}
 

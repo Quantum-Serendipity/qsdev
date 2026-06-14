@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -64,12 +66,16 @@ download only one type.`,
 
 			if downloadDevDocs {
 				baseURL := cat.DevDocsBaseURL()
-				slugs := cat.DevDocsSlugs()
-				if len(slugs) == 0 {
-					slugs = mcpregistry.LanguageToDevDocsSlugs
+				allSlugs := cat.DevDocsSlugs()
+				if len(allSlugs) == 0 {
+					allSlugs = mcpregistry.LanguageToDevDocsSlugs
 				}
+				projectEcosystems := projectEcosystemSet()
 				fmt.Fprintln(cmd.OutOrStdout(), "Downloading DevDocs documentation sets...")
-				for lang, langSlugs := range slugs {
+				for lang, langSlugs := range allSlugs {
+					if len(projectEcosystems) > 0 && !projectEcosystems[lang] {
+						continue
+					}
 					for _, slug := range langSlugs {
 						fmt.Fprintf(cmd.OutOrStdout(), "  %s (%s)...", slug, lang)
 						if err := mgr.DownloadDevDocs(ctx, slug, baseURL); err != nil {
@@ -267,6 +273,21 @@ func docsUpdateCmd() *cobra.Command {
 	}
 
 	return cmd
+}
+
+func projectEcosystemSet() map[string]bool {
+	val := os.Getenv("QSDEV_ECOSYSTEMS")
+	if val == "" {
+		return nil
+	}
+	set := make(map[string]bool)
+	for _, eco := range strings.Split(val, ",") {
+		eco = strings.TrimSpace(eco)
+		if eco != "" {
+			set[eco] = true
+		}
+	}
+	return set
 }
 
 func catalogZIMEntries(cat *catalog.Catalog) []mcpregistry.ZIMEntry {

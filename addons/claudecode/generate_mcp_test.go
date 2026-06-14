@@ -471,10 +471,10 @@ func TestGenerateMcpJson_DevDocsServer(t *testing.T) {
 	if len(entry.Args) != 2 || entry.Args[0] != "-y" || entry.Args[1] != "@madhan-g-p/devdocs-mcp-server" {
 		t.Errorf("unexpected args: %v", entry.Args)
 	}
-	if entry.Env["DEVDOCS_DATA_PATH"] != "${HOME}/.local/share/qsdev/docs/devdocs" {
+	if entry.Env["DEVDOCS_DATA_PATH"] != "${HOME}/.qsdev/docs/devdocs" {
 		t.Errorf("expected DEVDOCS_DATA_PATH env var, got %v", entry.Env)
 	}
-	if entry.Env["MCP_DB_PATH"] != "${HOME}/.local/share/qsdev/docs/mcp.db" {
+	if entry.Env["MCP_DB_PATH"] != "${HOME}/.qsdev/docs/mcp.db" {
 		t.Errorf("expected MCP_DB_PATH env var, got %v", entry.Env)
 	}
 }

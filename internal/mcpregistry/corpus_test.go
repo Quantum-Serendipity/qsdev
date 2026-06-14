@@ -319,25 +319,10 @@ func TestClean_All(t *testing.T) {
 }
 
 func TestDefaultDocsDataDir(t *testing.T) {
-	// Cannot use t.Parallel because subtests call t.Setenv.
-
-	t.Run("XDG_DATA_HOME", func(t *testing.T) {
-		xdg := filepath.Join("custom", "data")
-		t.Setenv("XDG_DATA_HOME", xdg)
-		got := DefaultDocsDataDir()
-		want := filepath.Join(xdg, "qsdev", "docs")
-		if got != want {
-			t.Errorf("DefaultDocsDataDir() = %q, want %q", got, want)
-		}
-	})
-
-	t.Run("Fallback", func(t *testing.T) {
-		t.Setenv("XDG_DATA_HOME", "")
-		got := DefaultDocsDataDir()
-		home, _ := os.UserHomeDir()
-		want := filepath.Join(home, ".local", "share", "qsdev", "docs")
-		if got != want {
-			t.Errorf("DefaultDocsDataDir() = %q, want %q", got, want)
-		}
-	})
+	got := DefaultDocsDataDir()
+	home, _ := os.UserHomeDir()
+	want := filepath.Join(home, ".qsdev", "docs")
+	if got != want {
+		t.Errorf("DefaultDocsDataDir() = %q, want %q", got, want)
+	}
 }

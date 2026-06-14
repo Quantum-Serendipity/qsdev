@@ -55,3 +55,6 @@ package-lock.json
 .env.*
 *.pem
 *.key
+
+# MCP server SQLite database (created by devdocs-mcp-server in CWD)
+mcp.db

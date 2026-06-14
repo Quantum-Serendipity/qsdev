@@ -824,7 +824,7 @@ mcp_servers:
         command: github-mcp-server
         args: ["stdio"]
         env:
-            GITHUB_TOKEN: "${GITHUB_TOKEN}"
+            GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
         transport: stdio
         nix_package: "github-mcp-server"
     filesystem:

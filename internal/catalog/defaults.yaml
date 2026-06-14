@@ -894,6 +894,9 @@ mcp_servers:
         description: "Version-aware DevDocs documentation with local caching"
         command: npx
         args: ["-y", "@madhan-g-p/devdocs-mcp-server"]
+        env:
+            DEVDOCS_DATA_PATH: "${HOME}/.qsdev/docs/devdocs"
+            MCP_DB_PATH: "${HOME}/.qsdev/docs/mcp.db"
         transport: stdio
         install_method: npm-global
         package_name: "@madhan-g-p/devdocs-mcp-server"
@@ -903,7 +906,7 @@ mcp_servers:
         description: "openzim-mcp server for offline Stack Exchange via ZIM files"
         command: openzim-mcp
         env:
-            OPENZIM_MCP_ZIM_DIR: "${HOME}/.local/share/qsdev/docs/zim"
+            OPENZIM_MCP_ZIM_DIR: "${HOME}/.qsdev/docs/zim"
             OPENZIM_MCP_TOOL_MODE: "simple"
             OPENZIM_MCP_CACHE_TTL: "3600"
             OPENZIM_MCP_LOG_LEVEL: "WARNING"

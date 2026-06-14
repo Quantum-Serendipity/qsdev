@@ -82,13 +82,10 @@ type DocsCorpusManager struct {
 }
 
 // DefaultDocsDataDir returns the default directory for local documentation
-// data, respecting the XDG_DATA_HOME convention.
+// data under the user-global ~/.qsdev/docs/ directory.
 func DefaultDocsDataDir() string {
-	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
-		return filepath.Join(xdg, "qsdev", "docs")
-	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "share", "qsdev", "docs")
+	return filepath.Join(home, ".qsdev", "docs")
 }
 
 // NewDocsCorpusManager creates a DocsCorpusManager with the given data

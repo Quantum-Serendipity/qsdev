@@ -441,6 +441,44 @@ func TestGenerateMcpJson_Context7InKnownServers(t *testing.T) {
 	}
 }
 
+func TestGenerateMcpJson_DevDocsServer(t *testing.T) {
+	answers := types.WizardAnswers{
+		MCPServers: []string{"local-docs-devdocs"},
+	}
+	cfg := claudecode.NewConfig()
+
+	gf, err := claudecode.GenerateMcpJson(answers, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gf == nil {
+		t.Fatal("expected non-nil GeneratedFile")
+		return
+	}
+
+	var mcp claudecode.McpJSON
+	if err := json.Unmarshal(gf.Content, &mcp); err != nil {
+		t.Fatalf("JSON unmarshal failed: %v\nContent:\n%s", err, string(gf.Content))
+	}
+
+	entry, ok := mcp.MCPServers["local-docs-devdocs"]
+	if !ok {
+		t.Fatal("expected 'local-docs-devdocs' key in mcpServers")
+	}
+	if entry.Command != "npx" {
+		t.Errorf("expected command 'npx', got %q", entry.Command)
+	}
+	if len(entry.Args) != 2 || entry.Args[0] != "-y" || entry.Args[1] != "@madhan-g-p/devdocs-mcp-server" {
+		t.Errorf("unexpected args: %v", entry.Args)
+	}
+	if entry.Env["DEVDOCS_DATA_PATH"] != "${HOME}/.qsdev/docs/devdocs" {
+		t.Errorf("expected DEVDOCS_DATA_PATH env var, got %v", entry.Env)
+	}
+	if entry.Env["MCP_DB_PATH"] != "${HOME}/.qsdev/docs/mcp.db" {
+		t.Errorf("expected MCP_DB_PATH env var, got %v", entry.Env)
+	}
+}
+
 // mcpKeys returns the keys of an MCPServerEntry map for diagnostic output.
 func mcpKeys(m map[string]claudecode.MCPServerEntry) []string {
 	result := make([]string, 0, len(m))

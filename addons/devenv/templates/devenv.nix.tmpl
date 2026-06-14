@@ -105,6 +105,10 @@
     }
 {{- end }}
 {{ end }}
+{{- if .NeedsNativeLibPath }}
+    # Native library path for uv-installed Python packages with C extensions (NixOS).
+    export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+{{- end }}
 {{ nixMultiline .EnterShell | indent 4 }}
   '';
 

@@ -111,7 +111,11 @@ func mcpListCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "Configured MCP Servers (%d)\n", len(servers))
 			fmt.Fprintln(cmd.OutOrStdout(), "----------------------------------------")
 			for name, cfg := range servers {
-				fmt.Fprintf(cmd.OutOrStdout(), "  %-20s  %s %v\n", name, cfg.Command, cfg.Args)
+				if cfg.URL != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "  %-20s  http %s\n", name, cfg.URL)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "  %-20s  %s %v\n", name, cfg.Command, cfg.Args)
+				}
 				if len(cfg.RequiredEnv) > 0 {
 					fmt.Fprintf(cmd.OutOrStdout(), "    required env: %v\n", cfg.RequiredEnv)
 				}
@@ -149,6 +153,7 @@ func loadMCPServers(projectRoot string) (map[string]mcphealth.ServerConfig, erro
 			Name:    name,
 			Command: entry.Command,
 			Args:    entry.Args,
+			URL:     entry.URL,
 			Env:     entry.Env,
 		}
 		if catErr == nil {

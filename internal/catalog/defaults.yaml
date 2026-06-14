@@ -855,14 +855,8 @@ mcp_servers:
         display_name: "Socket.dev Security"
         category: security
         description: "Supply chain security analysis of dependencies"
-        command: npx
-        args: ["@anthropic-ai/mcp-socket"]
-        env:
-            SOCKET_SECURITY_API_KEY: "${SOCKET_SECURITY_API_KEY}"
-        required_env: ["SOCKET_SECURITY_API_KEY"]
-        transport: stdio
-        install_method: npm-global
-        package_name: "@anthropic-ai/mcp-socket"
+        url: "https://mcp.socket.dev/"
+        transport: http
     semble:
         display_name: "Semble Semantic Search"
         category: agent

@@ -353,14 +353,11 @@ func TestGenerateMcpJson_SocketServer(t *testing.T) {
 	if !ok {
 		t.Fatal("expected 'socket' key in mcpServers")
 	}
-	if entry.Command != "npx" {
-		t.Errorf("expected command 'npx', got %q", entry.Command)
+	if entry.Type != "http" {
+		t.Errorf("expected type 'http', got %q", entry.Type)
 	}
-	if len(entry.Args) != 1 || entry.Args[0] != "@anthropic-ai/mcp-socket" {
-		t.Errorf("unexpected args: %v", entry.Args)
-	}
-	if entry.Env["SOCKET_SECURITY_API_KEY"] != "${SOCKET_SECURITY_API_KEY}" {
-		t.Errorf("expected SOCKET_SECURITY_API_KEY env var, got %v", entry.Env)
+	if entry.URL != "https://mcp.socket.dev/" {
+		t.Errorf("expected URL 'https://mcp.socket.dev/', got %q", entry.URL)
 	}
 }
 

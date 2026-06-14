@@ -16,9 +16,12 @@ type McpJSON struct {
 }
 
 // MCPServerEntry represents a single MCP server entry in .mcp.json.
+// HTTP-transport servers use Type+URL; stdio servers use Command+Args.
 type MCPServerEntry struct {
-	Command     string            `json:"command"`
-	Args        []string          `json:"args"`
+	Type        string            `json:"type,omitempty"`
+	URL         string            `json:"url,omitempty"`
+	Command     string            `json:"command,omitempty"`
+	Args        []string          `json:"args,omitempty"`
 	Env         map[string]string `json:"env,omitempty"`
 	RequiredEnv []string          `json:"-"`
 }
@@ -45,11 +48,7 @@ func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedF
 		if !ok {
 			return nil, fmt.Errorf("unknown MCP server %q: must be one of %s", name, mcpServerNameList(cat))
 		}
-		mcp.MCPServers[name] = MCPServerEntry{
-			Command: def.Command,
-			Args:    def.Args,
-			Env:     def.Env,
-		}
+		mcp.MCPServers[name] = catalogDefToEntry(def)
 	}
 
 	// Populate from config-provided servers (overrides wizard on collision).
@@ -76,6 +75,23 @@ func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedF
 		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.ThreeWayMerge,
 	}, nil
+}
+
+// catalogDefToEntry converts a catalog MCP server definition to a .mcp.json entry.
+// HTTP-transport servers get type+url; stdio servers get command+args.
+func catalogDefToEntry(def catalog.MCPServerDef) MCPServerEntry {
+	if def.Transport == "http" && def.URL != "" {
+		return MCPServerEntry{
+			Type: "http",
+			URL:  def.URL,
+			Env:  def.Env,
+		}
+	}
+	return MCPServerEntry{
+		Command: def.Command,
+		Args:    def.Args,
+		Env:     def.Env,
+	}
 }
 
 // mcpServerNameList returns a sorted, comma-separated list of known server

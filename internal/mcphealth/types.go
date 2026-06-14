@@ -6,6 +6,7 @@ type ServerConfig struct {
 	Name        string
 	Command     string
 	Args        []string
+	URL         string
 	Env         map[string]string
 	RequiredEnv []string
 }

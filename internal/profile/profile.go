@@ -59,9 +59,7 @@ func (p *InfraProfile) EnvironmentVars() map[string]string {
 	if p.Scanning.Vulnerability == VulnScannerSnyk {
 		env["SNYK_TOKEN"] = "${SNYK_TOKEN}"
 	}
-	if p.Scanning.Behavioral == BehavioralSocket {
-		env["SOCKET_SECURITY_API_KEY"] = "${SOCKET_SECURITY_API_KEY}"
-	}
+	// Socket.dev uses the public HTTP endpoint — no API key required.
 
 	return env
 }

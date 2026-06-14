@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -116,6 +117,9 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	toolPkgs, toolExprs := collectToolPackages(answers)
 	data.Packages = append(data.Packages, toolPkgs...)
 	data.PackageExprs = append(data.PackageExprs, toolExprs...)
+
+	// 4d. MCP server runtime dependencies (e.g. pkgs.uv for semble's uvx).
+	data.Packages = append(data.Packages, collectMCPPackages(answers)...)
 
 	// 5. Services.
 	for _, svc := range answers.Services {
@@ -290,6 +294,34 @@ func collectToolPackages(answers types.WizardAnswers) (pkgs []string, exprs []st
 		}
 	}
 	return pkgs, exprs
+}
+
+// mcpServerNixDeps maps MCP server install methods to the Nix packages
+// needed at runtime (e.g. uvx comes from the uv package).
+var mcpServerNixDeps = map[string]string{
+	"uv-tool": "pkgs.uv",
+}
+
+// collectMCPPackages returns Nix packages required by the selected MCP servers.
+func collectMCPPackages(answers types.WizardAnswers) []string {
+	cat, err := catalog.Default()
+	if err != nil {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	var pkgs []string
+	for _, name := range answers.MCPServers {
+		def, ok := cat.MCPServer(name)
+		if !ok {
+			continue
+		}
+		if nixPkg, ok := mcpServerNixDeps[def.InstallMethod]; ok && !seen[nixPkg] {
+			seen[nixPkg] = true
+			pkgs = append(pkgs, nixPkg)
+		}
+	}
+	return pkgs
 }
 
 // collectTaskDefinitions builds development task definitions from ecosystem

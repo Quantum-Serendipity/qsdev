@@ -13,8 +13,10 @@ type mcpJSON struct {
 }
 
 type mcpServerEntry struct {
-	Command string            `json:"command"`
-	Args    []string          `json:"args"`
+	Type    string            `json:"type,omitempty"`
+	URL     string            `json:"url,omitempty"`
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 }
 
@@ -108,6 +110,9 @@ func MergeMcpJson(base, theirs, ours []byte) ([]byte, error) {
 
 // serverEqual returns true if two mcpServerEntry values are equal.
 func serverEqual(a, b mcpServerEntry) bool {
+	if a.Type != b.Type || a.URL != b.URL {
+		return false
+	}
 	if a.Command != b.Command {
 		return false
 	}

@@ -859,10 +859,9 @@ mcp_servers:
     semble:
         display_name: "Semble Semantic Search"
         category: agent
-        description: "Semantic code search across repositories"
+        description: "Local semantic code search — CPU-only, no API keys"
         command: uvx
         args: ["--from", "semble[mcp]", "semble"]
-        required_env: ["SEMBLE_API_KEY"]
         transport: stdio
         install_method: uv-tool
         package_name: "semble[mcp]"

@@ -16,21 +16,22 @@ import (
 
 // DevenvNixTemplateData holds all data required to render the devenv.nix template.
 type DevenvNixTemplateData struct {
-	Overlays          []string                   // Nix overlay file paths (e.g. "./nix/go-overlay.nix").
-	Packages          []string                   // Base + extra packages (rendered as pkgs.NAME).
-	PackageExprs      []string                   // Raw Nix expressions that produce derivations.
-	EnvVars           map[string]string          // Non-sensitive env vars (always includes DEVENV_SECURITY_HARDENED).
-	UnsetEnvVars      []string                   // Credential-bearing vars stripped from the shell.
-	LanguageFragments []LanguageFragment         // Pre-rendered Nix from ecosystem modules.
-	Services          []ServiceTemplateData      // Structured service configs.
-	GitHooksEnabled   bool                       // Whether the git-hooks block appears.
-	SecurityHooks     []string                   // Always-present hooks (ripsecrets, etc.).
-	BuiltInHooks      []string                   // Ecosystem hooks using .enable = true syntax.
-	CustomHooks       []CustomHookData           // Ecosystem hooks needing full attribute sets.
-	EnterShell        string                     // Shell script body for enterShell.
-	EnterTest         string                     // Test script body for enterTest.
-	Tasks             []ecosystem.TaskDefinition // Development task definitions from ecosystem modules.
-	ServiceScripts    []ServiceScript            // Convenience scripts from services.
+	Overlays           []string                   // Nix overlay file paths (e.g. "./nix/go-overlay.nix").
+	Packages           []string                   // Base + extra packages (rendered as pkgs.NAME).
+	PackageExprs       []string                   // Raw Nix expressions that produce derivations.
+	EnvVars            map[string]string          // Non-sensitive env vars (always includes DEVENV_SECURITY_HARDENED).
+	UnsetEnvVars       []string                   // Credential-bearing vars stripped from the shell.
+	LanguageFragments  []LanguageFragment         // Pre-rendered Nix from ecosystem modules.
+	Services           []ServiceTemplateData      // Structured service configs.
+	GitHooksEnabled    bool                       // Whether the git-hooks block appears.
+	SecurityHooks      []string                   // Always-present hooks (ripsecrets, etc.).
+	BuiltInHooks       []string                   // Ecosystem hooks using .enable = true syntax.
+	CustomHooks        []CustomHookData           // Ecosystem hooks needing full attribute sets.
+	NeedsNativeLibPath bool                       // True when uv-tool MCP servers need LD_LIBRARY_PATH (NixOS).
+	EnterShell         string                     // Shell script body for enterShell.
+	EnterTest          string                     // Test script body for enterTest.
+	Tasks              []ecosystem.TaskDefinition // Development task definitions from ecosystem modules.
+	ServiceScripts     []ServiceScript            // Convenience scripts from services.
 }
 
 // LanguageFragment holds a pre-rendered Nix code block from an ecosystem module.
@@ -119,7 +120,9 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data.PackageExprs = append(data.PackageExprs, toolExprs...)
 
 	// 4d. MCP server runtime dependencies (e.g. pkgs.uv for semble's uvx).
-	data.Packages = append(data.Packages, collectMCPPackages(answers)...)
+	mcpPkgs := collectMCPPackages(answers)
+	data.Packages = append(data.Packages, mcpPkgs...)
+	data.NeedsNativeLibPath = needsNativeLibPath(answers)
 
 	// 5. Services.
 	for _, svc := range answers.Services {
@@ -326,6 +329,26 @@ func collectMCPPackages(answers types.WizardAnswers) []string {
 		}
 	}
 	return pkgs
+}
+
+// needsNativeLibPath returns true when any selected MCP server uses uv-tool
+// install method. On NixOS, Python packages with native C extensions (numpy)
+// need LD_LIBRARY_PATH to find libstdc++.
+func needsNativeLibPath(answers types.WizardAnswers) bool {
+	cat, err := catalog.Default()
+	if err != nil {
+		return false
+	}
+	for _, name := range answers.MCPServers {
+		def, ok := cat.MCPServer(name)
+		if !ok {
+			continue
+		}
+		if def.InstallMethod == "uv-tool" {
+			return true
+		}
+	}
+	return false
 }
 
 // collectTaskDefinitions builds development task definitions from ecosystem

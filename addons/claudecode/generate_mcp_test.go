@@ -39,8 +39,8 @@ func TestGenerateMcpJson_SingleKnownServer(t *testing.T) {
 	if len(entry.Args) != 1 || entry.Args[0] != "stdio" {
 		t.Errorf("unexpected args: %v", entry.Args)
 	}
-	if entry.Env["GITHUB_TOKEN"] != "${GITHUB_TOKEN}" {
-		t.Errorf("expected GITHUB_TOKEN env var, got %v", entry.Env)
+	if entry.Env["GITHUB_PERSONAL_ACCESS_TOKEN"] != "${GITHUB_TOKEN}" {
+		t.Errorf("expected GITHUB_PERSONAL_ACCESS_TOKEN env var, got %v", entry.Env)
 	}
 }
 
@@ -167,9 +167,9 @@ func TestGenerateMcpJson_WizardAndCustomCombined(t *testing.T) {
 	if gh.Env["GH_ENTERPRISE_TOKEN"] != "${GH_ENTERPRISE_TOKEN}" {
 		t.Errorf("expected GH_ENTERPRISE_TOKEN in overridden github entry, got %v", gh.Env)
 	}
-	// The original GITHUB_TOKEN should not be present (full override, not merge).
-	if _, ok := gh.Env["GITHUB_TOKEN"]; ok {
-		t.Error("expected config override to fully replace env, but GITHUB_TOKEN still present")
+	// The original GITHUB_PERSONAL_ACCESS_TOKEN should not be present (full override, not merge).
+	if _, ok := gh.Env["GITHUB_PERSONAL_ACCESS_TOKEN"]; ok {
+		t.Error("expected config override to fully replace env, but GITHUB_PERSONAL_ACCESS_TOKEN still present")
 	}
 
 	// "fetch" from wizard should still be present.

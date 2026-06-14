@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"sync"
@@ -38,6 +39,10 @@ func CheckServer(ctx context.Context, cfg ServerConfig) *ServerHealth {
 	}
 
 	start := time.Now()
+
+	if cfg.URL != "" {
+		return checkHTTPServer(ctx, cfg, h, start)
+	}
 
 	proc, err := startServer(cfg.Command, cfg.Args, cfg.Env)
 	if err != nil {
@@ -157,4 +162,27 @@ func countTools(result json.RawMessage) int {
 		return 0
 	}
 	return len(tlr.Tools)
+}
+
+func checkHTTPServer(ctx context.Context, cfg ServerConfig, h *ServerHealth, start time.Time) *ServerHealth {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.URL, nil)
+	if err != nil {
+		h.Status = StatusUnreachable
+		h.Error = fmt.Sprintf("building request: %s", err)
+		h.ResponseMs = time.Since(start).Milliseconds()
+		return h
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		h.Status = StatusUnreachable
+		h.Error = fmt.Sprintf("connecting: %s", err)
+		h.ResponseMs = time.Since(start).Milliseconds()
+		return h
+	}
+	resp.Body.Close()
+
+	h.Status = StatusHealthy
+	h.ResponseMs = time.Since(start).Milliseconds()
+	return h
 }

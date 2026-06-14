@@ -32,6 +32,7 @@ func catalogDefToRegistryDef(name string, def catalog.MCPServerDef) McpServerDef
 		Description:   def.Description,
 		Command:       def.Command,
 		Args:          def.Args,
+		URL:           def.URL,
 		Env:           def.Env,
 		RequiredEnv:   def.RequiredEnv,
 		Transport:     parseMcpTransport(def.Transport),

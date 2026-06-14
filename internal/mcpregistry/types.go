@@ -128,6 +128,7 @@ type McpServerDefinition struct {
 	Description     string
 	Command         string
 	Args            []string
+	URL             string
 	Env             map[string]string
 	RequiredEnv     []string
 	Transport       McpTransport

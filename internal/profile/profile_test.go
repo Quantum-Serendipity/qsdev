@@ -13,7 +13,6 @@ func TestConsultingDefault_EnvironmentVars(t *testing.T) {
 		"PIP_INDEX_URL",
 		"GOPROXY",
 		"RUSTC_WRAPPER",
-		"SOCKET_SECURITY_API_KEY",
 	}
 
 	for _, key := range required {

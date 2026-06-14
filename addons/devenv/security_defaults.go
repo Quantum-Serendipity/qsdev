@@ -174,6 +174,19 @@ else
   echo "  WARNING: ripsecrets not found in PATH"
 fi
 
+# MCP credential provisioning — re-inject after clean mode stripping.
+# GITHUB_TOKEN: sourced from gh CLI keyring (never touches disk).
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  export GITHUB_TOKEN="$(gh auth token 2>/dev/null)"
+fi
+
+# Project-scoped MCP secrets (.qsdev/ is gitignored).
+if [ -f "$PWD/.qsdev/mcp-secrets.env" ]; then
+  set -a
+  . "$PWD/.qsdev/mcp-secrets.env"
+  set +a
+fi
+
 echo "==================================================="
 echo ""
 echo "  ${%[1]sPROJECT_NAME:-unknown} | security: ${%[1]sSECURITY_PROFILE:-standard} | tools: ${%[1]sTOOL_COUNT:-0}"
@@ -202,14 +215,15 @@ if [ -d .git ]; then
   echo "PASS: pre-commit hooks installed"
 fi
 
-# 2. Verify credential variables are not in environment
-for var in AWS_SECRET_ACCESS_KEY GITHUB_TOKEN VAULT_TOKEN DATABASE_PASSWORD; do
+# 2. Verify ambient credential leakage is prevented.
+# GITHUB_TOKEN is intentionally re-injected for MCP servers via gh keyring.
+for var in AWS_SECRET_ACCESS_KEY VAULT_TOKEN DATABASE_PASSWORD; do
   if printenv "$var" >/dev/null 2>&1; then
     echo "FAIL: $var is set in the environment"
     exit 1
   fi
 done
-echo "PASS: no credential variables in environment"
+echo "PASS: no ambient credential leakage"
 
 # 3. Verify ripsecrets finds no issues in tracked files
 if command -v ripsecrets >/dev/null 2>&1; then

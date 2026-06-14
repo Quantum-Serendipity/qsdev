@@ -41,13 +41,8 @@
       ]
     },
     "socket": {
-      "command": "npx",
-      "args": [
-        "@anthropic-ai/mcp-socket"
-      ],
-      "env": {
-        "SOCKET_SECURITY_API_KEY": "${SOCKET_SECURITY_API_KEY}"
-      }
+      "type": "http",
+      "url": "https://mcp.socket.dev/"
     },
     "version-sentinel": {
       "command": "qsdev",

@@ -209,8 +209,9 @@ type MCPServerDef struct {
 	DisplayName   string            `yaml:"display_name"`
 	Category      string            `yaml:"category"`
 	Description   string            `yaml:"description"`
-	Command       string            `yaml:"command"`
+	Command       string            `yaml:"command,omitempty"`
 	Args          []string          `yaml:"args,omitempty"`
+	URL           string            `yaml:"url,omitempty"`
 	Env           map[string]string `yaml:"env,omitempty"`
 	RequiredEnv   []string          `yaml:"required_env,omitempty"`
 	Transport     string            `yaml:"transport,omitempty"`

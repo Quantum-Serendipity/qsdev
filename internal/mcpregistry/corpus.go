@@ -5,11 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -79,6 +81,12 @@ type HTTPClient interface {
 type DocsCorpusManager struct {
 	DataDir    string
 	HTTPClient HTTPClient
+
+	// Ingest, when non-nil, is invoked after a DevDocs set's files are downloaded
+	// and before the manifest entry is recorded. It may rewrite files in dir
+	// (e.g. sanitize db.json); the manifest hash is computed from the resulting
+	// on-disk files. A nil Ingest preserves the prior behavior.
+	Ingest func(ctx context.Context, dir string) error
 }
 
 // DefaultDocsDataDir returns the default directory for local documentation
@@ -160,22 +168,30 @@ func (m *DocsCorpusManager) DownloadDevDocs(ctx context.Context, slug, baseURL s
 	}
 
 	files := []string{"index.json", "db.json", "meta.json"}
-	var totalSize int64
 	var allPaths []string
-	combinedHasher := sha256.New()
 
 	for _, f := range files {
 		url := fmt.Sprintf("%s/%s/%s", baseURL, slug, f)
 		destPath := filepath.Join(dir, f)
 
-		size, hash, err := m.downloadFile(ctx, url, destPath)
-		if err != nil {
+		if _, _, err := m.downloadFile(ctx, url, destPath); err != nil {
 			return fmt.Errorf("downloading %s for %q: %w", f, slug, err)
 		}
 
-		totalSize += size
 		allPaths = append(allPaths, destPath)
-		_, _ = combinedHasher.Write([]byte(hash))
+	}
+
+	if m.Ingest != nil {
+		if err := m.Ingest(ctx, dir); err != nil {
+			return fmt.Errorf("ingesting devdocs %q: %w", slug, err)
+		}
+	}
+
+	// Compute the combined hash and total size from the FINAL on-disk files so
+	// the manifest always reflects post-ingest content.
+	sha, totalSize, err := combinedHashAndSize(allPaths)
+	if err != nil {
+		return fmt.Errorf("hashing devdocs %q: %w", slug, err)
 	}
 
 	manifest, err := m.LoadManifest()
@@ -189,11 +205,66 @@ func (m *DocsCorpusManager) DownloadDevDocs(ctx context.Context, slug, baseURL s
 		Version:     "latest",
 		InstalledAt: time.Now(),
 		SizeBytes:   totalSize,
-		SHA256:      hex.EncodeToString(combinedHasher.Sum(nil)),
+		SHA256:      sha,
 		Files:       allPaths,
 	}
 
 	return m.SaveManifest(manifest)
+}
+
+// combinedHashAndSize recomputes, from the on-disk files, the same combined
+// digest and total size that DownloadDevDocs records: for each path in order it
+// SHA-256s the file content, writes that file's hex digest into a combined
+// hasher, and accumulates the byte count. The returned sha256hex is the hex of
+// the combined hasher's sum. Iterating the paths in the same order with the
+// same per-file algorithm yields the identical value to the download-time hash
+// when content is unchanged. Files are streamed, so a multi-MB db.json is never
+// buffered whole.
+func combinedHashAndSize(paths []string) (sha256hex string, total int64, err error) {
+	combinedHasher := sha256.New()
+	for _, p := range paths {
+		size, fileHash, err := hashFile(p)
+		if err != nil {
+			return "", 0, err
+		}
+		_, _ = combinedHasher.Write([]byte(fileHash))
+		total += size
+	}
+	return hex.EncodeToString(combinedHasher.Sum(nil)), total, nil
+}
+
+// hashFile streams the file at path and returns its byte count and lowercase-hex
+// SHA-256 digest. The open error is wrapped with %w so callers can detect a
+// missing file via errors.Is(err, os.ErrNotExist).
+func hashFile(path string) (size int64, sha256hex string, err error) {
+	f, err := os.Open(path) //nolint:gosec // path is a manifest-controlled corpus path.
+	if err != nil {
+		return 0, "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	h := sha256.New()
+	n, err := io.Copy(h, f)
+	if err != nil {
+		return 0, "", fmt.Errorf("hashing %s: %w", path, err)
+	}
+	return n, hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// VerifyHash recomputes the combined SHA-256 over the entry's files and reports
+// whether it matches the recorded entry.SHA256, returning the computed digest.
+// A missing file is a verification failure (ok=false) rather than a hard error —
+// it yields ok=false, computed="", err=nil so callers can report it cleanly. Any
+// other I/O error is returned as err.
+func (m *DocsCorpusManager) VerifyHash(entry *DocSetEntry) (ok bool, computed string, err error) {
+	sum, _, err := combinedHashAndSize(entry.Files)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, "", nil
+		}
+		return false, "", fmt.Errorf("hashing doc set %q: %w", entry.Slug, err)
+	}
+	return strings.EqualFold(sum, entry.SHA256), sum, nil
 }
 
 // DownloadZIM fetches a ZIM archive and verifies its SHA256 hash against

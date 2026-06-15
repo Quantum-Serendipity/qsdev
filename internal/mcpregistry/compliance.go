@@ -16,7 +16,10 @@ type GradeResult struct {
 
 // GradeServer evaluates a server definition against the compliance ladder and
 // returns the highest fully-satisfied level along with per-criterion details.
-// The function is pure, stateless, and deterministic.
+// Every criterion except external-attestation is pure; the result is
+// deterministic given the injected AttestationChecker (which the claudecode
+// addon wires to a contentsign-backed verifier at startup, and which defaults
+// to a no-op returning false).
 func GradeServer(def *McpServerDefinition) GradeResult {
 	var criteria []CriterionResult
 
@@ -76,16 +79,35 @@ func GradeServer(def *McpServerDefinition) GradeResult {
 		level = ComplianceVerified
 	}
 
-	// Attested criteria.
-	attested := hasExternalAttestation(def)
+	// Attested criteria. Attestation only ever lifts a server that already
+	// reached Verified, which requires hasVerifiedProvenance (a /nix/store path
+	// or the qsdev binary). External npx/uvx doc servers fail the earlier
+	// local-only and provenance criteria, so they can never reach Attested even
+	// with a valid signature. Gate the (expensive, binary-streaming) check on
+	// verifiedMet so it is skipped for servers that cannot reach Attested — but
+	// keep the per-criterion report honest by distinguishing "not evaluated"
+	// from "evaluated, no signature": folding the gate into Passed would tell an
+	// operator a validly-signed sub-Verified server has "no signature".
+	attestationPassed := false
+	var attestationDetail string
+	switch {
+	case !verifiedMet:
+		attestationDetail = "not evaluated (server has not reached Verified)"
+	case hasExternalAttestation(def):
+		attestationPassed = true
+		attestationDetail = "verified attestation signature present"
+	default:
+		attestationDetail = "no verified attestation signature"
+	}
 	criteria = append(criteria, CriterionResult{
 		Name:   "external-attestation",
-		Passed: attested,
-		Detail: boolDetail(attested, "external attestation present", "no external attestation (placeholder for P30)"),
+		Passed: attestationPassed,
+		Detail: attestationDetail,
 	})
 
-	attestedMet := verifiedMet && attested
-	if attestedMet {
+	// attestationPassed already implies verifiedMet (the !verifiedMet branch
+	// leaves it false), so it is the full Attested gate.
+	if attestationPassed {
 		level = ComplianceAttested
 	}
 

@@ -92,8 +92,12 @@ func hasVerifiedProvenance(def *McpServerDefinition) bool {
 	return false
 }
 
-// hasExternalAttestation is a placeholder for P30 Content Signing. It always
-// returns false until external attestation verification is implemented.
-func hasExternalAttestation(_ *McpServerDefinition) bool {
-	return false
+// AttestationChecker reports whether a server's command binary has a verified
+// external attestation (a trusted Minisign signature). It defaults to a no-op
+// that returns false; the claudecode addon overrides it at startup with a
+// contentsign-backed implementation (mcpregistry must not import contentsign).
+var AttestationChecker = func(*McpServerDefinition) bool { return false }
+
+func hasExternalAttestation(def *McpServerDefinition) bool {
+	return AttestationChecker(def)
 }

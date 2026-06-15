@@ -130,6 +130,108 @@ func TestDownloadDevDocs_CreatesFiles(t *testing.T) {
 	}
 }
 
+func TestDownloadDevDocs_NilIngestRecordsHash(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	slug := "go"
+
+	client := &mockHTTPClient{
+		responses: map[string]*http.Response{
+			"https://documents.devdocs.io/go/index.json": makeResponse(`{"entries":[]}`),
+			"https://documents.devdocs.io/go/db.json":    makeResponse(`{"content":"test"}`),
+			"https://documents.devdocs.io/go/meta.json":  makeResponse(`{"name":"Go"}`),
+		},
+	}
+
+	mgr := NewDocsCorpusManager(dir, client)
+	// Ingest is nil: prior behavior preserved.
+	if err := mgr.DownloadDevDocs(context.Background(), slug, "https://documents.devdocs.io"); err != nil {
+		t.Fatalf("DownloadDevDocs: %v", err)
+	}
+
+	manifest, err := mgr.LoadManifest()
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	entry, ok := manifest.DocSets["devdocs:go"]
+	if !ok {
+		t.Fatal("expected devdocs:go entry in manifest")
+	}
+	if entry.SHA256 == "" {
+		t.Error("expected non-empty SHA256 in manifest entry")
+	}
+
+	// The recorded hash must equal a fresh computation over the on-disk files.
+	wantSHA, wantSize, err := combinedHashAndSize(entry.Files)
+	if err != nil {
+		t.Fatalf("combinedHashAndSize: %v", err)
+	}
+	if entry.SHA256 != wantSHA {
+		t.Errorf("SHA256 = %q, want %q", entry.SHA256, wantSHA)
+	}
+	if entry.SizeBytes != wantSize {
+		t.Errorf("SizeBytes = %d, want %d", entry.SizeBytes, wantSize)
+	}
+}
+
+func TestDownloadDevDocs_IngestRewritesDBHashMatchesOnDisk(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	slug := "go"
+
+	client := &mockHTTPClient{
+		responses: map[string]*http.Response{
+			"https://documents.devdocs.io/go/index.json": makeResponse(`{"entries":[]}`),
+			"https://documents.devdocs.io/go/db.json":    makeResponse(`{"content":"original"}`),
+			"https://documents.devdocs.io/go/meta.json":  makeResponse(`{"name":"Go"}`),
+		},
+	}
+
+	mgr := NewDocsCorpusManager(dir, client)
+	// Ingest rewrites db.json to different content AFTER download. The recorded
+	// manifest hash must reflect this post-ingest content, not the downloaded
+	// bytes — proving the ordering bug is fixed.
+	mgr.Ingest = func(_ context.Context, d string) error {
+		return os.WriteFile(filepath.Join(d, "db.json"), []byte(`{"content":"REWRITTEN"}`), 0o644)
+	}
+
+	if err := mgr.DownloadDevDocs(context.Background(), slug, "https://documents.devdocs.io"); err != nil {
+		t.Fatalf("DownloadDevDocs: %v", err)
+	}
+
+	manifest, err := mgr.LoadManifest()
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	entry, ok := manifest.DocSets["devdocs:go"]
+	if !ok {
+		t.Fatal("expected devdocs:go entry in manifest")
+	}
+
+	// Confirm db.json on disk is the rewritten content.
+	dbData, err := os.ReadFile(filepath.Join(dir, "devdocs", slug, "db.json"))
+	if err != nil {
+		t.Fatalf("reading db.json: %v", err)
+	}
+	if string(dbData) != `{"content":"REWRITTEN"}` {
+		t.Errorf("db.json = %q, want rewritten content", string(dbData))
+	}
+
+	// The recorded SHA256 must equal a fresh hash over the POST-ingest on-disk files.
+	wantSHA, wantSize, err := combinedHashAndSize(entry.Files)
+	if err != nil {
+		t.Fatalf("combinedHashAndSize: %v", err)
+	}
+	if entry.SHA256 != wantSHA {
+		t.Errorf("manifest SHA256 = %q does not match on-disk content hash %q", entry.SHA256, wantSHA)
+	}
+	if entry.SizeBytes != wantSize {
+		t.Errorf("SizeBytes = %d, want %d", entry.SizeBytes, wantSize)
+	}
+}
+
 func TestDownloadZIM_VerifyHash(t *testing.T) {
 	t.Parallel()
 
@@ -315,6 +417,91 @@ func TestClean_All(t *testing.T) {
 	}
 	if len(loaded.DocSets) != 0 {
 		t.Errorf("expected empty manifest, got %d entries", len(loaded.DocSets))
+	}
+}
+
+func TestVerifyHash(t *testing.T) {
+	t.Parallel()
+
+	// newEntry writes two files into a fresh temp dir and returns an entry whose
+	// SHA256 is the correct combined hash of those files.
+	newEntry := func(t *testing.T) (*DocSetEntry, []string) {
+		t.Helper()
+		dir := t.TempDir()
+		paths := []string{
+			filepath.Join(dir, "index.json"),
+			filepath.Join(dir, "db.json"),
+		}
+		for i, p := range paths {
+			if err := os.WriteFile(p, []byte("content-"+string(rune('a'+i))), 0o644); err != nil {
+				t.Fatalf("writing %s: %v", p, err)
+			}
+		}
+		sum, _, err := combinedHashAndSize(paths)
+		if err != nil {
+			t.Fatalf("combinedHashAndSize: %v", err)
+		}
+		return &DocSetEntry{Slug: "test", SHA256: sum, Files: paths}, paths
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(t *testing.T, entry *DocSetEntry, paths []string)
+		wantOK  bool
+		wantErr bool
+	}{
+		{
+			name:   "matching hash",
+			mutate: func(*testing.T, *DocSetEntry, []string) {},
+			wantOK: true,
+		},
+		{
+			name: "corrupt file",
+			mutate: func(t *testing.T, _ *DocSetEntry, paths []string) {
+				t.Helper()
+				if err := os.WriteFile(paths[1], []byte("tampered"), 0o644); err != nil {
+					t.Fatalf("corrupting file: %v", err)
+				}
+			},
+			wantOK: false,
+		},
+		{
+			name: "missing file",
+			mutate: func(t *testing.T, _ *DocSetEntry, paths []string) {
+				t.Helper()
+				if err := os.Remove(paths[0]); err != nil {
+					t.Fatalf("removing file: %v", err)
+				}
+			},
+			wantOK:  false,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mgr := NewDocsCorpusManager(t.TempDir(), nil)
+			entry, paths := newEntry(t)
+			tt.mutate(t, entry, paths)
+
+			ok, computed, err := mgr.VerifyHash(entry)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ok != tt.wantOK {
+				t.Errorf("ok = %t, want %t", ok, tt.wantOK)
+			}
+			if tt.name == "missing file" && computed != "" {
+				t.Errorf("computed = %q, want empty on missing file", computed)
+			}
+			if tt.wantOK && !strings.EqualFold(computed, entry.SHA256) {
+				t.Errorf("computed = %q, want %q", computed, entry.SHA256)
+			}
+		})
 	}
 }
 

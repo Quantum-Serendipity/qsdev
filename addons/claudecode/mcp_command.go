@@ -2,11 +2,14 @@ package claudecode
 
 import (
 	"context"
+	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/contentsign"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserver"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 )
@@ -89,6 +92,37 @@ func registerMCPProviders() {
 
 	reg.Register(newPostmortemProvider())
 	reg.Register(newVersionSentinelProvider())
+
+	// Wire external-attestation verification into the compliance grader. This is
+	// the only place mcpregistry and contentsign are connected (mcpregistry must
+	// not import contentsign, to avoid an import cycle).
+	mcpregistry.AttestationChecker = attestationChecker
+}
+
+// attestationStore caches the trusted-keys-backed attestation store. The keys
+// are loaded once on first use (lazily, to keep disk I/O out of init), so
+// grading many servers in one `mcp grade` run does not re-read and re-parse the
+// trusted-keys directory per server.
+var (
+	attestationStoreOnce sync.Once
+	attestationStore     contentsign.AttestationStore
+)
+
+// attestationChecker reports whether a server command has a trusted-key
+// attestation, reusing a single loaded key set across invocations.
+func attestationChecker(def *mcpregistry.McpServerDefinition) bool {
+	attestationStoreOnce.Do(func() {
+		// A load failure (incl. a missing keys dir) yields no keys; with no
+		// trusted keys nothing can be attested, so we simply report false below.
+		keys, _ := contentsign.LoadTrustedKeys("")
+		attestationStore = contentsign.AttestationStore{TrustedKeys: keys}
+	})
+	if len(attestationStore.TrustedKeys) == 0 {
+		// Short-circuit: an empty TrustedKeys set would otherwise make
+		// AttestationStore reload the keys directory on every IsAttested call.
+		return false
+	}
+	return attestationStore.IsAttested(context.Background(), def.Command)
 }
 
 func init() {

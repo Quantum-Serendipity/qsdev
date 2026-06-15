@@ -114,6 +114,50 @@ func TestGradeServer(t *testing.T) {
 	}
 }
 
+func TestGradeServerAttestationLiftsVerifiedToAttested(t *testing.T) {
+	// Not parallel: it mutates the package-level AttestationChecker.
+	t.Cleanup(func() {
+		AttestationChecker = func(*McpServerDefinition) bool { return false }
+	})
+
+	// A definition that already satisfies every Verified criterion: stdio
+	// transport, no plaintext secrets, local-only command with verified
+	// provenance, and no npx -y.
+	def := &McpServerDefinition{
+		Command:   "qsdev",
+		Args:      []string{"mcp", "agent-postmortem"},
+		Transport: TransportStdio,
+	}
+
+	// With the default checker (false) the definition grades to Verified, one
+	// below Attested.
+	AttestationChecker = func(*McpServerDefinition) bool { return false }
+	if got := GradeServer(def); got.Level != ComplianceVerified {
+		t.Fatalf("default checker: Level = %v, want %v", got.Level, ComplianceVerified)
+	}
+
+	// With an injected checker returning true, the same definition reaches
+	// Attested and the external-attestation criterion passes.
+	AttestationChecker = func(*McpServerDefinition) bool { return true }
+	result := GradeServer(def)
+	if result.Level != ComplianceAttested {
+		t.Errorf("attested checker: Level = %v, want %v", result.Level, ComplianceAttested)
+	}
+
+	var found bool
+	for _, c := range result.Criteria {
+		if c.Name == "external-attestation" {
+			found = true
+			if !c.Passed {
+				t.Errorf("external-attestation criterion Passed = false, want true")
+			}
+		}
+	}
+	if !found {
+		t.Error("external-attestation criterion not found in results")
+	}
+}
+
 func TestGradeServerCriteriaPopulated(t *testing.T) {
 	t.Parallel()
 

@@ -3,7 +3,9 @@ package claudecode
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sort"
@@ -12,8 +14,17 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/contentsign"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 )
+
+// printCorpusSectionHeader writes a section title with its item count followed
+// by the rule line shared across the docs status, outdated, and verify
+// listings, so the table chrome lives in one place.
+func printCorpusSectionHeader(w io.Writer, title string, n int) {
+	fmt.Fprintf(w, "%s (%d)\n", title, n)
+	fmt.Fprintln(w, "----------------------------------------")
+}
 
 func docsCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -28,6 +39,7 @@ the local corpus.`,
 
 	cmd.AddCommand(docsDownloadCmd())
 	cmd.AddCommand(docsStatusCmd())
+	cmd.AddCommand(docsVerifyCmd())
 	cmd.AddCommand(docsOutdatedCmd())
 	cmd.AddCommand(docsUpdateCmd())
 	cmd.AddCommand(docsCleanCmd())
@@ -35,6 +47,220 @@ the local corpus.`,
 	cmd.AddCommand(docsDisableCmd())
 
 	return cmd
+}
+
+// errCorpusVerifyFailed is returned by `docs verify` when any documentation set
+// fails verification, so the process exits non-zero for CI gating.
+var errCorpusVerifyFailed = errors.New("documentation corpus verification failed")
+
+// docVerifyResult is the per-doc-set outcome of `qsdev docs verify`.
+type docVerifyResult struct {
+	Slug     string `json:"slug"`
+	Type     string `json:"type"`
+	Status   string `json:"status"` // signed-verified | hash-verified | failed
+	Verified bool   `json:"verified"`
+	KeyID    string `json:"key_id,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+func docsVerifyCmd() *cobra.Command {
+	var (
+		jsonOutput     bool
+		keysDir        string
+		requireTrusted bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "verify",
+		Short: "Verify the integrity (and signatures, if present) of the documentation corpus",
+		Long: `Verify each installed documentation set against the manifest. When a set
+carries any detached Minisign signatures (<file>.minisig), the whole set is
+verified by signature against trusted keys — a missing or invalid sidecar then
+fails the set rather than downgrading it. A set with no signatures at all falls
+back to recomputing its recorded combined SHA-256. Exits non-zero when any set
+fails, for CI gating; --require-trusted additionally fails hash-only sets.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mgr := mcpregistry.NewDocsCorpusManager(
+				mcpregistry.DefaultDocsDataDir(),
+				http.DefaultClient,
+			)
+			manifest, err := mgr.LoadManifest()
+			if err != nil {
+				return err
+			}
+			return runDocsVerify(cmd, mgr, manifest, keysDir, requireTrusted, jsonOutput)
+		},
+	}
+
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+	cmd.Flags().StringVar(&keysDir, "keys", "", "Directory of trusted public keys (default: ~/.qsdev/keys)")
+	cmd.Flags().BoolVar(&requireTrusted, "require-trusted", false, "Require a verified signature; treat hash-only or failed sets as failures")
+
+	return cmd
+}
+
+// runDocsVerify verifies every doc set in stable order, prints the results, and
+// returns a non-nil error when any set failed (or, under requireTrusted, was not
+// signed-verified).
+func runDocsVerify(cmd *cobra.Command, mgr *mcpregistry.DocsCorpusManager, manifest *mcpregistry.DocsManifest, keysDir string, requireTrusted, jsonOutput bool) error {
+	if len(manifest.DocSets) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "No documentation sets installed.")
+		return nil
+	}
+
+	// Load the trusted keys once: every signed set verifies against the same set,
+	// so this avoids re-reading and re-parsing the keys directory per doc set.
+	trustedKeys, err := contentsign.LoadTrustedKeys(keysDir)
+	if err != nil {
+		return fmt.Errorf("loading trusted keys: %w", err)
+	}
+
+	slugs := make([]string, 0, len(manifest.DocSets))
+	for k := range manifest.DocSets {
+		slugs = append(slugs, k)
+	}
+	sort.Strings(slugs)
+
+	results := make([]docVerifyResult, 0, len(slugs))
+	for _, s := range slugs {
+		results = append(results, verifyDocSet(cmd.Context(), mgr, manifest.DocSets[s], trustedKeys, requireTrusted))
+	}
+
+	if err := printVerifyResults(cmd, results, jsonOutput); err != nil {
+		return err
+	}
+
+	// res.Verified is authoritative: verifyDocSet already folds the
+	// requireTrusted policy into it (a hash-only set is not Verified when trust
+	// is required), so the per-set output and this exit gate stay consistent.
+	failed := 0
+	for _, r := range results {
+		if !r.Verified {
+			failed++
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%w: %d of %d set(s) failed", errCorpusVerifyFailed, failed, len(results))
+	}
+	return nil
+}
+
+// verifyDocSet verifies a single doc set. When ANY file carries a .minisig
+// sidecar the set is treated as signed and verified by signature: a missing or
+// invalid sidecar on such a set is a failure, never a silent downgrade to the
+// unsigned manifest hash. Only a set with no signatures at all falls back to
+// the recorded combined-hash check, and that hash-only result does not satisfy
+// requireTrusted (the manifest itself is unsigned, so its hash is not a trust
+// anchor).
+func verifyDocSet(ctx context.Context, mgr *mcpregistry.DocsCorpusManager, entry *mcpregistry.DocSetEntry, trustedKeys []contentsign.PublicKey, requireTrusted bool) docVerifyResult {
+	res := docVerifyResult{Slug: entry.Slug, Type: entry.Type.String()}
+	if len(entry.Files) > 0 && anySigned(entry.Files) {
+		return verifyDocSetSignatures(ctx, entry, trustedKeys, requireTrusted, res)
+	}
+
+	ok, _, err := mgr.VerifyHash(entry)
+	switch {
+	case err != nil:
+		res.Status, res.Reason = contentsign.StatusFailed, err.Error()
+	case !ok:
+		res.Status, res.Reason = contentsign.StatusFailed, "hash mismatch or missing file"
+	case requireTrusted:
+		res.Status, res.Reason = contentsign.StatusHashVerified, "hash-only set; a trusted signature is required"
+	default:
+		res.Status, res.Verified = contentsign.StatusHashVerified, true
+	}
+	return res
+}
+
+// verifyDocSetSignatures verifies the set's files against trustedKeys via
+// contentsign.VerifyCorpus (bounded-parallel, exhaustive). The set is
+// signed-verified only when every file verifies; otherwise it records the first
+// failing file's reason in file order, and reports the verifying key ID when it
+// is uniform across files.
+func verifyDocSetSignatures(ctx context.Context, entry *mcpregistry.DocSetEntry, trustedKeys []contentsign.PublicKey, requireTrusted bool, res docVerifyResult) docVerifyResult {
+	entries := make([]contentsign.ContentManifestEntry, len(entry.Files))
+	for i, f := range entry.Files {
+		entries[i] = contentsign.ContentManifestEntry{Path: f}
+	}
+	opts := contentsign.VerifyOptions{TrustedKeys: trustedKeys, RequireTrusted: requireTrusted}
+	results := contentsign.VerifyCorpus(ctx, entries, opts)
+
+	keyID := ""
+	for i, vr := range results {
+		if !vr.Verified {
+			res.Status, res.Reason = contentsign.StatusFailed, fmt.Sprintf("%s: %s", entry.Files[i], vr.Reason)
+			return res
+		}
+		switch {
+		case i == 0:
+			keyID = string(vr.KeyID)
+		case string(vr.KeyID) != keyID:
+			keyID = ""
+		}
+	}
+	res.Status, res.Verified, res.KeyID = contentsign.StatusSignedVerified, true, keyID
+	return res
+}
+
+// anySigned reports whether ANY path has a detached signature sidecar on disk,
+// deferring to contentsign's own sidecar-path convention rather than hardcoding
+// the ".minisig" suffix in the addon. A set with at least one signature is
+// verified by signature (see verifyDocSet): dropping a sidecar from a signed
+// set then fails verification instead of silently downgrading to the unsigned
+// manifest hash.
+func anySigned(files []string) bool {
+	for _, f := range files {
+		sigPath := contentsign.ContentManifestEntry{Path: f}.SigPath()
+		if _, err := os.Stat(sigPath); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// printVerifyResults writes the verification results as indented JSON when
+// jsonOutput is set, otherwise as one human line per set plus a summary count.
+func printVerifyResults(cmd *cobra.Command, results []docVerifyResult, jsonOutput bool) error {
+	w := cmd.OutOrStdout()
+	if jsonOutput {
+		data, err := json.MarshalIndent(results, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshaling verify results: %w", err)
+		}
+		fmt.Fprintln(w, string(data))
+		return nil
+	}
+
+	printCorpusSectionHeader(w, "Documentation Corpus Verification", len(results))
+	verified := 0
+	for _, r := range results {
+		detail := r.Reason
+		if r.KeyID != "" {
+			detail = "key=" + r.KeyID
+		}
+		fmt.Fprintf(w, "  %-30s  %-8s  %-15s  %s\n", r.Slug, r.Type, r.Status, detail)
+		if r.Verified {
+			verified++
+		}
+	}
+	fmt.Fprintf(w, "\n%d of %d set(s) verified.\n", verified, len(results))
+	return nil
+}
+
+// newDownloadManager builds a DocsCorpusManager wired with the download-time
+// sanitizer, so every command that fetches DevDocs content (download, update)
+// scrubs db.json identically before it is indexed. Read-only commands (status,
+// verify, outdated) use a plain manager since they never write content.
+func newDownloadManager() *mcpregistry.DocsCorpusManager {
+	mgr := mcpregistry.NewDocsCorpusManager(
+		mcpregistry.DefaultDocsDataDir(),
+		http.DefaultClient,
+	)
+	mgr.Ingest = func(ctx context.Context, dir string) error {
+		_, err := contentsign.IngestDevDocs(ctx, dir, contentsign.DefaultSanitizeOptions())
+		return err
+	}
+	return mgr
 }
 
 func docsDownloadCmd() *cobra.Command {
@@ -50,10 +276,7 @@ func docsDownloadCmd() *cobra.Command {
 DevDocs API references and ZIM archives. Use --zim or --devdocs to
 download only one type.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			mgr := mcpregistry.NewDocsCorpusManager(
-				mcpregistry.DefaultDocsDataDir(),
-				http.DefaultClient,
-			)
+			mgr := newDownloadManager()
 			ctx := cmd.Context()
 
 			cat, err := catalog.Default()
@@ -150,8 +373,7 @@ func docsStatusCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Installed Documentation Sets (%d)\n", len(manifest.DocSets))
-			fmt.Fprintln(cmd.OutOrStdout(), "----------------------------------------")
+			printCorpusSectionHeader(cmd.OutOrStdout(), "Installed Documentation Sets", len(manifest.DocSets))
 
 			keys := make([]string, 0, len(manifest.DocSets))
 			for k := range manifest.DocSets {
@@ -200,8 +422,7 @@ func docsOutdatedCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Outdated Documentation Sets (%d)\n", len(outdated))
-			fmt.Fprintln(cmd.OutOrStdout(), "----------------------------------------")
+			printCorpusSectionHeader(cmd.OutOrStdout(), "Outdated Documentation Sets", len(outdated))
 			for _, o := range outdated {
 				fmt.Fprintf(cmd.OutOrStdout(), "  %-30s  %s -> %s\n",
 					o.Slug, o.InstalledVersion, o.AvailableVersion)
@@ -220,10 +441,7 @@ func docsUpdateCmd() *cobra.Command {
 		Use:   "update",
 		Short: "Download newer versions of outdated documentation",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			mgr := mcpregistry.NewDocsCorpusManager(
-				mcpregistry.DefaultDocsDataDir(),
-				http.DefaultClient,
-			)
+			mgr := newDownloadManager()
 			ctx := cmd.Context()
 
 			cat, err := catalog.Default()

@@ -27,6 +27,12 @@
 {{ end -}}
 ```
 {{ end }}
+{{- if .LSPEnabled }}
+
+## Code Navigation
+
+LSP servers are configured for this project. See `.claude/rules/lsp-navigation.md` for the navigation protocol (use the LSP tool, not Grep, for code symbols).
+{{- end }}
 {{ if hasAny .AvailableSkills }}
 <!-- qsdev:skills -->
 ## Available Skills

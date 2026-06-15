@@ -161,7 +161,12 @@ func TestHookRegistry_BuildHooksMapNilWhenAllDisabled(t *testing.T) {
 func TestDefaultHookRegistry_PackageGuardRegistered(t *testing.T) {
 	t.Parallel()
 	r := claudecode.ExportDefaultHookRegistry()
-	answers := types.WizardAnswers{Hooks: types.HookChoices{SafetyBlock: true}}
+	// Disable LSP enforcement so this test isolates the package-guard matcher;
+	// otherwise the always-on lsp-guard adds a second PreToolUse matcher.
+	answers := types.WizardAnswers{
+		Hooks: types.HookChoices{SafetyBlock: true},
+		LSP:   types.LSPSettings{Enforcement: "off"},
+	}
 
 	matchers := r.HooksForEvent("PreToolUse", answers)
 	if len(matchers) != 1 {
@@ -211,8 +216,11 @@ func TestDefaultHookRegistry_BothEnabled(t *testing.T) {
 func TestDefaultHookRegistry_BothDisabled(t *testing.T) {
 	t.Parallel()
 	r := claudecode.ExportDefaultHookRegistry()
+	// Also disable LSP enforcement: the always-on lsp-guard would otherwise
+	// register a PreToolUse matcher even with package-guard and audit-log off.
 	answers := types.WizardAnswers{
 		Hooks: types.HookChoices{SafetyBlock: false, AuditLog: false},
+		LSP:   types.LSPSettings{Enforcement: "off"},
 	}
 
 	m := r.BuildHooksMap(answers)
@@ -298,8 +306,8 @@ func TestBuildHookStatuses(t *testing.T) {
 	}
 
 	statuses := claudecode.ExportBuildHookStatuses(r, answers)
-	if len(statuses) != 14 {
-		t.Fatalf("expected 14 statuses, got %d", len(statuses))
+	if len(statuses) != 15 {
+		t.Fatalf("expected 15 statuses, got %d", len(statuses))
 	}
 
 	if statuses[0].Name != "self-protection" || statuses[0].Enabled {
@@ -335,6 +343,11 @@ func TestBuildHookStatuses(t *testing.T) {
 		if statuses[i].Name != "security-enforcement" || statuses[i].Enabled {
 			t.Errorf("statuses[%d]: want security-enforcement/disabled, got %s/%v", i, statuses[i].Name, statuses[i].Enabled)
 		}
+	}
+	// lsp-guard is registered last and enabled by default (LSP enforcement
+	// defaults to "block" when unset).
+	if statuses[14].Name != "lsp-guard" || !statuses[14].Enabled {
+		t.Errorf("statuses[14]: want lsp-guard/enabled, got %s/%v", statuses[14].Name, statuses[14].Enabled)
 	}
 }
 

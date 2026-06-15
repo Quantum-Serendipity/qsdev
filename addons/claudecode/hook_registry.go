@@ -293,5 +293,20 @@ func defaultHookRegistry() *HookRegistry {
 		EnabledFunc:   func(a types.WizardAnswers) bool { return a.Hooks.SecurityEnforcement },
 	})
 
+	// lsp-first-guard redirects code-symbol Grep searches to Claude Code's LSP
+	// tool (Phase 31). Registered last so it does not shift the positions of
+	// the preceding security hooks. Enabled whenever LSP enforcement is not
+	// "off" (the default tier resolves to "block").
+	r.Register(HookDefinition{
+		Owner:           "lsp-guard",
+		Event:           "PreToolUse",
+		Matcher:         "Grep",
+		Command:         `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/lsp-first-guard.sh`,
+		Timeout:         5,
+		StatusMessage:   "Checking for LSP-navigable symbols...",
+		SandboxCategory: "linter",
+		EnabledFunc:     func(a types.WizardAnswers) bool { return a.LSP.EnforcementTier() != "off" },
+	})
+
 	return r
 }

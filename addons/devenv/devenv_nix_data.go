@@ -11,6 +11,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/lsp"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -98,6 +99,13 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	// 2. Environment variables.
 	data.EnvVars = buildEnvVars(answers)
 
+	// 2b. LSP enforcement tier read by the lsp-first-guard PreToolUse hook.
+	// buildEnvVars always returns a non-nil map; guard anyway for safety.
+	if data.EnvVars == nil {
+		data.EnvVars = make(map[string]string, 1)
+	}
+	data.EnvVars["QSDEV_LSP_ENFORCEMENT"] = answers.LSP.EnforcementTier()
+
 	// 3. Unset env vars: credential-bearing variables.
 	data.UnsetEnvVars = defaultUnsetEnvVars()
 
@@ -123,6 +131,11 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	mcpPkgs := collectMCPPackages(answers)
 	data.Packages = append(data.Packages, mcpPkgs...)
 	data.NeedsNativeLibPath = needsNativeLibPath(answers)
+
+	// 4e. LSP servers: a single, registry-driven section that emits explicit
+	// enable/disable lines for every detected ecosystem (plus always-on nixd).
+	// Analyzer config lives in the generated .lsp.json, not devenv.
+	collectLSPSection(answers, data)
 
 	// 5. Services.
 	for _, svc := range answers.Services {
@@ -261,6 +274,77 @@ func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *eco
 	}
 
 	return result, nil
+}
+
+// lspDisplayName is the human-readable label for the synthetic LSP language
+// fragment rendered into devenv.nix.
+const lspDisplayName = "LSP servers (qsdev-managed)"
+
+// collectLSPSection builds the centralized, registry-driven LSP section and
+// merges it into data. It emits explicit enable/disable lines (analyzer config
+// is deferred to the generated .lsp.json), adds package-list servers to
+// data.Packages, and always provisions nixd regardless of selected languages.
+//
+// Emitting LSP lines from one place is equivalent to touching every ecosystem
+// module: Nix's module system merges separate "languages.X = {...}" and
+// "languages.X.lsp.enable = true" definitions.
+func collectLSPSection(answers types.WizardAnswers, data *DevenvNixTemplateData) {
+	reg := lsp.NewRegistry()
+
+	var b strings.Builder
+	nixSelected := false
+
+	for _, lang := range answers.Languages {
+		if lang.Name == "nix" {
+			nixSelected = true
+		}
+
+		cfg, ok := reg.ByEcosystem(lang.Name)
+		if !ok {
+			continue
+		}
+
+		// Servers with no devenv lsp option get their binary added to the
+		// packages list — but only when the server is default-on. Default-off
+		// package-list servers (e.g. ansible) are opt-in and never auto-added.
+		if pkg, isList := lsp.PackageListPackage(cfg); isList {
+			if cfg.DefaultOn {
+				data.Packages = append(data.Packages, pkg)
+			}
+			continue
+		}
+
+		// DevenvEnable / DevenvEnableOverridePackage / DevenvDisable emit lines;
+		// DevenvSDKBundled returns "" (server ships in the base SDK package).
+		b.WriteString(lsp.NixLSPFragment(cfg))
+	}
+
+	// nixd is always-on. devenv guards languages.nix.lsp.package behind
+	// `lib.mkIf languages.nix.enable`, so the enable line is required to make
+	// nixd available; the lsp line is emitted by the loop above when nix is a
+	// selected language, otherwise we emit both here. Both merge harmlessly with
+	// the nixlang module's own "languages.nix.enable = true;".
+	if !nixSelected {
+		if nixCfg, ok := reg.ByEcosystem("nix"); ok {
+			b.WriteString(nixIndentLine("languages.nix.enable = true;"))
+			b.WriteString(lsp.NixLSPFragment(nixCfg))
+		}
+	}
+
+	if b.Len() == 0 {
+		return
+	}
+
+	data.LanguageFragments = append(data.LanguageFragments, LanguageFragment{
+		DisplayName: lspDisplayName,
+		NixFragment: b.String(),
+	})
+}
+
+// nixIndentLine returns line with the 2-space devenv.nix indentation and a
+// trailing newline, matching the style emitted by pkg/lsp.NixLSPFragment.
+func nixIndentLine(line string) string {
+	return "  " + line + "\n"
 }
 
 // collectModulePackages gathers Nix packages from ecosystem modules that

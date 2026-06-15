@@ -22,6 +22,8 @@ func TestGenerateHookFiles_AllEnabled(t *testing.T) {
 				ToolGates:             true,
 				SOC2Audit:             true,
 			},
+			// Isolate the consulting hooks from the always-on lsp-guard.
+			LSP: types.LSPSettings{Enforcement: "off"},
 		}
 		files, err := claudecode.GenerateHookFiles(answers)
 		if err != nil {
@@ -46,6 +48,7 @@ func TestGenerateHookFiles_AllEnabled(t *testing.T) {
 			Hooks: types.HookChoices{
 				AuditLog: true,
 			},
+			LSP: types.LSPSettings{Enforcement: "off"},
 		}
 		files, err := claudecode.GenerateHookFiles(answers)
 		if err != nil {
@@ -80,7 +83,12 @@ func TestGenerateHookFiles_AllEnabled(t *testing.T) {
 
 	t.Run("none enabled", func(t *testing.T) {
 		t.Parallel()
-		files, err := claudecode.GenerateHookFiles(types.WizardAnswers{})
+		// Disable LSP too so no hooks at all are generated; the lsp-guard is
+		// otherwise on by default (enforcement defaults to "block").
+		answers := types.WizardAnswers{
+			LSP: types.LSPSettings{Enforcement: "off"},
+		}
+		files, err := claudecode.GenerateHookFiles(answers)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -93,6 +101,7 @@ func TestGenerateHookFiles_AllEnabled(t *testing.T) {
 		t.Parallel()
 		answers := types.WizardAnswers{
 			Hooks: types.HookChoices{SafetyBlock: true},
+			LSP:   types.LSPSettings{Enforcement: "off"},
 		}
 		files, err := claudecode.GenerateHookFiles(answers)
 		if err != nil {

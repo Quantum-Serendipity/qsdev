@@ -57,6 +57,14 @@ func GenerateHookFiles(answers types.WizardAnswers) ([]types.GeneratedFile, erro
 			owner:        "soc2-audit",
 		},
 		{
+			enabled:      answers.LSP.EnforcementTier() != "off",
+			templatePath: "templates/hooks/lsp-first-guard.sh",
+			outputPath:   ".claude/hooks/lsp-first-guard.sh",
+			mode:         fileutil.ModeExecutable,
+			strategy:     types.Overwrite,
+			owner:        "lsp-guard",
+		},
+		{
 			enabled:      answers.AgentTools.SembleEnabled,
 			templatePath: "templates/hooks/semble-analytics.sh",
 			outputPath:   ".claude/hooks/semble-analytics.sh",

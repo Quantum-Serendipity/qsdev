@@ -9,6 +9,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/lsp"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -18,14 +19,16 @@ var _ types.Generator = (*ClaudeCodeGenerator)(nil)
 // ClaudeCodeGenerator orchestrates all Claude Code sub-generators to produce
 // the complete set of files for a security-hardened Claude Code configuration.
 type ClaudeCodeGenerator struct {
-	registry *ecosystem.Registry
-	cfg      Config
+	registry    *ecosystem.Registry
+	cfg         Config
+	lspRegistry *lsp.LSPRegistry
 }
 
 // NewClaudeCodeGenerator creates a ClaudeCodeGenerator backed by the given
-// ecosystem module registry and addon configuration.
+// ecosystem module registry and addon configuration. The LSP registry is pure
+// static data, so it is built internally rather than injected.
 func NewClaudeCodeGenerator(registry *ecosystem.Registry, cfg Config) *ClaudeCodeGenerator {
-	return &ClaudeCodeGenerator{registry: registry, cfg: cfg}
+	return &ClaudeCodeGenerator{registry: registry, cfg: cfg, lspRegistry: lsp.NewRegistry()}
 }
 
 // resolveTier determines the effective tier from wizard answers, falling back
@@ -47,6 +50,13 @@ func resolveTier(answers types.WizardAnswers) tier.Tier {
 func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 	var files []types.GeneratedFile
 	t := resolveTier(answers)
+
+	// Reconcile the claudecode Config LSP enforcement override into answers so
+	// downstream hook generation observes it. answers is a value parameter, so
+	// this mutates only the local copy used by the rest of Generate.
+	if g.cfg.LSPEnforcement != "" {
+		answers.LSP.Enforcement = g.cfg.LSPEnforcement
+	}
 
 	// 1. settings.json (all tiers)
 	settingsFile, err := GenerateSettings(answers, g.registry, g.cfg)
@@ -84,6 +94,14 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		return nil, fmt.Errorf("generating rules: %w", err)
 	}
 	files = append(files, ruleFiles...)
+
+	// 4a. Consolidated LSP plugin (Standard+): auto-loads LSP servers for the
+	// detected ecosystems (nixd always included).
+	lspFiles, err := GenerateLspPlugin(answers, g.lspRegistry)
+	if err != nil {
+		return nil, fmt.Errorf("generating LSP plugin: %w", err)
+	}
+	files = append(files, lspFiles...)
 
 	// 4b. AlwaysOn tool configs (Standard+): security tools that must be
 	// present regardless of tier.

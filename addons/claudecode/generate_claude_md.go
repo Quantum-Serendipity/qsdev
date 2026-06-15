@@ -67,6 +67,7 @@ type ClaudeMdTemplateData struct {
 	DevenvTasks      []TaskSummary
 	ModelSize        string
 	HasGdevReference bool
+	LSPEnabled       bool
 }
 
 // BuildClaudeMdData assembles all template data from wizard answers and ecosystem
@@ -188,6 +189,10 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 		data.ModelSize = ModelOpus
 	}
 	data.HasGdevReference = true
+
+	// LSP is always available at this tier (nixd is always-on, and every qsdev
+	// project has .nix files), so the navigation pointer always renders.
+	data.LSPEnabled = true
 
 	return data
 }

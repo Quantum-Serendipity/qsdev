@@ -57,5 +57,17 @@ func IsLibraryRule(filename string) bool {
 			}
 		}
 	}
+	// LSP guidance rules are also library-managed: the always-on rules and the
+	// per-language rules. Derive from the same maps deployRules uses.
+	for _, r := range alwaysOnLSPRules {
+		if r == filename {
+			return true
+		}
+	}
+	for _, r := range languageToLSPRule {
+		if r == filename {
+			return true
+		}
+	}
 	return false
 }

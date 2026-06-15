@@ -35,6 +35,9 @@ var ExportValidHookPresets = validHookPresets
 // ExportClaudeCmd exposes claudeCmd for external tests.
 var ExportClaudeCmd = claudeCmd
 
+// ExportContentCmd exposes contentCmd for external tests.
+var ExportContentCmd = contentCmd
+
 // ExportHookPresetToChoices exposes hookPresetToChoices for external tests.
 var ExportHookPresetToChoices = func(name string, hooks *types.HookChoices) {
 	hookPresetToChoices(name, hooks)

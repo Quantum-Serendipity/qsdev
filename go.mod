@@ -3,6 +3,7 @@ module github.com/Quantum-Serendipity/qsdev
 go 1.26.4
 
 require (
+	aead.dev/minisign v0.3.0
 	fastcat.org/go/gdev v0.0.0-00010101000000-000000000000
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/charmbracelet/huh v1.0.0
@@ -27,6 +28,7 @@ require (
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/spf13/cast v1.7.1 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
+	golang.org/x/crypto v0.51.0 // indirect
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af // indirect
 )
 

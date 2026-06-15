@@ -439,11 +439,14 @@ func TestGenerateSettings_NoSandbox(t *testing.T) {
 
 func TestGenerateSettings_HooksSection(t *testing.T) {
 	reg := ecosystem.NewRegistry()
+	// Disable LSP enforcement so this test isolates the package-guard matcher;
+	// the always-on lsp-guard would otherwise add a second PreToolUse matcher.
 	answers := types.WizardAnswers{
 		PermissionLevel: "standard",
 		Hooks: types.HookChoices{
 			SafetyBlock: true,
 		},
+		LSP: types.LSPSettings{Enforcement: "off"},
 	}
 	gf := mustGenerateSettings(t, answers, reg)
 	s := mustUnmarshalSettings(t, gf)
@@ -479,11 +482,14 @@ func TestGenerateSettings_HooksSection(t *testing.T) {
 
 func TestGenerateSettings_NoHooksWhenSafetyBlockFalse(t *testing.T) {
 	reg := ecosystem.NewRegistry()
+	// Disable LSP enforcement too: the always-on lsp-guard would otherwise keep
+	// the hooks section populated even with SafetyBlock off.
 	answers := types.WizardAnswers{
 		PermissionLevel: "standard",
 		Hooks: types.HookChoices{
 			SafetyBlock: false,
 		},
+		LSP: types.LSPSettings{Enforcement: "off"},
 	}
 	gf := mustGenerateSettings(t, answers, reg)
 	s := mustUnmarshalSettings(t, gf)

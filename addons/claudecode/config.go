@@ -40,6 +40,7 @@ type Config struct {
 	SandboxEnabled     bool              `yaml:"sandbox_enabled,omitempty"`
 	AllowedDomains     []string          `yaml:"allowed_domains,omitempty"`
 	MCPServers         []MCPServerConfig `yaml:"mcp_servers,omitempty"`
+	LSPEnforcement     string            `yaml:"lsp_enforcement,omitempty"`
 }
 
 // Option is a functional option for configuring the claudecode addon.
@@ -105,5 +106,13 @@ func WithAllowedDomains(domains ...string) Option {
 func WithMCPServer(server MCPServerConfig) Option {
 	return func(c *Config) {
 		c.MCPServers = append(c.MCPServers, server)
+	}
+}
+
+// WithLSPEnforcement sets the lsp-first-guard enforcement tier: "block" (the
+// default when empty), "warn", or "off".
+func WithLSPEnforcement(tier string) Option {
+	return func(c *Config) {
+		c.LSPEnforcement = tier
 	}
 }

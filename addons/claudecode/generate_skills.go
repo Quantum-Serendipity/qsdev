@@ -92,6 +92,29 @@ var languageToRules = map[string][]string{
 	"terraform":  {"terraform-conventions.md"},
 }
 
+// languageToLSPRule maps ecosystem canonical names to their per-language LSP
+// guidance rule. Each of these rules carries `paths:` frontmatter so it loads
+// lazily only when Claude reads a matching file. Languages without an entry
+// here rely on the universal lsp-navigation.md rule alone. The path globs in
+// each rule must match the corresponding pkg/lsp RuleGlobs.
+var languageToLSPRule = map[string]string{
+	"go":         "go-lsp.md",
+	"javascript": "typescript-lsp.md",
+	"rust":       "rust-lsp.md",
+	"python":     "python-lsp.md",
+	"java":       "java-lsp.md",
+}
+
+// lspRulesOwner tags the LSP rule files for teardown tracking. Convention rules
+// set no Owner; only the LSP rules are owned so they can be cleaned up
+// independently.
+const lspRulesOwner = "lsp-rules"
+
+// alwaysOnLSPRules are deployed for every project regardless of detected
+// languages: the universal navigation rule, and nixd (always available — every
+// qsdev project has .nix files).
+var alwaysOnLSPRules = []string{"lsp-navigation.md", "nix-lsp.md"}
+
 // deployRules selects convention rule files based on the project's languages
 // and always includes the security rules. It returns GeneratedFile entries
 // for each selected rule.
@@ -120,6 +143,49 @@ func deployRules(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 			Content:  content,
 			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.LibraryManaged,
+		})
+	}
+
+	// Deploy LSP navigation rules. The universal rule and nixd are always
+	// present (LSP is always available); per-language rules deploy for each
+	// detected ecosystem that has one.
+	lspFiles, err := deployLSPRules(answers)
+	if err != nil {
+		return nil, err
+	}
+	files = append(files, lspFiles...)
+
+	return files, nil
+}
+
+// deployLSPRules returns the LSP guidance rule files. lsp-navigation.md and
+// nix-lsp.md are always deployed; a per-language LSP rule is added for each
+// detected ecosystem that maps to one. All returned files carry Owner
+// lspRulesOwner so they can be torn down independently of convention rules.
+func deployLSPRules(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
+	ruleNames := append([]string(nil), alwaysOnLSPRules...)
+
+	for _, lang := range answers.Languages {
+		if rule, ok := languageToLSPRule[lang.Name]; ok {
+			ruleNames = append(ruleNames, rule)
+		}
+	}
+
+	ruleNames = sliceutil.Dedup(ruleNames)
+
+	var files []types.GeneratedFile
+	for _, name := range ruleNames {
+		content, err := templateFS.ReadFile("templates/rules/" + name)
+		if err != nil {
+			return nil, fmt.Errorf("reading LSP rule file %q: %w", name, err)
+		}
+
+		files = append(files, types.GeneratedFile{
+			Path:     ".claude/rules/" + name,
+			Content:  content,
+			Mode:     fileutil.ModeReadWrite,
+			Strategy: types.LibraryManaged,
+			Owner:    lspRulesOwner,
 		})
 	}
 

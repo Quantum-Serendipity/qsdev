@@ -193,8 +193,10 @@ func TestDeployRules_GoProject(t *testing.T) {
 		t.Fatalf("deployRules returned error: %v", err)
 	}
 
-	if len(files) != 2 {
-		t.Fatalf("expected 2 files (go-conventions + security-rules), got %d", len(files))
+	// go-conventions + security-rules, plus the always-on LSP rules
+	// (lsp-navigation + nix-lsp) and the per-language go-lsp rule = 5.
+	if len(files) != 5 {
+		t.Fatalf("expected 5 files (go-conventions + security-rules + lsp-navigation + nix-lsp + go-lsp), got %d", len(files))
 	}
 
 	paths := make(map[string]bool)
@@ -222,8 +224,11 @@ func TestDeployRules_MultiLanguage(t *testing.T) {
 		t.Fatalf("deployRules returned error: %v", err)
 	}
 
-	if len(files) != 3 {
-		t.Fatalf("expected 3 files (go-conventions + typescript-conventions + security-rules), got %d", len(files))
+	// go-conventions + typescript-conventions + security-rules, plus the
+	// always-on LSP rules (lsp-navigation + nix-lsp) and the per-language
+	// go-lsp + typescript-lsp rules = 7.
+	if len(files) != 7 {
+		t.Fatalf("expected 7 files (go-conventions + typescript-conventions + security-rules + lsp-navigation + nix-lsp + go-lsp + typescript-lsp), got %d", len(files))
 	}
 
 	paths := make(map[string]bool)
@@ -251,12 +256,18 @@ func TestDeployRules_NoLanguages(t *testing.T) {
 		t.Fatalf("deployRules returned error: %v", err)
 	}
 
-	if len(files) != 1 {
-		t.Fatalf("expected 1 file (security-rules only), got %d", len(files))
+	// security-rules only for conventions, plus the always-on LSP rules
+	// (lsp-navigation + nix-lsp) = 3.
+	if len(files) != 3 {
+		t.Fatalf("expected 3 files (security-rules + lsp-navigation + nix-lsp), got %d", len(files))
 	}
 
-	if files[0].Path != ".claude/rules/security-rules.md" {
-		t.Errorf("expected security-rules.md, got %q", files[0].Path)
+	paths := make(map[string]bool)
+	for _, f := range files {
+		paths[f.Path] = true
+	}
+	if !paths[".claude/rules/security-rules.md"] {
+		t.Error("missing security-rules.md")
 	}
 }
 
@@ -309,8 +320,10 @@ func TestDeployRules_RustProject(t *testing.T) {
 		t.Fatalf("deployRules returned error: %v", err)
 	}
 
-	if len(files) != 2 {
-		t.Fatalf("expected 2 files (rust-conventions + security-rules), got %d", len(files))
+	// rust-conventions + security-rules, plus the always-on LSP rules
+	// (lsp-navigation + nix-lsp) and the per-language rust-lsp rule = 5.
+	if len(files) != 5 {
+		t.Fatalf("expected 5 files (rust-conventions + security-rules + lsp-navigation + nix-lsp + rust-lsp), got %d", len(files))
 	}
 
 	paths := make(map[string]bool)

@@ -40,6 +40,7 @@ type WizardAnswers struct {
 	ModelSize          string            `yaml:"model_size,omitempty"        json:"model_size,omitempty"`
 	Infrastructure     InfraConfig       `yaml:"infrastructure"              json:"infrastructure"`
 	Overlays           []string          `yaml:"overlays,omitempty"          json:"overlays,omitempty"`
+	LSP                LSPSettings       `yaml:"lsp"                         json:"lsp"`
 }
 
 // AgentToolsAnswers holds AI agent tool selections from the wizard.
@@ -50,6 +51,25 @@ type AgentToolsAnswers struct {
 	SembleEnabled        bool   `yaml:"semble_enabled"         json:"semble_enabled"`
 	SembleMode           string `yaml:"semble_mode"            json:"semble_mode"`
 	SembleTextFiles      bool   `yaml:"semble_text_files"      json:"semble_text_files"`
+}
+
+// LSPSettings configures the generated LSP integration (Phase 31). LSP is
+// "enabled" implicitly whenever any detected ecosystem maps to a default-on
+// server (nixd is always-on, so in practice it is always enabled); these
+// settings only tune the enforcement behavior of the lsp-first-guard hook.
+type LSPSettings struct {
+	// Enforcement controls the lsp-first-guard PreToolUse hook: "block" (the
+	// default), "warn", or "off". An empty value is treated as "block".
+	Enforcement string `yaml:"enforcement,omitempty" json:"enforcement,omitempty"`
+}
+
+// EnforcementTier returns the configured enforcement tier, defaulting to
+// "block" when unset. Centralizing the default keeps generators consistent.
+func (s LSPSettings) EnforcementTier() string {
+	if s.Enforcement == "" {
+		return "block"
+	}
+	return s.Enforcement
 }
 
 // LanguageChoice represents a user's selection of a programming language

@@ -432,11 +432,12 @@ Rules with `bypass_tier: enforce_always` cannot be overridden.
 
 ## Documentation Pipeline
 
-Documentation sets are stored in `~/.local/share/qsdev/docs/` (user-level, not per-project).
+Documentation sets are stored in `~/.qsdev/docs/` (user-level, not per-project).
 
 ```bash
 qsdev docs download        # Download configured documentation sets
 qsdev docs status          # Show installed sets and disk usage
+qsdev docs verify          # Verify corpus integrity/signatures against the manifest
 qsdev docs outdated        # Check for newer versions
 qsdev docs update          # Update outdated sets
 qsdev docs clean           # Remove downloaded sets
@@ -447,6 +448,28 @@ qsdev docs disable <set>   # Disable a documentation set
 Two documentation formats are supported:
 - **DevDocs** -- API references from devdocs.io for detected ecosystems, stored as JSON
 - **ZIM** -- Stack Exchange archives from openzim, stored as ZIM files
+
+DevDocs `db.json` is sanitized at download time (invisible/tag/control characters
+stripped) before the external documentation MCP server indexes it, eliminating the
+invisible-Unicode prompt-injection vector with no impact on legitimate content.
+
+## Content Signing & Verification
+
+Content signing protects the documentation corpus (and other artifacts) against
+tampering using detached Minisign (Ed25519) signatures, verified against trusted
+public keys. The implementation is pure-Go, so no `minisign` binary is required.
+
+```bash
+qsdev content keygen --out qsdev          # Generate a key pair (qsdev.pub / qsdev.key)
+qsdev content sign <file> --key qsdev.key # Produce a detached <file>.minisig
+qsdev content verify <file>               # Verify against trusted keys (--json, --require-trusted)
+qsdev content keys                        # List trusted public keys
+```
+
+Trusted public keys are loaded from `~/.qsdev/keys/` (`*.pub`). `qsdev docs verify`
+reuses this to check signed corpus files, falling back to the manifest SHA-256 for
+unsigned sets. Servers serving content with a trusted, signature-verified binary can
+reach the `Attested` compliance grade reported by `qsdev mcp grade`.
 
 The lookup-docs skill routes documentation queries through 5 sources in priority order: local DevDocs, Stack Exchange ZIM, man pages, mcp-nixos, Context7 (web fallback).
 

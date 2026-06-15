@@ -16,7 +16,10 @@ type GradeResult struct {
 
 // GradeServer evaluates a server definition against the compliance ladder and
 // returns the highest fully-satisfied level along with per-criterion details.
-// The function is pure, stateless, and deterministic.
+// Every criterion except external-attestation is pure; the result is
+// deterministic given the injected AttestationChecker (which the claudecode
+// addon wires to a contentsign-backed verifier at startup, and which defaults
+// to a no-op returning false).
 func GradeServer(def *McpServerDefinition) GradeResult {
 	var criteria []CriterionResult
 
@@ -76,12 +79,16 @@ func GradeServer(def *McpServerDefinition) GradeResult {
 		level = ComplianceVerified
 	}
 
-	// Attested criteria.
+	// Attested criteria. Attestation only ever lifts a server that already
+	// reached Verified, which requires hasVerifiedProvenance (a /nix/store path
+	// or the qsdev binary). External npx/uvx doc servers fail the earlier
+	// local-only and provenance criteria, so they can never reach Attested even
+	// with a valid signature.
 	attested := hasExternalAttestation(def)
 	criteria = append(criteria, CriterionResult{
 		Name:   "external-attestation",
 		Passed: attested,
-		Detail: boolDetail(attested, "external attestation present", "no external attestation (placeholder for P30)"),
+		Detail: boolDetail(attested, "verified attestation signature present", "no verified attestation signature"),
 	})
 
 	attestedMet := verifiedMet && attested

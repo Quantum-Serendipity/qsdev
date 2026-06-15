@@ -7,6 +7,8 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/contentsign"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserver"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 )
@@ -89,6 +91,13 @@ func registerMCPProviders() {
 
 	reg.Register(newPostmortemProvider())
 	reg.Register(newVersionSentinelProvider())
+
+	// Wire external-attestation verification into the compliance grader. This is
+	// the only place mcpregistry and contentsign are connected (mcpregistry must
+	// not import contentsign, to avoid an import cycle).
+	mcpregistry.AttestationChecker = func(def *mcpregistry.McpServerDefinition) bool {
+		return contentsign.AttestationStore{}.IsAttested(context.Background(), def.Command)
+	}
 }
 
 func init() {

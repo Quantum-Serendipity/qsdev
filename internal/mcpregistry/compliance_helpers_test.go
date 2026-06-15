@@ -188,6 +188,6 @@ func TestHasExternalAttestation(t *testing.T) {
 
 	def := &McpServerDefinition{Command: "anything"}
 	if hasExternalAttestation(def) {
-		t.Error("hasExternalAttestation() = true, want false (placeholder)")
+		t.Error("hasExternalAttestation() = true, want false (default no-op checker)")
 	}
 }

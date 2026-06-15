@@ -3,6 +3,7 @@ package contentsign
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -39,21 +40,12 @@ func IngestDevDocs(ctx context.Context, dir string, opts SanitizeOptions) (Sanit
 // injected so tests can exercise the oversize path without writing a huge file.
 func ingestDevDocs(ctx context.Context, dir string, opts SanitizeOptions, maxBytes int64) (SanitizeReport, error) {
 	dbPath := filepath.Join(dir, "db.json")
-	f, err := os.Open(dbPath) //nolint:gosec // dbPath is a manifest-controlled corpus path.
+	raw, err := readBounded(dbPath, maxBytes)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return SanitizeReport{}, nil
 		}
-		return SanitizeReport{}, fmt.Errorf("opening %s: %w", dbPath, err)
-	}
-	defer f.Close()
-
-	raw, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
-	if err != nil {
-		return SanitizeReport{}, fmt.Errorf("reading %s: %w", dbPath, err)
-	}
-	if int64(len(raw)) > maxBytes {
-		return SanitizeReport{}, fmt.Errorf("refusing to sanitize %s: size exceeds the %d-byte limit", dbPath, maxBytes)
+		return SanitizeReport{}, err
 	}
 
 	clean, report, err := SanitizeJSONStrings(ctx, raw, opts)
@@ -68,4 +60,28 @@ func ingestDevDocs(ctx context.Context, dir string, opts SanitizeOptions, maxByt
 	}
 
 	return report, nil
+}
+
+// readBounded reads at most maxBytes from path (one extra byte is read to detect
+// overflow) and closes the file before returning. Closing here — rather than
+// holding the read handle open across the caller's atomic rewrite — is essential
+// on Windows, where renaming a replacement file over a path that still has an
+// open handle fails with "Access is denied"; POSIX tolerates it, so the bug is
+// invisible on Linux/macOS. A file larger than maxBytes is rejected rather than
+// read into memory whole.
+func readBounded(path string, maxBytes int64) ([]byte, error) {
+	f, err := os.Open(path) //nolint:gosec // path is a manifest-controlled corpus path.
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	raw, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if int64(len(raw)) > maxBytes {
+		return nil, fmt.Errorf("refusing to sanitize %s: size exceeds the %d-byte limit", path, maxBytes)
+	}
+	return raw, nil
 }

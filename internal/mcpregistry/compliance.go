@@ -83,18 +83,31 @@ func GradeServer(def *McpServerDefinition) GradeResult {
 	// reached Verified, which requires hasVerifiedProvenance (a /nix/store path
 	// or the qsdev binary). External npx/uvx doc servers fail the earlier
 	// local-only and provenance criteria, so they can never reach Attested even
-	// with a valid signature. Gate the check on verifiedMet so the expensive
-	// attestation verification (it streams the entire command binary) is skipped
-	// for the common case of servers that cannot reach Attested regardless.
-	attested := verifiedMet && hasExternalAttestation(def)
+	// with a valid signature. Gate the (expensive, binary-streaming) check on
+	// verifiedMet so it is skipped for servers that cannot reach Attested — but
+	// keep the per-criterion report honest by distinguishing "not evaluated"
+	// from "evaluated, no signature": folding the gate into Passed would tell an
+	// operator a validly-signed sub-Verified server has "no signature".
+	attestationPassed := false
+	var attestationDetail string
+	switch {
+	case !verifiedMet:
+		attestationDetail = "not evaluated (server has not reached Verified)"
+	case hasExternalAttestation(def):
+		attestationPassed = true
+		attestationDetail = "verified attestation signature present"
+	default:
+		attestationDetail = "no verified attestation signature"
+	}
 	criteria = append(criteria, CriterionResult{
 		Name:   "external-attestation",
-		Passed: attested,
-		Detail: boolDetail(attested, "verified attestation signature present", "no verified attestation signature"),
+		Passed: attestationPassed,
+		Detail: attestationDetail,
 	})
 
-	attestedMet := verifiedMet && attested
-	if attestedMet {
+	// attestationPassed already implies verifiedMet (the !verifiedMet branch
+	// leaves it false), so it is the full Attested gate.
+	if attestationPassed {
 		level = ComplianceAttested
 	}
 

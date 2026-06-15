@@ -33,7 +33,7 @@ func Sign(ctx context.Context, path string, opts SignOptions) (sigPath string, e
 		return "", err
 	}
 
-	sig, err := signer.SignContent(ctx, path, priv, opts.TrustedComment, opts.UntrustedComment)
+	sig, err := signer.SignContent(ctx, path, priv, opts.TrustedComment)
 	if err != nil {
 		return "", fmt.Errorf("signing %q: %w", path, err)
 	}

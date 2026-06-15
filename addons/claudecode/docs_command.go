@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sort"
@@ -16,6 +17,14 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/contentsign"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 )
+
+// printCorpusSectionHeader writes a section title with its item count followed
+// by the rule line shared across the docs status, outdated, and verify
+// listings, so the table chrome lives in one place.
+func printCorpusSectionHeader(w io.Writer, title string, n int) {
+	fmt.Fprintf(w, "%s (%d)\n", title, n)
+	fmt.Fprintln(w, "----------------------------------------")
+}
 
 func docsCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -64,10 +73,12 @@ func docsVerifyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "verify",
 		Short: "Verify the integrity (and signatures, if present) of the documentation corpus",
-		Long: `Verify each installed documentation set against the manifest. When a set's
-files carry detached Minisign signatures (<file>.minisig), those signatures are
-verified against trusted keys; otherwise the set's recorded combined SHA-256 is
-recomputed and compared. Exits non-zero when any set fails, for CI gating.`,
+		Long: `Verify each installed documentation set against the manifest. When a set
+carries any detached Minisign signatures (<file>.minisig), the whole set is
+verified by signature against trusted keys — a missing or invalid sidecar then
+fails the set rather than downgrading it. A set with no signatures at all falls
+back to recomputing its recorded combined SHA-256. Exits non-zero when any set
+fails, for CI gating; --require-trusted additionally fails hash-only sets.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mgr := mcpregistry.NewDocsCorpusManager(
 				mcpregistry.DefaultDocsDataDir(),
@@ -119,9 +130,12 @@ func runDocsVerify(cmd *cobra.Command, mgr *mcpregistry.DocsCorpusManager, manif
 		return err
 	}
 
+	// res.Verified is authoritative: verifyDocSet already folds the
+	// requireTrusted policy into it (a hash-only set is not Verified when trust
+	// is required), so the per-set output and this exit gate stay consistent.
 	failed := 0
 	for _, r := range results {
-		if !r.Verified || (requireTrusted && r.Status != contentsign.StatusSignedVerified) {
+		if !r.Verified {
 			failed++
 		}
 	}
@@ -131,12 +145,16 @@ func runDocsVerify(cmd *cobra.Command, mgr *mcpregistry.DocsCorpusManager, manif
 	return nil
 }
 
-// verifyDocSet verifies a single doc set: when every file has a .minisig sidecar
-// it verifies the signatures against trusted keys; otherwise it falls back to
-// the recorded combined-hash check.
+// verifyDocSet verifies a single doc set. When ANY file carries a .minisig
+// sidecar the set is treated as signed and verified by signature: a missing or
+// invalid sidecar on such a set is a failure, never a silent downgrade to the
+// unsigned manifest hash. Only a set with no signatures at all falls back to
+// the recorded combined-hash check, and that hash-only result does not satisfy
+// requireTrusted (the manifest itself is unsigned, so its hash is not a trust
+// anchor).
 func verifyDocSet(ctx context.Context, mgr *mcpregistry.DocsCorpusManager, entry *mcpregistry.DocSetEntry, trustedKeys []contentsign.PublicKey, requireTrusted bool) docVerifyResult {
 	res := docVerifyResult{Slug: entry.Slug, Type: entry.Type.String()}
-	if len(entry.Files) > 0 && allSigned(entry.Files) {
+	if len(entry.Files) > 0 && anySigned(entry.Files) {
 		return verifyDocSetSignatures(ctx, entry, trustedKeys, requireTrusted, res)
 	}
 
@@ -144,10 +162,12 @@ func verifyDocSet(ctx context.Context, mgr *mcpregistry.DocsCorpusManager, entry
 	switch {
 	case err != nil:
 		res.Status, res.Reason = contentsign.StatusFailed, err.Error()
-	case ok:
-		res.Status, res.Verified = contentsign.StatusHashVerified, true
-	default:
+	case !ok:
 		res.Status, res.Reason = contentsign.StatusFailed, "hash mismatch or missing file"
+	case requireTrusted:
+		res.Status, res.Reason = contentsign.StatusHashVerified, "hash-only set; a trusted signature is required"
+	default:
+		res.Status, res.Verified = contentsign.StatusHashVerified, true
 	}
 	return res
 }
@@ -182,17 +202,20 @@ func verifyDocSetSignatures(ctx context.Context, entry *mcpregistry.DocSetEntry,
 	return res
 }
 
-// allSigned reports whether every path has a detached signature sidecar on disk,
+// anySigned reports whether ANY path has a detached signature sidecar on disk,
 // deferring to contentsign's own sidecar-path convention rather than hardcoding
-// the ".minisig" suffix in the addon.
-func allSigned(files []string) bool {
+// the ".minisig" suffix in the addon. A set with at least one signature is
+// verified by signature (see verifyDocSet): dropping a sidecar from a signed
+// set then fails verification instead of silently downgrading to the unsigned
+// manifest hash.
+func anySigned(files []string) bool {
 	for _, f := range files {
 		sigPath := contentsign.ContentManifestEntry{Path: f}.SigPath()
-		if _, err := os.Stat(sigPath); err != nil {
-			return false
+		if _, err := os.Stat(sigPath); err == nil {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // printVerifyResults writes the verification results as indented JSON when
@@ -208,8 +231,7 @@ func printVerifyResults(cmd *cobra.Command, results []docVerifyResult, jsonOutpu
 		return nil
 	}
 
-	fmt.Fprintf(w, "Documentation Corpus Verification (%d)\n", len(results))
-	fmt.Fprintln(w, "----------------------------------------")
+	printCorpusSectionHeader(w, "Documentation Corpus Verification", len(results))
 	verified := 0
 	for _, r := range results {
 		detail := r.Reason
@@ -225,6 +247,22 @@ func printVerifyResults(cmd *cobra.Command, results []docVerifyResult, jsonOutpu
 	return nil
 }
 
+// newDownloadManager builds a DocsCorpusManager wired with the download-time
+// sanitizer, so every command that fetches DevDocs content (download, update)
+// scrubs db.json identically before it is indexed. Read-only commands (status,
+// verify, outdated) use a plain manager since they never write content.
+func newDownloadManager() *mcpregistry.DocsCorpusManager {
+	mgr := mcpregistry.NewDocsCorpusManager(
+		mcpregistry.DefaultDocsDataDir(),
+		http.DefaultClient,
+	)
+	mgr.Ingest = func(ctx context.Context, dir string) error {
+		_, err := contentsign.IngestDevDocs(ctx, dir, contentsign.DefaultSanitizeOptions())
+		return err
+	}
+	return mgr
+}
+
 func docsDownloadCmd() *cobra.Command {
 	var (
 		zimOnly     bool
@@ -238,14 +276,7 @@ func docsDownloadCmd() *cobra.Command {
 DevDocs API references and ZIM archives. Use --zim or --devdocs to
 download only one type.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			mgr := mcpregistry.NewDocsCorpusManager(
-				mcpregistry.DefaultDocsDataDir(),
-				http.DefaultClient,
-			)
-			mgr.Ingest = func(ctx context.Context, dir string) error {
-				_, err := contentsign.IngestDevDocs(ctx, dir, contentsign.DefaultSanitizeOptions())
-				return err
-			}
+			mgr := newDownloadManager()
 			ctx := cmd.Context()
 
 			cat, err := catalog.Default()
@@ -342,8 +373,7 @@ func docsStatusCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Installed Documentation Sets (%d)\n", len(manifest.DocSets))
-			fmt.Fprintln(cmd.OutOrStdout(), "----------------------------------------")
+			printCorpusSectionHeader(cmd.OutOrStdout(), "Installed Documentation Sets", len(manifest.DocSets))
 
 			keys := make([]string, 0, len(manifest.DocSets))
 			for k := range manifest.DocSets {
@@ -392,8 +422,7 @@ func docsOutdatedCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Outdated Documentation Sets (%d)\n", len(outdated))
-			fmt.Fprintln(cmd.OutOrStdout(), "----------------------------------------")
+			printCorpusSectionHeader(cmd.OutOrStdout(), "Outdated Documentation Sets", len(outdated))
 			for _, o := range outdated {
 				fmt.Fprintf(cmd.OutOrStdout(), "  %-30s  %s -> %s\n",
 					o.Slug, o.InstalledVersion, o.AvailableVersion)
@@ -412,10 +441,7 @@ func docsUpdateCmd() *cobra.Command {
 		Use:   "update",
 		Short: "Download newer versions of outdated documentation",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			mgr := mcpregistry.NewDocsCorpusManager(
-				mcpregistry.DefaultDocsDataDir(),
-				http.DefaultClient,
-			)
+			mgr := newDownloadManager()
 			ctx := cmd.Context()
 
 			cat, err := catalog.Default()

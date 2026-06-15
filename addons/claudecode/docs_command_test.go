@@ -128,3 +128,45 @@ func TestVerifyDocSet_MissingFileFails(t *testing.T) {
 		t.Errorf("status = %q, want failed", res.Status)
 	}
 }
+
+func TestVerifyDocSet_RequireTrustedRejectsHashOnly(t *testing.T) {
+	t.Parallel()
+	mgr, entry := newTempCorpus(t)
+
+	// The set is unsigned but its hash matches. Under --require-trusted a
+	// hash-only result is not "verified": the manifest hash is not a trust
+	// anchor, so the per-set Verified flag must be false (and the exit gate
+	// derives from it).
+	res := claudecode.ExportVerifyDocSet(context.Background(), mgr, entry, nil, true)
+	if res.Verified {
+		t.Fatalf("hash-only set must not be Verified under require-trusted, got %+v", res)
+	}
+	if res.Status != "hash-verified" {
+		t.Errorf("status = %q, want hash-verified", res.Status)
+	}
+	if res.Reason == "" {
+		t.Error("expected a reason explaining the require-trusted rejection")
+	}
+}
+
+func TestVerifyDocSet_PartialSignatureFailsNotDowngrades(t *testing.T) {
+	t.Parallel()
+	mgr, entry := newTempCorpus(t)
+
+	// Simulate a signed set that lost integrity: a .minisig sidecar exists next
+	// to one file. The set is now treated as signed and must be verified by
+	// signature — and FAIL — rather than silently downgrading to the hash check
+	// that the unsigned manifest would otherwise pass.
+	sig := entry.Files[0] + ".minisig"
+	if err := os.WriteFile(sig, []byte("untrusted comment\nnot-a-real-signature\n"), 0o644); err != nil {
+		t.Fatalf("writing sidecar: %v", err)
+	}
+
+	res := claudecode.ExportVerifyDocSet(context.Background(), mgr, entry, nil, false)
+	if res.Verified {
+		t.Fatalf("partially-signed set must fail, not downgrade to hash; got %+v", res)
+	}
+	if res.Status != "failed" {
+		t.Errorf("status = %q, want failed", res.Status)
+	}
+}

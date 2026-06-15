@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"aead.dev/minisign"
 )
 
 func TestDefaultBackend(t *testing.T) {
@@ -57,5 +59,46 @@ func TestVerifyContentMissingFile(t *testing.T) {
 	}
 	if errors.Is(err, ErrSignatureInvalid) {
 		t.Error("missing content file misclassified as ErrSignatureInvalid")
+	}
+}
+
+func TestVerifyContentLegacyEdDSASignature(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	kp := newKeyPair(t, dir, "signer", "")
+	content := writeContent(t, dir, "db.json", "payload")
+
+	// Produce a LEGACY (non-prehashed, EdDSA) signature the way the standard
+	// minisign CLI does — the package-level SignWithComments signs the raw
+	// message — rather than via qsdev's streaming prehash path. VerifyContent
+	// must still accept it (interoperability), not reject it as tampered.
+	priv, err := loadSecretKey(kp.secPath, "")
+	if err != nil {
+		t.Fatalf("loadSecretKey: %v", err)
+	}
+	raw, err := os.ReadFile(content)
+	if err != nil {
+		t.Fatalf("reading content: %v", err)
+	}
+	sig := minisign.SignWithComments(priv, raw, "trusted comment", "untrusted comment")
+
+	keyID, trusted, err := DefaultBackend().VerifyContent(ctx, content, sig, []PublicKey{kp.pub})
+	if err != nil {
+		t.Fatalf("VerifyContent: %v", err)
+	}
+	if !trusted {
+		t.Fatal("legacy EdDSA signature from a trusted key was rejected")
+	}
+	if keyID != kp.pub.ID() {
+		t.Errorf("keyID = %q, want %q", keyID, kp.pub.ID())
+	}
+
+	// A tampered file must still fail the legacy path.
+	if err := os.WriteFile(content, []byte("tampered"), 0o644); err != nil {
+		t.Fatalf("tampering content: %v", err)
+	}
+	if _, trusted, _ := DefaultBackend().VerifyContent(ctx, content, sig, []PublicKey{kp.pub}); trusted {
+		t.Error("tampered content verified against a legacy signature")
 	}
 }

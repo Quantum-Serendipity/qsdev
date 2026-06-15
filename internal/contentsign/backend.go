@@ -32,9 +32,9 @@ type Verifier interface {
 // serialized detached .minisig bytes.
 type Signer interface {
 	// SignContent streams contentPath and signs its Blake2b-512 prehash digest
-	// with priv, embedding trusted and untrusted comments. It returns the
+	// with priv, embedding trusted as the authenticated comment. It returns the
 	// serialized .minisig file bytes.
-	SignContent(ctx context.Context, contentPath string, priv minisign.PrivateKey, trusted, untrusted string) ([]byte, error)
+	SignContent(ctx context.Context, contentPath string, priv minisign.PrivateKey, trusted string) ([]byte, error)
 }
 
 // Backend is the swappable signing/verification engine. A backend always
@@ -66,7 +66,13 @@ func (pureGoBackend) Name() string { return "pure-go-minisign" }
 // Signer implements Backend; the pure-Go backend can sign.
 func (b pureGoBackend) Signer() (Signer, bool) { return b, true }
 
-// VerifyContent implements Verifier using the streaming Reader path.
+// VerifyContent implements Verifier. Prehashed (HashEdDSA) signatures — what
+// qsdev's own signing produces — verify via the streaming Reader, which never
+// buffers the file (essential for multi-GB corpus artifacts). Legacy
+// non-prehashed (EdDSA) signatures, e.g. those produced by the standard
+// minisign CLI, sign the raw message and cannot be verified by the prehash
+// Reader; they are handled by buffering the file and using the package-level
+// verify, so qsdev interoperates with externally produced signatures too.
 func (pureGoBackend) VerifyContent(ctx context.Context, contentPath string, sig []byte, keys []PublicKey) (KeyID, bool, error) {
 	// Reject structurally invalid signatures up front so callers can tell a
 	// corrupt signature apart from a verification mismatch.
@@ -74,7 +80,15 @@ func (pureGoBackend) VerifyContent(ctx context.Context, contentPath string, sig 
 	if err := parsed.UnmarshalText(sig); err != nil {
 		return "", false, fmt.Errorf("parsing signature for %q: %w", contentPath, ErrSignatureInvalid)
 	}
+	if parsed.Algorithm != minisign.HashEdDSA {
+		return verifyBuffered(ctx, contentPath, sig, keys)
+	}
+	return verifyStreaming(ctx, contentPath, sig, keys)
+}
 
+// verifyStreaming verifies a prehashed (HashEdDSA) signature without buffering
+// the content file.
+func verifyStreaming(ctx context.Context, contentPath string, sig []byte, keys []PublicKey) (KeyID, bool, error) {
 	r, closeFn, err := streamReader(ctx, contentPath)
 	if err != nil {
 		return "", false, err
@@ -92,8 +106,27 @@ func (pureGoBackend) VerifyContent(ctx context.Context, contentPath string, sig 
 	return "", false, nil
 }
 
+// verifyBuffered verifies a legacy (non-prehashed) signature over the raw
+// message, which requires the whole file in memory.
+func verifyBuffered(ctx context.Context, contentPath string, sig []byte, keys []PublicKey) (KeyID, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, fmt.Errorf("reading content %q: %w", contentPath, err)
+	}
+	content, err := os.ReadFile(contentPath) //nolint:gosec // contentPath is a manifest-controlled corpus path.
+	if err != nil {
+		return "", false, fmt.Errorf("reading content %q: %w", contentPath, err)
+	}
+
+	for _, k := range keys {
+		if minisign.Verify(k.inner, content, sig) {
+			return k.ID(), true, nil
+		}
+	}
+	return "", false, nil
+}
+
 // SignContent implements Signer using the streaming Reader path.
-func (pureGoBackend) SignContent(ctx context.Context, contentPath string, priv minisign.PrivateKey, trusted, untrusted string) ([]byte, error) {
+func (pureGoBackend) SignContent(ctx context.Context, contentPath string, priv minisign.PrivateKey, trusted string) ([]byte, error) {
 	r, closeFn, err := streamReader(ctx, contentPath)
 	if err != nil {
 		return nil, err
@@ -102,7 +135,7 @@ func (pureGoBackend) SignContent(ctx context.Context, contentPath string, priv m
 	if err := drain(ctx, r); err != nil {
 		return nil, fmt.Errorf("reading content %q: %w", contentPath, err)
 	}
-	return r.SignWithComments(priv, trusted, untrusted), nil
+	return r.SignWithComments(priv, trusted, ""), nil
 }
 
 // streamReader opens contentPath and wraps it in a Minisign streaming Reader.

@@ -36,26 +36,22 @@ type VerificationResult struct {
 // It is intentionally decoupled from mcpregistry.DocSetEntry to keep contentsign
 // a leaf package with no domain coupling; callers map their type onto this one.
 type ContentManifestEntry struct {
-	Path          string // absolute path to the content file
-	SignaturePath string // absolute path to the detached signature (default: Path + ".minisig")
-	SHA256        string // optional recorded hash for hash-verification fallback
+	Path   string // absolute path to the content file
+	SHA256 string // optional recorded hash for hash-verification fallback
 }
 
-// SigPath returns the detached signature path, defaulting to Path + ".minisig".
+// SigPath returns the detached signature path: the content path plus ".minisig"
+// (the Minisign sidecar convention).
 func (e ContentManifestEntry) SigPath() string {
-	if e.SignaturePath != "" {
-		return e.SignaturePath
-	}
 	return e.Path + ".minisig"
 }
 
 // SignOptions configures signing of a single file.
 type SignOptions struct {
-	KeyPath          string // path to the Minisign secret key file
-	Password         string // password for an encrypted secret key ("" if unencrypted)
-	TrustedComment   string // authenticated comment embedded in the signature
-	UntrustedComment string // unauthenticated comment
-	Force            bool   // overwrite an existing signature file
+	KeyPath        string // path to the Minisign secret key file
+	Password       string // password for an encrypted secret key ("" if unencrypted)
+	TrustedComment string // authenticated comment embedded in the signature
+	Force          bool   // overwrite an existing signature file
 }
 
 // VerifyOptions configures verification.

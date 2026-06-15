@@ -143,6 +143,72 @@ func TestSanitizeText(t *testing.T) {
 			opts:  DefaultSanitizeOptions(),
 			want:  "Plain prose with code: x := y + 1; // comment",
 		},
+		{
+			// Canonicalize-before-match: the zero-width breaks the <script> match,
+			// but it is stripped FIRST, so the scrub then removes the real block
+			// instead of the strip "repairing" it into <script>...</script>.
+			name:           "zero-width repair attack neutralized",
+			input:          "<scr\u200bipt>alert(1)</script>",
+			opts:           DefaultSanitizeOptions(),
+			want:           "",
+			wantStripped:   1,
+			wantCategories: map[string]int{catZeroWidth: 1},
+		},
+		{
+			name:           "control-char repair attack neutralized",
+			input:          "<scr\u0001ipt>alert(1)</script>",
+			opts:           DefaultSanitizeOptions(),
+			want:           "",
+			wantStripped:   1,
+			wantCategories: map[string]int{catControl: 1},
+		},
+		{
+			// The zero-width hides the display:none keyword from isHiddenTag; once
+			// stripped first, the element is recognized as hidden and dropped whole
+			// rather than surviving with its injection text un-hidden.
+			name:           "hidden-style keyword obfuscation neutralized",
+			input:          "a<div style=\"display:n\u200bone\">hidden inject</div>b",
+			opts:           DefaultSanitizeOptions(),
+			want:           "ab",
+			wantStripped:   1,
+			wantCategories: map[string]int{catZeroWidth: 1},
+		},
+		{
+			// Fullwidth '＜' '＞' (U+FF1C/U+FF1E) dodge the literal '<' in the
+			// regexps; NFKC folds them to ASCII BEFORE the scrub, so the tag is
+			// matched and removed instead of being normalized into the output.
+			name:     "NFKC fullwidth tag de-obfuscated then scrubbed",
+			input:    "＜script＞alert(1)＜/script＞",
+			opts:     SanitizeOptions{StripInvisible: true, StripControl: true, StripHTML: true, NormalizeNFKC: true},
+			want:     "",
+			wantNFKC: true,
+		},
+		{
+			// U+180E is general-category Cf but is not in invisibleRanges; the
+			// category net catches it and reports the generic catFormat label.
+			name:           "Mongolian vowel separator stripped via category net",
+			input:          "a\u180eb",
+			opts:           DefaultSanitizeOptions(),
+			want:           "ab",
+			wantStripped:   1,
+			wantCategories: map[string]int{catFormat: 1},
+		},
+		{
+			name:           "combining grapheme joiner stripped",
+			input:          "a\u034fb", // U+034F CGJ (category Mn, explicit range)
+			opts:           DefaultSanitizeOptions(),
+			want:           "ab",
+			wantStripped:   1,
+			wantCategories: map[string]int{catZeroWidth: 1},
+		},
+		{
+			name:           "Hangul filler stripped",
+			input:          "a\u3164b", // U+3164 HANGUL FILLER (category Lo, explicit range)
+			opts:           DefaultSanitizeOptions(),
+			want:           "ab",
+			wantStripped:   1,
+			wantCategories: map[string]int{catZeroWidth: 1},
+		},
 	}
 
 	for _, tt := range tests {
@@ -173,6 +239,8 @@ func TestSanitizeTextIdempotentAndDeterministic(t *testing.T) {
 	inputs := []string{
 		"a\u200bb\u202ec\ad\ufeffe",
 		"docs <!-- x --><script>bad()</script> stay",
+		"<scr\u200bipt>alert(1)</script>",             // repair attack: must converge to ""
+		"a<div style=\"display:n\u200bone\">x</div>b", // hidden-style repair attack
 		"plain ascii",
 		"",
 	}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"golang.org/x/text/unicode/norm"
 )
@@ -52,6 +53,7 @@ const (
 	catTag       = "tag"                // Unicode TAG characters (instruction smuggling)
 	catSpecials  = "specials"           // U+FFF0..U+FFFF specials block
 	catControl   = "control"            // C0/C1 control characters and DEL
+	catFormat    = "format"             // other Cf/Zl/Zp runes caught by the category net
 )
 
 // stripRange is an inclusive [lo, hi] rune range assigned to a report category.
@@ -65,12 +67,17 @@ type stripRange struct {
 // early. Ranges do not overlap, so each rune maps to at most one category.
 var invisibleRanges = []stripRange{
 	{0x00AD, 0x00AD, catZeroWidth}, // soft hyphen (invisible conditional hyphen)
+	{0x034F, 0x034F, catZeroWidth}, // combining grapheme joiner (Mn, not Cf)
+	{0x115F, 0x1160, catZeroWidth}, // Hangul choseong/jungseong fillers (Lo, not Cf)
+	{0x180B, 0x180D, catVarSel},    // Mongolian free variation selectors (Mn, not Cf)
 	{0x200B, 0x200F, catZeroWidth}, // zero-width space/non-joiner/joiner, LRM, RLM
 	{0x2028, 0x2029, catLineSep},   // line separator, paragraph separator
 	{0x202A, 0x202E, catBiDi},      // LRE, RLE, PDF, LRO, RLO
 	{0x2060, 0x2069, catZeroWidth}, // word joiner, invisible operators, isolates
+	{0x3164, 0x3164, catZeroWidth}, // Hangul filler (Lo, not Cf)
 	{0xFE00, 0xFE0F, catVarSel},    // variation selectors 1..16
 	{0xFEFF, 0xFEFF, catZeroWidth}, // BOM / zero-width no-break space
+	{0xFFA0, 0xFFA0, catZeroWidth}, // halfwidth Hangul filler (Lo, not Cf)
 	{0xFFF0, 0xFFFF, catSpecials},  // specials block
 	{0xE0000, 0xE007F, catTag},     // tag characters (most dangerous)
 	{0xE0100, 0xE01EF, catVarSel},  // variation selectors supplement
@@ -79,28 +86,48 @@ var invisibleRanges = []stripRange{
 // SanitizeText runs the Unicode sanitization pipeline over s according to opts
 // and returns the cleaned string plus a report of what changed.
 //
-// The stages are applied in a fixed order — HTML scrubbing, optional NFKC
-// normalization, then a single rune-filter pass that removes invisible/format
-// characters and control characters. This order is deterministic (identical
-// input and opts always yield identical output) and idempotent for the strip
-// stages (applying it twice equals applying it once); NFKC is idempotent too.
+// The stages follow the canonicalize-before-match principle: ALL removal and
+// normalization happens before the structural HTML scrub, so a stripped
+// character can never "repair" a hidden construct that the HTML matcher already
+// cleared. The order is: (1) strip invisible/control runes (de-obfuscate), (2)
+// NFKC normalization (fold compatibility forms such as fullwidth '＜' to '<'),
+// (3) re-strip iff NFKC changed something (in case a decomposition exposed a
+// strippable rune), then (4) the HTML scrub on fully canonical text.
+//
+// Were the HTML scrub to run first, an interleaved zero-width/control character
+// (<scr␣ipt>) or a compatibility-equivalent bracket (＜script＞) would slip past
+// the literal-letter regexps and then be normalized away — reconstituting the
+// dangerous construct in the output. The order is deterministic (identical input
+// and opts always yield identical output) and idempotent (each strip pass and
+// NFKC are individually idempotent, and step 4 only ever removes content).
 func SanitizeText(s string, opts SanitizeOptions) (string, SanitizeReport) {
 	report := SanitizeReport{}
 
-	if opts.StripHTML {
-		s = stripHTML(s)
+	// 1. De-obfuscate: remove invisible/control runes so they cannot survive into
+	//    the structural matcher and be repaired by a later strip.
+	if opts.StripInvisible || opts.StripControl {
+		s = stripRunes(s, opts, &report)
 	}
 
+	// 2. Canonicalize compatibility forms (fullwidth, ligatures, ...).
 	if opts.NormalizeNFKC {
 		normalized := norm.NFKC.String(s)
 		if normalized != s {
 			report.NFKCChanged = true
+			// 3. Re-strip only when NFKC actually changed the string, in case a
+			//    compatibility decomposition exposed a newly strippable rune. This
+			//    is skipped in the default (NFKC-off) profile, so the common-path
+			//    strip counts are unaffected.
+			if opts.StripInvisible || opts.StripControl {
+				normalized = stripRunes(normalized, opts, &report)
+			}
 		}
 		s = normalized
 	}
 
-	if opts.StripInvisible || opts.StripControl {
-		s = stripRunes(s, opts, &report)
+	// 4. Structural HTML scrub, now operating on fully canonical text.
+	if opts.StripHTML {
+		s = stripHTML(s)
 	}
 
 	return s, report
@@ -205,8 +232,20 @@ func stripRunes(s string, opts SanitizeOptions, report *SanitizeReport) string {
 }
 
 // classifyStrip reports whether r should be stripped and, if so, its category.
+//
+// The explicit invisibleRanges are checked first: they assign precise report
+// categories and cover the dangerous runes that are NOT general-category Format
+// (variation selectors and Hangul fillers, which are Mn/Lo). Anything not
+// enumerated then falls through to a Unicode category net — Cf (format), Zl
+// (line separator), and Zp (paragraph separator) — so newly assigned or
+// less-common format runes (e.g. U+180E, U+17B4, the Arabic/Syriac Cf block) are
+// stripped without hand-maintaining the list. A blanket Mn check is deliberately
+// avoided: it would strip legitimate combining accents (U+0300..U+036F).
 func classifyStrip(r rune, opts SanitizeOptions) (string, bool) {
-	if opts.StripInvisible {
+	// Every invisible/format rune lives at or above the lowest explicit range
+	// (U+00AD), so ASCII can skip both the range scan and the category net — the
+	// common case in documentation, which is overwhelmingly ASCII.
+	if opts.StripInvisible && r >= invisibleRanges[0].lo {
 		for _, rg := range invisibleRanges {
 			if r < rg.lo {
 				break // ranges are sorted; no later range can match
@@ -214,6 +253,9 @@ func classifyStrip(r rune, opts SanitizeOptions) (string, bool) {
 			if r <= rg.hi {
 				return rg.cat, true
 			}
+		}
+		if unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
+			return catFormat, true
 		}
 	}
 	if opts.StripControl && isStrippedControl(r) {

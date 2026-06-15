@@ -172,8 +172,10 @@ func splitInlineCode(line string) []string {
 	return out
 }
 
-// markWhitespace replaces ASCII space (U+0020) and tab (U+0009) runes in s with
-// the marker rune. Newlines never reach this function (lines are split first).
+// markWhitespace replaces BOTH ASCII space (U+0020) and tab (U+0009) runes in s
+// with the marker rune. Both are token boundaries an attacker could exploit, so
+// both must be neutralized. Newlines never reach this function (lines are split
+// first).
 func markWhitespace(s string, marker rune) string {
 	if s == "" {
 		return s
@@ -208,10 +210,20 @@ func frame(body string, marker rune, opts DatamarkOptions) string {
 	return b.String()
 }
 
-// Unmark reverses Datamark for a datamarked body by replacing the marker rune
-// recorded in meta with an ASCII space. It is intended for round-trip tests;
-// callers must strip any framing first, as Unmark only performs rune
+// Unmark reverses Datamark for a datamarked body by replacing every marker rune
+// recorded in meta with a single ASCII space. It is intended for round-trip
+// tests; callers must strip any framing first, as Unmark only performs rune
 // replacement.
+//
+// Because the forward pass (markWhitespace) maps BOTH ASCII spaces and tabs to
+// the marker, a Datamark -> Unmark round-trip normalizes prose whitespace to
+// spaces: it is lossy on whitespace *type* BY DESIGN. There is no per-position
+// state recording whether a marker originated from a space or a tab, and the
+// only sound single-marker inverse is marker -> single space. This is acceptable
+// because (a) whitespace type in prose is not semantically meaningful and
+// (b) significant whitespace (fenced code blocks) is never marked, so it
+// survives untouched. Exact-reverse round-tripping therefore holds only for
+// space-only prose; tabs in prose come back as spaces.
 func Unmark(content string, meta DatamarkMetadata) string {
 	if meta.MarkerRune == 0 {
 		return content

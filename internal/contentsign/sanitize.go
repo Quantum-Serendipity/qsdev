@@ -290,6 +290,10 @@ func isStrippedControl(r rune) bool {
 // SanitizeText to every string value, then re-marshals. The returned report
 // aggregates the per-value reports. ctx is honored once before the CPU-bound
 // walk.
+//
+// Because it buffers both the decoded tree and the re-encoded output in memory
+// (~2-3x the input), callers that read raw from disk should bound the input
+// size before calling it (as IngestDevDocs does).
 func SanitizeJSONStrings(ctx context.Context, raw []byte, opts SanitizeOptions) ([]byte, SanitizeReport, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, SanitizeReport{}, fmt.Errorf("sanitizing JSON: %w", err)

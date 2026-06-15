@@ -75,6 +75,67 @@ func TestIngestDevDocs_MissingDB(t *testing.T) {
 	}
 }
 
+func TestIngestDevDocs_SizeBound(t *testing.T) {
+	t.Parallel()
+
+	// 30 bytes of valid JSON, comfortably larger than the tiny limit below.
+	raw := `{"k":"vvvvvvvvvvvvvvvvvvvv"}`
+
+	tests := []struct {
+		name      string
+		maxBytes  int64
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name:      "oversize is rejected before any write",
+			maxBytes:  10,
+			wantErr:   true,
+			errSubstr: "size exceeds",
+		},
+		{
+			name:     "generous limit succeeds",
+			maxBytes: maxIngestBytes,
+			wantErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			dbPath := filepath.Join(dir, "db.json")
+			if err := os.WriteFile(dbPath, []byte(raw), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := ingestDevDocs(context.Background(), dir, DefaultSanitizeOptions(), tt.maxBytes)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ingestDevDocs(maxBytes=%d): want error, got nil", tt.maxBytes)
+				}
+				if !strings.Contains(err.Error(), tt.errSubstr) {
+					t.Errorf("error = %q, want it to contain %q", err.Error(), tt.errSubstr)
+				}
+				// The oversize check must happen before any write: the file must
+				// still hold the original bytes untouched.
+				out, readErr := os.ReadFile(dbPath)
+				if readErr != nil {
+					t.Fatalf("reading db.json: %v", readErr)
+				}
+				if string(out) != raw {
+					t.Errorf("file was rewritten: got %q, want original %q", string(out), raw)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ingestDevDocs(maxBytes=%d): unexpected error: %v", tt.maxBytes, err)
+			}
+		})
+	}
+}
+
 func TestIngestDevDocs_NoChangeLeavesFile(t *testing.T) {
 	t.Parallel()
 

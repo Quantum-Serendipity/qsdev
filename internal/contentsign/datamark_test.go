@@ -187,6 +187,23 @@ func TestUnmarkRoundTrip(t *testing.T) {
 	}
 }
 
+func TestUnmarkNormalizesTabsToSpaces(t *testing.T) {
+	t.Parallel()
+
+	// Prose containing a tab. No framing, so we can Unmark the body directly.
+	const original = "alpha\tbeta gamma"
+	body, meta := Datamark(original, DatamarkOptions{MarkerRune: 0xE0AB})
+
+	// Datamark maps BOTH spaces and tabs to the marker, and Unmark can only map
+	// the marker back to a single space. So the tab returns as a space: the
+	// round-trip is lossy on whitespace *type* by design (see Unmark's doc). This
+	// space-normalization is the documented contract, NOT a bug.
+	const wantNormalized = "alpha beta gamma"
+	if got := Unmark(body, meta); got != wantNormalized {
+		t.Errorf("tab normalization: got %q, want %q", got, wantNormalized)
+	}
+}
+
 func TestUnmarkZeroMarkerIsNoOp(t *testing.T) {
 	t.Parallel()
 

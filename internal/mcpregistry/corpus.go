@@ -5,11 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -47,6 +49,13 @@ type DocSetEntry struct {
 	SizeBytes   int64      `json:"size_bytes"`
 	SHA256      string     `json:"sha256"`
 	Files       []string   `json:"files"`
+
+	// Signed and SignatureKey are forward-looking display hints populated by
+	// corpus-signing flows (and by `qsdev docs verify` in its in-memory report).
+	// They are omitted from manifests that predate signing; their zero values are
+	// the correct default, so older manifests load unchanged.
+	Signed       bool   `json:"signed,omitempty"`
+	SignatureKey string `json:"signature_key,omitempty"`
 }
 
 // DocsManifest records all documentation sets managed by qsdev.
@@ -234,6 +243,22 @@ func combinedHashAndSize(paths []string) (sha256hex string, total int64, err err
 		total += info.Size()
 	}
 	return hex.EncodeToString(combinedHasher.Sum(nil)), total, nil
+}
+
+// VerifyHash recomputes the combined SHA-256 over the entry's files and reports
+// whether it matches the recorded entry.SHA256, returning the computed digest.
+// A missing file is a verification failure (ok=false) rather than a hard error —
+// it yields ok=false, computed="", err=nil so callers can report it cleanly. Any
+// other I/O error is returned as err.
+func (m *DocsCorpusManager) VerifyHash(entry *DocSetEntry) (ok bool, computed string, err error) {
+	sum, _, err := combinedHashAndSize(entry.Files)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, "", nil
+		}
+		return false, "", fmt.Errorf("hashing doc set %q: %w", entry.Slug, err)
+	}
+	return strings.EqualFold(sum, entry.SHA256), sum, nil
 }
 
 // DownloadZIM fetches a ZIM archive and verifies its SHA256 hash against

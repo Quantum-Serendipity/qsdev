@@ -420,6 +420,91 @@ func TestClean_All(t *testing.T) {
 	}
 }
 
+func TestVerifyHash(t *testing.T) {
+	t.Parallel()
+
+	// newEntry writes two files into a fresh temp dir and returns an entry whose
+	// SHA256 is the correct combined hash of those files.
+	newEntry := func(t *testing.T) (*DocSetEntry, []string) {
+		t.Helper()
+		dir := t.TempDir()
+		paths := []string{
+			filepath.Join(dir, "index.json"),
+			filepath.Join(dir, "db.json"),
+		}
+		for i, p := range paths {
+			if err := os.WriteFile(p, []byte("content-"+string(rune('a'+i))), 0o644); err != nil {
+				t.Fatalf("writing %s: %v", p, err)
+			}
+		}
+		sum, _, err := combinedHashAndSize(paths)
+		if err != nil {
+			t.Fatalf("combinedHashAndSize: %v", err)
+		}
+		return &DocSetEntry{Slug: "test", SHA256: sum, Files: paths}, paths
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(t *testing.T, entry *DocSetEntry, paths []string)
+		wantOK  bool
+		wantErr bool
+	}{
+		{
+			name:   "matching hash",
+			mutate: func(*testing.T, *DocSetEntry, []string) {},
+			wantOK: true,
+		},
+		{
+			name: "corrupt file",
+			mutate: func(t *testing.T, _ *DocSetEntry, paths []string) {
+				t.Helper()
+				if err := os.WriteFile(paths[1], []byte("tampered"), 0o644); err != nil {
+					t.Fatalf("corrupting file: %v", err)
+				}
+			},
+			wantOK: false,
+		},
+		{
+			name: "missing file",
+			mutate: func(t *testing.T, _ *DocSetEntry, paths []string) {
+				t.Helper()
+				if err := os.Remove(paths[0]); err != nil {
+					t.Fatalf("removing file: %v", err)
+				}
+			},
+			wantOK:  false,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mgr := NewDocsCorpusManager(t.TempDir(), nil)
+			entry, paths := newEntry(t)
+			tt.mutate(t, entry, paths)
+
+			ok, computed, err := mgr.VerifyHash(entry)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ok != tt.wantOK {
+				t.Errorf("ok = %t, want %t", ok, tt.wantOK)
+			}
+			if tt.name == "missing file" && computed != "" {
+				t.Errorf("computed = %q, want empty on missing file", computed)
+			}
+			if tt.wantOK && !strings.EqualFold(computed, entry.SHA256) {
+				t.Errorf("computed = %q, want %q", computed, entry.SHA256)
+			}
+		})
+	}
+}
+
 func TestDefaultDocsDataDir(t *testing.T) {
 	got := DefaultDocsDataDir()
 	home, _ := os.UserHomeDir()

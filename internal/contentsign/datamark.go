@@ -158,7 +158,7 @@ func splitInlineCode(line string) []string {
 	var out []string
 	out = append(out, segs[0])
 	i := 1
-	for i+1 < len(segs) || (i < len(segs) && i+1 == len(segs)) {
+	for i < len(segs) {
 		if i+1 < len(segs) {
 			out = append(out, "`"+segs[i]+"`")
 			out = append(out, segs[i+1])

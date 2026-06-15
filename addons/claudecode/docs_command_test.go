@@ -79,7 +79,7 @@ func TestVerifyDocSet_HashVerified(t *testing.T) {
 	t.Parallel()
 	mgr, entry := newTempCorpus(t)
 
-	res := claudecode.ExportVerifyDocSet(context.Background(), mgr, entry, "", false)
+	res := claudecode.ExportVerifyDocSet(context.Background(), mgr, entry, nil, false)
 	if !res.Verified {
 		t.Fatalf("expected verified, got %+v", res)
 	}
@@ -100,7 +100,7 @@ func TestVerifyDocSet_CorruptFails(t *testing.T) {
 		t.Fatalf("corrupting file: %v", err)
 	}
 
-	res := claudecode.ExportVerifyDocSet(context.Background(), mgr, entry, "", false)
+	res := claudecode.ExportVerifyDocSet(context.Background(), mgr, entry, nil, false)
 	if res.Verified {
 		t.Fatalf("expected failure for corrupted file, got %+v", res)
 	}
@@ -120,7 +120,7 @@ func TestVerifyDocSet_MissingFileFails(t *testing.T) {
 		t.Fatalf("removing file: %v", err)
 	}
 
-	res := claudecode.ExportVerifyDocSet(context.Background(), mgr, entry, "", false)
+	res := claudecode.ExportVerifyDocSet(context.Background(), mgr, entry, nil, false)
 	if res.Verified {
 		t.Fatalf("expected failure for missing file, got %+v", res)
 	}

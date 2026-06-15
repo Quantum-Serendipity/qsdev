@@ -147,8 +147,8 @@ key is encrypted when --password is supplied.`,
 			}
 			w := cmd.OutOrStdout()
 			fmt.Fprintf(w, "Public key:  %s\n", pub.String())
-			fmt.Fprintf(w, "Public key:  written to %s\n", pubPath)
-			fmt.Fprintf(w, "Secret key:  written to %s\n", secPath)
+			fmt.Fprintf(w, "Written:     %s (public key)\n", pubPath)
+			fmt.Fprintf(w, "Written:     %s (secret key)\n", secPath)
 			fmt.Fprintf(w, "\nWARNING: protect the secret key (%s). Never commit it to version control\n", secPath)
 			fmt.Fprintln(w, "or share it. Only the public key (.pub) may be distributed and committed.")
 			return nil

@@ -30,6 +30,11 @@ type devDocsEntry struct {
 //
 // Both paths are required; a read or parse failure for either is returned as a
 // wrapped error.
+//
+// It is a building block for the hosted-mirror content-update workflow (it
+// reports what changed between two corpus versions before re-signing); that
+// workflow is wired in a later phase, so this ships tested but without an
+// in-repo caller today.
 func ContentDiffDevDocs(oldIndexPath, newIndexPath string) (*ContentDiff, error) {
 	oldBytes, oldIdx, err := readDevDocsIndex(oldIndexPath)
 	if err != nil {

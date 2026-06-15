@@ -97,15 +97,22 @@ func runDocsVerify(cmd *cobra.Command, mgr *mcpregistry.DocsCorpusManager, manif
 		return nil
 	}
 
-	keys := make([]string, 0, len(manifest.DocSets))
-	for k := range manifest.DocSets {
-		keys = append(keys, k)
+	// Load the trusted keys once: every signed set verifies against the same set,
+	// so this avoids re-reading and re-parsing the keys directory per doc set.
+	trustedKeys, err := contentsign.LoadTrustedKeys(keysDir)
+	if err != nil {
+		return fmt.Errorf("loading trusted keys: %w", err)
 	}
-	sort.Strings(keys)
 
-	results := make([]docVerifyResult, 0, len(keys))
-	for _, k := range keys {
-		results = append(results, verifyDocSet(cmd.Context(), mgr, manifest.DocSets[k], keysDir, requireTrusted))
+	slugs := make([]string, 0, len(manifest.DocSets))
+	for k := range manifest.DocSets {
+		slugs = append(slugs, k)
+	}
+	sort.Strings(slugs)
+
+	results := make([]docVerifyResult, 0, len(slugs))
+	for _, s := range slugs {
+		results = append(results, verifyDocSet(cmd.Context(), mgr, manifest.DocSets[s], trustedKeys, requireTrusted))
 	}
 
 	if err := printVerifyResults(cmd, results, jsonOutput); err != nil {
@@ -127,10 +134,10 @@ func runDocsVerify(cmd *cobra.Command, mgr *mcpregistry.DocsCorpusManager, manif
 // verifyDocSet verifies a single doc set: when every file has a .minisig sidecar
 // it verifies the signatures against trusted keys; otherwise it falls back to
 // the recorded combined-hash check.
-func verifyDocSet(ctx context.Context, mgr *mcpregistry.DocsCorpusManager, entry *mcpregistry.DocSetEntry, keysDir string, requireTrusted bool) docVerifyResult {
+func verifyDocSet(ctx context.Context, mgr *mcpregistry.DocsCorpusManager, entry *mcpregistry.DocSetEntry, trustedKeys []contentsign.PublicKey, requireTrusted bool) docVerifyResult {
 	res := docVerifyResult{Slug: entry.Slug, Type: entry.Type.String()}
 	if len(entry.Files) > 0 && allSigned(entry.Files) {
-		return verifyDocSetSignatures(ctx, entry, keysDir, requireTrusted, res)
+		return verifyDocSetSignatures(ctx, entry, trustedKeys, requireTrusted, res)
 	}
 
 	ok, _, err := mgr.VerifyHash(entry)
@@ -145,26 +152,23 @@ func verifyDocSet(ctx context.Context, mgr *mcpregistry.DocsCorpusManager, entry
 	return res
 }
 
-// verifyDocSetSignatures verifies each file's detached signature; the set is
-// signed-verified only when every file verifies, recording the first failure
-// reason otherwise and the verifying key ID when it is uniform across files.
-func verifyDocSetSignatures(ctx context.Context, entry *mcpregistry.DocSetEntry, keysDir string, requireTrusted bool, res docVerifyResult) docVerifyResult {
-	keys, err := contentsign.LoadTrustedKeys(keysDir)
-	if err != nil {
-		res.Status, res.Reason = contentsign.StatusFailed, fmt.Sprintf("loading trusted keys: %v", err)
-		return res
+// verifyDocSetSignatures verifies the set's files against trustedKeys via
+// contentsign.VerifyCorpus (bounded-parallel, exhaustive). The set is
+// signed-verified only when every file verifies; otherwise it records the first
+// failing file's reason in file order, and reports the verifying key ID when it
+// is uniform across files.
+func verifyDocSetSignatures(ctx context.Context, entry *mcpregistry.DocSetEntry, trustedKeys []contentsign.PublicKey, requireTrusted bool, res docVerifyResult) docVerifyResult {
+	entries := make([]contentsign.ContentManifestEntry, len(entry.Files))
+	for i, f := range entry.Files {
+		entries[i] = contentsign.ContentManifestEntry{Path: f}
 	}
-	opts := contentsign.VerifyOptions{TrustedKeys: keys, RequireTrusted: requireTrusted}
+	opts := contentsign.VerifyOptions{TrustedKeys: trustedKeys, RequireTrusted: requireTrusted}
+	results := contentsign.VerifyCorpus(ctx, entries, opts)
 
 	keyID := ""
-	for i, f := range entry.Files {
-		vr, verr := contentsign.Verify(ctx, f, opts)
-		if verr != nil {
-			res.Status, res.Reason = contentsign.StatusFailed, fmt.Sprintf("verifying %s: %v", f, verr)
-			return res
-		}
+	for i, vr := range results {
 		if !vr.Verified {
-			res.Status, res.Reason = contentsign.StatusFailed, fmt.Sprintf("%s: %s", f, vr.Reason)
+			res.Status, res.Reason = contentsign.StatusFailed, fmt.Sprintf("%s: %s", entry.Files[i], vr.Reason)
 			return res
 		}
 		switch {
@@ -178,10 +182,13 @@ func verifyDocSetSignatures(ctx context.Context, entry *mcpregistry.DocSetEntry,
 	return res
 }
 
-// allSigned reports whether every path has a <path>.minisig sidecar on disk.
+// allSigned reports whether every path has a detached signature sidecar on disk,
+// deferring to contentsign's own sidecar-path convention rather than hardcoding
+// the ".minisig" suffix in the addon.
 func allSigned(files []string) bool {
 	for _, f := range files {
-		if _, err := os.Stat(f + ".minisig"); err != nil {
+		sigPath := contentsign.ContentManifestEntry{Path: f}.SigPath()
+		if _, err := os.Stat(sigPath); err != nil {
 			return false
 		}
 	}

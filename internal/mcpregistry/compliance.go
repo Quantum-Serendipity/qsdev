@@ -83,8 +83,10 @@ func GradeServer(def *McpServerDefinition) GradeResult {
 	// reached Verified, which requires hasVerifiedProvenance (a /nix/store path
 	// or the qsdev binary). External npx/uvx doc servers fail the earlier
 	// local-only and provenance criteria, so they can never reach Attested even
-	// with a valid signature.
-	attested := hasExternalAttestation(def)
+	// with a valid signature. Gate the check on verifiedMet so the expensive
+	// attestation verification (it streams the entire command binary) is skipped
+	// for the common case of servers that cannot reach Attested regardless.
+	attested := verifiedMet && hasExternalAttestation(def)
 	criteria = append(criteria, CriterionResult{
 		Name:   "external-attestation",
 		Passed: attested,

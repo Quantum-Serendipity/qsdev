@@ -42,10 +42,10 @@ func GenerateKeyPair(pubPath, secPath, password string) (PublicKey, error) {
 		return PublicKey{}, fmt.Errorf("marshaling public key: %w", err)
 	}
 
-	if err := os.WriteFile(secPath, secBytes, fileutil.ModePrivate); err != nil {
+	if err := fileutil.WriteFileAtomic(secPath, secBytes, fileutil.ModePrivate); err != nil {
 		return PublicKey{}, fmt.Errorf("writing secret key %q: %w", secPath, err)
 	}
-	if err := os.WriteFile(pubPath, pubBytes, fileutil.ModeReadWrite); err != nil {
+	if err := fileutil.WriteFileAtomic(pubPath, pubBytes, fileutil.ModeReadWrite); err != nil {
 		return PublicKey{}, fmt.Errorf("writing public key %q: %w", pubPath, err)
 	}
 
@@ -71,12 +71,26 @@ func marshalSecretKey(priv minisign.PrivateKey, password string) ([]byte, error)
 // refuseExisting returns an error if path already exists, so key generation
 // never clobbers an existing key.
 func refuseExisting(path string) error {
+	exists, err := pathExists(path)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return fmt.Errorf("refusing to overwrite existing key file %q", path)
+	}
+	return nil
+}
+
+// pathExists reports whether path exists, distinguishing "present" (true, nil),
+// "absent" (false, nil), and a stat failure (false, err). It backs the
+// refuse-to-clobber guards in this package.
+func pathExists(path string) (bool, error) {
 	switch _, err := os.Stat(path); {
 	case err == nil:
-		return fmt.Errorf("refusing to overwrite existing key file %q", path)
+		return true, nil
 	case errors.Is(err, os.ErrNotExist):
-		return nil
+		return false, nil
 	default:
-		return fmt.Errorf("checking key file %q: %w", path, err)
+		return false, fmt.Errorf("checking %q: %w", path, err)
 	}
 }

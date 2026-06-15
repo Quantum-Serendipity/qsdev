@@ -2,7 +2,6 @@ package contentsign
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 
@@ -39,7 +38,7 @@ func Sign(ctx context.Context, path string, opts SignOptions) (sigPath string, e
 		return "", fmt.Errorf("signing %q: %w", path, err)
 	}
 
-	if err := os.WriteFile(sigPath, sig, fileutil.ModeReadWrite); err != nil {
+	if err := fileutil.WriteFileAtomic(sigPath, sig, fileutil.ModeReadWrite); err != nil {
 		return "", fmt.Errorf("writing signature %q: %w", sigPath, err)
 	}
 	return sigPath, nil
@@ -75,12 +74,12 @@ func guardSigPath(sigPath string, force bool) error {
 	if force {
 		return nil
 	}
-	switch _, err := os.Stat(sigPath); {
-	case err == nil:
-		return fmt.Errorf("signature %q already exists (use Force to overwrite)", sigPath)
-	case errors.Is(err, os.ErrNotExist):
-		return nil
-	default:
-		return fmt.Errorf("checking signature %q: %w", sigPath, err)
+	exists, err := pathExists(sigPath)
+	if err != nil {
+		return err
 	}
+	if exists {
+		return fmt.Errorf("signature %q already exists (use Force to overwrite)", sigPath)
+	}
+	return nil
 }

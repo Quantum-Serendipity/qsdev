@@ -49,13 +49,6 @@ type DocSetEntry struct {
 	SizeBytes   int64      `json:"size_bytes"`
 	SHA256      string     `json:"sha256"`
 	Files       []string   `json:"files"`
-
-	// Signed and SignatureKey are forward-looking display hints populated by
-	// corpus-signing flows (and by `qsdev docs verify` in its in-memory report).
-	// They are omitted from manifests that predate signing; their zero values are
-	// the correct default, so older manifests load unchanged.
-	Signed       bool   `json:"signed,omitempty"`
-	SignatureKey string `json:"signature_key,omitempty"`
 }
 
 // DocsManifest records all documentation sets managed by qsdev.
@@ -222,27 +215,40 @@ func (m *DocsCorpusManager) DownloadDevDocs(ctx context.Context, slug, baseURL s
 // combinedHashAndSize recomputes, from the on-disk files, the same combined
 // digest and total size that DownloadDevDocs records: for each path in order it
 // SHA-256s the file content, writes that file's hex digest into a combined
-// hasher, and accumulates os.Stat sizes. The returned sha256hex is the hex of
+// hasher, and accumulates the byte count. The returned sha256hex is the hex of
 // the combined hasher's sum. Iterating the paths in the same order with the
 // same per-file algorithm yields the identical value to the download-time hash
-// when content is unchanged.
+// when content is unchanged. Files are streamed, so a multi-MB db.json is never
+// buffered whole.
 func combinedHashAndSize(paths []string) (sha256hex string, total int64, err error) {
 	combinedHasher := sha256.New()
 	for _, p := range paths {
-		data, err := os.ReadFile(p)
+		size, fileHash, err := hashFile(p)
 		if err != nil {
-			return "", 0, fmt.Errorf("reading %s: %w", p, err)
+			return "", 0, err
 		}
-		fileHash := sha256.Sum256(data)
-		_, _ = combinedHasher.Write([]byte(hex.EncodeToString(fileHash[:])))
-
-		info, err := os.Stat(p)
-		if err != nil {
-			return "", 0, fmt.Errorf("stat %s: %w", p, err)
-		}
-		total += info.Size()
+		_, _ = combinedHasher.Write([]byte(fileHash))
+		total += size
 	}
 	return hex.EncodeToString(combinedHasher.Sum(nil)), total, nil
+}
+
+// hashFile streams the file at path and returns its byte count and lowercase-hex
+// SHA-256 digest. The open error is wrapped with %w so callers can detect a
+// missing file via errors.Is(err, os.ErrNotExist).
+func hashFile(path string) (size int64, sha256hex string, err error) {
+	f, err := os.Open(path) //nolint:gosec // path is a manifest-controlled corpus path.
+	if err != nil {
+		return 0, "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	h := sha256.New()
+	n, err := io.Copy(h, f)
+	if err != nil {
+		return 0, "", fmt.Errorf("hashing %s: %w", path, err)
+	}
+	return n, hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // VerifyHash recomputes the combined SHA-256 over the entry's files and reports

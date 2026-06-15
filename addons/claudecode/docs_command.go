@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/contentsign"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 )
 
@@ -54,6 +55,10 @@ download only one type.`,
 				mcpregistry.DefaultDocsDataDir(),
 				http.DefaultClient,
 			)
+			mgr.Ingest = func(ctx context.Context, dir string) error {
+				_, err := contentsign.IngestDevDocs(ctx, dir, contentsign.DefaultSanitizeOptions())
+				return err
+			}
 			ctx := cmd.Context()
 
 			cat, err := catalog.Default()

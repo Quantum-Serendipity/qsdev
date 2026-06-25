@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 )
 
 // defaultHTTPPort is the port used by the http transport when --port is unset.
@@ -69,7 +70,14 @@ func runServe(ctx context.Context, transport, flagRoot string, port int) error {
 	})
 	defer session.Close() // Close is nil-safe.
 
-	srv := New(WithProjectRoot(root))
+	// Build the real built-in middleware chain and inject it. defaultConfig keeps
+	// an EMPTY chain as the zero-config default (handlers run directly); the
+	// running server gets the full six-layer chain. Its audit sink defaults to
+	// slog.Default(), which logging.Init has just pointed at stderr.
+	srv := New(
+		WithProjectRoot(root),
+		WithChain(middleware.DefaultChain()),
+	)
 
 	if ctx == nil {
 		ctx = context.Background()

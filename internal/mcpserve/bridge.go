@@ -40,6 +40,12 @@ func (s *Server) toolHandler(reg spi.ToolRegistration) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		meta := metaFromMCP(req.Params.Meta)
 		cc := s.callContext(ctx, reg.Name, meta)
+		// Populate the tool's taxonomy metadata at construction time (before the
+		// chain runs) so per-category middleware (rate-limiting, guardrail) can
+		// read it. This is the only place the registration's Category/Tier are in
+		// scope; resource/prompt paths legitimately have neither.
+		cc.Category = reg.Category
+		cc.Tier = reg.Tier
 
 		args := req.GetArguments()
 		if args == nil {

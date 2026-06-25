@@ -31,6 +31,16 @@ type ToolCallContext struct {
 	ProjectRoot string
 	// ToolName is the name of the tool/resource/prompt being invoked.
 	ToolName string
+	// Category is the tool's taxonomy category (e.g. "filesystem",
+	// "credential"). It is request-scoped tool metadata copied from the
+	// ToolRegistration at construction time so middleware (notably the
+	// rate-limiter, which keys per category) can read it without re-deriving it.
+	// Resource and prompt invocations have no category and leave this empty.
+	Category string
+	// Tier is the tool's ordering/grouping hint copied from the
+	// ToolRegistration (lower tiers are more core). Resource and prompt
+	// invocations leave this zero.
+	Tier int
 }
 
 // ctxKey is the unexported context key type used to store a *ToolCallContext.

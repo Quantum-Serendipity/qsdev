@@ -18,6 +18,7 @@ func buildDefault() *McpServerRegistry {
 	}
 
 	enrichFromCatalog(r)
+	registerUniversalServer(r)
 	populateFromEmbeddedProviders(r)
 
 	return r

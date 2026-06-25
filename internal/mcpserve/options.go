@@ -14,6 +14,7 @@ type config struct {
 	instructions string
 	adapters     *spi.AdapterRegistry
 	chain        *spi.Chain
+	multiAdapter bool
 }
 
 // Option configures a Server at construction time.
@@ -79,4 +80,13 @@ func WithChain(chain *spi.Chain) Option {
 			c.chain = chain
 		}
 	}
+}
+
+// WithMultiAdapter forces every registered adapter to be mounted regardless of
+// its Applies() result and makes the per-request tool filter expose all mounted
+// tools regardless of the connected client. It backs the serve command's
+// --multi-adapter flag, used for integration testing and diagnostics where the
+// client identifies as none of the supported frameworks.
+func WithMultiAdapter(enabled bool) Option {
+	return func(c *config) { c.multiAdapter = enabled }
 }

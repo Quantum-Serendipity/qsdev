@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -11,10 +12,24 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 )
 
-// mountTool converts a neutral tool registration into mcp-go types and adds it
-// to the underlying server. The handler resolves a ToolCallContext, drives the
-// registration through the middleware chain, and converts the result back.
+// mountTool mounts a generic (non-adapter) tool: it is recorded under the
+// generic owner so the per-request tool filter always keeps it visible. The
+// handler resolves a ToolCallContext, drives the registration through the
+// middleware chain, and converts the result back.
 func (s *Server) mountTool(reg spi.ToolRegistration) {
+	s.mountToolOwned(reg, genericOwner)
+}
+
+// mountToolOwned records reg's name under owner in the catalog and, when that
+// succeeds, adds it to the underlying server. A duplicate tool name across the
+// composite surface is skipped with a logged warning rather than aborting
+// construction, so a single colliding adapter cannot prevent the server from
+// starting — the first registration wins.
+func (s *Server) mountToolOwned(reg spi.ToolRegistration, owner string) {
+	if err := s.catalog.addTool(reg.Name, owner); err != nil {
+		slog.Warn("skipping tool with duplicate name", "tool", reg.Name, "owner", owner, "error", err)
+		return
+	}
 	s.mcp.AddTool(buildMCPTool(reg), s.toolHandler(reg))
 }
 
@@ -81,10 +96,24 @@ func spiResultToMCP(res *spi.ToolResult) *mcp.CallToolResult {
 	return mcp.NewToolResultText(res.Text)
 }
 
-// mountResource converts a neutral resource registration into mcp-go types and
-// adds it to the underlying server. Resource reads do not pass through the
-// tool middleware chain.
+// mountResource mounts a generic (non-adapter) resource, recorded under the
+// generic owner. mcp-go exposes no resource filter, so resource visibility is
+// not scoped per client (all mounted resources are listable by every client);
+// the owner is recorded only for collision detection and future use.
 func (s *Server) mountResource(reg spi.ResourceRegistration) {
+	s.mountResourceOwned(reg, genericOwner)
+}
+
+// mountResourceOwned records reg's URI under owner in the catalog and, when that
+// succeeds, converts the neutral resource registration into mcp-go types and
+// adds it to the underlying server. A duplicate URI is skipped with a logged
+// warning (first registration wins). Resource reads do not pass through the
+// tool middleware chain.
+func (s *Server) mountResourceOwned(reg spi.ResourceRegistration, owner string) {
+	if err := s.catalog.addResource(reg.URI, owner); err != nil {
+		slog.Warn("skipping resource with duplicate URI", "uri", reg.URI, "owner", owner, "error", err)
+		return
+	}
 	resource := mcp.Resource{
 		URI:         reg.URI,
 		Name:        reg.Name,

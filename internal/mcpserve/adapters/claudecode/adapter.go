@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	ccaddon "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/config"
@@ -71,8 +72,12 @@ type Adapter struct {
 	ref *refcc.Adapter
 }
 
-// compile-time assertion that Adapter satisfies the contract.
-var _ spi.FrameworkAdapter = (*Adapter)(nil)
+// compile-time assertions that Adapter satisfies the contract and the optional
+// client-matching seam DetectFrameworks consumes.
+var (
+	_ spi.FrameworkAdapter = (*Adapter)(nil)
+	_ spi.ClientMatcher    = (*Adapter)(nil)
+)
 
 // New constructs the stateless Claude Code adapter. The reference adapter is
 // wired with the standard-preset default and the package-level ecosystem
@@ -111,6 +116,17 @@ func (a *Adapter) Applies(_ context.Context, projectRoot string) bool {
 		return false
 	}
 	return det != nil && det.Detected
+}
+
+// MatchesClient reports whether the connected MCP client identifies as Claude
+// Code. It matches any client whose reported name contains "claude"
+// (case-insensitively) — e.g. "claude-code", "Claude Code", "claude-desktop".
+// This is deliberately broader than the DefaultClientMatch rule (which would
+// require the full normalized "claudecode" token) so every Claude-family client
+// is served. It implements spi.ClientMatcher, consumed by
+// AdapterRegistry.DetectFrameworks when filtering tools/list per client.
+func (a *Adapter) MatchesClient(client spi.ClientInfo) bool {
+	return strings.Contains(strings.ToLower(client.Name), "claude")
 }
 
 // Prompts returns no prompts: the Claude Code adapter contributes tools and

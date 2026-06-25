@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/registry"
@@ -33,6 +34,65 @@ type FrameworkAdapter interface {
 	Resources() []ResourceRegistration
 	// Prompts returns the prompt registrations this adapter contributes.
 	Prompts() []PromptRegistration
+}
+
+// ClientMatcher is an OPTIONAL interface a FrameworkAdapter may implement to
+// customize how it is matched against an MCP client's self-reported identity
+// (the initialize-handshake clientInfo). Adapters that do not implement it fall
+// back to DefaultClientMatch, which compares the client name against a token
+// derived from the adapter's FrameworkID.
+//
+// It is deliberately separate from FrameworkAdapter so that adding client-aware
+// matching never changes the base contract every existing adapter already
+// satisfies. DetectFrameworks honors it when present.
+type ClientMatcher interface {
+	// MatchesClient reports whether this adapter should serve the given MCP
+	// client, as identified by the initialize-handshake clientInfo.
+	MatchesClient(client ClientInfo) bool
+}
+
+// normalizeIdentToken lowercases s and strips every character that is not an
+// ASCII letter or digit, so "Claude Code" and "claude-code" both collapse to
+// "claudecode". It is the shared normalization the framework-id token and the
+// client name pass through before the containment test in DefaultClientMatch.
+func normalizeIdentToken(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r + ('a' - 'A'))
+		}
+	}
+	return b.String()
+}
+
+// DefaultClientMatch is the fallback client-matching rule used for any adapter
+// that does not implement ClientMatcher. It reports whether the client's
+// reported name, once normalized (lowercased, non-alphanumerics stripped),
+// contains the framework id token normalized the same way. Both the token and
+// the name must be non-empty for a match.
+//
+// Examples: id "claudecode" matches client names "claude-code" and "Claude
+// Code" (both normalize to "claudecode"); id "gemini" matches "Gemini CLI".
+func DefaultClientMatch(id aiframework.FrameworkID, client ClientInfo) bool {
+	token := normalizeIdentToken(string(id))
+	name := normalizeIdentToken(client.Name)
+	if token == "" || name == "" {
+		return false
+	}
+	return strings.Contains(name, token)
+}
+
+// matchesClient applies an adapter's ClientMatcher when it implements one, else
+// the DefaultClientMatch rule keyed on the adapter's FrameworkID.
+func matchesClient(a FrameworkAdapter, client ClientInfo) bool {
+	if m, ok := a.(ClientMatcher); ok {
+		return m.MatchesClient(client)
+	}
+	return DefaultClientMatch(a.ID(), client)
 }
 
 // AdapterRegistry is a thread-safe collection of FrameworkAdapter
@@ -65,6 +125,23 @@ func (r *AdapterRegistry) All() []FrameworkAdapter {
 		return adapters[i].ID() < adapters[j].ID()
 	})
 	return adapters
+}
+
+// DetectFrameworks returns every registered adapter that matches the given MCP
+// client identity, in the deterministic order of All(). An adapter matches when
+// it implements ClientMatcher and MatchesClient returns true, or—when it does
+// not—when DefaultClientMatch(adapter.ID(), client) returns true. The result is
+// empty when no adapter matches (e.g. an unknown client), which the universal
+// server's tool filter treats as generic-only fallback mode.
+func (r *AdapterRegistry) DetectFrameworks(client ClientInfo) []FrameworkAdapter {
+	all := r.All()
+	matched := make([]FrameworkAdapter, 0, len(all))
+	for _, a := range all {
+		if matchesClient(a, client) {
+			matched = append(matched, a)
+		}
+	}
+	return matched
 }
 
 var (

@@ -23,9 +23,10 @@ const defaultHTTPPort = 8765
 // launches the universal qsdev MCP server over the selected transport.
 func Command() *cobra.Command {
 	var (
-		transport   string
-		projectRoot string
-		port        int
+		transport    string
+		projectRoot  string
+		port         int
+		multiAdapter bool
 	)
 
 	cmd := &cobra.Command{
@@ -36,7 +37,7 @@ func Command() *cobra.Command {
 			"clients.\n\nThe default stdio transport reserves stdout for the JSON-RPC " +
 			"protocol; all diagnostics are written to stderr.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runServe(cmd.Context(), transport, projectRoot, port)
+			return runServe(cmd.Context(), transport, projectRoot, port, multiAdapter)
 		},
 	}
 
@@ -46,13 +47,16 @@ func Command() *cobra.Command {
 		"explicit project-root override (takes precedence over auto-detection)")
 	cmd.Flags().IntVar(&port, "port", defaultHTTPPort,
 		"listen port (http transport only)")
+	cmd.Flags().BoolVar(&multiAdapter, "multi-adapter", false,
+		"mount and expose every registered framework adapter regardless of project "+
+			"detection or client identity (testing/diagnostics)")
 
 	return cmd
 }
 
 // runServe resolves the project root, initializes stderr logging, constructs the
 // server, and runs it over the chosen transport until interrupted.
-func runServe(ctx context.Context, transport, flagRoot string, port int) error {
+func runServe(ctx context.Context, transport, flagRoot string, port int, multiAdapter bool) error {
 	t := Transport(transport)
 	if t != TransportStdio && t != TransportHTTP {
 		return fmt.Errorf("unknown transport %q: want %q or %q", transport, TransportStdio, TransportHTTP)
@@ -79,6 +83,7 @@ func runServe(ctx context.Context, transport, flagRoot string, port int) error {
 	srv := New(
 		WithProjectRoot(root),
 		WithChain(middleware.DefaultChain()),
+		WithMultiAdapter(multiAdapter),
 	)
 
 	// Mount the generic project context surface (tools/resources/prompts). A

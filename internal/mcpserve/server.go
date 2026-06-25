@@ -14,10 +14,12 @@ import (
 // tool-handler middleware chain. Construct one with New, then run it over a
 // transport (see transport.go).
 type Server struct {
-	mcp         *server.MCPServer
-	projectRoot string
-	adapters    *spi.AdapterRegistry
-	chain       *spi.Chain
+	mcp          *server.MCPServer
+	projectRoot  string
+	adapters     *spi.AdapterRegistry
+	chain        *spi.Chain
+	catalog      *catalog
+	multiAdapter bool
 }
 
 // New constructs a Server. It builds the underlying mcp-go server with tool and
@@ -30,6 +32,17 @@ func New(opts ...Option) *Server {
 		o(&cfg)
 	}
 
+	// Construct the Server shell first so the tool filter installed below can
+	// close over it. s.mcp is assigned immediately after; the filter only runs
+	// at tools/list time, long after the catalog has been populated by mounting.
+	s := &Server{
+		projectRoot:  cfg.projectRoot,
+		adapters:     cfg.adapters,
+		chain:        cfg.chain,
+		catalog:      newCatalog(),
+		multiAdapter: cfg.multiAdapter,
+	}
+
 	mcpOpts := []server.ServerOption{
 		// Advertise tools even before any are mounted: the universal server's
 		// purpose is to expose qsdev tooling, and adapters add tools at mount
@@ -39,17 +52,17 @@ func New(opts ...Option) *Server {
 		server.WithLogging(),
 		// Recover panics in tool handlers into protocol errors.
 		server.WithRecovery(),
+		// Per-tools/list-request filter implementing the mount-all-then-filter
+		// model: the server mounts every project-applicable adapter's tools at
+		// construction, and this narrows each client's view to generic tools plus
+		// the tools of the frameworks that client matches (see toolFilter).
+		server.WithToolFilter(s.toolFilter),
 	}
 	if cfg.instructions != "" {
 		mcpOpts = append(mcpOpts, server.WithInstructions(cfg.instructions))
 	}
 
-	s := &Server{
-		mcp:         server.NewMCPServer(cfg.name, cfg.version, mcpOpts...),
-		projectRoot: cfg.projectRoot,
-		adapters:    cfg.adapters,
-		chain:       cfg.chain,
-	}
+	s.mcp = server.NewMCPServer(cfg.name, cfg.version, mcpOpts...)
 
 	// Mounting resources/prompts implicitly advertises those capabilities via
 	// mcp-go; tools are already advertised above.
@@ -102,17 +115,21 @@ func (s *Server) NotifyToolsListChanged() {
 }
 
 // mountAdapters mounts the contributions of every applicable adapter in the
-// registry. With no registered adapters (the Task-1 state) this is a no-op.
+// registry, recording each tool/resource under its owning framework id so the
+// tool filter can later scope visibility per client. An adapter is mounted when
+// it Applies to the resolved project root, or unconditionally in multi-adapter
+// mode. With no registered adapters (the Task-1 state) this is a no-op.
 func (s *Server) mountAdapters(ctx context.Context) {
 	for _, a := range s.adapters.All() {
-		if !a.Applies(ctx, s.projectRoot) {
+		if !s.multiAdapter && !a.Applies(ctx, s.projectRoot) {
 			continue
 		}
+		owner := string(a.ID())
 		for _, t := range a.Tools() {
-			s.mountTool(t)
+			s.mountToolOwned(t, owner)
 		}
 		for _, r := range a.Resources() {
-			s.mountResource(r)
+			s.mountResourceOwned(r, owner)
 		}
 		for _, p := range a.Prompts() {
 			s.mountPrompt(p)

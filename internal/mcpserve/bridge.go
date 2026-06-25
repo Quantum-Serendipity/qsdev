@@ -67,7 +67,13 @@ func spiResultToMCP(res *spi.ToolResult) *mcp.CallToolResult {
 		return mcp.NewToolResultError("tool returned no result")
 	}
 	if res.Structured != nil {
-		return mcp.NewToolResultStructured(res.Structured, res.Text)
+		// Preserve IsError on the structured path: a tool may return a
+		// structured error payload (e.g. a not_configured object or a failed
+		// scan result), and the flag must still reach the client. The mcp-go
+		// constructor leaves IsError false, so set it explicitly.
+		out := mcp.NewToolResultStructured(res.Structured, res.Text)
+		out.IsError = res.IsError
+		return out
 	}
 	if res.IsError {
 		return mcp.NewToolResultError(res.Text)

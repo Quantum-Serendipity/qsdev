@@ -91,6 +91,24 @@ func TestSpiResultToMCP(t *testing.T) {
 		if res.StructuredContent == nil {
 			t.Errorf("expected StructuredContent to be set")
 		}
+		if res.IsError {
+			t.Errorf("non-error structured result should not be an error")
+		}
+	})
+
+	t.Run("structured error preserves IsError", func(t *testing.T) {
+		t.Parallel()
+		res := spiResultToMCP(&spi.ToolResult{
+			Structured: map[string]any{"status": "not_configured"},
+			Text:       `{"status":"not_configured"}`,
+			IsError:    true,
+		})
+		if res.StructuredContent == nil {
+			t.Errorf("expected StructuredContent to be set")
+		}
+		if !res.IsError {
+			t.Errorf("structured error must surface IsError true to the client")
+		}
 	})
 }
 

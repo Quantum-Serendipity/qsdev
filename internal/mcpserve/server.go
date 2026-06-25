@@ -105,6 +105,16 @@ func (s *Server) MountProjectContext(pc ProjectContributor) {
 	}
 }
 
+// MountTools mounts a set of framework-agnostic tool registrations (e.g. the
+// security and devenv tools from internal/mcpserve/tools). Like the project
+// context surface they are recorded under the generic owner so the per-request
+// tool filter always keeps them visible. Call it before serving.
+func (s *Server) MountTools(regs []spi.ToolRegistration) {
+	for _, t := range regs {
+		s.mountTool(t)
+	}
+}
+
 // NotifyToolsListChanged broadcasts a notifications/tools/list_changed message to
 // every connected client, signaling that the tool catalog changed at runtime
 // (e.g. after dynamic re-pruning). The server already advertises listChanged via

@@ -14,6 +14,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/projectctx"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools"
 )
 
 // defaultHTTPPort is the port used by the http transport when --port is unset.
@@ -94,6 +95,10 @@ func runServe(ctx context.Context, transport, flagRoot string, port int, multiAd
 	} else {
 		srv.MountProjectContext(pc)
 	}
+
+	// Mount the security and devenv tool surface (Unit 32.9). These are
+	// framework-agnostic and always visible, like the project context tools.
+	srv.MountTools(tools.All(root))
 
 	if ctx == nil {
 		ctx = context.Background()

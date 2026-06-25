@@ -31,6 +31,18 @@ func (cs ContentSafety) Handle(ctx context.Context, cc *spi.ToolCallContext, req
 		return res, err
 	}
 
+	// The credential category is the sole tool category sanctioned to emit
+	// credentials: qsdev_credential_vend exists precisely to return short-lived
+	// cloud tokens (AWS STS, GCP IAM, Azure MI) to the agent. Redacting its
+	// output would strip the AWS-key/JWT-shaped material the tool is meant to
+	// deliver, defeating its purpose. The category is also the most restricted in
+	// the rate limiter (lowest rate, smallest burst, tightest concurrency) and
+	// passes through the same Guardrail/Audit layers as every other tool, so the
+	// exemption narrows redaction, not the surrounding controls.
+	if cc != nil && cc.Category == CategoryCredential {
+		return res, nil
+	}
+
 	red := cs.redactor
 	if red == nil {
 		red = logging.NewRedactor()

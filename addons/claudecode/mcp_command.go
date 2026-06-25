@@ -10,6 +10,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/contentsign"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserver"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 )
@@ -24,6 +25,11 @@ func mcpCmd() *cobra.Command {
 	for _, provider := range mcpserver.DefaultRegistry().All() {
 		cmd.AddCommand(mcpServerCmd(provider))
 	}
+
+	// The universal MCP server (internal/mcpserve) is the single allowed
+	// dependency edge from addons/claudecode into mcpserve. mcpserve must never
+	// import back into addons/claudecode (see internal/mcpserve/doc.go).
+	cmd.AddCommand(mcpserve.Command())
 
 	cmd.AddCommand(mcpStatusCmd())
 	cmd.AddCommand(mcpListCmd())

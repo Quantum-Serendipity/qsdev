@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/projectctx"
 )
 
 // defaultHTTPPort is the port used by the http transport when --port is unset.
@@ -78,6 +80,15 @@ func runServe(ctx context.Context, transport, flagRoot string, port int) error {
 		WithProjectRoot(root),
 		WithChain(middleware.DefaultChain()),
 	)
+
+	// Mount the generic project context surface (tools/resources/prompts). A
+	// failure here must not prevent the server from starting: log and continue so
+	// adapter-contributed tooling and the protocol itself still work.
+	if pc, perr := projectctx.NewProjectContext(root); perr != nil {
+		slog.Warn("project context engine unavailable; generic tools not mounted", "error", perr)
+	} else {
+		srv.MountProjectContext(pc)
+	}
 
 	if ctx == nil {
 		ctx = context.Background()

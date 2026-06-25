@@ -3,6 +3,7 @@ package mcpserve
 import (
 	"context"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
@@ -63,6 +64,42 @@ func (s *Server) MCPServer() *server.MCPServer { return s.mcp }
 
 // ProjectRoot returns the resolved project root the server operates within.
 func (s *Server) ProjectRoot() string { return s.projectRoot }
+
+// ProjectContributor supplies the generic, framework-agnostic tool, resource,
+// and prompt registrations rendered by the project context engine
+// (internal/mcpserve/projectctx). Its *ProjectContext satisfies this interface.
+// Defining the seam as a local interface keeps server.go free of an import on
+// projectctx (projectctx imports spi, never mcpserve), so there is no cycle.
+type ProjectContributor interface {
+	Tools() []spi.ToolRegistration
+	Resources() []spi.ResourceRegistration
+	Prompts() []spi.PromptRegistration
+}
+
+// MountProjectContext mounts every tool, resource, and prompt contributed by pc.
+// Unlike adapter contributions these are framework-agnostic and always mounted.
+// Call it before serving. Mounting resources/prompts implicitly advertises those
+// capabilities via mcp-go; tools are already advertised by New.
+func (s *Server) MountProjectContext(pc ProjectContributor) {
+	for _, t := range pc.Tools() {
+		s.mountTool(t)
+	}
+	for _, r := range pc.Resources() {
+		s.mountResource(r)
+	}
+	for _, p := range pc.Prompts() {
+		s.mountPrompt(p)
+	}
+}
+
+// NotifyToolsListChanged broadcasts a notifications/tools/list_changed message to
+// every connected client, signaling that the tool catalog changed at runtime
+// (e.g. after dynamic re-pruning). The server already advertises listChanged via
+// WithToolCapabilities(true). This is the notification hook the ToolPruner drives
+// through the projectctx.ListChangedNotifier seam.
+func (s *Server) NotifyToolsListChanged() {
+	s.mcp.SendNotificationToAllClients(mcp.MethodNotificationToolsListChanged, nil)
+}
 
 // mountAdapters mounts the contributions of every applicable adapter in the
 // registry. With no registered adapters (the Task-1 state) this is a no-op.

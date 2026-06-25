@@ -30,6 +30,10 @@ import (
 	// are instead blank-imported from this entry point, where their init/
 	// registration runs into spi.DefaultRegistry() before any command executes.
 	_ "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/claudecode"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/cline"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/codex"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/cursor"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/windsurf"
 )
 
 var logSession *logging.Session

@@ -5,12 +5,16 @@ go 1.26.4
 require (
 	aead.dev/minisign v0.3.0
 	fastcat.org/go/gdev v0.0.0-00010101000000-000000000000
+	github.com/BurntSushi/toml v1.6.0
 	github.com/Masterminds/semver/v3 v3.5.0
+	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/charmbracelet/huh v1.0.0
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gobwas/glob v0.2.3
 	github.com/mark3labs/mcp-go v0.54.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
+	golang.org/x/mod v0.37.0
 	golang.org/x/sys v0.45.0
 	gopkg.in/yaml.v3 v3.0.1
 )

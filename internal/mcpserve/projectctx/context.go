@@ -21,11 +21,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/workspace"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -51,11 +53,11 @@ type ProjectContext struct {
 	toolReg *toolreg.Registry
 	mcpReg  *mcpregistry.McpServerRegistry
 
-	// workspace is the slot for the Unit 32.7 monorepo workspace graph. It is an
-	// empty-interface placeholder that is always nil until Task T9 lands; while it
-	// is nil the per-package context resource degrades to a structured
-	// not_configured result.
-	workspace any
+	// workspace is the monorepo workspace graph (Unit 32.7). It is populated when
+	// the project root carries a recognized workspace configuration with at least
+	// one member package; otherwise it is nil and the per-package context resource
+	// degrades to a structured not_configured result.
+	workspace *workspace.WorkspaceGraph
 
 	pruner *ToolPruner
 }
@@ -94,8 +96,47 @@ func NewProjectContext(projectRoot string) (*ProjectContext, error) {
 		statePath:   statePath,
 		toolReg:     reg,
 		mcpReg:      mcpregistry.DefaultRegistry(),
+		workspace:   detectWorkspaceGraph(projectRoot),
 		pruner:      NewToolPruner(),
 	}, nil
+}
+
+// workspaceConfigFiles are the root configuration filenames whose presence marks
+// a project as a candidate monorepo workspace. They mirror the five formats the
+// workspace engine parses (npm/Yarn, pnpm, Cargo, Go, Python/uv).
+var workspaceConfigFiles = []string{
+	"package.json", "pnpm-workspace.yaml", "Cargo.toml", "go.work", "pyproject.toml",
+}
+
+// detectWorkspaceGraph builds the monorepo workspace graph for projectRoot when
+// a workspace configuration is present, returning nil for a non-monorepo project
+// (no configuration, or a configuration that declares no member packages). It
+// degrades gracefully: a detection failure logs and yields nil rather than
+// failing engine construction.
+func detectWorkspaceGraph(projectRoot string) *workspace.WorkspaceGraph {
+	hasConfig := false
+	for _, f := range workspaceConfigFiles {
+		if info, err := os.Stat(filepath.Join(projectRoot, f)); err == nil && !info.IsDir() {
+			hasConfig = true
+			break
+		}
+	}
+	if !hasConfig {
+		return nil
+	}
+
+	graph, err := workspace.DetectWorkspaces(projectRoot)
+	if err != nil {
+		slog.Warn("project context: workspace detection failed; per-package context disabled",
+			"root", projectRoot, "error", err)
+		return nil
+	}
+	if graph.Len() == 0 {
+		// A configuration file exists but declares no members (e.g. a single
+		// package.json without a "workspaces" field): not a monorepo.
+		return nil
+	}
+	return graph
 }
 
 // ProjectRoot returns the resolved project root the engine operates within.

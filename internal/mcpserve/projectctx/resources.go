@@ -58,7 +58,7 @@ func (pc *ProjectContext) Resources() []spi.ResourceRegistration {
 		{
 			URI:         resURIPackageCtx,
 			Name:        "Per-package context",
-			Description: "Per-package context for monorepo packages. Awaits the Unit 32.7 workspace graph (Task T9); returns not_configured until then.",
+			Description: "Per-package context for monorepo workspace packages (name, ecosystem, directory, dependencies, sub-detection). Resolves by relative directory or {ecosystem}:{name}; returns not_configured for non-monorepo projects or unknown packages.",
 			MIMEType:    mimeJSON,
 			Handler:     pc.readPackageContext,
 		},
@@ -121,18 +121,23 @@ func (pc *ProjectContext) readMCPServers(_ context.Context, _ *spi.ToolCallConte
 	return jsonResult(resURIMCPServers, data), nil
 }
 
-// readPackageContext degrades gracefully: the per-package monorepo context
-// requires the Unit 32.7 workspace graph, which is not built yet (Task T9). It
-// returns a structured not_configured JSON document rather than failing.
+// readPackageContext renders the per-package monorepo context backed by the
+// Unit 32.7 workspace graph. When the project is a monorepo and the requested
+// package resolves (by relative directory or {ecosystem}:{name}), it returns the
+// package's JSON context. Otherwise it degrades to a structured not_configured
+// document rather than failing: distinguishing a non-monorepo project from an
+// unknown package within a monorepo.
 func (pc *ProjectContext) readPackageContext(_ context.Context, _ *spi.ToolCallContext, req *spi.ResourceRequest) (*spi.ResourceResult, error) {
+	reason := "no monorepo workspace configuration detected at the project root"
 	if pc.workspace != nil {
-		// Defensive: when T9 wires a workspace graph in, replace this branch with
-		// real per-package rendering. Until then the field is always nil.
-		return nil, fmt.Errorf("workspace graph present but per-package rendering is not implemented")
+		if res, ok := pc.workspace.RenderPackageContext(req.URI); ok {
+			return res, nil
+		}
+		reason = "no workspace package matches the requested identifier"
 	}
 	payload := map[string]any{
 		"status": "not_configured",
-		"reason": "monorepo workspace graph is not available yet (qsdev Unit 32.7 / Task T9)",
+		"reason": reason,
 		"uri":    req.URI,
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")

@@ -16,6 +16,12 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/instance"
 	"github.com/Quantum-Serendipity/qsdev/internal/bugreport"
 	_ "github.com/Quantum-Serendipity/qsdev/internal/extlog/providers"
+	"github.com/Quantum-Serendipity/qsdev/internal/logcmd"
+	"github.com/Quantum-Serendipity/qsdev/internal/logging"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+
 	// Universal MCP server framework adapters self-register here.
 	//
 	// Concrete adapters under internal/mcpserve/adapters/* delegate to addon
@@ -23,14 +29,7 @@ import (
 	// mcpserve server package itself — that would create an import cycle. They
 	// are instead blank-imported from this entry point, where their init/
 	// registration runs into spi.DefaultRegistry() before any command executes.
-	// No adapter packages exist yet (later phase tasks add them); add their
-	// blank imports immediately below this comment, e.g.:
-	//   _ "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/claudecode"
-	"github.com/Quantum-Serendipity/qsdev/internal/logcmd"
-	"github.com/Quantum-Serendipity/qsdev/internal/logging"
-	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
-	"github.com/Quantum-Serendipity/qsdev/internal/version"
-	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	_ "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/claudecode"
 )
 
 var logSession *logging.Session

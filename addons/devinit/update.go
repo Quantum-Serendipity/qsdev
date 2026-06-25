@@ -27,6 +27,9 @@ import (
 type UpdateOptions struct {
 	Force  bool
 	DryRun bool
+	// SkipContainer opts out of generating Gateway container configuration for
+	// detected frameworks that lack native hook enforcement (Unit 32.10).
+	SkipContainer bool
 }
 
 // UpdateAction describes what the update will do to a file.
@@ -149,6 +152,12 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 		}
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "\nUpdate complete: %d created, %d updated, %d skipped.\n", created, updated, skipped)
+
+	// 13. Best-effort Gateway container config for hookless frameworks (Unit
+	// 32.10). This is intentionally additive and non-fatal: a failure or a
+	// project with no gateway-needing framework leaves the rest of the update
+	// untouched and produces no output.
+	maybeGenerateContainerConfig(cmd, projectRoot, answers, opts)
 
 	return nil
 }

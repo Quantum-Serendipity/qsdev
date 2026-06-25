@@ -1,0 +1,41 @@
+# Build-context excludes for `docker build -f build/docker/Dockerfile .`
+# (Phase 32, Unit 32.10). Docker reads the .dockerignore at the build-context
+# root; the gateway image is built with the repository root as context, so this
+# file lives here. It keeps the context small and, critically, keeps the
+# workspace files out of the build (gdev is consumed from the vendor tree with
+# GOWORK=off + -mod=vendor; ../gdev does not exist in the container).
+
+# Version control and CI metadata.
+.git/
+.github/
+
+# The Go workspace MUST NOT enter the build: it `use`s ../gdev, which is absent
+# in the container. The build ignores the workspace and uses vendor/ instead.
+go.work
+go.work.sum
+
+# Local-only docs and planning material.
+internal-docs/
+
+# devenv / direnv / nix build artifacts — large and never needed in the image.
+.devenv/
+.devenv.flake.nix
+.direnv/
+result
+result-*
+
+# Claude Code / agent scratch and local config.
+.claude/
+
+# Test scratch, temp dirs, and ad-hoc runners.
+tmp*/
+tmp-*
+*.tmp
+run-e2e.sh
+gotest.sh
+docs/e2e-runbook-comprehensive.md
+
+# Editor/OS noise.
+.idea/
+.vscode/
+.DS_Store

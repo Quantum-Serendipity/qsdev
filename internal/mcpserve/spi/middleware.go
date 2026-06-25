@@ -35,6 +35,20 @@ func NewChain(mws ...Middleware) *Chain {
 // Len reports the number of middlewares in the chain.
 func (c *Chain) Len() int { return len(c.mws) }
 
+// With returns a NEW Chain containing this chain's middlewares plus extra. The
+// receiver is not modified, so a shared base chain can be safely extended for
+// different deployment modes. Execute still orders every middleware by Order()
+// at call time, so an added middleware with a lower Order() than any existing
+// one becomes the new outermost layer regardless of its append position. The
+// gateway deployment uses this to wrap the built-in chain with an outer
+// authentication layer.
+func (c *Chain) With(extra ...Middleware) *Chain {
+	combined := make([]Middleware, 0, len(c.mws)+len(extra))
+	combined = append(combined, c.mws...)
+	combined = append(combined, extra...)
+	return &Chain{mws: combined}
+}
+
 // Execute runs final wrapped by every middleware. The chain is ordered
 // ascending by Order(): the lowest Order() ends up outermost. Sorting is stable
 // so middlewares sharing an Order() retain their registration order.

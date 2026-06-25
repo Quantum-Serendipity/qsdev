@@ -1,0 +1,49 @@
+# Universal qsdev MCP server — Gateway deployment (Phase 32, Unit 32.10).
+#
+# The gateway runs the container as an ENFORCING MCP proxy: it applies the
+# 4-layer enforcement (authentication, authorization, rate limiting, content
+# safety) even for frameworks that have no native pre-tool hooks. The project
+# directory is mounted READ-ONLY; the gateway never needs to write to it.
+#
+# Usage:
+#   1. Build the image (from the repo root):
+#        docker build -f build/docker/Dockerfile -t qsdev-mcp-gateway .
+#   2. Set the allow-list and run:
+#        QSDEV_GATEWAY_AGENTS=claude-code,cursor docker compose \
+#          -f build/docker/docker-compose.gateway.yaml up
+#   3. Point a framework's .mcp.json at http://localhost:${QSDEV_GATEWAY_PORT}/mcp
+#
+# Override the image, port, project path, and allow-list via the environment
+# variables referenced below (all have sensible defaults).
+
+services:
+  qsdev-mcp-gateway:
+    image: ${QSDEV_GATEWAY_IMAGE:-ghcr.io/quantum-serendipity/qsdev:latest}
+    # Serve the gateway over Streamable HTTP so multiple framework clients can
+    # connect to the same enforcing proxy.
+    command:
+      - mcp
+      - serve
+      - --deploy-mode=gateway
+      - --transport=http
+      - --port=${QSDEV_GATEWAY_PORT:-8765}
+      - --project-root=/workspace
+    ports:
+      - "${QSDEV_GATEWAY_PORT:-8765}:${QSDEV_GATEWAY_PORT:-8765}"
+    volumes:
+      # Mount the host project read-only at the in-container workspace path.
+      - "${QSDEV_PROJECT_DIR:-.}:/workspace:ro"
+    environment:
+      QSDEV_DEPLOY_MODE: gateway
+      QSDEV_PROJECT_ROOT: /workspace
+      # Comma-separated agent allow-list. Authentication is enforced when this is
+      # non-empty (or QSDEV_GATEWAY_REQUIRE_AUTH=true); an empty value runs the
+      # gateway as a pass-through with the other three layers still active.
+      QSDEV_GATEWAY_AGENTS: ${QSDEV_GATEWAY_AGENTS:-}
+      QSDEV_GATEWAY_REQUIRE_AUTH: ${QSDEV_GATEWAY_REQUIRE_AUTH:-false}
+    # Harden the container: read-only root FS (the distroless image needs no
+    # writes), no new privileges, and an automatic restart.
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped

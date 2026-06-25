@@ -2,6 +2,7 @@ package mcpserve
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -66,4 +67,64 @@ func (s *Server) ServeHTTP(ctx context.Context, addr string) error {
 		}
 		return err
 	}
+}
+
+// httpReadHeaderTimeout bounds how long the standalone HTTP server waits for a
+// request's headers, mitigating slowloris-style stalls on the health/MCP mux.
+const httpReadHeaderTimeout = 10 * time.Second
+
+// ServeHTTPWithHealth runs the server over Streamable HTTP on addr AND exposes a
+// plain GET /health endpoint for container orchestration (liveness/readiness
+// probes). The MCP protocol is served by the vendored streamable handler at its
+// own path (/mcp); /health is mounted ahead of it on a shared mux. Used by the
+// standalone deployment mode, where an orchestrator needs a non-MCP health
+// signal. It shuts down gracefully when ctx is cancelled.
+func (s *Server) ServeHTTPWithHealth(ctx context.Context, addr string) error {
+	streamable := server.NewStreamableHTTPServer(s.mcp)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", s.handleHealth)
+	mux.Handle("/", streamable)
+
+	httpSrv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- httpSrv.ListenAndServe() }()
+
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
+		defer cancel()
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+		return ctx.Err()
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	}
+}
+
+// handleHealth answers GET /health with 200 and a minimal JSON liveness body.
+// Any non-GET method is rejected so probes cannot be confused with MCP traffic.
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, `{"status":"method_not_allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodHead {
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":       "ok",
+		"project_root": s.projectRoot,
+	})
 }

@@ -46,7 +46,9 @@ func runProcessGroup(ctx context.Context, name string, argv []string, stdin stri
 		// group dies even if a child ignores softer signals.
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		<-done // reap so cmd.ProcessState is populated
-		timedOut = true
+		// Distinguish a deadline TIMEOUT from a caller CANCELLATION so the two
+		// platforms agree (procgroup_other.go makes the same distinction).
+		timedOut = ctx.Err() == context.DeadlineExceeded
 	case waitErr = <-done:
 	}
 

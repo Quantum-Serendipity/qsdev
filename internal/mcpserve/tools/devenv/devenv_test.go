@@ -134,6 +134,91 @@ func TestRunProcessGroupTimeoutKillsGroup(t *testing.T) {
 	}
 }
 
+// TestInstallableRejection proves the nix_run installable policy: remote flake
+// references (URLs and schemed flakerefs) are rejected, while local references
+// and scheme-less registry aliases are allowed.
+func TestInstallableRejection(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		ref      string
+		rejected bool
+	}{
+		{"github remote", "github:owner/repo#pkg", true},
+		{"gitlab remote", "gitlab:owner/repo", true},
+		{"sourcehut remote", "sourcehut:~user/repo", true},
+		{"git plus ssh url", "git+ssh://host/repo", true},
+		{"http url", "http://example.com/x.tar.gz", true},
+		{"https url", "https://example.com/x.tar.gz", true},
+		{"tarball url", "tarball+https://example.com/x.tar.gz", true},
+		{"file plus http url", "file+http://example.com/x", true},
+		{"flake plus scheme", "flake+github:owner/repo", true},
+		{"bare attr", "hello", false},
+		{"project flake attr", ".#hello", false},
+		{"project flake root", ".", false},
+		{"local relative path", "./flake#pkg", false},
+		{"local absolute path", "/srv/flake#pkg", false},
+		{"local path scheme", "path:./flake#pkg", false},
+		{"registry alias", "nixpkgs#hello", false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, rejected := installableRejection(tt.ref)
+			if rejected != tt.rejected {
+				t.Errorf("installableRejection(%q) rejected=%v, want %v", tt.ref, rejected, tt.rejected)
+			}
+		})
+	}
+}
+
+// TestNixRunRejectsRemoteInstallable proves the handler turns a remote ref into
+// a tool-level error (IsError) that names the rejected ref, without needing nix
+// to be installed and without ever executing it.
+func TestNixRunRejectsRemoteInstallable(t *testing.T) {
+	t.Parallel()
+	const ref = "github:owner/repo#pkg"
+	nix := newNixRunner()
+	res := call(t, nix.handle, map[string]any{"command": ref})
+	if !res.IsError {
+		t.Fatal("expected IsError for a remote installable")
+	}
+	structured, ok := res.Structured.(map[string]any)
+	if !ok {
+		t.Fatalf("structured is %T", res.Structured)
+	}
+	if structured["status"] != "error" {
+		t.Errorf("status = %v, want error", structured["status"])
+	}
+	if structured["command"] != ref {
+		t.Errorf("rejection did not name the ref; got %v", structured["command"])
+	}
+}
+
+// TestRunProcessGroupTimeoutVsCancellation proves the unix process-group path
+// distinguishes a deadline timeout (timed_out=true) from a caller cancellation
+// (timed_out=false), matching the non-unix path.
+func TestRunProcessGroupTimeoutVsCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process-group semantics are unix-specific")
+	}
+	t.Run("cancellation reports timed_out=false", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // cancel before running
+		res := runProcessGroup(ctx, "sh", []string{"-c", "sleep 5 & wait"}, "", 5*time.Second)
+		if res.timedOut {
+			t.Error("cancellation must not be reported as timed_out")
+		}
+	})
+	t.Run("deadline reports timed_out=true", func(t *testing.T) {
+		res := runProcessGroup(context.Background(), "sh", []string{"-c", "sleep 5 & wait"}, "", 150*time.Millisecond)
+		if !res.timedOut {
+			t.Error("deadline must be reported as timed_out")
+		}
+	})
+}
+
 // TestNixRunExecutes runs the full handler against a real nix when present. It is
 // skipped when nix is unavailable. A live `nix run` may require network/flake
 // evaluation, so the test asserts only that the handler executes nix and returns

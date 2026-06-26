@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
@@ -38,6 +39,12 @@ func (n *nixRunner) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi
 	if !ok || command == "" {
 		return toolutil.NotConfigured("command is required (e.g. nixpkgs#jq)",
 			map[string]any{"example": "nixpkgs#jq"}), nil
+	}
+	// Enforce the installable policy before doing anything else so a remote
+	// reference is rejected deterministically (no nix, no execution).
+	if reason, rejected := installableRejection(command); rejected {
+		return toolutil.ErrorResult("rejected remote nix installable",
+			map[string]any{"command": command, "reason": reason}), nil
 	}
 	if _, err := exec.LookPath("nix"); err != nil {
 		return toolutil.NotConfigured("nix is not installed or not on PATH",
@@ -76,6 +83,52 @@ func (n *nixRunner) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi
 		result.IsError = true
 	}
 	return result, nil
+}
+
+// installableRejection enforces nix_run's installable policy and returns a
+// human-readable reason plus true when ref denotes a REMOTE flake source that
+// must not be executed (arbitrary remote code execution). It returns "", false
+// for allowed references.
+//
+// Rejected (default-deny remote): any URL form ("scheme://host/...") and any
+// flakeref carrying a URI scheme other than the local "path:" scheme — this
+// covers github:, gitlab:, sourcehut:, git+*, http:, https:, tarball+*,
+// file+http*, and flake+* references.
+//
+// Allowed: a bare attribute ("foo"), the project's own flake (".", ".#foo"),
+// local filesystem paths ("./x", "../x", "/abs/x", "path:./x"), and scheme-less
+// registry aliases ("nixpkgs#hello").
+func installableRejection(ref string) (string, bool) {
+	trimmed := strings.TrimSpace(ref)
+	if strings.Contains(trimmed, "://") {
+		return "references a remote URL", true
+	}
+	if scheme, ok := uriScheme(trimmed); ok && scheme != "path" {
+		return fmt.Sprintf("uses remote flakeref scheme %q", scheme), true
+	}
+	return "", false
+}
+
+// uriScheme returns the lowercased URI scheme of ref and true when ref begins
+// with a "scheme:" prefix (RFC 3986: a letter followed by letters, digits, and
+// the characters "+", "-", "."). A flakeref attribute selector ("#") or path
+// ("." or "/") that appears before any colon yields ("", false), so registry
+// aliases and local paths are not treated as schemed.
+func uriScheme(ref string) (string, bool) {
+	for i := 0; i < len(ref); i++ {
+		c := ref[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+			continue
+		case i > 0 && (c >= '0' && c <= '9' || c == '+' || c == '-' || c == '.'):
+			continue
+		case c == ':' && i > 0:
+			return strings.ToLower(ref[:i]), true
+		default:
+			return "", false
+		}
+	}
+	return "", false
 }
 
 // nixRunTimeout resolves the timeout argument (a Go duration string or a number

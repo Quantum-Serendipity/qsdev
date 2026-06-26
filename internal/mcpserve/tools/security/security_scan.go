@@ -66,8 +66,15 @@ func (s *securityScanner) handle(ctx context.Context, _ *spi.ToolCallContext, re
 			map[string]any{"manifest_path": lockPath, "project_root": s.projectRoot}), nil
 	}
 	if err != nil {
-		return toolutil.NotConfigured("could not read lock file",
-			map[string]any{"path": lockPath, "error": err.Error()}), nil
+		// The lock file was located but could not be parsed (truncated, tampered,
+		// or an unsupported format). Distinguish this from "no lock file" below so
+		// a caller does not misread a broken lock file as a clean (zero-vuln) scan.
+		return toolutil.NotConfigured("lock file present but could not be parsed; scan did not run",
+			map[string]any{
+				"path":  lockPath,
+				"error": err.Error(),
+				"hint":  "the dependency scan did NOT complete — treat as unknown, not vulnerability-free",
+			}), nil
 	}
 	if len(pkgs) == 0 {
 		return toolutil.NotConfigured("no lock file with pinned dependencies found",

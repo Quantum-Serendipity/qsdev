@@ -82,7 +82,7 @@ func (pc *policyChecker) handle(_ context.Context, _ *spi.ToolCallContext, req *
 			map[string]any{"policy_path": requestedPath, "project_root": pc.projectRoot}), nil
 	}
 
-	project, local, err := pc.loadPolicy(policyPath)
+	project, local, localWarn, err := pc.loadPolicy(policyPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return toolutil.NotConfigured("project policy not found: "+branding.Get().ConfigFile+" is absent",
@@ -97,11 +97,13 @@ func (pc *policyChecker) handle(_ context.Context, _ *spi.ToolCallContext, req *
 	if toolName, ok := toolutil.StringArg(req.Arguments, "tool_name"); ok && toolName != "" {
 		dec := evaluateTool(toolName, project, local, defaultDecision)
 		text := fmt.Sprintf("policy: tool %q is %s (source=%s, rule=%s)", dec.Tool, dec.Decision, dec.Source, dec.Rule)
-		return toolutil.Result(text, map[string]any{
+		structured := map[string]any{
 			"policy_path":      policyPath,
 			"default_decision": defaultDecision,
 			"evaluation":       dec,
-		}), nil
+		}
+		addWarning(structured, localWarn)
+		return toolutil.Result(text, structured), nil
 	}
 
 	rules := inventoryRules(project, local)
@@ -111,21 +113,33 @@ func (pc *policyChecker) handle(_ context.Context, _ *spi.ToolCallContext, req *
 		"rules":            rules,
 		"rule_count":       len(rules),
 	}
+	addWarning(structured, localWarn)
 	text := fmt.Sprintf("policy: %d explicit rules; default decision is %q", len(rules), defaultDecision)
 	return toolutil.Result(text, structured), nil
+}
+
+// addWarning records a non-empty warning on a structured tool result under the
+// "warnings" key so a degraded (but non-fatal) condition — e.g. a dropped
+// malformed overlay — is surfaced to the caller rather than silently swallowed.
+func addWarning(m map[string]any, warning string) {
+	if warning == "" {
+		return
+	}
+	existing, _ := m["warnings"].([]string)
+	m["warnings"] = append(existing, warning)
 }
 
 // loadPolicy returns the parsed project config and optional local overlay,
 // reusing the cached parse while the files are unchanged. It returns a
 // not-exist error (detectable via os.IsNotExist) when the project policy file is
 // absent so the caller can degrade to not_configured.
-func (pc *policyChecker) loadPolicy(policyPath string) (*types.QsdevConfig, *config.LocalConfig, error) {
+func (pc *policyChecker) loadPolicy(policyPath string) (*types.QsdevConfig, *config.LocalConfig, string, error) {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
 
 	info, err := os.Stat(policyPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
 	if pc.cachedProject != nil && pc.projectPath == policyPath && pc.projectMtime.Equal(info.ModTime()) {
@@ -133,38 +147,44 @@ func (pc *policyChecker) loadPolicy(policyPath string) (*types.QsdevConfig, *con
 	} else {
 		project, perr := config.ParseQsdevConfig(policyPath)
 		if perr != nil {
-			return nil, nil, perr
+			return nil, nil, "", perr
 		}
 		pc.cachedProject = project
 		pc.projectPath = policyPath
 		pc.projectMtime = info.ModTime()
 	}
 
-	pc.refreshLocalLocked()
-	return pc.cachedProject, pc.cachedLocal, nil
+	localWarn := pc.refreshLocalLocked()
+	return pc.cachedProject, pc.cachedLocal, localWarn, nil
 }
 
 // refreshLocalLocked reloads the .qsdev.local.yaml overlay when its mtime
-// changed. An absent overlay yields a nil cachedLocal. The caller holds pc.mu.
-func (pc *policyChecker) refreshLocalLocked() {
+// changed. An absent overlay yields a nil cachedLocal and no warning. A malformed
+// overlay is dropped (evaluation proceeds on the project policy) but returns a
+// non-empty warning string: the local overlay is the highest-precedence layer, so
+// silently losing its denies would be a fail-open the caller must be told about.
+// The caller holds pc.mu.
+func (pc *policyChecker) refreshLocalLocked() string {
 	info, err := os.Stat(pc.localPath)
 	if err != nil {
 		pc.cachedLocal = nil
 		pc.localMtime = time.Time{}
-		return
+		return ""
 	}
 	if pc.cachedLocal != nil && pc.localMtime.Equal(info.ModTime()) {
-		return
+		return ""
 	}
 	// ParseLocalConfig returns (nil, nil) when the file is simply absent; a parse
 	// error degrades to no overlay rather than failing the whole evaluation.
 	local, perr := config.ParseLocalConfig(pc.localPath)
 	if perr != nil {
 		pc.cachedLocal = nil
-		return
+		return fmt.Sprintf("ignored malformed %s overlay (highest-precedence rules not applied): %v",
+			branding.Get().LocalConfig, perr)
 	}
 	pc.cachedLocal = local
 	pc.localMtime = info.ModTime()
+	return ""
 }
 
 // evaluateTool resolves the verdict for tool through the cascade

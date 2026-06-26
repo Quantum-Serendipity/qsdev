@@ -18,6 +18,7 @@ import (
 	ststypes "github.com/aws/aws-sdk-go-v2/service/sts/types"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // writeConfig writes a .qsdev.yaml fixture into dir and returns its path.
@@ -109,6 +110,58 @@ func TestPolicyCheckNotConfigured(t *testing.T) {
 	}
 	if structuredMap(t, res)["status"] != "not_configured" {
 		t.Errorf("status = %v, want not_configured", structuredMap(t, res)["status"])
+	}
+}
+
+// TestPolicyCheckWarnsOnMalformedLocalOverlay proves a malformed .qsdev.local.yaml
+// overlay does not fail the evaluation (it still runs on the project policy) but
+// surfaces a warning — the overlay is the highest-precedence layer, so silently
+// dropping its denies would be a fail-open.
+func TestPolicyCheckWarnsOnMalformedLocalOverlay(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeConfig(t, dir, policyFixture)
+	// Unterminated flow sequence: invalid YAML, so ParseLocalConfig errors.
+	localPath := filepath.Join(dir, branding.Get().LocalConfig)
+	if err := os.WriteFile(localPath, []byte("tools:\n  enabled: [a, b\n"), 0o644); err != nil {
+		t.Fatalf("write local overlay: %v", err)
+	}
+	pc := newPolicyChecker(dir)
+
+	res := call(t, pc.handle, map[string]any{"tool_name": "semgrep"})
+	if res.IsError {
+		t.Errorf("malformed overlay must degrade, not fail: %+v", res.Structured)
+	}
+	warnings, ok := structuredMap(t, res)["warnings"].([]string)
+	if !ok || len(warnings) == 0 {
+		t.Fatalf("expected a warnings entry for the dropped overlay, got %v", structuredMap(t, res)["warnings"])
+	}
+	if !strings.Contains(warnings[0], branding.Get().LocalConfig) {
+		t.Errorf("warning should name the overlay file, got %q", warnings[0])
+	}
+}
+
+// TestSecurityScanReportsUnparseableLockFile proves a present-but-corrupt lock
+// file is reported distinctly from "no lock file", so a caller cannot misread a
+// failed scan as a clean (zero-vulnerability) result.
+func TestSecurityScanReportsUnparseableLockFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte("{ this is not valid json"), 0o644); err != nil {
+		t.Fatalf("write lock: %v", err)
+	}
+	scanner := newSecurityScanner(dir)
+
+	res := call(t, scanner.handle, map[string]any{"manifest_path": "package-lock.json"})
+	if !res.IsError {
+		t.Fatal("expected IsError for an unparseable lock file")
+	}
+	m := structuredMap(t, res)
+	if m["status"] != "not_configured" {
+		t.Errorf("status = %v, want not_configured", m["status"])
+	}
+	if reason, _ := m["reason"].(string); !strings.Contains(reason, "could not be parsed") {
+		t.Errorf("reason should distinguish a present-but-unparseable lock file, got %q", reason)
 	}
 }
 

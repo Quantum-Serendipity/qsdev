@@ -32,7 +32,10 @@
 
 services:
   qsdev-mcp-gateway:
-    image: ${QSDEV_GATEWAY_IMAGE:-ghcr.io/quantum-serendipity/qsdev:latest}
+    # Default to a pinned release tag (tracks VERSION), not a floating :latest, so
+    # `docker compose up` resolves a deterministic image. Override with
+    # QSDEV_GATEWAY_IMAGE (e.g. a digest-pinned ref) for stricter supply-chain control.
+    image: ${QSDEV_GATEWAY_IMAGE:-ghcr.io/quantum-serendipity/qsdev:0.8.0}
     # The image ENTRYPOINT already supplies "/qsdev mcp serve" and docker APPENDS
     # command to it (it does NOT replace it), so command carries ONLY flags — a
     # leading "mcp"/"serve" here would double the subcommand. Bind 0.0.0.0 so the

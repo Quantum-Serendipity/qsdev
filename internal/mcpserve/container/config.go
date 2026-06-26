@@ -284,7 +284,11 @@ func (ContainerConfigGenerator) Generate(opts GenerateOptions) (*Artifacts, erro
 
 	httpEntry := MCPServerConfig{
 		Type: "http",
-		URL:  fmt.Sprintf("http://localhost:%d/mcp", port),
+		// https, not http: this entry only ever targets the gateway, which serves
+		// mTLS (validateServeSecurity refuses to start a gateway over plain HTTP), so
+		// a plaintext URL would fail the TLS handshake. The client must additionally
+		// present its mTLS client certificate (see docker-compose.gateway.yaml).
+		URL: fmt.Sprintf("https://localhost:%d/mcp", port),
 	}
 	mcpJSON, err := renderMCPJSON(mcpName, httpEntry)
 	if err != nil {

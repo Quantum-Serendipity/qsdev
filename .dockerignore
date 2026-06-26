@@ -35,6 +35,19 @@ run-e2e.sh
 gotest.sh
 docs/e2e-runbook-comprehensive.md
 
+# mTLS / secret material MUST NOT enter the build context. The gateway workflow
+# has operators place ./tls/server.key etc. at the repo root (the build context),
+# and `docker build` honors only this file (not .gitignore), so without these the
+# private key would be sent to the daemon and baked into an intermediate layer
+# (leakable via --cache-to). The final image copies only /qsdev, but the build
+# context and builder layers must never carry the key.
+tls/
+*.key
+*.pem
+*.crt
+.env
+.env.*
+
 # Editor/OS noise.
 .idea/
 .vscode/

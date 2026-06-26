@@ -212,7 +212,7 @@ func TestGenerateGatewayForHooklessFramework(t *testing.T) {
 		t.Errorf("service security_opt = %v, want %q", svc.SecurityOpt, noNewPrivileges)
 	}
 
-	// The .mcp.json entry must point at the container's HTTP port.
+	// The .mcp.json entry must point at the container's mTLS HTTP port over https.
 	var mcp struct {
 		Servers map[string]MCPServerConfig `json:"mcpServers"`
 	}
@@ -223,8 +223,8 @@ func TestGenerateGatewayForHooklessFramework(t *testing.T) {
 	if !ok {
 		t.Fatalf(".mcp.json missing server %q; got %v", DefaultMCPServerName, mcp.Servers)
 	}
-	if entry.Type != "http" || entry.URL != "http://localhost:9000/mcp" {
-		t.Errorf(".mcp.json entry = %+v, want http://localhost:9000/mcp", entry)
+	if entry.Type != "http" || entry.URL != "https://localhost:9000/mcp" {
+		t.Errorf(".mcp.json entry = %+v, want https://localhost:9000/mcp", entry)
 	}
 }
 

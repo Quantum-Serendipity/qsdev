@@ -15,7 +15,9 @@
 
 # ---- builder stage --------------------------------------------------------
 # Module is Go 1.26.4; use the matching toolchain (the spec's 1.23 is stale).
-FROM golang:1.26-alpine AS builder
+# Pinned by digest for reproducible, supply-chain-resistant builds (the tag is
+# kept for readability). Re-resolve with: docker buildx imagetools inspect golang:1.26-alpine
+FROM golang:1.26-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648 AS builder
 
 WORKDIR /src
 
@@ -32,8 +34,10 @@ RUN go build -ldflags='-s -w' -o /qsdev ./cmd/qsdev
 
 # ---- runtime stage --------------------------------------------------------
 # distroless/static is the minimal base for a CGO-free static Go binary; the
-# :nonroot variant runs as an unprivileged user (uid 65532) by default.
-FROM gcr.io/distroless/static-debian12:nonroot
+# :nonroot variant runs as an unprivileged user (uid 65532) by default. Pinned by
+# digest (tag kept for readability); re-resolve with:
+#   docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:d093aa3e30dbadd3efe1310db061a14da60299baff8450a17fe0ccc514a16639
 
 COPY --from=builder /qsdev /qsdev
 

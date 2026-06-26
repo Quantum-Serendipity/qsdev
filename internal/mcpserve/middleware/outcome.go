@@ -53,3 +53,14 @@ func markDecision(ctx context.Context, d Decision) {
 		o.set = true
 	}
 }
+
+// MarkDecision is the exported entry point to markDecision for sibling-package
+// middleware that sits INSIDE the Audit layer (Order > 15) and must record its
+// short-circuit decision so Audit reports the precise reason rather than a
+// generic error. The gateway authorization interceptor
+// (internal/mcpserve/container) uses it on a denial. It delegates to
+// markDecision (first decision wins) and is a no-op without an installed
+// carrier; it introduces no behavior change to the built-in layers.
+func MarkDecision(ctx context.Context, d Decision) {
+	markDecision(ctx, d)
+}

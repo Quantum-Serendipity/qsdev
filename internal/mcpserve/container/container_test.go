@@ -246,8 +246,8 @@ func TestGatewayInterceptorBlocksAndAllows(t *testing.T) {
 	if ran {
 		t.Error("handler ran for an unauthenticated agent")
 	}
-	if res == nil || !res.IsError || !strings.Contains(res.Text, "authentication failed") {
-		t.Fatalf("intruder result = %+v, want auth-failure IsError", res)
+	if res == nil || !res.IsError || !strings.Contains(res.Text, "authorization failed") {
+		t.Fatalf("intruder result = %+v, want authz-failure IsError", res)
 	}
 
 	// Allowed agent: passes through to the handler.

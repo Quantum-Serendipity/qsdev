@@ -296,12 +296,19 @@ func roleToMCP(r spi.PromptRole) mcp.Role {
 }
 
 // callContext builds the request-scoped ToolCallContext: it resolves the
-// handshake client info from the session and the effective agent id (honoring
-// the optional _meta override).
+// handshake client info from the session and the authoritative agent id.
+//
+// Identity precedence (see authoritativeAgentID): a cryptographically-verified
+// transport identity (an mTLS client-certificate CN/SAN injected into ctx by the
+// cert-identity HTTP middleware) is authoritative and wins. Only the local
+// trusted (stdio) path, which carries no such identity, falls back to the
+// self-asserted _meta override / clientInfo.Name. The handshake client info is
+// retained on cc.Client purely as a non-security label (e.g. for audit/display);
+// it never determines authorization once a verified cert exists.
 func (s *Server) callContext(ctx context.Context, name string, meta map[string]any) *spi.ToolCallContext {
 	client := clientInfoFromContext(ctx)
 	return &spi.ToolCallContext{
-		AgentID:     resolveAgentID(client, meta),
+		AgentID:     authoritativeAgentID(ctx, client, meta),
 		Client:      client,
 		ProjectRoot: s.projectRoot,
 		ToolName:    name,

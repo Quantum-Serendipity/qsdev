@@ -11,41 +11,52 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 )
 
-// orderGatewayAuth places the gateway authentication layer OUTSIDE every
-// built-in middleware. It is below Guardrail's Order 20 (it must see the
-// request before authorization, rate limiting, or content safety) and below
-// ContextInjection's Order 10 so an unauthenticated request is rejected before
-// any inner layer runs. Lower Order() is more outer (see spi.Chain.Execute).
-const orderGatewayAuth = 5
+// orderGatewayAuth places the gateway AUTHORIZATION layer INSIDE the Audit layer
+// (Order 15) and OUTSIDE Guardrail (Order 20). Authentication itself now happens
+// at the TLS layer (the mTLS client-certificate CN/SAN becomes the authoritative
+// cc.AgentID; see internal/mcpserve identity/transport), so this layer no longer
+// authenticates — it authorizes the already-verified identity against the
+// allow-list. Sitting inside Audit (16 > 15) is deliberate: a denial here is
+// recorded by Audit (it marks the outcome DecisionDenied before short-circuiting)
+// rather than going unaudited as it would at the former outermost Order 5. It
+// stays outside Guardrail (16 < 20) so an un-allow-listed identity is rejected
+// before policy/rate-limit/content-safety run. Lower Order() is more outer (see
+// spi.Chain.Execute).
+const orderGatewayAuth = 16
 
-// unknownAgent mirrors the sentinel the universal server assigns when neither
-// the _meta override nor the handshake clientInfo yields an identity. The
-// gateway treats it as "no usable identity" and never admits it when auth is
-// required, regardless of allow-list contents.
+// unknownAgent mirrors the sentinel the universal server assigns when neither a
+// verified transport identity, the _meta override, nor the handshake clientInfo
+// yields an identity. The gateway treats it as "no usable identity" and never
+// admits it when auth is required, regardless of allow-list contents.
 const unknownAgent = "unknown"
 
-// GatewayInterceptor is the container-specific AUTHENTICATION layer (layer 1 of
-// the 4-layer Gateway enforcement). It is the only NEW middleware the gateway
-// adds; authorization, rate limiting, and content safety are reused verbatim
-// from the built-in middleware package (see GatewayChain). It validates the
-// request's resolved agent identity (cc.AgentID) against a configured
-// allow-list and short-circuits with a tool-level error result (IsError, never
-// a Go error — that would surface as a JSON-RPC protocol error) when the agent
-// is not permitted.
+// GatewayInterceptor is the container-specific AUTHORIZATION layer of the
+// Gateway enforcement chain. Authentication is performed at the TLS layer (mTLS
+// client certificates), which sets the cryptographically-verified caller
+// identity as cc.AgentID; this layer authorizes that verified identity against a
+// configured allow-list of trusted cert identities (CNs). It is the only NEW
+// middleware the gateway adds; rate limiting and content safety are reused
+// verbatim from the built-in middleware package (see GatewayChain). It
+// short-circuits with a tool-level error result (IsError, never a Go error —
+// that would surface as a JSON-RPC protocol error) when the verified identity is
+// not in the allow-list, and records the denial on the audit outcome so the
+// Audit layer (which wraps it) reports it as denied.
 type GatewayInterceptor struct {
-	// allowed is the set of agent ids permitted to call through the gateway.
+	// allowed is the set of trusted (verified) identities permitted to call
+	// through the gateway.
 	allowed map[string]struct{}
 	// requireAuth gates enforcement. When false the interceptor is a
 	// transparent pass-through (used when the gateway runs without an
-	// allow-list); when true an agent absent from allowed is denied, and an
-	// EMPTY allow-list therefore denies every agent (fail-closed).
+	// allow-list); when true an identity absent from allowed is denied, and an
+	// EMPTY allow-list therefore denies every caller (fail-closed).
 	requireAuth bool
 }
 
-// NewGatewayInterceptor builds an authentication interceptor from an allow-list
-// of agent ids. Blank entries are ignored. When requireAuth is true and the
-// resulting allow-list is empty, every request is denied (fail-closed) — the
-// caller is responsible for supplying agents when it turns enforcement on.
+// NewGatewayInterceptor builds an authorization interceptor from an allow-list
+// of trusted cert identities (CNs). Blank entries are ignored. When requireAuth
+// is true and the resulting allow-list is empty, every request is denied
+// (fail-closed) — the caller is responsible for supplying identities when it
+// turns enforcement on.
 func NewGatewayInterceptor(allowedAgents []string, requireAuth bool) *GatewayInterceptor {
 	allowed := make(map[string]struct{}, len(allowedAgents))
 	for _, a := range allowedAgents {
@@ -56,24 +67,28 @@ func NewGatewayInterceptor(allowedAgents []string, requireAuth bool) *GatewayInt
 	return &GatewayInterceptor{allowed: allowed, requireAuth: requireAuth}
 }
 
-// Order returns 5, the outermost position in a gateway chain.
+// Order returns orderGatewayAuth (16): inside Audit, outside Guardrail.
 func (*GatewayInterceptor) Order() int { return orderGatewayAuth }
 
-// Handle authenticates the caller, then continues the chain. A rejected caller
-// short-circuits: next is never invoked, so none of the inner enforcement
-// layers or the tool handler run for an unauthenticated request.
+// Handle authorizes the (TLS-authenticated) caller, then continues the chain. A
+// rejected caller short-circuits: next is never invoked, so none of the inner
+// enforcement layers or the tool handler run. Before returning the denial it
+// records DecisionDenied on the audit outcome so the Audit layer (Order 15,
+// which wraps this one) reports the call as denied rather than a generic error.
 func (g *GatewayInterceptor) Handle(ctx context.Context, cc *spi.ToolCallContext, req *spi.ToolRequest, next spi.ToolHandler) (*spi.ToolResult, error) {
-	if g.requireAuth && !g.authenticated(cc) {
+	if g.requireAuth && !g.authorized(cc) {
+		middleware.MarkDecision(ctx, middleware.DecisionDenied)
 		return &spi.ToolResult{
 			IsError: true,
-			Text:    fmt.Sprintf("gateway authentication failed: agent %q is not in the allowed-agents set", agentIDOf(cc)),
+			Text:    fmt.Sprintf("gateway authorization failed: identity %q is not in the allowed-agents set", agentIDOf(cc)),
 		}, nil
 	}
 	return next(ctx, cc, req)
 }
 
-// authenticated reports whether cc carries a usable, allow-listed identity.
-func (g *GatewayInterceptor) authenticated(cc *spi.ToolCallContext) bool {
+// authorized reports whether cc carries a usable, allow-listed (verified)
+// identity.
+func (g *GatewayInterceptor) authorized(cc *spi.ToolCallContext) bool {
 	id := agentIDOf(cc)
 	if id == "" || id == unknownAgent {
 		return false
@@ -91,12 +106,14 @@ func agentIDOf(cc *spi.ToolCallContext) string {
 }
 
 // GatewayOptions configures GatewayChain. The zero value yields a usable gateway
-// (stricter default limits, permissive-by-default authorization policy, no auth
-// enforcement). Set AllowedAgents + RequireAuth to turn authentication on.
+// (stricter default limits, permissive-by-default authorization policy, no
+// allow-list enforcement). Set AllowedAgents + RequireAuth to turn allow-list
+// authorization on (authentication itself is the mTLS layer, not this chain).
 type GatewayOptions struct {
-	// AllowedAgents is the authentication allow-list (see NewGatewayInterceptor).
+	// AllowedAgents is the allow-list of trusted (verified) identities (see
+	// NewGatewayInterceptor).
 	AllowedAgents []string
-	// RequireAuth turns the authentication layer from pass-through into
+	// RequireAuth turns the gateway authorization layer from pass-through into
 	// enforcing. With an empty AllowedAgents this denies all callers.
 	RequireAuth bool
 	// Policy overrides the Guardrail authorization policy. Nil keeps the
@@ -113,22 +130,28 @@ type GatewayOptions struct {
 	Redactor *logging.Redactor
 }
 
-// GatewayChain assembles the 4-layer Gateway enforcement chain and returns it as
-// a plain *spi.Chain the serve command installs in gateway mode.
+// GatewayChain assembles the Gateway enforcement chain and returns it as a plain
+// *spi.Chain the serve command installs in gateway mode. Authentication is NOT a
+// layer here — it is performed at the TLS layer (mTLS client certificates),
+// which sets the verified identity as cc.AgentID before any middleware runs.
 //
 // Layers, from outermost to innermost:
 //
-//  1. Authentication  — GatewayInterceptor (Order 5, NEW).
-//  2. Authorization   — middleware.Guardrail (Order 20, REUSED).
-//  3. Rate limiting   — middleware.RateLimit (Order 30, REUSED, stricter limits).
-//  4. Content safety  — middleware.ContentSafety (Order 45, REUSED).
+//	10  ContextInjection  (REUSED)
+//	15  Audit             (REUSED) — records every decision, incl. gateway denials
+//	16  GatewayAuthz      — GatewayInterceptor (NEW): allow-list authorization
+//	20  Guardrail         (REUSED) — policy authorization
+//	30  RateLimit         (REUSED, stricter limits)
+//	45  ContentSafety     (REUSED)
+//	50  ErrorHandling     (REUSED)
 //
-// It builds the full built-in chain via middleware.DefaultChain (which also
-// brings ContextInjection, Audit, and ErrorHandling — the gateway keeps those:
-// dropping them would lose request-context propagation, audit, and panic
-// recovery) and then wraps it with the authentication interceptor using
-// spi.Chain.With. Because Execute orders by Order(), the interceptor's Order 5
-// lands outermost without any manual re-ordering.
+// It builds the full built-in chain via middleware.DefaultChain (which brings
+// ContextInjection, Audit, and ErrorHandling — the gateway keeps those: dropping
+// them would lose request-context propagation, audit, and panic recovery) and
+// then wraps it with the authorization interceptor using spi.Chain.With. Because
+// Execute orders by Order(), the interceptor's Order 16 lands between Audit (15)
+// and Guardrail (20) without any manual re-ordering — so a denial it issues is
+// still recorded by Audit.
 func GatewayChain(opts GatewayOptions) *spi.Chain {
 	limits := opts.Limits
 	if limits.Limits == nil && limits.Default == (middleware.Limit{}) {

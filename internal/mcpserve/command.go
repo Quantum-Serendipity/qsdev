@@ -2,11 +2,14 @@ package mcpserve
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -23,14 +26,22 @@ import (
 // defaultHTTPPort is the port used by the http transport when --port is unset.
 const defaultHTTPPort = 8765
 
+// defaultBindHost is the address the HTTP transports bind by default. It is
+// loopback, so an out-of-the-box server is never reachable beyond the local
+// host; a non-loopback bind must be opted into (and then requires mTLS).
+const defaultBindHost = "127.0.0.1"
+
 // Deployment env keys honored as fallbacks for the corresponding flags. The
 // compose template (build/docker) sets QSDEV_DEPLOY_MODE; the gateway allow-list
 // is supplied via QSDEV_GATEWAY_AGENTS (comma-separated). QSDEV_GATEWAY_REQUIRE_AUTH
-// forces fail-closed authentication even with an empty allow-list.
+// forces fail-closed authentication even with an empty allow-list. QSDEV_BIND
+// overrides the bind host (default loopback). The mTLS material falls back to
+// the EnvTLS* keys defined in tlsconfig.go.
 const (
 	envDeployMode         = "QSDEV_DEPLOY_MODE"
 	envGatewayAgents      = "QSDEV_GATEWAY_AGENTS"
 	envGatewayRequireAuth = "QSDEV_GATEWAY_REQUIRE_AUTH"
+	envBind               = "QSDEV_BIND"
 )
 
 // serveOptions bundles the resolved serve-command inputs so runServe keeps a
@@ -41,6 +52,10 @@ type serveOptions struct {
 	projectRoot  string
 	port         int
 	multiAdapter bool
+	bind         string
+	tlsCert      string
+	tlsKey       string
+	tlsClientCA  string
 }
 
 // Command returns the `serve` subcommand for the `qsdev mcp` command group. It
@@ -78,6 +93,15 @@ func Command() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.multiAdapter, "multi-adapter", false,
 		"mount and expose every registered framework adapter regardless of project "+
 			"detection or client identity (testing/diagnostics)")
+	cmd.Flags().StringVar(&opts.bind, "bind", "",
+		"bind host for HTTP serving (default 127.0.0.1, loopback); a non-loopback "+
+			"bind requires mTLS material and is opt-in; falls back to QSDEV_BIND")
+	cmd.Flags().StringVar(&opts.tlsCert, "tls-cert", "",
+		"path to the server certificate (PEM) for mTLS; falls back to "+EnvTLSCert)
+	cmd.Flags().StringVar(&opts.tlsKey, "tls-key", "",
+		"path to the server private key (PEM) for mTLS; falls back to "+EnvTLSKey)
+	cmd.Flags().StringVar(&opts.tlsClientCA, "tls-client-ca", "",
+		"path to the client-CA bundle (PEM) verifying client certs; falls back to "+EnvTLSClientCA)
 
 	return cmd
 }
@@ -100,6 +124,22 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	if err != nil {
 		return err
 	}
+
+	// Resolve the bind host (loopback by default) and the mTLS material, then
+	// enforce the fail-closed network-exposure rules BEFORE any listener opens.
+	bindHost := resolveBindHost(opts.bind, os.Getenv(envBind))
+	material := resolveTLSMaterial(opts.tlsCert, opts.tlsKey, opts.tlsClientCA, os.Getenv)
+	if verr := validateServeSecurity(mode, t, bindHost, material); verr != nil {
+		return verr
+	}
+	var tlsConfig *tls.Config
+	if material.Complete() {
+		tlsConfig, err = material.ServerTLSConfig()
+		if err != nil {
+			return fmt.Errorf("building mTLS config: %w", err)
+		}
+	}
+	addr := net.JoinHostPort(bindHost, strconv.Itoa(opts.port))
 
 	// Force stderr logging: in stdio mode stdout carries the protocol, so every
 	// diagnostic must land on stderr instead. A logging failure is non-fatal.
@@ -138,7 +178,15 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := runTransport(ctx, srv, mode, t, opts.port); err != nil {
+	// Loudly flag any non-loopback exposure. Reaching here means it is already
+	// gated by validateServeSecurity (mTLS is present), but the operator should
+	// still see that the server is reachable beyond localhost.
+	if servesOverHTTP(mode, t) && !isLoopbackHost(bindHost) {
+		slog.Warn("binding a non-loopback address: the MCP server is reachable beyond localhost",
+			"addr", addr, "mtls", tlsConfig != nil)
+	}
+
+	if err := runTransport(ctx, srv, mode, t, addr, tlsConfig); err != nil {
 		// A cancelled context is the normal way the server stops on a signal;
 		// do not surface it as a command error.
 		if errors.Is(err, context.Canceled) {
@@ -185,16 +233,90 @@ func chainForMode(mode container.DeployMode) *spi.Chain {
 
 // runTransport dispatches to the transport for the resolved mode. Standalone
 // always serves over HTTP with a /health endpoint (orchestration needs a
-// non-MCP liveness signal); the other modes honor the --transport flag.
-func runTransport(ctx context.Context, srv *Server, mode container.DeployMode, t Transport, port int) error {
-	addr := fmt.Sprintf(":%d", port)
+// non-MCP liveness signal); the other modes honor the --transport flag. addr is
+// the resolved host:port and tlsConfig is the mTLS configuration (nil for plain
+// HTTP / stdio); both are produced and validated by runServe.
+func runTransport(ctx context.Context, srv *Server, mode container.DeployMode, t Transport, addr string, tlsConfig *tls.Config) error {
 	if mode == container.DeployStandalone {
-		return srv.ServeHTTPWithHealth(ctx, addr)
+		return srv.ServeHTTPWithHealth(ctx, addr, tlsConfig)
 	}
 	if t == TransportHTTP {
-		return srv.ServeHTTP(ctx, addr)
+		return srv.ServeHTTP(ctx, addr, tlsConfig)
 	}
 	return srv.ServeStdio(ctx)
+}
+
+// servesOverHTTP reports whether the resolved mode/transport opens a network
+// listener (standalone always serves HTTP; other modes do so only when the http
+// transport is selected). Stdio opens no socket — it is a local pipe (native, or
+// a docker-exec gateway admin channel) governed by the OS process boundary — so
+// the bind/TLS network rules below do not apply to it.
+func servesOverHTTP(mode container.DeployMode, t Transport) bool {
+	return mode == container.DeployStandalone || t == TransportHTTP
+}
+
+// resolveBindHost resolves the HTTP bind host: an explicit --bind flag wins,
+// then QSDEV_BIND, then the loopback default. A loopback default keeps an
+// out-of-the-box server unreachable beyond the local host.
+func resolveBindHost(flag, env string) string {
+	if h := strings.TrimSpace(flag); h != "" {
+		return h
+	}
+	if h := strings.TrimSpace(env); h != "" {
+		return h
+	}
+	return defaultBindHost
+}
+
+// isLoopbackHost reports whether host is a loopback bind. "localhost" and any
+// loopback IP literal (127.0.0.0/8, ::1) are loopback; an empty host (all
+// interfaces) or a non-loopback IP/hostname is NOT, and is treated fail-closed
+// (it requires mTLS).
+func isLoopbackHost(host string) bool {
+	host = strings.TrimSpace(host)
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// validateServeSecurity enforces the fail-closed network-exposure rules before a
+// listener opens. It returns a clear error describing the refusal:
+//
+//   - Incomplete mTLS material (some but not all of cert/key/client-CA) is a
+//     misconfiguration and is rejected outright on any HTTP path.
+//   - Gateway mode served over HTTP REQUIRES mTLS: the gateway fronts untrusted
+//     frameworks, and authentication is now the client certificate, so it must
+//     never expose an unauthenticated surface (even on loopback).
+//   - Any non-loopback HTTP bind REQUIRES mTLS, so the server is never reachable
+//     beyond localhost without client-certificate authentication.
+//   - A loopback HTTP bind in native/http (and standalone) without TLS is allowed
+//     — local trusted dev.
+//
+// Stdio opens no socket and is exempt (see servesOverHTTP).
+func validateServeSecurity(mode container.DeployMode, t Transport, bindHost string, material TLSMaterial) error {
+	if !servesOverHTTP(mode, t) {
+		return nil
+	}
+	if material.partiallyConfigured() {
+		return fmt.Errorf("incomplete mTLS material: set all of %s, %s, and %s (or none of them)",
+			EnvTLSCert, EnvTLSKey, EnvTLSClientCA)
+	}
+	tlsReady := material.Complete()
+	if mode == container.DeployGateway && !tlsReady {
+		return fmt.Errorf("gateway mode served over HTTP requires mTLS material "+
+			"(set %s, %s, and %s); refusing to start an unauthenticated gateway",
+			EnvTLSCert, EnvTLSKey, EnvTLSClientCA)
+	}
+	if !isLoopbackHost(bindHost) && !tlsReady {
+		return fmt.Errorf("binding non-loopback address %q over HTTP requires mTLS material "+
+			"(set %s, %s, and %s); refusing to expose an unauthenticated server",
+			bindHost, EnvTLSCert, EnvTLSKey, EnvTLSClientCA)
+	}
+	return nil
 }
 
 // splitAgents parses a comma-separated agent allow-list, dropping blanks.

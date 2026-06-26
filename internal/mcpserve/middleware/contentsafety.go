@@ -50,30 +50,7 @@ func (cs ContentSafety) Handle(ctx context.Context, cc *spi.ToolCallContext, req
 
 	res.Text = red.RedactString(res.Text)
 	if res.Structured != nil {
-		res.Structured = redactValue(red, res.Structured)
+		res.Structured = red.RedactStructured(res.Structured)
 	}
 	return res, nil
-}
-
-// redactValue walks a JSON-shaped value (maps, slices, strings) and redacts any
-// string it finds. Non-string, non-container leaves are returned unchanged.
-func redactValue(red *logging.Redactor, v any) any {
-	switch t := v.(type) {
-	case string:
-		return red.RedactString(t)
-	case map[string]any:
-		out := make(map[string]any, len(t))
-		for k, val := range t {
-			out[k] = redactValue(red, val)
-		}
-		return out
-	case []any:
-		out := make([]any, len(t))
-		for i, val := range t {
-			out[i] = redactValue(red, val)
-		}
-		return out
-	default:
-		return v
-	}
 }

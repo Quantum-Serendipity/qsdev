@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -69,6 +70,80 @@ func TestContentSafetyRedactsStructured(t *testing.T) {
 	}
 	if got["count"] != 42 {
 		t.Errorf("non-string leaf altered: %v", got["count"])
+	}
+}
+
+// TestContentSafetyRedactsConcreteTypedStructured proves the generalized
+// structured redaction (red.RedactStructured) reaches secrets hidden behind
+// CONCRETE container types — map[string]string, []string, []map[string]any — not
+// just the any-tree shape, and that a deny-listed key name redacts a plain
+// value. Secret-shaped fixtures use the awsKey convention; the URL credential is
+// assembled by concatenation so the contiguous "user:pass@" literal never lands
+// in source (ripsecrets).
+func TestContentSafetyRedactsConcreteTypedStructured(t *testing.T) {
+	t.Parallel()
+
+	dbURL := "postgres://" + "u:p" + "@h/x" // URL-credential shape; creds = "u:p"
+
+	structured := map[string]any{
+		"env":      map[string]string{"DB": dbURL},
+		"list":     []string{awsKey},
+		"rows":     []map[string]any{{"token": awsKey}},
+		"password": "hunter2",
+	}
+
+	out, err := runContentSafety(t, &spi.ToolResult{Text: "ok", Structured: structured}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, ok := out.Structured.(map[string]any)
+	if !ok {
+		t.Fatalf("structured type changed: %T", out.Structured)
+	}
+
+	// End-to-end: marshal the whole redacted tree and assert no raw secret
+	// survives anywhere in it.
+	blob, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal redacted structured: %v", err)
+	}
+	for _, secret := range []string{awsKey, "u:p@", "hunter2"} {
+		if strings.Contains(string(blob), secret) {
+			t.Errorf("secret %q survived redaction in %s", secret, blob)
+		}
+	}
+
+	// Copy-on-write preserves the concrete container types; assert each leaf.
+	env, ok := got["env"].(map[string]string)
+	if !ok {
+		t.Fatalf("env type changed: %T", got["env"])
+	}
+	if env["DB"] == dbURL {
+		t.Errorf("URL credentials in map[string]string not redacted: %q", env["DB"])
+	}
+	if strings.Contains(env["DB"], "://u:p@") {
+		t.Errorf("raw URL credentials survived in map[string]string: %q", env["DB"])
+	}
+
+	list, ok := got["list"].([]string)
+	if !ok {
+		t.Fatalf("list type changed: %T", got["list"])
+	}
+	if list[0] != "[REDACTED]" {
+		t.Errorf("secret token in []string not redacted: %q", list[0])
+	}
+
+	rows, ok := got["rows"].([]map[string]any)
+	if !ok {
+		t.Fatalf("rows type changed: %T", got["rows"])
+	}
+	if rows[0]["token"] != "[REDACTED]" {
+		t.Errorf("deny-listed key in []map[string]any not redacted: %v", rows[0]["token"])
+	}
+
+	if got["password"] != "[REDACTED]" {
+		t.Errorf("plain value under deny-listed key %q not redacted: %v", "password", got["password"])
 	}
 }
 

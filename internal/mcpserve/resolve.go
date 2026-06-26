@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -118,35 +119,28 @@ func configFileName() string {
 }
 
 // walkUpForFile walks from dir toward the filesystem root, returning the first
-// directory that directly contains a regular file named name.
+// directory that directly contains a regular file named name. It shares the
+// traversal logic with the rest of qsdev via logging.WalkUp, supplying its own
+// "regular file named name" marker predicate.
 func walkUpForFile(dir, name string) (string, bool) {
-	for {
-		if regularFileExists(filepath.Join(dir, name)) {
-			return dir, true
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", false
-		}
-		dir = parent
-	}
+	return logging.WalkUp(dir, func(d string) bool {
+		return regularFileExists(filepath.Join(d, name))
+	})
 }
 
 // walkUpForAny walks from dir toward the filesystem root, returning the first
-// directory that contains any of the given markers (file or directory).
+// directory that contains any of the given markers (file or directory). Like
+// walkUpForFile it delegates traversal to logging.WalkUp and keeps its own
+// "any marker present" predicate.
 func walkUpForAny(dir string, markers []string) (string, bool) {
-	for {
+	return logging.WalkUp(dir, func(d string) bool {
 		for _, m := range markers {
-			if pathExists(filepath.Join(dir, m)) {
-				return dir, true
+			if pathExists(filepath.Join(d, m)) {
+				return true
 			}
 		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", false
-		}
-		dir = parent
-	}
+		return false
+	})
 }
 
 func regularFileExists(path string) bool {

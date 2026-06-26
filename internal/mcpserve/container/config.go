@@ -33,6 +33,25 @@ const (
 	envDeployMode   = "QSDEV_DEPLOY_MODE"
 	envProjectRoot  = "QSDEV_PROJECT_ROOT"
 	envGatewayAgent = "QSDEV_GATEWAY_AGENTS"
+	// envTLSCert / envTLSKey / envTLSClientCA name the mTLS material the gateway
+	// requires to boot (fail-closed). The names mirror internal/mcpserve's
+	// tlsconfig.go EnvTLS* contract; they are redefined here — like
+	// QSDEV_DEPLOY_MODE / QSDEV_PROJECT_ROOT above — to avoid an import cycle.
+	envTLSCert     = "QSDEV_TLS_CERT"
+	envTLSKey      = "QSDEV_TLS_KEY"
+	envTLSClientCA = "QSDEV_TLS_CLIENT_CA"
+	// ContainerTLSCert / ContainerTLSKey / ContainerTLSClientCA are the in-container
+	// paths at which the mTLS material is mounted read-only.
+	ContainerTLSCert     = "/tls/server.crt"
+	ContainerTLSKey      = "/tls/server.key"
+	ContainerTLSClientCA = "/tls/client-ca.crt"
+	// GatewayBindAll is the reachable bind address the gateway uses so its
+	// published port is usable from outside the container. A non-loopback bind
+	// requires the mTLS material above, which the generated service supplies.
+	GatewayBindAll = "0.0.0.0"
+	// noNewPrivileges is the security_opt that prevents the container process from
+	// gaining privileges via setuid/setgid binaries.
+	noNewPrivileges = "no-new-privileges:true"
 )
 
 // FrameworkProfile is the minimal capability slice the generator needs to decide
@@ -228,6 +247,7 @@ type composeService struct {
 	Volumes     []string          `yaml:"volumes,omitempty"`
 	Environment map[string]string `yaml:"environment,omitempty"`
 	ReadOnly    bool              `yaml:"read_only,omitempty"`
+	SecurityOpt []string          `yaml:"security_opt,omitempty"`
 	Restart     string            `yaml:"restart,omitempty"`
 }
 
@@ -306,6 +326,13 @@ func gatewayFrameworks(profiles []FrameworkProfile) []aiframework.FrameworkID {
 }
 
 // renderCompose marshals the gateway service into a docker-compose fragment.
+//
+// The image ENTRYPOINT already supplies "/qsdev mcp serve", and docker APPENDS
+// command to (never replaces) the ENTRYPOINT, so command here carries ONLY flags
+// — a leading "mcp"/"serve" would double the subcommand. The service binds
+// 0.0.0.0 so the published port is reachable, and mounts the mTLS material the
+// gateway requires to boot: it fails closed (refuses to start) if any of the
+// cert/key/client-CA files is absent, so the secure path is the default.
 func renderCompose(service, image string, port int, hostPath string) (string, error) {
 	portMap := fmt.Sprintf("%d:%d", port, port)
 	cf := composeFile{
@@ -313,21 +340,38 @@ func renderCompose(service, image string, port int, hostPath string) (string, er
 			service: {
 				Image: image,
 				Command: []string{
-					"mcp", "serve",
 					"--deploy-mode", string(DeployGateway),
 					"--transport", "http",
 					"--port", strconv.Itoa(port),
 					"--project-root", ContainerWorkspace,
+					"--bind", GatewayBindAll,
 				},
-				Ports:   []string{portMap},
-				Volumes: []string{hostPath + ":" + ContainerWorkspace + ":ro"},
+				Ports: []string{portMap},
+				Volumes: []string{
+					hostPath + ":" + ContainerWorkspace + ":ro",
+					// mTLS material, read-only. Host paths default to ./tls/* so an
+					// operator drops their certs in and runs; override via env.
+					"${QSDEV_TLS_CERT:-./tls/server.crt}:" + ContainerTLSCert + ":ro",
+					"${QSDEV_TLS_KEY:-./tls/server.key}:" + ContainerTLSKey + ":ro",
+					"${QSDEV_TLS_CLIENT_CA:-./tls/client-ca.crt}:" + ContainerTLSClientCA + ":ro",
+				},
 				Environment: map[string]string{
-					envDeployMode:   string(DeployGateway),
-					envProjectRoot:  ContainerWorkspace,
-					envGatewayAgent: "", // operator fills the allow-list here
+					envDeployMode:  string(DeployGateway),
+					envProjectRoot: ContainerWorkspace,
+					// In-container paths to the mounted mTLS material. Authentication
+					// is the client certificate; the gateway will not start without
+					// all three files present (fail-closed).
+					envTLSCert:     ContainerTLSCert,
+					envTLSKey:      ContainerTLSKey,
+					envTLSClientCA: ContainerTLSClientCA,
+					// Authorization allow-list of client-cert CNs. Empty admits any
+					// certificate signed by the client CA; set it to restrict to
+					// named CNs. Authentication itself is mTLS (above), not this list.
+					envGatewayAgent: "",
 				},
-				ReadOnly: true,
-				Restart:  "unless-stopped",
+				ReadOnly:    true,
+				SecurityOpt: []string{noNewPrivileges},
+				Restart:     "unless-stopped",
 			},
 		},
 	}

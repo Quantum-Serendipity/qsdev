@@ -1,46 +1,71 @@
 # Universal qsdev MCP server — Gateway deployment (Phase 32, Unit 32.10).
 #
-# The gateway runs the container as an ENFORCING MCP proxy: it applies the
-# 4-layer enforcement (authentication, authorization, rate limiting, content
-# safety) even for frameworks that have no native pre-tool hooks. The project
-# directory is mounted READ-ONLY; the gateway never needs to write to it.
+# The gateway runs the container as an ENFORCING MCP proxy over mutual TLS: it
+# applies the 4-layer enforcement (authentication, authorization, rate limiting,
+# content safety) even for frameworks that have no native pre-tool hooks. The
+# project directory is mounted READ-ONLY; the gateway never needs to write to it.
+#
+#   * Authentication is mTLS: every client must present a certificate signed by
+#     the client-CA bundle. The gateway FAILS CLOSED — it refuses to start
+#     without the server cert, server key, and client-CA bundle.
+#   * Authorization is the CN allow-list (QSDEV_GATEWAY_AGENTS): empty admits any
+#     CA-issued client certificate; set it to restrict to named cert CNs.
 #
 # Usage:
 #   1. Build the image (from the repo root):
 #        docker build -f build/docker/Dockerfile -t qsdev-mcp-gateway .
-#   2. Set the allow-list and run:
+#   2. Provide the mTLS material. By default the service mounts
+#        ./tls/server.crt, ./tls/server.key, ./tls/client-ca.crt
+#      (override the host paths via QSDEV_TLS_CERT/KEY/CLIENT_CA). A missing file
+#      simply prevents start-up — the intended fail-closed behavior.
+#   3. (Optionally restrict to named client-cert CNs and) run:
 #        QSDEV_GATEWAY_AGENTS=claude-code,cursor docker compose \
 #          -f build/docker/docker-compose.gateway.yaml up
-#   3. Point a framework's .mcp.json at http://localhost:${QSDEV_GATEWAY_PORT}/mcp
+#   4. Point a framework's .mcp.json at https://localhost:${QSDEV_GATEWAY_PORT}/mcp
+#      Clients — and any /health probe — MUST present a client certificate, since
+#      mTLS is enforced uniformly:
+#        curl --cert client.crt --key client.key --cacert client-ca.crt \
+#          https://localhost:8765/health
 #
-# Override the image, port, project path, and allow-list via the environment
-# variables referenced below (all have sensible defaults).
+# Override the image, port, project path, allow-list, and host cert paths via the
+# environment variables referenced below (all have sensible defaults).
 
 services:
   qsdev-mcp-gateway:
     image: ${QSDEV_GATEWAY_IMAGE:-ghcr.io/quantum-serendipity/qsdev:latest}
-    # Serve the gateway over Streamable HTTP so multiple framework clients can
-    # connect to the same enforcing proxy.
+    # The image ENTRYPOINT already supplies "/qsdev mcp serve" and docker APPENDS
+    # command to it (it does NOT replace it), so command carries ONLY flags — a
+    # leading "mcp"/"serve" here would double the subcommand. Bind 0.0.0.0 so the
+    # published port is reachable; a non-loopback bind requires the mTLS material
+    # supplied below.
     command:
-      - mcp
-      - serve
       - --deploy-mode=gateway
       - --transport=http
       - --port=${QSDEV_GATEWAY_PORT:-8765}
       - --project-root=/workspace
+      - --bind=0.0.0.0
     ports:
       - "${QSDEV_GATEWAY_PORT:-8765}:${QSDEV_GATEWAY_PORT:-8765}"
     volumes:
       # Mount the host project read-only at the in-container workspace path.
       - "${QSDEV_PROJECT_DIR:-.}:/workspace:ro"
+      # mTLS material, mounted read-only. Drop your server cert/key and the
+      # client-CA bundle in ./tls/ (or point these vars at your own paths).
+      - "${QSDEV_TLS_CERT:-./tls/server.crt}:/tls/server.crt:ro"
+      - "${QSDEV_TLS_KEY:-./tls/server.key}:/tls/server.key:ro"
+      - "${QSDEV_TLS_CLIENT_CA:-./tls/client-ca.crt}:/tls/client-ca.crt:ro"
     environment:
       QSDEV_DEPLOY_MODE: gateway
       QSDEV_PROJECT_ROOT: /workspace
-      # Comma-separated agent allow-list. Authentication is enforced when this is
-      # non-empty (or QSDEV_GATEWAY_REQUIRE_AUTH=true); an empty value runs the
-      # gateway as a pass-through with the other three layers still active.
+      # In-container paths to the mounted mTLS material. The gateway fails closed
+      # if any of these is missing, so a missing cert simply prevents start-up.
+      QSDEV_TLS_CERT: /tls/server.crt
+      QSDEV_TLS_KEY: /tls/server.key
+      QSDEV_TLS_CLIENT_CA: /tls/client-ca.crt
+      # Authorization allow-list of client-certificate CNs (comma-separated).
+      # Empty admits any certificate signed by the client CA; set it to restrict
+      # to named CNs. Authentication itself is mTLS (above), not this list.
       QSDEV_GATEWAY_AGENTS: ${QSDEV_GATEWAY_AGENTS:-}
-      QSDEV_GATEWAY_REQUIRE_AUTH: ${QSDEV_GATEWAY_REQUIRE_AUTH:-false}
     # Harden the container: read-only root FS (the distroless image needs no
     # writes), no new privileges, and an automatic restart.
     read_only: true

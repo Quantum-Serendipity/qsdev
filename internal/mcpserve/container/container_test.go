@@ -156,6 +156,7 @@ func TestGenerateGatewayForHooklessFramework(t *testing.T) {
 			Ports       []string          `yaml:"ports"`
 			Volumes     []string          `yaml:"volumes"`
 			Environment map[string]string `yaml:"environment"`
+			SecurityOpt []string          `yaml:"security_opt"`
 		} `yaml:"services"`
 	}
 	if err := yaml.Unmarshal([]byte(art.ComposeYAML), &parsed); err != nil {
@@ -176,6 +177,39 @@ func TestGenerateGatewayForHooklessFramework(t *testing.T) {
 	}
 	if !containsStr(svc.Volumes, "/srv/project:"+ContainerWorkspace+":ro") {
 		t.Errorf("service volumes = %v, want read-only project mount", svc.Volumes)
+	}
+
+	// R18: the ENTRYPOINT already supplies `/qsdev mcp serve`, and docker APPENDS
+	// command to it — so command must carry ONLY flags. A leading `mcp`/`serve`
+	// would double the subcommand.
+	if len(svc.Command) == 0 || !strings.HasPrefix(svc.Command[0], "-") {
+		t.Fatalf("command must start with a flag (ENTRYPOINT supplies `mcp serve`); got %v", svc.Command)
+	}
+	for _, a := range svc.Command {
+		if a == "mcp" || a == "serve" {
+			t.Errorf("command carries leading subcommand %q (doubled argv vs ENTRYPOINT); got %v", a, svc.Command)
+		}
+	}
+	// R3: the generated gateway is the secure mTLS path — it must bind a reachable
+	// address and point at the mounted mTLS material.
+	if !commandBindsAll(svc.Command) {
+		t.Errorf("command missing --bind %s; got %v", GatewayBindAll, svc.Command)
+	}
+	for env, want := range map[string]string{
+		envTLSCert:     ContainerTLSCert,
+		envTLSKey:      ContainerTLSKey,
+		envTLSClientCA: ContainerTLSClientCA,
+	} {
+		if got := svc.Environment[env]; got != want {
+			t.Errorf("service env %s = %q, want %q (fail-closed mTLS path)", env, got, want)
+		}
+	}
+	if !containsStr(svc.Volumes, "${QSDEV_TLS_CERT:-./tls/server.crt}:"+ContainerTLSCert+":ro") {
+		t.Errorf("service volumes = %v, want a read-only server-cert mount", svc.Volumes)
+	}
+	// R19: hardening — security_opt no-new-privileges must be rendered.
+	if !containsStr(svc.SecurityOpt, noNewPrivileges) {
+		t.Errorf("service security_opt = %v, want %q", svc.SecurityOpt, noNewPrivileges)
 	}
 
 	// The .mcp.json entry must point at the container's HTTP port.
@@ -331,6 +365,21 @@ func TestGatewayChainReusedGuardrailRuns(t *testing.T) {
 func containsStr(list []string, want string) bool {
 	for _, v := range list {
 		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
+// commandBindsAll reports whether cmd requests a 0.0.0.0 bind in either the
+// "--bind=0.0.0.0" or the "--bind","0.0.0.0" form.
+func commandBindsAll(cmd []string) bool {
+	want := GatewayBindAll
+	for i, a := range cmd {
+		if a == "--bind="+want {
+			return true
+		}
+		if a == "--bind" && i+1 < len(cmd) && cmd[i+1] == want {
 			return true
 		}
 	}

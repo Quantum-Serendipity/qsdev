@@ -2,10 +2,20 @@ package security
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	awssdk "github.com/aws/aws-sdk-go-v2/aws"
+	ststypes "github.com/aws/aws-sdk-go-v2/service/sts/types"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 )
@@ -102,6 +112,50 @@ func TestPolicyCheckNotConfigured(t *testing.T) {
 	}
 }
 
+// TestPolicyCheckRejectsPathTraversal proves the policy_path argument is confined
+// to the project root: a relative or absolute path that escapes the root degrades
+// to a structured not_configured result (rather than reading an arbitrary host
+// file), while an in-root path still loads normally.
+func TestPolicyCheckRejectsPathTraversal(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeConfig(t, dir, policyFixture)
+	pc := newPolicyChecker(dir)
+
+	cases := []struct {
+		name       string
+		policyPath string
+		wantError  bool
+	}{
+		{name: "relative escape", policyPath: "../../../../etc/passwd", wantError: true},
+		{name: "absolute outside root", policyPath: "/etc/passwd", wantError: true},
+		{name: "sneaky middle escape", policyPath: "sub/../../outside.yaml", wantError: true},
+		{name: "in-root relative path", policyPath: ".qsdev.yaml", wantError: false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res := call(t, pc.handle, map[string]any{
+				"tool_name":   "semgrep",
+				"policy_path": tc.policyPath,
+			})
+			if tc.wantError {
+				if !res.IsError {
+					t.Fatalf("expected IsError for path %q", tc.policyPath)
+				}
+				if got := structuredMap(t, res)["status"]; got != "not_configured" {
+					t.Errorf("status = %v, want not_configured", got)
+				}
+				return
+			}
+			if res.IsError {
+				t.Fatalf("in-root path %q should be allowed, got error: %+v", tc.policyPath, res.Structured)
+			}
+		})
+	}
+}
+
 func TestPolicyCheckFastPath(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -129,6 +183,101 @@ func TestSecurityScanNotConfiguredWithoutLockFile(t *testing.T) {
 	if structuredMap(t, res)["status"] != "not_configured" {
 		t.Errorf("status = %v, want not_configured", structuredMap(t, res)["status"])
 	}
+}
+
+// TestSecurityScanFetchDetailsDeterministic proves that when more than
+// maxVulnDetailFetches unique vulnerabilities are present, the subset whose
+// details are fetched is deterministic (the lexicographically smallest ids) and
+// stable across repeated runs, so the downstream severity-floor filtering does
+// not vary run-to-run.
+func TestSecurityScanFetchDetailsDeterministic(t *testing.T) {
+	t.Parallel()
+
+	const total = maxVulnDetailFetches + 50
+	oneQuery := make([]string, total)
+	for i := range oneQuery {
+		oneQuery[i] = fmt.Sprintf("VULN-%04d", i)
+	}
+	idsByQuery := [][]string{oneQuery}
+
+	var mu sync.Mutex
+	requested := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/v1/vulns/")
+		mu.Lock()
+		requested[id]++
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(osvVuln{ID: id})
+	}))
+	defer srv.Close()
+
+	s := &securityScanner{baseURL: srv.URL, httpClient: srv.Client()}
+
+	first := s.fetchDetails(context.Background(), idsByQuery)
+	if len(first) != maxVulnDetailFetches {
+		t.Fatalf("fetched %d details, want %d", len(first), maxVulnDetailFetches)
+	}
+
+	// The fetched subset must be exactly the lexicographically smallest ids.
+	want := append([]string(nil), oneQuery...)
+	sort.Strings(want)
+	want = want[:maxVulnDetailFetches]
+	for _, id := range want {
+		if _, ok := first[id]; !ok {
+			t.Fatalf("expected smallest id %q to be fetched", id)
+		}
+	}
+
+	second := s.fetchDetails(context.Background(), idsByQuery)
+	if len(second) != len(first) {
+		t.Fatalf("second fetch size %d != first %d", len(second), len(first))
+	}
+	for id := range first {
+		if _, ok := second[id]; !ok {
+			t.Errorf("nondeterministic selection: id %q fetched first run but not second", id)
+		}
+	}
+}
+
+// TestAWSCredsResultNilCredentials proves the AWS vend path degrades to an error
+// result instead of panicking when STS returns a nil Credentials block. The
+// populated case uses secret-shaped values assembled by concatenation so the
+// ripsecrets scanner does not flag the fixture.
+func TestAWSCredsResultNilCredentials(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil credentials degrades to error", func(t *testing.T) {
+		t.Parallel()
+		res := awsCredsResult(nil)
+		if res == nil || !res.IsError {
+			t.Fatalf("expected error result, got %+v", res)
+		}
+		if got := structuredMap(t, res)["status"]; got != "error" {
+			t.Errorf("status = %v, want error", got)
+		}
+	})
+
+	t.Run("populated credentials returns success", func(t *testing.T) {
+		t.Parallel()
+		exp := time.Now().Add(time.Hour)
+		creds := &ststypes.Credentials{
+			AccessKeyId:     awssdk.String("AKIA" + "EXAMPLEFIXTURE"),
+			SecretAccessKey: awssdk.String("not" + "-a-real-secret"),
+			SessionToken:    awssdk.String("session" + "-fixture-token"),
+			Expiration:      &exp,
+		}
+		res := awsCredsResult(creds)
+		if res.IsError {
+			t.Fatalf("unexpected error result: %+v", res)
+		}
+		m := structuredMap(t, res)
+		if m["access_key_id"] != "AKIA"+"EXAMPLEFIXTURE" {
+			t.Errorf("access_key_id = %v", m["access_key_id"])
+		}
+		if m["expiration"] != exp.UTC().Format(time.RFC3339) {
+			t.Errorf("expiration = %v", m["expiration"])
+		}
+	})
 }
 
 func TestCredentialVendNotConfigured(t *testing.T) {

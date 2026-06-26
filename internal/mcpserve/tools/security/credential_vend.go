@@ -140,6 +140,19 @@ func (cv *credentialVendor) vendAWS(ctx context.Context, args map[string]any, tt
 		creds = out.Credentials
 	}
 
+	return awsCredsResult(creds), nil
+}
+
+// awsCredsResult shapes an STS Credentials block into a tool result. It guards
+// against a nil block first: STS returns the credentials as a pointer, and a
+// malformed or unexpected response (or a mocked client) could leave it nil, so
+// dereferencing it directly would panic. A nil block degrades to a clear error
+// result instead.
+func awsCredsResult(creds *ststypes.Credentials) *spi.ToolResult {
+	if creds == nil {
+		return toolutil.ErrorResult("AWS STS returned no credentials",
+			map[string]any{"provider": "aws"})
+	}
 	expiry := ""
 	if creds.Expiration != nil {
 		expiry = creds.Expiration.UTC().Format(time.RFC3339)
@@ -151,7 +164,7 @@ func (cv *credentialVendor) vendAWS(ctx context.Context, args map[string]any, tt
 		"session_token":     awssdk.ToString(creds.SessionToken),
 		"expiration":        expiry,
 	}
-	return toolutil.Result("aws: vended temporary STS credentials (expires "+expiry+")", structured), nil
+	return toolutil.Result("aws: vended temporary STS credentials (expires "+expiry+")", structured)
 }
 
 // vendGCP impersonates a service account via the IAM Credentials REST API,

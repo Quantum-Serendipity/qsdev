@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +40,34 @@ func newPolicyChecker(projectRoot string) *policyChecker {
 	}
 }
 
+// resolvePolicyPath confines the requested policy path to the project root. A
+// relative path is resolved against the root; an absolute path must still fall
+// within it. It returns the cleaned, absolute path and ok=true when the target
+// stays inside the root, or ok=false when the path escapes (path traversal). The
+// check is lexical (filepath.Abs/Clean/Rel), matching the workspace resolver, so
+// it does not require the target to exist before the containment decision.
+func (pc *policyChecker) resolvePolicyPath(policyPath string) (string, bool) {
+	root, err := filepath.Abs(pc.projectRoot)
+	if err != nil {
+		return "", false
+	}
+	candidate := policyPath
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(root, candidate)
+	}
+	candidate = filepath.Clean(candidate)
+
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return "", false
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", false
+	}
+	return candidate, true
+}
+
 // policyDecision is the evaluated verdict for a single tool.
 type policyDecision struct {
 	Tool     string `json:"tool"`
@@ -60,8 +89,18 @@ const (
 // handle evaluates the in-memory policy. With tool_name set it returns the
 // single decision for that tool; without it, it returns the full rule inventory.
 func (pc *policyChecker) handle(_ context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
-	policyPath := toolutil.StringArgOr(req.Arguments, "policy_path",
+	requestedPath := toolutil.StringArgOr(req.Arguments, "policy_path",
 		filepath.Join(pc.projectRoot, branding.Get().ConfigFile))
+
+	// Containment: a caller-supplied policy_path must resolve to a location
+	// within the project root. Without this an attacker could point the tool at
+	// any readable file on the host (path traversal). An escaping path degrades to
+	// not_configured rather than reading the file.
+	policyPath, ok := pc.resolvePolicyPath(requestedPath)
+	if !ok {
+		return toolutil.NotConfigured("policy_path escapes the project root",
+			map[string]any{"policy_path": requestedPath, "project_root": pc.projectRoot}), nil
+	}
 
 	project, local, err := pc.loadPolicy(policyPath)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -258,8 +259,14 @@ func (s *securityScanner) resolveVulns(ctx context.Context, pkgs []osvPackage, i
 }
 
 // fetchDetails retrieves the OSV record for every unique vulnerability id (up to
-// maxVulnDetailFetches), returning a map keyed by id. A failed or missing fetch
-// leaves a zero-value record so the vuln is still reported with unknown severity.
+// maxVulnDetailFetches), returning a map keyed by id. The ids are sorted before
+// truncation so the fetched subset is deterministic: the same input always
+// resolves details for the same vulnerabilities, keeping the severity-floor
+// filtering in resolveVulns stable run-to-run. A failed fetch leaves a
+// zero-value record; an id dropped by truncation is simply absent from the map.
+// Either way resolveVulns reads a zero-value osvVuln, so the vuln is still
+// reported (with unknown severity, which is always above the floor) rather than
+// silently dropped.
 func (s *securityScanner) fetchDetails(ctx context.Context, idsByQuery [][]string) map[string]osvVuln {
 	unique := make(map[string]struct{})
 	for _, ids := range idsByQuery {
@@ -268,13 +275,20 @@ func (s *securityScanner) fetchDetails(ctx context.Context, idsByQuery [][]strin
 		}
 	}
 
-	details := make(map[string]osvVuln, len(unique))
-	fetched := 0
+	ids := make([]string, 0, len(unique))
 	for id := range unique {
-		if fetched >= maxVulnDetailFetches {
-			break
-		}
-		fetched++
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	if len(ids) > maxVulnDetailFetches {
+		slog.Warn("security_scan: vulnerability detail fetch truncated; dropped vulns are reported with unknown severity",
+			"unique_vulns", len(ids), "fetch_limit", maxVulnDetailFetches)
+		ids = ids[:maxVulnDetailFetches]
+	}
+
+	details := make(map[string]osvVuln, len(ids))
+	for _, id := range ids {
 		if v, err := s.fetchVuln(ctx, id); err == nil {
 			details[id] = v
 		} else {

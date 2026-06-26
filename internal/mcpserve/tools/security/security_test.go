@@ -196,6 +196,11 @@ func TestSecurityScanRejectsPathTraversal(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte("requests==2.31.0\n"), 0o644); err != nil {
 		t.Fatalf("write requirements.txt: %v", err)
 	}
+	// outsideAbs is an absolute path in a sibling temp dir — outside the project
+	// root on every platform. A literal "/etc/passwd" is not portable here:
+	// filepath.IsAbs treats it as rooted-but-relative on Windows, so it would be
+	// joined under the root rather than rejected as an escape.
+	outsideAbs := filepath.Join(t.TempDir(), "go.sum")
 
 	// Stub OSV so the in-root scan succeeds without network access: an empty
 	// response reports zero vulnerabilities.
@@ -213,7 +218,7 @@ func TestSecurityScanRejectsPathTraversal(t *testing.T) {
 		wantError bool
 	}{
 		{name: "relative escape", manifest: "../../../../etc/passwd", wantError: true},
-		{name: "absolute outside root", manifest: "/etc/passwd", wantError: true},
+		{name: "absolute outside root", manifest: outsideAbs, wantError: true},
 		{name: "sneaky middle escape", manifest: "sub/../../outside/requirements.txt", wantError: true},
 		{name: "in-root relative path", manifest: "requirements.txt", wantError: false},
 	}

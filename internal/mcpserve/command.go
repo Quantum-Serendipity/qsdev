@@ -129,7 +129,7 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	// enforce the fail-closed network-exposure rules BEFORE any listener opens.
 	bindHost := resolveBindHost(opts.bind, os.Getenv(envBind))
 	material := resolveTLSMaterial(opts.tlsCert, opts.tlsKey, opts.tlsClientCA, os.Getenv)
-	if verr := validateServeSecurity(mode, t, bindHost, material); verr != nil {
+	if verr := validateServeSecurity(mode, t, bindHost, material, gatewayRequireAuth()); verr != nil {
 		return verr
 	}
 	var tlsConfig *tls.Config
@@ -221,14 +221,21 @@ func resolveRootForMode(mode container.DeployMode, flagRoot string) (string, err
 // chainForMode returns the middleware chain for the deployment mode.
 func chainForMode(mode container.DeployMode) *spi.Chain {
 	if mode == container.DeployGateway {
-		agents := splitAgents(os.Getenv(envGatewayAgents))
-		requireAuth := len(agents) > 0 || envTruthy(os.Getenv(envGatewayRequireAuth))
 		return container.GatewayChain(container.GatewayOptions{
-			AllowedAgents: agents,
-			RequireAuth:   requireAuth,
+			AllowedAgents: splitAgents(os.Getenv(envGatewayAgents)),
+			RequireAuth:   gatewayRequireAuth(),
 		})
 	}
 	return middleware.DefaultChain()
+}
+
+// gatewayRequireAuth reports whether gateway allow-list authorization is being
+// enforced: a non-empty agent allow-list, or an explicit QSDEV_GATEWAY_REQUIRE_AUTH.
+// It is the single source of truth shared by the gateway chain (chainForMode) and
+// the fail-closed startup validation (validateServeSecurity), so the two cannot
+// disagree about whether authorization is on.
+func gatewayRequireAuth() bool {
+	return len(splitAgents(os.Getenv(envGatewayAgents))) > 0 || envTruthy(os.Getenv(envGatewayRequireAuth))
 }
 
 // runTransport dispatches to the transport for the resolved mode. Standalone
@@ -296,8 +303,22 @@ func isLoopbackHost(host string) bool {
 //   - A loopback HTTP bind in native/http (and standalone) without TLS is allowed
 //     — local trusted dev.
 //
-// Stdio opens no socket and is exempt (see servesOverHTTP).
-func validateServeSecurity(mode container.DeployMode, t Transport, bindHost string, material TLSMaterial) error {
+// Stdio opens no socket and is exempt from the network rules — but gateway
+// allow-list authorization cannot be enforced there (see the requireAuth check
+// below), so that combination is refused first.
+func validateServeSecurity(mode container.DeployMode, t Transport, bindHost string, material TLSMaterial, requireAuth bool) error {
+	// Gateway allow-list authorization can only be ENFORCED on a transport that
+	// authenticates the caller (mTLS over HTTP). Over stdio the identity is
+	// self-asserted — resolveAgentID reads the client-supplied _meta/clientInfo —
+	// so the allow-list would gate on a forgeable value while appearing to enforce.
+	// Refuse the combination rather than offer false assurance: the stdio admin
+	// channel is governed by the OS process boundary.
+	if mode == container.DeployGateway && requireAuth && t == TransportStdio {
+		return fmt.Errorf("gateway allow-list authorization (%s / %s) cannot be enforced over "+
+			"stdio, where the client identity is self-asserted and forgeable; use --transport http "+
+			"with mTLS material (%s, %s, %s), or unset the allow-list to rely on the OS process boundary",
+			envGatewayAgents, envGatewayRequireAuth, EnvTLSCert, EnvTLSKey, EnvTLSClientCA)
+	}
 	if !servesOverHTTP(mode, t) {
 		return nil
 	}

@@ -7,7 +7,9 @@ import (
 	"errors"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -96,15 +98,16 @@ func (s *Server) ServeHTTPWithHealth(ctx context.Context, addr string, tlsConfig
 }
 
 // serveMux builds the transport's *http.Server around mux — applying the shared
-// cert-identity middleware, read-header timeout, and TLS config — and serves it
-// until ctx is cancelled, shutting down gracefully. Both HTTP entrypoints route
-// through it so the server's timeouts, middleware, and TLS wiring stay identical;
-// they differ only in how they populate mux. When tlsConfig is nil the listener
-// serves plain HTTP, which the serve command permits only on a loopback bind.
+// handler stack (cert-identity, plus a loopback Host/Origin guard on the
+// plain-HTTP path), read-header timeout, and TLS config — and serves it until
+// ctx is cancelled, shutting down gracefully. Both HTTP entrypoints route through
+// it so the server's timeouts, middleware, and TLS wiring stay identical; they
+// differ only in how they populate mux. When tlsConfig is nil the listener serves
+// plain HTTP, which the serve command permits only on a loopback bind.
 func (s *Server) serveMux(ctx context.Context, addr string, mux *http.ServeMux, tlsConfig *tls.Config) error {
 	httpSrv := &http.Server{
 		Addr:              addr,
-		Handler:           certIdentityMiddleware(mux),
+		Handler:           httpHandler(mux, tlsConfig),
 		ReadHeaderTimeout: httpReadHeaderTimeout,
 		TLSConfig:         tlsConfig,
 	}
@@ -161,6 +164,68 @@ func certIdentityMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// httpHandler composes the transport's handler stack. certIdentityMiddleware
+// always runs (it is a no-op on plain HTTP). On the plain-HTTP path
+// (tlsConfig == nil) the stack is additionally wrapped in loopbackGuard: plain
+// HTTP is only ever served on a loopback bind (validateServeSecurity enforces
+// this), so requiring a loopback Host/Origin there costs nothing and blocks
+// DNS-rebinding. Under mTLS the verified client certificate is the gate and the
+// operator may legitimately bind a non-loopback DNS name, so the guard is omitted
+// to avoid rejecting legitimate requests.
+func httpHandler(mux http.Handler, tlsConfig *tls.Config) http.Handler {
+	h := certIdentityMiddleware(mux)
+	if tlsConfig == nil {
+		h = loopbackGuard(h)
+	}
+	return h
+}
+
+// loopbackGuard rejects (403, before any tool handler runs) every request whose
+// Host header is not a loopback address, or whose Origin header is present and
+// not loopback. It defends the plain-HTTP transport against DNS-rebinding: a
+// rebound browser request carries the attacker's domain in Host (and Origin),
+// failing the loopback check. A request with no Origin — the usual non-browser
+// MCP client — is allowed. CORS would not suffice: it only withholds the response
+// from a cross-origin reader while a state-changing tool call still executes, so
+// rejecting the request outright is the actual defense.
+func loopbackGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !hostIsLoopback(r.Host) || !originIsLoopback(r.Header.Get("Origin")) {
+			http.Error(w, "forbidden: non-loopback Host or Origin", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// hostIsLoopback reports whether an HTTP Host header (host or host:port) names a
+// loopback address. An empty Host is rejected. It reuses isLoopbackHost so the
+// transport guard and the serve-time bind validation share one loopback
+// definition.
+func hostIsLoopback(host string) bool {
+	if host == "" {
+		return false
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return isLoopbackHost(host)
+}
+
+// originIsLoopback reports whether an Origin header is safe for the loopback
+// transport: an absent or opaque ("null") origin carries no cross-site browsing
+// context and is allowed; any other value must parse to a loopback host.
+func originIsLoopback(origin string) bool {
+	if origin == "" || origin == "null" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return isLoopbackHost(u.Hostname())
 }
 
 // handleHealth answers GET /health with 200 and a minimal JSON liveness body.

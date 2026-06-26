@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -60,6 +61,10 @@ func (s *securityScanner) handle(ctx context.Context, _ *spi.ToolCallContext, re
 	}
 
 	pkgs, lockPath, err := s.collectDeps(req.Arguments)
+	if errors.Is(err, errManifestEscapesRoot) {
+		return toolutil.NotConfigured("manifest_path escapes the project root",
+			map[string]any{"manifest_path": lockPath, "project_root": s.projectRoot}), nil
+	}
 	if err != nil {
 		return toolutil.NotConfigured("could not read lock file",
 			map[string]any{"path": lockPath, "error": err.Error()}), nil
@@ -95,16 +100,28 @@ func (s *securityScanner) handle(ctx context.Context, _ *spi.ToolCallContext, re
 	return toolutil.Result(text, structured), nil
 }
 
+// errManifestEscapesRoot is returned by collectDeps when a caller-supplied
+// manifest_path resolves outside the project root; handle degrades it to a
+// not_configured result rather than reading the out-of-tree file.
+var errManifestEscapesRoot = errors.New("manifest_path escapes the project root")
+
 // collectDeps resolves the dependency set either from an explicit manifest_path
 // argument or by auto-detecting a lock file under the project root.
 func (s *securityScanner) collectDeps(args map[string]any) ([]osvPackage, string, error) {
 	if mp, ok := toolutil.StringArg(args, "manifest_path"); ok && mp != "" {
-		lf, ok := lockFileForPath(mp)
+		// Confine a caller-supplied manifest_path to the project root. Without
+		// this the tool would open (and report dependency coordinates from) any
+		// lock-file-named path on the host (path traversal).
+		resolved, ok := toolutil.ConfineToRoot(s.projectRoot, mp)
 		if !ok {
-			return nil, mp, fmt.Errorf("unsupported lock file %q", mp)
+			return nil, mp, errManifestEscapesRoot
 		}
-		pkgs, err := lf.parse(mp)
-		return pkgs, mp, err
+		lf, ok := lockFileForPath(resolved)
+		if !ok {
+			return nil, resolved, fmt.Errorf("unsupported lock file %q", mp)
+		}
+		pkgs, err := lf.parse(resolved)
+		return pkgs, resolved, err
 	}
 	lf, path, ok := detectLockFile(s.projectRoot)
 	if !ok {

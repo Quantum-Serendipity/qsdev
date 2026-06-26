@@ -185,6 +185,63 @@ func TestSecurityScanNotConfiguredWithoutLockFile(t *testing.T) {
 	}
 }
 
+// TestSecurityScanRejectsPathTraversal proves the manifest_path argument is
+// confined to the project root: a relative or absolute path that escapes the
+// root degrades to a structured not_configured result (rather than reading an
+// out-of-tree lock file), while an in-root path still scans. The OSV endpoint is
+// stubbed so the in-root happy path completes offline.
+func TestSecurityScanRejectsPathTraversal(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte("requests==2.31.0\n"), 0o644); err != nil {
+		t.Fatalf("write requirements.txt: %v", err)
+	}
+
+	// Stub OSV so the in-root scan succeeds without network access: an empty
+	// response reports zero vulnerabilities.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(osvBatchResponse{})
+	}))
+	// t.Cleanup (not defer): the parallel subtests below run after this function
+	// returns, so a defer would close the stub before they make their request.
+	t.Cleanup(srv.Close)
+	scanner := &securityScanner{projectRoot: dir, baseURL: srv.URL, httpClient: srv.Client()}
+
+	cases := []struct {
+		name      string
+		manifest  string
+		wantError bool
+	}{
+		{name: "relative escape", manifest: "../../../../etc/passwd", wantError: true},
+		{name: "absolute outside root", manifest: "/etc/passwd", wantError: true},
+		{name: "sneaky middle escape", manifest: "sub/../../outside/requirements.txt", wantError: true},
+		{name: "in-root relative path", manifest: "requirements.txt", wantError: false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res := call(t, scanner.handle, map[string]any{"manifest_path": tc.manifest})
+			if tc.wantError {
+				if !res.IsError {
+					t.Fatalf("expected IsError for escaping path %q", tc.manifest)
+				}
+				m := structuredMap(t, res)
+				if m["status"] != "not_configured" {
+					t.Errorf("status = %v, want not_configured", m["status"])
+				}
+				if m["reason"] != "manifest_path escapes the project root" {
+					t.Errorf("reason = %v, want manifest_path escape reason", m["reason"])
+				}
+				return
+			}
+			if res.IsError {
+				t.Fatalf("in-root path %q should scan, got error: %+v", tc.manifest, res.Structured)
+			}
+		})
+	}
+}
+
 // TestSecurityScanFetchDetailsDeterministic proves that when more than
 // maxVulnDetailFetches unique vulnerabilities are present, the subset whose
 // details are fetched is deterministic (the lexicographically smallest ids) and

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -40,32 +39,13 @@ func newPolicyChecker(projectRoot string) *policyChecker {
 	}
 }
 
-// resolvePolicyPath confines the requested policy path to the project root. A
-// relative path is resolved against the root; an absolute path must still fall
-// within it. It returns the cleaned, absolute path and ok=true when the target
-// stays inside the root, or ok=false when the path escapes (path traversal). The
-// check is lexical (filepath.Abs/Clean/Rel), matching the workspace resolver, so
-// it does not require the target to exist before the containment decision.
+// resolvePolicyPath confines the requested policy path to the project root,
+// delegating to the shared toolutil.ConfineToRoot primitive so policy_check and
+// security_scan apply identical containment. It returns the cleaned, absolute
+// path and ok=true when the target stays inside the root, or ok=false when the
+// path escapes (path traversal).
 func (pc *policyChecker) resolvePolicyPath(policyPath string) (string, bool) {
-	root, err := filepath.Abs(pc.projectRoot)
-	if err != nil {
-		return "", false
-	}
-	candidate := policyPath
-	if !filepath.IsAbs(candidate) {
-		candidate = filepath.Join(root, candidate)
-	}
-	candidate = filepath.Clean(candidate)
-
-	rel, err := filepath.Rel(root, candidate)
-	if err != nil {
-		return "", false
-	}
-	rel = filepath.ToSlash(rel)
-	if rel == ".." || strings.HasPrefix(rel, "../") {
-		return "", false
-	}
-	return candidate, true
+	return toolutil.ConfineToRoot(pc.projectRoot, policyPath)
 }
 
 // policyDecision is the evaluated verdict for a single tool.

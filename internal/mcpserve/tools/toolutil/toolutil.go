@@ -10,6 +10,7 @@ package toolutil
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -187,4 +188,34 @@ func JoinOrNone(items []string) string {
 		return "(none)"
 	}
 	return strings.Join(items, ", ")
+}
+
+// ConfineToRoot confines candidate to root and returns the cleaned, absolute
+// path when it stays inside root, or ok=false when it escapes (path traversal).
+// A relative candidate is resolved against root; an absolute candidate must
+// still fall within it. The check is lexical (filepath.Abs/Clean/Rel), so it
+// does not require the target to exist before the containment decision. It is
+// the single path-containment primitive shared by the file-reading tools
+// (policy_check, security_scan), so every caller-supplied path is confined
+// identically and an escaping path can be degraded to not_configured rather than
+// reading an arbitrary host file.
+func ConfineToRoot(root, candidate string) (string, bool) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", false
+	}
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(absRoot, candidate)
+	}
+	candidate = filepath.Clean(candidate)
+
+	rel, err := filepath.Rel(absRoot, candidate)
+	if err != nil {
+		return "", false
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", false
+	}
+	return candidate, true
 }

@@ -10,11 +10,20 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 )
+
+// envRedactor is the shared value-level secret scrubber, built once (it compiles
+// a set of regexes). A variable can pass the name filter yet still carry a secret
+// in its VALUE — e.g. DATABASE_URL=postgres://user:pass@host or a token-shaped
+// value in a generically-named var — so every emitted value is run through it to
+// strip URL userinfo and secret-shaped patterns.
+var envRedactor = sync.OnceValue(logging.NewRedactor)
 
 // envInfo probes the development environment: PATH composition, listening TCP
 // ports, the qsdev-managed tool catalog, and a filtered view of the process
@@ -205,11 +214,13 @@ func (e *envInfo) probeTools() map[string]any {
 }
 
 // probeEnv returns a filtered snapshot of the process environment: the values of
-// non-sensitive variables, plus the names (never values) of variables whose
-// names match a sensitive pattern.
+// non-sensitive variables (each run through the value-level secret scrubber so an
+// embedded credential — e.g. user:pass@ in a DSN — is stripped), plus the names
+// (never values) of variables whose names match a sensitive pattern.
 func probeEnv() map[string]any {
 	safe := map[string]string{}
 	var filtered []string
+	r := envRedactor()
 	for _, kv := range os.Environ() {
 		name, value, ok := strings.Cut(kv, "=")
 		if !ok {
@@ -219,7 +230,7 @@ func probeEnv() map[string]any {
 			filtered = append(filtered, name)
 			continue
 		}
-		safe[name] = value
+		safe[name] = r.RedactString(value)
 	}
 	sort.Strings(filtered)
 	return map[string]any{

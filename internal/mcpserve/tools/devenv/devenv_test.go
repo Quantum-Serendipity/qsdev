@@ -66,6 +66,36 @@ func TestEnvInfoReturnsPathAndFiltersSecrets(t *testing.T) {
 	}
 }
 
+// TestEnvInfoRedactsURLCredentials proves env_info scrubs credentials embedded in
+// a variable VALUE even when the variable NAME passes the sensitive-name filter
+// (e.g. DATABASE_URL=postgres://user:pass@host) — the name-only filter alone would
+// emit the userinfo verbatim.
+func TestEnvInfoRedactsURLCredentials(t *testing.T) {
+	// Split so the credential is never a contiguous literal (ripsecrets) yet the
+	// runtime value still exercises the URL-credential redaction path.
+	user, pass := "appuser", "s3cret"+"pw"
+	dsn := "postgres://" + user + ":" + pass + "@pg.example.com:5432/maindb"
+	t.Setenv("DATABASE_URL", dsn)
+
+	env := newEnvInfo(t.TempDir())
+	res := call(t, env.handle, map[string]any{"probe": "env"})
+
+	blob, err := json.Marshal(res.Structured)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	out := string(blob)
+	if strings.Contains(out, pass) {
+		t.Errorf("env_info leaked embedded DSN password: %s", out)
+	}
+	if strings.Contains(out, user) {
+		t.Errorf("env_info leaked embedded DSN username: %s", out)
+	}
+	if !strings.Contains(out, "pg.example.com") {
+		t.Errorf("expected DSN host to be preserved: %s", out)
+	}
+}
+
 func TestEnvInfoUnknownProbe(t *testing.T) {
 	t.Parallel()
 	env := newEnvInfo(t.TempDir())

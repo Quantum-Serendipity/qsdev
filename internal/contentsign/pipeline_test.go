@@ -166,3 +166,40 @@ func TestIngestDevDocs_NoChangeLeavesFile(t *testing.T) {
 		t.Errorf("content changed unexpectedly: %+v", parsed)
 	}
 }
+
+// TestIngestDevDocs_NormalizesNFKCBypass proves ingest forces NFKC ON regardless
+// of the caller's opts, so fullwidth-obfuscated markup is folded to ASCII BEFORE
+// the HTML scrub and removed — a bypass that would survive the lossless default
+// (NFKC off).
+func TestIngestDevDocs_NormalizesNFKCBypass(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Fullwidth '＜' (U+FF1C) / '＞' (U+FF1E) dodge the literal-ASCII HTML regexps
+	// until NFKC folds them to '<' '>'.
+	raw := "{\"body\":\"＜script＞alert(1)＜/script＞\"}"
+	dbPath := filepath.Join(dir, "db.json")
+	if err := os.WriteFile(dbPath, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// DefaultSanitizeOptions has NFKC OFF; ingest must force it ON.
+	report, err := IngestDevDocs(context.Background(), dir, DefaultSanitizeOptions())
+	if err != nil {
+		t.Fatalf("IngestDevDocs: %v", err)
+	}
+	if !report.NFKCChanged {
+		t.Error("expected NFKCChanged: ingest must force NFKC on for external prose")
+	}
+
+	out, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]string
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("output not valid JSON: %v", err)
+	}
+	if parsed["body"] != "" {
+		t.Errorf("fullwidth-obfuscated script markup survived ingest: %q", parsed["body"])
+	}
+}

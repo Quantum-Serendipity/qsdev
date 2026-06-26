@@ -27,7 +27,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
@@ -197,13 +196,13 @@ func (a *Adapter) handleInfo(ctx context.Context, cc *spi.ToolCallContext, _ *sp
 		"config_convention": a.desc.ConfigConvention,
 		"markers_present":   a.Applies(ctx, cc.ProjectRoot),
 		"languages":         langs,
-		"ecosystems":        sortedTrueKeys(det.Ecosystems),
+		"ecosystems":        toolutil.SortedTrueKeys(det.Ecosystems),
 		"container_runtime": det.ContainerRuntime,
 		"os_family":         det.OSFamily,
 		"is_git_repo":       det.IsGitRepo,
 	}
 	text := fmt.Sprintf("%s project info for %s: languages %s (config convention: %s)",
-		a.desc.Label, cc.ProjectRoot, joinOrNone(langs), a.desc.ConfigConvention)
+		a.desc.Label, cc.ProjectRoot, toolutil.JoinOrNone(langs), a.desc.ConfigConvention)
 	return &spi.ToolResult{Text: text, Structured: structured}, nil
 }
 
@@ -235,24 +234,4 @@ func (a *Adapter) handleConfig(_ context.Context, cc *spi.ToolCallContext, _ *sp
 // structured content. It is fully real research data carried on the descriptor.
 func (a *Adapter) handleCapabilities(_ context.Context, _ *spi.ToolCallContext, _ *spi.ToolRequest) (*spi.ToolResult, error) {
 	return &spi.ToolResult{Text: a.desc.CapabilitiesText, Structured: a.desc.Capabilities}, nil
-}
-
-// sortedTrueKeys returns the keys of m whose value is true, sorted.
-func sortedTrueKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k, v := range m {
-		if v {
-			out = append(out, k)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// joinOrNone joins s with ", " or returns "none" when empty.
-func joinOrNone(s []string) string {
-	if len(s) == 0 {
-		return "none"
-	}
-	return strings.Join(s, ", ")
 }

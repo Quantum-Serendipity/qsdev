@@ -13,6 +13,10 @@ import (
 
 const redacted = "[REDACTED]"
 
+// redactedReflectVal is the redaction marker as a reflect.Value, computed once
+// so the per-map-node redaction walk does not re-box the string on every call.
+var redactedReflectVal = reflect.ValueOf(redacted)
+
 // Redactor scrubs secret values from log attributes.
 type Redactor struct {
 	valuePatterns []*regexp.Regexp
@@ -248,7 +252,6 @@ func (r *Redactor) redactMap(rv reflect.Value) (reflect.Value, bool) {
 	}
 	stringKey := rv.Type().Key().Kind() == reflect.String
 	elemType := rv.Type().Elem()
-	redactedVal := reflect.ValueOf(redacted)
 
 	var out reflect.Value
 	changed := false
@@ -270,7 +273,7 @@ func (r *Redactor) redactMap(rv reflect.Value) (reflect.Value, bool) {
 		val := iter.Value()
 
 		if stringKey && r.isKeyDenied(k.String()) {
-			if rep, ok := assignableRedaction(redactedVal, elemType); ok {
+			if rep, ok := assignableRedaction(redactedReflectVal, elemType); ok {
 				ensureCopy()
 				out.SetMapIndex(k, rep)
 				continue

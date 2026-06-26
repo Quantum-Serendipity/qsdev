@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/BurntSushi/toml"
 
@@ -63,14 +64,19 @@ var lockParsers = map[string]lockParser{
 	"requirements.txt":  parseRequirementsTxt,
 }
 
-// knownLockFiles enumerates the lock files security_scan can extract pinned
-// dependency versions from. The set is derived from the canonical
+// knownLockFiles returns the memoized lock-file table. The table is invariant
+// (derived only from static package-level catalogs), so it is built once on
+// first use and shared read-only by detectLockFile and lockFileForPath.
+var knownLockFiles = sync.OnceValue(buildKnownLockFiles)
+
+// buildKnownLockFiles builds the table of lock files security_scan can extract
+// pinned dependency versions from. The set is derived from the canonical
 // ecosystem.LockFilesByEcosystem metadata intersected with the parser registry
 // and the OSV ecosystem map, so coverage stays in sync with pkg/ecosystem as
 // ecosystems are added there. The order is deterministic: ecosystems are visited
 // alphabetically, and within an ecosystem dedicated lock files are preferred over
 // loose manifests (e.g. poetry.lock and uv.lock before requirements.txt).
-func knownLockFiles() []lockFile {
+func buildKnownLockFiles() []lockFile {
 	ecos := make([]string, 0, len(ecosystem.LockFilesByEcosystem))
 	for eco := range ecosystem.LockFilesByEcosystem {
 		ecos = append(ecos, eco)
@@ -88,7 +94,6 @@ func knownLockFiles() []lockFile {
 			if !ok {
 				continue // no parser for this lock format yet
 			}
-			parser, osvEco := parser, osvEco // capture per iteration
 			out = append(out, lockFile{
 				name:      name,
 				ecosystem: osvEco,

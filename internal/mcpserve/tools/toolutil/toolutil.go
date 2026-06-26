@@ -10,6 +10,8 @@ package toolutil
 
 import (
 	"encoding/json"
+	"sort"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -161,4 +163,28 @@ func langLabel(name, version string) string {
 		return name + " " + version
 	}
 	return name
+}
+
+// SortedTrueKeys returns the keys of m whose value is true, sorted. It is the
+// single map[string]bool->present-keys helper shared by the generic project
+// context surface (qsdev_project_info / qsdev_detect) and the framework stub
+// adapters, so both report the same ecosystem/flag set for a project.
+func SortedTrueKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k, v := range m {
+		if v {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// JoinOrNone joins items with ", ", or returns "(none)" when the slice is empty.
+// It is shared so every detection summary renders an empty list identically.
+func JoinOrNone(items []string) string {
+	if len(items) == 0 {
+		return "(none)"
+	}
+	return strings.Join(items, ", ")
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -266,7 +265,7 @@ func detectionSummary(root string, d types.DetectedProject) (string, map[string]
 	langs := toolutil.DetectedLanguages(d)
 	frameworks := detectedFrameworks(d)
 	ai := detectedAIFrameworks(d)
-	ecosystems := sortedTrueKeys(d.Ecosystems)
+	ecosystems := toolutil.SortedTrueKeys(d.Ecosystems)
 
 	structured := map[string]any{
 		"project_root":      root,
@@ -281,10 +280,10 @@ func detectionSummary(root string, d types.DetectedProject) (string, map[string]
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Project: %s\n", root)
-	fmt.Fprintf(&b, "Languages: %s\n", joinOrNone(langs))
-	fmt.Fprintf(&b, "Frameworks/tools: %s\n", joinOrNone(frameworks))
-	fmt.Fprintf(&b, "AI frameworks: %s\n", joinOrNone(ai))
-	fmt.Fprintf(&b, "Ecosystems: %s\n", joinOrNone(ecosystems))
+	fmt.Fprintf(&b, "Languages: %s\n", toolutil.JoinOrNone(langs))
+	fmt.Fprintf(&b, "Frameworks/tools: %s\n", toolutil.JoinOrNone(frameworks))
+	fmt.Fprintf(&b, "AI frameworks: %s\n", toolutil.JoinOrNone(ai))
+	fmt.Fprintf(&b, "Ecosystems: %s\n", toolutil.JoinOrNone(ecosystems))
 	if d.ContainerRuntime != "" {
 		fmt.Fprintf(&b, "Container runtime: %s\n", d.ContainerRuntime)
 	}
@@ -315,22 +314,4 @@ func detectedAIFrameworks(d types.DetectedProject) []string {
 		out = append(out, "mcp")
 	}
 	return out
-}
-
-func sortedTrueKeys(m map[string]bool) []string {
-	var keys []string
-	for k, v := range m {
-		if v {
-			keys = append(keys, k)
-		}
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func joinOrNone(items []string) string {
-	if len(items) == 0 {
-		return "(none)"
-	}
-	return strings.Join(items, ", ")
 }

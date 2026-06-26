@@ -68,13 +68,7 @@ func (s *Server) ServeHTTP(ctx context.Context, addr string, tlsConfig *tls.Conf
 	mux := http.NewServeMux()
 	mux.Handle(mcpEndpointPath, streamable)
 
-	httpSrv := &http.Server{
-		Addr:              addr,
-		Handler:           certIdentityMiddleware(mux),
-		ReadHeaderTimeout: httpReadHeaderTimeout,
-		TLSConfig:         tlsConfig,
-	}
-	return serveHTTPWithShutdown(ctx, httpSrv, tlsConfig != nil)
+	return s.serveMux(ctx, addr, mux, tlsConfig)
 }
 
 // ServeHTTPWithHealth runs the server over Streamable HTTP on addr AND exposes a
@@ -98,6 +92,16 @@ func (s *Server) ServeHTTPWithHealth(ctx context.Context, addr string, tlsConfig
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.Handle("/", streamable)
 
+	return s.serveMux(ctx, addr, mux, tlsConfig)
+}
+
+// serveMux builds the transport's *http.Server around mux — applying the shared
+// cert-identity middleware, read-header timeout, and TLS config — and serves it
+// until ctx is cancelled, shutting down gracefully. Both HTTP entrypoints route
+// through it so the server's timeouts, middleware, and TLS wiring stay identical;
+// they differ only in how they populate mux. When tlsConfig is nil the listener
+// serves plain HTTP, which the serve command permits only on a loopback bind.
+func (s *Server) serveMux(ctx context.Context, addr string, mux *http.ServeMux, tlsConfig *tls.Config) error {
 	httpSrv := &http.Server{
 		Addr:              addr,
 		Handler:           certIdentityMiddleware(mux),

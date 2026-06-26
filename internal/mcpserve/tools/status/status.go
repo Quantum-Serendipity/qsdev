@@ -79,12 +79,16 @@ func (s *statusChecker) handle(_ context.Context, _ *spi.ToolCallContext, req *s
 
 	s.mu.Lock()
 	unchanged := s.stateUnchangedLocked()
-	// Copy the cache under the lock so the caller cannot mutate it and a
-	// concurrent Tier 2 swap cannot race the read.
-	cached := copyStatus(s.cachedStatus)
+	useTier1 := tier == "1" || (tier == "auto" && unchanged)
+	// Copy the cache under the lock (only when we will actually return it) so the
+	// caller cannot mutate it and a concurrent Tier 2 swap cannot race the read.
+	var cached map[string]any
+	if useTier1 {
+		cached = copyStatus(s.cachedStatus)
+	}
 	s.mu.Unlock()
 
-	if tier == "1" || (tier == "auto" && unchanged) {
+	if useTier1 {
 		text := fmt.Sprintf("status (tier 1, cached): %d drift item(s)", driftCount(cached))
 		return toolutil.Result(text, cached), nil
 	}

@@ -1,37 +1,33 @@
 package middleware
 
-// The 19-category taxonomy.
+// Tool category taxonomy.
 //
-// Unit 32.8 references a "19 categories from the design spike" but the cited
-// spike (research-spikes/gdev-universal-mcp-server-design) is not present in the
-// repository, so neither the exact category names nor their rate-limit defaults
-// are recoverable. The taxonomy below is a principled 19-category set covering
-// the tool surface a universal dev-tooling MCP server exposes (the seven tools
-// named in Units 32.9 — credential_vend, security_scan, policy_check, env_info,
-// nix_run, gdev_status, gdev_doctor — plus the generic dev-tool categories an
-// adapter ecosystem needs). Tools are mapped to a category via
-// spi.ToolRegistration.Category; an unknown/empty category falls back to
-// CategoryGeneral and the default limit.
+// The set below is intentionally limited to the categories that are actually
+// assigned to a registered tool, depended on by the Guardrail default policy, or
+// exercised by the rate-limit/guardrail tests — plus CategoryGeneral, the
+// default bucket for uncategorized or unknown categories. An earlier draft
+// carried a speculative 19-category taxonomy (the design spike that would have
+// pinned the full list, research-spikes/gdev-universal-mcp-server-design, is not
+// in the repository); the unassigned categories and their dead rate-limit table
+// entries were pruned. Adding a new tool that needs a category simply re-adds its
+// constant here and a DefaultLimits entry for it — until then, an unknown or
+// empty category falls back to CategoryGeneral and the Default limit.
+//
+// The seven first-class tools named in Units 32.9 map here as: security_scan →
+// CategorySecurity, credential_vend → CategoryCredential, policy_check →
+// CategoryPolicy, env_info → CategoryEnvironment, nix_run → CategoryProcess,
+// gdev_doctor → CategoryDiagnostics, gdev_status → CategoryStatus.
 const (
-	CategoryFilesystem       = "filesystem"        // read/write project files
-	CategorySearch           = "search"            // code/text search
-	CategoryCodeIntelligence = "code_intelligence" // LSP/AST navigation
-	CategoryVersionControl   = "version_control"   // git operations
-	CategoryBuild            = "build"             // compile/build
-	CategoryTest             = "test"              // run tests
-	CategoryPackage          = "package"           // dependency management
-	CategorySecurity         = "security"          // vulnerability scanning (security_scan)
-	CategoryCredential       = "credential"        // credential vending (credential_vend)
-	CategoryPolicy           = "policy"            // policy evaluation (policy_check)
-	CategoryEnvironment      = "environment"       // env probing (env_info)
-	CategoryProcess          = "process"           // process execution (nix_run)
-	CategoryDiagnostics      = "diagnostics"       // health checks (gdev_doctor)
-	CategoryStatus           = "status"            // state/drift (gdev_status)
-	CategoryDocumentation    = "documentation"     // docs lookup
-	CategoryNetwork          = "network"           // outbound HTTP/API
-	CategoryDatabase         = "database"          // database queries
-	CategoryContainer        = "container"         // container/orchestration
-	CategoryGeneral          = "general"           // uncategorized / default
+	CategorySearch      = "search"      // code/text search
+	CategorySecurity    = "security"    // vulnerability scanning (security_scan)
+	CategoryCredential  = "credential"  // credential vending (credential_vend)
+	CategoryPolicy      = "policy"      // policy evaluation (policy_check)
+	CategoryEnvironment = "environment" // env probing (env_info)
+	CategoryProcess     = "process"     // process execution (nix_run)
+	CategoryDiagnostics = "diagnostics" // health checks (gdev_doctor)
+	CategoryStatus      = "status"      // state/drift (gdev_status)
+	CategoryNetwork     = "network"     // outbound HTTP/API
+	CategoryGeneral     = "general"     // uncategorized / default
 )
 
 // Limit is the per-category rate-limit and concurrency configuration.
@@ -57,36 +53,29 @@ type CategoryLimits struct {
 // DefaultLimits returns the built-in per-category rate-limit table.
 //
 // These numbers are principled defaults (the spike that would have pinned them
-// is absent — see categories doc above). The guiding shape: cheap, cached,
-// read-only fast-path categories (status, policy, search, filesystem, docs) get
-// generous rate/burst and high concurrency; expensive or externally-facing
-// categories (build, test, network, security, process, credential) get tighter
-// buckets and limited concurrency. CategoryProcess concurrency is fixed at 3 to
-// honor the one concrete spec value (nix_run: "max 3 concurrent executions").
-// Credential vending is the most restrictive.
+// is absent — see the categories doc above). The guiding shape: cheap, cached,
+// read-only fast-path categories (status, policy, search) get generous
+// rate/burst and high concurrency; expensive or externally-facing categories
+// (network, security, process, credential) get tighter buckets and limited
+// concurrency. CategoryProcess concurrency is fixed at 3 to honor the one
+// concrete spec value (nix_run: "max 3 concurrent executions"). Credential
+// vending is the most restrictive. The table holds an entry only for an assigned
+// category; any category absent here (including CategoryGeneral and unknown
+// categories) gets Default.
 func DefaultLimits() CategoryLimits {
 	return CategoryLimits{
 		Default: Limit{Rate: 10, Burst: 20, Concurrency: 8},
 		Limits: map[string]Limit{
-			CategoryFilesystem:       {Rate: 50, Burst: 100, Concurrency: 16},
-			CategorySearch:           {Rate: 50, Burst: 100, Concurrency: 16},
-			CategoryCodeIntelligence: {Rate: 30, Burst: 60, Concurrency: 12},
-			CategoryVersionControl:   {Rate: 20, Burst: 40, Concurrency: 8},
-			CategoryBuild:            {Rate: 2, Burst: 4, Concurrency: 2},
-			CategoryTest:             {Rate: 2, Burst: 4, Concurrency: 2},
-			CategoryPackage:          {Rate: 5, Burst: 10, Concurrency: 4},
-			CategorySecurity:         {Rate: 2, Burst: 5, Concurrency: 3},
-			CategoryCredential:       {Rate: 0.5, Burst: 5, Concurrency: 2},
-			CategoryPolicy:           {Rate: 50, Burst: 100, Concurrency: 16},
-			CategoryEnvironment:      {Rate: 20, Burst: 40, Concurrency: 8},
-			CategoryProcess:          {Rate: 3, Burst: 6, Concurrency: 3},
-			CategoryDiagnostics:      {Rate: 5, Burst: 10, Concurrency: 4},
-			CategoryStatus:           {Rate: 50, Burst: 100, Concurrency: 16},
-			CategoryDocumentation:    {Rate: 30, Burst: 60, Concurrency: 12},
-			CategoryNetwork:          {Rate: 5, Burst: 10, Concurrency: 6},
-			CategoryDatabase:         {Rate: 10, Burst: 20, Concurrency: 8},
-			CategoryContainer:        {Rate: 5, Burst: 10, Concurrency: 4},
-			CategoryGeneral:          {Rate: 10, Burst: 20, Concurrency: 8},
+			CategorySearch:      {Rate: 50, Burst: 100, Concurrency: 16},
+			CategorySecurity:    {Rate: 2, Burst: 5, Concurrency: 3},
+			CategoryCredential:  {Rate: 0.5, Burst: 5, Concurrency: 2},
+			CategoryPolicy:      {Rate: 50, Burst: 100, Concurrency: 16},
+			CategoryEnvironment: {Rate: 20, Burst: 40, Concurrency: 8},
+			CategoryProcess:     {Rate: 3, Burst: 6, Concurrency: 3},
+			CategoryDiagnostics: {Rate: 5, Burst: 10, Concurrency: 4},
+			CategoryStatus:      {Rate: 50, Burst: 100, Concurrency: 16},
+			CategoryNetwork:     {Rate: 5, Burst: 10, Concurrency: 6},
+			CategoryGeneral:     {Rate: 10, Burst: 20, Concurrency: 8},
 		},
 	}
 }

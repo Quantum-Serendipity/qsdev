@@ -9,6 +9,14 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 )
 
+// defaultBucketTTL bounds how long an idle (agent,category) token bucket is
+// retained before eviction reclaims it. It is set generously larger than the
+// time any category needs to refill a full burst (the slowest, credential at
+// Rate 0.5 / Burst 5, refills in 10s), so an evicted-then-recreated bucket is
+// indistinguishable from one that simply sat at full capacity — eviction frees
+// memory without perturbing rate-limit behavior.
+const defaultBucketTTL = 10 * time.Minute
+
 // bucket is a single token bucket keyed by (agent_id, category). It is guarded
 // by the owning limiter's mutex; it carries no lock of its own.
 type bucket struct {
@@ -25,6 +33,10 @@ type limiter struct {
 
 	mu      sync.Mutex
 	buckets map[string]*bucket
+	// bucketTTL is the idle horizon past which a bucket is evicted; lastSweep is
+	// the clock time of the most recent eviction pass (both guarded by mu).
+	bucketTTL time.Duration
+	lastSweep time.Time
 	// sems holds one buffered-channel semaphore per category, sized to that
 	// category's Concurrency. A nil entry means the category is unbounded.
 	sems map[string]chan struct{}
@@ -35,10 +47,12 @@ func newLimiter(limits CategoryLimits, clock func() time.Time) *limiter {
 		clock = time.Now
 	}
 	return &limiter{
-		limits:  limits,
-		clock:   clock,
-		buckets: make(map[string]*bucket),
-		sems:    make(map[string]chan struct{}),
+		limits:    limits,
+		clock:     clock,
+		buckets:   make(map[string]*bucket),
+		bucketTTL: defaultBucketTTL,
+		lastSweep: clock(),
+		sems:      make(map[string]chan struct{}),
 	}
 }
 
@@ -56,6 +70,8 @@ func (l *limiter) allow(agentID, category string) bool {
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	l.evictIdleLocked(now)
 
 	key := bucketKey(agentID, category)
 	b, ok := l.buckets[key]
@@ -79,6 +95,24 @@ func (l *limiter) allow(agentID, category string) bool {
 		return true
 	}
 	return false
+}
+
+// evictIdleLocked reclaims (agent,category) buckets that have gone untouched for
+// longer than bucketTTL, bounding the map's memory under churning agent or
+// category keys (R15). It runs at most once per TTL window — gated on the
+// injected clock via lastSweep — so the steady-state allow() hot path stays
+// cheap. The caller must hold l.mu. Deleting during the range is safe in Go, and
+// the about-to-be-used bucket is recreated full afterward when missing.
+func (l *limiter) evictIdleLocked(now time.Time) {
+	if l.bucketTTL <= 0 || now.Sub(l.lastSweep) < l.bucketTTL {
+		return
+	}
+	l.lastSweep = now
+	for key, b := range l.buckets {
+		if now.Sub(b.lastRefill) > l.bucketTTL {
+			delete(l.buckets, key)
+		}
+	}
 }
 
 // acquire takes one concurrency slot for category without blocking. It returns a
@@ -119,18 +153,14 @@ type RateLimit struct {
 // Order returns 30.
 func (RateLimit) Order() int { return orderRateLimit }
 
-// Handle enforces the bucket then the concurrency semaphore before continuing.
+// Handle enforces the concurrency semaphore THEN the token bucket before
+// continuing. The order matters: acquiring the concurrency slot first means a
+// call rejected for saturated concurrency never reaches allow(), so it does not
+// burn a rate-limit token it cannot use (R14). The slot is always released via
+// defer, including on the bucket-exhaustion short-circuit.
 func (rl RateLimit) Handle(ctx context.Context, cc *spi.ToolCallContext, req *spi.ToolRequest, next spi.ToolHandler) (*spi.ToolResult, error) {
 	cat := category(cc)
 	agent := agentID(cc)
-
-	if !rl.limiter.allow(agent, cat) {
-		markDecision(ctx, DecisionRateLimited)
-		return &spi.ToolResult{
-			IsError: true,
-			Text:    fmt.Sprintf("rate limit exceeded for category %q (agent %q)", cat, agent),
-		}, nil
-	}
 
 	release, ok := rl.limiter.acquire(cat)
 	if !ok {
@@ -141,6 +171,14 @@ func (rl RateLimit) Handle(ctx context.Context, cc *spi.ToolCallContext, req *sp
 		}, nil
 	}
 	defer release()
+
+	if !rl.limiter.allow(agent, cat) {
+		markDecision(ctx, DecisionRateLimited)
+		return &spi.ToolResult{
+			IsError: true,
+			Text:    fmt.Sprintf("rate limit exceeded for category %q (agent %q)", cat, agent),
+		}, nil
+	}
 
 	return next(ctx, cc, req)
 }

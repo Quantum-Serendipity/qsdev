@@ -273,13 +273,17 @@ func (r *Redactor) redactMap(rv reflect.Value) (reflect.Value, bool) {
 		val := iter.Value()
 
 		if stringKey && r.isKeyDenied(k.String()) {
+			ensureCopy()
 			if rep, ok := assignableRedaction(redactedReflectVal, elemType); ok {
-				ensureCopy()
 				out.SetMapIndex(k, rep)
-				continue
+			} else {
+				// The element type cannot hold the "[REDACTED]" marker (e.g.
+				// map[string][]byte or map[string]<struct>); a denied key is still
+				// secret, so drop the value to its zero rather than leaking it
+				// through an incomplete value-pattern scrub.
+				out.SetMapIndex(k, reflect.Zero(elemType))
 			}
-			// Elem type cannot hold the redaction marker; fall through to a
-			// value-pattern scrub of the (typed) value instead.
+			continue
 		}
 
 		nv, ch := r.redactReflect(val)
@@ -326,35 +330,72 @@ func (r *Redactor) redactSeq(rv reflect.Value) (reflect.Value, bool) {
 }
 
 // redactStruct walks the exported fields of an all-exported struct, redacting
-// copy-on-write. Structs with unexported fields are routed through redactViaJSON
-// before reaching here (see redactReflect).
+// copy-on-write. For each field it first applies the key deny-list to the
+// field's effective name (its json tag, else the Go field name) — exactly as
+// redactMap does for a map key — so a plainly-named secret (e.g. a Token field
+// holding a value the pattern scrub would miss) cannot survive behind a concrete
+// struct type. It then redacts the field value itself. Structs with unexported
+// fields are routed through redactViaJSON before reaching here (see redactReflect).
 func (r *Redactor) redactStruct(rv reflect.Value) (reflect.Value, bool) {
 	t := rv.Type()
 	var out reflect.Value
 	changed := false
+	ensureCopy := func() {
+		if changed {
+			return
+		}
+		out = reflect.New(t).Elem()
+		for j := 0; j < rv.NumField(); j++ {
+			if t.Field(j).PkgPath == "" {
+				out.Field(j).Set(rv.Field(j))
+			}
+		}
+		changed = true
+	}
+
 	for i := 0; i < rv.NumField(); i++ {
-		if t.Field(i).PkgPath != "" { // unexported
+		field := t.Field(i)
+		if field.PkgPath != "" { // unexported
 			continue
 		}
+
+		if r.isKeyDenied(structFieldKey(field)) {
+			if rep, ok := assignableRedaction(redactedReflectVal, field.Type); ok {
+				ensureCopy()
+				out.Field(i).Set(rep)
+				continue
+			}
+			// Field type cannot hold the redaction marker; fall through to a
+			// value-pattern scrub of the (typed) value instead.
+		}
+
 		nv, ch := r.redactReflect(rv.Field(i))
 		if !ch {
 			continue
 		}
-		if !changed {
-			out = reflect.New(t).Elem()
-			for j := 0; j < rv.NumField(); j++ {
-				if t.Field(j).PkgPath == "" {
-					out.Field(j).Set(rv.Field(j))
-				}
-			}
-			changed = true
-		}
-		out.Field(i).Set(coerce(nv, out.Field(i).Type()))
+		ensureCopy()
+		out.Field(i).Set(coerce(nv, field.Type))
 	}
 	if !changed {
 		return rv, false
 	}
 	return out, true
+}
+
+// structFieldKey returns the name used to match a struct field against the secret
+// key deny-list: the json tag's name (its first comma-segment) when present and
+// usable, otherwise the Go field name. A "-" tag (not serialized) or an empty
+// name both fall back to the field name so an in-memory secret is still caught.
+func structFieldKey(f reflect.StructField) string {
+	tag, ok := f.Tag.Lookup("json")
+	if !ok {
+		return f.Name
+	}
+	name, _, _ := strings.Cut(tag, ",")
+	if name == "" || name == "-" {
+		return f.Name
+	}
+	return name
 }
 
 // redactViaJSON normalizes a value (typically a struct with unexported state)
@@ -422,7 +463,12 @@ func coerce(v reflect.Value, dst reflect.Type) reflect.Value {
 	if v.Type().ConvertibleTo(dst) {
 		return v.Convert(dst)
 	}
-	return v
+	// v cannot be represented as dst — e.g. a redacted map[string]any tree whose
+	// concrete destination slot rejected reconstruction (redactViaJSON's
+	// best-effort reencode failed). Fail closed to the zero value rather than
+	// returning an unassignable value that would panic at Set: the secret is
+	// dropped, never leaked.
+	return reflect.Zero(dst)
 }
 
 // assignableRedaction returns the "[REDACTED]" marker coerced to dst when dst can

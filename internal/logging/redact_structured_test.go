@@ -2,6 +2,7 @@ package logging
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -28,6 +29,39 @@ type row struct {
 type auditEntry struct {
 	Detail string
 	seq    int //nolint:unused // present to force the unexported-field code path
+}
+
+// secretRow is an all-exported struct whose field names hit the key deny-list,
+// exercising redactStruct's field-name deny-list check: a value the pattern
+// scrub alone would miss (Password/APIKey hold plain text) must still be redacted
+// because the field NAME is sensitive. APIKey uses a json tag to prove the tag —
+// not the Go field name — is what the deny-list matches.
+type secretRow struct {
+	Password string
+	APIKey   string `json:"api_key"`
+	Host     string
+}
+
+// rejectingDetail has an unexported field (routing it through redactViaJSON) and
+// a custom UnmarshalJSON that fails once the value carries the redaction marker,
+// so redactViaJSON's best-effort reencode cannot restore the concrete type.
+// Nested in a concretely-typed slice, the redacted generic tree is unassignable
+// to the slot — coerce must fail closed (zero the slot) instead of panicking.
+type rejectingDetail struct {
+	Detail string
+	seq    int //nolint:unused // forces the unexported-field (redactViaJSON) path
+}
+
+func (d *rejectingDetail) UnmarshalJSON(b []byte) error {
+	var aux struct{ Detail string }
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if strings.Contains(aux.Detail, redacted) {
+		return errors.New("rejectingDetail: refusing redaction marker")
+	}
+	d.Detail = aux.Detail
+	return nil
 }
 
 func marshalJSON(t *testing.T, v any) string {
@@ -104,6 +138,30 @@ func TestRedactStructured(t *testing.T) {
 			},
 			absent:  []string{"pw-cleartext", "apikey-cleartext", "token-cleartext"},
 			present: []string{redacted, "keepme"},
+		},
+		{
+			// redactStruct must apply the key deny-list to FIELD NAMES (incl. the
+			// json tag), not just map keys: a plain value behind a secret-named
+			// field would otherwise survive the pattern scrub.
+			name:    "struct field names hit the deny-list (incl. json tag)",
+			input:   secretRow{Password: "pw-cleartext", APIKey: "apikey-cleartext", Host: "keepme"},
+			absent:  []string{"pw-cleartext", "apikey-cleartext"},
+			present: []string{redacted, "keepme"},
+		},
+		{
+			// isKeyDenied lowercases, so a mixed-case key must still match.
+			name:    "mixed-case deny-listed key is normalized",
+			input:   map[string]any{"PassWord": "mc-cleartext", "Secret": "mc-secret", "ok": "fine"},
+			absent:  []string{"mc-cleartext", "mc-secret"},
+			present: []string{redacted, "fine"},
+		},
+		{
+			// A denied key whose value is a nested container is wholesale-redacted
+			// to the marker (the whole subtree is dropped), not walked into.
+			name:    "denied key with nested-map value is wholesale-redacted",
+			input:   map[string]any{"secret": map[string]any{"user": "uval", "pass": "p-cleartext"}},
+			absent:  []string{"uval", "p-cleartext"},
+			present: []string{redacted},
 		},
 		{
 			name: "embedded URL credentials are redacted, host preserved",
@@ -305,5 +363,66 @@ func TestRedactStructured_UnexportedFieldStruct(t *testing.T) {
 	// Original must not be mutated.
 	if !strings.Contains(in[0].Detail, ghToken) {
 		t.Error("input slice was mutated (copy-on-write violated)")
+	}
+}
+
+// TestRedactStructured_DenyKeyNonStringElem covers a denied key in a concretely
+// typed map whose element cannot hold the "[REDACTED]" string marker
+// (map[string][]byte). The value must be dropped to its zero, not left intact by
+// an incomplete value-pattern scrub.
+func TestRedactStructured_DenyKeyNonStringElem(t *testing.T) {
+	t.Parallel()
+	r := NewRedactor()
+
+	in := map[string][]byte{
+		"password": []byte("binary-secret"),
+		"name":     []byte("alice"),
+	}
+	out, ok := r.RedactStructured(in).(map[string][]byte)
+	if !ok {
+		t.Fatalf("expected map[string][]byte, got %T", r.RedactStructured(in))
+	}
+	if out["password"] != nil {
+		t.Errorf("denied-key []byte value not dropped: %q", out["password"])
+	}
+	if string(out["name"]) != "alice" {
+		t.Errorf("non-secret value altered: %q", out["name"])
+	}
+	// Copy-on-write: the original map must not be mutated.
+	if string(in["password"]) != "binary-secret" {
+		t.Errorf("input map mutated: %q", in["password"])
+	}
+}
+
+// TestRedactStructured_FailsClosedOnUnreconstructableType guards the coerce
+// fail-closed path: when a redacted, unexported-field struct nested in a concrete
+// slice cannot be reconstructed (its UnmarshalJSON rejects the marker), the slot
+// is zeroed rather than panicking on an unassignable map[string]any, and the
+// secret never survives.
+func TestRedactStructured_FailsClosedOnUnreconstructableType(t *testing.T) {
+	t.Parallel()
+	r := NewRedactor()
+
+	in := []rejectingDetail{{Detail: "tok " + ghToken, seq: 1}}
+
+	var got any
+	func() {
+		defer func() {
+			if p := recover(); p != nil {
+				t.Fatalf("RedactStructured panicked instead of failing closed: %v", p)
+			}
+		}()
+		got = r.RedactStructured(in)
+	}()
+
+	out, ok := got.([]rejectingDetail)
+	if !ok {
+		t.Fatalf("expected []rejectingDetail, got %T", got)
+	}
+	if strings.Contains(out[0].Detail, ghToken) {
+		t.Errorf("secret survived the fail-closed path: %q", out[0].Detail)
+	}
+	if out[0].Detail != "" {
+		t.Errorf("expected slot zeroed on unreconstructable type, got %q", out[0].Detail)
 	}
 }

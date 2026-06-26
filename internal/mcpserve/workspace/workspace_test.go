@@ -275,6 +275,47 @@ func TestDetectWorkspacesMultiEcosystem(t *testing.T) {
 	}
 }
 
+func TestDetectWorkspacesPnpmConfigSpelling(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		configFile string
+	}{
+		{name: "canonical yaml", configFile: "pnpm-workspace.yaml"},
+		{name: "legacy yml only", configFile: "pnpm-workspace.yml"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			// The workspace's only membership file uses the spelling under test;
+			// the .yml-only case must still be detected as a pnpm workspace.
+			writeWS(t, root, tc.configFile, "packages:\n  - 'packages/*'\n")
+			writeWS(t, root, "packages/web/package.json", `{"name":"@org/web","dependencies":{"react":"18"}}`)
+
+			graph, err := DetectWorkspaces(root)
+			if err != nil {
+				t.Fatalf("DetectWorkspaces: %v", err)
+			}
+			web := graph.ByRelDir("packages/web")
+			if web == nil {
+				t.Fatalf("packages/web not detected for %s-only workspace: %v", tc.configFile, graph.Packages())
+			}
+			if web.Ecosystem != ecoPnpm {
+				t.Errorf("ecosystem = %q, want %q", web.Ecosystem, ecoPnpm)
+			}
+			if web.Name != "@org/web" {
+				t.Errorf("name = %q, want @org/web", web.Name)
+			}
+			if !contains(web.Dependencies, "react") {
+				t.Errorf("deps %v should include react", web.Dependencies)
+			}
+		})
+	}
+}
+
 func TestDetectWorkspacesFailureIsolation(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

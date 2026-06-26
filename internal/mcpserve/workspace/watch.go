@@ -351,7 +351,7 @@ func (w *Watcher) reparseOne(relDir string) bool {
 	}
 
 	for _, spec := range allEcosystems() {
-		if !fileExists(filepath.Join(w.root, spec.configFile)) {
+		if !spec.configPresent(w.root) {
 			continue
 		}
 		pkg, err := buildPackage(w.root, spec, relDir)

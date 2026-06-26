@@ -50,7 +50,7 @@ func DetectWorkspaces(root string) (*WorkspaceGraph, error) {
 				}
 			}()
 
-			if !fileExists(filepath.Join(root, spec.configFile)) {
+			if !spec.configPresent(root) {
 				return // configuration absent for this ecosystem
 			}
 			includes, excludes, err := spec.parse(root)
@@ -153,4 +153,20 @@ func fallbackName(root, relDir string) string {
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+// configPresent reports whether root contains this ecosystem's membership
+// configuration, accepting either its primary configFile or any alternate
+// spelling in configAlts (e.g. pnpm's legacy "pnpm-workspace.yml"). A repo whose
+// only workspace file is an alternate spelling is therefore still detected.
+func (s ecosystemSpec) configPresent(root string) bool {
+	if fileExists(filepath.Join(root, s.configFile)) {
+		return true
+	}
+	for _, alt := range s.configAlts {
+		if fileExists(filepath.Join(root, alt)) {
+			return true
+		}
+	}
+	return false
 }

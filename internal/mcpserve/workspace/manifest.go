@@ -19,6 +19,12 @@ type ecosystemSpec struct {
 	id string
 	// configFile is the membership configuration filename at the workspace root.
 	configFile string
+	// configAlts are alternate membership-configuration filenames accepted in
+	// addition to configFile (e.g. pnpm's legacy "pnpm-workspace.yml" spelling).
+	// Detection and watching treat the presence of any of them as evidence the
+	// ecosystem is configured; the parser is responsible for reading whichever
+	// spelling exists.
+	configAlts []string
 	// manifest is the per-member manifest filename that a resolved directory must
 	// contain to qualify as a package of this ecosystem.
 	manifest string
@@ -33,7 +39,7 @@ type ecosystemSpec struct {
 func allEcosystems() []ecosystemSpec {
 	return []ecosystemSpec{
 		{id: ecoNpm, configFile: fileNpmManifest, manifest: fileNpmManifest, parse: ParseNpmWorkspaces, readManifest: readNpmManifest},
-		{id: ecoPnpm, configFile: filePnpmWorkspace, manifest: fileNpmManifest, parse: ParsePnpmWorkspaces, readManifest: readNpmManifest},
+		{id: ecoPnpm, configFile: filePnpmWorkspace, configAlts: []string{filePnpmWorkspace2}, manifest: fileNpmManifest, parse: ParsePnpmWorkspaces, readManifest: readNpmManifest},
 		{id: ecoCargo, configFile: fileCargoManifest, manifest: fileCargoManifest, parse: ParseCargoWorkspaces, readManifest: readCargoManifest},
 		{id: ecoGo, configFile: fileGoWork, manifest: fileGoModManifest, parse: ParseGoWorkspaces, readManifest: readGoManifest},
 		{id: ecoUv, configFile: filePyprojectToml, manifest: filePyprojectToml, parse: ParseUvWorkspaces, readManifest: readPyprojectManifest},

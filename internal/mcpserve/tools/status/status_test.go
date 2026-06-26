@@ -2,12 +2,19 @@ package status
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/detect"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func call(t *testing.T, h spi.ToolHandler, args map[string]any) *spi.ToolResult {
@@ -126,5 +133,155 @@ func TestDevenvDoctorSingleCheck(t *testing.T) {
 	checks := res.Structured.(map[string]any)["checks"].([]checkResult)
 	if len(checks) != 1 || checks[0].Name != "config" {
 		t.Errorf("got %+v, want a single config check", checks)
+	}
+}
+
+// TestCheckMCPProbesConcurrently (R20) verifies the MCP probes run concurrently
+// rather than serially. Each fake probe blocks until every probe has started; if
+// checkMCP probed sequentially the first probe would wait forever for the others
+// to start, deadlocking and tripping the test timeout. No timing assertion is
+// made, so the test is deterministic.
+func TestCheckMCPProbesConcurrently(t *testing.T) {
+	t.Parallel()
+	const n = 5 // below mcpProbeConcurrency so all probes may start at once
+	servers := make([]mcphealth.ServerConfig, n)
+	for i := range servers {
+		servers[i] = mcphealth.ServerConfig{Name: fmt.Sprintf("srv-%02d", i)}
+	}
+
+	var entered sync.WaitGroup
+	entered.Add(n)
+	proceed := make(chan struct{})
+
+	doc := newDoctorChecker(t.TempDir())
+	doc.mcpServers = func() []mcphealth.ServerConfig { return servers }
+	doc.probeMCP = func(ctx context.Context, _ mcphealth.ServerConfig) *mcphealth.ServerHealth {
+		entered.Done()
+		select {
+		case <-proceed:
+		case <-ctx.Done():
+		}
+		return &mcphealth.ServerHealth{Status: mcphealth.StatusHealthy}
+	}
+
+	go func() {
+		entered.Wait() // unblocks only once every probe is running
+		close(proceed)
+	}()
+
+	res := doc.checkMCP(context.Background())
+	if res.Status != checkPass {
+		t.Errorf("status = %q, want %q (all healthy)", res.Status, checkPass)
+	}
+	if !strings.Contains(res.Detail, fmt.Sprintf("%d healthy, 0 unhealthy of %d", n, n)) {
+		t.Errorf("detail = %q, want %d healthy/0 unhealthy", res.Detail, n)
+	}
+}
+
+// TestCheckMCPCountsHealth (R20) verifies the concurrent probe aggregation
+// counts healthy vs. unhealthy correctly and warns when any server is unhealthy,
+// regardless of the order probes complete.
+func TestCheckMCPCountsHealth(t *testing.T) {
+	t.Parallel()
+	servers := []mcphealth.ServerConfig{
+		{Name: "charlie"}, {Name: "alpha"}, {Name: "delta"}, {Name: "bravo"},
+	}
+	unhealthy := map[string]bool{"bravo": true, "delta": true}
+
+	doc := newDoctorChecker(t.TempDir())
+	doc.mcpServers = func() []mcphealth.ServerConfig { return servers }
+	doc.probeMCP = func(_ context.Context, cfg mcphealth.ServerConfig) *mcphealth.ServerHealth {
+		st := mcphealth.StatusHealthy
+		if unhealthy[cfg.Name] {
+			st = mcphealth.StatusUnreachable
+		}
+		return &mcphealth.ServerHealth{Status: st}
+	}
+
+	res := doc.checkMCP(context.Background())
+	if res.Status != checkWarn {
+		t.Errorf("status = %q, want %q", res.Status, checkWarn)
+	}
+	if !strings.Contains(res.Detail, "2 healthy, 2 unhealthy of 4") {
+		t.Errorf("detail = %q, want 2 healthy/2 unhealthy/4", res.Detail)
+	}
+}
+
+// TestCheckMCPNoServers verifies the empty-registry fast path stays a pass.
+func TestCheckMCPNoServers(t *testing.T) {
+	t.Parallel()
+	doc := newDoctorChecker(t.TempDir())
+	doc.mcpServers = func() []mcphealth.ServerConfig { return nil }
+	res := doc.checkMCP(context.Background())
+	if res.Status != checkPass {
+		t.Errorf("status = %q, want %q for no servers", res.Status, checkPass)
+	}
+}
+
+// TestStatusTier2DoesNotHoldLockDuringDetect (R21) verifies the checker mutex is
+// not held while detection runs. The injected detect tries TryLock: it succeeds
+// only if the lock is free, proving the fast path is not blocked by detection.
+func TestStatusTier2DoesNotHoldLockDuringDetect(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeState(t, dir)
+	checker := newStatusChecker(dir)
+
+	lockFree := make(chan bool, 1)
+	checker.detectFn = func(root string) types.DetectedProject {
+		ok := checker.mu.TryLock()
+		if ok {
+			checker.mu.Unlock()
+		}
+		lockFree <- ok
+		return detect.Detect(root)
+	}
+
+	call(t, checker.handle, map[string]any{"tier": "2"})
+	if got := <-lockFree; !got {
+		t.Error("checker mutex was held during detection; concurrent fast path would block")
+	}
+}
+
+// TestStatusTier2DetectRunsConcurrently (R21) verifies two concurrent Tier 2
+// calls run their detection concurrently rather than serializing on the mutex.
+// Both injected detects must enter before either is released; if detection were
+// serialized under the lock the second call could never enter (caught by the
+// rendezvous timeout below).
+func TestStatusTier2DetectRunsConcurrently(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeState(t, dir)
+	checker := newStatusChecker(dir)
+
+	const n = 2
+	entered := make(chan struct{}, n)
+	release := make(chan struct{})
+	checker.detectFn = func(root string) types.DetectedProject {
+		entered <- struct{}{}
+		<-release
+		return detect.Detect(root)
+	}
+
+	done := make(chan struct{}, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			// Call handle directly; t.Fatal must not run off the test goroutine.
+			_, _ = checker.handle(context.Background(), &spi.ToolCallContext{},
+				&spi.ToolRequest{Arguments: map[string]any{"tier": "2"}})
+			done <- struct{}{}
+		}()
+	}
+
+	for i := 0; i < n; i++ {
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("detections did not run concurrently; mutex serialized detect")
+		}
+	}
+	close(release)
+	for i := 0; i < n; i++ {
+		<-done
 	}
 }

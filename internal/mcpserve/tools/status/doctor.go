@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,6 +30,11 @@ const doctorTimeout = 5 * time.Second
 // slow server cannot consume the doctor's overall budget.
 const mcpProbeTimeout = 1500 * time.Millisecond
 
+// mcpProbeConcurrency bounds how many MCP server probes run at once. Probing
+// concurrently keeps checkMCP near max(probe) rather than sum(probe); the cap
+// avoids spawning an unbounded number of subprocesses for large registries.
+const mcpProbeConcurrency = 8
+
 const (
 	checkPass = "pass"
 	checkWarn = "warning"
@@ -49,10 +55,33 @@ type checkResult struct {
 // permission consistency.
 type doctorChecker struct {
 	projectRoot string
+
+	// mcpServers lists the MCP server configs the doctor probes. Injectable so
+	// tests can supply fakes without touching the global registry.
+	mcpServers func() []mcphealth.ServerConfig
+	// probeMCP performs one server health probe. Injectable for testing.
+	probeMCP func(ctx context.Context, cfg mcphealth.ServerConfig) *mcphealth.ServerHealth
 }
 
 func newDoctorChecker(projectRoot string) *doctorChecker {
-	return &doctorChecker{projectRoot: projectRoot}
+	return &doctorChecker{
+		projectRoot: projectRoot,
+		mcpServers:  defaultMCPServers,
+		probeMCP:    mcphealth.CheckServer,
+	}
+}
+
+// defaultMCPServers materializes the registered MCP servers as probe configs.
+func defaultMCPServers() []mcphealth.ServerConfig {
+	defs := mcpregistry.DefaultRegistry().All()
+	out := make([]mcphealth.ServerConfig, len(defs))
+	for i, def := range defs {
+		out[i] = mcphealth.ServerConfig{
+			Name: def.Name, Command: def.Command, Args: def.Args, URL: def.URL,
+			Env: def.Env, RequiredEnv: def.RequiredEnv,
+		}
+	}
+	return out
 }
 
 // namedCheck pairs a check's stable name with its implementation.
@@ -208,21 +237,42 @@ func (d *doctorChecker) checkNix(_ context.Context) checkResult {
 	return checkResult{"nix", checkPass, "nix installed and store accessible", ""}
 }
 
-// checkMCP probes each registered MCP server's health within a bounded deadline.
+// checkMCP probes each registered MCP server's health concurrently, each within
+// a bounded per-probe deadline, so several slow servers cannot serialize past
+// the doctor's overall budget. Results are sorted by server name to keep output
+// deterministic.
 func (d *doctorChecker) checkMCP(ctx context.Context) checkResult {
-	defs := mcpregistry.DefaultRegistry().All()
-	if len(defs) == 0 {
+	servers := d.mcpServers()
+	if len(servers) == 0 {
 		return checkResult{"mcp", checkPass, "no MCP servers registered", ""}
 	}
-	healthy, unhealthy := 0, 0
-	for _, def := range defs {
-		probeCtx, cancel := context.WithTimeout(ctx, mcpProbeTimeout)
-		h := mcphealth.CheckServer(probeCtx, mcphealth.ServerConfig{
-			Name: def.Name, Command: def.Command, Args: def.Args, URL: def.URL,
-			Env: def.Env, RequiredEnv: def.RequiredEnv,
+
+	type outcome struct {
+		name    string
+		healthy bool
+	}
+	outcomes := make([]outcome, len(servers))
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(mcpProbeConcurrency)
+	for i, cfg := range servers {
+		g.Go(func() error {
+			probeCtx, cancel := context.WithTimeout(gctx, mcpProbeTimeout)
+			defer cancel()
+			h := d.probeMCP(probeCtx, cfg)
+			outcomes[i] = outcome{name: cfg.Name, healthy: h.Status == mcphealth.StatusHealthy}
+			return nil
 		})
-		cancel()
-		if h.Status == mcphealth.StatusHealthy {
+	}
+	// Every probe returns nil, so Wait only surfaces context cancellation; the
+	// outcomes slice is fully populated for all completed probes regardless.
+	_ = g.Wait()
+
+	sort.Slice(outcomes, func(i, j int) bool { return outcomes[i].name < outcomes[j].name })
+
+	healthy, unhealthy := 0, 0
+	for _, o := range outcomes {
+		if o.healthy {
 			healthy++
 		} else {
 			unhealthy++
@@ -234,7 +284,7 @@ func (d *doctorChecker) checkMCP(ctx context.Context) checkResult {
 	}
 	return checkResult{
 		"mcp", status,
-		fmt.Sprintf("%d healthy, %d unhealthy of %d registered server(s)", healthy, unhealthy, len(defs)),
+		fmt.Sprintf("%d healthy, %d unhealthy of %d registered server(s)", healthy, unhealthy, len(servers)),
 		"investigate unhealthy servers with `qsdev mcp` diagnostics",
 	}
 }

@@ -28,6 +28,11 @@ type statusChecker struct {
 	statePath   string
 	configPath  string
 
+	// detectFn runs ecosystem detection. Injectable so tests can drive the
+	// concurrency behavior; defaults to detect.Detect. It is invoked WITHOUT
+	// holding mu so concurrent callers are not serialized behind the walk.
+	detectFn func(projectRoot string) types.DetectedProject
+
 	mu               sync.Mutex
 	baseDetection    types.DetectedProject
 	cachedMtime      time.Time
@@ -43,8 +48,9 @@ func newStatusChecker(projectRoot string) *statusChecker {
 		projectRoot: projectRoot,
 		statePath:   filepath.Join(projectRoot, state.StateFilePaths()[0]),
 		configPath:  filepath.Join(projectRoot, branding.Get().ConfigFile),
+		detectFn:    detect.Detect,
 	}
-	s.baseDetection = detect.Detect(projectRoot)
+	s.baseDetection = s.detectFn(projectRoot)
 	s.cachedMtime, s.cachedPresent = s.stateMtime()
 	s.cachedConfigHash = s.configHash()
 	s.cachedStatus = map[string]any{
@@ -66,29 +72,44 @@ type driftItem struct {
 }
 
 // handle resolves the requested tier (or auto-selects) and returns the status.
+// The lock is held only briefly to snapshot cache state; the expensive Tier 2
+// detection runs unlocked so concurrent fast-path callers are not blocked.
 func (s *statusChecker) handle(_ context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
 	tier := toolutil.StringArgOr(req.Arguments, "tier", "auto")
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	unchanged := s.stateUnchangedLocked()
+	// Copy the cache under the lock so the caller cannot mutate it and a
+	// concurrent Tier 2 swap cannot race the read.
+	cached := copyStatus(s.cachedStatus)
+	s.mu.Unlock()
+
 	if tier == "1" || (tier == "auto" && unchanged) {
-		text := fmt.Sprintf("status (tier 1, cached): %d drift item(s)", driftCount(s.cachedStatus))
-		// Return a copy so the caller cannot mutate the cache.
-		return toolutil.Result(text, copyStatus(s.cachedStatus)), nil
+		text := fmt.Sprintf("status (tier 1, cached): %d drift item(s)", driftCount(cached))
+		return toolutil.Result(text, cached), nil
 	}
-	return s.runTier2Locked()
+	return s.runTier2()
 }
 
-// runTier2Locked re-runs detection, diffs against the cached snapshot, refreshes
-// the cache, and returns the thorough status. The caller holds s.mu.
-func (s *statusChecker) runTier2Locked() (*spi.ToolResult, error) {
-	current := detect.Detect(s.projectRoot)
-	drift := compareDetection(s.baseDetection, current)
+// runTier2 re-runs detection, diffs against the cached snapshot, refreshes the
+// cache, and returns the thorough status. Detection runs WITHOUT s.mu held; the
+// lock is taken only to snapshot the baseline and, at the end, to swap in the
+// refreshed cache (last write wins under concurrent detection).
+func (s *statusChecker) runTier2() (*spi.ToolResult, error) {
+	s.mu.Lock()
+	base := s.baseDetection
+	cachedConfigHash := s.cachedConfigHash
+	cachedMtime := s.cachedMtime
+	cachedPresent := s.cachedPresent
+	s.mu.Unlock()
+
+	// Unlocked: detection may walk the filesystem and shell out to a container
+	// runtime, so holding the lock here would serialize the fast path.
+	current := s.detectFn(s.projectRoot)
+	drift := compareDetection(base, current)
 
 	curHash := s.configHash()
-	if curHash != s.cachedConfigHash {
+	if curHash != cachedConfigHash {
 		drift = append(drift, driftItem{
 			Type:     "config_changed",
 			Detail:   branding.Get().ConfigFile + " changed since the cached snapshot",
@@ -97,7 +118,7 @@ func (s *statusChecker) runTier2Locked() (*spi.ToolResult, error) {
 	}
 
 	curMtime, curPresent := s.stateMtime()
-	if curPresent != s.cachedPresent || !curMtime.Equal(s.cachedMtime) {
+	if curPresent != cachedPresent || !curMtime.Equal(cachedMtime) {
 		drift = append(drift, driftItem{
 			Type:     "state_changed",
 			Detail:   "generated-file state changed since the cached snapshot",
@@ -122,7 +143,9 @@ func (s *statusChecker) runTier2Locked() (*spi.ToolResult, error) {
 		"state":         stateInfo,
 	}
 
-	// Refresh the cache so the next Tier 1 call reflects this thorough run.
+	// Re-acquire the lock only to refresh the cache so the next Tier 1 call
+	// reflects this thorough run.
+	s.mu.Lock()
 	s.baseDetection = current
 	s.cachedMtime = curMtime
 	s.cachedPresent = curPresent
@@ -130,6 +153,7 @@ func (s *statusChecker) runTier2Locked() (*spi.ToolResult, error) {
 	s.cachedStatus = copyStatus(status)
 	s.cachedStatus["tier"] = 1
 	s.cachedStatus["cached"] = true
+	s.mu.Unlock()
 
 	text := fmt.Sprintf("status (tier 2): %d drift item(s)", len(drift))
 	return toolutil.Result(text, status), nil

@@ -4,15 +4,15 @@
 // accounting, config rendering, and enforcement-gap reporting) to the server's
 // adapter registry.
 //
-// The adapter is a stateless singleton. It self-registers into
-// spi.DefaultRegistry() from init(), long before any project root is resolved,
-// so it captures no project root: every tool and resource handler reads the
+// The adapter is a stateless singleton. It is registered into the adapter
+// registry explicitly from cmd/qsdev/main.go, before any project root is
+// resolved, so it captures no project root: every tool and resource handler reads the
 // resolved root from its *spi.ToolCallContext at call time. The mount-time
 // applicability check (Applies) likewise receives the root as an argument.
 //
 // Delegation: this package performs no generation of its own. It is the
 // quarantined leaf that is permitted to import addons/claudecode (it is
-// blank-imported only from cmd/qsdev/main.go, never from the mcpserve server
+// imported only from cmd/qsdev/main.go, never from the mcpserve server
 // root, so it cannot create an import cycle). Policy translation, config
 // rendering, detection, and gap analysis delegate to the P19 reference adapter
 // in pkg/aiframework/adapters/claudecode; context-budget accounting and the
@@ -21,7 +21,6 @@ package claudecode
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -86,17 +85,6 @@ var (
 func New() *Adapter {
 	cfg := ccaddon.Config{DefaultPermissions: ccaddon.PermissionPresetStandard}
 	return &Adapter{ref: refcc.New(cfg, ecosystem.DefaultRegistry())}
-}
-
-// init self-registers the singleton into the default adapter registry. This is
-// the sanctioned registry self-registration pattern (see pkg/ecosystem); the
-// general "avoid init()" guidance does not apply to registry wiring. The
-// registry rejects duplicate IDs, which can only happen if this package is
-// linked twice — a build error worth surfacing loudly.
-func init() {
-	if err := spi.DefaultRegistry().Register(New()); err != nil {
-		panic(fmt.Sprintf("registering claude code framework adapter: %v", err))
-	}
 }
 
 // ID identifies this adapter as the Claude Code framework.

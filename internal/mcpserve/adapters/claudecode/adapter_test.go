@@ -54,18 +54,24 @@ func TestID(t *testing.T) {
 	}
 }
 
-// TestRegisteredInDefaultRegistry proves the package init() self-registered the
-// singleton into the shared adapter registry the server consumes.
-func TestRegisteredInDefaultRegistry(t *testing.T) {
+// TestRegisters proves the adapter registers cleanly and exposes the Claude Code
+// FrameworkID. Production wiring into spi.DefaultRegistry() now happens explicitly
+// from cmd/qsdev/main.go (no longer via package init()); that wiring is covered by
+// TestRegisterFrameworkAdapters in package main.
+func TestRegisters(t *testing.T) {
 	t.Parallel()
+	reg := spi.NewAdapterRegistry()
+	if err := reg.Register(New()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
 	found := false
-	for _, a := range spi.DefaultRegistry().All() {
+	for _, a := range reg.All() {
 		if a.ID() == aiframework.ClaudeCode {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatal("claude code adapter not present in spi.DefaultRegistry()")
+		t.Fatal("claude code adapter not present after Register()")
 	}
 }
 

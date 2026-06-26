@@ -1,8 +1,8 @@
 // Package windsurf registers the Windsurf (Cascade) framework stub adapter for
 // the universal qsdev MCP server (Phase 32, Unit 32.5). All behavior lives in the
 // shared frameworkstub adapter; this package contributes only the Windsurf
-// descriptor and self-registers it into spi.DefaultRegistry() from init(). It is
-// blank-imported only from cmd/qsdev/main.go.
+// descriptor. It is registered into the adapter registry explicitly from
+// cmd/qsdev/main.go.
 //
 // RESEARCH-GATED: full Windsurf config rendering is pending the
 // gdev-universal-mcp-server-design spike and a Windsurf P19 reference adapter;
@@ -12,10 +12,7 @@
 package windsurf
 
 import (
-	"fmt"
-
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/frameworkstub"
-	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
 )
 
@@ -57,12 +54,3 @@ var descriptor = frameworkstub.Descriptor{
 
 // New constructs the Windsurf stub adapter from its descriptor.
 func New() *frameworkstub.Adapter { return frameworkstub.New(descriptor) }
-
-// init self-registers the singleton into the default adapter registry. A
-// duplicate-id error can only mean the package was linked twice — a build error
-// worth surfacing loudly.
-func init() {
-	if err := spi.DefaultRegistry().Register(New()); err != nil {
-		panic(fmt.Sprintf("registering windsurf framework adapter: %v", err))
-	}
-}

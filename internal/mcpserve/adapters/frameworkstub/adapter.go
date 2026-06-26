@@ -14,9 +14,9 @@
 // a fake success or an empty no-op.
 //
 // The shared Adapter is stateless beyond its immutable Descriptor. Each framework
-// package self-registers its New() singleton into spi.DefaultRegistry() from
-// init() and is blank-imported only from cmd/qsdev/main.go, never from the
-// mcpserve server root, so no import cycle is possible. Every handler reads the
+// package's New() singleton is registered into the adapter registry explicitly
+// from cmd/qsdev/main.go, never from the mcpserve server root, so no import cycle
+// is possible. Every handler reads the
 // resolved project root from its *spi.ToolCallContext at call time; the adapter
 // captures no root.
 package frameworkstub

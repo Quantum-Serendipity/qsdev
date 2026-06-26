@@ -7,17 +7,9 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/projectctx"
-
-	// Blank-import every framework adapter so their init() self-registration runs
-	// into spi.DefaultRegistry() before the server is constructed. This mirrors
-	// the wiring cmd/qsdev/main.go performs at the program entry point. Note these
-	// adapter packages never import the mcpserve server root (they import only the
-	// spi seam), so importing them from this external test creates no cycle.
-	_ "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/claudecode"
-	_ "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/cline"
-	_ "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/codex"
-	_ "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/cursor"
-	_ "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/windsurf"
+	// The framework adapters are registered into spi.DefaultRegistry() once by this
+	// package's TestMain (adapters_register_test.go), mirroring cmd/qsdev/main.go's
+	// explicit wiring; the server under test reads that registry.
 )
 
 // TestMultiAdapterToolCatalog proves that constructing the universal server in

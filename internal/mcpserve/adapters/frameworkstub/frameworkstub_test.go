@@ -119,8 +119,10 @@ func toolByName(t *testing.T, a *frameworkstub.Adapter, name string) spi.ToolReg
 }
 
 // TestIDAndRegistration proves each descriptor yields an adapter with the right
-// FrameworkID and that its package init() self-registered it into the shared
-// registry the server consumes.
+// FrameworkID and that the adapter registers cleanly. Production wiring into
+// spi.DefaultRegistry() now happens explicitly from cmd/qsdev/main.go (no longer
+// via package init()); that wiring is covered by TestRegisterFrameworkAdapters in
+// package main, so here we exercise registrability against a fresh registry.
 func TestIDAndRegistration(t *testing.T) {
 	t.Parallel()
 	for _, tc := range cases() {
@@ -130,14 +132,18 @@ func TestIDAndRegistration(t *testing.T) {
 			if id := tc.adapter.ID(); id != tc.wantID {
 				t.Errorf("ID() = %q, want %q", id, tc.wantID)
 			}
+			reg := spi.NewAdapterRegistry()
+			if err := reg.Register(tc.adapter); err != nil {
+				t.Fatalf("Register(%s): %v", tc.name, err)
+			}
 			found := false
-			for _, a := range spi.DefaultRegistry().All() {
+			for _, a := range reg.All() {
 				if a.ID() == tc.wantID {
 					found = true
 				}
 			}
 			if !found {
-				t.Errorf("%s adapter not present in spi.DefaultRegistry()", tc.name)
+				t.Errorf("%s adapter not present after Register()", tc.name)
 			}
 		})
 	}

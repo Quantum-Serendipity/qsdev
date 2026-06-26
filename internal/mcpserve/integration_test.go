@@ -19,16 +19,9 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools"
-
-	// Blank-import the framework adapters this file's tests exercise so their
-	// init() self-registration runs into spi.DefaultRegistry() before any server
-	// is constructed (the same wiring cmd/qsdev/main.go performs). These adapters
-	// import only the spi seam, never the mcpserve server root, so importing them
-	// from this external test package creates no cycle. multi_adapter_test.go in
-	// this same package additionally imports codex and windsurf.
-	_ "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/claudecode"
-	_ "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/cline"
-	_ "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/cursor"
+	// The framework adapters these tests exercise are registered into
+	// spi.DefaultRegistry() once by this package's TestMain
+	// (adapters_register_test.go), mirroring cmd/qsdev/main.go's explicit wiring.
 )
 
 // protocolVersion is the MCP revision the universal server negotiates.

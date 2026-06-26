@@ -193,12 +193,18 @@ func JoinOrNone(items []string) string {
 // ConfineToRoot confines candidate to root and returns the cleaned, absolute
 // path when it stays inside root, or ok=false when it escapes (path traversal).
 // A relative candidate is resolved against root; an absolute candidate must
-// still fall within it. The check is lexical (filepath.Abs/Clean/Rel), so it
-// does not require the target to exist before the containment decision. It is
-// the single path-containment primitive shared by the file-reading tools
-// (policy_check, security_scan), so every caller-supplied path is confined
-// identically and an escaping path can be degraded to not_configured rather than
-// reading an arbitrary host file.
+// still fall within it. It is the single path-containment primitive shared by the
+// file-reading tools (policy_check, security_scan), so every caller-supplied path
+// is confined identically and an escaping path can be degraded to not_configured
+// rather than reading an arbitrary host file.
+//
+// Containment is checked twice: first lexically (cheap, needs no filesystem
+// access and works for not-yet-created targets), then symlink-aware — symlinks in
+// the longest existing prefix of both root and candidate are resolved and the
+// check is repeated, so an in-root symlink whose target escapes the root is
+// rejected. Both sides are resolved so a root that itself lives under a symlinked
+// path (e.g. /tmp -> /private/tmp) does not cause a false rejection; a not-yet-
+// existing leaf stays lexical.
 func ConfineToRoot(root, candidate string) (string, bool) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
@@ -209,13 +215,37 @@ func ConfineToRoot(root, candidate string) (string, bool) {
 	}
 	candidate = filepath.Clean(candidate)
 
-	rel, err := filepath.Rel(absRoot, candidate)
-	if err != nil {
+	if !withinRoot(absRoot, candidate) {
 		return "", false
 	}
-	rel = filepath.ToSlash(rel)
-	if rel == ".." || strings.HasPrefix(rel, "../") {
+	if !withinRoot(resolveExistingSymlinks(absRoot), resolveExistingSymlinks(candidate)) {
 		return "", false
 	}
 	return candidate, true
+}
+
+// withinRoot reports whether candidate is lexically inside root (root itself
+// counts as inside). Both must be absolute, cleaned paths.
+func withinRoot(root, candidate string) bool {
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return false
+	}
+	rel = filepath.ToSlash(rel)
+	return rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
+// resolveExistingSymlinks resolves symlinks in the longest existing prefix of p,
+// leaving any non-existent trailing components lexical. This lets containment
+// follow a symlink that escapes the root even when the final target does not yet
+// exist. p must be absolute.
+func resolveExistingSymlinks(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	parent := filepath.Dir(p)
+	if parent == p { // reached the filesystem root with nothing resolvable
+		return p
+	}
+	return filepath.Join(resolveExistingSymlinks(parent), filepath.Base(p))
 }

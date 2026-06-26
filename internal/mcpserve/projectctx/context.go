@@ -18,7 +18,6 @@
 package projectctx
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -26,7 +25,6 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
-	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/workspace"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -156,27 +154,6 @@ func (pc *ProjectContext) configFile() string {
 // localConfigFile returns the absolute path to the project's .qsdev.local.yaml.
 func (pc *ProjectContext) localConfigFile() string {
 	return filepath.Join(pc.projectRoot, branding.Get().LocalConfig)
-}
-
-// notConfiguredResult builds the canonical graceful-degradation tool result: a
-// structured not_configured payload serialized into Text with IsError set.
-//
-// The payload is placed in Text (not Structured) deliberately: the mcpserve
-// bridge marshals a result with a non-nil Structured field via mcp-go's
-// structured-content path, which does not carry the IsError flag. Encoding the
-// structured payload as JSON Text and leaving Structured nil makes the bridge
-// emit a real protocol error result, so MCP clients see IsError=true exactly as
-// the graceful-degradation contract requires.
-func notConfiguredResult(reason string, extra map[string]any) *spi.ToolResult {
-	payload := map[string]any{"status": "not_configured", "reason": reason}
-	for k, v := range extra {
-		payload[k] = v
-	}
-	text, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		return &spi.ToolResult{Text: "not_configured: " + reason, IsError: true}
-	}
-	return &spi.ToolResult{Text: string(text), IsError: true}
 }
 
 // boolArg extracts an optional boolean argument, defaulting to false when absent

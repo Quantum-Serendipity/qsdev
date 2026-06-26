@@ -12,6 +12,7 @@ import (
 	ccaddon "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 )
@@ -33,7 +34,7 @@ func (a *Adapter) Tools() []spi.ToolRegistration {
 		{
 			Name:        toolHooks,
 			Description: "Enumerate the Claude Code hooks deployed under <project>/.claude/hooks/: for each script the file path, mode, size, and last-modified time, cross-referenced with the deployed .claude/settings.json to report the event, matcher, command, and enforcement mode each script is wired to.",
-			InputSchema: emptyObjectSchema(),
+			InputSchema: toolutil.EmptyObjectSchema(),
 			Category:    middleware.CategoryStatus,
 			Tier:        tierStandard,
 			Handler:     a.handleHooks,
@@ -57,7 +58,7 @@ func (a *Adapter) Tools() []spi.ToolRegistration {
 		{
 			Name:        toolEnforcementGaps,
 			Description: "Report the enforcement gaps between the security isolation each active deny rule ideally requires (kernel-level sandboxing) and what Claude Code actually provides (PreToolUse hooks), with a mitigation for each gap.",
-			InputSchema: emptyObjectSchema(),
+			InputSchema: toolutil.EmptyObjectSchema(),
 			Category:    middleware.CategoryPolicy,
 			Tier:        tierExtended,
 			Handler:     a.handleEnforcementGaps,
@@ -72,12 +73,12 @@ func (a *Adapter) handlePermissions(ctx context.Context, cc *spi.ToolCallContext
 	preset := presetFor(cc.ProjectRoot)
 	arts, err := a.ref.TranslatePermissions(ctx, &aiframework.PermissionPolicy{Preset: preset})
 	if err != nil {
-		return notConfigured("could not render claude code permissions",
+		return toolutil.NotConfigured("could not render claude code permissions",
 			map[string]any{"preset": preset, "error": err.Error()}), nil
 	}
 	settings, ok := settingsFromArtifacts(arts)
 	if !ok {
-		return notConfigured("permission translation produced no settings.json",
+		return toolutil.NotConfigured("permission translation produced no settings.json",
 			map[string]any{"preset": preset}), nil
 	}
 
@@ -108,7 +109,7 @@ func (a *Adapter) handleHooks(_ context.Context, cc *spi.ToolCallContext, _ *spi
 	entries, err := os.ReadDir(hooksDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return notConfigured("no claude code hooks deployed",
+			return toolutil.NotConfigured("no claude code hooks deployed",
 				map[string]any{"hooks_dir": hooksDir}), nil
 		}
 		return nil, fmt.Errorf("reading hooks directory %s: %w", hooksDir, err)
@@ -143,7 +144,7 @@ func (a *Adapter) handleContextBudget(_ context.Context, cc *spi.ToolCallContext
 	}
 	budget, err := ccaddon.CalculateContextBudget(cc.ProjectRoot, model)
 	if err != nil {
-		return notConfigured("could not calculate context budget",
+		return toolutil.NotConfigured("could not calculate context budget",
 			map[string]any{"model": model, "error": err.Error()}), nil
 	}
 
@@ -171,7 +172,7 @@ func (a *Adapter) handleConfigRender(ctx context.Context, cc *spi.ToolCallContex
 	input := a.policyInputFor(cc.ProjectRoot)
 	files, err := a.ref.Render(ctx, input)
 	if err != nil {
-		return notConfigured("could not render claude code configuration",
+		return toolutil.NotConfigured("could not render claude code configuration",
 			map[string]any{"preset": input.Permissions.Preset, "error": err.Error()}), nil
 	}
 
@@ -221,12 +222,12 @@ func (a *Adapter) handleEnforcementGaps(ctx context.Context, cc *spi.ToolCallCon
 	preset := presetFor(cc.ProjectRoot)
 	arts, err := a.ref.TranslatePermissions(ctx, &aiframework.PermissionPolicy{Preset: preset})
 	if err != nil {
-		return notConfigured("could not render claude code permissions for gap analysis",
+		return toolutil.NotConfigured("could not render claude code permissions for gap analysis",
 			map[string]any{"preset": preset, "error": err.Error()}), nil
 	}
 	settings, ok := settingsFromArtifacts(arts)
 	if !ok {
-		return notConfigured("permission translation produced no settings.json",
+		return toolutil.NotConfigured("permission translation produced no settings.json",
 			map[string]any{"preset": preset}), nil
 	}
 

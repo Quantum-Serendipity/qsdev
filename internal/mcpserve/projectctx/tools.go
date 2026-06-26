@@ -17,6 +17,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -32,11 +33,6 @@ const (
 	toolToolList    = "qsdev_tool_list"
 	toolDetect      = "qsdev_detect"
 )
-
-// emptyObjectSchema is the JSON Schema for a tool that accepts no arguments.
-func emptyObjectSchema() map[string]any {
-	return map[string]any{"type": "object", "properties": map[string]any{}}
-}
 
 // optionalBoolSchema builds an object schema with a single optional boolean
 // property of the given name and description.
@@ -57,7 +53,7 @@ func (pc *ProjectContext) Tools() []spi.ToolRegistration {
 		{
 			Name:        toolProjectInfo,
 			Description: "Summarize the detected project: languages, frameworks, ecosystems, container runtime, and AI-framework integration captured at server startup.",
-			InputSchema: emptyObjectSchema(),
+			InputSchema: toolutil.EmptyObjectSchema(),
 			Category:    middleware.CategoryStatus,
 			Tier:        int(TierCritical),
 			Handler:     pc.handleProjectInfo,
@@ -89,7 +85,7 @@ func (pc *ProjectContext) Tools() []spi.ToolRegistration {
 		{
 			Name:        toolToolList,
 			Description: "List the qsdev-managed tools (security, AI-agent, devex, infrastructure) with their category and enabled/disabled status for this project.",
-			InputSchema: emptyObjectSchema(),
+			InputSchema: toolutil.EmptyObjectSchema(),
 			Category:    middleware.CategoryStatus,
 			Tier:        int(TierStandard),
 			Handler:     pc.handleToolList,
@@ -168,13 +164,13 @@ func (pc *ProjectContext) handleDoctor(ctx context.Context, _ *spi.ToolCallConte
 func (pc *ProjectContext) handleConfigShow(_ context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
 	cfgPath := pc.configFile()
 	if _, err := os.Stat(cfgPath); err != nil {
-		return notConfiguredResult("project is not initialized: .qsdev.yaml not found",
+		return toolutil.NotConfigured("project is not initialized: .qsdev.yaml not found",
 			map[string]any{"expected_path": cfgPath}), nil
 	}
 
 	project, err := config.ParseQsdevConfig(cfgPath)
 	if err != nil {
-		return notConfiguredResult("could not parse .qsdev.yaml",
+		return toolutil.NotConfigured("could not parse .qsdev.yaml",
 			map[string]any{"path": cfgPath, "error": err.Error()}), nil
 	}
 
@@ -184,7 +180,7 @@ func (pc *ProjectContext) handleConfigShow(_ context.Context, _ *spi.ToolCallCon
 		// ParseLocalConfig returns (nil, nil) when the file is simply absent.
 		local, err = config.ParseLocalConfig(pc.localConfigFile())
 		if err != nil {
-			return notConfiguredResult("could not parse .qsdev.local.yaml",
+			return toolutil.NotConfigured("could not parse .qsdev.local.yaml",
 				map[string]any{"path": pc.localConfigFile(), "error": err.Error()}), nil
 		}
 	}
@@ -267,7 +263,7 @@ func (pc *ProjectContext) handleToolList(_ context.Context, _ *spi.ToolCallConte
 // detectionSummary renders a DetectedProject into a human-readable text summary
 // and a JSON-serializable structured payload.
 func detectionSummary(root string, d types.DetectedProject) (string, map[string]any) {
-	langs := detectedLanguages(d)
+	langs := toolutil.DetectedLanguages(d)
 	frameworks := detectedFrameworks(d)
 	ai := detectedAIFrameworks(d)
 	ecosystems := sortedTrueKeys(d.Ecosystems)
@@ -296,23 +292,6 @@ func detectionSummary(root string, d types.DetectedProject) (string, map[string]
 	return b.String(), structured
 }
 
-func detectedLanguages(d types.DetectedProject) []string {
-	var out []string
-	add := func(present bool, label string) {
-		if present {
-			out = append(out, label)
-		}
-	}
-	add(d.HasGoMod, langLabel("go", d.GoVersion))
-	add(d.HasPackageJSON, langLabel("node", d.NodeVersion))
-	add(d.HasCargoToml, "rust")
-	add(d.HasPyProject, langLabel("python", d.PythonVersion))
-	add(d.HasPomXML, "java (maven)")
-	add(d.HasBuildGradle, "java/kotlin (gradle)")
-	add(d.HasCsproj, "dotnet")
-	return out
-}
-
 func detectedFrameworks(d types.DetectedProject) []string {
 	var out []string
 	if d.HasDockerfile {
@@ -336,13 +315,6 @@ func detectedAIFrameworks(d types.DetectedProject) []string {
 		out = append(out, "mcp")
 	}
 	return out
-}
-
-func langLabel(name, version string) string {
-	if version != "" {
-		return name + " " + version
-	}
-	return name
 }
 
 func sortedTrueKeys(m map[string]bool) []string {

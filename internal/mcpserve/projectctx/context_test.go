@@ -2,7 +2,6 @@ package projectctx
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -263,16 +262,17 @@ func TestMCPList(t *testing.T) {
 	}
 }
 
-// assertNotConfigured checks the canonical graceful-degradation contract: a
-// tool-level error whose Text is a JSON object with status=not_configured.
+// assertNotConfigured checks the canonical graceful-degradation contract (the
+// shared toolutil.NotConfigured shape): a tool-level error carrying a structured
+// payload whose status is not_configured.
 func assertNotConfigured(t *testing.T, res *spi.ToolResult) {
 	t.Helper()
 	if !res.IsError {
 		t.Fatalf("expected IsError true for not_configured, got %q", res.Text)
 	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(res.Text), &payload); err != nil {
-		t.Fatalf("not_configured text is not JSON: %v\n%s", err, res.Text)
+	payload, ok := res.Structured.(map[string]any)
+	if !ok {
+		t.Fatalf("not_configured result has no structured payload: %T", res.Structured)
 	}
 	if payload["status"] != "not_configured" {
 		t.Errorf("status = %v, want not_configured", payload["status"])

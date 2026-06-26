@@ -1,16 +1,5 @@
 package claudecode
 
-import (
-	"encoding/json"
-
-	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
-)
-
-// emptyObjectSchema is the JSON Schema for a tool that accepts no arguments.
-func emptyObjectSchema() map[string]any {
-	return map[string]any{"type": "object", "properties": map[string]any{}}
-}
-
 // optionalStringSchema builds an object schema with a single optional string
 // property of the given name and description.
 func optionalStringSchema(name, desc string) map[string]any {
@@ -45,25 +34,4 @@ func stringArg(args map[string]any, name string) string {
 func boolArg(args map[string]any, name string) bool {
 	v, _ := args[name].(bool)
 	return v
-}
-
-// notConfigured builds the canonical graceful-degradation tool result: a
-// structured not_configured payload serialized into Text with IsError set, and
-// Structured left nil.
-//
-// The payload is placed in Text (not Structured) deliberately: the mcpserve
-// bridge routes a result with a non-nil Structured field through mcp-go's
-// structured-content path, but encoding the JSON in Text and leaving Structured
-// nil makes the bridge emit a real protocol error result, so clients observe
-// IsError=true exactly as the graceful-degradation contract requires.
-func notConfigured(reason string, extra map[string]any) *spi.ToolResult {
-	payload := map[string]any{"status": "not_configured", "reason": reason}
-	for k, v := range extra {
-		payload[k] = v
-	}
-	text, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		return &spi.ToolResult{Text: "not_configured: " + reason, IsError: true}
-	}
-	return &spi.ToolResult{Text: string(text), IsError: true}
 }

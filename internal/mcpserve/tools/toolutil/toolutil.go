@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // StringArg returns the string value of args[name]. The boolean reports whether
@@ -118,4 +119,46 @@ func MarshalText(v any, fallback string) string {
 		return fallback
 	}
 	return string(b)
+}
+
+// EmptyObjectSchema is the canonical JSON Schema for a tool that accepts no
+// arguments. It is the one shared empty-object schema every no-argument tool
+// across the project context surface and the framework adapters registers, so a
+// single definition keeps the wire schema identical everywhere. A fresh map is
+// returned per call so callers may not mutate a shared instance.
+func EmptyObjectSchema() map[string]any {
+	return map[string]any{"type": "object", "properties": map[string]any{}}
+}
+
+// DetectedLanguages renders a detection result's programming languages as the
+// canonical label set: the COMPLETE language surface qsdev detects (go, node,
+// rust, python, the two JVM build systems, and dotnet), with a version suffix
+// appended when one was detected. It is the single detection->language-labels
+// helper shared by the generic project context surface (qsdev_project_info /
+// qsdev_detect) and the framework stub adapters, so both report exactly the same
+// languages for a project rather than diverging.
+func DetectedLanguages(d types.DetectedProject) []string {
+	var out []string
+	add := func(present bool, label string) {
+		if present {
+			out = append(out, label)
+		}
+	}
+	add(d.HasGoMod, langLabel("go", d.GoVersion))
+	add(d.HasPackageJSON, langLabel("node", d.NodeVersion))
+	add(d.HasCargoToml, "rust")
+	add(d.HasPyProject, langLabel("python", d.PythonVersion))
+	add(d.HasPomXML, "java (maven)")
+	add(d.HasBuildGradle, "java/kotlin (gradle)")
+	add(d.HasCsproj, "dotnet")
+	return out
+}
+
+// langLabel appends a detected version to a language name (e.g. "go 1.22"),
+// returning the bare name when no version was detected.
+func langLabel(name, version string) string {
+	if version != "" {
+		return name + " " + version
+	}
+	return name
 }

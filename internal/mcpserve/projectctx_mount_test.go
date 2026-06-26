@@ -63,9 +63,7 @@ func TestMountProjectContext(t *testing.T) {
 	if _, ok := resources[templateURI]; ok {
 		t.Errorf("templated resource %q must be a resource template, not a static resource", templateURI)
 	}
-	srv.catalog.mu.RLock()
-	_, recorded := srv.catalog.resOwner[templateURI]
-	srv.catalog.mu.RUnlock()
+	_, recorded := srv.catalog.resources.Get(templateURI)
 	if !recorded {
 		t.Errorf("templated resource %q not recorded in the catalog", templateURI)
 	}

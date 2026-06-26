@@ -2,7 +2,8 @@ package mcpserve
 
 import (
 	"fmt"
-	"sync"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/registry"
 )
 
 // genericOwner is the sentinel owner recorded for tools and resources that are
@@ -16,20 +17,22 @@ const genericOwner = "generic"
 // project-context surface. It is populated at mount time and read by the
 // per-request tool filter to decide tool visibility.
 //
-// All access is mutex-guarded: mounting happens at construction (single
-// goroutine) but filtering happens at request time on possibly concurrent
-// goroutines, both touching the same maps.
+// Storage and concurrency-safety come from registry.Registry[string], one
+// instance per surface: mounting happens at construction (single goroutine)
+// but filtering happens at request time on possibly concurrent goroutines,
+// and the registry guards both with its own RWMutex. Each registry uses the
+// default DenyDuplicates policy so the first registration of a name/URI wins
+// and any later collision is reported as an error.
 type catalog struct {
-	mu        sync.RWMutex
-	toolOwner map[string]string
-	resOwner  map[string]string
+	tools     *registry.Registry[string]
+	resources *registry.Registry[string]
 }
 
 // newCatalog returns an empty catalog.
 func newCatalog() *catalog {
 	return &catalog{
-		toolOwner: make(map[string]string),
-		resOwner:  make(map[string]string),
+		tools:     registry.New[string](registry.WithEntityName("tool")),
+		resources: registry.New[string](registry.WithEntityName("resource")),
 	}
 }
 
@@ -38,32 +41,25 @@ func newCatalog() *catalog {
 // composite surface — leaving the first registration in place so callers can
 // skip the colliding tool rather than overwrite the original.
 func (c *catalog) addTool(name, owner string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if existing, ok := c.toolOwner[name]; ok {
-		return fmt.Errorf("duplicate tool name %q: already owned by %q, cannot also assign to %q", name, existing, owner)
+	if err := c.tools.Register(name, owner); err != nil {
+		existing, _ := c.tools.Get(name)
+		return fmt.Errorf("duplicate tool name %q: already owned by %q, cannot also assign to %q: %w", name, existing, owner, err)
 	}
-	c.toolOwner[name] = owner
 	return nil
 }
 
 // addResource records that the resource URI is owned by owner. It returns an
 // error when uri is already recorded, leaving the first registration in place.
 func (c *catalog) addResource(uri, owner string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if existing, ok := c.resOwner[uri]; ok {
-		return fmt.Errorf("duplicate resource URI %q: already owned by %q, cannot also assign to %q", uri, existing, owner)
+	if err := c.resources.Register(uri, owner); err != nil {
+		existing, _ := c.resources.Get(uri)
+		return fmt.Errorf("duplicate resource URI %q: already owned by %q, cannot also assign to %q: %w", uri, existing, owner, err)
 	}
-	c.resOwner[uri] = owner
 	return nil
 }
 
 // toolOwnerOf returns the recorded owner of the named tool. The boolean reports
 // whether the tool was tracked at mount time.
 func (c *catalog) toolOwnerOf(name string) (string, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	owner, ok := c.toolOwner[name]
-	return owner, ok
+	return c.tools.Get(name)
 }

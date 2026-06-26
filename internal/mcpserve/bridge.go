@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -99,37 +100,122 @@ func spiResultToMCP(res *spi.ToolResult) *mcp.CallToolResult {
 // mountResource mounts a generic (non-adapter) resource, recorded under the
 // generic owner. mcp-go exposes no resource filter, so resource visibility is
 // not scoped per client (all mounted resources are listable by every client);
-// the owner is recorded only for collision detection and future use.
+// the owner is recorded only for collision detection and future use. The
+// enforced security control on resources is redaction + audit on READ (see
+// mountResourceOwned and resourceReadHandler), not list-time hiding.
 func (s *Server) mountResource(reg spi.ResourceRegistration) {
 	s.mountResourceOwned(reg, genericOwner)
 }
 
 // mountResourceOwned records reg's URI under owner in the catalog and, when that
-// succeeds, converts the neutral resource registration into mcp-go types and
-// adds it to the underlying server. A duplicate URI is skipped with a logged
-// warning (first registration wins). Resource reads do not pass through the
-// tool middleware chain.
+// succeeds, registers the neutral resource on the underlying server. A duplicate
+// URI is skipped with a logged warning (first registration wins). The read is
+// routed through the tool middleware chain (see resourceReadHandler) so resource
+// contents receive the same redaction and audit as tool results.
+//
+// A templated URI (one carrying an RFC 6570 variable, e.g.
+// qsdev://project/{package}/context) is registered as a resource TEMPLATE rather
+// than a static resource: the literal "{package}" can never match a concrete read
+// like qsdev://project/web/context through the static AddResource path. mcp-go
+// matches a concrete read URI against each registered template's regexp and
+// invokes the handler with the concrete req.Params.URI. Static (non-templated)
+// resources stay on AddResource. The catalog records the raw (template) URI in
+// both cases, so collision detection is unchanged.
 func (s *Server) mountResourceOwned(reg spi.ResourceRegistration, owner string) {
 	if err := s.catalog.addResource(reg.URI, owner); err != nil {
 		slog.Warn("skipping resource with duplicate URI", "uri", reg.URI, "owner", owner, "error", err)
 		return
 	}
-	resource := mcp.Resource{
+	read := s.resourceReadHandler(reg)
+	if isTemplateURI(reg.URI) {
+		tmpl := mcp.NewResourceTemplate(reg.URI, reg.Name,
+			mcp.WithTemplateDescription(reg.Description),
+			mcp.WithTemplateMIMEType(reg.MIMEType))
+		s.mcp.AddResourceTemplate(tmpl, read)
+		return
+	}
+	s.mcp.AddResource(mcp.Resource{
 		URI:         reg.URI,
 		Name:        reg.Name,
 		Description: reg.Description,
 		MIMEType:    reg.MIMEType,
-	}
+	}, read)
+}
+
+// isTemplateURI reports whether uri is an RFC 6570 URI template (carries a
+// "{var}" expression) rather than a concrete URI.
+func isTemplateURI(uri string) bool {
+	return strings.Contains(uri, "{") && strings.Contains(uri, "}")
+}
+
+// resourceReadHandler adapts a neutral resource registration into the mcp-go
+// resource (and resource-template) handler shape — the two share the signature
+// func(ctx, mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) — routing
+// every read THROUGH the tool middleware chain so resource contents receive the
+// same redaction and audit as tool results.
+//
+// Adaptation: the neutral resource handler is invoked from a final
+// spi.ToolHandler whose returned *spi.ResourceResult is packed into
+// ToolResult.Structured so ContentSafety.RedactStructured walks and redacts the
+// nested content text. The read carries no Category, which leaves Guardrail
+// permissive-by-default while ContentSafety still redacts (its exemption applies
+// only to CategoryCredential). The concrete req.Params.URI is forwarded so a
+// template handler resolves the actual requested URI. A handler error propagates
+// as a Go error; the chain's ErrorHandling layer converts it (except context
+// cancellation) into an IsError result with no Structured payload, which is
+// surfaced below as a protocol error (carrying the redacted IsError text) so a
+// denied or failed read is visible to the client rather than masquerading as
+// empty contents.
+func (s *Server) resourceReadHandler(reg spi.ResourceRegistration) func(context.Context, mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 	handler := reg.Handler
-	s.mcp.AddResource(resource, func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 		cc := s.callContext(ctx, reg.URI, nil)
 		sreq := &spi.ResourceRequest{URI: req.Params.URI, Arguments: req.Params.Arguments}
-		res, err := handler(ctx, cc, sreq)
+		final := func(ctx context.Context, cc *spi.ToolCallContext, _ *spi.ToolRequest) (*spi.ToolResult, error) {
+			rres, herr := handler(ctx, cc, sreq)
+			if herr != nil {
+				return nil, herr
+			}
+			return &spi.ToolResult{Structured: rres}, nil
+		}
+		out, err := s.chain.Execute(ctx, cc, &spi.ToolRequest{Name: reg.URI}, final)
 		if err != nil {
 			return nil, fmt.Errorf("reading resource %s: %w", reg.URI, err)
 		}
-		return resourceContentsToMCP(reg.URI, res), nil
-	})
+		// On success the chain carries the redacted *spi.ResourceResult in
+		// Structured. When it is absent the chain short-circuited (e.g. a Guardrail
+		// denial) or ErrorHandling converted a handler error into an IsError
+		// result: surface that as a protocol error so a denied or failed read is
+		// visible to the client instead of looking like an empty resource.
+		rres, ok := resourceResultFrom(out)
+		if !ok {
+			return nil, fmt.Errorf("reading resource %s: %s", reg.URI, resourceErrorText(out))
+		}
+		return resourceContentsToMCP(reg.URI, rres), nil
+	}
+}
+
+// resourceErrorText extracts a human-readable failure message from a chain
+// result that carried no ResourceResult (a denial or a converted handler error),
+// falling back to a generic message. The text has already passed through
+// ContentSafety redaction.
+func resourceErrorText(out *spi.ToolResult) string {
+	if out != nil && out.Text != "" {
+		return out.Text
+	}
+	return "resource read failed"
+}
+
+// resourceResultFrom recovers the (redacted) *spi.ResourceResult packed into a
+// chain result's Structured field. It reports false when the result is nil or
+// carries no ResourceResult, so the caller can degrade gracefully instead of
+// panicking on a failed type assertion.
+func resourceResultFrom(out *spi.ToolResult) (*spi.ResourceResult, bool) {
+	if out == nil {
+		return nil, false
+	}
+	rres, ok := out.Structured.(*spi.ResourceResult)
+	return rres, ok
 }
 
 // resourceContentsToMCP converts neutral resource contents into mcp-go contents,

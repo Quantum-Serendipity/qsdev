@@ -1,6 +1,7 @@
 package mcpserve
 
 import (
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -23,12 +24,17 @@ type Option func(*config)
 // defaultConfig returns a config populated with sensible defaults. The server
 // name derives from branding and the version from the build info so the
 // advertised serverInfo matches the rest of the CLI.
+//
+// The default chain is the real built-in middleware chain (redaction, guardrail,
+// rate-limiting, audit), NOT an empty chain: a Server constructed without an
+// explicit WithChain must still enforce on every surface. An empty default would
+// be fail-open — handlers would run with no redaction, no guardrail, and no audit.
 func defaultConfig() config {
 	return config{
 		name:     branding.Get().AppName + "-mcp",
 		version:  version.Info().Version,
 		adapters: spi.DefaultRegistry(),
-		chain:    spi.NewChain(),
+		chain:    middleware.DefaultChain(),
 		instructions: "qsdev universal MCP server. Exposes qsdev tooling over MCP; " +
 			"tools operate within the resolved project root.",
 	}
@@ -72,8 +78,9 @@ func WithAdapterRegistry(r *spi.AdapterRegistry) Option {
 	}
 }
 
-// WithChain sets the tool-handler middleware chain. When nil an empty chain is
-// used (handlers run directly).
+// WithChain overrides the tool-handler middleware chain. A nil chain is ignored,
+// leaving the built-in middleware.DefaultChain installed by defaultConfig — the
+// server is never left fail-open.
 func WithChain(chain *spi.Chain) Option {
 	return func(c *config) {
 		if chain != nil {

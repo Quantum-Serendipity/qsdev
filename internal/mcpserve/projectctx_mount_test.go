@@ -43,15 +43,31 @@ func TestMountProjectContext(t *testing.T) {
 	}
 
 	resources := srv.MCPServer().ListResources()
+	// The four concrete resources are registered as static resources.
 	wantResources := []string{
 		"qsdev://project/detection", "qsdev://project/config",
 		"qsdev://project/state", "qsdev://project/mcp-servers",
-		"qsdev://project/{package}/context",
 	}
 	for _, uri := range wantResources {
 		if _, ok := resources[uri]; !ok {
 			t.Errorf("resource %q not mounted; mounted=%v", uri, keys(resources))
 		}
+	}
+
+	// The per-package URI carries a {package} variable, so it is registered as a
+	// resource TEMPLATE, not a static resource: it must NOT appear in
+	// ListResources (which returns only concrete resources) yet must be recorded
+	// in the catalog. That a concrete read against it resolves over the protocol
+	// is covered by TestChainEnforcementOverProtocol.
+	const templateURI = "qsdev://project/{package}/context"
+	if _, ok := resources[templateURI]; ok {
+		t.Errorf("templated resource %q must be a resource template, not a static resource", templateURI)
+	}
+	srv.catalog.mu.RLock()
+	_, recorded := srv.catalog.resOwner[templateURI]
+	srv.catalog.mu.RUnlock()
+	if !recorded {
+		t.Errorf("templated resource %q not recorded in the catalog", templateURI)
 	}
 
 	prompts := srv.MCPServer().ListPrompts()

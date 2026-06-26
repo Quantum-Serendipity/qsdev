@@ -24,8 +24,11 @@ import (
 // untracked tool and never hides functionality the client already has access to.
 //
 // Resource filtering is intentionally not performed here: mcp-go exposes a tool
-// filter but no resource filter, so all mounted resources are listable by every
-// client (see mountResource).
+// filter but no resource-list filter, so a true per-client resource filter is not
+// implementable with this library and all mounted resources are listable by every
+// client (see mountResource). The compensating security control on resources is
+// redaction + audit on READ — every resource read is routed through the
+// middleware chain (see resourceReadHandler) — not list-time visibility scoping.
 func (s *Server) toolFilter(ctx context.Context, tools []mcp.Tool) []mcp.Tool {
 	if s.multiAdapter {
 		return tools

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
 var (
@@ -33,6 +34,137 @@ var (
 
 func containsProtectedPathStr(s string) bool {
 	return canon.ContainsProtectedPath(s)
+}
+
+var (
+	deleteVerbs       = map[string]bool{"rm": true, "unlink": true, "shred": true}
+	copyVerbs         = map[string]bool{"cp": true, "rsync": true, "mv": true, "tar": true, "dd": true, "tee": true}
+	mcpMutatingVerbs  = map[string]bool{"cp": true, "mv": true, "dd": true, "tee": true, "rm": true, "install": true, "truncate": true}
+	reMcpDangerousCmd = regexp.MustCompile(`(?i)\b(curl|wget|fetch)\b[^|]*\|\s*(sh|bash|zsh|source)\b|\bnpx?\s+(-y\s+)?https?://`)
+)
+
+func isFlag(s string) bool { return strings.HasPrefix(s, "-") }
+
+func nonFlagArgs(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, a := range args {
+		if !isFlag(a) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func anyProtected(paths []string) bool {
+	for _, p := range paths {
+		if canon.ContainsProtectedPath(p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isInsideRepo reports whether path resolves to a location at or below cwd. An
+// empty cwd or a remote spec (host:path) is treated as outside so exfil checks
+// stay conservative (fail closed) when the boundary is unknown.
+func isInsideRepo(path, cwd string) bool {
+	if cwd == "" || strings.Contains(path, ":") {
+		return false
+	}
+	abs := path
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(cwd, path)
+	}
+	abs = filepath.Clean(abs)
+	cwdClean := filepath.Clean(cwd)
+	return abs == cwdClean || strings.HasPrefix(abs, cwdClean+string(filepath.Separator))
+}
+
+// deleteTargetsProtected reports whether a delete verb (rm/unlink/shred) has an
+// actual path argument or redirect target that resolves to a protected path.
+// On a parse error it fails closed to the original substring test.
+func deleteTargetsProtected(ctx *EvalContext) bool {
+	cmds, err := cmdscan.Parse(ctx.Command)
+	if err != nil {
+		return reDeleteCmd.MatchString(ctx.Command) && containsProtectedPathStr(ctx.Command)
+	}
+	for _, c := range cmds {
+		if !deleteVerbs[c.Name] {
+			continue
+		}
+		if anyProtected(nonFlagArgs(c.Args)) || anyProtected(c.Redirects) {
+			return true
+		}
+	}
+	return false
+}
+
+// copyIsDangerous reports whether a copy/redirect verb clobbers a protected path
+// (destination protected, or a protected redirect target) or exfiltrates one (a
+// protected source copied to a destination outside the repo). A benign in-repo
+// backup of a protected file is allowed. On a parse error it fails closed to the
+// original substring test.
+func copyIsDangerous(ctx *EvalContext) bool {
+	cmds, err := cmdscan.Parse(ctx.Command)
+	if err != nil {
+		return reCopyCmd.MatchString(ctx.Command) && containsProtectedPathStr(ctx.Command)
+	}
+	for _, c := range cmds {
+		if !copyVerbs[c.Name] {
+			continue
+		}
+		if anyProtected(c.Redirects) {
+			return true // clobbering a protected path via redirect
+		}
+		paths := nonFlagArgs(c.Args)
+		switch c.Name {
+		case "cp", "mv", "rsync":
+			if len(paths) < 2 {
+				if anyProtected(paths) {
+					return true
+				}
+				continue
+			}
+			dest := paths[len(paths)-1]
+			srcs := paths[:len(paths)-1]
+			if canon.ContainsProtectedPath(dest) {
+				return true // clobbering a protected destination
+			}
+			if !isInsideRepo(dest, ctx.CWD) && anyProtected(srcs) {
+				return true // exfiltrating a protected source out of the repo
+			}
+		default: // tar, dd, tee: operand conventions vary — stay conservative
+			if anyProtected(paths) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// bashMutatesMcpConfig reports whether a Bash command writes/redirects to or
+// mutates an MCP config file (as opposed to merely reading it). On a parse error
+// it fails closed to the substring test.
+func bashMutatesMcpConfig(command string) bool {
+	cmds, err := cmdscan.Parse(command)
+	if err != nil {
+		return isMCPConfigPath(command)
+	}
+	for _, c := range cmds {
+		for _, r := range c.Redirects {
+			if isMCPConfigPath(r) {
+				return true
+			}
+		}
+		if mcpMutatingVerbs[c.Name] || c.Name == "sed" || c.Name == "awk" {
+			for _, a := range nonFlagArgs(c.Args) {
+				if isMCPConfigPath(a) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func isWriteOrEdit(toolName string) bool {
@@ -92,7 +224,7 @@ var sp003 = Rule{
 		if ctx.ToolName != "Bash" {
 			return Allow, ""
 		}
-		if reDeleteCmd.MatchString(ctx.Command) && containsProtectedPathStr(ctx.Command) {
+		if deleteTargetsProtected(ctx) {
 			return Deny, "delete command targeting protected path"
 		}
 		return Allow, ""
@@ -155,7 +287,7 @@ var sp007 = Rule{
 		if ctx.ToolName != "Bash" {
 			return Allow, ""
 		}
-		if reCopyCmd.MatchString(ctx.Command) && containsProtectedPathStr(ctx.Command) {
+		if copyIsDangerous(ctx) {
 			return Deny, "copy/redirect command targeting protected config"
 		}
 		return Allow, ""
@@ -247,10 +379,18 @@ var mcp005 = Rule{
 	Name:     "Server config tampering",
 	Category: "mcp-poisoning",
 	Evaluate: func(ctx *EvalContext) (Verdict, string) {
+		// Allow benign structural edits to an MCP config; deny only when the
+		// written content carries prompt-injection or a remote-code-execution
+		// server command. (MCP-001 also guards injection content.)
 		if isWriteOrEdit(ctx.ToolName) && (isMCPConfigPath(ctx.CanonicalPath) || isMCPConfigPath(ctx.FilePath)) {
-			return Deny, "modification of MCP server configuration"
+			if reMcpInjection.MatchString(ctx.Content) || reMcpDangerousCmd.MatchString(ctx.Content) {
+				return Deny, "MCP server configuration write with dangerous content"
+			}
+			return Allow, ""
 		}
-		if ctx.ToolName == "Bash" && isMCPConfigPath(ctx.Command) {
+		// A Bash command that mutates (writes/redirects to) an MCP config is a
+		// blind, un-inspectable overwrite; deny it. Reads are allowed.
+		if ctx.ToolName == "Bash" && bashMutatesMcpConfig(ctx.Command) {
 			return Deny, "modification of MCP server configuration"
 		}
 		return Allow, ""

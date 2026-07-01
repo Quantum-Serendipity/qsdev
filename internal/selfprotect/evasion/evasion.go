@@ -4,6 +4,7 @@ import (
 	"regexp"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
 // Pre-compiled regexes for obfuscation detection.
@@ -69,10 +70,28 @@ func checkObfuscation(command string) (bool, string) {
 	if rePrintfHexShell.MatchString(command) {
 		return true, "printf hex escape piped to shell execution"
 	}
-	if reEvalExpansion.MatchString(command) {
+	if evalExpandsVariables(command) {
 		return true, "eval with variable expansion"
 	}
 	return false, ""
+}
+
+// evalExpandsVariables reports whether the command actually invokes `eval` on an
+// argument that performs a shell expansion — the dangerous, obfuscation-prone
+// case. It anchors on the command word so a benign `grep 'eval "$("'` (where
+// `eval` appears only inside a search pattern) is no longer blocked. On a parse
+// error it fails closed to the original whole-string regex.
+func evalExpandsVariables(command string) bool {
+	cmds, err := cmdscan.Parse(command)
+	if err != nil {
+		return reEvalExpansion.MatchString(command)
+	}
+	for _, c := range cmds {
+		if c.Name == "eval" && c.HasExpansion {
+			return true
+		}
+	}
+	return false
 }
 
 // checkHardlink detects hard link creation targeting protected paths. Symlinks

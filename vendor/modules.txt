@@ -481,4 +481,8 @@ google.golang.org/protobuf/runtime/protoimpl
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
+# mvdan.cc/sh/v3 v3.13.1
+## explicit; go 1.25.0
+mvdan.cc/sh/v3/fileutil
+mvdan.cc/sh/v3/syntax
 # fastcat.org/go/gdev => github.com/Quantum-Serendipity/gdev v0.0.0-20260515232304-7ffd0edf72e3

@@ -424,17 +424,19 @@ func TestSP007_ConfigCopyRedirectBlock(t *testing.T) {
 			ctx: EvalContext{
 				ToolName: "Bash",
 				Command:  "cp .claude/settings.json settings.bak",
-				CWD:      "/home/user/project",
+				CWD:      filepath.Join("home", "user", "project"),
 			},
 			verdict: Allow,
 		},
 		{
 			// But exfiltrating a protected source OUT of the repo stays blocked.
+			// Uses a relative escaping destination so filepath.Clean resolves it
+			// outside the repo identically on POSIX and Windows.
 			name: "deny cp of protected config out of the repo",
 			ctx: EvalContext{
 				ToolName: "Bash",
-				Command:  "cp .claude/settings.json /tmp/exfil",
-				CWD:      "/home/user/project",
+				Command:  "cp .claude/settings.json ../../../elsewhere/exfil",
+				CWD:      filepath.Join("home", "user", "project"),
 			},
 			verdict: Deny,
 		},

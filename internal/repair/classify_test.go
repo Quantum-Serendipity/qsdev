@@ -222,6 +222,43 @@ func TestClassifyFileModification_DevenvNix_AlwaysSkipped(t *testing.T) {
 	}
 }
 
+// TestClassifyFileModification_DevenvYaml_AlwaysSkipped guards DEFECT §4:
+// devenv.yaml (Strategy Overwrite) must be exempt from auto-repair like
+// devenv.nix, so `qsdev repair` never silently discards user edits.
+func TestClassifyFileModification_DevenvYaml_AlwaysSkipped(t *testing.T) {
+	report := &drift.Report{
+		Categories: []drift.Category{
+			{
+				Name: "File Modification",
+				Findings: []drift.Finding{
+					{
+						Subject:     "devenv.yaml",
+						Description: "Machine-owned file \"devenv.yaml\" has been modified (strategy: overwrite)",
+						Severity:    drift.Warning,
+					},
+				},
+			},
+		},
+	}
+	genState := types.GeneratedState{
+		Files: map[string]types.FileState{
+			"devenv.yaml": {Strategy: types.Overwrite},
+		},
+	}
+
+	// Even with --force and --reset, devenv.yaml is never auto-modified.
+	actions := classifyFindings(report, genState, RepairOptions{Force: true, Reset: true})
+	if len(actions) != 1 {
+		t.Fatalf("got %d actions, want 1", len(actions))
+	}
+	if actions[0].ActionType != ActionSkip {
+		t.Errorf("ActionType = %d, want ActionSkip for devenv.yaml", actions[0].ActionType)
+	}
+	if actions[0].AutoFixable {
+		t.Error("devenv.yaml should never be AutoFixable")
+	}
+}
+
 func TestClassifyFileModification_Deleted(t *testing.T) {
 	report := &drift.Report{
 		Categories: []drift.Category{

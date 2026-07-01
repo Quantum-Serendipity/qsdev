@@ -123,63 +123,74 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		files = append(files, toolFiles...)
 	}
 
-	// Gate 2: tier >= Full for MCP, agents, skills, workflows
-	if t < tier.Full {
-		return files, nil
-	}
-
-	// 5. Skills
+	// 5. Skills (Standard+): deploying an explicitly requested skill is a
+	// deliberate choice and must not be gated behind Full. deploySkills
+	// self-guards on an empty Skills list, so this is a no-op when none are
+	// configured.
 	skillFiles, err := deploySkills(answers)
 	if err != nil {
 		return nil, fmt.Errorf("generating skills: %w", err)
 	}
 	files = append(files, skillFiles...)
 
-	// 6. Auto-inject MCP servers for enabled tools that declare mcp_server_name.
-	cat := catalog.MustDefault()
-	for name, def := range cat.Tools() {
-		if def.MCPServerName == "" {
-			continue
+	// 6/7. MCP (Standard+ when servers are configured; always at Full, where
+	// enabled tools may auto-inject their own servers). The guard is a strict
+	// superset of the previous Full-only behavior, so Full-tier output is
+	// unchanged, while a standard-tier project that configured mcp_servers now
+	// gets its .mcp.json instead of silently nothing.
+	if t >= tier.Full || len(answers.MCPServers) > 0 {
+		// 6. Auto-inject MCP servers for enabled tools that declare mcp_server_name.
+		cat := catalog.MustDefault()
+		for name, def := range cat.Tools() {
+			if def.MCPServerName == "" {
+				continue
+			}
+			if !answers.EnabledTools[name] {
+				continue
+			}
+			if !slices.Contains(answers.MCPServers, def.MCPServerName) {
+				answers.MCPServers = append(answers.MCPServers, def.MCPServerName)
+			}
 		}
-		if !answers.EnabledTools[name] {
-			continue
-		}
-		if !slices.Contains(answers.MCPServers, def.MCPServerName) {
-			answers.MCPServers = append(answers.MCPServers, def.MCPServerName)
-		}
-	}
 
-	var sembleOverride *MCPServerConfig
-	if answers.AgentTools.SembleEnabled {
-		sr, err := generateSembleConfig(answers)
-		if err != nil {
-			return nil, fmt.Errorf("generating semble config: %w", err)
-		}
-		if sr != nil {
-			for _, name := range sr.MCPServers {
-				if !slices.Contains(answers.MCPServers, name) {
-					answers.MCPServers = append(answers.MCPServers, name)
+		var sembleOverride *MCPServerConfig
+		if answers.AgentTools.SembleEnabled {
+			sr, err := generateSembleConfig(answers)
+			if err != nil {
+				return nil, fmt.Errorf("generating semble config: %w", err)
+			}
+			if sr != nil {
+				for _, name := range sr.MCPServers {
+					if !slices.Contains(answers.MCPServers, name) {
+						answers.MCPServers = append(answers.MCPServers, name)
+					}
 				}
+				for i := range sr.Files {
+					sr.Files[i].Owner = "semble"
+				}
+				files = append(files, sr.Files...)
+				sembleOverride = sr.Override
 			}
-			for i := range sr.Files {
-				sr.Files[i].Owner = "semble"
-			}
-			files = append(files, sr.Files...)
-			sembleOverride = sr.Override
+		}
+
+		// 7. MCP config
+		mcpCfg := g.cfg
+		if sembleOverride != nil {
+			mcpCfg.MCPServers = append(append([]MCPServerConfig{}, mcpCfg.MCPServers...), *sembleOverride)
+		}
+		mcpFile, err := GenerateMcpJson(answers, mcpCfg)
+		if err != nil {
+			return nil, fmt.Errorf("generating MCP config: %w", err)
+		}
+		if mcpFile != nil {
+			files = append(files, *mcpFile)
 		}
 	}
 
-	// 7. MCP config
-	mcpCfg := g.cfg
-	if sembleOverride != nil {
-		mcpCfg.MCPServers = append(append([]MCPServerConfig{}, mcpCfg.MCPServers...), *sembleOverride)
-	}
-	mcpFile, err := GenerateMcpJson(answers, mcpCfg)
-	if err != nil {
-		return nil, fmt.Errorf("generating MCP config: %w", err)
-	}
-	if mcpFile != nil {
-		files = append(files, *mcpFile)
+	// Gate 2: tier >= Full for consulting agents/workflows, operation skills,
+	// and the qsdev reference doc.
+	if t < tier.Full {
+		return dedupeFilesByPath(files), nil
 	}
 
 	// 8. qsdev operation skills
@@ -248,5 +259,47 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		files = append(files, toolFiles...)
 	}
 
-	return files, nil
+	return dedupeFilesByPath(files), nil
+}
+
+// dedupeFilesByPath drops duplicate GeneratedFile entries that target the same
+// path, keeping the LAST occurrence. Later deployers intentionally supersede
+// earlier ones for the same path — e.g. review-pr is emitted both as a library
+// skill (deploySkills) and, at Full tier, as the richer consulting workflow
+// skill (deployWorkflowSkills); keeping the last occurrence lets the workflow
+// version win.
+func dedupeFilesByPath(files []types.GeneratedFile) []types.GeneratedFile {
+	lastIdx := make(map[string]int, len(files))
+	for i, f := range files {
+		lastIdx[f.Path] = i
+	}
+	out := make([]types.GeneratedFile, 0, len(files))
+	for i, f := range files {
+		if lastIdx[f.Path] == i {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// SuppressedConfigWarnings returns human-readable warnings for skills or MCP
+// servers that the resolved tier will NOT emit, so callers can avoid reporting
+// an unqualified success. After the standard-tier fix (skills + configured MCP
+// now emit at Standard), suppression only happens below Standard.
+func SuppressedConfigWarnings(answers types.WizardAnswers) []string {
+	if resolveTier(answers) >= tier.Standard {
+		return nil
+	}
+	var warnings []string
+	if len(answers.Skills) > 0 {
+		warnings = append(warnings, fmt.Sprintf(
+			"%d configured skill(s) will not be generated below the standard tier; raise the tier to standard or higher",
+			len(answers.Skills)))
+	}
+	if len(answers.MCPServers) > 0 {
+		warnings = append(warnings, fmt.Sprintf(
+			"%d configured MCP server(s) will not be generated below the standard tier; raise the tier to standard or higher",
+			len(answers.MCPServers)))
+	}
+	return warnings
 }

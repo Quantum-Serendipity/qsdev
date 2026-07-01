@@ -279,8 +279,9 @@ func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot st
 
 func writeAndRecordResults(cmd *cobra.Command, opts InitOptions, projectRoot string, answers types.WizardAnswers, accResult accumulatorResult) error {
 	result, err := generate.WriteFiles(accResult.allFiles, generate.PipelineOptions{
-		ProjectRoot:      projectRoot,
-		SectionMergeFunc: merge.SectionMarkers,
+		ProjectRoot:       projectRoot,
+		SectionMergeFunc:  merge.SectionMarkers,
+		ThreeWayMergeFunc: merge.MergeOnCreate,
 	})
 	if err != nil {
 		return fmt.Errorf("writing files: %w", err)
@@ -327,6 +328,11 @@ func writeAndRecordResults(cmd *cobra.Command, opts InitOptions, projectRoot str
 	if accResult.claudeGenerated {
 		if err := claudecode.SaveAnswers(projectRoot, answers); err != nil {
 			return fmt.Errorf("saving Claude Code answers: %w", err)
+		}
+		// Never report unqualified success when configured skills/MCP servers
+		// were suppressed by the resolved tier.
+		for _, w := range claudecode.SuppressedConfigWarnings(answers) {
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Warning: "+w)
 		}
 	}
 

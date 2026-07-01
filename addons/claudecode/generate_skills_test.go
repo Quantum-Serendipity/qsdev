@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -89,11 +91,46 @@ func TestDeploySkills_SelectedOnly(t *testing.T) {
 	for _, f := range files {
 		names[f.Path] = true
 	}
-	if !names[".claude/skills/deploy.md"] {
-		t.Error("missing .claude/skills/deploy.md")
+	// Skills must be written as <name>/SKILL.md so Claude Code can load them.
+	if !names[".claude/skills/deploy/SKILL.md"] {
+		t.Error("missing .claude/skills/deploy/SKILL.md")
 	}
-	if !names[".claude/skills/review-pr.md"] {
-		t.Error("missing .claude/skills/review-pr.md")
+	if !names[".claude/skills/review-pr/SKILL.md"] {
+		t.Error("missing .claude/skills/review-pr/SKILL.md")
+	}
+}
+
+// TestDeploySkills_SynthesizesFrontMatter guards DEFECT-8: every deployed skill
+// must be a <name>/SKILL.md with valid YAML front-matter (name + description),
+// or Claude Code cannot load it.
+func TestDeploySkills_SynthesizesFrontMatter(t *testing.T) {
+	answers := types.WizardAnswers{Skills: []string{"deploy", "security-review-owasp"}}
+	files, err := claudecode.ExportDeploySkills(answers)
+	if err != nil {
+		t.Fatalf("deploySkills returned error: %v", err)
+	}
+	for _, f := range files {
+		if !strings.HasSuffix(f.Path, "/SKILL.md") {
+			t.Errorf("path %q should end with /SKILL.md", f.Path)
+		}
+		if !strings.HasPrefix(string(f.Content), "---\n") {
+			t.Errorf("%s should begin with YAML front-matter delimiter", f.Path)
+		}
+		var fm struct {
+			Name        string `yaml:"name"`
+			Description string `yaml:"description"`
+		}
+		// Extract the front-matter block (between the first two --- lines).
+		parts := strings.SplitN(string(f.Content), "---\n", 3)
+		if len(parts) < 3 {
+			t.Fatalf("%s has no closed front-matter block", f.Path)
+		}
+		if err := yaml.Unmarshal([]byte(parts[1]), &fm); err != nil {
+			t.Errorf("%s front-matter is not valid YAML: %v", f.Path, err)
+		}
+		if fm.Name == "" || fm.Description == "" {
+			t.Errorf("%s front-matter missing name/description: %+v", f.Path, fm)
+		}
 	}
 }
 
@@ -153,7 +190,7 @@ func TestDeploySkills_ContentNotEmpty(t *testing.T) {
 
 func TestDeploySkills_FileMetadata(t *testing.T) {
 	answers := types.WizardAnswers{
-		Skills: []string{"deploy", "security-review"},
+		Skills: []string{"deploy", "security-review-owasp"},
 	}
 
 	files, err := claudecode.ExportDeploySkills(answers)

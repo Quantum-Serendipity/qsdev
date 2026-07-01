@@ -1,6 +1,7 @@
 package claudecode
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 
@@ -25,6 +26,36 @@ func loadYAMLManifest[T any](path string) (*T, error) {
 	}
 
 	return &manifest, nil
+}
+
+// prependSkillFrontMatter renders a minimal SKILL.md YAML front-matter block
+// (name + description) from a manifest entry and prepends it to a flat template
+// body so Claude Code can load the skill. Bodies that already begin with a
+// front-matter delimiter are returned unchanged, so it is idempotent and safe
+// if a template later grows its own front-matter. Marshaling via yaml.Marshal
+// (rather than string concatenation) safely quotes descriptions containing ':'
+// or other YAML metacharacters.
+func prependSkillFrontMatter(name, description string, body []byte) ([]byte, error) {
+	if bytes.HasPrefix(bytes.TrimLeft(body, " \t\r\n"), []byte("---")) {
+		return body, nil
+	}
+
+	fm := struct {
+		Name        string `yaml:"name"`
+		Description string `yaml:"description"`
+	}{Name: name, Description: description}
+
+	y, err := yaml.Marshal(fm)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling front-matter for skill %q: %w", name, err)
+	}
+
+	var b bytes.Buffer
+	b.WriteString("---\n")
+	b.Write(y)
+	b.WriteString("---\n\n")
+	b.Write(body)
+	return b.Bytes(), nil
 }
 
 // hookFileSpec describes a single hook file to be generated from a template.

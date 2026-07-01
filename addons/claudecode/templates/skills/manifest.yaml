@@ -7,7 +7,7 @@ skills:
     description: "Structured pull request review with checklist"
     tags: [review, quality]
     applicable_languages: []
-  - name: security-review
+  - name: security-review-owasp
     description: "Security-focused code review with OWASP checks"
     tags: [security, review]
     applicable_languages: []

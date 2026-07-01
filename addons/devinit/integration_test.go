@@ -139,9 +139,9 @@ func TestIntegration_EmptyDir_GoWebProfile(t *testing.T) {
 	requireFileExists(t, dir, "CLAUDE.md")
 	requireFileExists(t, dir, ".claude/hooks/package-guard.py")
 
-	// Skills from go-web profile.
-	requireFileExists(t, dir, ".claude/skills/deploy.md")
-	requireFileExists(t, dir, ".claude/skills/security-review.md")
+	// Skills from go-web profile (loadable <name>/SKILL.md layout).
+	requireFileExists(t, dir, ".claude/skills/deploy/SKILL.md")
+	requireFileExists(t, dir, ".claude/skills/security-review-owasp/SKILL.md")
 
 	// Rules for Go.
 	requireFileExists(t, dir, ".claude/rules/go-conventions.md")

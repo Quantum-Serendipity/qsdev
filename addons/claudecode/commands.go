@@ -1,6 +1,7 @@
 package claudecode
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -108,10 +109,13 @@ func initCmd() *cobra.Command {
 				return nil
 			}
 
-			// Write files to disk.
+			// Write files to disk. ThreeWayMergeFunc preserves user-owned
+			// top-level keys (e.g. settings.json "env") when --force overwrites
+			// an existing file.
 			result, err := generate.WriteFiles(files, generate.PipelineOptions{
-				ProjectRoot:      projectRoot,
-				SectionMergeFunc: merge.SectionMarkers,
+				ProjectRoot:       projectRoot,
+				SectionMergeFunc:  merge.SectionMarkers,
+				ThreeWayMergeFunc: merge.MergeOnCreate,
 			})
 			if err != nil {
 				return fmt.Errorf("writing files: %w", err)
@@ -126,6 +130,11 @@ func initCmd() *cobra.Command {
 			}
 			if err := saveAnswers(projectRoot, answers); err != nil {
 				return fmt.Errorf("saving answers: %w", err)
+			}
+
+			// Warn when configured skills/MCP servers were suppressed by tier.
+			for _, w := range SuppressedConfigWarnings(answers) {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Warning: "+w)
 			}
 
 			// Print summary.
@@ -368,6 +377,11 @@ type addItemSpec struct {
 	validate   func(name string) error
 	mutate     func(a *types.WizardAnswers, name string) error
 	successMsg func(name string, filesWritten int) string
+	// verify, when set, runs after regeneration with the set of written paths.
+	// It lets a command fail loudly (instead of reporting false success) when
+	// the item it was asked to add was not actually written — e.g. a skill
+	// suppressed by the resolved tier.
+	verify func(name string, written map[string]bool) error
 }
 
 // makeAddItemCmd builds a cobra.Command that adds an item to the Claude Code
@@ -403,12 +417,18 @@ func makeAddItemCmd(spec addItemSpec) *cobra.Command {
 				return err
 			}
 
-			filesWritten, err := regenerateAndPersist(cmd, answers, projectRoot)
+			written, err := regenerateAndPersist(cmd, answers, projectRoot)
 			if err != nil {
 				return err
 			}
 
-			_, _ = fmt.Fprint(cmd.OutOrStdout(), spec.successMsg(name, filesWritten))
+			if spec.verify != nil {
+				if err := spec.verify(name, written); err != nil {
+					return err
+				}
+			}
+
+			_, _ = fmt.Fprint(cmd.OutOrStdout(), spec.successMsg(name, len(written)))
 			return nil
 		},
 	}
@@ -417,26 +437,34 @@ func makeAddItemCmd(spec addItemSpec) *cobra.Command {
 }
 
 // regenerateAndPersist generates files from answers, performs a merge-aware
-// incremental write, and persists both state and answers. It returns the
-// number of files written.
-func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, projectRoot string) (int, error) {
+// incremental write, and persists both state and answers. It returns the set of
+// relative paths actually written.
+//
+// Any file present on disk with a mergeable strategy (ThreeWayMerge/
+// SectionMarker) is ALWAYS merged — not only when it shows as Modified or is
+// already recorded in state. This preserves user-owned top-level keys such as
+// settings.json "env" across every regeneration, including the first add-skill
+// after a top-level `qsdev init` (which records state under .devinit/, so the
+// claude addon has no record of settings.json) and repeated add-skills where
+// the file stays byte-identical on disk.
+func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, projectRoot string) (map[string]bool, error) {
 	registry := ecosystem.DefaultRegistry()
 	gen := NewClaudeCodeGenerator(registry, addon.Config)
 	files, err := gen.Generate(answers)
 	if err != nil {
-		return 0, fmt.Errorf("generating files: %w", err)
+		return nil, fmt.Errorf("generating files: %w", err)
 	}
 
 	stFile := filepath.Join(projectRoot, statePath())
 	existingState, err := state.LoadStateFromFile(stFile)
 	if err != nil {
-		return 0, fmt.Errorf("loading state: %w", err)
+		return nil, fmt.Errorf("loading state: %w", err)
 	}
 
-	diskStatus := state.CheckModified(existingState, projectRoot)
-
-	// Only write files that are new or whose content changed.
 	var writtenFiles []types.GeneratedFile
+	writtenPaths := make(map[string]bool)
+	mergedOriginals := make(map[string][]byte)
+
 	for _, f := range files {
 		absPath := filepath.Join(projectRoot, f.Path)
 		mode := f.Mode
@@ -444,43 +472,59 @@ func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, proje
 			mode = fileutil.ModeReadWrite
 		}
 
-		if fs, ok := existingState.Files[f.Path]; ok {
-			newHash := state.ComputeHash(f.Content)
-			if newHash == fs.Hash {
-				continue
-			}
+		onDisk, statErr := os.ReadFile(absPath)
+		exists := statErr == nil
 
-			if ds, found := diskStatus[f.Path]; found && ds.Status == types.Modified {
-				merged, mergeErr := mergeFile(f, existingState, projectRoot)
-				if mergeErr != nil {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: merge failed for %s: %v (skipping)\n", f.Path, mergeErr)
-					continue
+		switch {
+		case exists && (f.Strategy == types.ThreeWayMerge || f.Strategy == types.SectionMarker):
+			merged, mergeErr := mergeFile(f, existingState, projectRoot)
+			if mergeErr != nil {
+				// e.g. an empty on-disk file: nothing to preserve, fall through
+				// to a full write of the generated content.
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: merge failed for %s: %v (overwriting)\n", f.Path, mergeErr)
+			} else {
+				if bytes.Equal(onDisk, merged) {
+					continue // idempotent no-op
 				}
+				mergedOriginals[f.Path] = f.Content // remember "ours" for BaseContent
 				f.Content = merged
+			}
+		default:
+			if fs, ok := existingState.Files[f.Path]; ok && state.ComputeHash(f.Content) == fs.Hash {
+				continue
 			}
 		}
 
 		if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
-			return 0, fmt.Errorf("writing %s: %w", f.Path, err)
+			return nil, fmt.Errorf("writing %s: %w", f.Path, err)
 		}
 		writtenFiles = append(writtenFiles, f)
+		writtenPaths[f.Path] = true
 	}
 
-	// Save state (merge new + existing for unchanged files).
+	// Save state (merge new + existing for unchanged files). Store the
+	// un-merged generated content as the ThreeWayMerge base so future merges
+	// diff against ours, not the merged result (mirrors updateCmd).
 	newState := state.RecordFiles(writtenFiles)
+	for path, orig := range mergedOriginals {
+		if fs, ok := newState.Files[path]; ok && fs.Strategy == types.ThreeWayMerge {
+			fs.BaseContent = orig
+			newState.Files[path] = fs
+		}
+	}
 	for path, fs := range existingState.Files {
-		if _, written := newState.Files[path]; !written {
+		if _, ok := newState.Files[path]; !ok {
 			newState.Files[path] = fs
 		}
 	}
 	if err := state.SaveStateToFile(stFile, newState); err != nil {
-		return 0, fmt.Errorf("saving state: %w", err)
+		return nil, fmt.Errorf("saving state: %w", err)
 	}
 	if err := saveAnswers(projectRoot, answers); err != nil {
-		return 0, fmt.Errorf("saving answers: %w", err)
+		return nil, fmt.Errorf("saving answers: %w", err)
 	}
 
-	return len(writtenFiles), nil
+	return writtenPaths, nil
 }
 
 func addSkillCmd() *cobra.Command {
@@ -507,6 +551,13 @@ func addSkillCmd() *cobra.Command {
 				return fmt.Errorf("skill %q is already configured", name)
 			}
 			a.Skills = append(a.Skills, name)
+			return nil
+		},
+		verify: func(name string, written map[string]bool) error {
+			path := ".claude/skills/" + name + "/SKILL.md"
+			if !written[path] {
+				return fmt.Errorf("skill %q was not written (expected %s); it is suppressed by the current tier — raise the tier to standard or higher", name, path)
+			}
 			return nil
 		},
 		successMsg: func(name string, filesWritten int) string {

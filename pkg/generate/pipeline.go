@@ -113,12 +113,23 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 			continue
 		}
 
-		// Apply section-marker merge when the file already exists and the
-		// caller provided a merge function.
+		// Apply a merge when the file already exists and the caller provided a
+		// strategy-appropriate merge function. On any read/merge error we fall
+		// through to a full overwrite of the generated content.
 		contentToWrite := file.Content
-		if file.Strategy == types.SectionMarker && statErr == nil && opts.SectionMergeFunc != nil {
+		switch {
+		case file.Strategy == types.SectionMarker && statErr == nil && opts.SectionMergeFunc != nil:
 			if existingContent, readErr := os.ReadFile(fullPath); readErr == nil {
 				if merged, mergeErr := opts.SectionMergeFunc(existingContent, file.Content); mergeErr == nil {
+					contentToWrite = merged
+					fr.BytesSize = len(contentToWrite)
+				}
+			}
+		case file.Strategy == types.ThreeWayMerge && statErr == nil && opts.ThreeWayMergeFunc != nil:
+			// Preserve user-owned top-level keys (e.g. settings.json "env")
+			// when init overwrites an existing, unrecorded file.
+			if existingContent, readErr := os.ReadFile(fullPath); readErr == nil {
+				if merged, mergeErr := opts.ThreeWayMergeFunc(file.Path, existingContent, file.Content); mergeErr == nil {
 					contentToWrite = merged
 					fr.BytesSize = len(contentToWrite)
 				}

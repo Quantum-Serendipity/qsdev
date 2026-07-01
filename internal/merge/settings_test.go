@@ -726,3 +726,40 @@ func assertStringSlice(t *testing.T, name string, got, want []string) {
 		}
 	}
 }
+
+// TestMergeOnCreate_PreservesEnv guards DEFECT-6 on the create path: with no
+// recorded base, unknown top-level keys (e.g. "env") in the on-disk file must
+// survive when generated content is written over it.
+func TestMergeOnCreate_PreservesEnv(t *testing.T) {
+	theirs := []byte(`{"env":{"CLAUDE_CODE_USE_BEDROCK":"1"},"permissions":{"allow":["X"]}}`)
+	ours := []byte(`{"permissions":{"allow":["Y"],"deny":[]}}`)
+
+	merged, err := MergeOnCreate(".claude/settings.json", theirs, ours)
+	if err != nil {
+		t.Fatalf("MergeOnCreate returned error: %v", err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(merged, &got); err != nil {
+		t.Fatalf("merged output is not valid JSON: %v\n%s", err, merged)
+	}
+	if _, ok := got["env"]; !ok {
+		t.Errorf("env block dropped by MergeOnCreate: %s", merged)
+	}
+	if _, ok := got["permissions"]; !ok {
+		t.Errorf("generated permissions missing from merge: %s", merged)
+	}
+}
+
+// TestMergeOnCreate_UnknownPathPassesThrough verifies non-dispatched paths are
+// returned as-is (a plain overwrite), so the create path never alters files it
+// does not understand.
+func TestMergeOnCreate_UnknownPathPassesThrough(t *testing.T) {
+	ours := []byte("generated content")
+	merged, err := MergeOnCreate("CLAUDE.md", []byte("on disk"), ours)
+	if err != nil {
+		t.Fatalf("MergeOnCreate returned error: %v", err)
+	}
+	if string(merged) != string(ours) {
+		t.Errorf("unknown path should pass through ours, got %q", merged)
+	}
+}

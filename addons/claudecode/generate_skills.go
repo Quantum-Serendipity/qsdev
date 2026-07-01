@@ -39,28 +39,38 @@ func deploySkills(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 		return nil, err
 	}
 
-	// Build a set of known skill names for validation.
-	known := make(map[string]bool, len(manifest.Skills))
+	// Index by name for validation and front-matter synthesis.
+	entryByName := make(map[string]SkillEntry, len(manifest.Skills))
 	for _, s := range manifest.Skills {
-		known[s.Name] = true
+		entryByName[s.Name] = s
 	}
 
 	var files []types.GeneratedFile
 	for _, name := range answers.Skills {
-		if !known[name] {
+		entry, ok := entryByName[name]
+		if !ok {
 			return nil, fmt.Errorf("unknown skill %q: not found in manifest", name)
 		}
 
-		content, err := templateFS.ReadFile("templates/skills/" + name + ".md")
+		body, err := templateFS.ReadFile("templates/skills/" + name + ".md")
 		if err != nil {
 			return nil, fmt.Errorf("reading skill file %q: %w", name, err)
 		}
 
+		// Claude Code loads skills only from <name>/SKILL.md with YAML
+		// front-matter. Synthesize name+description from the manifest (the
+		// single source of truth) and write the directory layout.
+		content, err := prependSkillFrontMatter(entry.Name, entry.Description, body)
+		if err != nil {
+			return nil, err
+		}
+
 		files = append(files, types.GeneratedFile{
-			Path:     ".claude/skills/" + name + ".md",
+			Path:     ".claude/skills/" + name + "/SKILL.md",
 			Content:  content,
 			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.LibraryManaged,
+			Owner:    name,
 		})
 	}
 

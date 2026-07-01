@@ -107,4 +107,12 @@ type PipelineOptions struct {
 	// and new content and returns the merged result. On error the pipeline
 	// falls through to a full overwrite.
 	SectionMergeFunc func(existing, newGenerated []byte) ([]byte, error)
+	// ThreeWayMergeFunc, when non-nil, is called for files with Strategy
+	// ThreeWayMerge that already exist on disk. It receives the relative path,
+	// the on-disk content (theirs), and the newly generated content (ours),
+	// with no recorded base (this is the create path). It returns the merged
+	// result; on error the pipeline falls through to a full overwrite. This is
+	// what preserves user-owned top-level keys (e.g. settings.json "env") when
+	// init overwrites an existing, unrecorded file.
+	ThreeWayMergeFunc func(relPath string, theirs, ours []byte) ([]byte, error)
 }

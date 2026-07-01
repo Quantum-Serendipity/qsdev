@@ -148,7 +148,7 @@ project_profiles:
         permission_level: standard
         skills:
             - deploy
-            - security-review
+            - security-review-owasp
         hooks:
             - safety-block
             - pre-commit
@@ -165,12 +165,12 @@ project_profiles:
         permission_level: standard
         skills:
             - deploy
-            - security-review
+            - security-review-owasp
         hooks:
             - safety-block
             - pre-commit
     go-web:
-        description: 'Go web service: Go 1.24, PostgreSQL, Redis, direnv, Claude Code (standard), deploy + security-review skills'
+        description: 'Go web service: Go 1.24, PostgreSQL, Redis, direnv, Claude Code (standard), deploy + security-review-owasp skills'
         tier: full
         languages:
             - name: go
@@ -183,7 +183,7 @@ project_profiles:
         permission_level: standard
         skills:
             - deploy
-            - security-review
+            - security-review-owasp
         hooks:
             - safety-block
             - pre-commit
@@ -202,7 +202,7 @@ project_profiles:
         permission_level: standard
         skills:
             - deploy
-            - security-review
+            - security-review-owasp
         hooks:
             - safety-block
             - pre-commit
@@ -218,7 +218,7 @@ project_profiles:
         claude_code: true
         permission_level: minimal
         skills:
-            - security-review
+            - security-review-owasp
         hooks:
             - safety-block
             - pre-commit
@@ -237,7 +237,7 @@ project_profiles:
         permission_level: standard
         skills:
             - deploy
-            - security-review
+            - security-review-owasp
         hooks:
             - safety-block
             - pre-commit
@@ -251,7 +251,7 @@ project_profiles:
         claude_code: true
         permission_level: minimal
         skills:
-            - security-review
+            - security-review-owasp
         hooks:
             - safety-block
             - pre-commit
@@ -268,7 +268,7 @@ project_profiles:
         permission_level: standard
         skills:
             - deploy
-            - security-review
+            - security-review-owasp
         hooks:
             - safety-block
             - pre-commit
@@ -286,7 +286,7 @@ project_profiles:
         permission_level: standard
         skills:
             - deploy
-            - security-review
+            - security-review-owasp
         hooks:
             - safety-block
             - pre-commit
@@ -304,7 +304,7 @@ project_profiles:
         permission_level: standard
         skills:
             - deploy
-            - security-review
+            - security-review-owasp
         hooks:
             - auto-format
             - safety-block
@@ -716,9 +716,9 @@ tools:
         category: ai-agent
         description: Security-focused code review skills based on Trail of Bits audit methodology
         default_policy: always-on
-        skill_name: security-review
+        skill_name: security-review-owasp
         owned_files:
-            - path: .claude/skills/security-review.md
+            - path: .claude/skills/security-review-owasp/SKILL.md
               ownership: exclusive
             - path: CLAUDE.md
               ownership: shared

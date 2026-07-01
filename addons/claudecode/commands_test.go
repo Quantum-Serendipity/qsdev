@@ -182,10 +182,70 @@ func TestAddSkillCmd_ValidSkill(t *testing.T) {
 		t.Errorf("output should mention added skill, got: %s", output)
 	}
 
-	// Verify skill file was created.
-	skillFile := filepath.Join(tmpDir, ".claude", "skills", "deploy.md")
+	// Verify skill file was created in the loadable <name>/SKILL.md layout.
+	skillFile := filepath.Join(tmpDir, ".claude", "skills", "deploy", "SKILL.md")
 	if _, err := os.Stat(skillFile); err != nil {
 		t.Errorf("skill file not created: %v", err)
+	}
+}
+
+// TestAddSkill_PreservesEnv guards DEFECT-6: a user's top-level "env" block in
+// .claude/settings.json must survive `init --force` and every subsequent
+// add-skill, including the second one (the merge must not be gated on the file
+// showing as Modified).
+func TestAddSkill_PreservesEnv(t *testing.T) {
+	tmpDir := t.TempDir()
+	claudeDir := filepath.Join(tmpDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	seeded := `{"env":{"CLAUDE_CODE_USE_BEDROCK":"1","AWS_REGION":"us-east-1"},"permissions":{"allow":[],"deny":[]}}`
+	if err := os.WriteFile(settingsPath, []byte(seeded), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := claudecode.ExportClaudeCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetErr(&buf)
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("%v failed: %v\n%s", args, err, buf.String())
+		}
+	}
+	requireEnv := func(stage string) {
+		t.Helper()
+		data, err := os.ReadFile(settingsPath)
+		if err != nil {
+			t.Fatalf("reading settings.json after %s: %v", stage, err)
+		}
+		if !strings.Contains(string(data), "CLAUDE_CODE_USE_BEDROCK") {
+			t.Errorf("env block dropped after %s: %s", stage, data)
+		}
+	}
+
+	run("init", "--yes", "--force", "--permission-preset", "standard")
+	requireEnv("init --force")
+
+	// Two consecutive add-skills: the second exercises the always-merge path
+	// (settings.json unchanged on disk, so a Modified-gated merge would skip).
+	run("add-skill", "deploy")
+	requireEnv("first add-skill")
+	run("add-skill", "review-pr")
+	requireEnv("second add-skill")
+
+	// The skill itself must also be written in the loadable layout.
+	if _, err := os.Stat(filepath.Join(claudeDir, "skills", "deploy", "SKILL.md")); err != nil {
+		t.Errorf("deploy skill not written: %v", err)
 	}
 }
 
@@ -247,7 +307,7 @@ func TestListSkillsCmd_ShowsAvailable(t *testing.T) {
 	output := buf.String()
 
 	// Verify known skills appear in output.
-	expectedSkills := []string{"deploy", "review-pr", "security-review", "generate-tests", "refactor", "db-migration"}
+	expectedSkills := []string{"deploy", "review-pr", "security-review-owasp", "generate-tests", "refactor", "db-migration"}
 	for _, name := range expectedSkills {
 		if !strings.Contains(output, name) {
 			t.Errorf("output should contain skill %q, got:\n%s", name, output)
@@ -410,13 +470,18 @@ func TestInitCmd_ExistingSettings_Force(t *testing.T) {
 		t.Fatalf("init --force should succeed: %v", err)
 	}
 
-	// Verify settings.json was overwritten.
+	// Even with --force, unknown user-owned top-level keys must be preserved
+	// (DEFECT-6): --force regenerates the managed keys but merges rather than
+	// blindly overwriting, so a user's env/auth block is never silently lost.
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
 		t.Fatalf("reading settings.json: %v", err)
 	}
-	if strings.Contains(string(data), `"existing"`) {
-		t.Error("settings.json should have been overwritten by --force")
+	if !strings.Contains(string(data), `"existing"`) {
+		t.Error("--force must preserve unknown top-level keys (DEFECT-6), but 'existing' was dropped")
+	}
+	if !strings.Contains(string(data), `"permissions"`) {
+		t.Error("--force should still write the generated permissions block")
 	}
 }
 

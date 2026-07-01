@@ -54,7 +54,11 @@ func isToolImplicitlyEnabled(tool *Tool, answers *types.WizardAnswers) bool {
 	case ToolSemble:
 		return answers.AgentTools.SembleEnabled
 	case ToolTrailOfBitsSkills:
-		return slices.Contains(answers.Skills, "security-review")
+		// Accept the legacy name too, so pre-rename .qsdev.yaml files still
+		// migrate (the skill was renamed security-review → security-review-owasp
+		// to avoid colliding with Claude Code's built-in /security-review).
+		return slices.Contains(answers.Skills, "security-review-owasp") ||
+			slices.Contains(answers.Skills, "security-review")
 	default:
 		// For tools added in Phase 12+, they weren't present in pre-lifecycle
 		// projects, so default to the tool's DefaultPolicy.

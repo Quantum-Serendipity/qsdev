@@ -55,13 +55,14 @@ type StageResult struct {
 
 // FullUpdateOptions holds configuration for the coordinated update command.
 type FullUpdateOptions struct {
-	DryRun      bool
-	Force       bool
-	SelfOnly    bool
-	ConfigsOnly bool
-	DepsOnly    bool
-	Check       bool
-	Changelog   bool
+	DryRun        bool
+	Force         bool
+	SelfOnly      bool
+	ConfigsOnly   bool
+	DepsOnly      bool
+	Check         bool
+	Changelog     bool
+	SkipContainer bool
 }
 
 func updateCmd() *cobra.Command {
@@ -92,6 +93,7 @@ Use stage-specific flags to run only one stage.`,
 	cmd.Flags().BoolVar(&opts.DepsOnly, "deps-only", false, "Only update devenv inputs")
 	cmd.Flags().BoolVar(&opts.Check, "check", false, "Check for updates without installing")
 	cmd.Flags().BoolVar(&opts.Changelog, "changelog", false, "Show release notes (use with --check)")
+	cmd.Flags().BoolVar(&opts.SkipContainer, "skip-container", false, "Skip generating Gateway container config for hookless frameworks")
 	return cmd
 }
 
@@ -274,8 +276,9 @@ func runSelfUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult 
 
 func runConfigUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult {
 	err := runUpdate(cmd, UpdateOptions{
-		Force:  opts.Force,
-		DryRun: opts.DryRun,
+		Force:         opts.Force,
+		DryRun:        opts.DryRun,
+		SkipContainer: opts.SkipContainer,
 	})
 	if err != nil {
 		return StageResult{

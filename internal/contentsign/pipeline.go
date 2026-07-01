@@ -24,8 +24,10 @@ const maxIngestBytes int64 = 512 << 20 // 512 MiB
 // IngestDevDocs sanitizes the DevDocs db.json in dir in place (atomic rewrite),
 // stripping invisible/tag/control characters before the external devdocs server
 // indexes it. index.json and meta.json are left untouched. Returns the sanitize
-// report. opts controls the sanitizer (use DefaultSanitizeOptions for the
-// lossless download-time profile — invisible/control/HTML stripping, NFKC off).
+// report. opts controls the sanitizer (use DefaultSanitizeOptions), but NFKC
+// normalization is always forced ON for ingest regardless of opts: this is
+// untrusted external prose, and canonicalizing before the HTML scrub closes the
+// compatibility-form bypass (see ingestDevDocs).
 //
 // The input is size-bounded (see maxIngestBytes): value-level sanitization needs
 // the parsed tree in memory to tell string VALUES from object keys and to
@@ -39,6 +41,14 @@ func IngestDevDocs(ctx context.Context, dir string, opts SanitizeOptions) (Sanit
 // ingestDevDocs is the implementation behind IngestDevDocs with the size bound
 // injected so tests can exercise the oversize path without writing a huge file.
 func ingestDevDocs(ctx context.Context, dir string, opts SanitizeOptions, maxBytes int64) (SanitizeReport, error) {
+	// Force NFKC for ingest: external documentation prose is untrusted, and NFKC
+	// folds compatibility forms (e.g. fullwidth U+FF1C '＜' -> '<') BEFORE the HTML
+	// scrub, closing a bypass where compatibility-equivalent markup would slip past
+	// the literal-ASCII HTML stripper. The property must hold on every ingest, so
+	// it is set here (the single choke point) rather than relying on the caller's
+	// opts.
+	opts.NormalizeNFKC = true
+
 	dbPath := filepath.Join(dir, "db.json")
 	raw, err := readBounded(dbPath, maxBytes)
 	if err != nil {

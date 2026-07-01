@@ -33,6 +33,27 @@ func ResolveLogDir(projectRoot string, projectScoped bool) string {
 	return GlobalLogDir()
 }
 
+// WalkUp walks from startDir toward the filesystem root, returning the first
+// directory for which match reports true, together with true. When no ancestor
+// (nor startDir itself) matches it returns ("", false). match is invoked with
+// each candidate directory from startDir upward, so callers encode their own
+// project-root marker set inside it. This is the single shared traversal
+// primitive used by project-root detection across packages; callers keep their
+// own marker semantics by supplying the predicate.
+func WalkUp(startDir string, match func(dir string) bool) (string, bool) {
+	dir := startDir
+	for {
+		if match(dir) {
+			return dir, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
+}
+
 // DetectProjectRoot walks up from the current directory looking for
 // .qsdev.yaml or .qsdev/ to identify a qsdev project root.
 // Returns "" if not inside a project.
@@ -43,23 +64,15 @@ func DetectProjectRoot() string {
 	}
 
 	b := branding.Get()
-	for {
-		if fileExists(filepath.Join(dir, b.ConfigFile)) {
-			return dir
-		}
-		if dirExists(filepath.Join(dir, "."+b.AppName)) {
-			return dir
-		}
-		if dirExists(filepath.Join(dir, b.StateDir)) {
-			return dir
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return ""
-		}
-		dir = parent
+	root, ok := WalkUp(dir, func(d string) bool {
+		return fileExists(filepath.Join(d, b.ConfigFile)) ||
+			dirExists(filepath.Join(d, "."+b.AppName)) ||
+			dirExists(filepath.Join(d, b.StateDir))
+	})
+	if !ok {
+		return ""
 	}
+	return root
 }
 
 // IsProjectScopedCommand returns true for commands that should write to

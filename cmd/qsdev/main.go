@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -18,15 +19,51 @@ import (
 	_ "github.com/Quantum-Serendipity/qsdev/internal/extlog/providers"
 	"github.com/Quantum-Serendipity/qsdev/internal/logcmd"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+
+	// Universal MCP server framework adapters. Concrete adapters under
+	// internal/mcpserve/adapters/* delegate to addon packages (e.g.
+	// addons/claudecode) and so MUST NOT be imported by the mcpserve server
+	// package itself — that would create an import cycle. They are wired in
+	// explicitly from this entry point (see registerFrameworkAdapters) rather than
+	// self-registering from init(), so registration order is visible here. The
+	// aliases avoid colliding with the addon packages of the same name.
+	claudecodeadapter "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/claudecode"
+	clineadapter "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/cline"
+	codexadapter "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/codex"
+	cursoradapter "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/cursor"
+	windsurfadapter "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/windsurf"
 )
 
 var logSession *logging.Session
 
+// registerFrameworkAdapters explicitly wires the universal MCP server's framework
+// adapters into spi.DefaultRegistry(). Explicit registration here (rather than a
+// per-package init()) keeps the set and its order visible at the entry point, per
+// the project's Go conventions and DefaultRegistry's own guidance. A duplicate-id
+// error can only mean an adapter was listed twice — a build wiring mistake worth
+// surfacing loudly.
+func registerFrameworkAdapters() {
+	reg := spi.DefaultRegistry()
+	for _, a := range []spi.FrameworkAdapter{
+		claudecodeadapter.New(),
+		clineadapter.New(),
+		codexadapter.New(),
+		cursoradapter.New(),
+		windsurfadapter.New(),
+	} {
+		if err := reg.Register(a); err != nil {
+			panic(fmt.Sprintf("registering framework adapter %q: %v", a.ID(), err))
+		}
+	}
+}
+
 func main() {
 	instance.SetBranding(branding.Default())
+	registerFrameworkAdapters()
 
 	if vi := version.Info(); vi.Version != "dev" && vi.Version != "(devel)" {
 		instance.SetVersionOverride(vi.Version, vi.Commit)

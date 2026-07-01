@@ -374,3 +374,29 @@ func BenchmarkSanitizeText(b *testing.B) {
 		_, _ = SanitizeText(doc, opts)
 	}
 }
+
+// TestSanitizeJSONStringsBoundsRecursionDepth proves the JSON walk is depth-bounded:
+// a shallow value is sanitized while a value nested past maxJSONDepth is returned
+// untouched (the guard stops recursing), so a pathologically nested db.json cannot
+// drive unbounded recursion.
+func TestSanitizeJSONStringsBoundsRecursionDepth(t *testing.T) {
+	t.Parallel()
+	const zwsp = "\u200b" // zero-width space, as an escape (never a literal in source)
+	deep := maxJSONDepth + 50
+	// {"shallow":"a<ZWSP>b","deep":[[[ ... "c<ZWSP>d" ... ]]]}
+	raw := "{\"shallow\":\"a" + zwsp + "b\",\"deep\":" +
+		strings.Repeat("[", deep) + "\"c" + zwsp + "d\"" +
+		strings.Repeat("]", deep) + "}"
+
+	out, _, err := SanitizeJSONStrings(context.Background(), []byte(raw), DefaultSanitizeOptions())
+	if err != nil {
+		t.Fatalf("SanitizeJSONStrings on deeply-nested input: %v", err)
+	}
+	s := string(out)
+	if strings.Contains(s, "a"+zwsp+"b") {
+		t.Error("shallow zero-width space should have been stripped")
+	}
+	if !strings.Contains(s, "c"+zwsp+"d") {
+		t.Error("over-deep value should be left untouched by the depth guard (recursion bounded)")
+	}
+}

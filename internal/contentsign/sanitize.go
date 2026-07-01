@@ -313,7 +313,7 @@ func SanitizeJSONStrings(ctx context.Context, raw []byte, opts SanitizeOptions) 
 	}
 
 	report := SanitizeReport{}
-	sanitized := sanitizeJSONValue(root, opts, &report)
+	sanitized := sanitizeJSONValue(root, opts, &report, 0)
 
 	// Encode with HTML escaping disabled so that <, >, and & in legitimate
 	// documentation HTML are preserved verbatim. Re-encoding the decoded tree may
@@ -332,10 +332,23 @@ func SanitizeJSONStrings(ctx context.Context, raw []byte, opts SanitizeOptions) 
 	return out, report, nil
 }
 
+// maxJSONDepth bounds the recursion in sanitizeJSONValue so a pathologically
+// nested db.json (deeply nested arrays/objects, well within the byte-size bound)
+// cannot exhaust the goroutine stack — encoding/json imposes no nesting limit of
+// its own. Legitimate documentation JSON nests only a handful of levels; 1000 is
+// far beyond any real structure while staying clear of the stack limit.
+const maxJSONDepth = 1000
+
 // sanitizeJSONValue recursively sanitizes string values within a decoded JSON
 // tree, merging each string's report into agg. Object keys and non-string
-// scalars (numbers, booleans, null) are returned unchanged.
-func sanitizeJSONValue(v any, opts SanitizeOptions, agg *SanitizeReport) any {
+// scalars (numbers, booleans, null) are returned unchanged. Recursion is bounded
+// by maxJSONDepth: beyond it the subtree is returned untouched rather than
+// recursed into, trading deep-leaf sanitization (only reachable through absurd
+// nesting) for crash safety on hostile input.
+func sanitizeJSONValue(v any, opts SanitizeOptions, agg *SanitizeReport, depth int) any {
+	if depth >= maxJSONDepth {
+		return v
+	}
 	switch val := v.(type) {
 	case string:
 		clean, r := SanitizeText(val, opts)
@@ -343,12 +356,12 @@ func sanitizeJSONValue(v any, opts SanitizeOptions, agg *SanitizeReport) any {
 		return clean
 	case map[string]any:
 		for k, child := range val {
-			val[k] = sanitizeJSONValue(child, opts, agg)
+			val[k] = sanitizeJSONValue(child, opts, agg, depth+1)
 		}
 		return val
 	case []any:
 		for i, child := range val {
-			val[i] = sanitizeJSONValue(child, opts, agg)
+			val[i] = sanitizeJSONValue(child, opts, agg, depth+1)
 		}
 		return val
 	default:

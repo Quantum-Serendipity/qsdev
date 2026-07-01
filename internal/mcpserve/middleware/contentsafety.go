@@ -1,0 +1,56 @@
+package middleware
+
+import (
+	"context"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/logging"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+)
+
+// ContentSafety is the L1 sanitization layer (Order 45). It POST-processes the
+// result returned by the inner chain, redacting secret patterns (AWS access
+// keys, GitHub/GitLab/Slack/Stripe/npm tokens, JWTs, private keys, URL
+// credentials, ...) from res.Text and, recursively, from JSON-serializable
+// structured content. Redaction reuses internal/logging.Redactor so the MCP
+// surface and the log surface share one battle-tested pattern set rather than
+// maintaining a divergent copy. It never short-circuits and is nil-safe.
+type ContentSafety struct {
+	redactor *logging.Redactor
+}
+
+// Order returns 45.
+func (ContentSafety) Order() int { return orderContentSafety }
+
+// Handle continues the chain, then sanitizes the returned result. Go errors and
+// nil results are passed through untouched (ErrorHandling, which sits inside
+// this layer, has already converted handler failures into IsError results, so a
+// non-nil err here is a propagated context cancellation).
+func (cs ContentSafety) Handle(ctx context.Context, cc *spi.ToolCallContext, req *spi.ToolRequest, next spi.ToolHandler) (*spi.ToolResult, error) {
+	res, err := next(ctx, cc, req)
+	if err != nil || res == nil {
+		return res, err
+	}
+
+	// The credential category is the sole tool category sanctioned to emit
+	// credentials: qsdev_credential_vend exists precisely to return short-lived
+	// cloud tokens (AWS STS, GCP IAM, Azure MI) to the agent. Redacting its
+	// output would strip the AWS-key/JWT-shaped material the tool is meant to
+	// deliver, defeating its purpose. The category is also the most restricted in
+	// the rate limiter (lowest rate, smallest burst, tightest concurrency) and
+	// passes through the same Guardrail/Audit layers as every other tool, so the
+	// exemption narrows redaction, not the surrounding controls.
+	if cc != nil && cc.Category == CategoryCredential {
+		return res, nil
+	}
+
+	red := cs.redactor
+	if red == nil {
+		red = logging.NewRedactor()
+	}
+
+	res.Text = red.RedactString(res.Text)
+	if res.Structured != nil {
+		res.Structured = red.RedactStructured(res.Structured)
+	}
+	return res, nil
+}

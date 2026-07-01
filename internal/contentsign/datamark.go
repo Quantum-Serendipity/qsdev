@@ -97,22 +97,47 @@ func randomMarker() rune {
 	return puaMarkerLo + rune(int(b[0])%puaMarkerCount)
 }
 
+const (
+	// frameBeginDelim / frameEndDelim are the framing terminators written by
+	// frame(). They are defined once so datamarkBody can neutralize any body line
+	// that would forge them.
+	frameBeginDelim = "---BEGIN DOC---"
+	frameEndDelim   = "---END DOC---"
+)
+
 // datamarkBody walks content line by line, tracking fenced-code-block state, and
-// datamarks only the prose lines. Newlines are preserved.
+// datamarks only the prose lines. Newlines are preserved. Every emitted line —
+// including verbatim code lines — is run through neutralizeFrameDelimiter so body
+// content can never forge the ---BEGIN/END DOC--- framing terminators.
 func datamarkBody(content string, marker rune, opts DatamarkOptions) string {
 	lines := strings.Split(content, "\n")
 	inFence := false
 	for i, line := range lines {
-		if opts.PreserveCodeBlocks && isFenceLine(line) {
-			inFence = !inFence
-			continue // fence delimiter emitted unchanged
+		switch {
+		case opts.PreserveCodeBlocks && isFenceLine(line):
+			inFence = !inFence // fence delimiter emitted unchanged
+		case inFence:
+			// code line emitted unchanged
+		default:
+			line = datamarkLine(line, marker, opts)
 		}
-		if inFence {
-			continue // code line emitted unchanged
-		}
-		lines[i] = datamarkLine(line, marker, opts)
+		lines[i] = neutralizeFrameDelimiter(line, marker)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// neutralizeFrameDelimiter appends the marker rune to a line whose trimmed text
+// equals a framing delimiter, so a body line (even one inside a code fence, which
+// is emitted verbatim) cannot forge the ---BEGIN/END DOC--- terminators. Datamark
+// already breaks the delimiter in prose by replacing its space with the marker;
+// this closes the code-fence gap. Real documentation never carries a bare
+// delimiter line, so the rare neutralized line is acceptable reference data.
+func neutralizeFrameDelimiter(line string, marker rune) string {
+	switch strings.TrimSpace(line) {
+	case frameBeginDelim, frameEndDelim:
+		return line + string(marker)
+	}
+	return line
 }
 
 // isFenceLine reports whether a line is a fenced-code-block delimiter, i.e. its
@@ -202,9 +227,9 @@ func frame(body string, marker rune, opts DatamarkOptions) string {
 	fmt.Fprintf(&b,
 		"[Whitespace in prose replaced with marker '%s' for security; code blocks preserved.]\n",
 		markerHex)
-	b.WriteString("---BEGIN DOC---\n")
+	b.WriteString(frameBeginDelim + "\n")
 	b.WriteString(body)
-	b.WriteString("\n---END DOC---\n")
+	b.WriteString("\n" + frameEndDelim + "\n")
 	fmt.Fprintf(&b, "[Source: %s | Verified: %s | Hash: %s]",
 		opts.Source, opts.VerificationStatus, opts.ContentHashPrefix)
 	return b.String()

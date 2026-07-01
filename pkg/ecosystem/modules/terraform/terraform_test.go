@@ -272,19 +272,21 @@ func TestPreCommitHooks(t *testing.T) {
 		t.Fatalf("expected 4 hooks, got %d", len(hooks))
 	}
 
-	expectedIDs := []string{"terraform_fmt", "terraform_validate", "tflint", "tfsec"}
+	// Real git-hooks.nix hook names are hyphenated (terraform-format /
+	// terraform-validate); underscored names do not exist as built-ins.
+	expectedIDs := []string{"terraform-format", "terraform-validate", "tflint", "tfsec"}
 	for i, id := range expectedIDs {
 		if hooks[i].ID != id {
 			t.Errorf("hook[%d]: expected ID %q, got %q", i, id, hooks[i].ID)
 		}
 	}
 
-	// terraform_fmt and terraform_validate should be BuiltIn.
+	// terraform-format and terraform-validate should be BuiltIn.
 	if !hooks[0].BuiltIn {
-		t.Error("terraform_fmt should be BuiltIn")
+		t.Error("terraform-format should be BuiltIn")
 	}
 	if !hooks[1].BuiltIn {
-		t.Error("terraform_validate should be BuiltIn")
+		t.Error("terraform-validate should be BuiltIn")
 	}
 	// tflint and tfsec should NOT be BuiltIn.
 	if hooks[2].BuiltIn {

@@ -146,8 +146,8 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 
 	return []ecosystem.HookConfig{
 		{
-			ID:            "terraform_fmt",
-			Name:          "terraform_fmt",
+			ID:            "terraform-format",
+			Name:          "terraform-format",
 			Description:   fmt.Sprintf("Check %s configuration formatting", variant),
 			Entry:         binary + " fmt -check -recursive",
 			Language:      "system",
@@ -157,8 +157,8 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 			BuiltIn:       true,
 		},
 		{
-			ID:            "terraform_validate",
-			Name:          "terraform_validate",
+			ID:            "terraform-validate",
+			Name:          "terraform-validate",
 			Description:   fmt.Sprintf("Validate %s configuration syntax", variant),
 			Entry:         binary + " validate",
 			Language:      "system",

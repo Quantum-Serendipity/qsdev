@@ -24,6 +24,7 @@ var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
+var _ ecosystem.DevenvYamlInputProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -145,6 +146,20 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	}), nil
 }
 
+// DevenvYamlInputs returns the extra flake input required for Python.
+//
+// DevenvNixFragment always pins languages.python.version (defaulting to "3.12"
+// when unset), and devenv >=2.1 refuses to evaluate languages.python.version
+// unless the nixpkgs-python input is present. The input is therefore returned
+// unconditionally whenever the Python module is active — the invariant
+// "input present ⟺ languages.python.version emitted" must not depend on whether
+// the user pinned a version.
+func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
+	return []ecosystem.DevenvInput{
+		{URL: "github:cachix/nixpkgs-python", Follows: "nixpkgs"},
+	}
+}
+
 // SecurityConfigs returns generated security configuration files.
 // For pip, it generates a security-hardened pip.conf. For uv and poetry,
 // security is enforced via CI commands, so no config files are needed.
@@ -216,7 +231,10 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Types:         []string{"python"},
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
-			BuiltIn:       true,
+			// git-hooks.nix has no built-in "bandit" hook; render it as a
+			// custom hook so an `entry` is always emitted (via NixPackage).
+			BuiltIn:    false,
+			NixPackage: "bandit",
 		},
 	}
 }

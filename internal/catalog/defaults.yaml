@@ -994,6 +994,7 @@ unset_vars:
     - PRIVATE_KEY
     - ENCRYPTION_KEY
 keep_vars:
+    - PATH
     - TERM
     - COLORTERM
     - HOME

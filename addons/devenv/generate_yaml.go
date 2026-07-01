@@ -23,14 +23,26 @@ const (
 type DevenvYaml struct {
 	RequireVersion string                     `yaml:"require_version"`
 	Inputs         map[string]DevenvYamlInput `yaml:"inputs"`
-	Impure         bool                       `yaml:"impure"`       // no omitempty: false is security-critical
-	AllowUnfree    bool                       `yaml:"allow_unfree"` // no omitempty
-	AllowBroken    bool                       `yaml:"allow_broken"` // no omitempty
+	Impure         bool                       `yaml:"impure"` // no omitempty: false is security-critical
+	Nixpkgs        DevenvNixpkgs              `yaml:"nixpkgs"`
 	Clean          DevenvClean                `yaml:"clean"`
+}
+
+// DevenvNixpkgs mirrors the top-level `nixpkgs:` config block in devenv.yaml.
+//
+// devenv 2.x requires these keys in camelCase, nested under `nixpkgs:` — the
+// devenv.schema.json ($defs/Nixpkgs) is authoritative here; the reference docs
+// page showing top-level snake_case (allow_unfree) is wrong and silently
+// ignored. permittedUnfreePackages/permittedInsecurePackages exist ONLY under
+// this block, not at the top level. `impure` is a genuine top-level key and
+// stays outside this struct.
+type DevenvNixpkgs struct {
+	AllowUnfree bool `yaml:"allowUnfree"` // no omitempty
+	AllowBroken bool `yaml:"allowBroken"` // no omitempty
 
 	// These must always appear in output even when empty.
-	PermittedUnfreePackages   []string `yaml:"permitted_unfree_packages"`
-	PermittedInsecurePackages []string `yaml:"permitted_insecure_packages"`
+	PermittedUnfreePackages   []string `yaml:"permittedUnfreePackages"`
+	PermittedInsecurePackages []string `yaml:"permittedInsecurePackages"`
 }
 
 // DevenvYamlInput represents a single flake input entry in devenv.yaml.
@@ -101,11 +113,13 @@ func GenerateDevenvYaml(answers types.WizardAnswers, registry *ecosystem.Registr
 		Inputs: map[string]DevenvYamlInput{
 			"nixpkgs": {URL: nixpkgsURL},
 		},
-		Impure:                    false,
-		AllowUnfree:               true,
-		AllowBroken:               false,
-		PermittedUnfreePackages:   []string{},
-		PermittedInsecurePackages: []string{},
+		Impure: false,
+		Nixpkgs: DevenvNixpkgs{
+			AllowUnfree:               true,
+			AllowBroken:               false,
+			PermittedUnfreePackages:   []string{},
+			PermittedInsecurePackages: []string{},
+		},
 		Clean: DevenvClean{
 			Enabled: true,
 			Keep:    defaultCleanKeep(),
@@ -183,11 +197,18 @@ func marshalDevenvYaml(dy DevenvYaml) ([]byte, error) {
 	)
 
 	addBoolPair(doc, "impure", dy.Impure)
-	addBoolPair(doc, "allow_unfree", dy.AllowUnfree)
-	addBoolPair(doc, "allow_broken", dy.AllowBroken)
 
-	addStringSeqPair(doc, "permitted_unfree_packages", dy.PermittedUnfreePackages)
-	addStringSeqPair(doc, "permitted_insecure_packages", dy.PermittedInsecurePackages)
+	// nixpkgs config block — devenv 2.x requires camelCase keys nested here.
+	// (Distinct from the `inputs.nixpkgs` flake input above.)
+	nixpkgsMapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	addBoolPair(nixpkgsMapping, "allowUnfree", dy.Nixpkgs.AllowUnfree)
+	addBoolPair(nixpkgsMapping, "allowBroken", dy.Nixpkgs.AllowBroken)
+	addStringSeqPair(nixpkgsMapping, "permittedUnfreePackages", dy.Nixpkgs.PermittedUnfreePackages)
+	addStringSeqPair(nixpkgsMapping, "permittedInsecurePackages", dy.Nixpkgs.PermittedInsecurePackages)
+	doc.Content = append(doc.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Value: "nixpkgs"},
+		nixpkgsMapping,
+	)
 
 	// Clean section.
 	cleanMapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}

@@ -139,6 +139,13 @@ homebrew_casks:
 
       To initialize a project:
         qsdev init
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr",
+                           args: ["-dr", "com.apple.quarantine", "#{staged_path}/qsdev"]
+          end
 
 scoops:
   - name: qsdev

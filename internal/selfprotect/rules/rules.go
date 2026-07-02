@@ -139,12 +139,25 @@ func isInsideRepo(path, cwd string) bool {
 		path = expanded
 	}
 	abs := path
-	if !filepath.IsAbs(abs) {
+	if !isRooted(abs) {
 		abs = filepath.Join(cwd, path)
 	}
 	abs = filepath.Clean(abs)
 	cwdClean := filepath.Clean(cwd)
 	return abs == cwdClean || strings.HasPrefix(abs, cwdClean+string(filepath.Separator))
+}
+
+// isRooted reports whether path is absolute or begins with a path separator, so
+// it must never be reinterpreted as a cwd-relative path. filepath.IsAbs alone is
+// insufficient on Windows, where a POSIX-style "/tmp/x" is rooted but not
+// absolute (no drive letter): joining it under cwd would wrongly place an exfil
+// sink inside the repo and fail open. Treating any leading "/" or "\" as rooted
+// keeps the containment check fail-closed on every platform.
+func isRooted(path string) bool {
+	if filepath.IsAbs(path) {
+		return true
+	}
+	return len(path) > 0 && (path[0] == '/' || path[0] == '\\')
 }
 
 // looksRemote reports whether path is a remote scp/rsync spec (host:path or

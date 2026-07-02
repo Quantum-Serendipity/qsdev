@@ -52,6 +52,20 @@ func TestIsInsideRepo_TildeAndColon(t *testing.T) {
 	if isInsideRepo("host:/tmp/x", cwd) {
 		t.Errorf("isInsideRepo(host:/tmp/x) = true; a remote spec should be outside")
 	}
+	// A POSIX-rooted sink like /tmp/exfil must be OUTSIDE the repo on every
+	// platform. On Windows filepath.IsAbs("/tmp/exfil") is false (no drive
+	// letter), so without the isRooted guard it would be joined under cwd and
+	// wrongly seen as in-repo — a fail-open exfil path. This is a cross-platform
+	// assertion: isRooted classifies leading-slash paths identically everywhere.
+	if !isRooted("/tmp/exfil") {
+		t.Error("isRooted(/tmp/exfil) = false; a POSIX-rooted path must be rooted on every platform")
+	}
+	if !isRooted(`\tmp\exfil`) {
+		t.Error(`isRooted(\tmp\exfil) = false; a backslash-rooted path must be rooted`)
+	}
+	if isRooted("settings.bak") {
+		t.Error("isRooted(settings.bak) = true; a bare relative path must not be rooted")
+	}
 }
 
 func TestSP001_ConfigFileWriteBlock(t *testing.T) {

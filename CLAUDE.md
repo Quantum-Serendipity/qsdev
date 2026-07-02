@@ -103,7 +103,7 @@ golangci-lint run
 
 ## Project Overview
 
-This project implements three qsdev addons (`devenv`, `claudecode`, `devinit`) that enable developers to run `qsdev init` and get a fully configured, security-hardened development environment. The system covers 27 language/platform ecosystems and provides defense-in-depth against supply chain attacks.
+This project implements three qsdev addons (`devenv`, `claudecode`, `devinit`) that enable developers to run `qsdev init` and get a fully configured, security-hardened development environment. The system covers 30 language/platform ecosystems and provides defense-in-depth against supply chain attacks.
 
 ## System Environment
 

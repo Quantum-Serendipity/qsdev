@@ -51,9 +51,6 @@ func DetectPackageManagerWithRunner(osInfo *sysinfo.OSInfo, runner CommandRunner
 	case "gentoo":
 		return NewEmerge(runner)
 	case "macos":
-		if osInfo.HasHomebrew {
-			return NewBrew(runner)
-		}
 		return NewBrew(runner) // Homebrew is the standard macOS PM
 	case "windows":
 		return NewWinget(runner)

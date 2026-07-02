@@ -60,7 +60,13 @@ func RelativeTime(t time.Time) string {
 
 // RelativeTimeShort formats a time.Time as a compact relative duration
 // using abbreviations (e.g. "5 min ago", "1h ago", "3d ago").
+// Returns "never" for the zero time so an unset timestamp does not render as a
+// nonsensical age (e.g. "~3505mo ago").
 func RelativeTimeShort(t time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+
 	now := time.Now().UTC()
 	d := now.Sub(t)
 

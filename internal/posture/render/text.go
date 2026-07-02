@@ -183,18 +183,30 @@ func renderDepHealth(w io.Writer, report *posture.PostureReport, ind [4]string, 
 				continue
 			}
 			total := eco.VulnCounts.Total()
-			fmt.Fprintf(w, "  %-20s lockfile=%-10s vulns=%d (C:%d H:%d M:%d L:%d)\n",
-				eco.Name, eco.LockFile, total,
+			// Annotate unscanned ecosystems so a zero count is not mistaken for a
+			// clean bill of health.
+			scanNote := ""
+			if !eco.Scanned {
+				scanNote = " [not scanned]"
+			}
+			fmt.Fprintf(w, "  %-20s lockfile=%-10s vulns=%d%s (C:%d H:%d M:%d L:%d)\n",
+				eco.Name, eco.LockFile, total, scanNote,
 				eco.VulnCounts.Critical, eco.VulnCounts.High,
 				eco.VulnCounts.Moderate, eco.VulnCounts.Low)
 		}
 	} else {
 		totals := report.Dependencies.Totals
-		if totals.Total() > 0 {
+		switch {
+		case totals.Total() > 0:
 			fmt.Fprintf(w, "  Vulnerabilities: %d critical, %d high, %d moderate, %d low\n",
 				totals.Critical, totals.High, totals.Moderate, totals.Low)
-		} else {
+		case report.Dependencies.Scanned:
+			// Only claim a clean result when a scan actually ran.
 			fmt.Fprintf(w, "  No vulnerabilities detected\n")
+		default:
+			// Zero totals without a scan are NOT a clean bill of health — the
+			// dependencies were never checked. State that honestly (NF-2).
+			fmt.Fprintf(w, "  Dependencies not scanned — run 'qsdev status --scan' to check\n")
 		}
 		if report.Dependencies.Stale {
 			fmt.Fprintf(w, "  %s Scan data may be stale; re-run with --scan\n", fail)

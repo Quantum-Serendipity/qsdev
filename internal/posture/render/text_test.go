@@ -114,6 +114,73 @@ func TestRenderText_DefaultContainsSections(t *testing.T) {
 	}
 }
 
+// baseReport builds a minimal, renderable default-mode report for dep-health
+// tests. Callers override Dependencies to exercise the scan-honesty branches.
+func baseReport() *posture.PostureReport {
+	return &posture.PostureReport{
+		ProjectName: "dep-test",
+		ProjectPath: "/tmp/test",
+		Score:       posture.AggregateScore{Total: 85, Grade: "B"},
+		Conformance: posture.ConformanceResult{
+			Baseline: posture.ConformanceLevel{Pass: true, Checks: []posture.ConformanceCheck{}},
+			Enhanced: posture.ConformanceLevel{Pass: true, Checks: []posture.ConformanceCheck{}},
+		},
+		Defense: posture.DefenseCoverage{Layers: []posture.DefenseLayer{}},
+		Config:  posture.ConfigHealth{Files: []posture.ConfigFileInfo{}},
+		Drift:   drift.Report{Categories: []drift.Category{}, BySeverity: make(map[drift.Severity]int)},
+	}
+}
+
+// TestRenderText_DepHealthNotScanned is a regression for NF-2: when no scan ran,
+// zero vulnerability totals must NOT be reported as "No vulnerabilities detected"
+// — that overclaims a clean bill of health the tool never verified.
+func TestRenderText_DepHealthNotScanned(t *testing.T) {
+	t.Parallel()
+
+	report := baseReport()
+	report.Dependencies = posture.DependencyHealth{
+		Score:   100,
+		Totals:  posture.VulnSeverityCounts{}, // all zero
+		Scanned: false,
+	}
+
+	var buf bytes.Buffer
+	if err := RenderText(report, &buf, Options{UseColor: false}); err != nil {
+		t.Fatal(err)
+	}
+	output := buf.String()
+
+	if strings.Contains(output, "No vulnerabilities detected") {
+		t.Errorf("must not claim 'No vulnerabilities detected' when unscanned:\n%s", output)
+	}
+	if !strings.Contains(output, "not scanned") {
+		t.Errorf("expected an honest 'not scanned' notice:\n%s", output)
+	}
+}
+
+// TestRenderText_DepHealthScannedClean confirms that a genuine clean scan still
+// reports "No vulnerabilities detected".
+func TestRenderText_DepHealthScannedClean(t *testing.T) {
+	t.Parallel()
+
+	report := baseReport()
+	report.Dependencies = posture.DependencyHealth{
+		Score:   100,
+		Totals:  posture.VulnSeverityCounts{}, // all zero
+		Scanned: true,
+	}
+
+	var buf bytes.Buffer
+	if err := RenderText(report, &buf, Options{UseColor: false}); err != nil {
+		t.Fatal(err)
+	}
+	output := buf.String()
+
+	if !strings.Contains(output, "No vulnerabilities detected") {
+		t.Errorf("expected 'No vulnerabilities detected' after a clean scan:\n%s", output)
+	}
+}
+
 func TestRenderText_FixModeOnlyRemediation(t *testing.T) {
 	report := &posture.PostureReport{
 		Conformance: posture.ConformanceResult{

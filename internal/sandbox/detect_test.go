@@ -13,6 +13,8 @@ type mockSandboxProber struct {
 	files           map[string][]byte
 	fileInfos       map[string]bool
 	envVars         map[string]string
+	landlockHelper  string // path returned by LandlockHelperPath ("" = unavailable)
+	seccompFilter   string // path returned by SeccompFilterPath ("" = unavailable)
 }
 
 func newMockProber() *mockSandboxProber {
@@ -61,6 +63,10 @@ func (m *mockSandboxProber) Getenv(key string) string {
 	return m.envVars[key]
 }
 
+func (m *mockSandboxProber) LandlockHelperPath() string { return m.landlockHelper }
+
+func (m *mockSandboxProber) SeccompFilterPath() string { return m.seccompFilter }
+
 var _ SandboxProber = (*mockSandboxProber)(nil)
 
 func TestProbeCapabilities_FullSupport(t *testing.T) {
@@ -68,6 +74,10 @@ func TestProbeCapabilities_FullSupport(t *testing.T) {
 	mock := newMockProber()
 	mock.lookPathResults["bwrap"] = "/usr/bin/bwrap"
 	mock.lookPathResults["systemd-run"] = "/usr/bin/systemd-run"
+	// Enforcement artifacts present: full support requires the tools that APPLY
+	// Landlock and seccomp, not just a capable kernel.
+	mock.landlockHelper = "/usr/bin/ll-restrict"
+	mock.seccompFilter = "/nix/store/seccomp.bpf"
 	mock.files["/proc/sys/kernel/unprivileged_userns_clone"] = []byte("1\n")
 	mock.files["/proc/sys/kernel/seccomp/actions_avail"] = []byte("kill_process kill_thread trap errno trace log allow user_notif\n")
 	mock.files["/proc/version"] = []byte("Linux version 6.8.0-40-generic (buildd@x86-64) #40-Ubuntu\n")
@@ -158,12 +168,32 @@ func TestProbeCapabilities_UserNS_NixOS_Fallback(t *testing.T) {
 func TestProbeCapabilities_Seccomp_ViaStatus(t *testing.T) {
 	t.Parallel()
 	mock := newMockProber()
+	mock.seccompFilter = "/nix/store/seccomp.bpf"
 	mock.files["/proc/self/status"] = []byte("Name:\ttest\nSeccomp:\t2\nSeccomp_filters:\t1\n")
 
 	caps := ProbeCapabilities(context.Background(), mock)
 
 	if !caps.HasSeccomp {
 		t.Error("expected HasSeccomp = true (via /proc/self/status)")
+	}
+}
+
+// TestProbeCapabilities_SeccompNotEnforceableWithoutFilter is a regression for
+// NF-3: a seccomp-capable kernel does NOT make seccomp enforceable when the
+// compiled BPF filter (that bwrap loads via --seccomp) is absent. Reporting
+// true here would let DetermineTier advertise a syscall-filtering layer the
+// tool cannot apply.
+func TestProbeCapabilities_SeccompNotEnforceableWithoutFilter(t *testing.T) {
+	t.Parallel()
+	mock := newMockProber()
+	// Kernel advertises seccomp with errno action, but no filter is provisioned.
+	mock.files["/proc/sys/kernel/seccomp/actions_avail"] = []byte("kill errno trace\n")
+	mock.files["/proc/self/status"] = []byte("Name:\ttest\nSeccomp:\t2\n")
+
+	caps := ProbeCapabilities(context.Background(), mock)
+
+	if caps.HasSeccomp {
+		t.Error("expected HasSeccomp = false: seccomp-capable kernel but no BPF filter to enforce with")
 	}
 }
 
@@ -183,24 +213,65 @@ func TestProbeCapabilities_CgroupDelegation_ViaUID(t *testing.T) {
 func TestProbeCapabilities_LandlockViaKernelVersion(t *testing.T) {
 	t.Parallel()
 	mock := newMockProber()
+	// Helper present so Landlock is enforceable; ABI resolves via kernel heuristic.
+	mock.landlockHelper = "/usr/bin/ll-restrict"
 	mock.files["/proc/version"] = []byte("Linux version 6.1.0-arch1 (builder@arch) #1 SMP\n")
 
 	caps := ProbeCapabilities(context.Background(), mock)
 
 	if caps.LandlockABI < 1 {
-		t.Errorf("expected LandlockABI >= 1 for kernel 6.1, got %d", caps.LandlockABI)
+		t.Errorf("expected LandlockABI >= 1 for kernel 6.1 with helper, got %d", caps.LandlockABI)
 	}
 }
 
 func TestProbeCapabilities_LandlockOldKernel(t *testing.T) {
 	t.Parallel()
 	mock := newMockProber()
+	// Helper present but kernel too old — Landlock cannot be enforced.
+	mock.landlockHelper = "/usr/bin/ll-restrict"
 	mock.files["/proc/version"] = []byte("Linux version 5.10.0-generic\n")
 
 	caps := ProbeCapabilities(context.Background(), mock)
 
 	if caps.LandlockABI != 0 {
 		t.Errorf("expected LandlockABI = 0 for kernel 5.10, got %d", caps.LandlockABI)
+	}
+}
+
+// TestProbeCapabilities_LandlockNotEnforceableWithoutHelper is a regression for
+// NF-3: a Landlock-capable kernel does NOT make Landlock enforceable when the
+// ll-restrict helper is absent. Reporting a non-zero ABI here would let
+// DetermineTier advertise filesystem isolation the tool cannot apply.
+func TestProbeCapabilities_LandlockNotEnforceableWithoutHelper(t *testing.T) {
+	t.Parallel()
+	mock := newMockProber()
+	// Modern kernel supports Landlock, but no ll-restrict helper is provisioned.
+	mock.files["/proc/version"] = []byte("Linux version 6.8.0-40-generic\n")
+
+	caps := ProbeCapabilities(context.Background(), mock)
+
+	if caps.LandlockABI != 0 {
+		t.Errorf("expected LandlockABI = 0 without ll-restrict helper, got %d", caps.LandlockABI)
+	}
+}
+
+// TestProbeCapabilities_EffectiveTierHonestWithoutEnforcementTools is a
+// regression for NF-3: on a host with bwrap + userns and a fully Landlock/
+// seccomp-capable kernel, but WITHOUT the ll-restrict helper and seccomp filter,
+// DetermineTier must not report TierFull. The effective tier degrades because
+// the LSM layers cannot actually be applied.
+func TestProbeCapabilities_EffectiveTierHonestWithoutEnforcementTools(t *testing.T) {
+	t.Parallel()
+	mock := newMockProber()
+	mock.lookPathResults["bwrap"] = "/usr/bin/bwrap"
+	mock.files["/proc/sys/kernel/unprivileged_userns_clone"] = []byte("1\n")
+	mock.files["/proc/sys/kernel/seccomp/actions_avail"] = []byte("kill errno\n")
+	mock.files["/proc/version"] = []byte("Linux version 6.8.0-40-generic\n")
+
+	caps := ProbeCapabilities(context.Background(), mock)
+
+	if got := DetermineTier(caps); got == TierFull {
+		t.Errorf("DetermineTier = %v; must not report full when ll-restrict and seccomp filter are absent", got)
 	}
 }
 

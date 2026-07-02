@@ -78,37 +78,54 @@ func probeUserNamespaces(prober SandboxProber) bool {
 	return false
 }
 
-// probeLandlock checks Landlock ABI availability by examining kernel version
-// and looking for the ll-restrict helper binary.
+// probeLandlock reports the ENFORCEABLE Landlock ABI. Landlock is only
+// enforceable when the ll-restrict helper is present: the bwrap backend wraps
+// hook commands with it, and without the helper the kernel may support Landlock
+// but the sandbox applies no filesystem restriction. Reporting bare kernel
+// capability here would let DetermineTier advertise "full" isolation the tool
+// cannot deliver (NF-3), so the reported ABI is gated on the helper.
 func probeLandlock(ctx context.Context, prober SandboxProber) int {
-	// If ll-restrict binary is available, try probing its version output.
-	if llPath := LLRestrictBin(); llPath != "" {
-		if out, err := prober.Output(ctx, llPath, "--version"); err == nil {
-			version := strings.TrimSpace(string(out))
-			if abiStr, ok := strings.CutPrefix(version, "landlock-abi:"); ok {
-				if v, parseErr := strconv.Atoi(abiStr); parseErr == nil {
-					return v
-				}
-			}
-		}
-		// ll-restrict exists but can't determine ABI — assume at least v1.
-		return 1
+	llPath := prober.LandlockHelperPath()
+	if llPath == "" {
+		return 0
 	}
 
-	// Fall back to kernel version heuristic.
+	// Helper present — prefer its self-reported ABI version.
+	if out, err := prober.Output(ctx, llPath, "--version"); err == nil {
+		version := strings.TrimSpace(string(out))
+		if abiStr, ok := strings.CutPrefix(version, "landlock-abi:"); ok {
+			if v, parseErr := strconv.Atoi(abiStr); parseErr == nil {
+				return v
+			}
+		}
+	}
+
+	// ABI indeterminate — fall back to the kernel-version heuristic, which still
+	// requires kernel >= 5.13 for Landlock v1. A helper on an older kernel can
+	// restrict nothing, so report 0 there.
 	if data, err := prober.ReadFile("/proc/version"); err == nil {
 		kver := parseKernelVersion(string(data))
 		major, minor := parseKernelMajorMinor(kver)
 		if major > 5 || (major == 5 && minor >= 13) {
-			return 1 // Landlock v1 available from 5.13
+			return 1
 		}
+		return 0
 	}
 
-	return 0
+	// Helper present but kernel version unknown — trust the helper's presence.
+	return 1
 }
 
-// probeSeccomp checks whether seccomp is available.
+// probeSeccomp reports whether seccomp syscall filtering is ENFORCEABLE. It is
+// only enforceable when the compiled BPF filter is present: the bwrap backend
+// loads it via --seccomp, and without it no syscall filtering is applied even
+// on a seccomp-capable kernel. Reporting bare kernel capability here would let
+// DetermineTier advertise a layer the tool cannot apply (NF-3), so the reported
+// support is gated on the filter's presence.
 func probeSeccomp(prober SandboxProber) bool {
+	if prober.SeccompFilterPath() == "" {
+		return false
+	}
 	if data, err := prober.ReadFile("/proc/sys/kernel/seccomp/actions_avail"); err == nil {
 		return strings.Contains(string(data), "errno")
 	}

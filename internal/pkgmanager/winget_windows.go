@@ -25,10 +25,6 @@ func (w *Winget) Available() bool {
 
 func (w *Winget) NeedsElevation() bool { return false }
 
-func (w *Winget) UpdateIndex(ctx context.Context) error {
-	return w.runner.Run(ctx, "winget", "source", "update")
-}
-
 func (w *Winget) Install(ctx context.Context, packages ...string) error {
 	for _, pkg := range packages {
 		err := w.runner.Run(ctx, "winget", "install",
@@ -42,10 +38,3 @@ func (w *Winget) Install(ctx context.Context, packages ...string) error {
 	}
 	return nil
 }
-
-func (w *Winget) IsInstalled(ctx context.Context, pkg string) bool {
-	err := w.runner.Run(ctx, "winget", "list", "--id", pkg, "-e")
-	return err == nil
-}
-
-func (w *Winget) SearchCmd() string { return "winget search" }

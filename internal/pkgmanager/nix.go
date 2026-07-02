@@ -3,7 +3,6 @@ package pkgmanager
 import (
 	"context"
 	"fmt"
-	"strings"
 )
 
 // Nix implements PackageManager for the Nix package manager.
@@ -29,10 +28,6 @@ func (n *Nix) Available() bool {
 
 func (n *Nix) NeedsElevation() bool { return false }
 
-func (n *Nix) UpdateIndex(ctx context.Context) error {
-	return n.runner.Run(ctx, "nix", "flake", "update")
-}
-
 func (n *Nix) Install(ctx context.Context, packages ...string) error {
 	if n.isNixOS {
 		return fmt.Errorf(
@@ -47,14 +42,3 @@ func (n *Nix) Install(ctx context.Context, packages ...string) error {
 	}
 	return nil
 }
-
-func (n *Nix) IsInstalled(ctx context.Context, pkg string) bool {
-	out, err := n.runner.Output(ctx, "nix", "profile", "list")
-	if err != nil {
-		return false
-	}
-	// Check if the package name appears in the profile listing.
-	return strings.Contains(string(out), pkg)
-}
-
-func (n *Nix) SearchCmd() string { return "nix search nixpkgs" }

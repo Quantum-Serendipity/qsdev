@@ -25,18 +25,7 @@ func (s *Scoop) Available() bool {
 
 func (s *Scoop) NeedsElevation() bool { return false }
 
-func (s *Scoop) UpdateIndex(ctx context.Context) error {
-	return s.runner.Run(ctx, "scoop", "update")
-}
-
 func (s *Scoop) Install(ctx context.Context, packages ...string) error {
 	args := append([]string{"install"}, packages...)
 	return s.runner.Run(ctx, "scoop", args...)
 }
-
-func (s *Scoop) IsInstalled(ctx context.Context, pkg string) bool {
-	err := s.runner.Run(ctx, "scoop", "info", pkg)
-	return err == nil
-}
-
-func (s *Scoop) SearchCmd() string { return "scoop search" }

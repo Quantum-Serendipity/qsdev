@@ -23,18 +23,7 @@ func (a *Apk) Available() bool {
 
 func (a *Apk) NeedsElevation() bool { return true }
 
-func (a *Apk) UpdateIndex(ctx context.Context) error {
-	return a.runner.Run(ctx, "apk", "update")
-}
-
 func (a *Apk) Install(ctx context.Context, packages ...string) error {
 	args := append([]string{"add"}, packages...)
 	return a.runner.Run(ctx, "apk", args...)
 }
-
-func (a *Apk) IsInstalled(ctx context.Context, pkg string) bool {
-	err := a.runner.Run(ctx, "apk", "info", "-e", pkg)
-	return err == nil
-}
-
-func (a *Apk) SearchCmd() string { return "apk search" }

@@ -24,18 +24,7 @@ func (e *Emerge) Available() bool {
 
 func (e *Emerge) NeedsElevation() bool { return true }
 
-func (e *Emerge) UpdateIndex(ctx context.Context) error {
-	return e.runner.Run(ctx, "emerge", "--sync")
-}
-
 func (e *Emerge) Install(ctx context.Context, packages ...string) error {
 	args := append([]string{"--ask=n"}, packages...)
 	return e.runner.Run(ctx, "emerge", args...)
 }
-
-func (e *Emerge) IsInstalled(ctx context.Context, pkg string) bool {
-	err := e.runner.Run(ctx, "equery", "list", pkg)
-	return err == nil
-}
-
-func (e *Emerge) SearchCmd() string { return "emerge --search" }

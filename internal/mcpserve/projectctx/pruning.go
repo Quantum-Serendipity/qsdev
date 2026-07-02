@@ -79,18 +79,6 @@ func (p *ToolPruner) Prune(tools []spi.ToolRegistration, ceiling int) []spi.Tool
 	return p.consolidate(out, ceiling)
 }
 
-// ApplyCeiling prunes tools to ceiling and, when the resulting catalog differs
-// from the input, asks notifier to broadcast tools/list_changed. It returns the
-// pruned catalog. The per-client ceiling detection that drives this is a later
-// task; ApplyCeiling is the mechanism plus the notification hook.
-func (p *ToolPruner) ApplyCeiling(notifier ListChangedNotifier, tools []spi.ToolRegistration, ceiling int) []spi.ToolRegistration {
-	pruned := p.Prune(tools, ceiling)
-	if notifier != nil && catalogChanged(tools, pruned) {
-		notifier.NotifyToolsListChanged()
-	}
-	return pruned
-}
-
 // consolidate collapses same-category groups into single dispatcher tools,
 // largest group first, until the catalog fits the ceiling or no further
 // consolidation is possible (every remaining category has a single tool).
@@ -193,22 +181,4 @@ func consolidatedHandler(byName map[string]spi.ToolHandler) spi.ToolHandler {
 		}
 		return h(ctx, cc, sub)
 	}
-}
-
-// catalogChanged reports whether the set of tool names differs between before
-// and after.
-func catalogChanged(before, after []spi.ToolRegistration) bool {
-	if len(before) != len(after) {
-		return true
-	}
-	seen := make(map[string]struct{}, len(before))
-	for _, t := range before {
-		seen[t.Name] = struct{}{}
-	}
-	for _, t := range after {
-		if _, ok := seen[t.Name]; !ok {
-			return true
-		}
-	}
-	return false
 }

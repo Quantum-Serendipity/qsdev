@@ -712,6 +712,60 @@ func TestMergeSettings_ExtraTopLevelKeys(t *testing.T) {
 	assertStringSlice(t, "allow", parsed.Permissions.Allow, wantAllow)
 }
 
+// TestMergeSettings_PreservesNestedUnknownKeys guards DEFECT-6: unmodeled keys
+// nested under "permissions" (e.g. additionalDirectories) must survive a merge
+// rather than being dropped when the typed permissions object is overlaid.
+func TestMergeSettings_PreservesNestedUnknownKeys(t *testing.T) {
+	base := []byte(`{
+  "permissions": {
+    "allow": ["Read(*)"],
+    "deny": []
+  }
+}`)
+	theirs := []byte(`{
+  "permissions": {
+    "allow": ["Read(*)"],
+    "deny": [],
+    "additionalDirectories": ["/opt/shared", "../sibling"]
+  }
+}`)
+	ours := []byte(`{
+  "permissions": {
+    "allow": ["Read(*)", "Edit(*)"],
+    "deny": ["Bash(rm -rf *)"]
+  }
+}`)
+
+	got, err := MergeSettings(base, theirs, ours)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(got, &raw); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	permsRaw, ok := raw["permissions"]
+	if !ok {
+		t.Fatal("permissions missing from merged output")
+	}
+	var perms map[string]json.RawMessage
+	if err := json.Unmarshal(permsRaw, &perms); err != nil {
+		t.Fatalf("permissions not valid JSON: %v", err)
+	}
+	if _, ok := perms["additionalDirectories"]; !ok {
+		t.Errorf("nested additionalDirectories dropped by merge: %s", got)
+	}
+
+	// Modeled arrays remain authoritative (the merge, not theirs, drives them).
+	var parsed settingsJSON
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	assertStringSlice(t, "allow", parsed.Permissions.Allow, []string{"Read(*)", "Edit(*)"})
+	assertStringSlice(t, "deny", parsed.Permissions.Deny, []string{"Bash(rm -rf *)"})
+}
+
 // assertStringSlice is a helper that compares two string slices.
 func assertStringSlice(t *testing.T, name string, got, want []string) {
 	t.Helper()
@@ -724,5 +778,39 @@ func assertStringSlice(t *testing.T, name string, got, want []string) {
 			t.Errorf("%s[%d]: got %q, want %q (full: got %v, want %v)", name, i, got[i], want[i], got, want)
 			return
 		}
+	}
+}
+
+// TestMergeOnCreate_PreservesEnv guards DEFECT-6 on the create path: with no
+// recorded base, unknown top-level keys (e.g. "env") in the on-disk file must
+// survive when generated content is written over it.
+func TestMergeOnCreate_PreservesEnv(t *testing.T) {
+	theirs := []byte(`{"env":{"CLAUDE_CODE_USE_BEDROCK":"1"},"permissions":{"allow":["X"]}}`)
+	ours := []byte(`{"permissions":{"allow":["Y"],"deny":[]}}`)
+
+	merged, err := MergeOnCreate(".claude/settings.json", theirs, ours)
+	if err != nil {
+		t.Fatalf("MergeOnCreate returned error: %v", err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(merged, &got); err != nil {
+		t.Fatalf("merged output is not valid JSON: %v\n%s", err, merged)
+	}
+	if _, ok := got["env"]; !ok {
+		t.Errorf("env block dropped by MergeOnCreate: %s", merged)
+	}
+	if _, ok := got["permissions"]; !ok {
+		t.Errorf("generated permissions missing from merge: %s", merged)
+	}
+}
+
+// TestMergeOnCreate_UnknownPathErrors verifies a ThreeWayMerge path with no
+// known handler returns an error rather than silently overwriting, per the
+// unified Dispatch unknown-path policy. The pipeline surfaces the error so a
+// file it does not understand is not clobbered.
+func TestMergeOnCreate_UnknownPathErrors(t *testing.T) {
+	_, err := MergeOnCreate("CLAUDE.md", []byte("on disk"), []byte("generated content"))
+	if err == nil {
+		t.Fatal("expected error for unknown three-way merge path, got nil")
 	}
 }

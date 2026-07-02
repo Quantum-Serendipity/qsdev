@@ -22,6 +22,7 @@ var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
+var _ ecosystem.DevenvYamlInputProvider = (*Module)(nil)
 
 // Module is the stateless Rust ecosystem module.
 type Module struct{}
@@ -90,6 +91,19 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 			{Key: "components", Value: `[ "rustfmt" "clippy" ]`},
 		},
 	}), nil
+}
+
+// DevenvYamlInputs contributes the rust-overlay flake input to devenv.yaml.
+//
+// DevenvNixFragment always emits languages.rust.channel, and devenv only
+// accepts a non-"nixpkgs" Rust channel when the rust-overlay flake input is
+// present. The input and the channel are therefore an invariant pair: the
+// input is contributed here precisely because the channel is always emitted.
+// Removing one without the other breaks `devenv` evaluation for Rust projects.
+func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvInput {
+	return []ecosystem.DevenvInput{
+		{URL: "github:oxalica/rust-overlay", Follows: "nixpkgs"},
+	}
 }
 
 // SecurityConfigs returns security-hardened configuration files for Rust.

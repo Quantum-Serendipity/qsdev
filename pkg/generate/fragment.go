@@ -324,7 +324,7 @@ func resolveJSON(group []types.FragmentEntry) ([]byte, error) {
 		if err := json.Unmarshal(group[i].Content, &m); err != nil {
 			return nil, fmt.Errorf("parsing JSON from %s: %w", group[i].Source, err)
 		}
-		merged = deepMergeJSON(merged, m)
+		merged = merge.DeepMergeJSON(merged, m)
 	}
 
 	data, err := json.MarshalIndent(merged, "", "  ")
@@ -332,25 +332,6 @@ func resolveJSON(group []types.FragmentEntry) ([]byte, error) {
 		return nil, fmt.Errorf("marshaling merged JSON: %w", err)
 	}
 	return append(data, '\n'), nil
-}
-
-// deepMergeJSON merges src into dst. For conflicting map keys, src wins.
-// For nested maps, recurse. For everything else, src overwrites.
-func deepMergeJSON(dst, src map[string]any) map[string]any {
-	out := make(map[string]any, len(dst))
-	for k, v := range dst {
-		out[k] = v
-	}
-	for k, v := range src {
-		if srcMap, ok := v.(map[string]any); ok {
-			if dstMap, ok := out[k].(map[string]any); ok {
-				out[k] = deepMergeJSON(dstMap, srcMap)
-				continue
-			}
-		}
-		out[k] = v
-	}
-	return out
 }
 
 func resolveYAML(group []types.FragmentEntry) ([]byte, error) {
@@ -361,7 +342,7 @@ func resolveYAML(group []types.FragmentEntry) ([]byte, error) {
 		if err := yaml.Unmarshal(group[i].Content, &m); err != nil {
 			return nil, fmt.Errorf("parsing YAML from %s: %w", group[i].Source, err)
 		}
-		merged = deepMergeJSON(merged, m)
+		merged = merge.DeepMergeJSON(merged, m)
 	}
 
 	return DeterministicYAML(merged)

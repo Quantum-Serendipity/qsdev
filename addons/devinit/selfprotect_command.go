@@ -51,7 +51,10 @@ func runSelfprotect(cmd *cobra.Command) {
 	input := hookio.ParseInput(call.ToolInput)
 	evalCtx := buildSelfprotectContext(call.ToolName, &input)
 
-	if blocked, category, reason := evasion.Check(call.ToolName, input.Command, input.FilePath); blocked {
+	// Parse the Bash command once here (memoized on evalCtx); the rules below
+	// reuse the same parse via ctx.ParsedCommands().
+	cmds, parseErr := evalCtx.ParsedCommands()
+	if blocked, category, reason := evasion.CheckParsed(call.ToolName, input.Command, input.FilePath, cmds, parseErr); blocked {
 		hookio.WriteEvasionDeny(cmd.ErrOrStderr(), category, reason)
 		os.Exit(2)
 	}
@@ -62,8 +65,8 @@ func runSelfprotect(cmd *cobra.Command) {
 		os.Exit(2)
 	}
 
-	if isWriteOrEditTool(call.ToolName) && input.Content != "" {
-		if blocked, ruleID, reason := gatedodge.Detect(input.FilePath, input.Content); blocked {
+	if edited := input.EditedContent(); isWriteOrEditTool(call.ToolName) && edited != "" {
+		if blocked, ruleID, reason := gatedodge.Detect(input.FilePath, edited); blocked {
 			hookio.WriteDeny(cmd.ErrOrStderr(), ruleID, reason)
 			os.Exit(2)
 		}
@@ -75,7 +78,7 @@ func buildSelfprotectContext(toolName string, input *hookio.ToolInput) *rules.Ev
 		ToolName: toolName,
 		FilePath: input.FilePath,
 		Command:  input.Command,
-		Content:  input.Content,
+		Content:  input.EditedContent(),
 	}
 
 	if cwd, err := os.Getwd(); err == nil {

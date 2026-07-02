@@ -1,5 +1,7 @@
 package rules
 
+import "github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+
 // Verdict represents the outcome of a rule evaluation.
 type Verdict int
 
@@ -16,6 +18,12 @@ func (v Verdict) String() string {
 }
 
 // EvalContext contains the context for evaluating self-protection rules.
+//
+// For a Bash tool call the command is shell-parsed exactly once (in
+// buildSelfprotectContext) and the result is shared with every rule and the
+// evasion checks via Commands/ParseErr, avoiding a re-parse per rule on the
+// PreToolUse hot path. A non-nil ParseErr means the command was unparseable;
+// rules must fall back to their conservative substring test (fail closed).
 type EvalContext struct {
 	ToolName      string
 	FilePath      string // original path from tool input
@@ -23,6 +31,27 @@ type EvalContext struct {
 	Command       string // for Bash tool
 	Content       string // for Write/Edit tool
 	CWD           string
+
+	// Parsed Bash command, memoized by ParsedCommands. Do not read directly.
+	commands       []cmdscan.Command
+	parseErr       error
+	commandsParsed bool
+}
+
+// ParsedCommands returns Command shell-parsed into its simple commands, parsing
+// on first use and caching the result on the context. Every rule and the
+// evasion checks call this, so the command is parsed exactly once per tool call
+// regardless of how many rules inspect it. A non-nil error means the command
+// was unparseable; callers must fall back to their conservative substring test
+// (fail closed), never fail open.
+func (ctx *EvalContext) ParsedCommands() ([]cmdscan.Command, error) {
+	if !ctx.commandsParsed {
+		if ctx.Command != "" {
+			ctx.commands, ctx.parseErr = cmdscan.Parse(ctx.Command)
+		}
+		ctx.commandsParsed = true
+	}
+	return ctx.commands, ctx.parseErr
 }
 
 // Rule defines a compiled self-protection rule.

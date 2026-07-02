@@ -115,6 +115,17 @@ func MergeSettings(base, theirs, ours []byte) ([]byte, error) {
 		merged[k] = v
 	}
 
+	// The typed "permissions" object models only allow/deny/ask and the policy
+	// fields, so overlaying it wholesale drops unmodeled nested children (e.g.
+	// permissions.additionalDirectories). Deep-merge the typed permissions back
+	// over theirs' raw permissions so those survive. Modeled arrays (allow/deny)
+	// are always emitted by the typed result and therefore remain authoritative.
+	if permMerged, err := deepMergePermissions(theirsRaw["permissions"], typedRaw["permissions"]); err != nil {
+		return nil, err
+	} else if permMerged != nil {
+		merged["permissions"] = permMerged
+	}
+
 	// Remove keys that are zero-valued in the typed result but present from theirs.
 	// Specifically, if hooks is empty/null in the typed result, remove it.
 	if result.Hooks == nil {
@@ -129,6 +140,30 @@ func MergeSettings(base, theirs, ours []byte) ([]byte, error) {
 		return nil, fmt.Errorf("marshaling final settings: %w", err)
 	}
 	return append(out, '\n'), nil
+}
+
+// deepMergePermissions deep-merges the typed (merged) permissions object over
+// theirs' raw permissions so unknown nested keys survive. It returns nil when
+// there is nothing typed to overlay (leaving any theirs value untouched).
+func deepMergePermissions(theirsRaw, typedRaw json.RawMessage) (json.RawMessage, error) {
+	if len(typedRaw) == 0 {
+		return nil, nil
+	}
+	var theirsPerms, typedPerms map[string]any
+	if len(theirsRaw) > 0 {
+		if err := json.Unmarshal(theirsRaw, &theirsPerms); err != nil {
+			return nil, fmt.Errorf("parsing theirs permissions: %w", err)
+		}
+	}
+	if err := json.Unmarshal(typedRaw, &typedPerms); err != nil {
+		return nil, fmt.Errorf("parsing merged permissions: %w", err)
+	}
+	mergedPerms := DeepMergeJSON(theirsPerms, typedPerms)
+	out, err := json.Marshal(mergedPerms)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling merged permissions: %w", err)
+	}
+	return out, nil
 }
 
 // mergeHooks performs a three-way merge of hook maps.
@@ -197,4 +232,3 @@ func findMatcher(matchers []hookMatcher, matcher string) (hookMatcher, bool) {
 	}
 	return hookMatcher{}, false
 }
-

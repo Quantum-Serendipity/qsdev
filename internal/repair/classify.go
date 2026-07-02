@@ -8,9 +8,14 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// neverAutoRepairFile is exempt from all automatic repair actions regardless
-// of merge strategy or CLI flags.
-const neverAutoRepairFile = "devenv.nix"
+// neverAutoRepairFiles are exempt from all automatic repair actions regardless
+// of merge strategy or CLI flags. Both are legitimately hand-edited by users
+// (custom inputs/packages, follows overrides, keep tweaks), so silently
+// regenerating them would discard intentional edits.
+var neverAutoRepairFiles = map[string]bool{
+	"devenv.nix":  true,
+	"devenv.yaml": true,
+}
 
 // classifyFindings maps drift findings from a posture DriftReport into
 // concrete RepairActions. The classification rules depend on the file's merge
@@ -62,27 +67,27 @@ func classifyFinding(categoryName string, f drift.Finding, genState types.Genera
 func classifyFileModification(f drift.Finding, genState types.GeneratedState, opts RepairOptions) RepairAction {
 	file := f.Subject
 
-	// devenv.nix is NEVER auto-modified regardless of strategy or flags.
-	if file == neverAutoRepairFile {
-		return RepairAction{
-			File:        file,
-			Category:    CategoryFileDrift,
-			Description: "devenv.nix is never auto-modified",
-			ActionType:  ActionSkip,
-			AutoFixable: false,
-		}
-	}
-
-	// Check if this is a deleted file.
-	isDeleted := strings.Contains(f.Description, "has been deleted")
-
-	if isDeleted {
+	// A deleted file has no hand-edits to protect, so regenerate it — even one on
+	// the never-auto-modify list (the exemption below guards *modification* of an
+	// existing file, not recreation of a missing one).
+	if strings.Contains(f.Description, "has been deleted") {
 		return RepairAction{
 			File:        file,
 			Category:    CategoryFileDrift,
 			Description: fmt.Sprintf("Regenerate deleted file %s", file),
 			ActionType:  ActionRegenerate,
 			AutoFixable: true,
+		}
+	}
+
+	// devenv.nix/devenv.yaml are NEVER auto-modified regardless of strategy or flags.
+	if neverAutoRepairFiles[file] {
+		return RepairAction{
+			File:        file,
+			Category:    CategoryFileDrift,
+			Description: fmt.Sprintf("%s is never auto-modified", file),
+			ActionType:  ActionSkip,
+			AutoFixable: false,
 		}
 	}
 

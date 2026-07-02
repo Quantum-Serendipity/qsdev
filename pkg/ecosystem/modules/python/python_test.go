@@ -437,21 +437,38 @@ func TestPreCommitHooks(t *testing.T) {
 	m := &python.Module{}
 	hooks := m.PreCommitHooks(ecosystem.ModuleConfig{})
 
-	if len(hooks) != 3 {
-		t.Fatalf("PreCommitHooks() returned %d hooks, want 3", len(hooks))
+	// bandit is NOT a git-hooks.nix built-in, so it is rendered as a custom
+	// hook (BuiltIn:false) with a NixPackage so an `entry` is always emitted.
+	want := []struct {
+		id         string
+		builtIn    bool
+		nixPackage string
+		language   string
+	}{
+		{id: "ruff", builtIn: true, language: "python"},
+		{id: "mypy", builtIn: true, language: "python"},
+		// bandit runs the nix-provided binary directly, so Language is "system"
+		// (not "python", which would build a redundant venv).
+		{id: "bandit", builtIn: false, nixPackage: "bandit", language: "system"},
 	}
 
-	expectedIDs := []string{"ruff", "mypy", "bandit"}
+	if len(hooks) != len(want) {
+		t.Fatalf("PreCommitHooks() returned %d hooks, want %d", len(hooks), len(want))
+	}
 
 	for i, hook := range hooks {
-		if hook.ID != expectedIDs[i] {
-			t.Errorf("hooks[%d].ID = %q, want %q", i, hook.ID, expectedIDs[i])
+		w := want[i]
+		if hook.ID != w.id {
+			t.Errorf("hooks[%d].ID = %q, want %q", i, hook.ID, w.id)
 		}
-		if !hook.BuiltIn {
-			t.Errorf("hooks[%d].BuiltIn = false, want true", i)
+		if hook.BuiltIn != w.builtIn {
+			t.Errorf("hooks[%d].BuiltIn = %v, want %v", i, hook.BuiltIn, w.builtIn)
 		}
-		if hook.Language != "python" {
-			t.Errorf("hooks[%d].Language = %q, want %q", i, hook.Language, "python")
+		if hook.NixPackage != w.nixPackage {
+			t.Errorf("hooks[%d].NixPackage = %q, want %q", i, hook.NixPackage, w.nixPackage)
+		}
+		if hook.Language != w.language {
+			t.Errorf("hooks[%d].Language = %q, want %q", i, hook.Language, w.language)
 		}
 		if len(hook.Types) != 1 || hook.Types[0] != "python" {
 			t.Errorf("hooks[%d].Types = %v, want [\"python\"]", i, hook.Types)
@@ -462,6 +479,35 @@ func TestPreCommitHooks(t *testing.T) {
 		if hook.Description == "" {
 			t.Errorf("hooks[%d].Description should not be empty", i)
 		}
+	}
+}
+
+// --- DevenvYamlInputs tests ---
+
+// TestDevenvYamlInputs locks in the unconditional-return decision: because
+// DevenvNixFragment always emits languages.python.version (defaulting to 3.12),
+// the nixpkgs-python input must be returned regardless of whether the user
+// pinned a version. Guarding on config.Version would re-break unpinned projects.
+func TestDevenvYamlInputs(t *testing.T) {
+	m := &python.Module{}
+	cases := map[string]ecosystem.ModuleConfig{
+		"empty config":   {},
+		"pinned version": {Version: "3.13"},
+	}
+	for name, cfg := range cases {
+		t.Run(name, func(t *testing.T) {
+			inputs := m.DevenvYamlInputs(cfg)
+			if len(inputs) != 1 {
+				t.Fatalf("DevenvYamlInputs(%+v) returned %d inputs, want 1", cfg, len(inputs))
+			}
+			got := inputs[0]
+			if got.URL != "github:cachix/nixpkgs-python" {
+				t.Errorf("URL = %q, want github:cachix/nixpkgs-python", got.URL)
+			}
+			if got.Follows != "nixpkgs" {
+				t.Errorf("Follows = %q, want nixpkgs", got.Follows)
+			}
+		})
 	}
 }
 

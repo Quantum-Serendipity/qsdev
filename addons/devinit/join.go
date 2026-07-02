@@ -12,6 +12,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
+	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -166,9 +167,13 @@ func writeJoinResults(
 	devenvGenerated := accResult.devenvGenerated
 	claudeGenerated := accResult.claudeGenerated
 
-	// Write files.
+	// Write files. The merge funcs preserve user-owned keys (e.g. settings.json
+	// "env", per-server .mcp.json fields, CLAUDE.md sections outside markers)
+	// when join writes over an existing, unrecorded file.
 	result, err := generate.WriteFiles(allFiles, generate.PipelineOptions{
-		ProjectRoot: projectRoot,
+		ProjectRoot:       projectRoot,
+		SectionMergeFunc:  merge.SectionMarkers,
+		ThreeWayMergeFunc: merge.MergeOnCreate,
 	})
 	if err != nil {
 		return fmt.Errorf("writing files: %w", err)

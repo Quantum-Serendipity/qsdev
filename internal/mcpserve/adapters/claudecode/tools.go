@@ -13,6 +13,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 )
@@ -198,7 +199,11 @@ func (a *Adapter) handleConfigRender(ctx context.Context, cc *spi.ToolCallContex
 	}
 
 	if write {
-		res, werr := generate.WriteFiles(files, generate.PipelineOptions{ProjectRoot: cc.ProjectRoot})
+		res, werr := generate.WriteFiles(files, generate.PipelineOptions{
+			ProjectRoot:       cc.ProjectRoot,
+			SectionMergeFunc:  merge.SectionMarkers,
+			ThreeWayMergeFunc: merge.MergeOnCreate,
+		})
 		if werr != nil {
 			return nil, fmt.Errorf("writing rendered claude code files: %w", werr)
 		}

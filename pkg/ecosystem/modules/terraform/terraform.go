@@ -143,29 +143,37 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	variant := config.Extra("variant", "terraform")
 	binary := binaryName(variant)
+	nixPkg := nixPackageName(variant)
 
+	// These are custom hooks (BuiltIn:false), not git-hooks.nix built-ins: the
+	// built-in `terraform-format` runs plain `terraform fmt`, which would discard
+	// this module's binary selection (tofu for OpenTofu) and the `-check`/
+	// `-recursive` flags. NixPackage puts the right binary on PATH so the custom
+	// Entry resolves.
 	return []ecosystem.HookConfig{
 		{
-			ID:            "terraform_fmt",
-			Name:          "terraform_fmt",
+			ID:            "terraform-format",
+			Name:          "terraform-format",
 			Description:   fmt.Sprintf("Check %s configuration formatting", variant),
 			Entry:         binary + " fmt -check -recursive",
 			Language:      "system",
 			Types:         []string{"terraform"},
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
-			BuiltIn:       true,
+			BuiltIn:       false,
+			NixPackage:    nixPkg,
 		},
 		{
-			ID:            "terraform_validate",
-			Name:          "terraform_validate",
+			ID:            "terraform-validate",
+			Name:          "terraform-validate",
 			Description:   fmt.Sprintf("Validate %s configuration syntax", variant),
 			Entry:         binary + " validate",
 			Language:      "system",
 			Types:         []string{"terraform"},
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
-			BuiltIn:       true,
+			BuiltIn:       false,
+			NixPackage:    nixPkg,
 		},
 		{
 			ID:            "tflint",
@@ -177,6 +185,7 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
 			BuiltIn:       false,
+			NixPackage:    "tflint",
 		},
 		{
 			ID:            "tfsec",
@@ -188,8 +197,18 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
 			BuiltIn:       false,
+			NixPackage:    "tfsec",
 		},
 	}
+}
+
+// nixPackageName returns the nixpkgs package providing the CLI binary for the
+// given Terraform variant: opentofu (tofu) or terraform.
+func nixPackageName(variant string) string {
+	if variant == "opentofu" {
+		return "opentofu"
+	}
+	return "terraform"
 }
 
 // DenyRules returns Claude Code deny-rule patterns for Terraform/OpenTofu.

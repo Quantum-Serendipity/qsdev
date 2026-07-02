@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -89,11 +91,46 @@ func TestDeploySkills_SelectedOnly(t *testing.T) {
 	for _, f := range files {
 		names[f.Path] = true
 	}
-	if !names[".claude/skills/deploy.md"] {
-		t.Error("missing .claude/skills/deploy.md")
+	// Skills must be written as <name>/SKILL.md so Claude Code can load them.
+	if !names[".claude/skills/deploy/SKILL.md"] {
+		t.Error("missing .claude/skills/deploy/SKILL.md")
 	}
-	if !names[".claude/skills/review-pr.md"] {
-		t.Error("missing .claude/skills/review-pr.md")
+	if !names[".claude/skills/review-pr/SKILL.md"] {
+		t.Error("missing .claude/skills/review-pr/SKILL.md")
+	}
+}
+
+// TestDeploySkills_SynthesizesFrontMatter guards DEFECT-8: every deployed skill
+// must be a <name>/SKILL.md with valid YAML front-matter (name + description),
+// or Claude Code cannot load it.
+func TestDeploySkills_SynthesizesFrontMatter(t *testing.T) {
+	answers := types.WizardAnswers{Skills: []string{"deploy", "security-review-owasp"}}
+	files, err := claudecode.ExportDeploySkills(answers)
+	if err != nil {
+		t.Fatalf("deploySkills returned error: %v", err)
+	}
+	for _, f := range files {
+		if !strings.HasSuffix(f.Path, "/SKILL.md") {
+			t.Errorf("path %q should end with /SKILL.md", f.Path)
+		}
+		if !strings.HasPrefix(string(f.Content), "---\n") {
+			t.Errorf("%s should begin with YAML front-matter delimiter", f.Path)
+		}
+		var fm struct {
+			Name        string `yaml:"name"`
+			Description string `yaml:"description"`
+		}
+		// Extract the front-matter block (between the first two --- lines).
+		parts := strings.SplitN(string(f.Content), "---\n", 3)
+		if len(parts) < 3 {
+			t.Fatalf("%s has no closed front-matter block", f.Path)
+		}
+		if err := yaml.Unmarshal([]byte(parts[1]), &fm); err != nil {
+			t.Errorf("%s front-matter is not valid YAML: %v", f.Path, err)
+		}
+		if fm.Name == "" || fm.Description == "" {
+			t.Errorf("%s front-matter missing name/description: %+v", f.Path, fm)
+		}
 	}
 }
 
@@ -127,6 +164,48 @@ func TestDeploySkills_UnknownSkill(t *testing.T) {
 	}
 }
 
+// TestDeploySkills_LegacyName guards the skill-rename migration: a pre-rename
+// config that persisted "security-review" must still deploy (as the renamed
+// security-review-owasp) instead of hard-erroring on regeneration.
+func TestDeploySkills_LegacyName(t *testing.T) {
+	files, err := claudecode.ExportDeploySkills(types.WizardAnswers{Skills: []string{"security-review"}})
+	if err != nil {
+		t.Fatalf("deploySkills with legacy name returned error: %v", err)
+	}
+	if len(files) != 1 || files[0].Path != ".claude/skills/security-review-owasp/SKILL.md" {
+		t.Fatalf("legacy name did not resolve to the renamed skill: %+v", files)
+	}
+
+	// Both the legacy and current name present must deduplicate to one file.
+	dup, err := claudecode.ExportDeploySkills(types.WizardAnswers{Skills: []string{"security-review", "security-review-owasp"}})
+	if err != nil {
+		t.Fatalf("deploySkills with legacy+current returned error: %v", err)
+	}
+	if len(dup) != 1 {
+		t.Errorf("expected legacy+current to dedup to 1 file, got %d: %+v", len(dup), dup)
+	}
+}
+
+func TestLegacyFlatSkillPath(t *testing.T) {
+	cases := []struct {
+		in       string
+		wantPath string
+		wantOK   bool
+	}{
+		{".claude/skills/deploy/SKILL.md", ".claude/skills/deploy.md", true},
+		{".claude/skills/security-review-owasp/SKILL.md", ".claude/skills/security-review-owasp.md", true},
+		{".claude/rules/go-conventions.md", "", false}, // not a skill
+		{".claude/skills/deploy.md", "", false},        // already flat
+		{".claude/skills/a/b/SKILL.md", "", false},     // nested subdir, not a skill root
+	}
+	for _, c := range cases {
+		got, ok := claudecode.ExportLegacyFlatSkillPath(c.in)
+		if ok != c.wantOK || got != c.wantPath {
+			t.Errorf("legacyFlatSkillPath(%q) = (%q, %v), want (%q, %v)", c.in, got, ok, c.wantPath, c.wantOK)
+		}
+	}
+}
+
 func TestDeploySkills_ContentNotEmpty(t *testing.T) {
 	manifest, err := claudecode.ExportLoadManifest()
 	if err != nil {
@@ -153,7 +232,7 @@ func TestDeploySkills_ContentNotEmpty(t *testing.T) {
 
 func TestDeploySkills_FileMetadata(t *testing.T) {
 	answers := types.WizardAnswers{
-		Skills: []string{"deploy", "security-review"},
+		Skills: []string{"deploy", "security-review-owasp"},
 	}
 
 	files, err := claudecode.ExportDeploySkills(answers)

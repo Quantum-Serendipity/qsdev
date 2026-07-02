@@ -42,6 +42,41 @@ func TestCheck_Obfuscation(t *testing.T) {
 			category: "obfuscation",
 		},
 		{
+			name:     "eval with expansion in a later segment",
+			tool:     "Bash",
+			command:  `echo hi && eval "$x"`,
+			blocked:  true,
+			category: "obfuscation",
+		},
+		{
+			// DEFECT-10: `eval "$("` appears only inside a grep search pattern,
+			// not as an invoked command, so it must not be blocked.
+			name:    "eval string inside a read-only grep pattern",
+			tool:    "Bash",
+			command: `grep 'eval "$("' file.txt`,
+			blocked: false,
+		},
+		{
+			name:    "eval of a literal with no expansion",
+			tool:    "Bash",
+			command: `eval "cleanup"`,
+			blocked: false,
+		},
+		{
+			name:     "eval hidden behind sh -c wrapper",
+			tool:     "Bash",
+			command:  `sh -c 'eval "$X"'`,
+			blocked:  true,
+			category: "obfuscation",
+		},
+		{
+			name:     "eval hidden behind the command builtin",
+			tool:     "Bash",
+			command:  `command eval "$X"`,
+			blocked:  true,
+			category: "obfuscation",
+		},
+		{
 			name:    "base64 encoding not decoding",
 			tool:    "Bash",
 			command: "echo hello | base64",

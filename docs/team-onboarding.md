@@ -128,7 +128,7 @@ Six built-in skills are available for Claude Code workflows:
 |-------|-------------|-------------------|
 | `deploy` | Deploy to staging/production via CI pipeline | No |
 | `review-pr` | Structured pull request review with checklist | No |
-| `security-review` | Security-focused code review with OWASP checks | No |
+| `security-review-owasp` | Security-focused code review with OWASP checks | No |
 | `generate-tests` | Generate test suites for existing code | No |
 | `refactor` | Refactor code for clarity, performance, and maintainability | No |
 | `db-migration` | Create safe, reversible database schema migrations | Go, Python, JavaScript |
@@ -143,7 +143,7 @@ Install skills at init time or add them later:
 
 ```bash
 # At init time
-qsdev init --claude-skills deploy,security-review --yes
+qsdev init --claude-skills deploy,security-review-owasp --yes
 
 # Add to an existing project
 qsdev claude add-skill generate-tests
@@ -361,7 +361,7 @@ claude:
   permissions: standard
   skills:
     - deploy
-    - security-review
+    - security-review-owasp
     - review-pr
   hooks:
     - safety-block

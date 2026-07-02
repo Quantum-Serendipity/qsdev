@@ -84,7 +84,7 @@ security:
 claude_code:
   enabled: true
   permission_level: standard
-  skills: [deploy, review-pr, security-review]
+  skills: [deploy, review-pr, security-review-owasp]
   mcp_servers: [context7, github, socket, semble]
 infrastructure:
   registry_proxy: ""
@@ -262,7 +262,7 @@ This Python script is the runtime complement to the static ask rules. It receive
 |-------|-------------|
 | `deploy.md` | Deploy to staging/production via CI pipeline |
 | `review-pr.md` | Structured pull request review with checklist |
-| `security-review.md` | Security-focused code review with OWASP checks |
+| `security-review-owasp.md` | Security-focused code review with OWASP checks |
 | `generate-tests.md` | Generate test suites for existing code |
 | `refactor.md` | Refactor code for clarity, performance, and maintainability |
 | `db-migration.md` | Create safe, reversible database schema migrations |

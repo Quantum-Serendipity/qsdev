@@ -272,26 +272,29 @@ func TestPreCommitHooks(t *testing.T) {
 		t.Fatalf("expected 4 hooks, got %d", len(hooks))
 	}
 
-	expectedIDs := []string{"terraform_fmt", "terraform_validate", "tflint", "tfsec"}
+	// Real git-hooks.nix hook names are hyphenated (terraform-format /
+	// terraform-validate); underscored names do not exist as built-ins.
+	expectedIDs := []string{"terraform-format", "terraform-validate", "tflint", "tfsec"}
 	for i, id := range expectedIDs {
 		if hooks[i].ID != id {
 			t.Errorf("hook[%d]: expected ID %q, got %q", i, id, hooks[i].ID)
 		}
 	}
 
-	// terraform_fmt and terraform_validate should be BuiltIn.
-	if !hooks[0].BuiltIn {
-		t.Error("terraform_fmt should be BuiltIn")
+	// All four are custom hooks (BuiltIn:false): the built-in terraform-format
+	// would discard the tofu/terraform binary selection and -check flags, so the
+	// hooks are rendered with a NixPackage that puts the binary on PATH.
+	for i, h := range hooks {
+		if h.BuiltIn {
+			t.Errorf("%s should not be BuiltIn (custom hook preserving entry)", h.ID)
+		}
+		if h.NixPackage == "" {
+			t.Errorf("%s should set a NixPackage so its binary resolves", hooks[i].ID)
+		}
 	}
-	if !hooks[1].BuiltIn {
-		t.Error("terraform_validate should be BuiltIn")
-	}
-	// tflint and tfsec should NOT be BuiltIn.
-	if hooks[2].BuiltIn {
-		t.Error("tflint should not be BuiltIn")
-	}
-	if hooks[3].BuiltIn {
-		t.Error("tfsec should not be BuiltIn")
+	// Default variant resolves to the terraform package.
+	if hooks[0].NixPackage != "terraform" {
+		t.Errorf("terraform-format NixPackage = %q, want terraform", hooks[0].NixPackage)
 	}
 
 	// Default variant should use "terraform" in entry.

@@ -9,6 +9,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/python"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -62,31 +63,36 @@ func TestBasicGoProject(t *testing.T) {
 	gf := mustGenerate(t, answers, reg)
 	m := mustUnmarshal(t, gf)
 
-	// Verify hardened defaults.
+	// Verify hardened defaults. impure stays top-level; the unfree/insecure
+	// keys are camelCase nested under nixpkgs: per the devenv 2.x schema.
 	if m["impure"] != false {
 		t.Errorf("impure should be false, got %v", m["impure"])
 	}
-	if m["allow_unfree"] != true {
-		t.Errorf("allow_unfree should be true, got %v", m["allow_unfree"])
+	nixpkgs, ok := m["nixpkgs"].(map[string]any)
+	if !ok {
+		t.Fatal("nixpkgs should be a map")
 	}
-	if m["allow_broken"] != false {
-		t.Errorf("allow_broken should be false, got %v", m["allow_broken"])
+	if nixpkgs["allowUnfree"] != true {
+		t.Errorf("nixpkgs.allowUnfree should be true, got %v", nixpkgs["allowUnfree"])
+	}
+	if nixpkgs["allowBroken"] != false {
+		t.Errorf("nixpkgs.allowBroken should be false, got %v", nixpkgs["allowBroken"])
 	}
 	if m["require_version"] != ">=2.1" {
 		t.Errorf("require_version should be >=2.1, got %v", m["require_version"])
 	}
 
-	// Verify nixpkgs input.
+	// Verify nixpkgs input (distinct from the nixpkgs: config block above).
 	inputs, ok := m["inputs"].(map[string]any)
 	if !ok {
 		t.Fatal("inputs should be a map")
 	}
-	nixpkgs, ok := inputs["nixpkgs"].(map[string]any)
+	nixpkgsInput, ok := inputs["nixpkgs"].(map[string]any)
 	if !ok {
 		t.Fatal("inputs.nixpkgs should be a map")
 	}
-	if nixpkgs["url"] != "github:NixOS/nixpkgs/nixpkgs-unstable" {
-		t.Errorf("nixpkgs url wrong: %v", nixpkgs["url"])
+	if nixpkgsInput["url"] != "github:NixOS/nixpkgs/nixpkgs-unstable" {
+		t.Errorf("nixpkgs url wrong: %v", nixpkgsInput["url"])
 	}
 
 	// Verify clean section.
@@ -105,20 +111,20 @@ func TestBasicGoProject(t *testing.T) {
 		t.Error("clean.keep should have entries")
 	}
 
-	// Verify permitted_*_packages are present as empty lists.
-	unfree, ok := m["permitted_unfree_packages"].([]any)
+	// Verify nixpkgs.permitted*Packages are present as empty lists.
+	unfree, ok := nixpkgs["permittedUnfreePackages"].([]any)
 	if !ok {
-		t.Fatal("permitted_unfree_packages should be a list")
+		t.Fatal("nixpkgs.permittedUnfreePackages should be a list")
 	}
 	if len(unfree) != 0 {
-		t.Errorf("permitted_unfree_packages should be empty, got %v", unfree)
+		t.Errorf("nixpkgs.permittedUnfreePackages should be empty, got %v", unfree)
 	}
-	insecure, ok := m["permitted_insecure_packages"].([]any)
+	insecure, ok := nixpkgs["permittedInsecurePackages"].([]any)
 	if !ok {
-		t.Fatal("permitted_insecure_packages should be a list")
+		t.Fatal("nixpkgs.permittedInsecurePackages should be a list")
 	}
 	if len(insecure) != 0 {
-		t.Errorf("permitted_insecure_packages should be empty, got %v", insecure)
+		t.Errorf("nixpkgs.permittedInsecurePackages should be empty, got %v", insecure)
 	}
 }
 
@@ -348,8 +354,13 @@ func TestYAMLRoundTrip(t *testing.T) {
 	if second["impure"] != first["impure"] {
 		t.Errorf("impure changed: %v → %v", first["impure"], second["impure"])
 	}
-	if second["allow_unfree"] != first["allow_unfree"] {
-		t.Errorf("allow_unfree changed: %v → %v", first["allow_unfree"], second["allow_unfree"])
+	firstNixpkgs, _ := first["nixpkgs"].(map[string]any)
+	secondNixpkgs, _ := second["nixpkgs"].(map[string]any)
+	if firstNixpkgs == nil || secondNixpkgs == nil {
+		t.Fatalf("nixpkgs block missing after round-trip: first=%v second=%v", first["nixpkgs"], second["nixpkgs"])
+	}
+	if secondNixpkgs["allowUnfree"] != firstNixpkgs["allowUnfree"] {
+		t.Errorf("nixpkgs.allowUnfree changed: %v → %v", firstNixpkgs["allowUnfree"], secondNixpkgs["allowUnfree"])
 	}
 	if second["require_version"] != first["require_version"] {
 		t.Errorf("require_version changed: %v → %v", first["require_version"], second["require_version"])
@@ -366,11 +377,15 @@ func TestSecurityDefaultsWithEmptyAnswers(t *testing.T) {
 	if m["impure"] != false {
 		t.Errorf("impure should be false with empty answers, got %v", m["impure"])
 	}
-	if m["allow_unfree"] != true {
-		t.Errorf("allow_unfree should be true with empty answers, got %v", m["allow_unfree"])
+	nixpkgs, ok := m["nixpkgs"].(map[string]any)
+	if !ok {
+		t.Fatal("nixpkgs block should be present with empty answers")
 	}
-	if m["allow_broken"] != false {
-		t.Errorf("allow_broken should be false with empty answers, got %v", m["allow_broken"])
+	if nixpkgs["allowUnfree"] != true {
+		t.Errorf("nixpkgs.allowUnfree should be true with empty answers, got %v", nixpkgs["allowUnfree"])
+	}
+	if nixpkgs["allowBroken"] != false {
+		t.Errorf("nixpkgs.allowBroken should be false with empty answers, got %v", nixpkgs["allowBroken"])
 	}
 
 	clean := m["clean"].(map[string]any)
@@ -378,12 +393,12 @@ func TestSecurityDefaultsWithEmptyAnswers(t *testing.T) {
 		t.Errorf("clean.enabled should be true with empty answers")
 	}
 
-	// permitted_*_packages must be present as empty lists.
-	if _, ok := m["permitted_unfree_packages"]; !ok {
-		t.Error("permitted_unfree_packages must be present in output")
+	// nixpkgs.permitted*Packages must be present as empty lists.
+	if _, ok := nixpkgs["permittedUnfreePackages"]; !ok {
+		t.Error("nixpkgs.permittedUnfreePackages must be present in output")
 	}
-	if _, ok := m["permitted_insecure_packages"]; !ok {
-		t.Error("permitted_insecure_packages must be present in output")
+	if _, ok := nixpkgs["permittedInsecurePackages"]; !ok {
+		t.Error("nixpkgs.permittedInsecurePackages must be present in output")
 	}
 
 	// require_version must be present.
@@ -480,15 +495,16 @@ func TestBoolFieldsExplicitInOutput(t *testing.T) {
 	gf := mustGenerate(t, answers, reg)
 	content := string(gf.Content)
 
-	// These false values are security-critical and must appear explicitly.
+	// These false values are security-critical and must appear explicitly,
+	// in the devenv 2.x camelCase form (allowUnfree/allowBroken under nixpkgs:).
 	if !strings.Contains(content, "impure: false") {
 		t.Error("'impure: false' must appear explicitly in YAML output")
 	}
-	if !strings.Contains(content, "allow_unfree: true") {
-		t.Error("'allow_unfree: true' must appear explicitly in YAML output")
+	if !strings.Contains(content, "allowUnfree: true") {
+		t.Error("'allowUnfree: true' must appear explicitly in YAML output")
 	}
-	if !strings.Contains(content, "allow_broken: false") {
-		t.Error("'allow_broken: false' must appear explicitly in YAML output")
+	if !strings.Contains(content, "allowBroken: false") {
+		t.Error("'allowBroken: false' must appear explicitly in YAML output")
 	}
 }
 
@@ -498,12 +514,48 @@ func TestPermittedPackagesEmptyArrayInOutput(t *testing.T) {
 	gf := mustGenerate(t, answers, reg)
 	content := string(gf.Content)
 
-	// Empty lists should be serialized as [] not omitted.
-	if !strings.Contains(content, "permitted_unfree_packages: []") {
-		t.Errorf("permitted_unfree_packages should be serialized as []\nContent:\n%s", content)
+	// Empty lists should be serialized as [] not omitted (camelCase, nested).
+	if !strings.Contains(content, "permittedUnfreePackages: []") {
+		t.Errorf("permittedUnfreePackages should be serialized as []\nContent:\n%s", content)
 	}
-	if !strings.Contains(content, "permitted_insecure_packages: []") {
-		t.Errorf("permitted_insecure_packages should be serialized as []\nContent:\n%s", content)
+	if !strings.Contains(content, "permittedInsecurePackages: []") {
+		t.Errorf("permittedInsecurePackages should be serialized as []\nContent:\n%s", content)
+	}
+}
+
+// TestRealPythonModuleAddsNixpkgsPythonInput is the end-to-end proof (not a
+// mock) that the real Python module contributes the nixpkgs-python flake input
+// required by languages.python.version. Regression guard for DEFECT-1.
+func TestRealPythonModuleAddsNixpkgsPythonInput(t *testing.T) {
+	reg := ecosystem.NewRegistry()
+	if err := reg.Register(&python.Module{}); err != nil {
+		t.Fatalf("registering python module: %v", err)
+	}
+	answers := types.WizardAnswers{Languages: []types.LanguageChoice{pythonLanguage()}}
+	m := mustUnmarshal(t, mustGenerate(t, answers, reg))
+
+	inputs, ok := m["inputs"].(map[string]any)
+	if !ok {
+		t.Fatal("inputs should be a map")
+	}
+	np, ok := inputs["nixpkgs-python"].(map[string]any)
+	if !ok {
+		t.Fatalf("inputs.nixpkgs-python missing; got inputs=%v", inputs)
+	}
+	if np["url"] != "github:cachix/nixpkgs-python" {
+		t.Errorf("nixpkgs-python url = %v, want github:cachix/nixpkgs-python", np["url"])
+	}
+	// Must follow the root nixpkgs (rendered as inputs.nixpkgs.follows).
+	sub, ok := np["inputs"].(map[string]any)
+	if !ok {
+		t.Fatalf("nixpkgs-python.inputs missing; got %v", np)
+	}
+	nested, ok := sub["nixpkgs"].(map[string]any)
+	if !ok {
+		t.Fatalf("nixpkgs-python.inputs.nixpkgs missing; got %v", sub)
+	}
+	if nested["follows"] != "nixpkgs" {
+		t.Errorf("nixpkgs-python follows = %v, want nixpkgs", nested["follows"])
 	}
 }
 
@@ -513,7 +565,10 @@ func TestCleanKeepContainsExpectedVars(t *testing.T) {
 	gf := mustGenerate(t, answers, reg)
 	content := string(gf.Content)
 
-	expectedVars := []string{"TERM", "HOME", "SSH_AUTH_SOCK", "NIX_SSL_CERT_FILE"}
+	// PATH must be kept: clearing it strips /usr/bin, ~/.local/bin (claude),
+	// and the qsdev binary from the devenv shell (devenv's own rcfile calls
+	// mktemp before setting PATH).
+	expectedVars := []string{"PATH", "TERM", "HOME", "SSH_AUTH_SOCK", "NIX_SSL_CERT_FILE"}
 	for _, v := range expectedVars {
 		if !strings.Contains(content, v) {
 			t.Errorf("clean.keep should contain %s", v)

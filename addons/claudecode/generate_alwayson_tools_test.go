@@ -38,7 +38,11 @@ func TestAlwaysOnTools_StandardTier(t *testing.T) {
 	}
 }
 
-func TestAlwaysOnTools_StandardTier_NoMCPOrAgents(t *testing.T) {
+// TestStandardTier_MCPGeneratedNoFullOnlyArtifacts verifies DEFECT-5: at the
+// standard tier, configured MCP servers DO materialize .mcp.json, while
+// Full-only artifacts (consulting agents, operation skills such as the
+// postmortem agent) remain gated out.
+func TestStandardTier_MCPGeneratedNoFullOnlyArtifacts(t *testing.T) {
 	reg := newTestRegistry(t, goMock())
 	answers := types.WizardAnswers{
 		Tier:       "standard",
@@ -53,13 +57,17 @@ func TestAlwaysOnTools_StandardTier_NoMCPOrAgents(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var sawMCP bool
 	for _, f := range files {
 		if f.Path == ".mcp.json" {
-			t.Error("MCP config should not be generated at Standard tier")
+			sawMCP = true
 		}
 		if strings.Contains(f.Path, "agent-postmortem") {
 			t.Error("postmortem skill should not be generated at Standard tier")
 		}
+	}
+	if !sawMCP {
+		t.Error("MCP config should be generated at Standard tier when MCP servers are configured (DEFECT-5)")
 	}
 }
 
@@ -106,4 +114,30 @@ func TestAlwaysOnTools_SupplyChainTier_NoToolFiles(t *testing.T) {
 			t.Errorf("AlwaysOn tool file %q should not be generated at supply-chain-only tier", f.Path)
 		}
 	}
+}
+
+// TestSuppressedConfigWarnings covers DEFECT-5/7 messaging: configured skills or
+// MCP servers only warn when the resolved tier is below Standard (where they are
+// suppressed); at Standard+ they are emitted, so there is nothing to warn about.
+func TestSuppressedConfigWarnings(t *testing.T) {
+	t.Run("below standard warns", func(t *testing.T) {
+		w := claudecode.SuppressedConfigWarnings(types.WizardAnswers{
+			Tier:       "supply-chain-only",
+			Skills:     []string{"deploy"},
+			MCPServers: []string{"github"},
+		})
+		if len(w) != 2 {
+			t.Fatalf("expected 2 warnings below standard, got %d: %v", len(w), w)
+		}
+	})
+	t.Run("standard does not warn", func(t *testing.T) {
+		w := claudecode.SuppressedConfigWarnings(types.WizardAnswers{
+			Tier:       "standard",
+			Skills:     []string{"deploy"},
+			MCPServers: []string{"github"},
+		})
+		if len(w) != 0 {
+			t.Errorf("expected no warnings at standard, got: %v", w)
+		}
+	})
 }

@@ -10,9 +10,10 @@ import (
 type ExportMCPServerConfig = MCPServerConfig
 
 var (
-	ExportLoadManifest = loadManifest
-	ExportDeploySkills = deploySkills
-	ExportDeployRules  = deployRules
+	ExportLoadManifest        = loadManifest
+	ExportDeploySkills        = deploySkills
+	ExportDeployRules         = deployRules
+	ExportLegacyFlatSkillPath = legacyFlatSkillPath
 )
 
 // ExportSaveAnswers exposes saveAnswers for external tests.

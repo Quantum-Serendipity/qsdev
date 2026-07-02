@@ -334,6 +334,115 @@ func TestIsProtected_McpJson(t *testing.T) {
 	}
 }
 
+func TestIsProtected_HooksAndAgents(t *testing.T) {
+	t.Parallel()
+
+	resetProtectedPaths(t)
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("getting home dir: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		path     string
+		wantProt bool
+		wantCat  string
+	}{
+		{
+			// Home config hook script — caught by the home-anchored prefix.
+			"home claude hook script",
+			filepath.Join(home, ".claude", "hooks", "preToolUse.sh"),
+			true, "claude-settings",
+		},
+		{
+			"home claude agent definition",
+			filepath.Join(home, ".claude", "agents", "reviewer.md"),
+			true, "claude-settings",
+		},
+		{
+			// Project-relative hook path canonicalizes OUTSIDE $HOME; only the
+			// segment guard catches it.
+			"project claude hook script",
+			filepath.Join(home, "project", ".claude", "hooks", "preToolUse.sh"),
+			true, "claude-settings",
+		},
+		{
+			"project claude agent definition",
+			filepath.Join(home, "work", "repo", ".claude", "agents", "x.md"),
+			true, "claude-settings",
+		},
+		{
+			// A settings file that is NOT a hook/agent still resolves via its own
+			// prefix, unaffected by the new segment guard.
+			"home claude settings",
+			filepath.Join(home, ".claude", "settings.json"),
+			true, "claude-settings",
+		},
+		{
+			// Non-hook/agent .claude file stays unprotected (no matching prefix).
+			"non-matching claude subdir",
+			filepath.Join(home, ".claude", "other-file"),
+			false, "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gotProt, gotCat := IsProtected(tt.path)
+			if gotProt != tt.wantProt || gotCat != tt.wantCat {
+				t.Errorf("IsProtected(%q) = (%v, %q), want (%v, %q)",
+					tt.path, gotProt, gotCat, tt.wantProt, tt.wantCat)
+			}
+		})
+	}
+}
+
+func TestContainsProtectedPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		// Trailing-path forms (existing substring patterns).
+		{".claude/settings.json", true},
+		{"cat .claude/hooks/pre.sh", true},
+		{"/etc/gdev/policy.yaml", true},
+		{"/etc/claude-code/config.json", true},
+		// Bare directory names at a path-token boundary (the new match).
+		{".claude", true},
+		{"rm -rf .claude", true},
+		{"rm -rf ~/.claude", true},
+		{"rm -rf .qsdev", true},
+		{"rm -rf .gdev", true},
+		{"rm -rf /etc/gdev", true},
+		{"find .claude -delete", true}, // followed by whitespace
+		{`rm -rf ".claude"`, true},     // followed by a quote
+		{"rm -rf .claude;", true},      // followed by a shell metachar
+		// Over-match guards: a longer name that merely embeds a token.
+		{"my.claude.bak", false},
+		{"foo.claudex", false},
+		{"my.claude", false},
+		{"settings.claude", false},
+		// Unrelated paths.
+		{"node_modules", false},
+		{"README.md", false},
+		{"/tmp/scratch", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			if got := ContainsProtectedPath(tt.input); got != tt.want {
+				t.Errorf("ContainsProtectedPath(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 // resetProtectedPaths ensures the protected path list is initialized.
 func resetProtectedPaths(t *testing.T) {
 	t.Helper()

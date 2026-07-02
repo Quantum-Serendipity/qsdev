@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -281,7 +282,10 @@ func TestDownloadAndVerify(t *testing.T) {
 		},
 	}
 
-	cfg := Config{BinaryName: "qsdev"}
+	// Strict:false exercises the checksum-only (non-strict) path used for
+	// dev/self-built binaries: there is no sigstore bundle in this release, so
+	// under default-on strict mode this update would (correctly) be refused.
+	cfg := Config{BinaryName: "qsdev", Strict: false}
 
 	binaryPath, err := DownloadAndVerify(context.Background(), release, cfg, "linux", "amd64", tmpDir)
 	if err != nil {
@@ -330,11 +334,119 @@ func TestDownloadAndVerify_ChecksumMismatch(t *testing.T) {
 		},
 	}
 
-	cfg := Config{BinaryName: "qsdev"}
+	// Strict:false so the failure is unambiguously the checksum mismatch rather
+	// than the (also-failing) strict signature requirement.
+	cfg := Config{BinaryName: "qsdev", Strict: false}
 
 	_, err = DownloadAndVerify(context.Background(), release, cfg, "linux", "amd64", tmpDir)
 	if err == nil {
 		t.Fatal("expected checksum mismatch error")
+	}
+}
+
+func TestDownloadAndVerify_StrictFailsWhenUnsigned(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// A valid archive + checksums pair so download and asset resolution succeed;
+	// the failure must come from the strict signature requirement, not I/O.
+	archiveDir := t.TempDir()
+	archivePath := createTestTarGz(t, archiveDir, "qsdev", "#!/bin/sh\necho v3.0.0\n")
+	archiveData, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256sum(t, archivePath)
+	checksumsContent := fmt.Sprintf("%s  qsdev_3.0.0_Linux_x86_64.tar.gz\n", hash)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/archive":
+			w.Write(archiveData)
+		case "/checksums":
+			w.Write([]byte(checksumsContent))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	// Force the signature verification to report Skipped (mirrors "no bundle in
+	// release" or "cosign not installed"), the fail-open condition we now close.
+	oldFn := verifySigstoreBundle
+	t.Cleanup(func() { verifySigstoreBundle = oldFn })
+	verifySigstoreBundle = func(ctx context.Context, release *Release, checksumsPath, tmpDir string) (*VerificationResult, error) {
+		return &VerificationResult{Skipped: true, Message: "cosign not found on PATH"}, nil
+	}
+
+	release := &Release{
+		Version: "3.0.0",
+		Assets: []Asset{
+			{Name: "qsdev_3.0.0_Linux_x86_64.tar.gz", URL: srv.URL + "/archive"},
+			{Name: "checksums.txt", URL: srv.URL + "/checksums"},
+		},
+	}
+
+	cfg := Config{BinaryName: "qsdev", Strict: true}
+
+	_, err = DownloadAndVerify(context.Background(), release, cfg, "linux", "amd64", tmpDir)
+	if err == nil {
+		t.Fatal("expected error when strict mode requires a signature but verification was skipped")
+	}
+	if !strings.Contains(err.Error(), "signature verification required") {
+		t.Errorf("error = %q, want it to mention the missing signature requirement", err.Error())
+	}
+}
+
+func TestDownloadFile_TokenNotSentToUntrustedHost(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "super-secret-token")
+
+	var gotAuth string
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		gotAuth = r.Header.Get("Authorization")
+		w.Write([]byte("data"))
+	}))
+	defer srv.Close()
+
+	// srv.URL is http://127.0.0.1:<port> — not a trusted GitHub host. The
+	// download must be refused before any request is made, so the token never
+	// leaves the process.
+	dest := filepath.Join(t.TempDir(), "out")
+	err := downloadFile(context.Background(), srv.URL+"/asset", dest, 1<<20)
+	if err == nil {
+		t.Fatal("expected downloadFile to refuse an authenticated request to an untrusted host")
+	}
+	if hits != 0 {
+		t.Errorf("untrusted host received %d request(s); want 0", hits)
+	}
+	if gotAuth != "" {
+		t.Errorf("Authorization header leaked to untrusted host: %q", gotAuth)
+	}
+}
+
+func TestIsTrustedAssetHost(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want bool
+	}{
+		{"github.com", "https://github.com/org/repo/releases/download/v1/a.tar.gz", true},
+		{"release objects", "https://objects.githubusercontent.com/foo", true},
+		{"raw githubusercontent", "https://raw.githubusercontent.com/o/r/main/x", true},
+		{"api.github.com", "https://api.github.com/repos/o/r", true},
+		{"apex githubusercontent", "https://githubusercontent.com/x", true},
+		{"attacker host", "https://evil.example.com/asset", false},
+		{"lookalike suffix", "https://githubusercontent.com.evil.com/x", false},
+		{"http scheme", "http://github.com/o/r", false},
+		{"garbage", "://not a url", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isTrustedAssetHost(tt.url); got != tt.want {
+				t.Errorf("isTrustedAssetHost(%q) = %v, want %v", tt.url, got, tt.want)
+			}
+		})
 	}
 }
 

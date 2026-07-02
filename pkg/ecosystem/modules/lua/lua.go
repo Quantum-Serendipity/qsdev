@@ -115,7 +115,10 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Types:         []string{"lua"},
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
-			BuiltIn:       false,
+			// Custom hook (BuiltIn:false): NixPackage provisions the binary so
+			// the emitted `entry` resolves at commit time.
+			BuiltIn:    false,
+			NixPackage: "stylua",
 		},
 		{
 			ID:            "luacheck",
@@ -127,6 +130,9 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
 			BuiltIn:       false,
+			// luacheck is a Lua-package attribute in nixpkgs (no top-level
+			// binary); luaPackages.luacheck provides the /bin/luacheck wrapper.
+			NixPackage: "luaPackages.luacheck",
 		},
 	}
 }

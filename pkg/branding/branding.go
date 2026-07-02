@@ -1,6 +1,13 @@
 package branding
 
-import "sync/atomic"
+import (
+	"regexp"
+	"sync/atomic"
+)
+
+// githubActionsOIDCIssuer is the OIDC token issuer for keyless (Sigstore /
+// cosign) signatures produced by GitHub Actions workflows.
+const githubActionsOIDCIssuer = "https://token.actions.githubusercontent.com"
 
 type Config struct {
 	AppName       string
@@ -106,4 +113,20 @@ func RepoURL() string {
 func InstallScriptURL() string {
 	cfg := Get()
 	return "https://raw.githubusercontent.com/" + cfg.GitHubOwner + "/" + cfg.GitHubRepo + "/main/install.sh"
+}
+
+// WorkflowIdentity returns the Sigstore certificate-identity parameters used to
+// verify release artifacts signed by this project's GitHub Actions workflow.
+//
+// issuer is the GitHub Actions OIDC token issuer. subjectRegExp is an anchored
+// regular expression matching the signing subject — any workflow under the
+// project's own repository (derived from branding so that forks and rebrands
+// verify against their own repository rather than a hardcoded owner/repo). It
+// is suitable for cosign's --certificate-identity-regexp flag and can be reused
+// by any cosign-based verification policy in this project.
+func WorkflowIdentity() (issuer, subjectRegExp string) {
+	cfg := Get()
+	repo := regexp.QuoteMeta(cfg.GitHubOwner + "/" + cfg.GitHubRepo)
+	subjectRegExp = `^https://github\.com/` + repo + `/\.github/workflows/.+$`
+	return githubActionsOIDCIssuer, subjectRegExp
 }

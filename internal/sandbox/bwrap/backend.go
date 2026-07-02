@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
+	"strconv"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
@@ -52,14 +54,49 @@ func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 		return nil, fmt.Errorf("building sandbox args: %w", err)
 	}
 
+	// Seccomp layer: pass the compiled BPF filter to bwrap through an inherited
+	// file descriptor when one is available (the Nix build injects the path via
+	// ldflags). This is a no-op in builds without a filter, so exec still runs.
+	var extraFiles []*os.File
+	defer func() {
+		for _, f := range extraFiles {
+			_ = f.Close()
+		}
+	}()
+	seccompApplied := false
+	if fp := sandbox.SeccompFilterFile(); fp != "" {
+		if f, openErr := os.Open(fp); openErr == nil { //nolint:gosec // path is a trusted build-time constant
+			// cmd.ExtraFiles entries are handed to the child starting at fd 3.
+			childFD := 3 + len(extraFiles)
+			args = append(args, "--seccomp", strconv.Itoa(childFD))
+			extraFiles = append(extraFiles, f)
+			seccompApplied = true
+		} else {
+			slog.Warn("seccomp filter present but unreadable; syscall filtering NOT applied",
+				"path", fp, "error", openErr)
+		}
+	}
+
+	// Landlock layer: wrap the hook command with ll-restrict when it is
+	// available. InjectLandlock returns the command unchanged when ll-restrict
+	// is absent, so this is also a safe no-op in unprovisioned environments.
+	hookCmd := InjectLandlock(cfg.HookCommand, cfg)
+	landlockApplied := len(hookCmd) > len(cfg.HookCommand)
+
+	// Honesty: if the selected tier advertises an LSM layer we could not apply
+	// (missing ll-restrict binary or BPF filter), say so loudly instead of
+	// silently overclaiming protection.
+	b.warnUnappliedLayers(landlockApplied, seccompApplied)
+
 	// Append the hook command after the bwrap args.
 	args = append(args, "--")
-	args = append(args, cfg.HookCommand...)
+	args = append(args, hookCmd...)
 
 	sandboxOverhead := time.Since(setupStart)
 	execStart := time.Now()
 
 	cmd := exec.CommandContext(ctx, b.bwrapBin, args...)
+	cmd.ExtraFiles = extraFiles
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -91,6 +128,24 @@ func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 		SandboxOverhead: sandboxOverhead,
 		Tier:            b.tier,
 	}, nil
+}
+
+// warnUnappliedLayers emits a warning for each LSM layer the backend's tier
+// advertises but could not actually apply, so a reported tier never silently
+// overstates the isolation delivered. TierFull claims both Landlock and
+// seccomp; the two intermediate bwrap tiers each claim one of them.
+func (b *BubblewrapBackend) warnUnappliedLayers(landlockApplied, seccompApplied bool) {
+	claimsLandlock := b.tier == sandbox.TierFull || b.tier == sandbox.TierBwrapWithoutSeccomp
+	claimsSeccomp := b.tier == sandbox.TierFull || b.tier == sandbox.TierBwrapWithoutLandlock
+
+	if claimsLandlock && !landlockApplied {
+		slog.Warn("sandbox tier advertises Landlock but ll-restrict is unavailable; Landlock NOT applied",
+			"tier", b.tier.String())
+	}
+	if claimsSeccomp && !seccompApplied {
+		slog.Warn("sandbox tier advertises seccomp but no BPF filter is available; seccomp NOT applied",
+			"tier", b.tier.String())
+	}
 }
 
 // currentEnv builds the environment map from the config or from the current

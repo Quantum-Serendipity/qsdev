@@ -32,8 +32,13 @@ func PrepareLandlockFlags(cfg *sandbox.SandboxConfig) []string {
 		}
 	}
 
-	// Extra mounts from config.
+	// Extra mounts from config. Skip deny directives (self-referential mounts of
+	// sensitive paths) so we never grant Landlock read/write access to a path the
+	// policy declared off-limits.
 	for _, m := range cfg.Mounts {
+		if m.Source == m.Target && IsDenyPath(m.Source) {
+			continue
+		}
 		if m.ReadOnly {
 			flags = append(flags, "--ro", m.Source)
 		} else {

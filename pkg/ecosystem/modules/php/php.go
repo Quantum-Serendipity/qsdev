@@ -178,6 +178,9 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
 			BuiltIn:       false,
+			// phpstan ships as a PHP-package attribute in nixpkgs (no top-level
+			// binary); phpPackages.phpstan provides /bin/phpstan.
+			NixPackage: "phpPackages.phpstan",
 		},
 	}
 }

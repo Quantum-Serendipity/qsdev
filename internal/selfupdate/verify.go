@@ -15,8 +15,6 @@ const (
 	maxBundleSize = 1 << 20 // 1 MB for sigstore bundle.
 
 	sigstoreBundleName = "checksums.txt.sigstore.json"
-
-	expectedOIDCIssuer = "https://token.actions.githubusercontent.com"
 )
 
 // VerificationResult describes the outcome of Sigstore verification.
@@ -67,17 +65,16 @@ func verifySigstoreBundleImpl(ctx context.Context, release *Release, checksumsPa
 		return nil, fmt.Errorf("downloading sigstore bundle: %w", err)
 	}
 
-	// Construct the expected certificate identity from the release tag.
-	b := branding.Get()
-	identityPrefix := "https://github.com/" + b.GitHubOwner + "/" + b.GitHubRepo + "/.github/workflows/release.yml@refs/tags/"
-	expectedIdentity := identityPrefix + release.TagName
+	// Resolve the expected certificate identity (OIDC issuer + signing subject)
+	// from branding so forks/rebrands verify against their own release workflow.
+	issuer, subjectRegExp := branding.WorkflowIdentity()
 
 	// Run cosign verify-blob.
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, cosignPath, "verify-blob",
 		"--bundle", bundlePath,
-		"--certificate-identity", expectedIdentity,
-		"--certificate-oidc-issuer", expectedOIDCIssuer,
+		"--certificate-identity-regexp", subjectRegExp,
+		"--certificate-oidc-issuer", issuer,
 		checksumsPath,
 	)
 	cmd.Stdout = &stdout

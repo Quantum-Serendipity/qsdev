@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/policyengine"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/sarif"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
@@ -77,7 +77,7 @@ func runPolicyCheck(cmd *cobra.Command, sarifFlag bool, auditLevel, outputPath s
 		return err
 	}
 
-	orchestrator := policyengine.NewSecurityOrchestrator(engine, nil, nil)
+	orchestrator := newProductionOrchestrator(engine)
 	posture, _, _ := orchestrator.PostureSnapshot()
 
 	if sarifFlag {
@@ -111,7 +111,12 @@ func runPolicyCheck(cmd *cobra.Command, sarifFlag bool, auditLevel, outputPath s
 }
 
 func renderPolicySARIF(cmd *cobra.Command, posture *sarif.PolicyPosture, outputPath string) error {
-	data, err := json.MarshalIndent(posture, "", "  ")
+	b := branding.Get()
+	infoURI := fmt.Sprintf("https://github.com/%s/%s", b.GitHubOwner, b.GitHubRepo)
+
+	log := sarif.BuildLog(b.AppName, "", infoURI, posturefindings(posture))
+
+	data, err := json.MarshalIndent(log, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling SARIF output: %w", err)
 	}
@@ -122,6 +127,25 @@ func renderPolicySARIF(cmd *cobra.Command, posture *sarif.PolicyPosture, outputP
 
 	fmt.Fprintln(cmd.OutOrStdout(), string(data))
 	return nil
+}
+
+// posturefindings converts the policy posture into SARIF results. A posture
+// check evaluates no specific tool call, so it reports a note-level result when
+// the loaded policy has zero active rules (an empty or fully disabled policy),
+// which is the only posture condition that gates the command's exit code.
+func posturefindings(posture *sarif.PolicyPosture) []sarif.SarifResult {
+	if posture == nil || posture.RulesActive > 0 {
+		return nil
+	}
+	return []sarif.SarifResult{{
+		RuleID:           "qsdev/policy/MONITOR",
+		Level:            "warning",
+		Message:          "no active security policy rules are loaded",
+		SecuritySeverity: 5.0,
+		PartialFingerprints: map[string]string{
+			"ruleId": "qsdev/policy/MONITOR",
+		},
+	}}
 }
 
 func runPolicyList(cmd *cobra.Command) error {

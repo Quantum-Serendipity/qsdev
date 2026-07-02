@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -148,13 +149,56 @@ func printSandboxStatusText(cmd *cobra.Command, caps *sandbox.SystemCapabilities
 		fmt.Fprintf(w, "Note: %s\n", msg)
 	}
 
+	if layers := unenforceableLayers(tier); len(layers) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "Warning: the kernel supports %s, but the enforcement tool(s) are not\n",
+			strings.Join(layers, " and "))
+		fmt.Fprintf(w, "         installed in this build, so %s will NOT be applied at exec time.\n",
+			pluralLayers(layers))
+	}
+
 	return nil
+}
+
+// unenforceableLayers returns the LSM layer names that the given tier advertises
+// but that cannot actually be enforced because their userspace tool is missing
+// (ll-restrict for Landlock, a compiled BPF filter for seccomp). It lets the
+// status command stay honest even when kernel-capability probing reports a tier
+// stronger than the tool set can deliver.
+func unenforceableLayers(tier sandbox.DegradationTier) []string {
+	claimsLandlock := tier == sandbox.TierFull || tier == sandbox.TierBwrapWithoutSeccomp
+	claimsSeccomp := tier == sandbox.TierFull || tier == sandbox.TierBwrapWithoutLandlock
+
+	var layers []string
+	if claimsLandlock && sandbox.LLRestrictBin() == "" {
+		layers = append(layers, "Landlock")
+	}
+	if claimsSeccomp && sandbox.SeccompFilterFile() == "" {
+		layers = append(layers, "seccomp")
+	}
+	return layers
+}
+
+func pluralLayers(layers []string) string {
+	if len(layers) == 1 {
+		return "it"
+	}
+	return "they"
 }
 
 func printSandboxStatusJSON(cmd *cobra.Command, caps *sandbox.SystemCapabilities, tier sandbox.DegradationTier) error {
 	w := cmd.OutOrStdout()
-	fmt.Fprintf(w, `{"tier":%q,"security_level":%q,"capabilities":{"bwrap":%t,"user_ns":%t,"landlock_abi":%d,"seccomp":%t,"cgroup_v2":%t,"cgroup_deleg":%t,"systemd_run":%t,"kernel":%q}}`,
-		tier.String(), sandbox.TierSecurityLevel(tier),
+
+	// Report layers the tier advertises but cannot enforce, so machine consumers
+	// do not treat "full" as a guarantee that every layer is applied.
+	unenforceable := unenforceableLayers(tier)
+	quoted := make([]string, len(unenforceable))
+	for i, l := range unenforceable {
+		quoted[i] = fmt.Sprintf("%q", l)
+	}
+
+	fmt.Fprintf(w, `{"tier":%q,"security_level":%q,"unenforceable_layers":[%s],"capabilities":{"bwrap":%t,"user_ns":%t,"landlock_abi":%d,"seccomp":%t,"cgroup_v2":%t,"cgroup_deleg":%t,"systemd_run":%t,"kernel":%q}}`,
+		tier.String(), sandbox.TierSecurityLevel(tier), strings.Join(quoted, ","),
 		caps.HasBwrap, caps.HasUserNS, caps.LandlockABI,
 		caps.HasSeccomp, caps.HasCgroupV2, caps.HasCgroupDeleg,
 		caps.HasSystemdRun, caps.KernelVersion)

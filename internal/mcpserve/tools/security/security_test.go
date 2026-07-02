@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -17,6 +18,8 @@ import (
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	ststypes "github.com/aws/aws-sdk-go-v2/service/sts/types"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
@@ -99,6 +102,39 @@ func TestPolicyCheckEvaluatesDenyRule(t *testing.T) {
 			t.Errorf("got %+v, want ask/default", eval)
 		}
 	})
+}
+
+// TestPolicyCheckReportsEnforcedDenySet proves qsdev_policy_check reports the MCP
+// Guardrail's enforced deny set from the SAME middleware.PolicyFromConfig
+// derivation the running server installs (via projectPolicy/chainForMode), so a
+// tool "reported denied" and a tool "actually blocked on an MCP call" cannot
+// diverge (BL-P1-3, S7).
+func TestPolicyCheckReportsEnforcedDenySet(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeConfig(t, dir, "version: 1\ntools:\n  disabled:\n    - qsdev_security_scan\n    - qsdev_nix_run\n")
+	pc := newPolicyChecker(dir)
+
+	// Inventory mode (no tool_name) surfaces the enforced deny set.
+	reported, ok := structuredMap(t, call(t, pc.handle, nil))["mcp_enforced_deny"].([]string)
+	if !ok {
+		t.Fatalf("mcp_enforced_deny missing or wrong type")
+	}
+
+	// Independently derive what the server enforces from the same config + function.
+	cfg, err := config.ParseQsdevConfig(filepath.Join(dir, ".qsdev.yaml"))
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	want := middleware.PolicyFromConfig(cfg).DenyToolSet()
+
+	if !reflect.DeepEqual(reported, want) {
+		t.Errorf("reported enforced deny = %v, want %v (reported must equal enforced)", reported, want)
+	}
+	// Guard against a vacuous pass where both sides are empty.
+	if len(reported) != 2 {
+		t.Fatalf("enforced deny set = %v, want the 2 disabled tools", reported)
+	}
 }
 
 func TestPolicyCheckNotConfigured(t *testing.T) {

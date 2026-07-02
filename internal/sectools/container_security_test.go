@@ -1,10 +1,14 @@
 package sectools_test
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Quantum-Serendipity/qsdev/internal/sectools"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -82,5 +86,27 @@ func TestGenerateCosignPolicy_Content(t *testing.T) {
 	}
 	if !strings.Contains(content, "rekor.sigstore.dev") {
 		t.Error("content should reference Rekor transparency log")
+	}
+
+	// The keyless authority must be pinned, not wildcarded (BL-P1-5 / F-CAP-26.4-1).
+	if strings.Contains(content, `".*"`) {
+		t.Error("content must NOT wildcard the keyless identity with \".*\"")
+	}
+	if strings.Contains(content, "issuerRegExp") {
+		t.Error("content should pin an exact issuer, not an issuerRegExp wildcard")
+	}
+
+	issuer, subjectRegExp := branding.WorkflowIdentity()
+	if !strings.Contains(content, "issuer: "+strconv.Quote(issuer)) {
+		t.Errorf("content should pin the branded issuer %q", issuer)
+	}
+	if !strings.Contains(content, "subjectRegExp: "+strconv.Quote(subjectRegExp)) {
+		t.Errorf("content should pin the branded subject regexp %q", subjectRegExp)
+	}
+
+	// The generated policy must be valid YAML.
+	var parsed map[string]any
+	if err := yaml.Unmarshal(f.Content, &parsed); err != nil {
+		t.Fatalf("generated cosign policy is not valid YAML: %v", err)
 	}
 }

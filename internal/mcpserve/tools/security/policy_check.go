@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -94,13 +95,23 @@ func (pc *policyChecker) handle(_ context.Context, _ *spi.ToolCallContext, req *
 
 	defaultDecision := defaultDecisionFor(project, local)
 
+	// mcpEnforcedDeny is the exact tool-name deny set the MCP Guardrail enforces on
+	// tool calls, derived from the SAME middleware.PolicyFromConfig used at server
+	// construction. Surfacing it here keeps "reported denied" and "actually
+	// enforced" from diverging: what this tool reports as MCP-enforced is read from
+	// the identical Policy object the running server installs. It reflects the
+	// project config's tools.disabled only (the Guardrail is fed the project config
+	// at construction; the local overlay drives advisory Claude Code semantics).
+	mcpEnforcedDeny := middleware.PolicyFromConfig(project).DenyToolSet()
+
 	if toolName, ok := toolutil.StringArg(req.Arguments, "tool_name"); ok && toolName != "" {
 		dec := evaluateTool(toolName, project, local, defaultDecision)
 		text := fmt.Sprintf("policy: tool %q is %s (source=%s, rule=%s)", dec.Tool, dec.Decision, dec.Source, dec.Rule)
 		structured := map[string]any{
-			"policy_path":      policyPath,
-			"default_decision": defaultDecision,
-			"evaluation":       dec,
+			"policy_path":       policyPath,
+			"default_decision":  defaultDecision,
+			"evaluation":        dec,
+			"mcp_enforced_deny": mcpEnforcedDeny,
 		}
 		addWarning(structured, localWarn)
 		return toolutil.Result(text, structured), nil
@@ -108,10 +119,11 @@ func (pc *policyChecker) handle(_ context.Context, _ *spi.ToolCallContext, req *
 
 	rules := inventoryRules(project, local)
 	structured := map[string]any{
-		"policy_path":      policyPath,
-		"default_decision": defaultDecision,
-		"rules":            rules,
-		"rule_count":       len(rules),
+		"policy_path":       policyPath,
+		"default_decision":  defaultDecision,
+		"rules":             rules,
+		"rule_count":        len(rules),
+		"mcp_enforced_deny": mcpEnforcedDeny,
 	}
 	addWarning(structured, localWarn)
 	text := fmt.Sprintf("policy: %d explicit rules; default decision is %q", len(rules), defaultDecision)

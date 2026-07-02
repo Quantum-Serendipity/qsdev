@@ -217,6 +217,52 @@ func TestDeriveControlMapping_LayerNotInReport_TreatedAsDisabled(t *testing.T) {
 	}
 }
 
+func TestDeriveControlMapping_DescriptionGatedOnEnforcement(t *testing.T) {
+	def := ControlDefinition{
+		ID:       "TEST-GATE",
+		Name:     "Description Gating",
+		Desc:     "Descriptions must not assert enforcement for inactive layers",
+		Category: "Test",
+		Layers: []LayerMapping{
+			{LayerName: "nix-hardening", Relevance: "primary", Description: "Nix sandbox restricts process capabilities."},
+			{LayerName: "sast", Relevance: "supporting", Description: "Static analysis detects malicious patterns."},
+			{LayerName: "secrets-scanning", Relevance: "supporting", Description: "Secrets scanning blocks credential leaks."},
+			{LayerName: "container-security", Relevance: "supporting", Description: "Container scanning inspects images."},
+		},
+	}
+
+	layers := []posture.DefenseLayer{
+		{Name: "nix-hardening", Status: posture.LayerDisabled},
+		{Name: "sast", Status: posture.LayerEnabled},
+		{Name: "secrets-scanning", Status: posture.LayerPartial},
+		{Name: "container-security", Status: posture.LayerNotApplicable},
+	}
+
+	cm := DeriveControlMapping(def, layers)
+
+	byName := make(map[string]LayerEvidence, len(cm.GdevLayers))
+	for _, le := range cm.GdevLayers {
+		byName[le.LayerName] = le
+	}
+
+	// Disabled layer: enforcement claim must be marked as not enforced.
+	if desc := byName["nix-hardening"].Description; desc != "[not enforced] Nix sandbox restricts process capabilities." {
+		t.Errorf("disabled layer description = %q, want [not enforced] prefix", desc)
+	}
+	// Enabled layer: description surfaced verbatim.
+	if desc := byName["sast"].Description; desc != "Static analysis detects malicious patterns." {
+		t.Errorf("enabled layer description = %q, want verbatim", desc)
+	}
+	// Partial layer: marked partially enforced.
+	if desc := byName["secrets-scanning"].Description; desc != "[partially enforced] Secrets scanning blocks credential leaks." {
+		t.Errorf("partial layer description = %q, want [partially enforced] prefix", desc)
+	}
+	// N/A layer: marked not applicable.
+	if desc := byName["container-security"].Description; desc != "[not applicable] Container scanning inspects images." {
+		t.Errorf("n/a layer description = %q, want [not applicable] prefix", desc)
+	}
+}
+
 func TestDeriveControlMapping_ArtifactsInitialized(t *testing.T) {
 	def := ControlDefinition{
 		ID:       "TEST-ART",

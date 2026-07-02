@@ -592,6 +592,12 @@ tools:
         owned_files:
             - path: .opengrep/config.yaml
               ownership: exclusive
+            # The embedded core taint-rule library is delivered here (one
+            # GeneratedFile per rule, tracked individually in generated state so
+            # update/teardown manage them). This directory entry declares the
+            # tree as opengrep-owned.
+            - path: .opengrep/rules/core
+              ownership: exclusive
             - path: devenv.nix
               ownership: shared
               section_id: opengrep

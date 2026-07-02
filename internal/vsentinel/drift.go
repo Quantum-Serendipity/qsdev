@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -29,10 +30,25 @@ func DetectDrift(root string) (*DriftReport, error) {
 		manifestPath := filepath.Join(root, pair.manifest)
 		lockfilePath := filepath.Join(root, pair.lockfile)
 
+		// No manifest for this ecosystem: nothing to check.
 		if _, err := os.Stat(manifestPath); err != nil {
 			continue
 		}
+
+		// Manifest present but lockfile absent is the most dangerous state
+		// (fully unpinned dependencies). Fail closed by reporting it as drift
+		// rather than silently skipping the ecosystem.
 		if _, err := os.Stat(lockfilePath); err != nil {
+			report.Manifests = append(report.Manifests, DriftManifestStatus{
+				Path:       manifestPath,
+				Ecosystem:  pair.eco,
+				DriftCount: 1,
+				Drifted: []DriftEntry{{
+					Name:            pair.manifest,
+					DeclaredVersion: "requires " + pair.lockfile,
+					LockedVersion:   "(missing lockfile — dependencies unpinned)",
+				}},
+			})
 			continue
 		}
 
@@ -179,44 +195,91 @@ func parsePackageLock(path string) (map[string]string, error) {
 	return versions, nil
 }
 
-// jsSemverSatisfies does basic check: exact match, or caret/tilde prefix match.
-// For exact versions, compares directly. For ^/~ prefixed constraints, checks
-// that the locked version starts with the expected major (^) or major.minor (~).
+// jsSemverSatisfies reports whether an npm lockfile version satisfies a
+// package.json constraint. A bare version (no ^/~) is treated as an exact pin.
 func jsSemverSatisfies(constraint, locked string) bool {
+	return semverSatisfies(constraint, locked, 0)
+}
+
+// semverSatisfies reports whether locked satisfies the declared constraint.
+//
+// Unlike a naive prefix/major comparison, it enforces BOTH bounds:
+//   - the lower bound: locked must be >= the declared floor, so a within-major
+//     downgrade below the floor (e.g. ^4.18.0 vs 4.0.0) is flagged as drift; and
+//   - the upper bound implied by the range operator: caret (^) allows anything
+//     within the same major, tilde (~) within the same major.minor, and an exact
+//     pin requires all three components to match.
+//
+// bareOp is the operator assumed when the constraint carries no explicit ^/~
+// prefix: 0 means exact (npm's default), '^' means caret (Cargo's default).
+func semverSatisfies(constraint, locked string, bareOp byte) bool {
+	constraint = strings.TrimSpace(constraint)
+	locked = strings.TrimSpace(locked)
 	if constraint == locked {
 		return true
 	}
 
-	clean := strings.TrimLeft(constraint, "^~>=<")
-	if clean == locked {
-		return true
-	}
-
-	prefix := ""
+	op := bareOp
 	if len(constraint) > 0 {
-		prefix = string(constraint[0])
+		switch constraint[0] {
+		case '^', '~':
+			op = constraint[0]
+		}
 	}
 
-	switch prefix {
-	case "^":
-		// Caret: compatible with major version
-		cParts := strings.SplitN(clean, ".", 2)
-		lParts := strings.SplitN(locked, ".", 2)
-		if len(cParts) < 1 || len(lParts) < 1 {
-			return false
-		}
-		return cParts[0] == lParts[0]
-	case "~":
-		// Tilde: compatible with major.minor
-		cParts := strings.SplitN(clean, ".", 3)
-		lParts := strings.SplitN(locked, ".", 3)
-		if len(cParts) < 2 || len(lParts) < 2 {
-			return false
-		}
-		return cParts[0] == lParts[0] && cParts[1] == lParts[1]
-	default:
+	floor := strings.TrimLeft(constraint, "^~>=<vV ")
+	fMaj, fMin, fPat := parseSemver(floor)
+	lMaj, lMin, lPat := parseSemver(locked)
+
+	// Lower bound: locked must not be below the declared floor.
+	if compareSemver(lMaj, lMin, lPat, fMaj, fMin, fPat) < 0 {
 		return false
 	}
+
+	// Upper bound.
+	switch op {
+	case '^':
+		return lMaj == fMaj
+	case '~':
+		return lMaj == fMaj && lMin == fMin
+	default:
+		return lMaj == fMaj && lMin == fMin && lPat == fPat
+	}
+}
+
+// parseSemver parses a dotted version into up to three numeric components.
+// Missing components default to 0; a build/pre-release suffix ("-"/"+") and any
+// non-numeric segment are ignored (treated as 0).
+func parseSemver(v string) (major, minor, patch int) {
+	v = strings.TrimSpace(v)
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	parts := strings.SplitN(v, ".", 3)
+	get := func(i int) int {
+		if i >= len(parts) {
+			return 0
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(parts[i]))
+		if err != nil {
+			return 0
+		}
+		return n
+	}
+	return get(0), get(1), get(2)
+}
+
+// compareSemver returns -1, 0, or 1 comparing (aMaj.aMin.aPat) to (bMaj.bMin.bPat).
+func compareSemver(aMaj, aMin, aPat, bMaj, bMin, bPat int) int {
+	for _, d := range [][2]int{{aMaj, bMaj}, {aMin, bMin}, {aPat, bPat}} {
+		if d[0] < d[1] {
+			return -1
+		}
+		if d[0] > d[1] {
+			return 1
+		}
+	}
+	return 0
 }
 
 func checkCargoDrift(manifestPath, lockfilePath string) ([]DriftEntry, error) {
@@ -236,8 +299,10 @@ func checkCargoDrift(manifestPath, lockfilePath string) ([]DriftEntry, error) {
 		if !ok {
 			continue
 		}
-		clean := strings.TrimLeft(dep.DeclaredVersion, "^~>=<")
-		if !strings.HasPrefix(lockedVer, clean) {
+		// Cargo version requirements default to caret semantics, so a bare "1.0"
+		// means >=1.0.0 <2.0.0. Using segment-aware comparison avoids the old
+		// string-prefix false negatives (e.g. declared "1" matching "10.0.0").
+		if !semverSatisfies(dep.DeclaredVersion, lockedVer, '^') {
 			drifted = append(drifted, DriftEntry{
 				Name:            dep.Name,
 				DeclaredVersion: dep.DeclaredVersion,

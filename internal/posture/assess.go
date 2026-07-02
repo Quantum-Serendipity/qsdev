@@ -1,8 +1,10 @@
 package posture
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,10 +16,17 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+// newVulnScanner constructs the dependency vulnerability scanner used when a
+// fresh scan (AssessOptions.FreshScan) is requested. It is a package-level
+// variable so tests can substitute a scanner pointed at a mock OSV endpoint
+// without changing Assess's exported signature.
+var newVulnScanner = func() *vulnscan.Scanner { return vulnscan.New() }
 
 // ErrNotInitialized is returned when Assess is called on a project that has
 // not been initialized with qsdev init (no state files or .qsdev.yaml found).
@@ -178,8 +187,14 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 		}
 	}
 
-	// Assess dependency health.
-	ecoStatuses := buildEcosystemStatuses(detected, projectPath)
+	// Assess dependency health. When a fresh scan is requested, run the OSV
+	// scanner against each detected ecosystem's lock file so vulnerability counts
+	// reflect reality rather than staying inertly zero.
+	var scanner *vulnscan.Scanner
+	if opts.FreshScan {
+		scanner = newVulnScanner()
+	}
+	ecoStatuses := buildEcosystemStatuses(detected, projectPath, scanner)
 	if ecoStatuses == nil {
 		ecoStatuses = []EcosystemStatus{}
 	}
@@ -187,6 +202,14 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 	report.Dependencies = depHealth
 	if report.Dependencies.Ecosystems == nil {
 		report.Dependencies.Ecosystems = []EcosystemStatus{}
+	}
+	// Record whether a scan actually ran. When it did not, zero Totals mean
+	// "unknown", not "clean": conformance and rendering must not present the
+	// absence of findings as a clean bill of health.
+	report.Dependencies.Scanned = opts.FreshScan
+	if opts.FreshScan {
+		now := time.Now().UTC()
+		report.Dependencies.LastScan = &now
 	}
 	report.Ecosystems = ecoStatuses
 
@@ -258,8 +281,10 @@ func buildConfigFileInfos(projectPath string, files map[string]types.FileState) 
 }
 
 // buildEcosystemStatuses detects which ecosystems are present and whether
-// their lock files exist.
-func buildEcosystemStatuses(detected types.DetectedProject, projectPath string) []EcosystemStatus {
+// their lock files exist. When scanner is non-nil (a fresh scan was requested),
+// each present, OSV-covered lock file is scanned and its vulnerability counts
+// populated on the returned EcosystemStatus.
+func buildEcosystemStatuses(detected types.DetectedProject, projectPath string, scanner *vulnscan.Scanner) []EcosystemStatus {
 	var statuses []EcosystemStatus
 	for name, present := range detected.Ecosystems {
 		if !present {
@@ -269,10 +294,12 @@ func buildEcosystemStatuses(detected types.DetectedProject, projectPath string) 
 			Name:     name,
 			Detected: true,
 		}
+		var lockAbs string
 		for _, lf := range ecosystem.LockFilesByEcosystem[name] {
 			absPath := filepath.Join(projectPath, lf)
 			if _, err := os.Stat(absPath); err == nil {
 				status.LockFile = lf
+				lockAbs = absPath
 				break
 			}
 		}
@@ -283,8 +310,38 @@ func buildEcosystemStatuses(detected types.DetectedProject, projectPath string) 
 				status.LockFile = "n/a"
 			}
 		}
+		if scanner != nil && lockAbs != "" {
+			scanEcosystem(&status, scanner, lockAbs)
+		}
 		statuses = append(statuses, status)
 	}
 	sort.Slice(statuses, func(i, j int) bool { return statuses[i].Name < statuses[j].Name })
 	return statuses
+}
+
+// scanEcosystem runs the OSV scanner against a single lock file and populates
+// the ecosystem's vulnerability counts. A scan failure or an unsupported lock
+// format leaves the ecosystem unscanned (Scanned stays false, counts stay
+// zero) rather than falsely reporting it clean.
+func scanEcosystem(status *EcosystemStatus, scanner *vulnscan.Scanner, lockAbs string) {
+	res, err := scanner.ScanFile(context.Background(), lockAbs)
+	if err != nil {
+		slog.Warn("posture: dependency vulnerability scan failed; ecosystem left unscanned",
+			"ecosystem", status.Name, "lockFile", status.LockFile, "error", err)
+		return
+	}
+	if res == nil {
+		// The lock format has no OSV coverage; nothing was scanned.
+		return
+	}
+	status.VulnCounts = VulnSeverityCounts{
+		Critical: res.Counts.Critical,
+		High:     res.Counts.High,
+		Moderate: res.Counts.Moderate,
+		Low:      res.Counts.Low,
+		Info:     res.Counts.Info,
+	}
+	now := time.Now().UTC()
+	status.LastScan = &now
+	status.Scanned = true
 }

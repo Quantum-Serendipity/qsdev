@@ -1,6 +1,7 @@
 package generate
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"os"
@@ -114,22 +115,49 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 		}
 
 		// Apply a merge when the file already exists and the caller provided a
-		// strategy-appropriate merge function. On any read/merge error we fall
-		// through to a full overwrite of the generated content.
+		// strategy-appropriate merge function. This preserves user-owned content
+		// (e.g. settings.json "env", CLAUDE.md text outside markers) when a write
+		// path overwrites an existing, possibly-unrecorded file.
 		contentToWrite := file.Content
-		switch {
-		case file.Strategy == types.SectionMarker && statErr == nil && opts.SectionMergeFunc != nil:
-			if existingContent, readErr := os.ReadFile(fullPath); readErr == nil {
-				if merged, mergeErr := opts.SectionMergeFunc(existingContent, file.Content); mergeErr == nil {
-					contentToWrite = merged
-					fr.BytesSize = len(contentToWrite)
+		if statErr == nil {
+			var mergeFn func([]byte) ([]byte, error)
+			switch {
+			case file.Strategy == types.SectionMarker && opts.SectionMergeFunc != nil:
+				mergeFn = func(existing []byte) ([]byte, error) {
+					return opts.SectionMergeFunc(existing, file.Content)
+				}
+			case file.Strategy == types.ThreeWayMerge && opts.ThreeWayMergeFunc != nil:
+				mergeFn = func(existing []byte) ([]byte, error) {
+					return opts.ThreeWayMergeFunc(file.Path, existing, file.Content)
 				}
 			}
-		case file.Strategy == types.ThreeWayMerge && statErr == nil && opts.ThreeWayMergeFunc != nil:
-			// Preserve user-owned top-level keys (e.g. settings.json "env")
-			// when init overwrites an existing, unrecorded file.
-			if existingContent, readErr := os.ReadFile(fullPath); readErr == nil {
-				if merged, mergeErr := opts.ThreeWayMergeFunc(file.Path, existingContent, file.Content); mergeErr == nil {
+
+			if mergeFn != nil {
+				existingContent, readErr := os.ReadFile(fullPath)
+				switch {
+				case readErr != nil:
+					// Cannot read the existing file — fail rather than blindly
+					// overwrite content we could not inspect.
+					fr.Action = ActionFailed
+					fr.Error = fmt.Errorf("reading existing %s for merge: %w", file.Path, readErr)
+					slog.Warn("merge read failed", "path", file.Path, "error", readErr)
+					result.Files = append(result.Files, fr)
+					result.Failed++
+					continue
+				case len(bytes.TrimSpace(existingContent)) == 0:
+					// Empty on-disk file: nothing to preserve, write generated content.
+				default:
+					merged, mergeErr := mergeFn(existingContent)
+					if mergeErr != nil {
+						// A merge error must NOT silently overwrite user content;
+						// surface it so the file is left intact for repair.
+						fr.Action = ActionFailed
+						fr.Error = fmt.Errorf("merging %s: %w", file.Path, mergeErr)
+						slog.Warn("file merge failed", "path", file.Path, "error", mergeErr)
+						result.Files = append(result.Files, fr)
+						result.Failed++
+						continue
+					}
 					contentToWrite = merged
 					fr.BytesSize = len(contentToWrite)
 				}

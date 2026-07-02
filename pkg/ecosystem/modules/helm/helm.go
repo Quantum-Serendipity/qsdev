@@ -108,7 +108,8 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Stages:        []string{"pre-commit"},
 			Files:         `Chart\.yaml$`,
 			PassFilenames: false,
-			BuiltIn:       true,
+			BuiltIn:       false,
+			NixPackage:    "kubernetes-helm",
 		},
 	}
 }

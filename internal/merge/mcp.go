@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sort"
 )
 
 // mcpJSON mirrors the claudecode.McpJSON structure.
@@ -53,9 +52,21 @@ func MergeMcpJson(base, theirs, ours []byte) ([]byte, error) {
 		oursParsed.MCPServers = make(map[string]mcpServerEntry)
 	}
 
-	result := mcpJSON{
-		MCPServers: make(map[string]mcpServerEntry),
+	// Capture raw top-level keys and per-server JSON so unmodeled fields (e.g. a
+	// per-server "headers" block) and sibling top-level keys survive: the merge
+	// decisions are made on the typed structs, but output is assembled from the
+	// raw JSON.
+	theirsTop := map[string]json.RawMessage{}
+	if err := json.Unmarshal(theirs, &theirsTop); err != nil {
+		return nil, fmt.Errorf("parsing theirs mcp.json (raw): %w", err)
 	}
+	theirsServers := rawServers(theirsTop["mcpServers"])
+	oursServers, err := rawServersFrom(ours)
+	if err != nil {
+		return nil, err
+	}
+
+	resultRaw := map[string]json.RawMessage{}
 
 	// Process servers from ours.
 	for name, oursEntry := range oursParsed.MCPServers {
@@ -68,19 +79,21 @@ func MergeMcpJson(base, theirs, ours []byte) ([]byte, error) {
 				// User deleted it — respect deletion.
 				continue
 			}
-			if isEmptyServer(theirsEntry) && !isEmptyServer(oursEntry) {
+			switch {
+			case isEmptyServer(theirsEntry) && !isEmptyServer(oursEntry):
 				// Theirs was corrupted to empty — use ours.
-				result.MCPServers[name] = oursEntry
-			} else if !serverEqual(theirsEntry, baseEntry) {
-				// User modified it — keep theirs version.
-				result.MCPServers[name] = theirsEntry
-			} else {
-				// User didn't touch — use ours (updated) version.
-				result.MCPServers[name] = oursEntry
+				resultRaw[name] = oursServers[name]
+			case !serverEqual(theirsEntry, baseEntry):
+				// User modified it — keep theirs version (raw preserves unknowns).
+				resultRaw[name] = theirsServers[name]
+			default:
+				// User didn't touch modeled fields — use ours (updated) version,
+				// but preserve any unmodeled fields the user added (e.g. headers).
+				resultRaw[name] = mergeServerRaw(theirsServers[name], oursServers[name])
 			}
 		} else {
 			// Newly generated server — add from ours.
-			result.MCPServers[name] = oursEntry
+			resultRaw[name] = oursServers[name]
 		}
 	}
 
@@ -92,23 +105,76 @@ func MergeMcpJson(base, theirs, ours []byte) ([]byte, error) {
 		baseEntry, inBase := baseParsed.MCPServers[name]
 		if !inBase {
 			// User-added server — preserve.
-			result.MCPServers[name] = theirsEntry
+			resultRaw[name] = theirsServers[name]
 		} else {
 			// Was in base but removed from ours (generator removed it).
 			// Only preserve if user modified it.
 			if !serverEqual(theirsEntry, baseEntry) {
-				result.MCPServers[name] = theirsEntry
+				resultRaw[name] = theirsServers[name]
 			}
 			// Otherwise: generator removed and user didn't modify → drop.
 		}
 	}
 
-	// Sort keys for deterministic output by marshaling through an ordered structure.
-	out, err := marshalMcpSorted(result)
+	// json.Marshal sorts map keys, giving deterministic server ordering.
+	serversBytes, err := json.Marshal(resultRaw)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling merged mcp servers: %w", err)
+	}
+
+	// Preserve sibling top-level keys from theirs, replacing mcpServers with the
+	// merged set. MarshalIndent re-indents the embedded raw JSON.
+	top := make(map[string]json.RawMessage, len(theirsTop)+1)
+	for k, v := range theirsTop {
+		top[k] = v
+	}
+	top["mcpServers"] = serversBytes
+
+	out, err := json.MarshalIndent(top, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshaling merged mcp.json: %w", err)
 	}
 	return append(out, '\n'), nil
+}
+
+// rawServersFrom parses the mcpServers object of a document into per-server raw
+// JSON. Empty input yields an empty (non-nil) map.
+func rawServersFrom(doc []byte) (map[string]json.RawMessage, error) {
+	if len(doc) == 0 {
+		return map[string]json.RawMessage{}, nil
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(doc, &top); err != nil {
+		return nil, fmt.Errorf("parsing mcp.json (raw): %w", err)
+	}
+	return rawServers(top["mcpServers"]), nil
+}
+
+// rawServers unmarshals a raw mcpServers object into per-server raw JSON.
+func rawServers(raw json.RawMessage) map[string]json.RawMessage {
+	servers := map[string]json.RawMessage{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &servers)
+	}
+	return servers
+}
+
+// mergeServerRaw overlays ours' server JSON onto theirs so ours' modeled fields
+// win while unmodeled fields the user added (e.g. headers) survive. It falls
+// back to ours when either side is absent or unparseable.
+func mergeServerRaw(theirsRaw, oursRaw json.RawMessage) json.RawMessage {
+	var theirsMap, oursMap map[string]any
+	if len(theirsRaw) == 0 || json.Unmarshal(theirsRaw, &theirsMap) != nil {
+		return oursRaw
+	}
+	if len(oursRaw) == 0 || json.Unmarshal(oursRaw, &oursMap) != nil {
+		return oursRaw
+	}
+	merged, err := json.Marshal(DeepMergeJSON(theirsMap, oursMap))
+	if err != nil {
+		return oursRaw
+	}
+	return merged
 }
 
 // isEmptyServer returns true if the entry has no meaningful fields set.
@@ -137,70 +203,4 @@ func serverEqual(a, b mcpServerEntry) bool {
 		}
 	}
 	return true
-}
-
-// marshalMcpSorted marshals mcpJSON with sorted server names for deterministic output.
-func marshalMcpSorted(m mcpJSON) ([]byte, error) {
-	names := make([]string, 0, len(m.MCPServers))
-	for name := range m.MCPServers {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	// Build an ordered map using json.RawMessage to control key order.
-	ordered := make([]serverKV, 0, len(names))
-	for _, name := range names {
-		ordered = append(ordered, serverKV{Name: name, Entry: m.MCPServers[name]})
-	}
-
-	wrapper := orderedMcp{Servers: ordered}
-	return json.MarshalIndent(wrapper, "", "  ")
-}
-
-type serverKV struct {
-	Name  string
-	Entry mcpServerEntry
-}
-
-type orderedMcp struct {
-	Servers []serverKV
-}
-
-func (o orderedMcp) MarshalJSON() ([]byte, error) {
-	// Build {"mcpServers": {sorted...}}
-	inner := make(map[string]json.RawMessage)
-	for _, kv := range o.Servers {
-		b, err := json.Marshal(kv.Entry)
-		if err != nil {
-			return nil, err
-		}
-		inner[kv.Name] = b
-	}
-
-	// We need to control key ordering inside mcpServers too.
-	// Use a manual builder for the inner object.
-	buf := []byte("{")
-	for i, kv := range o.Servers {
-		if i > 0 {
-			buf = append(buf, ',')
-		}
-		key, _ := json.Marshal(kv.Name)
-		val, err := json.Marshal(kv.Entry)
-		if err != nil {
-			return nil, err
-		}
-		buf = append(buf, key...)
-		buf = append(buf, ':')
-		buf = append(buf, val...)
-	}
-	buf = append(buf, '}')
-
-	// Wrap in {"mcpServers": ...}
-	outerKey, _ := json.Marshal("mcpServers")
-	result := []byte("{")
-	result = append(result, outerKey...)
-	result = append(result, ':')
-	result = append(result, buf...)
-	result = append(result, '}')
-	return result, nil
 }

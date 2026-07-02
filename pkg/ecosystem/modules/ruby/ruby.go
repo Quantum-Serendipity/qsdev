@@ -136,11 +136,12 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Name:          "rubocop",
 			Description:   "Run RuboCop linter and formatter for Ruby",
 			Entry:         "rubocop --autocorrect",
-			Language:      "ruby",
+			Language:      "system",
 			Types:         []string{"ruby"},
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
-			BuiltIn:       true,
+			BuiltIn:       false,
+			NixPackage:    "rubocop",
 		},
 	}
 }

@@ -249,6 +249,105 @@ func TestAddSkill_PreservesEnv(t *testing.T) {
 	}
 }
 
+// TestAddSkill_TierSuppressedDoesNotPersist guards the verify-before-persist
+// fix: when a skill is suppressed by the current tier (skills need Full), the
+// command must fail WITHOUT recording the skill in answers, so a retry reports
+// the same tier error instead of a wedging "already configured".
+func TestAddSkill_TierSuppressedDoesNotPersist(t *testing.T) {
+	tmpDir := t.TempDir()
+	chdir(t, tmpDir)
+
+	runClaude := func(args ...string) error {
+		cmd := claudecode.ExportClaudeCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetErr(&buf)
+		cmd.SetArgs(args)
+		return cmd.Execute()
+	}
+
+	if err := runClaude("init", "--yes", "--permission-preset", "standard"); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+	// Downgrade to supply-chain-only (below Standard), where skills are suppressed.
+	answers0, err := claudecode.ExportLoadAnswers(tmpDir)
+	if err != nil {
+		t.Fatalf("loading answers: %v", err)
+	}
+	answers0.Tier = "supply-chain-only"
+	if err := claudecode.ExportSaveAnswers(tmpDir, answers0); err != nil {
+		t.Fatalf("saving answers: %v", err)
+	}
+
+	if err := runClaude("add-skill", "deploy"); err == nil {
+		t.Fatal("expected add-skill to fail when the tier suppresses skills")
+	}
+
+	// The suppressed skill must NOT have been persisted.
+	answers, err := claudecode.ExportLoadAnswers(tmpDir)
+	if err != nil {
+		t.Fatalf("loading answers: %v", err)
+	}
+	if claudecode.ExportContains(answers.Skills, "deploy") {
+		t.Fatal("tier-suppressed skill was persisted; a retry would be wedged")
+	}
+
+	// A retry must re-report suppression, not "already configured".
+	err = runClaude("add-skill", "deploy")
+	if err == nil || strings.Contains(err.Error(), "already configured") {
+		t.Errorf("retry should re-report tier suppression, got: %v", err)
+	}
+}
+
+// TestAddSkill_RemovesLegacyFlatSkillFile guards the layout-migration cleanup:
+// a pre-migration flat .claude/skills/<name>.md is removed when the new
+// <name>/SKILL.md is (re)generated.
+func TestAddSkill_RemovesLegacyFlatSkillFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	chdir(t, tmpDir)
+
+	runClaude := func(args ...string) {
+		t.Helper()
+		cmd := claudecode.ExportClaudeCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetErr(&buf)
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("%v failed: %v\n%s", args, err, buf.String())
+		}
+	}
+
+	runClaude("init", "--yes", "--permission-preset", "standard")
+	savedAnswers, err := claudecode.ExportLoadAnswers(tmpDir)
+	if err != nil {
+		t.Fatalf("loading answers: %v", err)
+	}
+	savedAnswers.Tier = "full"
+	if err := claudecode.ExportSaveAnswers(tmpDir, savedAnswers); err != nil {
+		t.Fatalf("saving answers: %v", err)
+	}
+
+	// Seed a stale flat skill file from the old layout.
+	skillsDir := filepath.Join(tmpDir, ".claude", "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(skillsDir, "deploy.md")
+	if err := os.WriteFile(legacy, []byte("stale flat skill"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runClaude("add-skill", "deploy")
+
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("stale flat skill file was not removed: err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(skillsDir, "deploy", "SKILL.md")); err != nil {
+		t.Errorf("new-layout skill file missing: %v", err)
+	}
+}
+
 func TestAddSkillCmd_UnknownSkill(t *testing.T) {
 	tmpDir := t.TempDir()
 

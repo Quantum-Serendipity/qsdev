@@ -164,6 +164,48 @@ func TestDeploySkills_UnknownSkill(t *testing.T) {
 	}
 }
 
+// TestDeploySkills_LegacyName guards the skill-rename migration: a pre-rename
+// config that persisted "security-review" must still deploy (as the renamed
+// security-review-owasp) instead of hard-erroring on regeneration.
+func TestDeploySkills_LegacyName(t *testing.T) {
+	files, err := claudecode.ExportDeploySkills(types.WizardAnswers{Skills: []string{"security-review"}})
+	if err != nil {
+		t.Fatalf("deploySkills with legacy name returned error: %v", err)
+	}
+	if len(files) != 1 || files[0].Path != ".claude/skills/security-review-owasp/SKILL.md" {
+		t.Fatalf("legacy name did not resolve to the renamed skill: %+v", files)
+	}
+
+	// Both the legacy and current name present must deduplicate to one file.
+	dup, err := claudecode.ExportDeploySkills(types.WizardAnswers{Skills: []string{"security-review", "security-review-owasp"}})
+	if err != nil {
+		t.Fatalf("deploySkills with legacy+current returned error: %v", err)
+	}
+	if len(dup) != 1 {
+		t.Errorf("expected legacy+current to dedup to 1 file, got %d: %+v", len(dup), dup)
+	}
+}
+
+func TestLegacyFlatSkillPath(t *testing.T) {
+	cases := []struct {
+		in       string
+		wantPath string
+		wantOK   bool
+	}{
+		{".claude/skills/deploy/SKILL.md", ".claude/skills/deploy.md", true},
+		{".claude/skills/security-review-owasp/SKILL.md", ".claude/skills/security-review-owasp.md", true},
+		{".claude/rules/go-conventions.md", "", false}, // not a skill
+		{".claude/skills/deploy.md", "", false},        // already flat
+		{".claude/skills/a/b/SKILL.md", "", false},     // nested subdir, not a skill root
+	}
+	for _, c := range cases {
+		got, ok := claudecode.ExportLegacyFlatSkillPath(c.in)
+		if ok != c.wantOK || got != c.wantPath {
+			t.Errorf("legacyFlatSkillPath(%q) = (%q, %v), want (%q, %v)", c.in, got, ok, c.wantPath, c.wantOK)
+		}
+	}
+}
+
 func TestDeploySkills_ContentNotEmpty(t *testing.T) {
 	manifest, err := claudecode.ExportLoadManifest()
 	if err != nil {

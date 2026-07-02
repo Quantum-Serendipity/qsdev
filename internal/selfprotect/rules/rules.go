@@ -14,6 +14,7 @@ var (
 	reSymlinkCmd    = regexp.MustCompile(`\bln\b.*-s`)
 	reTraversal     = regexp.MustCompile(`\.\./`)
 	reCopyCmd       = regexp.MustCompile(`\b(cp|rsync|mv|tar|dd|tee)\b`)
+	reExfilCmd      = regexp.MustCompile(`\b(curl|wget|nc|ncat|socat|ssh|scp|sftp|mail|mailx|sendmail|base64)\b`)
 	reEnvManip      = regexp.MustCompile(`\b(export|unset)\s+(QSDEV_|CLAUDE_|ANTHROPIC_)`)
 	reEnvAssign     = regexp.MustCompile(`\b(QSDEV_CONFIG_PATH|QSDEV_BYPASS_ALL|QSDEV_DISABLE_HOOKS)\s*=`)
 	reKillCmd       = regexp.MustCompile(`\b(kill|pkill|killall)\b`)
@@ -39,9 +40,69 @@ func containsProtectedPathStr(s string) bool {
 var (
 	deleteVerbs       = map[string]bool{"rm": true, "unlink": true, "shred": true}
 	copyVerbs         = map[string]bool{"cp": true, "rsync": true, "mv": true, "tar": true, "dd": true, "tee": true}
-	mcpMutatingVerbs  = map[string]bool{"cp": true, "mv": true, "dd": true, "tee": true, "rm": true, "install": true, "truncate": true}
 	reMcpDangerousCmd = regexp.MustCompile(`(?i)\b(curl|wget|fetch)\b[^|]*\|\s*(sh|bash|zsh|source)\b|\bnpx?\s+(-y\s+)?https?://`)
 )
+
+// exfilSinks are commands that send their input off the local process: to a
+// file (tee/dd/cp/mv/rsync/tar — only counted when the target is outside the
+// repo), across the network, or into an opaque interpreter. A plain filter
+// (grep/sort/…) is not a sink, so reading a protected file through one stays
+// allowed.
+var exfilSinks = map[string]bool{
+	"tee": true, "dd": true, "cp": true, "mv": true, "rsync": true, "tar": true,
+	"curl": true, "wget": true, "nc": true, "ncat": true, "socat": true,
+	"ssh": true, "scp": true, "sftp": true, "mail": true, "mailx": true,
+	"sendmail": true, "xargs": true, "sh": true, "bash": true, "zsh": true,
+	"base64": true,
+}
+
+// fileSinkVerbs are exfilSinks that write to a filesystem path argument or
+// redirect; for these, exfiltration is only flagged when the target is outside
+// the repo (an in-repo backup is benign). Non-file sinks always count.
+var fileSinkVerbs = map[string]bool{
+	"tee": true, "dd": true, "cp": true, "mv": true, "rsync": true, "tar": true,
+}
+
+// argvProvesBenign reports whether the parsed commands positively prove the
+// command is safe to allow despite a substring-triggered deny. It returns true
+// only when: the command parsed cleanly (parseErr == nil), no word used an
+// unresolved expansion, every command word is either a fully-analysed dangerous
+// verb whose arguments/redirects do not touch a protected path (per argDanger /
+// redirDanger) or a recognised safe-read verb, and no write redirect is
+// dangerous. Any wrapper, unknown command word, expansion, or parse failure
+// makes it return false, so the deny stands (fail closed).
+func argvProvesBenign(
+	cmds []cmdscan.Command, parseErr error,
+	dangerous map[string]bool,
+	argDanger func(cmdscan.Command) bool,
+	redirDanger func(cmdscan.Command) bool,
+) bool {
+	if parseErr != nil {
+		return false
+	}
+	for _, c := range cmds {
+		if c.HasExpansion {
+			return false // an expansion could hide a protected target
+		}
+		if redirDanger != nil && redirDanger(c) {
+			return false
+		}
+		if dangerous[c.Name] {
+			if argDanger != nil && argDanger(c) {
+				return false
+			}
+			continue
+		}
+		if c.Name == "" {
+			continue // nameless command (compound redirect); only redirects mattered
+		}
+		if cmdscan.IsSafeReadVerb(c.Name) {
+			continue
+		}
+		return false // wrapper or unknown command word ⇒ cannot clear
+	}
+	return true
+}
 
 func isFlag(s string) bool { return strings.HasPrefix(s, "-") }
 
@@ -64,12 +125,18 @@ func anyProtected(paths []string) bool {
 	return false
 }
 
-// isInsideRepo reports whether path resolves to a location at or below cwd. An
+// isInsideRepo reports whether path resolves to a location at or below cwd. A
+// leading ~ is expanded to the home directory first, so `~/x` is correctly seen
+// as outside a project repo (previously it was joined onto cwd and mistaken for
+// an in-repo path, letting `cp <protected> ~/x` slip past the exfil check). An
 // empty cwd or a remote spec (host:path) is treated as outside so exfil checks
 // stay conservative (fail closed) when the boundary is unknown.
 func isInsideRepo(path, cwd string) bool {
-	if cwd == "" || strings.Contains(path, ":") {
+	if cwd == "" || looksRemote(path) {
 		return false
+	}
+	if expanded, err := canon.ExpandTilde(path); err == nil {
+		path = expanded
 	}
 	abs := path
 	if !filepath.IsAbs(abs) {
@@ -80,91 +147,182 @@ func isInsideRepo(path, cwd string) bool {
 	return abs == cwdClean || strings.HasPrefix(abs, cwdClean+string(filepath.Separator))
 }
 
-// deleteTargetsProtected reports whether a delete verb (rm/unlink/shred) has an
-// actual path argument or redirect target that resolves to a protected path.
-// On a parse error it fails closed to the original substring test.
-func deleteTargetsProtected(ctx *EvalContext) bool {
-	cmds, err := cmdscan.Parse(ctx.Command)
-	if err != nil {
-		return reDeleteCmd.MatchString(ctx.Command) && containsProtectedPathStr(ctx.Command)
+// looksRemote reports whether path is a remote scp/rsync spec (host:path or
+// user@host:path) rather than a local path. It uses the same heuristic as git
+// and rsync: a colon before the first path separator marks a remote host —
+// except a lone Windows drive letter (e.g. C:\...), which is local. A colon
+// that appears only after a separator is part of a filename and is local. This
+// keeps local absolute Windows paths and colon-containing filenames from being
+// misclassified as "outside the repo" and falsely denied.
+func looksRemote(path string) bool {
+	colon := strings.IndexByte(path, ':')
+	if colon < 0 {
+		return false
 	}
-	for _, c := range cmds {
-		if !deleteVerbs[c.Name] {
-			continue
-		}
-		if anyProtected(nonFlagArgs(c.Args)) || anyProtected(c.Redirects) {
-			return true
-		}
+	if colon == 1 && isASCIILetter(path[0]) {
+		return false // Windows drive prefix, e.g. C:\Users\...
 	}
-	return false
+	slash := strings.IndexAny(path, `/\`)
+	return slash == -1 || colon < slash
 }
 
-// copyIsDangerous reports whether a copy/redirect verb clobbers a protected path
-// (destination protected, or a protected redirect target) or exfiltrates one (a
-// protected source copied to a destination outside the repo). A benign in-repo
-// backup of a protected file is allowed. On a parse error it fails closed to the
-// original substring test.
-func copyIsDangerous(ctx *EvalContext) bool {
-	cmds, err := cmdscan.Parse(ctx.Command)
-	if err != nil {
-		return reCopyCmd.MatchString(ctx.Command) && containsProtectedPathStr(ctx.Command)
+func isASCIILetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+// deleteTargetsProtected reports whether a Bash command deletes a protected
+// path. A delete verb plus a protected path in the raw command is the deny
+// trigger; the command is cleared only when argv parsing proves no delete verb
+// targets a protected path (and there is no wrapper, expansion, or parse error).
+// So `sh -c 'rm .claude/settings.json'`, `sudo rm …`, `… | xargs rm`, and
+// `V=…; rm "$V"` all deny, while `rm -rf ../build && grep x .claude/...` clears.
+func deleteTargetsProtected(ctx *EvalContext) bool {
+	if !reDeleteCmd.MatchString(ctx.Command) || !containsProtectedPathStr(ctx.Command) {
+		return false
 	}
+	cmds, err := ctx.ParsedCommands()
+	return !argvProvesBenign(cmds, err, deleteVerbs,
+		func(c cmdscan.Command) bool { return anyProtected(nonFlagArgs(c.Args)) },
+		func(c cmdscan.Command) bool { return anyProtected(c.WriteRedirects) })
+}
+
+// copyIsDangerous reports whether a Bash command clobbers a protected path,
+// exfiltrates one (a protected source copied/redirected outside the repo), or
+// pipes a protected read into an exfiltration sink. A copy verb plus a protected
+// path in the raw command is the deny trigger; the command is cleared only when
+// argv parsing proves it benign (no wrapper/expansion/parse error, no copy verb
+// touching a protected path dangerously) and no pipeline exfiltrates. A benign
+// in-repo backup of a protected file stays allowed.
+func copyIsDangerous(ctx *EvalContext) bool {
+	if !containsProtectedPathStr(ctx.Command) {
+		return false
+	}
+	cmds, err := ctx.ParsedCommands()
+	// Trigger on a copy verb, a network/exfil verb, or any pipeline (which could
+	// stream a protected read to a sink). A bare protected path with none of
+	// these — e.g. `cat <protected>` or `rm <protected>` (SP-003's job) — is not
+	// an SP-007 concern.
+	hasPipe := false
 	for _, c := range cmds {
-		if !copyVerbs[c.Name] {
-			continue
+		if c.Pipeline != 0 {
+			hasPipe = true
+			break
 		}
-		if anyProtected(c.Redirects) {
-			return true // clobbering a protected path via redirect
-		}
+	}
+	if !reCopyCmd.MatchString(ctx.Command) && !reExfilCmd.MatchString(ctx.Command) && !hasPipe {
+		return false
+	}
+	if !argvProvesBenign(cmds, err, copyVerbs, copyArgDanger(ctx.CWD),
+		func(c cmdscan.Command) bool { return anyProtected(c.WriteRedirects) }) {
+		return true
+	}
+	return pipelineExfil(cmds, ctx.CWD)
+}
+
+// copyArgDanger returns the per-command danger test for copy verbs: a protected
+// destination (clobber) or a protected source sent to a destination outside the
+// repo (exfil). tar/dd/tee operand conventions vary, so any protected operand is
+// treated as dangerous.
+func copyArgDanger(cwd string) func(cmdscan.Command) bool {
+	return func(c cmdscan.Command) bool {
 		paths := nonFlagArgs(c.Args)
 		switch c.Name {
 		case "cp", "mv", "rsync":
 			if len(paths) < 2 {
-				if anyProtected(paths) {
-					return true
-				}
-				continue
+				return anyProtected(paths)
 			}
 			dest := paths[len(paths)-1]
 			srcs := paths[:len(paths)-1]
 			if canon.ContainsProtectedPath(dest) {
 				return true // clobbering a protected destination
 			}
-			if !isInsideRepo(dest, ctx.CWD) && anyProtected(srcs) {
-				return true // exfiltrating a protected source out of the repo
-			}
-		default: // tar, dd, tee: operand conventions vary — stay conservative
-			if anyProtected(paths) {
-				return true
-			}
+			return !isInsideRepo(dest, cwd) && anyProtected(srcs) // exfil
+		default: // tar, dd, tee
+			return anyProtected(paths)
 		}
 	}
-	return false
 }
 
-// bashMutatesMcpConfig reports whether a Bash command writes/redirects to or
-// mutates an MCP config file (as opposed to merely reading it). On a parse error
-// it fails closed to the substring test.
-func bashMutatesMcpConfig(command string) bool {
-	cmds, err := cmdscan.Parse(command)
-	if err != nil {
-		return isMCPConfigPath(command)
-	}
+// pipelineExfil reports whether any pipeline reads a protected source in an
+// upstream stage and pipes it to an exfiltration sink downstream. File-writing
+// sinks (tee/dd/cp/…) count only when their target is outside the repo, so an
+// in-repo backup like `cat <protected> | tee settings.bak` stays allowed and a
+// pure filter like `cat <protected> | grep foo` (a read) is not exfil.
+func pipelineExfil(cmds []cmdscan.Command, cwd string) bool {
+	groups := make(map[int][]cmdscan.Command)
 	for _, c := range cmds {
-		for _, r := range c.Redirects {
-			if isMCPConfigPath(r) {
-				return true
-			}
+		if c.Pipeline != 0 {
+			groups[c.Pipeline] = append(groups[c.Pipeline], c)
 		}
-		if mcpMutatingVerbs[c.Name] || c.Name == "sed" || c.Name == "awk" {
-			for _, a := range nonFlagArgs(c.Args) {
-				if isMCPConfigPath(a) {
+	}
+	for _, stages := range groups {
+		readProtected := false
+		for _, c := range stages {
+			if anyProtected(nonFlagArgs(c.Args)) || anyProtected(c.ReadRedirects) {
+				readProtected = true
+			}
+			if !readProtected || !exfilSinks[c.Name] {
+				continue
+			}
+			if !fileSinkVerbs[c.Name] {
+				return true // network or opaque interpreter sink
+			}
+			for _, p := range nonFlagArgs(c.Args) {
+				if !isInsideRepo(p, cwd) {
+					return true
+				}
+			}
+			for _, p := range c.WriteRedirects {
+				if !isInsideRepo(p, cwd) {
 					return true
 				}
 			}
 		}
 	}
 	return false
+}
+
+// mcpDangerousVerbs are the verbs bashMutatesMcpConfig fully analyses: the
+// mutating verbs plus in-place editors (sed/awk). A mention of these targeting
+// an MCP config is a mutation.
+var mcpDangerousVerbs = map[string]bool{
+	"cp": true, "mv": true, "dd": true, "tee": true, "rm": true,
+	"install": true, "truncate": true, "sed": true, "awk": true,
+}
+
+// commandMentionsMcpConfig reports whether the raw command references an MCP
+// config path anywhere (the cheap deny trigger).
+func commandMentionsMcpConfig(command string) bool {
+	s := filepath.ToSlash(command)
+	return strings.Contains(s, ".mcp.json") ||
+		strings.Contains(s, ".cursor/mcp.json") ||
+		strings.Contains(s, ".vscode/mcp.json")
+}
+
+func anyMcpConfigPath(paths []string) bool {
+	for _, p := range paths {
+		if isMCPConfigPath(p) {
+			return true
+		}
+	}
+	return false
+}
+
+// bashMutatesMcpConfig reports whether a Bash command writes/redirects to or
+// mutates an MCP config file (as opposed to merely reading it). A mention of an
+// MCP config is the deny trigger; the command is cleared only when argv parsing
+// proves no mutating verb or write redirect targets it (and there is no wrapper,
+// expansion, or parse error). So `sh -c 'echo x > .mcp.json'`, `{ echo x; } >
+// .mcp.json`, and `sed -i … .mcp.json` deny, while `cat .mcp.json` and
+// `jq . .mcp.json` (reads) clear.
+func bashMutatesMcpConfig(ctx *EvalContext) bool {
+	if !commandMentionsMcpConfig(ctx.Command) {
+		return false
+	}
+	cmds, err := ctx.ParsedCommands()
+	return !argvProvesBenign(cmds, err, mcpDangerousVerbs,
+		func(c cmdscan.Command) bool { return anyMcpConfigPath(nonFlagArgs(c.Args)) },
+		func(c cmdscan.Command) bool { return anyMcpConfigPath(c.WriteRedirects) })
 }
 
 func isWriteOrEdit(toolName string) bool {
@@ -176,6 +334,109 @@ func isMCPConfigPath(path string) bool {
 	return strings.HasSuffix(normalized, ".mcp.json") ||
 		strings.Contains(normalized, ".cursor/mcp.json") ||
 		strings.Contains(normalized, ".vscode/mcp.json")
+}
+
+var (
+	symlinkVerbs     = map[string]bool{"ln": true}
+	hookMutateVerbs  = map[string]bool{"chmod": true, "chown": true, "chattr": true, "sed": true, "awk": true}
+	auditMutateVerbs = map[string]bool{"rm": true, "unlink": true, "shred": true, "cp": true, "mv": true, "tee": true, "dd": true, "truncate": true}
+)
+
+func underHooksDir(p string) bool { return strings.Contains(filepath.ToSlash(p), ".claude/hooks/") }
+func underAuditDir(p string) bool { return strings.Contains(filepath.ToSlash(p), ".qsdev/audit") }
+
+func anyUnderHooksDir(paths []string) bool {
+	for _, p := range paths {
+		if underHooksDir(p) {
+			return true
+		}
+	}
+	return false
+}
+
+func anyUnderAuditDir(paths []string) bool {
+	for _, p := range paths {
+		if underAuditDir(p) {
+			return true
+		}
+	}
+	return false
+}
+
+// symlinkTargetsProtected reports whether `ln` targets a protected path. Same
+// substring-trigger + argv-clear shape as SP-003/SP-007: a wrapper/expansion/
+// parse error cannot clear the deny.
+func symlinkTargetsProtected(ctx *EvalContext) bool {
+	if !reSymlinkCmd.MatchString(ctx.Command) || !containsProtectedPathStr(ctx.Command) {
+		return false
+	}
+	cmds, err := ctx.ParsedCommands()
+	return !argvProvesBenign(cmds, err, symlinkVerbs,
+		func(c cmdscan.Command) bool { return anyProtected(nonFlagArgs(c.Args)) },
+		func(c cmdscan.Command) bool { return anyProtected(c.WriteRedirects) })
+}
+
+// traversalReachesProtected reports whether a `..`-containing argument or
+// redirect target resolves to a protected path. This is the targeted fix for
+// the DEFECT-10 false positive: the old rule denied any command that merely
+// contained `../` and a protected path in unrelated segments (e.g.
+// `rm -rf ../build && grep x .claude/settings.json`). Now only a traversal that
+// actually points at a protected path denies. Fails closed on a parse error.
+func traversalReachesProtected(ctx *EvalContext) bool {
+	if !reTraversal.MatchString(ctx.Command) || !containsProtectedPathStr(ctx.Command) {
+		return false
+	}
+	cmds, err := ctx.ParsedCommands()
+	if err != nil {
+		return true
+	}
+	for _, c := range cmds {
+		targets := append(nonFlagArgs(c.Args), c.WriteRedirects...)
+		targets = append(targets, c.ReadRedirects...)
+		for _, a := range targets {
+			if !strings.Contains(a, "..") {
+				continue
+			}
+			if canon.ContainsProtectedPath(a) {
+				return true
+			}
+			resolved := a
+			if !filepath.IsAbs(resolved) && ctx.CWD != "" {
+				resolved = filepath.Join(ctx.CWD, a)
+			}
+			if canon.ContainsProtectedPath(filepath.Clean(resolved)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hookScriptMutated reports whether an in-place mutator (chmod/chown/chattr or
+// sed/awk in-place) targets a file under .claude/hooks/. Reads clear.
+func hookScriptMutated(ctx *EvalContext) bool {
+	modifiesInPlace := reChmodCmd.MatchString(ctx.Command) ||
+		reSedInplace.MatchString(ctx.Command) ||
+		reAwkInplace.MatchString(ctx.Command)
+	if !modifiesInPlace || !strings.Contains(ctx.Command, ".claude/hooks/") {
+		return false
+	}
+	cmds, err := ctx.ParsedCommands()
+	return !argvProvesBenign(cmds, err, hookMutateVerbs,
+		func(c cmdscan.Command) bool { return anyUnderHooksDir(nonFlagArgs(c.Args)) },
+		func(c cmdscan.Command) bool { return anyUnderHooksDir(c.WriteRedirects) })
+}
+
+// auditTrailMutated reports whether a mutating verb or write redirect targets a
+// file under .qsdev/audit. Reads clear.
+func auditTrailMutated(ctx *EvalContext) bool {
+	if !reAuditPath.MatchString(ctx.Command) || !reAuditModCmd.MatchString(ctx.Command) {
+		return false
+	}
+	cmds, err := ctx.ParsedCommands()
+	return !argvProvesBenign(cmds, err, auditMutateVerbs,
+		func(c cmdscan.Command) bool { return anyUnderAuditDir(nonFlagArgs(c.Args)) },
+		func(c cmdscan.Command) bool { return anyUnderAuditDir(c.WriteRedirects) })
 }
 
 var sp001 = Rule{
@@ -239,7 +500,7 @@ var sp004 = Rule{
 		if ctx.ToolName != "Bash" {
 			return Allow, ""
 		}
-		if reSymlinkCmd.MatchString(ctx.Command) && containsProtectedPathStr(ctx.Command) {
+		if symlinkTargetsProtected(ctx) {
 			return Deny, "symlink creation targeting protected config path"
 		}
 		return Allow, ""
@@ -254,7 +515,7 @@ var sp005 = Rule{
 		if ctx.ToolName != "Bash" {
 			return Allow, ""
 		}
-		if reTraversal.MatchString(ctx.Command) && containsProtectedPathStr(ctx.Command) {
+		if traversalReachesProtected(ctx) {
 			return Deny, "path traversal reaching protected config"
 		}
 		return Allow, ""
@@ -333,10 +594,7 @@ var sp010 = Rule{
 		if ctx.ToolName != "Bash" {
 			return Allow, ""
 		}
-		modifiesInPlace := reChmodCmd.MatchString(ctx.Command) ||
-			reSedInplace.MatchString(ctx.Command) ||
-			reAwkInplace.MatchString(ctx.Command)
-		if modifiesInPlace && strings.Contains(ctx.Command, ".claude/hooks/") {
+		if hookScriptMutated(ctx) {
 			return Deny, "modification of hook scripts"
 		}
 		return Allow, ""
@@ -390,7 +648,7 @@ var mcp005 = Rule{
 		}
 		// A Bash command that mutates (writes/redirects to) an MCP config is a
 		// blind, un-inspectable overwrite; deny it. Reads are allowed.
-		if ctx.ToolName == "Bash" && bashMutatesMcpConfig(ctx.Command) {
+		if ctx.ToolName == "Bash" && bashMutatesMcpConfig(ctx) {
 			return Deny, "modification of MCP server configuration"
 		}
 		return Allow, ""
@@ -453,7 +711,7 @@ var sp013 = Rule{
 				return Deny, "write to audit trail"
 			}
 		}
-		if ctx.ToolName == "Bash" && reAuditPath.MatchString(ctx.Command) && reAuditModCmd.MatchString(ctx.Command) {
+		if ctx.ToolName == "Bash" && auditTrailMutated(ctx) {
 			return Deny, "write to audit trail"
 		}
 		return Allow, ""

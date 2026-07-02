@@ -583,13 +583,58 @@ func TestWriteFiles_SectionMarkerMergeError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Updated != 1 {
-		t.Errorf("Updated = %d, want 1", result.Updated)
+	// A merge error must NOT silently overwrite user content: the file is
+	// left intact and the write is reported as failed for repair.
+	if result.Failed != 1 {
+		t.Errorf("Failed = %d, want 1", result.Failed)
+	}
+	if result.Updated != 0 {
+		t.Errorf("Updated = %d, want 0", result.Updated)
+	}
+	if len(result.Files) != 1 || result.Files[0].Action != generate.ActionFailed {
+		t.Errorf("expected one failed file result, got %+v", result.Files)
 	}
 
 	got, _ := os.ReadFile(filepath.Join(dir, "FILE.md"))
-	if string(got) != newContent {
-		t.Error("on merge error, file should be fully overwritten (fallthrough)")
+	if string(got) != existing {
+		t.Errorf("on merge error, existing file must be preserved, got %q", got)
+	}
+}
+
+func TestWriteFiles_ThreeWayMergeEmptyExistingOverwrites(t *testing.T) {
+	dir := t.TempDir()
+
+	// An empty on-disk file has nothing to preserve: the merge func must not be
+	// invoked and the generated content is written wholesale.
+	existingPath := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(existingPath, []byte("   \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent := []byte(`{"permissions":{"allow":[]}}`)
+	files := []types.GeneratedFile{
+		{Path: "settings.json", Content: newContent, Strategy: types.ThreeWayMerge},
+	}
+	mergeCalls := 0
+	result, err := generate.WriteFiles(files, generate.PipelineOptions{
+		ProjectRoot: dir,
+		ThreeWayMergeFunc: func(_ string, _, _ []byte) ([]byte, error) {
+			mergeCalls++
+			return nil, os.ErrInvalid
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mergeCalls != 0 {
+		t.Errorf("merge func called %d times for empty existing file, want 0", mergeCalls)
+	}
+	if result.Failed != 0 || result.Updated != 1 {
+		t.Errorf("Failed=%d Updated=%d, want 0 and 1", result.Failed, result.Updated)
+	}
+	got, _ := os.ReadFile(existingPath)
+	if string(got) != string(newContent) {
+		t.Errorf("empty existing file should be overwritten with generated content, got %q", got)
 	}
 }
 

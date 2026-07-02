@@ -35,11 +35,25 @@ var (
 	reProcSelfInfo = regexp.MustCompile(`/proc/self/(environ|cmdline)`)
 )
 
-// Check examines a tool call for evasion techniques.
-// Returns (blocked, category, reason) where category identifies the evasion type.
+// Check examines a tool call for evasion techniques, parsing the command itself.
+// Prefer CheckParsed when the command has already been parsed (the hook path) to
+// avoid a redundant shell parse; Check remains for callers with only the raw
+// string (e.g. tests). Returns (blocked, category, reason).
 func Check(toolName string, command string, filePath string) (bool, string, string) {
+	var cmds []cmdscan.Command
+	var parseErr error
 	if toolName == "Bash" && command != "" {
-		if blocked, reason := checkObfuscation(command); blocked {
+		cmds, parseErr = cmdscan.Parse(command)
+	}
+	return CheckParsed(toolName, command, filePath, cmds, parseErr)
+}
+
+// CheckParsed is Check with the command already shell-parsed. cmds/parseErr come
+// from a single cmdscan.Parse of command (parseErr non-nil ⇒ unparseable, so the
+// obfuscation check falls back to its whole-string regex).
+func CheckParsed(toolName string, command string, filePath string, cmds []cmdscan.Command, parseErr error) (bool, string, string) {
+	if toolName == "Bash" && command != "" {
+		if blocked, reason := checkObfuscation(command, cmds, parseErr); blocked {
 			return true, "obfuscation", reason
 		}
 	}
@@ -63,35 +77,44 @@ func Check(toolName string, command string, filePath string) (bool, string, stri
 
 // checkObfuscation detects base64-to-shell, printf hex-to-shell, and eval
 // expansion patterns that attempt to hide malicious commands.
-func checkObfuscation(command string) (bool, string) {
+func checkObfuscation(command string, cmds []cmdscan.Command, parseErr error) (bool, string) {
 	if reBase64PipeShell.MatchString(command) {
 		return true, "base64 decode piped to shell execution"
 	}
 	if rePrintfHexShell.MatchString(command) {
 		return true, "printf hex escape piped to shell execution"
 	}
-	if evalExpandsVariables(command) {
+	if evalExpandsVariables(command, cmds, parseErr) {
 		return true, "eval with variable expansion"
 	}
 	return false, ""
 }
 
-// evalExpandsVariables reports whether the command actually invokes `eval` on an
-// argument that performs a shell expansion — the dangerous, obfuscation-prone
-// case. It anchors on the command word so a benign `grep 'eval "$("'` (where
-// `eval` appears only inside a search pattern) is no longer blocked. On a parse
-// error it fails closed to the original whole-string regex.
-func evalExpandsVariables(command string) bool {
-	cmds, err := cmdscan.Parse(command)
-	if err != nil {
-		return reEvalExpansion.MatchString(command)
+// evalExpandsVariables reports whether the command invokes `eval` on an argument
+// that performs a shell expansion — the dangerous, obfuscation-prone case. The
+// `eval`+`$` regex is the deny trigger; the command is cleared only when argv
+// parsing proves `eval` is not invoked and every command word is a safe reader.
+// So a benign `grep 'eval "$("'` (where `eval` is only a search pattern) clears,
+// while `eval "$X"`, `sh -c 'eval "$X"'`, and `command eval "$X"` are blocked
+// (a wrapper could hide the eval, so it fails closed). On a parse error it fails
+// closed to the whole-string regex. cmds/parseErr are the shared parse of
+// command (see CheckParsed).
+func evalExpandsVariables(command string, cmds []cmdscan.Command, parseErr error) bool {
+	if !reEvalExpansion.MatchString(command) {
+		return false // trigger absent: no `eval` followed by `$`
+	}
+	if parseErr != nil {
+		return true // triggered and unparseable ⇒ fail closed
 	}
 	for _, c := range cmds {
-		if c.Name == "eval" && c.HasExpansion {
-			return true
+		if c.Name == "eval" {
+			return true // eval is actually invoked (with `$` present) ⇒ block
+		}
+		if c.Name != "" && !cmdscan.IsSafeReadVerb(c.Name) {
+			return true // a wrapper/unknown word could hide the eval ⇒ fail closed
 		}
 	}
-	return false
+	return false // every word is a safe reader; the `eval` text is inert
 }
 
 // checkHardlink detects hard link creation targeting protected paths. Symlinks

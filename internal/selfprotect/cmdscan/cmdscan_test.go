@@ -53,8 +53,89 @@ func TestParse_Redirects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
-	if len(cmds) != 1 || len(cmds[0].Redirects) != 1 || cmds[0].Redirects[0] != ".mcp.json" {
-		t.Errorf("redirect target not captured: %+v", cmds)
+	if len(cmds) != 1 || len(cmds[0].WriteRedirects) != 1 || cmds[0].WriteRedirects[0] != ".mcp.json" {
+		t.Errorf("write redirect target not captured: %+v", cmds)
+	}
+	if len(cmds[0].ReadRedirects) != 0 {
+		t.Errorf("output redirect misclassified as read: %+v", cmds)
+	}
+}
+
+func TestParse_RedirectOpSplit(t *testing.T) {
+	t.Parallel()
+
+	// An input redirect is a read, not a mutation: it must not land in
+	// WriteRedirects (a bug there falsely denies `cat < .mcp.json`).
+	cmds, err := Parse("cat < .mcp.json && echo hi")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	var reads, writes []string
+	for _, c := range cmds {
+		reads = append(reads, c.ReadRedirects...)
+		writes = append(writes, c.WriteRedirects...)
+	}
+	if len(writes) != 0 {
+		t.Errorf("input redirect classified as write: %+v", cmds)
+	}
+	if len(reads) != 1 || reads[0] != ".mcp.json" {
+		t.Errorf("input redirect not captured as read: %+v", cmds)
+	}
+}
+
+func TestParse_CompoundRedirects(t *testing.T) {
+	t.Parallel()
+
+	// A redirect on a compound command (block or subshell) attaches to the
+	// outer statement, whose Cmd is not a CallExpr. It must still be captured
+	// (as a nameless command) or `{ echo evil; } > .mcp.json` bypasses the
+	// mutation rules entirely.
+	for _, cmd := range []string{"{ echo evil; } > .mcp.json", "( echo evil ) > .mcp.json"} {
+		cmds, err := Parse(cmd)
+		if err != nil {
+			t.Fatalf("Parse(%q) error: %v", cmd, err)
+		}
+		var writes []string
+		for _, c := range cmds {
+			writes = append(writes, c.WriteRedirects...)
+		}
+		if len(writes) != 1 || writes[0] != ".mcp.json" {
+			t.Errorf("Parse(%q): compound redirect not captured: %+v", cmd, cmds)
+		}
+	}
+}
+
+func TestParse_PipelineGrouping(t *testing.T) {
+	t.Parallel()
+
+	cmds, err := Parse("cat .claude/settings.json | grep foo | tee /tmp/out")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if len(cmds) != 3 {
+		t.Fatalf("expected 3 commands, got %d: %+v", len(cmds), cmds)
+	}
+	// All three stages share one non-zero pipeline id, in order.
+	id := cmds[0].Pipeline
+	if id == 0 {
+		t.Fatalf("pipeline id not assigned: %+v", cmds)
+	}
+	for i, c := range cmds {
+		if c.Pipeline != id {
+			t.Errorf("stage %d (%s) pipeline id = %d, want %d", i, c.Name, c.Pipeline, id)
+		}
+	}
+	if cmds[0].Name != "cat" || cmds[2].Name != "tee" {
+		t.Errorf("pipeline order wrong: %+v", cmds)
+	}
+
+	// A standalone command has no pipeline id.
+	solo, err := Parse("rm -rf /tmp/build")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if len(solo) != 1 || solo[0].Pipeline != 0 {
+		t.Errorf("standalone command should have pipeline id 0: %+v", solo)
 	}
 }
 

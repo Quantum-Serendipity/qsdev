@@ -67,6 +67,19 @@ func classifyFinding(categoryName string, f drift.Finding, genState types.Genera
 func classifyFileModification(f drift.Finding, genState types.GeneratedState, opts RepairOptions) RepairAction {
 	file := f.Subject
 
+	// A deleted file has no hand-edits to protect, so regenerate it — even one on
+	// the never-auto-modify list (the exemption below guards *modification* of an
+	// existing file, not recreation of a missing one).
+	if strings.Contains(f.Description, "has been deleted") {
+		return RepairAction{
+			File:        file,
+			Category:    CategoryFileDrift,
+			Description: fmt.Sprintf("Regenerate deleted file %s", file),
+			ActionType:  ActionRegenerate,
+			AutoFixable: true,
+		}
+	}
+
 	// devenv.nix/devenv.yaml are NEVER auto-modified regardless of strategy or flags.
 	if neverAutoRepairFiles[file] {
 		return RepairAction{
@@ -75,19 +88,6 @@ func classifyFileModification(f drift.Finding, genState types.GeneratedState, op
 			Description: fmt.Sprintf("%s is never auto-modified", file),
 			ActionType:  ActionSkip,
 			AutoFixable: false,
-		}
-	}
-
-	// Check if this is a deleted file.
-	isDeleted := strings.Contains(f.Description, "has been deleted")
-
-	if isDeleted {
-		return RepairAction{
-			File:        file,
-			Category:    CategoryFileDrift,
-			Description: fmt.Sprintf("Regenerate deleted file %s", file),
-			ActionType:  ActionRegenerate,
-			AutoFixable: true,
 		}
 	}
 

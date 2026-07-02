@@ -1,22 +1,17 @@
 package merge
 
+import "github.com/Quantum-Serendipity/qsdev/pkg/types"
+
 // MergeOnCreate merges newly generated content (ours) over existing on-disk
 // content (theirs) for ThreeWayMerge files that have no recorded base — the
-// create / first-generation path. It dispatches by well-known relative path so
-// the pipeline can protect user-owned top-level keys (e.g. settings.json "env")
-// without threading strategy details through the writer.
+// create / first-generation path. It is a nil-base wrapper around Dispatch, so
+// the create path protects user-owned top-level keys (e.g. settings.json "env")
+// using the same routing and unknown-path policy as the update paths.
 //
-// Unknown paths fall back to ours (a plain overwrite). Both MergeSettings and
-// MergeMcpJson tolerate a nil base and preserve unknown top-level keys, but
-// return an error on empty theirs — the pipeline treats that as "nothing to
-// preserve" and falls through to a full overwrite.
+// Both MergeSettings and MergeMcpJson tolerate a nil base and preserve unknown
+// keys, but return an error on empty theirs; the pipeline calls MergeOnCreate
+// only for non-empty existing files and surfaces any error rather than
+// silently overwriting.
 func MergeOnCreate(relPath string, theirs, ours []byte) ([]byte, error) {
-	switch relPath {
-	case ".claude/settings.json":
-		return MergeSettings(nil, theirs, ours)
-	case ".mcp.json":
-		return MergeMcpJson(nil, theirs, ours)
-	default:
-		return ours, nil
-	}
+	return Dispatch(relPath, types.ThreeWayMerge, nil, theirs, ours)
 }

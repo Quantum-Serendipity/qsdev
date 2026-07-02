@@ -63,6 +63,20 @@ func TestCheck_Obfuscation(t *testing.T) {
 			blocked: false,
 		},
 		{
+			name:     "eval hidden behind sh -c wrapper",
+			tool:     "Bash",
+			command:  `sh -c 'eval "$X"'`,
+			blocked:  true,
+			category: "obfuscation",
+		},
+		{
+			name:     "eval hidden behind the command builtin",
+			tool:     "Bash",
+			command:  `command eval "$X"`,
+			blocked:  true,
+			category: "obfuscation",
+		},
+		{
 			name:    "base64 encoding not decoding",
 			tool:    "Bash",
 			command: "echo hello | base64",

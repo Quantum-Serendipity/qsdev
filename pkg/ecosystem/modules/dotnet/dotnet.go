@@ -133,7 +133,8 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Language:    "system",
 			Files:       `\.(cs|fs)$`,
 			Stages:      []string{"pre-commit"},
-			BuiltIn:     true,
+			BuiltIn:     false,
+			NixPackage:  "dotnet-sdk",
 		},
 	}
 }

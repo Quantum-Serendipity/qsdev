@@ -443,10 +443,13 @@ func TestPreCommitHooks(t *testing.T) {
 		id         string
 		builtIn    bool
 		nixPackage string
+		language   string
 	}{
-		{id: "ruff", builtIn: true},
-		{id: "mypy", builtIn: true},
-		{id: "bandit", builtIn: false, nixPackage: "bandit"},
+		{id: "ruff", builtIn: true, language: "python"},
+		{id: "mypy", builtIn: true, language: "python"},
+		// bandit runs the nix-provided binary directly, so Language is "system"
+		// (not "python", which would build a redundant venv).
+		{id: "bandit", builtIn: false, nixPackage: "bandit", language: "system"},
 	}
 
 	if len(hooks) != len(want) {
@@ -464,8 +467,8 @@ func TestPreCommitHooks(t *testing.T) {
 		if hook.NixPackage != w.nixPackage {
 			t.Errorf("hooks[%d].NixPackage = %q, want %q", i, hook.NixPackage, w.nixPackage)
 		}
-		if hook.Language != "python" {
-			t.Errorf("hooks[%d].Language = %q, want %q", i, hook.Language, "python")
+		if hook.Language != w.language {
+			t.Errorf("hooks[%d].Language = %q, want %q", i, hook.Language, w.language)
 		}
 		if len(hook.Types) != 1 || hook.Types[0] != "python" {
 			t.Errorf("hooks[%d].Types = %v, want [\"python\"]", i, hook.Types)

@@ -265,6 +265,47 @@ func TestConfigRenderTool(t *testing.T) {
 	}
 }
 
+// TestConfigRenderTool_PreservesUserEnv guards DEFECT-6 on the MCP render write
+// path: rendering with write=true over an existing settings.json that carries a
+// user-owned "env" block must preserve it (the ThreeWayMerge func is wired in).
+func TestConfigRenderTool_PreservesUserEnv(t *testing.T) {
+	t.Parallel()
+	a := New()
+	reg := toolByName(t, a, toolConfigRender)
+	root := presentRoot(t)
+
+	// Seed an existing settings.json with a user env block.
+	settingsPath := filepath.Join(root, ".claude", "settings.json")
+	existing := []byte(`{"env":{"CLAUDE_CODE_USE_BEDROCK":"1"},"permissions":{"allow":["Read(*)"],"deny":[]}}`)
+	if err := os.WriteFile(settingsPath, existing, 0o644); err != nil {
+		t.Fatalf("seeding settings.json: %v", err)
+	}
+
+	wres, err := reg.Handler(context.Background(), callCtx(root),
+		&spi.ToolRequest{Name: toolConfigRender, Arguments: map[string]any{"write": true}})
+	if err != nil {
+		t.Fatalf("write handler error: %v", err)
+	}
+	if wres.IsError {
+		t.Fatalf("write reported failures: %s", wres.Text)
+	}
+
+	got, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("reading merged settings.json: %v", err)
+	}
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("merged settings.json is not valid JSON: %v\n%s", err, got)
+	}
+	if _, ok := parsed["env"]; !ok {
+		t.Errorf("user env block dropped by render write path: %s", got)
+	}
+	if _, ok := parsed["permissions"]; !ok {
+		t.Errorf("generated permissions missing after merge: %s", got)
+	}
+}
+
 // TestContextBudgetTool checks the default-model budget for a small project is
 // within budget and reports the resolved model.
 func TestContextBudgetTool(t *testing.T) {

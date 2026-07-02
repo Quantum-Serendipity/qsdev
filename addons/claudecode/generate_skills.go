@@ -2,6 +2,8 @@ package claudecode
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -26,9 +28,46 @@ func loadManifest() (*SkillManifest, error) {
 	return loadYAMLManifest[SkillManifest]("templates/skills/manifest.yaml")
 }
 
+// legacySkillAliases maps renamed skill names to their current manifest name so
+// a pre-rename .qsdev.yaml (which persists the old name) still resolves instead
+// of hard-erroring on regeneration. security-review was renamed to
+// security-review-owasp to avoid colliding with Claude Code's built-in
+// /security-review command.
+var legacySkillAliases = map[string]string{
+	"security-review": "security-review-owasp",
+}
+
+// canonicalSkillName resolves a possibly-legacy persisted skill name to its
+// current manifest name.
+func canonicalSkillName(name string) string {
+	if current, ok := legacySkillAliases[name]; ok {
+		return current
+	}
+	return name
+}
+
+// legacyFlatSkillPath maps a current-layout skill path
+// (.claude/skills/<name>/SKILL.md) to its pre-migration flat path
+// (.claude/skills/<name>.md), reporting false for any other path. Used to remove
+// the stale flat file left behind by the layout change.
+func legacyFlatSkillPath(p string) (string, bool) {
+	const prefix = ".claude/skills/"
+	const suffix = "/SKILL.md"
+	s := filepath.ToSlash(p)
+	if !strings.HasPrefix(s, prefix) || !strings.HasSuffix(s, suffix) {
+		return "", false
+	}
+	name := s[len(prefix) : len(s)-len(suffix)]
+	if name == "" || strings.Contains(name, "/") {
+		return "", false
+	}
+	return prefix + name + ".md", true
+}
+
 // deploySkills reads the selected skill files from the embedded filesystem and
 // returns GeneratedFile entries for each. It validates that every requested
-// skill name exists in the manifest.
+// skill name exists in the manifest, tolerating legacy (renamed) names so
+// existing project configs keep regenerating.
 func deploySkills(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 	if len(answers.Skills) == 0 {
 		return nil, nil
@@ -46,10 +85,17 @@ func deploySkills(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 	}
 
 	var files []types.GeneratedFile
-	for _, name := range answers.Skills {
+	seen := make(map[string]bool, len(answers.Skills))
+	for _, requested := range answers.Skills {
+		name := canonicalSkillName(requested)
+		if seen[name] {
+			continue // legacy and current name both listed, or a duplicate
+		}
+		seen[name] = true
+
 		entry, ok := entryByName[name]
 		if !ok {
-			return nil, fmt.Errorf("unknown skill %q: not found in manifest", name)
+			return nil, fmt.Errorf("unknown skill %q: not found in manifest", requested)
 		}
 
 		body, err := templateFS.ReadFile("templates/skills/" + name + ".md")

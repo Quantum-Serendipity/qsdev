@@ -317,9 +317,46 @@ func TestClassifyFileModification_DeletedDevenvNix(t *testing.T) {
 	if len(actions) != 1 {
 		t.Fatalf("got %d actions, want 1", len(actions))
 	}
-	// devenv.nix is always skipped, even when deleted.
-	if actions[0].ActionType != ActionSkip {
-		t.Errorf("ActionType = %d, want ActionSkip for devenv.nix even if deleted", actions[0].ActionType)
+	// A DELETED devenv.nix has no hand-edits to protect, so repair regenerates
+	// it — the never-auto-modify exemption guards modification of an existing
+	// file, not recreation of a missing one.
+	if actions[0].ActionType != ActionRegenerate {
+		t.Errorf("ActionType = %d, want ActionRegenerate for deleted devenv.nix", actions[0].ActionType)
+	}
+	if !actions[0].AutoFixable {
+		t.Error("expected AutoFixable=true for deleted devenv.nix")
+	}
+}
+
+func TestClassifyFileModification_DeletedDevenvYaml(t *testing.T) {
+	report := &drift.Report{
+		Categories: []drift.Category{
+			{
+				Name: "File Modification",
+				Findings: []drift.Finding{
+					{
+						Subject:     "devenv.yaml",
+						Description: "Generated file \"devenv.yaml\" has been deleted",
+						Severity:    drift.Error,
+					},
+				},
+			},
+		},
+	}
+	genState := types.GeneratedState{
+		Files: map[string]types.FileState{
+			"devenv.yaml": {Strategy: types.Overwrite},
+		},
+	}
+
+	actions := classifyFindings(report, genState, RepairOptions{})
+	if len(actions) != 1 {
+		t.Fatalf("got %d actions, want 1", len(actions))
+	}
+	// A deleted devenv.yaml is regenerated (no edits to lose); the exemption
+	// still blocks auto-modification of an existing, hand-edited devenv.yaml.
+	if actions[0].ActionType != ActionRegenerate {
+		t.Errorf("ActionType = %d, want ActionRegenerate for deleted devenv.yaml", actions[0].ActionType)
 	}
 }
 

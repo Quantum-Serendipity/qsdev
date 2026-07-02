@@ -734,8 +734,13 @@ func TestPreCommitHooks(t *testing.T) {
 	if h.Language != "system" {
 		t.Errorf("Language = %q, want %q", h.Language, "system")
 	}
-	if !h.BuiltIn {
-		t.Error("BuiltIn should be true")
+	// dotnet-format is not a git-hooks.nix built-in, so it must be a custom
+	// hook whose binary is resolved from a Nix package.
+	if h.BuiltIn {
+		t.Error("BuiltIn should be false (dotnet-format is not a git-hooks.nix built-in)")
+	}
+	if h.NixPackage != "dotnet-sdk" {
+		t.Errorf("NixPackage = %q, want %q", h.NixPackage, "dotnet-sdk")
 	}
 	if h.Files != `\.(cs|fs)$` {
 		t.Errorf("Files = %q, want %q", h.Files, `\.(cs|fs)$`)

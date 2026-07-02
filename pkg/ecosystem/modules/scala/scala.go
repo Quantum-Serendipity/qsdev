@@ -193,7 +193,8 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Types:         []string{"scala"},
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
-			BuiltIn:       true,
+			BuiltIn:       false,
+			NixPackage:    "scalafmt",
 		},
 	}
 }

@@ -434,20 +434,7 @@ func dispatchMerge(fp FileUpdatePlan, projectRoot string) ([]byte, error) {
 		return nil, fmt.Errorf("reading %s: %w", fp.Path, err)
 	}
 
-	switch fp.Strategy {
-	case types.ThreeWayMerge:
-		base := fp.OldContent
-		switch {
-		case fp.Path == ".mcp.json" || strings.HasSuffix(fp.Path, ".mcp.json"):
-			return merge.MergeMcpJson(base, theirs, fp.NewContent)
-		case strings.HasSuffix(fp.Path, "settings.json"):
-			return merge.MergeSettings(base, theirs, fp.NewContent)
-		default:
-			return nil, fmt.Errorf("no three-way merge handler for %s; add one to dispatchMerge()", fp.Path)
-		}
-	case types.SectionMarker:
-		return merge.SectionMarkers(theirs, fp.NewContent)
-	default:
-		return nil, fmt.Errorf("merge strategy %s not implemented for %s", fp.Strategy, fp.Path)
-	}
+	// fp.OldContent is the recorded base for this file. Delegate to the shared
+	// merge.Dispatch table so all write paths route identically.
+	return merge.Dispatch(fp.Path, fp.Strategy, fp.OldContent, theirs, fp.NewContent)
 }

@@ -133,6 +133,41 @@ func TestParseInput_NilInput(t *testing.T) {
 	}
 }
 
+func TestParseInput_EditFields(t *testing.T) {
+	t.Parallel()
+
+	// Edit tool input carries old_string/new_string, not content.
+	edit := ParseInput(json.RawMessage(`{"file_path":".mcp.json","old_string":"a","new_string":"b"}`))
+	if edit.NewString != "b" || edit.OldString != "a" {
+		t.Errorf("Edit fields not parsed: %+v", edit)
+	}
+	// MultiEdit carries an edits array.
+	multi := ParseInput(json.RawMessage(`{"file_path":"x","edits":[{"old_string":"a","new_string":"b"},{"old_string":"c","new_string":"d"}]}`))
+	if len(multi.Edits) != 2 || multi.Edits[1].NewString != "d" {
+		t.Errorf("MultiEdit fields not parsed: %+v", multi)
+	}
+}
+
+func TestEditedContent(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		in   ToolInput
+		want string
+	}{
+		{"write uses content", ToolInput{Content: "written"}, "written"},
+		{"edit uses new_string", ToolInput{NewString: "edited"}, "edited"},
+		{"multiedit joins new_strings", ToolInput{Edits: []EditOp{{NewString: "one"}, {NewString: "two"}}}, "one\ntwo\n"},
+		{"empty", ToolInput{}, ""},
+	}
+	for _, tc := range cases {
+		if got := tc.in.EditedContent(); got != tc.want {
+			t.Errorf("%s: EditedContent() = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestWriteDeny(t *testing.T) {
 	t.Parallel()
 

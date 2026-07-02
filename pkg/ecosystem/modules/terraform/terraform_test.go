@@ -281,19 +281,20 @@ func TestPreCommitHooks(t *testing.T) {
 		}
 	}
 
-	// terraform-format and terraform-validate should be BuiltIn.
-	if !hooks[0].BuiltIn {
-		t.Error("terraform-format should be BuiltIn")
+	// All four are custom hooks (BuiltIn:false): the built-in terraform-format
+	// would discard the tofu/terraform binary selection and -check flags, so the
+	// hooks are rendered with a NixPackage that puts the binary on PATH.
+	for i, h := range hooks {
+		if h.BuiltIn {
+			t.Errorf("%s should not be BuiltIn (custom hook preserving entry)", h.ID)
+		}
+		if h.NixPackage == "" {
+			t.Errorf("%s should set a NixPackage so its binary resolves", hooks[i].ID)
+		}
 	}
-	if !hooks[1].BuiltIn {
-		t.Error("terraform-validate should be BuiltIn")
-	}
-	// tflint and tfsec should NOT be BuiltIn.
-	if hooks[2].BuiltIn {
-		t.Error("tflint should not be BuiltIn")
-	}
-	if hooks[3].BuiltIn {
-		t.Error("tfsec should not be BuiltIn")
+	// Default variant resolves to the terraform package.
+	if hooks[0].NixPackage != "terraform" {
+		t.Errorf("terraform-format NixPackage = %q, want terraform", hooks[0].NixPackage)
 	}
 
 	// Default variant should use "terraform" in entry.

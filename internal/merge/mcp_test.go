@@ -585,3 +585,92 @@ func TestMergeMcpJson_OutputIsValidJSON(t *testing.T) {
 		t.Error("expected trailing newline")
 	}
 }
+
+// TestMergeMcpJson_PreservesPerServerUnknownFields guards DEFECT-6: an unmodeled
+// per-server field the user added (e.g. "headers") must survive when the
+// generator updates that server's modeled fields.
+func TestMergeMcpJson_PreservesPerServerUnknownFields(t *testing.T) {
+	base := []byte(`{
+  "mcpServers": {
+    "github": {"command": "gh", "args": ["mcp"]}
+  }
+}`)
+	// User added a headers block; modeled fields unchanged from base.
+	theirs := []byte(`{
+  "mcpServers": {
+    "github": {
+      "command": "gh",
+      "args": ["mcp"],
+      "headers": {"Authorization": "Bearer user-secret"}
+    }
+  }
+}`)
+	// Generator updates args.
+	ours := []byte(`{
+  "mcpServers": {
+    "github": {"command": "gh", "args": ["mcp", "--verbose"]}
+  }
+}`)
+
+	got, err := MergeMcpJson(base, theirs, ours)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(got, &top); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	var servers map[string]json.RawMessage
+	if err := json.Unmarshal(top["mcpServers"], &servers); err != nil {
+		t.Fatalf("mcpServers not valid JSON: %v", err)
+	}
+	var gh map[string]json.RawMessage
+	if err := json.Unmarshal(servers["github"], &gh); err != nil {
+		t.Fatalf("github entry not valid JSON: %v", err)
+	}
+	if _, ok := gh["headers"]; !ok {
+		t.Errorf("per-server headers block dropped by merge: %s", got)
+	}
+
+	// The generator's args update must still be applied.
+	var parsed mcpJSON
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	args := parsed.MCPServers["github"].Args
+	if len(args) != 2 || args[1] != "--verbose" {
+		t.Errorf("expected updated args from ours, got %v", args)
+	}
+}
+
+// TestMergeMcpJson_PreservesSiblingTopLevelKeys guards DEFECT-6: top-level keys
+// besides mcpServers (e.g. a user "env" block) must survive a merge.
+func TestMergeMcpJson_PreservesSiblingTopLevelKeys(t *testing.T) {
+	base := []byte(`{
+  "mcpServers": {"github": {"command": "gh", "args": ["mcp"]}}
+}`)
+	theirs := []byte(`{
+  "env": {"GLOBAL_TOKEN": "xyz"},
+  "mcpServers": {"github": {"command": "gh", "args": ["mcp"]}}
+}`)
+	ours := []byte(`{
+  "mcpServers": {"github": {"command": "gh", "args": ["mcp", "--v2"]}}
+}`)
+
+	got, err := MergeMcpJson(base, theirs, ours)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(got, &top); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	if _, ok := top["env"]; !ok {
+		t.Errorf("sibling top-level env key dropped by merge: %s", got)
+	}
+	if _, ok := top["mcpServers"]; !ok {
+		t.Errorf("mcpServers missing from merged output: %s", got)
+	}
+}

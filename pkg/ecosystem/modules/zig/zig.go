@@ -99,7 +99,8 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Types:         []string{"zig"},
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
-			BuiltIn:       true,
+			BuiltIn:       false,
+			NixPackage:    "zig",
 		},
 	}
 }

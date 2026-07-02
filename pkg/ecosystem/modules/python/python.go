@@ -223,11 +223,14 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			BuiltIn:       true,
 		},
 		{
-			ID:            "bandit",
-			Name:          "bandit",
-			Description:   "Run bandit security SAST scanner for Python",
-			Entry:         "bandit -r",
-			Language:      "python",
+			ID:          "bandit",
+			Name:        "bandit",
+			Description: "Run bandit security SAST scanner for Python",
+			Entry:       "bandit -r",
+			// Language "system" runs the nix-provided binary directly; "python"
+			// would make git-hooks.nix build a redundant venv for the hook. Match
+			// the staticcheck/govulncheck reference for NixPackage-backed hooks.
+			Language:      "system",
 			Types:         []string{"python"},
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,

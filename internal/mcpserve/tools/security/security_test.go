@@ -209,20 +209,58 @@ func TestPolicyCheckRejectsPathTraversal(t *testing.T) {
 	}
 }
 
+// TestPolicyCheckFastPath proves the fast-path cache directly: once the policy is
+// parsed, a subsequent call with the file's mtime unchanged returns the cached
+// verdict WITHOUT re-parsing the YAML (the property that keeps repeated calls
+// cheap), and a call after the mtime advances re-parses and reflects the new
+// policy.
+//
+// This asserts the caching mechanism rather than wall-clock latency: a
+// millisecond budget measured under parallel `go test ./...` load is dominated by
+// scheduler and GC jitter on shared CI hosts, so it flakes without catching the
+// real regression — a broken cache that re-parses on every call, which the
+// stale-content check below catches deterministically.
 func TestPolicyCheckFastPath(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeConfig(t, dir, policyFixture)
+	path := writeConfig(t, dir, policyFixture)
 	pc := newPolicyChecker(dir)
 
-	// Warm the cache so the measured call hits the cached, no-parse path.
-	call(t, pc.handle, map[string]any{"tool_name": "semgrep"})
+	// Warm the cache: semgrep is enabled in the fixture, so the verdict is allowed.
+	warm := structuredMap(t, call(t, pc.handle, map[string]any{"tool_name": "semgrep"}))["evaluation"].(policyDecision)
+	if warm.Decision != decisionAllowed {
+		t.Fatalf("warm-up decision = %q, want allowed", warm.Decision)
+	}
 
-	start := time.Now()
-	call(t, pc.handle, map[string]any{"tool_name": "semgrep"})
-	elapsed := time.Since(start)
-	if elapsed > 5*time.Millisecond {
-		t.Errorf("cached policy_check took %v, want <=5ms", elapsed)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat policy: %v", err)
+	}
+	orig := info.ModTime()
+
+	// Rewrite the policy so semgrep would now evaluate to denied, but restore the
+	// original mtime. A cache hit (fast path) must skip the re-parse and still
+	// return the cached allowed verdict; a re-parse would surface the new deny.
+	flipped := "version: 1\ntools:\n  disabled:\n    - semgrep\n"
+	if err := os.WriteFile(path, []byte(flipped), 0o644); err != nil {
+		t.Fatalf("rewrite policy: %v", err)
+	}
+	if err := os.Chtimes(path, orig, orig); err != nil {
+		t.Fatalf("reset mtime: %v", err)
+	}
+	cached := structuredMap(t, call(t, pc.handle, map[string]any{"tool_name": "semgrep"}))["evaluation"].(policyDecision)
+	if cached.Decision != decisionAllowed {
+		t.Errorf("cached decision = %q, want allowed (fast path must not re-parse while mtime is unchanged)", cached.Decision)
+	}
+
+	// Advance the mtime: the cache must invalidate and re-parse, now returning denied.
+	changed := orig.Add(2 * time.Second)
+	if err := os.Chtimes(path, changed, changed); err != nil {
+		t.Fatalf("advance mtime: %v", err)
+	}
+	fresh := structuredMap(t, call(t, pc.handle, map[string]any{"tool_name": "semgrep"}))["evaluation"].(policyDecision)
+	if fresh.Decision != decisionDenied {
+		t.Errorf("post-invalidation decision = %q, want denied (mtime change must trigger re-parse)", fresh.Decision)
 	}
 }
 

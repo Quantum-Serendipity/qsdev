@@ -91,9 +91,10 @@ func evaluateBaseline(
 
 	noCritical := deps.Totals.Critical == 0
 	checks = append(checks, ConformanceCheck{
-		Name:   CheckNoCriticalVulns,
-		Pass:   noCritical,
-		Reason: boolReason(noCritical, "no critical vulnerabilities", "critical vulnerabilities found"),
+		Name: CheckNoCriticalVulns,
+		Pass: noCritical,
+		Reason: vulnCheckReason(deps.Scanned, noCritical,
+			"no critical vulnerabilities", "critical vulnerabilities found"),
 	})
 
 	_, hasClaudeMD := genState.Files["CLAUDE.md"]
@@ -151,9 +152,10 @@ func evaluateEnhanced(
 
 	noHighVulns := deps.Totals.High == 0
 	checks = append(checks, ConformanceCheck{
-		Name:   CheckNoHighVulns,
-		Pass:   noHighVulns,
-		Reason: boolReason(noHighVulns, "no high vulnerabilities", "high vulnerabilities found"),
+		Name: CheckNoHighVulns,
+		Pass: noHighVulns,
+		Reason: vulnCheckReason(deps.Scanned, noHighVulns,
+			"no high vulnerabilities", "high vulnerabilities found"),
 	})
 
 	semgrepEnabled := enabledTools["semgrep"]
@@ -217,4 +219,17 @@ func boolReason(ok bool, pass, fail string) string {
 		return pass
 	}
 	return fail
+}
+
+// vulnCheckReason renders the reason for a vulnerability-count conformance check.
+// When no fresh scan ran, a zero count is NOT a clean result — the dependencies
+// were never checked — so the reason states that explicitly instead of claiming
+// the absence of a given severity. This keeps the report honest: it reports what
+// was not done rather than implying a clean bill of health.
+func vulnCheckReason(scanned, ok bool, passReason, failReason string) string {
+	if !scanned {
+		return "dependencies not scanned for vulnerabilities; run 'qsdev status --scan' " +
+			"(vulnerability status unknown, not confirmed clean)"
+	}
+	return boolReason(ok, passReason, failReason)
 }

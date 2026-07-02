@@ -49,26 +49,28 @@ func DeriveControlMapping(def ControlDefinition, layers []posture.DefenseLayer) 
 	for _, mapping := range def.Layers {
 		postureLayer, found := layerLookup[mapping.LayerName]
 
-		le := LayerEvidence{
-			LayerName:   mapping.LayerName,
-			Relevance:   mapping.Relevance,
-			Description: mapping.Description,
+		// A layer named in the mapping but absent from the posture report is
+		// treated as disabled (its control is not enforced).
+		status := posture.LayerDisabled
+		if found {
+			status = postureLayer.Status
 		}
 
-		if !found {
-			le.Status = string(posture.LayerDisabled)
-		} else {
-			le.Status = string(postureLayer.Status)
+		le := LayerEvidence{
+			LayerName: mapping.LayerName,
+			Relevance: mapping.Relevance,
+			Status:    string(status),
+			// Gate the enforcement-claiming description on the layer's actual
+			// status so the evidence never asserts active enforcement (e.g.
+			// "Nix sandbox restricts process capabilities") for a layer that is
+			// not enabled.
+			Description: gateLayerDescription(mapping.Description, status),
 		}
 
 		cm.GdevLayers = append(cm.GdevLayers, le)
 
 		if mapping.Relevance == "primary" {
 			primaryCount++
-			status := posture.LayerDisabled
-			if found {
-				status = postureLayer.Status
-			}
 			switch status {
 			case posture.LayerEnabled:
 				primaryEnabled++
@@ -107,4 +109,28 @@ func DeriveControlMapping(def ControlDefinition, layers []posture.DefenseLayer) 
 	}
 
 	return cm
+}
+
+// gateLayerDescription returns the description to surface for a mapped defense
+// layer, gated on whether the layer is actually enforced.
+//
+// Control-to-layer descriptions assert active enforcement (e.g. "Nix sandbox
+// restricts process capabilities" or "Blocks execution of unverified install
+// scripts"). Surfacing such a claim verbatim for a layer that is not enabled
+// would overstate the project's posture, which is the exact defect this guard
+// closes. The claim is therefore only presented as fact when the layer holds
+// (enabled or partial); otherwise it is explicitly marked as not currently
+// enforced so an auditor cannot mistake a mapped-but-inactive layer for an
+// operating control.
+func gateLayerDescription(desc string, status posture.LayerStatus) string {
+	switch status {
+	case posture.LayerEnabled:
+		return desc
+	case posture.LayerPartial:
+		return "[partially enforced] " + desc
+	case posture.LayerNotApplicable:
+		return "[not applicable] " + desc
+	default: // LayerDisabled or absent from the posture report
+		return "[not enforced] " + desc
+	}
 }

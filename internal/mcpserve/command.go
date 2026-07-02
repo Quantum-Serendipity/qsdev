@@ -9,18 +9,21 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
 
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/container"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // defaultHTTPPort is the port used by the http transport when --port is unset.
@@ -150,12 +153,18 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	})
 	defer session.Close() // Close is nil-safe.
 
+	// Derive the Guardrail permission policy from the project's .qsdev.yaml
+	// (tools.disabled) BEFORE building the chain, so a disabled tool is actually
+	// enforced on MCP calls — not merely reported denied by qsdev_policy_check.
+	policy := projectPolicy(root)
+
 	// Select the middleware chain for the deployment mode. Native and standalone
 	// run the standard six-layer chain; gateway wraps it with an outer
 	// authentication layer and tighter rate limits (see container.GatewayChain).
+	// Both branches receive the derived policy so enforcement matches reporting.
 	srv := New(
 		WithProjectRoot(root),
-		WithChain(chainForMode(mode)),
+		WithChain(chainForMode(mode, policy)),
 		WithMultiAdapter(opts.multiAdapter),
 	)
 
@@ -218,15 +227,43 @@ func resolveRootForMode(mode container.DeployMode, flagRoot string) (string, err
 	return root, nil
 }
 
-// chainForMode returns the middleware chain for the deployment mode.
-func chainForMode(mode container.DeployMode) *spi.Chain {
+// chainForMode returns the middleware chain for the deployment mode, feeding the
+// derived Guardrail permission policy into BOTH branches. Native/standalone
+// install it via middleware.WithPolicy; gateway installs it via
+// GatewayOptions.Policy (which the gateway forwards to the same WithPolicy). A
+// nil policy is treated as "keep the permissive default" by both sinks, so a
+// project that disables nothing behaves exactly as before.
+func chainForMode(mode container.DeployMode, policy *middleware.Policy) *spi.Chain {
 	if mode == container.DeployGateway {
 		return container.GatewayChain(container.GatewayOptions{
 			AllowedAgents: splitAgents(os.Getenv(envGatewayAgents)),
 			RequireAuth:   gatewayRequireAuth(),
+			Policy:        policy,
 		})
 	}
-	return middleware.DefaultChain()
+	return middleware.DefaultChain(middleware.WithPolicy(policy))
+}
+
+// projectPolicy loads the project's .qsdev.yaml (when present) and derives the
+// Guardrail permission policy from its tools.disabled list via the single shared
+// middleware.PolicyFromConfig derivation (the same one qsdev_policy_check reports
+// from). A missing or unparseable config yields a nil policy: enforcement stays
+// permissive-by-default rather than failing server startup — a broken or absent
+// config must never take the MCP server down, only leave it un-narrowed.
+func projectPolicy(root string) *middleware.Policy {
+	if root == "" {
+		return nil
+	}
+	path := filepath.Join(root, branding.Get().ConfigFile)
+	cfg, err := qsdevconfig.ParseQsdevConfig(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("could not parse project config for MCP guardrail policy; enforcement stays permissive",
+				"path", path, "error", err)
+		}
+		return nil
+	}
+	return middleware.PolicyFromConfig(cfg)
 }
 
 // gatewayRequireAuth reports whether gateway allow-list authorization is being

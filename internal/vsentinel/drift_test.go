@@ -122,7 +122,10 @@ golang.org/x/sys v0.20.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=
 			wantDrift:     map[string]int{"javascript": 1},
 		},
 		{
-			name: "missing lockfile",
+			// A manifest with no lockfile is the most dangerous (fully
+			// unpinned) state and must fail closed: report the manifest with
+			// drift, not silently skip it.
+			name: "missing lockfile is drift",
 			files: map[string]string{
 				"go.mod": `module example.com/test
 
@@ -133,8 +136,8 @@ require (
 )
 `,
 			},
-			wantManifests: 0,
-			wantDrift:     nil,
+			wantManifests: 1,
+			wantDrift:     map[string]int{"go": 1},
 		},
 		{
 			name: "cargo no drift",
@@ -244,5 +247,102 @@ github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXl
 	}
 	if entry.LockedVersion != "v1.8.4" {
 		t.Errorf("locked = %q, want %q", entry.LockedVersion, "v1.8.4")
+	}
+}
+
+// TestDetectDrift_MissingLockfileIsDrift asserts the fail-closed behaviour:
+// a manifest present without its lockfile must be surfaced as drift for every
+// covered ecosystem, not silently dropped from the report.
+func TestDetectDrift_MissingLockfileIsDrift(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		manifest string
+		content  string
+		eco      string
+	}{
+		{"go.mod without go.sum", "go.mod", "module example.com/x\n\ngo 1.22\n", "go"},
+		{"package.json without lock", "package.json", `{"name":"x","dependencies":{"express":"^4.18.0"}}`, "javascript"},
+		{"Cargo.toml without lock", "Cargo.toml", "[package]\nname = \"x\"\n\n[dependencies]\nserde = \"1.0\"\n", "rust"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeFixtures(t, dir, map[string]string{tc.manifest: tc.content})
+
+			report, err := DetectDrift(dir)
+			if err != nil {
+				t.Fatalf("DetectDrift() error = %v", err)
+			}
+			if len(report.Manifests) != 1 {
+				t.Fatalf("manifest count = %d, want 1 (missing lockfile must fail closed)", len(report.Manifests))
+			}
+			m := report.Manifests[0]
+			if m.Ecosystem != tc.eco {
+				t.Errorf("ecosystem = %q, want %q", m.Ecosystem, tc.eco)
+			}
+			if m.DriftCount < 1 {
+				t.Errorf("DriftCount = %d, want >= 1 for a missing lockfile", m.DriftCount)
+			}
+		})
+	}
+}
+
+// TestJSSemverSatisfies_DowngradeIsDrift asserts that a within-major downgrade
+// below the declared floor is flagged (not treated as satisfied), plus the
+// tilde and exact boundaries.
+func TestJSSemverSatisfies_DowngradeIsDrift(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		constraint string
+		locked     string
+		want       bool // true == satisfies (no drift)
+	}{
+		{"^4.18.0", "4.0.0", false},   // downgrade below floor -> drift
+		{"^4.18.0", "4.19.2", true},   // within major, above floor -> ok
+		{"^4.18.0", "5.0.0", false},   // out of major -> drift
+		{"^4.18.0", "4.18.0", true},   // exact floor -> ok
+		{"~4.18.0", "4.18.5", true},   // within minor -> ok
+		{"~4.18.0", "4.19.0", false},  // next minor -> drift
+		{"~4.18.0", "4.17.9", false},  // below floor -> drift
+		{"4.17.21", "4.17.21", true},  // exact pin match
+		{"4.17.21", "4.17.20", false}, // exact pin mismatch (downgrade)
+	}
+
+	for _, tc := range cases {
+		got := jsSemverSatisfies(tc.constraint, tc.locked)
+		if got != tc.want {
+			t.Errorf("jsSemverSatisfies(%q, %q) = %v, want %v", tc.constraint, tc.locked, got, tc.want)
+		}
+	}
+}
+
+// TestCargoSemverSatisfies_BoundaryFalseNegative asserts the segment-aware
+// cargo comparison no longer accepts "10.0.0" for a declared "1" (the old
+// string-prefix false negative), while keeping legitimate caret matches.
+func TestCargoSemverSatisfies_BoundaryFalseNegative(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		constraint string
+		locked     string
+		want       bool
+	}{
+		{"1", "10.0.0", false},   // boundary false negative must be rejected
+		{"1", "1.5.0", true},     // caret major -> ok
+		{"1.0", "1.0.203", true}, // caret from bare "1.0" -> ok
+		{"1.0", "2.0.1", false},  // next major -> drift
+		{"1.0", "0.9.0", false},  // below floor -> drift
+	}
+
+	for _, tc := range cases {
+		got := semverSatisfies(tc.constraint, tc.locked, '^')
+		if got != tc.want {
+			t.Errorf("semverSatisfies(%q, %q, '^') = %v, want %v", tc.constraint, tc.locked, got, tc.want)
+		}
 	}
 }

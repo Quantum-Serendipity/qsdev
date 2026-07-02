@@ -20,29 +20,20 @@ var redactedReflectVal = reflect.ValueOf(redacted)
 // Redactor scrubs secret values from log attributes.
 type Redactor struct {
 	valuePatterns []*regexp.Regexp
-	keyDeny       map[string]bool
-	envNames      map[string]bool
 	urlCredRe     *regexp.Regexp
+	nameValRe     *regexp.Regexp
 }
 
 // NewRedactor creates a Redactor with default secret patterns.
 func NewRedactor() *Redactor {
-	r := &Redactor{
-		keyDeny:  make(map[string]bool, len(secrets.SensitiveKeyPatterns)),
-		envNames: make(map[string]bool, len(secrets.KnownCredentialVars)),
+	return &Redactor{
+		valuePatterns: compileValuePatterns(),
+		urlCredRe:     regexp.MustCompile(`://[^:@\s]+:[^:@\s]+@`),
+		// Matches "NAME=value" and "NAME: value" pairs so a sensitive credential
+		// NAME (e.g. DATABASE_PASSWORD) redacts its value even when the value
+		// itself matches no credential-shape pattern.
+		nameValRe: regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*(\S+)`),
 	}
-
-	for _, p := range secrets.SensitiveKeyPatterns {
-		r.keyDeny[strings.ToLower(p)] = true
-	}
-	for _, v := range secrets.KnownCredentialVars {
-		r.envNames[v] = true
-	}
-
-	r.valuePatterns = compileValuePatterns()
-	r.urlCredRe = regexp.MustCompile(`://[^:@\s]+:[^:@\s]+@`)
-
-	return r
 }
 
 func compileValuePatterns() []*regexp.Regexp {
@@ -94,7 +85,11 @@ func (r *Redactor) RedactAttr(a slog.Attr) slog.Attr {
 	return a
 }
 
-// RedactString scrubs secret patterns from a string value.
+// RedactString scrubs secret patterns from a string value. It runs the
+// value-shape passes (AKIA…, ghp_…, JWT, PEM, …) and URL-userinfo stripping,
+// then a NAME=value pass that redacts the value of any sensitive credential
+// variable — closing the leak where a keyword-less secret (DATABASE_PASSWORD=…,
+// BW_SESSION=…) has no recognizable value shape.
 func (r *Redactor) RedactString(s string) string {
 	for _, p := range r.valuePatterns {
 		s = p.ReplaceAllString(s, redacted)
@@ -102,7 +97,27 @@ func (r *Redactor) RedactString(s string) string {
 	if r.urlCredRe.MatchString(s) {
 		s = r.redactURLCredentials(s)
 	}
-	return s
+	return r.redactNamedValues(s)
+}
+
+// redactNamedValues redacts the VALUE of any "NAME=value" or "NAME: value" pair
+// whose NAME is a sensitive credential variable (per secrets.IsSensitiveName).
+// The NAME and separator are preserved; only the value is replaced. It is
+// conservative — a non-sensitive name such as PATH=/usr/bin or KEYBOARD=us is
+// left untouched.
+func (r *Redactor) redactNamedValues(s string) string {
+	if !strings.ContainsAny(s, "=:") {
+		return s
+	}
+	return r.nameValRe.ReplaceAllStringFunc(s, func(m string) string {
+		sub := r.nameValRe.FindStringSubmatch(m)
+		if len(sub) != 3 || !secrets.IsSensitiveName(sub[1]) {
+			return m
+		}
+		// sub[2] (the value) is the suffix of the match; keep the "NAME<sep>"
+		// prefix (including any surrounding whitespace) and redact only the value.
+		return m[:len(m)-len(sub[2])] + redacted
+	})
 }
 
 func (r *Redactor) redactURLCredentials(s string) string {
@@ -114,55 +129,13 @@ func (r *Redactor) redactURLCredentials(s string) string {
 	return u.String()
 }
 
-// isKeyDenied checks whether an attribute key indicates a secret value.
-// Uses word-boundary matching: "token" matches but "tokenizer" does not.
+// isKeyDenied checks whether an attribute key indicates a secret value. It
+// delegates to secrets.IsSensitiveName — the single shared credential-name
+// predicate — so the exact canon (KnownCredentialVars) and the token-boundary
+// keyword match ("token" matches, "tokenizer" does not) stay unified across the
+// slog attr path, the NAME=value message path, and the env probe.
 func (r *Redactor) isKeyDenied(key string) bool {
-	lower := strings.ToLower(key)
-
-	if r.envNames[key] || r.envNames[strings.ToUpper(key)] {
-		return true
-	}
-
-	// Normalize hyphens to underscores so "api-key" matches "api_key".
-	normalized := strings.ReplaceAll(lower, "-", "_")
-
-	for pattern := range r.keyDeny {
-		if matchesWordBoundary(lower, pattern) || matchesWordBoundary(normalized, pattern) {
-			return true
-		}
-	}
-	return false
-}
-
-// matchesWordBoundary checks if pattern appears in s at a word boundary.
-// A word boundary is: start/end of string, underscore, hyphen, or transition
-// between non-letter and letter.
-func matchesWordBoundary(s, pattern string) bool {
-	idx := strings.Index(s, pattern)
-	if idx < 0 {
-		return false
-	}
-
-	if idx > 0 {
-		prev := s[idx-1]
-		if isWordChar(prev) && prev != '_' && prev != '-' {
-			return false
-		}
-	}
-
-	end := idx + len(pattern)
-	if end < len(s) {
-		next := s[end]
-		if isWordChar(next) && next != '_' && next != '-' {
-			return false
-		}
-	}
-
-	return true
-}
-
-func isWordChar(c byte) bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+	return secrets.IsSensitiveName(key)
 }
 
 // RedactStructured returns a redacted copy of a JSON-serializable value tree,

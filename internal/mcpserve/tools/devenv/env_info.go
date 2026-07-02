@@ -15,6 +15,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 )
 
@@ -34,32 +35,27 @@ type envInfo struct {
 
 func newEnvInfo(projectRoot string) *envInfo { return &envInfo{projectRoot: projectRoot} }
 
-// sensitiveEnvSubstrings/Prefixes identify environment variable names whose
-// values must never be emitted. Matching is on the upper-cased name only; the
-// value is replaced with a "[FILTERED]" marker. This source-side filtering is
-// defense-in-depth alongside the ContentSafety middleware, which also redacts
-// secret-shaped values from results.
-var (
-	sensitiveEnvSubstrings = []string{
-		"TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "PRIVATE",
-		"SESSION", "APIKEY", "API_KEY", "ACCESS_KEY", "AUTH", "_KEY", "KEY_",
-	}
-	sensitiveEnvPrefixes = []string{"AWS_", "AZURE_", "GCP_", "GOOGLE_", "GH_", "GITHUB_"}
-)
+// sensitiveEnvPrefixes identify cloud-provider environment variable namespaces
+// whose values must never be emitted, even when the specific name carries no
+// credential keyword (e.g. GCP_PROJECT, GOOGLE_CLOUD_PROJECT). This source-side
+// filtering is defense-in-depth alongside the ContentSafety middleware, which
+// also redacts secret-shaped values from results.
+var sensitiveEnvPrefixes = []string{"AWS_", "AZURE_", "GCP_", "GOOGLE_", "GH_", "GITHUB_"}
 
 // isSensitiveEnv reports whether the named variable's value must be withheld.
+// The keyword match delegates to the shared secrets.MatchesSensitiveKeyPattern
+// predicate (token-boundary: password/secret/token/session/passwd/pwd/access_key/
+// key/…), so this probe, the log redactor, and the external-log scrubber share
+// one authority. The pattern predicate — rather than IsSensitiveName — is used so
+// a connection var whose credential lives in its VALUE (e.g. DATABASE_URL) is
+// still value-scrubbed (host preserved) rather than withheld wholesale.
 func isSensitiveEnv(name string) bool {
-	up := strings.ToUpper(name)
-	if up == "KEY" || strings.HasSuffix(up, "_KEY") || up == "PRIVATE_KEY" {
+	if secrets.MatchesSensitiveKeyPattern(name) {
 		return true
 	}
+	up := strings.ToUpper(name)
 	for _, p := range sensitiveEnvPrefixes {
 		if strings.HasPrefix(up, p) {
-			return true
-		}
-	}
-	for _, s := range sensitiveEnvSubstrings {
-		if strings.Contains(up, s) {
 			return true
 		}
 	}

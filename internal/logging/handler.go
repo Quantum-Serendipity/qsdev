@@ -25,7 +25,7 @@ func (h *RedactingHandler) Enabled(ctx context.Context, level slog.Level) bool {
 }
 
 func (h *RedactingHandler) Handle(ctx context.Context, r slog.Record) error {
-	scrubbed := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
+	scrubbed := slog.NewRecord(r.Time, r.Level, h.redactor.RedactString(r.Message), r.PC)
 	r.Attrs(func(a slog.Attr) bool {
 		scrubbed.AddAttrs(h.redactor.RedactAttr(a))
 		return true

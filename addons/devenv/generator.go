@@ -105,17 +105,27 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 		files = append(files, *podmanGuide)
 	}
 
-	// 6. Profile-driven configs (CI workflow, Renovate/Dependabot, security docs)
+	// 6. Profile-driven configs (CI workflow, Renovate/Dependabot, security docs).
 	// Requires tier >= Standard: these are opinionated workflow configs.
+	// This InfraProfile.ConfigFiles path is the SOLE generator of the project CI /
+	// security-scan workflow (the former internal/cigeneration workflow producer was
+	// dead code and has been removed).
 	t := tier.Resolve(answers.Tier, answers.PermissionLevel, answers.MCPServers)
 	if t >= tier.Standard && g.profileRegistry != nil {
 		profileName := answers.ProfileName
+		explicit := profileName != ""
 		if profileName == "" {
 			profileName = "consulting-default"
 		}
 		p, ok := g.profileRegistry.Get(profileName)
-		if ok {
+		switch {
+		case ok:
 			files = append(files, p.ConfigFiles()...)
+		case explicit:
+			// An explicit --infra-profile that does not resolve is a user error, not
+			// a silent no-op that drops CI/renovate/dependabot configs. Mirror the
+			// project --profile hard-error (addons/devinit/commands.go).
+			return nil, fmt.Errorf("unknown infra profile %q; use --list-profiles to see available profiles", profileName)
 		}
 	}
 

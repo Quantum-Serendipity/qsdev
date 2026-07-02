@@ -144,6 +144,14 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 			result.Infrastructure.RegistryProxyOverrides[k] = v
 		}
 	}
+	if len(overlay.Infrastructure.RegistryProxyPaths) > 0 {
+		if result.Infrastructure.RegistryProxyPaths == nil {
+			result.Infrastructure.RegistryProxyPaths = make(map[string]string)
+		}
+		for k, v := range overlay.Infrastructure.RegistryProxyPaths {
+			result.Infrastructure.RegistryProxyPaths[k] = v
+		}
+	}
 	if overlay.Infrastructure.NixCache != "" {
 		result.Infrastructure.NixCache = overlay.Infrastructure.NixCache
 	}
@@ -338,6 +346,13 @@ func cloneQsdevConfig(cfg *types.QsdevConfig) *types.QsdevConfig {
 		result.Infrastructure.RegistryProxyOverrides = make(map[string]string, len(cfg.Infrastructure.RegistryProxyOverrides))
 		for k, v := range cfg.Infrastructure.RegistryProxyOverrides {
 			result.Infrastructure.RegistryProxyOverrides[k] = v
+		}
+	}
+
+	if len(cfg.Infrastructure.RegistryProxyPaths) > 0 {
+		result.Infrastructure.RegistryProxyPaths = make(map[string]string, len(cfg.Infrastructure.RegistryProxyPaths))
+		for k, v := range cfg.Infrastructure.RegistryProxyPaths {
+			result.Infrastructure.RegistryProxyPaths[k] = v
 		}
 	}
 

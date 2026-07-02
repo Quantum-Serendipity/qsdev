@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -40,8 +41,10 @@ func TestAlwaysOnTools_StandardTier(t *testing.T) {
 
 // TestStandardTier_MCPGeneratedNoFullOnlyArtifacts verifies DEFECT-5: at the
 // standard tier, configured MCP servers DO materialize .mcp.json, while
-// Full-only artifacts (consulting agents, operation skills such as the
-// postmortem agent) remain gated out.
+// genuinely Full-only artifacts (consulting agents, operation skills, the qsdev
+// reference doc) remain gated out. The always-on agent-postmortem skill is NOT
+// a Full-only artifact: it is advertised in CLAUDE.md at Standard, so its
+// SKILL.md must be present too (BL-P1-9).
 func TestStandardTier_MCPGeneratedNoFullOnlyArtifacts(t *testing.T) {
 	reg := newTestRegistry(t, goMock())
 	answers := types.WizardAnswers{
@@ -57,17 +60,77 @@ func TestStandardTier_MCPGeneratedNoFullOnlyArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var sawMCP bool
+	var sawMCP, sawPostmortem bool
 	for _, f := range files {
 		if f.Path == ".mcp.json" {
 			sawMCP = true
 		}
-		if strings.Contains(f.Path, "agent-postmortem") {
-			t.Error("postmortem skill should not be generated at Standard tier")
+		if f.Path == ".claude/skills/agent-postmortem/SKILL.md" {
+			sawPostmortem = true
+		}
+		// Full-only surfaces must remain gated out at Standard.
+		if f.Path == ".claude/qsdev-reference.md" {
+			t.Error("qsdev reference doc should not be generated at Standard tier")
+		}
+		if strings.HasPrefix(f.Path, ".claude/agents/") {
+			t.Errorf("consulting agent %q should not be generated at Standard tier", f.Path)
 		}
 	}
 	if !sawMCP {
 		t.Error("MCP config should be generated at Standard tier when MCP servers are configured (DEFECT-5)")
+	}
+	if !sawPostmortem {
+		t.Error("always-on agent-postmortem SKILL.md should be generated at Standard tier (BL-P1-9)")
+	}
+}
+
+// TestAlwaysOnGenerateFuncs_NonNilBelowFull asserts that the catalog-derived
+// always-on agent-tool generators (agent-postmortem, version-sentinel) produce
+// files below the Full tier when their toggle is enabled. Regression guard for
+// BL-P1-9: previously these GenerateFuncs self-gated on Full and returned
+// (nil, nil) at Standard, so the enable path wrote only the CLAUDE.md section.
+func TestAlwaysOnGenerateFuncs_NonNilBelowFull(t *testing.T) {
+	reg := toolreg.DefaultRegistry()
+	cases := []struct {
+		tool    string
+		answers types.WizardAnswers
+	}{
+		{
+			tool: "agent-postmortem",
+			answers: types.WizardAnswers{
+				Tier:       "standard",
+				AgentTools: types.AgentToolsAnswers{PostmortemEnabled: true},
+			},
+		},
+		{
+			tool: "version-sentinel",
+			answers: types.WizardAnswers{
+				Tier:       "standard",
+				AgentTools: types.AgentToolsAnswers{VersionSentinel: true},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.tool, func(t *testing.T) {
+			tool, ok := reg.ByName(tc.tool)
+			if !ok {
+				t.Fatalf("tool %q not registered", tc.tool)
+			}
+			// "always-on" is derived from the catalog policy, not a hardcoded set.
+			if tool.Default != toolreg.AlwaysOn {
+				t.Fatalf("expected %q to be catalog default_policy always-on, got %v", tc.tool, tool.Default)
+			}
+			if tool.GenerateFunc == nil {
+				t.Fatalf("tool %q has no GenerateFunc attached", tc.tool)
+			}
+			gotFiles, err := tool.GenerateFunc(tc.answers)
+			if err != nil {
+				t.Fatalf("GenerateFunc(%q) error: %v", tc.tool, err)
+			}
+			if len(gotFiles) == 0 {
+				t.Errorf("always-on tool %q generated no files below Full; expected non-nil", tc.tool)
+			}
+		})
 	}
 }
 

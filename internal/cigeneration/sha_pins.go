@@ -1,3 +1,13 @@
+// Package cigeneration provides the canonical catalog of SHA-pinned GitHub
+// Action references (ActionRef) shared by the workflow emitters in
+// internal/gitworkflow and internal/teamreport.
+//
+// It no longer generates CI workflows itself: the former CIFragmentProducer /
+// GenerateWorkflow machinery was unreachable dead code (wired to no producer in
+// the fragment accumulator) and was removed. Project CI/security-scan workflows
+// are generated solely via the infrastructure-profile path — see
+// InfraProfile.ConfigFiles (internal/profile), invoked from
+// DevenvGenerator.Generate (addons/devenv/generator.go).
 package cigeneration
 
 import "fmt"

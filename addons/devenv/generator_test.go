@@ -1,9 +1,11 @@
 package devenv_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -173,6 +175,60 @@ func TestGenerate_ErrorOnUnknownLanguage(t *testing.T) {
 
 	// The devenv.nix generator (BuildDevenvNixData) also errors on unknown modules.
 	// Either that or our SecurityConfigs lookup should produce an error.
+}
+
+// TestGenerate_UnknownInfraProfileErrors is a regression test for BL-P1-15.
+// An explicit --infra-profile that does not resolve previously exited 0 and
+// silently dropped the profile-driven CI/renovate/dependabot configs. It must
+// now hard-error, mirroring the project --profile path.
+func TestGenerate_UnknownInfraProfileErrors(t *testing.T) {
+	reg := ecosystem.NewRegistry()
+	_ = reg.Register(&ecosystem.MockModule{
+		NameVal:        "go",
+		DisplayNameVal: "Go",
+		TierVal:        1,
+	})
+
+	answers := types.WizardAnswers{
+		Languages:   []types.LanguageChoice{{Name: "go", Version: "1.24"}},
+		Tier:        "standard", // profile branch requires tier >= Standard
+		ProfileName: "does-not-exist",
+	}
+
+	gen := devenv.NewDevenvGenerator(reg, devenv.WithProfileRegistry(profile.DefaultProfileRegistry()))
+	_, err := gen.Generate(answers)
+	if err == nil {
+		t.Fatal("expected error for unknown infra profile, got nil")
+	}
+	if !strings.Contains(err.Error(), "does-not-exist") {
+		t.Errorf("error should name the unknown profile, got: %v", err)
+	}
+}
+
+// TestGenerate_KnownInfraProfileSucceeds confirms the happy path still emits
+// the profile-driven config files (guards against BL-P1-15 over-correcting).
+func TestGenerate_KnownInfraProfileSucceeds(t *testing.T) {
+	reg := ecosystem.NewRegistry()
+	_ = reg.Register(&ecosystem.MockModule{
+		NameVal:        "go",
+		DisplayNameVal: "Go",
+		TierVal:        1,
+	})
+
+	answers := types.WizardAnswers{
+		Languages:   []types.LanguageChoice{{Name: "go", Version: "1.24"}},
+		Tier:        "standard",
+		ProfileName: "consulting-default",
+	}
+
+	gen := devenv.NewDevenvGenerator(reg, devenv.WithProfileRegistry(profile.DefaultProfileRegistry()))
+	files, err := gen.Generate(answers)
+	if err != nil {
+		t.Fatalf("Generate returned error for known profile: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("expected generated files for known profile")
+	}
 }
 
 // pathKeys extracts file paths from a slice of GeneratedFile for diagnostics.

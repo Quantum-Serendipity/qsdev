@@ -14,6 +14,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/surgery"
+	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -114,6 +115,14 @@ func writeToolFiles(tool *toolreg.Tool, toolName, projectRoot string, answers ty
 		if err != nil {
 			return nil, fmt.Errorf("generating files for %q: %w", toolName, err)
 		}
+		// Honesty guard: a tool that declares exclusive files but produced none
+		// is being suppressed (typically by a tier gate in its GenerateFunc).
+		// Refuse loudly here — before writing the CLAUDE.md advertisement or any
+		// shared section — instead of reporting a false success with the tool's
+		// SKILL.md silently omitted (BL-P1-9).
+		if len(generated) == 0 && len(tool.ExclusiveFiles()) > 0 {
+			return nil, unsatisfiedTierError(toolName, answers)
+		}
 		for _, f := range generated {
 			absPath := filepath.Join(projectRoot, f.Path)
 			mode := f.Mode
@@ -155,6 +164,19 @@ func writeToolFiles(tool *toolreg.Tool, toolName, projectRoot string, answers ty
 	}
 
 	return writtenFiles, nil
+}
+
+// unsatisfiedTierError builds an actionable error for a tool whose generation
+// was suppressed (it declares exclusive files but produced none) at the current
+// tier. This keeps enable honest: a loud, fixable error instead of a false
+// success that leaves the tool's configuration files silently missing.
+func unsatisfiedTierError(toolName string, answers types.WizardAnswers) error {
+	app := branding.Get().AppName
+	t := tier.Resolve(answers.Tier, answers.PermissionLevel, answers.MCPServers)
+	return fmt.Errorf(
+		"tool %q generated no configuration files at the %q tier: it requires a higher tier to produce its files. "+
+			"Raise the tier (e.g. run '%s init --tier full') and re-run '%s enable %s'",
+		toolName, t.String(), app, app, toolName)
 }
 
 // saveEnableState loads the current state file, records newly written files,

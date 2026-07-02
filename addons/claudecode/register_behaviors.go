@@ -72,11 +72,14 @@ func mcpServerContentFunc(serverName string) toolreg.SharedContentFunc {
 }
 
 func registerAgentToolGenerators(r *toolreg.Registry) {
+	// agent-postmortem and version-sentinel are catalog default_policy: always-on
+	// (see internal/catalog/defaults.yaml). Always-on tools are emitted regardless
+	// of tier by the generator's AlwaysOn loop (generator.go, gated on
+	// tool.Default == toolreg.AlwaysOn) and by the enable path. These GenerateFuncs
+	// therefore must NOT self-gate on tier — doing so caused CLAUDE.md to advertise
+	// the skill at Standard while its SKILL.md was silently omitted (BL-P1-9).
 	r.AttachBehavior("agent-postmortem", toolreg.ToolBehavior{
 		GenerateFunc: func(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
-			if resolveTier(answers) < tier.Full {
-				return nil, nil
-			}
 			registry := ecosystem.DefaultRegistry()
 			f, err := generatePostmortemSkill(answers, registry)
 			if err != nil {
@@ -91,9 +94,6 @@ func registerAgentToolGenerators(r *toolreg.Registry) {
 
 	r.AttachBehavior("version-sentinel", toolreg.ToolBehavior{
 		GenerateFunc: func(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
-			if resolveTier(answers) < tier.Full {
-				return nil, nil
-			}
 			registry := ecosystem.DefaultRegistry()
 			return generateVersionSentinelFiles(answers, registry)
 		},

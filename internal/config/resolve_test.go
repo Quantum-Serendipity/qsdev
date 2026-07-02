@@ -17,6 +17,71 @@ func TestResolveConfig_OrgDefaultsOnly(t *testing.T) {
 	}
 }
 
+// TestResolveConfig_RegistryProxyPathsSurvives is a regression test for
+// BL-P1-11: cloneQsdevConfig and deepMerge previously copied every InfraConfig
+// field EXCEPT RegistryProxyPaths, so the field was silently dropped on the
+// first clone during resolution even though pkg/ecosystem/helpers.go consumes it.
+func TestResolveConfig_RegistryProxyPathsSurvives(t *testing.T) {
+	project := &types.QsdevConfig{
+		Version: types.ConfigVersionCurrent,
+		Infrastructure: types.InfraConfig{
+			RegistryProxy:      "https://proxy.example.com",
+			RegistryProxyPaths: map[string]string{"npm": "/repository/npm", "pypi": "/repository/pypi"},
+		},
+	}
+
+	result, err := ResolveConfig(nil, nil, project, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := result.Config.Infrastructure.RegistryProxyPaths
+	if got == nil {
+		t.Fatal("RegistryProxyPaths was dropped during ResolveConfig (want it to survive)")
+	}
+	if got["npm"] != "/repository/npm" {
+		t.Errorf("RegistryProxyPaths[npm] = %q, want %q", got["npm"], "/repository/npm")
+	}
+	if got["pypi"] != "/repository/pypi" {
+		t.Errorf("RegistryProxyPaths[pypi] = %q, want %q", got["pypi"], "/repository/pypi")
+	}
+
+	// The clone must be independent of the input map (no aliasing).
+	got["npm"] = "mutated"
+	if project.Infrastructure.RegistryProxyPaths["npm"] != "/repository/npm" {
+		t.Error("mutating resolved RegistryProxyPaths mutated the input project config (aliased, not cloned)")
+	}
+}
+
+// TestResolveConfig_RegistryProxyPathsMerge verifies deepMerge unions
+// RegistryProxyPaths from a lower-priority layer with an overlay (BL-P1-11).
+func TestResolveConfig_RegistryProxyPathsMerge(t *testing.T) {
+	org := &types.QsdevConfig{
+		Infrastructure: types.InfraConfig{
+			RegistryProxyPaths: map[string]string{"npm": "/org/npm"},
+		},
+	}
+	project := &types.QsdevConfig{
+		Version: types.ConfigVersionCurrent,
+		Infrastructure: types.InfraConfig{
+			RegistryProxyPaths: map[string]string{"cargo": "/project/cargo"},
+		},
+	}
+
+	result, err := ResolveConfig(org, nil, project, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := result.Config.Infrastructure.RegistryProxyPaths
+	if got["npm"] != "/org/npm" {
+		t.Errorf("RegistryProxyPaths[npm] = %q, want %q (org layer lost)", got["npm"], "/org/npm")
+	}
+	if got["cargo"] != "/project/cargo" {
+		t.Errorf("RegistryProxyPaths[cargo] = %q, want %q (project layer lost)", got["cargo"], "/project/cargo")
+	}
+}
+
 func TestResolveConfig_ProfileOverridesOrg(t *testing.T) {
 	org := DefaultQsdevConfig()
 	profile := &types.QsdevConfig{

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
@@ -244,27 +245,18 @@ func TestTranslatePermissions_EmitsDenyRules(t *testing.T) {
 		t.Fatalf("emitted settings.json is not valid JSON: %v", err)
 	}
 
-	if !contains(settings.Permissions.Deny, "Bash(rm -rf /)") {
+	if !slices.Contains(settings.Permissions.Deny, "Bash(rm -rf /)") {
 		t.Errorf("emitted deny list %v does not contain policy deny rule %q",
 			settings.Permissions.Deny, "Bash(rm -rf /)")
 	}
-	if !contains(settings.Permissions.Allow, "Bash(go test *)") {
+	if !slices.Contains(settings.Permissions.Allow, "Bash(go test *)") {
 		t.Errorf("emitted allow list %v does not contain policy allow rule %q",
 			settings.Permissions.Allow, "Bash(go test *)")
 	}
-	if !contains(settings.Permissions.Ask, "Bash(git push *)") {
+	if !slices.Contains(settings.Permissions.Ask, "Bash(git push *)") {
 		t.Errorf("emitted ask list %v does not contain policy ask rule %q",
 			settings.Permissions.Ask, "Bash(git push *)")
 	}
-}
-
-func contains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
 }
 
 func TestContractSuite(t *testing.T) {

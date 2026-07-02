@@ -59,7 +59,10 @@ func BashDenyRules(provider CloudProvider) []string {
 	case AWS:
 		return []string{
 			"Bash(aws configure set *)",
-			"Bash(aws sts get-session-token *)",
+			// No space before the glob: the bare, arg-less `aws sts get-session-token`
+			// still prints temporary credentials to stdout, so the rule must match the
+			// subcommand with or without trailing arguments (F-CAP-11.1-1).
+			"Bash(aws sts get-session-token*)",
 			"Bash(aws sts assume-role *)",
 			"Bash(cat ~/.aws/credentials*)",
 			"Bash(cat ~/.aws/config*)",

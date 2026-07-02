@@ -42,8 +42,9 @@ func ensureInit() error {
 			{filepath.Join(home, ".claude", "settings.json"), "claude-settings"},
 			{filepath.Join(home, ".claude", "settings.local.json"), "claude-settings"},
 			{filepath.Join(home, ".claude", "managed-settings.json"), "claude-settings"},
-			{filepath.Join(home, ".claude", "hooks") + string(filepath.Separator), "claude-settings"},
-			{filepath.Join(home, ".claude", "agents") + string(filepath.Separator), "claude-settings"},
+			// ~/.claude/hooks/ and ~/.claude/agents/ need no entries here: the
+			// protectedClaudeSubdirs segment check in IsProtected covers those
+			// subdirectories wherever the .claude directory lives, home included.
 			{"/etc/gdev/", "system-config"},
 			{"/etc/claude-code/", "system-config"},
 		}
@@ -214,18 +215,19 @@ var protectedSubstringPatterns = []string{
 }
 
 // protectedDirTokens are the bare protected directory names (no trailing
-// separator). ContainsProtectedPath matches these when they appear as a complete
-// path segment, so a whole-directory operation like `rm -rf .claude` or
-// `find .claude -delete` is caught. The boundary check prevents over-matching a
-// longer name that merely embeds a token (`my.claude.bak`, `foo.claudex`,
-// `my.claude`).
-var protectedDirTokens = []string{
-	".claude",
-	".qsdev",
-	".gdev",
-	"/etc/gdev",
-	"/etc/claude-code",
-}
+// separator), derived from protectedSubstringPatterns so the two lists cannot
+// drift apart. ContainsProtectedPath matches these when they appear as a
+// complete path segment, so a whole-directory operation like `rm -rf .claude`
+// or `find .claude -delete` is caught. The boundary check prevents
+// over-matching a longer name that merely embeds a token (`my.claude.bak`,
+// `foo.claudex`, `my.claude`).
+var protectedDirTokens = func() []string {
+	tokens := make([]string, len(protectedSubstringPatterns))
+	for i, p := range protectedSubstringPatterns {
+		tokens[i] = strings.TrimSuffix(p, "/")
+	}
+	return tokens
+}()
 
 // protectedClaudeSubdirs are .claude subdirectories whose contents are protected
 // wherever the .claude directory lives (home config or project checkout): the

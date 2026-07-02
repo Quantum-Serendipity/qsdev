@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/config"
@@ -283,9 +284,12 @@ func buildConfigFileInfos(projectPath string, files map[string]types.FileState) 
 // buildEcosystemStatuses detects which ecosystems are present and whether
 // their lock files exist. When scanner is non-nil (a fresh scan was requested),
 // each present, OSV-covered lock file is scanned and its vulnerability counts
-// populated on the returned EcosystemStatus.
+// populated on the returned EcosystemStatus. The per-ecosystem scans run
+// concurrently — each writes only to its own slot — so the total scan time is
+// the slowest ecosystem rather than the sum of all of them.
 func buildEcosystemStatuses(detected types.DetectedProject, projectPath string, scanner *vulnscan.Scanner) []EcosystemStatus {
 	var statuses []EcosystemStatus
+	var lockPaths []string // index-aligned with statuses; "" when no lock file
 	for name, present := range detected.Ecosystems {
 		if !present {
 			continue
@@ -310,10 +314,22 @@ func buildEcosystemStatuses(detected types.DetectedProject, projectPath string, 
 				status.LockFile = "n/a"
 			}
 		}
-		if scanner != nil && lockAbs != "" {
-			scanEcosystem(&status, scanner, lockAbs)
-		}
 		statuses = append(statuses, status)
+		lockPaths = append(lockPaths, lockAbs)
+	}
+	if scanner != nil {
+		var wg sync.WaitGroup
+		for i := range statuses {
+			if lockPaths[i] == "" {
+				continue
+			}
+			wg.Add(1)
+			go func(status *EcosystemStatus, lockAbs string) {
+				defer wg.Done()
+				scanEcosystem(status, scanner, lockAbs)
+			}(&statuses[i], lockPaths[i])
+		}
+		wg.Wait()
 	}
 	sort.Slice(statuses, func(i, j int) bool { return statuses[i].Name < statuses[j].Name })
 	return statuses

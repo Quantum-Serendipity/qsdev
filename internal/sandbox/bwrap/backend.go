@@ -132,17 +132,13 @@ func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 
 // warnUnappliedLayers emits a warning for each LSM layer the backend's tier
 // advertises but could not actually apply, so a reported tier never silently
-// overstates the isolation delivered. TierFull claims both Landlock and
-// seccomp; the two intermediate bwrap tiers each claim one of them.
+// overstates the isolation delivered.
 func (b *BubblewrapBackend) warnUnappliedLayers(landlockApplied, seccompApplied bool) {
-	claimsLandlock := b.tier == sandbox.TierFull || b.tier == sandbox.TierBwrapWithoutSeccomp
-	claimsSeccomp := b.tier == sandbox.TierFull || b.tier == sandbox.TierBwrapWithoutLandlock
-
-	if claimsLandlock && !landlockApplied {
+	if sandbox.TierClaimsLandlock(b.tier) && !landlockApplied {
 		slog.Warn("sandbox tier advertises Landlock but ll-restrict is unavailable; Landlock NOT applied",
 			"tier", b.tier.String())
 	}
-	if claimsSeccomp && !seccompApplied {
+	if sandbox.TierClaimsSeccomp(b.tier) && !seccompApplied {
 		slog.Warn("sandbox tier advertises seccomp but no BPF filter is available; seccomp NOT applied",
 			"tier", b.tier.String())
 	}

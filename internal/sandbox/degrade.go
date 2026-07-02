@@ -52,6 +52,19 @@ func TierMessage(tier DegradationTier) string {
 	}
 }
 
+// TierClaimsLandlock reports whether the tier advertises Landlock filesystem
+// restriction. TierFull claims both LSM layers; the two intermediate bwrap
+// tiers each claim one of them.
+func TierClaimsLandlock(tier DegradationTier) bool {
+	return tier == TierFull || tier == TierBwrapWithoutSeccomp
+}
+
+// TierClaimsSeccomp reports whether the tier advertises seccomp syscall
+// filtering.
+func TierClaimsSeccomp(tier DegradationTier) bool {
+	return tier == TierFull || tier == TierBwrapWithoutLandlock
+}
+
 // TierSecurityLevel returns a qualitative label for the tier's isolation level.
 func TierSecurityLevel(tier DegradationTier) string {
 	switch tier {

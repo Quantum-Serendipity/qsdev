@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -18,32 +16,6 @@ import (
 // the process command line.
 const passphraseDeprecationWarning = "warning: --password places the passphrase on the process command line " +
 	"(visible via ps(1) and /proc/<pid>/cmdline); prefer --password-file or --password-env"
-
-// resolvePassphrase resolves a passphrase from the first configured out-of-band
-// source, mirroring contentsign.SignOptions precedence: passwordFile, then
-// passwordEnv, then the in-memory literal. Sourcing the passphrase from a file
-// or environment variable keeps it off the process command line. The passphrase
-// is never logged or echoed. It is used by keygen, whose contentsign entrypoint
-// takes a plaintext password (sign passes the fields through to SignOptions).
-func resolvePassphrase(password, passwordFile, passwordEnv string) (string, error) {
-	if passwordFile != "" {
-		raw, err := os.ReadFile(passwordFile) //nolint:gosec // operator-supplied passphrase file.
-		if err != nil {
-			return "", fmt.Errorf("reading passphrase file %q: %w", passwordFile, err)
-		}
-		// Trim only trailing newlines: editors and echo/redirection append one,
-		// but a passphrase never legitimately ends in a newline.
-		return strings.TrimRight(string(raw), "\r\n"), nil
-	}
-	if passwordEnv != "" {
-		v, ok := os.LookupEnv(passwordEnv)
-		if !ok {
-			return "", fmt.Errorf("passphrase environment variable %q is not set", passwordEnv)
-		}
-		return v, nil
-	}
-	return password, nil
-}
 
 // errVerificationFailed is returned by `content verify` when the content is not
 // verified, so the process exits non-zero for CI gating.
@@ -196,7 +168,7 @@ line (where ps and /proc would expose it).`,
 			if cmd.Flags().Changed("password") {
 				fmt.Fprintln(cmd.ErrOrStderr(), passphraseDeprecationWarning)
 			}
-			pass, err := resolvePassphrase(password, passwordFile, passwordEnv)
+			pass, err := contentsign.ResolvePassphrase(password, passwordFile, passwordEnv)
 			if err != nil {
 				return err
 			}

@@ -104,20 +104,35 @@ func (r *Redactor) RedactString(s string) string {
 // whose NAME is a sensitive credential variable (per secrets.IsSensitiveName).
 // The NAME and separator are preserved; only the value is replaced. It is
 // conservative — a non-sensitive name such as PATH=/usr/bin or KEYBOARD=us is
-// left untouched.
+// left untouched. This runs on every log message and MCP tool result, so it
+// does a single regex pass over the submatch indexes rather than re-matching
+// each hit.
 func (r *Redactor) redactNamedValues(s string) string {
 	if !strings.ContainsAny(s, "=:") {
 		return s
 	}
-	return r.nameValRe.ReplaceAllStringFunc(s, func(m string) string {
-		sub := r.nameValRe.FindStringSubmatch(m)
-		if len(sub) != 3 || !secrets.IsSensitiveName(sub[1]) {
-			return m
+	matches := r.nameValRe.FindAllStringSubmatchIndex(s, -1)
+	if len(matches) == 0 {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	last := 0
+	for _, m := range matches {
+		// m holds pair offsets: match, group 1 (NAME), group 2 (value).
+		if !secrets.IsSensitiveName(s[m[2]:m[3]]) {
+			continue
 		}
-		// sub[2] (the value) is the suffix of the match; keep the "NAME<sep>"
-		// prefix (including any surrounding whitespace) and redact only the value.
-		return m[:len(m)-len(sub[2])] + redacted
-	})
+		// Keep everything through "NAME<sep>" and redact only the value.
+		b.WriteString(s[last:m[4]])
+		b.WriteString(redacted)
+		last = m[5]
+	}
+	if last == 0 {
+		return s
+	}
+	b.WriteString(s[last:])
+	return b.String()
 }
 
 func (r *Redactor) redactURLCredentials(s string) string {

@@ -4,10 +4,11 @@
 // poetry.lock, uv.lock, Pipfile.lock, requirements.txt), batches them to
 // OSV.dev, and aggregates the advisories by severity.
 //
-// The OSV interaction is a self-contained copy of the logic in the mcpserve
-// security_scan tool so that callers such as internal/posture can run a real
-// dependency scan without importing the MCP tool tree. The two copies are
-// intentionally duplicated for now; consolidating them is a follow-up cleanup.
+// This package is the single lock-file parsing and OSV client implementation:
+// internal/posture consumes the high-level ScanProject/ScanFile entry points,
+// while the mcpserve security_scan tool builds its threshold-filtered report
+// from the exported QueryBatch/FetchDetails primitives and the LockFile
+// helpers.
 package vulnscan
 
 import (
@@ -19,6 +20,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,6 +35,11 @@ const scanHTTPTimeout = 20 * time.Second
 // maxVulnDetailFetches caps how many unique vulnerability records the scanner
 // fetches full details for, bounding fan-out on a heavily-vulnerable project.
 const maxVulnDetailFetches = 200
+
+// detailFetchConcurrency bounds the parallel /v1/vulns/{id} detail fetches so
+// up to maxVulnDetailFetches records fit within the shared scan deadline
+// (sequential fetches could not) without hammering the OSV endpoint.
+const detailFetchConcurrency = 8
 
 // SeverityCounts aggregates vulnerabilities by normalized severity. An advisory
 // whose severity cannot be resolved to one of the named buckets is counted as
@@ -110,7 +117,7 @@ func (s *Scanner) baseURL() string {
 // ScanProject auto-detects the first supported lock file under projectRoot and
 // scans it. It returns (nil, nil) when no supported lock file is present.
 func (s *Scanner) ScanProject(ctx context.Context, projectRoot string) (*Result, error) {
-	lf, path, ok := detectLockFile(projectRoot)
+	lf, path, ok := DetectLockFile(projectRoot)
 	if !ok {
 		return nil, nil
 	}
@@ -122,7 +129,7 @@ func (s *Scanner) ScanProject(ctx context.Context, projectRoot string) (*Result,
 // not a lock format with OSV coverage — the caller then knows the ecosystem was
 // not scanned rather than confirmed vulnerability-free.
 func (s *Scanner) ScanFile(ctx context.Context, lockPath string) (*Result, error) {
-	lf, ok := lockFileForPath(lockPath)
+	lf, ok := LockFileForPath(lockPath)
 	if !ok {
 		return nil, nil
 	}
@@ -131,7 +138,7 @@ func (s *Scanner) ScanFile(ctx context.Context, lockPath string) (*Result, error
 
 // scan parses the lock file, queries OSV for the extracted dependencies, and
 // aggregates the advisories into a Result.
-func (s *Scanner) scan(ctx context.Context, lf lockFile, path string) (*Result, error) {
+func (s *Scanner) scan(ctx context.Context, lf LockFile, path string) (*Result, error) {
 	pkgs, err := lf.parse(path)
 	if err != nil {
 		return nil, fmt.Errorf("parsing lock file %q: %w", path, err)
@@ -148,7 +155,7 @@ func (s *Scanner) scan(ctx context.Context, lf lockFile, path string) (*Result, 
 	ctx, cancel := context.WithTimeout(ctx, scanHTTPTimeout)
 	defer cancel()
 
-	idsByQuery, err := s.queryBatch(ctx, pkgs)
+	idsByQuery, err := s.QueryBatch(ctx, pkgs)
 	if err != nil {
 		return nil, fmt.Errorf("querying OSV: %w", err)
 	}
@@ -194,10 +201,13 @@ type osvBatchResponse struct {
 	} `json:"results"`
 }
 
-// queryBatch POSTs the dependency set to /v1/querybatch and returns, per query
+// QueryBatch POSTs the dependency set to /v1/querybatch and returns, per query
 // index, the vulnerability ids OSV reported. The slice is index-aligned with
-// pkgs so callers can map a vuln back to the package that triggered it.
-func (s *Scanner) queryBatch(ctx context.Context, pkgs []Package) ([][]string, error) {
+// pkgs so callers can map a vuln back to the package that triggered it. It is
+// exported (together with FetchDetails) for consumers such as the mcpserve
+// security_scan tool that need the raw ids to build their own report shape.
+// Callers own the deadline: bound ctx before calling.
+func (s *Scanner) QueryBatch(ctx context.Context, pkgs []Package) ([][]string, error) {
 	reqBody := osvBatchRequest{Queries: make([]osvQuery, len(pkgs))}
 	for i, p := range pkgs {
 		reqBody.Queries[i] = osvQuery{
@@ -267,25 +277,40 @@ type osvVuln struct {
 	} `json:"database_specific"`
 }
 
+// Detail is the per-advisory subset of an OSV /v1/vulns/{id} record consumers
+// need to render or filter a finding. SeverityLabel is the raw
+// database_specific.severity string (e.g. "CRITICAL", "MODERATE"); it is left
+// unnormalized so consumers with different severity vocabularies (this package
+// folds unrecognized labels to "info", the mcpserve security_scan tool folds
+// them to "unknown") can apply their own mapping. A zero-value Detail (failed
+// or truncated fetch) carries an empty SeverityLabel.
+type Detail struct {
+	ID            string
+	Summary       string
+	SeverityLabel string
+	FixedIn       string
+	AdvisoryURL   string
+}
+
 // resolveVulns fetches details for each unique vulnerability id, maps it back to
 // the originating package, normalizes its severity, and returns the report list
 // in deterministic order.
 func (s *Scanner) resolveVulns(ctx context.Context, pkgs []Package, idsByQuery [][]string) []Vulnerability {
-	details := s.fetchDetails(ctx, idsByQuery)
+	details := s.FetchDetails(ctx, idsByQuery)
 
 	var reports []Vulnerability
 	for i, ids := range idsByQuery {
 		for _, id := range ids {
-			v := details[id]
+			d := details[id]
 			reports = append(reports, Vulnerability{
 				ID:          id,
 				Package:     pkgs[i].Name,
 				Version:     pkgs[i].Version,
 				Ecosystem:   pkgs[i].Ecosystem,
-				Severity:    normalizeSeverity(v),
-				FixedIn:     fixedVersion(v),
-				AdvisoryURL: advisoryURL(v),
-				Summary:     v.Summary,
+				Severity:    normalizeSeverity(d.SeverityLabel),
+				FixedIn:     d.FixedIn,
+				AdvisoryURL: d.AdvisoryURL,
+				Summary:     d.Summary,
 			})
 		}
 	}
@@ -298,12 +323,17 @@ func (s *Scanner) resolveVulns(ctx context.Context, pkgs []Package, idsByQuery [
 	return reports
 }
 
-// fetchDetails retrieves the OSV record for every unique vulnerability id (up to
-// maxVulnDetailFetches), returning a map keyed by id. Ids are sorted before
-// truncation so the fetched subset is deterministic. A failed fetch or an id
-// dropped by truncation leaves a zero-value record, which normalizeSeverity maps
-// to "info" — the vuln is still reported, never silently dropped.
-func (s *Scanner) fetchDetails(ctx context.Context, idsByQuery [][]string) map[string]osvVuln {
+// FetchDetails retrieves the OSV record for every unique vulnerability id (up
+// to maxVulnDetailFetches), returning a map keyed by id. Ids are deduplicated
+// and sorted before truncation so the fetched subset is deterministic. The
+// fetches fan out across a bounded worker pool (each goroutine writes only its
+// own index slot) so the whole set fits within the caller's deadline; the
+// output stays deterministic because it is keyed by the pre-sorted ids. A
+// failed fetch or an id dropped by truncation yields a zero-value Detail, whose
+// empty SeverityLabel consumers map to their "unknown" bucket — the vuln is
+// still reported, never silently dropped or given a fabricated severity.
+// Callers own the deadline: bound ctx before calling.
+func (s *Scanner) FetchDetails(ctx context.Context, idsByQuery [][]string) map[string]Detail {
 	unique := make(map[string]struct{})
 	for _, ids := range idsByQuery {
 		for _, id := range ids {
@@ -323,13 +353,34 @@ func (s *Scanner) fetchDetails(ctx context.Context, idsByQuery [][]string) map[s
 		ids = ids[:maxVulnDetailFetches]
 	}
 
-	details := make(map[string]osvVuln, len(ids))
-	for _, id := range ids {
-		if v, err := s.fetchVuln(ctx, id); err == nil {
-			details[id] = v
-		} else {
-			details[id] = osvVuln{ID: id}
-		}
+	slots := make([]Detail, len(ids))
+	sem := make(chan struct{}, detailFetchConcurrency)
+	var wg sync.WaitGroup
+	for i, id := range ids {
+		wg.Add(1)
+		go func(i int, id string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			v, err := s.fetchVuln(ctx, id)
+			if err != nil {
+				slots[i] = Detail{ID: id}
+				return
+			}
+			slots[i] = Detail{
+				ID:            id,
+				Summary:       v.Summary,
+				SeverityLabel: v.DatabaseSpecific.Severity,
+				FixedIn:       fixedVersion(v),
+				AdvisoryURL:   advisoryURL(v),
+			}
+		}(i, id)
+	}
+	wg.Wait()
+
+	details := make(map[string]Detail, len(ids))
+	for i, id := range ids {
+		details[id] = slots[i]
 	}
 	return details
 }
@@ -360,8 +411,8 @@ func (s *Scanner) fetchVuln(ctx context.Context, id string) (osvVuln, error) {
 // GHSA advisories use MODERATE while some sources emit MEDIUM). An absent or
 // unrecognized label yields "info" so the vuln stays visible without being
 // overstated.
-func normalizeSeverity(v osvVuln) string {
-	switch strings.ToLower(strings.TrimSpace(v.DatabaseSpecific.Severity)) {
+func normalizeSeverity(label string) string {
+	switch strings.ToLower(strings.TrimSpace(label)) {
 	case "critical":
 		return "critical"
 	case "high":

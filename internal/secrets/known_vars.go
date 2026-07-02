@@ -120,8 +120,15 @@ func IsSensitiveName(name string) bool {
 func MatchesSensitiveKeyPattern(name string) bool {
 	lower := strings.ToLower(name)
 	normalized := strings.ReplaceAll(lower, "-", "_")
+	// When the name contains no hyphen, normalized is identical to lower, so
+	// scanning it again per pattern would be pure duplicate work. This predicate
+	// is hot (per slog attribute key and per NAME=value token), so skip it.
+	normalizedDiffers := normalized != lower
 	for _, pat := range SensitiveKeyPatterns {
-		if matchesTokenBoundary(lower, pat) || matchesTokenBoundary(normalized, pat) {
+		if matchesTokenBoundary(lower, pat) {
+			return true
+		}
+		if normalizedDiffers && matchesTokenBoundary(normalized, pat) {
 			return true
 		}
 	}

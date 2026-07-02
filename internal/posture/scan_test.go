@@ -1,50 +1,16 @@
 package posture
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan"
+	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan/vulnscantest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
-
-// osvCriticalStub returns an httptest server that reports a single critical
-// advisory for the first queried dependency. It answers both OSV endpoints the
-// scanner uses (/v1/querybatch and /v1/vulns/{id}).
-func osvCriticalStub(t *testing.T) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/v1/querybatch"):
-			_, _ = w.Write([]byte(`{"results":[{"vulns":[{"id":"GHSA-CRIT-001"}]}]}`))
-		case strings.Contains(r.URL.Path, "/v1/vulns/"):
-			_, _ = w.Write([]byte(`{"id":"GHSA-CRIT-001","database_specific":{"severity":"CRITICAL"}}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-// osvCleanStub returns an httptest server that reports no vulnerabilities.
-func osvCleanStub(t *testing.T) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/v1/querybatch") {
-			_, _ = w.Write([]byte(`{"results":[]}`))
-			return
-		}
-		_, _ = w.Write([]byte(`{}`))
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
 
 // writeGoSum writes a minimal single-module go.sum into dir.
 func writeGoSum(t *testing.T, dir string) {
@@ -64,7 +30,12 @@ func TestBuildEcosystemStatuses_FreshScanCriticalDrivesExit(t *testing.T) {
 	dir := t.TempDir()
 	writeGoSum(t, dir)
 
-	srv := osvCriticalStub(t)
+	// The stub reports a single critical advisory for the first queried
+	// dependency (the sole go.sum module).
+	srv := vulnscantest.NewServer(t,
+		map[int][]string{0: {"GHSA-CRIT-001"}},
+		map[string]string{"GHSA-CRIT-001": "CRITICAL"},
+	)
 	scanner := &vulnscan.Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()}
 	detected := types.DetectedProject{Ecosystems: map[string]bool{ecosystem.NameGo: true}}
 
@@ -164,7 +135,7 @@ func TestAssess_FreshScanSetsScannedFlag(t *testing.T) {
 	// Serial: this test substitutes the package-level scanner factory.
 	orig := newVulnScanner
 	t.Cleanup(func() { newVulnScanner = orig })
-	srv := osvCleanStub(t)
+	srv := vulnscantest.NewServer(t, nil, nil) // reports no vulnerabilities
 	newVulnScanner = func() *vulnscan.Scanner {
 		return &vulnscan.Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()}
 	}

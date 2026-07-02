@@ -17,10 +17,6 @@ import (
 
 // Package is a single (ecosystem, name, version) dependency coordinate in the
 // shape OSV.dev's query API expects.
-//
-// This mirrors the coordinate the mcpserve security tool extracts; the lock
-// parsing here is a self-contained copy so posture need not import the MCP tool
-// tree. De-duplicating the two copies is tracked as a later cleanup.
 type Package struct {
 	Name      string
 	Version   string
@@ -31,14 +27,26 @@ type Package struct {
 // at path, stamping each package with the OSV ecosystem identifier eco.
 type lockParser func(path, eco string) ([]Package, error)
 
-// lockFile pairs a lock filename with the OSV ecosystem and parser that handle
+// LockFile pairs a lock filename with the OSV ecosystem and parser that handle
 // it. Auto-detection walks the table knownLockFiles returns in order; the first
-// present file wins.
-type lockFile struct {
+// present file wins. Obtain one via DetectLockFile or LockFileForPath; the zero
+// value is not usable.
+type LockFile struct {
 	name      string
 	ecosystem string
 	parse     func(path string) ([]Package, error)
 }
+
+// Name returns the lock file's base name (e.g. "go.sum").
+func (lf LockFile) Name() string { return lf.name }
+
+// Ecosystem returns the OSV.dev ecosystem namespace the lock file maps to
+// (e.g. "Go", "npm", "PyPI", "crates.io").
+func (lf LockFile) Ecosystem() string { return lf.ecosystem }
+
+// Parse extracts the pinned dependency coordinates from the lock file at path,
+// each stamped with the lock file's OSV ecosystem.
+func (lf LockFile) Parse(path string) ([]Package, error) { return lf.parse(path) }
 
 // osvEcosystems bridges qsdev's internal ecosystem catalog (pkg/ecosystem) to
 // the namespaces OSV.dev indexes vulnerabilities under. An ecosystem absent here
@@ -77,14 +85,14 @@ var knownLockFiles = sync.OnceValue(buildKnownLockFiles)
 // ecosystems are added there. The order is deterministic: ecosystems are visited
 // alphabetically, and within an ecosystem dedicated lock files are preferred
 // over loose manifests.
-func buildKnownLockFiles() []lockFile {
+func buildKnownLockFiles() []LockFile {
 	ecos := make([]string, 0, len(ecosystem.LockFilesByEcosystem))
 	for eco := range ecosystem.LockFilesByEcosystem {
 		ecos = append(ecos, eco)
 	}
 	sort.Strings(ecos)
 
-	var out []lockFile
+	var out []LockFile
 	for _, eco := range ecos {
 		osvEco, ok := osvEcosystems[eco]
 		if !ok {
@@ -95,7 +103,7 @@ func buildKnownLockFiles() []lockFile {
 			if !ok {
 				continue // no parser for this lock format yet
 			}
-			out = append(out, lockFile{
+			out = append(out, LockFile{
 				name:      name,
 				ecosystem: osvEco,
 				parse: func(path string) ([]Package, error) {
@@ -125,28 +133,28 @@ func isDedicatedLock(name string) bool {
 	return strings.Contains(strings.ToLower(name), "lock")
 }
 
-// detectLockFile returns the first known lock file present in projectRoot, or a
-// false ok when none exists.
-func detectLockFile(projectRoot string) (lockFile, string, bool) {
+// DetectLockFile returns the first known lock file present in projectRoot,
+// along with its full path, or a false ok when none exists.
+func DetectLockFile(projectRoot string) (LockFile, string, bool) {
 	for _, lf := range knownLockFiles() {
 		p := filepath.Join(projectRoot, lf.name)
 		if info, err := os.Stat(p); err == nil && !info.IsDir() {
 			return lf, p, true
 		}
 	}
-	return lockFile{}, "", false
+	return LockFile{}, "", false
 }
 
-// lockFileForPath resolves the parser for an explicitly supplied manifest path
+// LockFileForPath resolves the parser for an explicitly supplied manifest path
 // by matching its base name against the known lock files.
-func lockFileForPath(path string) (lockFile, bool) {
+func LockFileForPath(path string) (LockFile, bool) {
 	base := filepath.Base(path)
 	for _, lf := range knownLockFiles() {
 		if lf.name == base {
 			return lf, true
 		}
 	}
-	return lockFile{}, false
+	return LockFile{}, false
 }
 
 // parseGoSum extracts module@version pairs from a go.sum file. Each module

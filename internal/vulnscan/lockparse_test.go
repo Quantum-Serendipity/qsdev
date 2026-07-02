@@ -1,4 +1,4 @@
-package security
+package vulnscan
 
 import (
 	"os"
@@ -23,7 +23,7 @@ func writeFile(t *testing.T, name, body string) (dir, path string) {
 
 // pkgKeys renders packages as a sorted set of "name@version (eco)" strings so
 // map-ordered parser output can be compared deterministically.
-func pkgKeys(pkgs []osvPackage) []string {
+func pkgKeys(pkgs []Package) []string {
 	keys := make([]string, len(pkgs))
 	for i, p := range pkgs {
 		keys[i] = p.Name + "@" + p.Version + " (" + p.Ecosystem + ")"
@@ -53,10 +53,10 @@ func TestKnownLockFilesDerivedFromCatalog(t *testing.T) {
 
 	got := map[string]string{} // name -> OSV ecosystem
 	for _, lf := range knownLockFiles() {
-		if _, dup := got[lf.name]; dup {
-			t.Errorf("duplicate lock file %q in knownLockFiles", lf.name)
+		if _, dup := got[lf.Name()]; dup {
+			t.Errorf("duplicate lock file %q in knownLockFiles", lf.Name())
 		}
-		got[lf.name] = lf.ecosystem
+		got[lf.Name()] = lf.Ecosystem()
 	}
 
 	// Every entry must trace back to the catalog (no orphan/hardcoded names).
@@ -111,12 +111,12 @@ func TestCatalogLockFileRecognized(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			lf, ok := lockFileForPath(filepath.Join("some", "dir", tc.name))
+			lf, ok := LockFileForPath(filepath.Join("some", "dir", tc.name))
 			if ok != tc.wantOK {
-				t.Fatalf("lockFileForPath(%q) ok = %t, want %t (%s)", tc.name, ok, tc.wantOK, tc.coverage)
+				t.Fatalf("LockFileForPath(%q) ok = %t, want %t (%s)", tc.name, ok, tc.wantOK, tc.coverage)
 			}
-			if ok && lf.ecosystem != tc.wantEco {
-				t.Errorf("ecosystem = %q, want %q", lf.ecosystem, tc.wantEco)
+			if ok && lf.Ecosystem() != tc.wantEco {
+				t.Errorf("ecosystem = %q, want %q", lf.Ecosystem(), tc.wantEco)
 			}
 		})
 	}
@@ -133,12 +133,12 @@ func TestDetectLockFilePrefersDedicatedLock(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	lf, _, ok := detectLockFile(dir)
+	lf, _, ok := DetectLockFile(dir)
 	if !ok {
 		t.Fatal("expected a lock file to be detected")
 	}
-	if lf.name != "poetry.lock" {
-		t.Errorf("detected %q, want poetry.lock (dedicated lock files take priority)", lf.name)
+	if lf.Name() != "poetry.lock" {
+		t.Errorf("detected %q, want poetry.lock (dedicated lock files take priority)", lf.Name())
 	}
 }
 

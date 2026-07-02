@@ -2,16 +2,10 @@ package security
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +15,8 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan"
+	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan/vulnscantest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -330,14 +326,14 @@ func TestSecurityScanRejectsPathTraversal(t *testing.T) {
 	outsideAbs := filepath.Join(t.TempDir(), "go.sum")
 
 	// Stub OSV so the in-root scan succeeds without network access: an empty
-	// response reports zero vulnerabilities.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(osvBatchResponse{})
-	}))
-	// t.Cleanup (not defer): the parallel subtests below run after this function
-	// returns, so a defer would close the stub before they make their request.
-	t.Cleanup(srv.Close)
-	scanner := &securityScanner{projectRoot: dir, baseURL: srv.URL, httpClient: srv.Client()}
+	// response reports zero vulnerabilities. The stub closes via t.Cleanup (not
+	// defer): the parallel subtests below run after this function returns, so a
+	// defer would close it before they make their request.
+	srv := vulnscantest.NewServer(t, nil, nil)
+	scanner := &securityScanner{
+		projectRoot: dir,
+		scanner:     &vulnscan.Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()},
+	}
 
 	cases := []struct {
 		name      string
@@ -371,60 +367,6 @@ func TestSecurityScanRejectsPathTraversal(t *testing.T) {
 				t.Fatalf("in-root path %q should scan, got error: %+v", tc.manifest, res.Structured)
 			}
 		})
-	}
-}
-
-// TestSecurityScanFetchDetailsDeterministic proves that when more than
-// maxVulnDetailFetches unique vulnerabilities are present, the subset whose
-// details are fetched is deterministic (the lexicographically smallest ids) and
-// stable across repeated runs, so the downstream severity-floor filtering does
-// not vary run-to-run.
-func TestSecurityScanFetchDetailsDeterministic(t *testing.T) {
-	t.Parallel()
-
-	const total = maxVulnDetailFetches + 50
-	oneQuery := make([]string, total)
-	for i := range oneQuery {
-		oneQuery[i] = fmt.Sprintf("VULN-%04d", i)
-	}
-	idsByQuery := [][]string{oneQuery}
-
-	var mu sync.Mutex
-	requested := map[string]int{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimPrefix(r.URL.Path, "/v1/vulns/")
-		mu.Lock()
-		requested[id]++
-		mu.Unlock()
-		_ = json.NewEncoder(w).Encode(osvVuln{ID: id})
-	}))
-	defer srv.Close()
-
-	s := &securityScanner{baseURL: srv.URL, httpClient: srv.Client()}
-
-	first := s.fetchDetails(context.Background(), idsByQuery)
-	if len(first) != maxVulnDetailFetches {
-		t.Fatalf("fetched %d details, want %d", len(first), maxVulnDetailFetches)
-	}
-
-	// The fetched subset must be exactly the lexicographically smallest ids.
-	want := append([]string(nil), oneQuery...)
-	sort.Strings(want)
-	want = want[:maxVulnDetailFetches]
-	for _, id := range want {
-		if _, ok := first[id]; !ok {
-			t.Fatalf("expected smallest id %q to be fetched", id)
-		}
-	}
-
-	second := s.fetchDetails(context.Background(), idsByQuery)
-	if len(second) != len(first) {
-		t.Fatalf("second fetch size %d != first %d", len(second), len(first))
-	}
-	for id := range first {
-		if _, ok := second[id]; !ok {
-			t.Errorf("nondeterministic selection: id %q fetched first run but not second", id)
-		}
 	}
 }
 

@@ -2,6 +2,7 @@ package devinit
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -166,14 +167,11 @@ func printSandboxStatusText(cmd *cobra.Command, caps *sandbox.SystemCapabilities
 // status command stay honest even when kernel-capability probing reports a tier
 // stronger than the tool set can deliver.
 func unenforceableLayers(tier sandbox.DegradationTier) []string {
-	claimsLandlock := tier == sandbox.TierFull || tier == sandbox.TierBwrapWithoutSeccomp
-	claimsSeccomp := tier == sandbox.TierFull || tier == sandbox.TierBwrapWithoutLandlock
-
 	var layers []string
-	if claimsLandlock && sandbox.LLRestrictBin() == "" {
+	if sandbox.TierClaimsLandlock(tier) && sandbox.LLRestrictBin() == "" {
 		layers = append(layers, "Landlock")
 	}
-	if claimsSeccomp && sandbox.SeccompFilterFile() == "" {
+	if sandbox.TierClaimsSeccomp(tier) && sandbox.SeccompFilterFile() == "" {
 		layers = append(layers, "seccomp")
 	}
 	return layers
@@ -186,23 +184,53 @@ func pluralLayers(layers []string) string {
 	return "they"
 }
 
+// sandboxStatusJSON is the machine-readable shape emitted by
+// `sandbox status --json`. UnenforceableLayers reports layers the tier
+// advertises but cannot enforce, so machine consumers do not treat "full" as a
+// guarantee that every layer is applied.
+type sandboxStatusJSON struct {
+	Tier                string                  `json:"tier"`
+	SecurityLevel       string                  `json:"security_level"`
+	UnenforceableLayers []string                `json:"unenforceable_layers"`
+	Capabilities        sandboxCapabilitiesJSON `json:"capabilities"`
+}
+
+type sandboxCapabilitiesJSON struct {
+	Bwrap       bool   `json:"bwrap"`
+	UserNS      bool   `json:"user_ns"`
+	LandlockABI int    `json:"landlock_abi"`
+	Seccomp     bool   `json:"seccomp"`
+	CgroupV2    bool   `json:"cgroup_v2"`
+	CgroupDeleg bool   `json:"cgroup_deleg"`
+	SystemdRun  bool   `json:"systemd_run"`
+	Kernel      string `json:"kernel"`
+}
+
 func printSandboxStatusJSON(cmd *cobra.Command, caps *sandbox.SystemCapabilities, tier sandbox.DegradationTier) error {
-	w := cmd.OutOrStdout()
-
-	// Report layers the tier advertises but cannot enforce, so machine consumers
-	// do not treat "full" as a guarantee that every layer is applied.
 	unenforceable := unenforceableLayers(tier)
-	quoted := make([]string, len(unenforceable))
-	for i, l := range unenforceable {
-		quoted[i] = fmt.Sprintf("%q", l)
+	if unenforceable == nil {
+		unenforceable = []string{}
 	}
-
-	fmt.Fprintf(w, `{"tier":%q,"security_level":%q,"unenforceable_layers":[%s],"capabilities":{"bwrap":%t,"user_ns":%t,"landlock_abi":%d,"seccomp":%t,"cgroup_v2":%t,"cgroup_deleg":%t,"systemd_run":%t,"kernel":%q}}`,
-		tier.String(), sandbox.TierSecurityLevel(tier), strings.Join(quoted, ","),
-		caps.HasBwrap, caps.HasUserNS, caps.LandlockABI,
-		caps.HasSeccomp, caps.HasCgroupV2, caps.HasCgroupDeleg,
-		caps.HasSystemdRun, caps.KernelVersion)
-	fmt.Fprintln(w)
+	status := sandboxStatusJSON{
+		Tier:                tier.String(),
+		SecurityLevel:       sandbox.TierSecurityLevel(tier),
+		UnenforceableLayers: unenforceable,
+		Capabilities: sandboxCapabilitiesJSON{
+			Bwrap:       caps.HasBwrap,
+			UserNS:      caps.HasUserNS,
+			LandlockABI: caps.LandlockABI,
+			Seccomp:     caps.HasSeccomp,
+			CgroupV2:    caps.HasCgroupV2,
+			CgroupDeleg: caps.HasCgroupDeleg,
+			SystemdRun:  caps.HasSystemdRun,
+			Kernel:      caps.KernelVersion,
+		},
+	}
+	out, err := json.Marshal(status)
+	if err != nil {
+		return fmt.Errorf("marshaling sandbox status: %w", err)
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), string(out))
 	return nil
 }
 

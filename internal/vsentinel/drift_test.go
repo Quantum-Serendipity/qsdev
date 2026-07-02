@@ -293,7 +293,9 @@ func TestDetectDrift_MissingLockfileIsDrift(t *testing.T) {
 
 // TestJSSemverSatisfies_DowngradeIsDrift asserts that a within-major downgrade
 // below the declared floor is flagged (not treated as satisfied), plus the
-// tilde and exact boundaries.
+// caret, tilde, and exact boundaries — including npm's 0.x caret cap
+// (^0.2.3 means >=0.2.3 <0.3.0, not "any 0.x above the floor") — and the
+// fail-closed handling of unparseable input.
 func TestJSSemverSatisfies_DowngradeIsDrift(t *testing.T) {
 	t.Parallel()
 
@@ -302,15 +304,20 @@ func TestJSSemverSatisfies_DowngradeIsDrift(t *testing.T) {
 		locked     string
 		want       bool // true == satisfies (no drift)
 	}{
-		{"^4.18.0", "4.0.0", false},   // downgrade below floor -> drift
-		{"^4.18.0", "4.19.2", true},   // within major, above floor -> ok
-		{"^4.18.0", "5.0.0", false},   // out of major -> drift
-		{"^4.18.0", "4.18.0", true},   // exact floor -> ok
-		{"~4.18.0", "4.18.5", true},   // within minor -> ok
-		{"~4.18.0", "4.19.0", false},  // next minor -> drift
-		{"~4.18.0", "4.17.9", false},  // below floor -> drift
-		{"4.17.21", "4.17.21", true},  // exact pin match
-		{"4.17.21", "4.17.20", false}, // exact pin mismatch (downgrade)
+		{"^4.18.0", "4.0.0", false},        // downgrade below floor -> drift
+		{"^4.18.0", "4.19.2", true},        // within major, above floor -> ok
+		{"^4.18.0", "5.0.0", false},        // out of major -> drift
+		{"^4.18.0", "4.18.0", true},        // exact floor -> ok
+		{"~4.18.0", "4.18.5", true},        // within minor -> ok
+		{"~4.18.0", "4.19.0", false},       // next minor -> drift
+		{"~4.18.0", "4.17.9", false},       // below floor -> drift
+		{"4.17.21", "4.17.21", true},       // exact pin match
+		{"4.17.21", "4.17.20", false},      // exact pin mismatch (downgrade)
+		{"^0.2.3", "0.2.5", true},          // 0.x caret: within minor -> ok
+		{"^0.2.3", "0.4.0", false},         // 0.x caret capped at <0.3.0 -> drift
+		{"^0.2.3", "0.2.2", false},         // 0.x caret: below floor -> drift
+		{"not-a-range", "1.0.0", false},    // unparseable constraint -> fail closed
+		{"^1.0.0", "not-a-version", false}, // unparseable locked version -> fail closed
 	}
 
 	for _, tc := range cases {
@@ -321,9 +328,11 @@ func TestJSSemverSatisfies_DowngradeIsDrift(t *testing.T) {
 	}
 }
 
-// TestCargoSemverSatisfies_BoundaryFalseNegative asserts the segment-aware
-// cargo comparison no longer accepts "10.0.0" for a declared "1" (the old
-// string-prefix false negative), while keeping legitimate caret matches.
+// TestCargoSemverSatisfies_BoundaryFalseNegative asserts the cargo comparison
+// no longer accepts "10.0.0" for a declared "1" (the old string-prefix false
+// negative), keeps legitimate caret matches, applies Cargo's default caret
+// semantics to bare versions (including the 0.x cap), and passes explicit
+// operators through unchanged.
 func TestCargoSemverSatisfies_BoundaryFalseNegative(t *testing.T) {
 	t.Parallel()
 
@@ -332,17 +341,24 @@ func TestCargoSemverSatisfies_BoundaryFalseNegative(t *testing.T) {
 		locked     string
 		want       bool
 	}{
-		{"1", "10.0.0", false},   // boundary false negative must be rejected
-		{"1", "1.5.0", true},     // caret major -> ok
-		{"1.0", "1.0.203", true}, // caret from bare "1.0" -> ok
-		{"1.0", "2.0.1", false},  // next major -> drift
-		{"1.0", "0.9.0", false},  // below floor -> drift
+		{"1", "10.0.0", false},          // boundary false negative must be rejected
+		{"1", "1.5.0", true},            // caret major -> ok
+		{"1.0", "1.0.203", true},        // caret from bare "1.0" -> ok
+		{"1.0", "2.0.1", false},         // next major -> drift
+		{"1.0", "0.9.0", false},         // below floor -> drift
+		{"0.2.3", "0.2.5", true},        // bare 0.x caret: within minor -> ok
+		{"0.2.3", "0.4.0", false},       // bare 0.x caret capped at <0.3.0 -> drift
+		{"^0.2.3", "0.4.0", false},      // explicit caret, same 0.x cap -> drift
+		{"~1.2.0", "1.2.9", true},       // explicit tilde passes through -> ok
+		{"~1.2.0", "1.3.0", false},      // explicit tilde: next minor -> drift
+		{"garbage", "1.0.0", false},     // unparseable requirement -> fail closed
+		{"1.0", "not-a-version", false}, // unparseable locked version -> fail closed
 	}
 
 	for _, tc := range cases {
-		got := semverSatisfies(tc.constraint, tc.locked, '^')
+		got := cargoSemverSatisfies(tc.constraint, tc.locked)
 		if got != tc.want {
-			t.Errorf("semverSatisfies(%q, %q, '^') = %v, want %v", tc.constraint, tc.locked, got, tc.want)
+			t.Errorf("cargoSemverSatisfies(%q, %q) = %v, want %v", tc.constraint, tc.locked, got, tc.want)
 		}
 	}
 }

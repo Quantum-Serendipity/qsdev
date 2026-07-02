@@ -168,19 +168,7 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 // from invoking dangerous AWS CLI commands (IAM mutations, STS assume-role,
 // credential configuration).
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	rules := cloudcommon.BashDenyRules(cloudcommon.AWS)
-	// The shared cloudcommon pattern requires a trailing argument (" *"), so the
-	// bare, arg-less `aws sts get-session-token` — which still prints temporary
-	// credentials to stdout — slips past the deny glob and has no ReadDeny
-	// backstop. Broaden it to match the subcommand with or without trailing
-	// arguments while staying anchored to the exact subcommand so unrelated
-	// `aws sts ...` commands are not over-matched (F-CAP-11.1-1).
-	for i, rule := range rules {
-		if rule == "Bash(aws sts get-session-token *)" {
-			rules[i] = "Bash(aws sts get-session-token*)"
-		}
-	}
-	return rules
+	return cloudcommon.BashDenyRules(cloudcommon.AWS)
 }
 
 // ReadDenyRules returns Claude Code read-deny path patterns that prevent the

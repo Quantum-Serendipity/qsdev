@@ -71,7 +71,7 @@ Key files to confirm exist (~35 files total):
 - `.claude/rules/security-rules.md`
 - `.claude/rules/typescript-conventions.md`
 - `.claude/skills/deploy.md` (from profile)
-- `.claude/skills/security-review.md` (AlwaysOn — Trail of Bits methodology)
+- `.claude/skills/security-review-owasp/SKILL.md` (AlwaysOn — Trail of Bits methodology)
 - `.claude/skills/agent-postmortem/SKILL.md` (AlwaysOn — verification protocol)
 - `.claude/skills/version-sentinel/SKILL.md` (AlwaysOn — dependency version guard)
 - `.claude/skills/qsdev-add-dep/SKILL.md` (AlwaysOn — dependency management guidance)
@@ -752,7 +752,7 @@ qsdev update --configs-only            # Execute
 **A5-13:**
 ```bash
 qsdev claude list-skills
-qsdev claude add-skill security-review
+qsdev claude add-skill security-review-owasp
 qsdev claude add-skill generate-tests
 qsdev claude add-skill refactor
 qsdev claude add-skill db-migration

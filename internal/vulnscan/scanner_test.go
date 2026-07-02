@@ -2,55 +2,14 @@ package vulnscan
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
+	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"sort"
 	"testing"
-)
 
-// osvStub builds an httptest server that answers the OSV /v1/querybatch and
-// /v1/vulns/{id} endpoints. vulnsByIndex maps a query index to the vuln ids to
-// report for it; severities maps a vuln id to the database_specific.severity
-// label returned for its detail record.
-func osvStub(t *testing.T, vulnsByIndex map[int][]string, severities map[string]string) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/v1/querybatch"):
-			var req osvBatchRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			var resp osvBatchResponse
-			resp.Results = make([]struct {
-				Vulns []struct {
-					ID string `json:"id"`
-				} `json:"vulns"`
-			}, len(req.Queries))
-			for i := range req.Queries {
-				for _, id := range vulnsByIndex[i] {
-					resp.Results[i].Vulns = append(resp.Results[i].Vulns, struct {
-						ID string `json:"id"`
-					}{ID: id})
-				}
-			}
-			_ = json.NewEncoder(w).Encode(resp)
-		case strings.Contains(r.URL.Path, "/v1/vulns/"):
-			id := strings.TrimPrefix(r.URL.Path, "/v1/vulns/")
-			v := osvVuln{ID: id}
-			v.DatabaseSpecific.Severity = severities[id]
-			_ = json.NewEncoder(w).Encode(v)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
+	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan/vulnscantest"
+)
 
 func writeLock(t *testing.T, dir, name, body string) string {
 	t.Helper()
@@ -65,7 +24,7 @@ func TestScanFile_CriticalAdvisory(t *testing.T) {
 	dir := t.TempDir()
 	lock := writeLock(t, dir, "requirements.txt", "requests==2.19.0\n")
 
-	srv := osvStub(t,
+	srv := vulnscantest.NewServer(t,
 		map[int][]string{0: {"GHSA-critical-1"}},
 		map[string]string{"GHSA-critical-1": "CRITICAL"},
 	)
@@ -99,7 +58,7 @@ func TestScanFile_MixedSeverities(t *testing.T) {
 	dir := t.TempDir()
 	lock := writeLock(t, dir, "requirements.txt", "requests==2.19.0\nflask==0.12\n")
 
-	srv := osvStub(t,
+	srv := vulnscantest.NewServer(t,
 		map[int][]string{0: {"A-high"}, 1: {"B-moderate", "C-unknown"}},
 		map[string]string{"A-high": "HIGH", "B-moderate": "MODERATE"}, // C-unknown has no severity
 	)
@@ -121,7 +80,7 @@ func TestScanFile_CleanProject(t *testing.T) {
 	dir := t.TempDir()
 	lock := writeLock(t, dir, "requirements.txt", "requests==2.31.0\n")
 
-	srv := osvStub(t, map[int][]string{}, map[string]string{}) // no vulns for any query
+	srv := vulnscantest.NewServer(t, nil, nil) // no vulns for any query
 	s := &Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()}
 
 	res, err := s.ScanFile(context.Background(), lock)
@@ -151,7 +110,7 @@ func TestScanProject_AutoDetects(t *testing.T) {
 	dir := t.TempDir()
 	writeLock(t, dir, "requirements.txt", "requests==2.19.0\n")
 
-	srv := osvStub(t,
+	srv := vulnscantest.NewServer(t,
 		map[int][]string{0: {"GHSA-critical-1"}},
 		map[string]string{"GHSA-critical-1": "CRITICAL"},
 	)
@@ -174,5 +133,49 @@ func TestScanProject_NoLockFile(t *testing.T) {
 	}
 	if res != nil {
 		t.Errorf("expected nil result when no lock file is present, got %+v", res)
+	}
+}
+
+// TestFetchDetails_DeterministicTruncation proves that when more than
+// maxVulnDetailFetches unique vulnerabilities are present, the subset whose
+// details are fetched is deterministic (the lexicographically smallest ids) and
+// stable across repeated runs — even with the fetches fanned out across the
+// worker pool — so downstream severity filtering does not vary run-to-run.
+func TestFetchDetails_DeterministicTruncation(t *testing.T) {
+	t.Parallel()
+
+	const total = maxVulnDetailFetches + 50
+	oneQuery := make([]string, total)
+	for i := range oneQuery {
+		oneQuery[i] = fmt.Sprintf("VULN-%04d", i)
+	}
+	idsByQuery := [][]string{oneQuery}
+
+	srv := vulnscantest.NewServer(t, nil, nil)
+	s := &Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()}
+
+	first := s.FetchDetails(context.Background(), idsByQuery)
+	if len(first) != maxVulnDetailFetches {
+		t.Fatalf("fetched %d details, want %d", len(first), maxVulnDetailFetches)
+	}
+
+	// The fetched subset must be exactly the lexicographically smallest ids.
+	want := append([]string(nil), oneQuery...)
+	sort.Strings(want)
+	want = want[:maxVulnDetailFetches]
+	for _, id := range want {
+		if _, ok := first[id]; !ok {
+			t.Fatalf("expected smallest id %q to be fetched", id)
+		}
+	}
+
+	second := s.FetchDetails(context.Background(), idsByQuery)
+	if len(second) != len(first) {
+		t.Fatalf("second fetch size %d != first %d", len(second), len(first))
+	}
+	for id := range first {
+		if _, ok := second[id]; !ok {
+			t.Errorf("nondeterministic selection: id %q fetched first run but not second", id)
+		}
 	}
 }

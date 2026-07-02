@@ -5,13 +5,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
 // pgDriver imports the package-guard hook template as a module and prints, as
 // JSON, whether the given command is detected as an install and which package
-// specifiers are extracted. It exercises only detect_install_commands and
-// extract_packages, so it makes no network calls (validate_package is not run).
+// specifiers are extracted. It exercises only detect_install_commands, which
+// returns the packages from its single parse of each segment, so it makes no
+// network calls (validate_package is not run).
 const pgDriver = `
 import importlib.util, json, os
 spec = importlib.util.spec_from_file_location('pg', os.environ['PG_PATH'])
@@ -20,8 +22,8 @@ spec.loader.exec_module(m)
 cmd = os.environ['PG_CMD']
 dets = m.detect_install_commands(cmd)
 pkgs = []
-for eco, mgr, seg in dets:
-    pkgs.extend(m.extract_packages(seg, mgr))
+for eco, mgr, seg, ps in dets:
+    pkgs.extend(ps)
 print(json.dumps({'detected': len(dets) > 0, 'packages': pkgs}))
 `
 
@@ -85,22 +87,9 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 			if res.Detected != tc.wantDetected {
 				t.Errorf("detected = %v, want %v (command: %s)", res.Detected, tc.wantDetected, tc.command)
 			}
-			if !equalStrings(res.Packages, tc.wantPackages) {
+			if !slices.Equal(res.Packages, tc.wantPackages) {
 				t.Errorf("packages = %v, want %v (command: %s)", res.Packages, tc.wantPackages, tc.command)
 			}
 		})
 	}
-}
-
-// equalStrings compares two string slices, treating nil and empty as equal.
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

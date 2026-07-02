@@ -525,22 +525,6 @@ def parse_install_segment(segment: str) -> Optional[tuple[str, str, list[str]]]:
     return None
 
 
-def extract_packages(command: str, manager: str) -> list[str]:
-    """Extract package specifier(s) from a single install command segment.
-
-    Only operands of a genuine install invocation are returned; tokens from
-    non-install commands (git/grep/echo message or pattern words, file paths,
-    redirections, etc.) are never treated as packages. `manager` is accepted for
-    backward compatibility but the ecosystem/manager are re-derived from argv.
-
-    Returns a list of raw package specifiers (may include version info).
-    """
-    parsed = parse_install_segment(command)
-    if parsed is None:
-        return []
-    return parsed[2]
-
-
 def strip_version(specifier: str) -> str:
     """
     Strip version info from a package specifier.
@@ -584,24 +568,25 @@ def strip_version(specifier: str) -> str:
 # Command matching
 # ---------------------------------------------------------------------------
 
-def detect_install_commands(command: str) -> list[tuple[str, str, str]]:
+def detect_install_commands(command: str) -> list[tuple[str, str, str, list[str]]]:
     """
     Find ALL genuine package install invocations in a (possibly compound)
-    command. Returns a list of (ecosystem, manager_label, segment) tuples — one
-    per segment whose argv is actually an install command. Every segment is
-    parsed independently so that compound commands like
+    command. Returns a list of (ecosystem, manager_label, segment, packages)
+    tuples — one per segment whose argv is actually an install command, with
+    the raw package specifiers extracted from that segment's single parse.
+    Every segment is parsed independently so that compound commands like
     ``pip install safe && npm install evil`` cannot sneak an unchecked install
     past the guard, while unrelated commands whose text merely *mentions* an
     install (``git commit -m "add install docs"``, ``grep "npm install" file``)
     are correctly ignored.
     """
-    results: list[tuple[str, str, str]] = []
+    results: list[tuple[str, str, str, list[str]]] = []
 
     for segment in _split_segments(command):
         parsed = parse_install_segment(segment)
         if parsed is not None:
-            ecosystem, manager, _packages = parsed
-            results.append((ecosystem, manager, segment))
+            ecosystem, manager, packages = parsed
+            results.append((ecosystem, manager, segment, packages))
 
     return results
 
@@ -764,7 +749,7 @@ def main() -> None:
     checked_packages: list[str] = []
     needs_safety_flags: list[str] = []  # managers that need flag injection
 
-    for ecosystem, manager, segment in detections:
+    for ecosystem, manager, segment, packages in detections:
         # Nix imperative installs: deny outright.
         if manager in ("nix-env", "nix-profile"):
             reason = (
@@ -782,9 +767,7 @@ def main() -> None:
             })
             continue
 
-        # Extract package names from this segment (not the full compound command).
-        packages = extract_packages(segment, manager)
-
+        # `packages` came from this segment's parse (not the full compound command).
         if not packages:
             # Bare install from lockfile/manifest — track for safety flags.
             needs_safety_flags.append(manager)

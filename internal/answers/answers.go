@@ -68,7 +68,9 @@ func SavePrimary(projectRoot string, a types.WizardAnswers) error {
 }
 
 // LoadPrimary reads the primary (devinit) answers file. Returns a zero-value
-// WizardAnswers and nil error if the file does not exist or is corrupt.
+// WizardAnswers and nil error only when the file does not exist. A corrupt or
+// unparseable file returns an error so the corruption is surfaced to callers
+// rather than being silently treated as empty state (config data loss).
 func LoadPrimary(projectRoot string) (types.WizardAnswers, error) {
 	b := branding.Get()
 	path := filepath.Join(projectRoot, b.StateDir, "."+b.AppName+"-init-answers.yaml")
@@ -82,7 +84,7 @@ func LoadPrimary(projectRoot string) (types.WizardAnswers, error) {
 
 	var a types.WizardAnswers
 	if err := yaml.Unmarshal(data, &a); err != nil {
-		return types.WizardAnswers{}, nil
+		return types.WizardAnswers{}, fmt.Errorf("parsing primary answers file %s: %w", path, err)
 	}
 	return a, nil
 }

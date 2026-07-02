@@ -4,12 +4,51 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+// TestLoadPrimary_CorruptFileReturnsError pins F-CAP-2.5-1: a corrupt primary
+// answers file must surface an error rather than being silently treated as
+// empty state (which would let posture aggregation report against nothing).
+func TestLoadPrimary_CorruptFileReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	b := branding.Get()
+	dir := filepath.Join(tmpDir, b.StateDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "."+b.AppName+"-init-answers.yaml")
+	if err := os.WriteFile(path, []byte("{not: valid: yaml: ["), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := answers.LoadPrimary(tmpDir)
+	if err == nil {
+		t.Fatal("expected error for corrupt primary answers file, got nil (silent data loss)")
+	}
+	if !strings.Contains(err.Error(), "parsing primary answers") {
+		t.Errorf("error = %q, want 'parsing primary answers' context", err.Error())
+	}
+}
+
+// TestLoadPrimary_MissingFileIsNotError confirms the absent-file path is still
+// a benign zero-value return (the corruption fix must not change this).
+func TestLoadPrimary_MissingFileIsNotError(t *testing.T) {
+	tmpDir := t.TempDir()
+	a, err := answers.LoadPrimary(tmpDir)
+	if err != nil {
+		t.Fatalf("missing primary file should not be an error, got: %v", err)
+	}
+	if a.ProjectName != "" || len(a.Languages) != 0 {
+		t.Errorf("expected zero-value answers for missing file, got %+v", a)
+	}
+}
 
 func TestSaveAndLoad_RoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()

@@ -173,23 +173,58 @@ func TestParseQsdevConfig_VersionTooHigh(t *testing.T) {
 	}
 }
 
-func TestParseQsdevConfig_UnknownFieldsIgnored(t *testing.T) {
+func TestParseQsdevConfig_UnknownTopLevelKeyRejected(t *testing.T) {
+	// A misspelled/unknown top-level key (e.g. a fat-fingered "securty:") must
+	// be rejected under strict decoding rather than silently dropped, so its
+	// intended settings are never lost without warning (F-CAP-4.1-1).
 	yaml := `
 version: 1
 future_field: some_value
 languages:
   - name: go
+`
+	_, err := ParseQsdevConfigBytes([]byte(yaml))
+	if err == nil {
+		t.Fatal("expected error for unknown top-level key, got nil")
+	}
+	if !strings.Contains(err.Error(), "parsing config") {
+		t.Errorf("error = %q, want 'parsing config' wrap", err.Error())
+	}
+	if !strings.Contains(err.Error(), "future_field") {
+		t.Errorf("error = %q, want it to name the unknown field", err.Error())
+	}
+}
+
+func TestParseQsdevConfig_TypodSecurityKeyRejected(t *testing.T) {
+	// A misspelled security key must not silently vanish — strict decoding
+	// surfaces it so the intended security posture is never dropped.
+	yaml := `
+version: 1
+security:
+  level: strict
+  script_blockng: true
+`
+	_, err := ParseQsdevConfigBytes([]byte(yaml))
+	if err == nil {
+		t.Fatal("expected error for typo'd security key, got nil")
+	}
+	if !strings.Contains(err.Error(), "script_blockng") {
+		t.Errorf("error = %q, want it to name the misspelled key", err.Error())
+	}
+}
+
+func TestParseQsdevConfig_UnknownNestedKeyRejected(t *testing.T) {
+	// Strict decoding applies to nested structs too (e.g. a bad key under a
+	// language entry).
+	yaml := `
+version: 1
+languages:
+  - name: go
     future_lang_field: ignored
 `
-	cfg, err := ParseQsdevConfigBytes([]byte(yaml))
-	if err != nil {
-		t.Fatalf("unknown fields should be silently ignored, got: %v", err)
-	}
-	if cfg.Version != 1 {
-		t.Errorf("Version = %d, want 1", cfg.Version)
-	}
-	if len(cfg.Languages) != 1 || cfg.Languages[0].Name != "go" {
-		t.Errorf("Languages = %+v, want [{Name:go}]", cfg.Languages)
+	_, err := ParseQsdevConfigBytes([]byte(yaml))
+	if err == nil {
+		t.Fatal("expected error for unknown nested key, got nil")
 	}
 }
 

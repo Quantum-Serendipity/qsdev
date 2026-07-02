@@ -75,6 +75,17 @@ func applyVerification(res *VerificationResult, keyID KeyID, trusted bool) {
 // unsignedResult handles an entry with no signature file, applying the SHA256
 // hash fallback when a recorded hash is present.
 func unsignedResult(ctx context.Context, res VerificationResult, entry ContentManifestEntry, opts VerifyOptions) VerificationResult {
+	// A trust gate requires a valid cryptographic signature. Content with no
+	// detached signature is unsigned regardless of whether it carries a recorded
+	// hash — a manifest hash is only as trustworthy as the (unsigned) manifest
+	// that records it. Fail closed here, before the hash fallback, so hash-only
+	// content is never reported as Verified when RequireTrusted is set.
+	if opts.RequireTrusted {
+		res.Status = StatusFailed
+		res.Reason = "unsigned content (no valid signature) and trust is required"
+		return res
+	}
+
 	if entry.SHA256 != "" {
 		ok, sum, err := hashMatches(ctx, entry.Path, entry.SHA256)
 		switch {
@@ -93,10 +104,6 @@ func unsignedResult(ctx context.Context, res VerificationResult, entry ContentMa
 
 	res.Status = StatusUnverified
 	res.Reason = "no signature"
-	if opts.RequireTrusted {
-		res.Status = StatusFailed
-		res.Reason = "no signature and trust is required"
-	}
 	return res
 }
 

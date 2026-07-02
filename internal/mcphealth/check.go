@@ -180,7 +180,18 @@ func checkHTTPServer(ctx context.Context, cfg ServerConfig, h *ServerHealth, sta
 		h.ResponseMs = time.Since(start).Milliseconds()
 		return h
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+
+	// Only a 2xx status indicates a reachable, functioning endpoint. A 4xx/5xx
+	// (or any other non-success status) means the server answered but is not
+	// serving a healthy endpoint; reporting it healthy would mask a broken or
+	// hostile server (F-CAP-19.4-1).
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		h.Status = StatusUnreachable
+		h.Error = fmt.Sprintf("unhealthy HTTP status: %d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+		h.ResponseMs = time.Since(start).Milliseconds()
+		return h
+	}
 
 	h.Status = StatusHealthy
 	h.ResponseMs = time.Since(start).Milliseconds()

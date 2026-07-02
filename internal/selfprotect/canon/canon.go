@@ -14,6 +14,11 @@ var (
 	protectedSuffixes []protectedEntry
 	initOnce          sync.Once
 	initErr           error
+
+	// userHomeDir resolves the current user's home directory. It is a package
+	// variable (defaulting to os.UserHomeDir) so tests can simulate a
+	// home-resolution failure and verify the fail-closed behavior of IsProtected.
+	userHomeDir = os.UserHomeDir
 )
 
 type protectedEntry struct {
@@ -23,7 +28,7 @@ type protectedEntry struct {
 
 func ensureInit() error {
 	initOnce.Do(func() {
-		home, err := os.UserHomeDir()
+		home, err := userHomeDir()
 		if err != nil {
 			initErr = fmt.Errorf("resolving home directory: %w", err)
 			return
@@ -56,7 +61,7 @@ func ExpandTilde(path string) (string, error) {
 		return "", nil
 	}
 	if path == "~" || strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
+		home, err := userHomeDir()
 		if err != nil {
 			return "", fmt.Errorf("expanding tilde: %w", err)
 		}
@@ -142,7 +147,16 @@ func isSymlinkLoop(err error) bool {
 // Returns (true, category) if protected, (false, "") otherwise.
 func IsProtected(canonicalPath string) (bool, string) {
 	if err := ensureInit(); err != nil {
-		return false, ""
+		// Fail closed. If the home directory cannot be resolved we cannot build
+		// the home-anchored protected-prefix table, so we cannot prove that a
+		// path is UNprotected. A self-protection control must never silently drop
+		// protection because of an environment error (the phase-28 fail-closed
+		// mandate), so treat every path as protected and let the rules deny the
+		// operation. This is deliberately conservative and only triggers when
+		// os.UserHomeDir fails (e.g. HOME/USERPROFILE unset), which is rare. The
+		// "config" category makes SP-001 — and, via deny-overrides, the whole
+		// Tier-1 rule set — block the operation.
+		return true, "config"
 	}
 
 	// Check prefix-based protected paths.

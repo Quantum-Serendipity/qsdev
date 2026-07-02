@@ -74,6 +74,17 @@ func TestRelativeTimeShort(t *testing.T) {
 	}
 }
 
+func TestRelativeTimeShortZero(t *testing.T) {
+	t.Parallel()
+
+	// Regression for WU-S-F3: an unset (zero) timestamp must not render as a
+	// nonsensical relative age (e.g. "~3505mo ago").
+	got := RelativeTimeShort(time.Time{})
+	if got != "never" {
+		t.Errorf("RelativeTimeShort(zero) = %q, want %q", got, "never")
+	}
+}
+
 func TestRelativeTimeShortFuture(t *testing.T) {
 	t.Parallel()
 

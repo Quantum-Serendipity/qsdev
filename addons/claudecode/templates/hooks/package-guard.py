@@ -33,6 +33,7 @@ Security invariants (not configurable):
 import json
 import os
 import re
+import shlex
 import sys
 import time
 import urllib.error
@@ -174,6 +175,64 @@ FLAGS_WITH_ARGS: set[str] = {
 # npm: package@version, pip: package==version or package>=version,
 # cargo: package@version, go: package@version, gem: package -v version
 VERSION_STRIP_RE = re.compile(r"[@=><~^!]+.*$")
+
+# ---------------------------------------------------------------------------
+# argv-based install detection
+# ---------------------------------------------------------------------------
+#
+# Package names are extracted from the *argv* of a genuine install invocation,
+# never from arbitrary substrings of the command line. Earlier revisions matched
+# an install pattern anywhere in the raw string and then tokenized the WHOLE
+# command, so words belonging to unrelated commands were looked up as if they
+# were packages — e.g. `git commit -m "...install..."` or `grep "npm install"
+# file` had message/pattern words registry-checked (and a stray word could match
+# a real advisory, blocking the command). We now shell-tokenize each command
+# segment and require the executable + subcommand verb to actually BE an install
+# before extracting any operands. shlex tokenization is the key defence: a quoted
+# argument such as "npm install foo" collapses to a single token, so it can never
+# be read as an `npm` executable followed by an `install` verb.
+
+# Shell wrappers that may precede the real executable; skipped so the executable
+# that follows is treated as argv[0] (e.g. `sudo npm install`, `env FOO=1 pip …`).
+COMMAND_PREFIXES: set[str] = {
+    "sudo", "doas", "env", "command", "builtin", "exec",
+    "time", "nice", "nohup", "stdbuf", "setsid", "ionice",
+}
+
+# Wrapper option flags that consume the following token as their value, so both
+# the flag and its value are skipped when locating the real executable
+# (e.g. `sudo -u deploy npm install`).
+_WRAPPER_VALUE_FLAGS: set[str] = {
+    "-u", "--user", "-g", "--group", "-n", "-C", "-h", "--host",
+    "-p", "--prompt", "-r", "--role", "-t", "--type", "-U", "-D",
+}
+
+# A leading VAR=value environment assignment (e.g. `FOO=bar npm install ...`).
+_ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+# Executable -> list of (verb_tokens, ecosystem, manager_label). verb_tokens are
+# the subcommand tokens that must immediately follow the executable to count as
+# an install; an empty list means the executable itself is the install (npx).
+INSTALL_COMMANDS: dict[str, list[tuple[list[str], str, str]]] = {
+    "npm":      [(["install"], "npm", "npm"), (["i"], "npm", "npm"), (["add"], "npm", "npm")],
+    "npx":      [([], "npm", "npx")],
+    "yarn":     [(["add"], "npm", "yarn"), (["install"], "npm", "yarn")],
+    "pnpm":     [(["add"], "npm", "pnpm"), (["install"], "npm", "pnpm"), (["i"], "npm", "pnpm")],
+    "bun":      [(["add"], "npm", "bun"), (["install"], "npm", "bun"), (["i"], "npm", "bun")],
+    "pip":      [(["install"], "PyPI", "pip")],
+    "pip3":     [(["install"], "PyPI", "pip")],
+    "uv":       [(["pip", "install"], "PyPI", "uv-pip"), (["add"], "PyPI", "uv-add")],
+    "cargo":    [(["add"], "crates.io", "cargo"), (["install"], "crates.io", "cargo")],
+    "go":       [(["get"], "Go", "go"), (["install"], "Go", "go")],
+    "gem":      [(["install"], "RubyGems", "gem")],
+    "composer": [(["require"], "Packagist", "composer")],
+}
+
+# Shell operators that separate independent commands. Each resulting segment is
+# validated on its own so a compound command (including pipe stages) cannot
+# smuggle an unchecked install past the guard. `||` is listed before `|` so it
+# is consumed as one operator.
+_SEGMENT_SPLIT_RE = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -361,56 +420,125 @@ def check_crates_age(package_name: str) -> Optional[float]:
 # Package name extraction
 # ---------------------------------------------------------------------------
 
-def extract_packages(command: str, manager: str) -> list[str]:
-    """
-    Extract package name(s) from a package install command string.
-    Strips flags, handles version specifiers, quoted names, etc.
+def _split_segments(command: str) -> list[str]:
+    """Split a (possibly compound) command into independent command segments on
+    shell operators (&&, ||, ;, |). Pipe stages are separate commands, so each is
+    validated on its own — `echo x | npm install evil` still checks the install."""
+    return [s for s in _SEGMENT_SPLIT_RE.split(command) if s.strip()]
 
-    Returns a list of raw package specifiers (may include version info).
+
+def _command_argv(segment: str) -> list[str]:
+    """Shell-tokenize one command segment and return its argv with leading
+    environment assignments (VAR=val) and command wrappers (sudo/env/...) removed,
+    so argv[0] is the real executable. Returns [] for an empty segment.
+
+    shlex tokenization is what defuses the false positives: a quoted argument such
+    as "npm install foo" becomes a single token, so it can never be read as an
+    `npm` executable followed by an `install` verb.
     """
-    # Split respecting basic quoting (handles "pkg with space" or 'pkg').
-    # For robust shell parsing we'd need shlex, but package names don't have
-    # spaces so a simple split suffices for the common case.
-    parts = command.split()
+    segment = segment.strip()
+    if not segment:
+        return []
+    try:
+        tokens = shlex.split(segment)
+    except ValueError:
+        # Unbalanced quotes etc. — fall back to a naive split. Worst case this
+        # yields an argv[0] that is not a package manager, so nothing is checked;
+        # a real install token stream still tokenizes cleanly.
+        tokens = segment.split()
+
+    i, n = 0, len(tokens)
+    while i < n:
+        tok = tokens[i]
+        if _ENV_ASSIGN_RE.match(tok):
+            i += 1
+            continue
+        if tok in COMMAND_PREFIXES:
+            i += 1
+            # Skip this wrapper's option flags (and their values).
+            while i < n and tokens[i].startswith("-"):
+                flag = tokens[i]
+                i += 1
+                if "=" not in flag and flag in _WRAPPER_VALUE_FLAGS and i < n:
+                    i += 1  # consume the flag's value too
+            continue
+        break
+    return tokens[i:]
+
+
+def _match_verb(args: list[str], verb_tokens: list[str]) -> Optional[list[str]]:
+    """If args begins with verb_tokens, return the remaining operands; else None."""
+    if len(args) < len(verb_tokens):
+        return None
+    for idx, verb in enumerate(verb_tokens):
+        if args[idx] != verb:
+            return None
+    return args[len(verb_tokens):]
+
+
+def _extract_package_args(operands: list[str], manager: str) -> list[str]:
+    """From the operands that follow an install verb, return the package
+    specifiers, skipping flags (and their values) and local path arguments."""
     packages: list[str] = []
     skip_next = False
-
-    # Words that are part of the command prefix, not package names.
-    command_verbs = {
-        "npm", "npx", "yarn", "pnpm", "bun",
-        "pip", "pip3", "uv",
-        "cargo", "go",
-        "gem", "composer",
-        "nix-env", "nix", "profile",
-        "install", "add", "i", "get", "require",
-    }
-
-    for i, part in enumerate(parts):
+    for tok in operands:
         if skip_next:
             skip_next = False
             continue
-
-        # Skip flags.
-        if part.startswith("-"):
-            if part in FLAGS_WITH_ARGS or part.rstrip("=") in FLAGS_WITH_ARGS:
+        if tok.startswith("-"):
+            base = tok.split("=", 1)[0]
+            if "=" not in tok and (tok in FLAGS_WITH_ARGS or base in FLAGS_WITH_ARGS):
                 skip_next = True
             continue
-
-        # Skip command verbs.
-        if part.lower() in command_verbs:
+        if tok in (".", "./", ".."):
             continue
-
-        # Stop at shell operators — anything after && is a separate command.
-        if part in ("&&", "||", ";", "|"):
-            break
-
-        # Skip common non-package arguments.
-        if part in (".", "./", ".."):
-            continue
-
-        packages.append(part)
-
+        packages.append(tok)
     return packages
+
+
+def parse_install_segment(segment: str) -> Optional[tuple[str, str, list[str]]]:
+    """Parse one command segment. Return (ecosystem, manager_label, packages) when
+    it is a genuine package-install invocation, else None. Detection is argv-based:
+    the executable and its subcommand verb must actually be an install command, so
+    install-like words inside unrelated commands are never treated as packages."""
+    argv = _command_argv(segment)
+    if not argv:
+        return None
+    exe = os.path.basename(argv[0])
+    rest = argv[1:]
+
+    # Imperative Nix installs are matched specially (denied downstream) and carry
+    # no registry package operands.
+    if exe == "nix-env":
+        if any(a == "--install" or a.startswith("-i") for a in rest):
+            return ("nix", "nix-env", [])
+        return None
+    if exe == "nix":
+        if _match_verb(rest, ["profile", "install"]) is not None:
+            return ("nix", "nix-profile", [])
+        return None
+
+    for verb_tokens, ecosystem, manager in INSTALL_COMMANDS.get(exe, []):
+        operands = _match_verb(rest, verb_tokens)
+        if operands is not None:
+            return (ecosystem, manager, _extract_package_args(operands, manager))
+    return None
+
+
+def extract_packages(command: str, manager: str) -> list[str]:
+    """Extract package specifier(s) from a single install command segment.
+
+    Only operands of a genuine install invocation are returned; tokens from
+    non-install commands (git/grep/echo message or pattern words, file paths,
+    redirections, etc.) are never treated as packages. `manager` is accepted for
+    backward compatibility but the ecosystem/manager are re-derived from argv.
+
+    Returns a list of raw package specifiers (may include version info).
+    """
+    parsed = parse_install_segment(command)
+    if parsed is None:
+        return []
+    return parsed[2]
 
 
 def strip_version(specifier: str) -> str:
@@ -458,20 +586,22 @@ def strip_version(specifier: str) -> str:
 
 def detect_install_commands(command: str) -> list[tuple[str, str, str]]:
     """
-    Find ALL package install invocations in a (possibly compound) command.
-    Returns a list of (ecosystem, manager_label, segment) tuples — one per
-    segment that contains an install command. Validates every segment so that
-    compound commands like ``pip install safe && npm install evil`` cannot
-    sneak an unchecked install past the guard.
+    Find ALL genuine package install invocations in a (possibly compound)
+    command. Returns a list of (ecosystem, manager_label, segment) tuples — one
+    per segment whose argv is actually an install command. Every segment is
+    parsed independently so that compound commands like
+    ``pip install safe && npm install evil`` cannot sneak an unchecked install
+    past the guard, while unrelated commands whose text merely *mentions* an
+    install (``git commit -m "add install docs"``, ``grep "npm install" file``)
+    are correctly ignored.
     """
-    segments = re.split(r'\s*(?:&&|\|\||;)\s*', command)
     results: list[tuple[str, str, str]] = []
 
-    for segment in segments:
-        for pattern, ecosystem, manager in INSTALL_PATTERNS:
-            if pattern.search(segment):
-                results.append((ecosystem, manager, segment))
-                break  # one match per segment is sufficient
+    for segment in _split_segments(command):
+        parsed = parse_install_segment(segment)
+        if parsed is not None:
+            ecosystem, manager, _packages = parsed
+            results.append((ecosystem, manager, segment))
 
     return results
 

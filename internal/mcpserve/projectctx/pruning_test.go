@@ -144,45 +144,6 @@ func TestPruneCeilingFortyWithManyTools(t *testing.T) {
 	}
 }
 
-// fakeNotifier counts NotifyToolsListChanged invocations.
-type fakeNotifier struct{ calls int }
-
-func (f *fakeNotifier) NotifyToolsListChanged() { f.calls++ }
-
-func TestApplyCeilingNotifies(t *testing.T) {
-	t.Parallel()
-	p := NewToolPruner()
-	tools := []spi.ToolRegistration{
-		tieredTool("c1", "status", TierCritical),
-		tieredTool("s1", "diagnostics", TierStandard),
-		tieredTool("e1", "documentation", TierExtended),
-	}
-
-	t.Run("notifies when catalog changes", func(t *testing.T) {
-		t.Parallel()
-		n := &fakeNotifier{}
-		got := p.ApplyCeiling(n, tools, 2)
-		if len(got) != 2 {
-			t.Fatalf("len = %d, want 2", len(got))
-		}
-		if n.calls != 1 {
-			t.Errorf("notifier calls = %d, want 1", n.calls)
-		}
-	})
-
-	t.Run("silent when catalog unchanged", func(t *testing.T) {
-		t.Parallel()
-		n := &fakeNotifier{}
-		got := p.ApplyCeiling(n, tools, 10)
-		if len(got) != 3 {
-			t.Fatalf("len = %d, want 3", len(got))
-		}
-		if n.calls != 0 {
-			t.Errorf("notifier calls = %d, want 0", n.calls)
-		}
-	})
-}
-
 func TestGenericToolsTierSpread(t *testing.T) {
 	t.Parallel()
 	_, pc := newGoProject(t)

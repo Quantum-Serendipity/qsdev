@@ -1,0 +1,106 @@
+package claudecode_test
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+// pgDriver imports the package-guard hook template as a module and prints, as
+// JSON, whether the given command is detected as an install and which package
+// specifiers are extracted. It exercises only detect_install_commands and
+// extract_packages, so it makes no network calls (validate_package is not run).
+const pgDriver = `
+import importlib.util, json, os
+spec = importlib.util.spec_from_file_location('pg', os.environ['PG_PATH'])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+cmd = os.environ['PG_CMD']
+dets = m.detect_install_commands(cmd)
+pkgs = []
+for eco, mgr, seg in dets:
+    pkgs.extend(m.extract_packages(seg, mgr))
+print(json.dumps({'detected': len(dets) > 0, 'packages': pkgs}))
+`
+
+// TestPackageGuard_ExtractsOnlyRealInstalls verifies the NF-1 fix: package names
+// are extracted only from genuine install invocations, never from install-like
+// words inside unrelated commands (git commit messages, grep patterns, echo).
+func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available; skipping package-guard hook test")
+	}
+	template, err := filepath.Abs(filepath.Join("templates", "hooks", "package-guard.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(template); err != nil {
+		t.Fatalf("package-guard template not found: %v", err)
+	}
+
+	cases := []struct {
+		name         string
+		command      string
+		wantDetected bool
+		wantPackages []string
+	}{
+		// False positives that NF-1 must NOT flag: install-like words appear
+		// only inside arguments of unrelated commands.
+		{"git commit message", `git commit -m "fix: refactor install logic, this is done"`, false, nil},
+		{"grep for install literal", `grep -rn "npm install" .`, false, nil},
+		{"grep install word", `grep install foo`, false, nil},
+		{"echo mentioning pip install", `echo "run pip install requests to set up"`, false, nil},
+		{"go build not go get", `go build ./...`, false, nil},
+
+		// Genuine installs that must still be checked.
+		{"npm install", `npm install left-pad`, true, []string{"left-pad"}},
+		{"pip install with version", `pip install requests==2.31.0`, true, []string{"requests==2.31.0"}},
+		{"sudo wrapped install", `sudo -u deploy npm install left-pad`, true, []string{"left-pad"}},
+		{"env-prefixed install", `FOO=bar pip install requests`, true, []string{"requests"}},
+		{"uv add", `uv add ruff`, true, []string{"ruff"}},
+		{"cargo add", `cargo add serde`, true, []string{"serde"}},
+		{"piped install still checked", `echo hi | npm install evil`, true, []string{"evil"}},
+		{"compound install checks both", `pip install safe && npm install evil`, true, []string{"safe", "evil"}},
+		{"bare pip from requirements", `pip install -r requirements.txt`, true, nil},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(python, "-c", pgDriver)
+			cmd.Env = append(os.Environ(), "PG_PATH="+template, "PG_CMD="+tc.command)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("driver failed: %v\n%s", err, out)
+			}
+			var res struct {
+				Detected bool     `json:"detected"`
+				Packages []string `json:"packages"`
+			}
+			if err := json.Unmarshal(out, &res); err != nil {
+				t.Fatalf("bad driver output %q: %v", out, err)
+			}
+			if res.Detected != tc.wantDetected {
+				t.Errorf("detected = %v, want %v (command: %s)", res.Detected, tc.wantDetected, tc.command)
+			}
+			if !equalStrings(res.Packages, tc.wantPackages) {
+				t.Errorf("packages = %v, want %v (command: %s)", res.Packages, tc.wantPackages, tc.command)
+			}
+		})
+	}
+}
+
+// equalStrings compares two string slices, treating nil and empty as equal.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

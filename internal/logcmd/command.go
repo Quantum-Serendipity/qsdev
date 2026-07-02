@@ -207,6 +207,10 @@ func runList(cmd *cobra.Command) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "%-10s %-20s %-22s %10s %8s\n",
 		"SESSION", "COMMAND", "STARTED", "DURATION", "SIZE")
 
+	// Defense-in-depth: re-scrub the command field before display in case a log
+	// captured a secret in its argv (F-CAP-29.5-1).
+	red := logging.NewRedactor()
+
 	count := 0
 	for _, s := range sessions {
 		if !cutoff.IsZero() && s.Started.Before(cutoff) {
@@ -228,7 +232,7 @@ func runList(cmd *cobra.Command) error {
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "%-10s %-20s %-22s %10s %8s\n",
-			s.ID, truncate(s.Command, 20), started, duration, formatBytes(s.Size))
+			s.ID, truncate(red.RedactString(s.Command), 20), started, duration, formatBytes(s.Size))
 		count++
 	}
 
@@ -257,6 +261,11 @@ func runShow(cmd *cobra.Command, sessionID string) error {
 	raw, _ := cmd.Flags().GetBool("raw")
 	levelFilter, _ := cmd.Flags().GetString("level")
 
+	// Defense-in-depth: re-scrub at display time. Write-time redaction already
+	// runs, but a hand-edited or externally-produced log file may still contain
+	// secrets, so never emit an unredacted line to the terminal (F-CAP-29.5-1).
+	red := logging.NewRedactor()
+
 	scanner := bufio.NewScanner(f)
 	w := cmd.OutOrStdout()
 	for scanner.Scan() {
@@ -270,7 +279,7 @@ func runShow(cmd *cobra.Command, sessionID string) error {
 		}
 
 		if raw {
-			fmt.Fprintln(w, line)
+			fmt.Fprintln(w, red.RedactString(line))
 			continue
 		}
 
@@ -285,7 +294,7 @@ func runShow(cmd *cobra.Command, sessionID string) error {
 		}
 
 		prefix := levelPrefix(lvl)
-		fmt.Fprintf(w, "%s %s %s\n", ts, prefix, msg)
+		fmt.Fprintf(w, "%s %s %s\n", ts, prefix, red.RedactString(msg))
 	}
 
 	return scanner.Err()
@@ -297,7 +306,7 @@ func runPath(cmd *cobra.Command) error {
 	return nil
 }
 
-func runClean(cmd *cobra.Command, ) error {
+func runClean(cmd *cobra.Command) error {
 	dir := resolveLogDir(cmd)
 	all, _ := cmd.Flags().GetBool("all")
 	force, _ := cmd.Flags().GetBool("force")
@@ -437,7 +446,12 @@ func parseDuration(s string) (time.Duration, error) {
 
 // WriteTo writes log entries from the given reader, applying optional level filter,
 // to the writer. Used by the bug report system to extract log excerpts.
+//
+// Entries are re-scrubbed at extraction time as defense-in-depth: a bug report
+// is a shareable artifact, so no excerpt should carry a secret even if write-time
+// redaction missed it or the file was edited by hand (F-CAP-29.5-1).
 func WriteTo(w io.Writer, r io.Reader, levelFilter string, maxLines int) (int, error) {
+	red := logging.NewRedactor()
 	scanner := bufio.NewScanner(r)
 	count := 0
 	for scanner.Scan() {
@@ -451,7 +465,7 @@ func WriteTo(w io.Writer, r io.Reader, levelFilter string, maxLines int) (int, e
 				continue
 			}
 		}
-		fmt.Fprintln(w, line)
+		fmt.Fprintln(w, red.RedactString(line))
 		count++
 	}
 	return count, scanner.Err()

@@ -35,18 +35,7 @@ func (d *Dnf) cmd() string {
 	return "yum"
 }
 
-func (d *Dnf) UpdateIndex(ctx context.Context) error {
-	return d.runner.Run(ctx, d.cmd(), "makecache")
-}
-
 func (d *Dnf) Install(ctx context.Context, packages ...string) error {
 	args := append([]string{"install", "-y"}, packages...)
 	return d.runner.Run(ctx, d.cmd(), args...)
 }
-
-func (d *Dnf) IsInstalled(ctx context.Context, pkg string) bool {
-	err := d.runner.Run(ctx, "rpm", "-q", pkg)
-	return err == nil
-}
-
-func (d *Dnf) SearchCmd() string { return d.cmd() + " search" }

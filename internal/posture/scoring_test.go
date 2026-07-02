@@ -129,16 +129,20 @@ func TestComputeDefenseScore_AllNotApplicable(t *testing.T) {
 		{Name: "a", Weight: WeightCritical, Status: LayerNotApplicable},
 		{Name: "b", Weight: WeightHigh, Status: LayerNotApplicable},
 	}
+	// Degenerate: nothing applicable was measured. Must not grade a vacuous A+
+	// (F-CAP-27.8-1).
 	got := ComputeDefenseScore(layers)
-	if got != 100.0 {
-		t.Errorf("all not-applicable: got %f, want 100.0", got)
+	if got != 0.0 {
+		t.Errorf("all not-applicable: got %f, want 0.0", got)
 	}
 }
 
 func TestComputeDefenseScore_EmptyLayers(t *testing.T) {
+	// Degenerate: no layers to measure — honest score is 0, not a vacuous 100
+	// (F-CAP-27.8-1).
 	got := ComputeDefenseScore(nil)
-	if got != 100.0 {
-		t.Errorf("empty layers: got %f, want 100.0", got)
+	if got != 0.0 {
+		t.Errorf("empty layers: got %f, want 0.0", got)
 	}
 }
 
@@ -406,22 +410,40 @@ func TestComputeTierRelativeDefenseScore_T3IncludesAll(t *testing.T) {
 
 func TestComputeTierRelativeDefenseScore_EmptyLayers(t *testing.T) {
 	t.Parallel()
+	// Degenerate: no layers to measure — honest score is 0 (F-CAP-27.8-1).
 	got := ComputeTierRelativeDefenseScore(nil, 1)
-	if got != 100.0 {
-		t.Errorf("empty layers: got %f, want 100.0", got)
+	if got != 0.0 {
+		t.Errorf("empty layers: got %f, want 0.0", got)
 	}
 }
 
 func TestComputeTierRelativeDefenseScore_AllAboveTier(t *testing.T) {
 	t.Parallel()
-	// All layers are T3, but user is T1 — nothing counts.
+	// All layers are T3, but user is T1 — nothing is in scope, so nothing was
+	// measured. This degenerate case must not grade a vacuous A+ (F-CAP-27.8-1).
 	layers := []DefenseLayer{
 		{Name: "sast", Weight: WeightMedium, Status: LayerDisabled, MinTier: 3},
 		{Name: "nix-hardening", Weight: WeightMedium, Status: LayerDisabled, MinTier: 3},
 	}
 	got := ComputeTierRelativeDefenseScore(layers, 1)
-	if got != 100.0 {
-		t.Errorf("all above tier: got %f, want 100.0", got)
+	if got != 0.0 {
+		t.Errorf("all above tier: got %f, want 0.0", got)
+	}
+}
+
+// TestComputeTierRelativeDefenseScore_UnknownTierNotVacuous is a regression for
+// F-CAP-27.8-1: tier.Position returns 0 for an unknown/misconfigured tier, which
+// excludes every layer (all MinTier >= 1). The pre-fix code returned a vacuous
+// 100 there, inflating the aggregate ("reports secure while insecure").
+func TestComputeTierRelativeDefenseScore_UnknownTierNotVacuous(t *testing.T) {
+	t.Parallel()
+	layers := []DefenseLayer{
+		{Name: "pretooluse-hooks", Weight: WeightCritical, Status: LayerEnabled, MinTier: 1},
+		{Name: "install-script-blocking", Weight: WeightHigh, Status: LayerEnabled, MinTier: 1},
+	}
+	got := ComputeTierRelativeDefenseScore(layers, 0)
+	if got != 0.0 {
+		t.Errorf("unknown tier (position 0): got %f, want 0.0 (must not report vacuous 100)", got)
 	}
 }
 

@@ -71,6 +71,10 @@ func WeightMultiplier(w LayerWeight) float64 {
 
 // ComputeDefenseScore computes weighted defense coverage (0-100).
 // Not-applicable layers are excluded from both numerator and denominator.
+//
+// A degenerate layer set (empty, or every layer not-applicable) has no measured
+// defense coverage. Reporting 100 there would grade a vacuous A+ and overclaim
+// security the assessment never verified (F-CAP-27.8-1), so it scores 0.
 func ComputeDefenseScore(layers []DefenseLayer) float64 {
 	var totalWeight, earnedWeight float64
 	for _, l := range layers {
@@ -87,7 +91,7 @@ func ComputeDefenseScore(layers []DefenseLayer) float64 {
 		}
 	}
 	if totalWeight == 0 {
-		return 100.0
+		return 0.0
 	}
 	return (earnedWeight / totalWeight) * 100.0
 }
@@ -116,7 +120,11 @@ func ComputeTierRelativeDefenseScore(layers []DefenseLayer, currentTier int) flo
 		}
 	}
 	if totalWeight == 0 {
-		return 100.0
+		// No in-scope, applicable layers at this tier — nothing was measured.
+		// Reporting 100 would overclaim security (e.g. an unknown/position-0 tier
+		// excluding every layer would grade a vacuous A+); score 0 instead
+		// (F-CAP-27.8-1).
+		return 0.0
 	}
 	return (earnedWeight / totalWeight) * 100.0
 }

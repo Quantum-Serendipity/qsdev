@@ -104,6 +104,6 @@ func landlockItem(abi int) ContainerCheckItem {
 	return ContainerCheckItem{
 		Label:   "Landlock",
 		Status:  "warn",
-		Summary: "not available (kernel < 5.13)",
+		Summary: "not enforceable (needs ll-restrict helper and kernel >= 5.13)",
 	}
 }

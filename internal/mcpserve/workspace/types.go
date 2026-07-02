@@ -7,19 +7,14 @@
 // doublestar-backed compatibility layer, and renders the result as a flat
 // WorkspaceGraph keyed by package directory.
 //
-// The engine watches the workspace configuration with a two-category fsnotify
-// strategy (membership configs trigger a full re-scan; member manifests trigger
-// a single-package re-parse) and exposes per-package context through the
+// The engine exposes per-package context through the
 // qsdev://project/{package}/context resource, using {ecosystem}:{name}
 // qualification for cross-ecosystem name collisions.
 //
-// To avoid an import cycle the package depends only on spi (never on mcpserve);
-// the watcher signals catalog changes through an injected callback rather than
-// importing the server.
+// To avoid an import cycle the package depends only on spi (never on mcpserve).
 package workspace
 
 import (
-	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -144,76 +139,6 @@ func (g *WorkspaceGraph) Resolve(id string) *Package {
 	return g.ByQualifiedName(id)
 }
 
-// ResolveCWDPackage provides V1 backward compatibility: given an absolute
-// working directory, it returns the package whose RelDir is the nearest ancestor
-// of cwd (the most specific enclosing package). It returns an error when cwd
-// lies outside the workspace root or no package encloses it.
-func (g *WorkspaceGraph) ResolveCWDPackage(cwd string) (*Package, error) {
-	abs, err := filepath.Abs(cwd)
-	if err != nil {
-		return nil, fmt.Errorf("resolving cwd %q: %w", cwd, err)
-	}
-
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
-	rel, err := filepath.Rel(g.root, abs)
-	if err != nil {
-		return nil, fmt.Errorf("relating cwd %q to root %q: %w", abs, g.root, err)
-	}
-	rel = filepath.ToSlash(rel)
-	if rel == ".." || strings.HasPrefix(rel, "../") {
-		return nil, fmt.Errorf("cwd %q is outside workspace root %q", abs, g.root)
-	}
-
-	var best *Package
-	bestLen := -1
-	for _, p := range g.packages {
-		if !relDirEncloses(p.RelDir, rel) {
-			continue
-		}
-		if l := relDirSpecificity(p.RelDir); l > bestLen {
-			best, bestLen = p, l
-		}
-	}
-	if best == nil {
-		return nil, fmt.Errorf("no workspace package encloses %q", abs)
-	}
-	return best, nil
-}
-
-// ReplaceAll atomically swaps the graph's package set (used by the watcher after
-// a full re-scan). The replacement map is keyed by RelDir.
-func (g *WorkspaceGraph) ReplaceAll(packages map[string]*Package) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.packages = packages
-}
-
-// Upsert inserts or replaces a single package entry (used by the watcher after a
-// member-manifest re-parse). A nil package or one with an empty RelDir is
-// ignored.
-func (g *WorkspaceGraph) Upsert(p *Package) {
-	if p == nil || p.RelDir == "" {
-		return
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.packages[p.RelDir] = p
-}
-
-// Remove deletes the package rooted at dir, returning whether an entry existed.
-func (g *WorkspaceGraph) Remove(dir string) bool {
-	key := normalizeRelDir(dir)
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if _, ok := g.packages[key]; !ok {
-		return false
-	}
-	delete(g.packages, key)
-	return true
-}
-
 // normalizeRelDir cleans a directory path into the graph's canonical key form:
 // forward slashes, no leading "./", with the root represented as ".".
 func normalizeRelDir(dir string) string {
@@ -248,23 +173,4 @@ func knownEcosystem(eco string) bool {
 	default:
 		return false
 	}
-}
-
-// relDirEncloses reports whether the package directory pkgDir encloses the
-// relative path rel (pkgDir == rel, or rel is nested under pkgDir, or pkgDir is
-// the workspace root ".").
-func relDirEncloses(pkgDir, rel string) bool {
-	if pkgDir == "." {
-		return true
-	}
-	return rel == pkgDir || strings.HasPrefix(rel, pkgDir+"/")
-}
-
-// relDirSpecificity ranks how specific a package directory is for nearest-
-// ancestor selection: the root "." is least specific, then path depth.
-func relDirSpecificity(pkgDir string) int {
-	if pkgDir == "." {
-		return 0
-	}
-	return len(strings.Split(pkgDir, "/"))
 }

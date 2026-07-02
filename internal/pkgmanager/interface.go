@@ -17,18 +17,8 @@ type PackageManager interface {
 	// must NOT prepend sudo themselves.
 	NeedsElevation() bool
 
-	// UpdateIndex refreshes the package index/cache.
-	UpdateIndex(ctx context.Context) error
-
 	// Install installs one or more packages.
 	Install(ctx context.Context, packages ...string) error
-
-	// IsInstalled reports whether a package is currently installed.
-	IsInstalled(ctx context.Context, pkg string) bool
-
-	// SearchCmd returns the shell command prefix for searching packages,
-	// e.g. "apt-cache search" or "brew search".
-	SearchCmd() string
 }
 
 // CommandRunner abstracts command execution for testability.

@@ -28,6 +28,8 @@ type mockSandboxProber struct {
 	files           map[string][]byte
 	fileInfos       map[string]bool
 	envVars         map[string]string
+	landlockHelper  string // path returned by LandlockHelperPath ("" = unavailable)
+	seccompFilter   string // path returned by SeccompFilterPath ("" = unavailable)
 }
 
 func newMockSandboxProber() *mockSandboxProber {
@@ -72,6 +74,10 @@ func (m *mockSandboxProber) Getenv(key string) string {
 	return m.envVars[key]
 }
 
+func (m *mockSandboxProber) LandlockHelperPath() string { return m.landlockHelper }
+
+func (m *mockSandboxProber) SeccompFilterPath() string { return m.seccompFilter }
+
 var _ sandbox.SandboxProber = (*mockSandboxProber)(nil)
 
 func TestRunSandboxCheck_FullSupport(t *testing.T) {
@@ -81,6 +87,10 @@ func TestRunSandboxCheck_FullSupport(t *testing.T) {
 	// actually selectable; otherwise the effective tier degrades to unsandboxed.
 	mock.lookPathResults["bwrap"] = stubBinary(t, "bwrap")
 	mock.lookPathResults["systemd-run"] = stubBinary(t, "systemd-run")
+	// TierFull additionally requires the tools that ENFORCE the LSM layers, not
+	// just a capable kernel: the ll-restrict helper and the seccomp BPF filter.
+	mock.landlockHelper = "/usr/bin/ll-restrict"
+	mock.seccompFilter = "/nix/store/seccomp.bpf"
 	mock.files["/proc/sys/kernel/unprivileged_userns_clone"] = []byte("1\n")
 	mock.files["/proc/sys/kernel/seccomp/actions_avail"] = []byte("kill errno\n")
 	mock.files["/proc/version"] = []byte("Linux version 6.8.0-generic\n")
@@ -163,6 +173,31 @@ func TestRunSandboxCheck_ReportsEffectiveTier(t *testing.T) {
 	}
 	if len(section.Recommendations) == 0 {
 		t.Error("expected remediation recommendations when effective tier is unsandboxed")
+	}
+}
+
+// TestRunSandboxCheck_NotFullWithoutEnforcementTools is a regression for NF-3:
+// bwrap is installed and stat-able and the kernel supports Landlock + seccomp,
+// but the enforcement tools (ll-restrict helper, seccomp BPF filter) are absent.
+// The doctor must not report the effective tier as "full", because the LSM
+// layers cannot actually be applied.
+func TestRunSandboxCheck_NotFullWithoutEnforcementTools(t *testing.T) {
+	t.Parallel()
+	mock := newMockSandboxProber()
+	mock.lookPathResults["bwrap"] = stubBinary(t, "bwrap")
+	mock.files["/proc/sys/kernel/unprivileged_userns_clone"] = []byte("1\n")
+	mock.files["/proc/sys/kernel/seccomp/actions_avail"] = []byte("kill errno\n")
+	mock.files["/proc/version"] = []byte("Linux version 6.8.0-generic\n")
+	mock.fileInfos["/sys/fs/cgroup/cgroup.controllers"] = true
+	// Deliberately no landlockHelper / seccompFilter set.
+
+	section := RunSandboxCheck(context.Background(), mock)
+
+	if section.Tier == "full" {
+		t.Errorf("Tier = %q; must not be full without ll-restrict helper and seccomp filter", section.Tier)
+	}
+	if section.SecurityLevel == "strong" {
+		t.Errorf("SecurityLevel = %q; must not be strong without enforcement tools", section.SecurityLevel)
 	}
 }
 

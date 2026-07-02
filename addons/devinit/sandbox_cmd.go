@@ -10,6 +10,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/backendselect"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/policy"
 )
 
@@ -59,13 +60,8 @@ automatically selected based on available kernel capabilities.`,
 			cfg.HookCommand = args
 
 			caps := sandbox.ProbeCapabilitiesDefault(ctx)
-			tier := sandbox.DetermineTier(caps)
 
-			if msg := sandbox.TierMessage(tier); msg != "" {
-				slog.Info("sandbox degraded", "tier", tier.String(), "message", msg)
-			}
-
-			result, err := runSandboxed(ctx, cfg, tier)
+			result, err := runSandboxed(ctx, cfg, caps)
 			if err != nil {
 				return fmt.Errorf("sandbox execution failed: %w", err)
 			}
@@ -106,7 +102,7 @@ func sandboxStatusCmd() *cobra.Command {
 			}
 
 			caps := sandbox.ProbeCapabilitiesDefault(ctx)
-			tier := sandbox.DetermineTier(caps)
+			_, tier := backendselect.ResolveBackend(*caps)
 
 			if jsonOutput {
 				return printSandboxStatusJSON(cmd, caps, tier)
@@ -166,16 +162,16 @@ func printSandboxStatusJSON(cmd *cobra.Command, caps *sandbox.SystemCapabilities
 	return nil
 }
 
-// runSandboxed runs a hook in the appropriate sandbox tier.
-func runSandboxed(ctx context.Context, cfg *sandbox.SandboxConfig, tier sandbox.DegradationTier) (*sandbox.SandboxResult, error) {
-	switch {
-	case tier <= sandbox.TierBwrapWithoutSeccomp:
-		slog.Warn("bubblewrap backend not yet connected in this build; falling back to unsandboxed")
-		return (&sandbox.UnsandboxedBackend{}).RunHook(ctx, cfg)
-	case tier == sandbox.TierSystemdRun:
-		slog.Warn("systemd-run backend not yet connected in this build; falling back to unsandboxed")
-		return (&sandbox.UnsandboxedBackend{}).RunHook(ctx, cfg)
-	default:
-		return (&sandbox.UnsandboxedBackend{}).RunHook(ctx, cfg)
+// runSandboxed resolves the strongest available sandbox backend for the probed
+// capabilities and runs the hook inside it. It warns only on genuine degradation
+// (any tier weaker than full), so a caller can tell when the requested isolation
+// could not be fully applied.
+func runSandboxed(ctx context.Context, cfg *sandbox.SandboxConfig, caps *sandbox.SystemCapabilities) (*sandbox.SandboxResult, error) {
+	backend, tier := backendselect.ResolveBackend(*caps)
+
+	if msg := sandbox.TierMessage(tier); msg != "" {
+		slog.Warn("sandbox degraded", "tier", tier.String(), "message", msg)
 	}
+
+	return backend.RunHook(ctx, cfg)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"aead.dev/minisign"
 
@@ -23,7 +24,12 @@ func Sign(ctx context.Context, path string, opts SignOptions) (sigPath string, e
 		return "", ErrSigningUnsupported
 	}
 
-	priv, err := loadSecretKey(opts.KeyPath, opts.Password)
+	password, err := resolvePassword(opts)
+	if err != nil {
+		return "", err
+	}
+
+	priv, err := loadSecretKey(opts.KeyPath, password)
 	if err != nil {
 		return "", err
 	}
@@ -42,6 +48,32 @@ func Sign(ctx context.Context, path string, opts SignOptions) (sigPath string, e
 		return "", fmt.Errorf("writing signature %q: %w", sigPath, err)
 	}
 	return sigPath, nil
+}
+
+// resolvePassword returns the secret-key passphrase from the first configured
+// out-of-band source, falling back to the in-memory literal. Sourcing the
+// passphrase from a file or environment variable keeps it off the process
+// command line, where ps(1), /proc/<pid>/cmdline, and shell history would
+// otherwise expose it. Precedence is PasswordFile, then PasswordEnv, then the
+// in-memory Password. The passphrase is never logged or echoed.
+func resolvePassword(opts SignOptions) (string, error) {
+	if opts.PasswordFile != "" {
+		raw, err := os.ReadFile(opts.PasswordFile) //nolint:gosec // operator-supplied passphrase file.
+		if err != nil {
+			return "", fmt.Errorf("reading passphrase file %q: %w", opts.PasswordFile, err)
+		}
+		// Trim only trailing newlines: editors and `echo`/redirection append one,
+		// but a passphrase never legitimately ends in a newline.
+		return strings.TrimRight(string(raw), "\r\n"), nil
+	}
+	if opts.PasswordEnv != "" {
+		v, ok := os.LookupEnv(opts.PasswordEnv)
+		if !ok {
+			return "", fmt.Errorf("passphrase environment variable %q is not set", opts.PasswordEnv)
+		}
+		return v, nil
+	}
+	return opts.Password, nil
 }
 
 // loadSecretKey reads the Minisign secret key at keyPath, decrypting it with

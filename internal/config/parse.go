@@ -3,6 +3,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"os"
@@ -37,9 +38,10 @@ type ValidateOptions struct {
 // ParseQsdevConfig reads and parses a .qsdev.yaml file at path.
 //
 // It uses two-pass parsing: first unmarshal to map[string]any to extract
-// and validate the version field with clear error messages, then full
-// struct unmarshal into QsdevConfig. Unknown YAML fields are silently
-// ignored (gopkg.in/yaml.v3 default behavior).
+// and validate the version field with clear error messages, then a strict
+// (known-field) struct unmarshal into QsdevConfig. Unknown/misspelled YAML
+// keys are rejected with an error rather than silently dropped, so a typo in
+// a security key (e.g. "script_blockng:") cannot silently discard its setting.
 func ParseQsdevConfig(path string) (*types.QsdevConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -86,9 +88,14 @@ func ParseQsdevConfigBytes(data []byte) (*types.QsdevConfig, error) {
 			versionInt, types.ConfigVersionMin, branding.Get().AppName)
 	}
 
-	// Pass 2: full struct unmarshal.
+	// Pass 2: strict (known-field) struct unmarshal. KnownFields(true) rejects
+	// any unknown/misspelled key rather than silently dropping it, so a typo'd
+	// top-level or nested security key surfaces as an error instead of quietly
+	// discarding the user's intended setting (config/security data loss).
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
 	var cfg types.QsdevConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := dec.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 

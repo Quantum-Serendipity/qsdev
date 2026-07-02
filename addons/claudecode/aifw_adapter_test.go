@@ -2,6 +2,7 @@ package claudecode_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -209,6 +210,61 @@ func TestReportGaps_DenyRules(t *testing.T) {
 			t.Errorf("expected ActualTier=TierHook, got %v", g.ActualTier)
 		}
 	}
+}
+
+func TestTranslatePermissions_EmitsDenyRules(t *testing.T) {
+	t.Parallel()
+
+	a := newTestAdapter()
+	policy := &aiframework.PermissionPolicy{
+		AllowRules: []aiframework.PermissionRule{
+			{Pattern: "Bash(go test *)", Reason: "run tests"},
+		},
+		DenyRules: []aiframework.PermissionRule{
+			{Pattern: "Bash(rm -rf /)", Reason: "prevent system wipe"},
+		},
+		AskRules: []aiframework.PermissionRule{
+			{Pattern: "Bash(git push *)", Reason: "confirm before pushing"},
+		},
+	}
+
+	arts, err := a.TranslatePermissions(context.Background(), policy)
+	if err != nil {
+		t.Fatalf("TranslatePermissions returned error: %v", err)
+	}
+	if arts == nil {
+		t.Fatal("TranslatePermissions returned nil artifacts")
+	}
+	if len(arts.GeneratedFiles) == 0 {
+		t.Fatal("TranslatePermissions emitted no generated files: computed deny rules were discarded")
+	}
+
+	var settings claudecode.SettingsJSON
+	if err := json.Unmarshal(arts.GeneratedFiles[0].Content, &settings); err != nil {
+		t.Fatalf("emitted settings.json is not valid JSON: %v", err)
+	}
+
+	if !contains(settings.Permissions.Deny, "Bash(rm -rf /)") {
+		t.Errorf("emitted deny list %v does not contain policy deny rule %q",
+			settings.Permissions.Deny, "Bash(rm -rf /)")
+	}
+	if !contains(settings.Permissions.Allow, "Bash(go test *)") {
+		t.Errorf("emitted allow list %v does not contain policy allow rule %q",
+			settings.Permissions.Allow, "Bash(go test *)")
+	}
+	if !contains(settings.Permissions.Ask, "Bash(git push *)") {
+		t.Errorf("emitted ask list %v does not contain policy ask rule %q",
+			settings.Permissions.Ask, "Bash(git push *)")
+	}
+}
+
+func contains(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func TestContractSuite(t *testing.T) {

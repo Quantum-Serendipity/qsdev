@@ -49,15 +49,28 @@ func (e ContentManifestEntry) SigPath() string {
 // SignOptions configures signing of a single file.
 type SignOptions struct {
 	KeyPath        string // path to the Minisign secret key file
-	Password       string // password for an encrypted secret key ("" if unencrypted)
 	TrustedComment string // authenticated comment embedded in the signature
 	Force          bool   // overwrite an existing signature file
+
+	// Passphrase sources for an encrypted secret key ("" everywhere means the
+	// key is unencrypted). To keep the passphrase off the process command line —
+	// where ps(1), /proc/<pid>/cmdline, and shell history would expose it —
+	// prefer PasswordFile or PasswordEnv over the in-memory Password literal.
+	// When more than one is set, precedence is PasswordFile, then PasswordEnv,
+	// then Password. PasswordFile may point at /dev/stdin to read a piped
+	// passphrase.
+	Password     string // in-memory passphrase (programmatic callers/tests; never place on argv)
+	PasswordFile string // path to a file whose contents (trailing newlines trimmed) are the passphrase
+	PasswordEnv  string // name of an environment variable holding the passphrase
 }
 
 // VerifyOptions configures verification.
 type VerifyOptions struct {
-	TrustedKeys    []PublicKey // when empty, keys are loaded from DefaultTrustedKeysDir
-	RequireTrusted bool        // treat signed-but-untrusted (or unsigned) as failure
+	TrustedKeys []PublicKey // when empty, keys are loaded from DefaultTrustedKeysDir
+	// RequireTrusted turns any outcome short of a valid signature from a trusted
+	// key into a failure: signed-but-untrusted, unsigned, and hash-only content
+	// (a recorded SHA-256 with no signature) are all reported as not Verified.
+	RequireTrusted bool
 }
 
 // SanitizeOptions controls the Unicode sanitization pipeline. NormalizeNFKC is

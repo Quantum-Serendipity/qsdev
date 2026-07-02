@@ -2,6 +2,8 @@ package mcphealth
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -125,6 +127,45 @@ func TestCheckAll_MixedResults(t *testing.T) {
 	}
 	if statuses["missing-prereq"] != StatusDegraded {
 		t.Errorf("missing-prereq status = %q, want %q", statuses["missing-prereq"], StatusDegraded)
+	}
+}
+
+func TestCheckServer_HTTPStatusGating(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		statusCode int
+		want       string
+	}{
+		{"ok", http.StatusOK, StatusHealthy},
+		{"no content", http.StatusNoContent, StatusHealthy},
+		{"not found", http.StatusNotFound, StatusUnreachable},
+		{"forbidden", http.StatusForbidden, StatusUnreachable},
+		{"server error", http.StatusInternalServerError, StatusUnreachable},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.statusCode)
+			}))
+			t.Cleanup(srv.Close)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			h := CheckServer(ctx, ServerConfig{Name: "http-server", URL: srv.URL})
+
+			if h.Status != tt.want {
+				t.Errorf("HTTP %d: status = %q, want %q (error=%q)", tt.statusCode, h.Status, tt.want, h.Error)
+			}
+			if tt.want != StatusHealthy && h.Error == "" {
+				t.Errorf("HTTP %d: expected a non-empty error for an unhealthy status", tt.statusCode)
+			}
+		})
 	}
 }
 

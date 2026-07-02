@@ -119,6 +119,9 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
 			BuiltIn:       false,
+			// perltidy ships as a Perl-package attribute in nixpkgs (no
+			// top-level binary); perlPackages.PerlTidy provides /bin/perltidy.
+			NixPackage: "perlPackages.PerlTidy",
 		},
 	}
 }

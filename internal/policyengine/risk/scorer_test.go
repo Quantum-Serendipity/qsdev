@@ -112,9 +112,10 @@ func TestScorePackage(t *testing.T) {
 				Version:   "0.1.0",
 				Ecosystem: EcosystemNpm,
 			},
-			wantMinScore:   0,
-			wantMaxScore:   100,
-			checkGradeOnly: false,
+			wantMinScore: 0,
+			wantMaxScore: 0,
+			wantGrade:    GradeF,
+			wantCeiling:  "insufficient-data",
 		},
 	}
 
@@ -136,6 +137,53 @@ func TestScorePackage(t *testing.T) {
 				t.Errorf("ceiling = %q, want %q", result.CeilingApplied, tt.wantCeiling)
 			}
 		})
+	}
+}
+
+// TestScorePackageFailsClosedOnUnenriched is the red→green guard for
+// F-CAP-21.5-1: an npm package with no telemetry (the state during a fresh
+// supply-chain lookup with no enrichment) must NOT fail open to grade B. The
+// data-freshness floor quarantines it at grade F.
+func TestScorePackageFailsClosedOnUnenriched(t *testing.T) {
+	t.Parallel()
+
+	result := ScorePackage(&PackageInfo{
+		Name:      "totally-unknown",
+		Version:   "1.0.0",
+		Ecosystem: EcosystemNpm,
+	})
+
+	if result.Grade != GradeF {
+		t.Errorf("unenriched package grade = %s, want F (failing open masks supply-chain risk)", result.Grade)
+	}
+	if result.Score != 0 {
+		t.Errorf("unenriched package score = %d, want 0", result.Score)
+	}
+	if result.CeilingApplied != "insufficient-data" {
+		t.Errorf("ceiling = %q, want \"insufficient-data\"", result.CeilingApplied)
+	}
+}
+
+// TestScorePackageEnrichedStillGrades confirms the floor does not over-fire: a
+// package with real publication timestamps and provenance still scores on the
+// normal scale (grade A here).
+func TestScorePackageEnrichedStillGrades(t *testing.T) {
+	t.Parallel()
+
+	twoYearsAgo := time.Now().Add(-2 * 365 * 24 * time.Hour)
+	sixMonthsAgo := time.Now().Add(-180 * 24 * time.Hour)
+
+	result := ScorePackage(&PackageInfo{
+		Name:                    "healthy",
+		Version:                 "1.0.0",
+		Ecosystem:               EcosystemNpm,
+		FirstPublishedAt:        &twoYearsAgo,
+		PublishedAt:             &sixMonthsAgo,
+		HasChecksumVerification: true,
+	})
+
+	if result.Grade != GradeA {
+		t.Errorf("enriched healthy package grade = %s, want A", result.Grade)
 	}
 }
 

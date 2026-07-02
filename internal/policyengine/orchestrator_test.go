@@ -2,6 +2,10 @@ package policyengine
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
@@ -318,6 +322,106 @@ func TestPostureSnapshot(t *testing.T) {
 	}
 	if trustPosture != nil {
 		t.Error("expected nil McpTrustPosture")
+	}
+}
+
+// TestProductionAdaptersSatisfyInterfaces is the compile-time guard for
+// F-CAP-21.6-2 / F-CAP-21.2-1: the production trust adapter and risk scorer must
+// satisfy the orchestrator interfaces so both can be wired non-nil. If either
+// stops satisfying its interface, this file fails to compile.
+func TestProductionAdaptersSatisfyInterfaces(t *testing.T) {
+	t.Parallel()
+
+	var _ McpTrustEvaluator = (*TrustAdapter)(nil)
+	var _ McpTrustEvaluator = NewTrustAdapter(trust.NewMcpTrustEngine(""))
+	var _ PackageRiskScorer = risk.NewScorer()
+}
+
+// TestRunPreToolUse_ConfusedDeputyRealCompiledRule is the end-to-end red→green
+// guard for F-CAP-21.2-1 + F-CAP-21.6-1 + F-CAP-21.6-2: a REAL compiled deny rule
+// (emitted as Type "denied_path" by the compiler, normalized to "path" by the
+// engine) must fire the confused-deputy check through the production-wired
+// orchestrator (real PolicyEngine + real TrustAdapter), blocking an MCP tool that
+// launders a write into a denied path.
+func TestRunPreToolUse_ConfusedDeputyRealCompiledRule(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	secretFile := filepath.Join(tmpDir, "id_rsa")
+	if err := os.WriteFile(secretFile, []byte("key"), 0o600); err != nil {
+		t.Fatalf("writing secret file: %v", err)
+	}
+
+	policyYAML := fmt.Sprintf(`apiVersion: qsdev/v1
+kind: SecurityPolicy
+metadata:
+  name: deputy-test
+  version: "1.0.0"
+rules:
+  - id: CG-DEPUTY
+    category: config-guard
+    name: Deny credential path
+    severity: high
+    bypass_tier: session
+    conditions:
+      type: denied_path_check
+      pattern: %q
+    action:
+      type: block
+      message: "denied"
+`, tmpDir+"/*")
+
+	policyFile := filepath.Join(tmpDir, "policy.yaml")
+	if err := os.WriteFile(policyFile, []byte(policyYAML), 0o644); err != nil {
+		t.Fatalf("writing policy file: %v", err)
+	}
+
+	engine, err := policy.NewPolicyEngine([]string{policyFile}, nil, policy.EngineOptions{})
+	if err != nil {
+		t.Fatalf("creating policy engine: %v", err)
+	}
+
+	// The compiled rule came from denied_path_check; FilePathDenyRules must have
+	// normalized its type to "path" for the trust layer to act on it.
+	denyRules := engine.FilePathDenyRules()
+	if len(denyRules) != 1 || denyRules[0].Type != "path" {
+		t.Fatalf("expected one normalized \"path\" deny rule, got %+v", denyRules)
+	}
+
+	adapter := NewTrustAdapter(trust.NewMcpTrustEngine(filepath.Join(tmpDir, "trust.yaml")))
+	orch := NewSecurityOrchestrator(engine, risk.NewScorer(), adapter)
+
+	args, _ := json.Marshal(map[string]string{"path": secretFile})
+	ctx := &policy.EvalContext{
+		ToolName:  "mcp__filesystem__write_file",
+		ToolInput: args,
+	}
+
+	code := orch.RunPreToolUse(ctx)
+	if code != 2 {
+		t.Errorf("expected confused-deputy block (exit 2) via real compiled deny rule, got %d", code)
+	}
+}
+
+// TestRunPostToolUse_ProductionAdapterHardens confirms the production trust
+// adapter actually transforms MCP output (F-CAP-21.8-1): a fallback-tier server's
+// output is hardened (framed) rather than passed through untouched.
+func TestRunPostToolUse_ProductionAdapterHardens(t *testing.T) {
+	t.Parallel()
+
+	adapter := NewTrustAdapter(trust.NewMcpTrustEngine(""))
+	orch := NewSecurityOrchestrator(newAllowPolicyEvaluator(), risk.NewScorer(), adapter)
+
+	ctx := &policy.EvalContext{ToolName: "mcp__untrusted__fetch"}
+	out, code := orch.RunPostToolUse(ctx, "raw content")
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if out == "raw content" {
+		t.Error("expected production adapter to harden MCP output, got passthrough")
+	}
+	if want := "<qsdev:data"; !strings.Contains(out, want) {
+		t.Errorf("expected hardened output to contain %q, got %q", want, out)
 	}
 }
 

@@ -107,7 +107,10 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Types:         []string{"swift"},
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
-			BuiltIn:       false,
+			// Custom hook (BuiltIn:false): NixPackage provisions the binary so
+			// the emitted `entry` resolves at commit time.
+			BuiltIn:    false,
+			NixPackage: "swiftformat",
 		},
 	}
 }

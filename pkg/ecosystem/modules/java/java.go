@@ -197,7 +197,10 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 			Types:         []string{"java"},
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
-			BuiltIn:       false,
+			// Custom hook (BuiltIn:false): NixPackage provisions the binary so
+			// the emitted `entry` resolves at commit time.
+			BuiltIn:    false,
+			NixPackage: "google-java-format",
 		},
 		{
 			ID:            "spotbugs",
@@ -209,6 +212,7 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
 			BuiltIn:       false,
+			NixPackage:    "spotbugs",
 		},
 	}
 
@@ -224,6 +228,7 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 			PassFilenames: true,
 			Files:         `\.kts?$`,
 			BuiltIn:       false,
+			NixPackage:    "ktlint",
 		})
 	}
 

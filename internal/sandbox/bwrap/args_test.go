@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
 )
 
 func TestBuildArgs(t *testing.T) {
@@ -179,6 +180,42 @@ func TestBuildArgs(t *testing.T) {
 			}
 			tt.check(t, args)
 		})
+	}
+}
+
+// TestBuildArgs_DefaultPolicyDenyMountsDoNotBreakExec is the primary regression
+// for the exec-is-non-functional defect: DefaultPolicy injects every deny-list
+// path (including /etc/shadow) as a self-referential read-only mount, and
+// BuildArgs used to reject those, breaking every `sandbox exec`. BuildArgs must
+// now succeed and must NOT emit any bind for a sensitive deny path.
+func TestBuildArgs_DefaultPolicyDenyMountsDoNotBreakExec(t *testing.T) {
+	t.Parallel()
+
+	cfg := sandbox.SandboxConfig{
+		HookCategory: sandbox.CategoryLinter,
+		Network:      sandbox.NetworkPolicy{Mode: "deny"},
+	}
+	// Mirror policy.DefaultPolicy/ToSandboxConfig: deny paths become ro mounts
+	// with Source == Target.
+	for _, p := range denylist.AllDenyPaths() {
+		cfg.Mounts = append(cfg.Mounts, sandbox.MountSpec{Source: p, Target: p, ReadOnly: true})
+	}
+
+	args, err := BuildArgs(&cfg, sandbox.TierFull)
+	if err != nil {
+		t.Fatalf("BuildArgs must not error on default deny-list mounts, got: %v", err)
+	}
+
+	// No argument may be a sensitive deny path (it must be absent from the
+	// sandbox, not mounted into it).
+	for _, a := range args {
+		if IsDenyPath(a) {
+			t.Errorf("BuildArgs produced an argument that overlaps a sensitive deny path: %q\nargs: %v", a, args)
+		}
+	}
+	// Sanity: the safe system files are still mounted.
+	if !containsSequence(args, []string{"--ro-bind", "/etc/passwd", "/etc/passwd"}) {
+		t.Errorf("expected /etc/passwd to still be mounted, got args: %v", args)
 	}
 }
 

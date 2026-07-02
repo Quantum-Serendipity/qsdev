@@ -37,6 +37,8 @@ func ensureInit() error {
 			{filepath.Join(home, ".claude", "settings.json"), "claude-settings"},
 			{filepath.Join(home, ".claude", "settings.local.json"), "claude-settings"},
 			{filepath.Join(home, ".claude", "managed-settings.json"), "claude-settings"},
+			{filepath.Join(home, ".claude", "hooks") + string(filepath.Separator), "claude-settings"},
+			{filepath.Join(home, ".claude", "agents") + string(filepath.Separator), "claude-settings"},
 			{"/etc/gdev/", "system-config"},
 			{"/etc/claude-code/", "system-config"},
 		}
@@ -156,6 +158,19 @@ func IsProtected(canonicalPath string) (bool, string) {
 		}
 	}
 
+	// Hook scripts (.claude/hooks/) and agent definitions (.claude/agents/) are
+	// protected wherever the .claude directory lives. A project-relative .claude/
+	// canonicalizes OUTSIDE $HOME, so the home-anchored prefixes above cannot catch
+	// a project hook/agent path; this segment check does, so SP-001 blocks
+	// Write/Edit to a hook or agent file in both the home config and a project
+	// checkout.
+	normalized := filepath.ToSlash(canonicalPath)
+	for _, frag := range protectedClaudeSubdirs {
+		if strings.Contains(normalized, frag) {
+			return true, "claude-settings"
+		}
+	}
+
 	// Check suffix-based protected paths.
 	for _, entry := range protectedSuffixes {
 		if strings.HasSuffix(canonicalPath, entry.path) {
@@ -174,7 +189,8 @@ func IsProtected(canonicalPath string) (bool, string) {
 // protectedSubstringPatterns are path fragments used by ContainsProtectedPath
 // to detect protected path references in raw command strings. This is the
 // union of all patterns previously in evasion.containsProtectedPath and
-// rules.containsProtectedPathStr.
+// rules.containsProtectedPathStr. Each carries a trailing separator, so a
+// protected path FOLLOWED by more path (`.claude/settings.json`) is matched.
 var protectedSubstringPatterns = []string{
 	".claude/",
 	".qsdev/",
@@ -183,10 +199,35 @@ var protectedSubstringPatterns = []string{
 	"/etc/claude-code/",
 }
 
+// protectedDirTokens are the bare protected directory names (no trailing
+// separator). ContainsProtectedPath matches these when they appear as a complete
+// path segment, so a whole-directory operation like `rm -rf .claude` or
+// `find .claude -delete` is caught. The boundary check prevents over-matching a
+// longer name that merely embeds a token (`my.claude.bak`, `foo.claudex`,
+// `my.claude`).
+var protectedDirTokens = []string{
+	".claude",
+	".qsdev",
+	".gdev",
+	"/etc/gdev",
+	"/etc/claude-code",
+}
+
+// protectedClaudeSubdirs are .claude subdirectories whose contents are protected
+// wherever the .claude directory lives (home config or project checkout): the
+// hook scripts that implement enforcement and the agent definitions that steer
+// it. IsProtected matches these as substrings so SP-001 guards Write/Edit to them.
+var protectedClaudeSubdirs = []string{
+	".claude/hooks/",
+	".claude/agents/",
+}
+
 // ContainsProtectedPath reports whether s contains any protected path
 // fragment. Unlike IsProtected (which checks a canonical path against known
 // prefixes/suffixes), this performs a substring search on raw text such as
-// shell commands where the path may appear anywhere in the string.
+// shell commands where the path may appear anywhere in the string. It matches
+// both a protected path with trailing path (`.claude/settings.json`) and a bare
+// protected directory name at a path-token boundary (`rm -rf .claude`).
 func ContainsProtectedPath(s string) bool {
 	normalized := filepath.ToSlash(s)
 	for _, p := range protectedSubstringPatterns {
@@ -194,5 +235,54 @@ func ContainsProtectedPath(s string) bool {
 			return true
 		}
 	}
+	for _, tok := range protectedDirTokens {
+		if containsSegment(normalized, tok) {
+			return true
+		}
+	}
 	return false
+}
+
+// containsSegment reports whether tok appears in s as a complete path segment:
+// bounded on both sides by the start/end of the string or a character that is not
+// part of a path token (a separator, whitespace, a shell metacharacter, a quote).
+// This matches a bare protected directory name (`.claude`) while rejecting a
+// longer name that merely embeds it (`my.claude.bak`, `foo.claudex`, `my.claude`).
+func containsSegment(s, tok string) bool {
+	for from := 0; ; {
+		i := strings.Index(s[from:], tok)
+		if i < 0 {
+			return false
+		}
+		start := from + i
+		end := start + len(tok)
+		if isTokenBoundary(s, start-1) && isTokenBoundary(s, end) {
+			return true
+		}
+		from = start + 1
+	}
+}
+
+// isTokenBoundary reports whether index i marks a path-token boundary in s: an
+// out-of-range index (the string start or end) or a byte that cannot appear
+// inside a single path token.
+func isTokenBoundary(s string, i int) bool {
+	if i < 0 || i >= len(s) {
+		return true
+	}
+	return !isPathTokenByte(s[i])
+}
+
+// isPathTokenByte reports whether b can appear inside one path token: an ASCII
+// letter or digit, or the filename punctuation '.', '-', '_'. Every other byte
+// (separators, whitespace, shell metacharacters, quotes) is a token boundary.
+func isPathTokenByte(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+		return true
+	case b == '.', b == '-', b == '_':
+		return true
+	default:
+		return false
+	}
 }

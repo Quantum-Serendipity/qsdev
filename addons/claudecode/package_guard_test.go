@@ -67,6 +67,24 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 		{"piped install still checked", `echo hi | npm install evil`, true, []string{"evil"}},
 		{"compound install checks both", `pip install safe && npm install evil`, true, []string{"safe", "evil"}},
 		{"bare pip from requirements", `pip install -r requirements.txt`, true, nil},
+
+		// M3 evasions: installs the argv[0]-only detector missed before. Each
+		// must now be detected while the false-positive cases above still pass.
+		{"newline-separated install", "echo hi\nnpm install evil", true, []string{"evil"}},
+		{"background-separated install", "sleep 1 & npm install evil", true, []string{"evil"}},
+		{"python -m pip install", `python -m pip install evil-pkg`, true, []string{"evil-pkg"}},
+		{"python3 -m pip install", `python3 -m pip install evil-pkg`, true, []string{"evil-pkg"}},
+		{"python -m uv pip install", `python -m uv pip install ruff`, true, []string{"ruff"}},
+		{"bash -c wrapped install", `bash -c "npm install evil"`, true, []string{"evil"}},
+		{"sh -c wrapped install", `sh -c "pip install evil"`, true, []string{"evil"}},
+		{"bash -lc combined flag", `bash -lc "npm install evil"`, true, []string{"evil"}},
+		{"timeout-wrapped install", `timeout 10 npm install evil`, true, []string{"evil"}},
+		{"nested shell inside compound", `echo start && bash -c "cargo add serde"`, true, []string{"serde"}},
+
+		// M3 must NOT introduce false positives: a shell -c whose script only
+		// mentions an install inside an argument stays unflagged.
+		{"shell -c echoing install text", `bash -c "echo pip install docs"`, false, nil},
+		{"python running a script named pip", `python analyze.py --mode pip-install`, false, nil},
 	}
 
 	for _, tc := range cases {

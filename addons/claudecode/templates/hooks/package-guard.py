@@ -196,16 +196,35 @@ VERSION_STRIP_RE = re.compile(r"[@=><~^!]+.*$")
 # that follows is treated as argv[0] (e.g. `sudo npm install`, `env FOO=1 pip …`).
 COMMAND_PREFIXES: set[str] = {
     "sudo", "doas", "env", "command", "builtin", "exec",
-    "time", "nice", "nohup", "stdbuf", "setsid", "ionice",
+    "time", "nice", "nohup", "stdbuf", "setsid", "ionice", "timeout",
 }
 
 # Wrapper option flags that consume the following token as their value, so both
 # the flag and its value are skipped when locating the real executable
-# (e.g. `sudo -u deploy npm install`).
+# (e.g. `sudo -u deploy npm install`). Includes `timeout`'s -k/-s value flags.
 _WRAPPER_VALUE_FLAGS: set[str] = {
     "-u", "--user", "-g", "--group", "-n", "-C", "-h", "--host",
     "-p", "--prompt", "-r", "--role", "-t", "--type", "-U", "-D",
+    "-k", "--kill-after", "-s", "--signal",
 }
+
+# Wrappers that take a mandatory positional argument before the command they run
+# (e.g. `timeout 10 npm install`): the leading numeric token must be skipped so
+# argv[0] resolves to the real executable rather than the duration.
+_DURATION_RE = re.compile(r"^[0-9]")
+
+# A python interpreter (python, python3, python3.12, ...) whose `-m <module>`
+# invocation must be resolved to the underlying installer (pip/uv), so that
+# `python -m pip install <pkg>` is validated like a bare `pip install <pkg>`.
+_PYTHON_RE = re.compile(r"^python[0-9.]*$")
+
+# Shells whose `-c "<script>"` argument is itself a command line that must be
+# recursively scanned, so `bash -c "npm install evil"` cannot hide the install
+# behind the shell executable. Combined short options (e.g. `bash -lc`) count.
+_SHELLS: set[str] = {"sh", "bash", "zsh", "dash", "ash", "ksh", "mksh"}
+_SHELL_C_FLAG_RE = re.compile(r"^-[A-Za-z]*c$")
+# Bound on recursive shell-script scanning to guard against pathological nesting.
+_MAX_SHELL_RECURSION = 4
 
 # A leading VAR=value environment assignment (e.g. `FOO=bar npm install ...`).
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -228,11 +247,14 @@ INSTALL_COMMANDS: dict[str, list[tuple[list[str], str, str]]] = {
     "composer": [(["require"], "Packagist", "composer")],
 }
 
-# Shell operators that separate independent commands. Each resulting segment is
-# validated on its own so a compound command (including pipe stages) cannot
-# smuggle an unchecked install past the guard. `||` is listed before `|` so it
-# is consumed as one operator.
-_SEGMENT_SPLIT_RE = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
+# Shell operators (and newlines) that separate independent commands. Each
+# resulting segment is validated on its own so a compound OR multi-line command
+# (including pipe stages and backgrounded commands) cannot smuggle an unchecked
+# install past the guard. Two-character operators are listed before their
+# one-character prefixes (`&&` before `&`, `||` before `|`, `\r\n` before `\n`)
+# so each is consumed whole. Newline and `&` matter: `echo hi\nnpm install evil`
+# and `foo & npm install evil` would otherwise be a single unparsed segment.
+_SEGMENT_SPLIT_RE = re.compile(r"\s*(?:&&|\|\||;|\||&|\r\n|\n|\r)\s*")
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -421,9 +443,10 @@ def check_crates_age(package_name: str) -> Optional[float]:
 # ---------------------------------------------------------------------------
 
 def _split_segments(command: str) -> list[str]:
-    """Split a (possibly compound) command into independent command segments on
-    shell operators (&&, ||, ;, |). Pipe stages are separate commands, so each is
-    validated on its own — `echo x | npm install evil` still checks the install."""
+    """Split a (possibly compound or multi-line) command into independent command
+    segments on shell operators (&&, ||, ;, |, &) and newlines. Each stage is a
+    separate command validated on its own — `echo x | npm install evil` and a
+    multi-line `echo hi\\nnpm install evil` both still check the install."""
     return [s for s in _SEGMENT_SPLIT_RE.split(command) if s.strip()]
 
 
@@ -461,6 +484,11 @@ def _command_argv(segment: str) -> list[str]:
                 i += 1
                 if "=" not in flag and flag in _WRAPPER_VALUE_FLAGS and i < n:
                     i += 1  # consume the flag's value too
+            # `timeout` takes a mandatory duration positional before the command
+            # (`timeout 10 npm install`); skip a leading numeric token so the
+            # duration is not mistaken for the executable.
+            if tok == "timeout" and i < n and _DURATION_RE.match(tokens[i]):
+                i += 1
             continue
         break
     return tokens[i:]
@@ -496,16 +524,47 @@ def _extract_package_args(operands: list[str], manager: str) -> list[str]:
     return packages
 
 
+def _shell_c_script(argv: list[str]) -> Optional[str]:
+    """If argv invokes a shell with -c, return the script argument that follows,
+    so it can be recursively scanned; else None. Handles combined short options
+    (e.g. `bash -lc "<script>"`). A shell invoked on a script file (`bash x.sh`)
+    or with no -c returns None."""
+    if not argv or os.path.basename(argv[0]) not in _SHELLS:
+        return None
+    for i in range(1, len(argv)):
+        tok = argv[i]
+        if _SHELL_C_FLAG_RE.match(tok):
+            return argv[i + 1] if i + 1 < len(argv) else None
+        if not tok.startswith("-"):
+            return None  # first positional before any -c: not a -c invocation
+    return None
+
+
 def parse_install_segment(segment: str) -> Optional[tuple[str, str, list[str]]]:
     """Parse one command segment. Return (ecosystem, manager_label, packages) when
     it is a genuine package-install invocation, else None. Detection is argv-based:
     the executable and its subcommand verb must actually be an install command, so
     install-like words inside unrelated commands are never treated as packages."""
-    argv = _command_argv(segment)
+    return parse_install_argv(_command_argv(segment))
+
+
+def parse_install_argv(argv: list[str]) -> Optional[tuple[str, str, list[str]]]:
+    """argv-based core of parse_install_segment, operating on an already-tokenized
+    argv (wrappers/env-assignments stripped). Resolves `python -m pip|uv` module
+    invocations to the underlying installer before matching."""
     if not argv:
         return None
     exe = os.path.basename(argv[0])
     rest = argv[1:]
+
+    # `python -m pip install …` / `python3 -m uv pip install …`: the real
+    # installer is the module named after -m, not the interpreter. Resolve it so
+    # the invocation is validated like a bare `pip`/`uv` install.
+    if _PYTHON_RE.match(exe) and rest and rest[0] == "-m":
+        if len(rest) < 2:
+            return None
+        exe = os.path.basename(rest[1])
+        rest = rest[2:]
 
     # Imperative Nix installs are matched specially (denied downstream) and carry
     # no registry package operands.
@@ -568,22 +627,36 @@ def strip_version(specifier: str) -> str:
 # Command matching
 # ---------------------------------------------------------------------------
 
-def detect_install_commands(command: str) -> list[tuple[str, str, str, list[str]]]:
+def detect_install_commands(command: str, _depth: int = 0) -> list[tuple[str, str, str, list[str]]]:
     """
-    Find ALL genuine package install invocations in a (possibly compound)
-    command. Returns a list of (ecosystem, manager_label, segment, packages)
-    tuples — one per segment whose argv is actually an install command, with
-    the raw package specifiers extracted from that segment's single parse.
+    Find ALL genuine package install invocations in a (possibly compound or
+    multi-line) command. Returns a list of (ecosystem, manager_label, segment,
+    packages) tuples — one per segment whose argv is actually an install command,
+    with the raw package specifiers extracted from that segment's single parse.
     Every segment is parsed independently so that compound commands like
     ``pip install safe && npm install evil`` cannot sneak an unchecked install
     past the guard, while unrelated commands whose text merely *mentions* an
     install (``git commit -m "add install docs"``, ``grep "npm install" file``)
     are correctly ignored.
+
+    Installs hidden behind a shell wrapper (``bash -c "npm install evil"``) are
+    surfaced by recursively scanning the shell's -c script, bounded by
+    _MAX_SHELL_RECURSION to guard against pathological nesting.
     """
     results: list[tuple[str, str, str, list[str]]] = []
 
     for segment in _split_segments(command):
-        parsed = parse_install_segment(segment)
+        argv = _command_argv(segment)
+
+        # `bash -c "<script>"` and friends: the install is inside the quoted
+        # script, not behind the shell executable — scan the script recursively.
+        script = _shell_c_script(argv)
+        if script is not None:
+            if _depth < _MAX_SHELL_RECURSION:
+                results.extend(detect_install_commands(script, _depth + 1))
+            continue
+
+        parsed = parse_install_argv(argv)
         if parsed is not None:
             ecosystem, manager, packages = parsed
             results.append((ecosystem, manager, segment, packages))

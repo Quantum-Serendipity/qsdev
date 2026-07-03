@@ -291,6 +291,32 @@ func TestDetectDrift_MissingLockfileIsDrift(t *testing.T) {
 	}
 }
 
+// TestDetectDrift_PackageLockV1 is the M10 regression: a lockfileVersion-1
+// package-lock.json records dependencies under a top-level "dependencies" map
+// (there is no "packages" map). parsePackageLock must read them — otherwise a v1
+// lock parses as empty and real drift goes undetected. Here express is pinned
+// below its declared floor, which must surface as drift.
+func TestDetectDrift_PackageLockV1(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFixtures(t, dir, map[string]string{
+		"package.json":      `{"name":"x","dependencies":{"express":"^4.18.0"}}`,
+		"package-lock.json": `{"lockfileVersion":1,"dependencies":{"express":{"version":"3.0.0"}}}`,
+	})
+
+	report, err := DetectDrift(dir)
+	if err != nil {
+		t.Fatalf("DetectDrift() error = %v", err)
+	}
+	if len(report.Manifests) != 1 {
+		t.Fatalf("manifest count = %d, want 1", len(report.Manifests))
+	}
+	if report.Manifests[0].DriftCount < 1 {
+		t.Errorf("DriftCount = %d, want >= 1 (v1 lock deps must be read and the downgrade flagged)",
+			report.Manifests[0].DriftCount)
+	}
+}
+
 // TestDetectDrift_NoFalsePositives is the M8 regression: two states that are NOT
 // drift must not be flagged as "missing lockfile" — a dependency-free manifest
 // (legitimately has no lockfile) and a project locked with a non-primary but

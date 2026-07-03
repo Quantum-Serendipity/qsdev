@@ -18,10 +18,12 @@ import (
 // external-API budget.
 const scanHTTPTimeout = 20 * time.Second
 
-// severityRank orders the threshold levels so a vuln can be compared against the
-// requested floor. Unknown severities are always reported (rank -1 < any floor).
-var severityRank = map[string]int{
-	"low": 0, "medium": 1, "high": 2, "critical": 3,
+// acceptedThresholds is the set of severity_threshold values a caller may pass.
+// "medium" is accepted as an alias for "moderate" (both normalize to "moderate"
+// via vulnscan.NormalizeSeverity) so the tool's floor and a scanned advisory's
+// severity are ranked by the SAME shared mapping the CLI scan uses.
+var acceptedThresholds = map[string]bool{
+	"low": true, "medium": true, "moderate": true, "high": true, "critical": true,
 }
 
 // securityScanner queries OSV.dev for vulnerabilities affecting the project's
@@ -44,11 +46,14 @@ func newSecurityScanner(projectRoot string) *securityScanner {
 // handle extracts dependencies from a lock file and queries OSV.dev for known
 // vulnerabilities, filtering to those at or above the severity threshold.
 func (s *securityScanner) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
-	threshold := strings.ToLower(toolutil.StringArgOr(req.Arguments, "severity_threshold", "medium"))
-	if _, ok := severityRank[threshold]; !ok {
+	rawThreshold := strings.ToLower(toolutil.StringArgOr(req.Arguments, "severity_threshold", "medium"))
+	if !acceptedThresholds[rawThreshold] {
 		return toolutil.NotConfigured("invalid severity_threshold",
-			map[string]any{"got": threshold, "allowed": []string{"low", "medium", "high", "critical"}}), nil
+			map[string]any{"got": rawThreshold, "allowed": []string{"low", "moderate", "high", "critical", "medium (alias of moderate)"}}), nil
 	}
+	// Normalize through the shared mapping so the floor is in the same vocabulary
+	// as scanned advisories ("medium" -> "moderate").
+	threshold := vulnscan.NormalizeSeverity(rawThreshold)
 
 	pkgs, lockPath, err := s.collectDeps(req.Arguments)
 	if errors.Is(err, errManifestEscapesRoot) {
@@ -147,16 +152,15 @@ type vulnReport struct {
 // which maps to "unknown" — always above the floor, so the vuln is reported
 // rather than silently dropped or given a fabricated severity.
 func (s *securityScanner) resolveVulns(ctx context.Context, pkgs []vulnscan.Package, idsByQuery [][]string, threshold string) []vulnReport {
-	floor := severityRank[threshold]
 	details := s.scanner.FetchDetails(ctx, idsByQuery)
 
 	var reports []vulnReport
 	for i, ids := range idsByQuery {
 		for _, id := range ids {
 			d := details[id]
-			sev := vulnSeverity(d.SeverityLabel)
-			if rank, ok := severityRank[sev]; ok && rank < floor {
-				continue // known and below the requested floor
+			sev := vulnscan.NormalizeSeverity(d.SeverityLabel)
+			if !vulnscan.SeverityAtOrAbove(sev, threshold) {
+				continue // below the requested floor ("unknown" always qualifies)
 			}
 			reports = append(reports, vulnReport{
 				ID:          id,
@@ -177,16 +181,4 @@ func (s *securityScanner) resolveVulns(ctx context.Context, pkgs []vulnscan.Pack
 		return reports[a].ID < reports[b].ID
 	})
 	return reports
-}
-
-// vulnSeverity resolves a coarse severity label from the OSV record's raw
-// database_specific.severity string, falling back to "unknown" for absent or
-// unrecognized labels so they are never filtered out by the threshold.
-func vulnSeverity(label string) string {
-	if s := strings.ToLower(strings.TrimSpace(label)); s != "" {
-		if _, ok := severityRank[s]; ok {
-			return s
-		}
-	}
-	return "unknown"
 }

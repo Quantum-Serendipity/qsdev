@@ -197,6 +197,47 @@ func TestSecurityScanReportsUnparseableLockFile(t *testing.T) {
 	}
 }
 
+// TestSecurityScanSeverityMatchesSharedMapping is the M11 regression: the MCP
+// security_scan tool must report the SAME normalized severity the CLI scan does.
+// Before consolidation, a GHSA "MODERATE" advisory folded to "unknown" via the
+// tool's private table (which only knew "medium"), while the CLI reported
+// "moderate" — the two entry points disagreed on the same advisory. Both the
+// "moderate" and the "medium" (alias) thresholds must admit it.
+func TestSecurityScanSeverityMatchesSharedMapping(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	goSum := "example.com/mod v1.0.0 h1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\n" +
+		"example.com/mod v1.0.0/go.mod h1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb=\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.sum"), []byte(goSum), 0o644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+
+	srv := vulnscantest.NewServer(t,
+		map[int][]string{0: {"GHSA-MOD-1"}},
+		map[string]string{"GHSA-MOD-1": "MODERATE"},
+	)
+	scanner := &securityScanner{
+		projectRoot: dir,
+		scanner:     &vulnscan.Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()},
+	}
+
+	for _, threshold := range []string{"moderate", "medium"} {
+		t.Run("threshold_"+threshold, func(t *testing.T) {
+			res := call(t, scanner.handle, map[string]any{"severity_threshold": threshold})
+			if res.IsError {
+				t.Fatalf("scan returned error: %+v", res.Structured)
+			}
+			vulns, ok := structuredMap(t, res)["vulnerabilities"].([]vulnReport)
+			if !ok || len(vulns) != 1 {
+				t.Fatalf("vulnerabilities = %v, want exactly one at/above %q", structuredMap(t, res)["vulnerabilities"], threshold)
+			}
+			if vulns[0].Severity != "moderate" {
+				t.Errorf("severity = %q, want \"moderate\" (must match the shared CLI mapping, not fold to unknown)", vulns[0].Severity)
+			}
+		})
+	}
+}
+
 // TestPolicyCheckRejectsPathTraversal proves the policy_path argument is confined
 // to the project root: a relative or absolute path that escapes the root degrades
 // to a structured not_configured result (rather than reading an arbitrary host

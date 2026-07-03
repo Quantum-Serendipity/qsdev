@@ -223,6 +223,13 @@ func checkJSDrift(manifestPath, lockfilePath string) ([]DriftEntry, error) {
 	return drifted, nil
 }
 
+// parsePackageLock reads the locked versions from a package-lock.json.
+//
+// NOTE: this is deliberately NOT merged with internal/vulnscan/lockparse.go.
+// That parser produces []Package for OSV queries and strips the leading "v" from
+// go.sum versions; drift detection must instead keep versions in the SAME textual
+// form the manifest declares (go.mod uses "v1.2.3") so declared-vs-locked
+// comparison is apples-to-apples. Merging the two would break that comparison.
 func parsePackageLock(path string) (map[string]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -233,6 +240,12 @@ func parsePackageLock(path string) (map[string]string, error) {
 		Packages map[string]struct {
 			Version string `json:"version"`
 		} `json:"packages"`
+		// lockfileVersion 1 has no "packages" map — top-level deps live under
+		// "dependencies". Read it too so a v1 lock is not parsed as empty (which
+		// would let real drift go undetected).
+		Dependencies map[string]struct {
+			Version string `json:"version"`
+		} `json:"dependencies"`
 	}
 	if err := json.Unmarshal(data, &lockfile); err != nil {
 		return nil, fmt.Errorf("parsing package-lock.json: %w", err)
@@ -250,6 +263,14 @@ func parsePackageLock(path string) (map[string]string, error) {
 			continue
 		}
 		versions[name] = pkg.Version
+	}
+
+	// lockfileVersion 1 fallback: only when the modern packages map yielded
+	// nothing, so a v2/v3 lock is never double-counted.
+	if len(versions) == 0 {
+		for name, dep := range lockfile.Dependencies {
+			versions[name] = dep.Version
+		}
 	}
 
 	return versions, nil

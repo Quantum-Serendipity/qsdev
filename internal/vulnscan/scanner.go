@@ -288,7 +288,7 @@ type osvVuln struct {
 // database_specific.severity string (e.g. "CRITICAL", "MODERATE"); it is left
 // unnormalized so consumers with different severity vocabularies can apply their
 // own mapping. A zero-value Detail (failed or truncated fetch) carries an empty
-// SeverityLabel, which normalizeSeverity resolves to "unknown" (fail-closed),
+// SeverityLabel, which NormalizeSeverity resolves to "unknown" (fail-closed),
 // not "info".
 type Detail struct {
 	ID            string
@@ -313,7 +313,7 @@ func (s *Scanner) resolveVulns(ctx context.Context, pkgs []Package, idsByQuery [
 				Package:     pkgs[i].Name,
 				Version:     pkgs[i].Version,
 				Ecosystem:   pkgs[i].Ecosystem,
-				Severity:    normalizeSeverity(d.SeverityLabel),
+				Severity:    NormalizeSeverity(d.SeverityLabel),
 				FixedIn:     d.FixedIn,
 				AdvisoryURL: d.AdvisoryURL,
 				Summary:     d.Summary,
@@ -412,15 +412,17 @@ func (s *Scanner) fetchVuln(ctx context.Context, id string) (osvVuln, error) {
 	return v, nil
 }
 
-// normalizeSeverity resolves a coarse severity bucket from the OSV record's
-// database_specific.severity label. "medium" is folded into "moderate" (OSV
-// GHSA advisories use MODERATE while some sources emit MEDIUM). An ABSENT label
-// (empty string) — which is what a failed or truncated detail fetch leaves —
-// yields "unknown", NOT "info": the severity is genuinely undetermined and must
-// fail closed rather than be silently demoted below the exit gate. A present but
+// NormalizeSeverity resolves a coarse severity bucket from the OSV record's
+// database_specific.severity label. It is the single shared mapping used by both
+// the CLI scan and the mcpserve security_scan tool, so the same advisory always
+// reports the same severity. "medium" is folded into "moderate" (OSV GHSA
+// advisories use MODERATE while some sources emit MEDIUM). An ABSENT label (empty
+// string) — which is what a failed or truncated detail fetch leaves — yields
+// "unknown", NOT "info": the severity is genuinely undetermined and must fail
+// closed rather than be silently demoted below the exit gate. A present but
 // unrecognized label yields "info" so the vuln stays visible without being
 // overstated.
-func normalizeSeverity(label string) string {
+func NormalizeSeverity(label string) string {
 	switch strings.ToLower(strings.TrimSpace(label)) {
 	case "critical":
 		return "critical"
@@ -435,6 +437,20 @@ func normalizeSeverity(label string) string {
 	default:
 		return "info"
 	}
+}
+
+// severityOrder ranks normalized severities for threshold comparison. "unknown"
+// ranks at the top so an unresolved severity is always reported (fail-closed).
+var severityOrder = map[string]int{
+	"info": 0, "low": 1, "moderate": 2, "high": 3, "critical": 4, "unknown": 5,
+}
+
+// SeverityAtOrAbove reports whether a normalized severity meets or exceeds the
+// given normalized threshold. Unknown always qualifies (fail-closed): an
+// unresolved severity could be anything up to critical, so it is never filtered
+// out by a threshold.
+func SeverityAtOrAbove(severity, threshold string) bool {
+	return severityOrder[severity] >= severityOrder[threshold]
 }
 
 // fixedVersion returns the first "fixed" event found across the affected ranges.

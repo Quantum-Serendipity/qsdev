@@ -20,6 +20,41 @@ func writeLock(t *testing.T, dir, name, body string) string {
 	return p
 }
 
+// TestNormalizeSeverity pins the single shared severity mapping used by both the
+// CLI scan and the mcpserve security_scan tool (M11), so the same advisory can
+// never report a different severity across entry points. Notably a GHSA
+// "MODERATE" and a "MEDIUM" both map to "moderate", and an absent label maps to
+// "unknown" (fail-closed), never silently to a low/hidden bucket.
+func TestNormalizeSeverity(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"CRITICAL": "critical",
+		"High":     "high",
+		"MODERATE": "moderate",
+		"medium":   "moderate",
+		"LOW":      "low",
+		"":         "unknown",
+		"weird":    "info",
+	}
+	for label, want := range cases {
+		if got := NormalizeSeverity(label); got != want {
+			t.Errorf("NormalizeSeverity(%q) = %q, want %q", label, got, want)
+		}
+	}
+
+	// SeverityAtOrAbove: unknown always qualifies; moderate meets a moderate
+	// floor; low/info fall below it.
+	if !SeverityAtOrAbove("unknown", "critical") {
+		t.Error("unknown must qualify against any floor (fail-closed)")
+	}
+	if !SeverityAtOrAbove("moderate", "moderate") {
+		t.Error("moderate must meet a moderate floor")
+	}
+	if SeverityAtOrAbove("low", "moderate") || SeverityAtOrAbove("info", "low") {
+		t.Error("a severity below the floor must not qualify")
+	}
+}
+
 func TestScanFile_CriticalAdvisory(t *testing.T) {
 	dir := t.TempDir()
 	lock := writeLock(t, dir, "requirements.txt", "requests==2.19.0\n")

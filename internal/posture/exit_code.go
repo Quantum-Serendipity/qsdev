@@ -31,8 +31,6 @@ func ShouldExitNonZero(report *PostureReport, auditLevel string) bool {
 		return true
 	}
 	switch auditLevel {
-	case "none":
-		return false
 	case "critical":
 		return report.Dependencies.Totals.Critical > 0
 	case "high":

@@ -61,6 +61,10 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 		{"npm install", `npm install left-pad`, true, []string{"left-pad"}},
 		{"pip install with version", `pip install requests==2.31.0`, true, []string{"requests==2.31.0"}},
 		{"sudo wrapped install", `sudo -u deploy npm install left-pad`, true, []string{"left-pad"}},
+		// Regression: `-s` is a boolean for sudo (run shell). It must NOT be
+		// treated as value-consuming, or `npm` would be skipped as its "value"
+		// and the install would slip past argv[0]=install.
+		{"sudo -s does not swallow the executable", `sudo -s npm install evil`, true, []string{"evil"}},
 		{"env-prefixed install", `FOO=bar pip install requests`, true, []string{"requests"}},
 		{"uv add", `uv add ruff`, true, []string{"ruff"}},
 		{"cargo add", `cargo add serde`, true, []string{"serde"}},
@@ -79,6 +83,9 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 		{"sh -c wrapped install", `sh -c "pip install evil"`, true, []string{"evil"}},
 		{"bash -lc combined flag", `bash -lc "npm install evil"`, true, []string{"evil"}},
 		{"timeout-wrapped install", `timeout 10 npm install evil`, true, []string{"evil"}},
+		// timeout's own `-s <signal>` value flag still consumes its value, and the
+		// duration positional is still skipped, so the install is found.
+		{"timeout signal flag then install", `timeout -s TERM 10 npm install evil`, true, []string{"evil"}},
 		{"nested shell inside compound", `echo start && bash -c "cargo add serde"`, true, []string{"serde"}},
 
 		// M3 must NOT introduce false positives: a shell -c whose script only

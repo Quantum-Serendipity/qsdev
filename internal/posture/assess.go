@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -210,13 +211,9 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 	// per-ecosystem outcomes rather than the request flag, so conformance,
 	// rendering, and the exit gate never present a failed scan as a clean bill of
 	// health.
-	scanFailed := false
-	for i := range ecoStatuses {
-		if ecoStatuses[i].ScanError {
-			scanFailed = true
-			break
-		}
-	}
+	scanFailed := slices.ContainsFunc(ecoStatuses, func(e EcosystemStatus) bool {
+		return e.ScanError
+	})
 	report.Dependencies.Scanned = opts.FreshScan && !scanFailed
 	report.Dependencies.ScanFailed = opts.FreshScan && scanFailed
 	if opts.FreshScan {

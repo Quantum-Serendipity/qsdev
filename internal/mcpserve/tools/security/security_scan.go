@@ -18,14 +18,6 @@ import (
 // external-API budget.
 const scanHTTPTimeout = 20 * time.Second
 
-// acceptedThresholds is the set of severity_threshold values a caller may pass.
-// "medium" is accepted as an alias for "moderate" (both normalize to "moderate"
-// via vulnscan.NormalizeSeverity) so the tool's floor and a scanned advisory's
-// severity are ranked by the SAME shared mapping the CLI scan uses.
-var acceptedThresholds = map[string]bool{
-	"low": true, "medium": true, "moderate": true, "high": true, "critical": true,
-}
-
 // securityScanner queries OSV.dev for vulnerabilities affecting the project's
 // pinned dependencies, extracted from its lock files. Lock-file parsing and the
 // OSV client live in internal/vulnscan; this type layers the MCP tool contract
@@ -47,13 +39,16 @@ func newSecurityScanner(projectRoot string) *securityScanner {
 // vulnerabilities, filtering to those at or above the severity threshold.
 func (s *securityScanner) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
 	rawThreshold := strings.ToLower(toolutil.StringArgOr(req.Arguments, "severity_threshold", "medium"))
-	if !acceptedThresholds[rawThreshold] {
+	// Validate through the SAME shared mapping the CLI scan and scanned advisories
+	// use, rather than a parallel accept-list that could drift from it. A ranked
+	// floor ("low"/"moderate"/"high"/"critical", with "medium" an alias of
+	// "moderate") normalizes to one of those buckets; anything unrecognized
+	// normalizes to "info", and an empty value to "unknown" — both rejected here.
+	threshold := vulnscan.NormalizeSeverity(rawThreshold)
+	if threshold == "info" || threshold == "unknown" {
 		return toolutil.NotConfigured("invalid severity_threshold",
 			map[string]any{"got": rawThreshold, "allowed": []string{"low", "moderate", "high", "critical", "medium (alias of moderate)"}}), nil
 	}
-	// Normalize through the shared mapping so the floor is in the same vocabulary
-	// as scanned advisories ("medium" -> "moderate").
-	threshold := vulnscan.NormalizeSeverity(rawThreshold)
 
 	pkgs, lockPath, err := s.collectDeps(req.Arguments)
 	if errors.Is(err, errManifestEscapesRoot) {

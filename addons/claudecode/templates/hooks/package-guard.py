@@ -201,12 +201,18 @@ COMMAND_PREFIXES: set[str] = {
 
 # Wrapper option flags that consume the following token as their value, so both
 # the flag and its value are skipped when locating the real executable
-# (e.g. `sudo -u deploy npm install`). Includes `timeout`'s -k/-s value flags.
+# (e.g. `sudo -u deploy npm install`).
 _WRAPPER_VALUE_FLAGS: set[str] = {
     "-u", "--user", "-g", "--group", "-n", "-C", "-h", "--host",
     "-p", "--prompt", "-r", "--role", "-t", "--type", "-U", "-D",
-    "-k", "--kill-after", "-s", "--signal",
 }
+
+# `timeout`'s own value-taking flags, consulted ONLY for the `timeout` wrapper.
+# They must NOT be folded into the shared set above: `-s` is a boolean for sudo,
+# so treating it as value-consuming for every wrapper would make
+# `sudo -s npm install` skip `npm` as if it were -s's value — hiding the install
+# behind an argv[0] of `install`.
+_TIMEOUT_VALUE_FLAGS: set[str] = {"-k", "--kill-after", "-s", "--signal"}
 
 # Wrappers that take a mandatory positional argument before the command they run
 # (e.g. `timeout 10 npm install`): the leading numeric token must be skipped so
@@ -477,12 +483,15 @@ def _command_argv(segment: str) -> list[str]:
             i += 1
             continue
         if tok in COMMAND_PREFIXES:
+            # Consult this specific wrapper's value-flag grammar; timeout's value
+            # flags apply only to timeout, never to sudo/env/etc.
+            value_flags = _TIMEOUT_VALUE_FLAGS if tok == "timeout" else _WRAPPER_VALUE_FLAGS
             i += 1
             # Skip this wrapper's option flags (and their values).
             while i < n and tokens[i].startswith("-"):
                 flag = tokens[i]
                 i += 1
-                if "=" not in flag and flag in _WRAPPER_VALUE_FLAGS and i < n:
+                if "=" not in flag and flag in value_flags and i < n:
                     i += 1  # consume the flag's value too
             # `timeout` takes a mandatory duration positional before the command
             # (`timeout 10 npm install`); skip a leading numeric token so the
@@ -540,18 +549,14 @@ def _shell_c_script(argv: list[str]) -> Optional[str]:
     return None
 
 
-def parse_install_segment(segment: str) -> Optional[tuple[str, str, list[str]]]:
-    """Parse one command segment. Return (ecosystem, manager_label, packages) when
-    it is a genuine package-install invocation, else None. Detection is argv-based:
-    the executable and its subcommand verb must actually be an install command, so
-    install-like words inside unrelated commands are never treated as packages."""
-    return parse_install_argv(_command_argv(segment))
-
-
 def parse_install_argv(argv: list[str]) -> Optional[tuple[str, str, list[str]]]:
-    """argv-based core of parse_install_segment, operating on an already-tokenized
-    argv (wrappers/env-assignments stripped). Resolves `python -m pip|uv` module
-    invocations to the underlying installer before matching."""
+    """Parse an already-tokenized argv (wrappers/env-assignments stripped by
+    _command_argv). Return (ecosystem, manager_label, packages) when it is a
+    genuine package-install invocation, else None. Detection is argv-based: the
+    executable and its subcommand verb must actually be an install command, so
+    install-like words inside unrelated commands are never treated as packages.
+    Resolves `python -m pip|uv` module invocations to the underlying installer
+    before matching."""
     if not argv:
         return None
     exe = os.path.basename(argv[0])

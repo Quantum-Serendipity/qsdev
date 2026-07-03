@@ -187,35 +187,39 @@ func (s *Server) resourceReadHandler(reg spi.ResourceRegistration) func(context.
 		// denial) or ErrorHandling converted a handler error into an IsError
 		// result: surface that as a protocol error so a denied or failed read is
 		// visible to the client instead of looking like an empty resource.
-		rres, ok := resourceResultFrom(out)
+		rres, ok := structuredResultFrom[*spi.ResourceResult](out)
 		if !ok {
-			return nil, fmt.Errorf("reading resource %s: %s", reg.URI, resourceErrorText(out))
+			return nil, fmt.Errorf("reading resource %s: %s", reg.URI, chainErrorText(out, "resource read failed"))
 		}
 		return resourceContentsToMCP(reg.URI, rres), nil
 	}
 }
 
-// resourceErrorText extracts a human-readable failure message from a chain
-// result that carried no ResourceResult (a denial or a converted handler error),
-// falling back to a generic message. The text has already passed through
-// ContentSafety redaction.
-func resourceErrorText(out *spi.ToolResult) string {
+// chainErrorText extracts a human-readable failure message from a chain result
+// that carried no typed payload (a denial or a converted handler error), falling
+// back to the given message. The text has already passed through ContentSafety
+// redaction.
+func chainErrorText(out *spi.ToolResult, fallback string) string {
 	if out != nil && out.Text != "" {
 		return out.Text
 	}
-	return "resource read failed"
+	return fallback
 }
 
-// resourceResultFrom recovers the (redacted) *spi.ResourceResult packed into a
-// chain result's Structured field. It reports false when the result is nil or
-// carries no ResourceResult, so the caller can degrade gracefully instead of
+// structuredResultFrom recovers the (redacted) typed payload of type T packed
+// into a chain result's Structured field. It reports false when the result is
+// nil or carries a different type, so callers degrade gracefully instead of
 // panicking on a failed type assertion.
-func resourceResultFrom(out *spi.ToolResult) (*spi.ResourceResult, bool) {
+func structuredResultFrom[T any](out *spi.ToolResult) (T, bool) {
+	var zero T
 	if out == nil {
-		return nil, false
+		return zero, false
 	}
-	rres, ok := out.Structured.(*spi.ResourceResult)
-	return rres, ok
+	v, ok := out.Structured.(T)
+	if !ok {
+		return zero, false
+	}
+	return v, true
 }
 
 // resourceContentsToMCP converts neutral resource contents into mcp-go contents,
@@ -268,31 +272,15 @@ func (s *Server) mountPrompt(reg spi.PromptRegistration) {
 		if err != nil {
 			return nil, fmt.Errorf("rendering prompt %s: %w", reg.Name, err)
 		}
-		pres, ok := promptResultFrom(out)
+		pres, ok := structuredResultFrom[*spi.PromptResult](out)
 		if !ok {
 			// The chain short-circuited (e.g. a Guardrail denial) or converted a
 			// handler error: surface it as a protocol error carrying the redacted
 			// text rather than an empty prompt.
-			msg := "prompt render blocked"
-			if out != nil && out.Text != "" {
-				msg = out.Text
-			}
-			return nil, fmt.Errorf("rendering prompt %s: %s", reg.Name, msg)
+			return nil, fmt.Errorf("rendering prompt %s: %s", reg.Name, chainErrorText(out, "prompt render blocked"))
 		}
 		return promptResultToMCP(pres), nil
 	})
-}
-
-// promptResultFrom recovers the (redacted) *spi.PromptResult packed into a chain
-// result's Structured field. It reports false when the result is nil or carries
-// no PromptResult, so the caller degrades gracefully instead of panicking on a
-// failed type assertion.
-func promptResultFrom(out *spi.ToolResult) (*spi.PromptResult, bool) {
-	if out == nil {
-		return nil, false
-	}
-	pres, ok := out.Structured.(*spi.PromptResult)
-	return pres, ok
 }
 
 func promptArgsToMCP(args []spi.PromptArgument) []mcp.PromptArgument {

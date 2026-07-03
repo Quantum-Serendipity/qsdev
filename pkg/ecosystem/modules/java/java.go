@@ -203,16 +203,21 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 			NixPackage: "google-java-format",
 		},
 		{
-			ID:            "spotbugs",
-			Name:          "spotbugs",
-			Description:   "Run SpotBugs static analysis on Java bytecode",
-			Entry:         "spotbugs",
+			// SpotBugs is not packaged in nixpkgs, and its bytecode analysis is a
+			// poor fit for a source-stage pre-commit hook (it needs compiled
+			// .class files). PMD provides equivalent Java static analysis over
+			// SOURCE with its bundled quickstart ruleset (no project config file),
+			// and is packaged as the top-level `pmd` attribute.
+			ID:            "pmd",
+			Name:          "pmd",
+			Description:   "Run PMD static analysis on Java source (quickstart ruleset)",
+			Entry:         "pmd -R rulesets/java/quickstart.xml -f text -d .",
 			Language:      "system",
 			Types:         []string{"java"},
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
 			BuiltIn:       false,
-			NixPackage:    "spotbugs",
+			NixPackage:    "pmd",
 		},
 	}
 

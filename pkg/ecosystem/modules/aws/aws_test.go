@@ -252,14 +252,16 @@ func TestDenyRules_AllPresent(t *testing.T) {
 	m := newModule()
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 
-	if len(rules) != 5 {
-		t.Fatalf("expected 5 deny rules, got %d: %v", len(rules), rules)
+	if len(rules) != 7 {
+		t.Fatalf("expected 7 deny rules, got %d: %v", len(rules), rules)
 	}
 
 	expected := []string{
 		"configure set",
 		"sts get-session-token",
 		"sts assume-role",
+		"sts get-federation-token",
+		"configure export-credentials",
 		"cat ~/.aws/credentials",
 		"cat ~/.aws/config",
 	}

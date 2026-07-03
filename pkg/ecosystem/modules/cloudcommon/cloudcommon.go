@@ -59,11 +59,19 @@ func BashDenyRules(provider CloudProvider) []string {
 	case AWS:
 		return []string{
 			"Bash(aws configure set *)",
-			// No space before the glob: the bare, arg-less `aws sts get-session-token`
-			// still prints temporary credentials to stdout, so the rule must match the
-			// subcommand with or without trailing arguments (F-CAP-11.1-1).
+			// No space before the glob: each of these subcommands prints temporary
+			// credentials to stdout even in its bare, arg-less form, so the rule must
+			// match the subcommand with or without trailing arguments (F-CAP-11.1-1).
+			// A space before the glob (e.g. "assume-role *") would additionally miss
+			// the hyphenated variants like assume-role-with-web-identity.
 			"Bash(aws sts get-session-token*)",
-			"Bash(aws sts assume-role *)",
+			// "assume-role*" (no space) also covers assume-role-with-web-identity and
+			// assume-role-with-saml, which likewise return usable credentials.
+			"Bash(aws sts assume-role*)",
+			"Bash(aws sts get-federation-token*)",
+			// `aws configure export-credentials` (CLI v2) writes credentials to
+			// stdout / process env in several formats.
+			"Bash(aws configure export-credentials*)",
 			"Bash(cat ~/.aws/credentials*)",
 			"Bash(cat ~/.aws/config*)",
 		}

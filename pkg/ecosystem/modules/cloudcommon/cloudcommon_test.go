@@ -3,6 +3,8 @@ package cloudcommon
 import (
 	"sort"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 )
 
 func TestReadDenyPaths(t *testing.T) {
@@ -37,7 +39,7 @@ func TestBashDenyRules(t *testing.T) {
 		provider CloudProvider
 		want     int
 	}{
-		{name: "AWS", provider: AWS, want: 5},
+		{name: "AWS", provider: AWS, want: 7},
 		{name: "GCP", provider: GCP, want: 5},
 		{name: "Azure", provider: Azure, want: 4},
 	}
@@ -50,6 +52,53 @@ func TestBashDenyRules(t *testing.T) {
 				t.Errorf("BashDenyRules(%s) returned %d rules, want %d", tt.provider, len(rules), tt.want)
 			}
 		})
+	}
+}
+
+// TestAWSDenyRules_CoverCredentialExfilCommands is the M6 regression: every AWS
+// STS/CLI command that emits usable credentials must be blocked by some deny rule
+// (matched with the real denyutil matcher), and benign commands must not be. The
+// space-before-glob in the old "assume-role *" rule missed the hyphenated
+// assume-role-with-web-identity/-with-saml variants, and get-federation-token /
+// configure export-credentials had no rule at all.
+func TestAWSDenyRules_CoverCredentialExfilCommands(t *testing.T) {
+	t.Parallel()
+	rules := BashDenyRules(AWS)
+
+	anyRuleMatches := func(op string) bool {
+		for _, r := range rules {
+			if denyutil.MatchesDenyRule(r, op) {
+				return true
+			}
+		}
+		return false
+	}
+
+	denied := []string{
+		"Bash(aws sts get-session-token)",
+		"Bash(aws sts get-session-token --duration-seconds 3600)",
+		"Bash(aws sts assume-role --role-arn arn:aws:iam::1:role/x --role-session-name s)",
+		"Bash(aws sts assume-role-with-web-identity --role-arn arn:aws:iam::1:role/x --web-identity-token t)",
+		"Bash(aws sts assume-role-with-saml --role-arn arn:aws:iam::1:role/x --principal-arn arn:aws:iam::1:saml/y)",
+		"Bash(aws sts get-federation-token --name temp)",
+		"Bash(aws configure export-credentials)",
+		"Bash(aws configure export-credentials --format env)",
+	}
+	for _, op := range denied {
+		if !anyRuleMatches(op) {
+			t.Errorf("no AWS deny rule blocks %q — a credential-exfil command reaches the agent", op)
+		}
+	}
+
+	allowed := []string{
+		"Bash(aws sts decode-authorization-message --encoded-message m)",
+		"Bash(aws s3 ls)",
+		"Bash(aws configure list)",
+	}
+	for _, op := range allowed {
+		if anyRuleMatches(op) {
+			t.Errorf("AWS deny rule over-blocks benign command %q", op)
+		}
 	}
 }
 
@@ -72,9 +121,9 @@ func TestAllBashDenyRules_MultiProvider(t *testing.T) {
 		t.Error("AllBashDenyRules result is not sorted")
 	}
 
-	// Total should be 5 + 5 + 4 = 14 (no overlaps between providers).
-	if len(rules) != 14 {
-		t.Errorf("AllBashDenyRules returned %d rules, want 14", len(rules))
+	// Total should be 7 + 5 + 4 = 16 (no overlaps between providers).
+	if len(rules) != 16 {
+		t.Errorf("AllBashDenyRules returned %d rules, want 16", len(rules))
 	}
 }
 

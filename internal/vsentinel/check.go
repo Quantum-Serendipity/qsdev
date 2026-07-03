@@ -93,6 +93,18 @@ func parseGoMod(path string) ([]DepStatus, error) {
 			continue
 		}
 
+		// Single-line require directive: `require golang.org/x/sys v0.20.0`.
+		// (Handled after the "require (" block check above, which this prefix
+		// would otherwise also match.)
+		if !inRequire && strings.HasPrefix(line, "require ") {
+			rest := strings.TrimSpace(strings.TrimPrefix(line, "require "))
+			rest = strings.TrimSpace(strings.TrimSuffix(rest, "// indirect"))
+			if parts := strings.Fields(rest); len(parts) >= 2 {
+				deps = append(deps, DepStatus{Name: parts[0], DeclaredVersion: parts[1]})
+			}
+			continue
+		}
+
 		if inRequire {
 			line = strings.TrimSuffix(line, "// indirect")
 			line = strings.TrimSpace(line)

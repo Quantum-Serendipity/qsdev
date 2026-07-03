@@ -262,7 +262,7 @@ func TestDetectDrift_MissingLockfileIsDrift(t *testing.T) {
 		content  string
 		eco      string
 	}{
-		{"go.mod without go.sum", "go.mod", "module example.com/x\n\ngo 1.22\n", "go"},
+		{"go.mod without go.sum", "go.mod", "module example.com/x\n\ngo 1.22\n\nrequire golang.org/x/sys v0.20.0\n", "go"},
 		{"package.json without lock", "package.json", `{"name":"x","dependencies":{"express":"^4.18.0"}}`, "javascript"},
 		{"Cargo.toml without lock", "Cargo.toml", "[package]\nname = \"x\"\n\n[dependencies]\nserde = \"1.0\"\n", "rust"},
 	}
@@ -286,6 +286,65 @@ func TestDetectDrift_MissingLockfileIsDrift(t *testing.T) {
 			}
 			if m.DriftCount < 1 {
 				t.Errorf("DriftCount = %d, want >= 1 for a missing lockfile", m.DriftCount)
+			}
+		})
+	}
+}
+
+// TestDetectDrift_NoFalsePositives is the M8 regression: two states that are NOT
+// drift must not be flagged as "missing lockfile" — a dependency-free manifest
+// (legitimately has no lockfile) and a project locked with a non-primary but
+// catalog-valid lockfile (pnpm/yarn/bun instead of package-lock.json).
+func TestDetectDrift_NoFalsePositives(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		files map[string]string
+		eco   string
+	}{
+		{
+			name:  "dependency-free go.mod (no go.sum) is not drift",
+			files: map[string]string{"go.mod": "module example.com/x\n\ngo 1.22\n"},
+			eco:   "go",
+		},
+		{
+			name: "pnpm-locked project (no package-lock.json) is not drift",
+			files: map[string]string{
+				"package.json":   `{"name":"x","dependencies":{"express":"^4.18.0"}}`,
+				"pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+			},
+			eco: "javascript",
+		},
+		{
+			name: "yarn-locked project (no package-lock.json) is not drift",
+			files: map[string]string{
+				"package.json": `{"name":"x","dependencies":{"express":"^4.18.0"}}`,
+				"yarn.lock":    "# yarn lockfile v1\n",
+			},
+			eco: "javascript",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeFixtures(t, dir, tc.files)
+
+			report, err := DetectDrift(dir)
+			if err != nil {
+				t.Fatalf("DetectDrift() error = %v", err)
+			}
+			if len(report.Manifests) != 1 {
+				t.Fatalf("manifest count = %d, want 1", len(report.Manifests))
+			}
+			m := report.Manifests[0]
+			if m.Ecosystem != tc.eco {
+				t.Errorf("ecosystem = %q, want %q", m.Ecosystem, tc.eco)
+			}
+			if m.DriftCount != 0 {
+				t.Errorf("DriftCount = %d, want 0 (not a real drift): %+v", m.DriftCount, m.Drifted)
 			}
 		})
 	}

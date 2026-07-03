@@ -9,51 +9,91 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 type lockfilePair struct {
 	manifest string
+	// lockfile is the PRIMARY lockfile this ecosystem's checker can diff against
+	// the manifest. Other catalog-valid lockfiles (e.g. pnpm/yarn/bun for JS)
+	// still count as "pinned" but are not version-diffed.
 	lockfile string
 	eco      string
 	checker  func(manifestPath, lockfilePath string) ([]DriftEntry, error)
+	// declaredCount returns how many dependencies the manifest declares, used to
+	// distinguish a dependency-free manifest (legitimately unlocked) from an
+	// unpinned one.
+	declaredCount func(manifestPath string) (int, error)
 }
 
 var lockfilePairs = []lockfilePair{
-	{"go.mod", "go.sum", "go", checkGoDrift},
-	{"package.json", "package-lock.json", "javascript", checkJSDrift},
-	{"Cargo.toml", "Cargo.lock", "rust", checkCargoDrift},
+	{"go.mod", "go.sum", ecosystem.NameGo, checkGoDrift, goDeclaredCount},
+	{"package.json", "package-lock.json", ecosystem.NameJavaScript, checkJSDrift, jsDeclaredCount},
+	{"Cargo.toml", "Cargo.lock", ecosystem.NameRust, checkCargoDrift, cargoDeclaredCount},
 }
+
+func goDeclaredCount(p string) (int, error)    { d, err := parseGoMod(p); return len(d), err }
+func jsDeclaredCount(p string) (int, error)    { d, err := parsePackageJSON(p); return len(d), err }
+func cargoDeclaredCount(p string) (int, error) { d, err := parseCargoToml(p); return len(d), err }
 
 func DetectDrift(root string) (*DriftReport, error) {
 	report := &DriftReport{}
 
 	for _, pair := range lockfilePairs {
 		manifestPath := filepath.Join(root, pair.manifest)
-		lockfilePath := filepath.Join(root, pair.lockfile)
 
 		// No manifest for this ecosystem: nothing to check.
 		if _, err := os.Stat(manifestPath); err != nil {
 			continue
 		}
 
-		// Manifest present but lockfile absent is the most dangerous state
-		// (fully unpinned dependencies). Fail closed by reporting it as drift
-		// rather than silently skipping the ecosystem.
-		if _, err := os.Stat(lockfilePath); err != nil {
+		// Any catalog-valid lockfile for this ecosystem pins the dependencies.
+		// Only when NONE is present is the manifest potentially unpinned — this
+		// is what stops a correctly-locked pnpm/yarn/bun project (whose lockfile
+		// is not package-lock.json) from being reported as "missing lockfile".
+		presentLock := firstPresentLockfile(root, pair)
+
+		if presentLock == "" {
+			// No lockfile at all. A manifest that declares zero dependencies
+			// legitimately has none (e.g. a stdlib-only go.mod has no go.sum), so
+			// report drift only when the manifest actually declares dependencies.
+			count, err := pair.declaredCount(manifestPath)
+			if err != nil {
+				return nil, fmt.Errorf("parsing %s: %w", pair.manifest, err)
+			}
+			if count == 0 {
+				report.Manifests = append(report.Manifests, DriftManifestStatus{
+					Path: manifestPath, Ecosystem: pair.eco, DriftCount: 0,
+				})
+				continue
+			}
+			// Manifest declares dependencies but nothing pins them — the most
+			// dangerous state. Fail closed by reporting it as drift.
 			report.Manifests = append(report.Manifests, DriftManifestStatus{
 				Path:       manifestPath,
 				Ecosystem:  pair.eco,
 				DriftCount: 1,
 				Drifted: []DriftEntry{{
 					Name:            pair.manifest,
-					DeclaredVersion: "requires " + pair.lockfile,
+					DeclaredVersion: "requires a lockfile",
 					LockedVersion:   "(missing lockfile — dependencies unpinned)",
 				}},
 			})
 			continue
 		}
 
-		drifted, err := pair.checker(manifestPath, lockfilePath)
+		// A non-primary but valid lockfile (pnpm/yarn/bun) still pins the deps,
+		// but this ecosystem's checker can only version-diff the primary format.
+		// Report it present-and-pinned (0 drift) rather than misreading it.
+		if presentLock != filepath.Join(root, pair.lockfile) {
+			report.Manifests = append(report.Manifests, DriftManifestStatus{
+				Path: manifestPath, Ecosystem: pair.eco, DriftCount: 0,
+			})
+			continue
+		}
+
+		drifted, err := pair.checker(manifestPath, presentLock)
 		if err != nil {
 			return nil, fmt.Errorf("checking drift for %s: %w", pair.manifest, err)
 		}
@@ -67,6 +107,25 @@ func DetectDrift(root string) (*DriftReport, error) {
 	}
 
 	return report, nil
+}
+
+// firstPresentLockfile returns the path of the first catalog-valid lockfile for
+// the pair's ecosystem that exists under root, preferring the primary (diffable)
+// lockfile so it wins when several are present; "" when none exists.
+func firstPresentLockfile(root string, pair lockfilePair) string {
+	candidates := []string{pair.lockfile}
+	for _, lf := range ecosystem.LockFilesByEcosystem[pair.eco] {
+		if lf != pair.lockfile {
+			candidates = append(candidates, lf)
+		}
+	}
+	for _, lf := range candidates {
+		p := filepath.Join(root, lf)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
 }
 
 func checkGoDrift(manifestPath, lockfilePath string) ([]DriftEntry, error) {

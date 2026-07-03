@@ -2,6 +2,7 @@ package mcpserve_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
@@ -119,7 +120,47 @@ func (p plantedContributor) Resources() []spi.ResourceRegistration {
 	}
 }
 
-func (p plantedContributor) Prompts() []spi.PromptRegistration { return nil }
+func (p plantedContributor) Prompts() []spi.PromptRegistration {
+	return []spi.PromptRegistration{
+		{
+			Name:        "qsdev_test_secret_prompt",
+			Description: "returns a planted secret in its rendered message text",
+			Handler: func(_ context.Context, _ *spi.ToolCallContext, _ *spi.PromptRequest) (*spi.PromptResult, error) {
+				return &spi.PromptResult{
+					Description: "planted",
+					Messages: []spi.PromptMessage{{
+						Role: spi.PromptRoleUser,
+						Text: "prompt leaked credential: " + p.secret,
+					}},
+				}, nil
+			},
+		},
+	}
+}
+
+// getPromptText sends prompts/get and returns the concatenated message text.
+func getPromptText(t *testing.T, c *testClient, name string) string {
+	t.Helper()
+	resp := c.call("prompts/get", map[string]any{"name": name, "arguments": map[string]any{}})
+	if resp.Error != nil {
+		t.Fatalf("prompts/get %q returned protocol error: %+v", name, resp.Error)
+	}
+	var out struct {
+		Messages []struct {
+			Content struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(resp.Result, &out); err != nil {
+		t.Fatalf("decoding prompts/get %q result: %v", name, err)
+	}
+	var b strings.Builder
+	for _, m := range out.Messages {
+		b.WriteString(m.Content.Text)
+	}
+	return b.String()
+}
 
 // TestChainEnforcementOverProtocol is the Phase 32 security linchpin: it drives
 // the REAL built-in middleware chain end-to-end through the bridge over the stdio
@@ -191,6 +232,18 @@ func TestChainEnforcementOverProtocol(t *testing.T) {
 		}
 		if !strings.Contains(body, "[REDACTED]") {
 			t.Errorf("resources/read content was not redacted: %q", body)
+		}
+	})
+
+	// (b2) prompts/get: the planted secret is redacted — proves prompt renders are
+	// routed THROUGH the chain (M9; previously mountPrompt bypassed it).
+	t.Run("prompt result redacted (M9)", func(t *testing.T) {
+		body := getPromptText(t, c, "qsdev_test_secret_prompt")
+		if strings.Contains(body, secret) {
+			t.Errorf("prompts/get leaked the planted secret (chain not wired): %q", body)
+		}
+		if !strings.Contains(body, "[REDACTED]") {
+			t.Errorf("prompts/get message text was not redacted: %q", body)
 		}
 	})
 

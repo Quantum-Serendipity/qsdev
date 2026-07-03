@@ -251,12 +251,48 @@ func (s *Server) mountPrompt(reg spi.PromptRegistration) {
 	s.mcp.AddPrompt(prompt, func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 		cc := s.callContext(ctx, reg.Name, nil)
 		sreq := &spi.PromptRequest{Name: req.Params.Name, Arguments: req.Params.Arguments}
-		res, err := handler(ctx, cc, sreq)
+		// Route the prompt render THROUGH the middleware chain — like tools
+		// (toolHandler) and resources (resourceReadHandler) — so its output
+		// receives the same ContentSafety redaction, Guardrail, and Audit. A
+		// prompt that interpolates environment/context text must not reach the
+		// client unredacted. The result is packed into ToolResult.Structured so
+		// ContentSafety.RedactStructured walks and scrubs each message's text.
+		final := func(ctx context.Context, cc *spi.ToolCallContext, _ *spi.ToolRequest) (*spi.ToolResult, error) {
+			pres, herr := handler(ctx, cc, sreq)
+			if herr != nil {
+				return nil, herr
+			}
+			return &spi.ToolResult{Structured: pres}, nil
+		}
+		out, err := s.chain.Execute(ctx, cc, &spi.ToolRequest{Name: reg.Name}, final)
 		if err != nil {
 			return nil, fmt.Errorf("rendering prompt %s: %w", reg.Name, err)
 		}
-		return promptResultToMCP(res), nil
+		pres, ok := promptResultFrom(out)
+		if !ok {
+			// The chain short-circuited (e.g. a Guardrail denial) or converted a
+			// handler error: surface it as a protocol error carrying the redacted
+			// text rather than an empty prompt.
+			msg := "prompt render blocked"
+			if out != nil && out.Text != "" {
+				msg = out.Text
+			}
+			return nil, fmt.Errorf("rendering prompt %s: %s", reg.Name, msg)
+		}
+		return promptResultToMCP(pres), nil
 	})
+}
+
+// promptResultFrom recovers the (redacted) *spi.PromptResult packed into a chain
+// result's Structured field. It reports false when the result is nil or carries
+// no PromptResult, so the caller degrades gracefully instead of panicking on a
+// failed type assertion.
+func promptResultFrom(out *spi.ToolResult) (*spi.PromptResult, bool) {
+	if out == nil {
+		return nil, false
+	}
+	pres, ok := out.Structured.(*spi.PromptResult)
+	return pres, ok
 }
 
 func promptArgsToMCP(args []spi.PromptArgument) []mcp.PromptArgument {

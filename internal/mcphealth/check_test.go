@@ -130,28 +130,78 @@ func TestCheckAll_MixedResults(t *testing.T) {
 	}
 }
 
-func TestCheckServer_HTTPStatusGating(t *testing.T) {
+// mcpInitResult writes a minimal JSON-RPC initialize result and, for a bare GET
+// (the SSE-stream open), replies 405 exactly like a spec-compliant Streamable-
+// HTTP MCP server that offers no server-initiated stream.
+func mcpInitResult(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{}}}`))
+}
+
+// TestCheckServer_HTTPProbesMCP is the M7 regression. The old check did a bare
+// GET and treated only 2xx as healthy, so it (a) reported a spec-compliant MCP
+// server that answers a GET with 405 as unhealthy (false negative) and (b)
+// reported any non-MCP web server returning 2xx as healthy (false positive).
+// The probe now POSTs a real MCP initialize and validates a JSON-RPC result.
+func TestCheckServer_HTTPProbesMCP(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		statusCode int
-		want       string
+		name    string
+		handler http.HandlerFunc
+		want    string
 	}{
-		{"ok", http.StatusOK, StatusHealthy},
-		{"no content", http.StatusNoContent, StatusHealthy},
-		{"not found", http.StatusNotFound, StatusUnreachable},
-		{"forbidden", http.StatusForbidden, StatusUnreachable},
-		{"server error", http.StatusInternalServerError, StatusUnreachable},
+		{
+			// A real MCP server: 405 to GET, valid JSON-RPC result to the POST.
+			name:    "mcp server answering 405 to GET is healthy",
+			handler: mcpInitResult,
+			want:    StatusHealthy,
+		},
+		{
+			name: "mcp server replying over SSE is healthy",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = w.Write([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n"))
+			},
+			want: StatusHealthy,
+		},
+		{
+			name: "plain non-MCP web server returning 200 is unreachable",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/html")
+				_, _ = w.Write([]byte("<html>hello</html>"))
+			},
+			want: StatusUnreachable,
+		},
+		{
+			name: "jsonrpc error response is unreachable",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"bad"}}`))
+			},
+			want: StatusUnreachable,
+		},
+		{
+			name:    "not found is unreachable",
+			handler: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) },
+			want:    StatusUnreachable,
+		},
+		{
+			name:    "server error is unreachable",
+			handler: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) },
+			want:    StatusUnreachable,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(tt.statusCode)
-			}))
+			srv := httptest.NewServer(tt.handler)
 			t.Cleanup(srv.Close)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -160,10 +210,10 @@ func TestCheckServer_HTTPStatusGating(t *testing.T) {
 			h := CheckServer(ctx, ServerConfig{Name: "http-server", URL: srv.URL})
 
 			if h.Status != tt.want {
-				t.Errorf("HTTP %d: status = %q, want %q (error=%q)", tt.statusCode, h.Status, tt.want, h.Error)
+				t.Errorf("status = %q, want %q (error=%q)", h.Status, tt.want, h.Error)
 			}
 			if tt.want != StatusHealthy && h.Error == "" {
-				t.Errorf("HTTP %d: expected a non-empty error for an unhealthy status", tt.statusCode)
+				t.Error("expected a non-empty error for an unhealthy status")
 			}
 		})
 	}

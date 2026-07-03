@@ -1,12 +1,16 @@
 package mcphealth
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,6 +18,12 @@ import (
 var initializeParams = json.RawMessage(`{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"qsdev-health","version":"1.0"}}`)
 
 var toolsListParams = json.RawMessage(`{}`)
+
+// maxHealthResponseBytes bounds how much of a health-probe response we read, so a
+// hostile or misconfigured endpoint cannot stream unbounded data into the check.
+// The JSON-RPC request/response shapes are defined in process.go and shared with
+// the stdio probe.
+const maxHealthResponseBytes = 1 << 20 // 1 MiB
 
 // CheckServer probes a single MCP server and returns its health status.
 // The provided context controls cancellation and timeout; callers should use
@@ -165,35 +175,92 @@ func countTools(result json.RawMessage) int {
 }
 
 func checkHTTPServer(ctx context.Context, cfg ServerConfig, h *ServerHealth, start time.Time) *ServerHealth {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.URL, nil)
-	if err != nil {
-		h.Status = StatusUnreachable
-		h.Error = fmt.Sprintf("building request: %s", err)
+	fail := func(status, msg string) *ServerHealth {
+		h.Status = status
+		h.Error = msg
 		h.ResponseMs = time.Since(start).Milliseconds()
 		return h
 	}
+
+	// Probe with a real MCP `initialize` POST rather than a bare GET. A bare GET
+	// only opens a server->client SSE stream; a spec-compliant Streamable-HTTP
+	// server that offers no such stream answers it with 405, which a status-only
+	// check misreads as unhealthy (false negative). POSTing initialize avoids
+	// that and, by requiring a valid JSON-RPC result, also rejects a plain
+	// non-MCP web server that merely returns 2xx (the symmetric false positive).
+	reqBody, err := json.Marshal(jsonRPCRequest{JSONRPC: "2.0", ID: 1, Method: "initialize", Params: initializeParams})
+	if err != nil {
+		return fail(StatusUnreachable, fmt.Sprintf("building request: %s", err))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, bytes.NewReader(reqBody))
+	if err != nil {
+		return fail(StatusUnreachable, fmt.Sprintf("building request: %s", err))
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		h.Status = StatusUnreachable
-		h.Error = fmt.Sprintf("connecting: %s", err)
-		h.ResponseMs = time.Since(start).Milliseconds()
-		return h
+		return fail(StatusUnreachable, fmt.Sprintf("connecting: %s", err))
 	}
 	defer resp.Body.Close()
 
-	// Only a 2xx status indicates a reachable, functioning endpoint. A 4xx/5xx
-	// (or any other non-success status) means the server answered but is not
-	// serving a healthy endpoint; reporting it healthy would mask a broken or
-	// hostile server (F-CAP-19.4-1).
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		h.Status = StatusUnreachable
-		h.Error = fmt.Sprintf("unhealthy HTTP status: %d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
-		h.ResponseMs = time.Since(start).Milliseconds()
-		return h
+		return fail(StatusUnreachable, fmt.Sprintf("initialize returned HTTP %d %s", resp.StatusCode, http.StatusText(resp.StatusCode)))
+	}
+
+	rpc, err := decodeJSONRPCResponse(resp)
+	if err != nil {
+		return fail(StatusUnreachable, fmt.Sprintf("endpoint did not return a valid MCP initialize response: %s", err))
+	}
+	if rpc.Error != nil {
+		return fail(StatusUnreachable, fmt.Sprintf("initialize error %d: %s", rpc.Error.Code, rpc.Error.Message))
 	}
 
 	h.Status = StatusHealthy
 	h.ResponseMs = time.Since(start).Milliseconds()
 	return h
+}
+
+// decodeJSONRPCResponse extracts the JSON-RPC response from an MCP
+// Streamable-HTTP initialize reply, which may be a direct application/json body
+// or a single SSE `data:` event (text/event-stream). It returns an error when
+// the body is not a JSON-RPC 2.0 message — i.e. the endpoint does not speak MCP.
+func decodeJSONRPCResponse(resp *http.Response) (*jsonRPCResponse, error) {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHealthResponseBytes))
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+	payload := body
+	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		payload = sseData(body)
+		if payload == nil {
+			return nil, fmt.Errorf("no SSE data event in response")
+		}
+	}
+	var rpc jsonRPCResponse
+	if err := json.Unmarshal(bytes.TrimSpace(payload), &rpc); err != nil {
+		return nil, fmt.Errorf("response is not JSON-RPC: %w", err)
+	}
+	if rpc.JSONRPC != "2.0" || (rpc.Result == nil && rpc.Error == nil) {
+		return nil, fmt.Errorf("response is not a JSON-RPC 2.0 result")
+	}
+	return &rpc, nil
+}
+
+// sseData returns the concatenated payload of the first SSE event's data: lines.
+func sseData(body []byte) []byte {
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	scanner.Buffer(make([]byte, 0, 64*1024), maxHealthResponseBytes)
+	var data []byte
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.HasPrefix(line, "data:"):
+			data = append(data, strings.TrimSpace(strings.TrimPrefix(line, "data:"))...)
+		case line == "" && data != nil:
+			return data // a blank line terminates the event
+		}
+	}
+	return data
 }

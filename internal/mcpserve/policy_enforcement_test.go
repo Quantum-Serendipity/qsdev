@@ -57,7 +57,10 @@ func TestChainForModeEnforcesDisabledTool(t *testing.T) {
 	dir := t.TempDir()
 	writeDisablingConfig(t, dir, disabledTool)
 
-	policy := projectPolicy(dir)
+	policy, err := projectPolicy(dir)
+	if err != nil {
+		t.Fatalf("projectPolicy returned error for a valid config: %v", err)
+	}
 	if policy == nil {
 		t.Fatal("projectPolicy returned nil for a config with tools.disabled; the deny would never be enforced")
 	}
@@ -91,5 +94,34 @@ func TestChainForModeEnforcesDisabledTool(t *testing.T) {
 					"got blocked, so the test no longer demonstrates the %s gap", mode)
 			}
 		})
+	}
+}
+
+// TestProjectPolicyFailsClosedOnUnparseableConfig is the M5 regression: a PRESENT
+// but unparseable .qsdev.yaml (an unknown/typo'd key the strict decoder rejects)
+// must fail closed — projectPolicy returns an error so the server refuses to
+// start un-narrowed — rather than a nil permissive policy that silently drops
+// every tools.disabled deny. An ABSENT config stays benign (nil policy, no error).
+func TestProjectPolicyFailsClosedOnUnparseableConfig(t *testing.T) {
+	// Absent config: benign — no error, permissive (nil) policy.
+	empty := t.TempDir()
+	if policy, err := projectPolicy(empty); err != nil || policy != nil {
+		t.Fatalf("absent config: got (policy=%v, err=%v), want (nil, nil)", policy, err)
+	}
+
+	// Present but unparseable: an unknown top-level key the strict decoder rejects
+	// alongside a real tools.disabled deny.
+	bad := t.TempDir()
+	body := "version: 1\ntools:\n  disabled:\n    - qsdev_security_scan\nbogus_unknown_key: true\n"
+	if err := os.WriteFile(filepath.Join(bad, ".qsdev.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := projectPolicy(bad)
+	if err == nil {
+		t.Fatal("unparseable config: projectPolicy returned nil error — the server would run " +
+			"permissively, silently dropping every tools.disabled deny (fail open)")
+	}
+	if policy != nil {
+		t.Errorf("unparseable config: policy = %v, want nil (must not hand back a usable permissive policy)", policy)
 	}
 }

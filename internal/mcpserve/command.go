@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"os"
@@ -155,8 +156,13 @@ func runServe(ctx context.Context, opts serveOptions) error {
 
 	// Derive the Guardrail permission policy from the project's .qsdev.yaml
 	// (tools.disabled) BEFORE building the chain, so a disabled tool is actually
-	// enforced on MCP calls — not merely reported denied by qsdev_policy_check.
-	policy := projectPolicy(root)
+	// enforced on MCP calls — not merely reported denied by qsdev_policy_check. A
+	// present-but-unparseable config fails startup rather than silently running
+	// un-narrowed (fail closed).
+	policy, err := projectPolicy(root)
+	if err != nil {
+		return err
+	}
 
 	// Select the middleware chain for the deployment mode. Native and standalone
 	// run the standard six-layer chain; gateway wraps it with an outer
@@ -247,23 +253,29 @@ func chainForMode(mode container.DeployMode, policy *middleware.Policy) *spi.Cha
 // projectPolicy loads the project's .qsdev.yaml (when present) and derives the
 // Guardrail permission policy from its tools.disabled list via the single shared
 // middleware.PolicyFromConfig derivation (the same one qsdev_policy_check reports
-// from). A missing or unparseable config yields a nil policy: enforcement stays
-// permissive-by-default rather than failing server startup — a broken or absent
-// config must never take the MCP server down, only leave it un-narrowed.
-func projectPolicy(root string) *middleware.Policy {
+// from).
+//
+// It fails closed on a PRESENT-but-unparseable config: returning a nil
+// (permissive) policy there would silently drop every tools.disabled deny the
+// operator intended — the exact fail-open the strict decoder can now trigger
+// from a single unknown/typo'd key. An ABSENT config is benign (nothing to
+// narrow) and yields a nil policy with no error. errors.Is unwraps the
+// fmt-wrapped read error so a missing file is detected reliably (os.IsNotExist
+// would not, and would misreport a missing config as a parse failure).
+func projectPolicy(root string) (*middleware.Policy, error) {
 	if root == "" {
-		return nil
+		return nil, nil
 	}
 	path := filepath.Join(root, branding.Get().ConfigFile)
 	cfg, err := qsdevconfig.ParseQsdevConfig(path)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			slog.Warn("could not parse project config for MCP guardrail policy; enforcement stays permissive",
-				"path", path, "error", err)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
 		}
-		return nil
+		return nil, fmt.Errorf("parsing project config %s for MCP guardrail policy "+
+			"(refusing to serve un-narrowed): %w", path, err)
 	}
-	return middleware.PolicyFromConfig(cfg)
+	return middleware.PolicyFromConfig(cfg), nil
 }
 
 // gatewayRequireAuth reports whether gateway allow-list authorization is being

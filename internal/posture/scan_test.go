@@ -270,6 +270,47 @@ func TestAssess_FreshScanFailureFailsClosed(t *testing.T) {
 	}
 }
 
+// TestBuildEcosystemStatuses_UnknownSeverityFailsGate is the M2 regression: a
+// vulnerability whose severity could not be resolved (empty label — what a
+// failed or truncated detail fetch leaves) must count as Unknown, fail the exit
+// gate, and drop the dependency score — never fold to Info and pass silently.
+func TestBuildEcosystemStatuses_UnknownSeverityFailsGate(t *testing.T) {
+	dir := t.TempDir()
+	writeGoSum(t, dir)
+	// The advisory id is reported by the batch query but carries no severity in
+	// its detail record (absent from the severities map).
+	srv := vulnscantest.NewServer(t,
+		map[int][]string{0: {"GHSA-UNK-001"}},
+		nil,
+	)
+	scanner := &vulnscan.Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()}
+	detected := types.DetectedProject{Ecosystems: map[string]bool{ecosystem.NameGo: true}}
+
+	ecos := buildEcosystemStatuses(detected, dir, scanner)
+	dep := ComputeDepScore(ecos)
+	dep.Scanned = true
+
+	if dep.Totals.Unknown != 1 {
+		t.Fatalf("Totals.Unknown = %d, want 1", dep.Totals.Unknown)
+	}
+	if dep.Totals.Info != 0 {
+		t.Errorf("Totals.Info = %d, want 0 (unknown severity must not fold to Info)", dep.Totals.Info)
+	}
+	if dep.Score >= 100 {
+		t.Errorf("Score = %.0f, want < 100 for an unknown-severity vuln", dep.Score)
+	}
+
+	report := &PostureReport{
+		Dependencies: dep,
+		Conformance:  ConformanceResult{Baseline: ConformanceLevel{Pass: true}},
+	}
+	for _, lvl := range []string{"critical", "high", "moderate", "low"} {
+		if !ShouldExitNonZero(report, lvl) {
+			t.Errorf("ShouldExitNonZero(%q) = false, want true for an unknown-severity vuln", lvl)
+		}
+	}
+}
+
 // reasonFor returns the reason of the named conformance check.
 func reasonFor(t *testing.T, checks []ConformanceCheck, name CheckName) string {
 	t.Helper()

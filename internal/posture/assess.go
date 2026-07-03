@@ -368,6 +368,7 @@ func scanEcosystem(status *EcosystemStatus, scanner *vulnscan.Scanner, lockAbs s
 		Moderate: res.Counts.Moderate,
 		Low:      res.Counts.Low,
 		Info:     res.Counts.Info,
+		Unknown:  res.Counts.Unknown,
 	}
 	now := time.Now().UTC()
 	status.LastScan = &now

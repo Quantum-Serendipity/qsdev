@@ -10,6 +10,10 @@ package posture
 //   - "high": Critical+High > 0 OR baseline conformance FAIL
 //   - "critical": Critical > 0
 //   - "none": always false (never exit non-zero)
+//
+// Independent of the level (except "none"), a failed scan (ScanFailed) or any
+// unresolved-severity vulnerability (Totals.Unknown > 0) fails closed: both mean
+// the result cannot be certified clean.
 func ShouldExitNonZero(report *PostureReport, auditLevel string) bool {
 	if auditLevel == "none" {
 		return false
@@ -18,6 +22,12 @@ func ShouldExitNonZero(report *PostureReport, auditLevel string) bool {
 	// unknown. Fail closed rather than certify clean on the strength of zero
 	// Totals that only reflect a scan that never completed.
 	if report.Dependencies.ScanFailed {
+		return true
+	}
+	// A vulnerability whose severity could not be resolved (absent OSV label or a
+	// failed detail fetch) could be anything up to critical. Fail closed rather
+	// than let it slip below the gate as a harmless Info finding.
+	if report.Dependencies.Totals.Unknown > 0 {
 		return true
 	}
 	switch auditLevel {

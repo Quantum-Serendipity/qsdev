@@ -201,8 +201,12 @@ func renderDepHealth(w io.Writer, report *posture.PostureReport, ind [4]string, 
 		totals := report.Dependencies.Totals
 		switch {
 		case totals.Total() > 0:
-			fmt.Fprintf(w, "  Vulnerabilities: %d critical, %d high, %d moderate, %d low\n",
+			fmt.Fprintf(w, "  Vulnerabilities: %d critical, %d high, %d moderate, %d low",
 				totals.Critical, totals.High, totals.Moderate, totals.Low)
+			if totals.Unknown > 0 {
+				fmt.Fprintf(w, ", %d unknown-severity", totals.Unknown)
+			}
+			fmt.Fprintln(w)
 		case report.Dependencies.ScanFailed:
 			// A requested scan that errored is NOT a clean result — the zero
 			// totals reflect a check that never completed. Say so, and flag it.

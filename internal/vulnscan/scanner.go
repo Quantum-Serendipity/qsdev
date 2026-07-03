@@ -42,19 +42,23 @@ const maxVulnDetailFetches = 200
 const detailFetchConcurrency = 8
 
 // SeverityCounts aggregates vulnerabilities by normalized severity. An advisory
-// whose severity cannot be resolved to one of the named buckets is counted as
-// Info so it remains visible in Total without being overstated as critical.
+// carrying a recognized-but-nonstandard label is counted as Info so it remains
+// visible without being overstated. An advisory whose severity could not be
+// determined at all — an absent label or a failed/truncated detail fetch — is
+// counted as Unknown, which consumers must treat as fail-closed: it could be
+// anything up to critical, so it must not read as harmless.
 type SeverityCounts struct {
 	Critical int `json:"critical"`
 	High     int `json:"high"`
 	Moderate int `json:"moderate"`
 	Low      int `json:"low"`
 	Info     int `json:"info"`
+	Unknown  int `json:"unknown"`
 }
 
 // Total returns the sum of all severity buckets.
 func (c SeverityCounts) Total() int {
-	return c.Critical + c.High + c.Moderate + c.Low + c.Info
+	return c.Critical + c.High + c.Moderate + c.Low + c.Info + c.Unknown
 }
 
 // Vulnerability is one advisory tied to the package that triggered it.
@@ -63,7 +67,7 @@ type Vulnerability struct {
 	Package     string `json:"package"`
 	Version     string `json:"version"`
 	Ecosystem   string `json:"ecosystem"`
-	Severity    string `json:"severity"` // normalized: critical|high|moderate|low|info
+	Severity    string `json:"severity"` // normalized: critical|high|moderate|low|info|unknown
 	FixedIn     string `json:"fixedIn,omitempty"`
 	AdvisoryURL string `json:"advisoryUrl,omitempty"`
 	Summary     string `json:"summary,omitempty"`
@@ -171,6 +175,8 @@ func (s *Scanner) scan(ctx context.Context, lf LockFile, path string) (*Result, 
 			res.Counts.Moderate++
 		case "low":
 			res.Counts.Low++
+		case "unknown":
+			res.Counts.Unknown++
 		default:
 			res.Counts.Info++
 		}
@@ -280,10 +286,10 @@ type osvVuln struct {
 // Detail is the per-advisory subset of an OSV /v1/vulns/{id} record consumers
 // need to render or filter a finding. SeverityLabel is the raw
 // database_specific.severity string (e.g. "CRITICAL", "MODERATE"); it is left
-// unnormalized so consumers with different severity vocabularies (this package
-// folds unrecognized labels to "info", the mcpserve security_scan tool folds
-// them to "unknown") can apply their own mapping. A zero-value Detail (failed
-// or truncated fetch) carries an empty SeverityLabel.
+// unnormalized so consumers with different severity vocabularies can apply their
+// own mapping. A zero-value Detail (failed or truncated fetch) carries an empty
+// SeverityLabel, which normalizeSeverity resolves to "unknown" (fail-closed),
+// not "info".
 type Detail struct {
 	ID            string
 	Summary       string
@@ -408,7 +414,10 @@ func (s *Scanner) fetchVuln(ctx context.Context, id string) (osvVuln, error) {
 
 // normalizeSeverity resolves a coarse severity bucket from the OSV record's
 // database_specific.severity label. "medium" is folded into "moderate" (OSV
-// GHSA advisories use MODERATE while some sources emit MEDIUM). An absent or
+// GHSA advisories use MODERATE while some sources emit MEDIUM). An ABSENT label
+// (empty string) — which is what a failed or truncated detail fetch leaves —
+// yields "unknown", NOT "info": the severity is genuinely undetermined and must
+// fail closed rather than be silently demoted below the exit gate. A present but
 // unrecognized label yields "info" so the vuln stays visible without being
 // overstated.
 func normalizeSeverity(label string) string {
@@ -421,6 +430,8 @@ func normalizeSeverity(label string) string {
 		return "moderate"
 	case "low":
 		return "low"
+	case "":
+		return "unknown"
 	default:
 		return "info"
 	}

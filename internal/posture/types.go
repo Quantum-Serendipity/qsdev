@@ -153,18 +153,22 @@ type DependencyHealth struct {
 	ScanFailed bool `json:"scanFailed"`
 }
 
-// VulnSeverityCounts holds vulnerability counts broken down by severity.
+// VulnSeverityCounts holds vulnerability counts broken down by severity. Unknown
+// counts advisories whose severity could not be resolved (absent label or a
+// failed detail fetch); it is fail-closed — treated as gate-failing because the
+// true severity could be anything up to critical.
 type VulnSeverityCounts struct {
 	Critical int `json:"critical"`
 	High     int `json:"high"`
 	Moderate int `json:"moderate"`
 	Low      int `json:"low"`
 	Info     int `json:"info"`
+	Unknown  int `json:"unknown"`
 }
 
 // Total returns the sum of all vulnerability counts.
 func (v VulnSeverityCounts) Total() int {
-	return v.Critical + v.High + v.Moderate + v.Low + v.Info
+	return v.Critical + v.High + v.Moderate + v.Low + v.Info + v.Unknown
 }
 
 // EcosystemStatus tracks the dependency health of a single ecosystem.

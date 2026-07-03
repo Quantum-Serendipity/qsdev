@@ -8,6 +8,11 @@ const (
 	DeductModerate    = 3.0
 	DeductLow         = 1.0
 	DeductMissingLock = 15.0
+	// DeductUnknown penalizes a vulnerability whose severity could not be
+	// resolved. Its true severity could be anything up to critical, so it is
+	// deducted at the High rate — enough to visibly drop the score below a clean
+	// 100 without overstating it as a confirmed critical.
+	DeductUnknown = 10.0
 )
 
 // ComputeDepScore calculates dependency health score (0-100).
@@ -28,6 +33,7 @@ func ComputeDepScore(ecosystems []EcosystemStatus) DependencyHealth {
 		totals.Moderate += eco.VulnCounts.Moderate
 		totals.Low += eco.VulnCounts.Low
 		totals.Info += eco.VulnCounts.Info
+		totals.Unknown += eco.VulnCounts.Unknown
 
 		if eco.LockFile == "missing" {
 			score -= DeductMissingLock
@@ -38,6 +44,7 @@ func ComputeDepScore(ecosystems []EcosystemStatus) DependencyHealth {
 	score -= float64(totals.High) * DeductHigh
 	score -= float64(totals.Moderate) * DeductModerate
 	score -= float64(totals.Low) * DeductLow
+	score -= float64(totals.Unknown) * DeductUnknown
 
 	score = math.Max(0, score)
 

@@ -68,8 +68,13 @@ func TestScanFile_MixedSeverities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanFile: %v", err)
 	}
-	if res.Counts.High != 1 || res.Counts.Moderate != 1 || res.Counts.Info != 1 {
-		t.Errorf("counts = %+v, want High=1 Moderate=1 Info=1", res.Counts)
+	// C-unknown has no severity label; a missing/failed detail severity must be
+	// counted as Unknown (fail-closed), NOT silently demoted to Info (M2).
+	if res.Counts.High != 1 || res.Counts.Moderate != 1 || res.Counts.Unknown != 1 {
+		t.Errorf("counts = %+v, want High=1 Moderate=1 Unknown=1", res.Counts)
+	}
+	if res.Counts.Info != 0 {
+		t.Errorf("Counts.Info = %d, want 0 (unknown severity must not fold to Info)", res.Counts.Info)
 	}
 	if res.Counts.Critical != 0 {
 		t.Errorf("Counts.Critical = %d, want 0", res.Counts.Critical)

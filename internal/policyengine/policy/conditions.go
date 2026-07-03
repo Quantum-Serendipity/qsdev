@@ -134,13 +134,18 @@ var semanticIndicators = []string{
 // rule-specific indicators.
 var semanticQuotedRE = regexp.MustCompile(`'([^']+)'`)
 
+// minQuotedIndicatorLen is the shortest single-quoted phrase promoted to a
+// rule-specific indicator. A shorter phrase (e.g. 'x' or 'go') is too generic
+// and would make the rule fire on nearly every tool call — a self-inflicted
+// over-block from a careless prompt. Built-in indicators are curated and exempt.
+const minQuotedIndicatorLen = 5
+
 // semanticCondition performs a deterministic, offline heuristic match for the
 // `semantic` condition type. Full LLM-backed evaluation is deferred, but the
 // condition MUST NOT be a silent no-op (a rule that can never fire is a silent
 // enforcement gap). It matches when any indicator phrase — built-in or quoted
 // in the rule's prompt — appears in the tool input, command, or file path.
 type semanticCondition struct {
-	prompt     string
 	indicators []string
 }
 
@@ -148,9 +153,9 @@ func newSemanticCondition(prompt string) *semanticCondition {
 	seen := make(map[string]struct{})
 	indicators := make([]string, 0, len(semanticIndicators))
 
-	add := func(s string) {
+	add := func(s string, minLen int) {
 		s = strings.ToLower(strings.TrimSpace(s))
-		if s == "" {
+		if len(s) < minLen {
 			return
 		}
 		if _, ok := seen[s]; ok {
@@ -160,14 +165,16 @@ func newSemanticCondition(prompt string) *semanticCondition {
 		indicators = append(indicators, s)
 	}
 
+	// Quoted phrases come from an author-written prompt, so enforce a length
+	// floor; built-in indicators are curated multi-word phrases.
 	for _, m := range semanticQuotedRE.FindAllStringSubmatch(prompt, -1) {
-		add(m[1])
+		add(m[1], minQuotedIndicatorLen)
 	}
 	for _, ind := range semanticIndicators {
-		add(ind)
+		add(ind, 1)
 	}
 
-	return &semanticCondition{prompt: prompt, indicators: indicators}
+	return &semanticCondition{indicators: indicators}
 }
 
 func (c *semanticCondition) Evaluate(ctx *EvalContext) (bool, error) {

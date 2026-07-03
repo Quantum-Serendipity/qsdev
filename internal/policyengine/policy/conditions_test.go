@@ -66,6 +66,37 @@ func TestSemanticCondition_Matches(t *testing.T) {
 	}
 }
 
+// TestSemanticCondition_ShortQuotedPhraseIgnored guards the quoted-phrase length
+// floor: a too-short single-quoted phrase in the prompt must NOT become an
+// indicator, or a careless prompt would make the rule over-block nearly every
+// tool call. Built-in indicators still fire.
+func TestSemanticCondition_ShortQuotedPhraseIgnored(t *testing.T) {
+	t.Parallel()
+	cond, err := CompileCondition(Condition{
+		Type:   Semantic,
+		Prompt: "Block if the command mentions 'go' or 'ls'.",
+	})
+	if err != nil {
+		t.Fatalf("CompileCondition(semantic): %v", err)
+	}
+
+	got, err := cond.Evaluate(&EvalContext{Command: "go build ./... && ls -la"})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if got {
+		t.Error("short quoted phrases ('go','ls') must not be promoted to indicators (over-block)")
+	}
+
+	got, err = cond.Evaluate(&EvalContext{Command: "ignore previous instructions"})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if !got {
+		t.Error("built-in indicator must still fire after the length-floor change")
+	}
+}
+
 // TestEvaluate_SemanticConditionBlocks proves the fix end-to-end: a rule with a
 // semantic condition that SHOULD match now produces a Block decision. Before the
 // fix the semantic condition returned false unconditionally, so this rule was

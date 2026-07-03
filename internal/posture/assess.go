@@ -204,10 +204,21 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 	if report.Dependencies.Ecosystems == nil {
 		report.Dependencies.Ecosystems = []EcosystemStatus{}
 	}
-	// Record whether a scan actually ran. When it did not, zero Totals mean
-	// "unknown", not "clean": conformance and rendering must not present the
-	// absence of findings as a clean bill of health.
-	report.Dependencies.Scanned = opts.FreshScan
+	// Record whether a scan actually ran to completion. A requested scan whose
+	// per-ecosystem checks errored (e.g. OSV unreachable) leaves zero Totals that
+	// mean "unknown", not "clean". Derive the aggregate flags from the actual
+	// per-ecosystem outcomes rather than the request flag, so conformance,
+	// rendering, and the exit gate never present a failed scan as a clean bill of
+	// health.
+	scanFailed := false
+	for i := range ecoStatuses {
+		if ecoStatuses[i].ScanError {
+			scanFailed = true
+			break
+		}
+	}
+	report.Dependencies.Scanned = opts.FreshScan && !scanFailed
+	report.Dependencies.ScanFailed = opts.FreshScan && scanFailed
 	if opts.FreshScan {
 		now := time.Now().UTC()
 		report.Dependencies.LastScan = &now
@@ -344,6 +355,7 @@ func scanEcosystem(status *EcosystemStatus, scanner *vulnscan.Scanner, lockAbs s
 	if err != nil {
 		slog.Warn("posture: dependency vulnerability scan failed; ecosystem left unscanned",
 			"ecosystem", status.Name, "lockFile", status.LockFile, "error", err)
+		status.ScanError = true
 		return
 	}
 	if res == nil {

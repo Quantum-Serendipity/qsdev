@@ -89,11 +89,13 @@ func evaluateBaseline(
 		Reason: boolReason(allLocked, "all detected ecosystems have lock files", "some ecosystems missing lock files"),
 	})
 
-	noCritical := deps.Totals.Critical == 0
+	// A failed scan cannot certify "no critical vulnerabilities": zero Totals
+	// only reflect a check that never completed, so the check does not pass.
+	noCritical := deps.Totals.Critical == 0 && !deps.ScanFailed
 	checks = append(checks, ConformanceCheck{
 		Name: CheckNoCriticalVulns,
 		Pass: noCritical,
-		Reason: vulnCheckReason(deps.Scanned, noCritical,
+		Reason: vulnCheckReason(deps.Scanned, deps.ScanFailed, deps.Totals.Critical == 0,
 			"no critical vulnerabilities", "critical vulnerabilities found"),
 	})
 
@@ -150,11 +152,11 @@ func evaluateEnhanced(
 ) []ConformanceCheck {
 	var checks []ConformanceCheck
 
-	noHighVulns := deps.Totals.High == 0
+	noHighVulns := deps.Totals.High == 0 && !deps.ScanFailed
 	checks = append(checks, ConformanceCheck{
 		Name: CheckNoHighVulns,
 		Pass: noHighVulns,
-		Reason: vulnCheckReason(deps.Scanned, noHighVulns,
+		Reason: vulnCheckReason(deps.Scanned, deps.ScanFailed, deps.Totals.High == 0,
 			"no high vulnerabilities", "high vulnerabilities found"),
 	})
 
@@ -226,7 +228,11 @@ func boolReason(ok bool, pass, fail string) string {
 // were never checked — so the reason states that explicitly instead of claiming
 // the absence of a given severity. This keeps the report honest: it reports what
 // was not done rather than implying a clean bill of health.
-func vulnCheckReason(scanned, ok bool, passReason, failReason string) string {
+func vulnCheckReason(scanned, failed, ok bool, passReason, failReason string) string {
+	if failed {
+		return "dependency vulnerability scan failed; results unavailable " +
+			"(vulnerability status unknown, not confirmed clean)"
+	}
 	if !scanned {
 		return "dependencies not scanned for vulnerabilities; run 'qsdev status --scan' " +
 			"(vulnerability status unknown, not confirmed clean)"

@@ -11,6 +11,15 @@ package posture
 //   - "critical": Critical > 0
 //   - "none": always false (never exit non-zero)
 func ShouldExitNonZero(report *PostureReport, auditLevel string) bool {
+	if auditLevel == "none" {
+		return false
+	}
+	// A requested dependency scan that failed leaves vulnerability status
+	// unknown. Fail closed rather than certify clean on the strength of zero
+	// Totals that only reflect a scan that never completed.
+	if report.Dependencies.ScanFailed {
+		return true
+	}
 	switch auditLevel {
 	case "none":
 		return false

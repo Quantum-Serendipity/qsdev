@@ -1,6 +1,8 @@
 package posture
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,17 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+// failingOSVServer returns a server that answers every request with HTTP 500,
+// so vulnscan.ScanFile reports a scan failure (as when OSV.dev is unreachable).
+func failingOSVServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
 
 // writeGoSum writes a minimal single-module go.sum into dir.
 func writeGoSum(t *testing.T, dir string) {
@@ -166,6 +179,94 @@ func TestAssess_FreshScanSetsScannedFlag(t *testing.T) {
 	reason := reasonFor(t, unscanned.Conformance.Baseline.Checks, CheckNoCriticalVulns)
 	if !strings.Contains(reason, "not scanned") {
 		t.Errorf("unscanned conformance reason = %q, want a 'not scanned' statement", reason)
+	}
+}
+
+// TestBuildEcosystemStatuses_ScanFailureMarksScanError proves a scan that errors
+// (OSV unreachable) is recorded as a failure, not silently left "unscanned with
+// zero counts" — the seam that C1 depends on.
+func TestBuildEcosystemStatuses_ScanFailureMarksScanError(t *testing.T) {
+	dir := t.TempDir()
+	writeGoSum(t, dir)
+	srv := failingOSVServer(t)
+	scanner := &vulnscan.Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()}
+	detected := types.DetectedProject{Ecosystems: map[string]bool{ecosystem.NameGo: true}}
+
+	ecos := buildEcosystemStatuses(detected, dir, scanner)
+
+	var goStatus *EcosystemStatus
+	for i := range ecos {
+		if ecos[i].Name == ecosystem.NameGo {
+			goStatus = &ecos[i]
+		}
+	}
+	if goStatus == nil {
+		t.Fatal("go ecosystem status not built")
+	}
+	if !goStatus.ScanError {
+		t.Error("ScanError should be true when the OSV query fails")
+	}
+	if goStatus.Scanned {
+		t.Error("Scanned must stay false on a failed scan")
+	}
+	if goStatus.VulnCounts.Total() != 0 {
+		t.Errorf("VulnCounts.Total = %d, want 0 on a failed scan", goStatus.VulnCounts.Total())
+	}
+}
+
+// TestAssess_FreshScanFailureFailsClosed is the C1 regression: when --scan is
+// requested but the scan errors, the report must NOT present a clean bill of
+// health. It marks ScanFailed, the exit gate fails closed at every gating level,
+// and conformance does not certify "no critical vulnerabilities".
+func TestAssess_FreshScanFailureFailsClosed(t *testing.T) {
+	orig := newVulnScanner
+	t.Cleanup(func() { newVulnScanner = orig })
+	srv := failingOSVServer(t)
+	newVulnScanner = func() *vulnscan.Scanner {
+		return &vulnscan.Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()}
+	}
+
+	dir := t.TempDir()
+	writeGoSum(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"),
+		[]byte("module example.com/x\n\ngo 1.21\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := Assess(dir, AssessOptions{FreshScan: true})
+	if err != nil {
+		t.Fatalf("Assess(FreshScan): %v", err)
+	}
+
+	if !report.Dependencies.ScanFailed {
+		t.Error("Dependencies.ScanFailed should be true when the requested scan errored")
+	}
+	if report.Dependencies.Scanned {
+		t.Error("Dependencies.Scanned must be false when the scan failed")
+	}
+
+	// Fail closed at every vuln-gating level; never for 'none'.
+	for _, lvl := range []string{"critical", "high", "moderate", "low", "info"} {
+		if !ShouldExitNonZero(report, lvl) {
+			t.Errorf("ShouldExitNonZero(%q) = false, want true on a failed scan", lvl)
+		}
+	}
+	if ShouldExitNonZero(report, "none") {
+		t.Error("ShouldExitNonZero(none) must stay false even on a failed scan")
+	}
+
+	// Conformance must not certify clean, and must say so.
+	reason := reasonFor(t, report.Conformance.Baseline.Checks, CheckNoCriticalVulns)
+	if !strings.Contains(reason, "scan failed") {
+		t.Errorf("conformance reason = %q, want it to state the scan failed", reason)
+	}
+	for _, c := range report.Conformance.Baseline.Checks {
+		if c.Name == CheckNoCriticalVulns && c.Pass {
+			t.Error("CheckNoCriticalVulns must not pass when the scan failed")
+		}
 	}
 }
 

@@ -141,10 +141,16 @@ type DependencyHealth struct {
 	LastScan   *time.Time         `json:"lastScan,omitempty"`
 	Stale      bool               `json:"stale"`
 	// Scanned reports whether a fresh dependency vulnerability scan was run for
-	// this assessment. When false, Totals are NOT a clean bill of health — the
-	// dependencies were simply never checked against OSV, so callers must not
-	// present a zero count as "no vulnerabilities".
+	// this assessment AND completed without error. When false, Totals are NOT a
+	// clean bill of health — the dependencies were either never checked against
+	// OSV or the scan failed — so callers must not present a zero count as "no
+	// vulnerabilities".
 	Scanned bool `json:"scanned"`
+	// ScanFailed reports that a fresh scan was requested but at least one
+	// ecosystem's scan errored (e.g. OSV unreachable), so the zero Totals reflect
+	// a failed check, not a clean result. Callers must fail closed on this rather
+	// than certify the dependencies clean.
+	ScanFailed bool `json:"scanFailed"`
 }
 
 // VulnSeverityCounts holds vulnerability counts broken down by severity.
@@ -173,6 +179,10 @@ type EcosystemStatus struct {
 	// against OSV. It is false when no scan was requested or the lock format has
 	// no OSV coverage, so zero VulnCounts do not imply a clean result.
 	Scanned bool `json:"scanned"`
+	// ScanError reports that a scan was attempted for this ecosystem's lock file
+	// but errored (as opposed to the lock format simply having no OSV coverage).
+	// It distinguishes a failed check from a legitimately unscannable ecosystem.
+	ScanError bool `json:"scanError,omitempty"`
 }
 
 // TierDescription returns a short description for a tier name.

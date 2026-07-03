@@ -186,7 +186,10 @@ func renderDepHealth(w io.Writer, report *posture.PostureReport, ind [4]string, 
 			// Annotate unscanned ecosystems so a zero count is not mistaken for a
 			// clean bill of health.
 			scanNote := ""
-			if !eco.Scanned {
+			switch {
+			case eco.ScanError:
+				scanNote = " [scan failed]"
+			case !eco.Scanned:
 				scanNote = " [not scanned]"
 			}
 			fmt.Fprintf(w, "  %-20s lockfile=%-10s vulns=%d%s (C:%d H:%d M:%d L:%d)\n",
@@ -200,6 +203,10 @@ func renderDepHealth(w io.Writer, report *posture.PostureReport, ind [4]string, 
 		case totals.Total() > 0:
 			fmt.Fprintf(w, "  Vulnerabilities: %d critical, %d high, %d moderate, %d low\n",
 				totals.Critical, totals.High, totals.Moderate, totals.Low)
+		case report.Dependencies.ScanFailed:
+			// A requested scan that errored is NOT a clean result — the zero
+			// totals reflect a check that never completed. Say so, and flag it.
+			fmt.Fprintf(w, "  %s Dependency scan failed — vulnerability status unknown (see logs)\n", fail)
 		case report.Dependencies.Scanned:
 			// Only claim a clean result when a scan actually ran.
 			fmt.Fprintf(w, "  No vulnerabilities detected\n")

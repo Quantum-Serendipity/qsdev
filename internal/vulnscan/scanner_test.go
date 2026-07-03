@@ -116,6 +116,51 @@ func TestScanFile_MixedSeverities(t *testing.T) {
 	}
 }
 
+// TestScanFile_CVSSSeverityFallback proves the scanner derives severity from an
+// advisory's top-level CVSS severity[] vector when database_specific.severity is
+// absent — the shape Go advisories (GO-YYYY-NNNN) use. Without this fallback the
+// label is empty, NormalizeSeverity yields "unknown", and the audit exit gate is
+// pinned non-zero at every audit level for any Go project carrying a single
+// advisory (#2).
+func TestScanFile_CVSSSeverityFallback(t *testing.T) {
+	cases := []struct {
+		name         string
+		vector       string
+		wantSeverity string
+	}{
+		// AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H is CVSS 3.1 base 9.8.
+		{"critical CVSS v3.1", "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", "critical"},
+		// AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N is CVSS 3.1 base 5.3.
+		{"moderate CVSS v3.1", "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N", "moderate"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			lock := writeLock(t, dir, "requirements.txt", "requests==2.19.0\n")
+
+			// The advisory carries NO database_specific.severity: its only severity
+			// is the top-level CVSS vector.
+			srv := vulnscantest.NewServerWithCVSS(t,
+				map[int][]string{0: {"GO-2024-0001"}},
+				nil,
+				map[string]string{"GO-2024-0001": tc.vector},
+			)
+			s := &Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()}
+
+			res, err := s.ScanFile(context.Background(), lock)
+			if err != nil {
+				t.Fatalf("ScanFile: %v", err)
+			}
+			if res.Counts.Unknown != 0 {
+				t.Errorf("Counts.Unknown = %d, want 0 (CVSS vector must resolve severity, not fail-closed)", res.Counts.Unknown)
+			}
+			if len(res.Vulnerabilities) != 1 || res.Vulnerabilities[0].Severity != tc.wantSeverity {
+				t.Fatalf("vulnerabilities = %+v, want one %q", res.Vulnerabilities, tc.wantSeverity)
+			}
+		})
+	}
+}
+
 func TestScanFile_CleanProject(t *testing.T) {
 	dir := t.TempDir()
 	lock := writeLock(t, dir, "requirements.txt", "requests==2.31.0\n")

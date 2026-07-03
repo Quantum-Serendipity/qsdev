@@ -153,6 +153,21 @@ type DependencyHealth struct {
 	ScanFailed bool `json:"scanFailed"`
 }
 
+// Certifiable reports whether the scan result is conclusive — no failed
+// ecosystems and no unresolved severities. It is the single predicate every
+// consumer of dependency health must route "is this clean?" through; a fifth
+// consumer must call this rather than re-derive clean from raw counts.
+//
+// Semantics: a project with no fresh scan requested is Certifiable
+// (ScanFailed=false, Unknown=0), preserving the honest "not scanned" state as a
+// separate concern from an inconclusive scan. A completed scan that turned up an
+// unknown-severity vulnerability, or an ecosystem whose scan errored, is NOT
+// certifiable: the true status could be anything up to critical, so callers must
+// fail closed rather than present zero Totals as a clean bill of health.
+func (d DependencyHealth) Certifiable() bool {
+	return !d.ScanFailed && d.Totals.Unknown == 0
+}
+
 // VulnSeverityCounts holds vulnerability counts broken down by severity. Unknown
 // counts advisories whose severity could not be resolved (absent label or a
 // failed detail fetch); it is fail-closed — treated as gate-failing because the

@@ -104,7 +104,14 @@ type ResourceRegistration struct {
 	Name        string
 	Description string
 	MIMEType    string
-	Handler     ResourceHandler
+	// Category groups the resource under a taxonomy category (mirroring
+	// ToolRegistration.Category), so category-scoped Guardrail denies and the
+	// per-category rate limiter apply to resource reads. An empty category leaves
+	// the read uncategorized (Guardrail permissive-by-default, Default rate
+	// limit), matching prior behavior — the point is that a category-scoped policy
+	// CAN now cover a resource.
+	Category string
+	Handler  ResourceHandler
 }
 
 // PromptRegistration declares a single prompt exposed by the server.
@@ -112,7 +119,12 @@ type PromptRegistration struct {
 	Name        string
 	Description string
 	Arguments   []PromptArgument
-	Handler     PromptHandler
+	// Category groups the prompt under a taxonomy category (mirroring
+	// ToolRegistration.Category), so category-scoped Guardrail denies and the
+	// per-category rate limiter apply to prompt renders. An empty category leaves
+	// the render uncategorized (matching prior behavior).
+	Category string
+	Handler  PromptHandler
 }
 
 // PromptArgument describes one templating argument a prompt accepts.

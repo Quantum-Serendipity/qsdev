@@ -197,6 +197,11 @@ VERSION_STRIP_RE = re.compile(r"[@=><~^!]+.*$")
 COMMAND_PREFIXES: set[str] = {
     "sudo", "doas", "env", "command", "builtin", "exec",
     "time", "nice", "nohup", "stdbuf", "setsid", "ionice", "timeout",
+    # Debuggers / tracers / launchers / sandboxes / schedulers that run the
+    # command that FOLLOWS them. Without these, `strace npm install evil` hides
+    # the install behind an argv[0] the detector never recognises.
+    "strace", "ltrace", "catchsegv", "proot", "firejail",
+    "flock", "unshare", "chrt", "taskset", "xargs",
 }
 
 # Wrapper option flags that consume the following token as their value, so both
@@ -214,10 +219,20 @@ _WRAPPER_VALUE_FLAGS: set[str] = {
 # behind an argv[0] of `install`.
 _TIMEOUT_VALUE_FLAGS: set[str] = {"-k", "--kill-after", "-s", "--signal"}
 
+# Per-wrapper value-flag overrides. Wrappers not listed here use the shared set.
+_WRAPPER_VALUE_FLAGS_BY_CMD: dict[str, set[str]] = {
+    "timeout": _TIMEOUT_VALUE_FLAGS,
+}
+
 # Wrappers that take a mandatory positional argument before the command they run
 # (e.g. `timeout 10 npm install`): the leading numeric token must be skipped so
 # argv[0] resolves to the real executable rather than the duration.
 _DURATION_RE = re.compile(r"^[0-9]")
+
+# Wrappers whose FIRST non-flag positional is a resource argument (a lock file /
+# fd for `flock`, a CPU mask for `taskset`, a priority for `chrt`) that precedes
+# the real command; that one positional is skipped so argv[0] is the executable.
+_WRAPPER_LEADING_POSITIONAL: set[str] = {"flock", "taskset", "chrt"}
 
 # A python interpreter (python, python3, python3.12, ...) whose `-m <module>`
 # invocation must be resolved to the underlying installer (pip/uv), so that
@@ -229,8 +244,28 @@ _PYTHON_RE = re.compile(r"^python[0-9.]*$")
 # behind the shell executable. Combined short options (e.g. `bash -lc`) count.
 _SHELLS: set[str] = {"sh", "bash", "zsh", "dash", "ash", "ksh", "mksh"}
 _SHELL_C_FLAG_RE = re.compile(r"^-[A-Za-z]*c$")
-# Bound on recursive shell-script scanning to guard against pathological nesting.
-_MAX_SHELL_RECURSION = 4
+
+# Privilege launchers whose `-c "<script>"` (or `--command`) argument is a shell
+# script, exactly like a shell's -c (e.g. `su -c "npm install evil"`). Unlike a
+# shell, the target user may appear as a positional BEFORE -c, so every token is
+# scanned for the flag. These are deliberately NOT in COMMAND_PREFIXES: stripping
+# them as plain wrappers would swallow the -c script and hide the install.
+_PRIV_C_RUNNERS: set[str] = {"su", "runuser"}
+# Value-taking option flags for su/runuser exec form (`runuser -u user <cmd>`).
+_PRIV_VALUE_FLAGS: set[str] = {
+    "-u", "--user", "-g", "--group", "-G", "--supp-group",
+    "-s", "--shell", "-w", "--whitelist-environment",
+}
+
+# Bound on recursive shell-script scanning (shell -c, eval, su -c, command and
+# process substitutions). Exceeding it FAILS CLOSED (a suspicious marker is
+# emitted so main() blocks for validation) rather than silently dropping the
+# deeper script — a dropped script is a fail-open bypass.
+_MAX_SHELL_RECURSION = 6
+
+# Manager label for a segment that could not be safely analyzed (unparseable, or
+# nested past the recursion cap). main() denies these to fail closed.
+_SUSPICIOUS_MANAGER = "__suspicious__"
 
 # A leading VAR=value environment assignment (e.g. `FOO=bar npm install ...`).
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -456,26 +491,15 @@ def _split_segments(command: str) -> list[str]:
     return [s for s in _SEGMENT_SPLIT_RE.split(command) if s.strip()]
 
 
-def _command_argv(segment: str) -> list[str]:
-    """Shell-tokenize one command segment and return its argv with leading
-    environment assignments (VAR=val) and command wrappers (sudo/env/...) removed,
-    so argv[0] is the real executable. Returns [] for an empty segment.
+def _strip_wrappers(tokens: list[str]) -> list[str]:
+    """Return argv from already-tokenized `tokens` with leading environment
+    assignments (VAR=val) and exec wrappers (sudo/env/strace/xargs/...) removed,
+    so argv[0] is the real executable. Returns [] when nothing remains.
 
-    shlex tokenization is what defuses the false positives: a quoted argument such
-    as "npm install foo" becomes a single token, so it can never be read as an
-    `npm` executable followed by an `install` verb.
+    Only wrappers in COMMAND_PREFIXES are stripped; shells and su/runuser are
+    intentionally left in place so their `-c <script>` can be recursed into
+    rather than swallowed.
     """
-    segment = segment.strip()
-    if not segment:
-        return []
-    try:
-        tokens = shlex.split(segment)
-    except ValueError:
-        # Unbalanced quotes etc. — fall back to a naive split. Worst case this
-        # yields an argv[0] that is not a package manager, so nothing is checked;
-        # a real install token stream still tokenizes cleanly.
-        tokens = segment.split()
-
     i, n = 0, len(tokens)
     while i < n:
         tok = tokens[i]
@@ -485,7 +509,7 @@ def _command_argv(segment: str) -> list[str]:
         if tok in COMMAND_PREFIXES:
             # Consult this specific wrapper's value-flag grammar; timeout's value
             # flags apply only to timeout, never to sudo/env/etc.
-            value_flags = _TIMEOUT_VALUE_FLAGS if tok == "timeout" else _WRAPPER_VALUE_FLAGS
+            value_flags = _WRAPPER_VALUE_FLAGS_BY_CMD.get(tok, _WRAPPER_VALUE_FLAGS)
             i += 1
             # Skip this wrapper's option flags (and their values).
             while i < n and tokens[i].startswith("-"):
@@ -493,14 +517,71 @@ def _command_argv(segment: str) -> list[str]:
                 i += 1
                 if "=" not in flag and flag in value_flags and i < n:
                     i += 1  # consume the flag's value too
-            # `timeout` takes a mandatory duration positional before the command
-            # (`timeout 10 npm install`); skip a leading numeric token so the
-            # duration is not mistaken for the executable.
-            if tok == "timeout" and i < n and _DURATION_RE.match(tokens[i]):
-                i += 1
+            # Wrappers that take a leading positional before the command:
+            # `timeout 10 npm …` (numeric duration), `flock /tmp/l npm …`
+            # (lock file/fd), `taskset 0x1 npm …`, `chrt 50 npm …`.
+            if i < n:
+                if tok == "timeout":
+                    if _DURATION_RE.match(tokens[i]):
+                        i += 1
+                elif tok in _WRAPPER_LEADING_POSITIONAL and not tokens[i].startswith("-"):
+                    i += 1
             continue
         break
     return tokens[i:]
+
+
+def _extract_substitutions(text: str) -> tuple[list[str], str]:
+    """Pull command/process substitutions out of `text`, returning
+    (inner_scripts, cleaned_text). Each `$(...)`, backtick `` `...` ``, `<(...)`
+    and `>(...)` is a shell command in its own right and must be scanned; its span
+    is replaced by a space in cleaned_text so the remainder tokenizes normally and
+    the substitution's inner operators do not fragment surrounding segments.
+
+    An unbalanced construct is treated as running to end-of-string (fail closed:
+    the remainder is still scanned rather than dropped).
+    """
+    scripts: list[str] = []
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "`":
+            j = text.find("`", i + 1)
+            if j == -1:
+                scripts.append(text[i + 1:])
+                out.append(" ")
+                i = n
+            else:
+                scripts.append(text[i + 1:j])
+                out.append(" ")
+                i = j + 1
+            continue
+        if (c == "$" and i + 1 < n and text[i + 1] == "(") or (
+            c in "<>" and i + 1 < n and text[i + 1] == "("
+        ):
+            # Skip the opening `$(` / `<(` / `>(` and find the matching `)`,
+            # counting nested parens so inner substitutions stay intact.
+            start = i + 2
+            depth = 1
+            j = start
+            while j < n and depth > 0:
+                if text[j] == "(":
+                    depth += 1
+                elif text[j] == ")":
+                    depth -= 1
+                j += 1
+            if depth == 0:
+                scripts.append(text[start:j - 1])
+                i = j
+            else:
+                scripts.append(text[start:])
+                i = n
+            out.append(" ")
+            continue
+        out.append(c)
+        i += 1
+    return scripts, "".join(out)
 
 
 def _match_verb(args: list[str], verb_tokens: list[str]) -> Optional[list[str]]:
@@ -533,25 +614,60 @@ def _extract_package_args(operands: list[str], manager: str) -> list[str]:
     return packages
 
 
-def _shell_c_script(argv: list[str]) -> Optional[str]:
-    """If argv invokes a shell with -c, return the script argument that follows,
-    so it can be recursively scanned; else None. Handles combined short options
-    (e.g. `bash -lc "<script>"`). A shell invoked on a script file (`bash x.sh`)
-    or with no -c returns None."""
-    if not argv or os.path.basename(argv[0]) not in _SHELLS:
+def _c_runner_script(argv: list[str]) -> Optional[str]:
+    """If argv invokes a `-c` runner — a shell (`bash -c "<script>"`) or a
+    privilege launcher (`su -c "<script>"`, `runuser -c "<script>"`) — return the
+    script argument so it can be recursively scanned; else None.
+
+    Shells: honour combined short options (`bash -lc "<script>"`) and bail at the
+    first positional before any -c (a script FILE such as `bash x.sh` is not -c).
+    su/runuser: the target user may appear as a positional before -c
+    (`su deploy -c "<script>"`), so every token is scanned for -c/--command.
+    """
+    if not argv:
         return None
-    for i in range(1, len(argv)):
-        tok = argv[i]
-        if _SHELL_C_FLAG_RE.match(tok):
-            return argv[i + 1] if i + 1 < len(argv) else None
-        if not tok.startswith("-"):
-            return None  # first positional before any -c: not a -c invocation
+    exe = os.path.basename(argv[0])
+    if exe in _SHELLS:
+        for i in range(1, len(argv)):
+            tok = argv[i]
+            if _SHELL_C_FLAG_RE.match(tok):
+                return argv[i + 1] if i + 1 < len(argv) else None
+            if not tok.startswith("-"):
+                return None  # first positional before any -c: not a -c invocation
+        return None
+    if exe in _PRIV_C_RUNNERS:
+        for i in range(1, len(argv)):
+            tok = argv[i]
+            if tok in ("-c", "--command") or _SHELL_C_FLAG_RE.match(tok):
+                return argv[i + 1] if i + 1 < len(argv) else None
+        return None
     return None
+
+
+def _strip_priv_runner(argv: list[str]) -> list[str]:
+    """For a su/runuser invocation WITHOUT -c (exec form, e.g.
+    `runuser -u deploy npm install evil`): drop the launcher and its option flags
+    (consuming values for flags like -u/-g/-s) so the wrapped command surfaces as
+    argv[0]. Returns [] when nothing remains."""
+    i, n = 1, len(argv)
+    while i < n and argv[i].startswith("-"):
+        flag = argv[i]
+        i += 1
+        if "=" not in flag and flag in _PRIV_VALUE_FLAGS and i < n:
+            i += 1
+    return argv[i:]
+
+
+def _suspicious_detection(segment: str) -> tuple[str, str, str, list[str]]:
+    """A fail-closed detection marker for a segment that could not be safely
+    analyzed (unparseable, or nested past the recursion cap). main() denies these
+    so the guard never silently allows an install it could not inspect."""
+    return ("suspicious", _SUSPICIOUS_MANAGER, segment[:200], [])
 
 
 def parse_install_argv(argv: list[str]) -> Optional[tuple[str, str, list[str]]]:
     """Parse an already-tokenized argv (wrappers/env-assignments stripped by
-    _command_argv). Return (ecosystem, manager_label, packages) when it is a
+    _strip_wrappers). Return (ecosystem, manager_label, packages) when it is a
     genuine package-install invocation, else None. Detection is argv-based: the
     executable and its subcommand verb must actually be an install command, so
     install-like words inside unrelated commands are never treated as packages.
@@ -632,6 +748,22 @@ def strip_version(specifier: str) -> str:
 # Command matching
 # ---------------------------------------------------------------------------
 
+def _recurse_script(
+    script: str, depth: int, results: list[tuple[str, str, str, list[str]]]
+) -> None:
+    """Recursively scan a nested shell script (a shell/su/eval -c body or a
+    command/process substitution), appending its detections. FAILS CLOSED past
+    the recursion cap: a suspicious marker is emitted instead of silently dropping
+    the script, so a pathologically nested install still forces validation."""
+    script = script.strip()
+    if not script:
+        return
+    if depth >= _MAX_SHELL_RECURSION:
+        results.append(_suspicious_detection(script))
+        return
+    results.extend(detect_install_commands(script, depth + 1))
+
+
 def detect_install_commands(command: str, _depth: int = 0) -> list[tuple[str, str, str, list[str]]]:
     """
     Find ALL genuine package install invocations in a (possibly compound or
@@ -644,22 +776,67 @@ def detect_install_commands(command: str, _depth: int = 0) -> list[tuple[str, st
     install (``git commit -m "add install docs"``, ``grep "npm install" file``)
     are correctly ignored.
 
-    Installs hidden behind a shell wrapper (``bash -c "npm install evil"``) are
-    surfaced by recursively scanning the shell's -c script, bounded by
-    _MAX_SHELL_RECURSION to guard against pathological nesting.
+    Classification only ever happens at a command POSITION (argv[0] after wrappers
+    are stripped and after each shell construct is entered recursively), never by
+    matching install words inside plain string arguments — that is what keeps the
+    false-positive suite safe. Installs hidden behind a shell construct are
+    surfaced by recursing into it:
+      - command / process substitutions: ``echo $(npm install evil)``,
+        ``x=`npm install evil` ``, ``diff <(pip install evil) x``
+      - shell / privilege -c runners: ``bash -c``, ``sh -c``, ``su -c``,
+        ``runuser -c``
+      - ``eval "<script>"`` (its concatenated arguments are a shell script)
+    Recursion is bounded by _MAX_SHELL_RECURSION; exceeding it, or hitting an
+    unparseable segment, FAILS CLOSED via a suspicious marker rather than dropping
+    the script.
     """
     results: list[tuple[str, str, str, list[str]]] = []
 
-    for segment in _split_segments(command):
-        argv = _command_argv(segment)
+    # Command/process substitutions anywhere in the command are independent
+    # scripts. Extract and recurse into them first, then continue with a cleaned
+    # command whose substitution spans are blanked out (so their inner operators
+    # can't fragment the surrounding segments).
+    sub_scripts, command = _extract_substitutions(command)
+    for script in sub_scripts:
+        _recurse_script(script, _depth, results)
 
-        # `bash -c "<script>"` and friends: the install is inside the quoted
-        # script, not behind the shell executable — scan the script recursively.
-        script = _shell_c_script(argv)
-        if script is not None:
-            if _depth < _MAX_SHELL_RECURSION:
-                results.extend(detect_install_commands(script, _depth + 1))
+    for segment in _split_segments(command):
+        segment = segment.strip()
+        if not segment:
             continue
+
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            # Unbalanced quotes etc.: we cannot trust any tokenization, so we
+            # cannot rule out a hidden install. Fail closed instead of guessing.
+            results.append(_suspicious_detection(segment))
+            continue
+
+        argv = _strip_wrappers(tokens)
+        if not argv:
+            continue
+        exe = os.path.basename(argv[0])
+
+        # `eval "<script>"` / `eval pip install evil`: eval concatenates its
+        # arguments into a shell script and runs it — recurse into that script.
+        if exe == "eval":
+            _recurse_script(" ".join(argv[1:]), _depth, results)
+            continue
+
+        # `bash -c "<script>"`, `su -c "<script>"`, `runuser -c "<script>"`: the
+        # install lives inside the -c script, not behind the runner executable.
+        script = _c_runner_script(argv)
+        if script is not None:
+            _recurse_script(script, _depth, results)
+            continue
+
+        # su/runuser exec form without -c (`runuser -u deploy npm install evil`):
+        # drop the launcher so the wrapped command can be classified.
+        if exe in _PRIV_C_RUNNERS:
+            argv = _strip_priv_runner(argv)
+            if not argv:
+                continue
 
         parsed = parse_install_argv(argv)
         if parsed is not None:
@@ -828,6 +1005,25 @@ def main() -> None:
     needs_safety_flags: list[str] = []  # managers that need flag injection
 
     for ecosystem, manager, segment, packages in detections:
+        # Fail-closed marker: a segment that could not be safely analyzed
+        # (unparseable, or nested past the recursion cap). Deny so an install we
+        # could not inspect is never silently allowed.
+        if manager == _SUSPICIOUS_MANAGER:
+            reason = (
+                "A command segment could not be safely analyzed (unbalanced "
+                "quoting or excessively nested shell constructs) and was blocked "
+                "to fail closed. Simplify the command, or run the package install "
+                "directly, so the guard can validate it."
+            )
+            deny_reasons.append(reason)
+            audit_log({
+                "event": "deny_unanalyzable",
+                "command": command,
+                "segment": segment,
+                "reason": reason,
+            })
+            continue
+
         # Nix imperative installs: deny outright.
         if manager in ("nix-env", "nix-profile"):
             reason = (

@@ -13,6 +13,11 @@ import (
 
 const redacted = "[REDACTED]"
 
+// nameValueTrimCutset is the whitespace RE2's \s matches; redactNamedValues trims
+// it from the tail of a captured value so the separator run before the next
+// key-like token stays verbatim in the output rather than being redacted.
+const nameValueTrimCutset = "\t\n\f\r "
+
 // redactedReflectVal is the redaction marker as a reflect.Value, computed once
 // so the per-map-node redaction walk does not re-box the string on every call.
 var redactedReflectVal = reflect.ValueOf(redacted)
@@ -22,6 +27,7 @@ type Redactor struct {
 	valuePatterns []*regexp.Regexp
 	urlCredRe     *regexp.Regexp
 	nameValRe     *regexp.Regexp
+	keyBoundaryRe *regexp.Regexp
 }
 
 // NewRedactor creates a Redactor with default secret patterns.
@@ -31,8 +37,18 @@ func NewRedactor() *Redactor {
 		urlCredRe:     regexp.MustCompile(`://[^:@\s]+:[^:@\s]+@`),
 		// Matches "NAME=value" and "NAME: value" pairs so a sensitive credential
 		// NAME (e.g. DATABASE_PASSWORD) redacts its value even when the value
-		// itself matches no credential-shape pattern.
+		// itself matches no credential-shape pattern. Group 2 anchors the value's
+		// START only (its first whitespace-delimited token); the value's true END
+		// — which extends across internal spaces to the next key or end-of-line —
+		// is computed in redactNamedValues because RE2 (Go's regexp) has no
+		// lookahead to stop the capture at the next key boundary.
 		nameValRe: regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*(\S+)`),
+		// Marks the next "NAME=" / "NAME:" key boundary that terminates a value:
+		// a NAME (optionally spaced from its separator) that is preceded by
+		// whitespace. The leading \s requirement means an intra-value token such
+		// as a=b (no preceding space) stays part of the value, while a genuine
+		// following pair on the same line ends it.
+		keyBoundaryRe: regexp.MustCompile(`\s[A-Za-z_][A-Za-z0-9_]*\s*[:=]`),
 	}
 }
 
@@ -119,20 +135,52 @@ func (r *Redactor) redactNamedValues(s string) string {
 	b.Grow(len(s))
 	last := 0
 	for _, m := range matches {
-		// m holds pair offsets: match, group 1 (NAME), group 2 (value).
+		// m holds pair offsets: match (m[0:2]), group 1 NAME (m[2:4]),
+		// group 2 value-start token (m[4:6]).
+		if m[0] < last {
+			// This pair begins inside a value already redacted for an earlier
+			// sensitive NAME (e.g. an "a=b" token nested in a redacted value);
+			// skip it so we neither double-write nor leak part of that value.
+			continue
+		}
 		if !secrets.IsSensitiveName(s[m[2]:m[3]]) {
 			continue
 		}
-		// Keep everything through "NAME<sep>" and redact only the value.
-		b.WriteString(s[last:m[4]])
+		valStart := m[4]
+		valEnd := r.valueEnd(s, valStart)
+		if valEnd <= valStart {
+			continue
+		}
+		// Keep everything through "NAME<sep>" and redact the whole value —
+		// internal spaces included — up to the computed end.
+		b.WriteString(s[last:valStart])
 		b.WriteString(redacted)
-		last = m[5]
+		last = valEnd
 	}
 	if last == 0 {
 		return s
 	}
 	b.WriteString(s[last:])
 	return b.String()
+}
+
+// valueEnd returns the offset at which a sensitive NAME's value ends. The value
+// runs from valStart to end-of-line, EXCEPT it stops before the next
+// whitespace-preceded "NAME=" / "NAME:" key so a following pair on the same line
+// is redacted independently rather than swallowed. Trailing whitespace before
+// that boundary is excluded so the separator run is preserved verbatim.
+func (r *Redactor) valueEnd(s string, valStart int) int {
+	end := len(s)
+	// A value never spans a newline (RE2's \S, like the value token, excludes it).
+	if nl := strings.IndexByte(s[valStart:], '\n'); nl >= 0 {
+		end = valStart + nl
+	}
+	// Stop before the next key-like token on the same line.
+	if loc := r.keyBoundaryRe.FindStringIndex(s[valStart:end]); loc != nil {
+		end = valStart + loc[0]
+	}
+	trimmed := strings.TrimRight(s[valStart:end], nameValueTrimCutset)
+	return valStart + len(trimmed)
 }
 
 func (r *Redactor) redactURLCredentials(s string) string {

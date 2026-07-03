@@ -371,6 +371,12 @@ func installToolsInOrder(ctx context.Context, w io.Writer, selected []string, os
 func installWithPM(ctx context.Context, w io.Writer, toolName, family, mgr string, pm pkgmanager.PackageManager) error {
 	pkgName, ok := pkgmanager.ResolvePackageName(toolName, family, mgr)
 	if !ok {
+		// A tool may have no installable package for this manager (e.g. pre-commit
+		// or npm on winget). Surface actionable guidance instead of attempting a
+		// broken install with the bare tool name.
+		if remedy, unavailable := pkgmanager.PackageUnavailable(toolName, mgr); unavailable {
+			return fmt.Errorf("no %s package for %s; %s", mgr, toolName, remedy)
+		}
 		// Fallback: try using the tool name directly.
 		pkgName = toolName
 	}

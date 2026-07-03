@@ -2,6 +2,8 @@ package mcphealth
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -216,6 +218,87 @@ func TestCheckServer_HTTPProbesMCP(t *testing.T) {
 				t.Error("expected a non-empty error for an unhealthy status")
 			}
 		})
+	}
+}
+
+// mcpRequestMethod reads the JSON-RPC method from an MCP request body so a test
+// handler can respond differently to initialize versus tools/list.
+func mcpRequestMethod(r *http.Request) string {
+	body, _ := io.ReadAll(r.Body)
+	var req struct {
+		Method string `json:"method"`
+	}
+	_ = json.Unmarshal(body, &req)
+	return req.Method
+}
+
+// TestCheckServer_HTTPToolsListError covers bug #13: previously the HTTP probe
+// stopped after initialize, so a server whose initialize succeeds but whose
+// tools/list fails was reported Healthy — while the identical failure over stdio
+// reports Unreachable. The shared handshake now sends tools/list over HTTP too,
+// so a tools/list error yields Unreachable, matching the stdio transport.
+func TestCheckServer_HTTPToolsListError(t *testing.T) {
+	t.Parallel()
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch mcpRequestMethod(r) {
+		case "initialize":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{}}}`))
+		default: // tools/list
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"method not found"}}`))
+		}
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(handler))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	h := CheckServer(ctx, ServerConfig{Name: "http-server", URL: srv.URL})
+
+	if h.Status != StatusUnreachable {
+		t.Errorf("status = %q, want %q (error=%q)", h.Status, StatusUnreachable, h.Error)
+	}
+	if h.Error == "" {
+		t.Error("expected a non-empty error when tools/list fails")
+	}
+	if h.ToolCount != 0 {
+		t.Errorf("tool count = %d, want 0", h.ToolCount)
+	}
+}
+
+// TestCheckServer_HTTPReportsToolCount covers the other half of bug #13: the old
+// HTTP probe never called tools/list, so it always reported ToolCount==0. The
+// shared handshake now counts the advertised tools over HTTP, matching stdio.
+func TestCheckServer_HTTPReportsToolCount(t *testing.T) {
+	t.Parallel()
+
+	const wantTools = 3
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch mcpRequestMethod(r) {
+		case "initialize":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{}}}`))
+		default: // tools/list
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"a"},{"name":"b"},{"name":"c"}]}}`))
+		}
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(handler))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	h := CheckServer(ctx, ServerConfig{Name: "http-server", URL: srv.URL})
+
+	if h.Status != StatusHealthy {
+		t.Errorf("status = %q, want %q (error=%q)", h.Status, StatusHealthy, h.Error)
+	}
+	if h.ToolCount != wantTools {
+		t.Errorf("tool count = %d, want %d", h.ToolCount, wantTools)
 	}
 }
 

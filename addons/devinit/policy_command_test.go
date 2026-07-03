@@ -3,6 +3,7 @@ package devinit
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -55,5 +56,64 @@ func TestRenderPolicySARIFEmitsSARIF(t *testing.T) {
 	}
 	if _, ok := run["results"].([]any); !ok {
 		t.Fatalf("run missing results array")
+	}
+}
+
+// TestEvaluatePolicyPostureExitGateParity guards BUG #4: the --sarif render path
+// used to return before the exit gate, so `policy check --sarif` always exited 0
+// even with zero enforced policy. Both render paths must now reach the same gate,
+// so a zero-rules posture at the default audit level fails identically whether the
+// output is SARIF or text, while a healthy posture passes on both paths. The
+// `--audit-level none` escape must remain intact on both paths.
+func TestEvaluatePolicyPostureExitGateParity(t *testing.T) {
+	t.Parallel()
+
+	zeroRules := &sarif.PolicyPosture{RulesActive: 0, RulesTotal: 5}
+	healthy := &sarif.PolicyPosture{RulesActive: 3, RulesTotal: 3}
+
+	tests := []struct {
+		name       string
+		posture    *sarif.PolicyPosture
+		sarifFlag  bool
+		auditLevel string
+		wantExit   bool
+	}{
+		// The flag default is "any"; zero active rules must fail on both paths.
+		{"sarif zero rules default audit", zeroRules, true, "any", true},
+		{"text zero rules default audit", zeroRules, false, "any", true},
+		// A healthy posture passes on both paths.
+		{"sarif healthy default audit", healthy, true, "any", false},
+		{"text healthy default audit", healthy, false, "any", false},
+		// The --audit-level none escape disables the gate on both paths.
+		{"sarif zero rules audit none escape", zeroRules, true, "none", false},
+		{"text zero rules audit none escape", zeroRules, false, "none", false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+			cmd := &cobra.Command{}
+			cmd.SetOut(&buf)
+
+			err := evaluatePolicyPosture(cmd, tt.posture, tt.sarifFlag, tt.auditLevel, "")
+
+			if !tt.wantExit {
+				if err != nil {
+					t.Fatalf("evaluatePolicyPosture() = %v, want nil", err)
+				}
+				return
+			}
+
+			var exitErr *ExitError
+			if !errors.As(err, &exitErr) {
+				t.Fatalf("evaluatePolicyPosture() = %v, want *ExitError", err)
+			}
+			if exitErr.Code != 1 {
+				t.Errorf("ExitError.Code = %d, want 1", exitErr.Code)
+			}
+		})
 	}
 }

@@ -2,7 +2,10 @@ package selfupdate
 
 import (
 	"context"
+	"slices"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 func TestVerifySigstoreBundle_NoBundleAsset(t *testing.T) {
@@ -24,6 +27,38 @@ func TestVerifySigstoreBundle_NoBundleAsset(t *testing.T) {
 	}
 	if result.Verified {
 		t.Error("expected Verified=false")
+	}
+}
+
+func TestCosignVerifyArgs_ExactIdentityPin(t *testing.T) {
+	args := cosignVerifyArgs("v1.2.3", "/tmp/bundle.json", "/tmp/checksums.txt")
+
+	// Must pin the EXACT identity, never the permissive regexp variant.
+	if slices.Contains(args, "--certificate-identity-regexp") {
+		t.Fatalf("args must not use --certificate-identity-regexp (permissive); got %v", args)
+	}
+
+	idIdx := slices.Index(args, "--certificate-identity")
+	if idIdx < 0 || idIdx+1 >= len(args) {
+		t.Fatalf("args missing --certificate-identity <value>; got %v", args)
+	}
+
+	_, wantIdentity := branding.ReleaseWorkflowIdentity("v1.2.3")
+	if got := args[idIdx+1]; got != wantIdentity {
+		t.Errorf("certificate-identity = %q, want %q", got, wantIdentity)
+	}
+
+	issuerIdx := slices.Index(args, "--certificate-oidc-issuer")
+	if issuerIdx < 0 || issuerIdx+1 >= len(args) {
+		t.Fatalf("args missing --certificate-oidc-issuer <value>; got %v", args)
+	}
+	if got, want := args[issuerIdx+1], "https://token.actions.githubusercontent.com"; got != want {
+		t.Errorf("certificate-oidc-issuer = %q, want %q", got, want)
+	}
+
+	// The checksums path must be the final positional argument to verify-blob.
+	if got := args[len(args)-1]; got != "/tmp/checksums.txt" {
+		t.Errorf("last arg = %q, want the checksums path %q", got, "/tmp/checksums.txt")
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 )
 
@@ -139,6 +140,57 @@ func TestServerCallContext(t *testing.T) {
 		}
 		if (cc.Client != spi.ClientInfo{}) {
 			t.Errorf("expected zero ClientInfo without a session, got %+v", cc.Client)
+		}
+	})
+}
+
+// TestResourceReadCategoryEnforced is the BUG A regression: a resource
+// registered WITH a category is now routed through the Guardrail under that
+// category, so a category-scoped deny blocks the read. Before the fix a resource
+// carried no category, fell through to Default=Allow, and was admitted despite
+// the deny — the "uncategorized" sub-test pins that pre-fix behavior as the
+// contrast.
+func TestResourceReadCategoryEnforced(t *testing.T) {
+	t.Parallel()
+
+	const deniedCat = middleware.CategoryEnvironment
+	policy := &middleware.Policy{
+		ByToolType: map[string]middleware.Verdict{deniedCat: middleware.VerdictDeny},
+		Default:    middleware.VerdictAllow,
+	}
+	srv := New(WithProjectRoot("/proj"),
+		WithChain(middleware.DefaultChain(middleware.WithPolicy(policy))))
+
+	handler := func(_ context.Context, _ *spi.ToolCallContext, _ *spi.ResourceRequest) (*spi.ResourceResult, error) {
+		return &spi.ResourceResult{Contents: []spi.ResourceContent{{URI: "qsdev://env", Text: "ok"}}}, nil
+	}
+	readOf := func(reg spi.ResourceRegistration) ([]mcp.ResourceContents, error) {
+		read := srv.resourceReadHandler(reg)
+		var req mcp.ReadResourceRequest
+		req.Params.URI = reg.URI
+		return read(context.Background(), req)
+	}
+
+	t.Run("category-denied resource is blocked", func(t *testing.T) {
+		t.Parallel()
+		_, err := readOf(spi.ResourceRegistration{
+			URI: "qsdev://env", Name: "env", Category: deniedCat, Handler: handler,
+		})
+		if err == nil {
+			t.Fatal("resource with a denied category was allowed; the category was not plumbed to the Guardrail")
+		}
+	})
+
+	t.Run("uncategorized resource still allowed under the same deny", func(t *testing.T) {
+		t.Parallel()
+		out, err := readOf(spi.ResourceRegistration{
+			URI: "qsdev://env", Name: "env", Handler: handler, // empty Category
+		})
+		if err != nil {
+			t.Fatalf("uncategorized resource was blocked under a category-scoped deny: %v", err)
+		}
+		if len(out) == 0 {
+			t.Fatal("expected resource contents from the allowed read")
 		}
 	})
 }

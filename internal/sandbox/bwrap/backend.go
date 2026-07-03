@@ -17,26 +17,38 @@ import (
 // isolation. It supports three tiers depending on available kernel features:
 // Full (bwrap + Landlock + seccomp), BwrapWithoutLandlock, BwrapWithoutSeccomp.
 type BubblewrapBackend struct {
-	tier     sandbox.DegradationTier
-	bwrapBin string
+	tier      sandbox.DegradationTier
+	bwrapBin  string
+	hasUserNS bool
 }
 
-// NewBubblewrapBackend creates a BubblewrapBackend with the given tier and
-// bwrap binary path.
-func NewBubblewrapBackend(tier sandbox.DegradationTier, bwrapBin string) *BubblewrapBackend {
-	return &BubblewrapBackend{tier: tier, bwrapBin: bwrapBin}
+// NewBubblewrapBackend creates a BubblewrapBackend with the given tier, bwrap
+// binary path, and unprivileged-user-namespace capability. hasUserNS records
+// whether the host permits unprivileged user namespaces; every bwrap invocation
+// emits --unshare-user, so a backend built without them fails every exec and
+// must report itself unavailable (see Available).
+func NewBubblewrapBackend(tier sandbox.DegradationTier, bwrapBin string, hasUserNS bool) *BubblewrapBackend {
+	return &BubblewrapBackend{tier: tier, bwrapBin: bwrapBin, hasUserNS: hasUserNS}
 }
 
 func (b *BubblewrapBackend) Name() string                  { return "bubblewrap" }
 func (b *BubblewrapBackend) Tier() sandbox.DegradationTier { return b.tier }
 
-// Available checks whether bwrap is accessible.
+// Available checks whether bwrap is accessible AND can actually run. Statting
+// the binary is not sufficient: bwrap always requests an unprivileged user
+// namespace (--unshare-user), so on a host where those are disabled every exec
+// fails with "setting up uid map: Permission denied". Reporting such a backend
+// Available would let Select pick it over a working fallback (e.g. systemd-run)
+// at the same demoted tier, so the missing namespace support is a hard failure.
 func (b *BubblewrapBackend) Available() error {
 	if b.bwrapBin == "" {
 		return fmt.Errorf("bubblewrap binary path not set")
 	}
 	if _, err := os.Stat(b.bwrapBin); err != nil {
 		return fmt.Errorf("bubblewrap binary not found at %s: %w", b.bwrapBin, err)
+	}
+	if !b.hasUserNS {
+		return fmt.Errorf("bubblewrap requires unprivileged user namespaces, which are unavailable on this host")
 	}
 	return nil
 }

@@ -76,3 +76,46 @@ func TestMatchesSensitiveKeyPattern(t *testing.T) {
 		})
 	}
 }
+
+// TestSensitiveSubstringFallback covers the credential-root substring fallback:
+// token-boundary matching alone leaks values whose credential keyword is
+// concatenated to another word with no separator — "auth" inside AUTHORIZATION /
+// PROXY_AUTHORIZATION (no right-hand boundary) and "private" inside bare PRIVATE
+// / PRIVATE_FOO. Both by-name predicates must now flag them, while obvious
+// non-secrets (including the ubiquitous PWD) must stay emittable.
+func TestSensitiveSubstringFallback(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		key  string
+		want bool
+	}{
+		// Previously leaked: concatenated credential words the boundary missed.
+		{"authorization", "AUTHORIZATION", true},
+		{"proxy authorization", "PROXY_AUTHORIZATION", true},
+		{"bare private", "PRIVATE", true},
+		{"private prefix", "PRIVATE_FOO", true},
+		{"oauth token", "OAUTH_TOKEN", true},
+		// Obvious non-secrets must not be over-withheld.
+		{"path", "PATH", false},
+		{"home", "HOME", false},
+		{"user", "USER", false},
+		{"pwd", "PWD", false},
+		{"lang", "LANG", false},
+		{"term", "TERM", false},
+		{"shell", "SHELL", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsSensitiveName(tt.key); got != tt.want {
+				t.Errorf("IsSensitiveName(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+			if got := MatchesSensitiveKeyPattern(tt.key); got != tt.want {
+				t.Errorf("MatchesSensitiveKeyPattern(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+		})
+	}
+}

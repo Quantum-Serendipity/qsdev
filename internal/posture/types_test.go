@@ -65,6 +65,49 @@ func TestVulnSeverityCountsTotal(t *testing.T) {
 	}
 }
 
+func TestDependencyHealthCertifiable(t *testing.T) {
+	tests := []struct {
+		name string
+		deps DependencyHealth
+		want bool
+	}{
+		{
+			name: "not scanned preserves clean/not-scanned semantics",
+			deps: DependencyHealth{},
+			want: true,
+		},
+		{
+			name: "completed clean scan",
+			deps: DependencyHealth{Scanned: true, Totals: VulnSeverityCounts{}},
+			want: true,
+		},
+		{
+			name: "completed scan with only info/low still certifiable",
+			deps: DependencyHealth{Scanned: true, Totals: VulnSeverityCounts{Low: 2, Info: 3}},
+			want: true,
+		},
+		{
+			name: "failed scan is not certifiable",
+			deps: DependencyHealth{ScanFailed: true},
+			want: false,
+		},
+		{
+			name: "unresolved severity is not certifiable even when scan succeeded",
+			deps: DependencyHealth{Scanned: true, Totals: VulnSeverityCounts{Unknown: 1}},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.deps.Certifiable(); got != tt.want {
+				t.Errorf("Certifiable() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLayerStatusStringValues(t *testing.T) {
 	tests := []struct {
 		status LayerStatus

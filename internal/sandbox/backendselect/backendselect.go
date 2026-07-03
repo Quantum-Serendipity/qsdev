@@ -29,9 +29,12 @@ func ResolveBackend(caps sandbox.SystemCapabilities) (sandbox.SandboxBackend, sa
 
 	// A bubblewrap backend is a candidate only when a bwrap binary was probed.
 	// It is constructed with the tier the probed capabilities imply; the
-	// registry still skips it if the binary is not stat-able at Select() time.
+	// registry still skips it at Select() time if the binary is not stat-able
+	// OR if unprivileged user namespaces are unavailable (bwrap always requests
+	// one, so it would otherwise register at the same demoted tier as the
+	// systemd-run fallback yet fail every exec).
 	if caps.BwrapPath != "" {
-		reg.Register(bwrap.NewBubblewrapBackend(sandbox.DetermineTier(&caps), caps.BwrapPath))
+		reg.Register(bwrap.NewBubblewrapBackend(sandbox.DetermineTier(&caps), caps.BwrapPath, caps.HasUserNS))
 	}
 
 	// A systemd-run backend is a candidate only when systemd-run was probed.

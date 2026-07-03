@@ -224,11 +224,28 @@ func enforceSecurityFloor(resolved, project *types.QsdevConfig) []FloorViolation
 		}
 	}
 
-	// Cannot set security bools to false when project set them to true.
-	violations = append(violations, enforceBoolFloor(&resolved.Security.AgeGating, project.Security.AgeGating, "security.age_gating")...)
-	violations = append(violations, enforceBoolFloor(&resolved.Security.ScriptBlocking, project.Security.ScriptBlocking, "security.script_blocking")...)
-	violations = append(violations, enforceBoolFloor(&resolved.Security.LockEnforcement, project.Security.LockEnforcement, "security.lock_enforcement")...)
-	violations = append(violations, enforceBoolFloor(&resolved.Security.VulnScanning, project.Security.VulnScanning, "security.vuln_scanning")...)
+	// Compute the compliance-mandated bool floor from the same effective level
+	// used to floor security.level above. A project that declares a client
+	// compliance level (or a direct security.level) inherits the security
+	// controls that level mandates, so a local override can never silently
+	// disable a compliance-required control while security.level still reports
+	// at that level. This is an ADDITIONAL floor stacked on the project's own
+	// declared bool floor; the stronger of the two wins (fail-closed).
+	var complianceFloor types.SecurityConfig
+	if overlay := ComplianceLevelToConfig(floorLevel); overlay != nil {
+		complianceFloor = overlay.Security
+	}
+
+	// Cannot set security bools to false when the project or the effective
+	// compliance level requires them to be true.
+	violations = append(violations, enforceBoolFloor(&resolved.Security.AgeGating,
+		strongerBoolFloor(project.Security.AgeGating, complianceFloor.AgeGating), "security.age_gating")...)
+	violations = append(violations, enforceBoolFloor(&resolved.Security.ScriptBlocking,
+		strongerBoolFloor(project.Security.ScriptBlocking, complianceFloor.ScriptBlocking), "security.script_blocking")...)
+	violations = append(violations, enforceBoolFloor(&resolved.Security.LockEnforcement,
+		strongerBoolFloor(project.Security.LockEnforcement, complianceFloor.LockEnforcement), "security.lock_enforcement")...)
+	violations = append(violations, enforceBoolFloor(&resolved.Security.VulnScanning,
+		strongerBoolFloor(project.Security.VulnScanning, complianceFloor.VulnScanning), "security.vuln_scanning")...)
 
 	// Client blocked MCP: union-only, never removed.
 	if project.Client != nil {
@@ -241,22 +258,43 @@ func enforceSecurityFloor(resolved, project *types.QsdevConfig) []FloorViolation
 	return violations
 }
 
-// enforceBoolFloor ensures a resolved *bool cannot be set to false when the
-// project floor has it set to true.
+// strongerBoolFloor combines two security-bool floors and returns the stronger
+// (fail-closed) of the two. A floor of true (must be enabled) dominates: if
+// either the project's declared floor or the compliance-mandated floor is true,
+// the effective floor is true. Otherwise it is nil, meaning no floor is
+// enforced. This is used to stack the compliance-level requirement on top of
+// the project's own bool floor without weakening either.
+func strongerBoolFloor(a, b *bool) *bool {
+	if (a != nil && *a) || (b != nil && *b) {
+		t := true
+		return &t
+	}
+	return nil
+}
+
+// enforceBoolFloor ensures a resolved *bool cannot be weaker than the floor.
+// When the floor requires the setting to be true, any resolved value that is
+// below that floor (explicitly false, or unset/nil which downstream treats as
+// disabled) is both recorded as a FloorViolation and enforced back up to true —
+// a compliance- or project-mandated control must never be locally disabled.
 func enforceBoolFloor(resolved **bool, floor *bool, field string) []FloorViolation {
 	if floor == nil || !*floor {
 		return nil
 	}
 
-	// Floor is true. If resolved is false, enforce.
-	if *resolved != nil && !**resolved {
+	// Floor is true. If resolved is below the floor (false or unset), enforce.
+	if *resolved == nil || !**resolved {
+		var attempted any
+		if *resolved != nil {
+			attempted = **resolved
+		}
 		t := true
 		*resolved = &t
 		return []FloorViolation{{
 			Field:     field,
-			Attempted: false,
+			Attempted: attempted,
 			Enforced:  true,
-			Reason:    "cannot disable security setting that project requires",
+			Reason:    "cannot disable security setting that project or compliance level requires",
 		}}
 	}
 

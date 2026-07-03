@@ -16,6 +16,7 @@ require (
 	github.com/charmbracelet/huh v1.0.0
 	github.com/gobwas/glob v0.2.3
 	github.com/mark3labs/mcp-go v0.54.1
+	github.com/pandatix/go-cvss v0.6.2
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	golang.org/x/mod v0.37.0

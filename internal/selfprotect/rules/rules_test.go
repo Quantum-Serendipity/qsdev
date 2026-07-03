@@ -804,6 +804,63 @@ func TestSP007_ConfigCopyRedirectBlock(t *testing.T) {
 	}
 }
 
+func TestSP007_MoveRelocatesProtectedConfig(t *testing.T) {
+	t.Parallel()
+	cwd := filepath.Join(homeDir(t), "project")
+
+	tests := []struct {
+		name    string
+		command string
+		verdict Verdict
+	}{
+		{
+			// BUG #7: a MOVE removes the protected file from its enforcing
+			// location, so relocating it even to an IN-REPO dest defeats
+			// protection. Unlike a cp, this must DENY.
+			name:    "deny mv of claude settings to in-repo dest",
+			command: "mv .claude/settings.json ./x",
+			verdict: Deny,
+		},
+		{
+			// Moving the enforcing hook script out of .claude/hooks/ disables it.
+			name:    "deny mv of hook script to in-repo dest",
+			command: "mv .claude/hooks/preToolUse.sh ./disabled.sh",
+			verdict: Deny,
+		},
+		{
+			// rsync --remove-source-files deletes the source after transfer, so
+			// it is a move: relocating a protected file out of protection.
+			name:    "deny rsync --remove-source-files of claude settings",
+			command: "rsync --remove-source-files .claude/settings.json ./x",
+			verdict: Deny,
+		},
+		{
+			// Regression guard: a plain cp in-repo backup of a protected file is a
+			// non-destructive copy and stays ALLOWED (unchanged behavior).
+			name:    "allow cp in-repo backup of protected config",
+			command: "cp .claude/settings.json settings.bak",
+			verdict: Allow,
+		},
+		{
+			// Plain rsync (no --remove-source-files) is a copy; an in-repo backup
+			// destination stays ALLOWED, mirroring the cp case.
+			name:    "allow plain rsync in-repo backup of protected config",
+			command: "rsync .claude/settings.json ./backup/",
+			verdict: Allow,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := EvalContext{ToolName: "Bash", Command: tt.command, CWD: cwd}
+			if v, _ := sp007.Evaluate(&ctx); v != tt.verdict {
+				t.Errorf("sp007(%q) = %v, want %v", tt.command, v, tt.verdict)
+			}
+		})
+	}
+}
+
 func TestSP008_EnvironmentVariableManipulationBlock(t *testing.T) {
 	t.Parallel()
 

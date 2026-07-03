@@ -50,7 +50,11 @@ func checkDenyList(path, role string) error {
 
 	for _, candidate := range candidates {
 		for _, deny := range denylist.AllDenyPaths() {
-			if matchesDeny(candidate, deny) {
+			// Reject the deny path itself, any descendant of it, AND any ancestor
+			// of it. Rejecting ancestors prevents binding e.g. $HOME (which
+			// contains ~/.ssh) or /etc (which contains /etc/shadow), which would
+			// otherwise re-expose the sensitive descendant inside the sandbox.
+			if matchesDeny(candidate, deny) || isStrictAncestor(candidate, deny) {
 				return fmt.Errorf("mount %s %q overlaps sensitive path %q", role, path, deny)
 			}
 		}
@@ -62,4 +66,17 @@ func checkDenyList(path, role string) error {
 // matchesDeny reports whether path equals deny or is a child of deny.
 func matchesDeny(path, deny string) bool {
 	return path == deny || strings.HasPrefix(path, deny+"/")
+}
+
+// isStrictAncestor reports whether ancestor is a proper parent directory of
+// descendant (not equal to it). The filesystem root "/" is an ancestor of every
+// absolute path.
+func isStrictAncestor(ancestor, descendant string) bool {
+	if ancestor == descendant {
+		return false
+	}
+	if ancestor == "/" {
+		return true
+	}
+	return strings.HasPrefix(descendant, ancestor+"/")
 }

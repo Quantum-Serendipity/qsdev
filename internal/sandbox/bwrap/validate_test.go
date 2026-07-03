@@ -78,6 +78,16 @@ func TestValidateMountPath(t *testing.T) {
 			name: "allow /etc/passwd",
 			path: "/etc/passwd",
 		},
+		{
+			name:    "deny /etc (ancestor of /etc/shadow)",
+			path:    "/etc",
+			wantErr: "denied",
+		},
+		{
+			name:    "deny / (ancestor of every deny path)",
+			path:    "/",
+			wantErr: "denied",
+		},
 	}
 
 	// Add home-relative deny tests only if we can resolve home.
@@ -133,8 +143,16 @@ func TestValidateMountPath(t *testing.T) {
 				wantErr: "denied",
 			},
 			{
-				name: "allow home dir itself",
-				path: home,
+				// Ancestor rejection: binding $HOME would re-expose ~/.ssh etc.
+				name:    "deny home dir itself (ancestor of credential dirs)",
+				path:    home,
+				wantErr: "denied",
+			},
+			{
+				// Ancestor rejection: ~/.config contains ~/.config/gcloud.
+				name:    "deny ~/.config (ancestor of gcloud creds)",
+				path:    filepath.Join(home, ".config"),
+				wantErr: "denied",
 			},
 		}
 		for _, ht := range homeTests {

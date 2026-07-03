@@ -71,7 +71,7 @@ func ruleID(suffix string) string {
 	return branding.Get().AppName + "/" + suffix
 }
 
-// buildAllRules constructs the 12 rule definitions using branded IDs.
+// buildAllRules constructs the 13 rule definitions using branded IDs.
 func buildAllRules() []sarifRule {
 	return []sarifRule{
 		{ID: ruleID("defense-disabled"), ShortDescription: sarifMultiText{Text: "A defense layer is disabled"}, DefaultConfig: sarifConfig{Level: "warning"}},
@@ -81,6 +81,7 @@ func buildAllRules() []sarifRule {
 		{ID: ruleID("config-modified"), ShortDescription: sarifMultiText{Text: "A machine-owned configuration file was modified"}, DefaultConfig: sarifConfig{Level: "warning"}},
 		{ID: ruleID("vuln-critical"), ShortDescription: sarifMultiText{Text: "Critical vulnerabilities detected"}, DefaultConfig: sarifConfig{Level: "error"}},
 		{ID: ruleID("vuln-high"), ShortDescription: sarifMultiText{Text: "High vulnerabilities detected"}, DefaultConfig: sarifConfig{Level: "warning"}},
+		{ID: ruleID("scan-unresolved"), ShortDescription: sarifMultiText{Text: "Dependency scan is inconclusive (failed ecosystem scan or unresolved-severity vulnerabilities)"}, DefaultConfig: sarifConfig{Level: "error"}},
 		{ID: ruleID("lockfile-missing"), ShortDescription: sarifMultiText{Text: "A lockfile is missing"}, DefaultConfig: sarifConfig{Level: "error"}},
 		{ID: ruleID("lockfile-stale"), ShortDescription: sarifMultiText{Text: "A lockfile is stale"}, DefaultConfig: sarifConfig{Level: "warning"}},
 		{ID: ruleID("hooks-not-installed"), ShortDescription: sarifMultiText{Text: "Git hooks are not installed"}, DefaultConfig: sarifConfig{Level: "warning"}},
@@ -193,6 +194,17 @@ func RenderSARIF(report *posture.PostureReport) ([]byte, error) {
 			RuleID:  ruleID("vuln-high"),
 			Level:   "warning",
 			Message: sarifMultiText{Text: fmt.Sprintf("%d high vulnerability(ies) detected", report.Dependencies.Totals.High)},
+		})
+	}
+	// A dependency result that cannot be certified clean — a failed ecosystem scan
+	// or an unresolved-severity vulnerability — must surface as a finding, not
+	// vanish behind zero Critical/High counts. This covers both ScanFailed and
+	// Totals.Unknown via the single Certifiable predicate.
+	if !report.Dependencies.Certifiable() {
+		*results = append(*results, sarifResult{
+			RuleID:  ruleID("scan-unresolved"),
+			Level:   "error",
+			Message: sarifMultiText{Text: "dependency scan inconclusive: a failed ecosystem scan or unresolved-severity vulnerabilities; results not confirmed clean"},
 		})
 	}
 

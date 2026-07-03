@@ -65,18 +65,11 @@ func verifySigstoreBundleImpl(ctx context.Context, release *Release, checksumsPa
 		return nil, fmt.Errorf("downloading sigstore bundle: %w", err)
 	}
 
-	// Resolve the expected certificate identity (OIDC issuer + signing subject)
-	// from branding so forks/rebrands verify against their own release workflow.
-	issuer, subjectRegExp := branding.WorkflowIdentity()
-
-	// Run cosign verify-blob.
+	// Run cosign verify-blob with an EXACT certificate-identity pinned to this
+	// release's tag, so a signature from any other workflow or ref is rejected.
 	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, cosignPath, "verify-blob",
-		"--bundle", bundlePath,
-		"--certificate-identity-regexp", subjectRegExp,
-		"--certificate-oidc-issuer", issuer,
-		checksumsPath,
-	)
+	args := cosignVerifyArgs(release.TagName, bundlePath, checksumsPath)
+	cmd := exec.CommandContext(ctx, cosignPath, args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -92,6 +85,25 @@ func verifySigstoreBundleImpl(ctx context.Context, release *Release, checksumsPa
 		Verified: true,
 		Message:  "sigstore signature verified: checksums.txt is authentically signed by the release workflow",
 	}, nil
+}
+
+// cosignVerifyArgs builds the argument slice for `cosign verify-blob` that pins
+// verification to this release's EXACT signing identity.
+//
+// The certificate identity comes from branding.ReleaseWorkflowIdentity(tag),
+// which encodes both the release workflow file and the git ref (refs/tags/<tag>).
+// It is passed via --certificate-identity (exact match), NOT
+// --certificate-identity-regexp, so a signature produced by a different workflow
+// or on a different ref is rejected (fail closed). Factored out for unit testing.
+func cosignVerifyArgs(tag, bundlePath, checksumsPath string) []string {
+	issuer, identity := branding.ReleaseWorkflowIdentity(tag)
+	return []string{
+		"verify-blob",
+		"--bundle", bundlePath,
+		"--certificate-identity", identity,
+		"--certificate-oidc-issuer", issuer,
+		checksumsPath,
+	}
 }
 
 // logVerificationResult writes the verification outcome to stderr for user visibility.

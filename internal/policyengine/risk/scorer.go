@@ -71,12 +71,13 @@ func ScorePackage(info *PackageInfo) PackageScore {
 
 	capped, ceiling := ApplyCeilings(aggregate, info)
 
-	// Data-freshness floor. The probe set treats the *absence* of a negative
-	// signal (no CVEs, no KEV listing, no install scripts) as a passing score,
-	// which is indistinguishable from "the package was never enriched". Dividing
-	// the weighted sum by activeWeightSum then normalizes the missing categories
-	// away, so an all-unknown package scores ~87 (grade B). Rather than fail open
-	// on a package with no telemetry, quarantine it at grade F.
+	// Data-freshness floor. The vulnerability probes now report
+	// ProbeDataUnavailable until an OSV/KEV lookup has actually run (see
+	// PackageInfo.VulnDataAvailable), so an unenriched package no longer earns a
+	// passing 100 for the absence of CVEs it was never checked for. Its
+	// vulnerability category (weight 0.35) drops out of activeWeightSum, pushing
+	// the collected signal below minActiveWeight. Rather than fail open on a
+	// package whose security posture is unknown, quarantine it at grade F.
 	if insufficientData(info, activeWeightSum) {
 		capped = 0
 		if ceiling == "" {
@@ -105,14 +106,22 @@ const minActiveWeight = 0.50
 
 // insufficientData reports whether a package carries too little telemetry to be
 // judged safe. A package with no publication timestamp was never located in a
-// registry (its provenance cannot be established), and a package whose available
+// registry (its provenance cannot be established); a package whose available
 // probes cover less than minActiveWeight of the weighted signal is effectively
-// unenriched. Either condition fails closed to grade F rather than failing open.
+// unenriched; and a package whose vulnerability status was never established has
+// an unknown posture. Any condition fails closed to grade F rather than open.
 func insufficientData(info *PackageInfo, activeWeightSum float64) bool {
 	if info.FirstPublishedAt == nil && info.PublishedAt == nil {
 		return true
 	}
-	return activeWeightSum < minActiveWeight
+	if activeWeightSum < minActiveWeight {
+		return true
+	}
+	// Backstop: even if future non-stub probes lift the remaining categories'
+	// weight above the floor, a package whose vulnerability status was never
+	// established (OSV/KEV lookup skipped, offline, or rate-limited) has an
+	// unknown — not clean — posture and must not be judged safe.
+	return !info.VulnDataAvailable
 }
 
 // Scorer is a stateless PackageRiskScorer implementation that delegates to the

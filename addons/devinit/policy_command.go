@@ -80,10 +80,31 @@ func runPolicyCheck(cmd *cobra.Command, sarifFlag bool, auditLevel, outputPath s
 	orchestrator := newProductionOrchestrator(engine)
 	posture, _, _ := orchestrator.PostureSnapshot()
 
+	return evaluatePolicyPosture(cmd, posture, sarifFlag, auditLevel, outputPath)
+}
+
+// evaluatePolicyPosture renders the posture in the requested format and then
+// applies the exit gate. Both the SARIF and human-readable render paths fall
+// through to the SAME gate so that --sarif (the machine invocation used in CI)
+// honors the identical exit-code contract as the text output: a policy with
+// zero active rules fails with exit code 1 unless the audit level is "none".
+func evaluatePolicyPosture(cmd *cobra.Command, posture *sarif.PolicyPosture, sarifFlag bool, auditLevel, outputPath string) error {
 	if sarifFlag {
-		return renderPolicySARIF(cmd, posture, outputPath)
+		if err := renderPolicySARIF(cmd, posture, outputPath); err != nil {
+			return err
+		}
+	} else {
+		renderPolicyText(cmd, posture)
 	}
 
+	if auditLevel != "none" && posture.RulesActive == 0 {
+		return &ExitError{Code: 1}
+	}
+
+	return nil
+}
+
+func renderPolicyText(cmd *cobra.Command, posture *sarif.PolicyPosture) {
 	w := cmd.OutOrStdout()
 	fmt.Fprintf(w, "Policy Posture Summary\n")
 	fmt.Fprintf(w, "  Rules active:  %d / %d\n", posture.RulesActive, posture.RulesTotal)
@@ -102,12 +123,6 @@ func runPolicyCheck(cmd *cobra.Command, sarifFlag bool, auditLevel, outputPath s
 			fmt.Fprintf(w, "    %s\n", cat)
 		}
 	}
-
-	if auditLevel != "none" && posture.RulesActive == 0 {
-		return &ExitError{Code: 1}
-	}
-
-	return nil
 }
 
 func renderPolicySARIF(cmd *cobra.Command, posture *sarif.PolicyPosture, outputPath string) error {

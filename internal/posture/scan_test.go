@@ -142,8 +142,11 @@ func TestEvaluateBaseline_UnscannedDoesNotClaimClean(t *testing.T) {
 }
 
 // TestAssess_FreshScanSetsScannedFlag proves that AssessOptions.FreshScan is now
-// honored end-to-end: Assess marks Dependencies as scanned and stamps LastScan,
-// and without FreshScan the conformance report states the scan was not run.
+// honored end-to-end: with a genuinely scannable ecosystem, Assess marks
+// Dependencies as scanned and stamps LastScan, and without FreshScan the
+// conformance report states the scan was not run. The aggregate Scanned flag is
+// derived from an ecosystem actually having been scanned OK — not merely from the
+// request flag — so a go.sum must be present for it to read true.
 func TestAssess_FreshScanSetsScannedFlag(t *testing.T) {
 	// Serial: this test substitutes the package-level scanner factory.
 	orig := newVulnScanner
@@ -154,6 +157,11 @@ func TestAssess_FreshScanSetsScannedFlag(t *testing.T) {
 	}
 
 	dir := t.TempDir()
+	writeGoSum(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"),
+		[]byte("module example.com/x\n\ngo 1.21\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -267,6 +275,62 @@ func TestAssess_FreshScanFailureFailsClosed(t *testing.T) {
 		if c.Name == CheckNoCriticalVulns && c.Pass {
 			t.Error("CheckNoCriticalVulns must not pass when the scan failed")
 		}
+	}
+}
+
+// TestAssess_UnscannableEcosystemNotClaimedScanned is the altitude regression:
+// when --scan runs but the only detected ecosystem's lock format has no OSV
+// coverage (a yarn.lock, which lacks a parser), nothing is actually scanned. The
+// aggregate Scanned flag must be derived from an ecosystem having been scanned OK
+// — not from the request flag — so the report reads "not scanned", not clean.
+func TestAssess_UnscannableEcosystemNotClaimedScanned(t *testing.T) {
+	orig := newVulnScanner
+	t.Cleanup(func() { newVulnScanner = orig })
+	// The scanner is never contacted: ScanFile returns (nil, nil) for yarn.lock
+	// before any network call, since there is no parser for that format.
+	srv := vulnscantest.NewServer(t, nil, nil)
+	newVulnScanner = func() *vulnscan.Scanner {
+		return &vulnscan.Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()}
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"x"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "yarn.lock"), []byte("# yarn lockfile v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := Assess(dir, AssessOptions{FreshScan: true})
+	if err != nil {
+		t.Fatalf("Assess(FreshScan): %v", err)
+	}
+
+	if report.Dependencies.Scanned {
+		t.Error("Dependencies.Scanned must be false when no ecosystem was actually scanned")
+	}
+	if report.Dependencies.ScanFailed {
+		t.Error("Dependencies.ScanFailed must be false: an OSV-coverage gap is not a scan failure")
+	}
+	// The unscannable ecosystem must be recorded as detected-with-lockfile but
+	// neither scanned nor errored — the exact state the coverage-gap render keys on.
+	var js *EcosystemStatus
+	for i := range report.Ecosystems {
+		if report.Ecosystems[i].Name == ecosystem.NameJavaScript {
+			js = &report.Ecosystems[i]
+		}
+	}
+	if js == nil {
+		t.Fatal("javascript ecosystem status not built")
+	}
+	if js.LockFile != "yarn.lock" {
+		t.Errorf("LockFile = %q, want yarn.lock", js.LockFile)
+	}
+	if js.Scanned || js.ScanError {
+		t.Errorf("javascript eco: Scanned=%v ScanError=%v, want both false (no OSV coverage)", js.Scanned, js.ScanError)
 	}
 }
 

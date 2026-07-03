@@ -62,6 +62,8 @@ func CheckServer(ctx context.Context, cfg ServerConfig) *ServerHealth {
 	}
 	defer proc.Close()
 
+	// The stdio transport's SendRequest cannot observe ctx cancellation, so run
+	// the shared handshake in a goroutine and enforce the deadline via select.
 	type probeResult struct {
 		status    string
 		err       string
@@ -70,18 +72,8 @@ func CheckServer(ctx context.Context, cfg ServerConfig) *ServerHealth {
 
 	ch := make(chan probeResult, 1)
 	go func() {
-		if _, err := proc.SendRequest(1, "initialize", initializeParams); err != nil {
-			ch <- probeResult{status: StatusUnreachable, err: fmt.Sprintf("initialize: %s", err)}
-			return
-		}
-
-		result, err := proc.SendRequest(2, "tools/list", toolsListParams)
-		if err != nil {
-			ch <- probeResult{status: StatusUnreachable, err: fmt.Sprintf("tools/list: %s", err)}
-			return
-		}
-
-		ch <- probeResult{status: StatusHealthy, toolCount: countTools(result)}
+		status, errMsg, toolCount := handshake(proc)
+		ch <- probeResult{status: status, err: errMsg, toolCount: toolCount}
 	}()
 
 	var r probeResult
@@ -174,52 +166,87 @@ func countTools(result json.RawMessage) int {
 	return len(tlr.Tools)
 }
 
-func checkHTTPServer(ctx context.Context, cfg ServerConfig, h *ServerHealth, start time.Time) *ServerHealth {
-	fail := func(status, msg string) *ServerHealth {
-		h.Status = status
-		h.Error = msg
-		h.ResponseMs = time.Since(start).Milliseconds()
-		return h
+// transport is the minimal request/response surface a health probe needs. Both
+// the stdio process (*MCPProcess) and the HTTP client (*httpTransport) implement
+// it, letting a single handshake define "healthy" identically across transports.
+type transport interface {
+	SendRequest(id int, method string, params json.RawMessage) (json.RawMessage, error)
+}
+
+// handshake runs the shared MCP health probe over a transport: initialize, then
+// tools/list, counting the advertised tools. Sharing it ensures the stdio and
+// HTTP probes agree on what "healthy" means — a server whose initialize succeeds
+// but whose tools/list fails is Unreachable on both transports, not just stdio.
+func handshake(t transport) (status, errMsg string, toolCount int) {
+	if _, err := t.SendRequest(1, "initialize", initializeParams); err != nil {
+		return StatusUnreachable, fmt.Sprintf("initialize: %s", err), 0
 	}
 
-	// Probe with a real MCP `initialize` POST rather than a bare GET. A bare GET
-	// only opens a server->client SSE stream; a spec-compliant Streamable-HTTP
-	// server that offers no such stream answers it with 405, which a status-only
-	// check misreads as unhealthy (false negative). POSTing initialize avoids
-	// that and, by requiring a valid JSON-RPC result, also rejects a plain
-	// non-MCP web server that merely returns 2xx (the symmetric false positive).
-	reqBody, err := json.Marshal(jsonRPCRequest{JSONRPC: "2.0", ID: 1, Method: "initialize", Params: initializeParams})
+	result, err := t.SendRequest(2, "tools/list", toolsListParams)
 	if err != nil {
-		return fail(StatusUnreachable, fmt.Sprintf("building request: %s", err))
+		return StatusUnreachable, fmt.Sprintf("tools/list: %s", err), 0
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, bytes.NewReader(reqBody))
+
+	return StatusHealthy, "", countTools(result)
+}
+
+func checkHTTPServer(ctx context.Context, cfg ServerConfig, h *ServerHealth, start time.Time) *ServerHealth {
+	status, errMsg, toolCount := handshake(&httpTransport{ctx: ctx, client: http.DefaultClient, url: cfg.URL})
+
+	h.Status = status
+	h.Error = errMsg
+	h.ToolCount = toolCount
+	h.ResponseMs = time.Since(start).Milliseconds()
+	return h
+}
+
+// httpTransport probes a Streamable-HTTP MCP server. Each SendRequest POSTs a
+// JSON-RPC request and validates the reply, so the shared handshake behaves the
+// same as it does over stdio.
+type httpTransport struct {
+	ctx    context.Context
+	client *http.Client
+	url    string
+}
+
+// SendRequest POSTs a real MCP JSON-RPC request rather than a bare GET. A bare
+// GET only opens a server->client SSE stream; a spec-compliant Streamable-HTTP
+// server that offers no such stream answers it with 405, which a status-only
+// check misreads as unhealthy (false negative). POSTing and requiring a valid
+// JSON-RPC result also rejects a plain non-MCP web server that merely returns
+// 2xx (the symmetric false positive). It mirrors *MCPProcess.SendRequest: a
+// JSON-RPC error reply becomes a Go error, otherwise the result is returned.
+func (t *httpTransport) SendRequest(id int, method string, params json.RawMessage) (json.RawMessage, error) {
+	reqBody, err := json.Marshal(jsonRPCRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params})
 	if err != nil {
-		return fail(StatusUnreachable, fmt.Sprintf("building request: %s", err))
+		return nil, fmt.Errorf("building request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(t.ctx, http.MethodPost, t.url, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("building request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := t.client.Do(req)
 	if err != nil {
-		return fail(StatusUnreachable, fmt.Sprintf("connecting: %s", err))
+		return nil, fmt.Errorf("connecting: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fail(StatusUnreachable, fmt.Sprintf("initialize returned HTTP %d %s", resp.StatusCode, http.StatusText(resp.StatusCode)))
+		return nil, fmt.Errorf("returned HTTP %d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 
 	rpc, err := decodeJSONRPCResponse(resp)
 	if err != nil {
-		return fail(StatusUnreachable, fmt.Sprintf("endpoint did not return a valid MCP initialize response: %s", err))
+		return nil, fmt.Errorf("endpoint did not return a valid MCP response: %w", err)
 	}
 	if rpc.Error != nil {
-		return fail(StatusUnreachable, fmt.Sprintf("initialize error %d: %s", rpc.Error.Code, rpc.Error.Message))
+		return nil, fmt.Errorf("server error %d: %s", rpc.Error.Code, rpc.Error.Message)
 	}
 
-	h.Status = StatusHealthy
-	h.ResponseMs = time.Since(start).Milliseconds()
-	return h
+	return rpc.Result, nil
 }
 
 // decodeJSONRPCResponse extracts the JSON-RPC response from an MCP

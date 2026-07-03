@@ -157,9 +157,11 @@ func isTemplateURI(uri string) bool {
 // Adaptation: the neutral resource handler is invoked from a final
 // spi.ToolHandler whose returned *spi.ResourceResult is packed into
 // ToolResult.Structured so ContentSafety.RedactStructured walks and redacts the
-// nested content text. The read carries no Category, which leaves Guardrail
-// permissive-by-default while ContentSafety still redacts (its exemption applies
-// only to CategoryCredential). The concrete req.Params.URI is forwarded so a
+// nested content text. The read carries the registration's Category (empty for
+// an uncategorized resource, which leaves Guardrail permissive-by-default) so a
+// category-scoped policy can now cover resource reads; ContentSafety still
+// redacts (its exemption is keyed on the trusted credential-vend tool identity,
+// which no resource carries). The concrete req.Params.URI is forwarded so a
 // template handler resolves the actual requested URI. A handler error propagates
 // as a Go error; the chain's ErrorHandling layer converts it (except context
 // cancellation) into an IsError result with no Structured payload, which is
@@ -170,6 +172,11 @@ func (s *Server) resourceReadHandler(reg spi.ResourceRegistration) func(context.
 	handler := reg.Handler
 	return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 		cc := s.callContext(ctx, reg.URI, nil)
+		// Populate the resource's taxonomy category (before the chain runs) so
+		// per-category middleware (Guardrail denies, the per-category rate limiter)
+		// can scope this read, mirroring toolHandler. An empty category leaves the
+		// read uncategorized (permissive-by-default), matching prior behavior.
+		cc.Category = reg.Category
 		sreq := &spi.ResourceRequest{URI: req.Params.URI, Arguments: req.Params.Arguments}
 		final := func(ctx context.Context, cc *spi.ToolCallContext, _ *spi.ToolRequest) (*spi.ToolResult, error) {
 			rres, herr := handler(ctx, cc, sreq)
@@ -254,6 +261,11 @@ func (s *Server) mountPrompt(reg spi.PromptRegistration) {
 	handler := reg.Handler
 	s.mcp.AddPrompt(prompt, func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 		cc := s.callContext(ctx, reg.Name, nil)
+		// Populate the prompt's taxonomy category (before the chain runs) so
+		// per-category middleware (Guardrail denies, the per-category rate limiter)
+		// can scope this render, mirroring toolHandler. An empty category leaves the
+		// render uncategorized (permissive-by-default), matching prior behavior.
+		cc.Category = reg.Category
 		sreq := &spi.PromptRequest{Name: req.Params.Name, Arguments: req.Params.Arguments}
 		// Route the prompt render THROUGH the middleware chain — like tools
 		// (toolHandler) and resources (resourceReadHandler) — so its output

@@ -9,6 +9,11 @@ import (
 // cosign) signatures produced by GitHub Actions workflows.
 const githubActionsOIDCIssuer = "https://token.actions.githubusercontent.com"
 
+// ReleaseWorkflow is the file name of the GitHub Actions workflow that builds,
+// signs, and publishes release artifacts (GoReleaser keyless cosign on a tag
+// push). It is the workflow whose signing identity release verification pins to.
+const ReleaseWorkflow = "release.yml"
+
 type Config struct {
 	AppName       string
 	ConfigFile    string
@@ -129,4 +134,26 @@ func WorkflowIdentity() (issuer, subjectRegExp string) {
 	repo := regexp.QuoteMeta(cfg.GitHubOwner + "/" + cfg.GitHubRepo)
 	subjectRegExp = `^https://github\.com/` + repo + `/\.github/workflows/.+$`
 	return githubActionsOIDCIssuer, subjectRegExp
+}
+
+// ReleaseWorkflowIdentity returns the Sigstore certificate-identity parameters
+// used to verify a specific release's artifacts against the EXACT signing
+// subject of this project's release workflow.
+//
+// Unlike WorkflowIdentity (which returns a regexp suitable for cosign policy
+// files that must accept any of the project's workflows), this returns the exact
+// Subject Alternative Name (SAN) pinning BOTH the workflow file and the git ref:
+//
+//	https://github.com/<owner>/<repo>/.github/workflows/release.yml@refs/tags/<tag>
+//
+// It is intended for cosign's --certificate-identity flag (exact match), which
+// rejects any signature produced by a different workflow file or on a different
+// ref — closing the impersonation gap left by a permissive regexp. issuer is the
+// GitHub Actions OIDC token issuer. Owner/repo derive from branding so
+// forks/rebrands verify against their own release workflow.
+func ReleaseWorkflowIdentity(tag string) (issuer, identity string) {
+	cfg := Get()
+	identity = "https://github.com/" + cfg.GitHubOwner + "/" + cfg.GitHubRepo +
+		"/.github/workflows/" + ReleaseWorkflow + "@refs/tags/" + tag
+	return githubActionsOIDCIssuer, identity
 }

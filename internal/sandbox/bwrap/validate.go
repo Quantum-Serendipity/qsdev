@@ -20,6 +20,14 @@ func ValidateMountPath(path string) error {
 		return fmt.Errorf("mount path %q is denied: overlaps sensitive path %q", path, deny)
 	}
 
+	// Also reject a path that is an ANCESTOR of a deny entry. Binding such a path
+	// (e.g. $HOME, which contains ~/.ssh, or /etc, which contains /etc/shadow)
+	// would re-expose the sensitive descendant inside the sandbox, defeating the
+	// deny list. Descendants and exact matches are handled by matchedDenyPath.
+	if deny, ok := ancestorOfDenyPath(path); ok {
+		return fmt.Errorf("mount path %q is denied: would re-expose sensitive path %q", path, deny)
+	}
+
 	return nil
 }
 
@@ -50,4 +58,39 @@ func matchedDenyPath(path string) (string, bool) {
 	}
 
 	return "", false
+}
+
+// ancestorOfDenyPath returns the deny-list entry that path is a strict ancestor
+// of, if any. It checks both the cleaned literal path and its symlink-resolved
+// form so that a symlink to an ancestor of a sensitive location is caught.
+func ancestorOfDenyPath(path string) (string, bool) {
+	candidates := []string{filepath.Clean(path)}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		if r := filepath.Clean(resolved); r != candidates[0] {
+			candidates = append(candidates, r)
+		}
+	}
+
+	for _, clean := range candidates {
+		for _, deny := range denylist.AllDenyPaths() {
+			if isStrictAncestor(clean, deny) {
+				return deny, true
+			}
+		}
+	}
+
+	return "", false
+}
+
+// isStrictAncestor reports whether ancestor is a proper parent directory of
+// descendant (not equal to it). The filesystem root "/" is an ancestor of every
+// absolute path.
+func isStrictAncestor(ancestor, descendant string) bool {
+	if ancestor == descendant {
+		return false
+	}
+	if ancestor == "/" {
+		return true
+	}
+	return strings.HasPrefix(descendant, ancestor+"/")
 }

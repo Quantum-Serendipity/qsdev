@@ -192,10 +192,11 @@ func renderDepHealth(w io.Writer, report *posture.PostureReport, ind [4]string, 
 			case !eco.Scanned:
 				scanNote = " [not scanned]"
 			}
-			fmt.Fprintf(w, "  %-20s lockfile=%-10s vulns=%d%s (C:%d H:%d M:%d L:%d)\n",
+			fmt.Fprintf(w, "  %-20s lockfile=%-10s vulns=%d%s (C:%d H:%d M:%d L:%d I:%d U:%d)\n",
 				eco.Name, eco.LockFile, total, scanNote,
 				eco.VulnCounts.Critical, eco.VulnCounts.High,
-				eco.VulnCounts.Moderate, eco.VulnCounts.Low)
+				eco.VulnCounts.Moderate, eco.VulnCounts.Low,
+				eco.VulnCounts.Info, eco.VulnCounts.Unknown)
 		}
 	} else {
 		totals := report.Dependencies.Totals
@@ -219,12 +220,44 @@ func renderDepHealth(w io.Writer, report *posture.PostureReport, ind [4]string, 
 			// dependencies were never checked. State that honestly (NF-2).
 			fmt.Fprintf(w, "  Dependencies not scanned — run 'qsdev status --scan' to check\n")
 		}
+		// When some ecosystems were scanned but others (with a present lock file)
+		// have no OSV coverage, a partly-covered project would otherwise read as
+		// fully clean. Surface the gap so the clean claim is scoped to what was
+		// actually checked.
+		if report.Dependencies.Scanned {
+			if gap := unscannedCoverageGap(report.Dependencies); gap > 0 {
+				fmt.Fprintf(w, "  Note: %d ecosystem(s) not scanned (no OSV coverage)\n", gap)
+			}
+		}
 		if report.Dependencies.Stale {
 			fmt.Fprintf(w, "  %s Scan data may be stale; re-run with --scan\n", fail)
 		}
 	}
 
 	fmt.Fprintln(w)
+}
+
+// unscannedCoverageGap counts ecosystems that were detected with a present lock
+// file but not scanned and not errored — an OSV-coverage gap (e.g. a yarn.lock
+// with no OSV parser). These are the ecosystems a "clean" aggregate silently
+// omits, so the count lets callers scope the clean claim honestly.
+func unscannedCoverageGap(deps posture.DependencyHealth) int {
+	n := 0
+	for _, eco := range deps.Ecosystems {
+		if !eco.Detected {
+			continue
+		}
+		// Only a present lock file is something we could have scanned; "missing",
+		// "n/a", and empty are not coverage gaps.
+		switch eco.LockFile {
+		case "", "missing", "n/a":
+			continue
+		}
+		if !eco.Scanned && !eco.ScanError {
+			n++
+		}
+	}
+	return n
 }
 
 // renderDriftFindings writes the drift section. Default mode shows a severity

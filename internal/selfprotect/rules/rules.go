@@ -245,28 +245,68 @@ func copyIsDangerous(ctx *EvalContext) bool {
 	return pipelineExfil(cmds, ctx.CWD)
 }
 
-// copyArgDanger returns the per-command danger test for copy verbs: a protected
-// destination (clobber) or a protected source sent to a destination outside the
-// repo (exfil). tar/dd/tee operand conventions vary, so any protected operand is
-// treated as dangerous.
+// copyArgDanger returns the per-command danger test for copy verbs. The three
+// filesystem verbs differ in whether they REMOVE their source:
+//
+//   - cp: a non-destructive copy. Dangerous only when it clobbers a protected
+//     destination or sends a protected source outside the repo (exfil). An
+//     in-repo backup of a protected file (protected source → non-protected
+//     in-repo dest) stays benign.
+//   - mv: a move REMOVES the protected source from its enforcing location, so
+//     ANY protected operand is dangerous regardless of destination — relocating
+//     a protected file even to an in-repo path (`mv .claude/settings.json ./x`)
+//     defeats protection. Clobbering a protected destination counts too, and
+//     anyProtected covers both source and destination positions.
+//   - rsync: with --remove-source-files it deletes the source after transfer, so
+//     it behaves like mv (any protected operand is dangerous). Plain rsync is a
+//     copy and uses the same clobber/exfil logic as cp.
+//
+// tar/dd/tee operand conventions vary, so any protected operand is dangerous.
 func copyArgDanger(cwd string) func(cmdscan.Command) bool {
 	return func(c cmdscan.Command) bool {
 		paths := nonFlagArgs(c.Args)
 		switch c.Name {
-		case "cp", "mv", "rsync":
-			if len(paths) < 2 {
-				return anyProtected(paths)
+		case "mv":
+			return anyProtected(paths) // a move removes the protected source
+		case "rsync":
+			if hasFlag(c.Args, "--remove-source-files") {
+				return anyProtected(paths) // source-removing rsync behaves like mv
 			}
-			dest := paths[len(paths)-1]
-			srcs := paths[:len(paths)-1]
-			if canon.ContainsProtectedPath(dest) {
-				return true // clobbering a protected destination
-			}
-			return !isInsideRepo(dest, cwd) && anyProtected(srcs) // exfil
+			return copyClobberOrExfil(paths, cwd)
+		case "cp":
+			return copyClobberOrExfil(paths, cwd)
 		default: // tar, dd, tee
 			return anyProtected(paths)
 		}
 	}
+}
+
+// copyClobberOrExfil reports whether a non-destructive copy (cp, or plain rsync)
+// is dangerous: it clobbers a protected destination, or it sends a protected
+// source to a destination outside the repo (exfil). An in-repo backup of a
+// protected file stays benign.
+func copyClobberOrExfil(paths []string, cwd string) bool {
+	if len(paths) < 2 {
+		return anyProtected(paths)
+	}
+	dest := paths[len(paths)-1]
+	srcs := paths[:len(paths)-1]
+	if canon.ContainsProtectedPath(dest) {
+		return true // clobbering a protected destination
+	}
+	return !isInsideRepo(dest, cwd) && anyProtected(srcs) // exfil
+}
+
+// hasFlag reports whether args contains the exact long option flag (e.g.
+// --remove-source-files). Long options take no value here, so an exact match is
+// sufficient.
+func hasFlag(args []string, flag string) bool {
+	for _, a := range args {
+		if a == flag {
+			return true
+		}
+	}
+	return false
 }
 
 // redirectDanger reports whether a single command's write redirect either

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -42,6 +43,12 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 	if _, err := os.Stat(template); err != nil {
 		t.Fatalf("package-guard template not found: %v", err)
 	}
+
+	// Nested command substitutions. Each `$(` adds one recursion level.
+	// Five levels stays under the cap (raised to 6) and is caught for real;
+	// eight levels exceeds the cap and must fail closed (detected, no packages).
+	deepNestCaught := strings.Repeat("$(", 5) + "npm install evil" + strings.Repeat(")", 5)
+	deepNestFailClosed := strings.Repeat("$(", 8) + "npm install evil" + strings.Repeat(")", 8)
 
 	cases := []struct {
 		name         string
@@ -92,6 +99,47 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 		// mentions an install inside an argument stays unflagged.
 		{"shell -c echoing install text", `bash -c "echo pip install docs"`, false, nil},
 		{"python running a script named pip", `python analyze.py --mode pip-install`, false, nil},
+
+		// M4 fail-open bypasses: each returned [] before, so the hook ALLOWED a
+		// real install. All must now be detected while the false-positive cases
+		// above still pass.
+		// 1. eval's string argument is a shell script — recurse into it.
+		{"eval wrapped install", `eval "pip install evil"`, true, []string{"evil"}},
+		{"eval unquoted install", `eval pip install evil`, true, []string{"evil"}},
+		// 2. command substitution $(...) — extract and scan the inner command.
+		{"command substitution install", `echo $(npm install evil)`, true, []string{"evil"}},
+		// 3. backtick substitution — same as $().
+		{"backtick substitution install", "x=`npm install evil`", true, []string{"evil"}},
+		// 4. exec wrapper not previously in COMMAND_PREFIXES.
+		{"strace wrapped install", `strace npm install evil`, true, []string{"evil"}},
+		{"flock wrapped install", `flock /tmp/lock npm install evil`, true, []string{"evil"}},
+		// 5. su -c runs a shell script like bash -c.
+		{"su -c wrapped install", `su -c "npm install evil"`, true, []string{"evil"}},
+		{"su user then -c install", `su deploy -c "pip install evil"`, true, []string{"evil"}},
+		{"runuser -c wrapped install", `runuser -c "npm install evil"`, true, []string{"evil"}},
+		{"runuser exec form install", `runuser -u deploy npm install evil`, true, []string{"evil"}},
+		// 6. xargs runs its trailing command.
+		{"xargs trailing install", `xargs npm install evil`, true, []string{"evil"}},
+		{"piped xargs bare install", `echo evil | xargs npm install`, true, nil},
+		// 7. process substitution <(...) / >(...).
+		{"process substitution install", `diff <(pip install evil) x`, true, []string{"evil"}},
+		// 8. deep nesting under the raised cap is still caught for real.
+		{"five-deep nesting caught", deepNestCaught, true, []string{"evil"}},
+
+		// Fail-closed cases: exceeding the recursion cap, or an unparseable
+		// segment, must be DETECTED (surfaced for validation) — never dropped.
+		{"eight-deep nesting fails closed", deepNestFailClosed, true, nil},
+		{"unbalanced quotes fail closed", `npm install "evil`, true, nil},
+
+		// Control: the mandated false-positive suite must remain unflagged even
+		// after the recursive-descent hardening above.
+		{"control: git commit message", `git commit -m "fix: refactor install logic"`, false, nil},
+		{"control: grep npm install literal", `grep -rn "npm install" .`, false, nil},
+		{"control: grep install word", `grep install foo`, false, nil},
+		{"control: echo pip install text", `echo "run pip install requests"`, false, nil},
+		{"control: go build", `go build ./...`, false, nil},
+		{"control: bash -c echo install text", `bash -c "echo pip install docs"`, false, nil},
+		{"control: python script named pip-install", `python analyze.py --mode pip-install`, false, nil},
 	}
 
 	for _, tc := range cases {

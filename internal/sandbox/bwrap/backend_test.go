@@ -26,7 +26,7 @@ func TestBubblewrapBackend_WarnsWhenLayersUnapplied(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	b := NewBubblewrapBackend(sandbox.TierFull, "/nonexistent/bwrap")
+	b := NewBubblewrapBackend(sandbox.TierFull, "/nonexistent/bwrap", true)
 
 	// Route slog through our buffer for the duration of the call.
 	prev := slog.Default()
@@ -51,7 +51,7 @@ func TestBubblewrapBackend_NoFalseWarnWhenApplied(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	b := NewBubblewrapBackend(sandbox.TierFull, "/nonexistent/bwrap")
+	b := NewBubblewrapBackend(sandbox.TierFull, "/nonexistent/bwrap", true)
 
 	prev := slog.Default()
 	slog.SetDefault(logger)
@@ -83,7 +83,7 @@ func e3Backend(t *testing.T) (*BubblewrapBackend, string, []sandbox.MountSpec) {
 
 	shPath, mounts := resolveSandboxShell(t)
 
-	backend := NewBubblewrapBackend(sandbox.TierFull, bwrapPath)
+	backend := NewBubblewrapBackend(sandbox.TierFull, bwrapPath, true)
 
 	// Smoke test: if a trivial sandboxed command cannot run (e.g. user
 	// namespaces disabled), skip rather than fail.

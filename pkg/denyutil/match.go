@@ -59,6 +59,29 @@ func GlobMatchArgs(denyArgs, opArgs string) bool {
 	}
 
 	segments := strings.Split(denyArgs, "*")
+
+	// A deny pattern ending in whitespace followed by a terminal '*'
+	// (e.g. "aws sts assume-role *") must act as a token-boundary prefix: it
+	// has to deny the bare subcommand ("aws sts assume-role"), its hyphenated
+	// continuations ("aws sts assume-role-with-web-identity"), and its
+	// space-separated continuations ("aws sts assume-role --role-arn x")
+	// alike. Trimming the trailing whitespace from the final literal segment
+	// makes the separating space optional while the terminal '*' still matches
+	// any suffix, so the prefix matches at a token boundary. This intentionally
+	// broadens denial — the safe direction for the credential-emitting
+	// subcommands these rules guard. Only the terminal whitespace-'*' case is
+	// touched; embedded wildcards (e.g. "git * --force") keep their semantics.
+	if strings.HasSuffix(denyArgs, "*") {
+		if body := denyArgs[:len(denyArgs)-1]; body != strings.TrimRight(body, " \t") {
+			for i := len(segments) - 1; i >= 0; i-- {
+				if segments[i] != "" {
+					segments[i] = strings.TrimRight(segments[i], " \t")
+					break
+				}
+			}
+		}
+	}
+
 	pos := 0
 	for i, seg := range segments {
 		if seg == "" {

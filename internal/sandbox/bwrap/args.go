@@ -2,6 +2,7 @@ package bwrap
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 )
@@ -20,14 +21,23 @@ func BuildArgs(cfg *sandbox.SandboxConfig, _ sandbox.DegradationTier) ([]string,
 	// The policy layer encodes each deny-list path as a self-referential
 	// read-only mount (Source == Target == a sensitive path) to declare "this
 	// path must be blocked". bwrap builds from an empty root, so a path that is
-	// never bound is already absent inside the sandbox -- which IS the intended
-	// block. Binding it would instead fail validation and break every exec, so
-	// we drop those deny directives here. A mount that tries to EXPOSE a
-	// sensitive path at a different location (Source != Target) is still
-	// rejected below, keeping the guard fail-closed against real exfiltration.
+	// never bound is already absent inside the sandbox. Rather than silently
+	// dropping these directives (which would leave the path exposed AND writable
+	// if a broader bind ever mounted one of its ancestors, e.g. $HOME), we record
+	// them and emit an explicit MASK below -- after every bind -- so the deny
+	// path is always replaced with an empty tmpfs (dirs) or read-only /dev/null
+	// (files). A mount that tries to EXPOSE a sensitive path at a different
+	// location (Source != Target) is still rejected below, keeping the guard
+	// fail-closed against real exfiltration.
 	mounts := make([]sandbox.MountSpec, 0, len(cfg.Mounts))
+	denyMasks := make([]string, 0)
+	seenMask := make(map[string]bool)
 	for _, m := range cfg.Mounts {
 		if m.Source == m.Target && IsDenyPath(m.Source) {
+			if !seenMask[m.Source] {
+				seenMask[m.Source] = true
+				denyMasks = append(denyMasks, m.Source)
+			}
 			continue
 		}
 		if err := ValidateMountPath(m.Source); err != nil {
@@ -101,5 +111,28 @@ func BuildArgs(cfg *sandbox.SandboxConfig, _ sandbox.DegradationTier) ([]string,
 		args = append(args, "--ro-bind", p, p)
 	}
 
+	// 9. Mask every deny directive. Emitted LAST so the mask always wins over any
+	// earlier bind: even if a broader mount above exposed an ancestor directory
+	// (e.g. $HOME), the sensitive credential store underneath is replaced with an
+	// empty tmpfs (directories) or a read-only /dev/null (files) and can be
+	// neither read nor written. These paths were matched as deny entries above,
+	// so they are trusted and bypass ValidateMountPath (which would reject them).
+	for _, p := range denyMasks {
+		args = append(args, maskDenyPathArgs(p)...)
+	}
+
 	return args, nil
+}
+
+// maskDenyPathArgs returns the bwrap arguments that mask a single deny-list path
+// so its contents can never be read or written inside the sandbox, even if a
+// broader bind exposed one of its ancestor directories. A directory (or a path
+// absent on the host) is masked with an empty tmpfs; a regular file is masked
+// with a read-only bind of /dev/null. Callers must emit these AFTER every bind
+// so the mask wins.
+func maskDenyPathArgs(path string) []string {
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		return []string{"--ro-bind", "/dev/null", path}
+	}
+	return []string{"--tmpfs", path}
 }

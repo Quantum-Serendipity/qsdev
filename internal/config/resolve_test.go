@@ -515,6 +515,140 @@ func TestResolveConfig_ViolationsRecorded(t *testing.T) {
 	}
 }
 
+// hasViolation reports whether a FloorViolation was recorded for the given field.
+func hasViolation(vs []FloorViolation, field string) bool {
+	for _, v := range vs {
+		if v.Field == field {
+			return true
+		}
+	}
+	return false
+}
+
+// TestResolveConfig_ComplianceBoolFloor is a regression test for #S6: the four
+// security bools must be floored against the compliance level a project
+// declares (client.security_level), mirroring how security.level itself is
+// floored. Before the fix, enforceBoolFloor only saw the project's own bool
+// (nil when unset), so a layer-5 local override to false silently disabled a
+// compliance-mandated control while security.level still read "strict".
+func TestResolveConfig_ComplianceBoolFloor(t *testing.T) {
+	tests := []struct {
+		name        string
+		field       string
+		localOff    func(*types.SecurityConfig)
+		getResolved func(*types.QsdevConfig) *bool
+	}{
+		{
+			name:        "script_blocking",
+			field:       "security.script_blocking",
+			localOff:    func(s *types.SecurityConfig) { s.ScriptBlocking = boolP(false) },
+			getResolved: func(c *types.QsdevConfig) *bool { return c.Security.ScriptBlocking },
+		},
+		{
+			name:        "age_gating",
+			field:       "security.age_gating",
+			localOff:    func(s *types.SecurityConfig) { s.AgeGating = boolP(false) },
+			getResolved: func(c *types.QsdevConfig) *bool { return c.Security.AgeGating },
+		},
+		{
+			name:        "lock_enforcement",
+			field:       "security.lock_enforcement",
+			localOff:    func(s *types.SecurityConfig) { s.LockEnforcement = boolP(false) },
+			getResolved: func(c *types.QsdevConfig) *bool { return c.Security.LockEnforcement },
+		},
+		{
+			name:        "vuln_scanning",
+			field:       "security.vuln_scanning",
+			localOff:    func(s *types.SecurityConfig) { s.VulnScanning = boolP(false) },
+			getResolved: func(c *types.QsdevConfig) *bool { return c.Security.VulnScanning },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			org := DefaultQsdevConfig()
+			// Project declares a strict compliance level but leaves the
+			// individual security bools unset.
+			project := &types.QsdevConfig{
+				Client: &types.ClientConfig{Name: "acme", SecurityLevel: "strict"},
+			}
+			// Local override tries to disable the compliance-mandated control.
+			local := &LocalConfig{}
+			tt.localOff(&local.Security)
+
+			result, err := ResolveConfig(org, nil, project, local, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Level must still read strict.
+			if result.Config.Security.Level != "strict" {
+				t.Errorf("security.level = %q, want strict", result.Config.Security.Level)
+			}
+			// The control must be enforced back on.
+			got := tt.getResolved(result.Config)
+			if got == nil || !*got {
+				t.Errorf("%s: resolved value not enforced to true (got %v)", tt.field, got)
+			}
+			// A floor violation must be recorded.
+			if !hasViolation(result.Violations, tt.field) {
+				t.Errorf("%s: expected a floor violation, got %v", tt.field, result.Violations)
+			}
+		})
+	}
+}
+
+// TestResolveConfig_ProjectBoolFloorStillEnforced is a regression guard: a
+// project that sets a bool true itself must continue to floor local overrides,
+// independent of the new compliance floor.
+func TestResolveConfig_ProjectBoolFloorStillEnforced(t *testing.T) {
+	org := DefaultQsdevConfig()
+	project := &types.QsdevConfig{
+		// No client / compliance level here — the project's own true floor
+		// must stand on its own.
+		Security: types.SecurityConfig{ScriptBlocking: boolP(true)},
+	}
+	local := &LocalConfig{
+		Security: types.SecurityConfig{ScriptBlocking: boolP(false)},
+	}
+	result, err := ResolveConfig(org, nil, project, local, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Config.Security.ScriptBlocking == nil || !*result.Config.Security.ScriptBlocking {
+		t.Error("expected script_blocking enforced to true by project floor")
+	}
+	if !hasViolation(result.Violations, "security.script_blocking") {
+		t.Errorf("expected script_blocking floor violation, got %v", result.Violations)
+	}
+}
+
+// TestResolveConfig_NonComplianceBoolUnaffected verifies a project with no
+// compliance level (and no project-level bool floor) does not gain a compliance
+// bool floor: a local override that disables a setting stays disabled and
+// records no violation.
+func TestResolveConfig_NonComplianceBoolUnaffected(t *testing.T) {
+	org := &types.QsdevConfig{
+		Security: types.SecurityConfig{ScriptBlocking: boolP(true)},
+	}
+	// Project declares neither a security level nor a client compliance level,
+	// and does not require script_blocking itself.
+	project := &types.QsdevConfig{}
+	local := &LocalConfig{
+		Security: types.SecurityConfig{ScriptBlocking: boolP(false)},
+	}
+	result, err := ResolveConfig(org, nil, project, local, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Config.Security.ScriptBlocking == nil || *result.Config.Security.ScriptBlocking {
+		t.Errorf("expected script_blocking to remain false (no floor), got %v", result.Config.Security.ScriptBlocking)
+	}
+	if hasViolation(result.Violations, "security.script_blocking") {
+		t.Errorf("did not expect a script_blocking violation, got %v", result.Violations)
+	}
+}
+
 func TestResolveConfig_PointerBoolNilVsFalse(t *testing.T) {
 	// nil means inherit, false means explicitly disabled.
 	org := &types.QsdevConfig{

@@ -258,12 +258,16 @@ func (s *Scanner) QueryBatch(ctx context.Context, pkgs []Package) ([][]string, e
 	return out, nil
 }
 
-// osvVuln models the subset of an OSV /v1/vulns/{id} record we surface. The
-// severity we use comes from database_specific.severity; the top-level "details"
-// text and CVSS "severity" array are intentionally not modeled (unused).
+// osvVuln models the subset of an OSV /v1/vulns/{id} record we surface. Severity
+// is taken from database_specific.severity when present; when that is empty we
+// fall back to the top-level CVSS "severity" array — Go advisories
+// (GO-YYYY-NNNN) carry their severity only there, as CVSS vectors, and never in
+// database_specific.severity. The top-level "details" text remains unmodeled
+// (unused).
 type osvVuln struct {
-	ID       string `json:"id"`
-	Summary  string `json:"summary"`
+	ID       string        `json:"id"`
+	Summary  string        `json:"summary"`
+	Severity []osvSeverity `json:"severity"`
 	Affected []struct {
 		Ranges []struct {
 			Events []struct {
@@ -280,13 +284,22 @@ type osvVuln struct {
 	} `json:"database_specific"`
 }
 
+// osvSeverity is one entry of an OSV record's top-level severity[] array: a CVSS
+// vector string (Score) tagged with its version (Type is CVSS_V2/CVSS_V3/CVSS_V4).
+type osvSeverity struct {
+	Type  string `json:"type"`
+	Score string `json:"score"`
+}
+
 // Detail is the per-advisory subset of an OSV /v1/vulns/{id} record consumers
 // need to render or filter a finding. SeverityLabel is the raw
-// database_specific.severity string (e.g. "CRITICAL", "MODERATE"); it is left
-// unnormalized so consumers with different severity vocabularies can apply their
-// own mapping. A zero-value Detail (failed or truncated fetch) carries an empty
-// SeverityLabel, which NormalizeSeverity resolves to "unknown" (fail-closed),
-// not "info".
+// database_specific.severity string (e.g. "CRITICAL", "MODERATE") when present,
+// and otherwise the label derived from the record's top-level CVSS severity[]
+// vectors (see severityFromCVSS); it is left unnormalized so consumers with
+// different severity vocabularies can apply their own mapping. A zero-value
+// Detail (failed or truncated fetch), or a record carrying neither source,
+// leaves SeverityLabel empty, which NormalizeSeverity resolves to "unknown"
+// (fail-closed), not "info".
 type Detail struct {
 	ID            string
 	Summary       string
@@ -370,10 +383,19 @@ func (s *Scanner) FetchDetails(ctx context.Context, idsByQuery [][]string) map[s
 				slots[i] = Detail{ID: id}
 				return
 			}
+			// Prefer database_specific.severity; fall back to the top-level CVSS
+			// severity[] vectors (the only source Go advisories carry) so their
+			// label is not left empty → "unknown". severityFromCVSS returns ""
+			// when nothing parses, preserving the fail-closed unknown path for
+			// records with neither source.
+			severity := v.DatabaseSpecific.Severity
+			if severity == "" {
+				severity = severityFromCVSS(v.Severity...)
+			}
 			slots[i] = Detail{
 				ID:            id,
 				Summary:       v.Summary,
-				SeverityLabel: v.DatabaseSpecific.Severity,
+				SeverityLabel: severity,
 				FixedIn:       fixedVersion(v),
 				AdvisoryURL:   advisoryURL(v),
 			}

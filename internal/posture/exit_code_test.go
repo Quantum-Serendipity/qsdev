@@ -214,6 +214,37 @@ func TestShouldExitNonZero_Any(t *testing.T) {
 	}
 }
 
+// TestShouldExitNonZero_Uncertifiable confirms the gate still fails closed on any
+// non-certifiable dependency result — a failed scan or an unresolved-severity
+// vuln — at every gating level, and never for "none". This is the exit-gate half
+// of the altitude fix, now routed through DependencyHealth.Certifiable().
+func TestShouldExitNonZero_Uncertifiable(t *testing.T) {
+	cases := []struct {
+		name string
+		deps DependencyHealth
+	}{
+		{"scan failed", DependencyHealth{ScanFailed: true}},
+		{"unresolved severity", DependencyHealth{Scanned: true, Totals: VulnSeverityCounts{Unknown: 1}}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			report := &PostureReport{
+				Dependencies: tc.deps,
+				Conformance:  ConformanceResult{Baseline: ConformanceLevel{Pass: true}},
+			}
+			for _, lvl := range []string{"critical", "high", "moderate", "low", "info", "any"} {
+				if !ShouldExitNonZero(report, lvl) {
+					t.Errorf("ShouldExitNonZero(%q) = false, want true for a non-certifiable result", lvl)
+				}
+			}
+			if ShouldExitNonZero(report, "none") {
+				t.Error("ShouldExitNonZero(none) must stay false even for a non-certifiable result")
+			}
+		})
+	}
+}
+
 func TestShouldExitNonZero_UnknownLevel(t *testing.T) {
 	// Unknown levels default to "high" behavior.
 	report := &PostureReport{

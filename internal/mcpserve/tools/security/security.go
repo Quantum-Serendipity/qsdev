@@ -6,8 +6,11 @@
 //
 // Every handler degrades gracefully: a missing provider, lock file, or policy
 // file yields a structured not_configured result rather than an error or a
-// crash. credential_vend is tagged CategoryCredential, the sole tool category
-// exempt from ContentSafety redaction so its short-lived token output survives.
+// crash. credential_vend is tagged CategoryCredential (for rate limiting) and,
+// as the sole tool registered under middleware.CredentialVendToolName, is the
+// only surface exempt from ContentSafety redaction so its short-lived token
+// output survives — the exemption is keyed on that trusted tool identity, not on
+// the self-declared category, so no other tool can borrow the exemption.
 package security
 
 import (
@@ -30,7 +33,7 @@ func Tools(projectRoot string) []spi.ToolRegistration {
 
 	return []spi.ToolRegistration{
 		{
-			Name:        "qsdev_credential_vend",
+			Name:        middleware.CredentialVendToolName,
 			Description: "Vend short-lived cloud credentials by exchanging the host's ambient identity: AWS STS (AssumeRole/GetSessionToken), GCP IAM Credentials (service-account access token), or Azure Managed Identity. Returns only time-boxed credential material, never long-lived secrets.",
 			InputSchema: credentialVendSchema(),
 			Category:    middleware.CategoryCredential,

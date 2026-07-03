@@ -31,15 +31,18 @@ func (cs ContentSafety) Handle(ctx context.Context, cc *spi.ToolCallContext, req
 		return res, err
 	}
 
-	// The credential category is the sole tool category sanctioned to emit
-	// credentials: qsdev_credential_vend exists precisely to return short-lived
-	// cloud tokens (AWS STS, GCP IAM, Azure MI) to the agent. Redacting its
-	// output would strip the AWS-key/JWT-shaped material the tool is meant to
-	// deliver, defeating its purpose. The category is also the most restricted in
-	// the rate limiter (lowest rate, smallest burst, tightest concurrency) and
-	// passes through the same Guardrail/Audit layers as every other tool, so the
-	// exemption narrows redaction, not the surrounding controls.
-	if cc != nil && cc.Category == CategoryCredential {
+	// The credential-vend tool is the sole surface sanctioned to emit credentials:
+	// CredentialVendToolName exists precisely to return short-lived cloud tokens
+	// (AWS STS, GCP IAM, Azure MI) to the agent. Redacting its output would strip
+	// the AWS-key/JWT-shaped material the tool is meant to deliver, defeating its
+	// purpose. The exemption is keyed on the TRUSTED, server-registered tool
+	// identity (resolved by toolName from the ToolCallContext/request, both set by
+	// the bridge from the registration) — NOT on the caller-declared
+	// cc.Category == CategoryCredential, which any tool or adapter could assert to
+	// pass its output through un-redacted. The credential category still gets the
+	// tightest rate limit and the same Guardrail/Audit layers as every other tool,
+	// so this narrows only redaction, and only for the one trusted tool.
+	if toolName(cc, req) == CredentialVendToolName {
 		return res, nil
 	}
 

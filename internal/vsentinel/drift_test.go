@@ -2,6 +2,8 @@ package vsentinel
 
 import (
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 func TestDetectDrift(t *testing.T) {
@@ -371,6 +373,83 @@ func TestDetectDrift_NoFalsePositives(t *testing.T) {
 			}
 			if m.DriftCount != 0 {
 				t.Errorf("DriftCount = %d, want 0 (not a real drift): %+v", m.DriftCount, m.Drifted)
+			}
+		})
+	}
+}
+
+// TestDetectDrift_GenericEcosystemCoverage is the BL-#12 regression: drift
+// coverage is derived from the ecosystem catalog, so ecosystems WITHOUT a
+// dedicated parser (python, ruby, ...) are no longer invisible — they fail
+// closed when a manifest is present with no lockfile. The parsed ecosystems
+// (go/js) keep their precise, no-false-positive behaviour.
+//
+// The first two cases fail before the fix (the manifests had no drift coverage
+// at all); the last two are regression guards that must keep passing.
+func TestDetectDrift_GenericEcosystemCoverage(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		files     map[string]string
+		eco       string
+		wantDrift int
+	}{
+		{
+			// Generic ecosystem, fail closed: an unpinned requirements.txt with
+			// no separate lockfile was previously invisible to drift detection.
+			name:      "unpinned requirements.txt reports drift",
+			files:     map[string]string{"requirements.txt": "requests==2.31.0\nflask\n"},
+			eco:       ecosystem.NamePython,
+			wantDrift: 1,
+		},
+		{
+			// Generic ecosystem, fail closed: a Gemfile with no Gemfile.lock.
+			name:      "Gemfile without Gemfile.lock reports drift",
+			files:     map[string]string{"Gemfile": "source 'https://rubygems.org'\ngem 'rails'\n"},
+			eco:       ecosystem.NameRuby,
+			wantDrift: 1,
+		},
+		{
+			// Parsed ecosystem regression guard: a stdlib-only go.mod declares no
+			// dependencies, so its missing go.sum is legitimate — NOT drift.
+			name:      "stdlib-only go.mod is not drift",
+			files:     map[string]string{"go.mod": "module example.com/x\n\ngo 1.22\n"},
+			eco:       ecosystem.NameGo,
+			wantDrift: 0,
+		},
+		{
+			// Parsed ecosystem regression guard: a project pinned with a
+			// non-primary but catalog-valid lockfile (pnpm) is fully pinned.
+			name: "pnpm-locked project is not drift",
+			files: map[string]string{
+				"package.json":   `{"name":"x","dependencies":{"express":"^4.18.0"}}`,
+				"pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+			},
+			eco:       ecosystem.NameJavaScript,
+			wantDrift: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeFixtures(t, dir, tc.files)
+
+			report, err := DetectDrift(dir)
+			if err != nil {
+				t.Fatalf("DetectDrift() error = %v", err)
+			}
+			if len(report.Manifests) != 1 {
+				t.Fatalf("manifest count = %d, want 1", len(report.Manifests))
+			}
+			m := report.Manifests[0]
+			if m.Ecosystem != tc.eco {
+				t.Errorf("ecosystem = %q, want %q", m.Ecosystem, tc.eco)
+			}
+			if m.DriftCount != tc.wantDrift {
+				t.Errorf("DriftCount = %d, want %d: %+v", m.DriftCount, tc.wantDrift, m.Drifted)
 			}
 		})
 	}

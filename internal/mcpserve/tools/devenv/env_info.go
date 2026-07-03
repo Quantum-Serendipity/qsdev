@@ -35,50 +35,27 @@ type envInfo struct {
 
 func newEnvInfo(projectRoot string) *envInfo { return &envInfo{projectRoot: projectRoot} }
 
-// sensitiveEnvPrefixes identify cloud-provider environment variable namespaces
-// whose values must never be emitted, even when the specific name carries no
-// credential keyword (e.g. GCP_PROJECT, GOOGLE_CLOUD_PROJECT). This source-side
-// filtering is defense-in-depth alongside the ContentSafety middleware, which
-// also redacts secret-shaped values from results.
-var sensitiveEnvPrefixes = []string{"AWS_", "AZURE_", "GCP_", "GOOGLE_", "GH_", "GITHUB_"}
-
-// concatenatedCredentialRoots catch names where a credential keyword is joined
-// to another word with no separator (e.g. SECRETKEY, ACCESSKEY, AUTHTOKEN,
-// PASSWORDHASH), which the token-boundary predicate does not match. These roots
-// are high-confidence — a name containing one is almost never a non-secret — and
-// for this probe over-withholding a value is harmless (fail-safe). Bare "key" is
-// excluded so common non-secrets (MONKEY_PATH, KEYBOARD_LAYOUT) are not withheld.
-var concatenatedCredentialRoots = []string{
-	"secret", "password", "passwd", "credential", "token", "apikey",
-	"accesskey", "privatekey",
-}
-
-// isSensitiveEnv reports whether the named variable's value must be withheld.
-// The keyword match delegates to the shared secrets.MatchesSensitiveKeyPattern
-// predicate (token-boundary: password/secret/token/session/passwd/pwd/access_key/
-// key/…), so this probe, the log redactor, and the external-log scrubber share
-// one authority. The pattern predicate — rather than IsSensitiveName — is used so
-// a connection var whose credential lives in its VALUE (e.g. DATABASE_URL) is
-// still value-scrubbed (host preserved) rather than withheld wholesale. A
-// high-confidence substring fallback then catches separator-less concatenations
-// the token-boundary predicate misses; over-withholding here is fail-safe.
+// isSensitiveEnv reports whether the named variable's value must be withheld. It
+// composes three shared secrets predicates, all owned by the internal/secrets
+// canon so this probe, the log redactor, and the external-log scrubber stay in
+// sync:
+//
+//   - secrets.MatchesSensitiveKeyPattern: precise by-name match (token-boundary
+//     tokens plus the auth/private substring fallback that catches AUTHORIZATION,
+//     PROXY_AUTHORIZATION, bare PRIVATE, …). The pattern predicate — rather than
+//     IsSensitiveName — is used so a connection var whose credential lives in its
+//     VALUE (e.g. DATABASE_URL) is still value-scrubbed (host preserved) rather
+//     than withheld wholesale.
+//   - secrets.HasCloudCredentialPrefix: cloud-provider namespaces (AWS_/GCP_/…)
+//     that carry no credential keyword (e.g. GCP_PROJECT), as defense-in-depth.
+//   - secrets.ContainsEnvCredentialRoot: the fail-safe substring fallback for
+//     opaque concatenations (SECRETKEY, PASSWORDHASH, MYAPIKEY, …). It is broader
+//     (lower precision) than the log-redaction path deliberately: here
+//     over-withholding a value is fail-safe while leaking is not.
 func isSensitiveEnv(name string) bool {
-	if secrets.MatchesSensitiveKeyPattern(name) {
-		return true
-	}
-	up := strings.ToUpper(name)
-	for _, p := range sensitiveEnvPrefixes {
-		if strings.HasPrefix(up, p) {
-			return true
-		}
-	}
-	lower := strings.ToLower(name)
-	for _, root := range concatenatedCredentialRoots {
-		if strings.Contains(lower, root) {
-			return true
-		}
-	}
-	return false
+	return secrets.MatchesSensitiveKeyPattern(name) ||
+		secrets.HasCloudCredentialPrefix(name) ||
+		secrets.ContainsEnvCredentialRoot(name)
 }
 
 // handle runs the requested probe (or all of them) and returns a structured

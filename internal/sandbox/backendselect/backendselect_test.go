@@ -130,3 +130,44 @@ func TestResolveBackend_ClosesP0(t *testing.T) {
 			backend.Name(), tier)
 	}
 }
+
+// TestResolveBackend_BwrapWithoutUserNSPrefersSystemdRun is a regression for
+// #S3: when a bwrap binary is present but unprivileged user namespaces are
+// disabled, DetermineTier demotes bwrap to TierSystemdRun — the SAME tier as the
+// systemd-run fallback. Because bwrap always requests --unshare-user it would
+// fail every exec, yet a non-stable tier sort could still pick it over the
+// working systemd-run backend. The fix makes the bwrap backend report itself
+// unavailable (no user namespaces) and makes same-tier ordering stable, so the
+// resolver deterministically selects the functional systemd-run backend.
+func TestResolveBackend_BwrapWithoutUserNSPrefersSystemdRun(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	realBwrap := writeStubBinary(t, tmp, "bwrap")
+	realSystemd := writeStubBinary(t, tmp, "systemd-run")
+
+	caps := sandbox.SystemCapabilities{
+		HasBwrap:       true,
+		BwrapPath:      realBwrap,
+		HasUserNS:      false, // user namespaces disabled -> bwrap cannot run
+		HasSystemdRun:  true,
+		SystemdRunPath: realSystemd,
+	}
+
+	// Run repeatedly: a non-stable sort of equal-tier backends is a source of
+	// flakiness, so a single pass could pass by luck. The selection must be the
+	// working systemd-run backend on every iteration.
+	for i := 0; i < 64; i++ {
+		backend, tier := ResolveBackend(caps)
+		if backend.Name() != "systemd-run" {
+			t.Fatalf("iteration %d: selected backend = %q, want %q (bwrap with no user namespaces must not be chosen)",
+				i, backend.Name(), "systemd-run")
+		}
+		if backend.Name() == "bubblewrap" {
+			t.Fatalf("iteration %d: broken bubblewrap backend selected despite disabled user namespaces", i)
+		}
+		if tier != sandbox.TierSystemdRun {
+			t.Fatalf("iteration %d: tier = %v, want %v", i, tier, sandbox.TierSystemdRun)
+		}
+	}
+}

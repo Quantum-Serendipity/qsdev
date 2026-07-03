@@ -30,6 +30,7 @@ func TestScorePackage(t *testing.T) {
 				Ecosystem:               EcosystemNpm,
 				FirstPublishedAt:        &twoYearsAgo,
 				PublishedAt:             &sixMonthsAgo,
+				VulnDataAvailable:       true,
 				KEVListed:               true,
 				HasChecksumVerification: true,
 			},
@@ -46,6 +47,7 @@ func TestScorePackage(t *testing.T) {
 				Ecosystem:               EcosystemNpm,
 				FirstPublishedAt:        &twoYearsAgo,
 				PublishedAt:             &sixMonthsAgo,
+				VulnDataAvailable:       true,
 				CVECritical:             1,
 				FixAvailable:            true,
 				HasChecksumVerification: true,
@@ -63,6 +65,7 @@ func TestScorePackage(t *testing.T) {
 				Ecosystem:               EcosystemNpm,
 				FirstPublishedAt:        &twoYearsAgo,
 				PublishedAt:             &sixMonthsAgo,
+				VulnDataAvailable:       true,
 				HasChecksumVerification: true,
 				IsDirect:                true,
 			},
@@ -80,6 +83,7 @@ func TestScorePackage(t *testing.T) {
 				Ecosystem:               EcosystemNpm,
 				FirstPublishedAt:        &twoYearsAgo,
 				PublishedAt:             &sixMonthsAgo,
+				VulnDataAvailable:       true,
 				MalwareDetected:         true,
 				HasChecksumVerification: true,
 			},
@@ -96,6 +100,7 @@ func TestScorePackage(t *testing.T) {
 				Ecosystem:               EcosystemNpm,
 				FirstPublishedAt:        &twoYearsAgo,
 				PublishedAt:             &sixMonthsAgo,
+				VulnDataAvailable:       true,
 				HasInstallScripts:       true,
 				InstallScriptsBlocked:   false,
 				HasChecksumVerification: true,
@@ -141,16 +146,29 @@ func TestScorePackage(t *testing.T) {
 }
 
 // TestScorePackageFailsClosedOnUnenriched is the red→green guard for
-// F-CAP-21.5-1: an npm package with no telemetry (the state during a fresh
-// supply-chain lookup with no enrichment) must NOT fail open to grade B. The
-// data-freshness floor quarantines it at grade F.
+// F-CAP-21.5-1: a package that WAS located in a registry (it has publication
+// timestamps) but was NEVER vulnerability-enriched — the state when an OSV/KEV
+// lookup is skipped, offline, rate-limited, or the package is too new — must NOT
+// fail open to grade B. This exercises the weight-based data-freshness floor
+// (not the nil-timestamp branch): with VulnDataAvailable false the vulnerability
+// category drops out of activeWeightSum, dropping it below minActiveWeight, and
+// the package is quarantined at grade F.
 func TestScorePackageFailsClosedOnUnenriched(t *testing.T) {
 	t.Parallel()
 
+	twoYearsAgo := time.Now().Add(-2 * 365 * 24 * time.Hour)
+	sixMonthsAgo := time.Now().Add(-180 * 24 * time.Hour)
+
 	result := ScorePackage(&PackageInfo{
-		Name:      "totally-unknown",
-		Version:   "1.0.0",
-		Ecosystem: EcosystemNpm,
+		Name:             "registered-but-unenriched",
+		Version:          "1.0.0",
+		Ecosystem:        EcosystemNpm,
+		FirstPublishedAt: &twoYearsAgo,
+		PublishedAt:      &sixMonthsAgo,
+		// VulnDataAvailable is false: no OSV/KEV lookup completed, so the zero
+		// CVE/KEV counts mean "unknown", not "clean".
+		VulnDataAvailable:       false,
+		HasChecksumVerification: true,
 	})
 
 	if result.Grade != GradeF {
@@ -165,8 +183,10 @@ func TestScorePackageFailsClosedOnUnenriched(t *testing.T) {
 }
 
 // TestScorePackageEnrichedStillGrades confirms the floor does not over-fire: a
-// package with real publication timestamps and provenance still scores on the
-// normal scale (grade A here).
+// package with real publication timestamps, completed vulnerability enrichment
+// (VulnDataAvailable true), and provenance still scores on the normal scale
+// (grade A here). This is the regression guard that a legitimately clean package
+// keeps its high grade.
 func TestScorePackageEnrichedStillGrades(t *testing.T) {
 	t.Parallel()
 
@@ -179,6 +199,7 @@ func TestScorePackageEnrichedStillGrades(t *testing.T) {
 		Ecosystem:               EcosystemNpm,
 		FirstPublishedAt:        &twoYearsAgo,
 		PublishedAt:             &sixMonthsAgo,
+		VulnDataAvailable:       true,
 		HasChecksumVerification: true,
 	})
 
@@ -200,6 +221,7 @@ func TestScoreAll(t *testing.T) {
 			Ecosystem:               EcosystemNpm,
 			FirstPublishedAt:        &twoYearsAgo,
 			PublishedAt:             &sixMonthsAgo,
+			VulnDataAvailable:       true,
 			HasChecksumVerification: true,
 			IsDirect:                true,
 		},
@@ -216,6 +238,7 @@ func TestScoreAll(t *testing.T) {
 			Ecosystem:               EcosystemNpm,
 			FirstPublishedAt:        &twoYearsAgo,
 			PublishedAt:             &sixMonthsAgo,
+			VulnDataAvailable:       true,
 			HasChecksumVerification: true,
 			IsDirect:                true,
 		},

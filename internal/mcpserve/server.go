@@ -3,7 +3,6 @@ package mcpserve
 import (
 	"context"
 
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
@@ -113,15 +112,6 @@ func (s *Server) MountTools(regs []spi.ToolRegistration) {
 	for _, t := range regs {
 		s.mountTool(t)
 	}
-}
-
-// NotifyToolsListChanged broadcasts a notifications/tools/list_changed message to
-// every connected client, signaling that the tool catalog changed at runtime
-// (e.g. after dynamic re-pruning). The server already advertises listChanged via
-// WithToolCapabilities(true). This is the notification hook the ToolPruner drives
-// through the projectctx.ListChangedNotifier seam.
-func (s *Server) NotifyToolsListChanged() {
-	s.mcp.SendNotificationToAllClients(mcp.MethodNotificationToolsListChanged, nil)
 }
 
 // mountAdapters mounts the contributions of every applicable adapter in the

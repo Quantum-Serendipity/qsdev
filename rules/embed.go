@@ -22,10 +22,6 @@ import (
 //go:embed core
 var coreFS embed.FS
 
-// FS returns the raw embedded filesystem rooted at this package's directory.
-// The rule tree is available under the "core" prefix.
-func FS() embed.FS { return coreFS }
-
 // RuleFile is a single deliverable OpenGrep rule file: its path relative to the
 // core/ directory (POSIX-slash separated) together with its raw YAML content.
 type RuleFile struct {

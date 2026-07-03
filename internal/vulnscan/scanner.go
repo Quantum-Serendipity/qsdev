@@ -258,15 +258,12 @@ func (s *Scanner) QueryBatch(ctx context.Context, pkgs []Package) ([][]string, e
 	return out, nil
 }
 
-// osvVuln models the subset of an OSV /v1/vulns/{id} record we surface.
+// osvVuln models the subset of an OSV /v1/vulns/{id} record we surface. The
+// severity we use comes from database_specific.severity; the top-level "details"
+// text and CVSS "severity" array are intentionally not modeled (unused).
 type osvVuln struct {
 	ID       string `json:"id"`
 	Summary  string `json:"summary"`
-	Details  string `json:"details"`
-	Severity []struct {
-		Type  string `json:"type"`
-		Score string `json:"score"`
-	} `json:"severity"`
 	Affected []struct {
 		Ranges []struct {
 			Events []struct {

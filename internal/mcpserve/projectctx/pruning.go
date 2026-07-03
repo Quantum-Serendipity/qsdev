@@ -31,13 +31,6 @@ type ToolPruner struct{}
 // NewToolPruner constructs a ToolPruner.
 func NewToolPruner() *ToolPruner { return &ToolPruner{} }
 
-// ListChangedNotifier is the seam through which the pruner asks the server to
-// broadcast a tools/list_changed notification when it changes the catalog. The
-// mcpserve.Server satisfies it via NotifyToolsListChanged; tests supply a fake.
-type ListChangedNotifier interface {
-	NotifyToolsListChanged()
-}
-
 // Prune returns a subset of tools that fits within ceiling. A ceiling of zero or
 // negative, or a catalog already within the ceiling, returns a copy unchanged.
 //

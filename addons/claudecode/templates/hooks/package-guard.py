@@ -767,19 +767,21 @@ def _classified_exe(exe: str) -> bool:
     )
 
 
-def _embedded_install_index(argv: list[str]) -> Optional[int]:
-    """Index of the first token past argv[0] that begins a genuine install
-    invocation: the token must itself BE an INSTALL_COMMANDS manager and be
-    immediately followed by one of ITS install verbs. Purely catalog-driven —
-    no wrapper names are consulted, so wrappers unknown to COMMAND_PREFIXES
-    (setpriv, nsenter, systemd-run, ...) are covered by construction. shlex has
-    already collapsed quoted text into single tokens, so `grep -rn "npm
-    install" .` carries no bare `npm` token and can never match. Returns None
-    when argv embeds no install."""
+def _embedded_install(argv: list[str]) -> Optional[tuple[str, str, list[str]]]:
+    """Parse of the first genuine install invocation embedded past argv[0]: the
+    token must itself BE an INSTALL_COMMANDS manager whose tail parse_install_argv
+    classifies as an install — one classifier for the primary path and this
+    fallback, so the two can never disagree. Purely catalog-driven — no wrapper
+    names are consulted, so wrappers unknown to COMMAND_PREFIXES (setpriv,
+    nsenter, systemd-run, ...) are covered by construction. shlex has already
+    collapsed quoted text into single tokens, so `grep -rn "npm install" .`
+    carries no bare `npm` token and can never match. Returns None when argv
+    embeds no install."""
     for k in range(1, len(argv)):
-        for verb_tokens, _ecosystem, _manager in INSTALL_COMMANDS.get(argv[k], []):
-            if _match_verb(argv[k + 1:], verb_tokens) is not None:
-                return k
+        if argv[k] in INSTALL_COMMANDS:
+            parsed = parse_install_argv(argv[k:])
+            if parsed is not None:
+                return parsed
     return None
 
 
@@ -879,29 +881,23 @@ def detect_install_commands(command: str, _depth: int = 0) -> list[tuple[str, st
             argv = _strip_priv_runner(argv)
             if not argv:
                 continue
+            exe = os.path.basename(argv[0])
 
         parsed = parse_install_argv(argv)
-        if parsed is None and _depth == 0 and not _classified_exe(os.path.basename(argv[0])):
+        if parsed is None and _depth == 0 and not _classified_exe(exe):
             # Catalog-driven wrapper fallback. argv[0] failed every
             # classification above, so this segment was about to be dropped —
             # exactly how an exec-style wrapper missing from COMMAND_PREFIXES
             # (setpriv, nsenter, systemd-run, ...) used to smuggle an install
-            # through fail-open. If a catalog manager token immediately
-            # followed by one of its install verbs appears later in argv,
+            # through fail-open. If a catalog manager token whose tail
+            # classifies as one of its install verbs appears later in argv,
             # re-classify from that token so the real package specifiers are
-            # extracted and validated. A scan hit that then fails to re-parse
-            # is never dropped: it emits the suspicious marker to fail closed.
-            # Top level only: inside recursed -c/eval/substitution scripts a
-            # manager-verb pair is routinely inert data (`bash -c "echo pip
-            # install docs"` is pinned as must-allow by the false-positive
-            # suite), while the explicit classifications above still run at
-            # every depth.
-            k = _embedded_install_index(argv)
-            if k is not None:
-                parsed = parse_install_argv(argv[k:])
-                if parsed is None:
-                    results.append(_suspicious_detection(segment))
-                    continue
+            # extracted and validated. Top level only: inside recursed
+            # -c/eval/substitution scripts a manager-verb pair is routinely
+            # inert data (`bash -c "echo pip install docs"` is pinned as
+            # must-allow by the false-positive suite), while the explicit
+            # classifications above still run at every depth.
+            parsed = _embedded_install(argv)
         if parsed is not None:
             ecosystem, manager, packages = parsed
             results.append((ecosystem, manager, segment, packages))

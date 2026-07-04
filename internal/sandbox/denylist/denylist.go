@@ -66,6 +66,28 @@ func AllDenyPaths() []string {
 	return paths
 }
 
+// CandidatePaths returns the deny-comparison candidates for path: the cleaned
+// literal path plus its symlink-resolved form when that differs, so a symlink
+// to (or toward) a sensitive location is caught. Both mount validators build
+// their candidates here, so they can never disagree on which paths were
+// examined.
+func CandidatePaths(path string) []string {
+	candidates := []string{filepath.Clean(path)}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		if r := filepath.Clean(resolved); r != candidates[0] {
+			candidates = append(candidates, r)
+		}
+	}
+	return candidates
+}
+
+// Overlaps reports whether path equals deny or is a descendant of it. It is
+// the complement of IsStrictAncestor: together they cover every way a mount
+// path can conflict with a deny entry.
+func Overlaps(path, deny string) bool {
+	return path == deny || strings.HasPrefix(path, deny+"/")
+}
+
 // IsStrictAncestor reports whether ancestor is a proper parent directory of
 // descendant (not equal to it). The filesystem root "/" is an ancestor of every
 // absolute path. Both mount validators use it to reject binding an ancestor of

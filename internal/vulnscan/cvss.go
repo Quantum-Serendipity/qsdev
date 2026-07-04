@@ -80,10 +80,12 @@ func baseScore(c interface{ BaseScore() float64 }, err error) (float64, bool) {
 // NormalizeSeverity recognizes. The thresholds come from the library's own
 // qualitative rating (>= 9.0 CRITICAL, >= 7.0 HIGH, >= 4.0 MEDIUM, >= 0.1 LOW;
 // identical for v3.1 and v4.0, and applied to v2 scores for want of an official
-// v2 scale) rather than a hand-mirrored table. Two labels are deliberately
-// remapped: MEDIUM folds into this codebase's "moderate" vocabulary, and a
-// 0.0/NONE score — a determined "no impact" result — maps to "info", visible
-// but not overstated, rather than a real "low" finding.
+// v2 scale) rather than a hand-mirrored table. The label is otherwise left in
+// the library's vocabulary — folding "medium" into this codebase's "moderate"
+// is NormalizeSeverity's job, done once for every severity source. The one
+// remap here is semantic, not vocabulary: a 0.0/NONE score — a determined
+// "no impact" result — maps to "info", visible but not overstated, rather than
+// falling through NormalizeSeverity's unrecognized-label branch by accident.
 func bucketCVSSScore(score float64) string {
 	rating, err := gocvss31.Rating(score)
 	if err != nil {
@@ -91,12 +93,8 @@ func bucketCVSSScore(score float64) string {
 		// fail-closed by resolving to "" -> "unknown" rather than guessing.
 		return ""
 	}
-	switch rating {
-	case "NONE":
+	if rating == "NONE" {
 		return "info"
-	case "MEDIUM":
-		return "moderate"
-	default:
-		return strings.ToLower(rating)
 	}
+	return strings.ToLower(rating)
 }

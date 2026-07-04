@@ -191,7 +191,7 @@ func handshake(t transport) (status, errMsg string, toolCount int) {
 }
 
 func checkHTTPServer(ctx context.Context, cfg ServerConfig, h *ServerHealth, start time.Time) *ServerHealth {
-	status, errMsg, toolCount := handshake(&httpTransport{ctx: ctx, client: http.DefaultClient, url: cfg.URL})
+	status, errMsg, toolCount := handshake(&httpTransport{ctx: ctx, url: cfg.URL})
 
 	h.Status = status
 	h.Error = errMsg
@@ -204,9 +204,8 @@ func checkHTTPServer(ctx context.Context, cfg ServerConfig, h *ServerHealth, sta
 // JSON-RPC request and validates the reply, so the shared handshake behaves the
 // same as it does over stdio.
 type httpTransport struct {
-	ctx    context.Context
-	client *http.Client
-	url    string
+	ctx context.Context
+	url string
 }
 
 // SendRequest POSTs a real MCP JSON-RPC request rather than a bare GET. A bare
@@ -228,7 +227,7 @@ func (t *httpTransport) SendRequest(id int, method string, params json.RawMessag
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 
-	resp, err := t.client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("connecting: %w", err)
 	}

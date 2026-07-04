@@ -3,6 +3,7 @@ package rules
 import (
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
@@ -269,7 +270,7 @@ func copyArgDanger(cwd string) func(cmdscan.Command) bool {
 		case "mv":
 			return anyProtected(paths) // a move removes the protected source
 		case "rsync":
-			if hasFlag(c.Args, "--remove-source-files") {
+			if slices.Contains(c.Args, "--remove-source-files") {
 				return anyProtected(paths) // source-removing rsync behaves like mv
 			}
 			return copyClobberOrExfil(paths, cwd)
@@ -295,18 +296,6 @@ func copyClobberOrExfil(paths []string, cwd string) bool {
 		return true // clobbering a protected destination
 	}
 	return !isInsideRepo(dest, cwd) && anyProtected(srcs) // exfil
-}
-
-// hasFlag reports whether args contains the exact long option flag (e.g.
-// --remove-source-files). Long options take no value here, so an exact match is
-// sufficient.
-func hasFlag(args []string, flag string) bool {
-	for _, a := range args {
-		if a == flag {
-			return true
-		}
-	}
-	return false
 }
 
 // redirectDanger reports whether a single command's write redirect either

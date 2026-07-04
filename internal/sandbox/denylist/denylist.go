@@ -6,6 +6,7 @@ package denylist
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // SystemDenyPaths returns absolute paths that must never be bind-mounted into
@@ -63,4 +64,19 @@ func AllDenyPaths() []string {
 	paths := SystemDenyPaths()
 	paths = append(paths, HomeDenyPaths()...)
 	return paths
+}
+
+// IsStrictAncestor reports whether ancestor is a proper parent directory of
+// descendant (not equal to it). The filesystem root "/" is an ancestor of every
+// absolute path. Both mount validators use it to reject binding an ancestor of
+// a deny path (e.g. $HOME, which contains ~/.ssh), which would re-expose the
+// sensitive descendant inside the sandbox.
+func IsStrictAncestor(ancestor, descendant string) bool {
+	if ancestor == descendant {
+		return false
+	}
+	if ancestor == "/" {
+		return true
+	}
+	return strings.HasPrefix(descendant, ancestor+"/")
 }

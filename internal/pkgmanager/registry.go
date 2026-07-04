@@ -265,10 +265,8 @@ func ResolvePackageName(toolName, family, manager string) (string, bool) {
 	// A tool may have no installable package for a given manager (e.g. pre-commit
 	// or npm on winget). Report no package rather than falling back to a generic
 	// name that would form a broken install command.
-	if manager != "" && entry.Packages.Unavailable != nil {
-		if _, unavailable := entry.Packages.Unavailable[manager]; unavailable {
-			return "", false
-		}
+	if _, unavailable := PackageUnavailable(toolName, manager); unavailable {
+		return "", false
 	}
 	// Prefer manager-specific name.
 	if manager != "" && entry.Packages.ByManager != nil {

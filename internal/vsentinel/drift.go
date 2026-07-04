@@ -16,35 +16,32 @@ import (
 
 // lockfilePair is a single manifest/lockfile relationship to check for one
 // ecosystem. It is derived from the ecosystem catalog (see driftPairs), never
-// hardcoded, so every catalog ecosystem is covered automatically.
+// hardcoded, so every catalog ecosystem is covered automatically. The embedded
+// specificChecker is the zero value for generic (unparsed) ecosystems.
 type lockfilePair struct {
 	manifest string // manifest file to look for under root; may be a glob (e.g. "*.csproj")
 	eco      string
-	// lockfile is the PRIMARY lockfile this ecosystem's checker can diff against
-	// the manifest. Other catalog-valid lockfiles (e.g. pnpm/yarn/bun for JS)
-	// still count as "pinned" but are not version-diffed. It is empty for a
-	// generic (unparsed) ecosystem, which has no diffable lockfile format.
-	lockfile string
-	// checker version-diffs manifest vs lockfile. It is nil for generic
-	// ecosystems, which fall back to presence-based, fail-closed detection.
-	checker func(manifestPath, lockfilePath string) ([]DriftEntry, error)
-	// declaredCount returns how many dependencies the manifest declares, used to
-	// distinguish a dependency-free manifest (legitimately unlocked) from an
-	// unpinned one. It is nil for generic ecosystems: they cannot parse deps, so
-	// a present manifest with no lockfile always fails closed.
-	declaredCount func(manifestPath string) (int, error)
+	specificChecker
 }
 
 // specificChecker binds an ecosystem that has a dedicated manifest/lockfile
-// parser to its precise drift checker. Ecosystems absent from this map fall
-// back to the generic, presence-based checker (fail closed on a missing
-// lockfile). This map lives here — not in the catalog — because it wires
-// ecosystems to parser functions defined in this package; it is not a
-// hardcoded coverage list. Coverage itself is derived from the catalog.
+// parser to its precise drift checker. Ecosystems absent from specificCheckers
+// get the zero value: no diffable primary lockfile, and nil funcs that select
+// the generic, presence-based checks (fail closed on a missing lockfile). The
+// map lives here — not in the catalog — because it wires ecosystems to parser
+// functions defined in this package; it is not a hardcoded coverage list.
+// Coverage itself is derived from the catalog.
 type specificChecker struct {
 	// primaryLock is the one lockfile format this checker can version-diff.
-	primaryLock   string
-	checker       func(manifestPath, lockfilePath string) ([]DriftEntry, error)
+	// Other catalog-valid lockfiles (e.g. pnpm/yarn/bun for JS) still count as
+	// "pinned" but are not version-diffed.
+	primaryLock string
+	// checker version-diffs manifest vs lockfile.
+	checker func(manifestPath, lockfilePath string) ([]DriftEntry, error)
+	// declaredCount returns how many dependencies the manifest declares, used to
+	// distinguish a dependency-free manifest (legitimately unlocked) from an
+	// unpinned one. Generic ecosystems cannot parse deps, so a present manifest
+	// with no lockfile always fails closed.
 	declaredCount func(manifestPath string) (int, error)
 }
 
@@ -73,15 +70,12 @@ func driftPairs() []lockfilePair {
 
 	var pairs []lockfilePair
 	for _, eco := range ecos {
-		sc, parsed := specificCheckers[eco]
 		for _, manifest := range ecosystem.ManifestsByEcosystem[eco] {
-			p := lockfilePair{manifest: manifest, eco: eco}
-			if parsed {
-				p.lockfile = sc.primaryLock
-				p.checker = sc.checker
-				p.declaredCount = sc.declaredCount
-			}
-			pairs = append(pairs, p)
+			pairs = append(pairs, lockfilePair{
+				manifest:        manifest,
+				eco:             eco,
+				specificChecker: specificCheckers[eco],
+			})
 		}
 	}
 	return pairs
@@ -138,18 +132,11 @@ func DetectDrift(root string) (*DriftReport, error) {
 		}
 
 		// A lockfile is present. Generic ecosystems have no parser, so the best we
-		// can verify is that a valid lockfile exists — report it pinned (0 drift).
-		if pair.checker == nil {
-			report.Manifests = append(report.Manifests, DriftManifestStatus{
-				Path: manifestPath, Ecosystem: pair.eco, DriftCount: 0,
-			})
-			continue
-		}
-
-		// A non-primary but valid lockfile (pnpm/yarn/bun) still pins the deps,
-		// but this ecosystem's checker can only version-diff the primary format.
-		// Report it present-and-pinned (0 drift) rather than misreading it.
-		if presentLock != filepath.Join(root, pair.lockfile) {
+		// can verify is that a valid lockfile exists; likewise a non-primary but
+		// valid lockfile (pnpm/yarn/bun) pins the deps but cannot be version-diffed
+		// by this ecosystem's checker. Either way, report present-and-pinned
+		// (0 drift) rather than misreading it.
+		if pair.checker == nil || presentLock != filepath.Join(root, pair.primaryLock) {
 			report.Manifests = append(report.Manifests, DriftManifestStatus{
 				Path: manifestPath, Ecosystem: pair.eco, DriftCount: 0,
 			})
@@ -200,11 +187,11 @@ func manifestPresent(root, manifest string) (string, bool) {
 // not a pinned one, so it must not satisfy its own lockfile requirement.
 func firstPresentLockfile(root string, pair lockfilePair) string {
 	var candidates []string
-	if pair.lockfile != "" {
-		candidates = append(candidates, pair.lockfile)
+	if pair.primaryLock != "" {
+		candidates = append(candidates, pair.primaryLock)
 	}
 	for _, lf := range ecosystem.LockFilesByEcosystem[pair.eco] {
-		if lf != pair.lockfile && lf != pair.manifest {
+		if lf != pair.primaryLock && lf != pair.manifest {
 			candidates = append(candidates, lf)
 		}
 	}

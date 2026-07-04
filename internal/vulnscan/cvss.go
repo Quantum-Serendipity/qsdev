@@ -57,44 +57,46 @@ func cvssBaseScore(typ, vector string) (float64, bool) {
 		return c.Score(), true
 	case "CVSS_V3":
 		if strings.HasPrefix(vector, "CVSS:3.0") {
-			c, err := gocvss30.ParseVector(vector)
-			if err != nil {
-				return 0, false
-			}
-			return c.BaseScore(), true
+			return baseScore(gocvss30.ParseVector(vector))
 		}
-		c, err := gocvss31.ParseVector(vector)
-		if err != nil {
-			return 0, false
-		}
-		return c.BaseScore(), true
+		return baseScore(gocvss31.ParseVector(vector))
 	case "CVSS_V2":
-		c, err := gocvss20.ParseVector(vector)
-		if err != nil {
-			return 0, false
-		}
-		return c.BaseScore(), true
+		return baseScore(gocvss20.ParseVector(vector))
 	default:
 		return 0, false
 	}
 }
 
+// baseScore adapts a go-cvss ParseVector result (v2/v3.x expose BaseScore) to
+// the (score, ok) shape cvssBaseScore returns.
+func baseScore(c interface{ BaseScore() float64 }, err error) (float64, bool) {
+	if err != nil {
+		return 0, false
+	}
+	return c.BaseScore(), true
+}
+
 // bucketCVSSScore maps a CVSS base score onto a lowercase severity label that
-// NormalizeSeverity recognizes, mirroring the go-cvss qualitative thresholds
-// (>= 9.0 critical, >= 7.0 high, >= 4.0 moderate, >= 0.1 low). A 0.0/NONE score
-// is a determined "no impact" result, so it maps to "info" — visible but not
-// overstated — rather than a real "low" finding.
+// NormalizeSeverity recognizes. The thresholds come from the library's own
+// qualitative rating (>= 9.0 CRITICAL, >= 7.0 HIGH, >= 4.0 MEDIUM, >= 0.1 LOW;
+// identical for v3.1 and v4.0, and applied to v2 scores for want of an official
+// v2 scale) rather than a hand-mirrored table. Two labels are deliberately
+// remapped: MEDIUM folds into this codebase's "moderate" vocabulary, and a
+// 0.0/NONE score — a determined "no impact" result — maps to "info", visible
+// but not overstated, rather than a real "low" finding.
 func bucketCVSSScore(score float64) string {
-	switch {
-	case score >= 9.0:
-		return "critical"
-	case score >= 7.0:
-		return "high"
-	case score >= 4.0:
-		return "moderate"
-	case score >= 0.1:
-		return "low"
-	default:
+	rating, err := gocvss31.Rating(score)
+	if err != nil {
+		// Unreachable for a parsed vector (scores are always 0.0-10.0); stay
+		// fail-closed by resolving to "" -> "unknown" rather than guessing.
+		return ""
+	}
+	switch rating {
+	case "NONE":
 		return "info"
+	case "MEDIUM":
+		return "moderate"
+	default:
+		return strings.ToLower(rating)
 	}
 }

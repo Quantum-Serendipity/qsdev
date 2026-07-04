@@ -130,10 +130,19 @@ func InstallScriptURL() string {
 // is suitable for cosign's --certificate-identity-regexp flag and can be reused
 // by any cosign-based verification policy in this project.
 func WorkflowIdentity() (issuer, subjectRegExp string) {
-	cfg := Get()
-	repo := regexp.QuoteMeta(cfg.GitHubOwner + "/" + cfg.GitHubRepo)
-	subjectRegExp = `^https://github\.com/` + repo + `/\.github/workflows/.+$`
+	subjectRegExp = "^" + regexp.QuoteMeta(workflowSubjectPrefix()) + ".+$"
 	return githubActionsOIDCIssuer, subjectRegExp
+}
+
+// workflowSubjectPrefix returns the Sigstore signing-subject prefix shared by
+// every workflow in this project's repository:
+//
+//	https://github.com/<owner>/<repo>/.github/workflows/
+//
+// Both WorkflowIdentity (regexp) and ReleaseWorkflowIdentity (exact) derive
+// from it, so the two identity forms cannot silently diverge.
+func workflowSubjectPrefix() string {
+	return RepoURL() + "/.github/workflows/"
 }
 
 // ReleaseWorkflowIdentity returns the Sigstore certificate-identity parameters
@@ -152,8 +161,6 @@ func WorkflowIdentity() (issuer, subjectRegExp string) {
 // GitHub Actions OIDC token issuer. Owner/repo derive from branding so
 // forks/rebrands verify against their own release workflow.
 func ReleaseWorkflowIdentity(tag string) (issuer, identity string) {
-	cfg := Get()
-	identity = "https://github.com/" + cfg.GitHubOwner + "/" + cfg.GitHubRepo +
-		"/.github/workflows/" + ReleaseWorkflow + "@refs/tags/" + tag
+	identity = workflowSubjectPrefix() + ReleaseWorkflow + "@refs/tags/" + tag
 	return githubActionsOIDCIssuer, identity
 }

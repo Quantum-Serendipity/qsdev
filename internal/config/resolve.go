@@ -258,18 +258,14 @@ func enforceSecurityFloor(resolved, project *types.QsdevConfig) []FloorViolation
 	return violations
 }
 
-// strongerBoolFloor combines two security-bool floors and returns the stronger
-// (fail-closed) of the two. A floor of true (must be enabled) dominates: if
-// either the project's declared floor or the compliance-mandated floor is true,
-// the effective floor is true. Otherwise it is nil, meaning no floor is
-// enforced. This is used to stack the compliance-level requirement on top of
-// the project's own bool floor without weakening either.
-func strongerBoolFloor(a, b *bool) *bool {
-	if (a != nil && *a) || (b != nil && *b) {
-		t := true
-		return &t
-	}
-	return nil
+// strongerBoolFloor combines two security-bool floors and reports whether a
+// floor is in effect (fail-closed). A floor of true (must be enabled)
+// dominates: if either the project's declared floor or the compliance-mandated
+// floor is true, the effective floor is true. This is used to stack the
+// compliance-level requirement on top of the project's own bool floor without
+// weakening either.
+func strongerBoolFloor(a, b *bool) bool {
+	return (a != nil && *a) || (b != nil && *b)
 }
 
 // enforceBoolFloor ensures a resolved *bool cannot be weaker than the floor.
@@ -277,8 +273,8 @@ func strongerBoolFloor(a, b *bool) *bool {
 // below that floor (explicitly false, or unset/nil which downstream treats as
 // disabled) is both recorded as a FloorViolation and enforced back up to true —
 // a compliance- or project-mandated control must never be locally disabled.
-func enforceBoolFloor(resolved **bool, floor *bool, field string) []FloorViolation {
-	if floor == nil || !*floor {
+func enforceBoolFloor(resolved **bool, floor bool, field string) []FloorViolation {
+	if !floor {
 		return nil
 	}
 

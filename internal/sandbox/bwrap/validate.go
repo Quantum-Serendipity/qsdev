@@ -16,7 +16,9 @@ func ValidateMountPath(path string) error {
 		return fmt.Errorf("mount path must be absolute: %q", path)
 	}
 
-	if deny, ok := matchedDenyPath(path); ok {
+	candidates := candidatePaths(path)
+
+	if deny, ok := matchedDenyPath(candidates); ok {
 		return fmt.Errorf("mount path %q is denied: overlaps sensitive path %q", path, deny)
 	}
 
@@ -24,7 +26,7 @@ func ValidateMountPath(path string) error {
 	// (e.g. $HOME, which contains ~/.ssh, or /etc, which contains /etc/shadow)
 	// would re-expose the sensitive descendant inside the sandbox, defeating the
 	// deny list. Descendants and exact matches are handled by matchedDenyPath.
-	if deny, ok := ancestorOfDenyPath(path); ok {
+	if deny, ok := ancestorOfDenyPath(candidates); ok {
 		return fmt.Errorf("mount path %q is denied: would re-expose sensitive path %q", path, deny)
 	}
 
@@ -34,23 +36,30 @@ func ValidateMountPath(path string) error {
 // IsDenyPath reports whether path (or its symlink-resolved form) overlaps a
 // sensitive deny-list entry that must never be bind-mounted into a sandbox.
 func IsDenyPath(path string) bool {
-	_, ok := matchedDenyPath(path)
+	_, ok := matchedDenyPath(candidatePaths(path))
 	return ok
 }
 
-// matchedDenyPath returns the deny-list entry that path overlaps, if any. It
-// checks both the cleaned literal path and its symlink-resolved form so that a
-// symlink to a sensitive location is caught.
-func matchedDenyPath(path string) (string, bool) {
+// candidatePaths returns the deny-comparison candidates for path: the cleaned
+// literal path plus its symlink-resolved form when that differs, so a symlink
+// to (or toward) a sensitive location is caught. Both deny checks consume one
+// shared resolution, so they can never disagree on which paths were examined.
+func candidatePaths(path string) []string {
 	candidates := []string{filepath.Clean(path)}
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		if r := filepath.Clean(resolved); r != candidates[0] {
 			candidates = append(candidates, r)
 		}
 	}
+	return candidates
+}
 
+// matchedDenyPath returns the deny-list entry that any candidate equals or
+// descends from, if any.
+func matchedDenyPath(candidates []string) (string, bool) {
+	denyPaths := denylist.AllDenyPaths()
 	for _, clean := range candidates {
-		for _, deny := range denylist.AllDenyPaths() {
+		for _, deny := range denyPaths {
 			if clean == deny || strings.HasPrefix(clean, deny+"/") {
 				return deny, true
 			}
@@ -60,37 +69,17 @@ func matchedDenyPath(path string) (string, bool) {
 	return "", false
 }
 
-// ancestorOfDenyPath returns the deny-list entry that path is a strict ancestor
-// of, if any. It checks both the cleaned literal path and its symlink-resolved
-// form so that a symlink to an ancestor of a sensitive location is caught.
-func ancestorOfDenyPath(path string) (string, bool) {
-	candidates := []string{filepath.Clean(path)}
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		if r := filepath.Clean(resolved); r != candidates[0] {
-			candidates = append(candidates, r)
-		}
-	}
-
+// ancestorOfDenyPath returns the deny-list entry that any candidate is a strict
+// ancestor of, if any.
+func ancestorOfDenyPath(candidates []string) (string, bool) {
+	denyPaths := denylist.AllDenyPaths()
 	for _, clean := range candidates {
-		for _, deny := range denylist.AllDenyPaths() {
-			if isStrictAncestor(clean, deny) {
+		for _, deny := range denyPaths {
+			if denylist.IsStrictAncestor(clean, deny) {
 				return deny, true
 			}
 		}
 	}
 
 	return "", false
-}
-
-// isStrictAncestor reports whether ancestor is a proper parent directory of
-// descendant (not equal to it). The filesystem root "/" is an ancestor of every
-// absolute path.
-func isStrictAncestor(ancestor, descendant string) bool {
-	if ancestor == descendant {
-		return false
-	}
-	if ancestor == "/" {
-		return true
-	}
-	return strings.HasPrefix(descendant, ancestor+"/")
 }

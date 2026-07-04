@@ -126,6 +126,18 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 		// 8. deep nesting under the raised cap is still caught for real.
 		{"five-deep nesting caught", deepNestCaught, true, []string{"evil"}},
 
+		// Catalog-driven wrapper fallback: exec-style wrappers NOT in
+		// COMMAND_PREFIXES used to hide the install behind an unknown argv[0]
+		// and fail open. The fallback scans argv for a catalog manager token
+		// immediately followed by its install verb and re-classifies from that
+		// token, so the real package specifiers are still extracted.
+		{"setpriv wrapped install", `setpriv --reuid 1000 npm install evil`, true, []string{"evil"}},
+		{"nsenter wrapped install", `nsenter -t 1 npm install evil`, true, []string{"evil"}},
+		{"systemd-run wrapped install", `systemd-run npm install evil`, true, []string{"evil"}},
+		// The fallback must NOT fire on an install VERB alone: `install` is not
+		// a catalog manager token, so an unknown argv[0] stays unflagged.
+		{"unknown command bare install verb", `frobnicate install foo`, false, nil},
+
 		// Fail-closed cases: exceeding the recursion cap, or an unparseable
 		// segment, must be DETECTED (surfaced for validation) — never dropped.
 		{"eight-deep nesting fails closed", deepNestFailClosed, true, nil},

@@ -58,8 +58,8 @@ func (s *Server) toolHandler(reg spi.ToolRegistration) server.ToolHandlerFunc {
 		cc := s.callContext(ctx, reg.Name, meta)
 		// Populate the tool's taxonomy metadata at construction time (before the
 		// chain runs) so per-category middleware (rate-limiting, guardrail) can
-		// read it. This is the only place the registration's Category/Tier are in
-		// scope; resource/prompt paths legitimately have neither.
+		// read it. The resource/prompt handlers do the same with their
+		// registrations' Category; only tools additionally carry a Tier.
 		cc.Category = reg.Category
 		cc.Tier = reg.Tier
 

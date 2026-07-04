@@ -219,11 +219,6 @@ _WRAPPER_VALUE_FLAGS: set[str] = {
 # behind an argv[0] of `install`.
 _TIMEOUT_VALUE_FLAGS: set[str] = {"-k", "--kill-after", "-s", "--signal"}
 
-# Per-wrapper value-flag overrides. Wrappers not listed here use the shared set.
-_WRAPPER_VALUE_FLAGS_BY_CMD: dict[str, set[str]] = {
-    "timeout": _TIMEOUT_VALUE_FLAGS,
-}
-
 # Wrappers that take a mandatory positional argument before the command they run
 # (e.g. `timeout 10 npm install`): the leading numeric token must be skipped so
 # argv[0] resolves to the real executable rather than the duration.
@@ -491,6 +486,20 @@ def _split_segments(command: str) -> list[str]:
     return [s for s in _SEGMENT_SPLIT_RE.split(command) if s.strip()]
 
 
+def _skip_option_flags(tokens: list[str], i: int, value_flags: set[str]) -> int:
+    """Advance past the option flags starting at tokens[i]: every token that
+    begins with "-" is consumed, and a flag in `value_flags` that does not carry
+    its value inline via "=" additionally consumes the following token as its
+    value. Returns the index of the first token past the option block."""
+    n = len(tokens)
+    while i < n and tokens[i].startswith("-"):
+        flag = tokens[i]
+        i += 1
+        if "=" not in flag and flag in value_flags and i < n:
+            i += 1  # consume the flag's value too
+    return i
+
+
 def _strip_wrappers(tokens: list[str]) -> list[str]:
     """Return argv from already-tokenized `tokens` with leading environment
     assignments (VAR=val) and exec wrappers (sudo/env/strace/xargs/...) removed,
@@ -509,14 +518,9 @@ def _strip_wrappers(tokens: list[str]) -> list[str]:
         if tok in COMMAND_PREFIXES:
             # Consult this specific wrapper's value-flag grammar; timeout's value
             # flags apply only to timeout, never to sudo/env/etc.
-            value_flags = _WRAPPER_VALUE_FLAGS_BY_CMD.get(tok, _WRAPPER_VALUE_FLAGS)
-            i += 1
+            value_flags = _TIMEOUT_VALUE_FLAGS if tok == "timeout" else _WRAPPER_VALUE_FLAGS
             # Skip this wrapper's option flags (and their values).
-            while i < n and tokens[i].startswith("-"):
-                flag = tokens[i]
-                i += 1
-                if "=" not in flag and flag in value_flags and i < n:
-                    i += 1  # consume the flag's value too
+            i = _skip_option_flags(tokens, i + 1, value_flags)
             # Wrappers that take a leading positional before the command:
             # `timeout 10 npm …` (numeric duration), `flock /tmp/l npm …`
             # (lock file/fd), `taskset 0x1 npm …`, `chrt 50 npm …`.
@@ -541,6 +545,11 @@ def _extract_substitutions(text: str) -> tuple[list[str], str]:
     An unbalanced construct is treated as running to end-of-string (fail closed:
     the remainder is still scanned rather than dropped).
     """
+    # Fast path: this runs on EVERY hook invocation, and the overwhelmingly
+    # common command contains no substitution at all. Without any of the four
+    # markers the character scan below cannot extract anything, so skip it.
+    if "`" not in text and "$(" not in text and "<(" not in text and ">(" not in text:
+        return [], text
     scripts: list[str] = []
     out: list[str] = []
     i, n = 0, len(text)
@@ -638,7 +647,9 @@ def _c_runner_script(argv: list[str]) -> Optional[str]:
     if exe in _PRIV_C_RUNNERS:
         for i in range(1, len(argv)):
             tok = argv[i]
-            if tok in ("-c", "--command") or _SHELL_C_FLAG_RE.match(tok):
+            # A bare `-c` already matches _SHELL_C_FLAG_RE; only the long form
+            # `--command` needs listing separately.
+            if tok == "--command" or _SHELL_C_FLAG_RE.match(tok):
                 return argv[i + 1] if i + 1 < len(argv) else None
         return None
     return None
@@ -649,13 +660,7 @@ def _strip_priv_runner(argv: list[str]) -> list[str]:
     `runuser -u deploy npm install evil`): drop the launcher and its option flags
     (consuming values for flags like -u/-g/-s) so the wrapped command surfaces as
     argv[0]. Returns [] when nothing remains."""
-    i, n = 1, len(argv)
-    while i < n and argv[i].startswith("-"):
-        flag = argv[i]
-        i += 1
-        if "=" not in flag and flag in _PRIV_VALUE_FLAGS and i < n:
-            i += 1
-    return argv[i:]
+    return argv[_skip_option_flags(argv, 1, _PRIV_VALUE_FLAGS):]
 
 
 def _suspicious_detection(segment: str) -> tuple[str, str, str, list[str]]:
@@ -748,6 +753,36 @@ def strip_version(specifier: str) -> str:
 # Command matching
 # ---------------------------------------------------------------------------
 
+def _classified_exe(exe: str) -> bool:
+    """True when `exe` is an executable the classifier already understands — a
+    catalog package manager, a nix special case, a shell, or a python
+    interpreter. The catalog wrapper fallback must not second-guess these: a
+    known manager with a non-install verb (`go build ./...`) really is not an
+    install, and shells/pythons have their own dedicated handling."""
+    return (
+        exe in INSTALL_COMMANDS
+        or exe in ("nix", "nix-env")
+        or exe in _SHELLS
+        or bool(_PYTHON_RE.match(exe))
+    )
+
+
+def _embedded_install_index(argv: list[str]) -> Optional[int]:
+    """Index of the first token past argv[0] that begins a genuine install
+    invocation: the token must itself BE an INSTALL_COMMANDS manager and be
+    immediately followed by one of ITS install verbs. Purely catalog-driven —
+    no wrapper names are consulted, so wrappers unknown to COMMAND_PREFIXES
+    (setpriv, nsenter, systemd-run, ...) are covered by construction. shlex has
+    already collapsed quoted text into single tokens, so `grep -rn "npm
+    install" .` carries no bare `npm` token and can never match. Returns None
+    when argv embeds no install."""
+    for k in range(1, len(argv)):
+        for verb_tokens, _ecosystem, _manager in INSTALL_COMMANDS.get(argv[k], []):
+            if _match_verb(argv[k + 1:], verb_tokens) is not None:
+                return k
+    return None
+
+
 def _recurse_script(
     script: str, depth: int, results: list[tuple[str, str, str, list[str]]]
 ) -> None:
@@ -789,6 +824,13 @@ def detect_install_commands(command: str, _depth: int = 0) -> list[tuple[str, st
     Recursion is bounded by _MAX_SHELL_RECURSION; exceeding it, or hitting an
     unparseable segment, FAILS CLOSED via a suspicious marker rather than dropping
     the script.
+
+    One catalog-driven fallback relaxes the argv[0] rule for TOP-LEVEL segments
+    only: when argv[0] matches nothing known, an INSTALL_COMMANDS manager token
+    immediately followed by one of its install verbs later in argv is
+    re-classified from that token, so exec wrappers absent from
+    COMMAND_PREFIXES (``setpriv npm install evil``) cannot fail open. Quoted
+    text is immune — shlex keeps it a single token.
     """
     results: list[tuple[str, str, str, list[str]]] = []
 
@@ -839,6 +881,27 @@ def detect_install_commands(command: str, _depth: int = 0) -> list[tuple[str, st
                 continue
 
         parsed = parse_install_argv(argv)
+        if parsed is None and _depth == 0 and not _classified_exe(os.path.basename(argv[0])):
+            # Catalog-driven wrapper fallback. argv[0] failed every
+            # classification above, so this segment was about to be dropped —
+            # exactly how an exec-style wrapper missing from COMMAND_PREFIXES
+            # (setpriv, nsenter, systemd-run, ...) used to smuggle an install
+            # through fail-open. If a catalog manager token immediately
+            # followed by one of its install verbs appears later in argv,
+            # re-classify from that token so the real package specifiers are
+            # extracted and validated. A scan hit that then fails to re-parse
+            # is never dropped: it emits the suspicious marker to fail closed.
+            # Top level only: inside recursed -c/eval/substitution scripts a
+            # manager-verb pair is routinely inert data (`bash -c "echo pip
+            # install docs"` is pinned as must-allow by the false-positive
+            # suite), while the explicit classifications above still run at
+            # every depth.
+            k = _embedded_install_index(argv)
+            if k is not None:
+                parsed = parse_install_argv(argv[k:])
+                if parsed is None:
+                    results.append(_suspicious_detection(segment))
+                    continue
         if parsed is not None:
             ecosystem, manager, packages = parsed
             results.append((ecosystem, manager, segment, packages))

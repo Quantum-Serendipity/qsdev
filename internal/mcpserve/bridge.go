@@ -58,8 +58,8 @@ func (s *Server) toolHandler(reg spi.ToolRegistration) server.ToolHandlerFunc {
 		cc := s.callContext(ctx, reg.Name, meta)
 		// Populate the tool's taxonomy metadata at construction time (before the
 		// chain runs) so per-category middleware (rate-limiting, guardrail) can
-		// read it. This is the only place the registration's Category/Tier are in
-		// scope; resource/prompt paths legitimately have neither.
+		// read it. The resource/prompt handlers do the same with their
+		// registrations' Category; only tools additionally carry a Tier.
 		cc.Category = reg.Category
 		cc.Tier = reg.Tier
 
@@ -157,9 +157,11 @@ func isTemplateURI(uri string) bool {
 // Adaptation: the neutral resource handler is invoked from a final
 // spi.ToolHandler whose returned *spi.ResourceResult is packed into
 // ToolResult.Structured so ContentSafety.RedactStructured walks and redacts the
-// nested content text. The read carries no Category, which leaves Guardrail
-// permissive-by-default while ContentSafety still redacts (its exemption applies
-// only to CategoryCredential). The concrete req.Params.URI is forwarded so a
+// nested content text. The read carries the registration's Category (empty for
+// an uncategorized resource, which leaves Guardrail permissive-by-default) so a
+// category-scoped policy can now cover resource reads; ContentSafety still
+// redacts (its exemption is keyed on the trusted credential-vend tool identity,
+// which no resource carries). The concrete req.Params.URI is forwarded so a
 // template handler resolves the actual requested URI. A handler error propagates
 // as a Go error; the chain's ErrorHandling layer converts it (except context
 // cancellation) into an IsError result with no Structured payload, which is
@@ -170,6 +172,11 @@ func (s *Server) resourceReadHandler(reg spi.ResourceRegistration) func(context.
 	handler := reg.Handler
 	return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 		cc := s.callContext(ctx, reg.URI, nil)
+		// Populate the resource's taxonomy category (before the chain runs) so
+		// per-category middleware (Guardrail denies, the per-category rate limiter)
+		// can scope this read, mirroring toolHandler. An empty category leaves the
+		// read uncategorized (permissive-by-default), matching prior behavior.
+		cc.Category = reg.Category
 		sreq := &spi.ResourceRequest{URI: req.Params.URI, Arguments: req.Params.Arguments}
 		final := func(ctx context.Context, cc *spi.ToolCallContext, _ *spi.ToolRequest) (*spi.ToolResult, error) {
 			rres, herr := handler(ctx, cc, sreq)
@@ -187,35 +194,39 @@ func (s *Server) resourceReadHandler(reg spi.ResourceRegistration) func(context.
 		// denial) or ErrorHandling converted a handler error into an IsError
 		// result: surface that as a protocol error so a denied or failed read is
 		// visible to the client instead of looking like an empty resource.
-		rres, ok := resourceResultFrom(out)
+		rres, ok := structuredResultFrom[*spi.ResourceResult](out)
 		if !ok {
-			return nil, fmt.Errorf("reading resource %s: %s", reg.URI, resourceErrorText(out))
+			return nil, fmt.Errorf("reading resource %s: %s", reg.URI, chainErrorText(out, "resource read failed"))
 		}
 		return resourceContentsToMCP(reg.URI, rres), nil
 	}
 }
 
-// resourceErrorText extracts a human-readable failure message from a chain
-// result that carried no ResourceResult (a denial or a converted handler error),
-// falling back to a generic message. The text has already passed through
-// ContentSafety redaction.
-func resourceErrorText(out *spi.ToolResult) string {
+// chainErrorText extracts a human-readable failure message from a chain result
+// that carried no typed payload (a denial or a converted handler error), falling
+// back to the given message. The text has already passed through ContentSafety
+// redaction.
+func chainErrorText(out *spi.ToolResult, fallback string) string {
 	if out != nil && out.Text != "" {
 		return out.Text
 	}
-	return "resource read failed"
+	return fallback
 }
 
-// resourceResultFrom recovers the (redacted) *spi.ResourceResult packed into a
-// chain result's Structured field. It reports false when the result is nil or
-// carries no ResourceResult, so the caller can degrade gracefully instead of
+// structuredResultFrom recovers the (redacted) typed payload of type T packed
+// into a chain result's Structured field. It reports false when the result is
+// nil or carries a different type, so callers degrade gracefully instead of
 // panicking on a failed type assertion.
-func resourceResultFrom(out *spi.ToolResult) (*spi.ResourceResult, bool) {
+func structuredResultFrom[T any](out *spi.ToolResult) (T, bool) {
+	var zero T
 	if out == nil {
-		return nil, false
+		return zero, false
 	}
-	rres, ok := out.Structured.(*spi.ResourceResult)
-	return rres, ok
+	v, ok := out.Structured.(T)
+	if !ok {
+		return zero, false
+	}
+	return v, true
 }
 
 // resourceContentsToMCP converts neutral resource contents into mcp-go contents,
@@ -250,12 +261,37 @@ func (s *Server) mountPrompt(reg spi.PromptRegistration) {
 	handler := reg.Handler
 	s.mcp.AddPrompt(prompt, func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 		cc := s.callContext(ctx, reg.Name, nil)
+		// Populate the prompt's taxonomy category (before the chain runs) so
+		// per-category middleware (Guardrail denies, the per-category rate limiter)
+		// can scope this render, mirroring toolHandler. An empty category leaves the
+		// render uncategorized (permissive-by-default), matching prior behavior.
+		cc.Category = reg.Category
 		sreq := &spi.PromptRequest{Name: req.Params.Name, Arguments: req.Params.Arguments}
-		res, err := handler(ctx, cc, sreq)
+		// Route the prompt render THROUGH the middleware chain — like tools
+		// (toolHandler) and resources (resourceReadHandler) — so its output
+		// receives the same ContentSafety redaction, Guardrail, and Audit. A
+		// prompt that interpolates environment/context text must not reach the
+		// client unredacted. The result is packed into ToolResult.Structured so
+		// ContentSafety.RedactStructured walks and scrubs each message's text.
+		final := func(ctx context.Context, cc *spi.ToolCallContext, _ *spi.ToolRequest) (*spi.ToolResult, error) {
+			pres, herr := handler(ctx, cc, sreq)
+			if herr != nil {
+				return nil, herr
+			}
+			return &spi.ToolResult{Structured: pres}, nil
+		}
+		out, err := s.chain.Execute(ctx, cc, &spi.ToolRequest{Name: reg.Name}, final)
 		if err != nil {
 			return nil, fmt.Errorf("rendering prompt %s: %w", reg.Name, err)
 		}
-		return promptResultToMCP(res), nil
+		pres, ok := structuredResultFrom[*spi.PromptResult](out)
+		if !ok {
+			// The chain short-circuited (e.g. a Guardrail denial) or converted a
+			// handler error: surface it as a protocol error carrying the redacted
+			// text rather than an empty prompt.
+			return nil, fmt.Errorf("rendering prompt %s: %s", reg.Name, chainErrorText(out, "prompt render blocked"))
+		}
+		return promptResultToMCP(pres), nil
 	})
 }
 

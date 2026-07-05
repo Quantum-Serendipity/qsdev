@@ -50,24 +50,69 @@ func TestResolvePackageName(t *testing.T) {
 			want: "ShellCheck", wantOK: true,
 		},
 		{
-			name: "nodejs on winget",
-			tool: "nodejs", family: "windows", manager: "winget",
+			name: "node on winget (node key, not nodejs)",
+			tool: "node", family: "", manager: "winget",
 			want: "OpenJS.NodeJS.LTS", wantOK: true,
 		},
 		{
-			name: "nodejs on scoop",
-			tool: "nodejs", family: "windows", manager: "scoop",
+			name: "node on scoop",
+			tool: "node", family: "windows", manager: "scoop",
 			want: "nodejs-lts", wantOK: true,
 		},
 		{
-			name: "nodejs on choco",
-			tool: "nodejs", family: "windows", manager: "choco",
+			name: "node on choco",
+			tool: "node", family: "windows", manager: "choco",
 			want: "nodejs-lts", wantOK: true,
 		},
 		{
-			name: "nodejs generic",
-			tool: "nodejs", family: "debian", manager: "apt",
+			name: "node generic (nodejs package on apt)",
+			tool: "node", family: "debian", manager: "apt",
 			want: "nodejs", wantOK: true,
+		},
+		{
+			name: "git on winget",
+			tool: "git", family: "", manager: "winget",
+			want: "Git.Git", wantOK: true,
+		},
+		{
+			name: "curl on winget",
+			tool: "curl", family: "", manager: "winget",
+			want: "cURL.cURL", wantOK: true,
+		},
+		{
+			name: "shellcheck on winget",
+			tool: "shellcheck", family: "", manager: "winget",
+			want: "koalaman.shellcheck", wantOK: true,
+		},
+		{
+			name: "shfmt on winget",
+			tool: "shfmt", family: "", manager: "winget",
+			want: "mvdan.shfmt", wantOK: true,
+		},
+		{
+			name: "hadolint on winget",
+			tool: "hadolint", family: "", manager: "winget",
+			want: "hadolint.hadolint", wantOK: true,
+		},
+		{
+			name: "direnv on winget",
+			tool: "direnv", family: "", manager: "winget",
+			want: "direnv.direnv", wantOK: true,
+		},
+		{
+			name: "pre-commit has no winget package (no bare generic)",
+			tool: "pre-commit", family: "", manager: "winget",
+			want: "", wantOK: false,
+		},
+		{
+			name: "pre-commit still installable via nix",
+			tool: "pre-commit", family: "", manager: "nix",
+			want: "pre-commit", wantOK: true,
+		},
+		{
+			name: "npm has no winget package (no bare generic)",
+			tool: "npm", family: "", manager: "winget",
+			want: "", wantOK: false,
 		},
 		{
 			name: "git on any platform",
@@ -171,8 +216,13 @@ func TestInstallCommand(t *testing.T) {
 		},
 		{
 			name: "winget install",
-			tool: "nodejs", family: "windows", manager: "winget",
+			tool: "node", family: "windows", manager: "winget",
 			want: "winget install --id OpenJS.NodeJS.LTS -e",
+		},
+		{
+			name: "winget install git",
+			tool: "git", family: "windows", manager: "winget",
+			want: "winget install --id Git.Git -e",
 		},
 		{
 			name: "emerge with category",
@@ -186,12 +236,12 @@ func TestInstallCommand(t *testing.T) {
 		},
 		{
 			name: "scoop install",
-			tool: "nodejs", family: "windows", manager: "scoop",
+			tool: "node", family: "windows", manager: "scoop",
 			want: "scoop install nodejs-lts",
 		},
 		{
 			name: "choco install",
-			tool: "nodejs", family: "windows", manager: "choco",
+			tool: "node", family: "windows", manager: "choco",
 			want: "choco install -y nodejs-lts",
 		},
 		{
@@ -221,6 +271,66 @@ func TestInstallCommand(t *testing.T) {
 	}
 }
 
+func TestPackageUnavailable(t *testing.T) {
+	tests := []struct {
+		name            string
+		tool            string
+		manager         string
+		wantUnavailable bool
+	}{
+		{"pre-commit has no winget package", "pre-commit", "winget", true},
+		{"npm has no winget package", "npm", "winget", true},
+		{"pre-commit is installable via nix", "pre-commit", "nix", false},
+		{"git has a winget package", "git", "winget", false},
+		{"node has a winget package", "node", "winget", false},
+		{"unknown tool is not marked unavailable", "nonexistent", "winget", false},
+		{"empty manager is never unavailable", "pre-commit", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			remedy, unavailable := PackageUnavailable(tt.tool, tt.manager)
+			if unavailable != tt.wantUnavailable {
+				t.Errorf("PackageUnavailable(%q, %q) unavailable=%v, want %v",
+					tt.tool, tt.manager, unavailable, tt.wantUnavailable)
+			}
+			if unavailable && remedy == "" {
+				t.Errorf("PackageUnavailable(%q, %q) returned empty remedy for an unavailable tool",
+					tt.tool, tt.manager)
+			}
+			if !unavailable && remedy != "" {
+				t.Errorf("PackageUnavailable(%q, %q) returned remedy %q for an available tool",
+					tt.tool, tt.manager, remedy)
+			}
+		})
+	}
+}
+
+func TestInstallCommandNoWingetPackage(t *testing.T) {
+	// Tools without a standalone winget package must not produce a broken
+	// "winget install --id <generic> -e"; they must surface actionable guidance.
+	tests := []struct {
+		name     string
+		tool     string
+		contains []string
+	}{
+		{"pre-commit points to pip", "pre-commit", []string{"no winget package for pre-commit", "pip"}},
+		{"npm points to Node.js", "npm", []string{"no winget package for npm", "Node.js"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := InstallCommand(tt.tool, "", "winget")
+			if strings.HasPrefix(got, "winget install --id") {
+				t.Fatalf("InstallCommand(%q, winget) = %q, must not emit a bare winget install", tt.tool, got)
+			}
+			for _, sub := range tt.contains {
+				if !strings.Contains(got, sub) {
+					t.Errorf("InstallCommand(%q, winget) = %q, want it to contain %q", tt.tool, got, sub)
+				}
+			}
+		})
+	}
+}
+
 func TestLookupTool(t *testing.T) {
 	entry, ok := LookupTool("git")
 	if !ok {
@@ -240,9 +350,9 @@ func TestLookupTool(t *testing.T) {
 }
 
 func TestRegistryCompleteness(t *testing.T) {
-	// Verify all 15 tools are present.
+	// Verify all core tools are present.
 	expectedTools := []string{
-		"git", "curl", "wget", "jq", "go", "nodejs", "python3",
+		"git", "curl", "wget", "jq", "go", "node", "python3",
 		"shellcheck", "direnv", "make", "docker", "terraform",
 		"rustup", "unzip", "tree",
 	}

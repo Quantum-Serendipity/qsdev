@@ -15,6 +15,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/secrets"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 )
 
@@ -34,36 +35,27 @@ type envInfo struct {
 
 func newEnvInfo(projectRoot string) *envInfo { return &envInfo{projectRoot: projectRoot} }
 
-// sensitiveEnvSubstrings/Prefixes identify environment variable names whose
-// values must never be emitted. Matching is on the upper-cased name only; the
-// value is replaced with a "[FILTERED]" marker. This source-side filtering is
-// defense-in-depth alongside the ContentSafety middleware, which also redacts
-// secret-shaped values from results.
-var (
-	sensitiveEnvSubstrings = []string{
-		"TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "PRIVATE",
-		"SESSION", "APIKEY", "API_KEY", "ACCESS_KEY", "AUTH", "_KEY", "KEY_",
-	}
-	sensitiveEnvPrefixes = []string{"AWS_", "AZURE_", "GCP_", "GOOGLE_", "GH_", "GITHUB_"}
-)
-
-// isSensitiveEnv reports whether the named variable's value must be withheld.
+// isSensitiveEnv reports whether the named variable's value must be withheld. It
+// composes three shared secrets predicates, all owned by the internal/secrets
+// canon so this probe, the log redactor, and the external-log scrubber stay in
+// sync:
+//
+//   - secrets.MatchesSensitiveKeyPattern: precise by-name match (token-boundary
+//     tokens plus the auth/private substring fallback that catches AUTHORIZATION,
+//     PROXY_AUTHORIZATION, bare PRIVATE, …). The pattern predicate — rather than
+//     IsSensitiveName — is used so a connection var whose credential lives in its
+//     VALUE (e.g. DATABASE_URL) is still value-scrubbed (host preserved) rather
+//     than withheld wholesale.
+//   - secrets.HasCloudCredentialPrefix: cloud-provider namespaces (AWS_/GCP_/…)
+//     that carry no credential keyword (e.g. GCP_PROJECT), as defense-in-depth.
+//   - secrets.ContainsEnvCredentialRoot: the fail-safe substring fallback for
+//     opaque concatenations (SECRETKEY, PASSWORDHASH, MYAPIKEY, …). It is broader
+//     (lower precision) than the log-redaction path deliberately: here
+//     over-withholding a value is fail-safe while leaking is not.
 func isSensitiveEnv(name string) bool {
-	up := strings.ToUpper(name)
-	if up == "KEY" || strings.HasSuffix(up, "_KEY") || up == "PRIVATE_KEY" {
-		return true
-	}
-	for _, p := range sensitiveEnvPrefixes {
-		if strings.HasPrefix(up, p) {
-			return true
-		}
-	}
-	for _, s := range sensitiveEnvSubstrings {
-		if strings.Contains(up, s) {
-			return true
-		}
-	}
-	return false
+	return secrets.MatchesSensitiveKeyPattern(name) ||
+		secrets.HasCloudCredentialPrefix(name) ||
+		secrets.ContainsEnvCredentialRoot(name)
 }
 
 // handle runs the requested probe (or all of them) and returns a structured

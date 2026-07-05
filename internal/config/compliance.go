@@ -39,6 +39,22 @@ var complianceLevelOrder = map[string]ComplianceLevel{
 	"strict":   ComplianceLevelStrict,
 }
 
+// complianceLevelUnknown is the ordinal assigned to any unrecognized
+// compliance/security level. It sorts strictly below every known level
+// (including baseline) so a garbage or typo'd level can never silently
+// satisfy a security floor: enforceSecurityFloor treats it as below the
+// floor and raises it, rather than passing it through as if it were baseline.
+const complianceLevelUnknown ComplianceLevel = -1
+
+// complianceLevelOrdinal returns the ordinal for a level name, or
+// complianceLevelUnknown (below baseline) when the name is not recognized.
+func complianceLevelOrdinal(name string) ComplianceLevel {
+	if level, ok := complianceLevelOrder[name]; ok {
+		return level
+	}
+	return complianceLevelUnknown
+}
+
 // GetComplianceLevels returns compliance level profiles.
 // Backed by internal/catalog/defaults/compliance.yaml.
 func GetComplianceLevels() map[string]ComplianceProfile {
@@ -79,10 +95,11 @@ func ParseComplianceLevel(s string) (ComplianceLevel, error) {
 
 // CompareComplianceLevels compares two compliance level strings.
 // Returns -1 if a < b, 0 if a == b, 1 if a > b.
-// Unknown levels are treated as below baseline.
+// Unknown/typo'd levels sort strictly below baseline, so an invalid resolved
+// security level always compares as below any recognized floor (fail-closed).
 func CompareComplianceLevels(a, b string) int {
-	aLevel := complianceLevelOrder[a]
-	bLevel := complianceLevelOrder[b]
+	aLevel := complianceLevelOrdinal(a)
+	bLevel := complianceLevelOrdinal(b)
 
 	if aLevel < bLevel {
 		return -1

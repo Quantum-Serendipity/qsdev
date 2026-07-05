@@ -229,20 +229,30 @@ func checkImageQualification(serviceName string, svc map[string]any, filePath st
 
 // qualifyImageName adds the docker.io prefix when missing.
 func qualifyImageName(image string) string {
-	// Split off tag/digest first so dots in tags don't confuse domain detection.
-	nameOnly := image
-	suffix := ""
-	if idx := strings.LastIndex(image, ":"); idx >= 0 {
-		nameOnly = image[:idx]
-		suffix = image[idx:]
-	} else if idx := strings.LastIndex(image, "@"); idx >= 0 {
-		nameOnly = image[:idx]
-		suffix = image[idx:]
+	// A registry host lives in the first "/"-separated segment. Tags and digests
+	// always come after the LAST "/", so inspecting the first segment cannot be
+	// confused by a "host:port" in a tag. Treat the image as already-qualified when
+	// that segment names a registry: it contains a "." (domain), a ":" (host:port),
+	// or is exactly "localhost". This preserves private registries such as
+	// "registry:5000/myapp:v1" and "localhost:5000/app" instead of prefixing them.
+	if slash := strings.Index(image, "/"); slash >= 0 {
+		firstSegment := image[:slash]
+		if strings.ContainsAny(firstSegment, ".:") || firstSegment == "localhost" {
+			return image
+		}
 	}
 
-	// Already qualified (name part contains a domain with a dot or localhost).
-	if strings.Contains(nameOnly, ".") || strings.HasPrefix(nameOnly, "localhost/") {
-		return image
+	// Unqualified Docker Hub reference: split off the tag/digest so the docker.io
+	// prefix lands before it. Check "@" (digest) before ":" (tag) so a digest's
+	// internal colon is not mistaken for a tag separator.
+	nameOnly := image
+	suffix := ""
+	if idx := strings.LastIndex(image, "@"); idx >= 0 {
+		nameOnly = image[:idx]
+		suffix = image[idx:]
+	} else if idx := strings.LastIndex(image, ":"); idx >= 0 {
+		nameOnly = image[:idx]
+		suffix = image[idx:]
 	}
 
 	if !strings.Contains(nameOnly, "/") {

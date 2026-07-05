@@ -67,6 +67,18 @@ func alertsForProject(p ProjectSummary, opts AggregateOptions, history *HistoryS
 		})
 	}
 
+	// HIGH: dependency scan inconclusive (failed ecosystem scan or unresolved
+	// severities). A member whose scan cannot be certified clean must not read
+	// clean fleet-wide on the strength of zero VulnTotals.
+	if !p.Certifiable {
+		alerts = append(alerts, PostureAlert{
+			Project:  p.Name,
+			Severity: SeverityHigh,
+			Message:  "Dependency scan inconclusive: failed or unresolved-severity vulnerabilities (not confirmed clean)",
+			Action:   "Re-run 'qsdev status --scan' and resolve failed or unresolved-severity findings",
+		})
+	}
+
 	// HIGH: baseline conformance FAIL.
 	if !p.Conformance.Baseline.Pass {
 		alerts = append(alerts, PostureAlert{

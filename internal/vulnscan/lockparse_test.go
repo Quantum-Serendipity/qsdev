@@ -1,0 +1,310 @@
+package vulnscan
+
+import (
+	"os"
+	"path/filepath"
+	"sort"
+	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+)
+
+// writeFile writes body into a fresh temp dir under name and returns the dir and
+// full path.
+func writeFile(t *testing.T, name, body string) (dir, path string) {
+	t.Helper()
+	dir = t.TempDir()
+	path = filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+	return dir, path
+}
+
+// pkgKeys renders packages as a sorted set of "name@version (eco)" strings so
+// map-ordered parser output can be compared deterministically.
+func pkgKeys(pkgs []Package) []string {
+	keys := make([]string, len(pkgs))
+	for i, p := range pkgs {
+		keys[i] = p.Name + "@" + p.Version + " (" + p.Ecosystem + ")"
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func equalKeys(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestKnownLockFilesDerivedFromCatalog proves the scanner's lock-file set is
+// derived from ecosystem.LockFilesByEcosystem rather than a private hardcoded
+// list: every catalog lock file that has both an OSV ecosystem and a registered
+// parser must be present with the right OSV ecosystem, and nothing else may be.
+func TestKnownLockFilesDerivedFromCatalog(t *testing.T) {
+	t.Parallel()
+
+	got := map[string]string{} // name -> OSV ecosystem
+	for _, lf := range knownLockFiles() {
+		if _, dup := got[lf.Name()]; dup {
+			t.Errorf("duplicate lock file %q in knownLockFiles", lf.Name())
+		}
+		got[lf.Name()] = lf.Ecosystem()
+	}
+
+	// Every entry must trace back to the catalog (no orphan/hardcoded names).
+	catalog := map[string]string{} // name -> OSV ecosystem expected
+	for eco, names := range ecosystem.LockFilesByEcosystem {
+		osvEco, hasOSV := osvEcosystems[eco]
+		for _, name := range names {
+			_, hasParser := lockParsers[name]
+			if hasOSV && hasParser {
+				catalog[name] = osvEco
+			}
+		}
+	}
+
+	for name, osvEco := range catalog {
+		if got[name] != osvEco {
+			t.Errorf("lock file %q: ecosystem = %q, want %q (derived from catalog)", name, got[name], osvEco)
+		}
+	}
+	for name := range got {
+		if _, ok := catalog[name]; !ok {
+			t.Errorf("lock file %q is in knownLockFiles but not derivable from the catalog", name)
+		}
+	}
+}
+
+// TestCatalogLockFileRecognized proves that lock files declared in pkg/ecosystem
+// are recognized by the scanner — including Pipfile.lock, which the previous
+// hardcoded list omitted (a coverage gain). A catalog entry without a parser is
+// correctly left unrecognized rather than silently mis-scanned.
+func TestCatalogLockFileRecognized(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		wantOK   bool
+		wantEco  string
+		coverage string
+	}{
+		{"Pipfile.lock", true, "PyPI", "newly covered (was missing from the old hardcoded list)"},
+		{"Cargo.lock", true, "crates.io", "preserved"},
+		{"poetry.lock", true, "PyPI", "preserved"},
+		{"uv.lock", true, "PyPI", "preserved"},
+		{"package-lock.json", true, "npm", "preserved"},
+		{"go.sum", true, "Go", "preserved"},
+		{"requirements.txt", true, "PyPI", "preserved"},
+		// Present in the catalog but with no parser yet: must not be recognized.
+		{"Gemfile.lock", false, "", "no parser"},
+		{"composer.lock", false, "", "no parser"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lf, ok := LockFileForPath(filepath.Join("some", "dir", tc.name))
+			if ok != tc.wantOK {
+				t.Fatalf("LockFileForPath(%q) ok = %t, want %t (%s)", tc.name, ok, tc.wantOK, tc.coverage)
+			}
+			if ok && lf.Ecosystem() != tc.wantEco {
+				t.Errorf("ecosystem = %q, want %q", lf.Ecosystem(), tc.wantEco)
+			}
+		})
+	}
+}
+
+// TestDetectLockFilePrefersDedicatedLock proves a dedicated lock file wins over a
+// loose manifest of the same ecosystem when both are present, so a project with
+// an authoritative poetry.lock is not scanned via a partial requirements.txt.
+func TestDetectLockFilePrefersDedicatedLock(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, name := range []string{"requirements.txt", "poetry.lock"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("[[package]]\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	lf, _, ok := DetectLockFile(dir)
+	if !ok {
+		t.Fatal("expected a lock file to be detected")
+	}
+	if lf.Name() != "poetry.lock" {
+		t.Errorf("detected %q, want poetry.lock (dedicated lock files take priority)", lf.Name())
+	}
+}
+
+// TestParseTOMLPackagesCargo exercises the BurntSushi-backed parser against a
+// realistic Cargo.lock, including edge cases the line-oriented parser mishandled:
+// a top-level "version = 3" key, an inline "# comment" after a version value, a
+// multi-line dependencies array, distinct versions of the same crate, and a
+// package with no version (skipped).
+func TestParseTOMLPackagesCargo(t *testing.T) {
+	t.Parallel()
+	const body = `# This file is automatically @generated by Cargo.
+version = 3
+
+[[package]]
+name = "anyhow"
+version = "1.0.86"  # inline comment the old line parser folded into the value
+
+[[package]]
+name = "libc"
+version = "0.2.155"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "anyhow",
+ "version_check",
+]
+
+[[package]]
+name = "libc"
+version = "0.2.156"
+
+[[package]]
+name = "version_check"
+version = "0.9.4"
+
+[[package]]
+name = "no-version-yet"
+`
+	_, path := writeFile(t, "Cargo.lock", body)
+	pkgs, err := parseTOMLPackages(path, "crates.io")
+	if err != nil {
+		t.Fatalf("parseTOMLPackages: %v", err)
+	}
+	want := []string{
+		"anyhow@1.0.86 (crates.io)",
+		"libc@0.2.155 (crates.io)",
+		"libc@0.2.156 (crates.io)",
+		"version_check@0.9.4 (crates.io)",
+	}
+	if got := pkgKeys(pkgs); !equalKeys(got, want) {
+		t.Errorf("packages = %v, want %v", got, want)
+	}
+}
+
+// TestParseTOMLPackagesPoetry confirms poetry.lock (PyPI) parses correctly even
+// with interleaved [package.dependencies] sub-tables between entries.
+func TestParseTOMLPackagesPoetry(t *testing.T) {
+	t.Parallel()
+	const body = `[[package]]
+name = "requests"
+version = "2.31.0"
+description = "Python HTTP for Humans."
+optional = false
+python-versions = ">=3.7"
+
+[package.dependencies]
+certifi = ">=2017.4.17"
+urllib3 = ">=1.21.1,<3"
+
+[[package]]
+name = "certifi"
+version = "2024.2.2"
+`
+	_, path := writeFile(t, "poetry.lock", body)
+	pkgs, err := parseTOMLPackages(path, "PyPI")
+	if err != nil {
+		t.Fatalf("parseTOMLPackages: %v", err)
+	}
+	want := []string{"certifi@2024.2.2 (PyPI)", "requests@2.31.0 (PyPI)"}
+	if got := pkgKeys(pkgs); !equalKeys(got, want) {
+		t.Errorf("packages = %v, want %v", got, want)
+	}
+}
+
+// TestParseTOMLPackagesInvalid proves malformed TOML surfaces a wrapped decode
+// error rather than silently yielding partial results.
+func TestParseTOMLPackagesInvalid(t *testing.T) {
+	t.Parallel()
+	_, path := writeFile(t, "Cargo.lock", "[[package]\nname = \"oops\"\n")
+	if _, err := parseTOMLPackages(path, "crates.io"); err == nil {
+		t.Fatal("expected an error decoding malformed TOML")
+	}
+}
+
+// TestParsePipfileLock proves the pipenv Pipfile.lock parser strips the "=="
+// pin, merges the default and develop groups, and skips unpinned entries.
+func TestParsePipfileLock(t *testing.T) {
+	t.Parallel()
+	const body = `{
+  "_meta": {"hash": {"sha256": "abc"}},
+  "default": {
+    "requests": {"hashes": ["sha256:deadbeef"], "version": "==2.31.0"},
+    "flask":    {"version": "==3.0.0"},
+    "fromgit":  {"git": "https://example.com/x.git", "ref": "abc"}
+  },
+  "develop": {
+    "pytest": {"version": "==7.4.0"}
+  }
+}`
+	_, path := writeFile(t, "Pipfile.lock", body)
+	pkgs, err := parsePipfileLock(path, "PyPI")
+	if err != nil {
+		t.Fatalf("parsePipfileLock: %v", err)
+	}
+	want := []string{
+		"flask@3.0.0 (PyPI)",
+		"pytest@7.4.0 (PyPI)",
+		"requests@2.31.0 (PyPI)",
+	}
+	if got := pkgKeys(pkgs); !equalKeys(got, want) {
+		t.Errorf("packages = %v, want %v", got, want)
+	}
+}
+
+// TestParseGoSumAndNPM keeps coverage on the parsers whose signatures changed to
+// take an explicit ecosystem, confirming the ecosystem is stamped through.
+func TestParseGoSumAndNPM(t *testing.T) {
+	t.Parallel()
+
+	t.Run("go.sum", func(t *testing.T) {
+		t.Parallel()
+		const body = `github.com/pkg/errors v0.9.1 h1:abc=
+github.com/pkg/errors v0.9.1/go.mod h1:def=
+golang.org/x/sys v0.1.0/go.mod h1:ghi=
+`
+		_, path := writeFile(t, "go.sum", body)
+		pkgs, err := parseGoSum(path, "Go")
+		if err != nil {
+			t.Fatalf("parseGoSum: %v", err)
+		}
+		want := []string{
+			"github.com/pkg/errors@0.9.1 (Go)",
+			"golang.org/x/sys@0.1.0 (Go)",
+		}
+		if got := pkgKeys(pkgs); !equalKeys(got, want) {
+			t.Errorf("packages = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("package-lock.json", func(t *testing.T) {
+		t.Parallel()
+		const body = `{
+  "lockfileVersion": 3,
+  "packages": {
+    "": {"name": "root"},
+    "node_modules/left-pad": {"version": "1.3.0"},
+    "node_modules/@scope/pkg": {"version": "2.0.0"}
+  }
+}`
+		_, path := writeFile(t, "package-lock.json", body)
+		pkgs, err := parseNPMLock(path, "npm")
+		if err != nil {
+			t.Fatalf("parseNPMLock: %v", err)
+		}
+		want := []string{"@scope/pkg@2.0.0 (npm)", "left-pad@1.3.0 (npm)"}
+		if got := pkgKeys(pkgs); !equalKeys(got, want) {
+			t.Errorf("packages = %v, want %v", got, want)
+		}
+	})
+}

@@ -1,6 +1,7 @@
 package teamreport
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -128,13 +129,14 @@ func TestAlertStale(t *testing.T) {
 	staleTime := time.Now().UTC().Add(-10 * 24 * time.Hour)
 	projects := []ProjectSummary{
 		{
-			Name:  "stale-project",
-			Stale: true,
-			Score: makeScore(80),
-			Conformance: makeConformance(true, true),
-			VulnTotals:  makeVulns(0, 0),
+			Name:         "stale-project",
+			Stale:        true,
+			Score:        makeScore(80),
+			Conformance:  makeConformance(true, true),
+			VulnTotals:   makeVulns(0, 0),
+			Certifiable:  true,
 			QsdevVersion: "v1.0.0",
-			LastScan:    staleTime,
+			LastScan:     staleTime,
 		},
 	}
 
@@ -150,6 +152,30 @@ func TestAlertStale(t *testing.T) {
 
 	if !found {
 		t.Error("expected medium alert for stale scan")
+	}
+}
+
+// TestAlertUncertifiable is the altitude regression for the fleet consumer: a
+// member whose dependency scan could not be certified clean (failed or
+// unresolved-severity) must raise a High alert, so zero VulnTotals do not read
+// clean fleet-wide.
+func TestAlertUncertifiable(t *testing.T) {
+	now := time.Now().UTC()
+	p := projectSummaryHelper("inconclusive", 90, true, true, 0, 0, "v1.0.0", now)
+	p.Certifiable = false // scan failed or turned up unresolved severities
+
+	alerts := generateAlerts([]ProjectSummary{p}, AggregateOptions{QsdevVersion: "v1.0.0"}, nil)
+
+	var found bool
+	for _, a := range alerts {
+		if a.Project == "inconclusive" && a.Severity == SeverityHigh &&
+			strings.Contains(a.Message, "not confirmed clean") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected a High 'not confirmed clean' alert for a non-certifiable member, got %+v", alerts)
 	}
 }
 

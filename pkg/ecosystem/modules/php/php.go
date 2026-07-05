@@ -178,6 +178,10 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
 			BuiltIn:       false,
+			// phpstan is a top-level nixpkgs attribute; the old
+			// `phpPackages.phpstan` is a removed throw-alias ("has been removed,
+			// use phpstan instead") that fails devenv.nix evaluation.
+			NixPackage: "phpstan",
 		},
 	}
 }

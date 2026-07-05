@@ -2,6 +2,7 @@ package logging
 
 import (
 	"log/slog"
+	"strings"
 	"testing"
 )
 
@@ -193,6 +194,105 @@ func TestRedactString_SafeValues(t *testing.T) {
 		if got != s {
 			t.Errorf("safe value was incorrectly modified: %q -> %q", s, got)
 		}
+	}
+}
+
+func TestRedactString_NameValuePairs(t *testing.T) {
+	r := NewRedactor()
+
+	positives := []struct {
+		name   string
+		input  string
+		secret string
+	}{
+		{"database password", "DATABASE_PASSWORD=hunter2", "hunter2"},
+		{"pg password", "PGPASSWORD=s3cr3t", "s3cr3t"},
+		{"aws secret access key", "AWS_SECRET_ACCESS_KEY=abcdef", "abcdef"},
+		{"bitwarden session", "BW_SESSION=toktoktok", "toktoktok"},
+		{"new relic license key", "NEW_RELIC_LICENSE_KEY=licabc", "licabc"},
+		{"rails master key", "RAILS_MASTER_KEY=masterval", "masterval"},
+		{"colon form", "PGPASSWORD: colonsecret", "colonsecret"},
+		{"prefixed export", "export DATABASE_PASSWORD=exportedpw", "exportedpw"},
+	}
+	for _, tt := range positives {
+		t.Run(tt.name, func(t *testing.T) {
+			got := r.RedactString(tt.input)
+			if strings.Contains(got, tt.secret) {
+				t.Errorf("RedactString(%q) = %q, still contains secret %q", tt.input, got, tt.secret)
+			}
+			if !strings.Contains(got, redacted) {
+				t.Errorf("RedactString(%q) = %q, expected %s marker", tt.input, got, redacted)
+			}
+		})
+	}
+
+	// Non-sensitive NAME=value pairs must be left untouched.
+	negatives := []string{
+		"PATH=/usr/bin",
+		"KEYBOARD=us",
+		"HOME=/home/x",
+	}
+	for _, in := range negatives {
+		t.Run("safe/"+in, func(t *testing.T) {
+			if got := r.RedactString(in); got != in {
+				t.Errorf("RedactString(%q) = %q, want unchanged", in, got)
+			}
+		})
+	}
+}
+
+func TestRedactString_MultiWordNamedValues(t *testing.T) {
+	r := NewRedactor()
+
+	tests := []struct {
+		name        string
+		input       string
+		want        string   // exact expected output ("" to skip the exact check)
+		wantAbsent  []string // substrings that must not survive redaction
+		wantPresent []string // substrings that must be preserved
+	}{
+		{
+			name:       "space-separated passphrase redacts entire value",
+			input:      "password: correct horse battery staple",
+			want:       "password: " + redacted,
+			wantAbsent: []string{"correct", "horse", "battery", "staple"},
+		},
+		{
+			name:       "multi-word value after spaced separator",
+			input:      "token = abc def",
+			want:       "token = " + redacted,
+			wantAbsent: []string{"abc", "def"},
+		},
+		{
+			name:        "trailing pair redacted independently",
+			input:       "user=alice password=hunter2 stuff",
+			wantAbsent:  []string{"hunter2"},
+			wantPresent: []string{"user=alice", redacted},
+		},
+		{
+			name:        "two sensitive pairs redacted separately",
+			input:       "password=my secret token=abc123",
+			wantAbsent:  []string{"my", "secret", "abc123"},
+			wantPresent: []string{"password=" + redacted, "token=" + redacted},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := r.RedactString(tt.input)
+			if tt.want != "" && got != tt.want {
+				t.Errorf("RedactString(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+			for _, a := range tt.wantAbsent {
+				if strings.Contains(got, a) {
+					t.Errorf("RedactString(%q) = %q, still contains secret %q", tt.input, got, a)
+				}
+			}
+			for _, p := range tt.wantPresent {
+				if !strings.Contains(got, p) {
+					t.Errorf("RedactString(%q) = %q, expected to contain %q", tt.input, got, p)
+				}
+			}
+		})
 	}
 }
 

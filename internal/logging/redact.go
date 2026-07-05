@@ -13,6 +13,11 @@ import (
 
 const redacted = "[REDACTED]"
 
+// nameValueTrimCutset is the whitespace RE2's \s matches; redactNamedValues trims
+// it from the tail of a captured value so the separator run before the next
+// key-like token stays verbatim in the output rather than being redacted.
+const nameValueTrimCutset = "\t\n\f\r "
+
 // redactedReflectVal is the redaction marker as a reflect.Value, computed once
 // so the per-map-node redaction walk does not re-box the string on every call.
 var redactedReflectVal = reflect.ValueOf(redacted)
@@ -20,29 +25,31 @@ var redactedReflectVal = reflect.ValueOf(redacted)
 // Redactor scrubs secret values from log attributes.
 type Redactor struct {
 	valuePatterns []*regexp.Regexp
-	keyDeny       map[string]bool
-	envNames      map[string]bool
 	urlCredRe     *regexp.Regexp
+	nameValRe     *regexp.Regexp
+	keyBoundaryRe *regexp.Regexp
 }
 
 // NewRedactor creates a Redactor with default secret patterns.
 func NewRedactor() *Redactor {
-	r := &Redactor{
-		keyDeny:  make(map[string]bool, len(secrets.SensitiveKeyPatterns)),
-		envNames: make(map[string]bool, len(secrets.KnownCredentialVars)),
+	return &Redactor{
+		valuePatterns: compileValuePatterns(),
+		urlCredRe:     regexp.MustCompile(`://[^:@\s]+:[^:@\s]+@`),
+		// Matches "NAME=value" and "NAME: value" pairs so a sensitive credential
+		// NAME (e.g. DATABASE_PASSWORD) redacts its value even when the value
+		// itself matches no credential-shape pattern. Group 2 anchors the value's
+		// START only (its first whitespace-delimited token); the value's true END
+		// — which extends across internal spaces to the next key or end-of-line —
+		// is computed in redactNamedValues because RE2 (Go's regexp) has no
+		// lookahead to stop the capture at the next key boundary.
+		nameValRe: regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*(\S+)`),
+		// Marks the next "NAME=" / "NAME:" key boundary that terminates a value:
+		// a NAME (optionally spaced from its separator) that is preceded by
+		// whitespace. The leading \s requirement means an intra-value token such
+		// as a=b (no preceding space) stays part of the value, while a genuine
+		// following pair on the same line ends it.
+		keyBoundaryRe: regexp.MustCompile(`\s[A-Za-z_][A-Za-z0-9_]*\s*[:=]`),
 	}
-
-	for _, p := range secrets.SensitiveKeyPatterns {
-		r.keyDeny[strings.ToLower(p)] = true
-	}
-	for _, v := range secrets.KnownCredentialVars {
-		r.envNames[v] = true
-	}
-
-	r.valuePatterns = compileValuePatterns()
-	r.urlCredRe = regexp.MustCompile(`://[^:@\s]+:[^:@\s]+@`)
-
-	return r
 }
 
 func compileValuePatterns() []*regexp.Regexp {
@@ -94,7 +101,11 @@ func (r *Redactor) RedactAttr(a slog.Attr) slog.Attr {
 	return a
 }
 
-// RedactString scrubs secret patterns from a string value.
+// RedactString scrubs secret patterns from a string value. It runs the
+// value-shape passes (AKIA…, ghp_…, JWT, PEM, …) and URL-userinfo stripping,
+// then a NAME=value pass that redacts the value of any sensitive credential
+// variable — closing the leak where a keyword-less secret (DATABASE_PASSWORD=…,
+// BW_SESSION=…) has no recognizable value shape.
 func (r *Redactor) RedactString(s string) string {
 	for _, p := range r.valuePatterns {
 		s = p.ReplaceAllString(s, redacted)
@@ -102,7 +113,74 @@ func (r *Redactor) RedactString(s string) string {
 	if r.urlCredRe.MatchString(s) {
 		s = r.redactURLCredentials(s)
 	}
-	return s
+	return r.redactNamedValues(s)
+}
+
+// redactNamedValues redacts the VALUE of any "NAME=value" or "NAME: value" pair
+// whose NAME is a sensitive credential variable (per secrets.IsSensitiveName).
+// The NAME and separator are preserved; only the value is replaced. It is
+// conservative — a non-sensitive name such as PATH=/usr/bin or KEYBOARD=us is
+// left untouched. This runs on every log message and MCP tool result, so it
+// does a single regex pass over the submatch indexes rather than re-matching
+// each hit.
+func (r *Redactor) redactNamedValues(s string) string {
+	if !strings.ContainsAny(s, "=:") {
+		return s
+	}
+	matches := r.nameValRe.FindAllStringSubmatchIndex(s, -1)
+	if len(matches) == 0 {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	last := 0
+	for _, m := range matches {
+		// m holds pair offsets: match (m[0:2]), group 1 NAME (m[2:4]),
+		// group 2 value-start token (m[4:6]).
+		if m[0] < last {
+			// This pair begins inside a value already redacted for an earlier
+			// sensitive NAME (e.g. an "a=b" token nested in a redacted value);
+			// skip it so we neither double-write nor leak part of that value.
+			continue
+		}
+		if !secrets.IsSensitiveName(s[m[2]:m[3]]) {
+			continue
+		}
+		valStart := m[4]
+		valEnd := r.valueEnd(s, valStart)
+		if valEnd <= valStart {
+			continue
+		}
+		// Keep everything through "NAME<sep>" and redact the whole value —
+		// internal spaces included — up to the computed end.
+		b.WriteString(s[last:valStart])
+		b.WriteString(redacted)
+		last = valEnd
+	}
+	if last == 0 {
+		return s
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+// valueEnd returns the offset at which a sensitive NAME's value ends. The value
+// runs from valStart to end-of-line, EXCEPT it stops before the next
+// whitespace-preceded "NAME=" / "NAME:" key so a following pair on the same line
+// is redacted independently rather than swallowed. Trailing whitespace before
+// that boundary is excluded so the separator run is preserved verbatim.
+func (r *Redactor) valueEnd(s string, valStart int) int {
+	end := len(s)
+	// A value never spans a newline (RE2's \S, like the value token, excludes it).
+	if nl := strings.IndexByte(s[valStart:], '\n'); nl >= 0 {
+		end = valStart + nl
+	}
+	// Stop before the next key-like token on the same line.
+	if loc := r.keyBoundaryRe.FindStringIndex(s[valStart:end]); loc != nil {
+		end = valStart + loc[0]
+	}
+	trimmed := strings.TrimRight(s[valStart:end], nameValueTrimCutset)
+	return valStart + len(trimmed)
 }
 
 func (r *Redactor) redactURLCredentials(s string) string {
@@ -114,55 +192,13 @@ func (r *Redactor) redactURLCredentials(s string) string {
 	return u.String()
 }
 
-// isKeyDenied checks whether an attribute key indicates a secret value.
-// Uses word-boundary matching: "token" matches but "tokenizer" does not.
+// isKeyDenied checks whether an attribute key indicates a secret value. It
+// delegates to secrets.IsSensitiveName — the single shared credential-name
+// predicate — so the exact canon (KnownCredentialVars) and the token-boundary
+// keyword match ("token" matches, "tokenizer" does not) stay unified across the
+// slog attr path, the NAME=value message path, and the env probe.
 func (r *Redactor) isKeyDenied(key string) bool {
-	lower := strings.ToLower(key)
-
-	if r.envNames[key] || r.envNames[strings.ToUpper(key)] {
-		return true
-	}
-
-	// Normalize hyphens to underscores so "api-key" matches "api_key".
-	normalized := strings.ReplaceAll(lower, "-", "_")
-
-	for pattern := range r.keyDeny {
-		if matchesWordBoundary(lower, pattern) || matchesWordBoundary(normalized, pattern) {
-			return true
-		}
-	}
-	return false
-}
-
-// matchesWordBoundary checks if pattern appears in s at a word boundary.
-// A word boundary is: start/end of string, underscore, hyphen, or transition
-// between non-letter and letter.
-func matchesWordBoundary(s, pattern string) bool {
-	idx := strings.Index(s, pattern)
-	if idx < 0 {
-		return false
-	}
-
-	if idx > 0 {
-		prev := s[idx-1]
-		if isWordChar(prev) && prev != '_' && prev != '-' {
-			return false
-		}
-	}
-
-	end := idx + len(pattern)
-	if end < len(s) {
-		next := s[end]
-		if isWordChar(next) && next != '_' && next != '-' {
-			return false
-		}
-	}
-
-	return true
-}
-
-func isWordChar(c byte) bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+	return secrets.IsSensitiveName(key)
 }
 
 // RedactStructured returns a redacted copy of a JSON-serializable value tree,

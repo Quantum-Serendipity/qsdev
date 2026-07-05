@@ -10,12 +10,13 @@ import (
 
 func projectSummaryHelper(name string, score float64, baselinePass, enhancedPass bool, critVulns, highVulns int, qsdevVersion string, lastScan time.Time) ProjectSummary {
 	return ProjectSummary{
-		Name:        name,
-		Score:       makeScore(score),
-		Conformance: makeConformance(baselinePass, enhancedPass),
-		VulnTotals:  makeVulns(critVulns, highVulns),
+		Name:         name,
+		Score:        makeScore(score),
+		Conformance:  makeConformance(baselinePass, enhancedPass),
+		VulnTotals:   makeVulns(critVulns, highVulns),
+		Certifiable:  true, // helper models a completed, conclusive scan
 		QsdevVersion: qsdevVersion,
-		LastScan:    lastScan,
+		LastScan:     lastScan,
 	}
 }
 

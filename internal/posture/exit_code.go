@@ -10,10 +10,23 @@ package posture
 //   - "high": Critical+High > 0 OR baseline conformance FAIL
 //   - "critical": Critical > 0
 //   - "none": always false (never exit non-zero)
+//
+// Independent of the level (except "none"), a dependency result that cannot be
+// certified clean — a failed scan (ScanFailed) or any unresolved-severity
+// vulnerability (Totals.Unknown > 0) — fails closed. Both are captured by the
+// single Certifiable predicate, so the gate and every other consumer agree.
 func ShouldExitNonZero(report *PostureReport, auditLevel string) bool {
-	switch auditLevel {
-	case "none":
+	if auditLevel == "none" {
 		return false
+	}
+	// A failed scan leaves vulnerability status unknown, and a vulnerability whose
+	// severity could not be resolved could be anything up to critical. Neither can
+	// be certified clean, so fail closed rather than certify on the strength of
+	// zero Totals that only reflect a check that never completed conclusively.
+	if !report.Dependencies.Certifiable() {
+		return true
+	}
+	switch auditLevel {
 	case "critical":
 		return report.Dependencies.Totals.Critical > 0
 	case "high":

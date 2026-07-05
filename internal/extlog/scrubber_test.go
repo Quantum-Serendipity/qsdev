@@ -154,6 +154,16 @@ func TestScrubberRedactsKnownSecretPatterns(t *testing.T) {
 			name:  "JWT token",
 			input: "bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
 		},
+		{
+			// Keyword-less NAME=value credential: no value-shape pattern matches,
+			// so it is caught only via the shared credential-name canon.
+			name:  "database password NAME=value",
+			input: "export DATABASE_PASSWORD=hunter2",
+		},
+		{
+			name:  "pg password NAME=value",
+			input: "PGPASSWORD=s3cr3tpw psql -h db",
+		},
 	}
 
 	for _, tt := range tests {

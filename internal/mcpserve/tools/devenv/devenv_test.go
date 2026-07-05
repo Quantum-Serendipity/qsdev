@@ -26,6 +26,37 @@ func call(t *testing.T, h spi.ToolHandler, args map[string]any) *spi.ToolResult 
 
 // TestEnvInfoReturnsPathAndFiltersSecrets proves env_info reports PATH entries
 // and never emits the value of a sensitive environment variable.
+// TestIsSensitiveEnv covers the value-withholding predicate, including the
+// separator-less concatenations (SECRETKEY, ACCESSKEY, AUTHTOKEN, …) that the
+// shared token-boundary predicate does not match — and confirms benign names are
+// not over-withheld.
+func TestIsSensitiveEnv(t *testing.T) {
+	t.Parallel()
+	sensitive := []string{
+		"AWS_SECRET_ACCESS_KEY", // token-boundary match
+		"GITHUB_TOKEN",          // prefix + boundary
+		"GCP_PROJECT",           // cloud prefix (no keyword)
+		"SECRETKEY",             // concatenated fallback
+		"ACCESSKEY",
+		"AUTHTOKEN",
+		"PASSWORDHASH",
+		"MYAPIKEY",
+		"DBPASSWORD",
+	}
+	for _, name := range sensitive {
+		if !isSensitiveEnv(name) {
+			t.Errorf("isSensitiveEnv(%q) = false, want true (its value would be emitted)", name)
+		}
+	}
+
+	notSensitive := []string{"PATH", "HOME", "EDITOR", "LANG", "TERM", "MONKEY_PATH"}
+	for _, name := range notSensitive {
+		if isSensitiveEnv(name) {
+			t.Errorf("isSensitiveEnv(%q) = true, want false (over-withholding a benign var)", name)
+		}
+	}
+}
+
 func TestEnvInfoReturnsPathAndFiltersSecrets(t *testing.T) {
 	// Build a sentinel value at runtime (not a contiguous secret-shaped literal)
 	// whose presence in the output would prove a leak.

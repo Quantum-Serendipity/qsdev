@@ -23,18 +23,7 @@ func (b *Brew) Available() bool {
 
 func (b *Brew) NeedsElevation() bool { return false }
 
-func (b *Brew) UpdateIndex(ctx context.Context) error {
-	return b.runner.Run(ctx, "brew", "update")
-}
-
 func (b *Brew) Install(ctx context.Context, packages ...string) error {
 	args := append([]string{"install"}, packages...)
 	return b.runner.Run(ctx, "brew", args...)
 }
-
-func (b *Brew) IsInstalled(ctx context.Context, pkg string) bool {
-	err := b.runner.Run(ctx, "brew", "list", pkg)
-	return err == nil
-}
-
-func (b *Brew) SearchCmd() string { return "brew search" }

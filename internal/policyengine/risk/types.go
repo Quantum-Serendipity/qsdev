@@ -33,21 +33,28 @@ const (
 )
 
 type PackageInfo struct {
-	Name                    string
-	Version                 string
-	Ecosystem               Ecosystem
-	PublishedAt             *time.Time
-	FirstPublishedAt        *time.Time
-	IsPreRelease            bool
-	MaintainerCount         int
-	HasInstallScripts       bool
-	InstallScriptsBlocked   bool
-	HasBinaries             bool
-	CVECritical             int
-	CVEHigh                 int
-	CVEMedium               int
-	CVELow                  int
-	KEVListed               bool
+	Name                  string
+	Version               string
+	Ecosystem             Ecosystem
+	PublishedAt           *time.Time
+	FirstPublishedAt      *time.Time
+	IsPreRelease          bool
+	MaintainerCount       int
+	HasInstallScripts     bool
+	InstallScriptsBlocked bool
+	HasBinaries           bool
+	CVECritical           int
+	CVEHigh               int
+	CVEMedium             int
+	CVELow                int
+	KEVListed             bool
+	// VulnDataAvailable records whether an OSV/KEV vulnerability lookup actually
+	// completed for this package. The caller must set it true only after real
+	// enrichment; when it is false the zero CVE/KEV counts above mean "never
+	// looked up", not "looked up and clean". The vulnerability probes gate on
+	// this flag so an unenriched package fails closed instead of scoring as if
+	// it were vulnerability-free.
+	VulnDataAvailable       bool
 	MalwareDetected         bool
 	FixAvailable            bool
 	EPSSMax                 float64

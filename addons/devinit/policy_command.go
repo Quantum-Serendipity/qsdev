@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/policyengine"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/sarif"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
@@ -77,13 +77,34 @@ func runPolicyCheck(cmd *cobra.Command, sarifFlag bool, auditLevel, outputPath s
 		return err
 	}
 
-	orchestrator := policyengine.NewSecurityOrchestrator(engine, nil, nil)
+	orchestrator := newProductionOrchestrator(engine)
 	posture, _, _ := orchestrator.PostureSnapshot()
 
+	return evaluatePolicyPosture(cmd, posture, sarifFlag, auditLevel, outputPath)
+}
+
+// evaluatePolicyPosture renders the posture in the requested format and then
+// applies the exit gate. Both the SARIF and human-readable render paths fall
+// through to the SAME gate so that --sarif (the machine invocation used in CI)
+// honors the identical exit-code contract as the text output: a policy with
+// zero active rules fails with exit code 1 unless the audit level is "none".
+func evaluatePolicyPosture(cmd *cobra.Command, posture *sarif.PolicyPosture, sarifFlag bool, auditLevel, outputPath string) error {
 	if sarifFlag {
-		return renderPolicySARIF(cmd, posture, outputPath)
+		if err := renderPolicySARIF(cmd, posture, outputPath); err != nil {
+			return err
+		}
+	} else {
+		renderPolicyText(cmd, posture)
 	}
 
+	if auditLevel != "none" && posture.RulesActive == 0 {
+		return &ExitError{Code: 1}
+	}
+
+	return nil
+}
+
+func renderPolicyText(cmd *cobra.Command, posture *sarif.PolicyPosture) {
 	w := cmd.OutOrStdout()
 	fmt.Fprintf(w, "Policy Posture Summary\n")
 	fmt.Fprintf(w, "  Rules active:  %d / %d\n", posture.RulesActive, posture.RulesTotal)
@@ -102,16 +123,15 @@ func runPolicyCheck(cmd *cobra.Command, sarifFlag bool, auditLevel, outputPath s
 			fmt.Fprintf(w, "    %s\n", cat)
 		}
 	}
-
-	if auditLevel != "none" && posture.RulesActive == 0 {
-		return &ExitError{Code: 1}
-	}
-
-	return nil
 }
 
 func renderPolicySARIF(cmd *cobra.Command, posture *sarif.PolicyPosture, outputPath string) error {
-	data, err := json.MarshalIndent(posture, "", "  ")
+	b := branding.Get()
+	infoURI := fmt.Sprintf("https://github.com/%s/%s", b.GitHubOwner, b.GitHubRepo)
+
+	log := sarif.BuildLog(b.AppName, "", infoURI, posturefindings(posture))
+
+	data, err := json.MarshalIndent(log, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling SARIF output: %w", err)
 	}
@@ -122,6 +142,25 @@ func renderPolicySARIF(cmd *cobra.Command, posture *sarif.PolicyPosture, outputP
 
 	fmt.Fprintln(cmd.OutOrStdout(), string(data))
 	return nil
+}
+
+// posturefindings converts the policy posture into SARIF results. A posture
+// check evaluates no specific tool call, so it reports a note-level result when
+// the loaded policy has zero active rules (an empty or fully disabled policy),
+// which is the only posture condition that gates the command's exit code.
+func posturefindings(posture *sarif.PolicyPosture) []sarif.SarifResult {
+	if posture == nil || posture.RulesActive > 0 {
+		return nil
+	}
+	return []sarif.SarifResult{{
+		RuleID:           "qsdev/policy/MONITOR",
+		Level:            "warning",
+		Message:          "no active security policy rules are loaded",
+		SecuritySeverity: 5.0,
+		PartialFingerprints: map[string]string{
+			"ruleId": "qsdev/policy/MONITOR",
+		},
+	}}
 }
 
 func runPolicyList(cmd *cobra.Command) error {

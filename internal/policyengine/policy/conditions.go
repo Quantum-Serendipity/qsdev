@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/gobwas/glob"
 )
@@ -107,12 +108,100 @@ func (c *deniedPathCheckCondition) Evaluate(ctx *EvalContext) (bool, error) {
 	return c.glob.Match(path), nil
 }
 
-type semanticCondition struct {
-	prompt string
+// semanticIndicators are built-in, high-signal phrases that indicate prompt
+// injection, data exfiltration, or attempts to tamper with security controls.
+// They are matched case-insensitively against the evaluated tool call. The set
+// is grounded in the semantic rule prompts from the security-pattern design
+// (MCP-001 tool-description injection, MCP-006 cross-server exfiltration,
+// CG-008 anti-rationalization). Every compiled semantic condition includes
+// these in addition to any phrase quoted in its own prompt.
+var semanticIndicators = []string{
+	"ignore previous instructions",
+	"ignore all previous instructions",
+	"disregard previous instructions",
+	"disregard all previous instructions",
+	"override system behavior",
+	"override system prompt",
+	"reveal your system prompt",
+	"exfiltrate",
+	"disable security",
+	"disable the security",
 }
 
-func (c *semanticCondition) Evaluate(_ *EvalContext) (bool, error) {
+// semanticQuotedRE extracts single-quoted phrases from a semantic prompt. The
+// design's semantic prompts enumerate the concrete phrases to look for inside
+// single quotes (e.g. 'pre-existing issue', 'out of scope'), so those become
+// rule-specific indicators.
+var semanticQuotedRE = regexp.MustCompile(`'([^']+)'`)
+
+// minQuotedIndicatorLen is the shortest single-quoted phrase promoted to a
+// rule-specific indicator. A shorter phrase (e.g. 'x' or 'go') is too generic
+// and would make the rule fire on nearly every tool call — a self-inflicted
+// over-block from a careless prompt. Built-in indicators are curated and exempt.
+const minQuotedIndicatorLen = 5
+
+// semanticCondition performs a deterministic, offline heuristic match for the
+// `semantic` condition type. Full LLM-backed evaluation is deferred, but the
+// condition MUST NOT be a silent no-op (a rule that can never fire is a silent
+// enforcement gap). It matches when any indicator phrase — built-in or quoted
+// in the rule's prompt — appears in the tool input, command, or file path.
+type semanticCondition struct {
+	indicators []string
+}
+
+func newSemanticCondition(prompt string) *semanticCondition {
+	seen := make(map[string]struct{})
+	indicators := make([]string, 0, len(semanticIndicators))
+
+	add := func(s string, minLen int) {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if len(s) < minLen {
+			return
+		}
+		if _, ok := seen[s]; ok {
+			return
+		}
+		seen[s] = struct{}{}
+		indicators = append(indicators, s)
+	}
+
+	// Quoted phrases come from an author-written prompt, so enforce a length
+	// floor; built-in indicators are curated multi-word phrases.
+	for _, m := range semanticQuotedRE.FindAllStringSubmatch(prompt, -1) {
+		add(m[1], minQuotedIndicatorLen)
+	}
+	for _, ind := range semanticIndicators {
+		add(ind, 1)
+	}
+
+	return &semanticCondition{indicators: indicators}
+}
+
+func (c *semanticCondition) Evaluate(ctx *EvalContext) (bool, error) {
+	haystack := strings.ToLower(semanticContent(ctx))
+	if haystack == "" {
+		return false, nil
+	}
+	for _, ind := range c.indicators {
+		if strings.Contains(haystack, ind) {
+			return true, nil
+		}
+	}
 	return false, nil
+}
+
+// semanticContent assembles the textual surface a semantic condition inspects:
+// the raw tool input (arguments/description), the command, and the file path.
+func semanticContent(ctx *EvalContext) string {
+	var b strings.Builder
+	if len(ctx.ToolInput) > 0 {
+		b.Write(ctx.ToolInput)
+		b.WriteByte(' ')
+	}
+	b.WriteString(ctx.Command)
+	b.WriteByte(' ')
+	b.WriteString(ctx.FilePath)
+	return b.String()
 }
 
 type allCondition struct {
@@ -202,7 +291,7 @@ func CompileCondition(cond Condition) (CompiledCondition, error) {
 		return &deniedPathCheckCondition{glob: g}, nil
 
 	case Semantic:
-		return &semanticCondition{prompt: cond.Prompt}, nil
+		return newSemanticCondition(cond.Prompt), nil
 
 	case All:
 		children, err := compileChildren(cond.Conditions)

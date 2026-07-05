@@ -3,7 +3,6 @@ package policy
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
 )
@@ -39,27 +38,18 @@ func ValidateMountDecl(m MountDecl) error {
 // checkDenyList checks a single path against the shared deny list, using both
 // the cleaned path and its symlink-resolved form.
 func checkDenyList(path, role string) error {
-	cleaned := filepath.Clean(path)
-
-	candidates := []string{cleaned}
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		if r := filepath.Clean(resolved); r != cleaned {
-			candidates = append(candidates, r)
-		}
-	}
-
-	for _, candidate := range candidates {
-		for _, deny := range denylist.AllDenyPaths() {
-			if matchesDeny(candidate, deny) {
+	denyPaths := denylist.AllDenyPaths()
+	for _, candidate := range denylist.CandidatePaths(path) {
+		for _, deny := range denyPaths {
+			// Reject the deny path itself, any descendant of it, AND any ancestor
+			// of it. Rejecting ancestors prevents binding e.g. $HOME (which
+			// contains ~/.ssh) or /etc (which contains /etc/shadow), which would
+			// otherwise re-expose the sensitive descendant inside the sandbox.
+			if denylist.Overlaps(candidate, deny) || denylist.IsStrictAncestor(candidate, deny) {
 				return fmt.Errorf("mount %s %q overlaps sensitive path %q", role, path, deny)
 			}
 		}
 	}
 
 	return nil
-}
-
-// matchesDeny reports whether path equals deny or is a child of deny.
-func matchesDeny(path, deny string) bool {
-	return path == deny || strings.HasPrefix(path, deny+"/")
 }

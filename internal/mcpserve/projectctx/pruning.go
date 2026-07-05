@@ -31,13 +31,6 @@ type ToolPruner struct{}
 // NewToolPruner constructs a ToolPruner.
 func NewToolPruner() *ToolPruner { return &ToolPruner{} }
 
-// ListChangedNotifier is the seam through which the pruner asks the server to
-// broadcast a tools/list_changed notification when it changes the catalog. The
-// mcpserve.Server satisfies it via NotifyToolsListChanged; tests supply a fake.
-type ListChangedNotifier interface {
-	NotifyToolsListChanged()
-}
-
 // Prune returns a subset of tools that fits within ceiling. A ceiling of zero or
 // negative, or a catalog already within the ceiling, returns a copy unchanged.
 //
@@ -77,18 +70,6 @@ func (p *ToolPruner) Prune(tools []spi.ToolRegistration, ceiling int) []spi.Tool
 		return out
 	}
 	return p.consolidate(out, ceiling)
-}
-
-// ApplyCeiling prunes tools to ceiling and, when the resulting catalog differs
-// from the input, asks notifier to broadcast tools/list_changed. It returns the
-// pruned catalog. The per-client ceiling detection that drives this is a later
-// task; ApplyCeiling is the mechanism plus the notification hook.
-func (p *ToolPruner) ApplyCeiling(notifier ListChangedNotifier, tools []spi.ToolRegistration, ceiling int) []spi.ToolRegistration {
-	pruned := p.Prune(tools, ceiling)
-	if notifier != nil && catalogChanged(tools, pruned) {
-		notifier.NotifyToolsListChanged()
-	}
-	return pruned
 }
 
 // consolidate collapses same-category groups into single dispatcher tools,
@@ -193,22 +174,4 @@ func consolidatedHandler(byName map[string]spi.ToolHandler) spi.ToolHandler {
 		}
 		return h(ctx, cc, sub)
 	}
-}
-
-// catalogChanged reports whether the set of tool names differs between before
-// and after.
-func catalogChanged(before, after []spi.ToolRegistration) bool {
-	if len(before) != len(after) {
-		return true
-	}
-	seen := make(map[string]struct{}, len(before))
-	for _, t := range before {
-		seen[t.Name] = struct{}{}
-	}
-	for _, t := range after {
-		if _, ok := seen[t.Name]; !ok {
-			return true
-		}
-	}
-	return false
 }

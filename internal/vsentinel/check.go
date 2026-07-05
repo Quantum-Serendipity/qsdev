@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/mod/modfile"
 )
 
 var knownManifests = map[string]string{
@@ -71,43 +73,28 @@ func parseManifest(path, filename string) ([]DepStatus, error) {
 }
 
 func parseGoMod(path string) ([]DepStatus, error) {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("opening go.mod: %w", err)
-	}
-	defer f.Close()
-
-	var deps []DepStatus
-	scanner := bufio.NewScanner(f)
-	inRequire := false
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-
-		if line == "require (" {
-			inRequire = true
-			continue
-		}
-		if inRequire && line == ")" {
-			inRequire = false
-			continue
-		}
-
-		if inRequire {
-			line = strings.TrimSuffix(line, "// indirect")
-			line = strings.TrimSpace(line)
-			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				deps = append(deps, DepStatus{
-					Name:            parts[0],
-					DeclaredVersion: parts[1],
-				})
-			}
-		}
+		return nil, fmt.Errorf("reading go.mod: %w", err)
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scanning go.mod: %w", err)
+	// ParseLax covers every require shape — single-line, block, commented, and
+	// quoted paths — uniformly, and tolerates directives this parser ignores
+	// (e.g. a newer toolchain line). It preserves the declared version text
+	// verbatim (keeping the "v" prefix), so declared-vs-locked comparison against
+	// go.sum stays apples-to-apples. Both direct and indirect requires are
+	// reported, matching the manifest's full require set.
+	mf, err := modfile.ParseLax(path, data, nil)
+	if err != nil {
+		return nil, fmt.Errorf("parsing go.mod: %w", err)
+	}
+
+	deps := make([]DepStatus, 0, len(mf.Require))
+	for _, r := range mf.Require {
+		if r == nil {
+			continue
+		}
+		deps = append(deps, DepStatus{Name: r.Mod.Path, DeclaredVersion: r.Mod.Version})
 	}
 
 	return deps, nil

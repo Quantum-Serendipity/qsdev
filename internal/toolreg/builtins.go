@@ -88,11 +88,9 @@ func builtinBehaviors() map[string]ToolBehavior {
 		},
 		"opengrep": {
 			GenerateFunc: func(a types.WizardAnswers) ([]types.GeneratedFile, error) {
-				f, err := sectools.GenerateOpengrepConfigYaml(a)
-				if err != nil {
-					return nil, err
-				}
-				return []types.GeneratedFile{*f}, nil
+				// Delivers the config plus the embedded core rule library so the
+				// rules the config references exist in the user's project.
+				return sectools.GenerateOpengrepFiles(a)
 			},
 		},
 		"container-security": {

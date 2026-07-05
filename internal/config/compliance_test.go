@@ -2,6 +2,8 @@ package config
 
 import (
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestComplianceLevel_BaselineMappings(t *testing.T) {
@@ -135,5 +137,54 @@ func TestCompareComplianceLevels_AllPairs(t *testing.T) {
 				t.Errorf("CompareComplianceLevels(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestCompareComplianceLevels_UnknownSortsBelowBaseline pins F-CAP-4.2-3: an
+// unknown/typo'd level must sort strictly below baseline so it can never
+// silently satisfy a security floor.
+func TestCompareComplianceLevels_UnknownSortsBelowBaseline(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		a, b string
+		want int
+	}{
+		{"strikt", "baseline", -1}, // typo'd "strict"
+		{"", "baseline", -1},       // empty
+		{"garbage", "enhanced", -1},
+		{"garbage", "strict", -1},
+		{"baseline", "strikt", 1}, // known outranks unknown
+		{"unknown-a", "unknown-b", 0},
+	}
+	for _, tt := range tests {
+		if got := CompareComplianceLevels(tt.a, tt.b); got != tt.want {
+			t.Errorf("CompareComplianceLevels(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
+// TestResolveConfig_FloorRaisesTypodSecurityLevel is the end-to-end guard for
+// F-CAP-4.2-3: a garbage/typo'd resolved security level with a known floor must
+// trigger a floor violation and be raised to the floor, not silently pass
+// through as if it were baseline.
+func TestResolveConfig_FloorRaisesTypodSecurityLevel(t *testing.T) {
+	org := DefaultQsdevConfig()
+	project := &types.QsdevConfig{
+		Security: types.SecurityConfig{Level: "baseline"}, // floor
+	}
+	// A local layer supplies a misspelled level; last-wins merge would leave it
+	// in place, so the floor check is the only line of defense.
+	local := &LocalConfig{
+		Security: types.SecurityConfig{Level: "strikt"},
+	}
+	result, err := ResolveConfig(org, nil, project, local, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Config.Security.Level != "baseline" {
+		t.Errorf("expected typo'd level raised to floor %q, got %q", "baseline", result.Config.Security.Level)
+	}
+	if len(result.Violations) == 0 {
+		t.Error("expected a floor violation for the invalid security level, got none")
 	}
 }

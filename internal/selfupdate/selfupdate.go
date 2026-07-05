@@ -33,6 +33,12 @@ type Config struct {
 	BinaryName    string        // Name of the binary (e.g. "qsdev")
 	CheckInterval time.Duration // Minimum interval between update checks
 	CacheDir      string        // Directory for caching update check results
+	// Strict requires a verified Sigstore signature over checksums.txt before
+	// an update is installed. When true (the default for releases), an update is
+	// refused if signature verification is skipped (no bundle in the release or
+	// cosign not installed). Set false as an escape hatch for dev/self-built
+	// binaries.
+	Strict bool
 }
 
 // testConfigOverride, when non-nil, is used by DefaultConfig instead of
@@ -55,6 +61,7 @@ func DefaultConfig() Config {
 		BinaryName:    b.AppName,
 		CheckInterval: 7 * 24 * time.Hour,
 		CacheDir:      filepath.Join(home, "."+b.AppName),
+		Strict:        true,
 	}
 }
 

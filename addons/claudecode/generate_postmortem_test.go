@@ -4,10 +4,76 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+// assertSkillLoadable verifies a generated SKILL.md is loadable by Claude Code:
+// it must begin with a YAML front-matter block ('---' delimited) that parses
+// into a mapping carrying non-empty name and description. Shared by the custom
+// skill generators (postmortem, etc.) to guard against front-matter regressions.
+func assertSkillLoadable(t *testing.T, content []byte) {
+	t.Helper()
+	s := string(content)
+	if !strings.HasPrefix(s, "---\n") {
+		t.Fatalf("SKILL.md must begin with a YAML front-matter delimiter, got:\n%.80s", s)
+	}
+	rest := s[len("---\n"):]
+	end := strings.Index(rest, "\n---")
+	if end < 0 {
+		t.Fatalf("SKILL.md front-matter is not terminated by a closing '---'")
+	}
+	var fm struct {
+		Name        string `yaml:"name"`
+		Description string `yaml:"description"`
+	}
+	if err := yaml.Unmarshal([]byte(rest[:end]), &fm); err != nil {
+		t.Fatalf("SKILL.md front-matter is not valid YAML: %v", err)
+	}
+	if fm.Name == "" {
+		t.Error("SKILL.md front-matter missing 'name'")
+	}
+	if fm.Description == "" {
+		t.Error("SKILL.md front-matter missing 'description'")
+	}
+}
+
+func TestGeneratePostmortemSkill_HasLoadableFrontMatter(t *testing.T) {
+	reg := newTestRegistry(t, goMock())
+	answers := types.WizardAnswers{
+		Tier:       "full",
+		Languages:  []types.LanguageChoice{{Name: "go"}},
+		AgentTools: types.AgentToolsAnswers{PostmortemEnabled: true},
+	}
+
+	gen := claudecode.NewClaudeCodeGenerator(reg, claudecode.Config{})
+	files, err := gen.Generate(answers)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var skillFile *types.GeneratedFile
+	for i, f := range files {
+		if f.Path == ".claude/skills/agent-postmortem/SKILL.md" {
+			skillFile = &files[i]
+			break
+		}
+	}
+	if skillFile == nil {
+		t.Fatal("expected postmortem skill file")
+		return
+	}
+
+	assertSkillLoadable(t, skillFile.Content)
+
+	// The body must survive the front-matter prepend.
+	if !strings.Contains(string(skillFile.Content), "## Step 1 - Intent Snapshot") {
+		t.Error("skill body should be preserved after front-matter synthesis")
+	}
+}
 
 func TestGeneratePostmortemSkill_GoProject(t *testing.T) {
 	reg := newTestRegistry(t, goMock())

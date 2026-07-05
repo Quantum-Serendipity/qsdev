@@ -229,61 +229,6 @@ func TestDnfYumFallback(t *testing.T) {
 	}
 }
 
-func TestPacmanAURHelper(t *testing.T) {
-	t.Run("paru preferred", func(t *testing.T) {
-		mock := NewMockRunner()
-		mock.LookPathResults["pacman"] = lookPathResult{path: "/usr/bin/pacman"}
-		mock.LookPathResults["paru"] = lookPathResult{path: "/usr/bin/paru"}
-		mock.LookPathResults["yay"] = lookPathResult{path: "/usr/bin/yay"}
-
-		p := NewPacman(mock)
-		if p.SearchCmd() != "paru -Ss" {
-			t.Errorf("expected paru search, got %s", p.SearchCmd())
-		}
-	})
-
-	t.Run("yay fallback", func(t *testing.T) {
-		mock := NewMockRunner()
-		mock.LookPathResults["pacman"] = lookPathResult{path: "/usr/bin/pacman"}
-		mock.LookPathResults["yay"] = lookPathResult{path: "/usr/bin/yay"}
-
-		p := NewPacman(mock)
-		if p.SearchCmd() != "yay -Ss" {
-			t.Errorf("expected yay search, got %s", p.SearchCmd())
-		}
-	})
-
-	t.Run("no AUR helper", func(t *testing.T) {
-		mock := NewMockRunner()
-		mock.LookPathResults["pacman"] = lookPathResult{path: "/usr/bin/pacman"}
-
-		p := NewPacman(mock)
-		if p.SearchCmd() != "pacman -Ss" {
-			t.Errorf("expected pacman search, got %s", p.SearchCmd())
-		}
-	})
-}
-
-func TestAptIsInstalled(t *testing.T) {
-	mock := NewMockRunner()
-	mock.LookPathResults["apt-get"] = lookPathResult{path: "/usr/bin/apt-get"}
-	mock.OutputResults["dpkg -l git"] = outputResult{
-		data: []byte("ii  git  1:2.39.2-1  amd64  fast, scalable, distributed revision control system\n"),
-	}
-	mock.OutputResults["dpkg -l missing"] = outputResult{
-		data: []byte("dpkg-query: no packages found matching missing\n"),
-		err:  fmt.Errorf("exit status 1"),
-	}
-
-	apt := NewApt(mock)
-	if !apt.IsInstalled(context.Background(), "git") {
-		t.Error("expected git to be installed")
-	}
-	if apt.IsInstalled(context.Background(), "missing") {
-		t.Error("expected missing to not be installed")
-	}
-}
-
 func TestElevation(t *testing.T) {
 	mock := NewMockRunner()
 	elevated := []PackageManager{
@@ -303,31 +248,6 @@ func TestElevation(t *testing.T) {
 	for _, pm := range notElevated {
 		if pm.NeedsElevation() {
 			t.Errorf("%s should not need elevation", pm.Name())
-		}
-	}
-}
-
-func TestSearchCmds(t *testing.T) {
-	mock := NewMockRunner()
-	mock.LookPathResults["dnf"] = lookPathResult{path: "/usr/bin/dnf"}
-
-	tests := []struct {
-		pm     PackageManager
-		expect string
-	}{
-		{NewApt(mock), "apt-cache search"},
-		{NewDnf(mock), "dnf search"},
-		{NewPacman(mock), "pacman -Ss"},
-		{NewZypper(mock), "zypper search"},
-		{NewApk(mock), "apk search"},
-		{NewXbps(mock), "xbps-query -Rs"},
-		{NewEmerge(mock), "emerge --search"},
-		{NewBrew(mock), "brew search"},
-		{NewNix(mock, false), "nix search nixpkgs"},
-	}
-	for _, tt := range tests {
-		if got := tt.pm.SearchCmd(); got != tt.expect {
-			t.Errorf("%s.SearchCmd()=%q, want %q", tt.pm.Name(), got, tt.expect)
 		}
 	}
 }

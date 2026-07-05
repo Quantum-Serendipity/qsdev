@@ -12,6 +12,8 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
+	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/risk"
+	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/trust"
 )
 
 type hookInput struct {
@@ -68,7 +70,7 @@ func runEnforce(cmd *cobra.Command, hookEvent string) error {
 		return nil
 	}
 
-	orchestrator := policyengine.NewSecurityOrchestrator(engine, nil, nil)
+	orchestrator := newProductionOrchestrator(engine)
 
 	switch hookEvent {
 	case "PreToolUse":
@@ -144,4 +146,27 @@ func sessionStatePath() (string, error) {
 		return "", fmt.Errorf("determining home directory: %w", err)
 	}
 	return filepath.Join(home, ".qsdev", "session-state.json"), nil
+}
+
+// trustConfigPath returns the path to the user's MCP trust configuration.
+// NewMcpTrustEngine tolerates a missing file (it falls back to an empty config),
+// so an empty path when the home directory cannot be resolved is acceptable.
+func trustConfigPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".qsdev", "trust.yaml")
+}
+
+// newProductionOrchestrator wires the SecurityOrchestrator with the real risk
+// scorer and MCP trust adapter so the confused-deputy check, PostToolUse output
+// hardening, and package risk scoring are actually reachable in the hook path.
+// Both production call sites (enforce and policy check) must go through this
+// seam; constructing the orchestrator with nil risk/trust silently disables
+// every MCP-poisoning defense.
+func newProductionOrchestrator(engine *policy.PolicyEngine) *policyengine.SecurityOrchestrator {
+	trustEngine := trust.NewMcpTrustEngine(trustConfigPath())
+	trustAdapter := policyengine.NewTrustAdapter(trustEngine)
+	return policyengine.NewSecurityOrchestrator(engine, risk.NewScorer(), trustAdapter)
 }

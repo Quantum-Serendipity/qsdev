@@ -76,7 +76,26 @@ func (e *PolicyEngine) DenyRuleChanges() <-chan []DenyRule {
 }
 
 func (e *PolicyEngine) FilePathDenyRules() []DenyRule {
-	return e.current.Load().DenyRules
+	raw := e.current.Load().DenyRules
+	normalized := make([]DenyRule, len(raw))
+	for i, r := range raw {
+		normalized[i] = normalizeDenyRuleType(r)
+	}
+	return normalized
+}
+
+// normalizeDenyRuleType maps the compiler's condition-specific deny-rule types
+// (denied_path from denied_path_check, path_glob from path_glob) onto the single
+// "path" type that the MCP confused-deputy check and deny-rule projection act on.
+// Without this normalization the trust layer skips every real compiled deny rule
+// (it only matches Type=="path"), so the confused-deputy defense is a silent
+// no-op against any policy an operator can actually author.
+func normalizeDenyRuleType(r DenyRule) DenyRule {
+	switch r.Type {
+	case "denied_path", "path_glob":
+		r.Type = "path"
+	}
+	return r
 }
 
 func (e *PolicyEngine) CurrentRules() []CompiledRule {

@@ -10,6 +10,13 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/contentsign"
 )
 
+// passphraseDeprecationWarning is emitted (to stderr, never echoing the value)
+// when the plaintext --password flag is used, steering callers to the
+// out-of-band --password-file/--password-env flags that keep the passphrase off
+// the process command line.
+const passphraseDeprecationWarning = "warning: --password places the passphrase on the process command line " +
+	"(visible via ps(1) and /proc/<pid>/cmdline); prefer --password-file or --password-env"
+
 // errVerificationFailed is returned by `content verify` when the content is not
 // verified, so the process exits non-zero for CI gating.
 var errVerificationFailed = errors.New("content verification failed")
@@ -35,10 +42,12 @@ against a set of trusted public keys.`,
 
 func contentSignCmd() *cobra.Command {
 	var (
-		keyPath  string
-		comment  string
-		password string
-		force    bool
+		keyPath      string
+		comment      string
+		password     string
+		passwordFile string
+		passwordEnv  string
+		force        bool
 	)
 
 	cmd := &cobra.Command{
@@ -46,9 +55,16 @@ func contentSignCmd() *cobra.Command {
 		Short: "Sign a content file, producing a detached Minisign signature",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("password") {
+				fmt.Fprintln(cmd.ErrOrStderr(), passphraseDeprecationWarning)
+			}
+			// PasswordFile/PasswordEnv are resolved out-of-band by contentsign so
+			// the passphrase never lands on argv; Password remains for compat.
 			opts := contentsign.SignOptions{
 				KeyPath:        keyPath,
 				Password:       password,
+				PasswordFile:   passwordFile,
+				PasswordEnv:    passwordEnv,
 				TrustedComment: comment,
 				Force:          force,
 			}
@@ -63,7 +79,13 @@ func contentSignCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&keyPath, "key", "", "Path to the Minisign secret key (required)")
 	cmd.Flags().StringVar(&comment, "comment", "", "Trusted (authenticated) comment to embed in the signature")
-	cmd.Flags().StringVar(&password, "password", "", "Password for an encrypted secret key")
+	cmd.Flags().StringVar(&password, "password", "",
+		"DEPRECATED: passphrase for an encrypted secret key. Exposes the passphrase on the process "+
+			"command line (ps, /proc); use --password-file or --password-env instead")
+	cmd.Flags().StringVar(&passwordFile, "password-file", "",
+		"Path to a file whose contents are the secret-key passphrase (may be /dev/stdin); keeps it off the command line")
+	cmd.Flags().StringVar(&passwordEnv, "password-env", "",
+		"Name of an environment variable holding the secret-key passphrase; keeps it off the command line")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite an existing signature file")
 	_ = cmd.MarkFlagRequired("key")
 
@@ -128,20 +150,31 @@ func printVerification(cmd *cobra.Command, res contentsign.VerificationResult, j
 
 func contentKeygenCmd() *cobra.Command {
 	var (
-		out      string
-		password string
+		out          string
+		password     string
+		passwordFile string
+		passwordEnv  string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "keygen",
 		Short: "Generate a new Minisign key pair",
 		Long: `Generate a new Minisign key pair, writing <out>.pub and <out>.key. The secret
-key is encrypted when --password is supplied.`,
+key is encrypted when a passphrase is supplied. Prefer --password-file or
+--password-env over --password so the passphrase stays off the process command
+line (where ps and /proc would expose it).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("password") {
+				fmt.Fprintln(cmd.ErrOrStderr(), passphraseDeprecationWarning)
+			}
+			pass, err := contentsign.ResolvePassphrase(password, passwordFile, passwordEnv)
+			if err != nil {
+				return err
+			}
 			pubPath := out + ".pub"
 			secPath := out + ".key"
-			pub, err := contentsign.GenerateKeyPair(pubPath, secPath, password)
+			pub, err := contentsign.GenerateKeyPair(pubPath, secPath, pass)
 			if err != nil {
 				return fmt.Errorf("generating key pair: %w", err)
 			}
@@ -156,7 +189,13 @@ key is encrypted when --password is supplied.`,
 	}
 
 	cmd.Flags().StringVar(&out, "out", "qsdev", "Output basename; writes <out>.pub and <out>.key")
-	cmd.Flags().StringVar(&password, "password", "", "Password to encrypt the secret key (recommended)")
+	cmd.Flags().StringVar(&password, "password", "",
+		"DEPRECATED: passphrase to encrypt the secret key. Exposes the passphrase on the process "+
+			"command line (ps, /proc); use --password-file or --password-env instead")
+	cmd.Flags().StringVar(&passwordFile, "password-file", "",
+		"Path to a file whose contents are the passphrase to encrypt the secret key (may be /dev/stdin)")
+	cmd.Flags().StringVar(&passwordEnv, "password-env", "",
+		"Name of an environment variable holding the passphrase to encrypt the secret key")
 
 	return cmd
 }

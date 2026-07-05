@@ -89,12 +89,13 @@ func Aggregate(reports []*posture.PostureReport, opts AggregateOptions) (*TeamRe
 
 	for _, r := range reports {
 		ps := ProjectSummary{
-			Name:        r.ProjectName,
-			Score:       r.Score,
-			Conformance: r.Conformance,
-			VulnTotals:  r.Dependencies.Totals,
+			Name:         r.ProjectName,
+			Score:        r.Score,
+			Conformance:  r.Conformance,
+			VulnTotals:   r.Dependencies.Totals,
+			Certifiable:  r.Dependencies.Certifiable(),
 			QsdevVersion: r.QsdevVersion,
-			LastScan:    r.GeneratedAt,
+			LastScan:     r.GeneratedAt,
 		}
 
 		// Mark as stale if the scan is older than the threshold.
@@ -163,13 +164,13 @@ func computeSummary(projects []ProjectSummary, opts AggregateOptions) TeamSummar
 	}
 
 	var (
-		totalScore     float64
-		scores         []float64
-		baselinePass   int
-		enhancedPass   int
-		criticalVulns  int
-		highVulns      int
-		needUpdate     int
+		totalScore    float64
+		scores        []float64
+		baselinePass  int
+		enhancedPass  int
+		criticalVulns int
+		highVulns     int
+		needUpdate    int
 	)
 
 	for _, p := range projects {

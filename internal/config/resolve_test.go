@@ -17,6 +17,71 @@ func TestResolveConfig_OrgDefaultsOnly(t *testing.T) {
 	}
 }
 
+// TestResolveConfig_RegistryProxyPathsSurvives is a regression test for
+// BL-P1-11: cloneQsdevConfig and deepMerge previously copied every InfraConfig
+// field EXCEPT RegistryProxyPaths, so the field was silently dropped on the
+// first clone during resolution even though pkg/ecosystem/helpers.go consumes it.
+func TestResolveConfig_RegistryProxyPathsSurvives(t *testing.T) {
+	project := &types.QsdevConfig{
+		Version: types.ConfigVersionCurrent,
+		Infrastructure: types.InfraConfig{
+			RegistryProxy:      "https://proxy.example.com",
+			RegistryProxyPaths: map[string]string{"npm": "/repository/npm", "pypi": "/repository/pypi"},
+		},
+	}
+
+	result, err := ResolveConfig(nil, nil, project, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := result.Config.Infrastructure.RegistryProxyPaths
+	if got == nil {
+		t.Fatal("RegistryProxyPaths was dropped during ResolveConfig (want it to survive)")
+	}
+	if got["npm"] != "/repository/npm" {
+		t.Errorf("RegistryProxyPaths[npm] = %q, want %q", got["npm"], "/repository/npm")
+	}
+	if got["pypi"] != "/repository/pypi" {
+		t.Errorf("RegistryProxyPaths[pypi] = %q, want %q", got["pypi"], "/repository/pypi")
+	}
+
+	// The clone must be independent of the input map (no aliasing).
+	got["npm"] = "mutated"
+	if project.Infrastructure.RegistryProxyPaths["npm"] != "/repository/npm" {
+		t.Error("mutating resolved RegistryProxyPaths mutated the input project config (aliased, not cloned)")
+	}
+}
+
+// TestResolveConfig_RegistryProxyPathsMerge verifies deepMerge unions
+// RegistryProxyPaths from a lower-priority layer with an overlay (BL-P1-11).
+func TestResolveConfig_RegistryProxyPathsMerge(t *testing.T) {
+	org := &types.QsdevConfig{
+		Infrastructure: types.InfraConfig{
+			RegistryProxyPaths: map[string]string{"npm": "/org/npm"},
+		},
+	}
+	project := &types.QsdevConfig{
+		Version: types.ConfigVersionCurrent,
+		Infrastructure: types.InfraConfig{
+			RegistryProxyPaths: map[string]string{"cargo": "/project/cargo"},
+		},
+	}
+
+	result, err := ResolveConfig(org, nil, project, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := result.Config.Infrastructure.RegistryProxyPaths
+	if got["npm"] != "/org/npm" {
+		t.Errorf("RegistryProxyPaths[npm] = %q, want %q (org layer lost)", got["npm"], "/org/npm")
+	}
+	if got["cargo"] != "/project/cargo" {
+		t.Errorf("RegistryProxyPaths[cargo] = %q, want %q (project layer lost)", got["cargo"], "/project/cargo")
+	}
+}
+
 func TestResolveConfig_ProfileOverridesOrg(t *testing.T) {
 	org := DefaultQsdevConfig()
 	profile := &types.QsdevConfig{
@@ -447,6 +512,140 @@ func TestResolveConfig_ViolationsRecorded(t *testing.T) {
 	}
 	if len(result.Violations) < 2 {
 		t.Errorf("expected at least 2 violations, got %d: %v", len(result.Violations), result.Violations)
+	}
+}
+
+// hasViolation reports whether a FloorViolation was recorded for the given field.
+func hasViolation(vs []FloorViolation, field string) bool {
+	for _, v := range vs {
+		if v.Field == field {
+			return true
+		}
+	}
+	return false
+}
+
+// TestResolveConfig_ComplianceBoolFloor is a regression test for #S6: the four
+// security bools must be floored against the compliance level a project
+// declares (client.security_level), mirroring how security.level itself is
+// floored. Before the fix, enforceBoolFloor only saw the project's own bool
+// (nil when unset), so a layer-5 local override to false silently disabled a
+// compliance-mandated control while security.level still read "strict".
+func TestResolveConfig_ComplianceBoolFloor(t *testing.T) {
+	tests := []struct {
+		name        string
+		field       string
+		localOff    func(*types.SecurityConfig)
+		getResolved func(*types.QsdevConfig) *bool
+	}{
+		{
+			name:        "script_blocking",
+			field:       "security.script_blocking",
+			localOff:    func(s *types.SecurityConfig) { s.ScriptBlocking = boolP(false) },
+			getResolved: func(c *types.QsdevConfig) *bool { return c.Security.ScriptBlocking },
+		},
+		{
+			name:        "age_gating",
+			field:       "security.age_gating",
+			localOff:    func(s *types.SecurityConfig) { s.AgeGating = boolP(false) },
+			getResolved: func(c *types.QsdevConfig) *bool { return c.Security.AgeGating },
+		},
+		{
+			name:        "lock_enforcement",
+			field:       "security.lock_enforcement",
+			localOff:    func(s *types.SecurityConfig) { s.LockEnforcement = boolP(false) },
+			getResolved: func(c *types.QsdevConfig) *bool { return c.Security.LockEnforcement },
+		},
+		{
+			name:        "vuln_scanning",
+			field:       "security.vuln_scanning",
+			localOff:    func(s *types.SecurityConfig) { s.VulnScanning = boolP(false) },
+			getResolved: func(c *types.QsdevConfig) *bool { return c.Security.VulnScanning },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			org := DefaultQsdevConfig()
+			// Project declares a strict compliance level but leaves the
+			// individual security bools unset.
+			project := &types.QsdevConfig{
+				Client: &types.ClientConfig{Name: "acme", SecurityLevel: "strict"},
+			}
+			// Local override tries to disable the compliance-mandated control.
+			local := &LocalConfig{}
+			tt.localOff(&local.Security)
+
+			result, err := ResolveConfig(org, nil, project, local, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Level must still read strict.
+			if result.Config.Security.Level != "strict" {
+				t.Errorf("security.level = %q, want strict", result.Config.Security.Level)
+			}
+			// The control must be enforced back on.
+			got := tt.getResolved(result.Config)
+			if got == nil || !*got {
+				t.Errorf("%s: resolved value not enforced to true (got %v)", tt.field, got)
+			}
+			// A floor violation must be recorded.
+			if !hasViolation(result.Violations, tt.field) {
+				t.Errorf("%s: expected a floor violation, got %v", tt.field, result.Violations)
+			}
+		})
+	}
+}
+
+// TestResolveConfig_ProjectBoolFloorStillEnforced is a regression guard: a
+// project that sets a bool true itself must continue to floor local overrides,
+// independent of the new compliance floor.
+func TestResolveConfig_ProjectBoolFloorStillEnforced(t *testing.T) {
+	org := DefaultQsdevConfig()
+	project := &types.QsdevConfig{
+		// No client / compliance level here — the project's own true floor
+		// must stand on its own.
+		Security: types.SecurityConfig{ScriptBlocking: boolP(true)},
+	}
+	local := &LocalConfig{
+		Security: types.SecurityConfig{ScriptBlocking: boolP(false)},
+	}
+	result, err := ResolveConfig(org, nil, project, local, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Config.Security.ScriptBlocking == nil || !*result.Config.Security.ScriptBlocking {
+		t.Error("expected script_blocking enforced to true by project floor")
+	}
+	if !hasViolation(result.Violations, "security.script_blocking") {
+		t.Errorf("expected script_blocking floor violation, got %v", result.Violations)
+	}
+}
+
+// TestResolveConfig_NonComplianceBoolUnaffected verifies a project with no
+// compliance level (and no project-level bool floor) does not gain a compliance
+// bool floor: a local override that disables a setting stays disabled and
+// records no violation.
+func TestResolveConfig_NonComplianceBoolUnaffected(t *testing.T) {
+	org := &types.QsdevConfig{
+		Security: types.SecurityConfig{ScriptBlocking: boolP(true)},
+	}
+	// Project declares neither a security level nor a client compliance level,
+	// and does not require script_blocking itself.
+	project := &types.QsdevConfig{}
+	local := &LocalConfig{
+		Security: types.SecurityConfig{ScriptBlocking: boolP(false)},
+	}
+	result, err := ResolveConfig(org, nil, project, local, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Config.Security.ScriptBlocking == nil || *result.Config.Security.ScriptBlocking {
+		t.Errorf("expected script_blocking to remain false (no floor), got %v", result.Config.Security.ScriptBlocking)
+	}
+	if hasViolation(result.Violations, "security.script_blocking") {
+		t.Errorf("did not expect a script_blocking violation, got %v", result.Violations)
 	}
 }
 

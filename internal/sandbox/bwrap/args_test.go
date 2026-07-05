@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
 )
 
 func TestBuildArgs(t *testing.T) {
@@ -182,6 +183,87 @@ func TestBuildArgs(t *testing.T) {
 	}
 }
 
+// TestBuildArgs_DefaultPolicyDenyMountsDoNotBreakExec is the primary regression
+// for the exec-is-non-functional defect: DefaultPolicy injects every deny-list
+// path (including /etc/shadow) as a self-referential read-only mount, and
+// BuildArgs used to reject those, breaking every `sandbox exec`. BuildArgs must
+// now succeed and must MASK each deny path (never bind/expose it).
+func TestBuildArgs_DefaultPolicyDenyMountsDoNotBreakExec(t *testing.T) {
+	t.Parallel()
+
+	cfg := sandbox.SandboxConfig{
+		HookCategory: sandbox.CategoryLinter,
+		Network:      sandbox.NetworkPolicy{Mode: "deny"},
+	}
+	// Mirror policy.DefaultPolicy/ToSandboxConfig: deny paths become ro mounts
+	// with Source == Target.
+	for _, p := range denylist.AllDenyPaths() {
+		cfg.Mounts = append(cfg.Mounts, sandbox.MountSpec{Source: p, Target: p, ReadOnly: true})
+	}
+
+	args, err := BuildArgs(&cfg, sandbox.TierFull)
+	if err != nil {
+		t.Fatalf("BuildArgs must not error on default deny-list mounts, got: %v", err)
+	}
+
+	// Every deny path must be MASKED (empty tmpfs or ro /dev/null), never bound
+	// with its real contents (no `--bind <p> <p>` / `--ro-bind <p> <p>`).
+	for _, p := range denylist.AllDenyPaths() {
+		if !containsMask(args, p) {
+			t.Errorf("deny path %q must be masked, got args: %v", p, args)
+		}
+		if containsSequence(args, []string{"--bind", p, p}) ||
+			containsSequence(args, []string{"--ro-bind", p, p}) {
+			t.Errorf("deny path %q must not be self-bound/exposed, got args: %v", p, args)
+		}
+	}
+	// Sanity: the safe system files are still mounted.
+	if !containsSequence(args, []string{"--ro-bind", "/etc/passwd", "/etc/passwd"}) {
+		t.Errorf("expected /etc/passwd to still be mounted, got args: %v", args)
+	}
+}
+
+// TestBuildArgs_MasksDenyPaths verifies the defense-in-depth mask: a config that
+// carries the deny-list self-mounts (the "these paths must be blocked"
+// directives) must emit an explicit mask for each deny path -- an empty tmpfs
+// for directories or a read-only /dev/null bind for files -- so the credential
+// store stays empty even if a broader bind ever exposed one of its ancestors
+// (e.g. $HOME). The masks are emitted AFTER every bind so they win.
+func TestBuildArgs_MasksDenyPaths(t *testing.T) {
+	t.Parallel()
+
+	cfg := sandbox.SandboxConfig{
+		ProjectDir:   "/home/user/project",
+		HookCategory: sandbox.CategoryFormatter,
+		Network:      sandbox.NetworkPolicy{Mode: "deny"},
+	}
+	for _, p := range denylist.AllDenyPaths() {
+		cfg.Mounts = append(cfg.Mounts, sandbox.MountSpec{Source: p, Target: p, ReadOnly: true})
+	}
+
+	args, err := BuildArgs(&cfg, sandbox.TierFull)
+	if err != nil {
+		t.Fatalf("BuildArgs returned unexpected error: %v", err)
+	}
+
+	for _, p := range denylist.AllDenyPaths() {
+		if !containsMask(args, p) {
+			t.Errorf("expected a mask (--tmpfs or --ro-bind /dev/null) for deny path %q, got args: %v", p, args)
+		}
+	}
+
+	// The mask must be emitted AFTER the project bind so it wins over any earlier
+	// (possibly broader) bind.
+	projectIdx := indexOfSequence(args, []string{"--bind", "/home/user/project", "/home/user/project"})
+	if projectIdx < 0 {
+		t.Fatalf("expected project dir bind, got args: %v", args)
+	}
+	maskIdx := indexOfMask(args, denylist.AllDenyPaths()[0])
+	if maskIdx <= projectIdx {
+		t.Errorf("deny mask (idx %d) must be emitted after the project bind (idx %d), got args: %v", maskIdx, projectIdx, args)
+	}
+}
+
 func TestBuildArgs_RejectsDeniedMountTarget(t *testing.T) {
 	t.Parallel()
 
@@ -253,15 +335,35 @@ func TestBuildArgs_RejectsRelativeNixStorePath(t *testing.T) {
 // containsSequence reports whether seq appears as a contiguous subsequence
 // within args.
 func containsSequence(args, seq []string) bool {
+	return indexOfSequence(args, seq) >= 0
+}
+
+// indexOfSequence returns the start index of the first contiguous occurrence of
+// seq within args, or -1 if absent.
+func indexOfSequence(args, seq []string) int {
 	if len(seq) == 0 {
-		return true
+		return 0
 	}
 	for i := 0; i <= len(args)-len(seq); i++ {
 		if slices.Equal(args[i:i+len(seq)], seq) {
-			return true
+			return i
 		}
 	}
-	return false
+	return -1
+}
+
+// containsMask reports whether args masks path with either an empty tmpfs
+// (--tmpfs <path>) or a read-only /dev/null bind (--ro-bind /dev/null <path>).
+func containsMask(args []string, path string) bool {
+	return indexOfMask(args, path) >= 0
+}
+
+// indexOfMask returns the start index of the mask for path, or -1 if absent.
+func indexOfMask(args []string, path string) int {
+	if i := indexOfSequence(args, []string{"--tmpfs", path}); i >= 0 {
+		return i
+	}
+	return indexOfSequence(args, []string{"--ro-bind", "/dev/null", path})
 }
 
 // containsBindRW reports whether args contains a read-write --bind for

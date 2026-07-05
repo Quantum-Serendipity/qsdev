@@ -75,6 +75,70 @@ func TestGenerateOpengrepConfigYaml_PathExclusions(t *testing.T) {
 	}
 }
 
+func TestGenerateOpengrepFiles_DeliversRules(t *testing.T) {
+	t.Parallel()
+
+	files, err := sectools.GenerateOpengrepFiles(types.WizardAnswers{})
+	if err != nil {
+		t.Fatalf("GenerateOpengrepFiles() error: %v", err)
+	}
+
+	var config *types.GeneratedFile
+	var ruleFiles []types.GeneratedFile
+	for i := range files {
+		switch {
+		case files[i].Path == ".opengrep/config.yaml":
+			config = &files[i]
+		case strings.HasPrefix(files[i].Path, ".opengrep/rules/core/"):
+			ruleFiles = append(ruleFiles, files[i])
+		}
+	}
+
+	if config == nil {
+		t.Fatal("expected a .opengrep/config.yaml among generated files")
+	}
+	if len(ruleFiles) == 0 {
+		t.Fatal("expected embedded rule files to be delivered, got none (rules never reach the user's project)")
+	}
+
+	// The path the config references must be the delivered location, not the
+	// source-only rules/core path that never exists in a user project.
+	cfg := string(config.Content)
+	if !strings.Contains(cfg, ".opengrep/rules/core") {
+		t.Errorf("config should point rules at the delivered .opengrep/rules/core; got:\n%s", cfg)
+	}
+	if strings.Contains(cfg, "  - rules/core\n") {
+		t.Error("config must not point at the source-only rules/core path")
+	}
+
+	for _, rf := range ruleFiles {
+		if rf.Owner != "opengrep" {
+			t.Errorf("rule file %s owner = %q, want opengrep", rf.Path, rf.Owner)
+		}
+		if len(rf.Content) == 0 {
+			t.Errorf("rule file %s has empty content", rf.Path)
+		}
+		// Intentionally-vulnerable test fixtures must never ship to users.
+		if strings.Contains(rf.Path, "/testdata/") {
+			t.Errorf("testdata fixture must not be delivered: %s", rf.Path)
+		}
+		if !strings.HasSuffix(rf.Path, ".yaml") && !strings.HasSuffix(rf.Path, ".yml") {
+			t.Errorf("non-rule file delivered: %s", rf.Path)
+		}
+	}
+
+	var found bool
+	for _, rf := range ruleFiles {
+		if strings.Contains(string(rf.Content), "qsdev.core.") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("delivered rule files should contain qsdev.core.* rule IDs")
+	}
+}
+
 func TestGenerateOpengrepConfigYaml_Defaults(t *testing.T) {
 	t.Parallel()
 

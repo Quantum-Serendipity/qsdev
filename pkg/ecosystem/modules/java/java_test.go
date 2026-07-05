@@ -598,7 +598,7 @@ func TestPreCommitHooks_JavaOnly(t *testing.T) {
 		t.Fatalf("PreCommitHooks() returned %d hooks, want 2", len(hooks))
 	}
 
-	expectedIDs := []string{"google-java-format", "spotbugs"}
+	expectedIDs := []string{"google-java-format", "pmd"}
 	for i, hook := range hooks {
 		if hook.ID != expectedIDs[i] {
 			t.Errorf("hooks[%d].ID = %q, want %q", i, hook.ID, expectedIDs[i])
@@ -620,7 +620,7 @@ func TestPreCommitHooks_WithKotlin(t *testing.T) {
 		t.Fatalf("PreCommitHooks() returned %d hooks, want 3", len(hooks))
 	}
 
-	expectedIDs := []string{"google-java-format", "spotbugs", "ktlint"}
+	expectedIDs := []string{"google-java-format", "pmd", "ktlint"}
 	for i, hook := range hooks {
 		if hook.ID != expectedIDs[i] {
 			t.Errorf("hooks[%d].ID = %q, want %q", i, hook.ID, expectedIDs[i])

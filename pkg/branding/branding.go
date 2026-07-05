@@ -1,6 +1,18 @@
 package branding
 
-import "sync/atomic"
+import (
+	"regexp"
+	"sync/atomic"
+)
+
+// githubActionsOIDCIssuer is the OIDC token issuer for keyless (Sigstore /
+// cosign) signatures produced by GitHub Actions workflows.
+const githubActionsOIDCIssuer = "https://token.actions.githubusercontent.com"
+
+// ReleaseWorkflow is the file name of the GitHub Actions workflow that builds,
+// signs, and publishes release artifacts (GoReleaser keyless cosign on a tag
+// push). It is the workflow whose signing identity release verification pins to.
+const ReleaseWorkflow = "release.yml"
 
 type Config struct {
 	AppName       string
@@ -106,4 +118,49 @@ func RepoURL() string {
 func InstallScriptURL() string {
 	cfg := Get()
 	return "https://raw.githubusercontent.com/" + cfg.GitHubOwner + "/" + cfg.GitHubRepo + "/main/install.sh"
+}
+
+// WorkflowIdentity returns the Sigstore certificate-identity parameters used to
+// verify release artifacts signed by this project's GitHub Actions workflow.
+//
+// issuer is the GitHub Actions OIDC token issuer. subjectRegExp is an anchored
+// regular expression matching the signing subject — any workflow under the
+// project's own repository (derived from branding so that forks and rebrands
+// verify against their own repository rather than a hardcoded owner/repo). It
+// is suitable for cosign's --certificate-identity-regexp flag and can be reused
+// by any cosign-based verification policy in this project.
+func WorkflowIdentity() (issuer, subjectRegExp string) {
+	subjectRegExp = "^" + regexp.QuoteMeta(workflowSubjectPrefix()) + ".+$"
+	return githubActionsOIDCIssuer, subjectRegExp
+}
+
+// workflowSubjectPrefix returns the Sigstore signing-subject prefix shared by
+// every workflow in this project's repository:
+//
+//	https://github.com/<owner>/<repo>/.github/workflows/
+//
+// Both WorkflowIdentity (regexp) and ReleaseWorkflowIdentity (exact) derive
+// from it, so the two identity forms cannot silently diverge.
+func workflowSubjectPrefix() string {
+	return RepoURL() + "/.github/workflows/"
+}
+
+// ReleaseWorkflowIdentity returns the Sigstore certificate-identity parameters
+// used to verify a specific release's artifacts against the EXACT signing
+// subject of this project's release workflow.
+//
+// Unlike WorkflowIdentity (which returns a regexp suitable for cosign policy
+// files that must accept any of the project's workflows), this returns the exact
+// Subject Alternative Name (SAN) pinning BOTH the workflow file and the git ref:
+//
+//	https://github.com/<owner>/<repo>/.github/workflows/release.yml@refs/tags/<tag>
+//
+// It is intended for cosign's --certificate-identity flag (exact match), which
+// rejects any signature produced by a different workflow file or on a different
+// ref — closing the impersonation gap left by a permissive regexp. issuer is the
+// GitHub Actions OIDC token issuer. Owner/repo derive from branding so
+// forks/rebrands verify against their own release workflow.
+func ReleaseWorkflowIdentity(tag string) (issuer, identity string) {
+	identity = workflowSubjectPrefix() + ReleaseWorkflow + "@refs/tags/" + tag
+	return githubActionsOIDCIssuer, identity
 }

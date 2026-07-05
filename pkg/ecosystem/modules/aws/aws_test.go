@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/aws"
 )
@@ -251,14 +252,16 @@ func TestDenyRules_AllPresent(t *testing.T) {
 	m := newModule()
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 
-	if len(rules) != 5 {
-		t.Fatalf("expected 5 deny rules, got %d: %v", len(rules), rules)
+	if len(rules) != 7 {
+		t.Fatalf("expected 7 deny rules, got %d: %v", len(rules), rules)
 	}
 
 	expected := []string{
 		"configure set",
 		"sts get-session-token",
 		"sts assume-role",
+		"sts get-federation-token",
+		"configure export-credentials",
 		"cat ~/.aws/credentials",
 		"cat ~/.aws/config",
 	}
@@ -272,6 +275,46 @@ func TestDenyRules_AllPresent(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("expected deny rule containing %q, got %v", exp, rules)
+		}
+	}
+}
+
+// TestDenyRules_GetSessionTokenArgless is a regression guard for F-CAP-11.1-1:
+// the arg-less `aws sts get-session-token` prints temporary credentials to
+// stdout and must be denied, not only the form that carries trailing arguments.
+// Benign, unrelated AWS commands must remain allowed (no over-matching).
+func TestDenyRules_GetSessionTokenArgless(t *testing.T) {
+	t.Parallel()
+
+	rules := newModule().DenyRules(ecosystem.ModuleConfig{})
+
+	denied := func(op string) bool {
+		for _, rule := range rules {
+			if denyutil.MatchesDenyRule(rule, op) {
+				return true
+			}
+		}
+		return false
+	}
+
+	mustDeny := []string{
+		"Bash(aws sts get-session-token)",
+		"Bash(aws sts get-session-token --duration-seconds 900)",
+		"Bash(aws sts get-session-token --serial-number arn:aws:iam::123:mfa/u --token-code 123456)",
+	}
+	for _, op := range mustDeny {
+		if !denied(op) {
+			t.Errorf("expected %q to be denied by AWS deny rules %v", op, rules)
+		}
+	}
+
+	mustAllow := []string{
+		"Bash(aws s3 ls)",
+		"Bash(aws sts get-caller-identity)",
+	}
+	for _, op := range mustAllow {
+		if denied(op) {
+			t.Errorf("expected %q to be allowed (not denied) by AWS deny rules %v", op, rules)
 		}
 	}
 }

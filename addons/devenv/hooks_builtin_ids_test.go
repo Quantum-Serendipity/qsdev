@@ -1,6 +1,7 @@
 package devenv_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -206,4 +207,89 @@ func TestBuiltInHookIDsAreRealGitHooksBuiltIns(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCustomHooksProvisionTheirBinary is the symmetric guard to
+// TestBuiltInHookIDsAreRealGitHooksBuiltIns. A custom hook (BuiltIn:false) is
+// rendered by collectLanguageFragmentsAndHooks in devenv_nix_data.go as an
+// explicit `entry`. Unless the hook declares a NixPackage — which makes the
+// generator rewrite the entry to "${pkgs.<pkg>}/bin/<binary>" AND add <pkg> to
+// the environment — the entry is emitted as a bare binary name that nothing
+// provisions, so the hook fails with command-not-found at commit time (BL-P1-8).
+//
+// The single legitimate alternative is for the owning module to ship the hook's
+// binary through DevenvPackages (e.g. container/hadolint, bazel/buildifier),
+// which puts it on PATH via the environment rather than the hook entry. This
+// test requires every custom hook across every registered module to satisfy one
+// of those two conditions, guarding the whole class of unprovisioned-hook defect
+// and preventing regressions when new custom hooks are added.
+func TestCustomHooksProvisionTheirBinary(t *testing.T) {
+	t.Parallel()
+
+	mods := ecosystem.DefaultRegistry().All()
+	if len(mods) == 0 {
+		t.Fatal("no ecosystem modules registered; expected the modules package import to register them")
+	}
+
+	for _, mod := range mods {
+		mod := mod
+		t.Run(mod.Name(), func(t *testing.T) {
+			t.Parallel()
+
+			cfg := ecosystem.ModuleConfig{}
+
+			// DevenvPackages is contributed via the optional PackageProvider
+			// interface; modules that don't implement it ship no extra binaries.
+			var devenvPkgs []string
+			if pp, ok := mod.(ecosystem.PackageProvider); ok {
+				devenvPkgs = pp.DevenvPackages(cfg)
+			}
+
+			for _, hook := range mod.PreCommitHooks(cfg) {
+				if hook.BuiltIn {
+					continue
+				}
+				if hook.NixPackage != "" {
+					continue
+				}
+
+				binary := hookBinary(hook.Entry)
+				if binary != "" && packageProvidesBinary(devenvPkgs, binary) {
+					continue
+				}
+
+				t.Errorf("module %q declares custom hook %q (BuiltIn:false) with entry %q but no NixPackage, "+
+					"and its binary %q is not shipped via DevenvPackages; the generated hook entry would be a bare "+
+					"binary name that nothing provisions, failing with command-not-found at commit time. Set "+
+					"NixPackage to the nixpkgs attribute that provides %q (or ship it through DevenvPackages).",
+					mod.Name(), hook.ID, hook.Entry, binary, binary)
+			}
+		})
+	}
+}
+
+// hookBinary extracts the executable name from a hook entry (its first
+// whitespace-separated token), e.g. "cppcheck --error-exitcode=1" -> "cppcheck".
+func hookBinary(entry string) string {
+	fields := strings.Fields(entry)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
+}
+
+// packageProvidesBinary reports whether any package in pkgs plausibly provides
+// the given binary. It matches a top-level attribute exactly (e.g. "hadolint")
+// as well as a nested attribute whose final path segment is the binary
+// (e.g. "lua54Packages.luacheck" provides "luacheck").
+func packageProvidesBinary(pkgs []string, binary string) bool {
+	for _, p := range pkgs {
+		if p == binary {
+			return true
+		}
+		if idx := strings.LastIndex(p, "."); idx >= 0 && p[idx+1:] == binary {
+			return true
+		}
+	}
+	return false
 }

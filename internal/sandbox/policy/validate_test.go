@@ -71,6 +71,11 @@ func TestValidateMountDecl(t *testing.T) {
 			name:  "allow /etc/hosts",
 			mount: MountDecl{Source: "/etc/hosts", Target: "/etc/hosts", ReadOnly: true},
 		},
+		{
+			name:    "deny /etc source (ancestor of /etc/shadow)",
+			mount:   MountDecl{Source: "/etc", Target: "/tmp/etc", ReadOnly: true},
+			wantErr: "overlaps sensitive path",
+		},
 	}
 
 	if home != "" {
@@ -109,6 +114,26 @@ func TestValidateMountDecl(t *testing.T) {
 			}{
 				name:    "deny ~/.docker/config.json",
 				mount:   MountDecl{Source: filepath.Join(home, ".docker", "config.json"), Target: "/tmp/docker", ReadOnly: true},
+				wantErr: "overlaps sensitive path",
+			},
+			struct {
+				name    string
+				mount   MountDecl
+				wantErr string
+			}{
+				// Ancestor rejection: binding $HOME would re-expose ~/.ssh etc.
+				name:    "deny home dir source (ancestor of credential dirs)",
+				mount:   MountDecl{Source: home, Target: "/tmp/home", ReadOnly: true},
+				wantErr: "overlaps sensitive path",
+			},
+			struct {
+				name    string
+				mount   MountDecl
+				wantErr string
+			}{
+				// Ancestor rejection on the target side: $HOME as a target.
+				name:    "deny home dir target (ancestor of credential dirs)",
+				mount:   MountDecl{Source: "/tmp/home", Target: home, ReadOnly: true},
 				wantErr: "overlaps sensitive path",
 			},
 		)

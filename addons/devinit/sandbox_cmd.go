@@ -2,14 +2,17 @@ package devinit
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/backendselect"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/policy"
 )
 
@@ -59,13 +62,8 @@ automatically selected based on available kernel capabilities.`,
 			cfg.HookCommand = args
 
 			caps := sandbox.ProbeCapabilitiesDefault(ctx)
-			tier := sandbox.DetermineTier(caps)
 
-			if msg := sandbox.TierMessage(tier); msg != "" {
-				slog.Info("sandbox degraded", "tier", tier.String(), "message", msg)
-			}
-
-			result, err := runSandboxed(ctx, cfg, tier)
+			result, err := runSandboxed(ctx, cfg, caps)
 			if err != nil {
 				return fmt.Errorf("sandbox execution failed: %w", err)
 			}
@@ -106,7 +104,7 @@ func sandboxStatusCmd() *cobra.Command {
 			}
 
 			caps := sandbox.ProbeCapabilitiesDefault(ctx)
-			tier := sandbox.DetermineTier(caps)
+			_, tier := backendselect.ResolveBackend(*caps)
 
 			if jsonOutput {
 				return printSandboxStatusJSON(cmd, caps, tier)
@@ -152,30 +150,100 @@ func printSandboxStatusText(cmd *cobra.Command, caps *sandbox.SystemCapabilities
 		fmt.Fprintf(w, "Note: %s\n", msg)
 	}
 
+	if layers := unenforceableLayers(tier); len(layers) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "Warning: the kernel supports %s, but the enforcement tool(s) are not\n",
+			strings.Join(layers, " and "))
+		fmt.Fprintf(w, "         installed in this build, so %s will NOT be applied at exec time.\n",
+			pluralLayers(layers))
+	}
+
 	return nil
+}
+
+// unenforceableLayers returns the LSM layer names that the given tier advertises
+// but that cannot actually be enforced because their userspace tool is missing
+// (ll-restrict for Landlock, a compiled BPF filter for seccomp). It lets the
+// status command stay honest even when kernel-capability probing reports a tier
+// stronger than the tool set can deliver.
+func unenforceableLayers(tier sandbox.DegradationTier) []string {
+	var layers []string
+	if sandbox.TierClaimsLandlock(tier) && sandbox.LLRestrictBin() == "" {
+		layers = append(layers, "Landlock")
+	}
+	if sandbox.TierClaimsSeccomp(tier) && sandbox.SeccompFilterFile() == "" {
+		layers = append(layers, "seccomp")
+	}
+	return layers
+}
+
+func pluralLayers(layers []string) string {
+	if len(layers) == 1 {
+		return "it"
+	}
+	return "they"
+}
+
+// sandboxStatusJSON is the machine-readable shape emitted by
+// `sandbox status --json`. UnenforceableLayers reports layers the tier
+// advertises but cannot enforce, so machine consumers do not treat "full" as a
+// guarantee that every layer is applied.
+type sandboxStatusJSON struct {
+	Tier                string                  `json:"tier"`
+	SecurityLevel       string                  `json:"security_level"`
+	UnenforceableLayers []string                `json:"unenforceable_layers"`
+	Capabilities        sandboxCapabilitiesJSON `json:"capabilities"`
+}
+
+type sandboxCapabilitiesJSON struct {
+	Bwrap       bool   `json:"bwrap"`
+	UserNS      bool   `json:"user_ns"`
+	LandlockABI int    `json:"landlock_abi"`
+	Seccomp     bool   `json:"seccomp"`
+	CgroupV2    bool   `json:"cgroup_v2"`
+	CgroupDeleg bool   `json:"cgroup_deleg"`
+	SystemdRun  bool   `json:"systemd_run"`
+	Kernel      string `json:"kernel"`
 }
 
 func printSandboxStatusJSON(cmd *cobra.Command, caps *sandbox.SystemCapabilities, tier sandbox.DegradationTier) error {
-	w := cmd.OutOrStdout()
-	fmt.Fprintf(w, `{"tier":%q,"security_level":%q,"capabilities":{"bwrap":%t,"user_ns":%t,"landlock_abi":%d,"seccomp":%t,"cgroup_v2":%t,"cgroup_deleg":%t,"systemd_run":%t,"kernel":%q}}`,
-		tier.String(), sandbox.TierSecurityLevel(tier),
-		caps.HasBwrap, caps.HasUserNS, caps.LandlockABI,
-		caps.HasSeccomp, caps.HasCgroupV2, caps.HasCgroupDeleg,
-		caps.HasSystemdRun, caps.KernelVersion)
-	fmt.Fprintln(w)
+	unenforceable := unenforceableLayers(tier)
+	if unenforceable == nil {
+		unenforceable = []string{}
+	}
+	status := sandboxStatusJSON{
+		Tier:                tier.String(),
+		SecurityLevel:       sandbox.TierSecurityLevel(tier),
+		UnenforceableLayers: unenforceable,
+		Capabilities: sandboxCapabilitiesJSON{
+			Bwrap:       caps.HasBwrap,
+			UserNS:      caps.HasUserNS,
+			LandlockABI: caps.LandlockABI,
+			Seccomp:     caps.HasSeccomp,
+			CgroupV2:    caps.HasCgroupV2,
+			CgroupDeleg: caps.HasCgroupDeleg,
+			SystemdRun:  caps.HasSystemdRun,
+			Kernel:      caps.KernelVersion,
+		},
+	}
+	out, err := json.Marshal(status)
+	if err != nil {
+		return fmt.Errorf("marshaling sandbox status: %w", err)
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), string(out))
 	return nil
 }
 
-// runSandboxed runs a hook in the appropriate sandbox tier.
-func runSandboxed(ctx context.Context, cfg *sandbox.SandboxConfig, tier sandbox.DegradationTier) (*sandbox.SandboxResult, error) {
-	switch {
-	case tier <= sandbox.TierBwrapWithoutSeccomp:
-		slog.Warn("bubblewrap backend not yet connected in this build; falling back to unsandboxed")
-		return (&sandbox.UnsandboxedBackend{}).RunHook(ctx, cfg)
-	case tier == sandbox.TierSystemdRun:
-		slog.Warn("systemd-run backend not yet connected in this build; falling back to unsandboxed")
-		return (&sandbox.UnsandboxedBackend{}).RunHook(ctx, cfg)
-	default:
-		return (&sandbox.UnsandboxedBackend{}).RunHook(ctx, cfg)
+// runSandboxed resolves the strongest available sandbox backend for the probed
+// capabilities and runs the hook inside it. It warns only on genuine degradation
+// (any tier weaker than full), so a caller can tell when the requested isolation
+// could not be fully applied.
+func runSandboxed(ctx context.Context, cfg *sandbox.SandboxConfig, caps *sandbox.SystemCapabilities) (*sandbox.SandboxResult, error) {
+	backend, tier := backendselect.ResolveBackend(*caps)
+
+	if msg := sandbox.TierMessage(tier); msg != "" {
+		slog.Warn("sandbox degraded", "tier", tier.String(), "message", msg)
 	}
+
+	return backend.RunHook(ctx, cfg)
 }

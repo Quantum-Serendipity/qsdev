@@ -207,7 +207,24 @@ func probeBinaryIncluded(info *PackageInfo) ProbeResult {
 	}
 }
 
+// vulnUnavailable is the result returned by a vulnerability-category probe when
+// no OSV/KEV enrichment has been performed for the package. Reporting the data
+// as unavailable (rather than a passing 100) keeps "never looked up" distinct
+// from "looked up and clean", so the data-freshness floor can quarantine an
+// unenriched package instead of failing open at grade B.
+func vulnUnavailable(id string) ProbeResult {
+	return ProbeResult{
+		ProbeID:  id,
+		Category: "vulnerability",
+		Status:   ProbeDataUnavailable,
+		Weight:   0.35,
+	}
+}
+
 func probeCVECritical(info *PackageInfo) ProbeResult {
+	if !info.VulnDataAvailable {
+		return vulnUnavailable("cve-critical")
+	}
 	score := 100.0
 	if info.CVECritical > 0 {
 		score = 0
@@ -223,6 +240,9 @@ func probeCVECritical(info *PackageInfo) ProbeResult {
 }
 
 func probeCVEHigh(info *PackageInfo) ProbeResult {
+	if !info.VulnDataAvailable {
+		return vulnUnavailable("cve-high")
+	}
 	penalty := min(info.CVEHigh*30, 100)
 	score := float64(100 - penalty)
 	return ProbeResult{
@@ -236,6 +256,9 @@ func probeCVEHigh(info *PackageInfo) ProbeResult {
 }
 
 func probeKEVListed(info *PackageInfo) ProbeResult {
+	if !info.VulnDataAvailable {
+		return vulnUnavailable("kev-listed")
+	}
 	score := 100.0
 	if info.KEVListed {
 		score = 0

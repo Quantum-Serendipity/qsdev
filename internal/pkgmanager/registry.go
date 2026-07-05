@@ -13,11 +13,18 @@ type PackageNames struct {
 
 	// ByManager maps package manager name to the package name for that manager.
 	ByManager map[string]string
+
+	// Unavailable maps a package manager name to actionable guidance for tools
+	// that have no installable package under that manager (e.g. "pre-commit"
+	// has no winget package; it is installed via pip). When a manager is present
+	// here, ResolvePackageName reports the tool as having no package rather than
+	// falling back to a bare generic name that would form a broken install.
+	Unavailable map[string]string
 }
 
 // ToolEntry describes a tool in the registry.
 type ToolEntry struct {
-	// Name is the canonical tool identifier (e.g. "go", "nodejs").
+	// Name is the canonical tool identifier (e.g. "go", "node").
 	Name string
 
 	// Binary is the executable name to look up on PATH.
@@ -34,11 +41,21 @@ type ToolEntry struct {
 var toolRegistry = map[string]ToolEntry{
 	"git": {
 		Name: "git", Binary: "git", VersionFlag: "--version",
-		Packages: PackageNames{Generic: "git"},
+		Packages: PackageNames{
+			Generic: "git",
+			ByManager: map[string]string{
+				"winget": "Git.Git",
+			},
+		},
 	},
 	"curl": {
 		Name: "curl", Binary: "curl", VersionFlag: "--version",
-		Packages: PackageNames{Generic: "curl"},
+		Packages: PackageNames{
+			Generic: "curl",
+			ByManager: map[string]string{
+				"winget": "cURL.cURL",
+			},
+		},
 	},
 	"wget": {
 		Name: "wget", Binary: "wget", VersionFlag: "--version",
@@ -70,8 +87,11 @@ var toolRegistry = map[string]ToolEntry{
 			},
 		},
 	},
-	"nodejs": {
-		Name: "nodejs", Binary: "node", VersionFlag: "--version",
+	// Keyed "node" (not "nodejs") to match the tool name that flows through
+	// doctor checks and the setup toolLevels; the installable package name is
+	// still "nodejs" on most Linux managers.
+	"node": {
+		Name: "node", Binary: "node", VersionFlag: "--version",
 		Packages: PackageNames{
 			Generic: "nodejs",
 			ByFamily: map[string]string{
@@ -82,6 +102,16 @@ var toolRegistry = map[string]ToolEntry{
 				"scoop":  "nodejs-lts",
 				"choco":  "nodejs-lts",
 				"emerge": "net-libs/nodejs",
+			},
+		},
+	},
+	// npm ships bundled with Node.js; there is no standalone winget package.
+	"npm": {
+		Name: "npm", Binary: "npm", VersionFlag: "--version",
+		Packages: PackageNames{
+			Generic: "npm",
+			Unavailable: map[string]string{
+				"winget": "it is bundled with Node.js — install the 'node' tool (winget package OpenJS.NodeJS.LTS)",
 			},
 		},
 	},
@@ -107,6 +137,7 @@ var toolRegistry = map[string]ToolEntry{
 				"dnf":    "ShellCheck",
 				"zypper": "ShellCheck",
 				"emerge": "dev-util/shellcheck",
+				"winget": "koalaman.shellcheck",
 			},
 		},
 	},
@@ -116,6 +147,7 @@ var toolRegistry = map[string]ToolEntry{
 			Generic: "direnv",
 			ByManager: map[string]string{
 				"emerge": "dev-util/direnv",
+				"winget": "direnv.direnv",
 			},
 		},
 	},
@@ -193,6 +225,9 @@ var toolRegistry = map[string]ToolEntry{
 			ByManager: map[string]string{
 				"nix": "pre-commit",
 			},
+			Unavailable: map[string]string{
+				"winget": "install it via pip (pip install pre-commit) or with Nix",
+			},
 		},
 	},
 	"shfmt": {
@@ -200,7 +235,8 @@ var toolRegistry = map[string]ToolEntry{
 		Packages: PackageNames{
 			Generic: "shfmt",
 			ByManager: map[string]string{
-				"nix": "shfmt",
+				"nix":    "shfmt",
+				"winget": "mvdan.shfmt",
 			},
 		},
 	},
@@ -209,7 +245,8 @@ var toolRegistry = map[string]ToolEntry{
 		Packages: PackageNames{
 			Generic: "hadolint",
 			ByManager: map[string]string{
-				"nix": "hadolint",
+				"nix":    "hadolint",
+				"winget": "hadolint.hadolint",
 			},
 		},
 	},
@@ -218,10 +255,17 @@ var toolRegistry = map[string]ToolEntry{
 // ResolvePackageName returns the best package name for the given tool,
 // considering OS family and package manager overrides.
 // Lookup order: ByManager → ByFamily → Generic.
-// Returns ("", false) if the tool is not in the registry.
+// Returns ("", false) if the tool is not in the registry, or if the tool has
+// no installable package for the given manager (see PackageUnavailable).
 func ResolvePackageName(toolName, family, manager string) (string, bool) {
 	entry, ok := toolRegistry[toolName]
 	if !ok {
+		return "", false
+	}
+	// A tool may have no installable package for a given manager (e.g. pre-commit
+	// or npm on winget). Report no package rather than falling back to a generic
+	// name that would form a broken install command.
+	if _, unavailable := PackageUnavailable(toolName, manager); unavailable {
 		return "", false
 	}
 	// Prefer manager-specific name.
@@ -249,9 +293,29 @@ func LookupTool(name string) (ToolEntry, bool) {
 	return e, ok
 }
 
+// PackageUnavailable reports whether toolName has no installable package for the
+// given package manager. When unavailable is true, remedy contains actionable
+// guidance for installing the tool by other means (e.g. via pip, or bundled
+// with another tool). It returns ("", false) for tools that are not in the
+// registry or that do have a package for the manager.
+func PackageUnavailable(toolName, manager string) (remedy string, unavailable bool) {
+	entry, ok := toolRegistry[toolName]
+	if !ok || manager == "" || entry.Packages.Unavailable == nil {
+		return "", false
+	}
+	remedy, unavailable = entry.Packages.Unavailable[manager]
+	return remedy, unavailable
+}
+
 // InstallCommand returns a human-readable install command string for the
 // given tool, e.g. "brew install git" or "sudo apt-get install -y golang".
 func InstallCommand(toolName, family, manager string) string {
+	// Tools with no package for this manager get actionable guidance instead of
+	// a broken command line (e.g. "winget install --id pre-commit -e").
+	if remedy, unavailable := PackageUnavailable(toolName, manager); unavailable {
+		return fmt.Sprintf("no %s package for %s; %s", manager, toolName, remedy)
+	}
+
 	pkgName, ok := ResolvePackageName(toolName, family, manager)
 	if !ok {
 		return ""

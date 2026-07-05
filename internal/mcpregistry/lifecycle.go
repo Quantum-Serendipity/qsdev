@@ -2,7 +2,9 @@ package mcpregistry
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -67,17 +69,11 @@ func (lc *McpLifecycle) Install(ctx context.Context, serverName string) (*Instal
 		out, err := lc.CmdRunner.Run(ctx, "uv", "tool", "install", def.PackageName)
 		if err != nil {
 			result.Error = fmt.Sprintf("uv tool install failed: %v: %s", err, out)
-		} else {
-			result.Installed = true
-			result.Version = "latest"
 		}
 	case InstallNpmGlobal:
 		out, err := lc.CmdRunner.Run(ctx, "npm", "install", "-g", def.PackageName)
 		if err != nil {
 			result.Error = fmt.Sprintf("npm install -g failed: %v: %s", err, out)
-		} else {
-			result.Installed = true
-			result.Version = "latest"
 		}
 	case InstallNixPackage:
 		result.Error = "nix packages are declarative; add to devenv.nix instead"
@@ -87,7 +83,20 @@ func (lc *McpLifecycle) Install(ctx context.Context, serverName string) (*Instal
 		return result, nil
 	}
 
-	if err := lc.updateServerState(serverName, def.InstallMethod, "latest"); err != nil {
+	// Fail closed: a failed package-manager command must never be recorded as a
+	// successful install. Return before touching state so a broken install
+	// cannot masquerade as installed.
+	if result.Error != "" {
+		return result, nil
+	}
+
+	// The command succeeded; resolve the real installed version and verify the
+	// package is actually present before recording success.
+	version, healthStatus := lc.verifyInstalled(ctx, def.InstallMethod, def.PackageName)
+	result.Installed = true
+	result.Version = version
+
+	if err := lc.updateServerState(serverName, def.InstallMethod, version, healthStatus); err != nil {
 		return result, fmt.Errorf("saving state for %q: %w", serverName, err)
 	}
 
@@ -125,17 +134,11 @@ func (lc *McpLifecycle) Update(ctx context.Context, serverName string) (*UpdateR
 		out, err := lc.CmdRunner.Run(ctx, "uv", "tool", "upgrade", def.PackageName)
 		if err != nil {
 			result.Error = fmt.Sprintf("uv tool upgrade failed: %v: %s", err, out)
-		} else {
-			result.Updated = true
-			result.NewVersion = "latest"
 		}
 	case InstallNpmGlobal:
 		out, err := lc.CmdRunner.Run(ctx, "npm", "update", "-g", def.PackageName)
 		if err != nil {
 			result.Error = fmt.Sprintf("npm update -g failed: %v: %s", err, out)
-		} else {
-			result.Updated = true
-			result.NewVersion = "latest"
 		}
 	case InstallNixPackage:
 		result.Error = "nix packages are declarative; update devenv.nix instead"
@@ -145,7 +148,18 @@ func (lc *McpLifecycle) Update(ctx context.Context, serverName string) (*UpdateR
 		return result, nil
 	}
 
-	if err := lc.updateServerState(serverName, def.InstallMethod, "latest"); err != nil {
+	// Fail closed: a failed upgrade must not overwrite state with a new
+	// successful entry. Return before touching state.
+	if result.Error != "" {
+		return result, nil
+	}
+
+	// Resolve the real post-upgrade version and verify presence.
+	version, healthStatus := lc.verifyInstalled(ctx, def.InstallMethod, def.PackageName)
+	result.Updated = true
+	result.NewVersion = version
+
+	if err := lc.updateServerState(serverName, def.InstallMethod, version, healthStatus); err != nil {
 		return result, fmt.Errorf("saving state for %q: %w", serverName, err)
 	}
 
@@ -228,7 +242,9 @@ func (lc *McpLifecycle) Remove(ctx context.Context, serverName string) (*RemoveR
 }
 
 // updateServerState records an MCP server's install state in generated state.
-func (lc *McpLifecycle) updateServerState(serverName string, method McpInstallMethod, version string) error {
+// healthStatus is derived from a post-install verification probe and must
+// reflect the real outcome — it is never assumed to be "installed".
+func (lc *McpLifecycle) updateServerState(serverName string, method McpInstallMethod, version, healthStatus string) error {
 	state, err := lc.StateLoader()
 	if err != nil {
 		return fmt.Errorf("loading state: %w", err)
@@ -243,8 +259,89 @@ func (lc *McpLifecycle) updateServerState(serverName string, method McpInstallMe
 		InstalledVersion: version,
 		InstallMethod:    method.String(),
 		LastHealthCheck:  &now,
-		LastHealthStatus: "installed",
+		LastHealthStatus: healthStatus,
 	}
 
 	return lc.StateSaver(state)
+}
+
+// versionUnknown is recorded when the installed version cannot be determined.
+const versionUnknown = "unknown"
+
+// verifyInstalled resolves the actually-installed version of a package and
+// probes that it is present in the package manager's inventory. For `uv tool`
+// and `npm -g`, a package appearing in that inventory means its entry-point
+// binary is on PATH. It returns the resolved version plus an honest health
+// status: "installed" when the package is confirmed present, "unverified" when
+// the install command reported success but presence could not be confirmed.
+func (lc *McpLifecycle) verifyInstalled(ctx context.Context, method McpInstallMethod, pkg string) (version, healthStatus string) {
+	version, found := lc.resolveInstalledVersion(ctx, method, pkg)
+	if found {
+		return version, "installed"
+	}
+	return version, "unverified"
+}
+
+// resolveInstalledVersion queries the relevant package manager for the
+// installed version of pkg. The second return value reports whether the
+// package was found in the manager's inventory.
+func (lc *McpLifecycle) resolveInstalledVersion(ctx context.Context, method McpInstallMethod, pkg string) (string, bool) {
+	switch method {
+	case InstallUvTool:
+		out, err := lc.CmdRunner.Run(ctx, "uv", "tool", "list")
+		if err != nil {
+			return versionUnknown, false
+		}
+		return parseUvToolVersion(out, pkg)
+	case InstallNpmGlobal:
+		// `npm ls` exits non-zero on peer/extraneous warnings while still
+		// emitting valid JSON, so the exit code is intentionally ignored and
+		// the output parsed directly.
+		out, _ := lc.CmdRunner.Run(ctx, "npm", "ls", "-g", "--json", pkg)
+		return parseNpmVersion(out, pkg)
+	default:
+		return versionUnknown, false
+	}
+}
+
+// parseUvToolVersion extracts the installed version of pkg from `uv tool list`
+// output. Package lines have the form "<name> v<version>" followed by indented
+// entry-point lines prefixed with "-". Any extras suffix (e.g. "pkg[extra]") is
+// stripped before matching, since uv lists the distribution name.
+func parseUvToolVersion(out []byte, pkg string) (string, bool) {
+	base := strings.SplitN(pkg, "[", 2)[0]
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "-") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != base {
+			continue
+		}
+		version := strings.TrimPrefix(fields[1], "v")
+		if version == "" {
+			return versionUnknown, false
+		}
+		return version, true
+	}
+	return versionUnknown, false
+}
+
+// parseNpmVersion extracts the installed version of pkg from
+// `npm ls -g --json <pkg>` output.
+func parseNpmVersion(out []byte, pkg string) (string, bool) {
+	var parsed struct {
+		Dependencies map[string]struct {
+			Version string `json:"version"`
+		} `json:"dependencies"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return versionUnknown, false
+	}
+	dep, ok := parsed.Dependencies[pkg]
+	if !ok || dep.Version == "" {
+		return versionUnknown, false
+	}
+	return dep.Version, true
 }

@@ -2,22 +2,21 @@ package security
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
+	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	ststypes "github.com/aws/aws-sdk-go-v2/service/sts/types"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan"
+	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan/vulnscantest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -101,6 +100,39 @@ func TestPolicyCheckEvaluatesDenyRule(t *testing.T) {
 	})
 }
 
+// TestPolicyCheckReportsEnforcedDenySet proves qsdev_policy_check reports the MCP
+// Guardrail's enforced deny set from the SAME middleware.PolicyFromConfig
+// derivation the running server installs (via projectPolicy/chainForMode), so a
+// tool "reported denied" and a tool "actually blocked on an MCP call" cannot
+// diverge (BL-P1-3, S7).
+func TestPolicyCheckReportsEnforcedDenySet(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeConfig(t, dir, "version: 1\ntools:\n  disabled:\n    - qsdev_security_scan\n    - qsdev_nix_run\n")
+	pc := newPolicyChecker(dir)
+
+	// Inventory mode (no tool_name) surfaces the enforced deny set.
+	reported, ok := structuredMap(t, call(t, pc.handle, nil))["mcp_enforced_deny"].([]string)
+	if !ok {
+		t.Fatalf("mcp_enforced_deny missing or wrong type")
+	}
+
+	// Independently derive what the server enforces from the same config + function.
+	cfg, err := config.ParseQsdevConfig(filepath.Join(dir, ".qsdev.yaml"))
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	want := middleware.PolicyFromConfig(cfg).DenyToolSet()
+
+	if !reflect.DeepEqual(reported, want) {
+		t.Errorf("reported enforced deny = %v, want %v (reported must equal enforced)", reported, want)
+	}
+	// Guard against a vacuous pass where both sides are empty.
+	if len(reported) != 2 {
+		t.Fatalf("enforced deny set = %v, want the 2 disabled tools", reported)
+	}
+}
+
 func TestPolicyCheckNotConfigured(t *testing.T) {
 	t.Parallel()
 	pc := newPolicyChecker(t.TempDir()) // no .qsdev.yaml present
@@ -162,6 +194,47 @@ func TestSecurityScanReportsUnparseableLockFile(t *testing.T) {
 	}
 	if reason, _ := m["reason"].(string); !strings.Contains(reason, "could not be parsed") {
 		t.Errorf("reason should distinguish a present-but-unparseable lock file, got %q", reason)
+	}
+}
+
+// TestSecurityScanSeverityMatchesSharedMapping is the M11 regression: the MCP
+// security_scan tool must report the SAME normalized severity the CLI scan does.
+// Before consolidation, a GHSA "MODERATE" advisory folded to "unknown" via the
+// tool's private table (which only knew "medium"), while the CLI reported
+// "moderate" — the two entry points disagreed on the same advisory. Both the
+// "moderate" and the "medium" (alias) thresholds must admit it.
+func TestSecurityScanSeverityMatchesSharedMapping(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	goSum := "example.com/mod v1.0.0 h1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\n" +
+		"example.com/mod v1.0.0/go.mod h1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb=\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.sum"), []byte(goSum), 0o644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+
+	srv := vulnscantest.NewServer(t,
+		map[int][]string{0: {"GHSA-MOD-1"}},
+		map[string]string{"GHSA-MOD-1": "MODERATE"},
+	)
+	scanner := &securityScanner{
+		projectRoot: dir,
+		scanner:     &vulnscan.Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()},
+	}
+
+	for _, threshold := range []string{"moderate", "medium"} {
+		t.Run("threshold_"+threshold, func(t *testing.T) {
+			res := call(t, scanner.handle, map[string]any{"severity_threshold": threshold})
+			if res.IsError {
+				t.Fatalf("scan returned error: %+v", res.Structured)
+			}
+			vulns, ok := structuredMap(t, res)["vulnerabilities"].([]vulnReport)
+			if !ok || len(vulns) != 1 {
+				t.Fatalf("vulnerabilities = %v, want exactly one at/above %q", structuredMap(t, res)["vulnerabilities"], threshold)
+			}
+			if vulns[0].Severity != "moderate" {
+				t.Errorf("severity = %q, want \"moderate\" (must match the shared CLI mapping, not fold to unknown)", vulns[0].Severity)
+			}
+		})
 	}
 }
 
@@ -294,14 +367,14 @@ func TestSecurityScanRejectsPathTraversal(t *testing.T) {
 	outsideAbs := filepath.Join(t.TempDir(), "go.sum")
 
 	// Stub OSV so the in-root scan succeeds without network access: an empty
-	// response reports zero vulnerabilities.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(osvBatchResponse{})
-	}))
-	// t.Cleanup (not defer): the parallel subtests below run after this function
-	// returns, so a defer would close the stub before they make their request.
-	t.Cleanup(srv.Close)
-	scanner := &securityScanner{projectRoot: dir, baseURL: srv.URL, httpClient: srv.Client()}
+	// response reports zero vulnerabilities. The stub closes via t.Cleanup (not
+	// defer): the parallel subtests below run after this function returns, so a
+	// defer would close it before they make their request.
+	srv := vulnscantest.NewServer(t, nil, nil)
+	scanner := &securityScanner{
+		projectRoot: dir,
+		scanner:     &vulnscan.Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()},
+	}
 
 	cases := []struct {
 		name      string
@@ -335,60 +408,6 @@ func TestSecurityScanRejectsPathTraversal(t *testing.T) {
 				t.Fatalf("in-root path %q should scan, got error: %+v", tc.manifest, res.Structured)
 			}
 		})
-	}
-}
-
-// TestSecurityScanFetchDetailsDeterministic proves that when more than
-// maxVulnDetailFetches unique vulnerabilities are present, the subset whose
-// details are fetched is deterministic (the lexicographically smallest ids) and
-// stable across repeated runs, so the downstream severity-floor filtering does
-// not vary run-to-run.
-func TestSecurityScanFetchDetailsDeterministic(t *testing.T) {
-	t.Parallel()
-
-	const total = maxVulnDetailFetches + 50
-	oneQuery := make([]string, total)
-	for i := range oneQuery {
-		oneQuery[i] = fmt.Sprintf("VULN-%04d", i)
-	}
-	idsByQuery := [][]string{oneQuery}
-
-	var mu sync.Mutex
-	requested := map[string]int{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimPrefix(r.URL.Path, "/v1/vulns/")
-		mu.Lock()
-		requested[id]++
-		mu.Unlock()
-		_ = json.NewEncoder(w).Encode(osvVuln{ID: id})
-	}))
-	defer srv.Close()
-
-	s := &securityScanner{baseURL: srv.URL, httpClient: srv.Client()}
-
-	first := s.fetchDetails(context.Background(), idsByQuery)
-	if len(first) != maxVulnDetailFetches {
-		t.Fatalf("fetched %d details, want %d", len(first), maxVulnDetailFetches)
-	}
-
-	// The fetched subset must be exactly the lexicographically smallest ids.
-	want := append([]string(nil), oneQuery...)
-	sort.Strings(want)
-	want = want[:maxVulnDetailFetches]
-	for _, id := range want {
-		if _, ok := first[id]; !ok {
-			t.Fatalf("expected smallest id %q to be fetched", id)
-		}
-	}
-
-	second := s.fetchDetails(context.Background(), idsByQuery)
-	if len(second) != len(first) {
-		t.Fatalf("second fetch size %d != first %d", len(second), len(first))
-	}
-	for id := range first {
-		if _, ok := second[id]; !ok {
-			t.Errorf("nondeterministic selection: id %q fetched first run but not second", id)
-		}
 	}
 }
 

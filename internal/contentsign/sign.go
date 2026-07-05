@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"aead.dev/minisign"
 
@@ -23,7 +24,12 @@ func Sign(ctx context.Context, path string, opts SignOptions) (sigPath string, e
 		return "", ErrSigningUnsupported
 	}
 
-	priv, err := loadSecretKey(opts.KeyPath, opts.Password)
+	password, err := resolvePassword(opts)
+	if err != nil {
+		return "", err
+	}
+
+	priv, err := loadSecretKey(opts.KeyPath, password)
 	if err != nil {
 		return "", err
 	}
@@ -42,6 +48,37 @@ func Sign(ctx context.Context, path string, opts SignOptions) (sigPath string, e
 		return "", fmt.Errorf("writing signature %q: %w", sigPath, err)
 	}
 	return sigPath, nil
+}
+
+// ResolvePassphrase returns a passphrase from the first configured out-of-band
+// source, falling back to the in-memory literal. Sourcing the passphrase from a
+// file or environment variable keeps it off the process command line, where
+// ps(1), /proc/<pid>/cmdline, and shell history would otherwise expose it.
+// Precedence is passwordFile, then passwordEnv, then the in-memory password.
+// The passphrase is never logged or echoed.
+func ResolvePassphrase(password, passwordFile, passwordEnv string) (string, error) {
+	if passwordFile != "" {
+		raw, err := os.ReadFile(passwordFile) //nolint:gosec // operator-supplied passphrase file.
+		if err != nil {
+			return "", fmt.Errorf("reading passphrase file %q: %w", passwordFile, err)
+		}
+		// Trim only trailing newlines: editors and `echo`/redirection append one,
+		// but a passphrase never legitimately ends in a newline.
+		return strings.TrimRight(string(raw), "\r\n"), nil
+	}
+	if passwordEnv != "" {
+		v, ok := os.LookupEnv(passwordEnv)
+		if !ok {
+			return "", fmt.Errorf("passphrase environment variable %q is not set", passwordEnv)
+		}
+		return v, nil
+	}
+	return password, nil
+}
+
+// resolvePassword adapts ResolvePassphrase to SignOptions.
+func resolvePassword(opts SignOptions) (string, error) {
+	return ResolvePassphrase(opts.Password, opts.PasswordFile, opts.PasswordEnv)
 }
 
 // loadSecretKey reads the Minisign secret key at keyPath, decrypting it with

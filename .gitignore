@@ -4,6 +4,10 @@
 *.test
 *.out
 
+# Python (hook test artifacts)
+__pycache__/
+*.pyc
+
 # Nix
 result
 result-*

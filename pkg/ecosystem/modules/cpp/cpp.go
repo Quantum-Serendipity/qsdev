@@ -229,7 +229,12 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Stages:        []string{"pre-commit"},
 			Files:         `\.(c|cc|cpp|cxx|h|hh|hpp|hxx)$`,
 			PassFilenames: true,
-			BuiltIn:       false,
+			// git-hooks.nix has no built-in "cppcheck" hook; render it as a
+			// custom hook so an `entry` is always emitted and provision the
+			// binary via NixPackage (otherwise the bare `cppcheck` command is
+			// unresolved at commit time).
+			BuiltIn:    false,
+			NixPackage: "cppcheck",
 		},
 	}
 }

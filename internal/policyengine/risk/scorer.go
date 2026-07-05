@@ -71,6 +71,20 @@ func ScorePackage(info *PackageInfo) PackageScore {
 
 	capped, ceiling := ApplyCeilings(aggregate, info)
 
+	// Data-freshness floor. The vulnerability probes now report
+	// ProbeDataUnavailable until an OSV/KEV lookup has actually run (see
+	// PackageInfo.VulnDataAvailable), so an unenriched package no longer earns a
+	// passing 100 for the absence of CVEs it was never checked for. Its
+	// vulnerability category (weight 0.35) drops out of activeWeightSum, pushing
+	// the collected signal below minActiveWeight. Rather than fail open on a
+	// package whose security posture is unknown, quarantine it at grade F.
+	if insufficientData(info, activeWeightSum) {
+		capped = 0
+		if ceiling == "" {
+			ceiling = "insufficient-data"
+		}
+	}
+
 	return PackageScore{
 		PackageName:    info.Name,
 		PackageVersion: info.Version,
@@ -83,6 +97,46 @@ func ScorePackage(info *PackageInfo) PackageScore {
 		DataFreshness:  time.Now(),
 	}
 }
+
+// minActiveWeight is the minimum share of the total category weight that must
+// be backed by real (available, non-stub) probe data for a package to be scored
+// on the normal A–F scale. The category weights sum to 1.0, so this is an
+// absolute floor on how much of the weighted signal was actually collected.
+const minActiveWeight = 0.50
+
+// insufficientData reports whether a package carries too little telemetry to be
+// judged safe. A package with no publication timestamp was never located in a
+// registry (its provenance cannot be established); a package whose available
+// probes cover less than minActiveWeight of the weighted signal is effectively
+// unenriched; and a package whose vulnerability status was never established has
+// an unknown posture. Any condition fails closed to grade F rather than open.
+func insufficientData(info *PackageInfo, activeWeightSum float64) bool {
+	if info.FirstPublishedAt == nil && info.PublishedAt == nil {
+		return true
+	}
+	if activeWeightSum < minActiveWeight {
+		return true
+	}
+	// Backstop: even if future non-stub probes lift the remaining categories'
+	// weight above the floor, a package whose vulnerability status was never
+	// established (OSV/KEV lookup skipped, offline, or rate-limited) has an
+	// unknown — not clean — posture and must not be judged safe.
+	return !info.VulnDataAvailable
+}
+
+// Scorer is a stateless PackageRiskScorer implementation that delegates to the
+// package-level scoring functions. It exists so the risk subsystem can be wired
+// into the SecurityOrchestrator through the PackageRiskScorer interface.
+type Scorer struct{}
+
+// NewScorer returns a ready-to-use Scorer.
+func NewScorer() Scorer { return Scorer{} }
+
+// ScorePackage scores a single package.
+func (Scorer) ScorePackage(info *PackageInfo) PackageScore { return ScorePackage(info) }
+
+// ScoreAll scores a dependency set and rolls up aggregate health.
+func (Scorer) ScoreAll(packages []PackageInfo) DependencyHealth { return ScoreAll(packages) }
 
 func probeApplies(reg ProbeRegistration, eco Ecosystem) bool {
 	if reg.Ecosystems == nil {

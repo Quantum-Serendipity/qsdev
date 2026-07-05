@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/backendselect"
 )
 
 // SandboxSection holds the hook sandbox check results for the doctor report.
@@ -22,7 +23,13 @@ type SandboxSection struct {
 // doctor report.
 func RunSandboxCheck(ctx context.Context, prober sandbox.SandboxProber) *SandboxSection {
 	caps := sandbox.ProbeCapabilities(ctx, prober)
-	tier := sandbox.DetermineTier(caps)
+
+	// Report the EFFECTIVE tier — the tier of the backend that will actually be
+	// selected and run — rather than the probed DetermineTier(caps). A host may
+	// support a stronger tier in principle, but if the backend binary is not
+	// available at selection time the doctor must not overstate the isolation
+	// the tool can deliver.
+	_, tier := backendselect.ResolveBackend(*caps)
 
 	section := &SandboxSection{
 		Detected:        true,
@@ -97,6 +104,6 @@ func landlockItem(abi int) ContainerCheckItem {
 	return ContainerCheckItem{
 		Label:   "Landlock",
 		Status:  "warn",
-		Summary: "not available (kernel < 5.13)",
+		Summary: "not enforceable (needs ll-restrict helper and kernel >= 5.13)",
 	}
 }

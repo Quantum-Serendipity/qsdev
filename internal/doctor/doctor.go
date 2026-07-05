@@ -10,7 +10,8 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/toolcheck"
 )
 
-// RunAllChecks runs all 15 tool checks in parallel and returns the results.
+// RunAllChecks runs every tool check returned by DefaultChecks in parallel and
+// returns the results (one ToolStatus per check).
 func RunAllChecks(ctx context.Context, osInfo *sysinfo.OSInfo) []ToolStatus {
 	checks := DefaultChecks()
 	results := make([]ToolStatus, len(checks))

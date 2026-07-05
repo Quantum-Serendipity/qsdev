@@ -103,7 +103,10 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Types:         []string{"nix"},
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
-			BuiltIn:       false,
+			// Custom hook (BuiltIn:false): NixPackage provisions the binary so
+			// the emitted `entry` resolves at commit time.
+			BuiltIn:    false,
+			NixPackage: "statix",
 		},
 		{
 			ID:            "deadnix",
@@ -115,6 +118,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
 			BuiltIn:       false,
+			NixPackage:    "deadnix",
 		},
 		{
 			ID:            "nixfmt",

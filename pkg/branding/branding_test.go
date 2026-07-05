@@ -1,6 +1,7 @@
 package branding
 
 import (
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -347,6 +348,108 @@ func TestGetReturnsCopy(t *testing.T) {
 	}
 	if cfg2.AppName != "original" {
 		t.Errorf("earlier Get() result was modified: AppName = %q", cfg2.AppName)
+	}
+}
+
+func TestWorkflowIdentityDefault(t *testing.T) {
+	resetToDefault(t)
+
+	issuer, subjectRegExp := WorkflowIdentity()
+
+	if want := "https://token.actions.githubusercontent.com"; issuer != want {
+		t.Errorf("issuer = %q, want %q", issuer, want)
+	}
+	if want := `^https://github\.com/Quantum-Serendipity/qsdev/\.github/workflows/.+$`; subjectRegExp != want {
+		t.Errorf("subjectRegExp = %q, want %q", subjectRegExp, want)
+	}
+
+	re, err := regexp.Compile(subjectRegExp)
+	if err != nil {
+		t.Fatalf("subjectRegExp does not compile: %v", err)
+	}
+	// Matches a real release-workflow signing subject for this repo.
+	if !re.MatchString("https://github.com/Quantum-Serendipity/qsdev/.github/workflows/release.yml@refs/tags/v1.2.3") {
+		t.Error("subjectRegExp should match this repo's release workflow identity")
+	}
+	// Rejects a different repository (impersonation guard).
+	if re.MatchString("https://github.com/attacker/evil/.github/workflows/release.yml@refs/tags/v1.2.3") {
+		t.Error("subjectRegExp must not match a different repository")
+	}
+}
+
+func TestWorkflowIdentityDerivedFromBranding(t *testing.T) {
+	resetToDefault(t)
+	t.Cleanup(func() { resetToDefault(t) })
+
+	Set(Config{GitHubOwner: "my-org", GitHubRepo: "my-repo"})
+
+	_, subjectRegExp := WorkflowIdentity()
+	if want := `^https://github\.com/my-org/my-repo/\.github/workflows/.+$`; subjectRegExp != want {
+		t.Errorf("subjectRegExp = %q, want %q", subjectRegExp, want)
+	}
+}
+
+func TestReleaseWorkflowIdentityExactPin(t *testing.T) {
+	resetToDefault(t)
+	t.Cleanup(func() { resetToDefault(t) })
+
+	const issuerWant = "https://token.actions.githubusercontent.com"
+
+	tests := []struct {
+		name         string
+		setCfg       *Config
+		tag          string
+		wantIdentity string
+	}{
+		{
+			name:         "default_branding",
+			tag:          "v1.2.3",
+			wantIdentity: "https://github.com/Quantum-Serendipity/qsdev/.github/workflows/release.yml@refs/tags/v1.2.3",
+		},
+		{
+			name:         "override_branding",
+			setCfg:       &Config{GitHubOwner: "o", GitHubRepo: "r"},
+			tag:          "v1.2.3",
+			wantIdentity: "https://github.com/o/r/.github/workflows/release.yml@refs/tags/v1.2.3",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetToDefault(t)
+			if tt.setCfg != nil {
+				Set(*tt.setCfg)
+			}
+
+			issuer, identity := ReleaseWorkflowIdentity(tt.tag)
+
+			if issuer != issuerWant {
+				t.Errorf("issuer = %q, want %q", issuer, issuerWant)
+			}
+			if identity != tt.wantIdentity {
+				t.Errorf("identity = %q, want %q", identity, tt.wantIdentity)
+			}
+
+			// The exact identity must NOT equal a branch/PR/other-workflow SAN.
+			// An exact --certificate-identity match rejects each of these.
+			owner := Get().GitHubOwner + "/" + Get().GitHubRepo
+			base := "https://github.com/" + owner + "/.github/workflows/"
+			forbidden := []string{
+				// Different ref (branch instead of the release tag).
+				base + "release.yml@refs/heads/main",
+				// Pull-request ref.
+				base + "release.yml@refs/pull/42/merge",
+				// Different workflow file on the same tag.
+				base + "attack.yml@refs/tags/" + tt.tag,
+				// A wildcard-style regexp source would also differ.
+				"^https://github.com/" + owner + "/.github/workflows/.+$",
+			}
+			for _, san := range forbidden {
+				if identity == san {
+					t.Errorf("identity %q must not match non-release SAN %q", identity, san)
+				}
+			}
+		})
 	}
 }
 

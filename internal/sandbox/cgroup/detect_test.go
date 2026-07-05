@@ -45,6 +45,10 @@ func (m *mockProber) Stat(path string) (os.FileInfo, error) {
 
 func (m *mockProber) Getenv(_ string) string { return "" }
 
+func (m *mockProber) LandlockHelperPath() string { return "" }
+
+func (m *mockProber) SeccompFilterPath() string { return "" }
+
 var _ sandbox.SandboxProber = (*mockProber)(nil)
 
 func TestDetectCgroupV2(t *testing.T) {

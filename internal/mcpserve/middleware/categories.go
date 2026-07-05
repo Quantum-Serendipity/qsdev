@@ -30,6 +30,16 @@ const (
 	CategoryGeneral     = "general"     // uncategorized / default
 )
 
+// CredentialVendToolName is the registered name of the sole tool whose output is
+// exempt from ContentSafety redaction: the credential-vend tool legitimately
+// returns short-lived cloud tokens (AWS STS, GCP IAM, Azure MI) whose
+// AWS-key/JWT-shaped material would otherwise be scrubbed. The exemption is keyed
+// on THIS trusted, server-registered identity — never on the caller-declared
+// CategoryCredential string — so a different tool declaring itself "credential"
+// cannot smuggle secrets past redaction. It is the single source of truth: the
+// tools/security registration binds the tool to this exact name.
+const CredentialVendToolName = "qsdev_credential_vend"
+
 // Limit is the per-category rate-limit and concurrency configuration.
 type Limit struct {
 	// Rate is the steady-state token refill rate in tokens per second.

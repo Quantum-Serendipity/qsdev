@@ -121,7 +121,10 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
 			Files:         `\.hs$`,
-			BuiltIn:       false,
+			// Custom hook (BuiltIn:false): NixPackage provisions the binary so
+			// the emitted `entry` resolves at commit time.
+			BuiltIn:    false,
+			NixPackage: "ormolu",
 		},
 	}
 }

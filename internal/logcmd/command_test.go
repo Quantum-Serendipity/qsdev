@@ -8,7 +8,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
+
+// awsExampleKey is a canonical AWS-key-shaped token (AKIA + 16 chars) used to
+// verify display-time redaction. It matches the redactor's AKIA pattern.
+const awsExampleKey = "AKIAIOSFODNN7EXAMPLE"
 
 func TestJsonField(t *testing.T) {
 	t.Parallel()
@@ -581,6 +587,78 @@ func TestFindSessionFile(t *testing.T) {
 			t.Error("expected error for nonexistent directory")
 		}
 	})
+}
+
+// TestRunShow_RedactsSecretsAtDisplayTime is a regression for F-CAP-29.5-1:
+// `logs show` must re-scrub entries at display time so a secret that reached the
+// log file (hand-edited, externally produced, or missed at write time) is never
+// printed to the terminal.
+func TestRunShow_RedactsSecretsAtDisplayTime(t *testing.T) {
+	// Not parallel: uses t.Setenv to pin the global log dir.
+	dir := t.TempDir()
+	t.Setenv(branding.Get().EnvLogDirVar, dir)
+
+	ts := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC).Format(time.RFC3339Nano)
+	content := strings.Join([]string{
+		`{"session":"leak1","command":"init","time":"` + ts + `"}`,
+		`{"level":"INFO","msg":"using key ` + awsExampleKey + ` for upload","time":"` + ts + `"}`,
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(dir, "qsdev-leak1.jsonl"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("formatted output", func(t *testing.T) {
+		cmd := Command()
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetArgs([]string{"show", "--global", "leak1"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("show failed: %v", err)
+		}
+		got := out.String()
+		if strings.Contains(got, awsExampleKey) {
+			t.Errorf("show leaked secret in formatted output:\n%s", got)
+		}
+		if !strings.Contains(got, "[REDACTED]") {
+			t.Errorf("expected [REDACTED] marker in output:\n%s", got)
+		}
+	})
+
+	t.Run("raw output", func(t *testing.T) {
+		cmd := Command()
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetArgs([]string{"show", "--global", "--raw", "leak1"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("show --raw failed: %v", err)
+		}
+		got := out.String()
+		if strings.Contains(got, awsExampleKey) {
+			t.Errorf("show --raw leaked secret:\n%s", got)
+		}
+	})
+}
+
+// TestWriteTo_RedactsSecrets is a regression for F-CAP-29.5-1: bug-report log
+// extraction must re-scrub secrets, since the excerpt becomes a shareable
+// artifact.
+func TestWriteTo_RedactsSecrets(t *testing.T) {
+	t.Parallel()
+
+	input := strings.NewReader(`{"level":"INFO","msg":"token ` + awsExampleKey + `"}`)
+	var buf bytes.Buffer
+	if _, err := WriteTo(&buf, input, "", 0); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := buf.String()
+	if strings.Contains(got, awsExampleKey) {
+		t.Errorf("WriteTo leaked secret into extract:\n%s", got)
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Errorf("expected [REDACTED] marker in extract:\n%s", got)
+	}
 }
 
 func TestWriteTo(t *testing.T) {

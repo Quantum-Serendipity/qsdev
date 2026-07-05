@@ -32,10 +32,13 @@ func (r *BackendRegistry) Select() (SandboxBackend, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// Sort by tier (strongest first).
+	// Sort by tier (strongest first). Use a STABLE sort so backends that share a
+	// tier keep their registration order: a non-stable sort leaves the winner
+	// among equal-tier backends unspecified, which could silently pick a broken
+	// backend over a working one at the same demoted tier.
 	sorted := make([]SandboxBackend, len(r.backends))
 	copy(sorted, r.backends)
-	sort.Slice(sorted, func(i, j int) bool {
+	sort.SliceStable(sorted, func(i, j int) bool {
 		return sorted[i].Tier() < sorted[j].Tier()
 	})
 

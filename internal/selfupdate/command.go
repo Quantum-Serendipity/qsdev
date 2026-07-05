@@ -14,8 +14,10 @@ import (
 // Command returns the "self-update" cobra command.
 func Command() *cobra.Command {
 	var (
-		force   bool
-		version string
+		force    bool
+		version  string
+		strict   bool
+		noStrict bool
 	)
 
 	cmd := &cobra.Command{
@@ -32,6 +34,9 @@ Prefer 'qsdev update' which coordinates binary updates with config regeneration.
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := DefaultConfig()
+			// Signature verification is required by default; --no-strict is the
+			// escape hatch for dev/self-built binaries.
+			cfg.Strict = strict && !noStrict
 			currentVersion := instance.Version()
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
@@ -82,6 +87,8 @@ Prefer 'qsdev update' which coordinates binary updates with config regeneration.
 
 	cmd.Flags().BoolVar(&force, "force", false, "Force update even if already up to date")
 	cmd.Flags().StringVar(&version, "version", "", "Install a specific version (e.g. 1.2.3)")
+	cmd.Flags().BoolVar(&strict, "strict", true, "Require a verified release signature before updating")
+	cmd.Flags().BoolVar(&noStrict, "no-strict", false, "Allow updating without signature verification (escape hatch for dev/self-built binaries)")
 
 	return cmd
 }

@@ -563,6 +563,57 @@ func TestEvaluateConformance_EnhancedFail_NoCIWorkflows(t *testing.T) {
 	}
 }
 
+// TestEvaluateConformance_UnresolvedSeverityFailsVulnChecks is the altitude
+// regression: a completed scan (Scanned=true, ScanFailed=false) that turned up an
+// unknown-severity vulnerability is not certifiable, so the no-critical-vulns and
+// no-high-vulns checks must fail even though Critical and High counts are zero —
+// and the reason must say the result is not confirmed clean, not claim cleanliness.
+func TestEvaluateConformance_UnresolvedSeverityFailsVulnChecks(t *testing.T) {
+	defense := DefenseCoverage{
+		Layers: []DefenseLayer{
+			{Name: "pretooluse-hooks", Weight: WeightCritical, Status: LayerEnabled},
+			{Name: "age-gating", Weight: WeightHigh, Status: LayerEnabled},
+			{Name: "install-script-blocking", Weight: WeightHigh, Status: LayerEnabled},
+			{Name: "lock-file-enforcement", Weight: WeightHigh, Status: LayerEnabled},
+			{Name: "vulnerability-scanning", Weight: WeightHigh, Status: LayerEnabled},
+		},
+	}
+	deps := DependencyHealth{
+		Ecosystems: []EcosystemStatus{{Name: "go", Detected: true, LockFile: "go.sum", Scanned: true}},
+		Scanned:    true,
+		Totals:     VulnSeverityCounts{Critical: 0, High: 0, Unknown: 1},
+	}
+	genState := types.GeneratedState{
+		Files: map[string]types.FileState{
+			"CLAUDE.md":               {},
+			".claude/settings.json":   {},
+			".pre-commit-config.yaml": {},
+		},
+	}
+
+	result := EvaluateConformance(defense, deps, map[string]bool{}, genState)
+
+	checkFailedWithUnresolved := func(t *testing.T, checks []ConformanceCheck, name CheckName) {
+		t.Helper()
+		for _, c := range checks {
+			if c.Name != name {
+				continue
+			}
+			if c.Pass {
+				t.Errorf("%s must fail when an unresolved-severity vuln is present", name)
+			}
+			if c.Reason != "unresolved-severity vulnerabilities present; not confirmed clean" {
+				t.Errorf("%s reason = %q, want the unresolved-severity statement", name, c.Reason)
+			}
+			return
+		}
+		t.Errorf("check %q not found", name)
+	}
+
+	checkFailedWithUnresolved(t, result.Baseline.Checks, CheckNoCriticalVulns)
+	checkFailedWithUnresolved(t, result.Enhanced.Checks, CheckNoHighVulns)
+}
+
 func TestEvaluateConformance_BaselinePass_NALockFile(t *testing.T) {
 	defense := DefenseCoverage{
 		Layers: []DefenseLayer{

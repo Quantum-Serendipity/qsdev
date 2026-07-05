@@ -1,9 +1,11 @@
 package canon
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 )
 
@@ -329,6 +331,177 @@ func TestIsProtected_McpJson(t *testing.T) {
 			if gotProt != tt.wantProt || gotCat != tt.wantCat {
 				t.Errorf("IsProtected(%q) = (%v, %q), want (%v, %q)",
 					tt.path, gotProt, gotCat, tt.wantProt, tt.wantCat)
+			}
+		})
+	}
+}
+
+func TestIsProtected_HooksAndAgents(t *testing.T) {
+	t.Parallel()
+
+	resetProtectedPaths(t)
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("getting home dir: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		path     string
+		wantProt bool
+		wantCat  string
+	}{
+		{
+			// Home config hook script — caught by the home-anchored prefix.
+			"home claude hook script",
+			filepath.Join(home, ".claude", "hooks", "preToolUse.sh"),
+			true, "claude-settings",
+		},
+		{
+			"home claude agent definition",
+			filepath.Join(home, ".claude", "agents", "reviewer.md"),
+			true, "claude-settings",
+		},
+		{
+			// Project-relative hook path canonicalizes OUTSIDE $HOME; only the
+			// segment guard catches it.
+			"project claude hook script",
+			filepath.Join(home, "project", ".claude", "hooks", "preToolUse.sh"),
+			true, "claude-settings",
+		},
+		{
+			"project claude agent definition",
+			filepath.Join(home, "work", "repo", ".claude", "agents", "x.md"),
+			true, "claude-settings",
+		},
+		{
+			// A settings file that is NOT a hook/agent still resolves via its own
+			// prefix, unaffected by the new segment guard.
+			"home claude settings",
+			filepath.Join(home, ".claude", "settings.json"),
+			true, "claude-settings",
+		},
+		{
+			// Non-hook/agent .claude file stays unprotected (no matching prefix).
+			"non-matching claude subdir",
+			filepath.Join(home, ".claude", "other-file"),
+			false, "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gotProt, gotCat := IsProtected(tt.path)
+			if gotProt != tt.wantProt || gotCat != tt.wantCat {
+				t.Errorf("IsProtected(%q) = (%v, %q), want (%v, %q)",
+					tt.path, gotProt, gotCat, tt.wantProt, tt.wantCat)
+			}
+		})
+	}
+}
+
+func TestContainsProtectedPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		// Trailing-path forms (existing substring patterns).
+		{".claude/settings.json", true},
+		{"cat .claude/hooks/pre.sh", true},
+		{"/etc/gdev/policy.yaml", true},
+		{"/etc/claude-code/config.json", true},
+		// Bare directory names at a path-token boundary (the new match).
+		{".claude", true},
+		{"rm -rf .claude", true},
+		{"rm -rf ~/.claude", true},
+		{"rm -rf .qsdev", true},
+		{"rm -rf .gdev", true},
+		{"rm -rf /etc/gdev", true},
+		{"find .claude -delete", true}, // followed by whitespace
+		{`rm -rf ".claude"`, true},     // followed by a quote
+		{"rm -rf .claude;", true},      // followed by a shell metachar
+		// Over-match guards: a longer name that merely embeds a token.
+		{"my.claude.bak", false},
+		{"foo.claudex", false},
+		{"my.claude", false},
+		{"settings.claude", false},
+		// Unrelated paths.
+		{"node_modules", false},
+		{"README.md", false},
+		{"/tmp/scratch", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			if got := ContainsProtectedPath(tt.input); got != tt.want {
+				t.Errorf("ContainsProtectedPath(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestIsProtected_FailsClosedOnHomeError verifies the fail-CLOSED behavior of
+// IsProtected when the home directory cannot be resolved (regression for
+// F-CAP-20.4-3). If os.UserHomeDir fails, the home-anchored protected-prefix
+// table cannot be built; a self-protection control must then treat paths as
+// protected (deny) rather than returning "not protected" (fail OPEN).
+//
+// This test is intentionally NOT parallel: it mutates the package-level home
+// resolver and init state. All other tests in this package call t.Parallel()
+// and therefore resume only after this sequential test (and its cleanup) has
+// fully completed, so there is no data race. Cleanup restores a clean,
+// re-initializable state so those tests initialize normally.
+func TestIsProtected_FailsClosedOnHomeError(t *testing.T) {
+	origHome := userHomeDir
+	t.Cleanup(func() {
+		userHomeDir = origHome
+		initOnce = sync.Once{}
+		initErr = nil
+		protectedPrefixes = nil
+		protectedSuffixes = nil
+	})
+
+	// Simulate an unresolvable home directory (e.g. HOME/USERPROFILE unset) and
+	// force ensureInit to re-run with the failing resolver.
+	userHomeDir = func() (string, error) {
+		return "", errors.New("home directory unavailable")
+	}
+	initOnce = sync.Once{}
+	initErr = nil
+	protectedPrefixes = nil
+	protectedSuffixes = nil
+
+	// The fail-closed branch is only exercised if init actually fails.
+	if err := ensureInit(); err == nil {
+		t.Fatal("ensureInit() succeeded, want an error when home is unavailable")
+	}
+
+	// Every path must stay protected: with no prefix table we cannot prove any
+	// path is unprotected, so the control must deny. This includes both
+	// would-be home-anchored config paths and arbitrary paths.
+	paths := []string{
+		filepath.FromSlash("/home/alice/.qsdev/config.yaml"),
+		filepath.FromSlash("/home/alice/.claude/settings.json"),
+		filepath.FromSlash("/etc/gdev/policy.yaml"),
+		filepath.FromSlash("/some/arbitrary/path.txt"),
+	}
+	for _, p := range paths {
+		t.Run(p, func(t *testing.T) {
+			gotProt, gotCat := IsProtected(p)
+			if !gotProt {
+				t.Errorf("IsProtected(%q) = (false, %q) on home-resolution failure; want fail-closed (true, ...)", p, gotCat)
+			}
+			// SP-001 denies Write/Edit only for these categories; the fail-closed
+			// return must land in one of them so the operation is actually blocked.
+			switch gotCat {
+			case "config", "claude-settings", "system-config":
+			default:
+				t.Errorf("IsProtected(%q) category = %q; want a category SP-001 denies (config/claude-settings/system-config)", p, gotCat)
 			}
 		})
 	}

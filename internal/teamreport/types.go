@@ -37,9 +37,13 @@ type ProjectSummary struct {
 	Score       posture.AggregateScore     `json:"score"`
 	Conformance posture.ConformanceResult  `json:"conformance"`
 	VulnTotals  posture.VulnSeverityCounts `json:"vulnTotals"`
-	QsdevVersion string                     `json:"qsdevVersion"`
-	LastScan    time.Time                  `json:"lastScan"`
-	Stale       bool                       `json:"stale,omitempty"`
+	// Certifiable mirrors the project's DependencyHealth.Certifiable(): false when
+	// the member scan failed or turned up unresolved-severity vulnerabilities, so
+	// its zero VulnTotals must not be read as a clean bill of health fleet-wide.
+	Certifiable  bool      `json:"certifiable"`
+	QsdevVersion string    `json:"qsdevVersion"`
+	LastScan     time.Time `json:"lastScan"`
+	Stale        bool      `json:"stale,omitempty"`
 }
 
 // ProjectTrend tracks score history for a single project over time.
@@ -88,5 +92,5 @@ type AggregateOptions struct {
 	HistoryFile   string  `json:"historyFile,omitempty"`
 	IncludeTrends bool    `json:"includeTrends,omitempty"`
 	Threshold     float64 `json:"threshold,omitempty"`
-	QsdevVersion   string  `json:"qsdevVersion,omitempty"`
+	QsdevVersion  string  `json:"qsdevVersion,omitempty"`
 }

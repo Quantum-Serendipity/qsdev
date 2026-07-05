@@ -140,20 +140,50 @@ type DependencyHealth struct {
 	Totals     VulnSeverityCounts `json:"totals"`
 	LastScan   *time.Time         `json:"lastScan,omitempty"`
 	Stale      bool               `json:"stale"`
+	// Scanned reports whether a fresh dependency vulnerability scan was run for
+	// this assessment AND completed without error. When false, Totals are NOT a
+	// clean bill of health — the dependencies were either never checked against
+	// OSV or the scan failed — so callers must not present a zero count as "no
+	// vulnerabilities".
+	Scanned bool `json:"scanned"`
+	// ScanFailed reports that a fresh scan was requested but at least one
+	// ecosystem's scan errored (e.g. OSV unreachable), so the zero Totals reflect
+	// a failed check, not a clean result. Callers must fail closed on this rather
+	// than certify the dependencies clean.
+	ScanFailed bool `json:"scanFailed"`
 }
 
-// VulnSeverityCounts holds vulnerability counts broken down by severity.
+// Certifiable reports whether the scan result is conclusive — no failed
+// ecosystems and no unresolved severities. It is the single predicate every
+// consumer of dependency health must route "is this clean?" through; a fifth
+// consumer must call this rather than re-derive clean from raw counts.
+//
+// Semantics: a project with no fresh scan requested is Certifiable
+// (ScanFailed=false, Unknown=0), preserving the honest "not scanned" state as a
+// separate concern from an inconclusive scan. A completed scan that turned up an
+// unknown-severity vulnerability, or an ecosystem whose scan errored, is NOT
+// certifiable: the true status could be anything up to critical, so callers must
+// fail closed rather than present zero Totals as a clean bill of health.
+func (d DependencyHealth) Certifiable() bool {
+	return !d.ScanFailed && d.Totals.Unknown == 0
+}
+
+// VulnSeverityCounts holds vulnerability counts broken down by severity. Unknown
+// counts advisories whose severity could not be resolved (absent label or a
+// failed detail fetch); it is fail-closed — treated as gate-failing because the
+// true severity could be anything up to critical.
 type VulnSeverityCounts struct {
 	Critical int `json:"critical"`
 	High     int `json:"high"`
 	Moderate int `json:"moderate"`
 	Low      int `json:"low"`
 	Info     int `json:"info"`
+	Unknown  int `json:"unknown"`
 }
 
 // Total returns the sum of all vulnerability counts.
 func (v VulnSeverityCounts) Total() int {
-	return v.Critical + v.High + v.Moderate + v.Low + v.Info
+	return v.Critical + v.High + v.Moderate + v.Low + v.Info + v.Unknown
 }
 
 // EcosystemStatus tracks the dependency health of a single ecosystem.
@@ -164,6 +194,14 @@ type EcosystemStatus struct {
 	VulnCounts VulnSeverityCounts `json:"vulnCounts"`
 	AgeGate    string             `json:"ageGate,omitempty"`
 	LastScan   *time.Time         `json:"lastScan,omitempty"`
+	// Scanned reports whether this ecosystem's lock file was actually scanned
+	// against OSV. It is false when no scan was requested or the lock format has
+	// no OSV coverage, so zero VulnCounts do not imply a clean result.
+	Scanned bool `json:"scanned"`
+	// ScanError reports that a scan was attempted for this ecosystem's lock file
+	// but errored (as opposed to the lock format simply having no OSV coverage).
+	// It distinguishes a failed check from a legitimately unscannable ecosystem.
+	ScanError bool `json:"scanError,omitempty"`
 }
 
 // TierDescription returns a short description for a tier name.

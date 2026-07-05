@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,6 +73,12 @@ func DownloadAndVerify(ctx context.Context, release *Release, cfg Config, target
 	if err != nil {
 		return "", err
 	}
+	// Fail closed: in strict mode a skipped signature check (no bundle in the
+	// release, or cosign not installed) is treated as a verification failure so
+	// an unsigned/unverifiable update is never installed silently.
+	if cfg.Strict && sigResult.Skipped {
+		return "", fmt.Errorf("signature verification required but %s", sigResult.Message)
+	}
 	logVerificationResult(sigResult)
 
 	// Verify checksum.
@@ -98,32 +105,59 @@ func DownloadAndVerify(ctx context.Context, release *Release, cfg Config, target
 	return extractedPath, nil
 }
 
+// isTrustedAssetHost reports whether rawURL points at a GitHub host that release
+// assets are legitimately served from. Only these hosts may receive a
+// GITHUB_TOKEN Authorization header, so a tampered asset URL in the release JSON
+// cannot exfiltrate the token to an attacker-controlled host.
+func isTrustedAssetHost(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	if !strings.EqualFold(u.Scheme, "https") {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	switch host {
+	case "github.com", "api.github.com", "githubusercontent.com":
+		return true
+	}
+	return strings.HasSuffix(host, ".githubusercontent.com")
+}
+
 // downloadFile downloads a URL to a local file path, rejecting payloads
 // exceeding maxSize bytes.
-func downloadFile(ctx context.Context, url, dest string, maxSize int64) (retErr error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+func downloadFile(ctx context.Context, rawURL, dest string, maxSize int64) (retErr error) {
+	trusted := isTrustedAssetHost(rawURL)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
 	if err != nil {
-		return fmt.Errorf("creating request for %s: %w", url, err)
+		return fmt.Errorf("creating request for %s: %w", rawURL, err)
 	}
 
-	// Support optional GITHUB_TOKEN for private repos.
+	// Support optional GITHUB_TOKEN for private repos, but only ever send it to
+	// trusted GitHub hosts. Refuse to make an authenticated request to an
+	// untrusted host so a tampered asset URL cannot exfiltrate the token.
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		if !trusted {
+			return fmt.Errorf("refusing to send credentials to untrusted asset host: %s", rawURL)
+		}
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	req.Header.Set("Accept", "application/octet-stream")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("fetching %s: %w", url, err)
+		return fmt.Errorf("fetching %s: %w", rawURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download %s returned HTTP %d", url, resp.StatusCode)
+		return fmt.Errorf("download %s returned HTTP %d", rawURL, resp.StatusCode)
 	}
 
 	if resp.ContentLength > maxSize {
-		return fmt.Errorf("download %s: Content-Length %d exceeds maximum %d", url, resp.ContentLength, maxSize)
+		return fmt.Errorf("download %s: Content-Length %d exceeds maximum %d", rawURL, resp.ContentLength, maxSize)
 	}
 
 	f, err := os.Create(dest)
@@ -141,7 +175,7 @@ func downloadFile(ctx context.Context, url, dest string, maxSize int64) (retErr 
 		return fmt.Errorf("writing %s: %w", dest, err)
 	}
 	if n > maxSize {
-		return fmt.Errorf("download %s: payload exceeds maximum size (%d bytes)", url, maxSize)
+		return fmt.Errorf("download %s: payload exceeds maximum size (%d bytes)", rawURL, maxSize)
 	}
 	return nil
 }

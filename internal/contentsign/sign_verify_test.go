@@ -223,6 +223,75 @@ func TestVerifyEntryHashFallback(t *testing.T) {
 	}
 }
 
+// TestVerifyEntryRequireTrustedRejectsUnsigned is the regression guard for
+// F-CAP-22.3-1: a trust gate (RequireTrusted) must require a valid signature, so
+// hash-only (unsigned) content is never reported as Verified even when its
+// recorded SHA-256 matches. Before the fix this returned Verified=true /
+// StatusHashVerified.
+func TestVerifyEntryRequireTrustedRejectsUnsigned(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	kp := newKeyPair(t, dir, "signer", "")
+
+	data := "hash-only but unsigned content"
+	content := writeContent(t, dir, "db.json", data)
+	entry := ContentManifestEntry{Path: content, SHA256: hashOf(data)}
+
+	// Trust required: an unsigned entry whose hash matches must NOT be trusted.
+	res, err := VerifyEntry(ctx, entry, VerifyOptions{
+		TrustedKeys:    []PublicKey{kp.pub},
+		RequireTrusted: true,
+	})
+	if err != nil {
+		t.Fatalf("VerifyEntry: %v", err)
+	}
+	if res.Verified {
+		t.Error("Verified = true for hash-only content under RequireTrusted, want false (unsigned content must not be trusted)")
+	}
+	if res.Status != StatusFailed {
+		t.Errorf("Status = %q, want %q", res.Status, StatusFailed)
+	}
+
+	// Control: without RequireTrusted the same entry is still hash-verified, so
+	// the fix did not break the lenient hash-fallback path.
+	lenient, err := VerifyEntry(ctx, entry, VerifyOptions{TrustedKeys: []PublicKey{kp.pub}})
+	if err != nil {
+		t.Fatalf("VerifyEntry (lenient): %v", err)
+	}
+	if !lenient.Verified || lenient.Status != StatusHashVerified {
+		t.Errorf("lenient hash fallback: got Verified=%v Status=%q, want true/%q",
+			lenient.Verified, lenient.Status, StatusHashVerified)
+	}
+}
+
+// TestVerifyRequireTrustedAcceptsSigned is the positive control for the trust
+// gate: a properly signed file from a trusted key still verifies under
+// RequireTrusted, so the gate is not merely "always fail".
+func TestVerifyRequireTrustedAcceptsSigned(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	kp := newKeyPair(t, dir, "signer", "")
+	content := writeContent(t, dir, "db.json", "properly signed content")
+
+	if _, err := Sign(ctx, content, SignOptions{KeyPath: kp.secPath}); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+
+	res, err := Verify(ctx, content, VerifyOptions{
+		TrustedKeys:    []PublicKey{kp.pub},
+		RequireTrusted: true,
+	})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !res.Verified || res.Status != StatusSignedVerified {
+		t.Errorf("signed+trusted under RequireTrusted: got Verified=%v Status=%q, want true/%q",
+			res.Verified, res.Status, StatusSignedVerified)
+	}
+}
+
 func TestVerifyCorpus(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

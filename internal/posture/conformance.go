@@ -89,11 +89,15 @@ func evaluateBaseline(
 		Reason: boolReason(allLocked, "all detected ecosystems have lock files", "some ecosystems missing lock files"),
 	})
 
-	noCritical := deps.Totals.Critical == 0
+	// Only a conclusive scan can certify "no critical vulnerabilities": a failed
+	// ecosystem or an unresolved-severity vuln leaves zero Totals meaning
+	// "unknown", not "clean", so a non-certifiable result never passes.
+	noCritical := deps.Certifiable() && deps.Totals.Critical == 0
 	checks = append(checks, ConformanceCheck{
-		Name:   CheckNoCriticalVulns,
-		Pass:   noCritical,
-		Reason: boolReason(noCritical, "no critical vulnerabilities", "critical vulnerabilities found"),
+		Name: CheckNoCriticalVulns,
+		Pass: noCritical,
+		Reason: vulnCheckReason(deps, deps.Totals.Critical == 0,
+			"no critical vulnerabilities", "critical vulnerabilities found"),
 	})
 
 	_, hasClaudeMD := genState.Files["CLAUDE.md"]
@@ -149,11 +153,12 @@ func evaluateEnhanced(
 ) []ConformanceCheck {
 	var checks []ConformanceCheck
 
-	noHighVulns := deps.Totals.High == 0
+	noHighVulns := deps.Certifiable() && deps.Totals.High == 0
 	checks = append(checks, ConformanceCheck{
-		Name:   CheckNoHighVulns,
-		Pass:   noHighVulns,
-		Reason: boolReason(noHighVulns, "no high vulnerabilities", "high vulnerabilities found"),
+		Name: CheckNoHighVulns,
+		Pass: noHighVulns,
+		Reason: vulnCheckReason(deps, deps.Totals.High == 0,
+			"no high vulnerabilities", "high vulnerabilities found"),
 	})
 
 	semgrepEnabled := enabledTools["semgrep"]
@@ -217,4 +222,26 @@ func boolReason(ok bool, pass, fail string) string {
 		return pass
 	}
 	return fail
+}
+
+// vulnCheckReason renders the reason for a vulnerability-count conformance check.
+// A zero count is a clean result only when the scan was conclusive. It reports,
+// in priority order, an outright scan failure, unresolved-severity vulnerabilities
+// (a scan that completed but could not certify clean), and a scan that never ran
+// — each stated explicitly instead of claiming the absence of a given severity.
+// This keeps the report honest: it reports what could not be confirmed rather
+// than implying a clean bill of health.
+func vulnCheckReason(deps DependencyHealth, ok bool, passReason, failReason string) string {
+	switch {
+	case deps.ScanFailed:
+		return "dependency vulnerability scan failed; results unavailable " +
+			"(vulnerability status unknown, not confirmed clean)"
+	case deps.Totals.Unknown > 0:
+		return "unresolved-severity vulnerabilities present; not confirmed clean"
+	case !deps.Scanned:
+		return "dependencies not scanned for vulnerabilities; run 'qsdev status --scan' " +
+			"(vulnerability status unknown, not confirmed clean)"
+	default:
+		return boolReason(ok, passReason, failReason)
+	}
 }

@@ -2,6 +2,8 @@ package vsentinel
 
 import (
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 func TestDetectDrift(t *testing.T) {
@@ -122,7 +124,10 @@ golang.org/x/sys v0.20.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=
 			wantDrift:     map[string]int{"javascript": 1},
 		},
 		{
-			name: "missing lockfile",
+			// A manifest with no lockfile is the most dangerous (fully
+			// unpinned) state and must fail closed: report the manifest with
+			// drift, not silently skip it.
+			name: "missing lockfile is drift",
 			files: map[string]string{
 				"go.mod": `module example.com/test
 
@@ -133,8 +138,8 @@ require (
 )
 `,
 			},
-			wantManifests: 0,
-			wantDrift:     nil,
+			wantManifests: 1,
+			wantDrift:     map[string]int{"go": 1},
 		},
 		{
 			name: "cargo no drift",
@@ -244,5 +249,280 @@ github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXl
 	}
 	if entry.LockedVersion != "v1.8.4" {
 		t.Errorf("locked = %q, want %q", entry.LockedVersion, "v1.8.4")
+	}
+}
+
+// TestDetectDrift_MissingLockfileIsDrift asserts the fail-closed behaviour:
+// a manifest present without its lockfile must be surfaced as drift for every
+// covered ecosystem, not silently dropped from the report.
+func TestDetectDrift_MissingLockfileIsDrift(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		manifest string
+		content  string
+		eco      string
+	}{
+		{"go.mod without go.sum", "go.mod", "module example.com/x\n\ngo 1.22\n\nrequire golang.org/x/sys v0.20.0\n", "go"},
+		{"package.json without lock", "package.json", `{"name":"x","dependencies":{"express":"^4.18.0"}}`, "javascript"},
+		{"Cargo.toml without lock", "Cargo.toml", "[package]\nname = \"x\"\n\n[dependencies]\nserde = \"1.0\"\n", "rust"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeFixtures(t, dir, map[string]string{tc.manifest: tc.content})
+
+			report, err := DetectDrift(dir)
+			if err != nil {
+				t.Fatalf("DetectDrift() error = %v", err)
+			}
+			if len(report.Manifests) != 1 {
+				t.Fatalf("manifest count = %d, want 1 (missing lockfile must fail closed)", len(report.Manifests))
+			}
+			m := report.Manifests[0]
+			if m.Ecosystem != tc.eco {
+				t.Errorf("ecosystem = %q, want %q", m.Ecosystem, tc.eco)
+			}
+			if m.DriftCount < 1 {
+				t.Errorf("DriftCount = %d, want >= 1 for a missing lockfile", m.DriftCount)
+			}
+		})
+	}
+}
+
+// TestDetectDrift_PackageLockV1 is the M10 regression: a lockfileVersion-1
+// package-lock.json records dependencies under a top-level "dependencies" map
+// (there is no "packages" map). parsePackageLock must read them — otherwise a v1
+// lock parses as empty and real drift goes undetected. Here express is pinned
+// below its declared floor, which must surface as drift.
+func TestDetectDrift_PackageLockV1(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFixtures(t, dir, map[string]string{
+		"package.json":      `{"name":"x","dependencies":{"express":"^4.18.0"}}`,
+		"package-lock.json": `{"lockfileVersion":1,"dependencies":{"express":{"version":"3.0.0"}}}`,
+	})
+
+	report, err := DetectDrift(dir)
+	if err != nil {
+		t.Fatalf("DetectDrift() error = %v", err)
+	}
+	if len(report.Manifests) != 1 {
+		t.Fatalf("manifest count = %d, want 1", len(report.Manifests))
+	}
+	if report.Manifests[0].DriftCount < 1 {
+		t.Errorf("DriftCount = %d, want >= 1 (v1 lock deps must be read and the downgrade flagged)",
+			report.Manifests[0].DriftCount)
+	}
+}
+
+// TestDetectDrift_NoFalsePositives is the M8 regression: two states that are NOT
+// drift must not be flagged as "missing lockfile" — a dependency-free manifest
+// (legitimately has no lockfile) and a project locked with a non-primary but
+// catalog-valid lockfile (pnpm/yarn/bun instead of package-lock.json).
+func TestDetectDrift_NoFalsePositives(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		files map[string]string
+		eco   string
+	}{
+		{
+			name:  "dependency-free go.mod (no go.sum) is not drift",
+			files: map[string]string{"go.mod": "module example.com/x\n\ngo 1.22\n"},
+			eco:   "go",
+		},
+		{
+			name: "pnpm-locked project (no package-lock.json) is not drift",
+			files: map[string]string{
+				"package.json":   `{"name":"x","dependencies":{"express":"^4.18.0"}}`,
+				"pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+			},
+			eco: "javascript",
+		},
+		{
+			name: "yarn-locked project (no package-lock.json) is not drift",
+			files: map[string]string{
+				"package.json": `{"name":"x","dependencies":{"express":"^4.18.0"}}`,
+				"yarn.lock":    "# yarn lockfile v1\n",
+			},
+			eco: "javascript",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeFixtures(t, dir, tc.files)
+
+			report, err := DetectDrift(dir)
+			if err != nil {
+				t.Fatalf("DetectDrift() error = %v", err)
+			}
+			if len(report.Manifests) != 1 {
+				t.Fatalf("manifest count = %d, want 1", len(report.Manifests))
+			}
+			m := report.Manifests[0]
+			if m.Ecosystem != tc.eco {
+				t.Errorf("ecosystem = %q, want %q", m.Ecosystem, tc.eco)
+			}
+			if m.DriftCount != 0 {
+				t.Errorf("DriftCount = %d, want 0 (not a real drift): %+v", m.DriftCount, m.Drifted)
+			}
+		})
+	}
+}
+
+// TestDetectDrift_GenericEcosystemCoverage is the BL-#12 regression: drift
+// coverage is derived from the ecosystem catalog, so ecosystems WITHOUT a
+// dedicated parser (python, ruby, ...) are no longer invisible — they fail
+// closed when a manifest is present with no lockfile. The parsed ecosystems
+// (go/js) keep their precise, no-false-positive behaviour.
+//
+// The first two cases fail before the fix (the manifests had no drift coverage
+// at all); the last two are regression guards that must keep passing.
+func TestDetectDrift_GenericEcosystemCoverage(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		files     map[string]string
+		eco       string
+		wantDrift int
+	}{
+		{
+			// Generic ecosystem, fail closed: an unpinned requirements.txt with
+			// no separate lockfile was previously invisible to drift detection.
+			name:      "unpinned requirements.txt reports drift",
+			files:     map[string]string{"requirements.txt": "requests==2.31.0\nflask\n"},
+			eco:       ecosystem.NamePython,
+			wantDrift: 1,
+		},
+		{
+			// Generic ecosystem, fail closed: a Gemfile with no Gemfile.lock.
+			name:      "Gemfile without Gemfile.lock reports drift",
+			files:     map[string]string{"Gemfile": "source 'https://rubygems.org'\ngem 'rails'\n"},
+			eco:       ecosystem.NameRuby,
+			wantDrift: 1,
+		},
+		{
+			// Parsed ecosystem regression guard: a stdlib-only go.mod declares no
+			// dependencies, so its missing go.sum is legitimate — NOT drift.
+			name:      "stdlib-only go.mod is not drift",
+			files:     map[string]string{"go.mod": "module example.com/x\n\ngo 1.22\n"},
+			eco:       ecosystem.NameGo,
+			wantDrift: 0,
+		},
+		{
+			// Parsed ecosystem regression guard: a project pinned with a
+			// non-primary but catalog-valid lockfile (pnpm) is fully pinned.
+			name: "pnpm-locked project is not drift",
+			files: map[string]string{
+				"package.json":   `{"name":"x","dependencies":{"express":"^4.18.0"}}`,
+				"pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+			},
+			eco:       ecosystem.NameJavaScript,
+			wantDrift: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeFixtures(t, dir, tc.files)
+
+			report, err := DetectDrift(dir)
+			if err != nil {
+				t.Fatalf("DetectDrift() error = %v", err)
+			}
+			if len(report.Manifests) != 1 {
+				t.Fatalf("manifest count = %d, want 1", len(report.Manifests))
+			}
+			m := report.Manifests[0]
+			if m.Ecosystem != tc.eco {
+				t.Errorf("ecosystem = %q, want %q", m.Ecosystem, tc.eco)
+			}
+			if m.DriftCount != tc.wantDrift {
+				t.Errorf("DriftCount = %d, want %d: %+v", m.DriftCount, tc.wantDrift, m.Drifted)
+			}
+		})
+	}
+}
+
+// TestJSSemverSatisfies_DowngradeIsDrift asserts that a within-major downgrade
+// below the declared floor is flagged (not treated as satisfied), plus the
+// caret, tilde, and exact boundaries — including npm's 0.x caret cap
+// (^0.2.3 means >=0.2.3 <0.3.0, not "any 0.x above the floor") — and the
+// fail-closed handling of unparseable input.
+func TestJSSemverSatisfies_DowngradeIsDrift(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		constraint string
+		locked     string
+		want       bool // true == satisfies (no drift)
+	}{
+		{"^4.18.0", "4.0.0", false},        // downgrade below floor -> drift
+		{"^4.18.0", "4.19.2", true},        // within major, above floor -> ok
+		{"^4.18.0", "5.0.0", false},        // out of major -> drift
+		{"^4.18.0", "4.18.0", true},        // exact floor -> ok
+		{"~4.18.0", "4.18.5", true},        // within minor -> ok
+		{"~4.18.0", "4.19.0", false},       // next minor -> drift
+		{"~4.18.0", "4.17.9", false},       // below floor -> drift
+		{"4.17.21", "4.17.21", true},       // exact pin match
+		{"4.17.21", "4.17.20", false},      // exact pin mismatch (downgrade)
+		{"^0.2.3", "0.2.5", true},          // 0.x caret: within minor -> ok
+		{"^0.2.3", "0.4.0", false},         // 0.x caret capped at <0.3.0 -> drift
+		{"^0.2.3", "0.2.2", false},         // 0.x caret: below floor -> drift
+		{"not-a-range", "1.0.0", false},    // unparseable constraint -> fail closed
+		{"^1.0.0", "not-a-version", false}, // unparseable locked version -> fail closed
+	}
+
+	for _, tc := range cases {
+		got := jsSemverSatisfies(tc.constraint, tc.locked)
+		if got != tc.want {
+			t.Errorf("jsSemverSatisfies(%q, %q) = %v, want %v", tc.constraint, tc.locked, got, tc.want)
+		}
+	}
+}
+
+// TestCargoSemverSatisfies_BoundaryFalseNegative asserts the cargo comparison
+// no longer accepts "10.0.0" for a declared "1" (the old string-prefix false
+// negative), keeps legitimate caret matches, applies Cargo's default caret
+// semantics to bare versions (including the 0.x cap), and passes explicit
+// operators through unchanged.
+func TestCargoSemverSatisfies_BoundaryFalseNegative(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		constraint string
+		locked     string
+		want       bool
+	}{
+		{"1", "10.0.0", false},          // boundary false negative must be rejected
+		{"1", "1.5.0", true},            // caret major -> ok
+		{"1.0", "1.0.203", true},        // caret from bare "1.0" -> ok
+		{"1.0", "2.0.1", false},         // next major -> drift
+		{"1.0", "0.9.0", false},         // below floor -> drift
+		{"0.2.3", "0.2.5", true},        // bare 0.x caret: within minor -> ok
+		{"0.2.3", "0.4.0", false},       // bare 0.x caret capped at <0.3.0 -> drift
+		{"^0.2.3", "0.4.0", false},      // explicit caret, same 0.x cap -> drift
+		{"~1.2.0", "1.2.9", true},       // explicit tilde passes through -> ok
+		{"~1.2.0", "1.3.0", false},      // explicit tilde: next minor -> drift
+		{"garbage", "1.0.0", false},     // unparseable requirement -> fail closed
+		{"1.0", "not-a-version", false}, // unparseable locked version -> fail closed
+	}
+
+	for _, tc := range cases {
+		got := cargoSemverSatisfies(tc.constraint, tc.locked)
+		if got != tc.want {
+			t.Errorf("cargoSemverSatisfies(%q, %q) = %v, want %v", tc.constraint, tc.locked, got, tc.want)
+		}
 	}
 }

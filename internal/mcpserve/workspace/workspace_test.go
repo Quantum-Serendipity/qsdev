@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -335,43 +334,6 @@ func TestDetectWorkspacesFailureIsolation(t *testing.T) {
 
 // --- Graph API & V1 compat --------------------------------------------------
 
-func TestResolveCWDPackage(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	writeWS(t, root, "package.json", `{"name":"root","workspaces":["packages/*"]}`)
-	writeWS(t, root, "packages/web/package.json", `{"name":"web"}`)
-	writeWS(t, root, "packages/api/package.json", `{"name":"api"}`)
-
-	graph, err := DetectWorkspaces(root)
-	if err != nil {
-		t.Fatalf("DetectWorkspaces: %v", err)
-	}
-
-	// A subdirectory deep inside packages/web resolves to packages/web.
-	pkg, err := graph.ResolveCWDPackage(filepath.Join(root, "packages", "web", "src", "components"))
-	if err != nil {
-		t.Fatalf("ResolveCWDPackage: %v", err)
-	}
-	if pkg.RelDir != "packages/web" {
-		t.Errorf("RelDir = %q, want packages/web", pkg.RelDir)
-	}
-
-	// The member directory itself resolves to that package.
-	if pkg, err := graph.ResolveCWDPackage(filepath.Join(root, "packages", "api")); err != nil || pkg.RelDir != "packages/api" {
-		t.Errorf("ResolveCWDPackage(packages/api) = %v, %v; want packages/api", pkg, err)
-	}
-
-	// A directory enclosing no package errors.
-	if _, err := graph.ResolveCWDPackage(filepath.Join(root, "docs")); err == nil {
-		t.Error("expected error resolving a non-package directory")
-	}
-
-	// Outside the root errors.
-	if _, err := graph.ResolveCWDPackage(filepath.Dir(root)); err == nil {
-		t.Error("expected error resolving a path outside the workspace root")
-	}
-}
-
 func TestQualifiedNameCollision(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -488,96 +450,5 @@ func TestDetectWorkspacesPerformance(t *testing.T) {
 	t.Logf("DetectWorkspaces for %d packages took %s", n, elapsed)
 	if elapsed > 100*time.Millisecond {
 		t.Errorf("detection took %s, exceeds 100ms target for %d packages", elapsed, n)
-	}
-}
-
-// --- Watcher ----------------------------------------------------------------
-
-// expectChange waits for the watcher to report the wanted change kind, ignoring
-// any unrelated or duplicate notifications until the timeout. A timeout fails
-// the test (e.g. a membership edit that wrongly produced a single-package update
-// would never deliver ChangeRescan and would time out here).
-func expectChange(t *testing.T, ch <-chan ChangeKind, want ChangeKind, timeout time.Duration) {
-	t.Helper()
-	deadline := time.After(timeout)
-	for {
-		select {
-		case got := <-ch:
-			if got == want {
-				return
-			}
-		case <-deadline:
-			t.Fatalf("timed out waiting for change %v", want)
-		}
-	}
-}
-
-func TestWatcherTwoCategoryStrategy(t *testing.T) {
-	root := t.TempDir()
-	writeWS(t, root, "package.json", `{"name":"root","workspaces":["packages/*"]}`)
-	writeWS(t, root, "packages/a/package.json", `{"name":"a","dependencies":{"x":"1"}}`)
-	writeWS(t, root, "packages/b/package.json", `{"name":"b"}`)
-
-	graph, err := DetectWorkspaces(root)
-	if err != nil {
-		t.Fatalf("DetectWorkspaces: %v", err)
-	}
-	if graph.Len() != 2 {
-		t.Fatalf("expected 2 packages, got %d", graph.Len())
-	}
-
-	w, err := NewWatcher(graph, WithDebounce(60*time.Millisecond, 25*time.Millisecond))
-	if err != nil {
-		t.Fatalf("NewWatcher: %v", err)
-	}
-	changes := make(chan ChangeKind, 32)
-	w.onChangeKind = func(k ChangeKind) { changes <- k }
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	if err := w.Start(ctx); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	defer w.Close()
-
-	// (1) Member-manifest change -> single-package re-parse.
-	writeWS(t, root, "packages/a/package.json", `{"name":"a","dependencies":{"x":"1","y":"2"}}`)
-	expectChange(t, changes, ChangeSinglePackage, 4*time.Second)
-	if a := graph.ByRelDir("packages/a"); a == nil || !contains(a.Dependencies, "y") {
-		t.Errorf("single-package re-parse did not update packages/a deps: %v", a)
-	}
-
-	// (2) Membership-config change -> full re-scan that picks up a new member.
-	writeWS(t, root, "libs/c/package.json", `{"name":"c"}`)
-	writeWS(t, root, "package.json", `{"name":"root","workspaces":["packages/*","libs/*"]}`)
-	expectChange(t, changes, ChangeRescan, 4*time.Second)
-	if graph.ByRelDir("libs/c") == nil {
-		t.Errorf("full re-scan did not pick up new member libs/c: %v", graph.Packages())
-	}
-}
-
-func TestWatcherCleanShutdown(t *testing.T) {
-	root := t.TempDir()
-	writeWS(t, root, "package.json", `{"name":"root","workspaces":["packages/*"]}`)
-	writeWS(t, root, "packages/a/package.json", `{"name":"a"}`)
-	graph, err := DetectWorkspaces(root)
-	if err != nil {
-		t.Fatalf("DetectWorkspaces: %v", err)
-	}
-	w, err := NewWatcher(graph)
-	if err != nil {
-		t.Fatalf("NewWatcher: %v", err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	if err := w.Start(ctx); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	// Cancelling the context must let the loop exit; Close must be idempotent.
-	cancel()
-	if err := w.Close(); err != nil {
-		t.Errorf("Close: %v", err)
-	}
-	if err := w.Close(); err != nil {
-		t.Errorf("second Close: %v", err)
 	}
 }

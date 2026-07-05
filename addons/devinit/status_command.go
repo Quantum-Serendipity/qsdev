@@ -127,6 +127,16 @@ func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptio
 		return fmt.Errorf("assessing project posture: %w", err)
 	}
 
+	// Honest reporting: a vulnerability-gated audit level is meaningless without a
+	// scan. Warn (on stderr, so machine-readable stdout stays clean) that the gate
+	// cannot fire rather than letting the run pass as if the dependencies were
+	// checked and found clean.
+	if !opts.scan && vulnAuditLevelNeedsScan(opts.auditLevel) {
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"note: dependencies were not scanned for vulnerabilities; the vulnerability portion of --audit-level %s cannot fire — pass --scan to check.\n",
+			opts.auditLevel)
+	}
+
 	// Detect color support.
 	useColor := render.ColorSupported(os.Stdout.Fd())
 
@@ -189,6 +199,17 @@ func resolveFormat(cmd *cobra.Command, opts postureStatusOptions) render.Format 
 	}
 
 	return render.Text
+}
+
+// vulnAuditLevelNeedsScan reports whether the given audit level's gate can be
+// influenced by dependency vulnerability counts. Without --scan those counts
+// stay zero, so the gate's vulnerability portion can never fire and a zero
+// count must not read as clean — the command surfaces an honest note. Every
+// level except "none" (which never gates on anything) qualifies; this
+// deliberately includes the DEFAULT level "high" and "info", which an earlier
+// enumeration omitted.
+func vulnAuditLevelNeedsScan(level string) bool {
+	return level != "none"
 }
 
 // exitForAudit evaluates the audit level and returns an error that wraps the

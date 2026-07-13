@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"mime"
 	"net/http"
@@ -20,7 +21,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/util"
 )
 
 // StreamableHTTPOption defines a function type for configuring StreamableHTTPServer
@@ -111,6 +111,30 @@ func WithDisableStreaming(disable bool) StreamableHTTPOption {
 	}
 }
 
+// WithDisableLocalhostProtection disables the automatic DNS rebinding
+// protection of the streamable HTTP server.
+//
+// By default, requests arriving over a loopback connection (127.0.0.1,
+// [::1]) whose Host header is not a localhost value are rejected with 403
+// Forbidden. This protects local MCP servers against DNS rebinding attacks,
+// where a malicious website rebinds its own domain to 127.0.0.1 to make a
+// victim's browser issue requests against a local server. The protection
+// applies regardless of whether the server listens on localhost specifically
+// or on 0.0.0.0, and never affects requests arriving via non-loopback
+// addresses.
+//
+// Disable it only if you understand the security implications, for example
+// when a reverse proxy on the same host forwards requests via localhost
+// while preserving the original Host header. In that case, prefer
+// configuring the proxy to rewrite the Host header to localhost instead.
+//
+// See https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#local-mcp-server-compromise
+func WithDisableLocalhostProtection(disable bool) StreamableHTTPOption {
+	return func(s *StreamableHTTPServer) {
+		s.disableLocalhostProtection = disable
+	}
+}
+
 // WithHTTPContextFunc sets a function that will be called to customise the context
 // to the server using the incoming request.
 // This can be used to inject context values from headers, for example.
@@ -129,9 +153,17 @@ func WithStreamableHTTPServer(srv *http.Server) StreamableHTTPOption {
 	}
 }
 
-// WithLogger sets the logger for the server
-func WithLogger(logger util.Logger) StreamableHTTPOption {
+// WithStreamableHTTPLogger sets the structured logger for transport-level
+// events emitted by the HTTP server (panics in goroutines, SSE event-write
+// errors, session expiry, etc.). It is renamed from WithLogger so that
+// server-level structured logging — see WithLogger — can carry that name on
+// the MCPServer. A nil logger falls back to slog.Default().
+func WithStreamableHTTPLogger(logger *slog.Logger) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
+		if logger == nil {
+			s.logger = slog.Default()
+			return
+		}
 		s.logger = logger
 	}
 }
@@ -245,9 +277,14 @@ type StreamableHTTPServer struct {
 	sessionIdManagerResolver SessionIdManagerResolver
 	sessionIdManager         SessionIdManager // for non-request contexts (sweeper)
 	listenHeartbeatInterval  time.Duration
-	logger                   util.Logger
+	logger                   *slog.Logger
 	sessionLogLevels         *sessionLogLevelsStore
 	disableStreaming         bool
+
+	// disableLocalhostProtection, when true, turns off the automatic DNS
+	// rebinding protection applied to requests arriving over loopback
+	// connections. See WithDisableLocalhostProtection.
+	disableLocalhostProtection bool
 
 	tlsCertFile string
 	tlsKeyFile  string
@@ -277,7 +314,7 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 		sessionLogLevels:         newSessionLogLevelsStore(),
 		endpointPath:             "/mcp",
 		sessionIdManagerResolver: NewDefaultSessionIdManagerResolver(&StatelessGeneratingSessionIdManager{}),
-		logger:                   util.DefaultLogger(),
+		logger:                   slog.Default(),
 		sessionResources:         newSessionResourcesStore(),
 		sessionResourceTemplates: newSessionResourceTemplatesStore(),
 	}
@@ -314,9 +351,16 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 // requests are answered directly and simple cross-origin responses are
 // decorated with the configured Access-Control-* headers before dispatch.
 //
+// Requests arriving over a loopback connection with a non-localhost Host
+// header are rejected with 403 Forbidden to protect against DNS rebinding
+// attacks, unless WithDisableLocalhostProtection is set.
+//
 // ServeHTTP is the conventional net/http entry point; for non-net/http HTTP
 // frameworks (fasthttp, fiber, etc.), see Handle.
 func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !s.disableLocalhostProtection && rejectDNSRebinding(w, r) {
+		return
+	}
 	if s.corsConfig.enabled() {
 		if s.corsConfig.handlePreflight(w, r) {
 			return
@@ -479,7 +523,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// Handle sampling responses separately
 	if isSamplingResponse {
 		if err := s.handleSamplingResponse(w, r, jsonMessage); err != nil {
-			s.logger.Errorf("Failed to handle sampling response: %v", err)
+			s.logger.Error("Failed to handle sampling response", "err", err)
 			// HTTP Status code is already set in handleSamplingResponse, just return here
 		}
 		return
@@ -557,7 +601,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				s.logger.Errorf("panic in notification forwarder: %v", r)
+				s.logger.Error("panic in notification forwarder", "panic", r)
 			}
 		}()
 		for {
@@ -590,7 +634,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 					}
 					err := writeSSEEvent(w, nt)
 					if err != nil {
-						s.logger.Errorf("Failed to write SSE event: %v", err)
+						s.logger.Error("Failed to write SSE event", "err", err)
 						return
 					}
 				}()
@@ -634,7 +678,7 @@ drainLoop:
 				upgradedHeader = true
 			}
 			if err := writeSSEEvent(w, nt); err != nil {
-				s.logger.Errorf("Failed to write SSE event during drain: %v", err)
+				s.logger.Error("Failed to write SSE event during drain", "err", err)
 			}
 			w.Flush()
 		default:
@@ -661,7 +705,7 @@ drainLoop:
 			upgradedHeader = true
 		}
 		if err := writeSSEEvent(w, response); err != nil {
-			s.logger.Errorf("Failed to write final SSE response event: %v", err)
+			s.logger.Error("Failed to write final SSE response event", "err", err)
 		}
 	} else {
 		w.Header().Set("Content-Type", "application/json")
@@ -672,7 +716,7 @@ drainLoop:
 		w.WriteHeader(http.StatusOK)
 		err := json.NewEncoder(w).Encode(response)
 		if err != nil {
-			s.logger.Errorf("Failed to write response: %v", err)
+			s.logger.Error("Failed to write response", "err", err)
 		}
 	}
 
@@ -684,7 +728,7 @@ drainLoop:
 			s.activeSessions.Store(sessionID, session)
 			// Register the session with the MCPServer for notification support
 			if err := s.server.RegisterSession(ctx, session); err != nil {
-				s.logger.Errorf("Failed to register POST session: %v", err)
+				s.logger.Error("Failed to register POST session", "err", err)
 				s.activeSessions.Delete(sessionID)
 				// Don't fail the request, just log the error
 			}
@@ -696,7 +740,7 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 	// get request is for listening to notifications
 	// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
 	if s.disableStreaming {
-		s.logger.Infof("Rejected GET request: streaming is disabled (session: %s)", r.header().Get(HeaderKeySessionID))
+		s.logger.Info("Rejected GET request: streaming is disabled", "session", r.header().Get(HeaderKeySessionID))
 		writeHTTPError(w, "Streaming is disabled on this server", http.StatusMethodNotAllowed)
 		return
 	}
@@ -755,7 +799,7 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				s.logger.Errorf("panic in SSE notification writer: %v", r)
+				s.logger.Error("panic in SSE notification writer", "panic", r)
 			}
 		}()
 		for {
@@ -821,7 +865,7 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
-					s.logger.Errorf("panic in heartbeat goroutine: %v", r)
+					s.logger.Error("panic in heartbeat goroutine", "panic", r)
 				}
 			}()
 			ticker := time.NewTicker(s.listenHeartbeatInterval)
@@ -861,7 +905,7 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 				continue
 			}
 			if err := writeSSEEvent(w, data); err != nil {
-				s.logger.Errorf("Failed to write SSE event: %v", err)
+				s.logger.Error("Failed to write SSE event", "err", err)
 				return
 			}
 			w.Flush()
@@ -1004,7 +1048,7 @@ func (s *StreamableHTTPServer) deliverSamplingResponse(w HTTPResponseWriter, ses
 	// Attempt to deliver the response with timeout to prevent indefinite blocking
 	select {
 	case responseChan <- response:
-		s.logger.Infof("Delivered sampling response for session %s, request %d", sessionID, response.requestID)
+		s.logger.Info("Delivered sampling response", "session", sessionID, "request", response.requestID)
 		return nil
 	default:
 		writeHTTPError(w, "Failed to deliver response", http.StatusInternalServerError)
@@ -1020,7 +1064,7 @@ func (s *StreamableHTTPServer) writeJSONRPCError(
 	message string,
 ) {
 	writeJSONRPCError(w, id, code, message, func(err error) {
-		s.logger.Errorf("Failed to write JSONRPCError: %v", err)
+		s.logger.Error("Failed to write JSONRPCError", "err", err)
 	})
 }
 
@@ -1063,7 +1107,7 @@ func (s *StreamableHTTPServer) startSessionSweeper(ctx context.Context) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				s.logger.Errorf("panic in session cleanup goroutine: %v", r)
+				s.logger.Error("panic in session cleanup goroutine", "panic", r)
 			}
 		}()
 		ticker := time.NewTicker(interval)
@@ -1111,7 +1155,7 @@ func (s *StreamableHTTPServer) sweepExpiredSessions() {
 			return true
 		}
 
-		s.logger.Infof("Sweeping expired session: %s", sessionID)
+		s.logger.Info("Sweeping expired session", "session", sessionID)
 		mgr := s.sessionIdManager
 		if mgr == nil {
 			mgr = s.sessionIdManagerResolver.ResolveSessionIdManager(nil)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"text/template"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cigeneration"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -15,6 +16,16 @@ type CIWorkflowData struct {
 	HasOSV          bool
 	HasSnyk         bool
 	HasGrype        bool
+
+	// Action pins come from the shared catalog rather than being written into
+	// the template. Hardcoding them there created a second source of truth that
+	// Dependabot cannot see and no test compared, which is how the OSV scanner
+	// pin sat four releases stale while its govulncheck analysis silently failed.
+	ActionHardenRunner cigeneration.ActionRef
+	ActionCheckout     cigeneration.ActionRef
+	ActionOSVScanner   cigeneration.ActionRef
+	ActionSnyk         cigeneration.ActionRef
+	ActionGrype        cigeneration.ActionRef
 }
 
 // generateSecurityScanWorkflow produces .github/workflows/security-scan.yml.
@@ -24,6 +35,12 @@ func (p *InfraProfile) generateSecurityScanWorkflow() types.GeneratedFile {
 		HasOSV:          p.Scanning.Vulnerability == VulnScannerOSV,
 		HasSnyk:         p.Scanning.Vulnerability == VulnScannerSnyk,
 		HasGrype:        p.Scanning.Vulnerability == VulnScannerGrype,
+
+		ActionHardenRunner: cigeneration.ActionHardenRunner,
+		ActionCheckout:     cigeneration.ActionCheckout,
+		ActionOSVScanner:   cigeneration.ActionOSVScanner,
+		ActionSnyk:         cigeneration.ActionSnyk,
+		ActionGrype:        cigeneration.ActionGrype,
 	}
 
 	// Parse and render template

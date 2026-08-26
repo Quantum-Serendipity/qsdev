@@ -86,8 +86,8 @@ var (
 	ActionOSVScanner = ActionRef{
 		Owner: "google",
 		Repo:  "osv-scanner-action/osv-scanner-action",
-		SHA:   "9a498708959aeaef5ef730655706c5a1df1edbc2",
-		Tag:   "v2.3.8",
+		SHA:   "6e4298ebc4db23e847df9b2e2de2939d6f066c67",
+		Tag:   "v2.5.1",
 	}
 	ActionClaudeCodeReview = ActionRef{
 		Owner: "anthropics",

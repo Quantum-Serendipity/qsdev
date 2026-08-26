@@ -39,7 +39,15 @@ jobs:
           done
 
       - name: OSV Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+        uses: google/osv-scanner-action/osv-scanner-action@6e4298ebc4db23e847df9b2e2de2939d6f066c67 # v2.5.1
+        # The scanner image bundles a fixed Go toolchain. If a project's go.mod
+        # requires a newer one, govulncheck cannot load packages and osv-scanner
+        # silently degrades from call-graph reachability to naive version
+        # matching — reporting every advisory as if it were reachable.
+        # The action sets GOTOOLCHAIN=auto itself; we set it explicitly so the
+        # requirement survives an action upgrade that drops it.
+        env:
+          GOTOOLCHAIN: auto
         with:
           scan-args: |-
             --recursive

@@ -5,7 +5,7 @@ qsdev_version: ""
 tier: full
 languages:
     - name: go
-      version: 1.26.3
+      version: 1.26.7
 security:
     level: enhanced
 claude_code:

@@ -1,6 +1,6 @@
 module github.com/Quantum-Serendipity/qsdev
 
-go 1.26.4
+go 1.26.7
 
 require (
 	aead.dev/minisign v0.3.0
@@ -19,7 +19,7 @@ require (
 	github.com/pandatix/go-cvss v0.6.2
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
-	golang.org/x/mod v0.37.0
+	golang.org/x/mod v0.40.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.46.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -41,7 +41,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.31.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.36.6 // indirect
 	github.com/aws/smithy-go v1.27.1 // indirect
-	github.com/cilium/ebpf v0.21.0 // indirect
+	github.com/cilium/ebpf v0.22.0 // indirect
 	github.com/containerd/cgroups/v3 v3.1.3 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
@@ -90,7 +90,7 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/sync v0.21.0
-	golang.org/x/text v0.38.0
+	golang.org/x/text v0.39.0
 )
 
 replace fastcat.org/go/gdev => github.com/Quantum-Serendipity/gdev v0.0.0-20260515232304-7ffd0edf72e3

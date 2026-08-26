@@ -1,6 +1,6 @@
 // Package cigeneration provides the canonical catalog of SHA-pinned GitHub
 // Action references (ActionRef) shared by the workflow emitters in
-// internal/gitworkflow and internal/teamreport.
+// internal/gitworkflow, internal/teamreport and internal/profile.
 //
 // It no longer generates CI workflows itself: the former CIFragmentProducer /
 // GenerateWorkflow machinery was unreachable dead code (wired to no producer in
@@ -8,6 +8,11 @@
 // are generated solely via the infrastructure-profile path — see
 // InfraProfile.ConfigFiles (internal/profile), invoked from
 // DevenvGenerator.Generate (addons/devenv/generator.go).
+//
+// Every entry here must be referenced by an emitter. An unreferenced entry
+// cannot be exercised by any test or workflow run, so nothing detects when its
+// SHA rots — this catalog previously accumulated four entries whose SHAs did
+// not resolve upstream at all. Add a pin when something emits it, not before.
 package cigeneration
 
 import "fmt"
@@ -32,8 +37,14 @@ func (a ActionRef) Comment() string {
 }
 
 // SHA-pinned action references.
-// Each SHA corresponds to the tagged release listed in the Tag field.
-// SHAs should be verified against the upstream repository before production use.
+//
+// Each SHA is the commit that the named tag resolves to upstream, verified
+// against the GitHub API rather than transcribed. A SHA that merely looks
+// plausible is worse than no pin: it fails at workflow run time, long after
+// review, and the tag comment beside it reads as authoritative.
+//
+// TestActionPinsMatchWorkflows keeps these in step with .github/workflows,
+// which Dependabot updates and this file it cannot see.
 var (
 	ActionCheckout = ActionRef{
 		Owner: "actions",
@@ -50,38 +61,17 @@ var (
 	ActionUploadArtifact = ActionRef{
 		Owner: "actions",
 		Repo:  "upload-artifact",
-		SHA:   "ea165f8d65b6e75b540449e92b4886f43607fa02",
-		Tag:   "v4.6.2",
+		SHA:   "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+		Tag:   "v7.0.1",
 	}
-	ActionUploadSarif = ActionRef{
-		Owner: "github",
-		Repo:  "codeql-action",
-		SHA:   "ff0a06e83cb2de871e5a09832bc6a81e7276941f",
-		Tag:   "v3.28.18",
-	}
-	ActionSemgrep = ActionRef{
-		Owner: "semgrep",
-		Repo:  "semgrep-action",
-		SHA:   "713efdd6cf1eadd5a227fc536c7f5b1731d32ddd",
-		Tag:   "v1.2.0",
-	}
-	ActionGrype = ActionRef{
-		Owner: "anchore",
-		Repo:  "scan-action",
-		SHA:   "2c901ab7a2a0168b0ece4efe2ad1b30fc1135484",
-		Tag:   "v6.2.0",
-	}
-	ActionSyft = ActionRef{
-		Owner: "anchore",
-		Repo:  "sbom-action",
-		SHA:   "61119d458adab75f756bc0b9e4bde25725f86a7a",
-		Tag:   "v0.17.2",
-	}
-	ActionCosignInstaller = ActionRef{
-		Owner: "sigstore",
-		Repo:  "cosign-installer",
-		SHA:   "3454372be43b5347950ddf1e4e2dc289b3a532da",
-		Tag:   "v3.8.2",
+	// Paired with ActionUploadArtifact by the team workflow emitter. Both are
+	// on the v4+ artifact backend, which is not interoperable with v3 and
+	// earlier; keep them on that generation together.
+	ActionDownloadArtifact = ActionRef{
+		Owner: "actions",
+		Repo:  "download-artifact",
+		SHA:   "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+		Tag:   "v8.0.1",
 	}
 	ActionOSVScanner = ActionRef{
 		Owner: "google",
@@ -89,11 +79,19 @@ var (
 		SHA:   "6e4298ebc4db23e847df9b2e2de2939d6f066c67",
 		Tag:   "v2.5.1",
 	}
-	ActionClaudeCodeReview = ActionRef{
-		Owner: "anthropics",
-		Repo:  "claude-code-action",
-		SHA:   "a0d3e11e71effa3e3a6b47e60f4ff66e7f2e60e9",
-		Tag:   "v1.0.0",
+	ActionGrype = ActionRef{
+		Owner: "anchore",
+		Repo:  "scan-action",
+		SHA:   "1638637db639e0ade3258b51db49a9a137574c3e",
+		Tag:   "v6",
+	}
+	// snyk/actions publishes no release tags; master is the documented
+	// reference, so the SHA is the only thing actually pinning it.
+	ActionSnyk = ActionRef{
+		Owner: "snyk",
+		Repo:  "actions",
+		SHA:   "9cf6ca713d71123d2d229cc3d7f145b96ea3c518",
+		Tag:   "master",
 	}
 	ActionLabeler = ActionRef{
 		Owner: "actions",

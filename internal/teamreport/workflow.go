@@ -8,13 +8,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
-// SHA-pinned action reference for download-artifact (not in sha_pins.go yet).
-var actionDownloadArtifact = cigeneration.ActionRef{
-	Owner: "actions",
-	Repo:  "download-artifact",
-	SHA:   "95815c38cf2ff2164869cbab79da8d1f422bc89e",
-	Tag:   "v4.2.1",
-}
+// actionDownloadArtifact aliases the shared catalog entry. It previously held
+// its own copy at v4.2.1 while ActionUploadArtifact moved on, which would have
+// paired mismatched artifact major versions in the emitted workflow.
+var actionDownloadArtifact = cigeneration.ActionDownloadArtifact
 
 // GenerateTeamWorkflow produces a complete GitHub Actions workflow YAML string
 // for the team aggregation pipeline. The workflow downloads posture reports

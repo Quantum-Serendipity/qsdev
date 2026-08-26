@@ -21,12 +21,12 @@ jobs:
     steps:
 {{- if .HasHardenRunner }}
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: {{ .ActionHardenRunner }} {{ .ActionHardenRunner.Comment }}
         with:
           egress-policy: audit
 {{ end }}
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: {{ .ActionCheckout }} {{ .ActionCheckout.Comment }}
 
       - name: Validate lock files
         shell: bash
@@ -89,7 +89,7 @@ jobs:
 {{- if .HasOSV }}
 
       - name: OSV Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@6e4298ebc4db23e847df9b2e2de2939d6f066c67 # v2.5.1
+        uses: {{ .ActionOSVScanner }} {{ .ActionOSVScanner.Comment }}
         # The scanner image bundles a fixed Go toolchain. If a project's go.mod
         # requires a newer one, govulncheck cannot load packages and osv-scanner
         # silently degrades from call-graph reachability to naive version
@@ -106,7 +106,7 @@ jobs:
 {{- if .HasSnyk }}
 
       - name: Snyk Security Scan
-        uses: snyk/actions@9cf6ca713d71123d2d229cc3d7f145b96ea3c518 # master
+        uses: {{ .ActionSnyk }} {{ .ActionSnyk.Comment }}
         env:
           SNYK_TOKEN: ${{ "{{" }} secrets.SNYK_TOKEN {{ "}}" }}
         with:
@@ -115,7 +115,7 @@ jobs:
 {{- if .HasGrype }}
 
       - name: Grype Vulnerability Scan
-        uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
+        uses: {{ .ActionGrype }} {{ .ActionGrype.Comment }}
         with:
           path: "."
           fail-build: true

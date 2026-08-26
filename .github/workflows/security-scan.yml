@@ -28,15 +28,63 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Validate lock files
+        shell: bash
         run: |
+          set -uo pipefail
+          fail=0
+
+          # A lock file pins every transitive dependency to an exact, verified
+          # version. A manifest committed without one resolves at build time, so
+          # the same commit can produce different dependency trees on different
+          # days — the precondition for most supply chain attacks.
+          #
+          # These checks assert properties of the commit itself. Comparing the
+          # working tree against git would be meaningless here: actions/checkout
+          # produces a pristine tree, so `git diff` is clean by construction and
+          # such a check can never fail regardless of what was committed.
+
+          # $1 = manifest, remaining args = acceptable lock files for it.
+          require_lock() {
+            manifest="$1"
+            shift
+            [ -f "$manifest" ] || return 0
+            for lock in "$@"; do
+              if [ -f "$lock" ]; then
+                echo "  ✓ $manifest -> $lock"
+                return 0
+              fi
+            done
+            # Distinguish "never generated" from "generated but deliberately
+            # excluded" — the second is a policy problem, not an oversight.
+            for lock in "$@"; do
+              if git check-ignore -q "$lock" 2>/dev/null; then
+                echo "::error file=$manifest::$lock is excluded by .gitignore, so it can never be committed. Lock files must be committed."
+                fail=1
+                return 0
+              fi
+            done
+            echo "::error file=$manifest::$manifest has no lock file (expected one of: $*). Dependencies would resolve at build time instead of being pinned to verified versions."
+            fail=1
+          }
+
           echo "Checking lock file integrity..."
-          # Verify lock files exist and are committed
-          for f in package-lock.json pnpm-lock.yaml yarn.lock Cargo.lock go.sum poetry.lock uv.lock; do
-            if [ -f "$f" ]; then
-              echo "  ✓ $f present"
-              git diff --exit-code "$f" || echo "  WARNING: $f has uncommitted changes"
-            fi
-          done
+
+          require_lock package.json package-lock.json npm-shrinkwrap.json pnpm-lock.yaml yarn.lock bun.lock bun.lockb
+          require_lock composer.json composer.lock
+          # Cargo keeps a single lock file at the workspace root, so members
+          # legitimately have no Cargo.lock. Only the root is checked.
+          require_lock Cargo.toml Cargo.lock
+          # A module with no dependencies correctly has no go.sum, so only
+          # require one when go.mod actually declares requirements.
+          if [ -f go.mod ] && grep -qE '^[[:space:]]*require' go.mod; then
+            require_lock go.mod go.sum
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            echo "Lock file validation failed."
+            exit 1
+          fi
+          echo "Lock file validation passed."
 
       - name: OSV Scanner
         uses: google/osv-scanner-action/osv-scanner-action@6e4298ebc4db23e847df9b2e2de2939d6f066c67 # v2.5.1

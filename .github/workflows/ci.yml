@@ -41,8 +41,14 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # -race on Linux only: it roughly triples runtime, and one leg is enough
+      # to catch a shared-state bug. Without it a data race surfaces as an
+      # intermittent crash of the whole package binary, reported as a scatter of
+      # unrelated test failures — a TestCommandTree race sat undetected on main
+      # for weeks that way, and `test (ubuntu-latest)` is a required check, so
+      # it randomly blocked merges.
       - name: Test
-        run: gotestsum --format testname --junitfile test-results.xml -- ./...
+        run: gotestsum --format testname --junitfile test-results.xml -- ${{ matrix.os == 'ubuntu-latest' && '-race' || '' }} ./...
 
       - name: Upload test results
         if: always()

@@ -808,10 +808,15 @@ func TestWriteTo(t *testing.T) {
 func TestCommandTree(t *testing.T) {
 	t.Parallel()
 
-	cmd := Command()
-
+	// Each subtest builds its own command rather than sharing one.
+	// cobra.Command.Find lazily merges persistent flags into the flag set,
+	// so it writes to an internal map. Sharing a command across parallel
+	// subtests made three of them race on that map, which crashed the whole
+	// package binary with "fatal error: concurrent map writes" — reported by
+	// gotestsum as 34 unrelated failures.
 	t.Run("root command", func(t *testing.T) {
 		t.Parallel()
+		cmd := Command()
 		if cmd.Use != "logs" {
 			t.Errorf("Use = %q, want %q", cmd.Use, "logs")
 		}
@@ -819,6 +824,7 @@ func TestCommandTree(t *testing.T) {
 
 	t.Run("has expected subcommands", func(t *testing.T) {
 		t.Parallel()
+		cmd := Command()
 		subNames := map[string]bool{}
 		for _, sub := range cmd.Commands() {
 			subNames[sub.Use] = true
@@ -832,6 +838,7 @@ func TestCommandTree(t *testing.T) {
 
 	t.Run("global flag on root", func(t *testing.T) {
 		t.Parallel()
+		cmd := Command()
 		f := cmd.PersistentFlags().Lookup("global")
 		if f == nil {
 			t.Fatal("expected --global persistent flag")
@@ -844,6 +851,7 @@ func TestCommandTree(t *testing.T) {
 
 	t.Run("list has flags", func(t *testing.T) {
 		t.Parallel()
+		cmd := Command()
 		list, _, err := cmd.Find([]string{"list"})
 		if err != nil {
 			t.Fatalf("finding list command: %v", err)
@@ -858,6 +866,7 @@ func TestCommandTree(t *testing.T) {
 
 	t.Run("show has flags", func(t *testing.T) {
 		t.Parallel()
+		cmd := Command()
 		show, _, err := cmd.Find([]string{"show"})
 		if err != nil {
 			t.Fatalf("finding show command: %v", err)
@@ -872,6 +881,7 @@ func TestCommandTree(t *testing.T) {
 
 	t.Run("clean has flags", func(t *testing.T) {
 		t.Parallel()
+		cmd := Command()
 		clean, _, err := cmd.Find([]string{"clean"})
 		if err != nil {
 			t.Fatalf("finding clean command: %v", err)

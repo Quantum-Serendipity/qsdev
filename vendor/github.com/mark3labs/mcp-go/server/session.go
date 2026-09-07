@@ -80,6 +80,22 @@ type SessionWithResourceSubscriptions interface {
 	IsSubscribedToResource(uri string) bool
 }
 
+// SessionWithResourceSubscriptionsErr is an optional extension of
+// SessionWithResourceSubscriptions whose SubscribeToResourceErr method can
+// reject a subscription. When a session implements this interface, MCPServer
+// uses SubscribeToResourceErr in preference to SubscribeToResource and returns
+// RESOURCE_NOT_FOUND if it reports an error.
+//
+// Implementations must be safe for concurrent use because requests and
+// notifications may run on independent goroutines.
+type SessionWithResourceSubscriptionsErr interface {
+	SessionWithResourceSubscriptions
+	// SubscribeToResourceErr records that this session has subscribed to updates
+	// for the given resource URI, or returns an error if the URI cannot be
+	// subscribed to.
+	SubscribeToResourceErr(uri string) error
+}
+
 // SessionWithResourceTemplates is an extension of ClientSession that can store session-specific resource template data
 type SessionWithResourceTemplates interface {
 	ClientSession
@@ -187,6 +203,19 @@ func (s *MCPServer) SendLogMessageToClient(ctx context.Context, notification mcp
 	if session == nil || !session.Initialized() {
 		return ErrNotificationNotInitialized
 	}
+	// Protocol version 2026-07-28 removed logging/setLevel: the level is
+	// declared per request, and a server MUST NOT emit log notifications for a
+	// request that did not ask for them (SEP-2575).
+	if info := RequestProtocolInfoFromContext(ctx); info != nil && info.Modern {
+		if info.LogLevel == "" {
+			return nil
+		}
+		if !notification.Params.Level.ShouldSendTo(info.LogLevel) {
+			return nil
+		}
+		return s.sendNotificationCore(ctx, session, s.buildLogNotification(notification))
+	}
+
 	sessionLogging, ok := session.(SessionWithLogging)
 	if !ok {
 		return ErrSessionDoesNotSupportLogging
@@ -200,6 +229,13 @@ func (s *MCPServer) SendLogMessageToClient(ctx context.Context, notification mcp
 func (s *MCPServer) sendNotificationToAllClients(notification mcp.JSONRPCNotification) {
 	s.sessions.Range(func(k, v any) bool {
 		if session, ok := v.(ClientSession); ok && session.Initialized() {
+			// From protocol version 2026-07-28 every server-to-client
+			// notification is opt-in: a session that opened a
+			// subscriptions/listen stream receives only the types it asked
+			// for (SEP-2575). Sessions that never opened one are unaffected.
+			if !subscriptionAllowsNotification(session, notification.Method) {
+				return true
+			}
 			if sessionWithStreamableHTTPConfig, ok := session.(SessionWithStreamableHTTPConfig); ok {
 				sessionWithStreamableHTTPConfig.UpgradeToSSEWhenReceiveNotification()
 			}

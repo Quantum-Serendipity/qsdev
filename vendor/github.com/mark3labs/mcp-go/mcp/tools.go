@@ -8,8 +8,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
-
-	"github.com/google/jsonschema-go/jsonschema"
+	"strings"
 )
 
 var errToolSchemaConflict = errors.New("provide either InputSchema or RawInputSchema, not both")
@@ -40,11 +39,15 @@ type ListToolsResult struct {
 // should be reported as an MCP error response.
 type CallToolResult struct {
 	Result
+	MultiRoundTripResult
 	Content []Content `json:"content"` // Can be TextContent, ImageContent, AudioContent, or EmbeddedResource
 	// Structured content returned as a JSON object in the structuredContent field of a result.
 	// For backwards compatibility, a tool that returns structured content SHOULD also return
 	// functionally equivalent unstructured content.
 	StructuredContent any `json:"structuredContent,omitempty"`
+	// RawStructuredContent preserves the original JSON bytes for structuredContent when
+	// unmarshaled from a wire message.
+	RawStructuredContent json.RawMessage `json:"-"`
 	// Whether the tool call ended in an error.
 	//
 	// If not set, this is assumed to be false (the call was successful).
@@ -63,6 +66,10 @@ type CallToolParams struct {
 	Arguments any         `json:"arguments,omitempty"`
 	Meta      *Meta       `json:"_meta,omitempty"`
 	Task      *TaskParams `json:"task,omitempty"`
+	MultiRoundTripParams
+	// RawArguments preserves the original JSON bytes for arguments when unmarshaled
+	// from a wire message. This avoids precision loss for integers above 2^53.
+	RawArguments json.RawMessage `json:"-"`
 }
 
 // GetArguments returns the Arguments as map[string]any for backward compatibility
@@ -74,17 +81,24 @@ func (r CallToolRequest) GetArguments() map[string]any {
 	return nil
 }
 
-// GetRawArguments returns the Arguments as-is without type conversion
-// This allows users to access the raw arguments in any format
+// GetRawArguments returns the original arguments payload when available.
+// For JSON-RPC requests this is json.RawMessage; otherwise it falls back to Arguments.
 func (r CallToolRequest) GetRawArguments() any {
+	if len(r.Params.RawArguments) > 0 {
+		return r.Params.RawArguments
+	}
 	return r.Params.Arguments
 }
 
 // BindArguments unmarshals the Arguments into the provided struct
 // This is useful for working with strongly-typed arguments
 func (r CallToolRequest) BindArguments(target any) error {
-	if target == nil || reflect.ValueOf(target).Kind() != reflect.Ptr {
+	if target == nil || reflect.ValueOf(target).Kind() != reflect.Pointer {
 		return fmt.Errorf("target must be a non-nil pointer")
+	}
+
+	if len(r.Params.RawArguments) > 0 {
+		return json.Unmarshal(r.Params.RawArguments, target)
 	}
 
 	// Fast-path: already raw JSON
@@ -109,6 +123,57 @@ func (r CallToolRequest) GetString(key string, defaultValue string) string {
 		}
 	}
 	return defaultValue
+}
+
+// UnmarshalJSON preserves the original arguments JSON while also populating Arguments.
+func (p *CallToolParams) UnmarshalJSON(data []byte) error {
+	type params struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+		Meta      *Meta           `json:"_meta,omitempty"`
+		Task      *TaskParams     `json:"task,omitempty"`
+		MultiRoundTripParams
+	}
+
+	var raw params
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	p.Name = raw.Name
+	p.Meta = raw.Meta
+	p.Task = raw.Task
+	p.MultiRoundTripParams = raw.MultiRoundTripParams
+
+	if len(raw.Arguments) == 0 {
+		return nil
+	}
+
+	p.RawArguments = append(json.RawMessage(nil), raw.Arguments...)
+	return json.Unmarshal(raw.Arguments, &p.Arguments)
+}
+
+// MarshalJSON re-emits preserved raw arguments when available.
+func (p CallToolParams) MarshalJSON() ([]byte, error) {
+	if len(p.RawArguments) > 0 {
+		type params struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments,omitempty"`
+			Meta      *Meta           `json:"_meta,omitempty"`
+			Task      *TaskParams     `json:"task,omitempty"`
+			MultiRoundTripParams
+		}
+		return json.Marshal(params{
+			Name:                 p.Name,
+			Arguments:            p.RawArguments,
+			Meta:                 p.Meta,
+			Task:                 p.Task,
+			MultiRoundTripParams: p.MultiRoundTripParams,
+		})
+	}
+
+	type alias CallToolParams
+	return json.Marshal(alias(p))
 }
 
 // RequireString returns a string argument by key, or an error if not found or not a string
@@ -331,8 +396,8 @@ func (r CallToolRequest) RequireIntSlice(key string) ([]int, error) {
 				case float64:
 					result = append(result, int(num))
 				case string:
-					if i, err := strconv.Atoi(num); err == nil {
-						result = append(result, i)
+					if n, err := strconv.Atoi(num); err == nil {
+						result = append(result, n)
 					} else {
 						return nil, fmt.Errorf("item %d in argument %q cannot be converted to int", i, key)
 					}
@@ -481,6 +546,12 @@ func (r CallToolResult) MarshalJSON() ([]byte, error) {
 		m["_meta"] = r.Meta
 	}
 
+	// resultType is required from protocol version 2026-07-28 onward, and
+	// omitted when replying to a client using an earlier version.
+	if r.ResultType != "" {
+		m["resultType"] = r.ResultType
+	}
+
 	// Marshal Content array
 	content := make([]any, len(r.Content))
 	for i, c := range r.Content {
@@ -489,7 +560,9 @@ func (r CallToolResult) MarshalJSON() ([]byte, error) {
 	m["content"] = content
 
 	// Marshal StructuredContent if present
-	if r.StructuredContent != nil {
+	if len(r.RawStructuredContent) > 0 {
+		m["structuredContent"] = json.RawMessage(r.RawStructuredContent)
+	} else if r.StructuredContent != nil {
 		m["structuredContent"] = r.StructuredContent
 	}
 
@@ -498,50 +571,56 @@ func (r CallToolResult) MarshalJSON() ([]byte, error) {
 		m["isError"] = r.IsError
 	}
 
+	// Multi round-trip fields, present only when the server is asking the
+	// client for more input before it can complete the call (SEP-2322).
+	if len(r.InputRequests) > 0 {
+		m["inputRequests"] = r.InputRequests
+	}
+	if r.RequestState != "" {
+		m["requestState"] = r.RequestState
+	}
+
 	return json.Marshal(m)
 }
 
 // UnmarshalJSON implements custom JSON unmarshaling for CallToolResult
 func (r *CallToolResult) UnmarshalJSON(data []byte) error {
-	var raw map[string]any
+	type result struct {
+		Meta              *Meta             `json:"_meta,omitempty"`
+		ResultType        ResultType        `json:"resultType,omitempty"`
+		Content           []json.RawMessage `json:"content"`
+		StructuredContent json.RawMessage   `json:"structuredContent,omitempty"`
+		IsError           bool              `json:"isError,omitempty"`
+		InputRequests     InputRequests     `json:"inputRequests,omitempty"`
+		RequestState      string            `json:"requestState,omitempty"`
+	}
+
+	var raw result
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 
-	// Unmarshal Meta
-	if meta, ok := raw["_meta"]; ok {
-		if metaMap, ok := meta.(map[string]any); ok {
-			r.Meta = NewMetaFromMap(metaMap)
-		}
-	}
+	r.Meta = raw.Meta
+	r.ResultType = raw.ResultType
+	r.IsError = raw.IsError
+	r.InputRequests = raw.InputRequests
+	r.RequestState = raw.RequestState
 
-	// Unmarshal Content array
-	if contentRaw, ok := raw["content"]; ok {
-		if contentArray, ok := contentRaw.([]any); ok {
-			r.Content = make([]Content, len(contentArray))
-			for i, item := range contentArray {
-				itemBytes, err := json.Marshal(item)
-				if err != nil {
-					return err
-				}
-				content, err := UnmarshalContent(itemBytes)
-				if err != nil {
-					return err
-				}
-				r.Content[i] = content
+	if len(raw.Content) > 0 {
+		r.Content = make([]Content, len(raw.Content))
+		for i, item := range raw.Content {
+			content, err := UnmarshalContent(item)
+			if err != nil {
+				return err
 			}
+			r.Content[i] = content
 		}
 	}
 
-	// Unmarshal StructuredContent if present
-	if structured, ok := raw["structuredContent"]; ok {
-		r.StructuredContent = structured
-	}
-
-	// Unmarshal IsError
-	if isError, ok := raw["isError"]; ok {
-		if isErrorBool, ok := isError.(bool); ok {
-			r.IsError = isErrorBool
+	if len(raw.StructuredContent) > 0 {
+		r.RawStructuredContent = append(json.RawMessage(nil), raw.StructuredContent...)
+		if err := json.Unmarshal(raw.StructuredContent, &r.StructuredContent); err != nil {
+			return err
 		}
 	}
 
@@ -756,12 +835,38 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 		return err
 	}
 
-	// If $defs wasn't provided but definitions was, use definitions
+	// If $defs wasn't provided but definitions was, use definitions.
+	// Marshaling re-emits Defs as "$defs", so local "#/definitions/..." $ref
+	// pointers must be rewritten to "#/$defs/..." or the round-tripped schema
+	// carries dangling references that strict validators reject.
 	if tis.Defs == nil && aux.Definitions != nil {
 		tis.Defs = aux.Definitions
+		rewriteDraft07LocalRefs(tis.Defs)
+		rewriteDraft07LocalRefs(tis.Properties)
+		rewriteDraft07LocalRefs(tis.AdditionalProperties)
 	}
 
 	return nil
+}
+
+// rewriteDraft07LocalRefs rewrites local draft-07 "#/definitions/..." $ref
+// pointers to their 2019-09+ "#/$defs/..." equivalent in place. It walks
+// nested maps and slices; non-local refs are left untouched.
+func rewriteDraft07LocalRefs(node any) {
+	const draft07Prefix = "#/definitions/"
+	switch v := node.(type) {
+	case map[string]any:
+		if ref, ok := v["$ref"].(string); ok && strings.HasPrefix(ref, draft07Prefix) {
+			v["$ref"] = "#/$defs/" + ref[len(draft07Prefix):]
+		}
+		for _, child := range v {
+			rewriteDraft07LocalRefs(child)
+		}
+	case []any:
+		for _, child := range v {
+			rewriteDraft07LocalRefs(child)
+		}
+	}
 }
 
 type ToolAnnotation struct {
@@ -861,7 +966,7 @@ func WithDeferLoading(deferLoading bool) ToolOption {
 // It accepts any Go type, usually a struct, and automatically generates a JSON schema from it.
 func WithInputSchema[T any]() ToolOption {
 	return func(t *Tool) {
-		schema, err := jsonschema.For[T](&jsonschema.ForOptions{IgnoreInvalidTypes: true})
+		schema, err := schemaFor[T]()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return
@@ -912,7 +1017,7 @@ func WithRawInputSchema(schema json.RawMessage) ToolOption {
 // It accepts any Go type, usually a struct, and automatically generates a JSON schema from it.
 func WithOutputSchema[T any]() ToolOption {
 	return func(t *Tool) {
-		schema, err := jsonschema.For[T](&jsonschema.ForOptions{IgnoreInvalidTypes: true})
+		schema, err := schemaFor[T]()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return

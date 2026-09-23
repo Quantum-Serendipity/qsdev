@@ -18,6 +18,7 @@ func runUnsandboxed(ctx context.Context, cfg *SandboxConfig) (*SandboxResult, er
 	cmd := exec.CommandContext(ctx, cfg.HookCommand[0], cfg.HookCommand[1:]...)
 
 	var stdout, stderr bytes.Buffer
+	cmd.Stdin = cfg.Stdin
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 

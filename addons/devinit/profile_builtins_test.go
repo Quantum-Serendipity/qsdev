@@ -6,21 +6,31 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/devinit"
 )
 
+// builtinProfile returns a built-in profile from the default registry.
+func builtinProfile(t *testing.T, name string) devinit.ExportProfile {
+	t.Helper()
+	p, ok := devinit.ExportDefaultProjectProfileRegistry().Get(name)
+	if !ok {
+		t.Fatalf("built-in profile %q not registered", name)
+	}
+	return p
+}
+
 func TestBuiltinProfiles_HaveRequiredFields(t *testing.T) {
 	tests := []struct {
 		name    string
 		profile devinit.ExportProfile
 	}{
-		{"go-web", devinit.ExportGoWeb},
-		{"ts-fullstack", devinit.ExportTSFullstack},
-		{"python-data", devinit.ExportPythonData},
-		{"rust-cli", devinit.ExportRustCLI},
-		{"java-web", devinit.ExportJavaWeb},
-		{"python-web", devinit.ExportPythonWeb},
-		{"ts-backend", devinit.ExportTSBackend},
-		{"elixir-web", devinit.ExportElixirWeb},
-		{"rust-web", devinit.ExportRustWeb},
-		{"dotnet-web", devinit.ExportDotnetWeb},
+		{"go-web", builtinProfile(t, "go-web")},
+		{"ts-fullstack", builtinProfile(t, "ts-fullstack")},
+		{"python-data", builtinProfile(t, "python-data")},
+		{"rust-cli", builtinProfile(t, "rust-cli")},
+		{"java-web", builtinProfile(t, "java-web")},
+		{"python-web", builtinProfile(t, "python-web")},
+		{"ts-backend", builtinProfile(t, "ts-backend")},
+		{"elixir-web", builtinProfile(t, "elixir-web")},
+		{"rust-web", builtinProfile(t, "rust-web")},
+		{"dotnet-web", builtinProfile(t, "dotnet-web")},
 	}
 
 	for _, tt := range tests {
@@ -41,7 +51,7 @@ func TestBuiltinProfiles_HaveRequiredFields(t *testing.T) {
 }
 
 func TestBuiltinProfiles_GoWeb(t *testing.T) {
-	p := devinit.ExportGoWeb
+	p := builtinProfile(t, "go-web")
 
 	if len(p.Languages) != 1 || p.Languages[0].Name != "go" {
 		t.Errorf("Languages = %v, want [{go 1.24}]", p.Languages)
@@ -64,7 +74,7 @@ func TestBuiltinProfiles_GoWeb(t *testing.T) {
 }
 
 func TestBuiltinProfiles_TSFullstack(t *testing.T) {
-	p := devinit.ExportTSFullstack
+	p := builtinProfile(t, "ts-fullstack")
 
 	if len(p.Languages) != 1 || p.Languages[0].Name != "javascript" {
 		t.Errorf("Languages = %v, want [{javascript pnpm}]", p.Languages)
@@ -82,7 +92,7 @@ func TestBuiltinProfiles_TSFullstack(t *testing.T) {
 }
 
 func TestBuiltinProfiles_PythonData(t *testing.T) {
-	p := devinit.ExportPythonData
+	p := builtinProfile(t, "python-data")
 
 	if len(p.Languages) != 1 || p.Languages[0].Name != "python" {
 		t.Errorf("Languages = %v, want [{python 3.12 uv}]", p.Languages)
@@ -102,7 +112,7 @@ func TestBuiltinProfiles_PythonData(t *testing.T) {
 }
 
 func TestBuiltinProfiles_RustCLI(t *testing.T) {
-	p := devinit.ExportRustCLI
+	p := builtinProfile(t, "rust-cli")
 
 	if len(p.Languages) != 1 || p.Languages[0].Name != "rust" {
 		t.Errorf("Languages = %v, want [{rust}]", p.Languages)
@@ -124,12 +134,12 @@ func TestBuiltinProfiles_WebProfiles_HaveServices(t *testing.T) {
 		name    string
 		profile devinit.ExportProfile
 	}{
-		{"java-web", devinit.ExportJavaWeb},
-		{"python-web", devinit.ExportPythonWeb},
-		{"ts-backend", devinit.ExportTSBackend},
-		{"elixir-web", devinit.ExportElixirWeb},
-		{"rust-web", devinit.ExportRustWeb},
-		{"dotnet-web", devinit.ExportDotnetWeb},
+		{"java-web", builtinProfile(t, "java-web")},
+		{"python-web", builtinProfile(t, "python-web")},
+		{"ts-backend", builtinProfile(t, "ts-backend")},
+		{"elixir-web", builtinProfile(t, "elixir-web")},
+		{"rust-web", builtinProfile(t, "rust-web")},
+		{"dotnet-web", builtinProfile(t, "dotnet-web")},
 	}
 
 	for _, tt := range webProfiles {

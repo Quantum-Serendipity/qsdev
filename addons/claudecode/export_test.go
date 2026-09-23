@@ -2,8 +2,6 @@ package claudecode
 
 import (
 	"slices"
-
-	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // ExportMCPServerConfig re-exports MCPServerConfig for convenience in tests.
@@ -47,11 +45,6 @@ var ExportVerifyDocSet = verifyDocSet
 
 // ExportDocVerifyResult re-exports docVerifyResult for external tests.
 type ExportDocVerifyResult = docVerifyResult
-
-// ExportHookPresetToChoices exposes hookPresetToChoices for external tests.
-var ExportHookPresetToChoices = func(name string, hooks *types.HookChoices) {
-	hookPresetToChoices(name, hooks)
-}
 
 // ExportAnswersPath exposes answersPath for external tests.
 var ExportAnswersPath = func(projectRoot string) string {

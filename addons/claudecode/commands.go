@@ -617,7 +617,9 @@ func addHookCmd() *cobra.Command {
 			return nil
 		},
 		mutate: func(a *types.WizardAnswers, name string) error {
-			hookPresetToChoices(name, &a.Hooks)
+			if err := a.Hooks.EnableHook(name); err != nil {
+				return fmt.Errorf("enabling hook preset: %w", err)
+			}
 			return nil
 		},
 		successMsg: func(name string, filesWritten int) string {
@@ -685,29 +687,4 @@ func buildClaudeAnswersFromFlags(projectRoot, preset string, skills, mcpServers 
 	}
 
 	return answers
-}
-
-// hookPresetToChoices maps a hook preset name to the corresponding field in
-// HookChoices, setting it to true.
-func hookPresetToChoices(name string, hooks *types.HookChoices) {
-	switch name {
-	case "auto-format":
-		hooks.AutoFormat = true
-	case "safety-block":
-		hooks.SafetyBlock = true
-	case "pre-commit":
-		hooks.PreCommit = true
-	case "audit-log":
-		hooks.AuditLog = true
-	case "credential-scan":
-		hooks.CredentialScan = true
-	case "destructive-prevention":
-		hooks.DestructivePrevention = true
-	case "soc2-audit":
-		hooks.SOC2Audit = true
-	case "file-boundary":
-		hooks.FileBoundary = true
-	case "tool-gates":
-		hooks.ToolGates = true
-	}
 }

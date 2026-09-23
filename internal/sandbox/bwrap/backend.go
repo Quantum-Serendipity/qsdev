@@ -111,6 +111,7 @@ func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 	cmd.ExtraFiles = extraFiles
 
 	var stdout, stderr bytes.Buffer
+	cmd.Stdin = cfg.Stdin
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 

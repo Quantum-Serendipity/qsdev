@@ -103,6 +103,10 @@ type SandboxConfig struct {
 	Network           NetworkPolicy
 	SeccompFilterPath string
 	PolicyPath        string
+	// Stdin is connected to the hook's standard input. Claude Code delivers the
+	// tool-call JSON payload on stdin, so a wrapper such as `sandbox exec` must
+	// forward it; nil means the hook reads from the null device.
+	Stdin io.Reader
 }
 
 // MountSpec describes a single bind mount in the sandbox.

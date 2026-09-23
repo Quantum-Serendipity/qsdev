@@ -281,7 +281,11 @@ func AnswersFromFlags(opts InitOptions, projectRoot string) (types.WizardAnswers
 
 	// Convert --claude-hooks to HookChoices.
 	if len(opts.ClaudeHooks) > 0 {
-		answers.Hooks = hooksFromStrings(opts.ClaudeHooks)
+		hooks, err := hooksFromStrings(opts.ClaudeHooks)
+		if err != nil {
+			return answers, fmt.Errorf("--claude-hooks: %w", err)
+		}
+		answers.Hooks = hooks
 	}
 
 	// --devenv-only disables Claude Code.

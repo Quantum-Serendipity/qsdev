@@ -2,6 +2,8 @@ package devinit
 
 import (
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -135,7 +137,9 @@ func runTeamReport(cmd *cobra.Command, opts teamReportOptions) error {
 		return fmt.Errorf("aggregating reports: %w", err)
 	}
 
-	// Create issues if requested.
+	// Create issues if requested. An issue that could not be filed is reported
+	// as an error once the report itself has been written.
+	var issuesErr error
 	if opts.createIssues {
 		var history *teamreport.HistoryStore
 		if opts.historyFile != "" {
@@ -146,14 +150,7 @@ func runTeamReport(cmd *cobra.Command, opts teamReportOptions) error {
 		}
 
 		issues := teamreport.GenerateIssues(teamReport, history)
-		if len(issues) > 0 {
-			if err := teamreport.CreateIssuesViaCLI(issues); err != nil {
-				return fmt.Errorf("creating issues: %w", err)
-			}
-			fmt.Fprintf(cmd.ErrOrStderr(), "Created %d issue(s)\n", len(issues))
-		} else {
-			fmt.Fprintln(cmd.ErrOrStderr(), "No issues to create")
-		}
+		issuesErr = createTeamIssues(cmd.ErrOrStderr(), issues, teamreport.CreateIssuesViaCLI)
 	}
 
 	// Render output.
@@ -178,6 +175,40 @@ func runTeamReport(cmd *cobra.Command, opts teamReportOptions) error {
 		_, _ = cmd.OutOrStdout().Write(rendered)
 	}
 
+	return issuesErr
+}
+
+// createTeamIssues files the issues that name a repository through create and
+// reports how many were filed. Issues without a repository cannot be filed;
+// they make the command fail instead of being counted as created, so a
+// degraded project's alert is never silently lost.
+func createTeamIssues(w io.Writer, issues []teamreport.IssueSpec, create func([]teamreport.IssueSpec) error) error {
+	if len(issues) == 0 {
+		fmt.Fprintln(w, "No issues to create")
+		return nil
+	}
+
+	var routable []teamreport.IssueSpec
+	var unrouted []string
+	for _, issue := range issues {
+		if issue.Repo == "" {
+			unrouted = append(unrouted, issue.Title)
+			continue
+		}
+		routable = append(routable, issue)
+	}
+
+	if len(routable) > 0 {
+		if err := create(routable); err != nil {
+			return fmt.Errorf("creating issues: %w", err)
+		}
+	}
+	fmt.Fprintf(w, "Created %d issue(s)\n", len(routable))
+
+	if len(unrouted) > 0 {
+		return fmt.Errorf("%d issue(s) not created because the project's repository is unknown: %s",
+			len(unrouted), strings.Join(unrouted, "; "))
+	}
 	return nil
 }
 

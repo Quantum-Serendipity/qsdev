@@ -13,6 +13,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -76,15 +77,21 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	ctx.ToolNames = toolreg.DefaultRegistry().Names()
 
 	// Profile names from registry.
-	if profileRegistry != nil {
-		ctx.ProfileNames = profileRegistry.Names()
-	} else {
-		reg := DefaultProjectProfileRegistry()
-		ctx.ProfileNames = reg.Names()
+	ctx.ProfileNames = ensureProfileRegistry().Names()
+
+	// Saved answers are the generator's input; they decide which deny rules
+	// .claude/settings.json must contain.
+	answers, err := loadAnswersOrEmpty(projectRoot)
+	if err != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not read saved answers: %v\n", err)
 	}
 
-	// Required deny rules — the critical subset that should always be present.
-	ctx.RequiredDenyRules = criticalDenyRules()
+	// Required deny rules: every base rule the project's permission preset
+	// generates, so deleting any of them from settings.json is caught.
+	ctx.RequiredDenyRules, err = requiredDenyRules(answers, cfg)
+	if err != nil {
+		return err
+	}
 
 	// Deny rule conflict validation.
 	ctx.DenyRules = claudecode.AllBaseDenyRules()
@@ -104,7 +111,7 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	// Auto-fix if requested.
 	if autoFix {
 		var regen check.RegenerateFunc
-		if answers, err := loadAnswersOrEmpty(projectRoot); err == nil && answers.ProjectName != "" {
+		if answers.ProjectName != "" {
 			regen = func(_ string) (map[string]types.GeneratedFile, error) {
 				freshFiles, _, err := regenerateFreshFiles(answers)
 				return freshFiles, err
@@ -154,18 +161,44 @@ func isMachineReadableFormat(f check.OutputFormat) bool {
 	}
 }
 
-// criticalDenyRules returns the deny rules that are considered critical and
-// must always be present in .claude/settings.json. Sourced from the catalog's
-// destructive_ops and pipe_to_shell deny sets to stay in sync with generated
-// settings and avoid hardcoded duplication.
-func criticalDenyRules() []string {
+// requiredDenyRules returns the base deny rules the generator emits for the
+// project's permission preset; each must be present in .claude/settings.json.
+// The rules come from the catalog's deny sets for that preset, so a preset
+// that omits a set (e.g. supply-chain-only) is not required to carry it.
+func requiredDenyRules(answers types.WizardAnswers, cfg *types.QsdevConfig) ([]string, error) {
 	cat, err := catalog.Default()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("loading catalog for required deny rules: %w", err)
+	}
+	def, ok := cat.PermissionPreset(effectivePermissionPreset(answers, cfg))
+	if !ok {
+		// Mirror the generator, which falls back to the standard preset.
+		if def, ok = cat.PermissionPreset(string(claudecode.PermissionPresetStandard)); !ok {
+			return nil, fmt.Errorf("catalog has no %q permission preset", claudecode.PermissionPresetStandard)
+		}
 	}
 	var rules []string
-	for _, setName := range []string{"destructive_ops", "pipe_to_shell"} {
+	for _, setName := range def.DenySets {
 		rules = append(rules, cat.PermissionDenyRules(setName)...)
 	}
-	return rules
+	return rules, nil
+}
+
+// effectivePermissionPreset resolves the permission preset the same way
+// settings generation does: an explicit permission level wins, then the
+// tier's default preset, then standard. Saved answers are preferred; the
+// project config is used when no answers were saved.
+func effectivePermissionPreset(answers types.WizardAnswers, cfg *types.QsdevConfig) string {
+	level, tierName, mcp := answers.PermissionLevel, answers.Tier, answers.MCPServers
+	if level == "" && tierName == "" && cfg != nil {
+		level, tierName = cfg.ClaudeCode.PermissionLevel, cfg.Tier
+	}
+	switch {
+	case level != "":
+		return level
+	case tierName != "":
+		return tier.Resolve(tierName, level, mcp).DefaultPermissionPreset()
+	default:
+		return string(claudecode.PermissionPresetStandard)
+	}
 }

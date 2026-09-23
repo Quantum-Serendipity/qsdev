@@ -1,9 +1,14 @@
 package devinit
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/evasion"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
 )
@@ -40,40 +45,127 @@ func TestBuildContext_EditContentReachesRules(t *testing.T) {
 	}
 }
 
-// TestBuildContext_BashBypassesDenyEndToEnd drives the full rule set + evasion
-// check the way the hook does, over the wrapper/pipe/expansion bypasses, and
-// confirms the DEFECT-10 command still clears.
-func TestBuildContext_BashBypassesDenyEndToEnd(t *testing.T) {
-	t.Parallel()
+// selfprotectHelperEnv selects TestSelfprotectHelperProcess as the production
+// hook in a child process.
+const selfprotectHelperEnv = "QSDEV_TEST_SELFPROTECT_HELPER"
 
-	deny := []string{
-		"sh -c 'rm -rf .claude/settings.json'",
-		"cat .claude/settings.json | tee /tmp/exfil",
-		`V=.claude/settings.json; rm "$V"`,
-		"{ echo evil; } > .mcp.json",
-		`sh -c 'eval "$PAYLOAD"'`,
+// TestSelfprotectHelperProcess is not a test on its own: runSelfprotectHook
+// re-executes the test binary with this function selected so the real
+// `selfprotect` command runs as Claude Code runs it, as a process whose exit
+// status is the verdict.
+func TestSelfprotectHelperProcess(t *testing.T) {
+	if os.Getenv(selfprotectHelperEnv) != "1" {
+		return
 	}
-	for _, cmd := range deny {
-		if !bashBlocked(t, cmd) {
-			t.Errorf("command %q was allowed end-to-end; want blocked", cmd)
-		}
+	cmd := selfprotectCmd()
+	cmd.SetArgs([]string{})
+	err := cmd.Execute()
+	var coded interface{ ExitCode() int }
+	switch {
+	case errors.As(err, &coded):
+		os.Exit(coded.ExitCode())
+	case err != nil:
+		os.Exit(1)
 	}
+	os.Exit(0)
+}
 
-	// DEFECT-10 false-positive must still be allowed by every rule and evasion.
-	if bashBlocked(t, "rm -rf /tmp/build && grep secret .claude/settings.json") {
-		t.Error("DEFECT-10 command was blocked end-to-end; want allowed")
+// runSelfprotectHook runs the production selfprotect hook with payload on
+// stdin in dir and returns its exit status and stderr.
+func runSelfprotectHook(t *testing.T, dir, payload string) (int, string) {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(self, "-test.run=^TestSelfprotectHelperProcess$") //nolint:gosec // re-executes this test binary
+	cmd.Env = append(os.Environ(), selfprotectHelperEnv+"=1")
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(payload)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	var exitErr *exec.ExitError
+	switch {
+	case err == nil:
+		return 0, stderr.String()
+	case errors.As(err, &exitErr):
+		return exitErr.ExitCode(), stderr.String()
+	default:
+		t.Fatalf("running selfprotect hook: %v", err)
+		return -1, ""
 	}
 }
 
-// bashBlocked mirrors runSelfprotect's decision path for a Bash command: parse
-// once, run the evasion checks, then the Tier-1 rules.
-func bashBlocked(t *testing.T, command string) bool {
+func toolCallJSON(t *testing.T, tool string, input map[string]any) string {
 	t.Helper()
-	ctx := buildSelfprotectContext("Bash", &hookio.ToolInput{Command: command})
-	cmds, parseErr := ctx.ParsedCommands()
-	if blocked, _, _ := evasion.CheckParsed("Bash", command, "", cmds, parseErr); blocked {
-		return true
+	data, err := json.Marshal(map[string]any{"tool_name": tool, "tool_input": input})
+	if err != nil {
+		t.Fatal(err)
 	}
-	v, _ := rules.Tier1Rules.EvaluateAll(ctx)
-	return v == rules.Deny
+	return string(data)
+}
+
+// TestSelfprotectHook_Decisions drives the real hook (not a re-implementation
+// of its pipeline) end to end: stdin parsing, evasion checks, Tier-1 rules,
+// the Write/Edit/MultiEdit gate-dodge step, and the deny-to-exit-2 mapping.
+func TestSelfprotectHook_Decisions(t *testing.T) {
+	t.Parallel()
+
+	bash := func(command string) string {
+		return toolCallJSON(t, "Bash", map[string]any{"command": command})
+	}
+	gateDodge := "ignore-scripts=false\n"
+
+	tests := []struct {
+		name       string
+		payload    string
+		wantExit   int
+		wantStderr string
+	}{
+		{"bash wrapper deleting settings is blocked", bash("sh -c 'rm -rf .claude/settings.json'"), 2, "qsdev-selfprotect:"},
+		{"bash pipe exfiltrating settings is blocked", bash("cat .claude/settings.json | tee /tmp/exfil"), 2, "qsdev-selfprotect:"},
+		{"bash variable indirection is blocked", bash(`V=.claude/settings.json; rm "$V"`), 2, "qsdev-selfprotect:"},
+		{"bash group redirect into .mcp.json is blocked", bash("{ echo evil; } > .mcp.json"), 2, "qsdev-selfprotect:"},
+		{"bash eval of a payload is blocked", bash(`sh -c 'eval "$PAYLOAD"'`), 2, "qsdev-selfprotect:"},
+		{"DEFECT-10 command is allowed", bash("rm -rf /tmp/build && grep secret .claude/settings.json"), 0, ""},
+		{
+			"write weakening .npmrc is blocked by gate-dodge",
+			toolCallJSON(t, "Write", map[string]any{"file_path": ".npmrc", "content": gateDodge}),
+			2, "GD-004",
+		},
+		{
+			"edit weakening .npmrc is blocked by gate-dodge",
+			toolCallJSON(t, "Edit", map[string]any{"file_path": ".npmrc", "old_string": "x", "new_string": gateDodge}),
+			2, "GD-004",
+		},
+		{
+			"multi-edit weakening .npmrc is blocked by gate-dodge",
+			toolCallJSON(t, "MultiEdit", map[string]any{
+				"file_path": ".npmrc",
+				"edits":     []map[string]any{{"old_string": "x", "new_string": gateDodge}},
+			}),
+			2, "GD-004",
+		},
+		{
+			"benign write is allowed",
+			toolCallJSON(t, "Write", map[string]any{"file_path": "README.md", "content": "hello\n"}),
+			0, "",
+		},
+		{"malformed input fails closed", "{not json", 2, "internal error"},
+		{"empty input fails closed", "", 2, "internal error"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			code, stderr := runSelfprotectHook(t, t.TempDir(), tt.payload)
+			if code != tt.wantExit {
+				t.Errorf("exit = %d, want %d (stderr: %q)", code, tt.wantExit, stderr)
+			}
+			if tt.wantStderr != "" && !strings.Contains(stderr, tt.wantStderr) {
+				t.Errorf("stderr %q does not contain %q", stderr, tt.wantStderr)
+			}
+		})
+	}
 }

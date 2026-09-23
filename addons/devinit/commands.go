@@ -237,7 +237,14 @@ func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot st
 		if !ok {
 			return types.WizardAnswers{}, fmt.Errorf("unknown profile %q; use --list-profiles to see available profiles", opts.ProfileName)
 		}
-		profileAnswers := ProfileToAnswers(p, projectRoot, filepath.Base(projectRoot))
+		profileAnswers, err := ProfileToAnswers(p, projectRoot, filepath.Base(projectRoot))
+		if err != nil {
+			return types.WizardAnswers{}, fmt.Errorf("profile %q: %w", opts.ProfileName, err)
+		}
+		// A profile does not configure agent tools, so start from the flag
+		// answers (flag defaults included); otherwise --profile would silently
+		// disable the postmortem and Version-Sentinel guardrails.
+		profileAnswers.AgentTools = answers.AgentTools
 		changed := flagSetToChangedMap(flagSet, cmd)
 		answers = MergeProfileWithFlags(profileAnswers, answers, changed)
 	}
@@ -445,19 +452,27 @@ func flagSetToChangedMap(fs *FlagSet, cmd *cobra.Command) map[string]bool {
 
 	// Map CLI flag names to WizardAnswers field names used by MergeProfileWithFlags.
 	flagToField := map[string]string{
-		"lang":               "languages",
-		"service":            "services",
-		"direnv":             "direnv",
-		"claude-code":        "claude_code",
-		"claude-permissions": "permission_level",
-		"claude-skills":      "skills",
-		"claude-hooks":       "hooks",
-		"git-hooks":          "git_hooks",
-		"packages":           "extra_packages",
-		"mcp":                "mcp_servers",
-		"tier":               "tier",
-		"infra-profile":      "profile_name",
-		"yes":                "confirmed",
+		"lang":                    "languages",
+		"service":                 "services",
+		"direnv":                  "direnv",
+		"claude-code":             "claude_code",
+		"claude-permissions":      "permission_level",
+		"claude-skills":           "skills",
+		"claude-hooks":            "hooks",
+		"git-hooks":               "git_hooks",
+		"packages":                "extra_packages",
+		"mcp":                     "mcp_servers",
+		"tier":                    "tier",
+		"infra-profile":           "profile_name",
+		"yes":                     "confirmed",
+		"env":                     "env_vars",
+		"nix-hardening-guide":     "nix_hardening_guide",
+		"profile":                 "project_type_profile",
+		"agent-postmortem":        "agent_postmortem",
+		"agent-version-sentinel":  "agent_version_sentinel",
+		"agent-semble":            "agent_semble",
+		"agent-semble-mode":       "agent_semble_mode",
+		"agent-semble-text-files": "agent_semble_text_files",
 	}
 
 	for flagName, fieldName := range flagToField {

@@ -86,6 +86,7 @@ func (s *SystemdRunBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 	cmd := exec.CommandContext(ctx, s.systemdRunPath, args...)
 
 	var stdout, stderr bytes.Buffer
+	cmd.Stdin = cfg.Stdin
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 

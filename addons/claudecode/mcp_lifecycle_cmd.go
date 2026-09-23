@@ -30,7 +30,7 @@ func (e *execRunner) Run(ctx context.Context, name string, args ...string) ([]by
 // lifecycle records share the claude addon's (branded) state file, whose
 // writers preserve them across regenerations.
 func stateFilePath(projectRoot string) string {
-	return filepath.Join(projectRoot, statePath())
+	return filepath.Join(projectRoot, filepath.FromSlash(statePath()))
 }
 
 // newLifecycle creates an McpLifecycle wired to the real command runner and

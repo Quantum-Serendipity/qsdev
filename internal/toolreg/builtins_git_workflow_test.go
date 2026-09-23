@@ -1,6 +1,7 @@
 package toolreg
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -60,80 +61,112 @@ func TestGitWorkflowToolDefaults(t *testing.T) {
 	}
 }
 
-func TestGitWorkflowToolEnableDisable(t *testing.T) {
-	reg := DefaultRegistry()
+func TestGitWorkflowToolsLifecycleOnly(t *testing.T) {
+	assertLifecycleOnly(t, DefaultRegistry(), gitWorkflowToolNames...)
+}
 
-	for _, name := range gitWorkflowToolNames {
-		t.Run(name, func(t *testing.T) {
-			tool, ok := reg.ByName(name)
-			if !ok {
-				t.Fatalf("tool %q not found", name)
+// renderInDevenvModule wraps a devenv.nix shared section in a minimal devenv
+// module, the context lifecycle surgery inserts it into.
+func renderInDevenvModule(t *testing.T, fn SharedContentFunc) string {
+	t.Helper()
+	content, err := fn(types.WizardAnswers{})
+	if err != nil {
+		t.Fatalf("SharedContent function returned error: %v", err)
+	}
+	return "{ pkgs, lib, config, ... }:\n{\n" + string(content) + "\n}\n"
+}
+
+// hookScriptBody extracts the shell script body: the Nix indented string
+// passed to pkgs.writeShellScript in a hook entry.
+func hookScriptBody(t *testing.T, nix string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(nix, "writeShellScript")
+	if !ok {
+		t.Fatal("no writeShellScript in hook content")
+	}
+	_, rest, ok = strings.Cut(rest, "''\n")
+	if !ok {
+		t.Fatal("no indented-string script body in hook content")
+	}
+	body, _, ok := strings.Cut(rest, "''}")
+	if !ok {
+		t.Fatal("unterminated indented-string script body in hook content")
+	}
+	return body
+}
+
+// TestGitWorkflowNixHooksParse is the regression guard for hook sections
+// that `enable` splices into devenv.nix: the Nix must parse and the embedded
+// script must be valid shell, or the whole devenv shell stops evaluating.
+func TestGitWorkflowNixHooksParse(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		fn   SharedContentFunc
+	}{
+		{"branch-naming", branchNamingNixContent},
+		{"commit-ticket", commitTicketNixContent},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			module := renderInDevenvModule(t, tt.fn)
+
+			// A backslash-escaped quote is not a Nix token outside a string;
+			// inside the ${ } interpolation it breaks parsing.
+			if strings.Contains(module, `\"`) {
+				t.Errorf("hook content contains a backslash-escaped quote:\n%s", module)
 			}
 
-			if tool.EnableFunc == nil {
-				t.Fatalf("tool %q has nil EnableFunc", name)
-			}
-			if tool.DisableFunc == nil {
-				t.Fatalf("tool %q has nil DisableFunc", name)
-			}
-
-			// Test enable.
-			answers := &types.WizardAnswers{
-				EnabledTools: make(map[string]bool),
-			}
-			tool.EnableFunc(answers)
-			if !answers.EnabledTools[name] {
-				t.Errorf("after EnableFunc, EnabledTools[%q] should be true", name)
+			if nixInstantiate, err := exec.LookPath("nix-instantiate"); err == nil {
+				cmd := exec.Command(nixInstantiate, "--parse", "-")
+				cmd.Stdin = strings.NewReader(module)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Errorf("nix-instantiate --parse failed: %v\n%s\n--- module ---\n%s", err, out, module)
+				}
 			}
 
-			// Test disable.
-			tool.DisableFunc(answers)
-			if answers.EnabledTools[name] {
-				t.Errorf("after DisableFunc, EnabledTools[%q] should be false", name)
+			if sh, err := exec.LookPath("sh"); err == nil {
+				cmd := exec.Command(sh, "-n")
+				cmd.Stdin = strings.NewReader(hookScriptBody(t, module))
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Errorf("hook script is not valid shell: %v\n%s", err, out)
+				}
 			}
 		})
 	}
 }
 
-func TestGitWorkflowToolEnableFunc_NilMap(t *testing.T) {
-	reg := DefaultRegistry()
-
-	for _, name := range gitWorkflowToolNames {
-		t.Run(name, func(t *testing.T) {
-			tool, ok := reg.ByName(name)
-			if !ok {
-				t.Fatalf("tool %q not found", name)
-			}
-
-			answers := &types.WizardAnswers{}
-			tool.EnableFunc(answers)
-			if answers.EnabledTools == nil {
-				t.Fatal("EnableFunc should initialize EnabledTools map when nil")
-			}
-			if !answers.EnabledTools[name] {
-				t.Errorf("EnableFunc should set %q to true", name)
-			}
-		})
+// TestBranchNamingHookScript runs the rendered branch-naming script against
+// branch names, proving the pattern reaches the shell intact.
+func TestBranchNamingHookScript(t *testing.T) {
+	t.Parallel()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
 	}
-}
+	module := renderInDevenvModule(t, branchNamingNixContent)
+	// Substitute the git call so the script checks a fixed branch name.
+	script := strings.Replace(hookScriptBody(t, module),
+		"$(git rev-parse --abbrev-ref HEAD)", `"$1"`, 1)
 
-func TestGitWorkflowToolDisableFunc_NilMap(t *testing.T) {
-	reg := DefaultRegistry()
-
-	for _, name := range gitWorkflowToolNames {
-		t.Run(name, func(t *testing.T) {
-			tool, ok := reg.ByName(name)
-			if !ok {
-				t.Fatalf("tool %q not found", name)
-			}
-
-			answers := &types.WizardAnswers{}
-			tool.DisableFunc(answers)
-			if answers.EnabledTools == nil {
-				t.Fatal("DisableFunc should initialize EnabledTools map when nil")
-			}
-			if answers.EnabledTools[name] {
-				t.Errorf("DisableFunc should set %q to false", name)
+	tests := []struct {
+		branch string
+		wantOK bool
+	}{
+		{"main", true},
+		{"feat/add-login", true},
+		{"fix/v1.2_patch", true},
+		{"audit/deep-review", false},
+		{"feature/Upper", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.branch, func(t *testing.T) {
+			t.Parallel()
+			cmd := exec.Command(sh, "-c", script, "branch-naming", tt.branch)
+			out, err := cmd.CombinedOutput()
+			if gotOK := err == nil; gotOK != tt.wantOK {
+				t.Errorf("branch %q accepted=%v, want %v (output: %s)", tt.branch, gotOK, tt.wantOK, out)
 			}
 		})
 	}

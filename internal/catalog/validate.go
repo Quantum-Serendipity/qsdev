@@ -3,6 +3,7 @@ package catalog
 import (
 	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -37,6 +38,7 @@ func (c *Catalog) Validate() []CatalogError {
 	errs = append(errs, c.validateMCPServerRefs()...)
 	errs = append(errs, c.validatePresetRefs()...)
 	errs = append(errs, c.validateComplianceHooks()...)
+	errs = append(errs, c.validateTools()...)
 
 	return errs
 }
@@ -343,6 +345,51 @@ func (c *Catalog) validateComplianceHooks() []CatalogError {
 					"compliance.yaml", level + ".required_pre_commit_hooks",
 					fmt.Sprintf("references unknown hook or tool %q", hook),
 				})
+			}
+		}
+	}
+
+	return errs
+}
+
+// validateTools checks tool definitions. Tools can come from user-editable
+// org and project overlays, and the tool registry turns their owned files
+// into what enable writes and disable deletes, so closed-set fields are
+// rejected rather than silently defaulted (a mis-cased "Shared" must not
+// become an exclusive file) and owned paths must stay inside the project.
+func (c *Catalog) validateTools() []CatalogError {
+	var errs []CatalogError
+
+	for _, name := range slices.Sorted(maps.Keys(c.tools.Tools)) {
+		def := c.tools.Tools[name]
+		addErr := func(format string, args ...any) {
+			errs = append(errs, CatalogError{"tools.yaml", name, fmt.Sprintf(format, args...)})
+		}
+
+		switch def.DefaultPolicy {
+		case "", "always-on", "on-when-detected", "opt-in", "always-off":
+		default:
+			addErr("unknown default_policy %q (want always-on, on-when-detected, opt-in or always-off)", def.DefaultPolicy)
+		}
+
+		for _, f := range def.OwnedFiles {
+			if !filepath.IsLocal(filepath.FromSlash(f.Path)) {
+				addErr("owned file %q must be a relative path inside the project", f.Path)
+			}
+			switch f.Ownership {
+			case "exclusive":
+			case "shared":
+				if f.SectionID == "" {
+					addErr("shared owned file %q has no section_id", f.Path)
+				}
+			default:
+				addErr("owned file %q: unknown ownership %q (want shared or exclusive)", f.Path, f.Ownership)
+			}
+		}
+
+		for _, ref := range slices.Concat(def.Prerequisites, def.Conflicts) {
+			if _, ok := c.tools.Tools[ref]; !ok {
+				addErr("references unknown tool %q", ref)
 			}
 		}
 	}

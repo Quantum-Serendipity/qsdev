@@ -1,20 +1,27 @@
 package toolreg
 
 import (
+	"maps"
+
 	"github.com/Quantum-Serendipity/qsdev/internal/sectools"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-func init() {
-	r := DefaultRegistry()
-	for name, b := range builtinBehaviors() {
-		r.AttachBehavior(name, b)
-	}
+// builtinBehaviors returns the Go behavior hooks this package attaches to
+// catalog tools when the default registry is built (see Default). Tools
+// whose only lifecycle effect is recording themselves in EnabledTools need
+// no Enable/DisableFunc: the enable and disable commands already do that.
+func builtinBehaviors() map[string]ToolBehavior {
+	m := coreBehaviors()
+	maps.Copy(m, gitWorkflowBehaviors())
+	maps.Copy(m, shellBehaviors())
+	maps.Copy(m, consultingWorkflowBehaviors())
+	return m
 }
 
-func builtinBehaviors() map[string]ToolBehavior {
+func coreBehaviors() map[string]ToolBehavior {
 	return map[string]ToolBehavior{
 		ToolVersionSentinel: {
 			EnableFunc: func(a *types.WizardAnswers) {

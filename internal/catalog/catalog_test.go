@@ -1174,3 +1174,94 @@ func TestEndToEnd_TierToComplianceChain(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_Tools(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		def     ToolDef
+		wantErr string // empty: the tool is valid
+	}{
+		{
+			name: "valid",
+			def: ToolDef{
+				DefaultPolicy: "opt-in",
+				Prerequisites: []string{"other"},
+				OwnedFiles: []ToolOwnedFileDef{
+					{Path: ".custom/config.yml", Ownership: "exclusive"},
+					{Path: "CLAUDE.md", Ownership: "shared", SectionID: "custom"},
+				},
+			},
+		},
+		{
+			name: "omitted default policy",
+			def:  ToolDef{},
+		},
+		{
+			name:    "unknown default policy",
+			def:     ToolDef{DefaultPolicy: "always_on"},
+			wantErr: `unknown default_policy "always_on"`,
+		},
+		{
+			// A mis-cased "shared" must not be read as exclusive, which
+			// disable would delete wholesale.
+			name:    "unknown ownership",
+			def:     ToolDef{OwnedFiles: []ToolOwnedFileDef{{Path: "devenv.nix", Ownership: "Shared", SectionID: "custom"}}},
+			wantErr: `unknown ownership "Shared"`,
+		},
+		{
+			name:    "missing ownership",
+			def:     ToolDef{OwnedFiles: []ToolOwnedFileDef{{Path: "devenv.nix"}}},
+			wantErr: `unknown ownership ""`,
+		},
+		{
+			name:    "shared file without section",
+			def:     ToolDef{OwnedFiles: []ToolOwnedFileDef{{Path: "CLAUDE.md", Ownership: "shared"}}},
+			wantErr: "has no section_id",
+		},
+		{
+			name:    "path escaping the project",
+			def:     ToolDef{OwnedFiles: []ToolOwnedFileDef{{Path: "../outside.txt", Ownership: "exclusive"}}},
+			wantErr: "must be a relative path inside the project",
+		},
+		{
+			name:    "absolute path",
+			def:     ToolDef{OwnedFiles: []ToolOwnedFileDef{{Path: "/etc/passwd", Ownership: "exclusive"}}},
+			wantErr: "must be a relative path inside the project",
+		},
+		{
+			name:    "unknown prerequisite",
+			def:     ToolDef{Prerequisites: []string{"ghost"}},
+			wantErr: `references unknown tool "ghost"`,
+		},
+		{
+			name:    "unknown conflict",
+			def:     ToolDef{Conflicts: []string{"ghost"}},
+			wantErr: `references unknown tool "ghost"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cat := newMinimalCatalog()
+			cat.tools.Tools["other"] = ToolDef{}
+			cat.tools.Tools["custom"] = tt.def
+
+			errs := cat.validateTools()
+			if tt.wantErr == "" {
+				if len(errs) != 0 {
+					t.Errorf("validateTools() = %v, want no errors", errs)
+				}
+				return
+			}
+			if !hasValidationError(errs, tt.wantErr) {
+				t.Errorf("validateTools() = %v, want an error containing %q", errs, tt.wantErr)
+			}
+			for _, e := range errs {
+				if e.Field != "custom" {
+					t.Errorf("error attributed to %q, want the invalid tool %q: %v", e.Field, "custom", e)
+				}
+			}
+		})
+	}
+}

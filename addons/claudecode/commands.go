@@ -250,7 +250,7 @@ type addItemSpec struct {
 	use       string
 	short     string
 	long      string
-	validArgs []string
+	validArgs func() []string
 
 	validate   func(name string) error
 	mutate     func(a *types.WizardAnswers, name string) error
@@ -266,11 +266,11 @@ type addItemSpec struct {
 // configuration using the behavior described by spec.
 func makeAddItemCmd(spec addItemSpec) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:       spec.use,
-		Short:     spec.short,
-		Long:      spec.long,
-		Args:      cobra.ExactArgs(1),
-		ValidArgs: spec.validArgs,
+		Use:               spec.use,
+		Short:             spec.short,
+		Long:              spec.long,
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: cmdutil.CompleteFrom(spec.validArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
@@ -453,7 +453,7 @@ func addHookCmd() *cobra.Command {
 		use:       "add-hook <name>",
 		short:     "Enable a hook preset in the Claude Code configuration",
 		long:      "Enable a hook preset (auto-format, safety-block, pre-commit, audit-log) in the existing configuration.",
-		validArgs: validation.HookPresets(),
+		validArgs: validation.HookPresets,
 		validate: func(name string) error {
 			if !validation.IsValidHookPreset(name) {
 				return fmt.Errorf("unknown hook preset %q; valid presets: %v", name, validation.HookPresets())

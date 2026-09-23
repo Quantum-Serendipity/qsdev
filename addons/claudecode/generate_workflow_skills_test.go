@@ -300,7 +300,7 @@ func TestConsultingGenerateFuncs_MatchInitPath(t *testing.T) {
 
 // TestConsultingToolBehaviours_MatchManifests guards against drift between the
 // embedded consulting manifests and the tool registry: every manifest entry
-// must be a registered tool with enable/disable and generate behaviour, and
+// must be a registered tool with generate behaviour, and
 // every registered consulting tool must come from a manifest.
 func TestConsultingToolBehaviours_MatchManifests(t *testing.T) {
 	t.Parallel()
@@ -321,8 +321,12 @@ func TestConsultingToolBehaviours_MatchManifests(t *testing.T) {
 				t.Errorf("manifest entry %q has no registered tool", g.prefix+n)
 				continue
 			}
-			if tool.EnableFunc == nil || tool.DisableFunc == nil || tool.GenerateFunc == nil {
-				t.Errorf("tool %q is missing enable/disable/generate behaviour", tool.Name)
+			// Enabling and disabling only toggle EnabledTools, which the
+			// lifecycle does itself (registry-pkgmgr-1 F476 removed the
+			// bookkeeping closures); the generator is the behaviour a tool
+			// must carry.
+			if tool.GenerateFunc == nil {
+				t.Errorf("tool %q is missing its generate behaviour", tool.Name)
 			}
 		}
 		for _, tool := range reg.All() {

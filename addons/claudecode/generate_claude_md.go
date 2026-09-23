@@ -128,6 +128,7 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 	}
 	if full && opsManifest != nil {
 		for _, s := range opsManifest.Skills {
+			// Advertise only what deployOperationSkills deploys.
 			if !opsSkillEnabled(answers, s.Name) {
 				continue
 			}

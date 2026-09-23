@@ -24,10 +24,10 @@ var ExportValidateNixPackageName = validateNixPackageName
 var ExportBuildAnswersFromFlags = buildAnswersFromFlags
 
 // ExportValidServices exposes validServices for external tests.
-var ExportValidServices = validServices
+var ExportValidServices = validServices()
 
 // ExportValidLanguages exposes validLanguages for external tests.
-var ExportValidLanguages = validLanguages
+var ExportValidLanguages = validLanguages()
 
 // ExportContains exposes contains for external tests.
 var ExportContains = func(slice []string, val string) bool {

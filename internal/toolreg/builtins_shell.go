@@ -9,45 +9,28 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-func init() {
-	r := DefaultRegistry()
-
-	r.AttachBehavior("starship-integration", ToolBehavior{
-		EnableFunc: func(a *types.WizardAnswers) {
-			ensureEnabledTools(a)
-			a.EnabledTools["starship-integration"] = true
-		},
-		DisableFunc: func(a *types.WizardAnswers) {
-			ensureEnabledTools(a)
-			a.EnabledTools["starship-integration"] = false
-		},
-		GenerateFunc: func(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
-			f, err := shellenv.GenerateStarshipToml(answers)
-			if err != nil {
-				return nil, err
-			}
-			return []types.GeneratedFile{*f}, nil
-		},
-		SharedContent: map[SharedSection]SharedContentFunc{
-			{Path: DevenvNixFile, SectionID: "starship"}: func(_ types.WizardAnswers) ([]byte, error) {
-				return []byte(`  env.STARSHIP_CONFIG = ".starship.toml";`), nil
+func shellBehaviors() map[string]ToolBehavior {
+	return map[string]ToolBehavior{
+		"starship-integration": {
+			GenerateFunc: func(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
+				f, err := shellenv.GenerateStarshipToml(answers)
+				if err != nil {
+					return nil, err
+				}
+				return []types.GeneratedFile{*f}, nil
+			},
+			SharedContent: map[SharedSection]SharedContentFunc{
+				{Path: DevenvNixFile, SectionID: "starship"}: func(_ types.WizardAnswers) ([]byte, error) {
+					return []byte(`  env.STARSHIP_CONFIG = ".starship.toml";`), nil
+				},
 			},
 		},
-	})
-
-	r.AttachBehavior("otel-config", ToolBehavior{
-		EnableFunc: func(a *types.WizardAnswers) {
-			ensureEnabledTools(a)
-			a.EnabledTools["otel-config"] = true
+		"otel-config": {
+			SharedContent: map[SharedSection]SharedContentFunc{
+				{Path: DevenvNixFile, SectionID: "otel-config"}: otelConfigNixContent,
+			},
 		},
-		DisableFunc: func(a *types.WizardAnswers) {
-			ensureEnabledTools(a)
-			a.EnabledTools["otel-config"] = false
-		},
-		SharedContent: map[SharedSection]SharedContentFunc{
-			{Path: DevenvNixFile, SectionID: "otel-config"}: otelConfigNixContent,
-		},
-	})
+	}
 }
 
 func otelConfigNixContent(answers types.WizardAnswers) ([]byte, error) {

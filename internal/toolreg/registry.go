@@ -141,20 +141,62 @@ type ToolBehavior struct {
 	SectionDataFunc SectionDataFunc
 }
 
+// BehaviorProvider attaches behavior to, or registers additional tools in, a
+// freshly built default registry. Providers run while the default registry
+// is being constructed, so they must not call Default or DefaultRegistry.
+type BehaviorProvider func(r *Registry)
+
 var (
-	defaultRegistryOnce sync.Once
-	defaultRegistryVal  *Registry
-	defaultRegistryErr  error
+	defaultMu          sync.Mutex
+	defaultBuilt       bool
+	defaultRegistryVal *Registry
+	defaultRegistryErr error
+	behaviorProviders  []BehaviorProvider
 )
 
+// RegisterBehaviors adds a provider that is applied to the default registry
+// when it is built. Registering is side-effect free — the catalog is not
+// loaded — so a package may call it while initializing without freezing the
+// catalog before main has configured branding, and without turning a bad
+// user config into a start-up panic. If the default registry has already
+// been built, the provider is applied to it immediately.
+func RegisterBehaviors(p BehaviorProvider) {
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	behaviorProviders = append(behaviorProviders, p)
+	if defaultBuilt && defaultRegistryVal != nil {
+		p(defaultRegistryVal)
+	}
+}
+
 // Default returns the lazily-initialized singleton tool registry and any
-// error that occurred during initialization. Callers that can propagate
-// errors should prefer this over DefaultRegistry.
+// error that occurred during initialization. On first use the registry is
+// built from the catalog, then the package's built-in behaviors and every
+// provider passed to RegisterBehaviors are attached. Callers that can
+// propagate errors should prefer this over DefaultRegistry.
 func Default() (*Registry, error) {
-	defaultRegistryOnce.Do(func() {
-		defaultRegistryVal, defaultRegistryErr = BuildFromCatalogE()
-	})
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	if !defaultBuilt {
+		defaultRegistryVal, defaultRegistryErr = buildDefault()
+		defaultBuilt = true
+	}
 	return defaultRegistryVal, defaultRegistryErr
+}
+
+// buildDefault constructs the default registry. The caller holds defaultMu.
+func buildDefault() (*Registry, error) {
+	r, err := BuildFromCatalogE()
+	if err != nil {
+		return nil, err
+	}
+	for name, b := range builtinBehaviors() {
+		r.AttachBehavior(name, b)
+	}
+	for _, p := range behaviorProviders {
+		p(r)
+	}
+	return r, nil
 }
 
 // DefaultRegistry returns the lazily-initialized singleton tool registry.
@@ -168,9 +210,13 @@ func DefaultRegistry() *Registry {
 	return r
 }
 
-// ResetDefaultRegistry clears the cached registry. For testing only.
+// ResetDefaultRegistry clears the cached registry so the next Default call
+// rebuilds it, re-applying every registered behavior provider. For testing
+// only.
 func ResetDefaultRegistry() {
-	defaultRegistryOnce = sync.Once{}
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	defaultBuilt = false
 	defaultRegistryVal = nil
 	defaultRegistryErr = nil
 }

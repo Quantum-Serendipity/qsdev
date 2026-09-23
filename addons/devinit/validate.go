@@ -10,16 +10,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Validation lists are sourced from the shared validation package.
-var (
-	validLanguages         = validation.Languages()
-	validServices          = validation.Services()
-	validPermissionPresets = validation.PermissionPresets()
-	validNodePkgMgrs       = validation.NodePackageManagers()
-	validPythonPkgMgrs     = validation.PythonPackageManagers()
-	validTiers             = validation.Tiers()
-)
-
 // ValidateAnswers checks that all user-provided values are valid.
 // It returns a combined error describing every validation failure, or nil
 // when all values pass.
@@ -37,14 +27,14 @@ func ValidateAnswers(answers types.WizardAnswers) error {
 	// Validate permission level.
 	if answers.PermissionLevel != "" {
 		if !validation.IsValidPermissionPreset(answers.PermissionLevel) {
-			errs = append(errs, fmt.Sprintf("unknown permission preset %q; valid presets: %v", answers.PermissionLevel, validPermissionPresets))
+			errs = append(errs, fmt.Sprintf("unknown permission preset %q; valid presets: %v", answers.PermissionLevel, validation.PermissionPresets()))
 		}
 	}
 
 	// Validate tier.
 	if answers.Tier != "" {
 		if !validation.IsValidTier(answers.Tier) {
-			errs = append(errs, fmt.Sprintf("unknown tier %q; valid tiers: %v", answers.Tier, validTiers))
+			errs = append(errs, fmt.Sprintf("unknown tier %q; valid tiers: %v", answers.Tier, validation.Tiers()))
 		}
 	}
 
@@ -76,7 +66,7 @@ func validateLanguageChoices(langs []types.LanguageChoice) []string {
 	var errs []string
 	for _, lang := range langs {
 		if !validation.IsValidLanguage(lang.Name) {
-			errs = append(errs, fmt.Sprintf("unknown language %q; valid languages: %v", lang.Name, validLanguages))
+			errs = append(errs, fmt.Sprintf("unknown language %q; valid languages: %v", lang.Name, validation.Languages()))
 		}
 
 		if lang.Version != "" && !validation.IsValidVersionConstraint(lang.Version) {
@@ -88,9 +78,9 @@ func validateLanguageChoices(langs []types.LanguageChoice) []string {
 		}
 		switch {
 		case lang.Name == "javascript" && !validation.IsValidNodePackageManager(lang.PackageManager):
-			errs = append(errs, fmt.Sprintf("unknown node package manager %q; valid values: %v", lang.PackageManager, validNodePkgMgrs))
+			errs = append(errs, fmt.Sprintf("unknown node package manager %q; valid values: %v", lang.PackageManager, validation.NodePackageManagers()))
 		case lang.Name == "python" && !validation.IsValidPythonPackageManager(lang.PackageManager):
-			errs = append(errs, fmt.Sprintf("unknown python package manager %q; valid values: %v", lang.PackageManager, validPythonPkgMgrs))
+			errs = append(errs, fmt.Sprintf("unknown python package manager %q; valid values: %v", lang.PackageManager, validation.PythonPackageManagers()))
 		case !validation.IsValidToken(lang.PackageManager):
 			errs = append(errs, fmt.Sprintf("invalid %s package manager %q: must be a single word of letters, digits, '.', '_' or '-'", lang.Name, lang.PackageManager))
 		}
@@ -105,7 +95,7 @@ func validateServiceChoices(services []types.ServiceChoice) []string {
 	var errs []string
 	for _, svc := range services {
 		if !validation.IsValidService(svc.Name) {
-			errs = append(errs, fmt.Sprintf("unknown service %q; valid services: %v", svc.Name, validServices))
+			errs = append(errs, fmt.Sprintf("unknown service %q; valid services: %v", svc.Name, validation.Services()))
 		}
 		if svc.Version != "" && !validation.IsValidToken(svc.Version) {
 			errs = append(errs, fmt.Sprintf("invalid %s version %q: must be a single word of letters, digits, '.', '_' or '-'", svc.Name, svc.Version))

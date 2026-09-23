@@ -32,11 +32,13 @@ func statePath() string {
 	return state.DevenvStateFile()
 }
 
-// validServices references the canonical service list for shell completion.
-var validServices = validation.Services()
+// validServices returns the canonical service list for shell completion. It
+// is resolved on use, not at package initialization, so a broken catalog
+// overlay cannot crash the binary before any command runs.
+func validServices() []string { return validation.Services() }
 
-// validLanguages references the canonical core language list for shell completion.
-var validLanguages = validation.CoreLanguages()
+// validLanguages returns the canonical core language list for shell completion.
+func validLanguages() []string { return validation.CoreLanguages() }
 
 func devenvCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -204,13 +206,13 @@ func updateCmd() *cobra.Command {
 // makeAddCmd and makeRemoveCmd use it to build cobra.Commands with
 // identical control flow but type-specific behavior.
 type itemSpec struct {
-	singular  string   // "service", "language", "package", "overlay"
-	use       string   // cobra Use field
-	short     string   // cobra Short description
-	long      string   // cobra Long description
-	validArgs []string // for shell completion (nil if not applicable)
-	multiArg  bool     // true if the command accepts multiple args
-	hasForce  bool     // true if --force re-adds an entry that is already configured
+	singular  string          // "service", "language", "package", "overlay"
+	use       string          // cobra Use field
+	short     string          // cobra Short description
+	long      string          // cobra Long description
+	validArgs func() []string // shell-completion candidates, resolved lazily (nil if not applicable)
+	multiArg  bool            // true if the command accepts multiple args
+	hasForce  bool            // true if --force re-adds an entry that is already configured
 
 	// validate checks whether name is an acceptable value. Return nil to skip.
 	validate func(name string, projectRoot string) error
@@ -238,11 +240,11 @@ func makeAddCmd(spec itemSpec) *cobra.Command {
 	}
 
 	cmd := &cobra.Command{
-		Use:       spec.use,
-		Short:     spec.short,
-		Long:      spec.long,
-		Args:      argsValidator,
-		ValidArgs: spec.validArgs,
+		Use:               spec.use,
+		Short:             spec.short,
+		Long:              spec.long,
+		Args:              argsValidator,
+		ValidArgsFunction: cmdutil.CompleteFrom(spec.validArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
@@ -343,11 +345,11 @@ func makeRemoveCmd(spec itemSpec) *cobra.Command {
 	}
 
 	cmd := &cobra.Command{
-		Use:       spec.use,
-		Short:     spec.short,
-		Long:      spec.long,
-		Args:      argsValidator,
-		ValidArgs: spec.validArgs,
+		Use:               spec.use,
+		Short:             spec.short,
+		Long:              spec.long,
+		Args:              argsValidator,
+		ValidArgsFunction: cmdutil.CompleteFrom(spec.validArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
@@ -413,7 +415,7 @@ func serviceSpec(add bool) itemSpec {
 		hasForce:  add,
 		validate: func(name string, _ string) error {
 			if !validation.IsValidService(name) {
-				return fmt.Errorf("unknown service %q; valid services: %v", name, validServices)
+				return fmt.Errorf("unknown service %q; valid services: %v", name, validServices())
 			}
 			return nil
 		},
@@ -462,7 +464,7 @@ func languageSpec(add bool) itemSpec {
 		hasForce:  add,
 		validate: func(name string, _ string) error {
 			if !validation.IsValidLanguage(name) {
-				return fmt.Errorf("unknown language %q; valid languages: %v", name, validLanguages)
+				return fmt.Errorf("unknown language %q; valid languages: %v", name, validLanguages())
 			}
 			return nil
 		},

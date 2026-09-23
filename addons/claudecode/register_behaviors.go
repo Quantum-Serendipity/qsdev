@@ -3,6 +3,7 @@ package claudecode
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
@@ -11,18 +12,39 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// init attaches this package's tool behaviours to the default registry. The
-// catalog and manifests it reads are embedded at build time, so a load failure
-// is a broken build: it panics rather than leaving tools silently without
-// their GenerateFuncs (which would surface later as "no files needed").
+// init only records the provider; the catalog and tool registry are built on
+// first use (see toolreg.Default), after main has configured the process. The
+// manifests the provider reads are embedded at build time, so a load failure
+// there is a broken build and panics rather than leaving tools silently
+// without their GenerateFuncs (which would surface later as "no files
+// needed").
 func init() {
-	r := toolreg.DefaultRegistry()
+	toolreg.RegisterBehaviors(registerToolBehaviors)
+}
 
+func registerToolBehaviors(r *toolreg.Registry) {
+	registerOperationSkillTools(r)
 	registerMCPServerContent(r)
 	registerAgentToolGenerators(r)
 	registerConsultingAgentGenerators(r)
 	registerConsultingWorkflowGenerators(r)
 	registerDocToolBehaviors(r)
+}
+
+// registerOperationSkillTools registers one always-on tool per entry of the
+// operation-skill manifest, so the manifest deployOperationSkills reads is the
+// single source of truth for which operation skills exist and are enabled.
+func registerOperationSkillTools(r *toolreg.Registry) {
+	manifest, err := loadQsdevOpsManifest()
+	if err != nil {
+		slog.Warn("failed to load ops manifest; operation skills not registered", "error", err)
+		return
+	}
+	for _, s := range manifest.Skills {
+		if err := r.Register(toolreg.NewOperationSkillTool(s.Name, s.Description)); err != nil {
+			slog.Warn("registering operation skill tool", "skill", s.Name, "error", err)
+		}
+	}
 }
 
 func registerMCPServerContent(r *toolreg.Registry) {

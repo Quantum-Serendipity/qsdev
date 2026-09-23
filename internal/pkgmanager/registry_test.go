@@ -150,6 +150,20 @@ func TestResolvePackageName(t *testing.T) {
 			want: "app-misc/jq", wantOK: true,
 		},
 		{
+			// The package must provide the "rustup" binary the entry checks;
+			// dev-lang/rust ships only rustc/cargo.
+			name: "rustup on emerge",
+			tool: "rustup", family: "gentoo", manager: "emerge",
+			want: "dev-util/rustup", wantOK: true,
+		},
+		{
+			// Arch's plain nodejs package tracks a supported release, unlike
+			// the pinned nodejs-lts-iron (Node 20, end of life).
+			name: "node on arch",
+			tool: "node", family: "arch", manager: "pacman",
+			want: "nodejs", wantOK: true,
+		},
+		{
 			name: "unknown tool",
 			tool: "nonexistent-tool", family: "debian", manager: "apt",
 			want: "", wantOK: false,

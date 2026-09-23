@@ -88,15 +88,13 @@ var toolRegistry = map[string]ToolEntry{
 		},
 	},
 	// Keyed "node" (not "nodejs") to match the tool name that flows through
-	// doctor checks and the setup install plan; the installable package name is
-	// still "nodejs" on most Linux managers.
+	// doctor checks and the setup toolLevels; the installable package name is
+	// still "nodejs" on most Linux managers. Arch uses the generic name too:
+	// its version-pinned nodejs-lts-<codename> packages go end of life.
 	"node": {
 		Name: "node", Binary: "node", VersionFlag: "--version",
 		Packages: PackageNames{
 			Generic: "nodejs",
-			ByFamily: map[string]string{
-				"arch": "nodejs-lts-iron",
-			},
 			ByManager: map[string]string{
 				"winget": "OpenJS.NodeJS.LTS",
 				"scoop":  "nodejs-lts",
@@ -192,7 +190,8 @@ var toolRegistry = map[string]ToolEntry{
 		Packages: PackageNames{
 			Generic: "rustup",
 			ByManager: map[string]string{
-				"emerge": "dev-lang/rust",
+				// dev-lang/rust ships rustc/cargo but not the rustup binary.
+				"emerge": "dev-util/rustup",
 			},
 		},
 	},

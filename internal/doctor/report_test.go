@@ -3,6 +3,7 @@ package doctor
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -166,7 +167,7 @@ func TestFormatReportWithColor(t *testing.T) {
 func TestReportJSONRoundTrip(t *testing.T) {
 	original := &Report{
 		QsdevVersion: "0.1.0",
-		Timestamp:   "2024-01-15T10:30:00Z",
+		Timestamp:    "2024-01-15T10:30:00Z",
 		System: SystemInfo{
 			OS:     "Linux",
 			Arch:   "amd64",
@@ -234,5 +235,15 @@ func TestUseColorWithDumbTerm(t *testing.T) {
 func TestUseColorNonTerminal(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
 	t.Setenv("TERM", "xterm-256color")
-	_ = UseColor(0)
+
+	// A regular file is never a terminal, whatever the test's own stdio is.
+	f, err := os.CreateTemp(t.TempDir(), "not-a-tty")
+	if err != nil {
+		t.Fatalf("creating temp file: %v", err)
+	}
+	defer f.Close()
+
+	if UseColor(f.Fd()) {
+		t.Error("UseColor should return false for a non-terminal file descriptor")
+	}
 }

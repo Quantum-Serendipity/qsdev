@@ -62,42 +62,8 @@ func TestShellToolsOptIn(t *testing.T) {
 	}
 }
 
-func TestShellToolEnableDisable(t *testing.T) {
-	reg := DefaultRegistry()
-
-	for _, name := range []string{"starship-integration", "otel-config"} {
-		t.Run(name, func(t *testing.T) {
-			tool, ok := reg.ByName(name)
-			if !ok {
-				t.Fatalf("tool %q not found", name)
-			}
-
-			if tool.EnableFunc == nil {
-				t.Fatal("EnableFunc is nil")
-			}
-			if tool.DisableFunc == nil {
-				t.Fatal("DisableFunc is nil")
-			}
-
-			// Enable with nil EnabledTools map.
-			answers := &types.WizardAnswers{}
-			tool.EnableFunc(answers)
-
-			if answers.EnabledTools == nil {
-				t.Fatal("EnableFunc did not initialize EnabledTools")
-			}
-			if !answers.EnabledTools[name] {
-				t.Errorf("after EnableFunc, EnabledTools[%q] should be true", name)
-			}
-
-			// Disable.
-			tool.DisableFunc(answers)
-
-			if answers.EnabledTools[name] {
-				t.Errorf("after DisableFunc, EnabledTools[%q] should be false", name)
-			}
-		})
-	}
+func TestShellToolsLifecycleOnly(t *testing.T) {
+	assertLifecycleOnly(t, DefaultRegistry(), "starship-integration", "otel-config")
 }
 
 func TestStarshipSharedContent(t *testing.T) {

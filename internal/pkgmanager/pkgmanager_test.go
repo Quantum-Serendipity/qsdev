@@ -2,7 +2,10 @@ package pkgmanager
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -155,19 +158,112 @@ func TestManagerNames(t *testing.T) {
 }
 
 func TestNilRunnerDefaults(t *testing.T) {
-	// Constructors with nil runner should not panic.
-	_ = NewApt(nil)
-	_ = NewDnf(nil)
-	_ = NewPacman(nil)
-	_ = NewZypper(nil)
-	_ = NewApk(nil)
-	_ = NewXbps(nil)
-	_ = NewEmerge(nil)
-	_ = NewBrew(nil)
-	_ = NewNix(nil, false)
-	_ = NewWinget(nil)
-	_ = NewScoop(nil)
-	_ = NewChoco(nil)
+	t.Parallel()
+	// A nil runner must be replaced by the production ExecRunner, streaming
+	// to the process's output. (Winget/Scoop/Choco are runner-less stubs off
+	// Windows, so they are not listed.)
+	tests := []struct {
+		name   string
+		runner func() CommandRunner
+	}{
+		{"apt", func() CommandRunner { return NewApt(nil).runner }},
+		{"dnf", func() CommandRunner { return NewDnf(nil).runner }},
+		{"pacman", func() CommandRunner { return NewPacman(nil).runner }},
+		{"zypper", func() CommandRunner { return NewZypper(nil).runner }},
+		{"apk", func() CommandRunner { return NewApk(nil).runner }},
+		{"xbps", func() CommandRunner { return NewXbps(nil).runner }},
+		{"emerge", func() CommandRunner { return NewEmerge(nil).runner }},
+		{"brew", func() CommandRunner { return NewBrew(nil).runner }},
+		{"nix", func() CommandRunner { return NewNix(nil, false).runner }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			er, ok := tt.runner().(*ExecRunner)
+			if !ok || er == nil {
+				t.Fatalf("runner = %T, want non-nil *ExecRunner", tt.runner())
+			}
+			if er.Stdout != os.Stdout || er.Stderr != os.Stderr {
+				t.Error("default runner does not stream to os.Stdout/os.Stderr")
+			}
+		})
+	}
+}
+
+// TestExecRunnerHelperProcess is not a real test: ExecRunner tests re-run the
+// test binary with pkgmanagerHelperEnv set to get a portable child process
+// that writes to stdout and stderr and exits non-zero.
+func TestExecRunnerHelperProcess(t *testing.T) {
+	if os.Getenv(pkgmanagerHelperEnv) != "1" {
+		return
+	}
+	fmt.Fprint(os.Stdout, "resolving dependencies")
+	fmt.Fprint(os.Stderr, "E: Unable to locate package shellcheck")
+	os.Exit(3)
+}
+
+const pkgmanagerHelperEnv = "QSDEV_PKGMANAGER_TEST_HELPER"
+
+func TestExecRunnerRun_StreamsOutputAndReportsStderr(t *testing.T) {
+	t.Setenv(pkgmanagerHelperEnv, "1")
+
+	var stdout, stderr strings.Builder
+	r := &ExecRunner{Stdout: &stdout, Stderr: &stderr}
+	err := r.Run(context.Background(), os.Args[0], "-test.run=^TestExecRunnerHelperProcess$")
+	if err == nil {
+		t.Fatal("expected an error from a non-zero exit")
+	}
+
+	if !strings.Contains(stdout.String(), "resolving dependencies") {
+		t.Errorf("stdout not streamed; got %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "Unable to locate package") {
+		t.Errorf("stderr not streamed; got %q", stderr.String())
+	}
+	if !strings.Contains(err.Error(), "Unable to locate package shellcheck") {
+		t.Errorf("error does not quote the command's stderr: %v", err)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 3 {
+		t.Errorf("error does not wrap the *exec.ExitError (code 3): %v", err)
+	}
+}
+
+func TestExecRunnerRun_NilWritersStillReportStderr(t *testing.T) {
+	t.Setenv(pkgmanagerHelperEnv, "1")
+
+	err := (&ExecRunner{}).Run(context.Background(), os.Args[0], "-test.run=^TestExecRunnerHelperProcess$")
+	if err == nil || !strings.Contains(err.Error(), "Unable to locate package shellcheck") {
+		t.Fatalf("error = %v, want it to quote the command's stderr", err)
+	}
+}
+
+func TestTailBufferKeepsLastBytes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		max    int
+		writes []string
+		want   string
+	}{
+		{"under limit", 10, []string{"abc", "def"}, "abcdef"},
+		{"single write over limit", 4, []string{"abcdefgh"}, "efgh"},
+		{"spans writes", 5, []string{"abc", "defg", "hi"}, "efghi"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tb := &tailBuffer{max: tt.max}
+			for _, w := range tt.writes {
+				if n, err := tb.Write([]byte(w)); err != nil || n != len(w) {
+					t.Fatalf("Write(%q) = %d, %v", w, n, err)
+				}
+			}
+			if got := tb.String(); got != tt.want {
+				t.Errorf("tail = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestNixNixOSReturnsError(t *testing.T) {

@@ -3,6 +3,8 @@ package mcphealth
 import (
 	"fmt"
 	"maps"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"slices"
@@ -25,7 +27,12 @@ func ValidateConfig(servers map[string]ServerConfig) []ConfigWarning {
 			continue
 		}
 
-		warnings = append(warnings, validateCommand(name, expandVars(cfg.Command, os.LookupEnv))...)
+		// A remote (Streamable HTTP/SSE) server has a URL instead of a command.
+		if cfg.URL != "" {
+			warnings = append(warnings, validateURL(name, expandVars(cfg.URL, os.LookupEnv))...)
+		} else {
+			warnings = append(warnings, validateCommand(name, expandVars(cfg.Command, os.LookupEnv))...)
+		}
 		warnings = append(warnings, validateRequiredEnv(name, cfg.RequiredEnv, envSet)...)
 		warnings = append(warnings, validateEnvRefs(name, cfg, envSet)...)
 	}
@@ -53,6 +60,38 @@ func validateCommand(server, command string) []ConfigWarning {
 	}
 
 	return nil
+}
+
+// validateURL checks a remote server URL: it must be absolute with a host, and
+// use https, or plain http only for a loopback host.
+func validateURL(server, raw string) []ConfigWarning {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return []ConfigWarning{{
+			Server:      server,
+			Severity:    "error",
+			Message:     fmt.Sprintf("url %q is not a valid http(s) URL", raw),
+			Remediation: "specify an absolute https:// URL for this MCP server",
+		}}
+	}
+	if u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
+		return []ConfigWarning{{
+			Server:      server,
+			Severity:    "error",
+			Message:     fmt.Sprintf("url %q uses plain http to a non-local host", raw),
+			Remediation: "use https:// (plain http is only acceptable for localhost)",
+		}}
+	}
+	return nil
+}
+
+// isLoopbackHost reports whether host is localhost or a loopback IP address.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func validateRequiredEnv(server string, required []string, envSet map[string]bool) []ConfigWarning {

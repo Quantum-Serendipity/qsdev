@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 )
@@ -133,34 +134,39 @@ func TestCheckAll_MixedResults(t *testing.T) {
 	}
 }
 
-// mcpInitResult answers MCP requests with minimal valid results and, for a bare
-// GET (the SSE-stream open), replies 405 exactly like a spec-compliant
-// Streamable-HTTP MCP server that offers no server-initiated stream.
+// mcpInitResult answers MCP requests with minimal valid results echoing the
+// request id and, for a bare GET (the SSE-stream open), replies 405 exactly
+// like a spec-compliant Streamable-HTTP MCP server that offers no
+// server-initiated stream. Notifications (no id) are acknowledged with 202.
 func mcpInitResult(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	req := readMCPRequest(r)
+	if req.ID == nil {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(mcpReply(r))
+	_, _ = w.Write(mcpReplyTo(req))
 }
 
-// mcpReply builds a valid JSON-RPC reply to an MCP request: an initialize
+// mcpReply reads an MCP request and builds a valid JSON-RPC reply to it (see
+// mcpReplyTo).
+func mcpReply(r *http.Request) []byte {
+	return mcpReplyTo(readMCPRequest(r))
+}
+
+// mcpReplyTo builds a valid JSON-RPC reply to an MCP request: an initialize
 // result naming a protocol version, or a one-tool tools/list result, echoing
 // the request id as a real server does.
-func mcpReply(r *http.Request) []byte {
-	body, _ := io.ReadAll(r.Body)
-	var req struct {
-		ID     int    `json:"id"`
-		Method string `json:"method"`
-	}
-	_ = json.Unmarshal(body, &req)
-
+func mcpReplyTo(req mcpRequest) []byte {
 	result := `{"tools":[{"name":"a"}]}`
 	if req.Method == "initialize" {
 		result = `{"protocolVersion":"2025-03-26","capabilities":{}}`
 	}
-	return []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"result":%s}`, req.ID, result))
+	return []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":%s}`, req.ID, result))
 }
 
 // TestCheckServer_HTTPProbesMCP is the M7 regression. The old check did a bare
@@ -189,6 +195,25 @@ func TestCheckServer_HTTPProbesMCP(t *testing.T) {
 				_, _ = w.Write([]byte("event: message\ndata: " + string(mcpReply(r)) + "\n\n"))
 			},
 			want: StatusHealthy,
+		},
+		{
+			// F266: an SSE response may be preceded by notifications and
+			// server requests; the probe must pick the event answering its id.
+			name: "sse response after a notification is healthy",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = fmt.Fprintf(w, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{}}\n\n"+
+					"event: message\ndata: %s\n\n", mcpReply(r))
+			},
+			want: StatusHealthy,
+		},
+		{
+			name: "sse response to a different request is unreachable",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = w.Write([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{}}\n\n"))
+			},
+			want: StatusUnreachable,
 		},
 		{
 			name: "plain non-MCP web server returning 200 is unreachable",
@@ -240,15 +265,99 @@ func TestCheckServer_HTTPProbesMCP(t *testing.T) {
 	}
 }
 
+// mcpRequest is the part of an MCP JSON-RPC message a test handler inspects.
+type mcpRequest struct {
+	Method string          `json:"method"`
+	ID     json.RawMessage `json:"id"`
+}
+
+// readMCPRequest decodes the JSON-RPC method and id (nil for a notification)
+// from an MCP request body.
+func readMCPRequest(r *http.Request) mcpRequest {
+	body, _ := io.ReadAll(r.Body)
+	var req mcpRequest
+	_ = json.Unmarshal(body, &req)
+	return req
+}
+
 // mcpRequestMethod reads the JSON-RPC method from an MCP request body so a test
 // handler can respond differently to initialize versus tools/list.
 func mcpRequestMethod(r *http.Request) string {
-	body, _ := io.ReadAll(r.Body)
-	var req struct {
-		Method string `json:"method"`
+	return readMCPRequest(r).Method
+}
+
+// sessionMCPServer is a stateful Streamable-HTTP MCP server, like the
+// TypeScript SDK's StreamableHTTPServerTransport with a sessionIdGenerator: it
+// assigns Mcp-Session-Id on initialize and rejects any later message without it
+// (400), and rejects tools/list before notifications/initialized.
+type sessionMCPServer struct {
+	mu          sync.Mutex
+	initialized bool
+	deleted     bool
+	versionSeen string
+}
+
+const testSessionID = "session-1234"
+
+func (s *sessionMCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	req := readMCPRequest(r)
+	if req.Method != "initialize" && r.Header.Get("Mcp-Session-Id") != testSessionID {
+		http.Error(w, "missing session", http.StatusBadRequest)
+		return
 	}
-	_ = json.Unmarshal(body, &req)
-	return req.Method
+	switch {
+	case r.Method == http.MethodDelete:
+		s.deleted = true
+		w.WriteHeader(http.StatusOK)
+	case req.Method == "initialize":
+		w.Header().Set("Mcp-Session-Id", testSessionID)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-06-18","capabilities":{}}}`, req.ID)
+	case req.Method == "notifications/initialized":
+		s.initialized = true
+		w.WriteHeader(http.StatusAccepted)
+	case req.Method == "tools/list" && s.initialized:
+		s.versionSeen = r.Header.Get("MCP-Protocol-Version")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"a"},{"name":"b"}]}}`, req.ID)
+	default:
+		http.Error(w, "not initialized", http.StatusBadRequest)
+	}
+}
+
+// TestCheckServer_HTTPSessionServer is the F266 regression: the stateless probe
+// never echoed Mcp-Session-Id nor sent notifications/initialized, so a healthy
+// session-based server was reported unreachable ("tools/list: returned HTTP 400").
+func TestCheckServer_HTTPSessionServer(t *testing.T) {
+	t.Parallel()
+
+	server := &sessionMCPServer{}
+	srv := httptest.NewServer(server)
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	h := CheckServer(ctx, ServerConfig{Name: "session-server", URL: srv.URL})
+
+	if h.Status != StatusHealthy {
+		t.Fatalf("status = %q, want %q (error=%q)", h.Status, StatusHealthy, h.Error)
+	}
+	if h.ToolCount != 2 {
+		t.Errorf("tool count = %d, want 2", h.ToolCount)
+	}
+
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if server.versionSeen != "2025-06-18" {
+		t.Errorf("MCP-Protocol-Version on tools/list = %q, want the negotiated 2025-06-18", server.versionSeen)
+	}
+	if !server.deleted {
+		t.Error("probe did not terminate its session with DELETE")
+	}
 }
 
 // TestCheckServer_HTTPToolsListError covers bug #13: previously the HTTP probe

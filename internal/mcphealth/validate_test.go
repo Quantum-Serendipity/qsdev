@@ -87,6 +87,15 @@ func TestValidateConfig(t *testing.T) {
 			wantCount: 0,
 		},
 		{
+			// F276: a remote server has a URL and no command; it used to be
+			// reported as "command is empty".
+			name: "https server without command produces no warning",
+			servers: map[string]ServerConfig{
+				"socket": {Name: "socket", URL: "https://mcp.socket.dev/"},
+			},
+			wantCount: 0,
+		},
+		{
 			name: "unset reference in args produces warning",
 			servers: map[string]ServerConfig{
 				"ref-arg": {
@@ -111,6 +120,31 @@ func TestValidateConfig(t *testing.T) {
 			wantCount:    1,
 			wantSeverity: "warning",
 			wantContains: "QSDEV_TEST_MISSING_HDR_333",
+		},
+		{
+			name: "http localhost server produces no warning",
+			servers: map[string]ServerConfig{
+				"local": {Name: "local", URL: "http://127.0.0.1:8080/mcp"},
+			},
+			wantCount: 0,
+		},
+		{
+			name: "plain http to a remote host produces error",
+			servers: map[string]ServerConfig{
+				"remote": {Name: "remote", URL: "http://mcp.example.com/mcp"},
+			},
+			wantCount:    1,
+			wantSeverity: "error",
+			wantContains: "plain http",
+		},
+		{
+			name: "malformed url produces error",
+			servers: map[string]ServerConfig{
+				"bad": {Name: "bad", URL: "ftp://mcp.example.com"},
+			},
+			wantCount:    1,
+			wantSeverity: "error",
+			wantContains: "not a valid http(s) URL",
 		},
 		{
 			name: "set env reference produces no warning",

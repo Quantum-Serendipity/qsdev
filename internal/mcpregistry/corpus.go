@@ -12,7 +12,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -84,16 +86,52 @@ type DocsCorpusManager struct {
 	HTTPClient HTTPClient
 
 	// Ingest, when non-nil, is invoked after a DevDocs set's files are downloaded
-	// and before the manifest entry is recorded. It may rewrite files in dir
-	// (e.g. sanitize db.json); the manifest hash is computed from the resulting
-	// on-disk files. A nil Ingest preserves the prior behavior.
+	// and before the manifest entry is recorded. dir is the staging directory
+	// holding the complete new set, which replaces the installed set afterwards.
+	// It may rewrite files in dir (e.g. sanitize db.json); the manifest hash is
+	// computed from the resulting on-disk files. A nil Ingest preserves the
+	// prior behavior.
 	Ingest func(ctx context.Context, dir string) error
 }
 
+// ErrDocsDataDirUnset is returned by DocsCorpusManager operations when no data
+// directory is configured, typically because DefaultDocsDataDir could not
+// determine the user's home directory.
+var ErrDocsDataDirUnset = errors.New("documentation data directory is not set: cannot determine the home directory (set HOME)")
+
+// Download size caps. A ZIM archive may exceed its catalog size estimate, so it
+// is capped at twice the estimate plus slack; a size-less entry and each
+// DevDocs file get a fixed ceiling that only stops a runaway stream.
+const (
+	zimSizeSlack        int64 = 256 << 20 // 256 MiB
+	maxUnsizedZIMBytes  int64 = 256 << 30 // 256 GiB
+	maxDevDocsFileBytes int64 = 1 << 30   // 1 GiB
+)
+
+// manifestMu serialises every load-modify-save of a docs manifest within the
+// process, so concurrent downloads cannot lose each other's entries.
+var manifestMu sync.Mutex
+
+// zimReleaseSuffix matches the _YYYY-MM release date that ends a ZIM slug.
+var zimReleaseSuffix = regexp.MustCompile(`_[0-9]{4}-[0-9]{2}$`)
+
+// zimArchiveName returns the stable identity of a ZIM archive: its slug
+// without the release date, so unix.stackexchange.com_en_all_2025-06 and
+// unix.stackexchange.com_en_all_2026-02 are two releases of the same archive.
+func zimArchiveName(slug string) string {
+	return zimReleaseSuffix.ReplaceAllString(slug, "")
+}
+
 // DefaultDocsDataDir returns the default directory for local documentation
-// data under the user-global ~/.qsdev/docs/ directory.
+// data under the user-global ~/.qsdev/docs/ directory. It returns "" when the
+// home directory is unknown (e.g. HOME unset in CI) rather than a
+// working-directory-relative path, and DocsCorpusManager then fails with
+// ErrDocsDataDirUnset instead of writing archives into the current directory.
 func DefaultDocsDataDir() string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil || !filepath.IsAbs(home) {
+		return ""
+	}
 	return filepath.Join(home, ".qsdev", "docs")
 }
 
@@ -106,6 +144,15 @@ func NewDocsCorpusManager(dataDir string, client HTTPClient) *DocsCorpusManager 
 	}
 }
 
+// checkDataDir reports ErrDocsDataDirUnset when the manager has no data
+// directory, so no operation falls back to the working directory.
+func (m *DocsCorpusManager) checkDataDir() error {
+	if m.DataDir == "" {
+		return ErrDocsDataDirUnset
+	}
+	return nil
+}
+
 // manifestPath returns the path to the manifest.json file.
 func (m *DocsCorpusManager) manifestPath() string {
 	return filepath.Join(m.DataDir, "manifest.json")
@@ -114,6 +161,9 @@ func (m *DocsCorpusManager) manifestPath() string {
 // LoadManifest reads the documentation manifest from disk. If the file does
 // not exist, an empty manifest is returned.
 func (m *DocsCorpusManager) LoadManifest() (*DocsManifest, error) {
+	if err := m.checkDataDir(); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(m.manifestPath())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -132,10 +182,11 @@ func (m *DocsCorpusManager) LoadManifest() (*DocsManifest, error) {
 	return &manifest, nil
 }
 
-// SaveManifest writes the manifest atomically to disk.
+// SaveManifest writes the manifest atomically to disk (unique temp file,
+// fsync, rename).
 func (m *DocsCorpusManager) SaveManifest(manifest *DocsManifest) error {
-	if err := os.MkdirAll(m.DataDir, fileutil.ModeDirDefault); err != nil {
-		return fmt.Errorf("creating data dir: %w", err)
+	if err := m.checkDataDir(); err != nil {
+		return err
 	}
 
 	data, err := json.MarshalIndent(manifest, "", "  ")
@@ -143,74 +194,129 @@ func (m *DocsCorpusManager) SaveManifest(manifest *DocsManifest) error {
 		return fmt.Errorf("marshaling manifest: %w", err)
 	}
 
-	tmp := m.manifestPath() + ".tmp"
-	if err := os.WriteFile(tmp, data, fileutil.ModeReadWrite); err != nil {
-		return fmt.Errorf("writing temp manifest: %w", err)
+	if err := fileutil.WriteFileAtomic(m.manifestPath(), data, fileutil.ModeReadWrite); err != nil {
+		return fmt.Errorf("writing manifest: %w", err)
 	}
-
-	if err := os.Rename(tmp, m.manifestPath()); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("renaming manifest: %w", err)
-	}
-
 	return nil
 }
 
-// DownloadDevDocs fetches a DevDocs documentation set (index.json, db.json,
-// meta.json) and records it in the manifest. The baseURL parameter specifies
-// the DevDocs CDN root (e.g. "https://documents.devdocs.io").
-func (m *DocsCorpusManager) DownloadDevDocs(ctx context.Context, slug, baseURL string) error {
-	if baseURL == "" {
-		baseURL = "https://documents.devdocs.io"
-	}
-	dir := filepath.Join(m.DataDir, "devdocs", slug)
-	if err := os.MkdirAll(dir, fileutil.ModeDirDefault); err != nil {
-		return fmt.Errorf("creating devdocs dir for %q: %w", slug, err)
-	}
-
-	files := []string{"index.json", "db.json", "meta.json"}
-	var allPaths []string
-
-	for _, f := range files {
-		url := fmt.Sprintf("%s/%s/%s", baseURL, slug, f)
-		destPath := filepath.Join(dir, f)
-
-		if _, _, err := m.downloadFile(ctx, url, destPath); err != nil {
-			return fmt.Errorf("downloading %s for %q: %w", f, slug, err)
-		}
-
-		allPaths = append(allPaths, destPath)
-	}
-
-	if m.Ingest != nil {
-		if err := m.Ingest(ctx, dir); err != nil {
-			return fmt.Errorf("ingesting devdocs %q: %w", slug, err)
-		}
-	}
-
-	// Compute the combined hash and total size from the FINAL on-disk files so
-	// the manifest always reflects post-ingest content.
-	sha, totalSize, err := combinedHashAndSize(allPaths)
-	if err != nil {
-		return fmt.Errorf("hashing devdocs %q: %w", slug, err)
-	}
+// updateManifest loads the manifest, applies fn and saves the result while
+// holding manifestMu, so concurrent updates in this process are not lost.
+func (m *DocsCorpusManager) updateManifest(fn func(*DocsManifest) error) error {
+	manifestMu.Lock()
+	defer manifestMu.Unlock()
 
 	manifest, err := m.LoadManifest()
 	if err != nil {
 		return fmt.Errorf("loading manifest: %w", err)
 	}
+	if err := fn(manifest); err != nil {
+		return err
+	}
+	return m.SaveManifest(manifest)
+}
 
-	manifest.DocSets["devdocs:"+slug] = &DocSetEntry{
-		Type:        DocSetDevDocs,
-		Slug:        slug,
-		Version:     "latest",
-		InstalledAt: time.Now(),
-		SizeBytes:   totalSize,
-		SHA256:      sha,
-		Files:       allPaths,
+// DownloadDevDocs fetches a DevDocs documentation set (index.json, db.json,
+// meta.json) and records it in the manifest. The baseURL parameter specifies
+// the DevDocs CDN root (e.g. "https://documents.devdocs.io"). The set is
+// downloaded and ingested in a staging directory that replaces the installed
+// set only once every file is complete, so a failed download leaves the
+// previous set intact and never mixes old and new files.
+func (m *DocsCorpusManager) DownloadDevDocs(ctx context.Context, slug, baseURL string) error {
+	if err := m.checkDataDir(); err != nil {
+		return err
+	}
+	if baseURL == "" {
+		baseURL = "https://documents.devdocs.io"
+	}
+	parent := filepath.Join(m.DataDir, "devdocs")
+	if err := os.MkdirAll(parent, fileutil.ModeDirDefault); err != nil {
+		return fmt.Errorf("creating devdocs dir for %q: %w", slug, err)
+	}
+	dir := filepath.Join(parent, slug)
+
+	stage, err := os.MkdirTemp(parent, "."+slug+".download-*")
+	if err != nil {
+		return fmt.Errorf("creating staging dir for %q: %w", slug, err)
+	}
+	// After a successful swap the staging dir no longer exists, so this only
+	// cleans up after a failure.
+	defer func() { _ = os.RemoveAll(stage) }()
+
+	files := []string{"index.json", "db.json", "meta.json"}
+	stagedPaths := make([]string, 0, len(files))
+	finalPaths := make([]string, 0, len(files))
+
+	for _, f := range files {
+		url := fmt.Sprintf("%s/%s/%s", baseURL, slug, f)
+		staged := filepath.Join(stage, f)
+		if err := m.downloadFile(ctx, url, staged, maxDevDocsFileBytes); err != nil {
+			return fmt.Errorf("downloading %s for %q: %w", f, slug, err)
+		}
+		stagedPaths = append(stagedPaths, staged)
+		finalPaths = append(finalPaths, filepath.Join(dir, f))
 	}
 
-	return m.SaveManifest(manifest)
+	if m.Ingest != nil {
+		if err := m.Ingest(ctx, stage); err != nil {
+			return fmt.Errorf("ingesting devdocs %q: %w", slug, err)
+		}
+	}
+
+	// Compute the combined hash and total size from the FINAL (post-ingest)
+	// files. The swap moves them unchanged, so the digest matches finalPaths.
+	sha, totalSize, err := combinedHashAndSize(stagedPaths)
+	if err != nil {
+		return fmt.Errorf("hashing devdocs %q: %w", slug, err)
+	}
+
+	backup, err := swapDir(stage, dir)
+	if err != nil {
+		return fmt.Errorf("installing devdocs %q: %w", slug, err)
+	}
+
+	err = m.updateManifest(func(manifest *DocsManifest) error {
+		manifest.DocSets["devdocs:"+slug] = &DocSetEntry{
+			Type:        DocSetDevDocs,
+			Slug:        slug,
+			Version:     "latest",
+			InstalledAt: time.Now(),
+			SizeBytes:   totalSize,
+			SHA256:      sha,
+			Files:       finalPaths,
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if backup != "" {
+		_ = os.RemoveAll(backup)
+	}
+	return nil
+}
+
+// swapDir replaces dir with the fully-populated stage directory. An existing
+// dir is first moved aside and restored if the swap fails; the returned backup
+// path (empty when dir did not exist) is for the caller to remove once the new
+// set is recorded.
+func swapDir(stage, dir string) (backup string, err error) {
+	if _, statErr := os.Lstat(dir); statErr == nil {
+		backup = stage + ".old"
+		if err := os.Rename(dir, backup); err != nil {
+			return "", fmt.Errorf("moving aside %s: %w", dir, err)
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return "", fmt.Errorf("checking %s: %w", dir, statErr)
+	}
+
+	if err := os.Rename(stage, dir); err != nil {
+		if backup != "" {
+			_ = os.Rename(backup, dir)
+		}
+		return "", fmt.Errorf("moving %s into place: %w", stage, err)
+	}
+	return backup, nil
 }
 
 // combinedHashAndSize recomputes, from the on-disk files, the same combined
@@ -269,11 +375,17 @@ func (m *DocsCorpusManager) VerifyHash(entry *DocSetEntry) (ok bool, computed st
 }
 
 // DownloadZIM fetches a ZIM archive and verifies its SHA-256 digest before
-// recording it. The expected digest is the catalog entry's ExpectedHash or,
+// installing it. The expected digest is the catalog entry's ExpectedHash or,
 // when the catalog pins none, the digest the publisher serves beside the
 // archive (see expectedZIMHash). The download fails closed when no expected
-// digest can be obtained: an unverified archive is never trusted.
+// digest can be obtained: an unverified archive is never trusted. The archive
+// is downloaded to a temporary file and only renamed over the installed copy
+// once complete and verified. Installing a new release removes the superseded
+// releases of the same archive from the manifest and disk.
 func (m *DocsCorpusManager) DownloadZIM(ctx context.Context, entry ZIMEntry) error {
+	if err := m.checkDataDir(); err != nil {
+		return err
+	}
 	expectedHash, err := m.expectedZIMHash(ctx, entry)
 	if err != nil {
 		return fmt.Errorf("verifying zim %q: %w", entry.Slug, err)
@@ -286,58 +398,59 @@ func (m *DocsCorpusManager) DownloadZIM(ctx context.Context, entry ZIMEntry) err
 
 	destPath := filepath.Join(dir, entry.Slug+".zim")
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, entry.URL, nil)
-	if err != nil {
-		return fmt.Errorf("creating request for %q: %w", entry.Slug, err)
-	}
-
-	resp, err := m.HTTPClient.Do(req)
+	tmp, written, computedHash, err := m.downloadToTemp(ctx, entry.URL, dir, zimSizeCap(entry))
 	if err != nil {
 		return fmt.Errorf("downloading zim %q: %w", entry.Slug, err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("downloading zim %q: HTTP %d", entry.Slug, resp.StatusCode)
-	}
-
-	f, err := os.Create(destPath)
-	if err != nil {
-		return fmt.Errorf("creating zim file %q: %w", entry.Slug, err)
-	}
-
-	hasher := sha256.New()
-	written, err := io.Copy(f, io.TeeReader(resp.Body, hasher))
-	if closeErr := f.Close(); closeErr != nil && err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		_ = os.Remove(destPath)
-		return fmt.Errorf("writing zim file %q: %w", entry.Slug, err)
-	}
-
-	computedHash := hex.EncodeToString(hasher.Sum(nil))
-	if computedHash != expectedHash {
-		_ = os.Remove(destPath)
+	if !strings.EqualFold(computedHash, expectedHash) {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("hash mismatch for %q: expected %s, got %s", entry.Slug, expectedHash, computedHash)
 	}
+	if err := os.Rename(tmp, destPath); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("installing zim file %q: %w", entry.Slug, err)
+	}
 
-	manifest, err := m.LoadManifest()
+	var superseded []string
+	err = m.updateManifest(func(manifest *DocsManifest) error {
+		name := zimArchiveName(entry.Slug)
+		for key, installed := range manifest.DocSets {
+			if installed.Type != DocSetZIM || installed.Slug == entry.Slug || zimArchiveName(installed.Slug) != name {
+				continue
+			}
+			delete(manifest.DocSets, key)
+			for _, f := range installed.Files {
+				if f != destPath {
+					superseded = append(superseded, f)
+				}
+			}
+		}
+		manifest.DocSets["zim:"+entry.Slug] = &DocSetEntry{
+			Type:        DocSetZIM,
+			Slug:        entry.Slug,
+			Version:     entry.Slug,
+			InstalledAt: time.Now(),
+			SizeBytes:   written,
+			SHA256:      computedHash,
+			Files:       []string{destPath},
+		}
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("loading manifest: %w", err)
+		return err
 	}
-
-	manifest.DocSets["zim:"+entry.Slug] = &DocSetEntry{
-		Type:        DocSetZIM,
-		Slug:        entry.Slug,
-		Version:     entry.Slug,
-		InstalledAt: time.Now(),
-		SizeBytes:   written,
-		SHA256:      computedHash,
-		Files:       []string{destPath},
+	for _, f := range superseded {
+		_ = os.Remove(f)
 	}
+	return nil
+}
 
-	return m.SaveManifest(manifest)
+// zimSizeCap returns the maximum number of bytes accepted for a ZIM download.
+func zimSizeCap(entry ZIMEntry) int64 {
+	if entry.SizeBytes <= 0 {
+		return maxUnsizedZIMBytes
+	}
+	return 2*entry.SizeBytes + zimSizeSlack
 }
 
 // zimHashSuffix is appended to a ZIM archive URL to fetch the SHA-256 digest
@@ -420,28 +533,43 @@ func isSHA256Hex(s string) bool {
 }
 
 // CheckOutdated compares installed ZIM entries against the provided catalog
-// and returns entries that have newer versions available.
+// and returns entries that have newer versions available. Installed and
+// catalog archives are matched by their stable name (the slug without its
+// release date), so a catalog release newer than every installed release of
+// the same archive is reported as outdated. OutdatedEntry.Slug is that stable
+// name; AvailableVersion is the catalog slug to download.
 func (m *DocsCorpusManager) CheckOutdated(zimEntries []ZIMEntry) ([]OutdatedEntry, error) {
 	manifest, err := m.LoadManifest()
 	if err != nil {
 		return nil, fmt.Errorf("loading manifest: %w", err)
 	}
 
-	var outdated []OutdatedEntry
-	for _, catalogEntry := range zimEntries {
-		key := "zim:" + catalogEntry.Slug
-		installed, ok := manifest.DocSets[key]
-		if !ok {
+	// Newest installed release (dated slug) per archive name. The release date
+	// is a fixed-width YYYY-MM suffix, so slugs order chronologically.
+	installed := make(map[string]string)
+	for _, e := range manifest.DocSets {
+		if e.Type != DocSetZIM {
 			continue
 		}
-		if installed.Version != catalogEntry.Slug {
-			outdated = append(outdated, OutdatedEntry{
-				Slug:             catalogEntry.Slug,
-				Type:             DocSetZIM,
-				InstalledVersion: installed.Version,
-				AvailableVersion: catalogEntry.Slug,
-			})
+		name := zimArchiveName(e.Slug)
+		if e.Slug > installed[name] {
+			installed[name] = e.Slug
 		}
+	}
+
+	var outdated []OutdatedEntry
+	for _, catalogEntry := range zimEntries {
+		name := zimArchiveName(catalogEntry.Slug)
+		current, ok := installed[name]
+		if !ok || current >= catalogEntry.Slug {
+			continue
+		}
+		outdated = append(outdated, OutdatedEntry{
+			Slug:             name,
+			Type:             DocSetZIM,
+			InstalledVersion: current,
+			AvailableVersion: catalogEntry.Slug,
+		})
 	}
 
 	return outdated, nil
@@ -450,11 +578,14 @@ func (m *DocsCorpusManager) CheckOutdated(zimEntries []ZIMEntry) ([]OutdatedEntr
 // Clean removes documentation files according to the given options and
 // updates the manifest.
 func (m *DocsCorpusManager) Clean(opts CleanOptions) error {
-	manifest, err := m.LoadManifest()
-	if err != nil {
-		return fmt.Errorf("loading manifest: %w", err)
-	}
+	return m.updateManifest(func(manifest *DocsManifest) error {
+		return m.clean(manifest, opts)
+	})
+}
 
+// clean removes the selected documentation directories and their manifest
+// entries.
+func (m *DocsCorpusManager) clean(manifest *DocsManifest, opts CleanOptions) error {
 	if opts.All || opts.ZIMOnly {
 		zimDir := filepath.Join(m.DataDir, "zim")
 		if err := os.RemoveAll(zimDir); err != nil && !os.IsNotExist(err) {
@@ -479,41 +610,75 @@ func (m *DocsCorpusManager) Clean(opts CleanOptions) error {
 		}
 	}
 
-	return m.SaveManifest(manifest)
+	return nil
 }
 
-// downloadFile fetches a URL and writes it to destPath, returning the file
-// size and hex-encoded SHA256 hash.
-func (m *DocsCorpusManager) downloadFile(ctx context.Context, url, destPath string) (int64, string, error) {
+// downloadFile fetches a URL into destPath via a temporary file in the same
+// directory, renaming it into place only once the whole body (at most maxBytes)
+// has been written.
+func (m *DocsCorpusManager) downloadFile(ctx context.Context, url, destPath string, maxBytes int64) error {
+	tmp, _, _, err := m.downloadToTemp(ctx, url, filepath.Dir(destPath), maxBytes)
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, destPath); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("renaming %s to %s: %w", tmp, destPath, err)
+	}
+	return nil
+}
+
+// downloadToTemp streams url into a new temporary file in dir, rejecting a
+// body larger than maxBytes, and returns the synced, closed file's path, size
+// and hex SHA-256. The caller renames it into place or removes it; on error
+// nothing is left behind.
+func (m *DocsCorpusManager) downloadToTemp(ctx context.Context, url, dir string, maxBytes int64) (tmpPath string, size int64, sha256hex string, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return 0, "", fmt.Errorf("creating request: %w", err)
+		return "", 0, "", fmt.Errorf("creating request: %w", err)
 	}
 
 	resp, err := m.HTTPClient.Do(req)
 	if err != nil {
-		return 0, "", fmt.Errorf("fetching %s: %w", url, err)
+		return "", 0, "", fmt.Errorf("fetching %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return 0, "", fmt.Errorf("fetching %s: HTTP %d", url, resp.StatusCode)
+		return "", 0, "", fmt.Errorf("fetching %s: HTTP %d", url, resp.StatusCode)
+	}
+	if resp.ContentLength > maxBytes {
+		return "", 0, "", fmt.Errorf("fetching %s: size %d exceeds limit %d", url, resp.ContentLength, maxBytes)
 	}
 
-	f, err := os.Create(destPath)
+	f, err := os.CreateTemp(dir, ".download-*")
 	if err != nil {
-		return 0, "", fmt.Errorf("creating %s: %w", destPath, err)
+		return "", 0, "", fmt.Errorf("creating temp file in %s: %w", dir, err)
 	}
+	defer func() {
+		if err != nil {
+			_ = f.Close()
+			_ = os.Remove(f.Name())
+		}
+	}()
 
 	hasher := sha256.New()
-	written, err := io.Copy(f, io.TeeReader(resp.Body, hasher))
-	if closeErr := f.Close(); closeErr != nil && err == nil {
-		err = closeErr
-	}
+	size, err = io.Copy(io.MultiWriter(f, hasher), io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
-		_ = os.Remove(destPath)
-		return 0, "", fmt.Errorf("writing %s: %w", destPath, err)
+		return "", 0, "", fmt.Errorf("writing %s: %w", f.Name(), err)
 	}
-
-	return written, hex.EncodeToString(hasher.Sum(nil)), nil
+	if size > maxBytes {
+		err = fmt.Errorf("fetching %s: response exceeds limit %d", url, maxBytes)
+		return "", 0, "", err
+	}
+	if err = f.Sync(); err != nil {
+		return "", 0, "", fmt.Errorf("syncing %s: %w", f.Name(), err)
+	}
+	if err = f.Close(); err != nil {
+		return "", 0, "", fmt.Errorf("closing %s: %w", f.Name(), err)
+	}
+	if err = os.Chmod(f.Name(), fileutil.ModeReadWrite); err != nil {
+		return "", 0, "", fmt.Errorf("chmod %s: %w", f.Name(), err)
+	}
+	return f.Name(), size, hex.EncodeToString(hasher.Sum(nil)), nil
 }

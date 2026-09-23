@@ -2,6 +2,21 @@ package mcpregistry
 
 import "testing"
 
+// testStorePath is a well-formed Nix store path (32-char nix-base32 hash).
+const testStorePath = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-server/bin/server"
+
+// fakeProvenance returns a resolver that sees selfPath as both the running
+// executable and the "qsdev" found on PATH, and treats every path as existing
+// with no symlinks.
+func fakeProvenance(t *testing.T, selfPath string) provenanceResolver {
+	t.Helper()
+	return provenanceResolver{
+		lookPath:     func(string) (string, error) { return selfPath, nil },
+		evalSymlinks: func(p string) (string, error) { return p, nil },
+		executable:   func() (string, error) { return selfPath, nil },
+	}
+}
+
 func TestGradeServer(t *testing.T) {
 	t.Parallel()
 
@@ -11,29 +26,24 @@ func TestGradeServer(t *testing.T) {
 		expected ComplianceLevel
 	}{
 		{
-			name: "qsdev embedded server grades Secure",
+			name: "qsdev embedded server grades Verified",
 			def: McpServerDefinition{
 				Command:   "qsdev",
 				Args:      []string{"mcp", "agent-postmortem"},
 				Transport: TransportStdio,
 			},
-			// qsdev: no secrets, stdio, local-only, no npx-y → Secure
-			// Not Verified because "qsdev" has verified provenance → actually Verified
-			// Wait: hasVerifiedProvenance returns true for "qsdev"
-			// So: Standard ✓, Secure ✓, Verified ✓
+			// no secrets, stdio, local-only, no auto-install, and "qsdev"
+			// resolves to the running binary → Verified.
 			expected: ComplianceVerified,
 		},
 		{
-			name: "npx with -y grades Basic",
+			name: "npx with -y grades Standard",
 			def: McpServerDefinition{
 				Command:   "npx",
 				Args:      []string{"-y", "@upstash/context7-mcp"},
 				Transport: TransportStdio,
 			},
-			// npx: no secrets ✓, stdio ✓ → Standard ✓
-			// local-only ✗ (npx is network command) → Secure ✗
-			// Also hasNpxDashY ✓ so noNpxY ✗
-			// Caps at Standard
+			// no secrets ✓, stdio ✓ → Standard; npx fetches → Secure ✗.
 			expected: ComplianceStandard,
 		},
 		{
@@ -44,8 +54,35 @@ func TestGradeServer(t *testing.T) {
 				Transport: TransportStdio,
 				Env:       map[string]string{"TOKEN": "${GITHUB_TOKEN}"},
 			},
-			// npx: no plaintext secrets ✓, stdio ✓ → Standard ✓
-			// local-only ✗ → Secure ✗
+			expected: ComplianceStandard,
+		},
+		{
+			name: "offline npx without pinned version grades Standard",
+			def: McpServerDefinition{
+				Command:   "npx",
+				Args:      []string{"--offline", "@anthropic-ai/mcp-github"},
+				Transport: TransportStdio,
+			},
+			// local-only ✓ (offline) but the unpinned package is auto-installed
+			// from the cache → no-runtime-auto-install ✗.
+			expected: ComplianceStandard,
+		},
+		{
+			name: "offline npx with exact version grades Secure",
+			def: McpServerDefinition{
+				Command:   "npx",
+				Args:      []string{"--offline", "@anthropic-ai/mcp-github@1.2.3"},
+				Transport: TransportStdio,
+			},
+			expected: ComplianceSecure,
+		},
+		{
+			name: "path-qualified npx grades Standard",
+			def: McpServerDefinition{
+				Command:   "/run/current-system/sw/bin/npx",
+				Args:      []string{"-y", "pkg"},
+				Transport: TransportStdio,
+			},
 			expected: ComplianceStandard,
 		},
 		{
@@ -54,8 +91,15 @@ func TestGradeServer(t *testing.T) {
 				Command: "uvx",
 				Env:     map[string]string{"API_KEY": "secret_test_xxxxxxxxxxxxxxxxxxxxxxxxx"},
 			},
-			// hasPlaintextSecrets → true, so noSecrets ✗
-			// Standard ✗ → stays Basic
+			expected: ComplianceBasic,
+		},
+		{
+			name: "plaintext secret in args grades Basic",
+			def: McpServerDefinition{
+				Command:   "/usr/local/bin/server",
+				Args:      []string{"--api-key", "sk-ant-api03-abcdefghijklmnopqrstuvwxyz"},
+				Transport: TransportStdio,
+			},
 			expected: ComplianceBasic,
 		},
 		{
@@ -64,21 +108,24 @@ func TestGradeServer(t *testing.T) {
 				Command:   "/usr/local/bin/man-mcp-server",
 				Transport: TransportStdio,
 			},
-			// no secrets ✓, stdio ✓ → Standard ✓
-			// local-only ✓, no npx-y ✓ → Secure ✓
 			// provenance: /usr/local is not /nix/store → Verified ✗
 			expected: ComplianceSecure,
 		},
 		{
 			name: "nix store binary grades Verified",
 			def: McpServerDefinition{
-				Command:   "/nix/store/abc-server/bin/server",
+				Command:   testStorePath,
 				Transport: TransportStdio,
 			},
-			// no secrets ✓, stdio ✓ → Standard ✓
-			// local-only ✓, no npx-y ✓ → Secure ✓
-			// /nix/store provenance ✓ → Verified ✓
 			expected: ComplianceVerified,
+		},
+		{
+			name: "nix store traversal grades Secure",
+			def: McpServerDefinition{
+				Command:   "/nix/store/../../tmp/evil",
+				Transport: TransportStdio,
+			},
+			expected: ComplianceSecure,
 		},
 		{
 			name: "SSE transport caps at Basic",
@@ -86,17 +133,14 @@ func TestGradeServer(t *testing.T) {
 				Command:   "qsdev",
 				Transport: TransportSSE,
 			},
-			// no secrets ✓ but stdio ✗ → Standard ✗
-			// Stays Basic
 			expected: ComplianceBasic,
 		},
 		{
 			name: "HTTP transport caps at Basic",
 			def: McpServerDefinition{
-				Command:   "/nix/store/abc/bin/server",
+				Command:   testStorePath,
 				Transport: TransportHTTP,
 			},
-			// stdio ✗ → Standard ✗ → stays Basic
 			expected: ComplianceBasic,
 		},
 	}
@@ -105,9 +149,9 @@ func TestGradeServer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := GradeServer(&tt.def)
+			result := gradeServer(&tt.def, fakeProvenance(t, "/opt/qsdev/bin/qsdev"))
 			if result.Level != tt.expected {
-				t.Errorf("GradeServer().Level = %v (%d), want %v (%d)",
+				t.Errorf("gradeServer().Level = %v (%d), want %v (%d)",
 					result.Level, result.Level, tt.expected, tt.expected)
 			}
 		})
@@ -122,24 +166,25 @@ func TestGradeServerAttestationLiftsVerifiedToAttested(t *testing.T) {
 
 	// A definition that already satisfies every Verified criterion: stdio
 	// transport, no plaintext secrets, local-only command with verified
-	// provenance, and no npx -y.
+	// provenance, and no runtime auto-install.
 	def := &McpServerDefinition{
 		Command:   "qsdev",
 		Args:      []string{"mcp", "agent-postmortem"},
 		Transport: TransportStdio,
 	}
+	prov := fakeProvenance(t, "/opt/qsdev/bin/qsdev")
 
 	// With the default checker (false) the definition grades to Verified, one
 	// below Attested.
 	AttestationChecker = func(*McpServerDefinition) bool { return false }
-	if got := GradeServer(def); got.Level != ComplianceVerified {
+	if got := gradeServer(def, prov); got.Level != ComplianceVerified {
 		t.Fatalf("default checker: Level = %v, want %v", got.Level, ComplianceVerified)
 	}
 
 	// With an injected checker returning true, the same definition reaches
 	// Attested and the external-attestation criterion passes.
 	AttestationChecker = func(*McpServerDefinition) bool { return true }
-	result := GradeServer(def)
+	result := gradeServer(def, prov)
 	if result.Level != ComplianceAttested {
 		t.Errorf("attested checker: Level = %v, want %v", result.Level, ComplianceAttested)
 	}
@@ -158,6 +203,30 @@ func TestGradeServerAttestationLiftsVerifiedToAttested(t *testing.T) {
 	}
 }
 
+// TestGradeServerNpxReportsAutoInstall is the F268 regression: the old
+// no-npx-dash-y criterion passed for `npx pkg`, although npx assumes --yes when
+// stdin is not a TTY and so installs the package at launch exactly like -y.
+func TestGradeServerNpxReportsAutoInstall(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{{"pkg"}, {"-y", "pkg"}} {
+		def := &McpServerDefinition{Command: "npx", Args: args, Transport: TransportStdio}
+		result := gradeServer(def, fakeProvenance(t, "/opt/qsdev/bin/qsdev"))
+		var found bool
+		for _, c := range result.Criteria {
+			if c.Name == "no-runtime-auto-install" {
+				found = true
+				if c.Passed {
+					t.Errorf("npx %v: no-runtime-auto-install passed, want failed", args)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("npx %v: no-runtime-auto-install criterion missing", args)
+		}
+	}
+}
+
 func TestGradeServerCriteriaPopulated(t *testing.T) {
 	t.Parallel()
 
@@ -172,14 +241,15 @@ func TestGradeServerCriteriaPopulated(t *testing.T) {
 	}
 
 	// We expect criteria for each check: no-plaintext-secrets, stdio-transport,
-	// local-only, no-npx-dash-y, verified-provenance, external-attestation.
+	// local-only, no-runtime-auto-install, verified-provenance,
+	// external-attestation.
 	expectedNames := map[string]bool{
-		"no-plaintext-secrets": false,
-		"stdio-transport":      false,
-		"local-only":           false,
-		"no-npx-dash-y":        false,
-		"verified-provenance":  false,
-		"external-attestation": false,
+		"no-plaintext-secrets":    false,
+		"stdio-transport":         false,
+		"local-only":              false,
+		"no-runtime-auto-install": false,
+		"verified-provenance":     false,
+		"external-attestation":    false,
 	}
 
 	for _, c := range result.Criteria {

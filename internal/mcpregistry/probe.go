@@ -31,14 +31,19 @@ func ProbeSkipReason(cfg mcphealth.ServerConfig) string {
 	return ""
 }
 
-// networkLauncherIn returns the name of the first package launcher found in the
-// command or in any whitespace-separated word of its arguments, or "".
+// networkLauncherIn returns the name of the package launcher the invocation
+// runs (including subcommand and env-wrapped launchers), or of the first
+// always-fetching launcher found in any whitespace-separated word of the
+// command or its arguments (a shell or cmd /c wrapper), or "".
 func networkLauncherIn(command string, args []string) string {
+	if launcherFetches(command, args) {
+		return commandName(command)
+	}
 	words := append([]string{command}, args...)
 	for _, w := range words {
 		for _, field := range strings.Fields(w) {
 			if LaunchesFromNetwork(field) {
-				return launcherName(field)
+				return commandName(field)
 			}
 		}
 	}
@@ -48,6 +53,6 @@ func networkLauncherIn(command string, args []string) string {
 // isSelfServer reports whether cfg launches qsdev's own MCP server
 // (`qsdev mcp serve ...`).
 func isSelfServer(cfg mcphealth.ServerConfig) bool {
-	return launcherName(cfg.Command) == branding.Get().AppName &&
+	return commandName(cfg.Command) == branding.Get().AppName &&
 		len(cfg.Args) >= 2 && cfg.Args[0] == "mcp" && cfg.Args[1] == "serve"
 }

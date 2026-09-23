@@ -57,11 +57,11 @@ func TestMcpGrade_GradesConfiguredDefinitionNotRegistry(t *testing.T) {
 		t.Errorf("grade = %q, want %q for a plaintext-token npx -y server", got.Grade, mcpregistry.ComplianceBasic)
 	}
 	want := map[string]bool{
-		"no-plaintext-secrets":   false,
-		"local-only":             false,
-		"no-npx-dash-y":          false,
-		"verified-provenance":    false,
-		criterionMatchesRegistry: false,
+		"no-plaintext-secrets":    false,
+		"local-only":              false,
+		"no-runtime-auto-install": false,
+		"verified-provenance":     false,
+		criterionMatchesRegistry:  false,
 	}
 	for _, c := range got.Criteria {
 		if wantPassed, ok := want[c.Name]; ok && c.Passed != wantPassed {

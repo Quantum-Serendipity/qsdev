@@ -111,7 +111,8 @@ func (m TLSMaterial) ServerTLSConfig() (*tls.Config, error) {
 
 // trustedAgentFromCert extracts the verified client identity from a completed
 // mTLS handshake. It reads the leaf certificate of the first verified chain and
-// returns its Subject CommonName, falling back to the first DNS SAN. The
+// returns its Subject CommonName, falling back to the first DNS SAN and then the
+// first URI SAN (e.g. a SPIFFE ID such as spiffe://example.org/ci-bot). The
 // identity is cryptographically trustworthy precisely because it is taken from
 // VerifiedChains (chains the TLS stack already validated against ClientCAs), not
 // from the raw PeerCertificates the client merely presented. It reports false
@@ -127,6 +128,14 @@ func trustedAgentFromCert(cs *tls.ConnectionState) (string, bool) {
 	for _, dns := range leaf.DNSNames {
 		if d := strings.TrimSpace(dns); d != "" {
 			return d, true
+		}
+	}
+	for _, u := range leaf.URIs {
+		if u == nil {
+			continue
+		}
+		if s := strings.TrimSpace(u.String()); s != "" {
+			return s, true
 		}
 	}
 	return "", false

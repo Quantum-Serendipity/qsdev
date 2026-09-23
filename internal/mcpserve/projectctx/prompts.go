@@ -157,6 +157,6 @@ Steps:
 3. Register the qsdev universal server as a stdio MCP server for %[1]q (command: "qsdev mcp serve"). Use the framework's own MCP configuration mechanism (for Claude Code this is .mcp.json).
 4. Verify the framework can call qsdev_project_info and qsdev_doctor through the server.
 
-Produce the exact configuration snippet for %[1]q and the steps to verify the connection, respecting the framework's tool ceiling (request tool pruning if the framework caps the tool count).`, framework)
+Produce the exact configuration snippet for %[1]q and the steps to verify the connection. If the framework caps the number of tools it loads, report which qsdev tools would exceed the cap rather than assuming they are available.`, framework)
 	return userMessage("AI framework configuration", text), nil
 }

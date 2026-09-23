@@ -25,28 +25,69 @@ func (s *Server) mountTool(reg spi.ToolRegistration) {
 // succeeds, adds it to the underlying server. A duplicate tool name across the
 // composite surface is skipped with a logged warning rather than aborting
 // construction, so a single colliding adapter cannot prevent the server from
-// starting — the first registration wins.
+// starting — the first registration wins, except that a generic tool reclaims
+// its name from an adapter (see catalog), replacing the adapter's tool.
 func (s *Server) mountToolOwned(reg spi.ToolRegistration, owner string) {
-	if err := s.catalog.addTool(reg.Name, owner); err != nil {
+	displaced, err := s.catalog.addTool(reg.Name, owner)
+	if err != nil {
 		slog.Warn("skipping tool with duplicate name", "tool", reg.Name, "owner", owner, "error", err)
 		return
 	}
+	warnDisplaced("tool", reg.Name, displaced)
 	s.mcp.AddTool(buildMCPTool(reg), s.toolHandler(reg))
+}
+
+// warnDisplaced logs that a generic registration replaced an adapter's
+// registration of the same key; it is a no-op when nothing was displaced.
+func warnDisplaced(kind, key, displaced string) {
+	if displaced != "" {
+		slog.Warn("generic "+kind+" replaces an adapter registration of the same name",
+			kind, key, "displaced_owner", displaced)
+	}
 }
 
 // buildMCPTool builds an mcp.Tool from a registration. When an InputSchema is
 // supplied it is marshaled and used verbatim as the raw JSON Schema; otherwise
-// a permissive empty-object schema is produced.
+// (or when marshaling fails, which is logged) a permissive empty-object schema
+// is produced. The advertised annotations come solely from the registration,
+// identically on both paths, so a tool's safety hints never depend on whether
+// it declares a schema.
 func buildMCPTool(reg spi.ToolRegistration) mcp.Tool {
-	if len(reg.InputSchema) > 0 {
-		if raw, err := json.Marshal(reg.InputSchema); err == nil {
-			return mcp.NewToolWithRawSchema(reg.Name, reg.Description, raw)
-		}
+	var tool mcp.Tool
+	raw, err := marshalSchema(reg.InputSchema)
+	switch {
+	case err != nil:
 		// A schema that fails to marshal is a programming error in the
-		// registration; fall through to a permissive schema rather than
-		// panicking so a single bad tool cannot take down the server.
+		// registration; fall back to a permissive schema rather than panicking
+		// so a single bad tool cannot take down the server.
+		slog.Warn("tool input schema failed to marshal; advertising a permissive schema",
+			"tool", reg.Name, "error", err)
+		tool = mcp.NewTool(reg.Name, mcp.WithDescription(reg.Description))
+	case raw != nil:
+		tool = mcp.NewToolWithRawSchema(reg.Name, reg.Description, raw)
+	default:
+		tool = mcp.NewTool(reg.Name, mcp.WithDescription(reg.Description))
 	}
-	return mcp.NewTool(reg.Name, mcp.WithDescription(reg.Description))
+	tool.Annotations = mcp.ToolAnnotation{
+		ReadOnlyHint:    reg.Annotations.ReadOnly,
+		DestructiveHint: reg.Annotations.Destructive,
+		IdempotentHint:  reg.Annotations.Idempotent,
+		OpenWorldHint:   reg.Annotations.OpenWorld,
+	}
+	return tool
+}
+
+// marshalSchema encodes a registration's input schema, returning nil when none
+// is declared.
+func marshalSchema(schema map[string]any) (json.RawMessage, error) {
+	if len(schema) == 0 {
+		return nil, nil
+	}
+	raw, err := json.Marshal(schema)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling input schema: %w", err)
+	}
+	return raw, nil
 }
 
 // toolHandler returns the mcp-go handler that bridges a CallToolRequest through
@@ -122,10 +163,12 @@ func (s *Server) mountResource(reg spi.ResourceRegistration) {
 // resources stay on AddResource. The catalog records the raw (template) URI in
 // both cases, so collision detection is unchanged.
 func (s *Server) mountResourceOwned(reg spi.ResourceRegistration, owner string) {
-	if err := s.catalog.addResource(reg.URI, owner); err != nil {
+	displaced, err := s.catalog.addResource(reg.URI, owner)
+	if err != nil {
 		slog.Warn("skipping resource with duplicate URI", "uri", reg.URI, "owner", owner, "error", err)
 		return
 	}
+	warnDisplaced("resource", reg.URI, displaced)
 	read := s.resourceReadHandler(reg)
 	if isTemplateURI(reg.URI) {
 		tmpl := mcp.NewResourceTemplate(reg.URI, reg.Name,
@@ -250,9 +293,23 @@ func resourceContentsToMCP(defaultURI string, res *spi.ResourceResult) []mcp.Res
 	return out
 }
 
-// mountPrompt converts a neutral prompt registration into mcp-go types and adds
-// it to the underlying server.
+// mountPrompt mounts a generic (non-adapter) prompt, recorded under the generic
+// owner.
 func (s *Server) mountPrompt(reg spi.PromptRegistration) {
+	s.mountPromptOwned(reg, genericOwner)
+}
+
+// mountPromptOwned records reg's name under owner in the catalog and, when that
+// succeeds, converts it into mcp-go types and adds it to the underlying server.
+// A duplicate prompt name is skipped with a logged warning under the same
+// collision policy as tools, rather than silently replacing the earlier prompt.
+func (s *Server) mountPromptOwned(reg spi.PromptRegistration, owner string) {
+	displaced, err := s.catalog.addPrompt(reg.Name, owner)
+	if err != nil {
+		slog.Warn("skipping prompt with duplicate name", "prompt", reg.Name, "owner", owner, "error", err)
+		return
+	}
+	warnDisplaced("prompt", reg.Name, displaced)
 	prompt := mcp.Prompt{
 		Name:        reg.Name,
 		Description: reg.Description,
@@ -345,6 +402,7 @@ func (s *Server) callContext(ctx context.Context, name string, meta map[string]a
 	client := clientInfoFromContext(ctx)
 	return &spi.ToolCallContext{
 		AgentID:     authoritativeAgentID(ctx, client, meta),
+		Principal:   transportPrincipal(ctx, client),
 		Client:      client,
 		ProjectRoot: s.projectRoot,
 		ToolName:    name,

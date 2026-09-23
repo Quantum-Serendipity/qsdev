@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -243,6 +244,55 @@ func TestToolListReflectsState(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("target tool %q not present in tool_list", target)
+	}
+}
+
+// TestToolListReflectsMidSessionStateChange is the regression test for a ledger
+// snapshotted at server start: after the state file changes (as `qsdev enable`
+// does while the server runs), the SAME ProjectContext must report the new
+// enabled flag, and an unreadable ledger must keep serving the last good one
+// with a warning.
+func TestToolListReflectsMidSessionStateChange(t *testing.T) {
+	t.Parallel()
+	dir, pc := newGoProject(t)
+	all := pc.toolReg.All()
+	if len(all) == 0 {
+		t.Skip("tool registry empty; nothing to assert")
+	}
+	target := all[0].Name
+
+	enabledOf := func(res *spi.ToolResult) any {
+		t.Helper()
+		for _, tm := range res.Structured.(map[string]any)["tools"].([]map[string]any) {
+			if tm["name"] == target {
+				return tm["enabled"]
+			}
+		}
+		t.Fatalf("target tool %q not present in tool_list", target)
+		return nil
+	}
+
+	if got := enabledOf(callTool(t, pc, toolToolList, nil)); got != false {
+		t.Fatalf("before enable: enabled = %v, want false", got)
+	}
+
+	statePath := ".devinit/.qsdev-init-state.yaml"
+	writeFile(t, dir, statePath, "files: {}\nenabled_tools:\n  "+target+": true\n")
+	if got := enabledOf(callTool(t, pc, toolToolList, nil)); got != true {
+		t.Errorf("after enable mid-session: enabled = %v, want true", got)
+	}
+
+	writeFile(t, dir, statePath, "files: [not, a, map\n")
+	later := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(filepath.Join(dir, statePath), later, later); err != nil {
+		t.Fatal(err)
+	}
+	res := callTool(t, pc, toolToolList, nil)
+	if got := enabledOf(res); got != true {
+		t.Errorf("with a corrupt ledger: enabled = %v, want the last good value true", got)
+	}
+	if w, _ := res.Structured.(map[string]any)["warnings"].([]string); len(w) == 0 {
+		t.Error("expected a warning for the unreadable ledger")
 	}
 }
 

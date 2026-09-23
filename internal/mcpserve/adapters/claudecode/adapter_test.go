@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
@@ -448,5 +450,89 @@ func TestHookScriptName(t *testing.T) {
 		if got := hookScriptName(tt.command); got != tt.want {
 			t.Errorf("hookScriptName(%q) = %q, want %q", tt.command, got, tt.want)
 		}
+	}
+}
+
+// renderedSettings runs the config-render tool (dry-run) against root and
+// returns its structured payload and the rendered settings.json content.
+func renderedSettings(t *testing.T, root string) (map[string]any, string) {
+	t.Helper()
+	reg := toolByName(t, New(), toolConfigRender)
+	res, err := reg.Handler(context.Background(), callCtx(root), &spi.ToolRequest{Name: toolConfigRender, Arguments: map[string]any{}})
+	if err != nil || res.IsError {
+		t.Fatalf("render: err=%v result=%+v", err, res)
+	}
+	structured := res.Structured.(map[string]any)
+	for _, f := range structured["files"].([]map[string]any) {
+		if filepath.Base(f["path"].(string)) == "settings.json" {
+			return structured, f["content"].(string)
+		}
+	}
+	t.Fatal("no settings.json rendered")
+	return nil, ""
+}
+
+// TestConfigRenderIncludesSecurityHooks is the regression test for a render
+// whose PolicyInput carried no Hooks: the preview (and a fresh write) must carry
+// the always-on security hooks `qsdev init` generates — the package guard
+// (safety block) and self-protection — and must name any enabled hook choice the
+// framework-agnostic render cannot express instead of silently dropping it.
+func TestConfigRenderIncludesSecurityHooks(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name           string
+		qsdevYAML      string
+		wantUnrendered []string
+	}{
+		{"standard preset", "version: 1\nclaude_code:\n  permission_level: standard\n", nil},
+		{"strict security level", "version: 1\nsecurity:\n  level: strict\n", []string{"auto_format", "pre_commit", "audit_log"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := presentRoot(t)
+			if err := os.WriteFile(filepath.Join(root, ".qsdev.yaml"), []byte(tt.qsdevYAML), 0o644); err != nil {
+				t.Fatalf("writing .qsdev.yaml: %v", err)
+			}
+			structured, content := renderedSettings(t, root)
+			for _, want := range []string{"package-guard.py", "selfprotect"} {
+				if !strings.Contains(content, want) {
+					t.Errorf("rendered settings.json lacks the %q hook:\n%s", want, content)
+				}
+			}
+			got, _ := structured["unrendered_hooks"].([]string)
+			if !slices.Equal(got, tt.wantUnrendered) {
+				t.Errorf("unrendered_hooks = %v, want %v", got, tt.wantUnrendered)
+			}
+		})
+	}
+}
+
+// TestUnparseableConfigIsNotConfigured is the regression test for silently
+// reporting the default preset when .qsdev.yaml is present but broken: every
+// policy-derived tool must degrade to not_configured carrying the parse error.
+func TestUnparseableConfigIsNotConfigured(t *testing.T) {
+	t.Parallel()
+	root := presentRoot(t)
+	if err := os.WriteFile(filepath.Join(root, ".qsdev.yaml"), []byte("version: 1\nclaude_codee:\n  permission_level: standard\n"), 0o644); err != nil {
+		t.Fatalf("writing .qsdev.yaml: %v", err)
+	}
+	a := New()
+	for _, name := range []string{toolPermissions, toolEnforcementGaps, toolConfigRender} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			reg := toolByName(t, a, name)
+			res, err := reg.Handler(context.Background(), callCtx(root), &spi.ToolRequest{Name: name, Arguments: map[string]any{}})
+			if err != nil {
+				t.Fatalf("handler Go error: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("expected IsError for a broken config, got %+v", res.Structured)
+			}
+			m := res.Structured.(map[string]any)
+			if m["status"] != "not_configured" || m["error"] == nil {
+				t.Errorf("structured = %v, want not_configured with the parse error", m)
+			}
+		})
 	}
 }

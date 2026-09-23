@@ -132,7 +132,7 @@ func (s *Server) mountAdapters(ctx context.Context) {
 			s.mountResourceOwned(r, owner)
 		}
 		for _, p := range a.Prompts() {
-			s.mountPrompt(p)
+			s.mountPromptOwned(p, owner)
 		}
 	}
 }

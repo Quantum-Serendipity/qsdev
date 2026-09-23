@@ -17,14 +17,21 @@ import (
 // client name without a live transport.
 type fakeClientSession struct {
 	info mcp.Implementation
+	// id overrides the reported session id; empty reports "test-session".
+	id string
 }
 
 func (f *fakeClientSession) Initialize()                                         {}
 func (f *fakeClientSession) Initialized() bool                                   { return true }
 func (f *fakeClientSession) NotificationChannel() chan<- mcp.JSONRPCNotification { return nil }
-func (f *fakeClientSession) SessionID() string                                   { return "test-session" }
-func (f *fakeClientSession) GetClientInfo() mcp.Implementation                   { return f.info }
-func (f *fakeClientSession) SetClientInfo(info mcp.Implementation)               { f.info = info }
+func (f *fakeClientSession) SessionID() string {
+	if f.id != "" {
+		return f.id
+	}
+	return "test-session"
+}
+func (f *fakeClientSession) GetClientInfo() mcp.Implementation     { return f.info }
+func (f *fakeClientSession) SetClientInfo(info mcp.Implementation) { f.info = info }
 func (f *fakeClientSession) GetClientCapabilities() mcp.ClientCapabilities {
 	return mcp.ClientCapabilities{}
 }

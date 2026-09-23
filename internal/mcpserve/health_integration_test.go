@@ -2,15 +2,16 @@
 
 // Package mcpserve_test's integration-tagged suite spawns the real qsdev binary
 // as a child process and health-checks it over stdio. It is gated behind the
-// `integration` build tag because it (1) builds the whole qsdev program and
-// (2) executes the resulting binary — both of which may be unavailable in a
-// sandboxed CI step. Run it explicitly with:
+// `integration` build tag because it builds the whole qsdev program and
+// executes the result, which is slower than the unit suite. CI runs it (the
+// "Integration tests" step of the Linux test job); run it locally with:
 //
-//	go test -tags integration -run TestHealthCheckIntegration ./internal/mcpserve/...
+//	go test -tags integration -run TestHealthCheckIntegration ./internal/mcpserve/
 //
-// When the binary cannot be built or executed in the current environment the
-// test self-skips with a clear message rather than failing; the untagged suite
-// (integration_test.go) is the must-pass gate.
+// The only environmental precondition it skips on is a missing Go toolchain.
+// Once the toolchain is present, a failing build or a binary that cannot start
+// (e.g. an init-time panic) is exactly the regression this suite exists to
+// catch, so both fail the test rather than skipping it.
 package mcpserve_test
 
 import (
@@ -46,15 +47,15 @@ func TestHealthCheckIntegration(t *testing.T) {
 	defer cancelBuild()
 	build := exec.CommandContext(buildCtx, goBin, "build", "-o", binPath, universalImportPath)
 	if out, berr := build.CombinedOutput(); berr != nil {
-		t.Skipf("could not build qsdev binary (environment may forbid it): %v\n%s", berr, out)
+		t.Fatalf("building qsdev binary: %v\n%s", berr, out)
 	}
 
-	// Pre-flight: confirm the environment actually permits executing the built
-	// binary. A sandbox that blocks running binaries fails here, and we skip.
+	// Pre-flight: the built binary must start and exit cleanly. A startup panic
+	// (duplicate adapter registration, catalog load failure) surfaces here.
 	probeCtx, cancelProbe := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelProbe()
-	if perr := exec.CommandContext(probeCtx, binPath, "--help").Run(); perr != nil {
-		t.Skipf("built qsdev binary cannot be executed in this environment: %v", perr)
+	if out, perr := exec.CommandContext(probeCtx, binPath, "--help").CombinedOutput(); perr != nil {
+		t.Fatalf("built qsdev binary failed to run --help: %v\n%s", perr, out)
 	}
 
 	// A minimal initialized project for the server to root at.

@@ -14,7 +14,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 )
 
-// tierStandard mirrors projectctx's standard pruning tier.
+// tierStandard mirrors projectctx's standard tool tier.
 const tierStandard = 1
 
 // Tools returns the two devenv tool registrations bound to projectRoot.
@@ -29,11 +29,12 @@ func Tools(projectRoot string) []spi.ToolRegistration {
 			InputSchema: envInfoSchema(),
 			Category:    middleware.CategoryEnvironment,
 			Tier:        tierStandard,
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     env.handle,
 		},
 		{
 			Name:        "qsdev_nix_run",
-			Description: "Execute a Nix package via `nix run <command> -- <args>` in a dedicated process group with a timeout (default 30s). Captures stdout, stderr, exit code, and duration; on timeout the entire process group is killed. Limited to 3 concurrent executions.",
+			Description: "Execute a Nix package via `nix run <command> -- <args>` in a dedicated process group with a timeout (default 30s, max 10m). Captures stdout, stderr (each capped at 1 MiB; excess is discarded and flagged *_truncated), exit code, and duration; on timeout the entire process group is killed. Limited to 3 concurrent executions.",
 			InputSchema: nixRunSchema(),
 			Category:    middleware.CategoryProcess,
 			Tier:        tierStandard,
@@ -66,7 +67,7 @@ func nixRunSchema() map[string]any {
 				"description": "Arguments passed to the program after `--`.",
 			},
 			"stdin":   map[string]any{"type": "string", "description": "Optional standard input piped to the program."},
-			"timeout": map[string]any{"type": "string", "description": "Timeout as a Go duration (e.g. \"30s\") or seconds. Default 30s."},
+			"timeout": map[string]any{"type": "string", "description": "Timeout as a Go duration (e.g. \"30s\") or seconds. Default 30s; values above 10m are clamped."},
 		},
 		"required": []any{"command"},
 	}

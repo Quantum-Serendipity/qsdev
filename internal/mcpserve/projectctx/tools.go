@@ -55,6 +55,7 @@ func (pc *ProjectContext) Tools() []spi.ToolRegistration {
 			InputSchema: toolutil.EmptyObjectSchema(),
 			Category:    middleware.CategoryStatus,
 			Tier:        int(TierCritical),
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     pc.handleProjectInfo,
 		},
 		{
@@ -63,6 +64,7 @@ func (pc *ProjectContext) Tools() []spi.ToolRegistration {
 			InputSchema: optionalBoolSchema("verbose", "Include the full per-tool detail for every checked tool, not just failures."),
 			Category:    middleware.CategoryDiagnostics,
 			Tier:        int(TierStandard),
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     pc.handleDoctor,
 		},
 		{
@@ -71,6 +73,7 @@ func (pc *ProjectContext) Tools() []spi.ToolRegistration {
 			InputSchema: optionalBoolSchema("include_local", "Merge .qsdev.local.yaml developer overrides into the returned configuration."),
 			Category:    middleware.CategoryStatus,
 			Tier:        int(TierStandard),
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     pc.handleConfigShow,
 		},
 		{
@@ -87,6 +90,7 @@ func (pc *ProjectContext) Tools() []spi.ToolRegistration {
 			InputSchema: toolutil.EmptyObjectSchema(),
 			Category:    middleware.CategoryStatus,
 			Tier:        int(TierStandard),
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     pc.handleToolList,
 		},
 		{
@@ -95,6 +99,7 @@ func (pc *ProjectContext) Tools() []spi.ToolRegistration {
 			InputSchema: optionalBoolSchema("force", "Bypass any cached detection result and re-scan from scratch (detection always re-scans)."),
 			Category:    middleware.CategoryStatus,
 			Tier:        int(TierCritical),
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     pc.handleDetect,
 		},
 	}
@@ -235,10 +240,12 @@ func (pc *ProjectContext) probeHealth(ctx context.Context, d *mcpregistry.McpSer
 }
 
 // handleToolList delegates to the tool lifecycle registry, layering on the
-// enabled/disabled state recorded in the project's state ledger.
+// enabled/disabled state recorded in the project's state ledger as it is now
+// (reloaded when the state file changes, not the snapshot from server start).
 func (pc *ProjectContext) handleToolList(_ context.Context, _ *spi.ToolCallContext, _ *spi.ToolRequest) (*spi.ToolResult, error) {
 	all := pc.toolReg.All()
-	enabledMap := pc.state.EnabledTools
+	st, warn := pc.ledger.current()
+	enabledMap := st.EnabledTools
 
 	tools := make([]map[string]any, 0, len(all))
 	enabledCount := 0
@@ -255,6 +262,9 @@ func (pc *ProjectContext) handleToolList(_ context.Context, _ *spi.ToolCallConte
 	}
 
 	structured := map[string]any{"count": len(tools), "enabled": enabledCount, "tools": tools}
+	if warn != "" {
+		structured["warnings"] = []string{warn}
+	}
 	text := fmt.Sprintf("%d managed tools (%d enabled)", len(tools), enabledCount)
 	return &spi.ToolResult{Text: text, Structured: structured}, nil
 }

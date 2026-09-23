@@ -155,12 +155,21 @@ func serveHTTPWithShutdown(ctx context.Context, httpSrv *http.Server, useTLS boo
 // authoritative cc.AgentID. A request without a verified chain (plain HTTP, or a
 // TLS config that does not require client certs) passes through unchanged and
 // falls back to the self-asserted identity.
+//
+// A request that DOES carry a verified chain whose leaf yields no usable name
+// (no CN, DNS SAN, or URI SAN) is rejected with 403 before any handler runs:
+// letting it through would silently downgrade a cert-authenticated caller to the
+// self-asserted _meta/clientInfo identity, which any CA-signed holder could set
+// to an allow-listed agent id (fail closed).
 func certIdentityMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.TLS != nil && len(r.TLS.VerifiedChains) > 0 {
-			if id, ok := trustedAgentFromCert(r.TLS); ok {
-				r = r.WithContext(withTrustedAgent(r.Context(), id))
+			id, ok := trustedAgentFromCert(r.TLS)
+			if !ok {
+				http.Error(w, "forbidden: verified client certificate carries no usable identity", http.StatusForbidden)
+				return
 			}
+			r = r.WithContext(withTrustedAgent(r.Context(), id))
 		}
 		next.ServeHTTP(w, r)
 	})

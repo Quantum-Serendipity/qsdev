@@ -2,10 +2,11 @@
 
 // Package container's integration-tagged suite builds the real Docker image and
 // exercises the running gateway container. It is gated behind the `integration`
-// build tag because it needs a Docker daemon and the full build toolchain, both
-// of which are commonly unavailable in a sandboxed CI step. Each test self-skips
-// with a clear message when docker is absent rather than failing; the untagged
-// suite (container_test.go) is the must-pass gate.
+// build tag because it needs a Docker daemon and builds the full image. Each
+// test self-skips with a clear message only when docker or its daemon is
+// unavailable. Once the daemon is reachable, a failing image build is exactly
+// the regression this suite exists to catch, so it fails the test rather than
+// skipping it.
 //
 // Run explicitly with:
 //
@@ -60,7 +61,7 @@ func buildImage(t *testing.T, docker string) {
 		"-f", "build/docker/Dockerfile", "-t", imageTag, ".")
 	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Skipf("docker build failed (environment may forbid it): %v\n%s", err, out)
+		t.Fatalf("docker build failed: %v\n%s", err, out)
 	}
 }
 

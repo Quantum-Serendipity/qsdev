@@ -18,7 +18,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 )
 
-// Tier values mirror projectctx's pruning tiers: lower is more core. policy_check
+// Tier values mirror projectctx's tool tiers: lower is more core. policy_check
 // is a fast-path critical tool; the external-API tools are standard tier.
 const (
 	tierCritical = 0
@@ -26,10 +26,12 @@ const (
 )
 
 // Tools returns the three security tool registrations bound to projectRoot.
-func Tools(projectRoot string) []spi.ToolRegistration {
+// enforced is the Guardrail policy the running server installed (nil when it
+// narrows nothing); qsdev_policy_check reports its deny set as MCP-enforced.
+func Tools(projectRoot string, enforced *middleware.Policy) []spi.ToolRegistration {
 	cv := newCredentialVendor()
 	scanner := newSecurityScanner(projectRoot)
-	checker := newPolicyChecker(projectRoot)
+	checker := newPolicyChecker(projectRoot, enforced)
 
 	return []spi.ToolRegistration{
 		{
@@ -46,6 +48,7 @@ func Tools(projectRoot string) []spi.ToolRegistration {
 			InputSchema: securityScanSchema(),
 			Category:    middleware.CategorySecurity,
 			Tier:        tierStandard,
+			Annotations: spi.ReadOnlyAnnotations(true),
 			Handler:     scanner.handle,
 		},
 		{
@@ -54,6 +57,7 @@ func Tools(projectRoot string) []spi.ToolRegistration {
 			InputSchema: policyCheckSchema(),
 			Category:    middleware.CategoryPolicy,
 			Tier:        tierCritical,
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     checker.handle,
 		},
 	}

@@ -13,7 +13,7 @@ func TestMountTools(t *testing.T) {
 
 	dir := t.TempDir()
 	srv := New(WithProjectRoot(dir))
-	srv.MountTools(tools.All(dir))
+	srv.MountTools(tools.All(dir, nil))
 
 	listed := srv.MCPServer().ListTools()
 	want := []string{

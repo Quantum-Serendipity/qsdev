@@ -10,6 +10,7 @@
 package tools
 
 import (
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/security"
@@ -18,10 +19,12 @@ import (
 
 // All returns every security and devenv tool registration bound to projectRoot,
 // ready to be mounted on the universal server. The order is stable: security,
-// then devenv, then status.
-func All(projectRoot string) []spi.ToolRegistration {
+// then devenv, then status. enforced is the Guardrail policy installed in the
+// server's middleware chain (nil when nothing is narrowed); qsdev_policy_check
+// reports from it so "reported enforced" is exactly what is enforced.
+func All(projectRoot string, enforced *middleware.Policy) []spi.ToolRegistration {
 	var regs []spi.ToolRegistration
-	regs = append(regs, security.Tools(projectRoot)...)
+	regs = append(regs, security.Tools(projectRoot, enforced)...)
 	regs = append(regs, devenv.Tools(projectRoot)...)
 	regs = append(regs, status.Tools(projectRoot)...)
 	return regs

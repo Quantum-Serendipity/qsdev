@@ -3,7 +3,6 @@
 package devenv
 
 import (
-	"bytes"
 	"context"
 	"os/exec"
 	"strings"
@@ -21,9 +20,10 @@ func runProcessGroup(ctx context.Context, name string, argv []string, stdin stri
 
 	cmd := exec.CommandContext(ctx, name, argv...) //nolint:gosec // argv is an explicit array; no shell interpolation
 
-	var outBuf, errBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
+	outBuf, errBuf := newCappedBuffer(maxProcOutputBytes), newCappedBuffer(maxProcOutputBytes)
+	cmd.Stdout = outBuf
+	cmd.Stderr = errBuf
+	cmd.WaitDelay = procWaitDelay
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
@@ -41,10 +41,12 @@ func runProcessGroup(ctx context.Context, name string, argv []string, stdin stri
 	}
 
 	return procResult{
-		stdout:   outBuf.String(),
-		stderr:   errBuf.String(),
-		exitCode: exitCode,
-		timedOut: timedOut,
-		duration: time.Since(start),
+		stdout:          outBuf.String(),
+		stderr:          errBuf.String(),
+		stdoutTruncated: outBuf.truncated,
+		stderrTruncated: errBuf.truncated,
+		exitCode:        exitCode,
+		timedOut:        timedOut,
+		duration:        time.Since(start),
 	}
 }

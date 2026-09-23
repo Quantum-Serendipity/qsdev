@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan"
 	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan/vulnscantest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // writeConfig writes a .qsdev.yaml fixture into dir and returns its path.
@@ -54,7 +56,7 @@ func call(t *testing.T, h spi.ToolHandler, args map[string]any) *spi.ToolResult 
 
 const policyFixture = `version: 1
 claude_code:
-  permission_level: strict
+  permission_level: minimal
 tools:
   enabled:
     - semgrep
@@ -66,7 +68,7 @@ func TestPolicyCheckEvaluatesDenyRule(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	writeConfig(t, dir, policyFixture)
-	pc := newPolicyChecker(dir)
+	pc := newPolicyChecker(dir, nil)
 
 	t.Run("denied tool", func(t *testing.T) {
 		// A denied verdict is a normal evaluation, not a tool error: IsError stays
@@ -93,7 +95,7 @@ func TestPolicyCheckEvaluatesDenyRule(t *testing.T) {
 
 	t.Run("unknown tool falls through to default", func(t *testing.T) {
 		eval := structuredMap(t, call(t, pc.handle, map[string]any{"tool_name": "mystery"}))["evaluation"].(policyDecision)
-		// permission_level: strict escalates the default to "ask".
+		// permission_level: minimal (a plan-mode preset) escalates the default to "ask".
 		if eval.Decision != decisionAsk || eval.Source != sourceDefault {
 			t.Errorf("got %+v, want ask/default", eval)
 		}
@@ -101,41 +103,187 @@ func TestPolicyCheckEvaluatesDenyRule(t *testing.T) {
 }
 
 // TestPolicyCheckReportsEnforcedDenySet proves qsdev_policy_check reports the MCP
-// Guardrail's enforced deny set from the SAME middleware.PolicyFromConfig
-// derivation the running server installs (via projectPolicy/chainForMode), so a
-// tool "reported denied" and a tool "actually blocked on an MCP call" cannot
-// diverge (BL-P1-3, S7).
+// Guardrail's enforced deny set from the Policy object the running server
+// installed (via projectPolicy/chainForMode), so a tool "reported denied" and a
+// tool "actually blocked on an MCP call" cannot diverge (BL-P1-3, S7).
 func TestPolicyCheckReportsEnforcedDenySet(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	writeConfig(t, dir, "version: 1\ntools:\n  disabled:\n    - qsdev_security_scan\n    - qsdev_nix_run\n")
-	pc := newPolicyChecker(dir)
-
-	// Inventory mode (no tool_name) surfaces the enforced deny set.
-	reported, ok := structuredMap(t, call(t, pc.handle, nil))["mcp_enforced_deny"].([]string)
-	if !ok {
-		t.Fatalf("mcp_enforced_deny missing or wrong type")
-	}
-
-	// Independently derive what the server enforces from the same config + function.
 	cfg, err := config.ParseQsdevConfig(filepath.Join(dir, ".qsdev.yaml"))
 	if err != nil {
 		t.Fatalf("parse config: %v", err)
 	}
-	want := middleware.PolicyFromConfig(cfg).DenyToolSet()
+	installed := middleware.PolicyFromConfig(cfg)
+	pc := newPolicyChecker(dir, installed)
 
-	if !reflect.DeepEqual(reported, want) {
+	// Inventory mode (no tool_name) surfaces the enforced deny set.
+	m := structuredMap(t, call(t, pc.handle, nil))
+	reported, ok := m["mcp_enforced_deny"].([]string)
+	if !ok {
+		t.Fatalf("mcp_enforced_deny missing or wrong type")
+	}
+	if want := installed.DenyToolSet(); !reflect.DeepEqual(reported, want) {
 		t.Errorf("reported enforced deny = %v, want %v (reported must equal enforced)", reported, want)
 	}
 	// Guard against a vacuous pass where both sides are empty.
 	if len(reported) != 2 {
 		t.Fatalf("enforced deny set = %v, want the 2 disabled tools", reported)
 	}
+	if w := m["warnings"]; w != nil {
+		t.Errorf("file and enforced policy agree; want no warnings, got %v", w)
+	}
+}
+
+// TestPolicyCheckEnforcedDenyIgnoresFileDrift is the regression test for
+// reporting a deny set the server does not enforce: after .qsdev.yaml is edited
+// mid-session (the Guardrail keeps its startup snapshot until restart), or when
+// policy_path points at another file, mcp_enforced_deny must still be the
+// installed policy's set, and the gap must be surfaced as a warning.
+func TestPolicyCheckEnforcedDenyIgnoresFileDrift(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Server started with nothing disabled: the installed Guardrail policy is nil.
+	pc := newPolicyChecker(dir, nil)
+	// The config now disables a tool (edited after startup).
+	writeConfig(t, dir, "version: 1\ntools:\n  disabled:\n    - qsdev_credential_vend\n")
+	other := filepath.Join(dir, "other.yaml")
+	if err := os.WriteFile(other, []byte("version: 1\ntools:\n  disabled:\n    - qsdev_nix_run\n"), 0o644); err != nil {
+		t.Fatalf("write other policy: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		args     map[string]any
+		wantWarn string
+	}{
+		{"edited default config", map[string]any{}, "restart"},
+		{"non-default policy_path", map[string]any{"policy_path": "other.yaml"}, "hypothetical"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := structuredMap(t, call(t, pc.handle, tt.args))
+			if got, _ := m["mcp_enforced_deny"].([]string); len(got) != 0 {
+				t.Errorf("mcp_enforced_deny = %v, want empty (nothing is enforced until restart)", got)
+			}
+			warnings, _ := m["warnings"].([]string)
+			if len(warnings) == 0 || !strings.Contains(warnings[0], tt.wantWarn) {
+				t.Errorf("warnings = %v, want one mentioning %q", warnings, tt.wantWarn)
+			}
+		})
+	}
+}
+
+// TestPolicyCheckOverlayMatchesCanonicalResolver is the regression test for
+// policy_check's private overlay cascade: a project deny must win over a local
+// enable (union semantics, as the Guardrail enforces), and a local security.level
+// must not lower the project floor when deriving the default decision.
+func TestPolicyCheckOverlayMatchesCanonicalResolver(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name           string
+		project        string
+		local          string
+		tool           string
+		wantDecision   string
+		wantSource     string
+		wantViolations bool
+	}{
+		{
+			name:         "project deny beats local enable",
+			project:      "version: 1\ntools:\n  disabled:\n    - semgrep\n",
+			local:        "tools:\n  enabled:\n    - semgrep\n",
+			tool:         "semgrep",
+			wantDecision: decisionDenied,
+			wantSource:   sourceProject,
+		},
+		{
+			name:         "local deny beats project enable",
+			project:      "version: 1\ntools:\n  enabled:\n    - semgrep\n",
+			local:        "tools:\n  disabled:\n    - semgrep\n",
+			tool:         "semgrep",
+			wantDecision: decisionDenied,
+			wantSource:   sourceLocal,
+		},
+		{
+			name:           "local security level cannot lower the floor",
+			project:        "version: 1\nsecurity:\n  level: strict\n",
+			local:          "security:\n  level: baseline\n",
+			tool:           "unlisted",
+			wantDecision:   decisionAsk,
+			wantSource:     sourceDefault,
+			wantViolations: true,
+		},
+		{
+			name:         "local security level may raise it",
+			project:      "version: 1\nsecurity:\n  level: baseline\n",
+			local:        "security:\n  level: strict\n",
+			tool:         "unlisted",
+			wantDecision: decisionAsk,
+			wantSource:   sourceDefault,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeConfig(t, dir, tt.project)
+			if err := os.WriteFile(filepath.Join(dir, branding.Get().LocalConfig), []byte(tt.local), 0o644); err != nil {
+				t.Fatalf("write local overlay: %v", err)
+			}
+			m := structuredMap(t, call(t, newPolicyChecker(dir, nil).handle, map[string]any{"tool_name": tt.tool}))
+			eval := m["evaluation"].(policyDecision)
+			if eval.Decision != tt.wantDecision || eval.Source != tt.wantSource {
+				t.Errorf("evaluation = %+v, want %s/%s", eval, tt.wantDecision, tt.wantSource)
+			}
+			violations, _ := m["floor_violations"].([]floorViolation)
+			levelViolation := slices.ContainsFunc(violations, func(v floorViolation) bool { return v.Field == "security.level" })
+			if levelViolation != tt.wantViolations {
+				t.Errorf("security.level floor violation = %v, want %v (%v)", levelViolation, tt.wantViolations, violations)
+			}
+		})
+	}
+}
+
+// TestDefaultDecisionForRealVocabulary is the regression test for a switch on
+// permission/security levels that do not exist: every valid preset and security
+// level must map to the intended default, in particular the restrictive
+// plan-mode "minimal" preset and the "strict" security level escalate to ask.
+func TestDefaultDecisionForRealVocabulary(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		permission string
+		security   string
+		want       string
+	}{
+		{"", "", decisionAllowed},
+		{"minimal", "", decisionAsk},
+		{"standard", "", decisionAllowed},
+		{"permissive", "", decisionAllowed},
+		{"custom", "", decisionAllowed},
+		{"supply-chain-only", "", decisionAllowed},
+		{"", "baseline", decisionAllowed},
+		{"", "enhanced", decisionAllowed},
+		{"", "strict", decisionAsk},
+		{"standard", "strict", decisionAsk},
+		{"minimal", "baseline", decisionAsk},
+	}
+	for _, tt := range tests {
+		t.Run(tt.permission+"/"+tt.security, func(t *testing.T) {
+			t.Parallel()
+			cfg := &types.QsdevConfig{}
+			cfg.ClaudeCode.PermissionLevel = tt.permission
+			cfg.Security.Level = tt.security
+			if got := defaultDecisionFor(cfg); got != tt.want {
+				t.Errorf("defaultDecisionFor(%q, %q) = %q, want %q", tt.permission, tt.security, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestPolicyCheckNotConfigured(t *testing.T) {
 	t.Parallel()
-	pc := newPolicyChecker(t.TempDir()) // no .qsdev.yaml present
+	pc := newPolicyChecker(t.TempDir(), nil) // no .qsdev.yaml present
 	res := call(t, pc.handle, map[string]any{"tool_name": "anything"})
 	if !res.IsError {
 		t.Fatal("expected IsError for missing policy")
@@ -158,7 +306,7 @@ func TestPolicyCheckWarnsOnMalformedLocalOverlay(t *testing.T) {
 	if err := os.WriteFile(localPath, []byte("tools:\n  enabled: [a, b\n"), 0o644); err != nil {
 		t.Fatalf("write local overlay: %v", err)
 	}
-	pc := newPolicyChecker(dir)
+	pc := newPolicyChecker(dir, nil)
 
 	res := call(t, pc.handle, map[string]any{"tool_name": "semgrep"})
 	if res.IsError {
@@ -246,7 +394,7 @@ func TestPolicyCheckRejectsPathTraversal(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	writeConfig(t, dir, policyFixture)
-	pc := newPolicyChecker(dir)
+	pc := newPolicyChecker(dir, nil)
 
 	cases := []struct {
 		name       string
@@ -297,7 +445,7 @@ func TestPolicyCheckFastPath(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := writeConfig(t, dir, policyFixture)
-	pc := newPolicyChecker(dir)
+	pc := newPolicyChecker(dir, nil)
 
 	// Warm the cache: semgrep is enabled in the fixture, so the verdict is allowed.
 	warm := structuredMap(t, call(t, pc.handle, map[string]any{"tool_name": "semgrep"}))["evaluation"].(policyDecision)

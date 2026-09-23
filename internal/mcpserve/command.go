@@ -185,7 +185,7 @@ func runServe(ctx context.Context, opts serveOptions) error {
 
 	// Mount the security and devenv tool surface (Unit 32.9). These are
 	// framework-agnostic and always visible, like the project context tools.
-	srv.MountTools(tools.All(root))
+	srv.MountTools(tools.All(root, policy))
 
 	if ctx == nil {
 		ctx = context.Background()

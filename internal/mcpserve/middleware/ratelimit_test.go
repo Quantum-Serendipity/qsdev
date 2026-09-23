@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -269,6 +270,60 @@ func TestRateLimitBucketEviction(t *testing.T) {
 	}
 	if _, ok := rl.limiter.buckets[bucketKey("active-bot", CategorySearch)]; !ok {
 		t.Error("active bucket should remain after eviction sweep")
+	}
+}
+
+// TestRateLimitKeyedOnPrincipalNotAgentID is the regression test for a bucket
+// keyed on the self-asserted agent id: a caller rotating its _meta agent id on
+// every call (same transport principal) must still exhaust one shared bucket.
+func TestRateLimitKeyedOnPrincipalNotAgentID(t *testing.T) {
+	t.Parallel()
+
+	clk := newFakeClock()
+	rl := RateLimit{limiter: newLimiter(limitsWith(CategoryCredential, Limit{Rate: 0, Burst: 2}), clk.Now)}
+	var allowed int
+	for i := 0; i < 5; i++ {
+		cc := &spi.ToolCallContext{
+			AgentID:   "rotated-" + strconv.Itoa(i),
+			Principal: "session:s1\x00client",
+			Category:  CategoryCredential,
+		}
+		var ran bool
+		if _, err := rl.Handle(context.Background(), cc, &spi.ToolRequest{}, okHandler(&ran, "x")); err != nil {
+			t.Fatal(err)
+		}
+		if ran {
+			allowed++
+		}
+	}
+	if allowed != 2 {
+		t.Errorf("allowed %d calls across rotated agent ids, want the burst of 2", allowed)
+	}
+	if n := len(rl.limiter.buckets); n != 1 {
+		t.Errorf("bucket count = %d, want 1 (one per principal, not per agent id)", n)
+	}
+}
+
+// TestRateLimitBucketMapIsCapped proves the bucket map cannot grow past
+// maxBuckets under a flood of distinct principals: full (idle-equivalent)
+// buckets are reclaimed first, and once only depleted buckets remain newcomers
+// share a per-category overflow bucket instead of each receiving a fresh one.
+func TestRateLimitBucketMapIsCapped(t *testing.T) {
+	t.Parallel()
+
+	clk := newFakeClock()
+	l := newLimiter(limitsWith(CategorySearch, Limit{Rate: 0, Burst: 1}), clk.Now)
+	// Each principal spends its only token, so no bucket is reclaimable.
+	for i := 0; i < maxBuckets+50; i++ {
+		l.allow("p"+strconv.Itoa(i), CategorySearch)
+	}
+	if n := len(l.buckets); n > maxBuckets+1 {
+		t.Fatalf("bucket count = %d, want <= %d", n, maxBuckets+1)
+	}
+	// The overflow bucket's single token went to the first newcomer past the
+	// cap; later newcomers are throttled rather than handed a fresh bucket.
+	if l.allow("late-newcomer", CategorySearch) {
+		t.Error("newcomer past the cap received a fresh bucket; want the exhausted overflow bucket")
 	}
 }
 

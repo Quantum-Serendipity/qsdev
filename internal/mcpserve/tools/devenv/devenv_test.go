@@ -302,3 +302,120 @@ func TestNixRunExecutes(t *testing.T) {
 		t.Errorf("expected an exit_code in the result; got %v", structured)
 	}
 }
+
+// TestCappedBuffer proves the output writer retains at most its limit, reports
+// every write as fully consumed (so the child's pipe keeps draining), and flags
+// truncation only when bytes were actually discarded.
+func TestCappedBuffer(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		limit         int
+		writes        []string
+		want          string
+		wantTruncated bool
+	}{
+		{"under limit", 8, []string{"abc", "de"}, "abcde", false},
+		{"exactly limit", 4, []string{"ab", "cd"}, "abcd", false},
+		{"split write crosses limit", 4, []string{"abc", "def"}, "abcd", true},
+		{"writes after full", 2, []string{"ab", "c", "d"}, "ab", true},
+		{"empty write at limit", 2, []string{"ab", ""}, "ab", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			b := newCappedBuffer(tt.limit)
+			for _, w := range tt.writes {
+				n, err := b.Write([]byte(w))
+				if err != nil || n != len(w) {
+					t.Fatalf("Write(%q) = (%d, %v), want (%d, nil)", w, n, err, len(w))
+				}
+			}
+			if b.String() != tt.want {
+				t.Errorf("String() = %q, want %q", b.String(), tt.want)
+			}
+			if b.truncated != tt.wantTruncated {
+				t.Errorf("truncated = %v, want %v", b.truncated, tt.wantTruncated)
+			}
+		})
+	}
+}
+
+// TestRunProcessGroupCapsOutput is the regression test for unbounded output
+// capture: a program that writes far more than the cap must yield at most
+// maxProcOutputBytes per stream with the truncated flag set, instead of growing
+// the server's memory without bound.
+func TestRunProcessGroupCapsOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell semantics; not run on windows")
+	}
+	// Emit ~4 MiB on stdout and a short line on stderr.
+	script := "head -c 4194304 /dev/zero; printf small 1>&2"
+	res := runProcessGroup(context.Background(), "sh", []string{"-c", script}, "", 20*time.Second)
+	if res.startErr != nil {
+		t.Fatalf("start error: %v", res.startErr)
+	}
+	if len(res.stdout) != maxProcOutputBytes {
+		t.Errorf("len(stdout) = %d, want %d", len(res.stdout), maxProcOutputBytes)
+	}
+	if !res.stdoutTruncated {
+		t.Error("stdoutTruncated = false, want true")
+	}
+	if res.stderr != "small" || res.stderrTruncated {
+		t.Errorf("stderr = %q truncated=%v, want %q untruncated", res.stderr, res.stderrTruncated, "small")
+	}
+}
+
+// TestRunProcessGroupEscapedDescendantDoesNotHang proves WaitDelay bounds Wait
+// when a descendant that left the process group keeps stdout open after the
+// launcher exits: the call must return shortly after procWaitDelay rather than
+// for the descendant's full lifetime.
+func TestRunProcessGroupEscapedDescendantDoesNotHang(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell semantics; not run on windows")
+	}
+	if _, err := exec.LookPath("setsid"); err != nil {
+		t.Skip("setsid not available")
+	}
+	start := time.Now()
+	res := runProcessGroup(context.Background(), "sh",
+		[]string{"-c", "setsid sleep 30 & printf launched"}, "", 20*time.Second)
+	elapsed := time.Since(start)
+	if res.startErr != nil {
+		t.Fatalf("start error: %v", res.startErr)
+	}
+	if elapsed > procWaitDelay+5*time.Second {
+		t.Errorf("call took %v; WaitDelay did not bound the escaped descendant's open pipe", elapsed)
+	}
+}
+
+// TestNixRunTimeout proves the timeout argument is parsed from a duration string
+// or a number of seconds, defaults when absent or invalid, and is clamped to
+// maxNixRunTimeout (reporting the clamp) when larger.
+func TestNixRunTimeout(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		args        map[string]any
+		want        time.Duration
+		wantClamped bool
+	}{
+		{"absent", map[string]any{}, defaultNixRunTimeout, false},
+		{"duration string", map[string]any{"timeout": "45s"}, 45 * time.Second, false},
+		{"invalid string", map[string]any{"timeout": "soon"}, defaultNixRunTimeout, false},
+		{"negative duration", map[string]any{"timeout": "-5s"}, defaultNixRunTimeout, false},
+		{"numeric seconds", map[string]any{"timeout": float64(90)}, 90 * time.Second, false},
+		{"at ceiling", map[string]any{"timeout": "10m"}, maxNixRunTimeout, false},
+		{"huge duration string", map[string]any{"timeout": "8760h"}, maxNixRunTimeout, true},
+		{"huge numeric seconds", map[string]any{"timeout": float64(1e9)}, maxNixRunTimeout, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, clamped := nixRunTimeout(tt.args)
+			if got != tt.want || clamped != tt.wantClamped {
+				t.Errorf("nixRunTimeout(%v) = (%v, %v), want (%v, %v)", tt.args, got, clamped, tt.want, tt.wantClamped)
+			}
+		})
+	}
+}

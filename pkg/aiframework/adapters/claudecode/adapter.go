@@ -72,6 +72,8 @@ func hookSpecsToChoices(specs []aiframework.HookSpec) types.HookChoices {
 		switch aiframework.HookLogicID(s.Command) {
 		case aiframework.LogicPackageGuard:
 			c.SafetyBlock = true
+		case aiframework.LogicAgentSelfProtection:
+			c.SelfProtection = true
 		case aiframework.LogicCredentialScan:
 			c.CredentialScan = true
 		case aiframework.LogicDestructiveBlock:

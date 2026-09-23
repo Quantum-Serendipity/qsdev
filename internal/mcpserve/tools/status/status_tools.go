@@ -13,7 +13,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 )
 
-// Pruning tiers: qsdev_status is fast-path critical; the doctor is standard.
+// Tool tiers: qsdev_status is fast-path critical; the doctor is standard.
 const (
 	tierCritical = 0
 	tierStandard = 1
@@ -27,10 +27,11 @@ func Tools(projectRoot string) []spi.ToolRegistration {
 	return []spi.ToolRegistration{
 		{
 			Name:        "qsdev_status",
-			Description: "Report project drift with 2-tier detection. Tier 1 (fast, cached) returns the last snapshot when the generated-file state is unchanged; Tier 2 re-runs ecosystem detection and diffs it to surface added/removed ecosystems, changed tool versions, and configuration changes.",
+			Description: "Report project drift with 2-tier detection. Tier 2 verifies generated files against the state ledger (modified or deleted machine-owned files), hook, section-marker and lock-file drift, tool availability and version drift, plus ecosystem, language-version and .qsdev.yaml changes since the baseline (server start or the last regeneration). Tier 1 (fast) returns the last Tier 2 result while the state ledger, the config and every tracked generated file are unchanged; any change falls back to Tier 2.",
 			InputSchema: statusSchema(),
 			Category:    middleware.CategoryStatus,
 			Tier:        tierCritical,
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     st.handle,
 		},
 		{
@@ -39,6 +40,7 @@ func Tools(projectRoot string) []spi.ToolRegistration {
 			InputSchema: doctorSchema(),
 			Category:    middleware.CategoryDiagnostics,
 			Tier:        tierStandard,
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     doc.handle,
 		},
 	}
@@ -51,7 +53,7 @@ func statusSchema() map[string]any {
 			"tier": map[string]any{
 				"type":        "string",
 				"enum":        []any{"1", "2", "auto"},
-				"description": "Force Tier 1 (cached) or Tier 2 (thorough). Default auto: Tier 1 when state is unchanged, else Tier 2.",
+				"description": "Force Tier 1 (cached; runs Tier 2 when no result is cached yet) or Tier 2 (thorough). Default auto: Tier 1 when the state ledger, config and tracked generated files are unchanged since the last Tier 2, else Tier 2.",
 			},
 		},
 	}

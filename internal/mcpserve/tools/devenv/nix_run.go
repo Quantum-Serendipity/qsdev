@@ -1,6 +1,7 @@
 package devenv
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
@@ -14,16 +15,65 @@ import (
 // defaultNixRunTimeout bounds a nix_run invocation when the caller omits timeout.
 const defaultNixRunTimeout = 30 * time.Second
 
+// maxNixRunTimeout is the ceiling applied to a caller-supplied timeout. The
+// server is long-lived and shared by every tool, so a single call must not be
+// able to pin a process slot (and its output) for an arbitrary duration.
+const maxNixRunTimeout = 10 * time.Minute
+
+// maxProcOutputBytes caps how much of each of stdout and stderr is retained in
+// memory and returned. Output past the cap is drained and discarded (so the
+// child never blocks on a full pipe) and the stream is flagged truncated.
+const maxProcOutputBytes = 1 << 20
+
+// procWaitDelay bounds how long Wait lingers after the launched process exits
+// (or is killed) for its I/O pipes to close. A descendant that escaped the
+// process group (setsid) and still holds a pipe open would otherwise block Wait
+// — and the tool call — indefinitely.
+const procWaitDelay = 5 * time.Second
+
 // procResult is the outcome of a process-group execution, shared by the
 // platform-specific runProcessGroup implementations.
 type procResult struct {
-	stdout   string
-	stderr   string
-	exitCode int
-	timedOut bool
-	duration time.Duration
-	startErr error
+	stdout          string
+	stderr          string
+	stdoutTruncated bool
+	stderrTruncated bool
+	exitCode        int
+	timedOut        bool
+	duration        time.Duration
+	startErr        error
 }
+
+// cappedBuffer is an io.Writer that retains at most limit bytes and silently
+// discards the rest, recording that it did so. It always reports the full write
+// as consumed so the copying goroutine keeps draining the child's pipe. Each
+// instance has a single writer (exec's copy goroutine) and is read only after
+// Wait returns, so it needs no locking.
+type cappedBuffer struct {
+	buf       bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func newCappedBuffer(limit int) *cappedBuffer { return &cappedBuffer{limit: limit} }
+
+// Write implements io.Writer.
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if room := c.limit - c.buf.Len(); room > 0 {
+		if len(p) <= room {
+			c.buf.Write(p)
+			return len(p), nil
+		}
+		c.buf.Write(p[:room])
+	}
+	if len(p) > 0 {
+		c.truncated = true
+	}
+	return len(p), nil
+}
+
+// String returns the retained output.
+func (c *cappedBuffer) String() string { return c.buf.String() }
 
 // nixRunner executes `nix run <command> -- <args>` in a dedicated process group
 // so that, on timeout or cancellation, the entire group (including orphaned nix
@@ -51,7 +101,7 @@ func (n *nixRunner) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi
 			map[string]any{"error": err.Error(), "remediation": "install Nix or enter the devenv shell"}), nil
 	}
 
-	timeout := nixRunTimeout(req.Arguments)
+	timeout, clamped := nixRunTimeout(req.Arguments)
 	extraArgs := toolutil.StringSliceArg(req.Arguments, "args")
 	stdin := toolutil.StringArgOr(req.Arguments, "stdin", "")
 
@@ -66,13 +116,17 @@ func (n *nixRunner) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi
 	}
 
 	structured := map[string]any{
-		"command":     command,
-		"args":        extraArgs,
-		"exit_code":   res.exitCode,
-		"stdout":      res.stdout,
-		"stderr":      res.stderr,
-		"duration_ms": res.duration.Milliseconds(),
-		"timed_out":   res.timedOut,
+		"command":          command,
+		"args":             extraArgs,
+		"exit_code":        res.exitCode,
+		"stdout":           res.stdout,
+		"stderr":           res.stderr,
+		"stdout_truncated": res.stdoutTruncated,
+		"stderr_truncated": res.stderrTruncated,
+		"duration_ms":      res.duration.Milliseconds(),
+		"timed_out":        res.timedOut,
+		"timeout_ms":       timeout.Milliseconds(),
+		"timeout_clamped":  clamped,
 	}
 	text := fmt.Sprintf("nix_run: %s exited %d in %dms (timed_out=%t)",
 		command, res.exitCode, res.duration.Milliseconds(), res.timedOut)
@@ -132,15 +186,22 @@ func uriScheme(ref string) (string, bool) {
 }
 
 // nixRunTimeout resolves the timeout argument (a Go duration string or a number
-// of seconds), defaulting to defaultNixRunTimeout.
-func nixRunTimeout(args map[string]any) time.Duration {
+// of seconds), defaulting to defaultNixRunTimeout. A requested timeout above
+// maxNixRunTimeout is clamped to it; the boolean reports whether that happened.
+func nixRunTimeout(args map[string]any) (time.Duration, bool) {
+	d := defaultNixRunTimeout
 	if s, ok := toolutil.StringArg(args, "timeout"); ok && s != "" {
-		if d, err := time.ParseDuration(s); err == nil && d > 0 {
-			return d
+		if parsed, err := time.ParseDuration(s); err == nil && parsed > 0 {
+			d = parsed
 		}
+	} else if secs, ok := toolutil.IntArg(args, "timeout"); ok && secs > 0 {
+		if int64(secs) > int64(maxNixRunTimeout/time.Second) {
+			return maxNixRunTimeout, true
+		}
+		d = time.Duration(secs) * time.Second
 	}
-	if secs, ok := toolutil.IntArg(args, "timeout"); ok && secs > 0 {
-		return time.Duration(secs) * time.Second
+	if d > maxNixRunTimeout {
+		return maxNixRunTimeout, true
 	}
-	return defaultNixRunTimeout
+	return d, false
 }

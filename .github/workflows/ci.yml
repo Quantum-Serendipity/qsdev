@@ -50,6 +50,13 @@ jobs:
       - name: Test
         run: gotestsum --format testname --junitfile test-results.xml -- ${{ matrix.os == 'ubuntu-latest' && '-race' || '' }} ./...
 
+      # The integration-tagged MCP health suite builds the real qsdev binary and
+      # drives it over stdio; a build failure or startup crash fails it. One leg
+      # is enough to catch a binary that cannot start.
+      - name: Integration tests
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -tags integration -run TestHealthCheckIntegration ./internal/mcpserve/
+
       - name: Upload test results
         if: always()
         continue-on-error: true

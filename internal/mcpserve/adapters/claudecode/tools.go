@@ -30,6 +30,7 @@ func (a *Adapter) Tools() []spi.ToolRegistration {
 			InputSchema: optionalStringSchema("category", "Restrict the returned rules to those targeting this Claude Code tool (e.g. \"Bash\", \"Read\", \"WebFetch\"). Case-insensitive; omit for all rules."),
 			Category:    middleware.CategoryPolicy,
 			Tier:        tierStandard,
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     a.handlePermissions,
 		},
 		{
@@ -38,6 +39,7 @@ func (a *Adapter) Tools() []spi.ToolRegistration {
 			InputSchema: toolutil.EmptyObjectSchema(),
 			Category:    middleware.CategoryStatus,
 			Tier:        tierStandard,
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     a.handleHooks,
 		},
 		{
@@ -46,6 +48,7 @@ func (a *Adapter) Tools() []spi.ToolRegistration {
 			InputSchema: optionalStringSchema("model", "Model whose context window to budget against: \"sonnet\" (200k) or \"opus\" (1M). Unknown values fall back to sonnet."),
 			Category:    middleware.CategoryStatus,
 			Tier:        tierExtended,
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     a.handleContextBudget,
 		},
 		{
@@ -62,6 +65,7 @@ func (a *Adapter) Tools() []spi.ToolRegistration {
 			InputSchema: toolutil.EmptyObjectSchema(),
 			Category:    middleware.CategoryPolicy,
 			Tier:        tierExtended,
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     a.handleEnforcementGaps,
 		},
 	}
@@ -71,7 +75,10 @@ func (a *Adapter) Tools() []spi.ToolRegistration {
 // the reference adapter's TranslatePermissions, then explains every allow/deny/
 // ask rule. An optional category argument filters to one targeted tool.
 func (a *Adapter) handlePermissions(ctx context.Context, cc *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
-	preset := presetFor(cc.ProjectRoot)
+	preset, err := presetFor(cc.ProjectRoot)
+	if err != nil {
+		return configError(err), nil
+	}
 	arts, err := a.ref.TranslatePermissions(ctx, &aiframework.PermissionPolicy{Preset: preset})
 	if err != nil {
 		return toolutil.NotConfigured("could not render claude code permissions",
@@ -170,7 +177,10 @@ func (a *Adapter) handleContextBudget(_ context.Context, cc *spi.ToolCallContext
 // It is dry-run by default (returns contents without writing); write=true
 // materializes the files through the generation pipeline.
 func (a *Adapter) handleConfigRender(ctx context.Context, cc *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
-	input := a.policyInputFor(cc.ProjectRoot)
+	input, unrendered, err := a.policyInputFor(cc.ProjectRoot)
+	if err != nil {
+		return configError(err), nil
+	}
 	files, err := a.ref.Render(ctx, input)
 	if err != nil {
 		return toolutil.NotConfigured("could not render claude code configuration",
@@ -196,6 +206,12 @@ func (a *Adapter) handleConfigRender(ctx context.Context, cc *spi.ToolCallContex
 		"file_count":        len(files),
 		"files":             rendered,
 		"validation_issues": validationIssues(a.ref.Validate(ctx, files)),
+	}
+	if len(unrendered) > 0 {
+		structured["unrendered_hooks"] = unrendered
+		structured["warnings"] = []string{fmt.Sprintf(
+			"hook choice(s) %v are enabled for this project but cannot be expressed through the framework-agnostic render; "+
+				"run `qsdev init --update` to generate them", unrendered)}
 	}
 
 	if write {
@@ -224,7 +240,10 @@ func (a *Adapter) handleConfigRender(ctx context.Context, cc *spi.ToolCallContex
 // the reference adapter, the gap between the kernel-level isolation each rule
 // ideally requires and the hook-level enforcement Claude Code provides.
 func (a *Adapter) handleEnforcementGaps(ctx context.Context, cc *spi.ToolCallContext, _ *spi.ToolRequest) (*spi.ToolResult, error) {
-	preset := presetFor(cc.ProjectRoot)
+	preset, err := presetFor(cc.ProjectRoot)
+	if err != nil {
+		return configError(err), nil
+	}
 	arts, err := a.ref.TranslatePermissions(ctx, &aiframework.PermissionPolicy{Preset: preset})
 	if err != nil {
 		return toolutil.NotConfigured("could not render claude code permissions for gap analysis",

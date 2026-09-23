@@ -43,9 +43,10 @@ type ProjectContext struct {
 	// need a fresh view (qsdev_detect) re-run detection rather than reading this.
 	detection types.DetectedProject
 
-	// state is the primary generated-file state ledger, or an empty ledger when
-	// the project has not been initialized yet.
-	state     types.GeneratedState
+	// ledger serves the primary generated-file state ledger (an empty ledger when
+	// the project has not been initialized yet), reloaded whenever the state file
+	// changes so `qsdev enable`/`disable` during a session are reflected.
+	ledger    *ledgerCache
 	statePath string // absolute path to the primary state file (may not exist)
 
 	toolReg *toolreg.Registry
@@ -56,8 +57,6 @@ type ProjectContext struct {
 	// one member package; otherwise it is nil and the per-package context resource
 	// degrades to a structured not_configured result.
 	workspace *workspace.WorkspaceGraph
-
-	pruner *ToolPruner
 }
 
 // NewProjectContext builds the engine for projectRoot. Detection always runs;
@@ -73,13 +72,11 @@ func NewProjectContext(projectRoot string) (*ProjectContext, error) {
 	detection := detect.Detect(projectRoot)
 
 	statePath := filepath.Join(projectRoot, state.StateFilePaths()[0])
-	st, err := state.LoadStateFromFile(statePath)
-	if err != nil {
+	ledger := newLedgerCache(statePath)
+	if _, warn := ledger.current(); warn != "" {
 		// A malformed or unreadable state file must not crash the engine: degrade
 		// to an empty ledger so introspection still works.
-		slog.Warn("project context: state file unreadable; using empty state",
-			"path", statePath, "error", err)
-		st = types.GeneratedState{Files: map[string]types.FileState{}}
+		slog.Warn("project context: "+warn, "path", statePath)
 	}
 
 	reg, err := toolreg.Default()
@@ -90,12 +87,11 @@ func NewProjectContext(projectRoot string) (*ProjectContext, error) {
 	return &ProjectContext{
 		projectRoot: projectRoot,
 		detection:   detection,
-		state:       st,
+		ledger:      ledger,
 		statePath:   statePath,
 		toolReg:     reg,
 		mcpReg:      mcpregistry.DefaultRegistry(),
 		workspace:   detectWorkspaceGraph(projectRoot),
-		pruner:      NewToolPruner(),
 	}, nil
 }
 
@@ -142,9 +138,6 @@ func (pc *ProjectContext) ProjectRoot() string { return pc.projectRoot }
 
 // Detection returns the detection result captured at construction.
 func (pc *ProjectContext) Detection() types.DetectedProject { return pc.detection }
-
-// Pruner returns the engine's tool pruner (the tier-based ceiling mechanism).
-func (pc *ProjectContext) Pruner() *ToolPruner { return pc.pruner }
 
 // configFile returns the absolute path to the project's .qsdev.yaml.
 func (pc *ProjectContext) configFile() string {

@@ -36,7 +36,12 @@ func runOutdated(cmd *cobra.Command, opts outdated.OutdatedOptions) error {
 	}
 
 	// Determine detected ecosystems from answers.
-	answers, _ := loadAnswersOrEmpty(projectRoot)
+	// A missing answers file is fine (falls back below); a corrupt or
+	// unreadable one must be reported rather than silently treated as empty.
+	answers, err := loadAnswersOrEmpty(projectRoot)
+	if err != nil {
+		return fmt.Errorf("loading saved answers: %w", err)
+	}
 	var ecosystems []string
 	for _, lang := range answers.Languages {
 		ecosystems = append(ecosystems, lang.Name)

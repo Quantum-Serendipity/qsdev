@@ -540,7 +540,7 @@ func TestExecuteUpdatePlan_RefusesSymlinkEscape(t *testing.T) {
 		Action:     UpdateActionCreate,
 		NewContent: []byte("generated\n"),
 	}}}
-	if _, _, err := executeUpdatePlan(plan, root, UpdateOptions{}); err == nil || !strings.Contains(err.Error(), "escapes project root") {
+	if _, err := executeUpdatePlan(plan, root, UpdateOptions{}); err == nil || !strings.Contains(err.Error(), "escapes project root") {
 		t.Fatalf("want containment refusal, got %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(outside, "pull_request_template.md")); !os.IsNotExist(err) {

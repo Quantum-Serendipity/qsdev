@@ -123,10 +123,7 @@ func TestRunJoin_WritesGeneratedFilesFromConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildJoinAnswers: %v", err)
 	}
-	acc, err := runAccumulator(answers, struct {
-		ClaudeOnly bool
-		DevenvOnly bool
-	}{})
+	acc, err := runAccumulator(answers, generationScope{})
 	if err != nil {
 		t.Fatalf("runAccumulator: %v", err)
 	}

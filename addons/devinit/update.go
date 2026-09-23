@@ -1,8 +1,11 @@
 package devinit
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +21,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/update"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // register all modules
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
@@ -26,11 +30,27 @@ import (
 
 // UpdateOptions holds configuration for the update command.
 type UpdateOptions struct {
-	Force  bool
-	DryRun bool
+	// Force overwrites managed files the user has modified or deleted, and
+	// untracked files that already exist at a generated path.
+	Force bool
+	// AllowDowngrade lets a binary older than the one that last generated the
+	// project regenerate its files (bypasses the version ratchet).
+	AllowDowngrade bool
+	// OverwriteFlag is the CLI flag that sets Force, named in skip reasons.
+	// Defaults to "--force".
+	OverwriteFlag string
+	DryRun        bool
 	// SkipContainer opts out of generating Gateway container configuration for
 	// detected frameworks that lack native hook enforcement (Unit 32.10).
 	SkipContainer bool
+}
+
+// overwriteFlag returns the flag that enables Force, for user-facing reasons.
+func (o UpdateOptions) overwriteFlag() string {
+	if o.OverwriteFlag != "" {
+		return o.OverwriteFlag
+	}
+	return "--force"
 }
 
 // UpdateAction describes what the update will do to a file.
@@ -42,6 +62,12 @@ const (
 	UpdateActionSkip
 	UpdateActionCreate
 	UpdateActionSidecar
+	// UpdateActionRemove deletes an unmodified file the generators no longer
+	// produce and stops tracking it.
+	UpdateActionRemove
+	// UpdateActionUntrack stops tracking a file the generators no longer
+	// produce but leaves it on disk (the user modified or deleted it).
+	UpdateActionUntrack
 )
 
 // FileUpdatePlan describes the planned action for a single file during update.
@@ -60,6 +86,22 @@ type FileUpdatePlan struct {
 type UpdatePlan struct {
 	Files   []FileUpdatePlan
 	NixPlan *FileUpdatePlan // separate tracking for devenv.nix
+}
+
+// fileFailure records a file that could not be updated. Execution continues
+// past these; the file keeps its previous state entry so it is retried.
+type fileFailure struct {
+	Path string
+	Err  error
+}
+
+// updateOutcome records what executeUpdatePlan actually did, as opposed to
+// what the plan intended.
+type updateOutcome struct {
+	written   []types.GeneratedFile
+	dropped   map[string]bool // orphaned paths removed from disk or untracked
+	failures  []fileFailure
+	nixResult *update.NixUpdateResult
 }
 
 func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
@@ -84,83 +126,120 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	// 3. Check modification status of all stored files.
 	modStatus := state.CheckModified(existingState, projectRoot)
 
-	// 3b. Version ratchet check — warn if current binary is older than last run.
-	if !opts.Force {
+	// 3b. Version ratchet check — refuse if current binary is older than last run.
+	if !opts.AllowDowngrade {
 		if ratchet := qsdevconfig.CheckVersionRatchet(version.Info().Version, existingState.QsdevVersion); ratchet != nil {
 			return ratchet
 		}
 	}
 
-	// 4. Generate new files via fragment accumulation.
-	accResult, err := runAccumulator(answers, struct {
-		ClaudeOnly bool
-		DevenvOnly bool
-	}{
-		ClaudeOnly: answers.ClaudeCode && answers.MergeMode == "claude-only",
-	})
+	// 4. Generate new files via fragment accumulation, honouring the
+	// generation scope the project was initialized with.
+	accResult, err := runAccumulator(answers, scopeFromAnswers(answers))
 	if err != nil {
 		return fmt.Errorf("generating files: %w", err)
 	}
 	allFiles := accResult.allFiles
 
-	// 5. Build update plan.
-	plan := buildUpdatePlan(allFiles, modStatus, existingState, opts)
+	// 5. Build update plan, including cleanup of files no longer generated.
+	plan := buildUpdatePlan(allFiles, modStatus, existingState, projectRoot, opts)
+	plan.Files = append(plan.Files, planOrphans(existingState, allFiles, modStatus, answers)...)
 
 	// 6. Preview.
+	previewUpdatePlan(plan, cmd.OutOrStdout())
 	if opts.DryRun {
-		previewUpdatePlan(plan, cmd.OutOrStdout())
 		return nil
 	}
 
-	// 7. Show plan summary.
-	previewUpdatePlan(plan, cmd.OutOrStdout())
+	// 7. Execute plan.
+	outcome, execErr := executeUpdatePlan(plan, projectRoot, opts)
+	reportUpdateFailures(cmd.ErrOrStderr(), outcome.failures)
 
-	// 8. Execute plan.
-	writtenFiles, nixResult, err := executeUpdatePlan(plan, projectRoot, opts)
-	if err != nil {
-		return fmt.Errorf("executing update: %w", err)
-	}
-
-	// 9. If nix sidecar was created, show instructions.
-	if nixResult != nil && nixResult.Action == update.NixSidecarCreated {
+	// 8. If nix sidecar was created, show instructions.
+	if nixResult := outcome.nixResult; nixResult != nil && nixResult.Action == update.NixSidecarCreated {
 		fmt.Fprintln(cmd.OutOrStdout())
 		fmt.Fprintln(cmd.OutOrStdout(), nixResult.DiffOutput)
 		fmt.Fprintln(cmd.OutOrStdout(), nixResult.Message)
 	}
 
-	// 10. Save state and answers.
-	if err := saveUpdateResults(plan, writtenFiles, existingState, answers, accResult, stateFile, projectRoot); err != nil {
-		return err
+	// 9. Save state and answers. This runs even when execution stopped
+	// partway: files already rewritten must be recorded, or the next update
+	// would mistake qsdev's own output for user modifications.
+	if err := saveUpdateResults(plan, outcome, existingState, answers, accResult, stateFile, projectRoot); err != nil {
+		return errors.Join(execErr, err)
+	}
+	if execErr != nil {
+		return fmt.Errorf("executing update: %w", execErr)
 	}
 
-	// 11. Print version diff summary if applicable.
-	vDiff := claudecode.CompareVersions(existingState.TemplateVersion, existingState.SkillLibraryVersion)
-	if vDiff.NeedsUpdate() {
-		summary := claudecode.BuildUpdateSummary(existingState, allFiles, vDiff)
-		fmt.Fprintln(cmd.OutOrStdout(), summary.String())
-	}
-
-	// 12. Print result summary.
-	created, updated, skipped := 0, 0, 0
-	for _, fp := range plan.Files {
-		switch fp.Action {
-		case UpdateActionCreate:
-			created++
-		case UpdateActionRegenerate, UpdateActionMerge:
-			updated++
-		case UpdateActionSkip, UpdateActionSidecar:
-			skipped++
+	// 10. Print version diff summary if Claude Code files were generated.
+	if accResult.claudeGenerated {
+		vDiff := claudecode.CompareVersions(existingState.TemplateVersion, existingState.SkillLibraryVersion)
+		if vDiff.NeedsUpdate() {
+			summary := claudecode.BuildUpdateSummary(existingState, allFiles, vDiff)
+			fmt.Fprintln(cmd.OutOrStdout(), summary.String())
 		}
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "\nUpdate complete: %d created, %d updated, %d skipped.\n", created, updated, skipped)
 
-	// 13. Best-effort Gateway container config for hookless frameworks (Unit
+	// 11. Print result summary.
+	printUpdateSummary(cmd.OutOrStdout(), plan, outcome)
+
+	// 12. Best-effort Gateway container config for hookless frameworks (Unit
 	// 32.10). This is intentionally additive and non-fatal: a failure or a
 	// project with no gateway-needing framework leaves the rest of the update
 	// untouched and produces no output.
 	maybeGenerateContainerConfig(cmd, projectRoot, answers, opts)
 
+	if n := len(outcome.failures); n > 0 {
+		return fmt.Errorf("%d file(s) could not be updated; they keep their previous state and will be retried on the next update", n)
+	}
 	return nil
+}
+
+// reportUpdateFailures writes one warning per file that could not be updated.
+func reportUpdateFailures(w io.Writer, failures []fileFailure) {
+	for _, f := range failures {
+		fmt.Fprintf(w, "Warning: %s: %v\n", f.Path, f.Err)
+	}
+}
+
+// printUpdateSummary prints per-action counts derived from what was actually
+// written, removed or failed, rather than from the plan alone.
+func printUpdateSummary(w io.Writer, plan UpdatePlan, out updateOutcome) {
+	written := make(map[string]bool, len(out.written))
+	for _, f := range out.written {
+		written[f.Path] = true
+	}
+	failed := make(map[string]bool, len(out.failures))
+	for _, f := range out.failures {
+		failed[f.Path] = true
+	}
+
+	var created, updated, skipped, removed int
+	for _, fp := range plan.Files {
+		switch {
+		case failed[fp.Path]:
+			// Reported separately below.
+		case written[fp.Path] && fp.Action == UpdateActionCreate:
+			created++
+		case written[fp.Path]:
+			updated++
+		case fp.Action == UpdateActionRemove && out.dropped[fp.Path]:
+			removed++
+		default:
+			skipped++
+		}
+	}
+
+	heading := "Update complete"
+	if len(failed) > 0 {
+		heading = "Update finished with errors"
+	}
+	fmt.Fprintf(w, "\n%s: %d created, %d updated, %d skipped, %d removed", heading, created, updated, skipped, removed)
+	if len(failed) > 0 {
+		fmt.Fprintf(w, ", %d failed", len(failed))
+	}
+	fmt.Fprintln(w, ".")
 }
 
 // loadAndRefreshForUpdate loads saved answers, refreshes ecosystem detection,
@@ -186,14 +265,14 @@ func loadAndRefreshForUpdate(projectRoot string) (types.WizardAnswers, error) {
 // and re-saves answers after an update execution.
 func saveUpdateResults(
 	plan UpdatePlan,
-	writtenFiles []types.GeneratedFile,
+	outcome updateOutcome,
 	existingState types.GeneratedState,
 	answers types.WizardAnswers,
 	accResult accumulatorResult,
 	stateFile, projectRoot string,
 ) error {
 	// Merge: new state for written files + old state for skipped files.
-	newState := state.RecordFiles(writtenFiles)
+	newState := state.RecordFiles(outcome.written)
 	// Correct BaseContent for merged ThreeWayMerge files: store the
 	// original generated content (ours), not the merged result.
 	for _, fp := range plan.Files {
@@ -207,17 +286,15 @@ func saveUpdateResults(
 	newState.QsdevVersion = version.Info().Version
 	newState.EnabledTools = answers.EnabledTools
 	newState.Fragments = state.RecordFragments(accResult.fragments)
-	// Preserve state entries for files we didn't touch.
+	// Preserve state entries for files we didn't touch (skipped, failed, or
+	// not reached), dropping orphans that were removed or untracked.
 	for path, fs := range existingState.Files {
-		if _, written := newState.Files[path]; !written {
-			newState.Files[path] = fs
+		if _, written := newState.Files[path]; written || outcome.dropped[path] {
+			continue
 		}
+		newState.Files[path] = fs
 	}
-	// Set version metadata.
-	if answers.ClaudeCode {
-		newState.TemplateVersion = claudecode.ComputeTemplateVersion()
-		newState.SkillLibraryVersion = claudecode.ComputeSkillLibraryVersion()
-	}
+	stampTemplateVersions(&newState, accResult.claudeGenerated)
 	if err := state.SaveStateToFile(stateFile, newState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
 	}
@@ -234,6 +311,7 @@ func buildUpdatePlan(
 	newFiles []types.GeneratedFile,
 	modStatus map[string]state.FileStatus,
 	storedState types.GeneratedState,
+	projectRoot string,
 	opts UpdateOptions,
 ) UpdatePlan {
 	var plan UpdatePlan
@@ -248,11 +326,7 @@ func buildUpdatePlan(
 
 		fs, inState := modStatus[f.Path]
 		if !inState {
-			// File not in stored state — it's new.
-			fp.Status = types.New
-			fp.Action = UpdateActionCreate
-			fp.Reason = "new file"
-			plan.Files = append(plan.Files, fp)
+			plan.Files = append(plan.Files, planUntrackedFile(fp, projectRoot, opts))
 			continue
 		}
 
@@ -296,7 +370,7 @@ func buildUpdatePlan(
 					fp.Reason = "library-managed, updating to latest"
 				default:
 					fp.Action = UpdateActionSkip
-					fp.Reason = "modified, use --force to overwrite"
+					fp.Reason = fmt.Sprintf("modified, use %s to overwrite", opts.overwriteFlag())
 				}
 			}
 
@@ -322,6 +396,111 @@ func buildUpdatePlan(
 	}
 
 	return plan
+}
+
+// planUntrackedFile plans a generated file that has no state entry. A missing
+// file is simply created. A file that already exists was not written by
+// qsdev (or its state was lost), so it is never blindly overwritten: mergeable
+// strategies merge with it the way init does, and anything else is skipped
+// unless overwriting was explicitly requested.
+func planUntrackedFile(fp FileUpdatePlan, projectRoot string, opts UpdateOptions) FileUpdatePlan {
+	fp.Status = types.New
+
+	absPath := filepath.Join(projectRoot, fp.Path)
+	info, err := os.Lstat(absPath)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		fp.Action = UpdateActionCreate
+		fp.Reason = "new file"
+	case err != nil:
+		fp.Action = UpdateActionSkip
+		fp.Reason = fmt.Sprintf("cannot inspect existing file: %v", err)
+	case info.Mode().IsRegular() && fileHasContent(absPath, fp.NewContent):
+		// Already exactly what would be generated: nothing to lose, so start
+		// tracking it instead of reporting it as untracked on every update.
+		fp.Action = UpdateActionRegenerate
+		fp.Reason = "exists untracked with generated content, tracking"
+	case fp.Strategy == types.ThreeWayMerge || fp.Strategy == types.SectionMarker:
+		// OldContent stays nil: there is no recorded base.
+		fp.Action = UpdateActionMerge
+		fp.Reason = "exists but untracked, merging"
+	case opts.Force:
+		fp.Action = UpdateActionRegenerate
+		fp.Reason = "exists but untracked, force overwrite"
+	default:
+		fp.Action = UpdateActionSkip
+		fp.Reason = fmt.Sprintf("exists but not tracked by %s, use %s to overwrite",
+			branding.Get().AppName, opts.overwriteFlag())
+	}
+	return fp
+}
+
+// fileHasContent reports whether the file at path holds exactly content.
+func fileHasContent(path string, content []byte) bool {
+	existing, err := os.ReadFile(path)
+	return err == nil && bytes.Equal(existing, content)
+}
+
+// planOrphans plans cleanup for tracked files the generators no longer
+// produce (language removed, ecosystem no longer detected, tier lowered,
+// template retired). Unmodified orphans are removed; ones the user modified
+// or already deleted are left alone and simply no longer tracked.
+func planOrphans(
+	storedState types.GeneratedState,
+	newFiles []types.GeneratedFile,
+	modStatus map[string]state.FileStatus,
+	answers types.WizardAnswers,
+) []FileUpdatePlan {
+	var plans []FileUpdatePlan
+	for _, path := range state.OrphanedFiles(storedState, newFiles) {
+		stored := storedState.Files[path]
+		if !updateOwnsOrphan(path, stored, answers) {
+			continue
+		}
+
+		fp := FileUpdatePlan{Path: path, Strategy: stored.Strategy}
+		st, ok := modStatus[path]
+		switch {
+		case !ok:
+			fp.Status = types.Unknown
+			fp.Action = UpdateActionSkip
+			fp.Reason = "no longer generated, status unknown"
+		case !filepath.IsLocal(filepath.FromSlash(path)):
+			// Never delete outside the project, whatever the state file says.
+			fp.Status = st.Status
+			fp.Action = UpdateActionUntrack
+			fp.Reason = "no longer generated, path outside project; untracking"
+		case st.Status == types.Unmodified:
+			fp.Status = st.Status
+			fp.Action = UpdateActionRemove
+			fp.Reason = "no longer generated, removing"
+		case st.Status == types.Modified:
+			fp.Status = st.Status
+			fp.Action = UpdateActionUntrack
+			fp.Reason = "no longer generated, modified; left in place and untracked"
+		case st.Status == types.Deleted:
+			fp.Status = st.Status
+			fp.Action = UpdateActionUntrack
+			fp.Reason = "no longer generated, already deleted"
+		default:
+			fp.Status = st.Status
+			fp.Action = UpdateActionSkip
+			fp.Reason = fmt.Sprintf("no longer generated, unknown status: %v", st.Error)
+		}
+		plans = append(plans, fp)
+	}
+	return plans
+}
+
+// updateOwnsOrphan reports whether update is responsible for cleaning up a
+// tracked file it no longer generates. Files owned by a still-enabled tool
+// belong to the enable/disable lifecycle, and the per-developer local config
+// is created once by join and never regenerated.
+func updateOwnsOrphan(path string, stored types.FileState, answers types.WizardAnswers) bool {
+	if stored.Owner != "" && answers.EnabledTools[stored.Owner] {
+		return false
+	}
+	return path != branding.Get().LocalConfig
 }
 
 // readFileForMerge returns the base content for three-way merge from stored state.
@@ -356,18 +535,25 @@ func updateActionString(a UpdateAction) string {
 		return "create"
 	case UpdateActionSidecar:
 		return "sidecar"
+	case UpdateActionRemove:
+		return "remove"
+	case UpdateActionUntrack:
+		return "untrack"
 	default:
 		return "unknown"
 	}
 }
 
+// executeUpdatePlan applies the plan. Per-file merge and removal failures are
+// recorded in the outcome and execution continues; a write failure stops
+// execution and is returned together with everything done up to that point,
+// so the caller can still record it.
 func executeUpdatePlan(
 	plan UpdatePlan,
 	projectRoot string,
 	opts UpdateOptions,
-) ([]types.GeneratedFile, *update.NixUpdateResult, error) {
-	var writtenFiles []types.GeneratedFile
-	var nixResult *update.NixUpdateResult
+) (updateOutcome, error) {
+	out := updateOutcome{dropped: make(map[string]bool)}
 
 	for _, fp := range plan.Files {
 		absPath := filepath.Join(projectRoot, fp.Path)
@@ -379,59 +565,79 @@ func executeUpdatePlan(
 		// through a symlink (or a crafted path) to outside the project.
 		if fp.Action != UpdateActionSkip {
 			if err := generate.ValidateDestination(projectRoot, fp.Path); err != nil {
-				return writtenFiles, nixResult, fmt.Errorf("refusing to write %s: %w", fp.Path, err)
+				return out, fmt.Errorf("refusing to write %s: %w", fp.Path, err)
 			}
 		}
 
 		switch fp.Action {
 		case UpdateActionCreate, UpdateActionRegenerate:
 			if err := fileutil.WriteFileAtomic(absPath, fp.NewContent, mode); err != nil {
-				return writtenFiles, nixResult, fmt.Errorf("writing %s: %w", fp.Path, err)
+				return out, fmt.Errorf("writing %s: %w", fp.Path, err)
 			}
-			writtenFiles = append(writtenFiles, types.GeneratedFile{
-				Path: fp.Path, Content: fp.NewContent, Mode: mode, Strategy: fp.Strategy,
-			})
+			out.recordWrite(fp, fp.NewContent, mode)
 
 		case UpdateActionMerge:
 			merged, err := dispatchMerge(fp, projectRoot)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: merge failed for %s: %v (will retry on next update)\n", fp.Path, err)
+				out.failures = append(out.failures, fileFailure{Path: fp.Path, Err: fmt.Errorf("merge failed: %w", err)})
 				continue
 			}
 			if err := fileutil.WriteFileAtomic(absPath, merged, mode); err != nil {
-				return writtenFiles, nixResult, fmt.Errorf("writing merged %s: %w", fp.Path, err)
+				return out, fmt.Errorf("writing merged %s: %w", fp.Path, err)
 			}
-			writtenFiles = append(writtenFiles, types.GeneratedFile{
-				Path: fp.Path, Content: merged, Mode: mode, Strategy: fp.Strategy,
-			})
+			out.recordWrite(fp, merged, mode)
 
 		case UpdateActionSidecar:
-			result, err := update.UpdateDevenvNix(update.NixUpdateOptions{
-				ProjectRoot: projectRoot,
-				FilePath:    fp.Path,
-				NewContent:  fp.NewContent,
-				NewMode:     mode,
-				Status:      fp.Status,
-				Force:       opts.Force,
-				DryRun:      opts.DryRun,
-			})
-			if err != nil {
-				return writtenFiles, nixResult, fmt.Errorf("updating %s: %w", fp.Path, err)
+			if err := executeSidecar(fp, projectRoot, mode, opts, &out); err != nil {
+				return out, err
 			}
-			nixResult = result
-			// Only record in written files if actually written.
-			if result.Action == update.NixRegenerated || result.Action == update.NixForceOverwritten {
-				writtenFiles = append(writtenFiles, types.GeneratedFile{
-					Path: fp.Path, Content: fp.NewContent, Mode: mode, Strategy: fp.Strategy,
-				})
+
+		case UpdateActionRemove:
+			if err := os.Remove(absPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				out.failures = append(out.failures, fileFailure{Path: fp.Path, Err: fmt.Errorf("removing orphaned file: %w", err)})
+				continue
 			}
+			out.dropped[fp.Path] = true
+
+		case UpdateActionUntrack:
+			out.dropped[fp.Path] = true
 
 		case UpdateActionSkip:
 			// Do nothing.
 		}
 	}
 
-	return writtenFiles, nixResult, nil
+	return out, nil
+}
+
+// recordWrite notes a file written with content and mode.
+func (o *updateOutcome) recordWrite(fp FileUpdatePlan, content []byte, mode os.FileMode) {
+	o.written = append(o.written, types.GeneratedFile{
+		Path: fp.Path, Content: content, Mode: mode, Strategy: fp.Strategy,
+	})
+}
+
+// executeSidecar applies a manual-merge file update (devenv.nix), which
+// either regenerates the file or writes a .new sidecar for the user to merge.
+func executeSidecar(fp FileUpdatePlan, projectRoot string, mode os.FileMode, opts UpdateOptions, out *updateOutcome) error {
+	result, err := update.UpdateDevenvNix(update.NixUpdateOptions{
+		ProjectRoot: projectRoot,
+		FilePath:    fp.Path,
+		NewContent:  fp.NewContent,
+		NewMode:     mode,
+		Status:      fp.Status,
+		Force:       opts.Force,
+		DryRun:      opts.DryRun,
+	})
+	if err != nil {
+		return fmt.Errorf("updating %s: %w", fp.Path, err)
+	}
+	out.nixResult = result
+	// Only record in written files if actually written.
+	if result.Action == update.NixRegenerated || result.Action == update.NixForceOverwritten {
+		out.recordWrite(fp, fp.NewContent, mode)
+	}
+	return nil
 }
 
 func dispatchMerge(fp FileUpdatePlan, projectRoot string) ([]byte, error) {
@@ -441,6 +647,12 @@ func dispatchMerge(fp FileUpdatePlan, projectRoot string) ([]byte, error) {
 	theirs, err := os.ReadFile(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", fp.Path, err)
+	}
+
+	// An empty on-disk file has nothing to preserve (matches the init
+	// pipeline); write the generated content.
+	if len(bytes.TrimSpace(theirs)) == 0 {
+		return fp.NewContent, nil
 	}
 
 	// fp.OldContent is the recorded base for this file. Delegate to the shared

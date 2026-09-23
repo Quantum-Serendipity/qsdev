@@ -56,10 +56,7 @@ func commitConfig(t *testing.T, dir string, answers types.WizardAnswers) {
 // returns the content of each generated file by path.
 func generatedContent(t *testing.T, answers types.WizardAnswers) map[string]string {
 	t.Helper()
-	acc, err := runAccumulator(answers, struct {
-		ClaudeOnly bool
-		DevenvOnly bool
-	}{})
+	acc, err := runAccumulator(answers, generationScope{})
 	if err != nil {
 		t.Fatalf("runAccumulator: %v", err)
 	}

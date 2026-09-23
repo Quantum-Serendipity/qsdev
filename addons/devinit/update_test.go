@@ -22,7 +22,7 @@ func TestBuildUpdatePlan_UnmodifiedRegenerate(t *testing.T) {
 			"devenv.yaml": {Hash: "sha256:abc", Strategy: types.Overwrite},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -50,7 +50,7 @@ func TestBuildUpdatePlan_ModifiedNoForce_ThreeWayMerge(t *testing.T) {
 			},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -74,7 +74,7 @@ func TestBuildUpdatePlan_ModifiedNoForce_SectionMarker(t *testing.T) {
 			"CLAUDE.md": {Hash: "sha256:abc", Strategy: types.SectionMarker},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -98,7 +98,7 @@ func TestBuildUpdatePlan_ModifiedNoForce_ManualMerge(t *testing.T) {
 			"devenv.nix": {Hash: "sha256:abc", Strategy: types.ManualMerge},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -119,7 +119,7 @@ func TestBuildUpdatePlan_ModifiedNoForce_LibraryManaged(t *testing.T) {
 			".claude/skills/deploy.md": {Hash: "sha256:abc", Strategy: types.LibraryManaged},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -143,7 +143,7 @@ func TestBuildUpdatePlan_ModifiedNoForce_Overwrite(t *testing.T) {
 			"devenv.yaml": {Hash: "sha256:abc", Strategy: types.Overwrite},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -167,7 +167,7 @@ func TestBuildUpdatePlan_ModifiedWithForce(t *testing.T) {
 			"devenv.yaml": {Hash: "sha256:abc", Strategy: types.Overwrite},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{Force: true})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{Force: true})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -191,7 +191,7 @@ func TestBuildUpdatePlan_Deleted(t *testing.T) {
 			"devenv.yaml": {Hash: "sha256:abc", Strategy: types.Overwrite},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -212,7 +212,7 @@ func TestBuildUpdatePlan_DeletedForce(t *testing.T) {
 			"devenv.yaml": {Hash: "sha256:abc", Strategy: types.Overwrite},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{Force: true})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{Force: true})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -233,7 +233,7 @@ func TestBuildUpdatePlan_NewFile(t *testing.T) {
 			// new-file.txt is NOT in stored state
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -257,7 +257,7 @@ func TestBuildUpdatePlan_Unknown(t *testing.T) {
 			"devenv.yaml": {Hash: "sha256:abc", Strategy: types.Overwrite},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -316,7 +316,7 @@ func TestBuildUpdatePlan_UnmodifiedSectionMarker(t *testing.T) {
 			"CLAUDE.md": {Hash: "sha256:abc", Strategy: types.SectionMarker},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -344,7 +344,7 @@ func TestBuildUpdatePlan_UnmodifiedThreeWayMerge(t *testing.T) {
 			},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -375,7 +375,7 @@ func TestBuildUpdatePlan_UnmodifiedOverwrite_StillRegenerates(t *testing.T) {
 			"changelog.md": {Hash: "sha256:def", Strategy: types.LibraryManaged},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 2 {
 		t.Fatalf("expected 2 files, got %d", len(plan.Files))
 	}

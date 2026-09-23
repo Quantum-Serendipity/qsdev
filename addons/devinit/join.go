@@ -40,10 +40,8 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	hasMissingPrereqs := joinPrerequisites(cmd, opts)
 
 	// 3. Generate files via fragment accumulation.
-	accResult, err := runAccumulator(answers, struct {
-		ClaudeOnly bool
-		DevenvOnly bool
-	}{ClaudeOnly: opts.ClaudeOnly, DevenvOnly: opts.DevenvOnly})
+	applyScopeFlags(opts, &answers)
+	accResult, err := runAccumulator(answers, scopeFromAnswers(answers))
 	if err != nil {
 		return fmt.Errorf("generating files: %w", err)
 	}
@@ -288,6 +286,7 @@ func writeJoinResults(
 	genState.QsdevVersion = version.Info().Version
 	genState.EnabledTools = answers.EnabledTools
 	genState.Fragments = state.RecordFragments(accResult.fragments)
+	stampTemplateVersions(&genState, claudeGenerated)
 	stateFile := filepath.Join(projectRoot, stateFilePath())
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)

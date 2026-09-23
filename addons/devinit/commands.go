@@ -53,10 +53,7 @@ for the current project. Detects existing languages and frameworks, applies
 project-type profiles, and writes all files atomically.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.Update {
-				return runUpdate(cmd, UpdateOptions{
-					Force:  opts.Force,
-					DryRun: opts.DryRun,
-				})
+				return runUpdate(cmd, updateOptionsFromInit(opts))
 			}
 			return runInitWithModeDetection(cmd, opts)
 		},
@@ -65,6 +62,17 @@ project-type profiles, and writes all files atomically.`,
 	RegisterInitFlags(cmd, &opts)
 
 	return cmd
+}
+
+// updateOptionsFromInit maps init flags onto the update flow. For init,
+// --force means "overwrite", which covers both user-modified files and the
+// version ratchet.
+func updateOptionsFromInit(opts InitOptions) UpdateOptions {
+	return UpdateOptions{
+		Force:          opts.Force,
+		AllowDowngrade: opts.Force,
+		DryRun:         opts.DryRun,
+	}
 }
 
 // runInitWithModeDetection auto-detects the onboarding mode and dispatches
@@ -115,10 +123,7 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 		}
 		return runJoin(cmd, opts, projectRoot)
 	case ModeUpdate:
-		return runUpdate(cmd, UpdateOptions{
-			Force:  opts.Force,
-			DryRun: opts.DryRun,
-		})
+		return runUpdate(cmd, updateOptionsFromInit(opts))
 	case ModeRepair:
 		return runRepair(cmd, opts)
 	default:
@@ -161,10 +166,9 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		}
 	}
 
-	accResult, err := runAccumulator(answers, struct {
-		ClaudeOnly bool
-		DevenvOnly bool
-	}{ClaudeOnly: opts.ClaudeOnly, DevenvOnly: opts.DevenvOnly})
+	// Persist the generation scope so update and repair keep honouring it.
+	applyScopeFlags(opts, &answers)
+	accResult, err := runAccumulator(answers, scopeFromAnswers(answers))
 	if err != nil {
 		return fmt.Errorf("generating files: %w", err)
 	}
@@ -319,6 +323,7 @@ func writeAndRecordResults(cmd *cobra.Command, opts InitOptions, projectRoot str
 	genState.QsdevVersion = version.Info().Version
 	genState.EnabledTools = answers.EnabledTools
 	genState.Fragments = state.RecordFragments(accResult.fragments)
+	stampTemplateVersions(&genState, accResult.claudeGenerated)
 	stateFile := filepath.Join(projectRoot, stateFilePath())
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
@@ -364,6 +369,17 @@ func writeAndRecordResults(cmd *cobra.Command, opts InitOptions, projectRoot str
 	}
 
 	return nil
+}
+
+// stampTemplateVersions records the Claude Code template and skill-library
+// versions that produced the tracked files, so a later update reports a
+// template change only when one actually happened.
+func stampTemplateVersions(st *types.GeneratedState, claudeGenerated bool) {
+	if !claudeGenerated {
+		return
+	}
+	st.TemplateVersion = claudecode.ComputeTemplateVersion()
+	st.SkillLibraryVersion = claudecode.ComputeSkillLibraryVersion()
 }
 
 func finalizeProject(cmd *cobra.Command, opts InitOptions, answers types.WizardAnswers, projectRoot string, devenvGenerated, claudeGenerated bool) error {

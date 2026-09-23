@@ -155,12 +155,7 @@ func (e *repairExitErr) ExitCode() int { return e.code }
 // regenerateFreshFiles runs both generators via fragment accumulation to produce
 // a map of path to fresh GeneratedFile. Returns an error only if generation fails entirely.
 func regenerateFreshFiles(answers types.WizardAnswers) (map[string]types.GeneratedFile, []types.FragmentEntry, error) {
-	accResult, err := runAccumulator(answers, struct {
-		ClaudeOnly bool
-		DevenvOnly bool
-	}{
-		ClaudeOnly: answers.MergeMode == "claude-only",
-	})
+	accResult, err := runAccumulator(answers, scopeFromAnswers(answers))
 	if err != nil {
 		return nil, nil, fmt.Errorf("generating files for repair: %w", err)
 	}

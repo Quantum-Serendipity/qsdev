@@ -203,7 +203,7 @@ qsdev trial                   # Evaluate in an isolated git worktree
 | `check` | CI enforcement checks (JSON, SARIF, JUnit output). `--auto-fix` repairs issues |
 | `info` | Project status at a glance (cached, instant) |
 | `repair` | Fix corrupted or drifted config files |
-| `update` | Update binary + configs + devenv inputs. Flags: `--check`, `--changelog`, `--dry-run`, `--force`, `--self-only`, `--configs-only`, `--deps-only` |
+| `update` | Update binary + configs + devenv inputs. Flags: `--check`, `--changelog`, `--dry-run`, `--force` (reinstall the binary only), `--overwrite-modified` (replace config files you edited), `--allow-downgrade`, `--self-only`, `--configs-only`, `--deps-only` |
 | `outdated` | Check for outdated dependencies across ecosystems |
 | `teardown` | Remove all qsdev configuration from project |
 | `enable <tool>` | Enable a tool |

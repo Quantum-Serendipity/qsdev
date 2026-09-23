@@ -151,14 +151,8 @@ func loadLifecycleAnswers(projectRoot string) (types.WizardAnswers, error) {
 
 // lifecycleAccumulatorMode mirrors update's generator selection: a
 // claude-only project never has its devenv files regenerated.
-func lifecycleAccumulatorMode(answers types.WizardAnswers) struct {
-	ClaudeOnly bool
-	DevenvOnly bool
-} {
-	return struct {
-		ClaudeOnly bool
-		DevenvOnly bool
-	}{ClaudeOnly: answers.ClaudeCode && answers.MergeMode == "claude-only"}
+func lifecycleAccumulatorMode(answers types.WizardAnswers) generationScope {
+	return generationScope{ClaudeOnly: answers.ClaudeCode && answers.MergeMode == mergeModeClaudeOnly}
 }
 
 // generateToolFiles renders the tool's exclusive files (its GenerateFunc plus
@@ -323,10 +317,15 @@ func planSharedFiles(
 		}
 	}
 
-	plan := buildUpdatePlan(shared, modStatus, existingState, UpdateOptions{})
+	plan := buildUpdatePlan(shared, modStatus, existingState, projectRoot, UpdateOptions{})
 	kept := plan.Files[:0]
 	for _, fp := range plan.Files {
-		if fp.Action == UpdateActionCreate && fileutil.FileExists(projectRoot, fp.Path) {
+		// buildUpdatePlan already merges an existing untracked file with a
+		// mergeable strategy and skips anything else; a manual-merge file
+		// (devenv.nix) gets a sidecar instead so the tool's contribution is
+		// still offered to the user.
+		if fp.Status == types.New && fp.Action == UpdateActionSkip && fp.Strategy == types.ManualMerge &&
+			fileutil.FileExists(projectRoot, fp.Path) {
 			untrackedExisting(&fp)
 		}
 		if removing && fp.Action == UpdateActionCreate {
@@ -381,11 +380,12 @@ func applyToolChange(projectRoot string, change toolChange, st types.GeneratedSt
 		result.written = append(result.written, f)
 	}
 
-	sharedWritten, nixResult, err := executeUpdatePlan(change.shared, projectRoot, UpdateOptions{})
+	outcome, err := executeUpdatePlan(change.shared, projectRoot, UpdateOptions{})
 	if err != nil {
 		return result, fmt.Errorf("updating shared files: %w", err)
 	}
-	result.nixResult = nixResult
+	sharedWritten := outcome.written
+	result.nixResult = outcome.nixResult
 	result.notices = append(result.notices, change.notices...)
 
 	writtenPaths := make(map[string]bool, len(sharedWritten))

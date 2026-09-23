@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -39,7 +40,7 @@ func TestDetect_FillDefaults_CarriesSuggestedConfig(t *testing.T) {
 			}
 
 			var a types.WizardAnswers
-			a.FillDefaults(Detect(dir), catalog.MustDefault())
+			a.FillDefaults(Detect(context.Background(), dir), catalog.MustDefault())
 
 			idx := slices.IndexFunc(a.Languages, func(l types.LanguageChoice) bool { return l.Name == tt.module })
 			if idx < 0 {
@@ -62,7 +63,7 @@ func TestDetect_FillDefaults_MavenDenyRules(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "pom.xml"), "<project/>")
 
 	var a types.WizardAnswers
-	a.FillDefaults(Detect(dir), catalog.MustDefault())
+	a.FillDefaults(Detect(context.Background(), dir), catalog.MustDefault())
 
 	m, ok := ecosystem.DefaultRegistry().ByName("java")
 	if !ok {
@@ -91,7 +92,7 @@ func TestDetect_RedactsRemoteURLCredentials(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(gitDir, "config"), "[remote \"origin\"]\n\turl = https://x-access-token:ghs_secret@github.com/org/repo.git\n")
 
-	dp := Detect(dir)
+	dp := Detect(context.Background(), dir)
 	if want := "https://github.com/org/repo.git"; dp.RemoteURL != want {
 		t.Errorf("RemoteURL = %q, want %q", dp.RemoteURL, want)
 	}

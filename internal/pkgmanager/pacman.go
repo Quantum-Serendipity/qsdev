@@ -24,7 +24,12 @@ func (p *Pacman) Available() bool {
 
 func (p *Pacman) NeedsElevation() bool { return true }
 
+// InstallArgs returns the command Install runs, without sudo.
+func (p *Pacman) InstallArgs(packages ...string) (string, []string) {
+	return "pacman", append([]string{"-S", "--noconfirm"}, packages...)
+}
+
 func (p *Pacman) Install(ctx context.Context, packages ...string) error {
-	args := append([]string{"-S", "--noconfirm"}, packages...)
-	return p.runner.Run(ctx, "pacman", args...)
+	bin, args := p.InstallArgs(packages...)
+	return p.runner.Run(ctx, bin, args...)
 }

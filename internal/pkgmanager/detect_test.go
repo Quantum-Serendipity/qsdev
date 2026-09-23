@@ -154,3 +154,34 @@ func TestDetectPackageManagerNonNil(t *testing.T) {
 		t.Fatal("DetectPackageManager should not return nil")
 	}
 }
+
+// TestDetectedManagerDrivesPackageNames pins F466: on a distro with Nix
+// installed, setup installs through Nix, so package names must be resolved for
+// Nix rather than for osInfo.PackageManager.
+func TestDetectedManagerDrivesPackageNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		osInfo *sysinfo.OSInfo
+		tool   string
+		want   string
+	}{
+		{"debian with nix", &sysinfo.OSInfo{Family: "debian", PackageManager: "apt", HasNix: true}, "go", "go"},
+		{"rhel with nix", &sysinfo.OSInfo{Family: "rhel", PackageManager: "dnf", HasNix: true}, "shellcheck", "shellcheck"},
+		{"arch with nix", &sysinfo.OSInfo{Family: "arch", PackageManager: "pacman", HasNix: true}, "node", "nodejs"},
+		{"debian without nix", &sysinfo.OSInfo{Family: "debian", PackageManager: "apt"}, "go", "golang"},
+		// Arch resolves the generic name (registry-pkgmgr-1 F482: nodejs-lts-iron is EOL).
+		{"arch without nix", &sysinfo.OSInfo{Family: "arch", PackageManager: "pacman"}, "node", "nodejs"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			pm := DetectPackageManagerWithRunner(tt.osInfo, NewMockRunner())
+			got, ok := PackageFor(pm, tt.osInfo.Family, tt.tool)
+			if !ok || got != tt.want {
+				t.Errorf("PackageFor(%s, %q, %q) = %q, %v; want %q", pm.Name(), tt.osInfo.Family, tt.tool, got, ok, tt.want)
+			}
+		})
+	}
+}

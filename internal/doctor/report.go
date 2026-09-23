@@ -155,7 +155,9 @@ func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, qsdevVersion strin
 		})
 	}
 
-	mgr := osInfo.PackageManager
+	// Recommend the manager setup actually installs with (Nix when present),
+	// not osInfo.PackageManager, so the advice matches `devenv setup`.
+	pm := pkgmanager.DetectPackageManager(osInfo)
 	family := osInfo.Family
 
 	for _, ts := range checks {
@@ -168,9 +170,9 @@ func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, qsdevVersion strin
 		}
 
 		if !ts.Installed {
-			entry.FixCommand = pkgmanager.InstallCommand(ts.Name, family, mgr)
+			entry.FixCommand = pkgmanager.InstallCommand(pm, family, ts.Name)
 		} else if ts.MinVersion != "" && !ts.VersionOK {
-			entry.FixCommand = pkgmanager.InstallCommand(ts.Name, family, mgr)
+			entry.FixCommand = pkgmanager.InstallCommand(pm, family, ts.Name)
 		}
 
 		if ts.Required {
@@ -186,10 +188,10 @@ func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, qsdevVersion strin
 	// Build recommendations
 	for _, ts := range checks {
 		if !ts.Installed {
-			cmd := pkgmanager.InstallCommand(ts.Name, family, mgr)
+			cmd := pkgmanager.InstallCommand(pm, family, ts.Name)
 			r.Recommendations = append(r.Recommendations, fmt.Sprintf("Install %s: %s", ts.Name, cmd))
 		} else if ts.MinVersion != "" && !ts.VersionOK {
-			cmd := pkgmanager.InstallCommand(ts.Name, family, mgr)
+			cmd := pkgmanager.InstallCommand(pm, family, ts.Name)
 			r.Recommendations = append(r.Recommendations, fmt.Sprintf("Upgrade %s to >= %s: %s", ts.Name, ts.MinVersion, cmd))
 		}
 	}

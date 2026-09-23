@@ -55,7 +55,7 @@ func SaveAnswers(projectRoot string, a types.WizardAnswers) error {
 // returns an error telling the user to run init first if the file does not
 // exist.
 func loadAnswers(projectRoot string) (types.WizardAnswers, error) {
-	return answers.LoadFromDir(projectRoot, branding.Get().StateDir, primaryAnswersFile(), "claude")
+	return answers.LoadFromDir(projectRoot, branding.Get().StateDir, primaryAnswersFile(), "claude init")
 }
 
 // overlayInitAnswers merges the answers `claude init` builds from its flags

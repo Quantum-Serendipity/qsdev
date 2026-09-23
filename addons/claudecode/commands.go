@@ -83,7 +83,7 @@ func initCmd() *cobra.Command {
 			}
 
 			// Detect project characteristics.
-			detected := detect.Detect(projectRoot)
+			detected := detect.Detect(cmd.Context(), projectRoot)
 
 			// Build answers from flags, overlaid onto any saved answers so the
 			// rest of the project's configuration survives a re-init.
@@ -183,7 +183,7 @@ func updateCmd() *cobra.Command {
 			}
 
 			// Refresh detection.
-			answers.Detected = detect.Detect(projectRoot)
+			answers.Detected = detect.Detect(cmd.Context(), projectRoot)
 
 			// Load stored state.
 			stateFile := filepath.Join(projectRoot, statePath())

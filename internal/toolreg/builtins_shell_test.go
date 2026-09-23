@@ -178,6 +178,35 @@ func TestOtelConfigSharedContent_CustomEndpoint(t *testing.T) {
 	}
 }
 
+// TestOtelConfigSharedContent_EscapesNixStrings pins F470: user-controlled
+// values must be Nix-escaped so quotes cannot break devenv.nix and `${` cannot
+// inject a Nix interpolation.
+func TestOtelConfigSharedContent_EscapesNixStrings(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		projectName string
+		want        string
+	}{
+		{name: "double quote", projectName: `my"proj`, want: `env.OTEL_SERVICE_NAME = "my\"proj";`},
+		{name: "interpolation", projectName: "x${builtins.currentSystem}", want: `env.OTEL_SERVICE_NAME = "x\${builtins.currentSystem}";`},
+		{name: "backslash", projectName: `a\b`, want: `env.OTEL_SERVICE_NAME = "a\\b";`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			content, err := otelConfigNixContent(types.WizardAnswers{ProjectName: tt.projectName})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(string(content), tt.want) {
+				t.Errorf("content missing %q:\n%s", tt.want, content)
+			}
+		})
+	}
+}
+
 func TestStarshipGenerateFunc(t *testing.T) {
 	reg := DefaultRegistry()
 	tool, ok := reg.ByName("starship-integration")

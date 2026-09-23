@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
+	"github.com/Quantum-Serendipity/qsdev/internal/pkgmanager"
 )
 
 func TestSetupCmd_Flags(t *testing.T) {
@@ -327,66 +328,110 @@ func TestSetupCmd_ToolToNixPkg(t *testing.T) {
 }
 
 func TestSetupCmd_InstallCommandForTool(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name   string
 		family string
-		mgr    string
+		pm     pkgmanager.PackageManager
 		want   string
 	}{
-		{"nix", "debian", "apt", "curl -sSf -L https://install.determinate.systems/nix | sh -s -- install"},
-		{"claude", "debian", "apt", "npm install -g @anthropic-ai/claude-code"},
-		{"devenv", "debian", "apt", strings.Join(devenvSpec.InstallCmd, " ")},
-		{"git", "debian", "apt", "sudo apt-get install -y git"},
-		{"git", "macos", "brew", "brew install git"},
+		{"nix", "debian", pkgmanager.NewApt(nil), "curl -sSf -L https://install.determinate.systems/nix | sh -s -- install"},
+		{"claude", "debian", pkgmanager.NewApt(nil), "npm install -g @anthropic-ai/claude-code"},
+		{"devenv", "debian", pkgmanager.NewApt(nil), strings.Join(devenvSpec.InstallCmd, " ")},
+		{"git", "debian", pkgmanager.NewApt(nil), "sudo apt-get install -y git"},
+		{"git", "macos", pkgmanager.NewBrew(nil), "brew install git"},
+		// F466: on a debian host with Nix, setup installs through Nix, so the
+		// dry run must show the Nix command and the nixpkgs attribute.
+		{"go", "debian", pkgmanager.NewNix(nil, false), "nix profile install nixpkgs#go"},
 	}
 
 	for _, tt := range tests {
-		got := installCommandForTool(tt.name, tt.family, tt.mgr)
-		if got != tt.want {
-			t.Errorf("installCommandForTool(%q, %q, %q) = %q, want %q", tt.name, tt.family, tt.mgr, got, tt.want)
-		}
-	}
-}
-
-func TestSetupCmd_PmInstallArgs(t *testing.T) {
-	// Verify that pmInstallArgs produces correct arguments for each PM type.
-	// We use a helper mock that just returns a name.
-	tests := []struct {
-		pmName string
-		pkg    string
-		want   []string
-	}{
-		{"apt", "git", []string{"install", "-y", "git"}},
-		{"dnf", "git", []string{"install", "-y", "git"}},
-		{"pacman", "git", []string{"-S", "--noconfirm", "git"}},
-		{"apk", "git", []string{"add", "git"}},
-		{"xbps", "git", []string{"-y", "git"}},
-		{"emerge", "git", []string{"--ask=n", "git"}},
-		{"brew", "git", []string{"install", "git"}},
-	}
-
-	for _, tt := range tests {
-		pm := &pmNameOnly{name: tt.pmName}
-		got := pmInstallArgs(pm, tt.pkg)
-		if len(got) != len(tt.want) {
-			t.Errorf("pmInstallArgs(%q, %q): len=%d, want len=%d", tt.pmName, tt.pkg, len(got), len(tt.want))
-			continue
-		}
-		for i := range got {
-			if got[i] != tt.want[i] {
-				t.Errorf("pmInstallArgs(%q, %q)[%d]=%q, want %q", tt.pmName, tt.pkg, i, got[i], tt.want[i])
+		t.Run(tt.name+"/"+tt.pm.Name(), func(t *testing.T) {
+			t.Parallel()
+			got := installCommandForTool(tt.name, tt.family, tt.pm)
+			if got != tt.want {
+				t.Errorf("installCommandForTool(%q, %q, %s) = %q, want %q", tt.name, tt.family, tt.pm.Name(), got, tt.want)
 			}
-		}
+		})
 	}
 }
 
-// pmNameOnly satisfies pkgmanager.PackageManager for Name() only.
-// Other methods panic; only Name() is tested here.
-type pmNameOnly struct {
-	name string
+// recordingPM is a PackageManager that records Install calls.
+type recordingPM struct {
+	name      string
+	available bool
+	installed []string
 }
 
-func (p *pmNameOnly) Name() string                                 { return p.name }
-func (p *pmNameOnly) Available() bool                              { panic("unused") }
-func (p *pmNameOnly) NeedsElevation() bool                         { panic("unused") }
-func (p *pmNameOnly) Install(_ context.Context, _ ...string) error { panic("unused") }
+func (p *recordingPM) Name() string         { return p.name }
+func (p *recordingPM) Available() bool      { return p.available }
+func (p *recordingPM) NeedsElevation() bool { return false }
+func (p *recordingPM) InstallArgs(packages ...string) (string, []string) {
+	return p.name, append([]string{"install"}, packages...)
+}
+
+func (p *recordingPM) Install(_ context.Context, packages ...string) error {
+	p.installed = append(p.installed, packages...)
+	return nil
+}
+
+// TestInstallWithPM resolves package names for the manager that actually runs
+// the install (F466) and refuses to run a manager that is not installed (F477).
+func TestInstallWithPM(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		tool          string
+		family        string
+		pm            *recordingPM
+		wantInstalled []string
+		wantErr       string
+	}{
+		{
+			// dnf's ByManager name is "ShellCheck", which is not a nixpkgs attribute.
+			name: "rhel host with nix uses nix names", tool: "shellcheck", family: "rhel",
+			pm:            &recordingPM{name: "nix", available: true},
+			wantInstalled: []string{"shellcheck"},
+		},
+		{
+			// arch's ByFamily name "nodejs-lts-iron" is not a nixpkgs attribute.
+			name: "arch host with nix uses nix names", tool: "node", family: "arch",
+			pm:            &recordingPM{name: "nix", available: true},
+			wantInstalled: []string{"nodejs"},
+		},
+		{
+			name: "native manager keeps family names", tool: "shellcheck", family: "rhel",
+			pm:            &recordingPM{name: "dnf", available: true},
+			wantInstalled: []string{"ShellCheck"},
+		},
+		{
+			name: "missing manager is reported", tool: "git", family: "macos",
+			pm:      &recordingPM{name: "brew"},
+			wantErr: "package manager brew is not installed",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var out bytes.Buffer
+			err := installWithPM(t.Context(), &out, tt.tool, tt.family, tt.pm)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tt.wantErr)
+				}
+				if len(tt.pm.installed) != 0 {
+					t.Errorf("Install called with %v on an unavailable manager", tt.pm.installed)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if strings.Join(tt.pm.installed, ",") != strings.Join(tt.wantInstalled, ",") {
+				t.Errorf("installed %v, want %v", tt.pm.installed, tt.wantInstalled)
+			}
+		})
+	}
+}

@@ -2,6 +2,7 @@ package devinit
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -111,7 +112,7 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	}
 
 	// 1. Load answers, refresh detection, infer tools.
-	answers, err := loadAndRefreshForUpdate(projectRoot)
+	answers, err := loadAndRefreshForUpdate(cmd.Context(), projectRoot)
 	if err != nil {
 		return err
 	}
@@ -244,14 +245,14 @@ func printUpdateSummary(w io.Writer, plan UpdatePlan, out updateOutcome) {
 
 // loadAndRefreshForUpdate loads saved answers, refreshes ecosystem detection,
 // and augments enabled tools with inferred entries.
-func loadAndRefreshForUpdate(projectRoot string) (types.WizardAnswers, error) {
+func loadAndRefreshForUpdate(ctx context.Context, projectRoot string) (types.WizardAnswers, error) {
 	answers, err := loadAnswers(projectRoot)
 	if err != nil {
 		return types.WizardAnswers{}, err
 	}
 
 	// Refresh detection.
-	answers.Detected = detect.Detect(projectRoot)
+	answers.Detected = detect.Detect(ctx, projectRoot)
 	answers.ProjectRoot = projectRoot
 
 	// Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).

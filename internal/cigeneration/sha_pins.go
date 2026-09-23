@@ -87,6 +87,10 @@ var (
 	}
 	// snyk/actions publishes no release tags; master is the documented
 	// reference, so the SHA is the only thing actually pinning it.
+	//
+	// Caveat: the SHA pins only the action metadata. The repo-root action is a
+	// Docker action whose action.yml runs the mutable "docker://snyk/snyk:node"
+	// image tag, so the code that executes (with SNYK_TOKEN) is not pinned.
 	ActionSnyk = ActionRef{
 		Owner: "snyk",
 		Repo:  "actions",

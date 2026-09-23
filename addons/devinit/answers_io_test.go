@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 )
 
 func TestLoadAnswersOrEmpty(t *testing.T) {
@@ -20,7 +22,7 @@ func TestLoadAnswersOrEmpty(t *testing.T) {
 		{name: "valid file", content: "project_name: demo\n", wantProj: "demo"},
 		// A corrupt file must surface an error that names the file, not a bare
 		// YAML error the caller cannot place.
-		{name: "corrupt file", content: "languages: [unterminated\n", wantErr: answersFile()},
+		{name: "corrupt file", content: "languages: [unterminated\n", wantErr: answers.PrimaryFilename()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

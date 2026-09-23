@@ -37,10 +37,7 @@ type MockRunner struct {
 	// RunResults maps "name args..." to an error result.
 	RunResults map[string]error
 
-	// OutputResults maps "name args..." to (output, error) results.
-	OutputResults map[string]outputResult
-
-	// Calls records all Run/Output invocations as "name arg1 arg2 ...".
+	// Calls records all Run invocations as "name arg1 arg2 ...".
 	Calls []string
 }
 
@@ -49,16 +46,10 @@ type lookPathResult struct {
 	err  error
 }
 
-type outputResult struct {
-	data []byte
-	err  error
-}
-
 func NewMockRunner() *MockRunner {
 	return &MockRunner{
 		LookPathResults: make(map[string]lookPathResult),
 		RunResults:      make(map[string]error),
-		OutputResults:   make(map[string]outputResult),
 	}
 }
 
@@ -76,15 +67,6 @@ func (m *MockRunner) Run(_ context.Context, name string, args ...string) error {
 		return err
 	}
 	return nil
-}
-
-func (m *MockRunner) Output(_ context.Context, name string, args ...string) ([]byte, error) {
-	key := m.makeKey(name, args...)
-	m.Calls = append(m.Calls, key)
-	if r, ok := m.OutputResults[key]; ok {
-		return r.data, r.err
-	}
-	return nil, nil
 }
 
 func (m *MockRunner) makeKey(name string, args ...string) string {
@@ -345,5 +327,47 @@ func TestElevation(t *testing.T) {
 		if pm.NeedsElevation() {
 			t.Errorf("%s should not need elevation", pm.Name())
 		}
+	}
+}
+
+// TestInstallRunsInstallArgs pins F474: Install must run exactly the command
+// InstallArgs reports, since setup's elevated path and every displayed
+// command are built from InstallArgs.
+func TestInstallRunsInstallArgs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		pm   func(CommandRunner) PackageManager
+		path []string // binaries present on PATH
+	}{
+		{"apt", func(r CommandRunner) PackageManager { return NewApt(r) }, []string{"apt-get"}},
+		{"dnf", func(r CommandRunner) PackageManager { return NewDnf(r) }, []string{"dnf"}},
+		{"yum fallback", func(r CommandRunner) PackageManager { return NewDnf(r) }, []string{"yum"}},
+		{"pacman", func(r CommandRunner) PackageManager { return NewPacman(r) }, []string{"pacman"}},
+		{"zypper", func(r CommandRunner) PackageManager { return NewZypper(r) }, []string{"zypper"}},
+		{"apk", func(r CommandRunner) PackageManager { return NewApk(r) }, []string{"apk"}},
+		{"xbps", func(r CommandRunner) PackageManager { return NewXbps(r) }, []string{"xbps-install"}},
+		{"emerge", func(r CommandRunner) PackageManager { return NewEmerge(r) }, []string{"emerge"}},
+		{"brew", func(r CommandRunner) PackageManager { return NewBrew(r) }, []string{"brew"}},
+		{"nix", func(r CommandRunner) PackageManager { return NewNix(r, false) }, []string{"nix"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := NewMockRunner()
+			for _, bin := range tt.path {
+				mock.LookPathResults[bin] = lookPathResult{path: "/usr/bin/" + bin}
+			}
+			pm := tt.pm(mock)
+			if err := pm.Install(context.Background(), "pkg"); err != nil {
+				t.Fatalf("Install: %v", err)
+			}
+			bin, args := pm.InstallArgs("pkg")
+			want := strings.Join(append([]string{bin}, args...), " ")
+			if len(mock.Calls) != 1 || mock.Calls[0] != want {
+				t.Errorf("Install ran %v, InstallArgs reports %q", mock.Calls, want)
+			}
+		})
 	}
 }

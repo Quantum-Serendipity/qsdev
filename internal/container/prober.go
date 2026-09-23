@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"time"
 )
 
 // Prober abstracts the system calls needed by container runtime detection.
@@ -21,6 +22,9 @@ type Prober interface {
 	Getenv(key string) string
 }
 
+// probeWaitDelay bounds how long Output waits for I/O after its context ends.
+const probeWaitDelay = time.Second
+
 // ExecProber implements Prober using real system calls.
 type ExecProber struct{}
 
@@ -32,6 +36,9 @@ func (p *ExecProber) Output(ctx context.Context, name string, args ...string) ([
 	cmd := exec.CommandContext(ctx, name, args...)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
+	// Once ctx is done and the process is killed, stop waiting for any
+	// grandchild that still holds the stdout pipe open.
+	cmd.WaitDelay = probeWaitDelay
 	err := cmd.Run()
 	return stdout.Bytes(), err
 }

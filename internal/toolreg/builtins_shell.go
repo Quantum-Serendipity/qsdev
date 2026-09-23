@@ -33,6 +33,25 @@ func shellBehaviors() map[string]ToolBehavior {
 	}
 }
 
+// otelServiceNameVar is filled from the project name rather than a constant.
+const otelServiceNameVar = "OTEL_SERVICE_NAME"
+
+// otelDefaults lists the OpenTelemetry variables the otel-config section
+// sets, in emission order.
+var otelDefaults = []struct{ name, value string }{
+	{"OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"},
+	{"OTEL_EXPORTER_OTLP_PROTOCOL", "grpc"},
+	{otelServiceNameVar, ""},
+	{"OTEL_TRACES_SAMPLER", "parentbased_traceidratio"},
+	{"OTEL_TRACES_SAMPLER_ARG", "0.1"},
+}
+
+// otelConfigNixContent renders the otel-config devenv.nix section. Values are
+// Nix-escaped because the project name comes from user input. Variables the
+// user already set through answers.EnvVars (the `--env` flag) are skipped:
+// the devenv.nix env block already emits them, and defining the same
+// attribute again in this section makes Nix reject the file with
+// "attribute 'env.X' already defined".
 func otelConfigNixContent(answers types.WizardAnswers) ([]byte, error) {
 	projectName := answers.ProjectName
 	if projectName == "" {
@@ -40,22 +59,18 @@ func otelConfigNixContent(answers types.WizardAnswers) ([]byte, error) {
 	}
 
 	// Defaults only: a value the user set in answers.EnvVars (e.g. a custom
-	// collector endpoint) is already rendered in devenv.nix's env block.
-	vars := []struct{ name, value string }{
-		{"OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"},
-		{"OTEL_EXPORTER_OTLP_PROTOCOL", "grpc"},
-		{"OTEL_SERVICE_NAME", projectName},
-		{"OTEL_TRACES_SAMPLER", "parentbased_traceidratio"},
-		{"OTEL_TRACES_SAMPLER_ARG", "0.1"},
-	}
-	var lines []string
-	for _, v := range vars {
-		// devenv.nix already renders answers.EnvVars in its env block; defining
-		// the same attribute again is a Nix "already defined" error.
+	// collector endpoint) is already rendered in devenv.nix's env block, and
+	// defining the same attribute again is a Nix "already defined" error.
+	lines := make([]string, 0, len(otelDefaults))
+	for _, v := range otelDefaults {
 		if _, userSet := answers.EnvVars[v.name]; userSet {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("  env.%s = %s;", v.name, ecosystem.NixString(v.value)))
+		value := v.value
+		if v.name == otelServiceNameVar {
+			value = projectName
+		}
+		lines = append(lines, fmt.Sprintf("  env.%s = %s;", v.name, ecosystem.NixString(value)))
 	}
 	return []byte(strings.Join(lines, "\n")), nil
 }

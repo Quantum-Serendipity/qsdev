@@ -369,13 +369,13 @@ func TestStatusTier2DoesNotHoldLockDuringDetect(t *testing.T) {
 	checker := newStatusChecker(dir)
 
 	lockFree := make(chan bool, 1)
-	checker.detectFn = func(root string) types.DetectedProject {
+	checker.detectFn = func(ctx context.Context, root string) types.DetectedProject {
 		ok := checker.mu.TryLock()
 		if ok {
 			checker.mu.Unlock()
 		}
 		lockFree <- ok
-		return detect.Detect(root)
+		return detect.Detect(ctx, root)
 	}
 
 	call(t, checker.handle, map[string]any{"tier": "2"})
@@ -398,10 +398,10 @@ func TestStatusTier2DetectRunsConcurrently(t *testing.T) {
 	const n = 2
 	entered := make(chan struct{}, n)
 	release := make(chan struct{})
-	checker.detectFn = func(root string) types.DetectedProject {
+	checker.detectFn = func(ctx context.Context, root string) types.DetectedProject {
 		entered <- struct{}{}
 		<-release
-		return detect.Detect(root)
+		return detect.Detect(ctx, root)
 	}
 
 	done := make(chan struct{}, n)

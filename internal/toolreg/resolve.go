@@ -2,9 +2,8 @@ package toolreg
 
 import (
 	"fmt"
+	"slices"
 	"strings"
-
-	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // ValidateEnable checks that enabling toolName is valid given the current
@@ -25,6 +24,17 @@ func ValidateEnable(registry *Registry, toolName string, enabledTools map[string
 	for _, conflict := range tool.Conflicts {
 		if enabledTools[conflict] {
 			return fmt.Errorf("cannot enable %q: conflicts with enabled tool %q", toolName, conflict)
+		}
+	}
+
+	// Conflicts are symmetric: an enabled tool that lists toolName among its
+	// conflicts blocks the enable even when toolName does not list it back.
+	for _, other := range registry.All() {
+		if other.Name == toolName || !enabledTools[other.Name] {
+			continue
+		}
+		if slices.Contains(other.Conflicts, toolName) {
+			return fmt.Errorf("cannot enable %q: conflicts with enabled tool %q", toolName, other.Name)
 		}
 	}
 
@@ -70,25 +80,4 @@ func ValidateDisable(registry *Registry, toolName string, enabledTools map[strin
 	}
 
 	return nil
-}
-
-// ComputeDefaults returns the set of tools that should be enabled by
-// default for a project with the given detection results.
-func ComputeDefaults(registry *Registry, detected types.DetectedProject) map[string]bool {
-	enabled := make(map[string]bool)
-
-	for _, tool := range registry.All() {
-		switch tool.Default {
-		case AlwaysOn:
-			enabled[tool.Name] = true
-		case OnWhenDetected:
-			if tool.DetectFunc != nil && tool.DetectFunc(detected) {
-				enabled[tool.Name] = true
-			}
-		case OptIn, AlwaysOff:
-			// Not enabled by default.
-		}
-	}
-
-	return enabled
 }

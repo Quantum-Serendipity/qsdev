@@ -30,14 +30,6 @@ func stateFilePath() string {
 	return state.InitStateFile()
 }
 
-func answersDirectory() string {
-	return branding.Get().StateDir
-}
-
-func answersFile() string {
-	return "." + branding.Get().AppName + "-init-answers.yaml"
-}
-
 func initCmd() *cobra.Command {
 	var opts InitOptions
 
@@ -133,7 +125,7 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 // runCreate is the original init flow for creating a project from scratch.
 func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	flagSet := NewFlagSet(cmd)
-	detected := detect.Detect(projectRoot)
+	detected := detect.Detect(cmd.Context(), projectRoot)
 	slog.Debug("ecosystem detection complete",
 		"ecosystems", len(detected.Ecosystems),
 		"has_go", detected.HasGoMod,

@@ -188,7 +188,7 @@ func (a *Adapter) handleInfo(ctx context.Context, cc *spi.ToolCallContext, _ *sp
 	if cc.ProjectRoot == "" {
 		return toolutil.NotConfigured("no project root resolved for "+a.desc.Label+" info", nil), nil
 	}
-	det := detect.Detect(cc.ProjectRoot)
+	det := detect.Detect(ctx, cc.ProjectRoot)
 	langs := toolutil.DetectedLanguages(det)
 	structured := map[string]any{
 		"framework":         string(a.desc.ID),

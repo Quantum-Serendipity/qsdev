@@ -2,11 +2,11 @@ package info
 
 import (
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 
-	"gopkg.in/yaml.v3"
-
+	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -40,7 +40,7 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 	genState, _ := state.LoadStateFromFile(statePath)
 
 	// 4. Load answers (graceful if missing).
-	answers := loadAnswersQuietly(projectRoot)
+	wizardAnswers := loadAnswersBestEffort(projectRoot)
 
 	// 5. Build ProjectInfo.
 	info := &ProjectInfo{
@@ -83,15 +83,15 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 	}
 
 	// From answers.
-	info.ClaudeCodeEnabled = answers.ClaudeCode
-	info.ProjectName = answers.ProjectName
-	if info.SecurityProfile == "" && answers.ComplianceLevel != "" {
-		info.SecurityProfile = answers.ComplianceLevel
+	info.ClaudeCodeEnabled = wizardAnswers.ClaudeCode
+	info.ProjectName = wizardAnswers.ProjectName
+	if info.SecurityProfile == "" && wizardAnswers.ComplianceLevel != "" {
+		info.SecurityProfile = wizardAnswers.ComplianceLevel
 	}
 
 	// Ecosystems from answers if config didn't have them.
 	if len(info.Ecosystems) == 0 {
-		for _, lang := range answers.Languages {
+		for _, lang := range wizardAnswers.Languages {
 			info.Ecosystems = append(info.Ecosystems, lang.Name)
 		}
 	}
@@ -107,16 +107,15 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 	return info, nil
 }
 
-// loadAnswersQuietly reads .devinit/.qsdev-init-answers.yaml without errors.
-func loadAnswersQuietly(projectRoot string) types.WizardAnswers {
-	path := filepath.Join(projectRoot, branding.Get().StateDir, "."+branding.Get().AppName+"-init-answers.yaml")
-	data, err := os.ReadFile(path)
+// loadAnswersBestEffort reads the primary answers file. A missing file yields
+// zero-value answers; an unreadable or corrupt file is logged and also yields
+// zero-value answers, so `info` still reports what it can without hiding the
+// corruption.
+func loadAnswersBestEffort(projectRoot string) types.WizardAnswers {
+	a, err := answers.LoadPrimary(projectRoot)
 	if err != nil {
+		slog.Warn("ignoring unreadable answers file", "path", answers.PrimaryPath(projectRoot), "error", err)
 		return types.WizardAnswers{}
 	}
-	var answers types.WizardAnswers
-	if err := yaml.Unmarshal(data, &answers); err != nil {
-		return types.WizardAnswers{}
-	}
-	return answers
+	return a
 }

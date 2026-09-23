@@ -1,6 +1,9 @@
 package teardown
 
 import (
+	"path"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -15,7 +18,7 @@ func stateFilesForTeardown() []string {
 	files := make([]string, 0, len(statePaths)+2)
 	files = append(files, statePaths[:]...)
 	return append(files,
-		b.StateDir+"/."+b.AppName+"-init-answers.yaml",
+		path.Join(answers.PrimaryDir(), answers.PrimaryFilename()),
 		b.ConfigFile,
 	)
 }

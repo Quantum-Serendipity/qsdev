@@ -127,7 +127,7 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 		return types.WizardAnswers{}, fmt.Errorf("parsing %s: %w", cfgFile, err)
 	}
 
-	detected := detect.Detect(projectRoot)
+	detected := detect.Detect(cmdContext(cmd), projectRoot)
 	answers := qsdevconfig.ConfigToAnswers(cfg, detected, projectRoot)
 
 	if opts.AnswersFile != "" {

@@ -112,17 +112,137 @@ func TestSaveAndLoad_RoundTrip(t *testing.T) {
 }
 
 func TestLoadFromDir_NotFound(t *testing.T) {
-	tmpDir := t.TempDir()
+	t.Parallel()
 
-	_, err := answers.LoadFromDir(tmpDir, ".nonexistent", "answers.yaml", "test")
-	if err == nil {
-		t.Fatal("expected error when answers file does not exist, got nil")
+	// The remediation hint must name the init command verbatim; building it
+	// as "<app> <cmd> init" produced "qsdev init init" for devinit (F478).
+	tests := []struct {
+		name    string
+		initCmd string
+		want    string
+	}{
+		{name: "top-level init", initCmd: "init", want: "run 'qsdev init' first"},
+		{name: "addon init", initCmd: "devenv init", want: "run 'qsdev devenv init' first"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := answers.LoadFromDir(t.TempDir(), ".nonexistent", "answers.yaml", tt.initCmd)
+			if err == nil {
+				t.Fatal("expected error when answers file does not exist, got nil")
+			}
+			if got := err.Error(); !strings.Contains(got, tt.want) {
+				t.Errorf("error = %q, want it to contain %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLoadAddon_PrefersPrimary pins F468: lifecycle commands (enable/disable)
+// update only the primary answers file, so an addon that loads its own stale
+// copy and saves it back through SavePrimary would drop those changes. The
+// addon load must return the primary state.
+func TestLoadAddon_PrefersPrimary(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+
+	stale := types.WizardAnswers{ProjectName: "proj", EnabledTools: map[string]bool{"a": true}}
+	if err := answers.SaveToDir(root, ".addon", "answers.yaml", stale); err != nil {
+		t.Fatal(err)
+	}
+	if err := answers.SavePrimary(root, stale); err != nil {
+		t.Fatal(err)
 	}
 
-	// Verify the error message includes the command name hint.
-	want := "run 'qsdev test init' first"
-	if got := err.Error(); !containsStr(got, want) {
-		t.Errorf("error = %q, want it to contain %q", got, want)
+	// Simulate `qsdev enable b`, which writes only the primary file.
+	enabled := types.WizardAnswers{ProjectName: "proj", EnabledTools: map[string]bool{"a": true, "b": true}}
+	if err := answers.SavePrimary(root, enabled); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate an addon command's load -> modify -> save round trip.
+	loaded, err := answers.LoadAddon(root, ".addon", "answers.yaml", "addon init")
+	if err != nil {
+		t.Fatalf("LoadAddon: %v", err)
+	}
+	loaded.EnvVars = map[string]string{"X": "1"}
+	if err := answers.SaveToDir(root, ".addon", "answers.yaml", loaded); err != nil {
+		t.Fatal(err)
+	}
+	if err := answers.SavePrimary(root, loaded); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := answers.LoadPrimary(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.EnabledTools["b"] {
+		t.Errorf("EnabledTools = %v, want the lifecycle-enabled tool b kept", got.EnabledTools)
+	}
+	if got.EnvVars["X"] != "1" {
+		t.Errorf("EnvVars = %v, want the addon change kept", got.EnvVars)
+	}
+}
+
+func TestLoadAddon_Fallbacks(t *testing.T) {
+	t.Parallel()
+
+	own := types.WizardAnswers{ProjectName: "addon-copy"}
+
+	t.Run("no primary uses addon copy", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		if err := answers.SaveToDir(root, ".addon", "answers.yaml", own); err != nil {
+			t.Fatal(err)
+		}
+		got, err := answers.LoadAddon(root, ".addon", "answers.yaml", "addon init")
+		if err != nil {
+			t.Fatalf("LoadAddon: %v", err)
+		}
+		if got.ProjectName != "addon-copy" {
+			t.Errorf("ProjectName = %q, want addon-copy", got.ProjectName)
+		}
+	})
+
+	t.Run("addon not initialized", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		if err := answers.SavePrimary(root, types.WizardAnswers{ProjectName: "primary"}); err != nil {
+			t.Fatal(err)
+		}
+		_, err := answers.LoadAddon(root, ".addon", "answers.yaml", "addon init")
+		if err == nil || !strings.Contains(err.Error(), "run 'qsdev addon init' first") {
+			t.Fatalf("err = %v, want not-initialized error", err)
+		}
+	})
+
+	t.Run("corrupt primary surfaces error", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		if err := answers.SaveToDir(root, ".addon", "answers.yaml", own); err != nil {
+			t.Fatal(err)
+		}
+		path := answers.PrimaryPath(root)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("{not: valid: yaml: ["), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := answers.LoadAddon(root, ".addon", "answers.yaml", "addon init"); err == nil {
+			t.Fatal("expected error for corrupt primary answers file")
+		}
+	})
+}
+
+func TestPrimaryPath(t *testing.T) {
+	t.Parallel()
+	b := branding.Get()
+	root := t.TempDir()
+	want := filepath.Join(root, b.StateDir, "."+b.AppName+"-init-answers.yaml")
+	if got := answers.PrimaryPath(root); got != want {
+		t.Errorf("PrimaryPath = %q, want %q", got, want)
 	}
 }
 

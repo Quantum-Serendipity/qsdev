@@ -1,16 +1,18 @@
-package detect
+package ecosystem_test
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 func TestDetectEnvironment_DevenvNix(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "devenv.nix"), "{ pkgs, ... }: {}")
+	writeEnvTestFile(t, filepath.Join(dir, "devenv.nix"), "{ pkgs, ... }: {}")
 
-	env := detectEnvironment(dir)
+	env := ecosystem.DetectEnvironment(dir)
 	if !env.HasDevenvNix {
 		t.Error("expected HasDevenvNix to be true")
 	}
@@ -18,9 +20,9 @@ func TestDetectEnvironment_DevenvNix(t *testing.T) {
 
 func TestDetectEnvironment_DevenvYaml(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "devenv.yaml"), "inputs:\n  nixpkgs:\n    url: github:NixOS/nixpkgs/nixpkgs-unstable")
+	writeEnvTestFile(t, filepath.Join(dir, "devenv.yaml"), "inputs:\n  nixpkgs:\n    url: github:NixOS/nixpkgs/nixpkgs-unstable")
 
-	env := detectEnvironment(dir)
+	env := ecosystem.DetectEnvironment(dir)
 	if !env.HasDevenvYaml {
 		t.Error("expected HasDevenvYaml to be true")
 	}
@@ -32,9 +34,9 @@ func TestDetectEnvironment_ClaudeDir(t *testing.T) {
 	if err := os.Mkdir(claudeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(claudeDir, "settings.json"), `{"permissions":{}}`)
+	writeEnvTestFile(t, filepath.Join(claudeDir, "settings.json"), `{"permissions":{}}`)
 
-	env := detectEnvironment(dir)
+	env := ecosystem.DetectEnvironment(dir)
 	if !env.HasClaudeDir {
 		t.Error("expected HasClaudeDir to be true")
 	}
@@ -45,9 +47,9 @@ func TestDetectEnvironment_ClaudeDir(t *testing.T) {
 
 func TestDetectEnvironment_ClaudeMd(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "CLAUDE.md"), "# CLAUDE.md")
+	writeEnvTestFile(t, filepath.Join(dir, "CLAUDE.md"), "# CLAUDE.md")
 
-	env := detectEnvironment(dir)
+	env := ecosystem.DetectEnvironment(dir)
 	if !env.HasClaudeMd {
 		t.Error("expected HasClaudeMd to be true")
 	}
@@ -55,9 +57,9 @@ func TestDetectEnvironment_ClaudeMd(t *testing.T) {
 
 func TestDetectEnvironment_Envrc(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".envrc"), "use devenv")
+	writeEnvTestFile(t, filepath.Join(dir, ".envrc"), "use devenv")
 
-	env := detectEnvironment(dir)
+	env := ecosystem.DetectEnvironment(dir)
 	if !env.HasEnvrc {
 		t.Error("expected HasEnvrc to be true")
 	}
@@ -65,9 +67,9 @@ func TestDetectEnvironment_Envrc(t *testing.T) {
 
 func TestDetectEnvironment_McpJson(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".mcp.json"), "{}")
+	writeEnvTestFile(t, filepath.Join(dir, ".mcp.json"), "{}")
 
-	env := detectEnvironment(dir)
+	env := ecosystem.DetectEnvironment(dir)
 	if !env.HasMcpJson {
 		t.Error("expected HasMcpJson to be true")
 	}
@@ -79,7 +81,7 @@ func TestDetectEnvironment_GitRepo(t *testing.T) {
 	if err := os.Mkdir(gitDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(gitDir, "config"),
+	writeEnvTestFile(t, filepath.Join(gitDir, "config"),
 		`[core]
 	repositoryformatversion = 0
 	filemode = true
@@ -91,7 +93,7 @@ func TestDetectEnvironment_GitRepo(t *testing.T) {
 	merge = refs/heads/main
 `)
 
-	env := detectEnvironment(dir)
+	env := ecosystem.DetectEnvironment(dir)
 	if !env.IsGitRepo {
 		t.Error("expected IsGitRepo to be true")
 	}
@@ -114,7 +116,7 @@ func TestDetectEnvironment_GitHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	env := detectEnvironment(dir)
+	env := ecosystem.DetectEnvironment(dir)
 	if !env.HasGitHooks {
 		t.Error("expected HasGitHooks to be true")
 	}
@@ -134,7 +136,7 @@ func TestDetectEnvironment_GitHooksSampleOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	env := detectEnvironment(dir)
+	env := ecosystem.DetectEnvironment(dir)
 	if env.HasGitHooks {
 		t.Error("expected HasGitHooks to be false when only .sample hooks exist")
 	}
@@ -143,7 +145,7 @@ func TestDetectEnvironment_GitHooksSampleOnly(t *testing.T) {
 func TestDetectEnvironment_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
 
-	env := detectEnvironment(dir)
+	env := ecosystem.DetectEnvironment(dir)
 	if env.HasDevenvNix || env.HasDevenvYaml || env.HasClaudeDir || env.HasClaudeMd ||
 		env.HasClaudeSettings || env.HasEnvrc || env.HasMcpJson || env.IsGitRepo ||
 		env.HasGitHooks || env.RemoteURL != "" {
@@ -157,19 +159,19 @@ func TestDetectEnvironment_HTTPSRemote(t *testing.T) {
 	if err := os.Mkdir(gitDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(gitDir, "config"),
+	writeEnvTestFile(t, filepath.Join(gitDir, "config"),
 		`[remote "origin"]
 	url = https://github.com/example/repo.git
 `)
 
-	env := detectEnvironment(dir)
+	env := ecosystem.DetectEnvironment(dir)
 	if env.RemoteURL != "https://github.com/example/repo.git" {
 		t.Errorf("RemoteURL = %q, want HTTPS URL", env.RemoteURL)
 	}
 }
 
-// writeFile is a test helper that creates a file with the given content.
-func writeFile(t *testing.T, path, content string) {
+// writeEnvTestFile is a test helper that creates a file with the given content.
+func writeEnvTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)

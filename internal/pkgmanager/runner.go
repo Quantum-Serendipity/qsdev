@@ -1,7 +1,6 @@
 package pkgmanager
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -51,15 +50,6 @@ func (r *ExecRunner) Run(ctx context.Context, name string, args ...string) error
 		return fmt.Errorf("running %s: %w", cmdline, err)
 	}
 	return nil
-}
-
-func (r *ExecRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	err := cmd.Run()
-	return buf.Bytes(), err
 }
 
 // tailBuffer is an io.Writer that keeps only the last max bytes written.

@@ -30,14 +30,6 @@ func (r *Registry) Register(t Tool) error {
 	return r.Registry.Register(t.Name, &t)
 }
 
-// MustRegister adds a tool to the registry and panics if registration fails.
-// Intended for use in init() where a registration failure is a programmer error.
-func (r *Registry) MustRegister(t Tool) {
-	if err := r.Register(t); err != nil {
-		panic(fmt.Sprintf("toolreg: %v", err))
-	}
-}
-
 // ByName returns the tool with the given name.
 func (r *Registry) ByName(name string) (*Tool, bool) {
 	return r.Get(name)
@@ -99,7 +91,7 @@ func categoryOrder(c ToolCategory) int {
 // YAML provides declarative metadata, Go code provides function hooks.
 // If the tool name is not in the registry, this is a no-op.
 func (r *Registry) AttachBehavior(name string, b ToolBehavior) {
-	found := r.Modify(name, func(t *Tool) {
+	found := r.Modify(name, func(t *Tool) *Tool {
 		if b.EnableFunc != nil {
 			t.EnableFunc = b.EnableFunc
 		}
@@ -123,6 +115,7 @@ func (r *Registry) AttachBehavior(name string, b ToolBehavior) {
 		if b.SectionDataFunc != nil {
 			t.SectionDataFunc = b.SectionDataFunc
 		}
+		return t
 	})
 	if !found {
 		slog.Warn("AttachBehavior called for unknown tool", "tool", name)

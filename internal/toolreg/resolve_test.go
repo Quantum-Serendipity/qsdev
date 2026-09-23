@@ -4,8 +4,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func newTestRegistry(tools ...Tool) *Registry {
@@ -96,6 +94,37 @@ func TestValidateEnable_Conflict(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `"tool-a"`) {
 		t.Fatalf("expected error mentioning tool-a, got %q", err.Error())
+	}
+}
+
+// TestValidateEnable_ConflictDeclaredByEnabledTool pins F480: a conflict
+// declared only on the already-enabled tool must still block the enable.
+func TestValidateEnable_ConflictDeclaredByEnabledTool(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(
+		Tool{Name: "semgrep", Category: CategorySecurity, Conflicts: []string{"opengrep"}},
+		Tool{Name: "opengrep", Category: CategorySecurity},
+	)
+
+	tests := []struct {
+		name    string
+		enabled map[string]bool
+		wantErr bool
+	}{
+		{name: "declaring tool enabled", enabled: map[string]bool{"semgrep": true}, wantErr: true},
+		{name: "declaring tool disabled", enabled: map[string]bool{"semgrep": false}, wantErr: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateEnable(reg, "opengrep", tt.enabled)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ValidateEnable() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), `conflicts with enabled tool "semgrep"`) {
+				t.Errorf("error = %q, want it to name semgrep", err.Error())
+			}
+		})
 	}
 }
 
@@ -236,140 +265,5 @@ func TestValidateDisable_UnknownTool(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown tool") {
 		t.Fatalf("expected error mentioning unknown tool, got %q", err.Error())
-	}
-}
-
-// --- ComputeDefaults tests ---
-
-func TestComputeDefaults_AlwaysOn(t *testing.T) {
-	reg := newTestRegistry(
-		Tool{Name: "always-tool", Category: CategorySecurity, Default: AlwaysOn},
-	)
-
-	defaults := ComputeDefaults(reg, types.DetectedProject{})
-	if !defaults["always-tool"] {
-		t.Fatal("expected always-on tool to be enabled")
-	}
-}
-
-func TestComputeDefaults_OnWhenDetected_Detected(t *testing.T) {
-	reg := newTestRegistry(
-		Tool{
-			Name:     "go-tool",
-			Category: CategoryDevEx,
-			Default:  OnWhenDetected,
-			DetectFunc: func(d types.DetectedProject) bool {
-				return d.HasGoMod
-			},
-		},
-	)
-
-	detected := types.DetectedProject{HasGoMod: true}
-	defaults := ComputeDefaults(reg, detected)
-	if !defaults["go-tool"] {
-		t.Fatal("expected detected tool to be enabled")
-	}
-}
-
-func TestComputeDefaults_OnWhenDetected_NotDetected(t *testing.T) {
-	reg := newTestRegistry(
-		Tool{
-			Name:     "go-tool",
-			Category: CategoryDevEx,
-			Default:  OnWhenDetected,
-			DetectFunc: func(d types.DetectedProject) bool {
-				return d.HasGoMod
-			},
-		},
-	)
-
-	detected := types.DetectedProject{HasGoMod: false}
-	defaults := ComputeDefaults(reg, detected)
-	if defaults["go-tool"] {
-		t.Fatal("expected non-detected tool to not be enabled")
-	}
-}
-
-func TestComputeDefaults_OnWhenDetected_NilDetectFunc(t *testing.T) {
-	reg := newTestRegistry(
-		Tool{
-			Name:       "missing-detect",
-			Category:   CategoryDevEx,
-			Default:    OnWhenDetected,
-			DetectFunc: nil,
-		},
-	)
-
-	defaults := ComputeDefaults(reg, types.DetectedProject{HasGoMod: true})
-	if defaults["missing-detect"] {
-		t.Fatal("expected tool with nil DetectFunc to not be enabled")
-	}
-}
-
-func TestComputeDefaults_OptIn(t *testing.T) {
-	reg := newTestRegistry(
-		Tool{Name: "optional-tool", Category: CategoryDevEx, Default: OptIn},
-	)
-
-	defaults := ComputeDefaults(reg, types.DetectedProject{})
-	if defaults["optional-tool"] {
-		t.Fatal("expected opt-in tool to not be enabled by default")
-	}
-}
-
-func TestComputeDefaults_AlwaysOff(t *testing.T) {
-	reg := newTestRegistry(
-		Tool{Name: "deprecated-tool", Category: CategoryDevEx, Default: AlwaysOff},
-	)
-
-	defaults := ComputeDefaults(reg, types.DetectedProject{})
-	if defaults["deprecated-tool"] {
-		t.Fatal("expected always-off tool to not be enabled")
-	}
-}
-
-func TestComputeDefaults_MixedPolicies(t *testing.T) {
-	reg := newTestRegistry(
-		Tool{Name: "always", Category: CategorySecurity, Default: AlwaysOn},
-		Tool{
-			Name: "detected", Category: CategoryDevEx, Default: OnWhenDetected,
-			DetectFunc: func(d types.DetectedProject) bool { return d.HasPackageJSON },
-		},
-		Tool{
-			Name: "not-detected", Category: CategoryDevEx, Default: OnWhenDetected,
-			DetectFunc: func(d types.DetectedProject) bool { return d.HasCargoToml },
-		},
-		Tool{Name: "opt-in", Category: CategoryInfrastructure, Default: OptIn},
-		Tool{Name: "off", Category: CategoryInfrastructure, Default: AlwaysOff},
-	)
-
-	detected := types.DetectedProject{HasPackageJSON: true, HasCargoToml: false}
-	defaults := ComputeDefaults(reg, detected)
-
-	if !defaults["always"] {
-		t.Error("expected 'always' to be enabled")
-	}
-	if !defaults["detected"] {
-		t.Error("expected 'detected' to be enabled")
-	}
-	if defaults["not-detected"] {
-		t.Error("expected 'not-detected' to not be enabled")
-	}
-	if defaults["opt-in"] {
-		t.Error("expected 'opt-in' to not be enabled")
-	}
-	if defaults["off"] {
-		t.Error("expected 'off' to not be enabled")
-	}
-
-	// Exactly 2 tools should be enabled.
-	count := 0
-	for _, v := range defaults {
-		if v {
-			count++
-		}
-	}
-	if count != 2 {
-		t.Errorf("expected 2 enabled tools, got %d", count)
 	}
 }

@@ -42,7 +42,7 @@ type statusChecker struct {
 	// detectFn runs ecosystem detection. Injectable so tests can drive the
 	// concurrency behavior; defaults to detect.Detect. It is invoked WITHOUT
 	// holding mu so concurrent callers are not serialized behind the walk.
-	detectFn func(projectRoot string) types.DetectedProject
+	detectFn func(ctx context.Context, projectRoot string) types.DetectedProject
 
 	mu sync.Mutex
 	// anchor is the reference point for detection/config drift: the project as
@@ -80,11 +80,11 @@ func newStatusChecker(projectRoot string) *statusChecker {
 		projectRoot: projectRoot,
 		statePath:   filepath.Join(projectRoot, state.StateFilePaths()[0]),
 		configPath:  filepath.Join(projectRoot, branding.Get().ConfigFile),
-		detectFn:    detect.Detect,
+		detectFn:    func(ctx context.Context, root string) types.DetectedProject { return detect.Detect(ctx, root) },
 	}
 	mtime, present := s.stateMtime()
 	s.anchor = snapshot{
-		detection:  s.detectFn(projectRoot),
+		detection:  s.detectFn(context.Background(), projectRoot),
 		configHash: s.configHash(),
 		stateMtime: mtime,
 		statePres:  present,
@@ -102,7 +102,7 @@ type driftItem struct {
 // handle resolves the requested tier (or auto-selects) and returns the status.
 // The lock is held only briefly to snapshot cache state; fingerprinting and the
 // expensive Tier 2 detection run unlocked so concurrent callers are not blocked.
-func (s *statusChecker) handle(_ context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
+func (s *statusChecker) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
 	tier := toolutil.StringArgOr(req.Arguments, "tier", "auto")
 
 	s.mu.Lock()
@@ -117,21 +117,21 @@ func (s *statusChecker) handle(_ context.Context, _ *spi.ToolCallContext, req *s
 		text := fmt.Sprintf("status (tier 1, cached): %d drift item(s)", driftCount(cached))
 		return toolutil.Result(text, cached), nil
 	}
-	return s.runTier2()
+	return s.runTier2(ctx)
 }
 
 // runTier2 re-runs detection and the ledger-anchored drift detector, refreshes
 // the Tier 1 cache, and returns the thorough status. Detection runs WITHOUT s.mu
 // held; the lock is taken only to read and, at the end, update the anchor and
 // cache (last write wins under concurrent runs).
-func (s *statusChecker) runTier2() (*spi.ToolResult, error) {
+func (s *statusChecker) runTier2(ctx context.Context) (*spi.ToolResult, error) {
 	s.mu.Lock()
 	anchor := s.anchor
 	s.mu.Unlock()
 
 	// Unlocked: detection may walk the filesystem and shell out to a container
 	// runtime, so holding the lock here would serialize the fast path.
-	current := s.detectFn(s.projectRoot)
+	current := s.detectFn(ctx, s.projectRoot)
 	curHash := s.configHash()
 	curMtime, curPresent := s.stateMtime()
 

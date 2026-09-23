@@ -26,6 +26,6 @@ func (s *Scoop) Available() bool {
 func (s *Scoop) NeedsElevation() bool { return false }
 
 func (s *Scoop) Install(ctx context.Context, packages ...string) error {
-	args := append([]string{"install"}, packages...)
-	return s.runner.Run(ctx, "scoop", args...)
+	bin, args := s.InstallArgs(packages...)
+	return s.runner.Run(ctx, bin, args...)
 }

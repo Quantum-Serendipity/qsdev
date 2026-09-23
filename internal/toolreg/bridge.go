@@ -20,19 +20,6 @@ func BuildFromCatalogE() (*Registry, error) {
 	return buildRegistryFromCatalog(cat)
 }
 
-// BuildFromCatalog creates a Registry pre-loaded with tool metadata from
-// the YAML catalog. Tools get declarative fields (name, display name,
-// category, description, default policy, owned files) from YAML. Behavioral
-// functions (EnableFunc, etc.) are attached later via AttachBehavior. It
-// panics if the catalog cannot be loaded or a tool definition is invalid.
-func BuildFromCatalog() *Registry {
-	r, err := buildRegistryFromCatalog(catalog.MustDefault())
-	if err != nil {
-		panic(fmt.Sprintf("toolreg: %v", err))
-	}
-	return r
-}
-
 // buildRegistryFromCatalog converts every catalog tool definition into a
 // registry Tool. catalog.Validate has already checked the catalog's own
 // invariants (ownership, default_policy, owned paths, tool references); a

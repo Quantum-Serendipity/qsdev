@@ -306,7 +306,9 @@ func toolToNixPkg(name string) string {
 
 // printDryRun shows what would be installed without executing.
 func printDryRun(w io.Writer, tools []string, osInfo *sysinfo.OSInfo) error {
-	mgr := osInfo.PackageManager
+	// Describe the manager setup will actually install with (Nix when present),
+	// not osInfo.PackageManager.
+	pm := pkgmanager.DetectPackageManager(osInfo)
 	family := osInfo.Family
 
 	_, _ = fmt.Fprintln(w, "Dry run: the following tools would be installed:")
@@ -314,12 +316,11 @@ func printDryRun(w io.Writer, tools []string, osInfo *sysinfo.OSInfo) error {
 	_, _ = fmt.Fprintf(w, "  %-14s %s\n", "TOOL", "INSTALL COMMAND")
 	_, _ = fmt.Fprintln(w, "  "+strings.Repeat("-", 60))
 	for _, name := range tools {
-		cmd := installCommandForTool(name, family, mgr)
+		cmd := installCommandForTool(name, family, pm)
 		_, _ = fmt.Fprintf(w, "  %-14s %s\n", name, cmd)
 	}
 	_, _ = fmt.Fprintln(w)
 
-	pm := pkgmanager.DetectPackageManager(osInfo)
 	if pm.NeedsElevation() && privilege.NeedsElevation() {
 		_, _ = fmt.Fprintln(w, "Note: Some installations will require elevated privileges (sudo).")
 	}
@@ -328,7 +329,7 @@ func printDryRun(w io.Writer, tools []string, osInfo *sysinfo.OSInfo) error {
 }
 
 // installCommandForTool returns a human-readable install command for a tool.
-func installCommandForTool(name, family, mgr string) string {
+func installCommandForTool(name, family string, pm pkgmanager.PackageManager) string {
 	switch name {
 	case "nix":
 		return "curl -sSf -L https://install.determinate.systems/nix | sh -s -- install"
@@ -337,7 +338,7 @@ func installCommandForTool(name, family, mgr string) string {
 	case "devenv":
 		return strings.Join(devenvSpec.InstallCmd, " ")
 	default:
-		cmd := pkgmanager.InstallCommand(name, family, mgr)
+		cmd := pkgmanager.InstallCommand(pm, family, name)
 		if cmd == "" {
 			return fmt.Sprintf("(install %s manually)", name)
 		}
@@ -398,7 +399,7 @@ func installToolsInOrder(ctx context.Context, w io.Writer, selected []string, os
 		case "claude":
 			return installClaude(ctx, w)
 		default:
-			return installWithPM(ctx, w, name, osInfo.Family, osInfo.PackageManager, pm)
+			return installWithPM(ctx, w, name, osInfo.Family, pm)
 		}
 	}
 	return runInstallPlan(ctx, w, selected, install)
@@ -433,15 +434,21 @@ func runInstallPlan(ctx context.Context, w io.Writer, selected []string, install
 	return errors.Join(errs...)
 }
 
-// installWithPM installs a tool using the detected package manager.
-func installWithPM(ctx context.Context, w io.Writer, toolName, family, mgr string, pm pkgmanager.PackageManager) error {
-	pkgName, ok := pkgmanager.ResolvePackageName(toolName, family, mgr)
+// installWithPM installs a tool using the detected package manager. The
+// package name is resolved for pm itself (not osInfo.PackageManager), and the
+// elevated path runs pm's own install command line.
+func installWithPM(ctx context.Context, w io.Writer, toolName, family string, pm pkgmanager.PackageManager) error {
+	if !pm.Available() {
+		return fmt.Errorf("package manager %s is not installed; install it or install %s manually", pm.Name(), toolName)
+	}
+
+	pkgName, ok := pkgmanager.PackageFor(pm, family, toolName)
 	if !ok {
 		// A tool may have no installable package for this manager (e.g. pre-commit
 		// or npm on winget). Surface actionable guidance instead of attempting a
 		// broken install with the bare tool name.
-		if remedy, unavailable := pkgmanager.PackageUnavailable(toolName, mgr); unavailable {
-			return fmt.Errorf("no %s package for %s; %s", mgr, toolName, remedy)
+		if remedy, unavailable := pkgmanager.PackageUnavailable(toolName, pm.Name()); unavailable {
+			return fmt.Errorf("no %s package for %s; %s", pm.Name(), toolName, remedy)
 		}
 		// Fallback: try using the tool name directly.
 		pkgName = toolName
@@ -449,44 +456,11 @@ func installWithPM(ctx context.Context, w io.Writer, toolName, family, mgr strin
 
 	if pm.NeedsElevation() && privilege.NeedsElevation() {
 		_, _ = fmt.Fprintf(w, "  (requires elevated privileges)\n")
-		return privilege.ElevatedExec(ctx, pmBinary(pm), pmInstallArgs(pm, pkgName)...)
+		bin, args := pm.InstallArgs(pkgName)
+		return privilege.ElevatedExec(ctx, bin, args...)
 	}
 
 	return pm.Install(ctx, pkgName)
-}
-
-// pmBinary returns the binary name for a package manager.
-func pmBinary(pm pkgmanager.PackageManager) string {
-	switch pm.Name() {
-	case "apt":
-		return "apt-get"
-	case "xbps":
-		return "xbps-install"
-	default:
-		return pm.Name()
-	}
-}
-
-// pmInstallArgs returns the install subcommand arguments for a package manager.
-func pmInstallArgs(pm pkgmanager.PackageManager, pkg string) []string {
-	switch pm.Name() {
-	case "apt":
-		return []string{"install", "-y", pkg}
-	case "dnf":
-		return []string{"install", "-y", pkg}
-	case "pacman":
-		return []string{"-S", "--noconfirm", pkg}
-	case "zypper":
-		return []string{"install", "-y", pkg}
-	case "apk":
-		return []string{"add", pkg}
-	case "xbps":
-		return []string{"-y", pkg}
-	case "emerge":
-		return []string{"--ask=n", pkg}
-	default:
-		return []string{"install", pkg}
-	}
 }
 
 // nixInstallerURL is the Determinate Systems Nix installer script.

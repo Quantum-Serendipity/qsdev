@@ -88,3 +88,49 @@ func TestFileAndDirExists(t *testing.T) {
 		})
 	}
 }
+
+func TestFileExists(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a regular file.
+	path := filepath.Join(dir, "exists.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if !fileutil.FileExists(path) {
+		t.Error("FileExists should return true for an existing file")
+	}
+	if fileutil.FileExists(dir, "nope.txt") {
+		t.Error("FileExists should return false for a missing file")
+	}
+	// A directory is not a file.
+	if fileutil.FileExists(dir) {
+		t.Error("FileExists should return false for a directory")
+	}
+}
+
+func TestDirExists(t *testing.T) {
+	dir := t.TempDir()
+
+	subdir := filepath.Join(dir, "sub")
+	if err := os.Mkdir(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a regular file.
+	path := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(path, []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if !fileutil.DirExists(subdir) {
+		t.Error("DirExists should return true for an existing directory")
+	}
+	if fileutil.DirExists(path) {
+		t.Error("DirExists should return false for a regular file")
+	}
+	if fileutil.DirExists(dir, "missing") {
+		t.Error("DirExists should return false for a missing path")
+	}
+}

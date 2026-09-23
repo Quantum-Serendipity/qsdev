@@ -114,8 +114,8 @@ func (pc *ProjectContext) handleProjectInfo(_ context.Context, _ *spi.ToolCallCo
 // handleDetect re-runs detection so the result reflects the current on-disk
 // project. The force flag is accepted for forward compatibility; detection is
 // uncached and always re-scans.
-func (pc *ProjectContext) handleDetect(_ context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
-	fresh := detect.Detect(pc.projectRoot)
+func (pc *ProjectContext) handleDetect(ctx context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
+	fresh := detect.Detect(ctx, pc.projectRoot)
 	text, structured := detectionSummary(pc.projectRoot, fresh)
 	structured["forced"] = boolArg(req.Arguments, "force")
 	return &spi.ToolResult{Text: text, Structured: structured}, nil

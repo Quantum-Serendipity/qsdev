@@ -2,6 +2,7 @@ package devinit
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -58,7 +59,7 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 		return err
 	}
 
-	answers, tool, err := loadToolForEnable(projectRoot, toolName)
+	answers, tool, err := loadToolForEnable(cmdContext(cmd), projectRoot, toolName)
 	if err != nil {
 		return err
 	}
@@ -120,8 +121,8 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 
 // loadToolForEnable loads saved answers, infers enabled tools, and looks up
 // the named tool in the registry.
-func loadToolForEnable(projectRoot, toolName string) (types.WizardAnswers, *toolreg.Tool, error) {
-	answers, err := loadLifecycleAnswers(projectRoot)
+func loadToolForEnable(ctx context.Context, projectRoot, toolName string) (types.WizardAnswers, *toolreg.Tool, error) {
+	answers, err := loadLifecycleAnswers(ctx, projectRoot)
 	if err != nil {
 		return types.WizardAnswers{}, nil, err
 	}
@@ -138,13 +139,13 @@ func loadToolForEnable(projectRoot, toolName string) (types.WizardAnswers, *tool
 // refreshes them exactly as update does — current detection plus inferred
 // tools — so the shared files enable/disable regenerate match what the next
 // update would produce.
-func loadLifecycleAnswers(projectRoot string) (types.WizardAnswers, error) {
+func loadLifecycleAnswers(ctx context.Context, projectRoot string) (types.WizardAnswers, error) {
 	answers, err := loadAnswersOrEmpty(projectRoot)
 	if err != nil {
 		return types.WizardAnswers{}, fmt.Errorf("loading answers: %w", err)
 	}
 	answers.ProjectRoot = projectRoot
-	answers.Detected = detect.Detect(projectRoot)
+	answers.Detected = detect.Detect(ctx, projectRoot)
 	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
 	return answers, nil
 }
@@ -437,7 +438,7 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 
 	registry := toolreg.DefaultRegistry()
 
-	answers, err := loadLifecycleAnswers(projectRoot)
+	answers, err := loadLifecycleAnswers(cmdContext(cmd), projectRoot)
 	if err != nil {
 		return err
 	}

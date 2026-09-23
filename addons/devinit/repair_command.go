@@ -53,7 +53,7 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 	if err != nil {
 		return err
 	}
-	answers.Detected = detect.Detect(projectRoot)
+	answers.Detected = detect.Detect(cmd.Context(), projectRoot)
 	answers.ProjectRoot = projectRoot
 
 	// Load state.

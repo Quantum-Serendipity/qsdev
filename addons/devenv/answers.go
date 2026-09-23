@@ -48,12 +48,12 @@ func SaveAnswers(projectRoot string, a types.WizardAnswers) error {
 // project initialized by an older release). It returns an error if neither
 // file exists.
 func loadAnswers(projectRoot string) (types.WizardAnswers, error) {
-	_, err := os.Stat(answers.PrimaryFilePath(projectRoot))
+	_, err := os.Stat(answers.PrimaryPath(projectRoot))
 	switch {
 	case err == nil:
 		return answers.LoadPrimary(projectRoot)
 	case !errors.Is(err, os.ErrNotExist):
 		return types.WizardAnswers{}, fmt.Errorf("checking primary answers: %w", err)
 	}
-	return answers.LoadFromDir(projectRoot, AddonDir, answersFile(), "devenv")
+	return answers.LoadFromDir(projectRoot, AddonDir, answersFile(), "devenv init")
 }

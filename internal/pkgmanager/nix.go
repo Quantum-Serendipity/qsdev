@@ -36,9 +36,20 @@ func (n *Nix) Install(ctx context.Context, packages ...string) error {
 		)
 	}
 	for _, pkg := range packages {
-		if err := n.runner.Run(ctx, "nix", "profile", "install", "nixpkgs#"+pkg); err != nil {
+		bin, args := n.InstallArgs(pkg)
+		if err := n.runner.Run(ctx, bin, args...); err != nil {
 			return fmt.Errorf("nix profile install %s: %w", pkg, err)
 		}
 	}
 	return nil
+}
+
+// InstallArgs returns the command Install runs for packages (Install runs it
+// once per package so a failure names the package).
+func (n *Nix) InstallArgs(packages ...string) (string, []string) {
+	args := []string{"profile", "install"}
+	for _, pkg := range packages {
+		args = append(args, "nixpkgs#"+pkg)
+	}
+	return "nix", args
 }

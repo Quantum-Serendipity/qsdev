@@ -18,6 +18,7 @@
 package projectctx
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -69,7 +70,9 @@ func NewProjectContext(projectRoot string) (*ProjectContext, error) {
 		return nil, fmt.Errorf("project context: project root is required")
 	}
 
-	detection := detect.Detect(projectRoot)
+	// Construction has no request context; Detect bounds its own subprocess
+	// probes, so server startup cannot hang on a wedged container runtime.
+	detection := detect.Detect(context.Background(), projectRoot)
 
 	statePath := filepath.Join(projectRoot, state.StateFilePaths()[0])
 	ledger := newLedgerCache(statePath)

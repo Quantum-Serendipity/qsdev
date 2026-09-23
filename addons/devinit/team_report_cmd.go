@@ -1,6 +1,7 @@
 package devinit
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -105,7 +106,7 @@ func runTeamReport(cmd *cobra.Command, opts teamReportOptions) error {
 		}
 	case opts.scopeFile != "":
 		var err error
-		reports, warnings, err = teamreport.CollectFromScope(opts.scopeFile)
+		reports, warnings, err = teamreport.CollectFromScope(cmdContext(cmd), opts.scopeFile)
 		if err != nil {
 			return fmt.Errorf("collecting from scope: %w", err)
 		}
@@ -150,7 +151,9 @@ func runTeamReport(cmd *cobra.Command, opts teamReportOptions) error {
 		}
 
 		issues := teamreport.GenerateIssues(teamReport, history)
-		issuesErr = createTeamIssues(cmd.ErrOrStderr(), issues, teamreport.CreateIssuesViaCLI)
+		issuesErr = createTeamIssues(cmd.ErrOrStderr(), issues, func(routable []teamreport.IssueSpec) (int, error) {
+			return teamreport.CreateIssuesViaCLI(cmdContext(cmd), routable)
+		})
 	}
 
 	// Render output.
@@ -179,10 +182,10 @@ func runTeamReport(cmd *cobra.Command, opts teamReportOptions) error {
 }
 
 // createTeamIssues files the issues that name a repository through create and
-// reports how many were filed. Issues without a repository cannot be filed;
-// they make the command fail instead of being counted as created, so a
-// degraded project's alert is never silently lost.
-func createTeamIssues(w io.Writer, issues []teamreport.IssueSpec, create func([]teamreport.IssueSpec) error) error {
+// reports how many were actually filed, even when some failed. Issues without
+// a repository cannot be filed; they make the command fail instead of being
+// counted as created, so a degraded project's alert is never silently lost.
+func createTeamIssues(w io.Writer, issues []teamreport.IssueSpec, create func([]teamreport.IssueSpec) (int, error)) error {
 	if len(issues) == 0 {
 		fmt.Fprintln(w, "No issues to create")
 		return nil
@@ -198,18 +201,30 @@ func createTeamIssues(w io.Writer, issues []teamreport.IssueSpec, create func([]
 		routable = append(routable, issue)
 	}
 
+	created := 0
+	var createErr error
 	if len(routable) > 0 {
-		if err := create(routable); err != nil {
-			return fmt.Errorf("creating issues: %w", err)
-		}
+		created, createErr = create(routable)
 	}
-	fmt.Fprintf(w, "Created %d issue(s)\n", len(routable))
+	fmt.Fprintf(w, "Created %d of %d issue(s)\n", created, len(issues))
+	if createErr != nil {
+		return fmt.Errorf("creating issues: %w", createErr)
+	}
 
 	if len(unrouted) > 0 {
 		return fmt.Errorf("%d issue(s) not created because the project's repository is unknown: %s",
 			len(unrouted), strings.Join(unrouted, "; "))
 	}
 	return nil
+}
+
+// cmdContext returns the command's context, falling back to Background when
+// the command runs without one (e.g. RunE invoked directly).
+func cmdContext(cmd *cobra.Command) context.Context {
+	if ctx := cmd.Context(); ctx != nil {
+		return ctx
+	}
+	return context.Background()
 }
 
 func runGenerateWorkflow(cmd *cobra.Command, output string) error {

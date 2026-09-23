@@ -98,6 +98,7 @@ func TestGeneratePerProjectStepsValidStructure(t *testing.T) {
 		"Generate posture report",
 		"qsdev status --scan --json --audit-level none",
 		"Upload posture report",
+		"if: ${{ !cancelled() }}",
 		"posture-report.json",
 		"retention-days:",
 	}
@@ -192,8 +193,10 @@ func TestPerProjectStepsAlwaysUploadReport(t *testing.T) {
 	}
 
 	upload := findStep(t, steps, "Upload posture report")
-	if upload.If != "always()" {
-		t.Errorf("upload step if = %q, want always()", upload.If)
+	// !cancelled() runs the upload after a failed earlier step too; only a
+	// cancelled run skips it.
+	if upload.If != "${{ !cancelled() }}" {
+		t.Errorf("upload step if = %q, want ${{ !cancelled() }}", upload.If)
 	}
 	name, _ := upload.With["name"].(string)
 	if !strings.HasPrefix(name, postureArtifactPrefix) {

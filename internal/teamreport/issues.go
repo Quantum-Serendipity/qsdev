@@ -1,8 +1,10 @@
 package teamreport
 
 import (
+	"context"
+	"errors"
 	"fmt"
-	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -39,10 +41,11 @@ func GenerateIssues(report *TeamReport, history *HistoryStore) []IssueSpec {
 		labels := []string{"security", branding.Get().AppName + "-posture"}
 
 		issue := IssueSpec{
-			Title:  title,
-			Body:   body,
-			Repo:   p.Repo,
-			Labels: labels,
+			Project: p.Name,
+			Title:   title,
+			Body:    body,
+			Repo:    p.Repo,
+			Labels:  labels,
 		}
 
 		issues = append(issues, issue)
@@ -89,8 +92,13 @@ func buildIssueBody(p ProjectSummary, alerts []PostureAlert, history *HistorySto
 	}
 	fmt.Fprintf(&b, "| Baseline Conformance | %s |\n", baselineStatus)
 
-	fmt.Fprintf(&b, "| Critical Vulnerabilities | %d |\n", p.VulnTotals.Critical)
-	fmt.Fprintf(&b, "| High Vulnerabilities | %d |\n", p.VulnTotals.High)
+	if p.Scanned {
+		fmt.Fprintf(&b, "| Critical Vulnerabilities | %d |\n", p.VulnTotals.Critical)
+		fmt.Fprintf(&b, "| High Vulnerabilities | %d |\n", p.VulnTotals.High)
+	} else {
+		b.WriteString("| Critical Vulnerabilities | n/a (not scanned) |\n")
+		b.WriteString("| High Vulnerabilities | n/a (not scanned) |\n")
+	}
 	fmt.Fprintf(&b, "| %s Version | %s |\n", branding.Get().AppName, p.QsdevVersion)
 
 	if history != nil {
@@ -120,11 +128,24 @@ func buildIssueBody(p ProjectSummary, alerts []PostureAlert, history *HistorySto
 	return b.String()
 }
 
-// CreateIssuesViaCLI creates GitHub issues using the gh CLI tool.
-// Each issue is created in its corresponding repository.
-func CreateIssuesViaCLI(issues []IssueSpec) error {
+// ErrIssueRepoUnknown reports issues that could not be created because the
+// project's source repository is unknown (the posture report carried none).
+var ErrIssueRepoUnknown = errors.New("repository unknown; issue not created")
+
+// CreateIssuesViaCLI creates GitHub issues using the gh CLI tool, each in its
+// project's repository, and returns how many were actually created. Issues
+// whose repository is unknown are not silently dropped: they are reported in
+// an error wrapping ErrIssueRepoUnknown after the others have been created.
+// Cancelling ctx stops before the next issue.
+func CreateIssuesViaCLI(ctx context.Context, issues []IssueSpec) (int, error) {
+	created := 0
+	var unknownRepo []string
 	for _, issue := range issues {
+		if err := ctx.Err(); err != nil {
+			return created, fmt.Errorf("creating issues: %w", err)
+		}
 		if issue.Repo == "" {
+			unknownRepo = append(unknownRepo, issue.Project)
 			continue
 		}
 
@@ -138,12 +159,17 @@ func CreateIssuesViaCLI(issues []IssueSpec) error {
 			args = append(args, "--label", label)
 		}
 
-		cmd := exec.Command("gh", args...)
-		output, err := cmd.CombinedOutput()
+		output, err := runGH(ctx, args...)
 		if err != nil {
-			return fmt.Errorf("creating issue for %s: %w\noutput: %s", issue.Repo, err, string(output))
+			return created, fmt.Errorf("creating issue for %s: %w\noutput: %s", issue.Repo, err, string(output))
 		}
+		created++
 	}
 
-	return nil
+	if len(unknownRepo) > 0 {
+		sort.Strings(unknownRepo)
+		return created, fmt.Errorf("%w for %d project(s): %s", ErrIssueRepoUnknown,
+			len(unknownRepo), strings.Join(unknownRepo, ", "))
+	}
+	return created, nil
 }

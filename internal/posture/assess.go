@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"sync"
@@ -30,6 +31,11 @@ import (
 // variable so tests can substitute a scanner pointed at a mock OSV endpoint
 // without changing Assess's exported signature.
 var newVulnScanner = func() *vulnscan.Scanner { return vulnscan.New() }
+
+// StateFilesCategory is the drift category under which Assess records findings
+// about qsdev's own state and config (state files that failed to load, unknown
+// tool enablement, a malformed project config).
+const StateFilesCategory = "state-files"
 
 // ErrNotInitialized is returned when Assess is called on a project that has
 // not been initialized with qsdev init (no state files or .qsdev.yaml found).
@@ -80,6 +86,7 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 		QsdevVersion:  qsdevVersion,
 		ProjectPath:   projectPath,
 		ProjectName:   projectName,
+		Repository:    ciRepository(),
 		Score: AggregateScore{
 			Grade: "U", // Unscored — will be filled by scoring logic.
 		},
@@ -115,8 +122,8 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 	if cfgErr != nil {
 		slog.Warn("posture: config unreadable; assessing against the default tier",
 			"config", configFile, "tier", currentTierName, "error", cfgErr)
-		addDriftFinding(report, stateFilesCategory, drift.Finding{
-			Category: stateFilesCategory,
+		addDriftFinding(report, StateFilesCategory, drift.Finding{
+			Category: StateFilesCategory,
 			Severity: drift.Error,
 			Subject:  configFile,
 			Description: fmt.Sprintf("Failed to parse %s; the tier defaults to %q, which may not match the project: %s",
@@ -134,8 +141,8 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 
 	// Record any state loading errors as drift findings.
 	for _, loadErr := range merged.Errors {
-		addDriftFinding(report, stateFilesCategory, drift.Finding{
-			Category:    stateFilesCategory,
+		addDriftFinding(report, StateFilesCategory, drift.Finding{
+			Category:    StateFilesCategory,
 			Severity:    drift.Warning,
 			Subject:     loadErr.Path,
 			Description: fmt.Sprintf("Failed to load state file: %s", loadErr.Err),
@@ -144,8 +151,8 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 		})
 	}
 	if merged.ToolStateUnknown {
-		addDriftFinding(report, stateFilesCategory, drift.Finding{
-			Category: stateFilesCategory,
+		addDriftFinding(report, StateFilesCategory, drift.Finding{
+			Category: StateFilesCategory,
 			Severity: drift.Warning,
 			Subject:  "enabled tools",
 			Description: "Tool enablement is unknown: no state file or answers file records which tools " +
@@ -170,16 +177,30 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 	// qsdev's state, such as a hand-written pre-commit config. That goes into a
 	// separate view so it never reaches config health or drift detection, which
 	// would otherwise report an untracked file as a modified machine-owned one.
-	activeTools, presentState := observedProtections(projectPath, enabledTools, genState)
-
-	// Assess defense layers.
-	report.Defense = AssessDefenseLayers(activeTools, detected, presentState, report.Tier.Position)
+	activeTools, observedState := observedProtections(projectPath, enabledTools, genState)
 
 	// Assess config health from tracked files.
 	configFiles := buildConfigFileInfos(projectPath, merged.Files)
 	if configFiles == nil {
 		configFiles = []ConfigFileInfo{}
 	}
+
+	// Defense layers and conformance judge the files that are actually on
+	// disk. A path the state file still lists after its file was deleted (or
+	// became unreadable) is not a present control.
+	presentState := genState
+	presentState.Files = presentFiles(genState.Files, configFiles)
+	// Protection observed outside the tracked state (see observedProtections)
+	// is present by construction: it was just read from disk.
+	for path, fileState := range observedState.Files {
+		if _, tracked := genState.Files[path]; !tracked {
+			presentState.Files[path] = fileState
+		}
+	}
+
+	// Assess defense layers.
+	report.Defense = AssessDefenseLayers(projectPath, activeTools, detected, presentState, report.Tier.Position)
+
 	configScore := ComputeConfigScore(configFiles)
 	report.Config = ConfigHealth{
 		Score: configScore,
@@ -259,9 +280,6 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 	return report, nil
 }
 
-// stateFilesCategory groups drift findings about qsdev's own state and config.
-const stateFilesCategory = "state-files"
-
 // defaultTierName is the tier assumed when the project config sets none.
 const defaultTierName = "standard"
 
@@ -290,6 +308,24 @@ func addDriftFinding(report *PostureReport, category string, finding drift.Findi
 	report.Drift.Categories = appendOrCreateCategory(report.Drift.Categories, category, finding)
 	report.Drift.TotalFindings++
 	report.Drift.BySeverity[finding.Severity]++
+}
+
+// repositorySlugRe matches a GitHub "owner/name" repository slug.
+var repositorySlugRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$`)
+
+// ciRepository returns the "owner/name" repository GitHub Actions reports for
+// the running workflow, so reports uploaded from CI identify their source
+// repository for team aggregation. It returns "" outside GitHub Actions or
+// when the value is not a well-formed slug.
+func ciRepository() string {
+	if os.Getenv("GITHUB_ACTIONS") != "true" {
+		return ""
+	}
+	repo := os.Getenv("GITHUB_REPOSITORY")
+	if !repositorySlugRe.MatchString(repo) {
+		return ""
+	}
+	return repo
 }
 
 // appendOrCreateCategory adds a finding to the named category, creating the
@@ -340,6 +376,22 @@ func buildConfigFileInfos(projectPath string, files map[string]types.FileState) 
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].Path < infos[j].Path })
 	return infos
+}
+
+// presentFiles returns the subset of tracked files whose config health shows
+// them present and readable on disk (current or modified). Missing and corrupt
+// files are left out.
+func presentFiles(files map[string]types.FileState, infos []ConfigFileInfo) map[string]types.FileState {
+	present := make(map[string]types.FileState, len(infos))
+	for _, info := range infos {
+		if info.State != "current" && info.State != "modified" {
+			continue
+		}
+		if fs, ok := files[info.Path]; ok {
+			present[info.Path] = fs
+		}
+	}
+	return present
 }
 
 // buildEcosystemStatuses detects which ecosystems are present and whether

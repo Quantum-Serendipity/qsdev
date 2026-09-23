@@ -1,7 +1,8 @@
 package evidence
 
 // ASVSFramework returns the OWASP Application Security Verification Standard
-// framework definition with 6 controls mapped to qsdev's defense-in-depth layers.
+// framework definition with 5 controls mapped to qsdev's defense-in-depth layers.
+// Control IDs, names and descriptions follow the ASVS 4.0.3 requirement text.
 func ASVSFramework() Framework {
 	return Framework{
 		ID:          "asvs",
@@ -15,9 +16,9 @@ func ASVSFramework() Framework {
 func asvsControls() []ControlDefinition {
 	return []ControlDefinition{
 		{
-			ID:       "10.3.1",
-			Name:     "Trusted Package Sources",
-			Desc:     "Verify that the application source code and third-party libraries do not contain unauthorized phone home or data collection capabilities.",
+			ID:       "10.2.1",
+			Name:     "No Unauthorized Phone Home",
+			Desc:     "Verify that the application source code and third party libraries do not contain unauthorized phone home or data collection capabilities. Where such functionality exists, obtain the user's permission for it to operate before collecting any data.",
 			Category: "Malicious Code",
 			Layers: []LayerMapping{
 				{
@@ -34,8 +35,8 @@ func asvsControls() []ControlDefinition {
 		},
 		{
 			ID:       "10.3.2",
-			Name:     "Software Composition Analysis",
-			Desc:     "Verify that the application employs integrity protections, such as code signing or subresource integrity. The application must not load or execute code from untrusted sources.",
+			Name:     "Integrity Protections",
+			Desc:     "Verify that the application employs integrity protections, such as code signing or subresource integrity. The application must not load or execute code from untrusted sources, such as loading includes, modules, plugins, code, or libraries from untrusted sources or the Internet.",
 			Category: "Malicious Code",
 			Layers: []LayerMapping{
 				{
@@ -49,14 +50,6 @@ func asvsControls() []ControlDefinition {
 					Description: "Static analysis detects code patterns associated with malicious behavior, backdoors, and integrity violations.",
 				},
 			},
-		},
-		{
-			ID:                  "10.3.3",
-			Name:                "Unused Dependencies",
-			Desc:                "Verify that the application does not include unused packages, frameworks, or libraries that are not necessary for its operation.",
-			Category:            "Malicious Code",
-			Layers:              []LayerMapping{},
-			NotApplicableReason: "Unused dependency detection requires language-specific dead-code analysis beyond the scope of qsdev's supply chain security layers. Recommend using language-specific tools (e.g., depcheck for Node.js, go mod tidy for Go).",
 		},
 		{
 			ID:       "14.2.1",
@@ -90,10 +83,10 @@ func asvsControls() []ControlDefinition {
 			},
 		},
 		{
-			ID:       "1.14.1",
-			Name:     "Configuration Verification",
-			Desc:     "Verify the use of a unique or special low-privilege operating system account for all application components, services, and servers.",
-			Category: "Configuration",
+			ID:       "1.2.1",
+			Name:     "Low-Privilege Service Accounts",
+			Desc:     "Verify the use of unique or special low-privilege operating system accounts for all application components, services, and servers.",
+			Category: "Architecture",
 			Layers: []LayerMapping{
 				{
 					LayerName:   "nix-hardening",

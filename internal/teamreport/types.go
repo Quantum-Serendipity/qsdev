@@ -26,6 +26,7 @@ type TeamSummary struct {
 	EnhancedPassRate   float64 `json:"enhancedPassRate"`
 	TotalCriticalVulns int     `json:"totalCriticalVulns"`
 	TotalHighVulns     int     `json:"totalHighVulns"`
+	UnscannedProjects  int     `json:"unscannedProjects"` // projects whose vuln counts are unknown (never scanned)
 	ProjectsNeedUpdate int     `json:"projectsNeedingUpdate"`
 }
 
@@ -40,10 +41,15 @@ type ProjectSummary struct {
 	// Certifiable mirrors the project's DependencyHealth.Certifiable(): false when
 	// the member scan failed or turned up unresolved-severity vulnerabilities, so
 	// its zero VulnTotals must not be read as a clean bill of health fleet-wide.
-	Certifiable  bool      `json:"certifiable"`
-	QsdevVersion string    `json:"qsdevVersion"`
-	LastScan     time.Time `json:"lastScan"`
-	Stale        bool      `json:"stale,omitempty"`
+	Certifiable bool `json:"certifiable"`
+	// Scanned mirrors DependencyHealth.Scanned: false when the project's
+	// dependencies were never scanned, so VulnTotals say nothing either way.
+	Scanned      bool   `json:"scanned"`
+	QsdevVersion string `json:"qsdevVersion"`
+	// LastScan is when the dependencies were last scanned; nil if never.
+	LastScan *time.Time `json:"lastScan,omitempty"`
+	// Stale reports a dependency scan older than the staleness threshold.
+	Stale bool `json:"stale,omitempty"`
 }
 
 // ProjectTrend tracks score history for a single project over time.
@@ -69,10 +75,11 @@ type PostureAlert struct {
 // IssueSpec describes a GitHub issue to be created for a project with
 // degraded security posture.
 type IssueSpec struct {
-	Title  string   `json:"title"`
-	Body   string   `json:"body"`
-	Repo   string   `json:"repo"`
-	Labels []string `json:"labels"`
+	Project string   `json:"project"`
+	Title   string   `json:"title"`
+	Body    string   `json:"body"`
+	Repo    string   `json:"repo"`
+	Labels  []string `json:"labels"`
 }
 
 // ScopeFile defines the set of projects to include in a team report
@@ -91,6 +98,6 @@ type ScopeProject struct {
 type AggregateOptions struct {
 	HistoryFile   string  `json:"historyFile,omitempty"`
 	IncludeTrends bool    `json:"includeTrends,omitempty"`
-	Threshold     float64 `json:"threshold,omitempty"`
+	Threshold     float64 `json:"threshold,omitempty"` // minimum acceptable score; lower scores alert (0 disables)
 	QsdevVersion  string  `json:"qsdevVersion,omitempty"`
 }

@@ -63,11 +63,11 @@ func TestGenerate_SOC2_ProducesValidReport(t *testing.T) {
 	if result.SchemaVersion != posture.SchemaVersion {
 		t.Errorf("SchemaVersion = %q, want %q", result.SchemaVersion, posture.SchemaVersion)
 	}
-	if len(result.Controls) != 8 {
-		t.Errorf("expected 8 controls, got %d", len(result.Controls))
+	if len(result.Controls) != 6 {
+		t.Errorf("expected 6 controls, got %d", len(result.Controls))
 	}
-	if result.Summary.TotalControls != 8 {
-		t.Errorf("TotalControls = %d, want 8", result.Summary.TotalControls)
+	if result.Summary.TotalControls != 6 {
+		t.Errorf("TotalControls = %d, want 6", result.Summary.TotalControls)
 	}
 	if result.Posture == nil || result.Posture.SchemaVersion != pr.SchemaVersion ||
 		len(result.Posture.Defense.Layers) != len(pr.Defense.Layers) {

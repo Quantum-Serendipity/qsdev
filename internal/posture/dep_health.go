@@ -13,10 +13,16 @@ const (
 	// deducted at the High rate — enough to visibly drop the score below a clean
 	// 100 without overstating it as a confirmed critical.
 	DeductUnknown = 10.0
+	// DeductScanError penalizes an ecosystem whose vulnerability scan was
+	// attempted but errored. Its zero counts mean "unknown", not "clean", so,
+	// like an unresolved-severity vulnerability, it is deducted at the High
+	// rate rather than scored as a clean 100.
+	DeductScanError = DeductUnknown
 )
 
 // ComputeDepScore calculates dependency health score (0-100).
-// Starts at 100, deducts per vulnerability and per missing lock file. Floor at 0.
+// Starts at 100, deducts per vulnerability, per missing lock file and per
+// ecosystem whose scan errored. Floor at 0.
 func ComputeDepScore(ecosystems []EcosystemStatus) DependencyHealth {
 	var totals VulnSeverityCounts
 	score := 100.0
@@ -37,6 +43,9 @@ func ComputeDepScore(ecosystems []EcosystemStatus) DependencyHealth {
 
 		if eco.LockFile == "missing" {
 			score -= DeductMissingLock
+		}
+		if eco.ScanError {
+			score -= DeductScanError
 		}
 	}
 

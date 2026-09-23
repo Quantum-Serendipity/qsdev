@@ -38,6 +38,7 @@ func renderOverviewTable(b *strings.Builder, report *TeamReport) {
 	fmt.Fprintf(b, "| Enhanced Pass Rate | %.1f%% |\n", report.Summary.EnhancedPassRate)
 	fmt.Fprintf(b, "| Critical Vulnerabilities | %d |\n", report.Summary.TotalCriticalVulns)
 	fmt.Fprintf(b, "| High Vulnerabilities | %d |\n", report.Summary.TotalHighVulns)
+	fmt.Fprintf(b, "| Projects Without Dependency Scan | %d |\n", report.Summary.UnscannedProjects)
 	fmt.Fprintf(b, "| Projects Needing Update | %d |\n", report.Summary.ProjectsNeedUpdate)
 	b.WriteString("\n")
 }
@@ -62,16 +63,15 @@ func renderProjectTable(b *strings.Builder, report *TeamReport) {
 			enhancedStatus = "FAIL"
 		}
 
-		fmt.Fprintf(b, "| %s | %.1f | %s | %s | %s | %d/%d | %s | %s |\n",
+		fmt.Fprintf(b, "| %s | %.1f | %s | %s | %s | %s | %s | %s |\n",
 			p.Name,
 			p.Score.Total,
 			p.Score.Grade,
 			baselineStatus,
 			enhancedStatus,
-			p.VulnTotals.Critical,
-			p.VulnTotals.High,
+			vulnCountsText(p),
 			p.QsdevVersion,
-			relativeTime(p.LastScan),
+			lastScanText(p),
 		)
 	}
 	b.WriteString("\n")
@@ -199,7 +199,7 @@ func renderStaleScans(b *strings.Builder, report *TeamReport) {
 	b.WriteString("## Stale Scans\n\n")
 	b.WriteString("The following projects have not been scanned in over 7 days:\n\n")
 	for _, p := range stale {
-		fmt.Fprintf(b, "- **%s**: last scanned %s\n", p.Name, relativeTime(p.LastScan))
+		fmt.Fprintf(b, "- **%s**: last scanned %s\n", p.Name, lastScanText(p))
 	}
 	b.WriteString("\n")
 }

@@ -15,7 +15,7 @@ func makeReport(name string, score float64, baselinePass, enhancedPass bool, cri
 	return &posture.PostureReport{
 		SchemaVersion: posture.SchemaVersion,
 		GeneratedAt:   generatedAt,
-		QsdevVersion:   qsdevVersion,
+		QsdevVersion:  qsdevVersion,
 		ProjectName:   name,
 		Score: posture.AggregateScore{
 			Total:     score,
@@ -34,12 +34,15 @@ func makeReport(name string, score float64, baselinePass, enhancedPass bool, cri
 				Checks: []posture.ConformanceCheck{},
 			},
 		},
+		// Models a report generated with a completed dependency scan.
 		Dependencies: posture.DependencyHealth{
 			Totals: posture.VulnSeverityCounts{
 				Critical: critVulns,
 				High:     highVulns,
 			},
 			Ecosystems: []posture.EcosystemStatus{},
+			Scanned:    true,
+			LastScan:   &generatedAt,
 		},
 		Defense: posture.DefenseCoverage{
 			Layers: []posture.DefenseLayer{},
@@ -167,7 +170,7 @@ func TestAggregateVulnTotals(t *testing.T) {
 
 func TestAggregateStaleDetection(t *testing.T) {
 	staleTime := time.Now().UTC().Add(-8 * 24 * time.Hour) // 8 days ago
-	freshTime := time.Now().UTC().Add(-1 * time.Hour)       // 1 hour ago
+	freshTime := time.Now().UTC().Add(-1 * time.Hour)      // 1 hour ago
 
 	reports := []*posture.PostureReport{
 		makeReport("stale-project", 80, true, true, 0, 0, "v1.0.0", staleTime),
@@ -309,9 +312,9 @@ func TestIsOutdatedGdev(t *testing.T) {
 
 func TestParseVersion(t *testing.T) {
 	tests := []struct {
-		input      string
-		wantMajor  int
-		wantMinor  int
+		input     string
+		wantMajor int
+		wantMinor int
 	}{
 		{"v1.5.0", 1, 5},
 		{"1.5.0", 1, 5},

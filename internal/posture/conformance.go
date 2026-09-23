@@ -29,7 +29,9 @@ const (
 	CheckCIWorkflowsGenerated   CheckName = "ci-workflows-generated"
 )
 
-// EvaluateConformance checks baseline and enhanced conformance.
+// EvaluateConformance checks baseline and enhanced conformance. genState must
+// list only the generated files that are present on disk, so a deleted file
+// never passes a presence check.
 func EvaluateConformance(
 	defense DefenseCoverage,
 	deps DependencyHealth,
@@ -104,16 +106,19 @@ func evaluateBaseline(
 	checks = append(checks, ConformanceCheck{
 		Name:   CheckClaudeMDPresent,
 		Pass:   hasClaudeMD,
-		Reason: boolReason(hasClaudeMD, "CLAUDE.md present in generated state", "CLAUDE.md not found in generated state"),
+		Reason: boolReason(hasClaudeMD, "CLAUDE.md present", "CLAUDE.md missing or not generated"),
 	})
 
 	_, hasSettings := genState.Files[".claude/settings.json"]
 	checks = append(checks, ConformanceCheck{
 		Name:   CheckSettingsJSONPresent,
 		Pass:   hasSettings,
-		Reason: boolReason(hasSettings, "settings.json present in generated state", "settings.json not found in generated state"),
+		Reason: boolReason(hasSettings, "settings.json present", "settings.json missing or not generated"),
 	})
 
+	// Baseline is a fixed floor, deliberately independent of the progressive
+	// tier: every high/critical layer is required at every tier, even though
+	// the tier-relative defense score leaves higher-tier layers out.
 	highLayersOK := true
 	for _, l := range defense.Layers {
 		if l.Weight == WeightHigh || l.Weight == WeightCritical {
@@ -139,7 +144,7 @@ func evaluateBaseline(
 	checks = append(checks, ConformanceCheck{
 		Name:   CheckPreCommitHooks,
 		Pass:   hasPreCommit,
-		Reason: boolReason(hasPreCommit, "pre-commit hooks configured", "no pre-commit hooks found in generated state"),
+		Reason: boolReason(hasPreCommit, "pre-commit hooks configured", "no pre-commit hook configuration present"),
 	})
 
 	return checks

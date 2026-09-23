@@ -36,6 +36,12 @@ const (
 	unreleasedVersionPlaceholder = "SET-A-RELEASED-VERSION"
 )
 
+// postureArtifactPattern matches every per-project posture report artifact.
+// The per-project steps upload "<prefix><owner>-<repo>", and both the team
+// workflow and CollectFromScope download by this pattern, so the upload and
+// download sides cannot drift apart.
+const postureArtifactPattern = postureArtifactPrefix + "*"
+
 // GenerateTeamWorkflow produces a complete GitHub Actions workflow YAML string
 // for the team aggregation pipeline. The workflow collects the latest posture
 // report artifact from every repository listed in the scope file, aggregates
@@ -174,7 +180,7 @@ func writeCollectReportsStep(b *strings.Builder) {
 	b.WriteString("          set -euo pipefail\n")
 	b.WriteString("          mkdir -p reports\n")
 	fmt.Fprintf(b, "          for repo in $(jq -r '.projects[].repo' %s); do\n", scopeFile)
-	fmt.Fprintf(b, "            if ! gh run download --repo \"$repo\" --pattern '%s*' --dir \"reports/${repo//\\//-}\"; then\n", postureArtifactPrefix)
+	fmt.Fprintf(b, "            if ! gh run download --repo \"$repo\" --pattern '%s' --dir \"reports/${repo//\\//-}\"; then\n", postureArtifactPattern)
 	b.WriteString("              echo \"::warning::no posture report artifact found for $repo\"\n")
 	b.WriteString("            fi\n")
 	b.WriteString("          done\n")
@@ -232,8 +238,10 @@ func GeneratePerProjectSteps() string {
 	b.WriteString("        run: |\n")
 	fmt.Fprintf(&b, "          %s status --scan --json --audit-level none > posture-report.json\n\n", app)
 
+	// The upload runs even when an earlier step failed, so failing projects
+	// still reach the team dashboard; only a cancelled run skips it.
 	fmt.Fprintf(&b, "      - name: Upload posture report\n")
-	b.WriteString("        if: always()\n")
+	b.WriteString("        if: ${{ !cancelled() }}\n")
 	fmt.Fprintf(&b, "        uses: %s %s\n", cigeneration.ActionUploadArtifact, cigeneration.ActionUploadArtifact.Comment())
 	b.WriteString("        with:\n")
 	fmt.Fprintf(&b, "          name: %s${{ github.repository_owner }}-${{ github.event.repository.name }}\n", postureArtifactPrefix)

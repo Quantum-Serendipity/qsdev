@@ -34,19 +34,19 @@ func TestCreateTeamIssues(t *testing.T) {
 			name:        "all routable",
 			issues:      []teamreport.IssueSpec{withRepo},
 			wantCreated: []string{"org/a"},
-			wantOutput:  "Created 1 issue(s)",
+			wantOutput:  "Created 1 of 1 issue(s)",
 		},
 		{
 			name:        "issue without repo is not counted and fails the command",
 			issues:      []teamreport.IssueSpec{withRepo, noRepo},
 			wantCreated: []string{"org/a"},
-			wantOutput:  "Created 1 issue(s)",
+			wantOutput:  "Created 1 of 2 issue(s)",
 			wantErr:     "b degraded",
 		},
 		{
 			name:       "only unroutable issues",
 			issues:     []teamreport.IssueSpec{noRepo},
-			wantOutput: "Created 0 issue(s)",
+			wantOutput: "Created 0 of 1 issue(s)",
 			wantErr:    "repository is unknown",
 		},
 		{
@@ -62,11 +62,14 @@ func TestCreateTeamIssues(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var created []string
-			create := func(issues []teamreport.IssueSpec) error {
+			create := func(issues []teamreport.IssueSpec) (int, error) {
 				for _, i := range issues {
 					created = append(created, i.Repo)
 				}
-				return tt.createErr
+				if tt.createErr != nil {
+					return 0, tt.createErr
+				}
+				return len(issues), nil
 			}
 			var out bytes.Buffer
 			err := createTeamIssues(&out, tt.issues, create)

@@ -279,7 +279,7 @@ func TestAssess_UnknownToolStateCreditsNothing(t *testing.T) {
 	found := false
 	for _, cat := range report.Drift.Categories {
 		for _, f := range cat.Findings {
-			found = found || (cat.Name == stateFilesCategory && f.Subject == "enabled tools")
+			found = found || (cat.Name == StateFilesCategory && f.Subject == "enabled tools")
 		}
 	}
 	if !found {

@@ -321,7 +321,7 @@ func TestAssess_MalformedConfigRecordedAsDrift(t *testing.T) {
 			var got *drift.Finding
 			for _, cat := range report.Drift.Categories {
 				for i, f := range cat.Findings {
-					if cat.Name == stateFilesCategory && f.Subject == ".qsdev.yaml" {
+					if cat.Name == StateFilesCategory && f.Subject == ".qsdev.yaml" {
 						got = &cat.Findings[i]
 					}
 				}

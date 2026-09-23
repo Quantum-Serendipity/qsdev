@@ -147,6 +147,37 @@ func TestComputeDepScore_NALockFileNotPenalized(t *testing.T) {
 	}
 }
 
+// TestComputeDepScore_ScanErrorIsNotClean pins that an ecosystem whose scan
+// errored does not score as a clean 100 on the strength of its zero counts.
+func TestComputeDepScore_ScanErrorIsNotClean(t *testing.T) {
+	tests := []struct {
+		name string
+		ecos []EcosystemStatus
+		want float64
+	}{
+		{
+			name: "one failed ecosystem",
+			ecos: []EcosystemStatus{{Name: "go", Detected: true, LockFile: "go.sum", ScanError: true}},
+			want: 100 - DeductScanError,
+		},
+		{
+			name: "failed and clean ecosystems",
+			ecos: []EcosystemStatus{
+				{Name: "go", Detected: true, LockFile: "go.sum", ScanError: true},
+				{Name: "npm", Detected: true, LockFile: "package-lock.json", Scanned: true},
+			},
+			want: 100 - DeductScanError,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ComputeDepScore(tt.ecos).Score; got != tt.want {
+				t.Errorf("score = %.1f, want %.1f", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestComputeDepScore_EcosystemsPreserved(t *testing.T) {
 	ecosystems := []EcosystemStatus{
 		{Name: "go", Detected: true, LockFile: "valid"},

@@ -48,6 +48,7 @@ type PostureReport struct {
 	QsdevVersion       string                    `json:"qsdevVersion"`
 	ProjectPath        string                    `json:"projectPath"`
 	ProjectName        string                    `json:"projectName"`
+	Repository         string                    `json:"repository,omitempty"` // "owner/name" source repository, when known; team-report files issues there
 	Tier               ReportTierInfo            `json:"tier"`
 	Score              AggregateScore            `json:"score"`
 	Conformance        ConformanceResult         `json:"conformance"`

@@ -12,15 +12,18 @@
 package rlang
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -62,10 +65,11 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		pm = "renv"
 	}
 
-	// DESCRIPTION alone is only probable — many non-R projects (Debian, Perl)
-	// use DESCRIPTION files. Upgrade to certain when combined with other R
-	// indicators.
-	hasDescription := fileutil.FileExists(projectRoot, "DESCRIPTION")
+	// DESCRIPTION alone is only probable — many non-R projects (Debian, Perl,
+	// plain prose) use DESCRIPTION files, so it counts only when it is an R
+	// package DESCRIPTION (DCF with a Package: field). Upgrade to certain
+	// when combined with other R indicators.
+	hasDescription := isRPackageDescription(filepath.Join(projectRoot, "DESCRIPTION"))
 	if hasDescription {
 		evidence = append(evidence, "DESCRIPTION found")
 		if hasNamespace || hasRproj || hasRenvLock {
@@ -184,4 +188,32 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 // verification commands at the module level.
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
+}
+
+// ManifestFiles declares the R package manifest and its renv lockfile so
+// Version-Sentinel coverage reports list R dependencies as uncovered instead
+// of omitting them.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{
+		Path:           "DESCRIPTION",
+		Ecosystem:      "renv",
+		VSSupported:    false,
+		LockFile:       "renv.lock",
+		LockFilePolicy: ecosystem.LockFilePolicyRecommended,
+	}}
+}
+
+// isRPackageDescription reports whether path is an R package DESCRIPTION
+// file: Debian Control Format with a top-level "Package:" field.
+func isRPackageDescription(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for line := range strings.Lines(string(data)) {
+		if strings.HasPrefix(line, "Package:") {
+			return true
+		}
+	}
+	return false
 }

@@ -211,7 +211,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 				Path:     ".mvn/settings.xml",
 				Content:  content,
 				Mode:     fileutil.ModeReadWrite,
-				Strategy: types.Overwrite,
+				Strategy: types.Skip,
 			})
 		}
 	}
@@ -222,7 +222,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 			Path:     "gradle.properties",
 			Content:  []byte(content),
 			Mode:     fileutil.ModeReadWrite,
-			Strategy: types.Overwrite,
+			Strategy: types.Skip,
 		})
 
 		if config.RegistryProxy != "" {
@@ -231,7 +231,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 				Path:     "init.gradle",
 				Content:  []byte(initGradle),
 				Mode:     fileutil.ModeReadWrite,
-				Strategy: types.Overwrite,
+				Strategy: types.Skip,
 			})
 		}
 	}

@@ -72,6 +72,10 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		extras["typescript"] = "true"
 		evidence = append(evidence, "tsconfig.json found")
 	}
+	if pm == "yarn" && isYarnClassic(projectRoot) {
+		extras[ExtraYarnClassic] = "true"
+		evidence = append(evidence, "Yarn Classic (v1) project")
+	}
 
 	return ecosystem.DetectionResult{
 		Detected:   true,
@@ -209,6 +213,11 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 		installCmd = "pnpm install --frozen-lockfile"
 	case "yarn":
 		installCmd = "yarn install --immutable"
+		if config.Extra(ExtraYarnClassic, "") == "true" {
+			// --immutable is Berry-only; Yarn Classic spells it
+			// --frozen-lockfile.
+			installCmd = "yarn install --frozen-lockfile --ignore-scripts"
+		}
 	case "bun":
 		installCmd = "bun install --frozen-lockfile"
 	default:

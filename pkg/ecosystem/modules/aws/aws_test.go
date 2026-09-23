@@ -252,8 +252,8 @@ func TestDenyRules_AllPresent(t *testing.T) {
 	m := newModule()
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 
-	if len(rules) != 7 {
-		t.Fatalf("expected 7 deny rules, got %d: %v", len(rules), rules)
+	if len(rules) != 11 {
+		t.Fatalf("expected 11 deny rules, got %d: %v", len(rules), rules)
 	}
 
 	expected := []string{
@@ -327,8 +327,8 @@ func TestReadDenyRules_AllPresent(t *testing.T) {
 	m := newModule()
 	paths := m.ReadDenyRules(ecosystem.ModuleConfig{})
 
-	if len(paths) != 3 {
-		t.Fatalf("expected 3 read deny paths, got %d: %v", len(paths), paths)
+	if len(paths) != 4 {
+		t.Fatalf("expected 4 read deny paths, got %d: %v", len(paths), paths)
 	}
 
 	expected := []string{

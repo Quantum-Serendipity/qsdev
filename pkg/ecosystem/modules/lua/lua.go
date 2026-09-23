@@ -183,3 +183,16 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
 }
+
+// Compile-time check that the Lua module declares its manifests.
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
+
+// ManifestFiles declares the Lua manifests so Version-Sentinel coverage
+// reports list them as uncovered instead of omitting them. Lux pins
+// dependencies in lux.lock; LuaRocks rockspecs have no lock file.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{
+		{Path: "lux.toml", Ecosystem: "lux", LockFile: "lux.lock", LockFilePolicy: ecosystem.LockFilePolicyRecommended},
+		{Path: "*.rockspec", Ecosystem: "luarocks", LockFilePolicy: ecosystem.LockFilePolicyNone},
+	}
+}

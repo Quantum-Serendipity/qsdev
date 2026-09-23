@@ -60,30 +60,53 @@ func TestDetect_ShFile(t *testing.T) {
 	}
 }
 
+// TestDetect_ScriptsDir verifies scripts/ only indicates shell when it holds
+// shell scripts: the directory commonly contains Python or JS helpers.
 func TestDetect_ScriptsDir(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
-		t.Fatal(err)
+	t.Parallel()
+	tests := []struct {
+		name         string
+		files        []string
+		wantDetected bool
+	}{
+		{"empty scripts dir", nil, false},
+		{"python helper only", []string{"x.py"}, false},
+		{"sh script", []string{"build.sh"}, true},
+		{"bash script", []string{"setup.bash"}, true},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, "scripts", f), []byte("#!/bin/sh\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-	m := newModule()
-	r := m.Detect(dir)
-
-	if !r.Detected {
-		t.Fatal("expected Detected = true for scripts/ directory")
-	}
-	if r.Confidence < ecosystem.ConfidenceProbable {
-		t.Errorf("Confidence = %v, want >= Probable", r.Confidence)
-	}
-
-	foundScripts := false
-	for _, e := range r.Evidence {
-		if strings.Contains(e, "scripts") {
-			foundScripts = true
-		}
-	}
-	if !foundScripts {
-		t.Error("Evidence should mention scripts/ directory")
+			r := newModule().Detect(dir)
+			if r.Detected != tt.wantDetected {
+				t.Fatalf("Detected = %v, want %v (evidence %v)", r.Detected, tt.wantDetected, r.Evidence)
+			}
+			if !tt.wantDetected {
+				return
+			}
+			if r.Confidence != ecosystem.ConfidenceProbable {
+				t.Errorf("Confidence = %v, want Probable", r.Confidence)
+			}
+			found := false
+			for _, e := range r.Evidence {
+				if strings.Contains(e, "scripts/") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("Evidence %v should mention scripts/", r.Evidence)
+			}
+		})
 	}
 }
 

@@ -346,8 +346,8 @@ func TestSecurityConfigs_NPM(t *testing.T) {
 	if cfg.Path != ".npmrc" {
 		t.Errorf("Path = %q, want %q", cfg.Path, ".npmrc")
 	}
-	if cfg.Strategy != types.Overwrite {
-		t.Errorf("Strategy = %v, want Overwrite", cfg.Strategy)
+	if cfg.Strategy != types.Skip {
+		t.Errorf("Strategy = %v, want Skip (user-owned config must not be replaced)", cfg.Strategy)
 	}
 
 	content := string(cfg.Content)
@@ -384,8 +384,8 @@ func TestSecurityConfigs_PNPM(t *testing.T) {
 	if cfg.Path != "pnpm-workspace.yaml" {
 		t.Errorf("Path = %q, want %q", cfg.Path, "pnpm-workspace.yaml")
 	}
-	if cfg.Strategy != types.Overwrite {
-		t.Errorf("Strategy = %v, want Overwrite", cfg.Strategy)
+	if cfg.Strategy != types.Skip {
+		t.Errorf("Strategy = %v, want Skip (user-owned config must not be replaced)", cfg.Strategy)
 	}
 
 	content := string(cfg.Content)
@@ -424,8 +424,8 @@ func TestSecurityConfigs_Yarn(t *testing.T) {
 	if cfg.Path != ".yarnrc.yml" {
 		t.Errorf("Path = %q, want %q", cfg.Path, ".yarnrc.yml")
 	}
-	if cfg.Strategy != types.Overwrite {
-		t.Errorf("Strategy = %v, want Overwrite", cfg.Strategy)
+	if cfg.Strategy != types.Skip {
+		t.Errorf("Strategy = %v, want Skip (user-owned config must not be replaced)", cfg.Strategy)
 	}
 
 	content := string(cfg.Content)
@@ -462,14 +462,14 @@ func TestSecurityConfigs_Bun(t *testing.T) {
 	if cfg.Path != "bunfig.toml" {
 		t.Errorf("Path = %q, want %q", cfg.Path, "bunfig.toml")
 	}
-	if cfg.Strategy != types.Overwrite {
-		t.Errorf("Strategy = %v, want Overwrite", cfg.Strategy)
+	if cfg.Strategy != types.Skip {
+		t.Errorf("Strategy = %v, want Skip (user-owned config must not be replaced)", cfg.Strategy)
 	}
 
 	content := string(cfg.Content)
 	requiredStrings := []string{
 		"[install]",
-		`minimumReleaseAge = "7d"`,
+		"minimumReleaseAge = 604800\n",
 	}
 	for _, s := range requiredStrings {
 		if !strings.Contains(content, s) {

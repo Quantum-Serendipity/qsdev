@@ -57,11 +57,12 @@ Per-ecosystem configuration files disable install-time script execution — the 
 | Ecosystem | Config File | Key Setting |
 |-----------|------------|-------------|
 | JavaScript (npm) | `.npmrc` | `ignore-scripts=true` |
-| JavaScript (yarn) | `.yarnrc.yml` | `enableScripts: false` |
+| JavaScript (yarn Berry) | `.yarnrc.yml` | `enableScripts: false` |
+| JavaScript (yarn Classic) | `.yarnrc` | `ignore-scripts true` |
 | JavaScript (pnpm) | `.npmrc` + `pnpm-workspace.yaml` | `ignore-scripts=true`, `strictDepBuilds` |
 | Python | `pip.conf` | `--no-deps` enforcement |
 | Rust | `.cargo/config.toml` | Registry pinning |
-| Ruby | `.bundle/config` | `BUNDLE_DISABLE_EXEC_LOAD: true` |
+| Ruby | `devenv.nix` env | `BUNDLE_DISABLE_EXEC_LOAD=true` |
 | PHP | `composer.json` config | Script restrictions |
 | .NET | `nuget.config` | Source pinning |
 

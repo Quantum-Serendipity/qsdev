@@ -117,7 +117,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 			Path:           "nuget.config",
 			Content:        buildNugetConfig(config.RegistryProxy),
 			Mode:           fileutil.ModeReadWrite,
-			Strategy:       types.Overwrite,
+			Strategy:       types.Skip,
 			SkipValidation: true,
 		},
 		{

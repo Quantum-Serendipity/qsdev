@@ -1,6 +1,7 @@
 package types
 
 import (
+	"maps"
 	"os"
 	"slices"
 	"time"
@@ -113,6 +114,18 @@ type DetectedProject struct {
 	// Forward-compatible extensibility: new ecosystem modules can register
 	// presence here without requiring struct changes.
 	Ecosystems map[string]bool `yaml:"ecosystems" json:"ecosystems"`
+
+	// Suggested holds each detected module's suggested configuration
+	// (Version, PackageManager and module Extras as "key=value"), keyed by
+	// module name. It carries what detection learned (Java build tool, uv,
+	// OpenTofu, .NET SDK, TypeScript, ...) into LanguageChoice entries; see
+	// WithSuggested.
+	Suggested map[string]LanguageChoice `yaml:"suggested,omitempty" json:"suggested,omitempty"`
+
+	// ProbableEcosystems marks ecosystems detected only from weak, generic
+	// indicators (probable confidence). FillDefaults does not auto-enable
+	// such tier 2+ ecosystems; they remain available as explicit choices.
+	ProbableEcosystems map[string]bool `yaml:"probable_ecosystems,omitempty" json:"probable_ecosystems,omitempty"`
 
 	HasDevenvNix      bool `yaml:"has_devenv_nix"      json:"has_devenv_nix"`
 	HasDevenvYaml     bool `yaml:"has_devenv_yaml"     json:"has_devenv_yaml"`
@@ -271,14 +284,18 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 		}
 
 		// Tier 2+ ecosystems: add any detected ecosystem not covered above.
+		// Ecosystems seen only through generic, probable markers (a bare
+		// Makefile, *.ps1 scripts, a roles/ directory) are not auto-enabled:
+		// that would install toolchains, hooks and build/test tasks for an
+		// unrelated project. Names are sorted for deterministic output.
 		tier1Names := map[string]bool{
 			"go": true, "javascript": true, "python": true,
 			"rust": true, "java": true, "dotnet": true,
 			"container": true, "terraform": true,
 			"node": true, "docker": true,
 		}
-		for name := range detected.Ecosystems {
-			if tier1Names[name] {
+		for _, name := range slices.Sorted(maps.Keys(detected.Ecosystems)) {
+			if tier1Names[name] || !detected.Ecosystems[name] || detected.ProbableEcosystems[name] {
 				continue
 			}
 			a.Languages = append(a.Languages, LanguageChoice{Name: name})
@@ -296,22 +313,24 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 		}
 	}
 
-	// Merge detected versions into existing language entries that lack one.
+	// Merge detected configuration into language entries: versions from the
+	// dedicated fields, then every module's suggested version, package
+	// manager and extras for whatever the entry does not already set.
 	for i := range a.Languages {
-		if a.Languages[i].Version != "" {
-			continue
-		}
-		switch a.Languages[i].Name {
-		case "go":
-			a.Languages[i].Version = detected.GoVersion
-		case "javascript":
-			a.Languages[i].Version = detected.NodeVersion
-			if a.Languages[i].PackageManager == "" {
-				a.Languages[i].PackageManager = detected.PackageManager
+		if a.Languages[i].Version == "" {
+			switch a.Languages[i].Name {
+			case "go":
+				a.Languages[i].Version = detected.GoVersion
+			case "javascript":
+				a.Languages[i].Version = detected.NodeVersion
+				if a.Languages[i].PackageManager == "" {
+					a.Languages[i].PackageManager = detected.PackageManager
+				}
+			case "python":
+				a.Languages[i].Version = detected.PythonVersion
 			}
-		case "python":
-			a.Languages[i].Version = detected.PythonVersion
 		}
+		a.Languages[i] = detected.WithSuggested(a.Languages[i])
 	}
 
 	// Default permission level — only when Tier is not explicitly set.

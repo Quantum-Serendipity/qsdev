@@ -143,3 +143,17 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
 }
+
+// Compile-time check that the Zig module declares its manifest.
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
+
+// ManifestFiles declares build.zig.zon so Version-Sentinel coverage reports
+// list it as uncovered instead of omitting it. The manifest pins each
+// dependency by content hash itself, so there is no separate lock file.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{
+		Path:           "build.zig.zon",
+		Ecosystem:      "zig",
+		LockFilePolicy: ecosystem.LockFilePolicyNone,
+	}}
+}

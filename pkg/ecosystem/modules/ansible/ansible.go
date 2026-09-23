@@ -170,3 +170,17 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
 }
+
+// Compile-time check that the Ansible module declares its manifest.
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
+
+// ManifestFiles declares requirements.yml so Version-Sentinel coverage
+// reports list Galaxy dependencies as uncovered instead of omitting them.
+// Galaxy has no separate lock file: versions are pinned in the manifest.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{
+		Path:           "requirements.yml",
+		Ecosystem:      "ansible-galaxy",
+		LockFilePolicy: ecosystem.LockFilePolicyNone,
+	}}
+}

@@ -660,9 +660,6 @@ tools:
         owned_files:
             - path: secretspec.toml
               ownership: exclusive
-            - path: devenv.nix
-              ownership: shared
-              section_id: secretspec
             - path: CLAUDE.md
               ownership: shared
               section_id: secretspec

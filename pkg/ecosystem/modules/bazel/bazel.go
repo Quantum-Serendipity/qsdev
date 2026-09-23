@@ -2,7 +2,7 @@
 // qsdev. It detects Bazel projects by scanning for
 // MODULE.bazel, WORKSPACE, WORKSPACE.bazel, and .bazelrc files, generates
 // devenv.nix fragments with Bazel and Buildifier packages, produces a
-// security-hardened .bazelrc configuration, and provides pre-commit hooks,
+// security-hardened .bazelrc.qsdev imported from .bazelrc, and provides pre-commit hooks,
 // CI commands, deny rules, and package manager metadata for the Bazel toolchain.
 package bazel
 
@@ -85,11 +85,26 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "", nil
 }
 
-// SecurityConfigs returns a security-hardened .bazelrc configuration file.
+// qsdevBazelrc is the qsdev-owned Bazel rc file holding the hardening flags.
+// The project's own .bazelrc (a detection marker, typically holding remote
+// cache, toolchain and --config definitions) stays user-owned and pulls it in
+// with bazelrcImport.
+const qsdevBazelrc = ".bazelrc.qsdev"
+
+// bazelrcImport is the line that makes Bazel read qsdevBazelrc. try-import
+// tolerates the file being absent, so the line is always safe to keep.
+const bazelrcImport = "try-import %workspace%/" + qsdevBazelrc
+
+// SecurityConfigs returns the security-hardened .bazelrc.qsdev plus a minimal
+// .bazelrc that imports it. The .bazelrc uses the Skip strategy so an existing
+// user .bazelrc is never replaced; such projects add bazelrcImport themselves
+// (the instruction is in the generated .bazelrc.qsdev header).
 func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {
-	bazelrc := "# Security-hardened Bazel configuration.\n" +
-		"# " + branding.GeneratedBy() + ".\n" +
+	hardened := "# Security-hardened Bazel configuration.\n" +
+		"# " + branding.GeneratedBy() + "; regenerated on update, do not edit.\n" +
 		"# Requires: Bazel >= 7.0 for bzlmod lockfile support.\n" +
+		"# Activate by adding this line to your .bazelrc:\n" +
+		"#   " + bazelrcImport + "\n" +
 		"\n" +
 		"build --lockfile_mode=update\n" +
 		"# In CI, use: build --lockfile_mode=error\n" +
@@ -97,12 +112,22 @@ func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile
 		"build --spawn_strategy=sandboxed\n" +
 		"build --sandbox_default_allow_network=false\n"
 
+	bazelrc := "# Bazel configuration.\n" +
+		"# Security hardening is maintained by qsdev in " + qsdevBazelrc + ".\n" +
+		bazelrcImport + "\n"
+
 	return []types.GeneratedFile{
+		{
+			Path:     qsdevBazelrc,
+			Content:  []byte(hardened),
+			Mode:     fileutil.ModeReadWrite,
+			Strategy: types.Overwrite,
+		},
 		{
 			Path:     ".bazelrc",
 			Content:  []byte(bazelrc),
 			Mode:     fileutil.ModeReadWrite,
-			Strategy: types.Overwrite,
+			Strategy: types.Skip,
 		},
 	}
 }
@@ -166,4 +191,19 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 // verification commands at the module level.
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
+}
+
+// Compile-time check that the Bazel module declares its manifest.
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
+
+// ManifestFiles declares MODULE.bazel and its bzlmod lock file so
+// Version-Sentinel coverage reports list Bazel dependencies as uncovered
+// instead of omitting them.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{
+		Path:           "MODULE.bazel",
+		Ecosystem:      "bzlmod",
+		LockFile:       "MODULE.bazel.lock",
+		LockFilePolicy: ecosystem.LockFilePolicyRecommended,
+	}}
 }

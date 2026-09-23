@@ -428,8 +428,8 @@ func TestSecurityConfigs_NugetConfig(t *testing.T) {
 	}
 
 	// Check strategy.
-	if nugetConfig.Strategy != types.Overwrite {
-		t.Errorf("nuget.config Strategy = %v, want Overwrite", nugetConfig.Strategy)
+	if nugetConfig.Strategy != types.Skip {
+		t.Errorf("nuget.config Strategy = %v, want Skip (never replace a user nuget.config)", nugetConfig.Strategy)
 	}
 
 	// Check SkipValidation.

@@ -284,6 +284,8 @@ func TestPreCommitHooks(t *testing.T) {
 	// All four are custom hooks (BuiltIn:false): the built-in terraform-format
 	// would discard the tofu/terraform binary selection and -check flags, so the
 	// hooks are rendered with a NixPackage that puts the binary on PATH.
+	// terraform-validate chains init and validate through `sh -c`, so its
+	// NixPackage provides `sh` rather than the Terraform binary.
 	for i, h := range hooks {
 		if h.BuiltIn {
 			t.Errorf("%s should not be BuiltIn (custom hook preserving entry)", h.ID)

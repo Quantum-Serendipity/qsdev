@@ -571,6 +571,9 @@ func executeUpdatePlan(
 
 		switch fp.Action {
 		case UpdateActionCreate, UpdateActionRegenerate:
+			if skipExistingUserFile(fp, absPath) {
+				continue
+			}
 			if err := fileutil.WriteFileAtomic(absPath, fp.NewContent, mode); err != nil {
 				return out, fmt.Errorf("writing %s: %w", fp.Path, err)
 			}
@@ -638,6 +641,18 @@ func executeSidecar(fp FileUpdatePlan, projectRoot string, mode os.FileMode, opt
 		out.recordWrite(fp, fp.NewContent, mode)
 	}
 	return nil
+}
+
+// skipExistingUserFile reports whether a planned create must leave an
+// existing file alone: a Skip-strategy file that qsdev never recorded (so it
+// is "new" to the plan) but that already exists on disk belongs to the user,
+// e.g. a project's own .npmrc or .bazelrc that init also declined to replace.
+func skipExistingUserFile(fp FileUpdatePlan, absPath string) bool {
+	if fp.Action != UpdateActionCreate || fp.Strategy != types.Skip {
+		return false
+	}
+	_, err := os.Lstat(absPath)
+	return err == nil
 }
 
 func dispatchMerge(fp FileUpdatePlan, projectRoot string) ([]byte, error) {

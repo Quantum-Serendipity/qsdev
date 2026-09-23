@@ -162,6 +162,21 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 	return ecosystem.VerificationCommands{}
 }
 
+// Compile-time check that the Helm module declares its manifest.
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
+
+// ManifestFiles declares Chart.yaml and Chart.lock so Version-Sentinel
+// coverage reports list chart dependencies as uncovered instead of omitting
+// them.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{
+		Path:           "Chart.yaml",
+		Ecosystem:      "helm",
+		LockFile:       "Chart.lock",
+		LockFilePolicy: ecosystem.LockFilePolicyRecommended,
+	}}
+}
+
 // parseChartVersion reads Chart.yaml and returns its top-level version field.
 // Parsing the YAML (rather than matching lines) ignores the version keys of
 // entries under dependencies and strips quoting and trailing comments.

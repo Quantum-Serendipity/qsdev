@@ -738,7 +738,9 @@ func formLanguages(fs *formState, base []types.LanguageChoice, detected types.De
 		case "python":
 			lc.Version = fs.pythonVersion
 		}
-		langs = append(langs, lc)
+		// Complete the choice with what detection learned (build tool,
+		// package manager, variant, ...) for fields the form does not ask.
+		langs = append(langs, detected.WithSuggested(lc))
 	}
 	return langs
 }

@@ -2,6 +2,7 @@ package javascript
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -12,9 +13,24 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// ExtraYarnClassic is the ModuleConfig.Extras key that marks a Yarn project
+// as Yarn Classic (v1). Classic reads .yarnrc (and .npmrc) but never
+// .yarnrc.yml, so it needs a different hardening file from Yarn Berry (v2+).
+const ExtraYarnClassic = "yarn_classic"
+
+// bunMinimumReleaseAgeSeconds is the Bun install age gate. bunfig.toml's
+// install.minimumReleaseAge is an integer number of SECONDS; a string such
+// as "7d" makes `bun install` fail with "Invalid Bunfig".
+const bunMinimumReleaseAgeSeconds = 7 * 24 * 60 * 60
+
 // SecurityConfigs returns generated security configuration files for the
 // detected (or user-selected) package manager. Only one PM-specific config
 // is generated per invocation.
+//
+// Every file returned here is a conventional, often user-maintained package
+// manager config (a pnpm monorepo's workspace list, scoped registries and
+// auth in .npmrc, yarnPath/plugins in .yarnrc.yml). They therefore use the
+// Skip strategy: an existing file is never replaced on first generation.
 func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {
 	pm := config.PM("npm")
 
@@ -24,6 +40,9 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 	case "pnpm":
 		return []types.GeneratedFile{pnpmSecurityConfig(config.RegistryProxy)}
 	case "yarn":
+		if config.Extra(ExtraYarnClassic, "") == "true" {
+			return []types.GeneratedFile{yarnClassicSecurityConfig(config.RegistryProxy)}
+		}
 		return []types.GeneratedFile{yarnSecurityConfig(config.RegistryProxy)}
 	case "bun":
 		return []types.GeneratedFile{bunSecurityConfig()}
@@ -57,7 +76,7 @@ func npmSecurityConfig(registryProxy string) types.GeneratedFile {
 		Path:     ".npmrc",
 		Content:  []byte(b.String()),
 		Mode:     fileutil.ModeReadWrite,
-		Strategy: types.Overwrite,
+		Strategy: types.Skip,
 	}
 }
 
@@ -125,7 +144,7 @@ func pnpmSecurityConfig(registryProxy string) types.GeneratedFile {
 		Path:     "pnpm-workspace.yaml",
 		Content:  content,
 		Mode:     fileutil.ModeReadWrite,
-		Strategy: types.Overwrite,
+		Strategy: types.Skip,
 	}
 }
 
@@ -192,7 +211,31 @@ func yarnSecurityConfig(registryProxy string) types.GeneratedFile {
 		Path:     ".yarnrc.yml",
 		Content:  content,
 		Mode:     fileutil.ModeReadWrite,
-		Strategy: types.Overwrite,
+		Strategy: types.Skip,
+	}
+}
+
+// yarnClassicSecurityConfig generates a hardened .yarnrc for Yarn Classic
+// (v1), which ignores .yarnrc.yml. Classic has no release-age gate, so only
+// lifecycle scripts and the registry can be controlled here.
+func yarnClassicSecurityConfig(registryProxy string) types.GeneratedFile {
+	var b strings.Builder
+	b.WriteString("# Security-hardened Yarn Classic (v1) configuration\n")
+	b.WriteString("# " + branding.GeneratedBy() + " - do not remove security settings\n")
+	b.WriteString("# Yarn Classic has no package age gate; migrate to Yarn >= 4.10\n")
+	b.WriteString("# (Berry, .yarnrc.yml) to enforce one.\n")
+	b.WriteString("\n")
+	if registryProxy != "" {
+		fmt.Fprintf(&b, "registry %s\n", strconv.Quote(registryProxy))
+	}
+	b.WriteString("# Disable lifecycle scripts to block malicious postinstall hooks\n")
+	b.WriteString("ignore-scripts true\n")
+
+	return types.GeneratedFile{
+		Path:     ".yarnrc",
+		Content:  []byte(b.String()),
+		Mode:     fileutil.ModeReadWrite,
+		Strategy: types.Skip,
 	}
 }
 
@@ -205,12 +248,12 @@ func bunSecurityConfig() types.GeneratedFile {
 	b.WriteString("\n")
 	b.WriteString("[install]\n")
 	b.WriteString("# Require packages to be published for at least 7 days\n")
-	b.WriteString("minimumReleaseAge = \"7d\"\n")
+	fmt.Fprintf(&b, "minimumReleaseAge = %d\n", bunMinimumReleaseAgeSeconds)
 
 	return types.GeneratedFile{
 		Path:     "bunfig.toml",
 		Content:  []byte(b.String()),
 		Mode:     fileutil.ModeReadWrite,
-		Strategy: types.Overwrite,
+		Strategy: types.Skip,
 	}
 }

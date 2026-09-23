@@ -3,10 +3,12 @@ package bazel_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/bazel"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // newModule returns a fresh Module for testing.
@@ -118,4 +120,40 @@ func searchString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// --- SecurityConfigs tests ---
+
+// TestSecurityConfigs_PreservesUserBazelrc verifies the hardening lives in a
+// qsdev-owned .bazelrc.qsdev and that the user's .bazelrc (a detection
+// marker, so it exists in most Bazel repos) is only created when absent.
+func TestSecurityConfigs_PreservesUserBazelrc(t *testing.T) {
+	t.Parallel()
+	files := newModule().SecurityConfigs(ecosystem.ModuleConfig{})
+
+	byPath := make(map[string]types.GeneratedFile, len(files))
+	for _, f := range files {
+		byPath[f.Path] = f
+	}
+
+	owned, ok := byPath[".bazelrc.qsdev"]
+	if !ok {
+		t.Fatal("missing .bazelrc.qsdev")
+	}
+	for _, flag := range []string{"--lockfile_mode=update", "--spawn_strategy=sandboxed", "--sandbox_default_allow_network=false"} {
+		if !strings.Contains(string(owned.Content), flag) {
+			t.Errorf(".bazelrc.qsdev missing %q", flag)
+		}
+	}
+
+	user, ok := byPath[".bazelrc"]
+	if !ok {
+		t.Fatal("missing .bazelrc")
+	}
+	if user.Strategy != types.Skip {
+		t.Errorf(".bazelrc Strategy = %v, want Skip (never replace a user .bazelrc)", user.Strategy)
+	}
+	if !strings.Contains(string(user.Content), "try-import %workspace%/.bazelrc.qsdev\n") {
+		t.Errorf(".bazelrc does not import .bazelrc.qsdev:\n%s", user.Content)
+	}
 }

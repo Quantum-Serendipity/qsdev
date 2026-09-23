@@ -7,11 +7,15 @@ package terraform
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/cloudcommon"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -23,6 +27,7 @@ var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
+var _ ecosystem.DevenvYamlInputProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -82,24 +87,80 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		}
 	}
 
+	if !result.Detected {
+		return result
+	}
+	if providers := cloudcommon.DetectTerraformProviders(projectRoot); len(providers) > 0 {
+		names := slices.Sorted(maps.Keys(providers))
+		result.SuggestedConfig.Extras[ExtraCloudProviders] = strings.Join(names, ",")
+		result.Evidence = append(result.Evidence, "cloud providers: "+strings.Join(names, ", "))
+	}
+
 	return result
 }
 
+// ExtraCloudProviders is the ModuleConfig.Extras key holding the
+// comma-separated Terraform cloud providers in use (aws, azurerm, google).
+const ExtraCloudProviders = "cloud_providers"
+
+// nixpkgsTerraformInput is the flake input devenv resolves
+// languages.terraform.version against (config.lib.getInput for
+// "nixpkgs-terraform"). It must be present in devenv.yaml whenever the
+// fragment pins a Terraform version.
+const nixpkgsTerraformInput = "github:stackbuilders/nixpkgs-terraform"
+
+// terraformVersionRe matches the release versions nixpkgs-terraform
+// publishes (1.8, 1.8.5).
+var terraformVersionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+(\.[0-9]+)?$`)
+
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for Terraform or OpenTofu language support.
+//
+// Only devenv's Terraform module has a version option (backed by the
+// nixpkgs-terraform input, see DevenvYamlInputs); languages.opentofu has none,
+// so an OpenTofu project always uses the nixpkgs opentofu package.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
 	variant := config.Extra("variant", "terraform")
+	version, err := pinnedVersion(config)
+	if err != nil {
+		return "", err
+	}
 
 	var b strings.Builder
 	b.WriteString("  languages.")
 	b.WriteString(variant)
 	b.WriteString(" = {\n")
 	b.WriteString("    enable = true;\n")
-	if config.Version != "" {
-		fmt.Fprintf(&b, "    version = %q;\n", config.Version)
+	if version != "" {
+		fmt.Fprintf(&b, "    version = %s;\n", ecosystem.NixString(version))
 	}
 	b.WriteString("  };\n")
 	return b.String(), nil
+}
+
+// DevenvYamlInputs contributes the nixpkgs-terraform flake input when the
+// fragment pins languages.terraform.version; devenv refuses to evaluate the
+// version option without it. The input and the version line are an
+// invariant pair.
+func (m *Module) DevenvYamlInputs(config ecosystem.ModuleConfig) []ecosystem.DevenvInput {
+	if version, err := pinnedVersion(config); err != nil || version == "" {
+		return nil
+	}
+	return []ecosystem.DevenvInput{{URL: nixpkgsTerraformInput, Follows: "nixpkgs"}}
+}
+
+// pinnedVersion returns the version the fragment pins: "" for OpenTofu (no
+// devenv version option) or when unset, and an error for a Terraform version
+// nixpkgs-terraform cannot provide.
+func pinnedVersion(config ecosystem.ModuleConfig) (string, error) {
+	version := strings.TrimPrefix(strings.TrimSpace(config.Version), "v")
+	if version == "" || config.Extra("variant", "terraform") == "opentofu" {
+		return "", nil
+	}
+	if !terraformVersionRe.MatchString(version) {
+		return "", fmt.Errorf("invalid Terraform version %q: want a release such as 1.8 or 1.8.5", config.Version)
+	}
+	return version, nil
 }
 
 // SecurityConfigs returns a .terraformrc file with security-hardened settings.
@@ -128,12 +189,14 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 		content.WriteString("}\n")
 	}
 
+	// Skip: an existing .terraformrc (credentials blocks, dev_overrides,
+	// plugin cache settings) is user-owned and must never be replaced.
 	return []types.GeneratedFile{
 		{
 			Path:     ".terraformrc",
 			Content:  []byte(content.String()),
 			Mode:     fileutil.ModeReadWrite,
-			Strategy: types.Overwrite,
+			Strategy: types.Skip,
 		},
 	}
 }
@@ -163,18 +226,7 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 			BuiltIn:       false,
 			NixPackage:    nixPkg,
 		},
-		{
-			ID:            "terraform-validate",
-			Name:          "terraform-validate",
-			Description:   fmt.Sprintf("Validate %s configuration syntax", variant),
-			Entry:         binary + " validate",
-			Language:      "system",
-			Types:         []string{"terraform"},
-			Stages:        []string{"pre-commit"},
-			PassFilenames: false,
-			BuiltIn:       false,
-			NixPackage:    nixPkg,
-		},
+		validateHook(variant),
 		{
 			ID:            "tflint",
 			Name:          "tflint",
@@ -199,6 +251,34 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 			BuiltIn:       false,
 			NixPackage:    "tfsec",
 		},
+	}
+}
+
+// validateHook returns the terraform-validate pre-commit hook.
+//
+// `validate` needs an initialized working directory (providers and modules
+// installed), which a fresh clone does not have, and the agent is denied
+// `<bin> init`. The hook therefore initializes first with
+// `init -backend=false`: no backend or state is touched, but providers and
+// modules are downloaded (through the provider mirror when one is
+// configured). The two steps need a shell, so the entry runs through `sh -c`
+// with NixPackage "bash" (entry rewriting turns `sh` into
+// ${pkgs.bash}/bin/sh); the Terraform binary itself resolves from the devenv
+// environment, where languages.<variant>.enable and the sibling hooks'
+// NixPackage install it.
+func validateHook(variant string) ecosystem.HookConfig {
+	binary := binaryName(variant)
+	return ecosystem.HookConfig{
+		ID:            "terraform-validate",
+		Name:          "terraform-validate",
+		Description:   fmt.Sprintf("Initialize (without backend) and validate %s configuration", variant),
+		Entry:         fmt.Sprintf("sh -c '%[1]s init -backend=false -input=false >/dev/null && %[1]s validate'", binary),
+		Language:      "system",
+		Types:         []string{"terraform"},
+		Stages:        []string{"pre-commit"},
+		PassFilenames: false,
+		BuiltIn:       false,
+		NixPackage:    "bash",
 	}
 }
 
@@ -334,19 +414,29 @@ func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFil
 	}
 }
 
-// SecretDeclarations returns the secrets required by a Terraform/OpenTofu project.
-func (m *Module) SecretDeclarations(_ ecosystem.ModuleConfig) []ecosystem.SecretDecl {
+// SecretDeclarations returns the secrets a Terraform/OpenTofu project may use.
+//
+// Declarations follow the cloud providers the configuration actually uses
+// (ExtraCloudProviders, recorded by Detect); a GCP- or Azure-only project
+// declares no AWS keys. Static AWS keys are optional: the AWS module isolates
+// credentials per project through AWS_PROFILE (SSO/profile auth), which is
+// the preferred model, so requiring long-lived keys would push users away
+// from it.
+func (m *Module) SecretDeclarations(config ecosystem.ModuleConfig) []ecosystem.SecretDecl {
+	if !slices.Contains(strings.Split(config.Extra(ExtraCloudProviders, ""), ","), "aws") {
+		return nil
+	}
 	return []ecosystem.SecretDecl{
 		{
 			Name:        "AWS_ACCESS_KEY_ID",
-			Description: "AWS access key for Terraform provider authentication",
-			Required:    true,
+			Description: "Optional static AWS access key for the Terraform AWS provider (prefer AWS_PROFILE / SSO)",
+			Required:    false,
 			Source:      "terraform",
 		},
 		{
 			Name:        "AWS_SECRET_ACCESS_KEY",
-			Description: "AWS secret key for Terraform provider authentication",
-			Required:    true,
+			Description: "Optional static AWS secret key for the Terraform AWS provider (prefer AWS_PROFILE / SSO)",
+			Required:    false,
 			Source:      "terraform",
 		},
 	}

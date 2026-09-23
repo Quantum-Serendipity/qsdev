@@ -103,9 +103,13 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		}
 	}
 
-	// Check Makefile (Probable, build_system="make" only if no certain build system found).
-	if fileutil.FileExists(projectRoot, "Makefile") {
-		result.Evidence = append(result.Evidence, "Makefile found")
+	// Check Makefile (Probable, build_system="make" only if no certain build
+	// system found). Makefiles front Go, Python, Node, docs and container
+	// projects alike, so a Makefile only indicates C/C++ when C/C++ sources
+	// sit next to it; otherwise it would enable a C/C++ toolchain, hooks and
+	// build/test tasks for an unrelated project.
+	if fileutil.FileExists(projectRoot, "Makefile") && hasCSources(projectRoot) {
+		result.Evidence = append(result.Evidence, "Makefile with C/C++ sources found")
 		if !result.Detected {
 			result.Detected = true
 			result.Confidence = ecosystem.ConfidenceProbable
@@ -116,6 +120,26 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	return result
+}
+
+// cSourceDirs are the conventional locations of C/C++ sources relative to
+// the project root.
+var cSourceDirs = []string{".", "src", "include", "lib"}
+
+// cSourcePatterns match C and C++ source and header files.
+var cSourcePatterns = []string{"*.c", "*.cc", "*.cpp", "*.cxx", "*.h", "*.hh", "*.hpp", "*.hxx"}
+
+// hasCSources reports whether any conventional source directory under
+// projectRoot contains C/C++ source or header files.
+func hasCSources(projectRoot string) bool {
+	for _, dir := range cSourceDirs {
+		for _, pattern := range cSourcePatterns {
+			if matches, _ := filepath.Glob(filepath.Join(projectRoot, dir, pattern)); len(matches) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // DevenvPackages returns Nix packages required by the C/C++ module based
@@ -197,10 +221,12 @@ func vcpkgSecurityConfig() types.GeneratedFile {
 	b.WriteString("}\n")
 
 	return types.GeneratedFile{
-		Path:     "vcpkg-configuration.json",
-		Content:  []byte(b.String()),
-		Mode:     fileutil.ModeReadWrite,
-		Strategy: types.Overwrite,
+		Path:    "vcpkg-configuration.json",
+		Content: []byte(b.String()),
+		Mode:    fileutil.ModeReadWrite,
+		// Skip: an existing vcpkg-configuration.json carries the project's
+		// real baseline and registries; never replace it with the template.
+		Strategy: types.Skip,
 	}
 }
 
@@ -374,15 +400,17 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 // VerificationCommands returns build and test commands for C/C++ projects,
 // switching on the configured build system (cmake, meson, or make).
 func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.VerificationCommands {
+	// Build commands include the configure step (matching CICommands) so
+	// they work on a fresh checkout that has no build/ directory yet.
 	switch config.Extra("build_system", "cmake") {
 	case "cmake":
 		return ecosystem.VerificationCommands{
-			Build: []string{"cmake --build build"},
+			Build: []string{"cmake -B build && cmake --build build"},
 			Test:  []string{"ctest --test-dir build"},
 		}
 	case "meson":
 		return ecosystem.VerificationCommands{
-			Build: []string{"meson compile -C build"},
+			Build: []string{"(test -d build || meson setup build) && meson compile -C build"},
 			Test:  []string{"meson test -C build"},
 		}
 	case "make":

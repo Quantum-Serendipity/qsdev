@@ -7,6 +7,10 @@
 package gcp
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
+
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/cloudcommon"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -67,8 +71,10 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		detected = true
 	}
 
-	// app.yaml → Certain (App Engine).
-	if fileutil.FileExists(projectRoot, "app.yaml") {
+	// app.yaml → Certain (App Engine). The name is generic (Kubernetes
+	// manifests, app configs), so it only counts as an App Engine descriptor
+	// when it declares a top-level runtime.
+	if isAppEngineDescriptor(filepath.Join(projectRoot, "app.yaml")) {
 		evidence = append(evidence, "app.yaml found")
 		confidence = ecosystem.ConfidenceCertain
 		detected = true
@@ -193,4 +199,19 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 // standard verification commands.
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
+}
+
+// isAppEngineDescriptor reports whether path is an App Engine app.yaml: a
+// YAML file with a top-level "runtime:" key.
+func isAppEngineDescriptor(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for line := range strings.Lines(string(data)) {
+		if strings.HasPrefix(line, "runtime:") {
+			return true
+		}
+	}
+	return false
 }

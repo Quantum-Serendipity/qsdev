@@ -181,3 +181,19 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
 }
+
+// Compile-time check that the Nix module declares its flake manifest.
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
+
+// ManifestFiles declares flake.nix and its flake.lock so Version-Sentinel
+// coverage reports list Nix inputs as uncovered instead of omitting them. A
+// flake's inputs are only pinned by the committed flake.lock.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{
+		Path:           "flake.nix",
+		Ecosystem:      "nix",
+		VSSupported:    false,
+		LockFile:       "flake.lock",
+		LockFilePolicy: ecosystem.LockFilePolicyRequired,
+	}}
+}

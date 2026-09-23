@@ -35,7 +35,7 @@ func (m *Module) DisplayName() string { return "Bash/Shell" }
 func (m *Module) Tier() int { return 2 }
 
 // Detect scans projectRoot for shell script indicators.
-// *.sh files in the root and scripts/ directories yield Probable confidence.
+// *.sh files in the root and *.sh/*.bash files in scripts/ yield Probable confidence.
 // .envrc is recorded as evidence but does not boost confidence.
 // Maximum confidence is Probable since shell scripts are ubiquitous.
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
@@ -49,9 +49,12 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		result.Evidence = append(result.Evidence, fmt.Sprintf("%d .sh file(s) in root", len(shFiles)))
 	}
 
-	// Check for scripts/ directory.
-	if fileutil.DirExists(projectRoot, "scripts") {
-		result.Evidence = append(result.Evidence, "scripts/ directory found")
+	// Check for shell scripts in scripts/. The directory alone is not
+	// evidence: it commonly holds Python, JS or PowerShell helpers.
+	scriptFiles, _ := filepath.Glob(filepath.Join(projectRoot, "scripts", "*.sh"))
+	bashFiles, _ := filepath.Glob(filepath.Join(projectRoot, "scripts", "*.bash"))
+	if n := len(scriptFiles) + len(bashFiles); n > 0 {
+		result.Evidence = append(result.Evidence, fmt.Sprintf("%d shell script(s) in scripts/", n))
 		if !result.Detected {
 			result.Detected = true
 			result.Confidence = ecosystem.ConfidenceProbable

@@ -101,6 +101,18 @@ func TestDetect_AppEngine(t *testing.T) {
 	assertEvidenceContains(t, result.Evidence, "app.yaml found")
 }
 
+// TestDetect_AppYamlWithoutRuntime verifies a generic app.yaml (for example
+// a Kubernetes Deployment) does not enable the GCP ecosystem.
+func TestDetect_AppYamlWithoutRuntime(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, dir, "app.yaml", "apiVersion: apps/v1\nkind: Deployment\nspec:\n  template:\n    spec:\n      runtime: x\n")
+
+	if result := newModule().Detect(dir); result.Detected {
+		t.Errorf("Detected = true for a non-App Engine app.yaml (evidence %v)", result.Evidence)
+	}
+}
+
 func TestDetect_Gcloudignore(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -134,8 +146,8 @@ func TestDetect_NoGCPIndicators(t *testing.T) {
 func TestDenyRules_AllPresent(t *testing.T) {
 	t.Parallel()
 	rules := newModule().DenyRules(ecosystem.ModuleConfig{})
-	if len(rules) != 5 {
-		t.Fatalf("expected 5 deny rules, got %d: %v", len(rules), rules)
+	if len(rules) != 6 {
+		t.Fatalf("expected 6 deny rules, got %d: %v", len(rules), rules)
 	}
 
 	// Verify each rule contains "gcloud" or "Bash(".
@@ -151,8 +163,8 @@ func TestDenyRules_AllPresent(t *testing.T) {
 func TestReadDenyRules_AllPresent(t *testing.T) {
 	t.Parallel()
 	rules := newModule().ReadDenyRules(ecosystem.ModuleConfig{})
-	if len(rules) != 4 {
-		t.Fatalf("expected 4 read deny paths, got %d: %v", len(rules), rules)
+	if len(rules) != 6 {
+		t.Fatalf("expected 6 read deny paths, got %d: %v", len(rules), rules)
 	}
 }
 

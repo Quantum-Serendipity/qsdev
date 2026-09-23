@@ -33,6 +33,9 @@ func ReadDenyPaths(provider CloudProvider) []string {
 			"~/.aws/credentials",
 			"~/.aws/config",
 			"~/.aws/sso/cache/*",
+			// assume-role / SSO credential-process results cached by the CLI:
+			// JSON holding AccessKeyId, SecretAccessKey and SessionToken.
+			"~/.aws/cli/cache/*",
 		}
 	case GCP:
 		return []string{
@@ -40,6 +43,10 @@ func ReadDenyPaths(provider CloudProvider) []string {
 			"~/.config/gcloud/credentials.db",
 			"~/.config/gcloud/access_tokens.db",
 			"~/.config/gcloud/properties",
+			// Per-account refresh tokens and client secrets (adc.json,
+			// .boto) written by `gcloud auth login`.
+			"~/.config/gcloud/legacy_credentials/**",
+			"~/.config/gcloud/configurations/*",
 		}
 	case Azure:
 		return []string{
@@ -72,6 +79,12 @@ func BashDenyRules(provider CloudProvider) []string {
 			// `aws configure export-credentials` (CLI v2) writes credentials to
 			// stdout / process env in several formats.
 			"Bash(aws configure export-credentials*)",
+			// `aws configure get aws_secret_access_key` prints the stored secret.
+			"Bash(aws configure get*)",
+			// Each of these returns usable short-lived credentials or tokens.
+			"Bash(aws sso get-role-credentials*)",
+			"Bash(aws ecr get-login-password*)",
+			"Bash(aws codeartifact get-authorization-token*)",
 			"Bash(cat ~/.aws/credentials*)",
 			"Bash(cat ~/.aws/config*)",
 		}
@@ -80,6 +93,8 @@ func BashDenyRules(provider CloudProvider) []string {
 			"Bash(gcloud auth print-access-token*)",
 			"Bash(gcloud auth print-identity-token*)",
 			"Bash(gcloud auth application-default print-access-token*)",
+			// config-helper prints a live access token (credential.access_token).
+			"Bash(gcloud config config-helper*)",
 			"Bash(cat ~/.config/gcloud/*)",
 			"Bash(gcloud config set *)",
 		}

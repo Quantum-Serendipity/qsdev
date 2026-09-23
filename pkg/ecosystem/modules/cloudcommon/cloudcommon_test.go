@@ -15,8 +15,8 @@ func TestReadDenyPaths(t *testing.T) {
 		provider CloudProvider
 		want     int
 	}{
-		{name: "AWS", provider: AWS, want: 3},
-		{name: "GCP", provider: GCP, want: 4},
+		{name: "AWS", provider: AWS, want: 4},
+		{name: "GCP", provider: GCP, want: 6},
 		{name: "Azure", provider: Azure, want: 4},
 	}
 
@@ -39,8 +39,8 @@ func TestBashDenyRules(t *testing.T) {
 		provider CloudProvider
 		want     int
 	}{
-		{name: "AWS", provider: AWS, want: 7},
-		{name: "GCP", provider: GCP, want: 5},
+		{name: "AWS", provider: AWS, want: 11},
+		{name: "GCP", provider: GCP, want: 6},
 		{name: "Azure", provider: Azure, want: 4},
 	}
 
@@ -121,9 +121,9 @@ func TestAllBashDenyRules_MultiProvider(t *testing.T) {
 		t.Error("AllBashDenyRules result is not sorted")
 	}
 
-	// Total should be 7 + 5 + 4 = 16 (no overlaps between providers).
-	if len(rules) != 16 {
-		t.Errorf("AllBashDenyRules returned %d rules, want 16", len(rules))
+	// Total should be 11 + 6 + 4 = 21 (no overlaps between providers).
+	if len(rules) != 21 {
+		t.Errorf("AllBashDenyRules returned %d rules, want 21", len(rules))
 	}
 }
 
@@ -146,9 +146,9 @@ func TestAllReadDenyPaths_MultiProvider(t *testing.T) {
 		t.Error("AllReadDenyPaths result is not sorted")
 	}
 
-	// Total should be 3 + 4 + 4 = 11 (no overlaps between providers).
-	if len(paths) != 11 {
-		t.Errorf("AllReadDenyPaths returned %d paths, want 11", len(paths))
+	// Total should be 4 + 6 + 4 = 14 (no overlaps between providers).
+	if len(paths) != 14 {
+		t.Errorf("AllReadDenyPaths returned %d paths, want 14", len(paths))
 	}
 }
 

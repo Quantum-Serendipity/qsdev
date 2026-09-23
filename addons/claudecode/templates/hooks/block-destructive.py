@@ -21,7 +21,9 @@ Configuration via environment variables:
 
 import json
 import os
+import posixpath
 import re
+import shlex
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -86,17 +88,9 @@ def deny(category: str, reason: str, remediation: str, command: str) -> None:
 # Category 1: Filesystem destruction
 # ---------------------------------------------------------------------------
 
+# rm is handled by check_rm_danger, which parses its argv rather than pattern
+# matching the raw string.
 FILESYSTEM_PATTERNS: list[tuple[re.Pattern, str, str]] = [
-    (
-        re.compile(r'\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)?(\/|~\/|\$HOME\b|\$\{HOME\})'),
-        "Recursive deletion of root/home directory detected.",
-        "Use targeted rm on specific files or directories within the project.",
-    ),
-    (
-        re.compile(r'\brm\s+.*-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+(\/|~\/|\$HOME\b)'),
-        "Recursive deletion of root/home directory detected.",
-        "Use targeted rm on specific files or directories within the project.",
-    ),
     (
         re.compile(r':\(\)\{\s*:\|:&\s*\};:'),
         "Fork bomb detected.",
@@ -120,30 +114,103 @@ FILESYSTEM_PATTERNS: list[tuple[re.Pattern, str, str]] = [
 ]
 
 
-def check_rm_danger(command: str) -> tuple[str, str] | None:
-    """Check for rm with recursive+force targeting root/home, handling all flag forms."""
-    rm_match = re.search(r'\brm\s+(.*)', command)
-    if not rm_match:
-        return None
-    rm_args = rm_match.group(1)
+# Whole rm targets that mean "the filesystem root" or "the home directory",
+# after quote removal and normalisation by _normalize_rm_target.
+_DANGEROUS_RM_TARGETS: set[str] = {"/", "~", "$HOME", "${HOME}"}
 
-    has_recursive = bool(
-        re.search(r'(^|\s)-[a-zA-Z]*r', rm_args)
-        or re.search(r'--recursive\b', rm_args)
-    )
-    has_force = bool(
-        re.search(r'(^|\s)-[a-zA-Z]*f', rm_args)
-        or re.search(r'--force\b', rm_args)
-    )
-    has_dangerous_path = bool(
-        re.search(r'(^|\s)(\/|~\/|\$HOME\b|\$\{HOME\})', rm_args)
+
+def _command_tokens(command: str) -> list[list[str]]:
+    """Tokenize `command` into per-command token lists, splitting on unquoted
+    shell operators (; & | ( ), backticks and newlines). Quotes are removed, so `"$HOME"`
+    and `'/'` become `$HOME` and `/`. When the command cannot be tokenized
+    (unbalanced quotes), fall back to whitespace splitting with quote characters
+    stripped so a dangerous target is still recognised."""
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars=";&|()`\n")
+        lex.whitespace = " \t\r"
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        tokens = [t.strip("'\"") for t in re.split(r"[\s;&|()`]+", command)]
+        tokens = [t for t in tokens if t]
+        return [tokens]
+    commands: list[list[str]] = [[]]
+    for tok in tokens:
+        if tok and all(c in ";&|()`\n" for c in tok):
+            commands.append([])
+        else:
+            commands[-1].append(tok)
+    return [c for c in commands if c]
+
+
+_HOME_PREFIXES: tuple[str, ...] = ("~", "$HOME", "${HOME}")
+
+
+def _normalize_rm_target(target: str) -> str:
+    """Reduce an rm operand to its base: trailing `/*` globs are dropped and
+    the path is normalised (`.`/`..` segments, repeated and trailing slashes),
+    so `/*`, `~/`, `$HOME/*`, `//` and `/usr/..` compare equal to `/`, `~`,
+    `$HOME`, `/` and `/`. A home-relative target that climbs out of the home
+    directory (`~/..`) normalises to the root marker `/`, since it takes the
+    home directory (and its siblings) with it."""
+    t = target
+    while t.endswith("/*"):
+        t = t[:-2] or "/"
+    if not t:
+        return t
+    norm = posixpath.normpath(t)
+    if norm.startswith("//"):
+        norm = "/" + norm.lstrip("/")  # normpath keeps a POSIX leading "//"
+    home = next((h for h in _HOME_PREFIXES if t == h or t.startswith(h + "/")), None)
+    if home is not None and (norm == "." or norm == ".." or norm.startswith("../")):
+        return "/"
+    return norm
+
+
+# How deep check_rm_danger re-parses quoted arguments as nested scripts.
+_MAX_RM_NESTING = 4
+
+
+def _rm_is_dangerous(args: list[str]) -> bool:
+    """Whether rm's arguments request a recursive delete of root or home."""
+    recursive = False
+    end_of_opts = False
+    targets: list[str] = []
+    for arg in args:
+        if not end_of_opts and arg == "--":
+            end_of_opts = True
+        elif not end_of_opts and arg.startswith("--"):
+            recursive = recursive or arg == "--recursive"
+        elif not end_of_opts and arg.startswith("-") and len(arg) > 1:
+            recursive = recursive or "r" in arg[1:] or "R" in arg[1:]
+        else:
+            targets.append(arg)
+    return recursive and any(
+        _normalize_rm_target(t) in _DANGEROUS_RM_TARGETS for t in targets
     )
 
-    if has_recursive and has_force and has_dangerous_path:
-        return (
-            "Recursive forced deletion of root/home directory detected.",
-            "Use targeted rm on specific files or directories within the project.",
-        )
+
+def check_rm_danger(command: str, _depth: int = 0) -> tuple[str, str] | None:
+    """Check for a recursive rm whose target is the filesystem root or the home
+    directory, handling combined/long flag forms and quoted targets. Only whole
+    targets count: `rm -rf /tmp/build` and `rm ~/notes.txt` are ordinary.
+
+    A quoted argument that could itself be a script (`bash -c "rm -rf /"`,
+    `echo "$(rm -rf ~)"`) is re-parsed and checked the same way."""
+    for argv in _command_tokens(command):
+        for k, tok in enumerate(argv):
+            if (
+                _depth < _MAX_RM_NESTING
+                and tok != command
+                and (any(c in tok for c in " \t\n`") or "$(" in tok)
+                and (nested := check_rm_danger(tok, _depth + 1))
+            ):
+                return nested
+            if os.path.basename(tok) == "rm" and _rm_is_dangerous(argv[k + 1:]):
+                return (
+                    "Recursive deletion of root/home directory detected.",
+                    "Use targeted rm on specific files or directories within the project.",
+                )
     return None
 
 
@@ -160,9 +227,14 @@ def check_git_force(command: str) -> tuple[str, str] | None:
         rf'\bgit\s+push\s+.*(-f\b|--force\b|--force-with-lease\b).*\b({branch_pattern})\b'
         rf'|\bgit\s+push\s+.*\b({branch_pattern})\b.*(-f\b|--force\b|--force-with-lease\b)'
     )
-    if force_push.search(command):
+    # A leading `+` on a refspec forces that ref (`git push origin +main`,
+    # `git push origin +HEAD:refs/heads/main`) exactly like --force.
+    plus_refspec = re.compile(
+        rf'\bgit\s+push\b.*\s\+(?:[^\s:]*:)?(?:refs/heads/)?({branch_pattern})(?![\w./-])'
+    )
+    if force_push.search(command) or plus_refspec.search(command):
         return (
-            f"Force push to protected branch detected.",
+            "Force push to protected branch detected.",
             "Use a feature branch and PR workflow instead of force-pushing.",
         )
 

@@ -2,6 +2,7 @@ package claudecode_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -471,5 +472,130 @@ func TestSecretPatterns_MatchPythonHook(t *testing.T) {
 		if !strings.Contains(content, goPattern) {
 			t.Errorf("Go pattern [%d] %q not found in scan-secrets.py (patterns may be out of sync)", i, goPattern)
 		}
+	}
+}
+
+// TestWrapHooksForSandbox_UsesAppName verifies the sandbox wrapper invokes the
+// branded binary: a downstream build whose binary is not "qsdev" must not emit
+// hook commands that fail with command-not-found (a non-blocking hook error,
+// so every guard would fail open).
+func TestWrapHooksForSandbox_UsesAppName(t *testing.T) {
+	t.Parallel()
+	for _, app := range []string{"qsdev", "acme"} {
+		t.Run(app, func(t *testing.T) {
+			t.Parallel()
+			r := claudecode.ExportDefaultHookRegistry()
+			hooks := r.BuildHooksMap(types.WizardAnswers{Hooks: types.HookChoices{SafetyBlock: true, AuditLog: true}})
+			wrapped := claudecode.ExportWrapHooksForSandbox(hooks, r, types.WizardAnswers{}, app)
+			if len(wrapped) == 0 {
+				t.Fatal("expected hooks to wrap")
+			}
+			for event, matchers := range wrapped {
+				for _, m := range matchers {
+					for _, h := range m.Hooks {
+						if !strings.HasPrefix(h.Command, app+" sandbox exec --category ") {
+							t.Errorf("%s hook command %q does not start with %q", event, h.Command, app+" sandbox exec")
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+// lspGuardCommand returns the lsp-guard PreToolUse command in the settings.json
+// Generate emits, or "" when the hook is absent, along with whether the hook
+// script itself was generated.
+func lspGuardCommand(t *testing.T, answers types.WizardAnswers, cfg claudecode.Config) (string, bool) {
+	t.Helper()
+	files, err := claudecode.NewClaudeCodeGenerator(newTestRegistry(t, goMock()), cfg).Generate(answers)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	var cmd string
+	var script bool
+	for _, f := range files {
+		switch f.Path {
+		case ".claude/hooks/lsp-first-guard.sh":
+			script = true
+		case ".claude/settings.json":
+			var s claudecode.SettingsJSON
+			if err := json.Unmarshal(f.Content, &s); err != nil {
+				t.Fatalf("unmarshal settings: %v", err)
+			}
+			for _, m := range s.Hooks["PreToolUse"] {
+				if m.Matcher == "Grep" {
+					cmd = m.Hooks[0].Command
+				}
+			}
+		}
+	}
+	return cmd, script
+}
+
+// TestLSPGuard_TierAndEnforcement verifies the lsp-first-guard is only
+// installed at tiers that generate the LSP plugin it redirects to, and that the
+// configured enforcement tier (including the Config override) is baked into the
+// hook command rather than depending on the devenv shell's environment.
+func TestLSPGuard_TierAndEnforcement(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		answers    types.WizardAnswers
+		cfg        claudecode.Config
+		wantCmd    string
+		wantScript bool
+	}{
+		{
+			name:    "supply-chain-only has no LSP plugin, so no guard",
+			answers: types.WizardAnswers{Tier: "supply-chain-only", Languages: []types.LanguageChoice{{Name: "go"}}},
+		},
+		{
+			name:       "standard defaults to block",
+			answers:    types.WizardAnswers{Tier: "standard", Languages: []types.LanguageChoice{{Name: "go"}}},
+			wantCmd:    `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/lsp-first-guard.sh block`,
+			wantScript: true,
+		},
+		{
+			name: "answers warn is baked in",
+			answers: types.WizardAnswers{Tier: "standard", Languages: []types.LanguageChoice{{Name: "go"}},
+				LSP: types.LSPSettings{Enforcement: "warn"}},
+			wantCmd:    `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/lsp-first-guard.sh warn`,
+			wantScript: true,
+		},
+		{
+			name:       "config override reaches the command",
+			answers:    types.WizardAnswers{Tier: "standard", Languages: []types.LanguageChoice{{Name: "go"}}},
+			cfg:        claudecode.NewConfig(claudecode.WithLSPEnforcement("warn")),
+			wantCmd:    `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/lsp-first-guard.sh warn`,
+			wantScript: true,
+		},
+		{
+			name: "off removes the guard",
+			answers: types.WizardAnswers{Tier: "full", Languages: []types.LanguageChoice{{Name: "go"}},
+				LSP: types.LSPSettings{Enforcement: "off"}},
+		},
+		{
+			// `sandbox exec --` execs its arguments directly, so the tier must
+			// be a script argument (an env-assignment prefix would be run as
+			// the program name), and the linter category must still resolve.
+			name: "sandbox wrapping keeps tier and category",
+			answers: types.WizardAnswers{Tier: "standard", Languages: []types.LanguageChoice{{Name: "go"}},
+				LSP: types.LSPSettings{Enforcement: "warn"}, Hooks: types.HookChoices{SandboxEnabled: true}},
+			wantCmd:    `qsdev sandbox exec --category linter -- "${CLAUDE_PROJECT_DIR}"/.claude/hooks/lsp-first-guard.sh warn`,
+			wantScript: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cmd, script := lspGuardCommand(t, tc.answers, tc.cfg)
+			if cmd != tc.wantCmd {
+				t.Errorf("Grep hook command = %q, want %q", cmd, tc.wantCmd)
+			}
+			if script != tc.wantScript {
+				t.Errorf("lsp-first-guard.sh generated = %v, want %v", script, tc.wantScript)
+			}
+		})
 	}
 }

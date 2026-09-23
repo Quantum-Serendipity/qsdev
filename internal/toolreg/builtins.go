@@ -27,21 +27,7 @@ func builtinBehaviors() map[string]ToolBehavior {
 				a.AgentTools.VersionSentinel = false
 			},
 			SectionDataFunc: func(answers types.WizardAnswers, ecoReg *ecosystem.Registry) map[string]any {
-				var modules []ecosystem.EcosystemModule
-				configFor := func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
-					for _, lang := range answers.Languages {
-						if lang.Name == mod.Name() {
-							return ecosystem.ToModuleConfig(lang)
-						}
-					}
-					return ecosystem.ModuleConfig{}
-				}
-				for _, lang := range answers.Languages {
-					if mod, ok := ecoReg.ByName(lang.Name); ok {
-						modules = append(modules, mod)
-					}
-				}
-				report := ecosystem.AggregateManifestCoverage(modules, configFor)
+				report := ecosystem.LanguageManifestCoverage(answers.Languages, ecoReg)
 				covered := make([]string, len(report.Covered))
 				for i, m := range report.Covered {
 					covered[i] = m.Path

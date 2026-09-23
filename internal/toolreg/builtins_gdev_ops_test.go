@@ -17,6 +17,7 @@ var qsdevOpsSkillNames = []string{
 	"qsdev-status",
 	"qsdev-tools",
 	"qsdev-detect",
+	"qsdev-add-dep",
 }
 
 func TestQsdevOpsToolsRegistered(t *testing.T) {

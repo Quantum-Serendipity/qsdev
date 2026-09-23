@@ -2,9 +2,9 @@
 """
 Claude Code PreToolUse Hook: Credential Scanning
 
-Scans Write/Edit/MultiEdit content for hardcoded credentials, API keys,
-private keys, and other secrets. Blocks writes containing detected secrets
-with actionable feedback.
+Scans Write/Edit/MultiEdit/NotebookEdit content for hardcoded credentials,
+API keys, private keys, and other secrets. Blocks writes containing detected
+secrets with actionable feedback.
 
 Exit codes:
   0 — allow or deny (with JSON on stdout for deny)
@@ -114,6 +114,29 @@ def is_placeholder(matched_text: str) -> bool:
     return any(indicator in upper for indicator in PLACEHOLDER_INDICATORS)
 
 
+# Tools whose written content this hook scans. The hook's settings.json matcher
+# must list exactly these tools (hook_registry.go; kept in sync by
+# TestHookMatchersCoverScriptTools).
+SCANNED_TOOLS: tuple[str, ...] = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+
+
+def written_content(tool_name: str, tool_input: dict) -> tuple[str, str]:
+    """Return (content, file_path) for the text a file-writing tool call adds:
+    Write's content, Edit's new_string, every MultiEdit edits[].new_string, or
+    NotebookEdit's new_source."""
+    if tool_name == "Write":
+        return tool_input.get("content", "") or "", tool_input.get("file_path", "")
+    if tool_name == "Edit":
+        return tool_input.get("new_string", "") or "", tool_input.get("file_path", "")
+    if tool_name == "MultiEdit":
+        edits = tool_input.get("edits") or []
+        parts = [e.get("new_string", "") or "" for e in edits if isinstance(e, dict)]
+        return "\n".join(parts), tool_input.get("file_path", "")
+    if tool_name == "NotebookEdit":
+        return tool_input.get("new_source", "") or "", tool_input.get("notebook_path", "")
+    return "", ""
+
+
 def main() -> None:
     try:
         input_data = json.load(sys.stdin)
@@ -125,14 +148,9 @@ def main() -> None:
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
 
-    if tool_name == "Write":
-        content = tool_input.get("content", "")
-        file_path = tool_input.get("file_path", "")
-    elif tool_name in ("Edit", "MultiEdit"):
-        content = tool_input.get("new_string", "")
-        file_path = tool_input.get("file_path", "")
-    else:
+    if tool_name not in SCANNED_TOOLS:
         sys.exit(0)
+    content, file_path = written_content(tool_name, tool_input)
 
     if file_path:
         ext = os.path.splitext(file_path)[1].lower()

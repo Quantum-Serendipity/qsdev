@@ -27,6 +27,14 @@ func ComputeSkillLibraryVersion() string {
 	})
 }
 
+// isTemplateTestFixture reports whether an embedded path is a test script that
+// lives beside the templates (e.g. hooks/lsp-first-guard_test.sh) rather than
+// shipped template content, so it must not affect the template version.
+func isTemplateTestFixture(path string) bool {
+	base := filepath.Base(path)
+	return strings.Contains(base, "_test.")
+}
+
 // computeEmbedHash walks the embedded FS under "templates", filters paths
 // with accept, sorts entries for determinism, concatenates "path\x00content"
 // for each file, and returns "sha256:<64-char-hex>".
@@ -45,7 +53,7 @@ func computeEmbedHash(accept func(path string) bool) string {
 		if d.IsDir() {
 			return nil
 		}
-		if filepath.Base(path) == ".gitkeep" {
+		if isTemplateTestFixture(path) {
 			return nil
 		}
 		if !accept(path) {

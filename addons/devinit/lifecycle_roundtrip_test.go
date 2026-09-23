@@ -386,6 +386,17 @@ func TestLifecycle_EveryToolRoundTrip(t *testing.T) {
 				t.Fatalf("copying project: %v", err)
 			}
 			startEnabled := loadProjectAnswers(t, dir).EnabledTools[tool.Name]
+			if !startEnabled {
+				// Enabling is refused until the tool's prerequisites are on.
+				for _, prereq := range tool.Prerequisites {
+					if loadProjectAnswers(t, dir).EnabledTools[prereq] {
+						continue
+					}
+					if out, err := enableTool(t, dir, prereq, "--force"); err != nil {
+						t.Fatalf("enabling prerequisite %q: %v\n%s", prereq, err, out)
+					}
+				}
+			}
 			steps := []func(*testing.T, string, ...string) (string, error){enableTool, disableTool}
 			if startEnabled {
 				steps = []func(*testing.T, string, ...string) (string, error){disableTool, enableTool}

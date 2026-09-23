@@ -40,11 +40,8 @@ func deployOperationSkills(answers types.WizardAnswers) ([]types.GeneratedFile, 
 
 	var files []types.GeneratedFile
 	for _, entry := range manifest.Skills {
-		// Gate on EnabledTools if present.
-		if answers.EnabledTools != nil {
-			if !answers.EnabledTools[entry.Name] {
-				continue
-			}
+		if !opsSkillEnabled(answers, entry.Name) {
+			continue
 		}
 
 		content, err := templateFS.ReadFile("templates/skills/" + entry.Name + "/SKILL.md")
@@ -62,6 +59,14 @@ func deployOperationSkills(answers types.WizardAnswers) ([]types.GeneratedFile, 
 	}
 
 	return files, nil
+}
+
+// opsSkillEnabled reports whether deployOperationSkills emits the named
+// operation skill: every skill on a legacy/first run (nil EnabledTools),
+// otherwise only those explicitly enabled. CLAUDE.md uses the same predicate so
+// it never advertises a skill that is not generated.
+func opsSkillEnabled(answers types.WizardAnswers, name string) bool {
+	return answers.EnabledTools == nil || answers.EnabledTools[name]
 }
 
 // AvailableQsdevOpsSkillNames returns the names of all qsdev operation skills

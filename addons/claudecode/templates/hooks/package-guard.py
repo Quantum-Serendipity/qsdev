@@ -252,6 +252,11 @@ _PRIV_VALUE_FLAGS: set[str] = {
     "-s", "--shell", "-w", "--whitelist-environment",
 }
 
+# Commands that may execute text they read (stdin, a file or their arguments) as
+# a shell script. A heredoc body, or a substitution's output, reaching one of
+# these in the same command is scanned as a script rather than treated as data.
+_SCRIPT_READERS: set[str] = _SHELLS | _PRIV_C_RUNNERS | {"eval", "source", "."}
+
 # Bound on recursive shell-script scanning (shell -c, eval, su -c, command and
 # process substitutions). Exceeding it FAILS CLOSED (a suspicious marker is
 # emitted so main() blocks for validation) rather than silently dropping the
@@ -283,14 +288,8 @@ INSTALL_COMMANDS: dict[str, list[tuple[list[str], str, str]]] = {
     "composer": [(["require"], "Packagist", "composer")],
 }
 
-# Shell operators (and newlines) that separate independent commands. Each
-# resulting segment is validated on its own so a compound OR multi-line command
-# (including pipe stages and backgrounded commands) cannot smuggle an unchecked
-# install past the guard. Two-character operators are listed before their
-# one-character prefixes (`&&` before `&`, `||` before `|`, `\r\n` before `\n`)
-# so each is consumed whole. Newline and `&` matter: `echo hi\nnpm install evil`
-# and `foo & npm install evil` would otherwise be a single unparsed segment.
-_SEGMENT_SPLIT_RE = re.compile(r"\s*(?:&&|\|\||;|\||&|\r\n|\n|\r)\s*")
+# Characters that end a heredoc delimiter word (`cat <<EOF;` / `<<EOF)`).
+_HEREDOC_WORD_END = set(" \t\r\n;&|<>()")
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -478,12 +477,206 @@ def check_crates_age(package_name: str) -> Optional[float]:
 # Package name extraction
 # ---------------------------------------------------------------------------
 
-def _split_segments(command: str) -> list[str]:
+def _read_heredoc_delimiter(command: str, i: int) -> tuple[str, int]:
+    """Read the heredoc delimiter word starting at command[i] (just past `<<` /
+    `<<-` and any blanks). Quotes and backslashes are removed, as the shell does
+    when matching the terminator line. Returns (delimiter, index past the word).
+    """
+    delim: list[str] = []
+    n = len(command)
+    while i < n and command[i] not in _HEREDOC_WORD_END:
+        c = command[i]
+        if c in ("'", '"'):
+            j = command.find(c, i + 1)
+            if j == -1:
+                j = n
+            delim.append(command[i + 1:j])
+            i = j + 1
+            continue
+        if c == "\\" and i + 1 < n:
+            delim.append(command[i + 1])
+            i += 2
+            continue
+        delim.append(c)
+        i += 1
+    return "".join(delim), min(i, n)
+
+
+def _read_heredoc_body(command: str, i: int, delim: str, strip_tabs: bool) -> tuple[str, int]:
+    """Read a heredoc body starting at command[i] (the first character after the
+    newline that ends the introducing line), up to the line equal to `delim`.
+    Returns (body, index past the terminator line). An unterminated body runs to
+    end-of-string, as in the shell."""
+    lines: list[str] = []
+    n = len(command)
+    while i < n:
+        j = command.find("\n", i)
+        end = n if j == -1 else j
+        line = command[i:end]
+        i = n if j == -1 else j + 1
+        check = line.rstrip("\r")
+        if strip_tabs:
+            check = check.lstrip("\t")
+        if check == delim:
+            break
+        lines.append(line)
+    return "\n".join(lines), i
+
+
+def _split_segments(command: str) -> list[tuple[str, list[str]]]:
     """Split a (possibly compound or multi-line) command into independent command
-    segments on shell operators (&&, ||, ;, |, &) and newlines. Each stage is a
+    segments, returning (segment_text, heredoc_bodies) pairs. Each stage is a
     separate command validated on its own — `echo x | npm install evil` and a
-    multi-line `echo hi\\nnpm install evil` both still check the install."""
-    return [s for s in _SEGMENT_SPLIT_RE.split(command) if s.strip()]
+    multi-line `echo hi\\nnpm install evil` both still check the install.
+
+    The scan is quote-aware: control operators (&&, ||, ;, |, |&, &), subshell
+    parentheses and newlines split segments only OUTSIDE single/double quotes and
+    when not backslash-escaped, so a quoted operator (`jq '.a | .b'`,
+    `git commit -m "a; b"`, a multi-line -m message) stays inside its argument.
+    Redirections that contain `&` or `|` (`2>&1`, `&>`, `>|`) are not operators.
+    Backslash-newline line continuations are removed, as the shell does.
+
+    Heredoc bodies (`<<EOF` … `EOF`) are data rather than command text, so they
+    are returned separately, attached to the segment that opened them; the caller
+    decides whether they are scripts. An unbalanced quote leaves the remainder in
+    one segment, which shlex then rejects so the caller fails closed.
+
+    Because a heredoc hides the lines that follow it, `<<` is only treated as one
+    where the shell does: never inside a `#` comment, `((…))` / `$[…]`
+    arithmetic or a `${…}` expansion (`echo hi # <<EOF`, `((x=1<<2))` followed by
+    `npm install evil` on the next line must still see the install).
+    """
+    segments: list[tuple[str, list[str]]] = []
+    buf: list[str] = []
+    # Heredocs opened on the current line: (delimiter, strip_tabs, segment index).
+    pending: list[tuple[str, bool, int]] = []
+    # Closers of the open arithmetic/expansion contexts in which `<<` is a shift
+    # operator or literal text rather than a heredoc. Leaving one open by mistake
+    # only suppresses heredoc detection, so more text is scanned, never less.
+    no_heredoc: list[str] = []
+    quote: Optional[str] = None
+    i, n = 0, len(command)
+
+    def flush() -> None:
+        text = "".join(buf).strip()
+        buf.clear()
+        if text:
+            segments.append((text, []))
+
+    while i < n:
+        c = command[i]
+        nxt = command[i + 1] if i + 1 < n else ""
+
+        if quote == "'":
+            buf.append(c)
+            if c == "'":
+                quote = None
+            i += 1
+            continue
+
+        if c == "\\":
+            if nxt == "\n":
+                i += 2  # line continuation: removed outside single quotes
+                continue
+            if nxt == "\r" and command[i + 2:i + 3] == "\n":
+                i += 3
+                continue
+            buf.append(command[i:i + 2])
+            i += 2
+            continue
+
+        if quote == '"':
+            buf.append(c)
+            if c == '"':
+                quote = None
+            i += 1
+            continue
+
+        if c in ("'", '"'):
+            quote = c
+            buf.append(c)
+            i += 1
+            continue
+
+        # A `#` starting a word comments out the rest of the line (no line
+        # continuation). An escaped blank (`a\ #`) is a 2-char entry in buf, so
+        # it does not count as a word break.
+        if c == "#" and (not buf or buf[-1] in (" ", "\t")):
+            while i < n and command[i] not in "\r\n":
+                i += 1
+            continue
+
+        if c == "$" and nxt in ("{", "["):
+            no_heredoc.append("}" if nxt == "{" else "]")
+            buf.append(c + nxt)
+            i += 2
+            continue
+        if c == "(" and nxt == "(":
+            no_heredoc.append("))")
+            flush()
+            i += 2
+            continue
+        if no_heredoc:
+            closer = no_heredoc[-1]
+            if closer != "))" and c == {"}": "{", "]": "["}[closer]:
+                no_heredoc.append(closer)  # nested brace/bracket
+            elif command.startswith(closer, i):
+                no_heredoc.pop()
+                if closer == "))":
+                    flush()
+                else:
+                    buf.append(c)
+                i += len(closer)
+                continue
+
+        if c == "<" and nxt == "<" and not no_heredoc:
+            if command[i + 2:i + 3] == "<":
+                buf.append("<<<")  # here-string, not a heredoc
+                i += 3
+                continue
+            j = i + 2
+            strip_tabs = command[j:j + 1] == "-"
+            if strip_tabs:
+                j += 1
+            while j < n and command[j] in " \t":
+                j += 1
+            delim, j = _read_heredoc_delimiter(command, j)
+            buf.append(command[i:j])
+            if delim:
+                # This segment's buffer is non-empty, so it lands at this index.
+                pending.append((delim, strip_tabs, len(segments)))
+            i = j
+            continue
+
+        if c in "\r\n":
+            flush()
+            i += 2 if (c == "\r" and nxt == "\n") else 1
+            for delim, strip_tabs, seg_idx in pending:
+                body, i = _read_heredoc_body(command, i, delim, strip_tabs)
+                if seg_idx < len(segments):
+                    segments[seg_idx][1].append(body)
+            pending.clear()
+            continue
+
+        prev = buf[-1][-1:] if buf else ""
+        if c == "&" and (prev in ("<", ">") or nxt == ">"):
+            buf.append(c)  # redirection: 2>&1, <&3, &>file, &>>file
+            i += 1
+            continue
+        if c == "|" and prev == ">":
+            buf.append(c)  # >| noclobber override
+            i += 1
+            continue
+        if c in ";&|()":
+            flush()
+            i += 2 if (c in "&|" and nxt in ("&", "|")) or (c == ";" and nxt == ";") else 1
+            continue
+
+        buf.append(c)
+        i += 1
+
+    flush()
+    return segments
 
 
 def _skip_option_flags(tokens: list[str], i: int, value_flags: set[str]) -> int:
@@ -786,7 +979,10 @@ def _embedded_install(argv: list[str]) -> Optional[tuple[str, str, list[str]]]:
 
 
 def _recurse_script(
-    script: str, depth: int, results: list[tuple[str, str, str, list[str]]]
+    script: str,
+    depth: int,
+    results: list[tuple[str, str, str, list[str]]],
+    script_reader: bool = False,
 ) -> None:
     """Recursively scan a nested shell script (a shell/su/eval -c body or a
     command/process substitution), appending its detections. FAILS CLOSED past
@@ -798,10 +994,12 @@ def _recurse_script(
     if depth >= _MAX_SHELL_RECURSION:
         results.append(_suspicious_detection(script))
         return
-    results.extend(detect_install_commands(script, depth + 1))
+    results.extend(detect_install_commands(script, depth + 1, script_reader))
 
 
-def detect_install_commands(command: str, _depth: int = 0) -> list[tuple[str, str, str, list[str]]]:
+def detect_install_commands(
+    command: str, _depth: int = 0, _script_reader: bool = False
+) -> list[tuple[str, str, str, list[str]]]:
     """
     Find ALL genuine package install invocations in a (possibly compound or
     multi-line) command. Returns a list of (ecosystem, manager_label, segment,
@@ -841,23 +1039,35 @@ def detect_install_commands(command: str, _depth: int = 0) -> list[tuple[str, st
     # command whose substitution spans are blanked out (so their inner operators
     # can't fragment the surrounding segments).
     sub_scripts, command = _extract_substitutions(command)
-    for script in sub_scripts:
-        _recurse_script(script, _depth, results)
 
-    for segment in _split_segments(command):
-        segment = segment.strip()
-        if not segment:
-            continue
-
+    # A heredoc body is data, except when something in this command (or in the
+    # command a substitution's output feeds) may run it as a script:
+    # `bash <<EOF`, `cat <<EOF | sh`, `source /dev/stdin <<EOF`,
+    # `bash -c "$(cat <<EOF …)"`. `_script_reader` carries that from the parent.
+    parsed_segments: list[tuple[str, Optional[list[str]], list[str]]] = []
+    script_reader = _script_reader
+    for segment, heredocs in _split_segments(command):
         try:
-            tokens = shlex.split(segment)
+            argv: Optional[list[str]] = _strip_wrappers(shlex.split(segment))
         except ValueError:
             # Unbalanced quotes etc.: we cannot trust any tokenization, so we
             # cannot rule out a hidden install. Fail closed instead of guessing.
+            argv = None
+        if argv and os.path.basename(argv[0]) in _SCRIPT_READERS:
+            script_reader = True
+        parsed_segments.append((segment, argv, heredocs))
+
+    for script in sub_scripts:
+        _recurse_script(script, _depth, results, script_reader)
+
+    for segment, argv, heredocs in parsed_segments:
+        if script_reader:
+            for body in heredocs:
+                _recurse_script(body, _depth, results)
+
+        if argv is None:
             results.append(_suspicious_detection(segment))
             continue
-
-        argv = _strip_wrappers(tokens)
         if not argv:
             continue
         exe = os.path.basename(argv[0])

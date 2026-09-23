@@ -56,8 +56,6 @@ var (
 	ExportComputeSkillLibraryVersion = ComputeSkillLibraryVersion
 	ExportCompareVersions            = CompareVersions
 	ExportBuildUpdateSummary         = BuildUpdateSummary
-	ExportIsLibrarySkill             = IsLibrarySkill
-	ExportIsLibraryRule              = IsLibraryRule
 )
 
 type ExportVersionDiff = VersionDiff
@@ -103,4 +101,7 @@ var (
 	ExportHooksCmd            = hooksCmd
 	ExportTemplateFS          = templateFS
 	ExportGenerateHookFiles   = GenerateHookFiles
+	ExportWrapHooksForSandbox = wrapHooksForSandbox
 )
+
+var ExportIsTemplateTestFixture = isTemplateTestFixture

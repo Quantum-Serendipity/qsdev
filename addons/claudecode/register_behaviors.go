@@ -8,10 +8,13 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
-	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// init attaches this package's tool behaviours to the default registry. The
+// catalog and manifests it reads are embedded at build time, so a load failure
+// is a broken build: it panics rather than leaving tools silently without
+// their GenerateFuncs (which would surface later as "no files needed").
 func init() {
 	r := toolreg.DefaultRegistry()
 
@@ -25,7 +28,7 @@ func init() {
 func registerMCPServerContent(r *toolreg.Registry) {
 	cat, err := catalog.Default()
 	if err != nil {
-		return
+		panic(fmt.Sprintf("claudecode: loading embedded catalog: %v", err))
 	}
 	for name, def := range cat.Tools() {
 		if def.MCPServerName == "" {
@@ -103,53 +106,49 @@ func registerAgentToolGenerators(r *toolreg.Registry) {
 func registerConsultingAgentGenerators(r *toolreg.Registry) {
 	manifest, err := loadAgentManifest()
 	if err != nil {
-		return
+		panic(fmt.Sprintf("claudecode: loading embedded agent manifest: %v", err))
 	}
 
 	for _, a := range manifest.Agents {
 		agentName := a.Name
-		toolKey := "consulting-agent-" + agentName
-
-		r.AttachBehavior(toolKey, toolreg.ToolBehavior{
-			GenerateFunc: func(_ types.WizardAnswers) ([]types.GeneratedFile, error) {
-				content, err := templateFS.ReadFile("templates/agents/" + agentName + ".md")
-				if err != nil {
-					return nil, fmt.Errorf("reading agent template %q: %w", agentName, err)
-				}
-				return []types.GeneratedFile{{
-					Path:    ".claude/agents/" + agentName + ".md",
-					Content: content,
-					Mode:    fileutil.ModeReadWrite,
-					Owner:   toolKey,
-				}}, nil
-			},
+		r.AttachBehavior("consulting-agent-"+agentName, toolreg.ToolBehavior{
+			GenerateFunc: fullTierFile(func() (types.GeneratedFile, error) {
+				return consultingAgentFile(agentName)
+			}),
 		})
+	}
+}
+
+// fullTierFile adapts a single-file builder into a tool GenerateFunc that
+// applies the same Full-tier policy as Generate's deployAgents and
+// deployWorkflowSkills. Below Full it returns no files, so `enable` reports
+// that the tool needs a higher tier instead of writing a file init/update
+// would never regenerate.
+func fullTierFile(build func() (types.GeneratedFile, error)) toolreg.GenerateFunc {
+	return func(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
+		if resolveTier(answers) < tier.Full {
+			return nil, nil
+		}
+		f, err := build()
+		if err != nil {
+			return nil, err
+		}
+		return []types.GeneratedFile{f}, nil
 	}
 }
 
 func registerConsultingWorkflowGenerators(r *toolreg.Registry) {
 	manifest, err := loadConsultingSkillManifest()
 	if err != nil {
-		return
+		panic(fmt.Sprintf("claudecode: loading embedded consulting skill manifest: %v", err))
 	}
 
 	for _, skill := range manifest.Skills {
 		skillName := skill.Name
-		toolKey := "consulting-workflow-" + skillName
-
-		r.AttachBehavior(toolKey, toolreg.ToolBehavior{
-			GenerateFunc: func(_ types.WizardAnswers) ([]types.GeneratedFile, error) {
-				content, err := templateFS.ReadFile("templates/skills/" + skillName + "/SKILL.md")
-				if err != nil {
-					return nil, fmt.Errorf("reading workflow skill template %q: %w", skillName, err)
-				}
-				return []types.GeneratedFile{{
-					Path:    ".claude/skills/" + skillName + "/SKILL.md",
-					Content: content,
-					Mode:    fileutil.ModeReadWrite,
-					Owner:   toolKey,
-				}}, nil
-			},
+		r.AttachBehavior("consulting-workflow-"+skillName, toolreg.ToolBehavior{
+			GenerateFunc: fullTierFile(func() (types.GeneratedFile, error) {
+				return consultingWorkflowFile(skillName)
+			}),
 		})
 	}
 }

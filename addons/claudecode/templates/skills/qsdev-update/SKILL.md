@@ -9,7 +9,7 @@ allowed-tools: Bash(qsdev *) Read Grep Glob
 
 ## Current Environment
 
-!`qsdev status --json 2>/dev/null || echo '{"tools": {}}'`
+!`qsdev status --json 2>/dev/null || echo "ERROR: 'qsdev status --json' exited with status $?. Any output above may be partial; do not treat missing data as empty."`
 
 !`git log --oneline -5 2>/dev/null || echo 'not a git repo'`
 
@@ -17,7 +17,7 @@ allowed-tools: Bash(qsdev *) Read Grep Glob
 
 1. **Show current state**: Present the current qsdev status and recent git changes from the output above.
 
-2. **Preview changes**: Run `qsdev init --update --dry-run --json` to preview what will be updated. Present:
+2. **Preview changes**: Run `qsdev init --update --dry-run` to preview what will be updated. Present:
    - Files that will be modified
    - New settings or tools that will be added
    - Deprecated settings that will be removed

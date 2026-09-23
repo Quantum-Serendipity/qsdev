@@ -6,7 +6,8 @@
 # precise, token-efficient navigation. Plain-text / literal / config-file
 # searches pass straight through to Grep.
 #
-# Enforcement tiers (QSDEV_LSP_ENFORCEMENT):
+# Enforcement tiers (first argument, else QSDEV_LSP_ENFORCEMENT; qsdev passes
+# the configured tier as the argument in settings.json):
 #   block (default) — deny the Grep and tell the model to use the LSP tool.
 #   warn            — allow the Grep but inject guidance (additionalContext).
 #   off             — disabled; pass everything through.
@@ -41,7 +42,7 @@ fi
 IFS=$'\t' read -r tool_name pattern path glob <<<"$parsed"
 
 # --- b. Honor the enforcement tier. -----------------------------------------
-tier="${QSDEV_LSP_ENFORCEMENT:-block}"
+tier="${1:-${QSDEV_LSP_ENFORCEMENT:-block}}"
 if [ "$tier" = "off" ]; then
 	exit 0
 fi

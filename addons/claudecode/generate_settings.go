@@ -3,9 +3,11 @@ package claudecode
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -27,12 +29,25 @@ type Permissions struct {
 	Ask                          []string `json:"ask,omitempty"`
 }
 
-// SandboxConfig defines filesystem and network sandbox restrictions.
+// SandboxConfig is Claude Code's settings.json "sandbox" block: it turns on
+// the Bash sandbox and restricts what sandboxed commands may read, write and
+// reach on the network.
 type SandboxConfig struct {
-	WriteDeny  []string `json:"writeDeny,omitempty"`
-	WriteAllow []string `json:"writeAllow,omitempty"`
-	ReadDeny   []string `json:"readDeny,omitempty"`
-	NetAllow   []string `json:"netAllow,omitempty"`
+	Enabled    bool               `json:"enabled"`
+	Filesystem *SandboxFilesystem `json:"filesystem,omitempty"`
+	Network    *SandboxNetwork    `json:"network,omitempty"`
+}
+
+// SandboxFilesystem is the "sandbox.filesystem" block.
+type SandboxFilesystem struct {
+	AllowWrite []string `json:"allowWrite,omitempty"`
+	DenyWrite  []string `json:"denyWrite,omitempty"`
+	DenyRead   []string `json:"denyRead,omitempty"`
+}
+
+// SandboxNetwork is the "sandbox.network" block.
+type SandboxNetwork struct {
+	AllowedDomains []string `json:"allowedDomains,omitempty"`
 }
 
 // HookMatcher defines a matcher and its associated hooks within a hook event.
@@ -70,13 +85,19 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 	if err != nil {
 		return Permissions{}, fmt.Errorf("loading catalog for permissions: %w", err)
 	}
+	// Ecosystem deny rules include Read(...) rules for the credential files
+	// modules declare read-denied, so the agent's own Read tool is blocked from
+	// them whether or not the Bash sandbox is enabled.
 	ecosystemDeny := collectEcosystemDenyRules(answers, registry)
+	ecosystemDeny = append(ecosystemDeny, readDenyPermissionRules(collectEcosystemReadDenyRules(answers, registry))...)
 
 	presetName := string(preset)
 	presetDef, ok := cat.PermissionPreset(presetName)
 	if !ok {
-		// Fall back to standard if preset not found.
-		presetDef, _ = cat.PermissionPreset("standard")
+		// Never guess: silently substituting another preset could grant far
+		// more access (e.g. Write(*)) than the configuration asked for.
+		return Permissions{}, fmt.Errorf("unknown permission preset %q (valid: %s)",
+			presetName, strings.Join(cat.PermissionPresets(), ", "))
 	}
 
 	// Assemble allow rules from preset's allow sets.
@@ -190,20 +211,34 @@ func collectEcosystemReadDenyRules(answers types.WizardAnswers, registry *ecosys
 	return sliceutil.Dedup(rules)
 }
 
+// readDenyPermissionRules converts module read-deny paths into Claude Code
+// Read(...) permission deny rules. A trailing "/*" becomes "/**" so the rule
+// also covers nested entries (e.g. ~/.aws/sso/cache/<dir>/<token>).
+func readDenyPermissionRules(paths []string) []string {
+	rules := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if base, ok := strings.CutSuffix(p, "/*"); ok {
+			p = base + "/**"
+		}
+		rules = append(rules, "Read("+p+")")
+	}
+	return rules
+}
+
 // buildSandbox returns a SandboxConfig when sandbox is enabled, or nil otherwise.
 func buildSandbox(cfg Config, answers types.WizardAnswers, registry *ecosystem.Registry) *SandboxConfig {
 	if !cfg.SandboxEnabled {
 		return nil
 	}
-	readDeny := collectEcosystemReadDenyRules(answers, registry)
 	sandbox := &SandboxConfig{
-		WriteDeny: []string{"/etc", "/usr"},
-	}
-	if len(readDeny) > 0 {
-		sandbox.ReadDeny = readDeny
+		Enabled: true,
+		Filesystem: &SandboxFilesystem{
+			DenyWrite: []string{"/etc", "/usr"},
+			DenyRead:  collectEcosystemReadDenyRules(answers, registry),
+		},
 	}
 	if len(cfg.AllowedDomains) > 0 {
-		sandbox.NetAllow = cfg.AllowedDomains
+		sandbox.Network = &SandboxNetwork{AllowedDomains: cfg.AllowedDomains}
 	}
 	return sandbox
 }
@@ -211,24 +246,26 @@ func buildSandbox(cfg Config, answers types.WizardAnswers, registry *ecosystem.R
 // buildHooks returns the hooks map based on enabled hook presets.
 // It delegates to the default HookRegistry which evaluates each registered
 // hook's EnabledFunc against the provided answers. When sandbox is enabled,
-// hook commands are wrapped with "qsdev sandbox exec".
+// hook commands are wrapped with "<app> sandbox exec".
 func buildHooks(answers types.WizardAnswers) map[string][]HookMatcher {
 	registry := defaultHookRegistry()
 	hooks := registry.BuildHooksMap(answers)
 	if hooks != nil && answers.Hooks.SandboxEnabled {
-		hooks = wrapHooksForSandbox(hooks, registry)
+		hooks = wrapHooksForSandbox(hooks, registry, answers, branding.Get().AppName)
 	}
 	return hooks
 }
 
-// wrapHooksForSandbox prefixes each hook command with "qsdev sandbox exec
-// --category <cat> --" so hooks run inside the sandbox. The category is
-// looked up from the registry's SandboxCategory field.
-func wrapHooksForSandbox(hooks map[string][]HookMatcher, registry *HookRegistry) map[string][]HookMatcher {
+// wrapHooksForSandbox prefixes each hook command with "<appName> sandbox exec
+// --category <cat> --" so hooks run inside the sandbox. appName is the branded
+// binary name (as for the self-invoked hooks in defaultHookRegistry): a binary
+// that is not installed makes every hook fail with a non-blocking error. The
+// category is looked up from the registry's SandboxCategory field.
+func wrapHooksForSandbox(hooks map[string][]HookMatcher, registry *HookRegistry, answers types.WizardAnswers, appName string) map[string][]HookMatcher {
 	catMap := make(map[string]string)
 	for _, def := range registry.Definitions() {
 		if def.SandboxCategory != "" {
-			catMap[def.Command] = def.SandboxCategory
+			catMap[def.commandFor(answers)] = def.SandboxCategory
 		}
 	}
 
@@ -240,7 +277,7 @@ func wrapHooksForSandbox(hooks map[string][]HookMatcher, registry *HookRegistry)
 					cat = "linter"
 				}
 				hooks[event][i].Hooks[j].Command = fmt.Sprintf(
-					`qsdev sandbox exec --category %s -- %s`, cat, h.Command)
+					`%s sandbox exec --category %s -- %s`, appName, cat, h.Command)
 			}
 		}
 	}

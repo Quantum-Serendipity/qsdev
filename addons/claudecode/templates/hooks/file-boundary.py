@@ -2,9 +2,9 @@
 """
 Claude Code PreToolUse Hook: File Boundary Enforcement
 
-Restricts Write/Edit/Read file operations to the current project directory
-tree and configured safe paths. Prevents cross-project access and path
-traversal attacks.
+Restricts Write/Edit/MultiEdit/NotebookEdit/Read file operations to the
+current project directory tree and configured safe paths. Prevents
+cross-project access and path traversal attacks.
 
 Exit codes:
   0 — allow or deny (with JSON on stdout for deny)
@@ -36,6 +36,17 @@ STRICT_MODE: bool = os.environ.get("FILE_BOUNDARY_STRICT_MODE", "").lower() == "
 AUDIT_LOG: Path = Path(
     os.environ.get("CLAUDE_PROJECT_DIR", ".")
 ) / ".claude" / "logs" / "hook-audit.jsonl"
+
+# Tools this hook inspects, and the tool_input key that names the target file.
+# The hook's settings.json matcher must list exactly these tools
+# (hook_registry.go; kept in sync by TestHookMatchersCoverScriptTools).
+PATH_KEYS: dict[str, str] = {
+    "Write": "file_path",
+    "Edit": "file_path",
+    "MultiEdit": "file_path",
+    "NotebookEdit": "notebook_path",
+    "Read": "file_path",
+}
 
 BLOCKED_PREFIXES: tuple[str, ...] = (
     "/proc/self/root",
@@ -98,10 +109,9 @@ def main() -> None:
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
-    file_path = tool_input.get("file_path", "")
-
-    if tool_name not in ("Write", "Edit", "MultiEdit", "Read"):
+    if tool_name not in PATH_KEYS:
         sys.exit(0)
+    file_path = tool_input.get(PATH_KEYS[tool_name], "")
 
     if not file_path:
         sys.exit(0)

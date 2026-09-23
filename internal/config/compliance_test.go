@@ -49,8 +49,8 @@ func TestComplianceLevel_StrictMappings(t *testing.T) {
 	if p.MCPServerPolicy != "explicit-only" {
 		t.Errorf("expected explicit-only, got %q", p.MCPServerPolicy)
 	}
-	if p.ClaudePermissionLevel != "restricted" {
-		t.Errorf("expected restricted, got %q", p.ClaudePermissionLevel)
+	if p.ClaudePermissionLevel != "minimal" {
+		t.Errorf("expected minimal, got %q", p.ClaudePermissionLevel)
 	}
 	if !p.ClaudeAuditLog {
 		t.Error("expected ClaudeAuditLog to be true")

@@ -156,7 +156,6 @@ func TestGenerateClaudeMd_GoProject(t *testing.T) {
 	content := string(got.Content)
 	requireContains(t, content, "go build")
 	requireContains(t, content, "qsdev init")
-	requireContains(t, content, "qsdev-reference.md")
 }
 
 func TestGenerateClaudeMd_MultiLanguage(t *testing.T) {
@@ -462,19 +461,104 @@ func TestGenerateClaudeMd_SectionMarkers(t *testing.T) {
 	}
 }
 
+// TestGenerateClaudeMd_HasGdevReference verifies the @-import of the qsdev
+// reference appears only at the Full tier, the only tier that generates
+// .claude/qsdev-reference.md.
 func TestGenerateClaudeMd_HasGdevReference(t *testing.T) {
-	reg := newTestRegistry(t, goMock())
-	answers := types.WizardAnswers{
-		ProjectName: "test",
-		Languages:   []types.LanguageChoice{{Name: "go"}},
+	t.Parallel()
+	for _, tc := range []struct {
+		tier string
+		want bool
+	}{
+		{"standard", false},
+		{"full", true},
+	} {
+		t.Run(tc.tier, func(t *testing.T) {
+			t.Parallel()
+			reg := newTestRegistry(t, goMock())
+			answers := types.WizardAnswers{
+				ProjectName: "test",
+				Tier:        tc.tier,
+				Languages:   []types.LanguageChoice{{Name: "go"}},
+			}
+			got, err := claudecode.GenerateClaudeMd(answers, reg)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if has := strings.Contains(string(got.Content), "@.claude/qsdev-reference.md"); has != tc.want {
+				t.Errorf("reference import present = %v, want %v", has, tc.want)
+			}
+		})
 	}
+}
 
-	got, err := claudecode.GenerateClaudeMd(answers, reg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+// TestGenerate_ClaudeMdAdvertisesOnlyGeneratedArtifacts verifies that every
+// skill, agent and @-import CLAUDE.md advertises exists in the file set
+// Generate emits, at every tier and for both legacy (nil) and explicit
+// EnabledTools.
+func TestGenerate_ClaudeMdAdvertisesOnlyGeneratedArtifacts(t *testing.T) {
+	t.Parallel()
+	explicit := map[string]bool{
+		"qsdev-doctor":                           true,
+		"qsdev-add-dep":                          true,
+		"consulting-agent-security-reviewer":     true,
+		"consulting-workflow-write-adr":          true,
+		"consulting-workflow-onboard-me":         true,
+		"consulting-agent-codebase-explorer":     true,
+		"consulting-agent-test-gap-analyzer":     false,
+		"consulting-workflow-incident-debug":     false,
+		"consulting-agent-handoff-doc-generator": false,
 	}
-
-	requireContains(t, string(got.Content), "@.claude/qsdev-reference.md")
+	for _, tierName := range []string{"supply-chain-only", "standard", "full"} {
+		for _, enabled := range []map[string]bool{nil, explicit} {
+			name := tierName + "/nil-enabled"
+			if enabled != nil {
+				name = tierName + "/explicit-enabled"
+			}
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				reg := newTestRegistry(t, goMock())
+				answers := types.WizardAnswers{
+					ProjectName:  "adv",
+					Tier:         tierName,
+					Languages:    []types.LanguageChoice{{Name: "go"}},
+					EnabledTools: enabled,
+				}
+				files, err := claudecode.NewClaudeCodeGenerator(reg, claudecode.Config{}).Generate(answers)
+				if err != nil {
+					t.Fatalf("Generate: %v", err)
+				}
+				paths := make(map[string]bool, len(files))
+				var claudeMd string
+				for _, f := range files {
+					paths[f.Path] = true
+					if f.Path == "CLAUDE.md" {
+						claudeMd = string(f.Content)
+					}
+				}
+				for _, line := range strings.Split(claudeMd, "\n") {
+					switch {
+					case strings.HasPrefix(line, "- `/"):
+						skill := strings.TrimPrefix(line, "- `/")
+						skill = skill[:strings.Index(skill, "`")]
+						if p := ".claude/skills/" + skill + "/SKILL.md"; !paths[p] {
+							t.Errorf("CLAUDE.md advertises /%s but %s is not generated", skill, p)
+						}
+					case strings.HasPrefix(line, "- `@"):
+						agent := strings.TrimPrefix(line, "- `@")
+						agent = agent[:strings.Index(agent, "`")]
+						if p := ".claude/agents/" + agent + ".md"; !paths[p] {
+							t.Errorf("CLAUDE.md advertises @%s but %s is not generated", agent, p)
+						}
+					case strings.HasPrefix(line, "@"):
+						if p := strings.TrimSpace(strings.TrimPrefix(line, "@")); !paths[p] {
+							t.Errorf("CLAUDE.md imports @%s but it is not generated", p)
+						}
+					}
+				}
+			})
+		}
+	}
 }
 
 func TestGenerateClaudeMd_QsdevCommandsSection(t *testing.T) {
@@ -570,4 +654,55 @@ func TestGenerateClaudeMd_NoLanguageConventions(t *testing.T) {
 	requireNotContains(t, content, "Language Conventions")
 	requireNotContains(t, content, "### Go")
 	requireNotContains(t, content, "fmt.Errorf")
+}
+
+// TestGenerateClaudeMd_BuildAndTestWithoutBuildCommands verifies the Build &
+// Test section renders for ecosystems that have test/lint commands but no
+// build command (Python, Terraform), instead of being dropped entirely.
+func TestGenerateClaudeMd_BuildAndTestWithoutBuildCommands(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, pythonMock())
+	answers := types.WizardAnswers{
+		ProjectName: "py",
+		Languages:   []types.LanguageChoice{{Name: "python"}},
+	}
+	got, err := claudecode.GenerateClaudeMd(answers, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(got.Content)
+	requireContains(t, content, "## Build & Test\n\n```bash\npython -m pytest\nruff check .\n```")
+}
+
+// TestGenerateClaudeMd_ToolSectionOnlyWhenToolEmitsFiles verifies a tool's
+// CLAUDE.md section is advertised only when the tool actually emits files for
+// the configuration: lookup-docs' skill is a Full-tier artifact, so a
+// Standard-tier CLAUDE.md must not point at it.
+func TestGenerateClaudeMd_ToolSectionOnlyWhenToolEmitsFiles(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		tier string
+		want bool
+	}{
+		{"standard", false},
+		{"full", true},
+	} {
+		t.Run(tc.tier, func(t *testing.T) {
+			t.Parallel()
+			reg := newTestRegistry(t, goMock())
+			answers := types.WizardAnswers{
+				ProjectName:  "docs",
+				Tier:         tc.tier,
+				Languages:    []types.LanguageChoice{{Name: "go"}},
+				EnabledTools: map[string]bool{"lookup-docs": true},
+			}
+			got, err := claudecode.GenerateClaudeMd(answers, reg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if has := strings.Contains(string(got.Content), "<!-- qsdev:lookup-docs -->"); has != tc.want {
+				t.Errorf("lookup-docs section present = %v, want %v", has, tc.want)
+			}
+		})
+	}
 }

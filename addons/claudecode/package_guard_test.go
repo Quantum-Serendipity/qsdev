@@ -143,6 +143,37 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 		{"eight-deep nesting fails closed", deepNestFailClosed, true, nil},
 		{"unbalanced quotes fail closed", `npm install "evil`, true, nil},
 
+		// Quote-aware segmentation: operators and newlines inside quotes (or
+		// escaped, or inside a heredoc body) are argument text, not command
+		// separators, so ordinary commands must not fail closed.
+		{"quoted grep alternation", `grep -n "foo\|bar" README.md`, false, nil},
+		{"quoted jq pipe", `jq '.a | .b' f.json`, false, nil},
+		{"quoted semicolon in commit message", `git commit -m 'fix: a; b'`, false, nil},
+		{"quoted ampersand", `echo "a && b & c"`, false, nil},
+		{"multi-line commit message", "git commit -m \"fix: thing\n\nbody; it's done\"", false, nil},
+		{"heredoc commit message", "git commit -m \"$(cat <<'EOF'\nfix(x): don't; break | it\n\nnpm install evil\nEOF\n)\"", false, nil},
+		{"heredoc to file with tab strip", "cat <<-EOF > f\n\tdon't\n\tEOF\necho ok", false, nil},
+		{"quoted install text with operator", `echo "a && npm install evil"`, false, nil},
+		{"stderr redirect is not a separator", `go test ./... 2>&1 | tail -5`, false, nil},
+		// Real separators outside quotes must still split.
+		{"redirect then chained install", `ls &>/dev/null; pip install evil`, true, []string{"evil"}},
+		{"subshell install", `(cd x && npm install evil)`, true, []string{"evil"}},
+		{"line continuation install", "npm \\\ninstall evil", true, []string{"evil"}},
+		{"heredoc piped to shell", "cat <<EOF | bash\nnpm install evil\nEOF", true, []string{"evil"}},
+		{"heredoc read by shell", "bash <<EOF\nnpm install evil\nEOF", true, []string{"evil"}},
+		{"heredoc sourced from stdin", "cat <<EOF | source /dev/stdin\nnpm install evil\nEOF", true, []string{"evil"}},
+		{"heredoc read by eval", "eval \"$(cat)\" <<EOF\nnpm install evil\nEOF", true, []string{"evil"}},
+		{"heredoc in substitution run by shell -c", "bash -c \"$(cat <<EOF\nnpm install evil\nEOF\n)\"", true, []string{"evil"}},
+		{"heredoc in process substitution sourced", "source <(cat <<EOF\nnpm install evil\nEOF\n)", true, []string{"evil"}},
+		// `<<` that the shell does NOT treat as a heredoc must not hide the
+		// following lines from the scan.
+		{"heredoc marker inside comment", "echo hi # <<EOF\nnpm install evil\nEOF", true, []string{"evil"}},
+		{"shift in arithmetic command", "((x=1<<2))\nnpm install evil", true, []string{"evil"}},
+		{"shift in legacy arithmetic", "echo $[1<<2]\nnpm install evil", true, []string{"evil"}},
+		{"<< inside parameter expansion", "echo ${y//<</z}\nnpm install evil", true, []string{"evil"}},
+		{"escaped blank before hash is not a comment", `echo a\ #b; npm install evil`, true, []string{"evil"}},
+		{"comment with apostrophe", "ls # it's fine\necho ok", false, nil},
+
 		// Control: the mandated false-positive suite must remain unflagged even
 		// after the recursive-descent hardening above.
 		{"control: git commit message", `git commit -m "fix: refactor install logic"`, false, nil},
@@ -157,7 +188,9 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := exec.Command(python, "-c", pgDriver)
-			cmd.Env = append(os.Environ(), "PG_PATH="+template, "PG_CMD="+tc.command)
+			// PYTHONDONTWRITEBYTECODE keeps the import from writing a
+			// __pycache__ directory into the embedded templates tree.
+			cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "PG_PATH="+template, "PG_CMD="+tc.command)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("driver failed: %v\n%s", err, out)

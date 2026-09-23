@@ -2,10 +2,13 @@ package claudecode_test
 
 import (
 	"encoding/json"
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -404,17 +407,64 @@ func TestGenerateSettings_SandboxEnabled(t *testing.T) {
 	if s.Sandbox == nil {
 		t.Fatal("sandbox should be present when enabled")
 	}
-	if !containsRule(s.Sandbox.WriteDeny, "/etc") {
-		t.Error("sandbox writeDeny should contain /etc")
+	if !s.Sandbox.Enabled {
+		t.Error("sandbox.enabled should be true")
 	}
-	if !containsRule(s.Sandbox.WriteDeny, "/usr") {
-		t.Error("sandbox writeDeny should contain /usr")
+	if s.Sandbox.Filesystem == nil || s.Sandbox.Network == nil {
+		t.Fatalf("sandbox filesystem and network blocks should be present, got %+v", s.Sandbox)
 	}
-	if !containsRule(s.Sandbox.NetAllow, "github.com") {
-		t.Error("sandbox netAllow should contain github.com")
+	if !containsRule(s.Sandbox.Filesystem.DenyWrite, "/etc") {
+		t.Error("sandbox.filesystem.denyWrite should contain /etc")
 	}
-	if !containsRule(s.Sandbox.NetAllow, "registry.npmjs.org") {
-		t.Error("sandbox netAllow should contain registry.npmjs.org")
+	if !containsRule(s.Sandbox.Filesystem.DenyWrite, "/usr") {
+		t.Error("sandbox.filesystem.denyWrite should contain /usr")
+	}
+	if !containsRule(s.Sandbox.Network.AllowedDomains, "github.com") {
+		t.Error("sandbox.network.allowedDomains should contain github.com")
+	}
+	if !containsRule(s.Sandbox.Network.AllowedDomains, "registry.npmjs.org") {
+		t.Error("sandbox.network.allowedDomains should contain registry.npmjs.org")
+	}
+}
+
+// TestGenerateSettings_SandboxSchema pins the emitted sandbox block to Claude
+// Code's settings schema (sandbox.enabled, sandbox.filesystem.*,
+// sandbox.network.allowedDomains). Keys Claude Code does not read would leave
+// the block silently inert.
+func TestGenerateSettings_SandboxSchema(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, &ecosystem.MockModule{
+		NameVal:          "aws",
+		DisplayNameVal:   "AWS",
+		TierVal:          2,
+		ReadDenyRulesVal: []string{"~/.aws/credentials"},
+	})
+	answers := types.WizardAnswers{
+		PermissionLevel: "standard",
+		Languages:       []types.LanguageChoice{{Name: "aws"}},
+	}
+	gf := mustGenerateSettings(t, answers, reg,
+		claudecode.WithSandbox(true),
+		claudecode.WithAllowedDomains("github.com"),
+	)
+	var raw struct {
+		Sandbox map[string]any `json:"sandbox"`
+	}
+	if err := json.Unmarshal(gf.Content, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	want := map[string]any{
+		"enabled": true,
+		"filesystem": map[string]any{
+			"denyWrite": []any{"/etc", "/usr"},
+			"denyRead":  []any{"~/.aws/credentials"},
+		},
+		"network": map[string]any{
+			"allowedDomains": []any{"github.com"},
+		},
+	}
+	if !reflect.DeepEqual(raw.Sandbox, want) {
+		t.Errorf("sandbox block = %v, want %v", raw.Sandbox, want)
 	}
 }
 
@@ -856,11 +906,45 @@ func TestGenerateSettings_CloudAWSReadDeny(t *testing.T) {
 	if s.Sandbox == nil {
 		t.Fatal("sandbox should be present when enabled")
 	}
-	if !containsRule(s.Sandbox.ReadDeny, "~/.aws/credentials") {
-		t.Error("sandbox readDeny should contain ~/.aws/credentials")
+	if s.Sandbox.Filesystem == nil {
+		t.Fatal("sandbox.filesystem should be present")
 	}
-	if !containsRule(s.Sandbox.ReadDeny, "~/.aws/sso/cache") {
-		t.Error("sandbox readDeny should contain ~/.aws/sso/cache")
+	if !containsRule(s.Sandbox.Filesystem.DenyRead, "~/.aws/credentials") {
+		t.Error("sandbox.filesystem.denyRead should contain ~/.aws/credentials")
+	}
+	if !containsRule(s.Sandbox.Filesystem.DenyRead, "~/.aws/sso/cache") {
+		t.Error("sandbox.filesystem.denyRead should contain ~/.aws/sso/cache")
+	}
+}
+
+// TestGenerateSettings_ReadDenyBecomesPermissionDeny verifies that module
+// read-deny paths are enforced as Read(...) permission deny rules for every
+// preset, independent of the (opt-in) Bash sandbox.
+func TestGenerateSettings_ReadDenyBecomesPermissionDeny(t *testing.T) {
+	t.Parallel()
+	for _, preset := range []string{"minimal", "standard", "permissive", "supply-chain-only", "custom"} {
+		t.Run(preset, func(t *testing.T) {
+			t.Parallel()
+			reg := newTestRegistry(t, &ecosystem.MockModule{
+				NameVal:        "aws",
+				DisplayNameVal: "AWS",
+				TierVal:        2,
+				ReadDenyRulesVal: []string{
+					"~/.aws/credentials",
+					"~/.aws/sso/cache/*",
+				},
+			})
+			answers := types.WizardAnswers{
+				PermissionLevel: preset,
+				Languages:       []types.LanguageChoice{{Name: "aws"}},
+			}
+			s := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, reg))
+			for _, want := range []string{"Read(~/.aws/credentials)", "Read(~/.aws/sso/cache/**)"} {
+				if !containsRule(s.Permissions.Deny, want) {
+					t.Errorf("deny should contain %s, got %v", want, s.Permissions.Deny)
+				}
+			}
+		})
 	}
 }
 
@@ -935,4 +1019,36 @@ func searchStr(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestGenerateSettings_UnknownPresetErrors verifies an unknown permission
+// preset is rejected rather than silently replaced by "standard", which would
+// grant Write(*)/Edit(*) to a configuration that asked for something else.
+func TestGenerateSettings_UnknownPresetErrors(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{PermissionLevel: "restricted"}
+	_, err := claudecode.GenerateSettings(answers, ecosystem.NewRegistry(), claudecode.NewConfig())
+	if err == nil {
+		t.Fatal("expected an error for an unknown permission preset")
+	}
+	if !strings.Contains(err.Error(), `"restricted"`) {
+		t.Errorf("error should name the unknown preset, got %v", err)
+	}
+}
+
+// TestCatalogCompliancePermissionLevelsAreDefinedPresets guards the catalog:
+// every compliance level's claude_permission_level must name a permission
+// preset that GenerateSettings can build.
+func TestCatalogCompliancePermissionLevelsAreDefinedPresets(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatalf("loading catalog: %v", err)
+	}
+	for name, level := range cat.ComplianceLevels() {
+		if _, ok := cat.PermissionPreset(level.ClaudePermissionLevel); !ok {
+			t.Errorf("compliance level %q uses claude_permission_level %q, which is not a defined permission preset",
+				name, level.ClaudePermissionLevel)
+		}
+	}
 }

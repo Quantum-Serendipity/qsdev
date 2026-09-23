@@ -25,6 +25,7 @@ func qsdevOpsTools() []Tool {
 		qsdevSkillTool(app+"-status", app+" status", "Show "+app+" configuration status and security posture"),
 		qsdevSkillTool(app+"-tools", app+" tools", "List available "+app+" tools organized by category"),
 		qsdevSkillTool(app+"-detect", app+" detect", "Detect project ecosystems, languages, and frameworks"),
+		qsdevSkillTool(app+"-add-dep", app+" add-dep", "Add a dependency or package to the project safely"),
 	}
 }
 

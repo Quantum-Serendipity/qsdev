@@ -21,10 +21,19 @@ type permissions struct {
 }
 
 type sandboxConfig struct {
-	WriteDeny  []string `json:"writeDeny,omitempty"`
-	WriteAllow []string `json:"writeAllow,omitempty"`
-	ReadDeny   []string `json:"readDeny,omitempty"`
-	NetAllow   []string `json:"netAllow,omitempty"`
+	Enabled    bool               `json:"enabled"`
+	Filesystem *sandboxFilesystem `json:"filesystem,omitempty"`
+	Network    *sandboxNetwork    `json:"network,omitempty"`
+}
+
+type sandboxFilesystem struct {
+	AllowWrite []string `json:"allowWrite,omitempty"`
+	DenyWrite  []string `json:"denyWrite,omitempty"`
+	DenyRead   []string `json:"denyRead,omitempty"`
+}
+
+type sandboxNetwork struct {
+	AllowedDomains []string `json:"allowedDomains,omitempty"`
 }
 
 type hookMatcher struct {
@@ -120,10 +129,14 @@ func MergeSettings(base, theirs, ours []byte) ([]byte, error) {
 	// permissions.additionalDirectories). Deep-merge the typed permissions back
 	// over theirs' raw permissions so those survive. Modeled arrays (allow/deny)
 	// are always emitted by the typed result and therefore remain authoritative.
-	if permMerged, err := deepMergePermissions(theirsRaw["permissions"], typedRaw["permissions"]); err != nil {
-		return nil, err
-	} else if permMerged != nil {
-		merged["permissions"] = permMerged
+	// The same applies to "sandbox", whose unmodeled children (e.g.
+	// excludedCommands, network.allowUnixSockets) must survive the overlay.
+	for _, key := range []string{"permissions", "sandbox"} {
+		if objMerged, err := deepMergeObject(key, theirsRaw[key], typedRaw[key]); err != nil {
+			return nil, err
+		} else if objMerged != nil {
+			merged[key] = objMerged
+		}
 	}
 
 	// Remove keys that are zero-valued in the typed result but present from theirs.
@@ -142,26 +155,25 @@ func MergeSettings(base, theirs, ours []byte) ([]byte, error) {
 	return append(out, '\n'), nil
 }
 
-// deepMergePermissions deep-merges the typed (merged) permissions object over
-// theirs' raw permissions so unknown nested keys survive. It returns nil when
+// deepMergeObject deep-merges the typed (merged) object for the top-level key
+// over theirs' raw object so unknown nested keys survive. It returns nil when
 // there is nothing typed to overlay (leaving any theirs value untouched).
-func deepMergePermissions(theirsRaw, typedRaw json.RawMessage) (json.RawMessage, error) {
+func deepMergeObject(key string, theirsRaw, typedRaw json.RawMessage) (json.RawMessage, error) {
 	if len(typedRaw) == 0 {
 		return nil, nil
 	}
-	var theirsPerms, typedPerms map[string]any
+	var theirsObj, typedObj map[string]any
 	if len(theirsRaw) > 0 {
-		if err := json.Unmarshal(theirsRaw, &theirsPerms); err != nil {
-			return nil, fmt.Errorf("parsing theirs permissions: %w", err)
+		if err := json.Unmarshal(theirsRaw, &theirsObj); err != nil {
+			return nil, fmt.Errorf("parsing theirs %s: %w", key, err)
 		}
 	}
-	if err := json.Unmarshal(typedRaw, &typedPerms); err != nil {
-		return nil, fmt.Errorf("parsing merged permissions: %w", err)
+	if err := json.Unmarshal(typedRaw, &typedObj); err != nil {
+		return nil, fmt.Errorf("parsing merged %s: %w", key, err)
 	}
-	mergedPerms := DeepMergeJSON(theirsPerms, typedPerms)
-	out, err := json.Marshal(mergedPerms)
+	out, err := json.Marshal(DeepMergeJSON(theirsObj, typedObj))
 	if err != nil {
-		return nil, fmt.Errorf("marshaling merged permissions: %w", err)
+		return nil, fmt.Errorf("marshaling merged %s: %w", key, err)
 	}
 	return out, nil
 }
@@ -215,12 +227,31 @@ func mergeSandbox(theirs, ours *sandboxConfig) *sandboxConfig {
 	if ours == nil {
 		return theirs
 	}
-	return &sandboxConfig{
-		WriteDeny:  unionStrings(ours.WriteDeny, theirs.WriteDeny),
-		WriteAllow: unionStrings(ours.WriteAllow, theirs.WriteAllow),
-		ReadDeny:   unionStrings(ours.ReadDeny, theirs.ReadDeny),
-		NetAllow:   unionStrings(ours.NetAllow, theirs.NetAllow),
+	result := &sandboxConfig{Enabled: ours.Enabled || theirs.Enabled}
+	if ours.Filesystem != nil || theirs.Filesystem != nil {
+		of, tf := derefOr(ours.Filesystem), derefOr(theirs.Filesystem)
+		result.Filesystem = &sandboxFilesystem{
+			AllowWrite: unionStrings(of.AllowWrite, tf.AllowWrite),
+			DenyWrite:  unionStrings(of.DenyWrite, tf.DenyWrite),
+			DenyRead:   unionStrings(of.DenyRead, tf.DenyRead),
+		}
 	}
+	if ours.Network != nil || theirs.Network != nil {
+		on, tn := derefOr(ours.Network), derefOr(theirs.Network)
+		result.Network = &sandboxNetwork{
+			AllowedDomains: unionStrings(on.AllowedDomains, tn.AllowedDomains),
+		}
+	}
+	return result
+}
+
+// derefOr returns *p, or the zero value when p is nil.
+func derefOr[T any](p *T) T {
+	if p == nil {
+		var zero T
+		return zero
+	}
+	return *p
 }
 
 // findMatcher searches for a hookMatcher by matcher string in a slice.

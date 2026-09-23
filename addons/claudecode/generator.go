@@ -113,6 +113,11 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		if tool.GenerateFunc == nil {
 			continue
 		}
+		// An always-on tool the user force-disabled (`disable --force`
+		// persists EnabledTools[name]=false) must stay disabled on regenerate.
+		if enabled, set := answers.EnabledTools[tool.Name]; set && !enabled {
+			continue
+		}
 		toolFiles, err := tool.GenerateFunc(answers)
 		if err != nil {
 			return nil, fmt.Errorf("generating %s files: %w", tool.Name, err)

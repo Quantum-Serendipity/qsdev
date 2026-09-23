@@ -46,18 +46,15 @@ func generateVersionSentinelFiles(answers types.WizardAnswers, registry *ecosyst
 		})
 	}
 
-	// Seed events.jsonl for MCP server history tool.
-	files = append(files, types.GeneratedFile{
-		Path:     ".version-sentinel/events.jsonl",
-		Content:  []byte{},
-		Mode:     fileutil.ModeReadWrite,
-		Strategy: types.LibraryManaged,
-	})
+	// .version-sentinel/events.jsonl is deliberately NOT generated: it is an
+	// append-only history that vsentinel.LogVersionEvent creates on first
+	// write (O_CREATE) and ReadVersionHistory treats as empty when absent.
+	// Emitting it as a managed file would let every regeneration replace the
+	// recorded history with the empty seed.
 
 	return files, nil
 }
 
 func collectManifestCoverage(answers types.WizardAnswers, registry *ecosystem.Registry) ecosystem.ManifestCoverageReport {
-	modules, configFor := resolveLanguageModules(answers, registry)
-	return ecosystem.AggregateManifestCoverage(modules, configFor)
+	return ecosystem.LanguageManifestCoverage(answers.Languages, registry)
 }

@@ -70,7 +70,7 @@ func postmortemSkillDescription() string {
 }
 
 func collectVerificationCommands(answers types.WizardAnswers, registry *ecosystem.Registry) []string {
-	modules, configFor := resolveLanguageModules(answers, registry)
+	modules, configFor := ecosystem.ResolveLanguageModules(answers.Languages, registry)
 	agg := ecosystem.AggregateVerificationCommands(modules, configFor)
 	return sliceutil.Dedup(agg.All())
 }

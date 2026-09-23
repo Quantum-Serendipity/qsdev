@@ -10,11 +10,11 @@ argument-hint: "[--profile <name>]"
 
 ## Current Environment
 
-!`qsdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
+!`qsdev devenv doctor --json 2>/dev/null || echo "ERROR: 'qsdev devenv doctor --json' exited with status $?. Any output above may be partial; do not treat missing data as empty."`
 
 !`ls -la .claude/ devenv.nix devenv.yaml .envrc .mcp.json 2>/dev/null || echo 'no existing config files'`
 
-!`qsdev detect --json 2>/dev/null || echo '{"ecosystems": []}'`
+!`ls -a`
 
 ## Instructions
 
@@ -27,7 +27,7 @@ argument-hint: "[--profile <name>]"
 
 3. **Get confirmation**: Present the planned changes and ask the user to confirm before proceeding.
 
-4. **Run onboarding**: Execute `qsdev init --merge --non-interactive` to merge qsdev configuration into the existing project without overwriting user customizations. Pass through any `--profile` argument.
+4. **Run onboarding**: Execute `qsdev init --yes` to merge qsdev configuration into the existing project; without `--force` it does not overwrite user customizations. Pass through any `--profile` argument.
 
 5. **Verify results**: Run `qsdev devenv doctor --json` to confirm onboarding succeeded. Compare before and after states.
 

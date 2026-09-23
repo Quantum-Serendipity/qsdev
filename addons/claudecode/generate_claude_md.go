@@ -9,6 +9,7 @@ import (
 	"text/template"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -114,13 +115,22 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 		data.ProjectDescription = "Development environment managed by " + branding.Get().AppName + "."
 	}
 
+	// Operation skills, consulting workflows/agents and the qsdev reference are
+	// Full-tier artifacts (see Generate's Gate 2). Advertise each only when
+	// Generate will actually emit it, using the same gates, so CLAUDE.md never
+	// points at a skill, agent or @-import that does not exist.
+	full := resolveTier(answers) >= tier.Full
+
 	// Skills from qsdev-ops manifest.
 	opsManifest, err := loadQsdevOpsManifest()
 	if err != nil {
 		slog.Warn("failed to load ops manifest", "error", err)
 	}
-	if opsManifest != nil {
+	if full && opsManifest != nil {
 		for _, s := range opsManifest.Skills {
+			if !opsSkillEnabled(answers, s.Name) {
+				continue
+			}
 			data.AvailableSkills = append(data.AvailableSkills, SkillSummary{
 				Name: "/" + s.Name, Description: s.Description, Category: branding.Get().AppName + "-operations",
 			})
@@ -132,10 +142,10 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 	if err != nil {
 		slog.Warn("failed to load consulting skill manifest", "error", err)
 	}
-	if consultingManifest != nil {
+	if full && consultingManifest != nil {
 		for _, s := range consultingManifest.Skills {
 			toolKey := "consulting-workflow-" + s.Name
-			if answers.EnabledTools != nil && answers.EnabledTools[toolKey] {
+			if answers.EnabledTools[toolKey] {
 				data.AvailableSkills = append(data.AvailableSkills, SkillSummary{
 					Name: "/" + s.Name, Description: s.Description, Category: "consulting-workflows",
 				})
@@ -148,10 +158,10 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 	if err != nil {
 		slog.Warn("failed to load agent manifest", "error", err)
 	}
-	if agentManifest != nil {
+	if full && agentManifest != nil {
 		for _, a := range agentManifest.Agents {
 			toolKey := "consulting-agent-" + a.Name
-			if answers.EnabledTools != nil && answers.EnabledTools[toolKey] {
+			if answers.EnabledTools[toolKey] {
 				data.AvailableAgents = append(data.AvailableAgents, AgentSummary{
 					Name: "@" + a.Name, Description: a.Description,
 				})
@@ -188,7 +198,7 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 	if data.ModelSize == ModelSonnet && answers.ModelSize == "" {
 		data.ModelSize = ModelOpus
 	}
-	data.HasGdevReference = true
+	data.HasGdevReference = full
 
 	// LSP is always available at this tier (nixd is always-on, and every qsdev
 	// project has .nix files), so the navigation pointer always renders.
@@ -236,6 +246,9 @@ func buildToolSections(answers types.WizardAnswers, ecoReg *ecosystem.Registry) 
 		if !ok {
 			continue
 		}
+		if !producesFiles(tool, answers) {
+			continue
+		}
 		for _, owned := range tool.OwnedFiles {
 			if owned.Path != "CLAUDE.md" || owned.SectionID == "" {
 				continue
@@ -268,13 +281,22 @@ func buildToolSections(answers types.WizardAnswers, ecoReg *ecosystem.Registry) 
 	return sections
 }
 
-func renderSectionTemplate(tmplStr string, data map[string]any) (string, error) {
-	funcMap := template.FuncMap{
-		"join": func(sep string, items []string) string {
-			return strings.Join(items, sep)
-		},
+// producesFiles reports whether an enabled tool emits anything for answers. A
+// tool whose GenerateFunc yields no files (e.g. a Full-tier-only skill at the
+// Standard tier) has nothing for its CLAUDE.md section to point at, so the
+// section is not advertised. Tools without a GenerateFunc (MCP servers, hook
+// presets) and generation errors, which surface from Generate itself, keep
+// their section.
+func producesFiles(tool *toolreg.Tool, answers types.WizardAnswers) bool {
+	if tool.GenerateFunc == nil {
+		return true
 	}
-	t, err := template.New("section").Funcs(funcMap).Parse(tmplStr)
+	files, err := tool.GenerateFunc(answers)
+	return err != nil || len(files) > 0
+}
+
+func renderSectionTemplate(tmplStr string, data map[string]any) (string, error) {
+	t, err := template.New("section").Funcs(tmpl.MarkdownFuncMap()).Parse(tmplStr)
 	if err != nil {
 		return "", fmt.Errorf("parsing section template: %w", err)
 	}

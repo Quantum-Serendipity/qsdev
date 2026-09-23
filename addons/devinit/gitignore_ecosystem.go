@@ -150,6 +150,11 @@ var securityGitignoreEntries = []string{
 	".env.*",
 	"*.pem",
 	"*.key",
+	// Claude Code hook audit logs record full command lines, which can carry
+	// credentials (tokens in index URLs, NPM_TOKEN=...). The second entry is
+	// the package guard's location in older templates.
+	".claude/logs/",
+	".claude/hook-audit.log",
 }
 
 // gitignoreEntriesForLanguages returns the combined .gitignore entries for

@@ -71,7 +71,7 @@ def fake_urlopen(req, timeout=None):
         return _Resp(json.dumps({
             "info": {"version": "1.0.0"},
             "urls": [{"upload_time_iso_8601": _published(name)}],
-            "releases": {"1.0.0": [{"upload_time_iso_8601": _published(name)}]},
+            "releases": {v: [{"upload_time_iso_8601": _published(name)}] for v in ("1.0.0", "2.31.0")},
         }).encode())
     if "crates.io" in url:
         name = urllib.parse.unquote(url.split("/crates/", 1)[1].split("/", 1)[0])

@@ -1236,7 +1236,13 @@ permission_deny_rules:
         - "Bash(nix-env --uninstall *)"
         - "Bash(nix profile install *)"
         - "Bash(nix profile add *)"
+        - "Bash(nix profile upgrade *)"
         - "Bash(nix profile remove *)"
+        # Global options may precede the subcommand
+        # (`nix --extra-experimental-features 'nix-command flakes' profile add`).
+        - "Bash(nix * profile install *)"
+        - "Bash(nix * profile add *)"
+        - "Bash(nix * profile upgrade *)"
         - "Bash(cachix use *)"
     system:
         - "Bash(apt install *)"
@@ -1600,6 +1606,13 @@ permission_ask_rules:
         - "Bash(deno install *)"
         - "Bash(deno install)"
         - "Bash(deno remove *)"
+        # Global options before the verb (`npm -g install`, `pnpm --filter web add`).
+        - "Bash(npm -* install *)"
+        - "Bash(npm -* i *)"
+        - "Bash(pnpm -* add *)"
+        - "Bash(pnpm -* install *)"
+        - "Bash(yarn workspace * add *)"
+        - "Bash(yarn --cwd * add *)"
     python:
         - "Bash(pip install *)"
         - "Bash(pip install)"
@@ -1619,10 +1632,28 @@ permission_ask_rules:
         - "Bash(uv sync *)"
         - "Bash(uv sync)"
         - "Bash(uv remove *)"
+        - "Bash(pip -* install *)"
+        - "Bash(pip3 -* install *)"
+        - "Bash(uv -* add *)"
+        - "Bash(uv -* pip install *)"
+        # Every other Python installer the package guard models (poetry is a
+        # catalog package manager; uvx / pipx run / uv run --with fetch and run).
+        - "Bash(poetry add *)"
+        - "Bash(pdm add *)"
+        - "Bash(pipenv install *)"
+        - "Bash(pipenv install)"
+        - "Bash(pipx run *)"
+        - "Bash(pipx inject *)"
+        - "Bash(uvx *)"
+        - "Bash(uv tool install *)"
+        - "Bash(uv tool run *)"
+        - "Bash(uv run --with *)"
     rust:
         - "Bash(cargo add *)"
         - "Bash(cargo install *)"
         - "Bash(cargo install)"
+        - "Bash(cargo +* install *)"
+        - "Bash(cargo -* install *)"
     go:
         - "Bash(go get *)"
         - "Bash(go install *)"
@@ -1653,6 +1684,8 @@ permission_ask_rules:
         - "Bash(composer run-script *)"
         - "Bash(nix run *)"
         - "Bash(nix shell *)"
+        - "Bash(nix-shell -p *)"
+        - "Bash(nix-shell --packages *)"
         - "Bash(nix build *)"
         - "Bash(nix build)"
     standard_base:

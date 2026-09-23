@@ -338,8 +338,8 @@ func TestAssessDefenseLayers_AgeGating(t *testing.T) {
 		t.Error("age-gating layer not found")
 	})
 
-	// W027: the guard has no age check for Go (or Ruby, PHP, Java, ...), so
-	// a project using one is only partly age-gated, and the report says which.
+	// W027: the guard has no age check for Java (or .NET, ...), so a project
+	// using one is only partly age-gated, and the report says which.
 	t.Run("partial for ecosystems the guard does not age-check", func(t *testing.T) {
 		enabledTools := map[string]bool{"attach-guard": true}
 		genState := types.GeneratedState{
@@ -353,8 +353,8 @@ func TestAssessDefenseLayers_AgeGating(t *testing.T) {
 			wantStatus LayerStatus
 			wantInText string
 		}{
-			{"go", types.DetectedProject{HasGoMod: true}, LayerPartial, "not for: go"},
-			{"go and javascript", types.DetectedProject{HasGoMod: true, HasPackageJSON: true}, LayerPartial, "not for: go"},
+			{"go", types.DetectedProject{HasGoMod: true}, LayerEnabled, ""},
+			{"java and javascript", types.DetectedProject{HasPomXML: true, HasPackageJSON: true}, LayerPartial, "not for: java"},
 			{"java", types.DetectedProject{HasPomXML: true}, LayerPartial, "java"},
 			{"javascript only", types.DetectedProject{HasPackageJSON: true}, LayerEnabled, ""},
 			{"python and rust", types.DetectedProject{HasPyProject: true, HasCargoToml: true}, LayerEnabled, ""},

@@ -113,13 +113,13 @@ func TestPackageGuard_EndToEnd(t *testing.T) {
 		keepsDescription string
 	}{
 		{name: "clean npm install is rewritten with safety flags", tool: "Bash", input: bash("npm install left-pad"),
-			want: "allow", rewrittenHas: "npm install left-pad --ignore-scripts", wantLookupFor: "left-pad"},
+			want: "ask", rewrittenHas: "npm install --ignore-scripts left-pad", wantLookupFor: "left-pad"},
 		{name: "vulnerable package", tool: "Bash", input: bash("npm install evil"), env: []string{"PG_VULN=evil"},
 			want: "deny", reasonHas: "GHSA-stub-0001"},
 		{name: "freshly published package", tool: "Bash", input: bash("pip install fresh"), env: []string{"PG_FRESH=fresh"},
 			want: "deny", reasonHas: "days ago"},
 		{name: "pinned version is checked", tool: "Bash", input: bash("pip install requests==2.31.0"),
-			want: "allow", rewrittenHas: "--only-binary :all:", wantLookupFor: "requests"},
+			want: "ask", rewrittenHas: "pip install --only-binary :all: requests==2.31.0", wantLookupFor: "requests"},
 		{name: "network failure fails closed", tool: "Bash", input: bash("npm install left-pad"), env: []string{"PG_URL_ERROR=1"},
 			want: "deny", reasonHas: "Failing closed"},
 		{name: "internal error fails closed", tool: "Bash", input: bash("npm install left-pad"), env: []string{"PG_INTERNAL_ERROR=1"},
@@ -127,7 +127,7 @@ func TestPackageGuard_EndToEnd(t *testing.T) {
 		{name: "imperative nix install", tool: "Bash", input: bash("nix-env -iA nixpkgs.hello"), want: "deny", reasonHas: "nix-env"},
 		{name: "not an install", tool: "Bash", input: bash("go test ./..."), want: "allow"},
 		{name: "compound command rewrites the install segment", tool: "Bash", input: bash("cd web && npm install left-pad && npm test"),
-			want: "allow", rewrittenHas: "npm install left-pad --ignore-scripts &&"},
+			want: "ask", rewrittenHas: "npm install --ignore-scripts left-pad &&"},
 		// W033: the same commands through PowerShell and Monitor.
 		{name: "powershell vulnerable package", tool: "PowerShell", input: bash("npm install evil"), env: []string{"PG_VULN=evil"},
 			want: "deny", reasonHas: "GHSA-stub-0001"},
@@ -135,7 +135,7 @@ func TestPackageGuard_EndToEnd(t *testing.T) {
 			env: []string{"PG_VULN=evil"}, want: "deny", reasonHas: "GHSA-stub-0001"},
 		{name: "monitor rewrite keeps the other input fields", tool: "Monitor",
 			input: map[string]any{"command": "npm install left-pad", "description": "watch install"},
-			want:  "allow", rewrittenHas: "--ignore-scripts", keepsDescription: "watch install"},
+			want:  "ask", rewrittenHas: "--ignore-scripts", keepsDescription: "watch install"},
 		{name: "powershell npm.cmd launcher", tool: "PowerShell", input: bash("npm.cmd install evil"), env: []string{"PG_VULN=evil"},
 			want: "deny", reasonHas: "GHSA-stub-0001"},
 		{name: "powershell windows path to pip.exe", tool: "PowerShell", input: bash(`C:\Python312\Scripts\pip.exe install evil`),
@@ -207,8 +207,8 @@ func TestPackageGuard_RewrittenCommandRuns(t *testing.T) {
 		command string
 		want    string
 	}{
-		{"npm install left-pad", "npm [install] [left-pad] [--ignore-scripts]"},
-		{"pip install requests==2.31.0", "pip [install] [requests==2.31.0] [--only-binary] [:all:]"},
+		{"npm install left-pad", "npm [install] [--ignore-scripts] [left-pad]"},
+		{"pip install requests==2.31.0", "pip [install] [--only-binary] [:all:] [requests==2.31.0]"},
 	}
 	for _, tc := range cases {
 		res := runPackageGuard(t, "Bash", map[string]any{"command": tc.command})

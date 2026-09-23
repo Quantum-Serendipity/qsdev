@@ -12,7 +12,8 @@ import (
 // pgJSDriver imports the package-guard hook template as a module with all
 // network access replaced by a failing stub, then runs one of:
 //   - detect: detect_install_commands, printing each (manager, packages)
-//   - flags:  apply_safety_flags for PG_MGR, printing the rewritten command
+//   - flags:  apply_safety_flags on the command's detections, printing the
+//     rewritten command
 //   - main:   the full hook on a Bash PreToolUse envelope, printing its exit
 //     code and stdout
 //
@@ -29,9 +30,9 @@ spec.loader.exec_module(m)
 cmd = os.environ['PG_CMD']
 mode = os.environ['PG_MODE']
 if mode == 'detect':
-    print(json.dumps([{'manager': mgr, 'packages': ps} for _, mgr, _, ps in m.detect_install_commands(cmd)]))
+    print(json.dumps([{'manager': d.manager, 'packages': d.packages} for d in m.detect_install_commands(cmd)]))
 elif mode == 'flags':
-    print(json.dumps({'rewritten': m.apply_safety_flags(cmd, os.environ['PG_MGR'])}))
+    print(json.dumps({'rewritten': m.apply_safety_flags(cmd, m.detect_install_commands(cmd))[0]}))
 else:
     sys.stdin = io.StringIO(json.dumps({'tool_name': 'Bash', 'tool_input': {'command': cmd}}))
     out = io.StringIO()
@@ -84,7 +85,7 @@ func TestPackageGuard_BunIgnoresScripts(t *testing.T) {
 		command string
 		want    string
 	}{
-		{"bun add left-pad", "bun add left-pad --ignore-scripts"},
+		{"bun add left-pad", "bun add --ignore-scripts left-pad"},
 		{"bun install", "bun install --ignore-scripts"},
 		{"cd web && bun i", "cd web && bun i --ignore-scripts"},
 	}
@@ -144,7 +145,8 @@ func TestPackageGuard_DenoRegistryPackages(t *testing.T) {
 		{"deno x ./scripts/tool.ts", false, nil},
 		{"deno task build", false, nil},
 		{"deno remove npm:left-pad", false, nil},
-		{"deno run --allow-net https://example.com/x.ts", false, nil},
+		// A remote module URL cannot be verified: detected (and asked about), no package.
+		{"deno run --allow-net https://example.com/x.ts", true, []string{}},
 		{"deno test", false, nil},
 		{"deno fmt", false, nil},
 	}

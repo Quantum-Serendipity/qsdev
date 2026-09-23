@@ -1,6 +1,11 @@
 package catalog
 
-import "github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+import (
+	"maps"
+	"slices"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+)
 
 // --- Validation accessors ---
 
@@ -51,6 +56,12 @@ func (c *Catalog) DataClassifications() []string {
 	out := make([]string, len(c.validation.DataClassifications))
 	copy(out, c.validation.DataClassifications)
 	return out
+}
+
+// PackageManagerEcosystems returns the ecosystems that declare package
+// managers, sorted.
+func (c *Catalog) PackageManagerEcosystems() []string {
+	return slices.Sorted(maps.Keys(c.validation.PackageManagers))
 }
 
 // PackageManagers returns the package manager names for an ecosystem.

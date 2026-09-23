@@ -10,12 +10,14 @@ func TestGitignoreEntriesForLanguages_JavaScript(t *testing.T) {
 	entries := gitignoreEntriesForLanguages([]string{"javascript"})
 
 	want := map[string]bool{
-		"node_modules/": true,
-		"dist/":         true,
-		".env":          true,
-		".env.*":        true,
-		"*.pem":         true,
-		"*.key":         true,
+		"node_modules/":          true,
+		"dist/":                  true,
+		".env":                   true,
+		".env.*":                 true,
+		"*.pem":                  true,
+		"*.key":                  true,
+		".claude/logs/":          true,
+		".claude/hook-audit.log": true,
 	}
 
 	if len(entries) != len(want) {
@@ -71,6 +73,11 @@ func TestGitignoreEntriesForLanguages_UnknownLanguage(t *testing.T) {
 	}
 	if !entrySet["*.pem"] {
 		t.Error("missing *.pem for unknown language")
+	}
+	for _, want := range []string{".claude/logs/", ".claude/hook-audit.log"} {
+		if !entrySet[want] {
+			t.Errorf("missing hook audit log entry %q", want)
+		}
 	}
 }
 

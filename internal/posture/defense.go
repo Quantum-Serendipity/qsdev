@@ -106,9 +106,15 @@ func (in assessmentInput) hasLockFileAuditHook() bool {
 }
 
 // GuardAgeCheckedLanguages are the ecosystems whose registry publication age
-// package-guard.py checks (npm, PyPI and crates.io). The claudecode addon's
-// tests keep this list in sync with the hook template.
-var GuardAgeCheckedLanguages = []string{ecosystem.NameJavaScript, ecosystem.NamePython, ecosystem.NameRust}
+// package-guard.py checks (npm, PyPI, crates.io, the Go module proxy,
+// RubyGems, Packagist and pub.dev; dart/flutter installs are currently denied
+// outright, which is stricter still). NuGet publishes no dates in the index
+// the guard reads, so .NET is not age-gated. The claudecode addon's tests keep
+// this list in sync with the hook template.
+var GuardAgeCheckedLanguages = []string{
+	ecosystem.NameJavaScript, ecosystem.NamePython, ecosystem.NameRust, ecosystem.NameGo,
+	ecosystem.NameRuby, ecosystem.NamePHP, ecosystem.NameDart,
+}
 
 // ageUngatedLanguages lists the detected ecosystems that install packages (their
 // module declares package managers) but whose publication age package-guard.py

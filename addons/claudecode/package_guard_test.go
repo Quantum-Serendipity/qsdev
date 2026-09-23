@@ -27,8 +27,8 @@ spec.loader.exec_module(m)
 cmd = os.environ['PG_CMD']
 dets = m.detect_install_commands(cmd)
 pkgs = []
-for eco, mgr, seg, ps in dets:
-    pkgs.extend(ps)
+for d in dets:
+    pkgs.extend(d.packages)
 print(json.dumps({'detected': len(dets) > 0, 'packages': pkgs}))
 `
 
@@ -252,15 +252,26 @@ func TestPackageGuard_AgeCheckedEcosystemsMatchPosture(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(data)
-	start := strings.Index(src, "# 4. Check publication age")
-	end := strings.Index(src, "if age_days is not None")
-	if start < 0 || end < start {
-		t.Fatal("age-check block not found in package-guard.py")
+	block := regexp.MustCompile(`(?s)\n_RESOLVERS = \{(.*?)\n\}`).FindStringSubmatch(src)
+	if block == nil {
+		t.Fatal("_RESOLVERS table not found in package-guard.py")
 	}
 	// OSV ecosystem name -> qsdev language name.
-	languageOf := map[string]string{"npm": "javascript", "PyPI": "python", "crates.io": "rust"}
+	languageOf := map[string]string{
+		"npm": "javascript", "PyPI": "python", "crates.io": "rust", "Go": "go",
+		"RubyGems": "ruby", "Packagist": "php", "Pub": "dart", "NuGet": "dotnet",
+	}
 	var checked []string
-	for _, m := range regexp.MustCompile(`ecosystem == "([^"]+)"`).FindAllStringSubmatch(src[start:end], -1) {
+	for _, m := range regexp.MustCompile(`"([^"]+)":\s*(_resolve_\w+)`).FindAllStringSubmatch(block[1], -1) {
+		// A resolver age-checks when it reports a publication age (the flat
+		// NuGet index carries no dates, so its resolver returns None).
+		body := regexp.MustCompile(`(?s)\ndef ` + m[2] + `\(.*?\n\S`).FindString(src)
+		if body == "" {
+			t.Fatalf("resolver %s not found in package-guard.py", m[2])
+		}
+		if !strings.Contains(body, "_age_days(") {
+			continue
+		}
 		lang, ok := languageOf[m[1]]
 		if !ok {
 			t.Fatalf("package-guard.py age-checks %q; map it to its language here and add it to posture.GuardAgeCheckedLanguages", m[1])

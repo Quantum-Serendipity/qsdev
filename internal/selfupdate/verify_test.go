@@ -2,7 +2,14 @@ package selfupdate
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -62,27 +69,94 @@ func TestCosignVerifyArgs_ExactIdentityPin(t *testing.T) {
 	}
 }
 
-func TestVerifySigstoreBundle_MockedVerifier(t *testing.T) {
-	oldFn := verifySigstoreBundle
-	t.Cleanup(func() { verifySigstoreBundle = oldFn })
+// fakeCosignRelease serves a sigstore bundle asset from an httptest server and
+// puts a fake `cosign` (exiting with exitCode and recording its argv) first on
+// PATH. It returns the release and the argv record file.
+func fakeCosignRelease(t *testing.T, exitCode int) (*Release, string) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"bundle":"fake"}`))
+	}))
+	t.Cleanup(srv.Close)
 
-	verifySigstoreBundle = func(ctx context.Context, release *Release, checksumsPath, tmpDir string) (*VerificationResult, error) {
-		return &VerificationResult{Verified: true, Message: "mock verified"}, nil
+	binDir := t.TempDir()
+	argvFile := filepath.Join(t.TempDir(), "argv")
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\necho 'fake cosign failure' >&2\nexit %d\n", argvFile, exitCode)
+	if err := os.WriteFile(filepath.Join(binDir, "cosign"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	return &Release{
+		Version: "1.0.0",
+		TagName: "v1.0.0",
+		Assets:  []Asset{{Name: sigstoreBundleName, URL: srv.URL + "/bundle"}},
+	}, argvFile
+}
+
+func TestVerifySigstoreBundleImpl_Cosign(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake cosign is a shell script")
 	}
 
+	tests := []struct {
+		name     string
+		exitCode int
+		wantErr  bool
+	}{
+		{name: "cosign rejects the bundle: fail closed", exitCode: 1, wantErr: true},
+		{name: "cosign accepts the bundle: verified", exitCode: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			release, argvFile := fakeCosignRelease(t, tt.exitCode)
+			checksums := filepath.Join(t.TempDir(), "checksums.txt")
+			tmpDir := t.TempDir()
+
+			result, err := verifySigstoreBundleImpl(context.Background(), release, checksums, tmpDir)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error when cosign verification fails, got %+v", result)
+				}
+				if !strings.Contains(err.Error(), "fake cosign failure") {
+					t.Errorf("error %q should carry cosign's stderr", err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if !result.Verified || result.Skipped {
+					t.Errorf("result = %+v, want Verified", result)
+				}
+			}
+
+			argv, err := os.ReadFile(argvFile)
+			if err != nil {
+				t.Fatalf("fake cosign was not invoked: %v", err)
+			}
+			got := strings.Split(strings.TrimSpace(string(argv)), "\n")
+			// The bundle is downloaded into tmpDir under its asset name.
+			want := cosignVerifyArgs(release.TagName, tmpDir+"/"+sigstoreBundleName, checksums)
+			if !slices.Equal(got, want) {
+				t.Errorf("cosign argv = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestVerifySigstoreBundleImpl_NoCosign(t *testing.T) {
 	release := &Release{
 		Version: "1.0.0",
 		TagName: "v1.0.0",
-		Assets: []Asset{
-			{Name: sigstoreBundleName, URL: "https://example.com/bundle.json"},
-		},
+		Assets:  []Asset{{Name: sigstoreBundleName, URL: "https://example.invalid/bundle"}},
 	}
+	t.Setenv("PATH", t.TempDir()) // no cosign anywhere
 
-	result, err := verifySigstoreBundle(context.Background(), release, "/tmp/checksums.txt", t.TempDir())
+	result, err := verifySigstoreBundleImpl(context.Background(), release, "/tmp/checksums.txt", t.TempDir())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !result.Verified {
-		t.Error("expected Verified=true from mock")
+	if !result.Skipped || result.Verified {
+		t.Errorf("result = %+v, want Skipped (cosign absent)", result)
 	}
 }

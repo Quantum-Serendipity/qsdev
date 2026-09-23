@@ -285,3 +285,57 @@ func TestUpdateDevenvNix_DiffContent(t *testing.T) {
 		t.Errorf("expected diff to contain '@@', got:\n%s", diff)
 	}
 }
+
+// TestUpdateDevenvNix_DryRunNeverMutates proves DryRun is honored in every
+// branch: no overwrite, no sidecar write, and no stale-sidecar cleanup.
+func TestUpdateDevenvNix_DryRunNeverMutates(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		status     types.ModificationStatus
+		force      bool
+		wantAction NixUpdateAction
+	}{
+		{name: "unmodified", status: types.Unmodified, wantAction: NixRegenerated},
+		{name: "new", status: types.New, wantAction: NixRegenerated},
+		{name: "modified", status: types.Modified, wantAction: NixSidecarCreated},
+		{name: "modified force", status: types.Modified, force: true, wantAction: NixForceOverwritten},
+		{name: "deleted force", status: types.Deleted, force: true, wantAction: NixForceOverwritten},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			nixPath := filepath.Join(dir, "devenv.nix")
+			if tt.status != types.Deleted {
+				writeTestFile(t, dir, "devenv.nix", "original\n")
+			}
+			writeTestFile(t, dir, "devenv.nix.new", "pending user merge\n")
+
+			result, err := UpdateDevenvNix(NixUpdateOptions{
+				ProjectRoot: dir,
+				FilePath:    "devenv.nix",
+				NewContent:  []byte("new content\n"),
+				Status:      tt.status,
+				Force:       tt.force,
+				DryRun:      true,
+			})
+			if err != nil {
+				t.Fatalf("UpdateDevenvNix: %v", err)
+			}
+			if result.Action != tt.wantAction {
+				t.Errorf("Action = %d, want %d", result.Action, tt.wantAction)
+			}
+			if tt.status == types.Deleted {
+				if _, err := os.Stat(nixPath); !os.IsNotExist(err) {
+					t.Error("dry run recreated a deleted devenv.nix")
+				}
+			} else if got := readTestFile(t, nixPath); got != "original\n" {
+				t.Errorf("dry run modified devenv.nix: %q", got)
+			}
+			if got := readTestFile(t, nixPath+".new"); got != "pending user merge\n" {
+				t.Errorf("dry run touched the existing sidecar: %q", got)
+			}
+		})
+	}
+}

@@ -27,8 +27,8 @@ func Command() *cobra.Command {
 		Long: `Check for and install the latest version of qsdev.
 
 By default, checks GitHub for a newer release and, if found, downloads it,
-verifies its checksum, and replaces the current binary. A backup is created
-during the update and restored if anything goes wrong.
+verifies its checksum and signature, test-runs it, and atomically replaces
+the current binary. If anything fails, the current binary is left in place.
 
 Prefer 'qsdev update' which coordinates binary updates with config regeneration.`,
 		SilenceUsage: true,
@@ -56,13 +56,18 @@ Prefer 'qsdev update' which coordinates binary updates with config regeneration.
 					return fmt.Errorf("fetching release %s: %w", version, err)
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "Found release %s\n", release.Version)
+				if IsDowngrade(release.Version, currentVersion) {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: v%s is OLDER than the running v%s; this is a downgrade and may reintroduce fixed bugs or vulnerabilities.\n",
+						release.Version, strings.TrimPrefix(currentVersion, "v"))
+				}
 			} else {
 				// Check for latest.
 				if !force {
 					release, err = CheckForUpdate(ctx, cfg, currentVersion)
 				} else {
-					// Force: skip cache, just fetch latest.
-					release, err = FetchLatestRelease(ctx, cfg)
+					// Force: skip cache, reinstall latest — but never silently
+					// downgrade; --version is the explicit rollback path.
+					release, err = ResolveForcedUpdate(ctx, cfg, currentVersion)
 				}
 				if err != nil {
 					return fmt.Errorf("checking for updates: %w", err)
@@ -85,8 +90,8 @@ Prefer 'qsdev update' which coordinates binary updates with config regeneration.
 		},
 	}
 
-	cmd.Flags().BoolVar(&force, "force", false, "Force update even if already up to date")
-	cmd.Flags().StringVar(&version, "version", "", "Install a specific version (e.g. 1.2.3)")
+	cmd.Flags().BoolVar(&force, "force", false, "Reinstall the latest release even if already up to date (refuses to downgrade)")
+	cmd.Flags().StringVar(&version, "version", "", "Install a specific version (e.g. 1.2.3); may downgrade")
 	cmd.Flags().BoolVar(&strict, "strict", true, "Require a verified release signature before updating")
 	cmd.Flags().BoolVar(&noStrict, "no-strict", false, "Allow updating without signature verification (escape hatch for dev/self-built binaries)")
 

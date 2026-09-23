@@ -3,10 +3,12 @@ package selfupdate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -100,48 +102,202 @@ func TestCheckForUpdate_DevVersion(t *testing.T) {
 	}
 }
 
+// countingReleaseServer serves gh at every path and counts requests.
+func countingReleaseServer(t *testing.T, gh githubRelease) *atomic.Int32 {
+	t.Helper()
+	var count atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gh)
+	}))
+	t.Cleanup(srv.Close)
+	oldBase := apiBaseURL
+	apiBaseURL = srv.URL
+	t.Cleanup(func() { apiBaseURL = oldBase })
+	return &count
+}
+
 func TestCheckForUpdate_CacheHit(t *testing.T) {
-	requestCount := 0
 	gh := githubRelease{
 		TagName: "v2.0.0",
 		HTMLURL: "https://github.com/test/releases/v2.0.0",
+		Body:    "notes",
+		Assets:  []githubAsset{{Name: "checksums.txt", BrowserDownloadURL: "https://example.com/c"}},
 	}
 
+	t.Run("notice path is served from the cache", func(t *testing.T) {
+		requests := countingReleaseServer(t, gh)
+		cfg := testConfig(t)
+		if _, err := CheckForUpdate(context.Background(), cfg, "1.0.0"); err != nil {
+			t.Fatalf("first CheckForUpdate() error: %v", err)
+		}
+		release, err := checkForUpdateNotice(context.Background(), cfg, "1.0.0")
+		if err != nil || release == nil {
+			t.Fatalf("cached notice check = %v, %v; want a release", release, err)
+		}
+		if release.Version != "2.0.0" {
+			t.Errorf("Version = %q, want 2.0.0", release.Version)
+		}
+		if got := requests.Load(); got != 1 {
+			t.Errorf("expected 1 API request (cached), got %d", got)
+		}
+	})
+
+	t.Run("install path returns a complete release", func(t *testing.T) {
+		countingReleaseServer(t, gh)
+		cfg := testConfig(t)
+		if _, err := CheckForUpdate(context.Background(), cfg, "1.0.0"); err != nil {
+			t.Fatalf("first CheckForUpdate() error: %v", err)
+		}
+		release, err := CheckForUpdate(context.Background(), cfg, "1.0.0")
+		if err != nil || release == nil {
+			t.Fatalf("second CheckForUpdate() = %v, %v; want a release", release, err)
+		}
+		if release.TagName != "v2.0.0" || len(release.Assets) != 1 || release.Body != "notes" {
+			t.Errorf("cache hit returned an incomplete release: %+v", release)
+		}
+	})
+
+	t.Run("cached up-to-date answer makes no request", func(t *testing.T) {
+		requests := countingReleaseServer(t, gh)
+		cfg := testConfig(t)
+		for range 2 {
+			if release, err := CheckForUpdate(context.Background(), cfg, "2.0.0"); err != nil || release != nil {
+				t.Fatalf("CheckForUpdate() = %v, %v; want nil, nil", release, err)
+			}
+		}
+		if got := requests.Load(); got != 1 {
+			t.Errorf("expected 1 API request, got %d", got)
+		}
+	})
+}
+
+func TestCheckForUpdateNotice_BacksOffAfterAttempt(t *testing.T) {
+	tests := []struct {
+		name         string
+		attemptedAgo time.Duration
+		wantRequests int32
+	}{
+		{name: "recent unfinished attempt suppresses the request", attemptedAgo: time.Minute, wantRequests: 0},
+		{name: "old attempt allows a new request", attemptedAgo: 2 * attemptBackoff, wantRequests: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requests := countingReleaseServer(t, githubRelease{TagName: "v2.0.0"})
+			cfg := testConfig(t)
+			// An expired successful check plus an attempt that never
+			// completed (e.g. a hook process that exited mid-request).
+			if err := saveCache(cfg, &cachedCheck{
+				CheckedAt:   time.Now().Add(-2 * cfg.CheckInterval),
+				AttemptedAt: time.Now().Add(-tt.attemptedAgo),
+				Owner:       cfg.GitHubOwner,
+				Repo:        cfg.GitHubRepo,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := checkForUpdateNotice(context.Background(), cfg, "1.0.0"); err != nil {
+				t.Fatalf("checkForUpdateNotice() error: %v", err)
+			}
+			if got := requests.Load(); got != tt.wantRequests {
+				t.Errorf("requests = %d, want %d", got, tt.wantRequests)
+			}
+		})
+	}
+}
+
+func TestCheckForUpdate_FailedFetchRecordsAttempt(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount++
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(gh)
+		w.WriteHeader(http.StatusForbidden) // rate limited
 	}))
 	defer srv.Close()
-
 	oldBase := apiBaseURL
 	apiBaseURL = srv.URL
 	defer func() { apiBaseURL = oldBase }()
 
 	cfg := testConfig(t)
-
-	// First call should hit the API.
-	release, err := CheckForUpdate(context.Background(), cfg, "1.0.0")
+	if _, err := checkForUpdateNotice(context.Background(), cfg, "1.0.0"); err == nil {
+		t.Fatal("expected an error for a 403 response")
+	}
+	cached, err := loadCache(cfg)
 	if err != nil {
-		t.Fatalf("first CheckForUpdate() error: %v", err)
+		t.Fatalf("a failed attempt must still be recorded: %v", err)
 	}
-	if release == nil {
-		t.Fatal("first call: expected release, got nil")
+	if time.Since(cached.AttemptedAt) > time.Minute {
+		t.Errorf("AttemptedAt = %v, want now", cached.AttemptedAt)
 	}
-	if requestCount != 1 {
-		t.Errorf("expected 1 API request, got %d", requestCount)
+	if !cached.CheckedAt.IsZero() || cached.Version != "" {
+		t.Errorf("a failed attempt must not record a successful check: %+v", cached)
 	}
+}
 
-	// Second call should use cache.
-	release2, err := CheckForUpdate(context.Background(), cfg, "1.0.0")
-	if err != nil {
-		t.Fatalf("second CheckForUpdate() error: %v", err)
+func TestIsNewerVersion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		candidate, current string
+		want               bool
+	}{
+		{"1.2.4", "1.2.3", true},
+		{"1.2.3", "v1.2.3", false},     // 'v' prefix on the running version
+		{"1.2.3", "v1.2.3+abc", false}, // build metadata ignored
+		{"2.0.0", "v1.10.0", true},
+		{"1.10.0", "1.9.0", true},
+		{"0.9.0", "0.9.0-rc.1", true}, // final release supersedes its rc
+		{"0.9.0-rc.2", "0.9.0-rc.1", true},
+		{"0.9.0-rc.1", "0.9.0", false},
+		{"0.8.0", "v0.8.0-3-gabc1234-dirty", false}, // describe build is after its tag
+		{"0.8.0", "v0.8.0-dirty", false},
+		{"0.8.1", "v0.8.0-3-gabc1234", true},
+		{"garbage", "1.0.0", false},
+		{"", "1.0.0", false},
 	}
-	if release2 == nil {
-		t.Fatal("second call: expected release from cache, got nil")
+	for _, tt := range tests {
+		t.Run(tt.candidate+"_vs_"+tt.current, func(t *testing.T) {
+			t.Parallel()
+			current, ok := comparableVersion(tt.current)
+			if !ok {
+				t.Fatalf("comparableVersion(%q) not ok", tt.current)
+			}
+			if got := isNewerVersion(tt.candidate, current); got != tt.want {
+				t.Errorf("isNewerVersion(%q, %q) = %v, want %v", tt.candidate, current, got, tt.want)
+			}
+		})
 	}
-	if requestCount != 1 {
-		t.Errorf("expected 1 API request (cached), got %d", requestCount)
+}
+
+func TestComparableVersion_Unparseable(t *testing.T) {
+	t.Parallel()
+	for _, v := range []string{"", "dev", "(devel)", "abc1234"} {
+		if _, ok := comparableVersion(v); ok {
+			t.Errorf("comparableVersion(%q) ok, want not ok (check skipped)", v)
+		}
+	}
+}
+
+func TestResolveForcedUpdate(t *testing.T) {
+	tests := []struct {
+		name, latest, current string
+		wantErr               bool
+	}{
+		{name: "reinstall same version", latest: "v1.0.0", current: "1.0.0"},
+		{name: "newer latest", latest: "v1.1.0", current: "v1.0.0"},
+		{name: "latest older than prerelease is refused", latest: "v0.8.5", current: "0.9.0-rc.2", wantErr: true},
+		{name: "dev build is not compared", latest: "v0.8.5", current: "dev"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			countingReleaseServer(t, githubRelease{TagName: tt.latest})
+			release, err := ResolveForcedUpdate(context.Background(), testConfig(t), tt.current)
+			if tt.wantErr {
+				if !errors.Is(err, ErrDowngrade) {
+					t.Fatalf("error = %v, want ErrDowngrade", err)
+				}
+				return
+			}
+			if err != nil || release == nil {
+				t.Fatalf("ResolveForcedUpdate() = %v, %v; want a release", release, err)
+			}
+		})
 	}
 }
 

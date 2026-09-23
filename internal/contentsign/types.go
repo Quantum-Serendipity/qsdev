@@ -66,7 +66,7 @@ type SignOptions struct {
 
 // VerifyOptions configures verification.
 type VerifyOptions struct {
-	TrustedKeys []PublicKey // when empty, keys are loaded from DefaultTrustedKeysDir
+	TrustedKeys []PublicKey // when nil, LoadTrustedKeys("") is used; a non-nil empty set trusts no key
 	// RequireTrusted turns any outcome short of a valid signature from a trusted
 	// key into a failure: signed-but-untrusted, unsigned, and hash-only content
 	// (a recorded SHA-256 with no signature) are all reported as not Verified.

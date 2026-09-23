@@ -394,9 +394,18 @@ func runSelfUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult 
 	var release *selfupdate.Release
 	var err error
 	if opts.Force {
-		release, err = selfupdate.FetchLatestRelease(ctx, cfg)
+		release, err = selfupdate.ResolveForcedUpdate(ctx, cfg, currentVersion)
 	} else {
 		release, err = selfupdate.CheckForUpdate(ctx, cfg, currentVersion)
+	}
+	if errors.Is(err, selfupdate.ErrDowngrade) {
+		// --force also forces config regeneration; refusing to downgrade the
+		// binary is not a failure of the update as a whole.
+		return StageResult{
+			Name:    "Self-update",
+			Status:  StageSkipped,
+			Message: err.Error(),
+		}
 	}
 	if err != nil {
 		return StageResult{

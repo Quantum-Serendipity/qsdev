@@ -10,23 +10,26 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
-	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
+// executablePath locates the running binary. It is a variable so tests can
+// point DoUpdate at a scratch binary instead of the test executable.
+var executablePath = os.Executable
+
 // DoUpdate downloads, verifies, and replaces the current binary with the
-// new version from the given release. It implements a safe replacement
-// strategy with rollback on failure:
+// new version from the given release. The live binary is never missing or
+// partially written (see replaceBinary):
 //
-//  1. Download and verify the new binary
-//  2. Rename current binary to .bak
-//  3. Copy new binary to original path
-//  4. Verify the new binary executes successfully
-//  5. Remove .bak on success, or restore it on failure
+//  1. Download and verify the new binary (checksum and signature)
+//  2. Stage it in a synced temp file next to the current binary
+//  3. Run the staged binary to confirm it executes
+//  4. Atomically rename it over the current binary
 func DoUpdate(ctx context.Context, cfg Config, release *Release) error {
 	// Find current binary path.
-	currentPath, err := os.Executable()
+	currentPath, err := executablePath()
 	if err != nil {
 		return fmt.Errorf("finding current binary: %w", err)
 	}
@@ -56,43 +59,8 @@ func DoUpdate(ctx context.Context, cfg Config, release *Release) error {
 		return fmt.Errorf("downloading update: %w", err)
 	}
 
-	// Clean up stale backup from previous update (Windows can't delete running binaries).
-	backupPath := currentPath + ".bak"
-	if _, statErr := os.Stat(backupPath); statErr == nil {
-		if err := os.Remove(backupPath); err != nil {
-			slog.Warn("removing stale backup", "path", backupPath, "error", err)
-		}
-	}
-
-	// Create backup.
-	if err := os.Rename(currentPath, backupPath); err != nil {
-		return fmt.Errorf("creating backup: %w", err)
-	}
-
-	// Copy new binary to original path.
-	if err := fileutil.CopyFile(newBinaryPath, currentPath, currentMode); err != nil {
-		// Restore backup on copy failure.
-		if renameErr := os.Rename(backupPath, currentPath); renameErr != nil {
-			slog.Warn("restoring backup after copy failure", "error", renameErr)
-		}
-		return fmt.Errorf("installing new binary: %w", err)
-	}
-
-	// Verify the new binary runs.
-	if err := verifyBinary(ctx, currentPath); err != nil {
-		// Restore backup on verification failure.
-		if rmErr := os.Remove(currentPath); rmErr != nil {
-			slog.Warn("removing failed binary", "error", rmErr)
-		}
-		if restoreErr := os.Rename(backupPath, currentPath); restoreErr != nil {
-			return fmt.Errorf("verification failed and restore also failed: %w", errors.Join(err, restoreErr))
-		}
-		return fmt.Errorf("new binary verification failed (restored previous version): %w", err)
-	}
-
-	// Success — remove backup.
-	if err := os.Remove(backupPath); err != nil {
-		slog.Warn("removing backup after successful update", "error", err)
+	if err := replaceBinary(ctx, currentPath, newBinaryPath, currentMode, verifyBinary); err != nil {
+		return err
 	}
 
 	// Print changelog summary.
@@ -105,6 +73,110 @@ func DoUpdate(ctx context.Context, cfg Config, release *Release) error {
 		fmt.Fprintf(os.Stderr, "\nRelease: %s\n", release.URL)
 	}
 
+	return nil
+}
+
+// replaceBinary installs newBinaryPath at currentPath (with mode) so that the
+// install path always holds a complete, working binary:
+//
+//   - the new binary is staged in a temp file in currentPath's directory (same
+//     filesystem), fsynced and chmodded;
+//   - verify runs against the STAGED file, before the live binary is touched,
+//     so a broken download never replaces a working install;
+//   - the staged file is renamed over currentPath, which is atomic on Unix
+//     (running processes keep the old inode, new ones get the new file).
+//
+// Windows cannot rename over a running executable, so there the live binary is
+// first moved aside to <path>.bak and restored if the final rename fails.
+func replaceBinary(ctx context.Context, currentPath, newBinaryPath string, mode os.FileMode, verify func(context.Context, string) error) error {
+	staged, err := stageBinary(currentPath, newBinaryPath, mode)
+	if err != nil {
+		return fmt.Errorf("installing new binary: %w", err)
+	}
+	installed := false
+	defer func() {
+		if !installed {
+			_ = os.Remove(staged)
+		}
+	}()
+
+	if err := verify(ctx, staged); err != nil {
+		return fmt.Errorf("new binary verification failed (current version left in place): %w", err)
+	}
+
+	if err := swapBinary(staged, currentPath, runtime.GOOS == "windows"); err != nil {
+		return fmt.Errorf("installing new binary: %w", err)
+	}
+	installed = true
+	return nil
+}
+
+// stageBinary copies src into a new temp file beside currentPath, syncs it to
+// disk, and applies mode. The temp name keeps currentPath's extension so the
+// staged binary is directly executable on Windows. It returns the temp path.
+func stageBinary(currentPath, src string, mode os.FileMode) (_ string, retErr error) {
+	base := filepath.Base(currentPath)
+	ext := filepath.Ext(base)
+	tmp, err := os.CreateTemp(filepath.Dir(currentPath), "."+strings.TrimSuffix(base, ext)+".new-*"+ext)
+	if err != nil {
+		return "", fmt.Errorf("creating staging file: %w", err)
+	}
+	defer func() {
+		if retErr != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+		}
+	}()
+
+	in, err := os.Open(src) //nolint:gosec // src is the verified binary extracted into our own temp dir.
+	if err != nil {
+		return "", fmt.Errorf("opening new binary: %w", err)
+	}
+	defer func() { _ = in.Close() }()
+
+	if _, err := io.Copy(tmp, in); err != nil {
+		return "", fmt.Errorf("writing staging file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return "", fmt.Errorf("syncing staging file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("closing staging file: %w", err)
+	}
+	if err := os.Chmod(tmp.Name(), mode); err != nil {
+		return "", fmt.Errorf("setting staging file mode: %w", err)
+	}
+	return tmp.Name(), nil
+}
+
+// swapBinary renames staged over currentPath. With viaBackup (Windows, where a
+// running executable cannot be replaced), the live binary is first renamed to
+// <currentPath>.bak and restored if the final rename fails; the .bak is left
+// behind because a running executable cannot be deleted, and is removed by the
+// next update.
+func swapBinary(staged, currentPath string, viaBackup bool) error {
+	backupPath := currentPath + ".bak"
+	// Clean up a stale backup from a previous update.
+	if err := os.Remove(backupPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.Warn("removing stale backup", "path", backupPath, "error", err)
+	}
+
+	if !viaBackup {
+		return os.Rename(staged, currentPath)
+	}
+
+	if err := os.Rename(currentPath, backupPath); err != nil {
+		return fmt.Errorf("moving current binary aside: %w", err)
+	}
+	if err := os.Rename(staged, currentPath); err != nil {
+		if restoreErr := os.Rename(backupPath, currentPath); restoreErr != nil {
+			return fmt.Errorf("install failed and restoring the previous binary also failed: %w", errors.Join(err, restoreErr))
+		}
+		return err
+	}
+	if err := os.Remove(backupPath); err != nil {
+		slog.Debug("backup of running binary left for the next update", "path", backupPath, "error", err)
+	}
 	return nil
 }
 

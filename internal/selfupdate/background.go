@@ -15,6 +15,10 @@ import (
 // human-readable update notice string. If no update is available or the
 // check is suppressed, the channel receives nothing and is closed.
 //
+// Network use is bounded: a cached result younger than CheckInterval is
+// reused, and otherwise a request is started at most once per attemptBackoff,
+// even from short-lived processes (hooks) that exit before it completes.
+//
 // Returns nil if QSDEV_NO_UPDATE_CHECK=1 is set.
 func BackgroundCheck(currentVersion string) <-chan string {
 	if os.Getenv(branding.Get().EnvNoUpdate) == "1" {
@@ -32,7 +36,7 @@ func BackgroundCheck(currentVersion string) <-chan string {
 
 		done := make(chan *Release, 1)
 		go func() {
-			release, err := CheckForUpdate(ctx, cfg, currentVersion)
+			release, err := checkForUpdateNotice(ctx, cfg, currentVersion)
 			if err != nil || release == nil {
 				done <- nil
 				return

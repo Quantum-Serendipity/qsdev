@@ -9,7 +9,7 @@ import (
 // AttestationStore answers whether a binary has a verified external attestation:
 // a detached Minisign signature (<path>.minisig) from one of the trusted keys.
 type AttestationStore struct {
-	TrustedKeys []PublicKey // when empty, keys are loaded from DefaultTrustedKeysDir
+	TrustedKeys []PublicKey // when nil, LoadTrustedKeys("") is used; a non-nil empty set trusts no key
 }
 
 // IsAttested reports whether the binary identified by command has a valid

@@ -160,9 +160,6 @@ var ExportEnsureGitignoreEntry = EnsureGitignoreEntry
 // ExportGenerateLocalConfigTemplate exposes GenerateLocalConfigTemplate for external tests.
 var ExportGenerateLocalConfigTemplate = GenerateLocalConfigTemplate
 
-// ExportConfigToAnswers exposes configToAnswers for external tests.
-var ExportConfigToAnswers = configToAnswers
-
 // ExportOnboardingMode re-exports OnboardingMode for external tests.
 type ExportOnboardingMode = OnboardingMode
 

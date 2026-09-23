@@ -2,19 +2,22 @@ package devinit
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
-	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -34,29 +37,13 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	}
 
 	// 2. Auto-install missing prerequisites if --yes, otherwise warn.
-	prereqs := CheckPrerequisites(cmd.Context())
-	hasMissingPrereqs := prereqs.HasMissing()
-	if hasMissingPrereqs {
-		if opts.Yes {
-			if err := devenv.AutoSetupPrerequisites(cmd.Context(), cmd.ErrOrStderr()); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: prerequisite installation failed: %v\n", err)
-				fmt.Fprintf(cmd.ErrOrStderr(), "Run '%s devenv setup' manually.\n\n", branding.Get().AppName)
-			} else {
-				hasMissingPrereqs = false
-			}
-		} else {
-			fmt.Fprintln(cmd.ErrOrStderr(), "Note: some prerequisites are missing:")
-			prereqs.PrintReport(cmd.ErrOrStderr())
-			fmt.Fprintf(cmd.ErrOrStderr(), "Run '%s devenv setup' after join to install them.\n", branding.Get().AppName)
-			fmt.Fprintln(cmd.ErrOrStderr())
-		}
-	}
+	hasMissingPrereqs := joinPrerequisites(cmd, opts)
 
 	// 3. Generate files via fragment accumulation.
 	accResult, err := runAccumulator(answers, struct {
 		ClaudeOnly bool
 		DevenvOnly bool
-	}{})
+	}{ClaudeOnly: opts.ClaudeOnly, DevenvOnly: opts.DevenvOnly})
 	if err != nil {
 		return fmt.Errorf("generating files: %w", err)
 	}
@@ -74,16 +61,16 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		})
 	}
 
-	// 5. Ensure local config is in .gitignore.
-	if err := EnsureGitignoreEntry(projectRoot, localCfg); err != nil {
-		return fmt.Errorf("updating .gitignore: %w", err)
-	}
-
-	// 6. Dry-run: preview and return.
+	// 5. Dry-run: preview and return before touching the working tree.
 	if opts.DryRun {
 		preview := generate.PreviewFiles(allFiles, nil, projectRoot)
 		_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
 		return nil
+	}
+
+	// 6. Ensure local config is in .gitignore.
+	if err := EnsureGitignoreEntry(projectRoot, localCfg); err != nil {
+		return fmt.Errorf("updating .gitignore: %w", err)
 	}
 
 	// 7. Write files and record results.
@@ -101,8 +88,38 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	return nil
 }
 
-// buildJoinAnswers parses the project config, runs detection, converts to
-// wizard answers, and optionally merges answers-file overrides.
+// joinPrerequisites auto-installs missing prerequisites with --yes and warns
+// otherwise, reporting whether any are still missing. Like the create path it
+// does nothing for --dry-run (a preview must not install onto the host) or
+// --claude-only (no devenv environment is generated).
+func joinPrerequisites(cmd *cobra.Command, opts InitOptions) bool {
+	if opts.DryRun || opts.ClaudeOnly {
+		return false
+	}
+	prereqs := CheckPrerequisites(cmd.Context())
+	if !prereqs.HasMissing() {
+		return false
+	}
+	if !opts.Yes {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Note: some prerequisites are missing:")
+		prereqs.PrintReport(cmd.ErrOrStderr())
+		fmt.Fprintf(cmd.ErrOrStderr(), "Run '%s devenv setup' after join to install them.\n", branding.Get().AppName)
+		fmt.Fprintln(cmd.ErrOrStderr())
+		return true
+	}
+	if err := devenv.AutoSetupPrerequisites(cmd.Context(), cmd.ErrOrStderr()); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: prerequisite installation failed: %v\n", err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "Run '%s devenv setup' manually.\n\n", branding.Get().AppName)
+		return true
+	}
+	return false
+}
+
+// buildJoinAnswers rebuilds the answers the project was created with from the
+// committed .qsdev.yaml. Precedence, lowest first: the committed config, an
+// --answers-file overlay (top-level keys it sets replace the config's), then
+// explicitly-set flags. Settings the config has no key for get the same
+// defaults and invariants the create path applies.
 func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) (types.WizardAnswers, error) {
 	// Parse project config.
 	cfgFile := branding.Get().ConfigFile
@@ -112,36 +129,41 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 		return types.WizardAnswers{}, fmt.Errorf("parsing %s: %w", cfgFile, err)
 	}
 
-	// Run detection.
 	detected := detect.Detect(projectRoot)
+	answers := qsdevconfig.ConfigToAnswers(cfg, detected, projectRoot)
 
-	// Convert config to answers for the generation pipeline.
-	answers := configToAnswers(cfg, detected, projectRoot)
-
-	// If --answers-file is set, merge file answers over config answers.
 	if opts.AnswersFile != "" {
-		fileAnswers, err := LoadAnswersFile(opts.AnswersFile)
+		answers, err = OverlayAnswersFile(answers, opts.AnswersFile)
 		if err != nil {
 			return types.WizardAnswers{}, err
 		}
-		fileAnswers.ProjectRoot = projectRoot
-		fileAnswers.ProjectName = filepath.Base(projectRoot)
+	}
 
-		flagSet := NewFlagSet(cmd)
-		changed := flagSetToChangedMap(flagSet, cmd)
-		flagAnswers, err := AnswersFromFlags(opts, projectRoot)
-		if err != nil {
-			return types.WizardAnswers{}, err
-		}
-		answers = MergeFileWithFlags(fileAnswers, flagAnswers, changed)
+	flagAnswers, err := AnswersFromFlags(opts, projectRoot)
+	if err != nil {
+		return types.WizardAnswers{}, err
+	}
+	answers = MergeFileWithFlags(answers, flagAnswers, flagSetToChangedMap(NewFlagSet(cmd), cmd))
+	if opts.ProfileName != "" {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Note: --profile applies only when creating a project; ignoring it in join mode (re-run with --mode create to apply it).")
+	}
 
+	if opts.AnswersFile != "" {
 		if err := ValidateAnswersFileCompleteness(answers); err != nil {
 			return types.WizardAnswers{}, err
 		}
-
-		answers.Confirmed = true
-		answers.Detected = detected
 	}
+	answers.ProjectRoot = projectRoot
+	answers.ProjectName = filepath.Base(projectRoot)
+	answers.Detected = detected
+	answers.Confirmed = true
+
+	cat, err := catalog.Default()
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("loading catalog for defaults: %w", err)
+	}
+	registry := toolreg.DefaultRegistry()
+	applyJoinDefaults(&answers, cat, registry)
 
 	// Validate answers.
 	if err := ValidateAnswers(answers); err != nil {
@@ -149,10 +171,90 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 	}
 
 	// Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
-	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
+	toolreg.MergeInferredTools(&answers, registry)
 	enforceAnswerInvariants(&answers)
 
 	return answers, nil
+}
+
+// applyJoinDefaults gives a joiner the defaults the create path applies (via
+// FillDefaults) for settings .qsdev.yaml has no key for: the self-protection
+// and safety-block hook invariants, agent tools, and the tier-derived tool
+// set. FillDefaults runs on a copy and only those fields are adopted, because
+// its list defaulting must not apply here: an empty claude_code.mcp_servers or
+// languages list in the committed config is the team's choice. The compliance
+// level is not adopted either: security.level is persisted, so an empty one is
+// what the project was created with.
+//
+// When the config records tool decisions (tools.enabled/disabled), they are
+// authoritative for the hook and agent-tool toggles and are replayed instead
+// of the agent-tool defaults.
+func applyJoinDefaults(a *types.WizardAnswers, defaults types.DefaultsProvider, registry *toolreg.Registry) {
+	toolsRecorded := len(a.EnabledTools) > 0
+
+	filled := *a
+	filled.Languages = slices.Clone(a.Languages)
+	filled.MCPServers = slices.Clone(a.MCPServers)
+	filled.EnvVars = maps.Clone(a.EnvVars)
+	filled.EnabledTools = maps.Clone(a.EnabledTools)
+	filled.FillDefaults(a.Detected, defaults)
+
+	a.Hooks = filled.Hooks
+	if toolsRecorded {
+		restoreToolToggles(a, registry)
+		return
+	}
+	a.AgentTools = filled.AgentTools
+	a.EnabledTools = filled.EnabledTools
+}
+
+// restoreToolToggles replays each recorded tool decision's enable/disable
+// function, keeping only its effect on the hook and agent-tool toggles. The
+// MCP-server and skill lists are persisted verbatim under claude_code and stay
+// authoritative, so a tool's edits to them are not replayed.
+func restoreToolToggles(a *types.WizardAnswers, registry *toolreg.Registry) {
+	for _, name := range slices.Sorted(maps.Keys(a.EnabledTools)) {
+		tool, ok := registry.ByName(name)
+		if !ok {
+			continue
+		}
+		apply := (func(*types.WizardAnswers))(tool.DisableFunc)
+		if a.EnabledTools[name] {
+			apply = tool.EnableFunc
+		}
+		if apply == nil {
+			continue
+		}
+		scratch := *a
+		scratch.MCPServers = slices.Clone(a.MCPServers)
+		scratch.Skills = slices.Clone(a.Skills)
+		apply(&scratch)
+		a.Hooks = scratch.Hooks
+		a.AgentTools = scratch.AgentTools
+	}
+}
+
+// runControlFlags are init flags that steer the run rather than describe the
+// project, so they are never "ignored" configuration.
+var runControlFlags = map[string]bool{
+	"mode": true, "yes": true, "quiet": true, "theme": true, "dry-run": true, "force": true,
+}
+
+// warnIgnoredInitFlags reports configuration flags given to a run that
+// generates nothing because the project is already set up, instead of
+// dropping them silently.
+func warnIgnoredInitFlags(cmd *cobra.Command) {
+	var ignored []string
+	cmd.Flags().Visit(func(f *pflag.Flag) {
+		if !runControlFlags[f.Name] {
+			ignored = append(ignored, "--"+f.Name)
+		}
+	})
+	if len(ignored) == 0 {
+		return
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "Note: ignoring %s because the project is already set up; re-run with --force to regenerate with them.\n",
+		strings.Join(ignored, ", "))
 }
 
 // writeJoinResults writes generated files, records state, saves answers, and
@@ -223,80 +325,4 @@ func writeJoinResults(
 	}
 
 	return nil
-}
-
-// configToAnswers converts a parsed QsdevConfig into WizardAnswers for use
-// by the generation pipeline during join mode.
-func configToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, projectRoot string) types.WizardAnswers {
-	answers := types.WizardAnswers{
-		ProjectName: filepath.Base(projectRoot),
-		ProjectRoot: projectRoot,
-		Detected:    detected,
-		Confirmed:   true,
-		Direnv:      true,
-	}
-
-	// Map languages.
-	for _, lang := range cfg.Languages {
-		answers.Languages = append(answers.Languages, types.LanguageChoice{
-			Name:           lang.Name,
-			Version:        lang.Version,
-			PackageManager: lang.PackageManager,
-		})
-	}
-
-	// Map services.
-	for _, svc := range cfg.Services {
-		answers.Services = append(answers.Services, types.ServiceChoice{
-			Name:    svc.Name,
-			Version: svc.Version,
-		})
-	}
-
-	// Map Claude Code settings.
-	if cfg.ClaudeCode.Enabled != nil {
-		answers.ClaudeCode = *cfg.ClaudeCode.Enabled
-	} else {
-		// Default to enabled when not explicitly set.
-		answers.ClaudeCode = true
-	}
-	if cfg.ClaudeCode.PermissionLevel != "" {
-		answers.PermissionLevel = cfg.ClaudeCode.PermissionLevel
-	} else if answers.ClaudeCode {
-		answers.PermissionLevel = "standard"
-	}
-	answers.Skills = cfg.ClaudeCode.Skills
-	answers.MCPServers = cfg.ClaudeCode.MCPServers
-
-	// Map tools.
-	if len(cfg.Tools.Enabled) > 0 {
-		answers.EnabledTools = make(map[string]bool, len(cfg.Tools.Enabled))
-		for _, t := range cfg.Tools.Enabled {
-			answers.EnabledTools[t] = true
-		}
-	}
-
-	// Map tier (infer from legacy fields if not explicit).
-	if cfg.Tier != "" {
-		answers.Tier = cfg.Tier
-	} else {
-		answers.Tier = inferTier(cfg)
-	}
-
-	// Map profile.
-	if cfg.Profile != "" {
-		answers.ProjectTypeProfile = cfg.Profile
-	}
-
-	// Map infrastructure config.
-	answers.Infrastructure = cfg.Infrastructure
-	if cfg.Infrastructure.RegistryProxy != "" || cfg.Infrastructure.NixCache != "" || cfg.Infrastructure.BuildCache != "" {
-		answers.ProfileName = cfg.Profile
-	}
-
-	return answers
-}
-
-func inferTier(cfg *types.QsdevConfig) string {
-	return tier.Infer(cfg.ClaudeCode.PermissionLevel, cfg.ClaudeCode.MCPServers).String()
 }

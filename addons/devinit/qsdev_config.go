@@ -2,6 +2,8 @@ package devinit
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 
 	"gopkg.in/yaml.v3"
 
@@ -9,6 +11,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// buildQsdevConfig converts the create path's answers into the committed
+// .qsdev.yaml. Join mode rebuilds a teammate's answers from this file through
+// config.ConfigToAnswers, so every choice that shapes generation and has a
+// config key is persisted here.
 func buildQsdevConfig(answers types.WizardAnswers, qsdevVersion string) types.QsdevConfig {
 	cfg := types.QsdevConfig{
 		Version:      types.ConfigVersionCurrent,
@@ -29,6 +35,7 @@ func buildQsdevConfig(answers types.WizardAnswers, qsdevVersion string) types.Qs
 		cfg.Services = append(cfg.Services, types.ServiceConfig{
 			Name:    svc.Name,
 			Version: svc.Version,
+			Options: maps.Clone(svc.Settings),
 		})
 	}
 
@@ -36,19 +43,32 @@ func buildQsdevConfig(answers types.WizardAnswers, qsdevVersion string) types.Qs
 		Level: answers.ComplianceLevel,
 	}
 
+	// Always record claude_code.enabled, including false: an absent key is
+	// read back as enabled (the legacy default), so omitting it would turn a
+	// deliberate --claude-code=false / --devenv-only project back on for
+	// every teammate who joins.
+	enabled := answers.ClaudeCode
+	cfg.ClaudeCode = types.ClaudeCodeConfig{Enabled: &enabled}
 	if answers.ClaudeCode {
-		enabled := true
-		cfg.ClaudeCode = types.ClaudeCodeConfig{
-			Enabled:         &enabled,
-			PermissionLevel: answers.PermissionLevel,
-			Skills:          answers.Skills,
-			MCPServers:      answers.MCPServers,
+		cfg.ClaudeCode.PermissionLevel = answers.PermissionLevel
+		cfg.ClaudeCode.Skills = answers.Skills
+		cfg.ClaudeCode.MCPServers = answers.MCPServers
+	}
+
+	// Tool decisions carry the toggles (safety-block, agent tools) and the
+	// tier-derived tool set that have no dedicated config key.
+	for _, name := range slices.Sorted(maps.Keys(answers.EnabledTools)) {
+		if answers.EnabledTools[name] {
+			cfg.Tools.Enabled = append(cfg.Tools.Enabled, name)
+		} else {
+			cfg.Tools.Disabled = append(cfg.Tools.Disabled, name)
 		}
 	}
 
 	cfg.Infrastructure = types.InfraConfig{
 		RegistryProxy:          answers.Infrastructure.RegistryProxy,
-		RegistryProxyOverrides: answers.Infrastructure.RegistryProxyOverrides,
+		RegistryProxyOverrides: maps.Clone(answers.Infrastructure.RegistryProxyOverrides),
+		RegistryProxyPaths:     maps.Clone(answers.Infrastructure.RegistryProxyPaths),
 		NixCache:               answers.Infrastructure.NixCache,
 		BuildCache:             answers.Infrastructure.BuildCache,
 	}

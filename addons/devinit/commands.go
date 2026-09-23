@@ -110,6 +110,7 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 		}
 		if result.AlreadySetUp {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Project is already set up.")
+			warnIgnoredInitFlags(cmd)
 			return nil
 		}
 		return runJoin(cmd, opts, projectRoot)

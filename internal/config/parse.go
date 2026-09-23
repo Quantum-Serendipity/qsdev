@@ -6,7 +6,9 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -139,6 +141,8 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 		}
 	}
 
+	errs = append(errs, validateSplicedValues(cfg)...)
+
 	// Validate security level.
 	if cfg.Security.Level != "" && !validation.IsValidSecurityLevel(cfg.Security.Level) {
 		errs = append(errs, ValidationError{
@@ -227,6 +231,50 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 		}
 	}
 
+	return errs
+}
+
+// validateSplicedValues checks the syntax of the free-form language and
+// service values that generation splices into devenv.nix, some of them
+// unquoted (e.g. pkgs.postgresql_<version>). The committed .qsdev.yaml is
+// team-shared input, so a value that could end a Nix expression is rejected
+// here as well as at the answers boundary (devinit.ValidateAnswers).
+func validateSplicedValues(cfg *types.QsdevConfig) []ValidationError {
+	var errs []ValidationError
+	for i, lang := range cfg.Languages {
+		if lang.Version != "" && !validation.IsValidVersionConstraint(lang.Version) {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("languages[%d].version", i),
+				Value:   lang.Version,
+				Message: "invalid version; only letters, digits, spaces and . _ - + * ^ ~ < > = ! | , / are allowed",
+			})
+		}
+		if lang.PackageManager != "" && !validation.IsValidToken(lang.PackageManager) {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("languages[%d].package_manager", i),
+				Value:   lang.PackageManager,
+				Message: "invalid package manager; must be a single word of letters, digits, '.', '_' or '-'",
+			})
+		}
+	}
+	for i, svc := range cfg.Services {
+		if svc.Version != "" && !validation.IsValidToken(svc.Version) {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("services[%d].version", i),
+				Value:   svc.Version,
+				Message: "invalid version; must be a single word of letters, digits, '.', '_' or '-'",
+			})
+		}
+		for _, k := range slices.Sorted(maps.Keys(svc.Options)) {
+			if !validation.IsValidEnvKey(k) || !validation.IsValidToken(svc.Options[k]) {
+				errs = append(errs, ValidationError{
+					Field:   fmt.Sprintf("services[%d].options.%s", i, k),
+					Value:   svc.Options[k],
+					Message: "invalid option; keys must be identifiers and values a single word of letters, digits, '.', '_' or '-'",
+				})
+			}
+		}
+	}
 	return errs
 }
 

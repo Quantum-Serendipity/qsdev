@@ -3,17 +3,15 @@ package devinit
 import (
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
-
-var validEnvKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // FlagSet tracks which CLI flags were explicitly set by the user.
 type FlagSet struct {
@@ -274,7 +272,7 @@ func AnswersFromFlags(opts InitOptions, projectRoot string) (types.WizardAnswers
 				return answers, fmt.Errorf("invalid --env value %q: must be KEY=VALUE", kv)
 			}
 			key := kv[:idx]
-			if !validEnvKey.MatchString(key) {
+			if !validation.IsValidEnvKey(key) {
 				return answers, fmt.Errorf("invalid environment variable name %q: must match [A-Za-z_][A-Za-z0-9_]*", key)
 			}
 			answers.EnvVars[key] = kv[idx+1:]

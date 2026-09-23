@@ -482,18 +482,16 @@ func hasVerb(ctx *EvalContext, re *regexp.Regexp, verbs map[string]bool) bool {
 	return false
 }
 
-// isReadOnly reports whether a command word only reads its operands.
-func isReadOnly(name string) bool { return cmdscan.IsSafeReadVerb(name) }
-
 // dirChangeVerbs change the working directory; scannedCommands models them, so
 // they are not mutations themselves.
 var dirChangeVerbs = map[string]bool{"cd": true, "pushd": true, "popd": true}
 
 // isMutating reports whether command sc may change files through its
-// arguments: anything but a read-only verb, a directory change, or a nameless
-// (redirect-only) command.
+// arguments: anything but a proven read-only command (cmdscan.IsSafeReadCommand,
+// which models git/sort/rg by their arguments), a directory change, or a
+// nameless (redirect-only) command.
 func isMutating(sc scannedCommand) bool {
-	return sc.Name != "" && !isReadOnly(sc.Name) && !dirChangeVerbs[sc.Name]
+	return sc.Name != "" && !cmdscan.IsSafeReadCommand(sc.Command) && !dirChangeVerbs[sc.Name]
 }
 
 // patternOptions are tar's and rsync's options whose value is a file-name
@@ -705,7 +703,10 @@ func relativeWriteTarget(sc scannedCommand) bool {
 //   - it is an interpreter reading its program from a here-document,
 //     here-string, or input redirect, whose text argv does not show;
 //   - it writes a relative path after a cd whose target was not resolvable;
-//   - it is a find whose actions can delete or rewrite protected files.
+//   - it is a find whose actions can delete or rewrite protected files;
+//   - it sets variables (a prefix or bare assignment): PATH, LD_PRELOAD or
+//     GIT_EXTERNAL_DIFF can make a read-only command word run arbitrary code,
+//     and the assigned value is not analysed.
 //
 // Non-destructive copies (cp, rsync) and the other copy-family verbs are
 // exempt from the input rule: their exfiltration semantics are modelled by
@@ -713,6 +714,9 @@ func relativeWriteTarget(sc scannedCommand) bool {
 func protectedMutation(scs []scannedCommand) bool {
 	upstreamProtected := make(map[int]bool)
 	for _, sc := range scs {
+		if len(sc.Assigns) > 0 {
+			return true
+		}
 		if anyArgRefersProtected(sc, mutationTargets(sc)) || anyRefersProtected(sc, sc.WriteRedirects) {
 			return true
 		}

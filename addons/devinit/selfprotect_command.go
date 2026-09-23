@@ -58,7 +58,11 @@ func runSelfprotect(cmd *cobra.Command) (err error) {
 		return errSelfprotectDeny
 	}
 
-	input := hookio.ParseInput(call.ToolInput)
+	input, err := hookio.ParseInput(call.ToolName, call.ToolInput)
+	if err != nil {
+		hookio.WriteError(stderr, err.Error())
+		return errSelfprotectDeny
+	}
 	evalCtx := buildSelfprotectContext(call.ToolName, &input)
 	// The envelope's cwd is the session directory, which the Bash tool keeps
 	// across calls (a `cd` in one call moves the next); relative paths must be
@@ -94,6 +98,10 @@ func runSelfprotect(cmd *cobra.Command) (err error) {
 			hookio.WriteDeny(stderr, ruleID, reason)
 			return errSelfprotectDeny
 		}
+	}
+	if blocked, ruleID, reason := detectResultGateDodge(call.ToolName, input, evalCtx.CanonicalPath); blocked {
+		hookio.WriteDeny(stderr, ruleID, reason)
+		return errSelfprotectDeny
 	}
 	return nil
 }

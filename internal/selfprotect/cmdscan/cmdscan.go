@@ -30,6 +30,14 @@ type Command struct {
 	WriteRedirects []string
 	ReadRedirects  []string
 	HasExpansion   bool
+	// Assigns names the variables this statement sets for the command or the
+	// rest of the shell line: prefix assignments (`GIT_EXTERNAL_DIFF=x git
+	// diff`) and bare assignment statements (`PATH=/tmp/x`, emitted as a
+	// nameless Command). Either can change what a later command word runs, so
+	// a command with assignments is never proven read-only. Declaration
+	// builtins (export, declare, local, ...) are reported as ordinary commands
+	// named by the builtin.
+	Assigns []string
 	// Pipeline groups commands joined by `|`/`|&`: all stages of one pipeline
 	// share the same non-zero id, in left-to-right order. Standalone commands
 	// have Pipeline == 0. Rules use this to reason about dataflow across a pipe
@@ -37,26 +45,141 @@ type Command struct {
 	Pipeline int
 }
 
-// safeReadVerbs are commands that only read or inspect their arguments — they
-// never delete, copy, execute a payload, or spawn a subshell. Self-protection
-// consumers (rules, evasion) use IsSafeReadVerb to decide whether a parsed
-// command word can clear a substring-triggered deny: anything outside this set
-// (a wrapper like sudo/env/sh/xargs/find, or an unknown binary) is opaque and
-// must fail closed. sed/awk/eval are deliberately absent — they can mutate in
-// place or execute.
+// safeReadVerbs are commands that only read or inspect their arguments whatever
+// those arguments are — they never write a named operand, delete, copy,
+// execute a payload, or spawn a subshell. Self-protection consumers (rules,
+// evasion) use IsSafeReadCommand to decide whether a parsed command can clear a
+// substring-triggered deny: anything it does not prove read-only (a wrapper
+// like sudo/env/sh/xargs/find, or an unknown binary) is opaque and must fail
+// closed. sed/awk/eval are deliberately absent — they can mutate in place or
+// execute — as are go (run/generate execute code) and uniq (its second operand
+// is an output file). Commands that are read-only only for some arguments
+// (git, sort, rg) are modelled by argReadOnly instead.
 var safeReadVerbs = map[string]bool{
-	"cat": true, "grep": true, "egrep": true, "fgrep": true, "rg": true,
+	"cat": true, "grep": true, "egrep": true, "fgrep": true,
 	"ls": true, "head": true, "tail": true, "wc": true, "echo": true,
 	"printf": true, "test": true, "[": true, "true": true, "false": true,
 	"pwd": true, "stat": true, "file": true, "diff": true, "cmp": true,
-	"sort": true, "uniq": true, "cut": true, "jq": true, "git": true,
-	"go": true, "tac": true, "nl": true,
+	"cut": true, "jq": true, "tac": true, "nl": true,
 }
 
-// IsSafeReadVerb reports whether name is a read-only/inspection command that can
-// clear a substring-triggered self-protection deny. See safeReadVerbs.
+// argReadOnly holds, for commands whose effect depends on their arguments, a
+// predicate reporting whether a given argument list only reads.
+var argReadOnly = map[string]func(args []string) bool{
+	"git":  gitArgsReadOnly,
+	"sort": sortArgsReadOnly,
+	"rg":   rgArgsReadOnly,
+}
+
+// IsSafeReadVerb reports whether name is a command that is read-only for ANY
+// arguments, so the command word alone proves it cannot mutate. Prefer
+// IsSafeReadCommand, which also accepts the read-only uses of commands such as
+// `git diff` that can write or execute with other arguments.
 func IsSafeReadVerb(name string) bool {
 	return safeReadVerbs[name]
+}
+
+// IsSafeReadCommand reports whether the parsed command c only reads or inspects
+// its arguments and can therefore clear a substring-triggered self-protection
+// deny: either its command word is read-only for any arguments (see
+// safeReadVerbs), or it is an argument-dependent command (git, sort, rg) whose
+// actual arguments are read-only — and it sets no variables (see
+// Command.Assigns).
+func IsSafeReadCommand(c Command) bool {
+	if len(c.Assigns) > 0 {
+		// A prefix assignment can make a read-only command run code
+		// (GIT_EXTERNAL_DIFF, LD_PRELOAD, PATH).
+		return false
+	}
+	if safeReadVerbs[c.Name] {
+		return true
+	}
+	if readOnly, ok := argReadOnly[c.Name]; ok {
+		return readOnly(c.Args)
+	}
+	return false
+}
+
+// gitReadOnlySubcommands are git subcommands that only inspect the repository.
+// Everything else (rm, mv, checkout, restore, reset, clean, apply, am, stash,
+// worktree, filter-branch, config, ...) can mutate the working tree.
+var gitReadOnlySubcommands = map[string]bool{
+	"status": true, "diff": true, "log": true, "show": true, "grep": true,
+	"ls-files": true, "blame": true, "rev-parse": true,
+}
+
+// gitArgsReadOnly reports whether a git invocation is a read-only subcommand
+// with no option that writes a file or runs a program. The subcommand must be
+// the first argument: a global option before it (`-c alias.x=!sh`, `-C dir`,
+// `--exec-path`) could redefine what runs, so it fails closed.
+func gitArgsReadOnly(args []string) bool {
+	if len(args) == 0 || !gitReadOnlySubcommands[args[0]] {
+		return false
+	}
+	for _, a := range args[1:] {
+		// --output writes the diff/log to a file; grep -O/--open-files-in-pager
+		// runs a program. Long options match any abbreviation git accepts, and
+		// a short-option cluster containing 'O' (-nO) is treated as -O.
+		if a == "--" {
+			break
+		}
+		if name, ok := strings.CutPrefix(a, "--"); ok {
+			name, _, _ = strings.Cut(name, "=")
+			if isLongOptionPrefix(name, "output") || isLongOptionPrefix(name, "open-files-in-pager") {
+				return false
+			}
+			continue
+		}
+		if len(a) > 1 && a[0] == '-' && strings.ContainsRune(a[1:], 'O') {
+			return false
+		}
+	}
+	return true
+}
+
+// sortArgsReadOnly reports whether a sort invocation writes only to stdout:
+// no -o/--output file and no --compress-program to execute. A short-option
+// cluster containing 'o' is treated as -o (conservatively), and a long option
+// matches any unambiguous prefix, as getopt_long allows.
+func sortArgsReadOnly(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		if name, ok := strings.CutPrefix(a, "--"); ok {
+			name, _, _ = strings.Cut(name, "=")
+			if isLongOptionPrefix(name, "output") || isLongOptionPrefix(name, "compress-program") {
+				return false
+			}
+			continue
+		}
+		if len(a) > 1 && a[0] == '-' && strings.ContainsRune(a[1:], 'o') {
+			return false
+		}
+	}
+	return true
+}
+
+// rgArgsReadOnly reports whether a ripgrep invocation runs no helper program:
+// --pre and --hostname-bin execute a command.
+func rgArgsReadOnly(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		name, _, _ := strings.Cut(a, "=")
+		if name == "--pre" || name == "--hostname-bin" {
+			return false
+		}
+	}
+	return true
+}
+
+// isLongOptionPrefix reports whether name (a long option without its leading
+// "--") abbreviates option, as getopt_long accepts. The empty name is "--",
+// the end-of-options marker, which is not an abbreviation.
+func isLongOptionPrefix(name, option string) bool {
+	return name != "" && strings.HasPrefix(option, name)
 }
 
 // isWriteOp reports whether a redirect operator creates or clobbers its target
@@ -98,15 +221,33 @@ func Parse(command string) ([]Command, error) {
 		// descends into their inner statements — but redirects on the compound
 		// statement itself are attributed below to a nameless Command.
 		hasWord := false
-		if call, ok := stmt.Cmd.(*syntax.CallExpr); ok && len(call.Args) > 0 {
+		switch cmd := stmt.Cmd.(type) {
+		case *syntax.CallExpr:
+			for _, a := range cmd.Assigns {
+				name, _, exp := assignText(a)
+				c.Assigns = append(c.Assigns, name)
+				c.HasExpansion = c.HasExpansion || exp
+			}
+			if len(cmd.Args) > 0 {
+				hasWord = true
+				name, exp := wordText(cmd.Args[0])
+				c.Name = name
+				c.HasExpansion = c.HasExpansion || exp
+				for _, w := range cmd.Args[1:] {
+					t, e := wordText(w)
+					c.Args = append(c.Args, t)
+					c.HasExpansion = c.HasExpansion || e
+				}
+			}
+		case *syntax.DeclClause:
+			// export/declare/local/readonly/typeset/nameref: a builtin that
+			// sets (and may export) variables for later commands.
 			hasWord = true
-			name, exp := wordText(call.Args[0])
-			c.Name = name
-			c.HasExpansion = exp
-			for _, w := range call.Args[1:] {
-				t, e := wordText(w)
-				c.Args = append(c.Args, t)
-				c.HasExpansion = c.HasExpansion || e
+			c.Name = cmd.Variant.Value
+			for _, a := range cmd.Args {
+				_, text, exp := assignText(a)
+				c.Args = append(c.Args, text)
+				c.HasExpansion = c.HasExpansion || exp
 			}
 		}
 
@@ -124,9 +265,10 @@ func Parse(command string) ([]Command, error) {
 		}
 
 		// Emit the command when it has a command word, or when it carries
-		// redirects that must be attributed even without one (compound-command
-		// redirects, bare `VAR=val > f`). Skip pure structural statements.
-		if hasWord || len(c.WriteRedirects) > 0 || len(c.ReadRedirects) > 0 {
+		// assignments or redirects that must be attributed even without one
+		// (bare `VAR=val`, compound-command redirects, `VAR=val > f`). Skip pure
+		// structural statements.
+		if hasWord || len(c.Assigns) > 0 || len(c.WriteRedirects) > 0 || len(c.ReadRedirects) > 0 {
 			cmds = append(cmds, c)
 		}
 		return true
@@ -181,6 +323,26 @@ func appendPipeStmt(s *syntax.Stmt, out *[]*syntax.Stmt) {
 		return
 	}
 	*out = append(*out, s)
+}
+
+// assignText renders an assignment: the variable name (empty for a bare
+// option word such as the -x in `declare -x`), its text as written
+// (`NAME=value`, or just the word), and whether any part used an expansion.
+// Array values count as an expansion: their elements are not rendered.
+func assignText(a *syntax.Assign) (name, text string, hasExpansion bool) {
+	if a.Name != nil {
+		name = a.Name.Value
+	}
+	value, exp := wordText(a.Value)
+	switch {
+	case a.Index != nil || a.Array != nil:
+		exp = true
+	case name == "":
+		return "", value, exp
+	case a.Naked:
+		return name, name, exp
+	}
+	return name, name + "=" + value, exp
 }
 
 // wordText renders a shell word to the literal text the shell would pass to the

@@ -26,11 +26,17 @@ func TestParseToolCall_DecodesSessionCwd(t *testing.T) {
 func TestParseInput_DecodesReplaceAll(t *testing.T) {
 	t.Parallel()
 
-	edit := ParseInput([]byte(`{"file_path":"f","old_string":"a","new_string":"b","replace_all":true}`))
+	edit, err := ParseInput("Edit", []byte(`{"file_path":"f","old_string":"a","new_string":"b","replace_all":true}`))
+	if err != nil {
+		t.Fatalf("ParseInput(Edit): %v", err)
+	}
 	if !edit.ReplaceAll {
 		t.Error("Edit replace_all not decoded")
 	}
-	multi := ParseInput([]byte(`{"file_path":"f","edits":[{"old_string":"a","new_string":"b","replace_all":true},{"old_string":"c","new_string":"d"}]}`))
+	multi, err := ParseInput("MultiEdit", []byte(`{"file_path":"f","edits":[{"old_string":"a","new_string":"b","replace_all":true},{"old_string":"c","new_string":"d"}]}`))
+	if err != nil {
+		t.Fatalf("ParseInput(MultiEdit): %v", err)
+	}
 	if len(multi.Edits) != 2 || !multi.Edits[0].ReplaceAll || multi.Edits[1].ReplaceAll {
 		t.Errorf("MultiEdit replace_all not decoded per edit: %+v", multi.Edits)
 	}

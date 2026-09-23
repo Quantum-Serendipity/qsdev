@@ -39,7 +39,7 @@ func TestAnswersFromFlags_FullFlagSet(t *testing.T) {
 		PythonVersion:     "3.12",
 	}
 
-	answers := mustAnswersFromFlags(t,opts, "/tmp/myproject")
+	answers := mustAnswersFromFlags(t, opts, "/tmp/myproject")
 
 	if answers.ProjectName != "myproject" {
 		t.Errorf("ProjectName = %q, want %q", answers.ProjectName, "myproject")
@@ -156,7 +156,7 @@ func TestAnswersFromFlags_ImplicitLanguageFromVersionFlag(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			answers := mustAnswersFromFlags(t,tt.opts, "/tmp/test")
+			answers := mustAnswersFromFlags(t, tt.opts, "/tmp/test")
 
 			found := false
 			for _, l := range answers.Languages {
@@ -183,7 +183,7 @@ func TestAnswersFromFlags_VersionFlagMergesWithExplicitLang(t *testing.T) {
 		Direnv:            true,
 	}
 
-	answers := mustAnswersFromFlags(t,opts, "/tmp/test")
+	answers := mustAnswersFromFlags(t, opts, "/tmp/test")
 
 	goCount := 0
 	for _, l := range answers.Languages {
@@ -234,7 +234,7 @@ func TestAnswersFromFlags_EnvVarParsing(t *testing.T) {
 				ClaudeCode:        true,
 				Direnv:            true,
 			}
-			answers := mustAnswersFromFlags(t,opts, "/tmp/test")
+			answers := mustAnswersFromFlags(t, opts, "/tmp/test")
 
 			if answers.EnvVars[tt.wantKey] != tt.wantVal {
 				t.Errorf("EnvVars[%q] = %q, want %q", tt.wantKey, answers.EnvVars[tt.wantKey], tt.wantVal)
@@ -251,7 +251,7 @@ func TestAnswersFromFlags_DevenvOnly(t *testing.T) {
 		Direnv:            true,
 	}
 
-	answers := mustAnswersFromFlags(t,opts, "/tmp/test")
+	answers := mustAnswersFromFlags(t, opts, "/tmp/test")
 
 	if answers.ClaudeCode {
 		t.Error("expected ClaudeCode = false when --devenv-only is set")
@@ -266,7 +266,7 @@ func TestAnswersFromFlags_ClaudeOnly(t *testing.T) {
 		Direnv:            true,
 	}
 
-	answers := mustAnswersFromFlags(t,opts, "/tmp/test")
+	answers := mustAnswersFromFlags(t, opts, "/tmp/test")
 
 	// ClaudeOnly does not change ClaudeCode — it's a signal for the orchestrator.
 	if !answers.ClaudeCode {
@@ -282,7 +282,7 @@ func TestAnswersFromFlags_NodePkgMgrOnly(t *testing.T) {
 		Direnv:            true,
 	}
 
-	answers := mustAnswersFromFlags(t,opts, "/tmp/test")
+	answers := mustAnswersFromFlags(t, opts, "/tmp/test")
 
 	found := false
 	for _, l := range answers.Languages {
@@ -300,13 +300,13 @@ func TestAnswersFromFlags_NodePkgMgrOnly(t *testing.T) {
 
 func TestAnswersFromFlags_PythonPkgMgrOnly(t *testing.T) {
 	opts := devinit.ExportInitOptions{
-		PythonPkgMgr:     "uv",
+		PythonPkgMgr:      "uv",
 		ClaudePermissions: "standard",
 		ClaudeCode:        true,
 		Direnv:            true,
 	}
 
-	answers := mustAnswersFromFlags(t,opts, "/tmp/test")
+	answers := mustAnswersFromFlags(t, opts, "/tmp/test")
 
 	found := false
 	for _, l := range answers.Languages {
@@ -389,7 +389,7 @@ func TestAnswersFromFlags_ProfileSetsProjectTypeProfile(t *testing.T) {
 		Direnv:            true,
 	}
 
-	answers := mustAnswersFromFlags(t,opts, "/tmp/test")
+	answers := mustAnswersFromFlags(t, opts, "/tmp/test")
 
 	if answers.ProjectTypeProfile != "go-web" {
 		t.Errorf("ProjectTypeProfile = %q, want %q", answers.ProjectTypeProfile, "go-web")
@@ -405,7 +405,7 @@ func TestAnswersFromFlags_JavaBuildTool(t *testing.T) {
 		Direnv:            true,
 	}
 
-	answers := mustAnswersFromFlags(t,opts, "/tmp/test")
+	answers := mustAnswersFromFlags(t, opts, "/tmp/test")
 
 	found := false
 	for _, l := range answers.Languages {

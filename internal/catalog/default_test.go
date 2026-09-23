@@ -127,7 +127,10 @@ func TestDefault_InvalidOrgOverlayFallsBack(t *testing.T) {
 		name    string
 		content string
 	}{
-		{"partially uncommented tier", "tiers:\n  standard:\n    order: 2\n"},
+		// A partial entry that only restates a built-in field is a valid
+		// overlay since entries are deep-merged; these stay invalid.
+		{"partially uncommented tier renumbering a built-in", "tiers:\n  standard:\n    order: 9\n"},
+		{"partially uncommented tier with misspelled key", "tiers:\n  standard:\n    ordr: 2\n"},
 		{"yaml syntax error", "tiers: [unclosed\n"},
 	}
 	for _, tt := range tests {

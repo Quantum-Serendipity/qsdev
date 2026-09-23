@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"sync"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -23,6 +25,12 @@ type Catalog struct {
 	permissionRules PermissionRulesFile
 	mcpServers      map[string]MCPServerDef
 	docsCorpus      DocsCorpusConfig
+
+	// entryNodes holds, for a catalog parsed from a unified defaults file,
+	// the source YAML node of every entry of each top-level mapping section
+	// (section name -> entry name -> node). MergeCatalogs uses it to
+	// deep-merge a partial overlay entry onto the base entry.
+	entryNodes map[string]map[string]*yaml.Node
 }
 
 var (

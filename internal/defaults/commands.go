@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -186,16 +187,10 @@ func runEdit(cmd *cobra.Command) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "Created %s\n", path)
 	}
 
-	editorEnv := os.Getenv("EDITOR")
-	if editorEnv == "" {
-		editorEnv = "vi"
-	}
-	editorParts := strings.Fields(editorEnv)
-	editorBin := editorParts[0]
+	editorBin, editorArgs := editorCommand(os.Getenv("EDITOR"), path)
 	if _, err := exec.LookPath(editorBin); err != nil {
 		return fmt.Errorf("editor %q not found in PATH: %w", editorBin, err)
 	}
-	editorArgs := append(append([]string{}, editorParts[1:]...), path)
 
 	editorCmd := exec.Command(editorBin, editorArgs...)
 	editorCmd.Stdin = os.Stdin
@@ -207,6 +202,18 @@ func runEdit(cmd *cobra.Command) error {
 	}
 
 	return runValidate(cmd)
+}
+
+// editorCommand splits an $EDITOR value into the editor binary and its
+// arguments, with path appended. An unset, empty, or whitespace-only value
+// falls back to vi.
+func editorCommand(editorEnv, path string) (string, []string) {
+	parts := strings.Fields(editorEnv)
+	if len(parts) == 0 {
+		parts = []string{"vi"}
+	}
+	args := append(append([]string{}, parts[1:]...), path)
+	return parts[0], args
 }
 
 func pathCmd() *cobra.Command {
@@ -288,92 +295,21 @@ func loadFresh() (*catalog.Catalog, error) {
 	return catalog.Load(opts...)
 }
 
-// sectionFromUnified extracts a named section from UnifiedDefaults.
+// sectionFromUnified extracts a named section from UnifiedDefaults. The
+// section is selected by the field's yaml tag, so every section listed by
+// catalog.SectionNames resolves without a hand-maintained switch.
 func sectionFromUnified(u *catalog.UnifiedDefaults, name string) (any, error) {
-	switch strings.ToLower(name) {
-	case "tiers":
-		return u.Tiers, nil
-	case "compliance":
-		return u.Compliance, nil
-	case "profiles":
-		return u.Profiles, nil
-	case "profile_aliases":
-		return u.ProfileAliases, nil
-	case "project_profiles":
-		return u.ProjectProfiles, nil
-	case "tools":
-		return u.Tools, nil
-	case "security_hooks":
-		return u.SecurityHooks, nil
-	case "base_packages":
-		return u.BasePackages, nil
-	case "unset_vars":
-		return u.UnsetVars, nil
-	case "keep_vars":
-		return u.KeepVars, nil
-	case "custom_hooks":
-		return u.CustomHooks, nil
-	case "hook_tier_order":
-		return u.HookTierOrder, nil
-	case "hook_tiers":
-		return u.HookTiers, nil
-	case "tier_to_compliance":
-		return u.TierToCompliance, nil
-	case "tier_to_enabled_tools":
-		return u.TierToEnabledTools, nil
-	case "default_mcp_servers":
-		return u.DefaultMCPServers, nil
-	case "default_agent_tools":
-		return u.DefaultAgentTools, nil
-	case "languages":
-		return u.Languages, nil
-	case "services":
-		return u.Services, nil
-	case "permission_presets":
-		return u.PermissionPresets, nil
-	case "hook_presets":
-		return u.HookPresets, nil
-	case "security_levels":
-		return u.SecurityLevels, nil
-	case "data_classifications":
-		return u.DataClassifications, nil
-	case "package_managers":
-		return u.PackageManagers, nil
-	case "tool_categories":
-		return u.ToolCategories, nil
-	default:
-		return nil, fmt.Errorf("unknown section %q; valid sections: %s",
-			name, strings.Join(sectionNames(), ", "))
+	key := strings.ToLower(name)
+	if key != "" {
+		v := reflect.ValueOf(u).Elem()
+		t := v.Type()
+		for i := range t.NumField() {
+			tag, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ",")
+			if tag == key {
+				return v.Field(i).Interface(), nil
+			}
+		}
 	}
-}
-
-// sectionNames returns all valid section names for sectionFromUnified.
-func sectionNames() []string {
-	return []string{
-		"tiers",
-		"compliance",
-		"profiles",
-		"profile_aliases",
-		"project_profiles",
-		"tools",
-		"security_hooks",
-		"base_packages",
-		"unset_vars",
-		"keep_vars",
-		"custom_hooks",
-		"hook_tier_order",
-		"hook_tiers",
-		"tier_to_compliance",
-		"tier_to_enabled_tools",
-		"default_mcp_servers",
-		"default_agent_tools",
-		"languages",
-		"services",
-		"permission_presets",
-		"hook_presets",
-		"security_levels",
-		"data_classifications",
-		"package_managers",
-		"tool_categories",
-	}
+	return nil, fmt.Errorf("unknown section %q; valid sections: %s",
+		name, strings.Join(catalog.SectionNames(), ", "))
 }

@@ -1,6 +1,11 @@
 package catalog
 
-import "fmt"
+import (
+	"fmt"
+	"maps"
+	"slices"
+	"strings"
+)
 
 // maxInheritanceDepth is the maximum allowed tier inheritance chain length.
 const maxInheritanceDepth = 10
@@ -27,6 +32,11 @@ func (c *Catalog) Validate() []CatalogError {
 	errs = append(errs, c.validateDerivations()...)
 	errs = append(errs, c.validateHookTiers()...)
 	errs = append(errs, c.validateProjectProfiles()...)
+	errs = append(errs, c.validateTierOrders()...)
+	errs = append(errs, c.validatePermissionSets()...)
+	errs = append(errs, c.validateMCPServerRefs()...)
+	errs = append(errs, c.validatePresetRefs()...)
+	errs = append(errs, c.validateComplianceHooks()...)
 
 	return errs
 }
@@ -166,6 +176,172 @@ func (c *Catalog) validateProjectProfiles() []CatalogError {
 				errs = append(errs, CatalogError{
 					"project_profiles.yaml", name,
 					fmt.Sprintf("references unknown tier %q", def.Tier),
+				})
+			}
+		}
+	}
+
+	return errs
+}
+
+// validateTierOrders checks that no two tiers share an order. The order is a
+// tier's numeric level, so a duplicate would make the tier a level maps back
+// to ambiguous.
+func (c *Catalog) validateTierOrders() []CatalogError {
+	var errs []CatalogError
+
+	byOrder := make(map[int][]string)
+	for name, def := range c.tiers.Tiers {
+		byOrder[def.Order] = append(byOrder[def.Order], name)
+	}
+	for _, order := range slices.Sorted(maps.Keys(byOrder)) {
+		names := byOrder[order]
+		if len(names) < 2 {
+			continue
+		}
+		slices.Sort(names)
+		errs = append(errs, CatalogError{
+			"tiers.yaml", strings.Join(names, ","),
+			fmt.Sprintf("tiers share order %d; tier orders must be unique", order),
+		})
+	}
+
+	return errs
+}
+
+// validatePermissionSets checks that every permission set name referenced by
+// the deny/ask set lists and the preset definitions exists. An unknown set
+// name would otherwise silently contribute no rules at all.
+func (c *Catalog) validatePermissionSets() []CatalogError {
+	var errs []CatalogError
+	rules := c.permissionRules
+
+	check := func(field string, names []string, sets map[string][]string, kind string) {
+		for _, name := range names {
+			if _, ok := sets[name]; !ok {
+				errs = append(errs, CatalogError{
+					"permission_rules", field,
+					fmt.Sprintf("references unknown %s set %q", kind, name),
+				})
+			}
+		}
+	}
+
+	check("permission_all_deny_sets", rules.AllDenySets, rules.DenyRules, "deny")
+	check("permission_supply_chain_deny_sets", rules.SupplyChainDenySets, rules.DenyRules, "deny")
+	check("permission_package_ask_sets", rules.PackageAskSets, rules.AskRules, "ask")
+	for _, name := range slices.Sorted(maps.Keys(rules.PresetDefs)) {
+		def := rules.PresetDefs[name]
+		field := "permission_preset_defs." + name
+		check(field+".allow_sets", def.AllowSets, rules.AllowRules, "allow")
+		check(field+".deny_sets", def.DenySets, rules.DenyRules, "deny")
+		check(field+".ask_sets", def.AskSets, rules.AskRules, "ask")
+	}
+
+	return errs
+}
+
+// validateMCPServerRefs checks that MCP servers referenced by tiers, profiles
+// and default_mcp_servers are defined in mcp_servers.
+func (c *Catalog) validateMCPServerRefs() []CatalogError {
+	var errs []CatalogError
+
+	check := func(file, field string, names []string) {
+		for _, name := range names {
+			if _, ok := c.mcpServers[name]; !ok {
+				errs = append(errs, CatalogError{file, field, fmt.Sprintf("references unknown MCP server %q", name)})
+			}
+		}
+	}
+
+	for name, def := range c.tiers.Tiers {
+		if def.ClaudeCode != nil {
+			check("tiers.yaml", name+".claude_code.mcp_servers", def.ClaudeCode.MCPServers)
+		}
+	}
+	for name, def := range c.profiles.Profiles {
+		if def.ClaudeCode != nil {
+			check("profiles.yaml", name+".claude_code.mcp_servers", def.ClaudeCode.MCPServers)
+		}
+	}
+	check("derivations.yaml", "default_mcp_servers", c.derivations.DefaultMCPServers)
+
+	return errs
+}
+
+// validatePresetRefs checks that every permission level referenced by tiers,
+// profiles, project profiles and compliance levels is a valid permission
+// preset, and that every preset definition is a listed preset.
+func (c *Catalog) validatePresetRefs() []CatalogError {
+	var errs []CatalogError
+
+	valid := make(map[string]bool, len(c.validation.PermissionPresets))
+	for _, p := range c.validation.PermissionPresets {
+		valid[p] = true
+	}
+	check := func(file, field, preset string) {
+		if preset != "" && !valid[preset] {
+			errs = append(errs, CatalogError{file, field, fmt.Sprintf("references unknown permission preset %q", preset)})
+		}
+	}
+
+	for name, def := range c.tiers.Tiers {
+		check("tiers.yaml", name+".default_permission_preset", def.DefaultPermissionPreset)
+		if def.ClaudeCode != nil {
+			check("tiers.yaml", name+".claude_code.permission_level", def.ClaudeCode.PermissionLevel)
+		}
+	}
+	for name, def := range c.profiles.Profiles {
+		if def.ClaudeCode != nil {
+			check("profiles.yaml", name+".claude_code.permission_level", def.ClaudeCode.PermissionLevel)
+		}
+	}
+	for name, def := range c.projectProfiles.Profiles {
+		check("project_profiles.yaml", name+".permission_level", def.PermissionLevel)
+	}
+	for name, def := range c.compliance.Levels {
+		check("compliance.yaml", name+".claude_permission_level", def.ClaudePermissionLevel)
+	}
+	for name := range c.permissionRules.PresetDefs {
+		if !valid[name] {
+			errs = append(errs, CatalogError{
+				"permission_rules", "permission_preset_defs." + name,
+				"preset is not listed in permission_presets",
+			})
+		}
+	}
+
+	return errs
+}
+
+// validateComplianceHooks checks that each compliance level's required
+// pre-commit hooks name a known pre-commit hook (security_hooks, hook_tiers
+// or custom_hooks) or a known tool.
+func (c *Catalog) validateComplianceHooks() []CatalogError {
+	var errs []CatalogError
+
+	known := make(map[string]bool)
+	for _, h := range c.security.Hooks.Default {
+		known[h] = true
+	}
+	for _, hooks := range c.hookTiers.Tiers {
+		for _, h := range hooks {
+			known[h] = true
+		}
+	}
+	for _, h := range c.security.CustomHooks {
+		known[h.ID] = true
+	}
+	for name := range c.tools.Tools {
+		known[name] = true
+	}
+
+	for level, def := range c.compliance.Levels {
+		for _, hook := range def.RequiredPreCommitHooks {
+			if !known[hook] {
+				errs = append(errs, CatalogError{
+					"compliance.yaml", level + ".required_pre_commit_hooks",
+					fmt.Sprintf("references unknown hook or tool %q", hook),
 				})
 			}
 		}

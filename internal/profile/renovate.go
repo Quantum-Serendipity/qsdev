@@ -3,6 +3,8 @@ package profile
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -17,20 +19,31 @@ func (p *InfraProfile) generateRenovateJSON() types.GeneratedFile {
 		AutomergeType     string   `json:"automergeType,omitempty"`
 		Automerge         bool     `json:"automerge,omitempty"`
 		MatchManagers     []string `json:"matchManagers,omitempty"`
-		MatchCategories   []string `json:"matchCategories,omitempty"`
-		Labels            []string `json:"labels,omitempty"`
 		MatchDepTypes     []string `json:"matchDepTypes,omitempty"`
 	}
 
+	// vulnerabilityAlerts configures Renovate's security-fix updates. An
+	// explicit null minimumReleaseAge exempts them from the age gate below.
+	// (matchCategories selects language/manager categories such as "js" or
+	// "golang"; there is no "vulnerability" category, so a packageRule cannot
+	// target security fixes.)
+	type vulnerabilityAlerts struct {
+		Labels            []string `json:"labels"`
+		MinimumReleaseAge *string  `json:"minimumReleaseAge"`
+	}
+
 	type renovateConfig struct {
-		Schema       string        `json:"$schema"`
-		Extends      []string      `json:"extends"`
-		PackageRules []packageRule `json:"packageRules,omitempty"`
+		Schema              string              `json:"$schema"`
+		Extends             []string            `json:"extends"`
+		VulnerabilityAlerts vulnerabilityAlerts `json:"vulnerabilityAlerts"`
+		PackageRules        []packageRule       `json:"packageRules,omitempty"`
 	}
 
 	cfg := renovateConfig{
 		Schema:  "https://docs.renovatebot.com/renovate-schema.json",
 		Extends: []string{"config:recommended"},
+		// Vulnerability alerts bypass age-gating and are labelled.
+		VulnerabilityAlerts: vulnerabilityAlerts{Labels: []string{"security"}},
 	}
 
 	// Default age-gating rule.
@@ -39,13 +52,6 @@ func (p *InfraProfile) generateRenovateJSON() types.GeneratedFile {
 			MinimumReleaseAge: fmt.Sprintf("%d days", p.Updates.AgeGatingDays),
 		})
 	}
-
-	// Vulnerability alerts bypass age-gating.
-	cfg.PackageRules = append(cfg.PackageRules, packageRule{
-		MatchCategories:   []string{"vulnerability"},
-		MinimumReleaseAge: "0 days",
-		Labels:            []string{"security"},
-	})
 
 	// Automerge patches if enabled.
 	if p.Updates.AutomergePatches {
@@ -56,15 +62,16 @@ func (p *InfraProfile) generateRenovateJSON() types.GeneratedFile {
 		})
 	}
 
-	// Ecosystem-specific overrides.
-	for eco, days := range p.Updates.EcosystemOverrides {
+	// Ecosystem-specific overrides, in sorted order so the generated file is
+	// byte-for-byte stable across runs.
+	for _, eco := range slices.Sorted(maps.Keys(p.Updates.EcosystemOverrides)) {
 		manager := ecosystemToRenovateManager(eco)
 		if manager == "" {
 			continue
 		}
 		cfg.PackageRules = append(cfg.PackageRules, packageRule{
 			MatchManagers:     []string{manager},
-			MinimumReleaseAge: fmt.Sprintf("%d days", days),
+			MinimumReleaseAge: fmt.Sprintf("%d days", p.Updates.EcosystemOverrides[eco]),
 		})
 	}
 

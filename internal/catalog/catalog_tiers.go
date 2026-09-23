@@ -8,7 +8,8 @@ import (
 
 // --- Tier accessors ---
 
-// TierOrder returns the tier names sorted by ascending order.
+// TierOrder returns the tier names sorted by ascending order. Ties (which
+// Validate rejects) are broken by name so the result is deterministic.
 func (c *Catalog) TierOrder() []string {
 	type kv struct {
 		name  string
@@ -19,7 +20,7 @@ func (c *Catalog) TierOrder() []string {
 		items = append(items, kv{name, def.Order})
 	}
 	slices.SortFunc(items, func(a, b kv) int {
-		return cmp.Compare(a.order, b.order)
+		return cmp.Or(cmp.Compare(a.order, b.order), cmp.Compare(a.name, b.name))
 	})
 	result := make([]string, len(items))
 	for i, item := range items {

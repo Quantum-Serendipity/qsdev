@@ -6,6 +6,7 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -31,6 +32,8 @@ func (e *VersionMismatchError) Error() string {
 		app, e.BinaryVersion, e.Constraint)
 	if e.UpgradeCommand != "" {
 		msg += fmt.Sprintf("; run %q to update", e.UpgradeCommand)
+	} else {
+		msg += fmt.Sprintf("; update %s using the package manager you installed it with", app)
 	}
 	return msg
 }
@@ -58,6 +61,11 @@ func (w *RatchetWarning) Error() string {
 //   - ~> X     means  >= X.0.0, < (X+1).0.0
 //   - ~> X.Y   means  >= X.Y.0, < X.(Y+1).0
 //   - ~> X.Y.Z means  >= X.Y.Z, < X.(Y+1).0
+//
+// Prerelease versions are compared by normal semver precedence rather than
+// excluded outright: a release candidate (0.8.1-rc1) or a go-install
+// pseudo-version (v0.8.1-0.20260101000000-abcdef123456, which sorts after
+// v0.8.0) satisfies ">= 0.8.0", while 0.8.0-rc1 still does not.
 func ParseVersionConstraint(raw string) (*VersionConstraint, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -68,6 +76,7 @@ func ParseVersionConstraint(raw string) (*VersionConstraint, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid version constraint %q: %w", raw, err)
 	}
+	c.IncludePrerelease = true
 
 	return &VersionConstraint{raw: raw, constraint: c}, nil
 }
@@ -121,12 +130,31 @@ func CheckBinaryVersion(qsdevVersionConstraint, binaryVersion string) error {
 		return &VersionMismatchError{
 			BinaryVersion:  binaryVersion,
 			Constraint:     qsdevVersionConstraint,
-			UpgradeCommand: "nix flake update",
+			UpgradeCommand: upgradeCommand(version.Info().BuiltBy),
 		}
 	}
 
 	return nil
 }
+
+// upgradeCommand returns the command that updates a binary produced by the
+// given build method (the builtBy ldflag), or "" when the install channel
+// cannot be told from the build alone (release archives are shipped through
+// several package managers).
+func upgradeCommand(builtBy string) string {
+	switch builtBy {
+	case "nix":
+		return "nix flake update"
+	case "manual":
+		// go install / go build leave builtBy at its default.
+		return "go install " + qsdevModulePath + "/cmd/qsdev@latest"
+	default:
+		return ""
+	}
+}
+
+// qsdevModulePath is the Go module path of the qsdev binary.
+const qsdevModulePath = "github.com/Quantum-Serendipity/qsdev"
 
 // CheckVersionRatchet compares the current binary version against the version
 // that last generated files. Returns nil if:

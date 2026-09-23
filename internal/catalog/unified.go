@@ -1,11 +1,27 @@
 package catalog
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+)
+
+// Top-level unified defaults sections whose entries are deep-merged by
+// MergeCatalogs (see Catalog.entryNodes). The names match the yaml tags on
+// UnifiedDefaults.
+const (
+	sectionTiers                = "tiers"
+	sectionCompliance           = "compliance"
+	sectionProfiles             = "profiles"
+	sectionProjectProfiles      = "project_profiles"
+	sectionTools                = "tools"
+	sectionMCPServers           = "mcp_servers"
+	sectionPermissionPresetDefs = "permission_preset_defs"
 )
 
 // UnifiedDefaults is the user-facing schema for ~/.config/qsdev/defaults.yaml.
@@ -223,12 +239,90 @@ func loadUnifiedFile(path string) (*Catalog, error) {
 		return nil, err
 	}
 
-	var ud UnifiedDefaults
-	if err := yaml.Unmarshal(data, &ud); err != nil {
+	cat, err := parseUnifiedBytes(data)
+	if err != nil {
 		return nil, fmt.Errorf("parsing unified defaults %s: %w", path, err)
 	}
+	return cat, nil
+}
 
-	return ud.ToCatalog(), nil
+// parseUnifiedBytes strictly parses unified defaults YAML. Unknown or
+// misspelled keys are rejected (a typo such as "permision_deny_rules" must
+// not silently drop the user's intended security rules), as is any YAML
+// document after the first, which would otherwise be ignored. An empty or
+// comment-only file yields an empty catalog.
+func parseUnifiedBytes(data []byte) (*Catalog, error) {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+
+	var ud UnifiedDefaults
+	if err := dec.Decode(&ud); err != nil {
+		if errors.Is(err, io.EOF) {
+			return &Catalog{}, nil
+		}
+		return nil, err
+	}
+	more, err := hasMoreDocuments(dec)
+	if err != nil {
+		return nil, err
+	}
+	if more {
+		return nil, errors.New("multiple YAML documents are not supported; remove everything after the first \"---\"")
+	}
+
+	// Keep the raw document so MergeCatalogs can tell which fields of an
+	// entry the file actually sets.
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+
+	cat := ud.ToCatalog()
+	cat.entryNodes = sectionEntryNodes(&doc)
+	return cat, nil
+}
+
+// hasMoreDocuments reports whether dec holds another YAML document with
+// content. Empty trailing documents (a closing "---", optionally followed by
+// comments) carry nothing that could be ignored, so they are skipped.
+func hasMoreDocuments(dec *yaml.Decoder) (bool, error) {
+	for {
+		var doc yaml.Node
+		if err := dec.Decode(&doc); err != nil {
+			if errors.Is(err, io.EOF) {
+				return false, nil
+			}
+			return false, err
+		}
+		if len(doc.Content) > 0 && doc.Content[0].Tag != "!!null" {
+			return true, nil
+		}
+	}
+}
+
+// sectionEntryNodes indexes the entries of every top-level mapping section
+// of a unified defaults document by section and entry name.
+func sectionEntryNodes(doc *yaml.Node) map[string]map[string]*yaml.Node {
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return nil
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return nil
+	}
+	out := make(map[string]map[string]*yaml.Node)
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		section := root.Content[i+1]
+		if section.Kind != yaml.MappingNode {
+			continue
+		}
+		entries := make(map[string]*yaml.Node, len(section.Content)/2)
+		for j := 0; j+1 < len(section.Content); j += 2 {
+			entries[section.Content[j].Value] = section.Content[j+1]
+		}
+		out[root.Content[i].Value] = entries
+	}
+	return out
 }
 
 // LoadEmbeddedOnly loads only the embedded catalog defaults with no overlays.

@@ -1,6 +1,9 @@
 package defaults
 
 import (
+	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
@@ -47,6 +50,10 @@ func TestSectionFromUnified(t *testing.T) {
 		{name: "data_classifications", section: "data_classifications", wantNil: true},
 		{name: "package_managers", section: "package_managers", wantNil: true},
 		{name: "tool_categories", section: "tool_categories", wantNil: true},
+		{name: "mcp_servers", section: "mcp_servers", wantNil: true},
+		{name: "docs_corpus", section: "docs_corpus", wantNil: true},
+		{name: "permission_deny_rules", section: "permission_deny_rules", wantNil: true},
+		{name: "permission_preset_defs", section: "permission_preset_defs", wantNil: true},
 		{name: "case insensitive", section: "TIERS"},
 		{name: "mixed case", section: "Tools"},
 
@@ -78,17 +85,77 @@ func TestSectionFromUnified(t *testing.T) {
 func TestSectionNames(t *testing.T) {
 	t.Parallel()
 
-	names := sectionNames()
+	names := catalog.SectionNames()
 	if len(names) == 0 {
-		t.Fatal("sectionNames returned empty slice")
+		t.Fatal("catalog.SectionNames returned empty slice")
 	}
 
-	// Every name should be a valid section.
+	// Every advertised section must resolve, including the security-relevant
+	// mcp_servers, docs_corpus and permission_* sections.
 	u := &catalog.UnifiedDefaults{}
 	for _, name := range names {
-		_, err := sectionFromUnified(u, name)
-		if err != nil {
-			t.Errorf("sectionNames includes %q but sectionFromUnified rejects it: %v", name, err)
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := sectionFromUnified(u, name); err != nil {
+				t.Errorf("catalog.SectionNames includes %q but sectionFromUnified rejects it: %v", name, err)
+			}
+		})
+	}
+}
+
+func TestSectionNamesCoverUnifiedDefaults(t *testing.T) {
+	t.Parallel()
+
+	known := make(map[string]bool)
+	for _, n := range catalog.SectionNames() {
+		known[n] = true
+	}
+	typ := reflect.TypeOf(catalog.UnifiedDefaults{})
+	for i := range typ.NumField() {
+		tag, _, _ := strings.Cut(typ.Field(i).Tag.Get("yaml"), ",")
+		if !known[tag] {
+			t.Errorf("UnifiedDefaults section %q (field %s) is missing from catalog.SectionNames", tag, typ.Field(i).Name)
 		}
+	}
+}
+
+func TestSectionFromUnifiedReturnsPermissionRules(t *testing.T) {
+	t.Parallel()
+
+	u := &catalog.UnifiedDefaults{
+		PermissionDenyRules: map[string][]string{"destructive_ops": {"Bash(rm -rf /)"}},
+	}
+	got, err := sectionFromUnified(u, "permission_deny_rules")
+	if err != nil {
+		t.Fatalf("sectionFromUnified: %v", err)
+	}
+	rules, ok := got.(map[string][]string)
+	if !ok || len(rules["destructive_ops"]) != 1 {
+		t.Errorf("sectionFromUnified(permission_deny_rules) = %#v, want the deny rules map", got)
+	}
+}
+
+func TestEditorCommand(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		env      string
+		wantBin  string
+		wantArgs []string
+	}{
+		{name: "unset", env: "", wantBin: "vi", wantArgs: []string{"/f.yaml"}},
+		{name: "whitespace only", env: " \t ", wantBin: "vi", wantArgs: []string{"/f.yaml"}},
+		{name: "plain", env: "nano", wantBin: "nano", wantArgs: []string{"/f.yaml"}},
+		{name: "with args", env: "code --wait", wantBin: "code", wantArgs: []string{"--wait", "/f.yaml"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			bin, args := editorCommand(tt.env, "/f.yaml")
+			if bin != tt.wantBin || !slices.Equal(args, tt.wantArgs) {
+				t.Errorf("editorCommand(%q) = %q %v, want %q %v", tt.env, bin, args, tt.wantBin, tt.wantArgs)
+			}
+		})
 	}
 }

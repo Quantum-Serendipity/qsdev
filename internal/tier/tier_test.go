@@ -1,6 +1,7 @@
 package tier
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
@@ -34,6 +35,18 @@ func TestParseTier_Invalid(t *testing.T) {
 		if err == nil {
 			t.Errorf("ParseTier(%q): expected error, got nil", input)
 		}
+	}
+}
+
+func TestParseTier_InvalidListsCatalogTiers(t *testing.T) {
+	t.Parallel()
+	_, err := ParseTier("ful")
+	if err == nil {
+		t.Fatal("ParseTier(\"ful\"): expected error, got nil")
+	}
+	want := strings.Join(catalog.MustDefault().TierOrder(), ", ")
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("ParseTier error = %q, want it to list the catalog tiers %q", err, want)
 	}
 }
 

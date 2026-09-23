@@ -2,7 +2,7 @@ package config
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -28,7 +28,7 @@ func GetBuiltInProfile(name string) (*types.QsdevConfig, error) {
 	aliases := cat.ProfileAliases()
 
 	if alias, ok := aliases[name]; ok {
-		log.Printf("warning: profile %q is deprecated, use %q instead", name, alias)
+		slog.Warn("profile is deprecated", "profile", name, "use", alias)
 		name = alias
 	}
 

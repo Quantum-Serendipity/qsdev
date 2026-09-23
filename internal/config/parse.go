@@ -4,11 +4,14 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -101,7 +104,37 @@ func ParseQsdevConfigBytes(data []byte) (*types.QsdevConfig, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
+	// Reject any YAML document after the first: both passes above read only
+	// the first document, so a second one (e.g. a pasted snippet after
+	// "---") would otherwise be silently ignored, security settings included.
+	more, err := hasMoreDocuments(dec)
+	if err != nil {
+		return nil, fmt.Errorf("parsing config: %w", err)
+	}
+	if more {
+		return nil, fmt.Errorf("parsing config: multiple YAML documents are not supported; "+
+			"merge everything after the first \"---\" into a single document in %s", branding.Get().ConfigFile)
+	}
+
 	return &cfg, nil
+}
+
+// hasMoreDocuments reports whether dec holds another YAML document with
+// content. Empty trailing documents (a closing "---", optionally followed by
+// comments) carry nothing that could be ignored, so they are skipped.
+func hasMoreDocuments(dec *yaml.Decoder) (bool, error) {
+	for {
+		var doc yaml.Node
+		if err := dec.Decode(&doc); err != nil {
+			if errors.Is(err, io.EOF) {
+				return false, nil
+			}
+			return false, err
+		}
+		if len(doc.Content) > 0 && doc.Content[0].Tag != "!!null" {
+			return true, nil
+		}
+	}
 }
 
 // ValidateQsdevConfig validates a parsed config and returns all validation
@@ -149,6 +182,16 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 			Field:   "security.level",
 			Value:   cfg.Security.Level,
 			Message: "invalid security level; valid values: baseline, enhanced, strict",
+		})
+	}
+
+	// Validate tier: an unknown explicit tier must fail validation rather
+	// than be silently replaced by an inferred one during generation.
+	if cfg.Tier != "" && !validation.IsValidTier(cfg.Tier) {
+		errs = append(errs, ValidationError{
+			Field:   "tier",
+			Value:   cfg.Tier,
+			Message: "unknown tier; valid values: " + strings.Join(validation.Tiers(), ", "),
 		})
 	}
 

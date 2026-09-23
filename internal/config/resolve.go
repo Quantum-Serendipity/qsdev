@@ -1,6 +1,8 @@
 package config
 
 import (
+	"slices"
+
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -165,9 +167,10 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 	}
 
 	// Client: NOT merged, only from project config.
-	// The overlay's Client is used directly if present.
+	// The overlay's Client replaces the base's if present (as a deep copy,
+	// so later edits to the resolved config never reach the caller's input).
 	if overlay.Client != nil {
-		result.Client = overlay.Client
+		result.Client = cloneClient(overlay.Client)
 	}
 
 	// Tier: last-wins scalar.
@@ -443,25 +446,21 @@ func cloneQsdevConfig(cfg *types.QsdevConfig) *types.QsdevConfig {
 		copy(result.ClaudeCode.MCPServers, cfg.ClaudeCode.MCPServers)
 	}
 
-	// Clone Client.
-	if cfg.Client != nil {
-		client := *cfg.Client
-		if len(cfg.Client.Compliance) > 0 {
-			client.Compliance = make([]string, len(cfg.Client.Compliance))
-			copy(client.Compliance, cfg.Client.Compliance)
-		}
-		if len(cfg.Client.AllowedMCP) > 0 {
-			client.AllowedMCP = make([]string, len(cfg.Client.AllowedMCP))
-			copy(client.AllowedMCP, cfg.Client.AllowedMCP)
-		}
-		if len(cfg.Client.BlockedMCP) > 0 {
-			client.BlockedMCP = make([]string, len(cfg.Client.BlockedMCP))
-			copy(client.BlockedMCP, cfg.Client.BlockedMCP)
-		}
-		result.Client = &client
-	}
+	result.Client = cloneClient(cfg.Client)
 
 	return result
+}
+
+// cloneClient returns a deep copy of a *ClientConfig, or nil for nil.
+func cloneClient(c *types.ClientConfig) *types.ClientConfig {
+	if c == nil {
+		return nil
+	}
+	client := *c
+	client.Compliance = slices.Clone(c.Compliance)
+	client.AllowedMCP = slices.Clone(c.AllowedMCP)
+	client.BlockedMCP = slices.Clone(c.BlockedMCP)
+	return &client
 }
 
 // cloneBoolPtr returns a copy of a *bool value.

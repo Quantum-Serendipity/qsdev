@@ -2,6 +2,8 @@ package tier
 
 import (
 	"fmt"
+	"log/slog"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 )
@@ -30,10 +32,9 @@ func ParseTier(s string) (Tier, error) {
 	if err != nil {
 		return 0, fmt.Errorf("loading catalog: %w", err)
 	}
-	defs := cat.TierDefs()
-	def, ok := defs[s]
+	def, ok := cat.TierDef(s)
 	if !ok {
-		return 0, fmt.Errorf("unknown tier %q; valid tiers: supply-chain-only, standard, full", s)
+		return 0, fmt.Errorf("unknown tier %q; valid tiers: %s", s, strings.Join(cat.TierOrder(), ", "))
 	}
 	return Tier(def.Order), nil
 }
@@ -44,22 +45,30 @@ func (t Tier) String() string {
 	if err != nil {
 		return fmt.Sprintf("tier(%d)", int(t))
 	}
-	for name, def := range cat.TierDefs() {
-		if Tier(def.Order) == t {
-			return name
-		}
+	if name, _, ok := lookup(cat, t); ok {
+		return name
 	}
 	return fmt.Sprintf("tier(%d)", int(t))
+}
+
+// lookup returns the catalog tier whose order equals t. It walks the
+// deterministic TierOrder (catalog validation guarantees orders are unique)
+// rather than ranging over the tier map.
+func lookup(cat *catalog.Catalog, t Tier) (string, catalog.TierDef, bool) {
+	for _, name := range cat.TierOrder() {
+		if def, _ := cat.TierDef(name); Tier(def.Order) == t {
+			return name, def, true
+		}
+	}
+	return "", catalog.TierDef{}, false
 }
 
 // DefaultPermissionPreset returns the permission preset implied by this tier.
 func (t Tier) DefaultPermissionPreset() string {
 	cat, err := catalog.Default()
 	if err == nil {
-		for _, def := range cat.TierDefs() {
-			if Tier(def.Order) == t && def.DefaultPermissionPreset != "" {
-				return def.DefaultPermissionPreset
-			}
+		if _, def, ok := lookup(cat, t); ok && def.DefaultPermissionPreset != "" {
+			return def.DefaultPermissionPreset
 		}
 	}
 	if t <= SupplyChainOnly {
@@ -131,12 +140,19 @@ func Total() int {
 
 // Resolve determines the effective tier from an explicit tier string,
 // falling back to inference from legacy fields when the explicit tier
-// is not set or is invalid.
+// is not set or is invalid. An invalid explicit tier is logged rather than
+// silently replaced; callers validate tiers at their input boundary
+// (answers and .qsdev.yaml validation).
 func Resolve(tierStr string, permissionLevel string, mcpServers []string) Tier {
 	if tierStr != "" {
-		if t, err := ParseTier(tierStr); err == nil {
+		t, err := ParseTier(tierStr)
+		if err == nil {
 			return t
 		}
+		inferred := Infer(permissionLevel, mcpServers)
+		slog.Warn("ignoring invalid tier; falling back to inferred tier",
+			"tier", tierStr, "inferred", int(inferred), "error", err)
+		return inferred
 	}
 	return Infer(permissionLevel, mcpServers)
 }

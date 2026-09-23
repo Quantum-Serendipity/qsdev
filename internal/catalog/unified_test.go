@@ -333,3 +333,23 @@ func TestGenerateDefaultsTemplate(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateDefaultsTemplate_UncommentedLoadsStrictly(t *testing.T) {
+	t.Parallel()
+
+	output, err := GenerateDefaultsTemplate()
+	if err != nil {
+		t.Fatalf("GenerateDefaultsTemplate() error: %v", err)
+	}
+	body := strings.TrimPrefix(string(output), defaultsTemplateHeader)
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		line = strings.TrimPrefix(line, "#")
+		lines[i] = strings.TrimPrefix(line, " ")
+	}
+
+	f := writeUnifiedFile(t, strings.Join(lines, "\n"))
+	if _, err := Load(WithOrgConfigFile(f)); err != nil {
+		t.Fatalf("fully uncommented template must load under strict parsing and validation: %v", err)
+	}
+}

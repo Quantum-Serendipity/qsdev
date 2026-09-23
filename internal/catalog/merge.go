@@ -1,32 +1,46 @@
 package catalog
 
-import "maps"
+import (
+	"maps"
+
+	"gopkg.in/yaml.v3"
+)
 
 // MergeCatalogs merges an overlay catalog into a base catalog.
 // Non-empty overlay fields override or extend the base. For map fields,
 // overlay entries are added or replace base entries with the same key.
 // For slice fields, the overlay replaces the base if non-empty.
+//
+// Struct-valued map entries (tiers, compliance levels, profiles, project
+// profiles, tools, MCP servers, permission presets) parsed from a unified
+// defaults file are deep-merged: only the fields the overlay file actually
+// names replace the base entry's fields, so uncommenting one line of the
+// generated template does not wipe the rest of that entry. Entries of an
+// overlay built in code (no source YAML) replace the base entry wholesale.
 func MergeCatalogs(base, overlay *Catalog) *Catalog {
 	result := &Catalog{}
+	nodes := overlay.entryNodes
 
 	// Tiers: merge maps.
-	result.tiers.Tiers = mergeMap(base.tiers.Tiers, overlay.tiers.Tiers)
+	result.tiers.Tiers = mergeEntries(base.tiers.Tiers, overlay.tiers.Tiers, nodes[sectionTiers])
 
 	// Compliance: merge maps.
-	result.compliance.Levels = mergeMap(base.compliance.Levels, overlay.compliance.Levels)
+	result.compliance.Levels = mergeEntries(base.compliance.Levels, overlay.compliance.Levels, nodes[sectionCompliance])
 
 	// Profiles: merge maps and aliases.
-	result.profiles.Profiles = mergeMap(base.profiles.Profiles, overlay.profiles.Profiles)
+	result.profiles.Profiles = mergeEntries(base.profiles.Profiles, overlay.profiles.Profiles, nodes[sectionProfiles])
 	result.profiles.Aliases = mergeStringMap(base.profiles.Aliases, overlay.profiles.Aliases)
 
 	// Project profiles: merge maps.
-	result.projectProfiles.Profiles = mergeMap(base.projectProfiles.Profiles, overlay.projectProfiles.Profiles)
+	result.projectProfiles.Profiles = mergeEntries(
+		base.projectProfiles.Profiles, overlay.projectProfiles.Profiles, nodes[sectionProjectProfiles],
+	)
 
 	// Tools: merge maps.
-	result.tools.Tools = mergeMap(base.tools.Tools, overlay.tools.Tools)
+	result.tools.Tools = mergeEntries(base.tools.Tools, overlay.tools.Tools, nodes[sectionTools])
 
 	// MCP Servers: merge maps.
-	result.mcpServers = mergeMap(base.mcpServers, overlay.mcpServers)
+	result.mcpServers = mergeEntries(base.mcpServers, overlay.mcpServers, nodes[sectionMCPServers])
 
 	// Security: merge lists and sub-structures.
 	result.security.Hooks.Default = mergeStringSlice(base.security.Hooks.Default, overlay.security.Hooks.Default)
@@ -63,20 +77,84 @@ func MergeCatalogs(base, overlay *Catalog) *Catalog {
 	result.permissionRules.AllowRules = mergeStringSliceMap(base.permissionRules.AllowRules, overlay.permissionRules.AllowRules)
 	result.permissionRules.AskRules = mergeStringSliceMap(base.permissionRules.AskRules, overlay.permissionRules.AskRules)
 	result.permissionRules.PackageAskSets = mergeStringSlice(base.permissionRules.PackageAskSets, overlay.permissionRules.PackageAskSets)
-	result.permissionRules.PresetDefs = mergeMap(base.permissionRules.PresetDefs, overlay.permissionRules.PresetDefs)
+	result.permissionRules.PresetDefs = mergeEntries(
+		base.permissionRules.PresetDefs, overlay.permissionRules.PresetDefs, nodes[sectionPermissionPresetDefs],
+	)
+
+	// Docs corpus: merge field by field.
+	result.docsCorpus = mergeDocsCorpus(base.docsCorpus, overlay.docsCorpus)
 
 	return result
 }
 
-// mergeMap merges two maps of the same type, overlay entries win.
-func mergeMap[V any](base, overlay map[string]V) map[string]V {
+// mergeEntries merges two maps of struct entries, overlay entries win. When
+// the overlay entry's source YAML node is known and the base has the same
+// key, the node is decoded on top of a deep copy of the base entry so only
+// the fields present in the overlay file change (including explicit
+// false/zero values). Otherwise the overlay entry replaces the base entry.
+func mergeEntries[V any](base, overlay map[string]V, nodes map[string]*yaml.Node) map[string]V {
 	if len(base) == 0 && len(overlay) == 0 {
 		return nil
 	}
 	out := make(map[string]V, len(base)+len(overlay))
 	maps.Copy(out, base)
-	maps.Copy(out, overlay)
+	for key, value := range overlay {
+		baseValue, inBase := base[key]
+		node, hasNode := nodes[key]
+		if !inBase || !hasNode {
+			out[key] = value
+			continue
+		}
+		merged, err := decodeOnto(baseValue, node)
+		if err != nil {
+			// Unreachable in practice: the same node already decoded into V
+			// when the overlay file was loaded. Fall back to replacement.
+			out[key] = value
+			continue
+		}
+		out[key] = merged
+	}
 	return out
+}
+
+// decodeOnto decodes node on top of a deep copy of base. The copy is taken
+// via a YAML round trip so decoding into pointer and map fields can never
+// mutate the base entry.
+func decodeOnto[V any](base V, node *yaml.Node) (V, error) {
+	var out V
+	data, err := yaml.Marshal(base)
+	if err != nil {
+		return out, err
+	}
+	if err := yaml.Unmarshal(data, &out); err != nil {
+		return out, err
+	}
+	if err := node.Decode(&out); err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+// mergeDocsCorpus merges the docs corpus configuration: a non-empty overlay
+// base URL wins, slug mappings merge per language, and a non-empty overlay
+// ZIM archive list replaces the base list.
+func mergeDocsCorpus(base, overlay DocsCorpusConfig) DocsCorpusConfig {
+	result := DocsCorpusConfig{
+		DevDocsBaseURL: base.DevDocsBaseURL,
+		DevDocsSlugs:   mergeStringSliceMap(base.DevDocsSlugs, overlay.DevDocsSlugs),
+	}
+	if overlay.DevDocsBaseURL != "" {
+		result.DevDocsBaseURL = overlay.DevDocsBaseURL
+	}
+	zims := base.ZIMArchives
+	if len(overlay.ZIMArchives) > 0 {
+		zims = overlay.ZIMArchives
+	}
+	if zims != nil {
+		result.ZIMArchives = make([]ZIMArchiveDef, len(zims))
+		copy(result.ZIMArchives, zims)
+	}
+	return result
 }
 
 // mergeStringMap merges two string→string maps.

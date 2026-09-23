@@ -43,8 +43,8 @@ func goMock() *ecosystem.MockModule {
   env.GONOSUMDB = "";`,
 		PreCommitHooksVal: []ecosystem.HookConfig{
 			{ID: "gofmt", Name: "gofmt", Description: "Format Go source code", Entry: "gofmt -l -w", Language: "system", Types: []string{"go"}, Stages: []string{"pre-commit"}, PassFilenames: true, BuiltIn: true},
-			{ID: "govet", Name: "govet", Description: "Run go vet", Entry: "go vet ./...", Language: "system", Types: []string{"go"}, Stages: []string{"pre-commit"}, BuiltIn: true},
-			{ID: "staticcheck", Name: "staticcheck", Description: "Run staticcheck", Entry: "staticcheck ./...", Language: "system", Types: []string{"go"}, Stages: []string{"pre-commit"}, BuiltIn: false, NixPackage: "go-tools"},
+			{ID: "govet", Name: "govet", Description: "Run go vet", Entry: "go vet ./...", Language: "system", Types: []string{"go"}, Stages: []string{"pre-commit"}, BuiltIn: true, Excludes: []string{`(^|/)testdata/`}},
+			{ID: "staticcheck", Name: "staticcheck", Description: "Run staticcheck", Entry: "staticcheck ./...", Language: "system", Types: []string{"go"}, Stages: []string{"pre-commit"}, BuiltIn: false, NixPackage: "go-tools", Excludes: []string{`(^|/)vendor/`}},
 		},
 	}
 }
@@ -236,7 +236,10 @@ func TestGenerateDevenvNix_HookComposition(t *testing.T) {
 
 	// Built-in hooks from Go module.
 	requireContains(t, content, "gofmt.enable = true")
-	requireContains(t, content, "govet.enable = true")
+	// Hook excludes render for built-in hooks (whose entry git-hooks.nix
+	// owns) and for custom hooks alike.
+	requireContains(t, content, "    govet = {\n      enable = true;\n      excludes = [ \"(^|/)testdata/\" ];\n    };")
+	requireContains(t, content, `excludes = [ "(^|/)vendor/" ];`)
 
 	// Built-in hooks from Python module.
 	requireContains(t, content, "ruff.enable = true")

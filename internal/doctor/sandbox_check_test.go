@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -268,5 +269,35 @@ func TestRunSandboxCheck_LandlockRemediation(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("recommendations %q do not mention %q", section.Recommendations, want)
 		}
+	}
+}
+
+// TestLandlockItem pins that a Landlock ABI without IPC scoping (< 6) is a
+// warning, not full isolation: ll-restrict cannot keep a network-allowed hook
+// away from host abstract UNIX sockets there.
+func TestLandlockItem(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		abi        int
+		wantStatus string
+		wantText   string
+	}{
+		{0, "warn", "not enforceable"},
+		{4, "warn", "not scoped"},
+		{5, "warn", "not scoped"},
+		{6, "ok", "ABI v6"},
+		{9, "ok", "ABI v9"},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("abi%d", tt.abi), func(t *testing.T) {
+			t.Parallel()
+			got := landlockItem(tt.abi)
+			if got.Status != tt.wantStatus {
+				t.Errorf("Status = %q, want %q", got.Status, tt.wantStatus)
+			}
+			if !strings.Contains(got.Summary, tt.wantText) {
+				t.Errorf("Summary = %q, want it to contain %q", got.Summary, tt.wantText)
+			}
+		})
 	}
 }

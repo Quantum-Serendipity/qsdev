@@ -23,3 +23,16 @@ updates:
       actions:
         patterns:
           - "*"
+
+  # Digest-pinned base images of the MCP gateway image.
+  - package-ecosystem: "docker"
+    directory: "/build/docker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore(docker):"
+    groups:
+      docker-images:
+        patterns:
+          - "*"

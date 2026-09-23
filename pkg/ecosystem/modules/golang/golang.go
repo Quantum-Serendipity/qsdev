@@ -165,6 +165,10 @@ func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile
 	return nil
 }
 
+// goToolIgnoredDirs matches the paths the go tool leaves out of `./...`:
+// testdata and vendor directories and directories starting with "." or "_".
+var goToolIgnoredDirs = []string{`(^|/)(testdata|vendor)/`, `(^|/)[._][^/]*/`}
+
 // PreCommitHooks returns pre-commit hook definitions for the Go ecosystem.
 func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	return []ecosystem.HookConfig{
@@ -189,6 +193,11 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
 			BuiltIn:       true,
+			// The built-in hook runs `go vet` in each staged file's directory,
+			// so it must skip the directories `./...` skips: testdata (often
+			// //go:build ignore fixtures, where go vet fails with "build
+			// constraints exclude all Go files"), vendor, and _/. prefixed dirs.
+			Excludes: goToolIgnoredDirs,
 		},
 		{
 			ID:            "staticcheck",

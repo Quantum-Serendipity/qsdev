@@ -6,7 +6,15 @@
  *
  * Applies Landlock filesystem (and optionally network) restrictions,
  * then execs CMD. Designed to run INSIDE a bubblewrap namespace as
- * the inner wrapper stage.
+ * the inner wrapper stage. On ABI 6+ it also scopes IPC: CMD cannot
+ * connect to abstract UNIX sockets (e.g. an X11 or D-Bus endpoint) or
+ * signal processes outside its Landlock domain. Abstract sockets are
+ * per network namespace, so without scoping a hook in a category that
+ * keeps the host network could reach them.
+ *
+ * Every --ro/--rw path that exists must get its rule; a rule the kernel
+ * rejects is a setup failure (exit 122), not a silently narrower
+ * sandbox. Paths that do not exist are skipped: they only narrow access.
  *
  * --version prints "landlock-abi:N", the Landlock ABI the running kernel
  * enforces (0 when Landlock is unsupported or disabled, e.g. missing from
@@ -34,15 +42,37 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
-#ifndef landlock_create_ruleset
-static inline int landlock_create_ruleset(
-    const struct landlock_ruleset_attr *attr, size_t size, __u32 flags) {
+/* Landlock ABI 5/6 constants, for building against older kernel headers.
+ * The values are kernel UAPI; the running kernel's ABI is checked below. */
+#ifndef LANDLOCK_ACCESS_FS_IOCTL_DEV
+#define LANDLOCK_ACCESS_FS_IOCTL_DEV (1ULL << 15)
+#endif
+#ifndef LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET
+#define LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET (1ULL << 0)
+#endif
+#ifndef LANDLOCK_SCOPE_SIGNAL
+#define LANDLOCK_SCOPE_SIGNAL (1ULL << 1)
+#endif
+
+/* struct landlock_ruleset_attr as of ABI 6. Declared here so the scoped
+ * field exists whatever the headers' age; the kernel accepts a larger struct
+ * than it knows as long as the unknown trailing fields are zero. */
+struct ll_ruleset_attr {
+    __u64 handled_access_fs;
+    __u64 handled_access_net;
+    __u64 scoped;
+};
+
+/* Named apart from any libc wrapper, which would take the header's
+ * (possibly pre-ABI-6) struct. */
+static inline int ll_create_ruleset(
+    const struct ll_ruleset_attr *attr, size_t size, __u32 flags) {
     return (int)syscall(__NR_landlock_create_ruleset, attr, size, flags);
 }
-#endif
 
 #ifndef landlock_add_rule
 static inline int landlock_add_rule(int ruleset_fd,
@@ -76,10 +106,22 @@ static inline int landlock_restrict_self(int ruleset_fd, __u32 flags) {
 #define ACCESS_FS_V2 (ACCESS_FS_V1 | LANDLOCK_ACCESS_FS_REFER)
 #define ACCESS_FS_V3 (ACCESS_FS_V2 | LANDLOCK_ACCESS_FS_TRUNCATE)
 
+#define ACCESS_FS_V5 (ACCESS_FS_V3 | LANDLOCK_ACCESS_FS_IOCTL_DEV)
+
 #define ACCESS_READ ( \
     LANDLOCK_ACCESS_FS_EXECUTE | \
     LANDLOCK_ACCESS_FS_READ_FILE | \
     LANDLOCK_ACCESS_FS_READ_DIR)
+
+/* The rights that apply to a non-directory. Landlock rejects a rule that
+ * grants a directory-only right (READ_DIR, REMOVE_*, MAKE_*, REFER) on a
+ * file with EINVAL. */
+#define ACCESS_FILE ( \
+    LANDLOCK_ACCESS_FS_EXECUTE | \
+    LANDLOCK_ACCESS_FS_WRITE_FILE | \
+    LANDLOCK_ACCESS_FS_READ_FILE | \
+    LANDLOCK_ACCESS_FS_TRUNCATE | \
+    LANDLOCK_ACCESS_FS_IOCTL_DEV)
 
 #define MAX_PATHS 64
 
@@ -101,7 +143,7 @@ int main(int argc, char *argv[]) {
     int cmd_start = -1;
 
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
-        int v = landlock_create_ruleset(NULL, 0,
+        int v = ll_create_ruleset(NULL, 0,
                                         LANDLOCK_CREATE_RULESET_VERSION);
         printf("landlock-abi:%d\n", v < 0 ? 0 : v);
         return 0;
@@ -140,7 +182,7 @@ int main(int argc, char *argv[]) {
         return EXIT_USAGE;
     }
 
-    int abi = landlock_create_ruleset(NULL, 0,
+    int abi = ll_create_ruleset(NULL, 0,
                                      LANDLOCK_CREATE_RULESET_VERSION);
     if (abi < 0) {
         if (errno == ENOSYS || errno == EOPNOTSUPP) {
@@ -156,11 +198,12 @@ int main(int argc, char *argv[]) {
     }
 
     __u64 handled_fs;
-    if (abi >= 3)      handled_fs = ACCESS_FS_V3;
+    if (abi >= 5)      handled_fs = ACCESS_FS_V5;
+    else if (abi >= 3) handled_fs = ACCESS_FS_V3;
     else if (abi >= 2) handled_fs = ACCESS_FS_V2;
     else               handled_fs = ACCESS_FS_V1;
 
-    struct landlock_ruleset_attr ruleset_attr = {
+    struct ll_ruleset_attr ruleset_attr = {
         .handled_access_fs = handled_fs,
         .handled_access_net = 0,
     };
@@ -171,7 +214,15 @@ int main(int argc, char *argv[]) {
             LANDLOCK_ACCESS_NET_CONNECT_TCP;
     }
 
-    int ruleset_fd = landlock_create_ruleset(&ruleset_attr,
+    if (abi >= 6) {
+        ruleset_attr.scoped = LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET |
+                              LANDLOCK_SCOPE_SIGNAL;
+    } else if (verbose) {
+        fprintf(stderr, "ll-restrict: ABI < 6, abstract UNIX sockets and "
+                        "signals are not scoped\n");
+    }
+
+    int ruleset_fd = ll_create_ruleset(&ruleset_attr,
                                             sizeof(ruleset_attr), 0);
     if (ruleset_fd < 0) {
         perror("ll-restrict: landlock_create_ruleset");
@@ -188,17 +239,34 @@ int main(int argc, char *argv[]) {
             }
             continue;
         }
+        struct stat st;
+        if (fstat(parent_fd, &st)) {
+            fprintf(stderr, "ll-restrict: stat %s: %s\n",
+                    paths[i].path, strerror(errno));
+            close(parent_fd);
+            close(ruleset_fd);
+            return EXIT_SETUP;
+        }
+        __u64 allowed = paths[i].writable ? handled_fs : ACCESS_READ;
+        if (!S_ISDIR(st.st_mode)) {
+            allowed &= ACCESS_FILE;
+        }
         struct landlock_path_beneath_attr path_beneath = {
-            .allowed_access = paths[i].writable ? handled_fs : ACCESS_READ,
+            .allowed_access = allowed & handled_fs,
             .parent_fd = parent_fd,
         };
         int err = landlock_add_rule(ruleset_fd,
                                     LANDLOCK_RULE_PATH_BENEATH,
                                     &path_beneath, 0);
+        int saved = errno;
         close(parent_fd);
         if (err) {
+            /* The path was requested and exists: running without its rule
+             * would deny it inside the sandbox with no visible cause. */
             fprintf(stderr, "ll-restrict: rule for %s failed: %s\n",
-                    paths[i].path, strerror(errno));
+                    paths[i].path, strerror(saved));
+            close(ruleset_fd);
+            return EXIT_SETUP;
         }
     }
 

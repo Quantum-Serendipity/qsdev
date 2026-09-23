@@ -71,12 +71,14 @@ type ServiceScript struct {
 	Exec string // Shell command body.
 }
 
-// BuiltInHookData is an ecosystem hook provided by git-hooks.nix. A hook with
-// no TypesOr, ExcludeTypes or Settings renders as `<id>.enable = true;`.
+// BuiltInHookData is an ecosystem hook provided by git-hooks.nix. Its entry is
+// defined by git-hooks.nix; a hook with no TypesOr, ExcludeTypes, Excludes or
+// Settings renders as `<id>.enable = true;`.
 type BuiltInHookData struct {
 	ID           string
 	TypesOr      []string
 	ExcludeTypes []string
+	Excludes     []string      // Path regexes the hook skips (git-hooks.nix excludes).
 	Settings     []HookSetting // Sorted by Key.
 }
 
@@ -105,6 +107,7 @@ type CustomHookData struct {
 	ExcludeTypes  []string
 	Stages        []string
 	Files         string
+	Excludes      []string
 	PassFilenames bool
 	// Package is the nixpkgs attribute rendered as the hook's `package`. A
 	// custom hook whose ID matches a git-hooks.nix built-in merges with that
@@ -416,6 +419,7 @@ func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *eco
 					ExcludeTypes:  hook.ExcludeTypes,
 					Stages:        hook.Stages,
 					Files:         hook.Files,
+					Excludes:      hook.Excludes,
 					PassFilenames: hook.PassFilenames,
 					Package:       hook.NixPackage,
 				})
@@ -793,7 +797,7 @@ func countEnabledTools(answers types.WizardAnswers) int {
 // builtInHookData converts a BuiltIn ecosystem hook into template data,
 // carrying the options git-hooks.nix exposes for its built-in hooks.
 func builtInHookData(hook ecosystem.HookConfig) (BuiltInHookData, error) {
-	data := BuiltInHookData{ID: hook.ID, TypesOr: hook.TypesOr, ExcludeTypes: hook.ExcludeTypes}
+	data := BuiltInHookData{ID: hook.ID, TypesOr: hook.TypesOr, ExcludeTypes: hook.ExcludeTypes, Excludes: hook.Excludes}
 	for _, key := range slices.Sorted(maps.Keys(hook.Settings)) {
 		if !hookSettingKeyRe.MatchString(key) {
 			return BuiltInHookData{}, fmt.Errorf("hook %q: invalid setting name %q", hook.ID, key)

@@ -487,3 +487,51 @@ func TestRegistration(t *testing.T) {
 		t.Errorf("registered module Name() = %q, want %q", mod.Name(), "go")
 	}
 }
+
+// TestPreCommitHooks_GovetExcludesGoIgnoredDirs guards the built-in govet
+// hook, which runs `go vet` in each staged file's directory: it must skip the
+// directories `go vet ./...` skips, or committing a //go:build ignore fixture
+// under testdata (or a vendored file) fails the hook.
+func TestPreCommitHooks_GovetExcludesGoIgnoredDirs(t *testing.T) {
+	t.Parallel()
+
+	var excludes []*regexp.Regexp
+	for _, h := range (&golang.Module{}).PreCommitHooks(ecosystem.ModuleConfig{}) {
+		if h.ID != "govet" {
+			continue
+		}
+		for _, e := range h.Excludes {
+			excludes = append(excludes, regexp.MustCompile(e))
+		}
+	}
+	if len(excludes) == 0 {
+		t.Fatal("govet hook declares no excludes")
+	}
+
+	tests := []struct {
+		path     string
+		excluded bool
+	}{
+		{"rules/core/testdata/vulnerable/sql_injection.go", true},
+		{"testdata/fixture.go", true},
+		{"vendor/github.com/foo/bar/bar.go", true},
+		{"internal/_scratch/x.go", true},
+		{".github/tools/gen.go", true},
+		{"internal/sandbox/bwrap/backend.go", false},
+		{"cmd/qsdev/main.go", false},
+		{"pkg/testdataset/x.go", false},
+		{"internal/vendored/x.go", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			t.Parallel()
+			got := false
+			for _, re := range excludes {
+				got = got || re.MatchString(tt.path)
+			}
+			if got != tt.excluded {
+				t.Errorf("excluded(%q) = %v, want %v", tt.path, got, tt.excluded)
+			}
+		})
+	}
+}

@@ -15,9 +15,9 @@ permissions:
 jobs:
   security-scan:
     runs-on: ubuntu-latest
+    # No step uploads SARIF, so the job needs no write scope.
     permissions:
       contents: read
-      security-events: write
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -26,6 +26,10 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        # Keep the job token out of .git/config: the scanner actions below
+        # run third-party code over the checked-out workspace.
+        with:
+          persist-credentials: false
 
       - name: Validate lock files
         shell: bash
@@ -43,42 +47,92 @@ jobs:
           # produces a pristine tree, so `git diff` is clean by construction and
           # such a check can never fail regardless of what was committed.
 
-          # $1 = manifest, remaining args = acceptable lock files for it.
+          # Every tracked manifest is checked, not only the repository root;
+          # vendored and fixture trees are skipped.
+          manifests() {
+            git ls-files -- "$1" "*/$1" | grep -Ev '(^|/)(vendor|node_modules|testdata|third_party)/' || true
+          }
+
+          # Prints the first of the lock files (args after $2) found in
+          # directory $1, or in an ancestor for the workspace lock files
+          # listed in $2: workspace members (npm/pnpm/yarn/bun, Cargo, uv)
+          # share the lock file at the workspace root, while a nested Go
+          # module, Gemfile or flake needs its own.
+          find_lock() {
+            dir="$1"
+            workspace=" $2 "
+            shift 2
+            member=""
+            while :; do
+              for lock in "$@"; do
+                if [ -n "$member" ] && [ "${workspace#* "$lock" }" = "$workspace" ]; then
+                  continue
+                fi
+                if [ -f "$dir/$lock" ]; then
+                  echo "$dir/$lock"
+                  return 0
+                fi
+              done
+              [ "$dir" = "." ] && return 1
+              dir="$(dirname "$dir")"
+              member=1
+            done
+          }
+
+          # Whether a manifest needs a lock file at all. A module with no
+          # dependencies has no go.sum, and pyproject.toml is locked only
+          # when a locking tool (Poetry, uv) manages the project.
+          needs_lock() {
+            case "$(basename "$1")" in
+              go.mod) grep -qE '^[[:space:]]*require' "$1" ;;
+              pyproject.toml) grep -qE '^\[tool\.(poetry|uv)(\]|\.)' "$1" ;;
+              *) return 0 ;;
+            esac
+          }
+
+          # $1 = manifest file name, $2 = the lock files (space-separated)
+          # a workspace root may hold, remaining args = acceptable lock files.
           require_lock() {
-            manifest="$1"
-            shift
-            [ -f "$manifest" ] || return 0
-            for lock in "$@"; do
-              if [ -f "$lock" ]; then
-                echo "  ✓ $manifest -> $lock"
-                return 0
+            name="$1"
+            workspace="$2"
+            shift 2
+            while IFS= read -r manifest; do
+              [ -n "$manifest" ] || continue
+              needs_lock "$manifest" || continue
+              dir="$(dirname "$manifest")"
+              if found="$(find_lock "$dir" "$workspace" "$@")"; then
+                echo "  ✓ $manifest -> ${found#./}"
+                continue
               fi
-            done
-            # Distinguish "never generated" from "generated but deliberately
-            # excluded" — the second is a policy problem, not an oversight.
-            for lock in "$@"; do
-              if git check-ignore -q "$lock" 2>/dev/null; then
-                echo "::error file=$manifest::$lock is excluded by .gitignore, so it can never be committed. Lock files must be committed."
-                fail=1
-                return 0
+              # Distinguish "never generated" from "generated but deliberately
+              # excluded" — the second is a policy problem, not an oversight.
+              ignored=""
+              for lock in "$@"; do
+                if git check-ignore -q "$dir/$lock" 2>/dev/null; then
+                  ignored="$lock"
+                  break
+                fi
+              done
+              if [ -n "$ignored" ]; then
+                echo "::error file=$manifest::$ignored is excluded by .gitignore, so it can never be committed. Lock files must be committed."
+              else
+                echo "::error file=$manifest::$manifest has no lock file (expected one of: $*). Dependencies would resolve at build time instead of being pinned to verified versions."
               fi
-            done
-            echo "::error file=$manifest::$manifest has no lock file (expected one of: $*). Dependencies would resolve at build time instead of being pinned to verified versions."
-            fail=1
+              fail=1
+            done < <(manifests "$name")
           }
 
           echo "Checking lock file integrity..."
 
-          require_lock package.json package-lock.json npm-shrinkwrap.json pnpm-lock.yaml yarn.lock bun.lock bun.lockb
-          require_lock composer.json composer.lock
-          # Cargo keeps a single lock file at the workspace root, so members
-          # legitimately have no Cargo.lock. Only the root is checked.
-          require_lock Cargo.toml Cargo.lock
-          # A module with no dependencies correctly has no go.sum, so only
-          # require one when go.mod actually declares requirements.
-          if [ -f go.mod ] && grep -qE '^[[:space:]]*require' go.mod; then
-            require_lock go.mod go.sum
-          fi
+          # Manifest/lock-file pairs from the qsdev ecosystem catalog.
+          require_lock package.json "npm-shrinkwrap.json package-lock.json pnpm-lock.yaml yarn.lock bun.lock bun.lockb" npm-shrinkwrap.json package-lock.json pnpm-lock.yaml yarn.lock bun.lock bun.lockb
+          require_lock pyproject.toml "uv.lock" uv.lock poetry.lock pdm.lock
+          require_lock Pipfile "" Pipfile.lock
+          require_lock go.mod "" go.sum
+          require_lock Cargo.toml "Cargo.lock" Cargo.lock
+          require_lock Gemfile "" Gemfile.lock
+          require_lock composer.json "" composer.lock
+          require_lock flake.nix "" flake.lock
 
           if [ "$fail" -ne 0 ]; then
             echo "Lock file validation failed."

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -313,5 +314,60 @@ func TestResolveMissing_SymlinkLoop(t *testing.T) {
 	}
 	if got, err := resolveMissing(filepath.Join(a, "x")); err == nil {
 		t.Fatalf("resolveMissing through a symlink cycle = %q, want an error", got)
+	}
+}
+
+// TestInstalledBinaryEntries pins where the guard-hook binary is protected:
+// every installer's default directory (install.ps1 uses %LOCALAPPDATA% on
+// Windows, not ~/.qsdev/bin) and the running executable wherever it lives.
+func TestInstalledBinaryEntries(t *testing.T) {
+	t.Parallel()
+	sep := string(filepath.Separator)
+	home := filepath.FromSlash("/home/alice")
+	lad := filepath.FromSlash("/users/alice/appdata/local")
+	exe := filepath.FromSlash("/opt/tools/qsdev")
+	homeBin := filepath.Join(home, ".qsdev", "bin") + sep
+	winBin := filepath.Join(lad, "qsdev", "bin") + sep
+
+	tests := []struct {
+		name, goos, lad, exe string
+		want                 []string
+	}{
+		{"linux default", "linux", "", "", []string{homeBin}},
+		{"linux ignores LOCALAPPDATA", "linux", lad, "", []string{homeBin}},
+		{"windows installer dir", "windows", lad, "", []string{homeBin, winBin}},
+		{"custom install dir", "darwin", "", exe, []string{homeBin, exe}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var got []string
+			for _, e := range installedBinaryEntries(tt.goos, home, tt.lad, tt.exe) {
+				if e.category != "binary" {
+					t.Errorf("entry %q category = %q, want binary", e.path, e.category)
+				}
+				got = append(got, e.path)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("entries = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestIsProtected_RunningExecutable checks that the binary running the hooks
+// is protected even outside ~/.qsdev/bin (here: the test binary's location).
+func TestIsProtected_RunningExecutable(t *testing.T) {
+	t.Parallel()
+	exe := runningExecutable()
+	if exe == "" {
+		t.Skip("cannot resolve the running executable")
+	}
+	if prot, cat := IsProtected(exe); !prot || cat != "binary" {
+		t.Errorf("IsProtected(%q) = (%v, %q), want (true, binary)", exe, prot, cat)
+	}
+	sibling := filepath.Join(filepath.Dir(exe), "unrelated.txt")
+	if prot, _ := IsProtected(sibling); prot {
+		t.Errorf("IsProtected(%q) = true; only the executable itself should be protected", sibling)
 	}
 }

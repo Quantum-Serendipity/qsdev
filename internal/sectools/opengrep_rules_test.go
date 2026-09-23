@@ -2,10 +2,6 @@ package sectools_test
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -13,21 +9,6 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/rules"
 )
-
-// rulesRoot returns the on-disk rules/core directory, for tools that need a
-// path. The library is a tracked repo invariant, so its absence is a failure.
-func rulesRoot(t *testing.T) string {
-	t.Helper()
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot determine test file location")
-	}
-	root := filepath.Join(filepath.Dir(thisFile), "..", "..", "rules", "core")
-	if _, err := os.Stat(root); err != nil {
-		t.Fatalf("rules/core not found at %s: %v", root, err)
-	}
-	return root
-}
 
 type ruleMetadata struct {
 	Category    string `yaml:"category"`
@@ -194,15 +175,5 @@ func TestRuleFiles_IDUniqueness(t *testing.T) {
 	}
 }
 
-func TestRulesValidateWithOpengrep(t *testing.T) {
-	if _, err := exec.LookPath("opengrep"); err != nil {
-		t.Skip("opengrep not available")
-	}
-	root := rulesRoot(t)
-
-	cmd := exec.Command("opengrep", "scan", "--validate", "--config", root)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("opengrep scan --validate failed: %v\noutput: %s", err, output)
-	}
-}
+// Engine validation of the whole library (every rule parses, none is skipped)
+// lives in the rules package: TestCoreRules_Validate.

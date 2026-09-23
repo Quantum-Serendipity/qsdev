@@ -37,10 +37,10 @@ rules:
       - patterns:
           - pattern-inside: |
               export const actions = {
-                ...
+                ...,
                 $ACTION: async ({..., request, ...}) => {
                   ...
-                }
+                },
                 ...
               }
           - pattern: request.formData()

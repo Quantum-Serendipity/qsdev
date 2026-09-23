@@ -150,12 +150,12 @@ func TestGenerateSecurityScanWorkflow_LockFileValidationCanFail(t *testing.T) {
 			if !strings.Contains(content, "require_lock package.json") {
 				t.Error("expected package.json to require a lock file")
 			}
-			if !strings.Contains(content, "require_lock go.mod go.sum") {
+			if !strings.Contains(content, `require_lock go.mod "" go.sum`) {
 				t.Error("expected go.mod to require go.sum")
 			}
 			// A dependency-free module correctly has no go.sum; requiring one
 			// unconditionally would be a false positive.
-			if !strings.Contains(content, "grep -qE '^[[:space:]]*require' go.mod") {
+			if !strings.Contains(content, "go.mod) grep -qE '^[[:space:]]*require'") {
 				t.Error("go.sum should only be required when go.mod declares requirements")
 			}
 		})

@@ -74,7 +74,7 @@
 {{- end}}
     # Enhanced hooks (language-aware, from ecosystem modules)
 {{- range .BuiltInHooks}}
-{{- if or .TypesOr .ExcludeTypes .Settings }}
+{{- if or .TypesOr .ExcludeTypes .Excludes .Settings }}
     {{ .ID }} = {
       enable = true;
 {{- if .TypesOr }}
@@ -82,6 +82,9 @@
 {{- end }}
 {{- if .ExcludeTypes }}
       exclude_types = {{ nixStringList .ExcludeTypes }};
+{{- end }}
+{{- if .Excludes }}
+      excludes = {{ nixStringList .Excludes }};
 {{- end }}
 {{- range .Settings }}
       settings.{{ .Key }} = {{ nixString .Value }};
@@ -132,6 +135,9 @@
 {{- end}}
 {{- if .Files}}
       files = {{ nixString .Files }};
+{{- end}}
+{{- if .Excludes}}
+      excludes = {{ nixStringList .Excludes }};
 {{- end}}
       pass_filenames = {{ nixBool .PassFilenames }};
     };

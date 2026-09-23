@@ -11,32 +11,6 @@ import (
 
 const categoryLockfileDrift = "Lock File Drift"
 
-// manifestLockfiles groups a manifest with every lockfile that can satisfy it.
-// Several package managers share a manifest (package.json is locked by npm,
-// pnpm, yarn or bun), so the lockfiles are alternatives: one is enough.
-type manifestLockfiles struct {
-	manifest  string
-	lockfiles []string
-}
-
-// groupLockfilePairs folds the flat ecosystem.ManifestLockfilePairs catalog
-// into one entry per manifest, preserving the catalog's order for both the
-// manifests and their alternative lockfiles.
-func groupLockfilePairs(pairs []ecosystem.LockFilePair) []manifestLockfiles {
-	var groups []manifestLockfiles
-	index := make(map[string]int)
-	for _, pair := range pairs {
-		i, ok := index[pair.Manifest]
-		if !ok {
-			i = len(groups)
-			index[pair.Manifest] = i
-			groups = append(groups, manifestLockfiles{manifest: pair.Manifest})
-		}
-		groups[i].lockfiles = append(groups[i].lockfiles, pair.Lockfile)
-	}
-	return groups
-}
-
 // detectLockfileDrift checks whether lockfiles are up-to-date relative to
 // their manifest files by comparing modification times. A manifest is reported
 // as unlocked only when none of its alternative lockfiles exists, and staleness
@@ -44,22 +18,22 @@ func groupLockfilePairs(pairs []ecosystem.LockFilePair) []manifestLockfiles {
 func detectLockfileDrift(projectDir string) Category {
 	cat := Category{Name: categoryLockfileDrift}
 
-	for _, group := range groupLockfilePairs(ecosystem.ManifestLockfilePairs) {
-		manifestInfo, err := os.Stat(filepath.Join(projectDir, group.manifest))
+	for _, group := range ecosystem.GroupedManifestLockfiles() {
+		manifestInfo, err := os.Stat(filepath.Join(projectDir, group.Manifest))
 		if err != nil {
 			// Manifest doesn't exist; nothing to lock.
 			continue
 		}
 
 		present := 0
-		for _, lockfile := range group.lockfiles {
+		for _, lockfile := range group.Lockfiles {
 			lockfileInfo, err := os.Stat(filepath.Join(projectDir, lockfile))
 			if err != nil {
 				continue
 			}
 			present++
 			if lockfileInfo.ModTime().Before(manifestInfo.ModTime()) {
-				cat.Findings = append(cat.Findings, staleLockfileFinding(group.manifest, lockfile, manifestInfo, lockfileInfo))
+				cat.Findings = append(cat.Findings, staleLockfileFinding(group.Manifest, lockfile, manifestInfo, lockfileInfo))
 			}
 		}
 
@@ -74,26 +48,26 @@ func detectLockfileDrift(projectDir string) Category {
 // missingLockfileFinding reports a manifest none of whose lockfiles exists. With
 // a single possible lockfile the finding names it directly; with alternatives
 // it names the manifest, since no one lockfile is the "expected" one.
-func missingLockfileFinding(group manifestLockfiles) Finding {
-	if len(group.lockfiles) == 1 {
-		lockfile := group.lockfiles[0]
+func missingLockfileFinding(group ecosystem.ManifestLockfiles) Finding {
+	if len(group.Lockfiles) == 1 {
+		lockfile := group.Lockfiles[0]
 		return Finding{
 			Category:    categoryLockfileDrift,
 			Severity:    Error,
 			Subject:     lockfile,
-			Description: fmt.Sprintf("Manifest %q exists but lockfile %q is missing", group.manifest, lockfile),
+			Description: fmt.Sprintf("Manifest %q exists but lockfile %q is missing", group.Manifest, lockfile),
 			Expected:    lockfile,
 			Remediation: fmt.Sprintf("Run the package manager to generate %s", lockfile),
 		}
 	}
-	alternatives := strings.Join(group.lockfiles, ", ")
+	alternatives := strings.Join(group.Lockfiles, ", ")
 	return Finding{
 		Category:    categoryLockfileDrift,
 		Severity:    Error,
-		Subject:     group.manifest,
-		Description: fmt.Sprintf("Manifest %q exists but no lockfile is present (expected one of: %s)", group.manifest, alternatives),
+		Subject:     group.Manifest,
+		Description: fmt.Sprintf("Manifest %q exists but no lockfile is present (expected one of: %s)", group.Manifest, alternatives),
 		Expected:    "one of: " + alternatives,
-		Remediation: fmt.Sprintf("Run the package manager to generate a lockfile for %s", group.manifest),
+		Remediation: fmt.Sprintf("Run the package manager to generate a lockfile for %s", group.Manifest),
 	}
 }
 

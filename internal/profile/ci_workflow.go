@@ -6,6 +6,7 @@ import (
 	"text/template"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cigeneration"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -26,6 +27,11 @@ type CIWorkflowData struct {
 	ActionOSVScanner   cigeneration.ActionRef
 	ActionSnyk         cigeneration.ActionRef
 	ActionGrype        cigeneration.ActionRef
+
+	// LockChecks are the manifest/lock-file alternatives the lock file step
+	// enforces, derived from the ecosystem catalog so the CI gate and drift
+	// detection cover the same ecosystems.
+	LockChecks []ecosystem.ManifestLockfiles
 }
 
 // securityScanWorkflowTmpl is parsed once from the embedded templates, so a
@@ -54,6 +60,8 @@ func (p *InfraProfile) generateSecurityScanWorkflow() (types.GeneratedFile, erro
 		ActionOSVScanner:   cigeneration.ActionOSVScanner,
 		ActionSnyk:         cigeneration.ActionSnyk,
 		ActionGrype:        cigeneration.ActionGrype,
+
+		LockChecks: ecosystem.GroupedManifestLockfiles(),
 	}
 
 	var buf bytes.Buffer

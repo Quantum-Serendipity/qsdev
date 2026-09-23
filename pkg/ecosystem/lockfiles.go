@@ -1,5 +1,7 @@
 package ecosystem
 
+import "slices"
+
 // LockFilePair maps a manifest file to its expected lock file.
 type LockFilePair struct {
 	Manifest string
@@ -77,4 +79,46 @@ var ManifestLockfilePairs = []LockFilePair{
 	{"Gemfile", "Gemfile.lock"},
 	{"composer.json", "composer.lock"},
 	{"flake.nix", "flake.lock"},
+}
+
+// WorkspaceLockfiles are the lockfiles a package manager keeps once, at the
+// workspace root, for every member manifest below it (npm/pnpm/yarn/bun
+// workspaces, Cargo workspaces, uv workspaces). Any other lockfile belongs to
+// the manifest in its own directory: a nested Go module, Gemfile or flake
+// needs its own, and one in a parent directory does not lock it.
+var WorkspaceLockfiles = []string{
+	"package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb",
+	"Cargo.lock", "uv.lock",
+}
+
+// ManifestLockfiles groups a manifest with every lockfile that can satisfy it.
+// Several package managers share a manifest (package.json is locked by npm,
+// pnpm, yarn or bun), so the lockfiles are alternatives: one is enough.
+type ManifestLockfiles struct {
+	Manifest  string
+	Lockfiles []string
+	// Workspace is the subset of Lockfiles that may sit in an ancestor
+	// directory (see WorkspaceLockfiles).
+	Workspace []string
+}
+
+// GroupedManifestLockfiles folds ManifestLockfilePairs into one entry per
+// manifest, preserving the catalog's order for both the manifests and their
+// alternative lockfiles.
+func GroupedManifestLockfiles() []ManifestLockfiles {
+	var groups []ManifestLockfiles
+	index := make(map[string]int)
+	for _, pair := range ManifestLockfilePairs {
+		i, ok := index[pair.Manifest]
+		if !ok {
+			i = len(groups)
+			index[pair.Manifest] = i
+			groups = append(groups, ManifestLockfiles{Manifest: pair.Manifest})
+		}
+		groups[i].Lockfiles = append(groups[i].Lockfiles, pair.Lockfile)
+		if slices.Contains(WorkspaceLockfiles, pair.Lockfile) {
+			groups[i].Workspace = append(groups[i].Workspace, pair.Lockfile)
+		}
+	}
+	return groups
 }

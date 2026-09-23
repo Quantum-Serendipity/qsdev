@@ -60,6 +60,7 @@ func TestLockfileCatalogsCoverPackageManagers(t *testing.T) {
 	tests := []struct {
 		eco, manifest, lockfile string
 	}{
+		{NameJavaScript, "package.json", "npm-shrinkwrap.json"},
 		{NameJavaScript, "package.json", "bun.lock"},
 		{NameJavaScript, "package.json", "bun.lockb"},
 		{NamePython, "Pipfile", "Pipfile.lock"},
@@ -77,5 +78,35 @@ func TestLockfileCatalogsCoverPackageManagers(t *testing.T) {
 				t.Errorf("ManifestLockfilePairs missing {%q, %q}", tt.manifest, tt.lockfile)
 			}
 		})
+	}
+}
+
+// TestGroupedManifestLockfiles_Workspace checks that every workspace lockfile
+// is a catalog lockfile (a typo would silently disable the workspace-root
+// lookup) and that grouping marks it on its manifest only.
+func TestGroupedManifestLockfiles_Workspace(t *testing.T) {
+	t.Parallel()
+
+	for _, lf := range WorkspaceLockfiles {
+		if !slices.ContainsFunc(ManifestLockfilePairs, func(p LockFilePair) bool { return p.Lockfile == lf }) {
+			t.Errorf("workspace lockfile %q is not in ManifestLockfilePairs", lf)
+		}
+	}
+
+	want := map[string][]string{
+		"package.json":   {"npm-shrinkwrap.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"},
+		"pyproject.toml": {"uv.lock"},
+		"Cargo.toml":     {"Cargo.lock"},
+		"go.mod":         nil,
+		"Gemfile":        nil,
+	}
+	for _, g := range GroupedManifestLockfiles() {
+		w, ok := want[g.Manifest]
+		if !ok {
+			continue
+		}
+		if !slices.Equal(g.Workspace, w) {
+			t.Errorf("%s: Workspace = %v, want %v", g.Manifest, g.Workspace, w)
+		}
 	}
 }

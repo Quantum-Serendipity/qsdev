@@ -108,6 +108,7 @@ type HookConfig struct {
 	AdditionalDependencies []string `yaml:"additional_dependencies"   json:"additional_dependencies"`
 	BuiltIn                bool     `yaml:"built_in"                  json:"built_in"`
 	NixPackage             string   `yaml:"nix_package,omitempty"     json:"nix_package,omitempty"`
+	Excludes               []string `yaml:"excludes,omitempty"        json:"excludes,omitempty"` // Path regexes the hook skips (git-hooks.nix excludes); honored for built-in hooks too.
 	// Settings sets git-hooks.nix `settings.<key>` string options of a
 	// BuiltIn hook (e.g. binPath).
 	Settings map[string]string `yaml:"settings,omitempty" json:"settings,omitempty"`

@@ -95,12 +95,28 @@ func boolItem(label string, ok bool, okSummary, failSummary string) ContainerChe
 	return ContainerCheckItem{Label: label, Status: "warn", Summary: failSummary}
 }
 
+// landlockScopingABI is the first Landlock ABI that scopes IPC (abstract UNIX
+// sockets and signals) to the sandbox; ll-restrict enables it from there.
+const landlockScopingABI = 6
+
 func landlockItem(abi int) ContainerCheckItem {
-	if abi > 0 {
+	if abi >= landlockScopingABI {
 		return ContainerCheckItem{
 			Label:   "Landlock",
 			Status:  "ok",
 			Summary: fmt.Sprintf("ABI v%d", abi),
+		}
+	}
+	if abi > 0 {
+		// Abstract UNIX sockets are per network namespace: a hook in a
+		// category that keeps the host network can reach host endpoints such
+		// as X11 or D-Bus unless Landlock scopes them.
+		return ContainerCheckItem{
+			Label:  "Landlock",
+			Status: "warn",
+			Summary: fmt.Sprintf("ABI v%d: filesystem only; abstract UNIX sockets and signals are not scoped "+
+				"(needs ABI v%d, Linux 6.12+), so network-allowed hooks can reach host sockets such as X11",
+				abi, landlockScopingABI),
 		}
 	}
 	return ContainerCheckItem{

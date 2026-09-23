@@ -24,6 +24,9 @@ var (
 	// variable (defaulting to os.UserHomeDir) so tests can simulate a
 	// home-resolution failure and verify the fail-closed behavior of IsProtected.
 	userHomeDir = os.UserHomeDir
+
+	// executablePath resolves the running qsdev binary (a variable for tests).
+	executablePath = os.Executable
 )
 
 type protectedEntry struct {
@@ -43,21 +46,58 @@ func ensureInit() error {
 		// separator and protects everything below it; a file entry matches
 		// exactly. Locations protected wherever they live (home config or
 		// project checkout) are in protectedSegments instead.
-		protectedPrefixes = []protectedEntry{
-			{filepath.Join(home, ".qsdev", "bin") + string(filepath.Separator), "binary"},
+		protectedPrefixes = installedBinaryEntries(runtime.GOOS, home, os.Getenv("LOCALAPPDATA"), runningExecutable())
+		protectedPrefixes = append(protectedPrefixes, []protectedEntry{
 			{filepath.Join(home, ".claude", "managed-settings.json"), "claude-settings"},
 			// ~/.claude.json holds the user-scoped MCP servers, per-project
 			// permission grants and trust decisions.
 			{filepath.Join(home, ".claude.json"), "claude-settings"},
 			{"/etc/gdev/", "system-config"},
 			{"/etc/claude-code/", "system-config"},
-		}
+		}...)
 
 		protectedSuffixes = []protectedEntry{
 			{string(filepath.Separator) + ".mcp.json", "mcp-config"},
 		}
 	})
 	return initErr
+}
+
+// installedBinaryEntries returns the protected entries for the qsdev binary,
+// which runs every guard hook: each installer's default install directory,
+// and the running executable itself (exe, "" when unknown) wherever it was
+// installed (--install-dir, QSDEV_INSTALL_DIR, a package manager). The
+// executable is protected as a file, not by directory, since it may sit in a
+// shared directory such as /usr/local/bin or a project checkout.
+func installedBinaryEntries(goos, home, localAppData, exe string) []protectedEntry {
+	sep := string(filepath.Separator)
+	entries := []protectedEntry{{filepath.Join(home, ".qsdev", "bin") + sep, "binary"}}
+	// install.ps1 installs to %LOCALAPPDATA%\qsdev\bin by default.
+	if goos == "windows" && localAppData != "" {
+		entries = append(entries, protectedEntry{filepath.Join(localAppData, "qsdev", "bin") + sep, "binary"})
+	}
+	if exe != "" {
+		entries = append(entries, protectedEntry{exe, "binary"})
+	}
+	return entries
+}
+
+// runningExecutable returns the canonical path of the running binary, or ""
+// when it cannot be resolved (protection then rests on the default install
+// directories).
+func runningExecutable() string {
+	exe, err := executablePath()
+	if err != nil {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	abs, err := filepath.Abs(exe)
+	if err != nil {
+		return ""
+	}
+	return abs
 }
 
 // ExpandTilde replaces a leading ~ with the user's home directory.

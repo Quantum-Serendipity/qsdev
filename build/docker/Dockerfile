@@ -5,7 +5,8 @@
 # Build from the REPOSITORY ROOT (the build context must be the repo root so the
 # vendor tree and cmd/qsdev are visible):
 #
-#   docker build -f build/docker/Dockerfile -t qsdev-mcp-gateway .
+#   docker build -f build/docker/Dockerfile -t qsdev-mcp-gateway \
+#     --build-arg VERSION="$(cat VERSION)" --build-arg COMMIT="$(git rev-parse --short HEAD)" .
 #
 # Key build detail: this repo carries a go.work that `use`s ../gdev, which does
 # not exist inside the container. gdev is VENDORED (vendor/fastcat.org/go/gdev)
@@ -14,10 +15,12 @@
 # excludes go.work/go.work.sum from the context for the same reason.
 
 # ---- builder stage --------------------------------------------------------
-# Module is Go 1.26.4; use the matching toolchain (the spec's 1.23 is stale).
-# Pinned by digest for reproducible, supply-chain-resistant builds (the tag is
-# kept for readability). Re-resolve with: docker buildx imagetools inspect golang:1.26-alpine
-FROM golang:1.26-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648 AS builder
+# The image sets GOTOOLCHAIN=local, so its Go must be at least go.mod's `go`
+# line (the security pin from nix/go-overlay.nix); CI builds this image, so a
+# stale pin fails there. Pinned by digest for reproducible, supply-chain-
+# resistant builds (the tag is kept for readability; dependabot bumps both).
+# Re-resolve with: docker buildx imagetools inspect golang:<version>-alpine
+FROM golang:1.26.8-alpine@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS builder
 
 WORKDIR /src
 
@@ -27,10 +30,22 @@ ENV GOFLAGS=-mod=vendor
 ENV CGO_ENABLED=0
 ENV GOOS=linux
 
+# Version stamping, matching .goreleaser.yaml's ldflags.
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG DATE=unknown
+
 # Copy the whole context (kept small by .dockerignore) and build the static,
-# stripped binary. -ldflags='-s -w' drops the symbol table and DWARF info.
+# stripped, reproducible binary. -ldflags='-s -w' drops the symbol table and
+# DWARF info; -trimpath drops build-machine paths.
 COPY . .
-RUN go build -ldflags='-s -w' -o /qsdev ./cmd/qsdev
+RUN go build -trimpath -o /qsdev \
+      -ldflags="-s -w \
+        -X github.com/Quantum-Serendipity/qsdev/internal/version.version=${VERSION} \
+        -X github.com/Quantum-Serendipity/qsdev/internal/version.commit=${COMMIT} \
+        -X github.com/Quantum-Serendipity/qsdev/internal/version.date=${DATE} \
+        -X github.com/Quantum-Serendipity/qsdev/internal/version.builtBy=docker" \
+      ./cmd/qsdev
 
 # ---- runtime stage --------------------------------------------------------
 # distroless/static is the minimal base for a CGO-free static Go binary; the

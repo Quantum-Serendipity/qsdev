@@ -2,6 +2,8 @@ package claudecode
 
 import (
 	"slices"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 )
 
 // ExportMCPServerConfig re-exports MCPServerConfig for convenience in tests.
@@ -25,11 +27,11 @@ var ExportLoadAnswers = loadAnswers
 // Parameters: projectRoot, preset string, skills, mcpServers []string, yes, noSafetyBlock bool
 var ExportBuildClaudeAnswersFromFlags = buildClaudeAnswersFromFlags
 
-// ExportValidPermissionPresets exposes validPermissionPresets for external tests.
-var ExportValidPermissionPresets = validPermissionPresets
+// ExportValidPermissionPresets exposes the permission presets init accepts for external tests.
+var ExportValidPermissionPresets = validation.PermissionPresets()
 
-// ExportValidHookPresets exposes validHookPresets for external tests.
-var ExportValidHookPresets = validHookPresets
+// ExportValidHookPresets exposes the hook presets add-hook accepts for external tests.
+var ExportValidHookPresets = validation.HookPresets()
 
 // ExportClaudeCmd exposes claudeCmd for external tests.
 var ExportClaudeCmd = claudeCmd

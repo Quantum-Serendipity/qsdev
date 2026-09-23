@@ -280,10 +280,15 @@ func TestInitCmd_SavesPerAddonAnswers(t *testing.T) {
 		t.Error(".devenv/.qsdev-answers.yaml was not created")
 	}
 
-	// Verify Claude Code answers were saved (claude-code defaults to true).
+	// Claude Code answers live only in the primary answers file: a separate
+	// .claude copy went stale and overwrote later changes (F515).
 	claudeAnswers := filepath.Join(dir, ".claude", ".qsdev-claude-answers.yaml")
-	if _, err := os.Stat(claudeAnswers); os.IsNotExist(err) {
-		t.Error(".claude/.qsdev-claude-answers.yaml was not created")
+	if _, err := os.Stat(claudeAnswers); !os.IsNotExist(err) {
+		t.Error(".claude/.qsdev-claude-answers.yaml should not be created")
+	}
+	primaryAnswers := filepath.Join(dir, ".devinit", ".qsdev-init-answers.yaml")
+	if _, err := os.Stat(primaryAnswers); err != nil {
+		t.Errorf("primary answers file not saved: %v", err)
 	}
 }
 

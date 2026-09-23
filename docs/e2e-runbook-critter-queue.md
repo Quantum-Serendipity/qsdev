@@ -77,7 +77,6 @@ Key files to confirm exist (~35 files total):
 - `.claude/skills/qsdev-add-dep/SKILL.md` (AlwaysOn — dependency management guidance)
 - `.claude/skills/qsdev-*/SKILL.md` (11 qsdev ops skills including qsdev-add-dep)
 - `.claude/agents/semble-search.md` (AlwaysOn — semantic code search agent)
-- `.claude/.qsdev-claude-answers.yaml`
 - `.claude/qsdev-reference.md`
 - `.mcp.json` (AlwaysOn MCP servers: context7, github, socket, semble)
 - `.semgrep.yml` (AlwaysOn — Semgrep SAST rules)

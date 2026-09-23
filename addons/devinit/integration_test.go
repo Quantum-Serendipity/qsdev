@@ -151,7 +151,6 @@ func TestIntegration_EmptyDir_GoWebProfile(t *testing.T) {
 	requireFileExists(t, dir, ".devinit/.qsdev-init-state.yaml")
 	requireFileExists(t, dir, ".devinit/.qsdev-init-answers.yaml")
 	requireFileExists(t, dir, ".devenv/.qsdev-answers.yaml")
-	requireFileExists(t, dir, ".claude/.qsdev-claude-answers.yaml")
 
 	// Content spot-checks.
 	requireFileContains(t, dir, "devenv.nix", "go")

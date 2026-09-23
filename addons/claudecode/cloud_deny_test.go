@@ -12,15 +12,8 @@ func TestCloudDenyRulesNoSkillConflicts(t *testing.T) {
 	allCloudRules := cloudcommon.AllBashDenyRules([]cloudcommon.CloudProvider{
 		cloudcommon.AWS, cloudcommon.GCP, cloudcommon.Azure,
 	})
-	skills := BuiltinSkillDefinitions()
-
-	conflicts := ValidateDenyRuleConflicts(allCloudRules, skills)
-	unexpected := FilterExpectedConflicts(conflicts)
-
-	if len(unexpected) > 0 {
-		for _, c := range unexpected {
-			t.Errorf("unexpected conflict: %s", c.Message)
-		}
+	for _, c := range unexpectedDenyConflicts(t, allCloudRules, BuiltinSkillDefinitions()) {
+		t.Errorf("unexpected conflict: %s", c.Message)
 	}
 }
 

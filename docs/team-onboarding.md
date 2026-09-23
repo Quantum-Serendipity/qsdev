@@ -200,7 +200,8 @@ These are included automatically during `qsdev init`. No additional flags are ne
 Use `qsdev mcp grade` to check compliance levels and `qsdev mcp health` to verify connectivity:
 
 ```bash
-qsdev mcp grade                # Show compliance grades for all servers
+qsdev mcp grade                # Grade the servers configured in .mcp.json
+qsdev mcp grade --all          # Also grade registry servers not configured
 qsdev mcp grade context7       # Grade a specific server
 qsdev mcp install <name>       # Install a server from the registry
 qsdev mcp health               # Health check all configured servers

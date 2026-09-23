@@ -125,7 +125,7 @@ func TestInitCmd_WritesFiles(t *testing.T) {
 	}
 
 	// Verify answers were saved.
-	answersFile := filepath.Join(tmpDir, ".claude", ".qsdev-claude-answers.yaml")
+	answersFile := claudecode.ExportAnswersPath(tmpDir)
 	if _, err := os.Stat(answersFile); err != nil {
 		t.Errorf("answers file not saved: %v", err)
 	}
@@ -891,7 +891,7 @@ func TestInitCmd_SavesStateAndAnswers(t *testing.T) {
 	}
 
 	// Verify answers file.
-	answersFile := filepath.Join(tmpDir, ".claude", ".qsdev-claude-answers.yaml")
+	answersFile := claudecode.ExportAnswersPath(tmpDir)
 	if _, err := os.Stat(answersFile); err != nil {
 		t.Errorf("answers file not saved: %v", err)
 	}
@@ -929,6 +929,9 @@ func TestInitCmd_DryRunNoFiles(t *testing.T) {
 		if _, err := os.Stat(absPath); err == nil {
 			t.Errorf("dry-run should not write %s", relPath)
 		}
+	}
+	if _, err := os.Stat(claudecode.ExportAnswersPath(tmpDir)); err == nil {
+		t.Error("dry-run should not write the primary answers file")
 	}
 }
 

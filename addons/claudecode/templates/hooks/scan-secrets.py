@@ -58,9 +58,10 @@ KNOWN_EXAMPLES: set[str] = {
     'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
 }
 
+# Compared against the upper-cased match, so every indicator must be upper case.
 PLACEHOLDER_INDICATORS: tuple[str, ...] = (
     'EXAMPLE', 'PLACEHOLDER', 'YOUR_', 'REPLACE', 'CHANGEME',
-    'INSERT_', 'TODO', 'XXXX', 'sample', 'dummy', 'test_key',
+    'INSERT_', 'TODO', 'XXXX', 'SAMPLE', 'DUMMY', 'TEST_KEY',
 )
 
 BINARY_EXTENSIONS: set[str] = {

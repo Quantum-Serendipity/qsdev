@@ -33,6 +33,9 @@ func CurrentConfig() Config {
 }
 
 func initialize() error {
+	// Register the embedded MCP providers before mcpCmd enumerates them.
+	registerMCPProviders()
+
 	instance.AddCommands(claudeCmd())
 	instance.AddCommands(mcpCmd())
 	instance.AddCommands(docsCmd())

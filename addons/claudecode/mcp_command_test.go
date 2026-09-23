@@ -9,6 +9,7 @@ import (
 func TestMcpCmd_Structure(t *testing.T) {
 	t.Parallel()
 
+	registerMCPProviders()
 	cmd := mcpCmd()
 	if cmd.Use != "mcp" {
 		t.Errorf("mcpCmd().Use = %q, want %q", cmd.Use, "mcp")
@@ -50,6 +51,7 @@ func TestMcpCmd_HasDiagnosticSubcommands(t *testing.T) {
 func TestMCPProviderRegistry_HasExpectedProviders(t *testing.T) {
 	t.Parallel()
 
+	registerMCPProviders()
 	reg := mcpserver.DefaultRegistry()
 	expected := []string{"agent-postmortem", "version-sentinel"}
 

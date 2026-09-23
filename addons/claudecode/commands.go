@@ -29,9 +29,6 @@ func statePath() string {
 	return ".claude/." + branding.Get().AppName + "-claude-state.yaml"
 }
 
-var validPermissionPresets = validation.PermissionPresets()
-var validHookPresets = validation.HookPresets()
-
 func claudeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "claude",
@@ -69,7 +66,7 @@ func initCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Validate permission preset before any work.
 			if !validation.IsValidPermissionPreset(preset) {
-				return fmt.Errorf("unknown permission preset %q; valid presets: %v", preset, validPermissionPresets)
+				return fmt.Errorf("unknown permission preset %q; valid presets: %v", preset, validation.PermissionPresets())
 			}
 
 			projectRoot, err := cmdutil.ProjectRoot()
@@ -88,8 +85,13 @@ func initCmd() *cobra.Command {
 			// Detect project characteristics.
 			detected := detect.Detect(projectRoot)
 
-			// Build answers from flags.
-			answers := buildClaudeAnswersFromFlags(projectRoot, preset, skills, mcpServers, yes, noSafetyBlock)
+			// Build answers from flags, overlaid onto any saved answers so the
+			// rest of the project's configuration survives a re-init.
+			answers, err := overlayInitAnswers(projectRoot,
+				buildClaudeAnswersFromFlags(projectRoot, preset, skills, mcpServers, yes, noSafetyBlock))
+			if err != nil {
+				return err
+			}
 			answers.Detected = detected
 
 			// Generate files.
@@ -451,10 +453,10 @@ func addHookCmd() *cobra.Command {
 		use:       "add-hook <name>",
 		short:     "Enable a hook preset in the Claude Code configuration",
 		long:      "Enable a hook preset (auto-format, safety-block, pre-commit, audit-log) in the existing configuration.",
-		validArgs: validHookPresets,
+		validArgs: validation.HookPresets(),
 		validate: func(name string) error {
 			if !validation.IsValidHookPreset(name) {
-				return fmt.Errorf("unknown hook preset %q; valid presets: %v", name, validHookPresets)
+				return fmt.Errorf("unknown hook preset %q; valid presets: %v", name, validation.HookPresets())
 			}
 			switch name {
 			case "auto-format":

@@ -14,10 +14,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// gatewayComposePath is where the generated Gateway compose fragment is written,
-// relative to the project root.
-const gatewayComposePath = "docker-compose.gateway.yaml"
-
 // maybeGenerateContainerConfig is the best-effort `qsdev update` integration for
 // Unit 32.10. After the framework configs are regenerated it checks whether any
 // framework present in the project lacks native hook enforcement and, if so,
@@ -54,18 +50,20 @@ func maybeGenerateContainerConfig(cmd *cobra.Command, projectRoot string, answer
 	fmt.Fprintf(out, "\nGateway container config (frameworks without native hooks: %s):\n",
 		joinFrameworkIDs(art.GatewayFrameworks))
 
+	// The generator owns the fragment's filename (relative to the project root).
+	composeFile := art.ComposeFileName
 	if opts.DryRun {
-		fmt.Fprintf(out, "  [dry-run] would write %s\n", gatewayComposePath)
+		fmt.Fprintf(out, "  [dry-run] would write %s\n", composeFile)
 		fmt.Fprintf(out, "  [dry-run] add the gateway to your framework .mcp.json:\n%s\n", art.MCPJSON)
 		return
 	}
 
-	absPath := filepath.Join(projectRoot, gatewayComposePath)
+	absPath := filepath.Join(projectRoot, composeFile)
 	if err := fileutil.WriteFileAtomic(absPath, []byte(art.ComposeYAML), fileutil.ModeReadWrite); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: writing %s: %v\n", gatewayComposePath, err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: writing %s: %v\n", composeFile, err)
 		return
 	}
-	fmt.Fprintf(out, "  wrote %s\n", gatewayComposePath)
+	fmt.Fprintf(out, "  wrote %s\n", composeFile)
 	fmt.Fprintf(out, "  add the gateway to your framework .mcp.json:\n%s\n", art.MCPJSON)
 }
 

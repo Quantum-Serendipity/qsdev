@@ -125,25 +125,35 @@ func TestRunFullUpdate_SelectiveStages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("PATH", t.TempDir())
+			// Run outside any project so a config stage cannot touch the repo.
+			t.Chdir(t.TempDir())
 
 			cmd, buf := newTestCmd()
-			_ = runFullUpdate(cmd, tt.opts)
+			err := runFullUpdate(cmd, tt.opts)
 
 			output := buf.String()
 
+			// A stage may fail in this sandbox, but only as a reported stage
+			// failure; any other error means runFullUpdate bailed out early.
+			if err != nil && !strings.Contains(err.Error(), "one or more update stages failed") {
+				t.Fatalf("runFullUpdate returned an unexpected error: %v\noutput:\n%s", err, output)
+			}
+
+			summaryIdx := strings.Index(output, "Update Summary:")
+			if summaryIdx < 0 {
+				t.Fatalf("expected 'Update Summary:' in output, got:\n%s", output)
+			}
+			summary := output[summaryIdx:]
+
 			for _, stage := range tt.expectStages {
-				if !strings.Contains(output, stage) {
-					t.Errorf("expected output to contain stage %q, got:\n%s", stage, output)
+				if !strings.Contains(summary, stage) {
+					t.Errorf("expected summary to contain stage %q, got:\n%s", stage, summary)
 				}
 			}
 
 			for _, stage := range tt.excludeStages {
-				summaryIdx := strings.Index(output, "Update Summary:")
-				if summaryIdx >= 0 {
-					summary := output[summaryIdx:]
-					if strings.Contains(summary, stage) {
-						t.Errorf("expected summary NOT to contain stage %q, got:\n%s", stage, summary)
-					}
+				if strings.Contains(summary, stage) {
+					t.Errorf("expected summary NOT to contain stage %q, got:\n%s", stage, summary)
 				}
 			}
 		})

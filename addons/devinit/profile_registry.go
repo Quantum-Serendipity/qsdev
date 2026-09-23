@@ -11,7 +11,9 @@ type ProfileSummary struct {
 }
 
 // ProjectProfileRegistry is a thread-safe store of named project-type profiles.
-// It preserves insertion order for deterministic List() output.
+// It preserves insertion order for deterministic List() output. Register, Get
+// and Names are promoted unchanged from the embedded generic registry; only
+// List adds behavior.
 type ProjectProfileRegistry struct {
 	*registry.Registry[Profile]
 }
@@ -26,20 +28,9 @@ func NewProjectProfileRegistry() *ProjectProfileRegistry {
 	}
 }
 
-// Register adds a named profile to the registry. It returns an error if a
-// profile with the same name is already registered.
-func (r *ProjectProfileRegistry) Register(name string, p Profile) error {
-	return r.Registry.Register(name, p)
-}
-
-// Get retrieves a profile by name. The boolean reports whether it was found.
-func (r *ProjectProfileRegistry) Get(name string) (Profile, bool) {
-	return r.Registry.Get(name)
-}
-
 // List returns summaries of all registered profiles in insertion order.
 func (r *ProjectProfileRegistry) List() []ProfileSummary {
-	names := r.Registry.Names() // insertion order due to WithInsertionOrder
+	names := r.Names() // insertion order due to WithInsertionOrder
 	items := r.All()
 	list := make([]ProfileSummary, 0, len(names))
 	for _, name := range names {
@@ -50,9 +41,4 @@ func (r *ProjectProfileRegistry) List() []ProfileSummary {
 		})
 	}
 	return list
-}
-
-// Names returns the names of all registered profiles in insertion order.
-func (r *ProjectProfileRegistry) Names() []string {
-	return r.Registry.Names()
 }

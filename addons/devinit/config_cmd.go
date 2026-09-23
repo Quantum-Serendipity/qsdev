@@ -94,15 +94,19 @@ func runMigrate(cmd *cobra.Command, write bool) error {
 		return fmt.Errorf("field \"version\" must be an integer")
 	}
 
-	if !qsdevconfig.NeedsMigration(versionInt) {
+	if versionInt == types.ConfigVersionCurrent {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s is already at schema version %d (current). No migration needed.\n",
-			cfgFile, types.ConfigVersionCurrent)
+			cfgFile, versionInt)
 		return nil
 	}
 
+	// MigrateConfig rejects versions newer than this binary supports and
+	// versions below the minimum, so an unsupported schema is reported as an
+	// error instead of being mistaken for "already current".
 	migrated, err := qsdevconfig.MigrateConfig(raw, versionInt)
 	if err != nil {
-		return fmt.Errorf("migration failed: %w", err)
+		return fmt.Errorf("migrating %s from schema version %d (supported: %d-%d): %w",
+			cfgFile, versionInt, types.ConfigVersionMin, types.ConfigVersionCurrent, err)
 	}
 
 	newData, err := yaml.Marshal(migrated)

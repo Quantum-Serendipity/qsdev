@@ -53,8 +53,8 @@ func captureCmd() (*cobra.Command, *bytes.Buffer) {
 
 func assertNoCompose(t *testing.T, dir string) {
 	t.Helper()
-	if _, err := os.Stat(filepath.Join(dir, gatewayComposePath)); !os.IsNotExist(err) {
-		t.Errorf("expected %s to be absent, stat err = %v", gatewayComposePath, err)
+	if _, err := os.Stat(filepath.Join(dir, container.ComposeFileName)); !os.IsNotExist(err) {
+		t.Errorf("expected %s to be absent, stat err = %v", container.ComposeFileName, err)
 	}
 }
 
@@ -89,7 +89,7 @@ func TestMaybeGenerateContainerConfig_DryRun(t *testing.T) {
 	maybeGenerateContainerConfig(cmd, dir, types.WizardAnswers{}, UpdateOptions{DryRun: true})
 
 	out := buf.String()
-	if !strings.Contains(out, "[dry-run] would write "+gatewayComposePath) {
+	if !strings.Contains(out, "[dry-run] would write "+container.ComposeFileName) {
 		t.Errorf("dry-run should announce the intended write, got: %q", out)
 	}
 	assertNoCompose(t, dir) // dry-run must not actually write
@@ -103,10 +103,10 @@ func TestMaybeGenerateContainerConfig_WritesCompose(t *testing.T) {
 	cmd, buf := captureCmd()
 	maybeGenerateContainerConfig(cmd, dir, types.WizardAnswers{}, UpdateOptions{})
 
-	if out := buf.String(); !strings.Contains(out, "wrote "+gatewayComposePath) {
+	if out := buf.String(); !strings.Contains(out, "wrote "+container.ComposeFileName) {
 		t.Errorf("expected a 'wrote' message, got: %q", out)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, gatewayComposePath))
+	data, err := os.ReadFile(filepath.Join(dir, container.ComposeFileName))
 	if err != nil {
 		t.Fatalf("compose file not written: %v", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devinit"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -415,6 +416,32 @@ func TestPreSelectedLanguages_AllTier1(t *testing.T) {
 	selected := devinit.ExportPreSelectedLanguages(detected)
 	if len(selected) != 8 {
 		t.Errorf("expected 8 pre-selected languages for all Tier 1, got %d: %v", len(selected), selected)
+	}
+}
+
+// TestMapDetectionToDefaults_EveryDetectedModulePreselected guards against a
+// hard-coded ecosystem list drifting from the registry: every registered
+// module that detection reports (including the aws/gcp/azure cloud modules)
+// must be pre-selected exactly once.
+func TestMapDetectionToDefaults_EveryDetectedModulePreselected(t *testing.T) {
+	t.Parallel()
+	for _, mod := range ecosystem.DefaultRegistry().All() {
+		name := mod.Name()
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			detected := types.DetectedProject{Ecosystems: map[string]bool{name: true}}
+			answers := devinit.ExportMapDetectionToDefaults(detected, "/tmp/project")
+
+			count := 0
+			for _, lc := range answers.Languages {
+				if lc.Name == name {
+					count++
+				}
+			}
+			if count != 1 {
+				t.Errorf("module %q pre-selected %d times, want 1; languages = %v", name, count, answers.Languages)
+			}
+		})
 	}
 }
 

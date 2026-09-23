@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
+	"strconv"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -31,11 +31,20 @@ func init() {
 // goVersionRe matches the "go X.Y" or "go X.Y.Z" directive in go.mod.
 var goVersionRe = regexp.MustCompile(`^go\s+(\d+\.\d+(?:\.\d+)?)`)
 
+// goReleaseRe parses a Go 1.x release version ("1.24" or "1.24.1") and
+// captures the minor version.
+var goReleaseRe = regexp.MustCompile(`^1\.(\d+)(?:\.\d+)?$`)
+
+// supportedGoMinors lists the Go 1.x minor versions that have a stable
+// go_1_<minor> attribute in nixpkgs, in ascending order. goVersionToNixPackage
+// never emits an attribute outside this list.
+var supportedGoMinors = []int{25, 26}
+
 // Module implements ecosystem.EcosystemModule for the Go programming language.
 type Module struct{}
 
 // Name returns the canonical ecosystem identifier.
-func (m *Module) Name() string { return "go" }
+func (m *Module) Name() string { return ecosystem.NameGo }
 
 // DisplayName returns the human-readable label.
 func (m *Module) DisplayName() string { return "Go" }
@@ -47,10 +56,7 @@ func (m *Module) Tier() int { return 1 }
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	modPath := filepath.Join(projectRoot, "go.mod")
 	if !fileutil.FileExists(modPath) {
-		return ecosystem.DetectionResult{
-			Detected:   false,
-			Confidence: ecosystem.ConfidenceAbsent,
-		}
+		return ecosystem.DetectionAbsent()
 	}
 
 	version := parseGoVersion(projectRoot)
@@ -77,7 +83,7 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 		{
 			Key:     "GOFLAGS",
 			Value:   `"-mod=readonly"`,
-			Comment: "Enforce module-aware mode — prevents unvetted dependency additions",
+			Comment: "Fail instead of silently updating go.mod/go.sum — prevents unvetted dependency additions",
 		},
 	}
 	if config.RegistryProxy != "" {
@@ -86,26 +92,28 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 			Value: fmt.Sprintf(`"%s,direct"`, ecosystem.NixEscapeString(config.RegistryProxy)),
 		})
 	}
-	envVars = append(envVars,
-		ecosystem.NixEnvVar{
-			Key:     "GONOSUMCHECK",
-			Value:   `""`,
-			Comment: "Ensure all modules are verified via the Go checksum database",
-		},
-		ecosystem.NixEnvVar{
-			Key:     "GONOSUMDB",
-			Value:   `""`,
-			Comment: "Ensure all modules use the Go notary for transparency",
-		},
-	)
+	// GOSUMDB is the variable that controls checksum verification; pinning it
+	// overrides an inherited GOSUMDB=off. Go fetches the checksum database
+	// through GOPROXY when the proxy supports it. Modules matched by
+	// GOPRIVATE/GONOSUMDB remain exempt, as they must be for private code.
+	envVars = append(envVars, ecosystem.NixEnvVar{
+		Key:     "GOSUMDB",
+		Value:   `"sum.golang.org"`,
+		Comment: "Verify all public modules against the Go checksum database",
+	})
 
-	return ecosystem.BuildLanguageFragment(ecosystem.NixLangConfig{
+	pkg, note := goVersionToNixPackage(config.Version)
+	fragment := ecosystem.BuildLanguageFragment(ecosystem.NixLangConfig{
 		EnablePath: "languages.go",
 		Properties: []ecosystem.NixProperty{
-			{Key: "package", Value: goVersionToNixPackage(config.Version)},
+			{Key: "package", Value: pkg},
 		},
 		EnvVars: envVars,
-	}), nil
+	})
+	if note != "" {
+		fragment = "  # " + note + "\n" + fragment
+	}
+	return fragment, nil
 }
 
 // SecurityConfigs returns generated security configuration files.
@@ -209,7 +217,7 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 		{
 			Key:         "go_version",
 			Label:       "Go version",
-			Description: "Specify the Go version to use (e.g. 1.22)",
+			Description: "Specify the Go version to use (e.g. 1.25)",
 			Type:        ecosystem.FieldTypeInput,
 			Default:     "",
 		},
@@ -244,19 +252,37 @@ func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
 	return []string{"gopls", "golangci-lint", "delve", "goreleaser"}
 }
 
-// goVersionToNixPackage maps a Go version string to the corresponding Nix package
-// attribute. For example, "1.24.1" maps to "pkgs.go_1_24". If the version is empty
-// or cannot be parsed into at least major.minor components, "pkgs.go" (latest) is returned.
-func goVersionToNixPackage(version string) string {
+// goVersionToNixPackage maps a Go version string to a nixpkgs attribute.
+// The go.mod directive is a minimum, so the requested minor version maps to
+// the oldest supported go_1_<minor> attribute at or above it (for example,
+// "1.22" maps to "pkgs.go_1_25" and "1.26.1" to "pkgs.go_1_26"). An empty
+// version maps to "pkgs.go" (latest). A version that is not a Go 1.x release,
+// or is newer than every supported attribute, also maps to "pkgs.go". note is
+// non-empty whenever the result differs from the requested version, so the
+// substitution can be surfaced instead of emitting a nonexistent attribute.
+func goVersionToNixPackage(version string) (pkg, note string) {
 	if version == "" {
-		return "pkgs.go"
+		return "pkgs.go", ""
 	}
-	// Extract major.minor (e.g. "1.24.1" -> "1.24", "1.23" -> "1.23")
-	parts := strings.SplitN(version, ".", 3)
-	if len(parts) < 2 {
-		return "pkgs.go"
+	m := goReleaseRe.FindStringSubmatch(version)
+	if m == nil {
+		return "pkgs.go", fmt.Sprintf("unrecognized Go version %q; using pkgs.go (latest)", version)
 	}
-	return fmt.Sprintf("pkgs.go_%s_%s", parts[0], parts[1])
+	minor, err := strconv.Atoi(m[1])
+	if err != nil {
+		return "pkgs.go", fmt.Sprintf("unrecognized Go version %q; using pkgs.go (latest)", version)
+	}
+	for _, v := range supportedGoMinors {
+		if v < minor {
+			continue
+		}
+		attr := fmt.Sprintf("pkgs.go_1_%d", v)
+		if v == minor {
+			return attr, ""
+		}
+		return attr, fmt.Sprintf("go %s is not packaged in nixpkgs; using %s (Go is backward compatible)", version, attr)
+	}
+	return "pkgs.go", fmt.Sprintf("go %s is newer than any pinned toolchain; using pkgs.go (latest)", version)
 }
 
 // parseGoVersion reads go.mod in projectRoot and extracts the Go version

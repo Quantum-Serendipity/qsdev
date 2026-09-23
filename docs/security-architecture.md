@@ -348,7 +348,7 @@ Commands that represent bypass vectors â€” ways to circumvent the hook-gating â€
 | eval/xargs | `eval *npm install*`, `xargs cargo install` | ~7 |
 | env/command Prefix | `env npm install`, `command pip install` | ~10 |
 | sudo Prefix | `sudo npm install`, `sudo apt install` | ~8 |
-| npx/bunx Execution | `npx <package>`, `bunx <package>` | ~6 |
+| Remote Package Execution | `npx <package>`, `pnpm dlx`, `yarn dlx`, `bunx`, `npm exec` | ~8 |
 | Destructive Ops | `git push --force`, `rm -rf /`, `Read(./.env)` | ~6 |
 | Nix Bypass | `nix-env -i`, `cachix use` | ~8 |
 | Uncategorized | Per-ecosystem edge cases | ~14 |

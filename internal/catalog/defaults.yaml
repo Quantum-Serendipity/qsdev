@@ -1204,6 +1204,17 @@ tool_categories:
 permission_deny_rules:
     npx:
         - "Bash(npx *)"
+    # Remote package executors equivalent to npx: each downloads a package
+    # from the registry and runs it immediately, bypassing lockfiles and the
+    # package-guard age gate.
+    remote_package_exec:
+        - "Bash(pnpm dlx *)"
+        - "Bash(pnpx *)"
+        - "Bash(yarn dlx *)"
+        - "Bash(bunx *)"
+        - "Bash(bun x *)"
+        - "Bash(npm exec *)"
+        - "Bash(npm x *)"
     nix:
         - "Bash(nix-env -i *)"
         - "Bash(nix-env --install *)"
@@ -1349,6 +1360,7 @@ permission_deny_rules:
 # Supply chain deny sets are all sets except destructive_ops and sandbox_config_edits.
 permission_supply_chain_deny_sets:
     - npx
+    - remote_package_exec
     - nix
     - system
     - pipe_to_shell
@@ -1361,6 +1373,7 @@ permission_supply_chain_deny_sets:
 # All base deny sets include supply chain + destructive_ops + sandbox_config_edits.
 permission_all_deny_sets:
     - npx
+    - remote_package_exec
     - nix
     - system
     - pipe_to_shell
@@ -1548,6 +1561,7 @@ permission_preset_defs:
             - frozen_lockfile_installs
         deny_sets:
             - npx
+            - remote_package_exec
             - nix
             - system
             - pipe_to_shell
@@ -1576,6 +1590,7 @@ permission_preset_defs:
             - frozen_lockfile_installs
         deny_sets:
             - npx
+            - remote_package_exec
             - nix
             - system
             - pipe_to_shell
@@ -1605,6 +1620,7 @@ permission_preset_defs:
             - permissive_extra
         deny_sets:
             - npx
+            - remote_package_exec
             - nix
             - system
             - pipe_to_shell
@@ -1628,6 +1644,7 @@ permission_preset_defs:
         allow_sets: []
         deny_sets:
             - npx
+            - remote_package_exec
             - nix
             - system
             - pipe_to_shell
@@ -1646,6 +1663,7 @@ permission_preset_defs:
     custom:
         deny_sets:
             - npx
+            - remote_package_exec
             - nix
             - system
             - pipe_to_shell

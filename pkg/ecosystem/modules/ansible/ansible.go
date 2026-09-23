@@ -25,7 +25,7 @@ func init() {
 type Module struct{}
 
 // Name returns the canonical module identifier.
-func (m *Module) Name() string { return "ansible" }
+func (m *Module) Name() string { return ecosystem.NameAnsible }
 
 // DisplayName returns the human-readable label.
 func (m *Module) DisplayName() string { return "Ansible" }

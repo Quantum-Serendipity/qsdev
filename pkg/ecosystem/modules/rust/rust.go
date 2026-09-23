@@ -32,7 +32,7 @@ func init() {
 }
 
 // Name returns the canonical module identifier.
-func (m *Module) Name() string { return "rust" }
+func (m *Module) Name() string { return ecosystem.NameRust }
 
 // DisplayName returns the human-readable label.
 func (m *Module) DisplayName() string { return "Rust" }
@@ -68,28 +68,49 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		result.Evidence = append(result.Evidence, "Cargo.lock")
 	}
 
+	// Keep the toolchain spec only when devenv can express it; anything else
+	// (a host-qualified toolchain, a custom toolchain name) falls back to
+	// stable rather than producing an invalid devenv.nix.
 	channel := parseToolchainChannel(projectRoot)
+	if _, _, err := resolveToolchain(channel); err != nil {
+		result.Evidence = append(result.Evidence, fmt.Sprintf("unsupported toolchain %q ignored", channel))
+		channel = "stable"
+	}
 	result.SuggestedConfig.Extras["channel"] = channel
 
 	return result
 }
 
 // DevenvNixFragment returns a Nix fragment that enables Rust in devenv.sh.
+// The toolchain spec comes from the "channel" extra (rust-toolchain.toml) or,
+// when that is unset or plain "stable", from Version (--rust-channel). It is
+// split into devenv's channel enum and an optional version; see
+// resolveToolchain.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
-	channel := "stable"
-	if ch := config.Extra("channel", ""); ch != "" {
-		channel = ch
+	spec := config.Extra("channel", "")
+	if (spec == "" || spec == "stable") && config.Version != "" {
+		spec = config.Version
 	}
-	if channel == "stable" && config.Version != "" {
-		channel = config.Version
+	if spec == "" {
+		spec = "stable"
 	}
+
+	channel, version, err := resolveToolchain(spec)
+	if err != nil {
+		return "", err
+	}
+
+	props := []ecosystem.NixProperty{
+		{Key: "channel", Value: ecosystem.NixString(channel)},
+	}
+	if version != "" {
+		props = append(props, ecosystem.NixProperty{Key: "version", Value: ecosystem.NixString(version)})
+	}
+	props = append(props, ecosystem.NixProperty{Key: "components", Value: `[ "rustfmt" "clippy" ]`})
 
 	return ecosystem.BuildLanguageFragment(ecosystem.NixLangConfig{
 		EnablePath: "languages.rust",
-		Properties: []ecosystem.NixProperty{
-			{Key: "channel", Value: ecosystem.NixString(channel)},
-			{Key: "components", Value: `[ "rustfmt" "clippy" ]`},
-		},
+		Properties: props,
 	}), nil
 }
 
@@ -247,6 +268,41 @@ func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFil
 //
 //	channel = "stable"
 var channelRegexp = regexp.MustCompile(`^\s*channel\s*=\s*"([^"]+)"`)
+
+// rustReleaseRe matches a pinned stable release: "1.80" or "1.80.1".
+var rustReleaseRe = regexp.MustCompile(`^[0-9]+\.[0-9]+(\.[0-9]+)?$`)
+
+// rustDatedRe matches a dated beta or nightly toolchain such as
+// "nightly-2024-05-01", capturing the channel and the date.
+var rustDatedRe = regexp.MustCompile(`^(beta|nightly)-([0-9]{4}-[0-9]{2}-[0-9]{2})$`)
+
+// resolveToolchain splits a rustup toolchain spec into devenv's
+// languages.rust.channel, which only accepts the enum "stable", "beta" or
+// "nightly", and languages.rust.version, which selects a release or date on
+// that channel (empty means devenv's default, the latest one):
+//
+//	stable | beta | nightly      -> channel only
+//	1.80.1                       -> channel "stable", version "1.80.1"
+//	1.80                         -> channel "stable", version "1.80.0"
+//	nightly-2024-05-01           -> channel "nightly", version "2024-05-01"
+//
+// rust-overlay only publishes full X.Y.Z stable versions, so a bare X.Y is
+// pinned to its .0 release. Any other spec is rejected with an error.
+func resolveToolchain(spec string) (channel, version string, err error) {
+	switch {
+	case spec == "stable" || spec == "beta" || spec == "nightly":
+		return spec, "", nil
+	case rustReleaseRe.MatchString(spec):
+		if strings.Count(spec, ".") == 1 {
+			spec += ".0"
+		}
+		return "stable", spec, nil
+	}
+	if m := rustDatedRe.FindStringSubmatch(spec); m != nil {
+		return m[1], m[2], nil
+	}
+	return "", "", fmt.Errorf("unsupported Rust toolchain %q: want stable, beta, nightly, a release such as 1.80.0, or a dated channel such as nightly-2024-05-01", spec)
+}
 
 // parseToolchainChannel extracts the Rust toolchain channel from
 // rust-toolchain.toml (preferred) or the legacy rust-toolchain file.

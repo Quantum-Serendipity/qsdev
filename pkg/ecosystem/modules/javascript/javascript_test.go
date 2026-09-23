@@ -3,9 +3,11 @@ package javascript_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/javascript"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -638,9 +640,10 @@ func TestDenyRules(t *testing.T) {
 	m := &javascript.Module{}
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 
-	// Only npx + pipe-to-shell patterns remain (package installs moved to ask).
-	if len(rules) != 5 {
-		t.Fatalf("DenyRules() returned %d rules, want 5 (npx + 4 pipe-to-shell)", len(rules))
+	// Remote package executors + pipe-to-shell patterns (package installs
+	// moved to ask).
+	if len(rules) != 12 {
+		t.Fatalf("DenyRules() returned %d rules, want 12 (8 remote-exec + 4 pipe-to-shell)", len(rules))
 	}
 
 	expectedPatterns := []string{
@@ -662,6 +665,63 @@ func TestDenyRules(t *testing.T) {
 			t.Errorf("DenyRules() missing pattern containing %q\nrules: %v", pattern, rules)
 		}
 	}
+}
+
+// TestDenyRules_RemotePackageExecutors checks that every package manager's
+// equivalent of npx is hard-denied. Denying npx alone is trivially bypassed.
+func TestDenyRules_RemotePackageExecutors(t *testing.T) {
+	t.Parallel()
+	rules := (&javascript.Module{}).DenyRules(ecosystem.ModuleConfig{})
+	for _, cmd := range []string{
+		"npx evil-pkg",
+		"pnpm dlx some-typosquat@latest",
+		"pnpx evil-pkg",
+		"yarn dlx evil-pkg",
+		"bunx evil-pkg",
+		"bun x evil-pkg",
+		"npm exec evil-pkg",
+		"npm x evil-pkg",
+	} {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			if !slices.ContainsFunc(rules, func(r string) bool { return bashRuleMatches(r, cmd) }) {
+				t.Errorf("no deny rule matches %q; rules: %v", cmd, rules)
+			}
+		})
+	}
+}
+
+// TestDenyRules_MatchCatalog keeps the module's hard-deny list in sync with
+// the catalog deny sets every permission preset applies.
+func TestDenyRules_MatchCatalog(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.LoadEmbeddedOnly()
+	if err != nil {
+		t.Fatalf("LoadEmbeddedOnly() error: %v", err)
+	}
+	rules := (&javascript.Module{}).DenyRules(ecosystem.ModuleConfig{})
+	for _, set := range []string{"npx", "remote_package_exec"} {
+		catRules := cat.PermissionDenyRules(set)
+		if len(catRules) == 0 {
+			t.Fatalf("catalog deny set %q is empty", set)
+		}
+		for _, r := range catRules {
+			if !slices.Contains(rules, r) {
+				t.Errorf("catalog %s rule %q missing from DenyRules()", set, r)
+			}
+		}
+	}
+}
+
+// bashRuleMatches reports whether a "Bash(<prefix> *)" rule matches cmd.
+func bashRuleMatches(rule, cmd string) bool {
+	inner, ok := strings.CutPrefix(rule, "Bash(")
+	if !ok {
+		return false
+	}
+	inner = strings.TrimSuffix(inner, ")")
+	prefix, ok := strings.CutSuffix(inner, "*")
+	return ok && strings.HasPrefix(cmd, prefix)
 }
 
 // --- CICommands tests ---

@@ -121,7 +121,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Language:      "system",
 			Types:         []string{"dart"},
 			Stages:        []string{"pre-commit"},
-			PassFilenames: false,
+			PassFilenames: true, // the formatter needs file operands
 			BuiltIn:       false,
 			NixPackage:    "dart",
 		},

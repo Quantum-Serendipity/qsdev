@@ -3,6 +3,7 @@ package gcp_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -185,28 +186,25 @@ func TestDevenvNix_NoGACEnvVar(t *testing.T) {
 	}
 }
 
-func TestDevenvNix_K8sExtra(t *testing.T) {
+// TestDevenvNix_NoLiveEnvAssignments guards against exporting placeholder
+// values: a fake CLOUDSDK_ACTIVE_CONFIG_NAME/CLOUDSDK_CORE_PROJECT breaks every
+// gcloud command in the shell, and any generated env.X definition collides
+// with the user's own definition from devenv.local.nix or --env.
+func TestDevenvNix_NoLiveEnvAssignments(t *testing.T) {
 	t.Parallel()
-	cfg := ecosystem.ModuleConfig{
-		Extras: map[string]string{"k8s": "true"},
-	}
-	frag, err := newModule().DevenvNixFragment(cfg)
-	if err != nil {
-		t.Fatalf("DevenvNixFragment error: %v", err)
-	}
-	if !strings.Contains(frag, "gke-gcloud-auth-plugin") {
-		t.Error("k8s=true fragment should mention gke-gcloud-auth-plugin")
-	}
-}
-
-func TestDevenvNix_NoK8s(t *testing.T) {
-	t.Parallel()
-	frag, err := newModule().DevenvNixFragment(ecosystem.ModuleConfig{})
-	if err != nil {
-		t.Fatalf("DevenvNixFragment error: %v", err)
-	}
-	if strings.Contains(frag, "gke-gcloud-auth-plugin") {
-		t.Error("default fragment should NOT mention gke-gcloud-auth-plugin")
+	for _, extras := range []map[string]string{nil, {"k8s": "true"}} {
+		frag, err := newModule().DevenvNixFragment(ecosystem.ModuleConfig{Extras: extras})
+		if err != nil {
+			t.Fatalf("DevenvNixFragment error: %v", err)
+		}
+		for line := range strings.SplitSeq(strings.TrimRight(frag, "\n"), "\n") {
+			if !strings.HasPrefix(line, "  #") {
+				t.Errorf("fragment line is live Nix, want comment only: %q", line)
+			}
+		}
+		if strings.Contains(frag, "PLACEHOLDER") {
+			t.Errorf("fragment contains a placeholder value:\n%s", frag)
+		}
 	}
 }
 
@@ -223,6 +221,43 @@ func TestDevenvPackages_Default(t *testing.T) {
 		if pkgs[i] != w {
 			t.Errorf("DevenvPackages()[%d] = %q, want %q", i, pkgs[i], w)
 		}
+	}
+}
+
+// TestDevenvPackages_K8sProvidesAuthPlugin asserts GKE projects get the
+// gke-gcloud-auth-plugin binary, which the plain google-cloud-sdk package
+// lacks, and never two conflicting google-cloud-sdk builds.
+func TestDevenvPackages_K8sProvidesAuthPlugin(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		extras    map[string]string
+		wantPkgs  []string
+		wantExprs []string
+	}{
+		{
+			name:     "no k8s",
+			wantPkgs: []string{"google-cloud-sdk"},
+		},
+		{
+			name:   "k8s",
+			extras: map[string]string{"k8s": "true"},
+			wantExprs: []string{
+				"(pkgs.google-cloud-sdk.withExtraComponents [ pkgs.google-cloud-sdk.components.gke-gcloud-auth-plugin ])",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := ecosystem.ModuleConfig{Extras: tt.extras}
+			if got := newModule().DevenvPackages(cfg); !slices.Equal(got, tt.wantPkgs) {
+				t.Errorf("DevenvPackages() = %v, want %v", got, tt.wantPkgs)
+			}
+			if got := newModule().DevenvPackageExprs(cfg); !slices.Equal(got, tt.wantExprs) {
+				t.Errorf("DevenvPackageExprs() = %v, want %v", got, tt.wantExprs)
+			}
+		})
 	}
 }
 

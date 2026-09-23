@@ -7,8 +7,6 @@
 package gcp
 
 import (
-	"strings"
-
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/cloudcommon"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -20,6 +18,7 @@ var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 var _ ecosystem.ReadDenyRuleProvider = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
+var _ ecosystem.PackageExprProvider = (*Module)(nil)
 var _ ecosystem.DoctorCheckProvider = (*Module)(nil)
 
 func init() {
@@ -30,7 +29,7 @@ func init() {
 type Module struct{}
 
 // Name returns the canonical module identifier.
-func (m *Module) Name() string { return "gcp" }
+func (m *Module) Name() string { return ecosystem.NameGCP }
 
 // DisplayName returns the human-readable label.
 func (m *Module) DisplayName() string { return "Google Cloud CLI" }
@@ -85,10 +84,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	if !detected {
-		return ecosystem.DetectionResult{
-			Detected:   false,
-			Confidence: ecosystem.ConfidenceAbsent,
-		}
+		return ecosystem.DetectionAbsent()
 	}
 
 	return ecosystem.DetectionResult{
@@ -98,24 +94,49 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 }
 
+// envHints are the per-project variables gcloud and the Google Cloud client
+// libraries read to select a configuration and project.
+var envHints = []cloudcommon.EnvVarHint{
+	{Name: "CLOUDSDK_ACTIVE_CONFIG_NAME", Description: "gcloud configuration name"},
+	{Name: "CLOUDSDK_CORE_PROJECT", Description: "GCP project ID"},
+	{Name: "GOOGLE_CLOUD_PROJECT", Description: "GCP project ID"},
+}
+
+// gkeAuthPluginExpr is google-cloud-sdk with the gke-gcloud-auth-plugin
+// component, which kubectl needs to authenticate against GKE clusters. The
+// plain google-cloud-sdk package does not ship the plugin binary.
+const gkeAuthPluginExpr = "(pkgs.google-cloud-sdk.withExtraComponents " +
+	"[ pkgs.google-cloud-sdk.components.gke-gcloud-auth-plugin ])"
+
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for GCP environment variables.
-func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
-	var b strings.Builder
-	b.WriteString("  env.CLOUDSDK_ACTIVE_CONFIG_NAME = \"PLACEHOLDER -- set to your gcloud config name\";\n")
-	b.WriteString("  env.CLOUDSDK_CORE_PROJECT = \"PLACEHOLDER -- set to your GCP project ID\";\n")
-	b.WriteString("  env.GOOGLE_CLOUD_PROJECT = \"PLACEHOLDER -- same as CLOUDSDK_CORE_PROJECT\";\n")
-
-	if config.Extra("k8s", "") == "true" {
-		b.WriteString("  # GKE auth: google-cloud-sdk is installed with gke-gcloud-auth-plugin component\n")
-	}
-
-	return b.String(), nil
+// for GCP. It documents the per-project environment variables without setting
+// them; see cloudcommon.EnvGuidanceFragment.
+func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
+	return cloudcommon.EnvGuidanceFragment("Google Cloud", envHints), nil
 }
 
 // DevenvPackages returns the Nix packages required for the GCP ecosystem.
-func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
+// With the k8s extra, the SDK is provided by DevenvPackageExprs instead, so
+// that two conflicting google-cloud-sdk builds never land in one profile.
+func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
+	if needsGKEAuth(config) {
+		return nil
+	}
 	return []string{"google-cloud-sdk"}
+}
+
+// DevenvPackageExprs returns google-cloud-sdk with the gke-gcloud-auth-plugin
+// component when the k8s extra is set (GKE clusters), and nothing otherwise.
+func (m *Module) DevenvPackageExprs(config ecosystem.ModuleConfig) []string {
+	if needsGKEAuth(config) {
+		return []string{gkeAuthPluginExpr}
+	}
+	return nil
+}
+
+// needsGKEAuth reports whether the project targets Kubernetes on GKE.
+func needsGKEAuth(config ecosystem.ModuleConfig) bool {
+	return config.Extra("k8s", "") == "true"
 }
 
 // DenyRules returns Claude Code bash deny-rule patterns for GCP.

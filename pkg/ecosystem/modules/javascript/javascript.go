@@ -3,6 +3,7 @@ package javascript
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -24,7 +25,7 @@ func init() {
 type Module struct{}
 
 // Name returns the canonical ecosystem identifier.
-func (m *Module) Name() string { return "javascript" }
+func (m *Module) Name() string { return ecosystem.NameJavaScript }
 
 // DisplayName returns the human-readable label.
 func (m *Module) DisplayName() string { return "JavaScript/TypeScript" }
@@ -39,10 +40,7 @@ func (m *Module) Tier() int { return 1 }
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	pkgJSONPath := filepath.Join(projectRoot, "package.json")
 	if !fileutil.FileExists(pkgJSONPath) {
-		return ecosystem.DetectionResult{
-			Detected:   false,
-			Confidence: ecosystem.ConfidenceAbsent,
-		}
+		return ecosystem.DetectionAbsent()
 	}
 
 	evidence := []string{"package.json found"}
@@ -171,6 +169,22 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 	}
 }
 
+// remotePackageExecDenyRules block every package manager's "download and run
+// a package" command. Each one fetches a package from the registry and
+// executes it immediately, bypassing lockfiles and the package-guard age
+// gate, so denying only npx would leave the same capability open through the
+// others. These mirror the catalog's npx and remote_package_exec deny sets.
+var remotePackageExecDenyRules = []string{
+	"Bash(npx *)",
+	"Bash(pnpm dlx *)",
+	"Bash(pnpx *)",
+	"Bash(yarn dlx *)",
+	"Bash(bunx *)",
+	"Bash(bun x *)",
+	"Bash(npm exec *)",
+	"Bash(npm x *)",
+}
+
 // DenyRules returns Claude Code deny-rule patterns for the JavaScript/TypeScript ecosystem.
 // These cover ALL four package managers regardless of which one is detected,
 // plus pipe-to-shell patterns that are common JS supply chain attack vectors.
@@ -178,7 +192,7 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	// Package install commands (npm/pnpm/yarn/bun add/install) are handled by
 	// base ask rules + package-guard hook. Only hard-deny patterns here that
 	// must never execute regardless of hook validation.
-	rules := []string{"Bash(npx *)"}
+	rules := slices.Clone(remotePackageExecDenyRules)
 	return append(rules, ecosystem.PipeToShellDenyRules()...)
 }
 

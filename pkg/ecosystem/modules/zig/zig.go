@@ -30,7 +30,7 @@ func init() {
 type Module struct{}
 
 // Name returns the canonical ecosystem identifier.
-func (m *Module) Name() string { return "zig" }
+func (m *Module) Name() string { return ecosystem.NameZig }
 
 // DisplayName returns the human-readable label.
 func (m *Module) DisplayName() string { return "Zig" }
@@ -60,10 +60,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	if !detected {
-		return ecosystem.DetectionResult{
-			Detected:   false,
-			Confidence: ecosystem.ConfidenceAbsent,
-		}
+		return ecosystem.DetectionAbsent()
 	}
 
 	return ecosystem.DetectionResult{
@@ -98,7 +95,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Language:      "system",
 			Types:         []string{"zig"},
 			Stages:        []string{"pre-commit"},
-			PassFilenames: false,
+			PassFilenames: true, // the formatter needs file operands
 			BuiltIn:       false,
 			NixPackage:    "zig",
 		},

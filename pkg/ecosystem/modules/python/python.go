@@ -34,11 +34,20 @@ func init() {
 // captures the first version number (major.minor).
 var requiresPythonRe = regexp.MustCompile(`^\s*requires-python\s*=\s*"[><=!~]*(\d+\.\d+)`)
 
+// pythonVersionRe is the accepted form of a Python version: major.minor with
+// an optional patch component, as understood by nixpkgs-python. Versions are
+// read from repo-controlled files and interpolated into devenv.nix, so any
+// other text is rejected rather than escaped.
+var pythonVersionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+(\.[0-9]+)?$`)
+
+// defaultPythonVersion is used when no Python version is configured.
+const defaultPythonVersion = "3.12"
+
 // Module implements ecosystem.EcosystemModule for the Python programming language.
 type Module struct{}
 
 // Name returns the canonical ecosystem identifier.
-func (m *Module) Name() string { return "python" }
+func (m *Module) Name() string { return ecosystem.NamePython }
 
 // DisplayName returns the human-readable label.
 func (m *Module) DisplayName() string { return "Python" }
@@ -80,10 +89,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	if confidence == ecosystem.ConfidenceAbsent {
-		return ecosystem.DetectionResult{
-			Detected:   false,
-			Confidence: ecosystem.ConfidenceAbsent,
-		}
+		return ecosystem.DetectionAbsent()
 	}
 
 	// Determine package manager from lockfiles.
@@ -97,8 +103,10 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	// Determine version: .python-version takes priority over pyproject.toml.
+	// A .python-version that is not a plain version number (pyenv names such
+	// as "pypy3.10" or "system", or hostile text) is ignored.
 	version := ""
-	if v := fileutil.ReadFirstLine(filepath.Join(projectRoot, ".python-version")); v != "" {
+	if v := fileutil.ReadFirstLine(filepath.Join(projectRoot, ".python-version")); pythonVersionRe.MatchString(v) {
 		version = v
 		evidence = append(evidence, fmt.Sprintf("python version %s (from .python-version)", v))
 	} else if v := parseRequiresPython(filepath.Join(projectRoot, "pyproject.toml")); v != "" {
@@ -118,17 +126,21 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 }
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for Python language support with the configured package manager.
+// for Python language support with the configured package manager. It returns
+// an error when the configured version is not a plain Python version number.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
 	version := config.Version
 	if version == "" {
-		version = "3.12"
+		version = defaultPythonVersion
+	}
+	if !pythonVersionRe.MatchString(version) {
+		return "", fmt.Errorf("invalid python version %q: want MAJOR.MINOR or MAJOR.MINOR.PATCH", version)
 	}
 
 	pm := config.PM("pip")
 
 	props := []ecosystem.NixProperty{
-		{Key: "version", Value: fmt.Sprintf("%q", version)},
+		{Key: "version", Value: ecosystem.NixString(version)},
 	}
 
 	switch pm {
@@ -140,11 +152,28 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 
 	props = append(props, ecosystem.NixProperty{Key: "venv.enable", Value: "true"})
 
+	// pip only reads configuration from user, site, virtualenv or
+	// PIP_CONFIG_FILE locations, never from the project root, so the
+	// generated pip.conf must be wired in explicitly for its settings to
+	// take effect. The value is a Nix antiquotation of the project root.
+	var envVars []ecosystem.NixEnvVar
+	if pm == "pip" {
+		envVars = append(envVars, ecosystem.NixEnvVar{
+			Key:     "PIP_CONFIG_FILE",
+			Value:   `"${config.devenv.root}/` + pipConfigPath + `"`,
+			Comment: "Apply the qsdev-managed pip.conf (hash checking, binary-only installs)",
+		})
+	}
+
 	return ecosystem.BuildLanguageFragment(ecosystem.NixLangConfig{
 		EnablePath: "languages.python",
 		Properties: props,
+		EnvVars:    envVars,
 	}), nil
 }
+
+// pipConfigPath is the project-relative path of the generated pip.conf.
+const pipConfigPath = "pip.conf"
 
 // DevenvYamlInputs returns the extra flake input required for Python.
 //
@@ -189,7 +218,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 
 	return []types.GeneratedFile{
 		{
-			Path:     "pip.conf",
+			Path:     pipConfigPath,
 			Content:  []byte(content),
 			Mode:     fileutil.ModeReadWrite,
 			Strategy: types.Overwrite,

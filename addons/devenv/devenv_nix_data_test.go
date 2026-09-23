@@ -252,6 +252,37 @@ func TestBuildDevenvNixData_ModulePackagesCollected(t *testing.T) {
 	}
 }
 
+// exprModule is a mock ecosystem module that also implements
+// ecosystem.PackageExprProvider.
+type exprModule struct {
+	ecosystem.MockModule
+	exprs []string
+}
+
+func (m *exprModule) DevenvPackageExprs(_ ecosystem.ModuleConfig) []string { return m.exprs }
+
+func TestBuildDevenvNixData_ModulePackageExprsCollected(t *testing.T) {
+	t.Parallel()
+	const expr = "(pkgs.google-cloud-sdk.withExtraComponents [ pkgs.google-cloud-sdk.components.gke-gcloud-auth-plugin ])"
+	reg := ecosystem.NewRegistry()
+	_ = reg.Register(&exprModule{
+		MockModule: ecosystem.MockModule{NameVal: "gcp", DisplayNameVal: "Google Cloud CLI", TierVal: 2},
+		exprs:      []string{expr},
+	})
+
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{{Name: "gcp"}},
+	}
+
+	data, err := BuildDevenvNixData(answers, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !slices.Contains(data.PackageExprs, expr) {
+		t.Errorf("data.PackageExprs missing module PackageExprProvider expression; got %v", data.PackageExprs)
+	}
+}
+
 func TestBuildEnterShellScript_ContainsGdevVars(t *testing.T) {
 	script := buildEnterShellScript(defaultUnsetEnvVars())
 

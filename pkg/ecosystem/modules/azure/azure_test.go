@@ -222,6 +222,25 @@ func TestDevenvNix_ContainsSubscription(t *testing.T) {
 	}
 }
 
+// TestDevenvNix_NoLiveEnvAssignments guards against exporting placeholder
+// values: a fake ARM_SUBSCRIPTION_ID fails Terraform azurerm, and a generated
+// env.X definition collides with the user's own from devenv.local.nix or --env.
+func TestDevenvNix_NoLiveEnvAssignments(t *testing.T) {
+	t.Parallel()
+	fragment, err := newModule().DevenvNixFragment(ecosystem.ModuleConfig{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for line := range strings.SplitSeq(strings.TrimRight(fragment, "\n"), "\n") {
+		if !strings.HasPrefix(line, "  #") {
+			t.Errorf("fragment line is live Nix, want comment only: %q", line)
+		}
+	}
+	if strings.Contains(fragment, "PLACEHOLDER") {
+		t.Errorf("fragment contains a placeholder value:\n%s", fragment)
+	}
+}
+
 func TestDevenvNix_NoClientSecret(t *testing.T) {
 	t.Parallel()
 	m := newModule()

@@ -3,6 +3,7 @@ package golang_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -123,8 +124,7 @@ func TestDevenvNixFragment(t *testing.T) {
 		"package = pkgs.go;",
 		"GOFLAGS",
 		`"-mod=readonly"`,
-		"GONOSUMCHECK",
-		"GONOSUMDB",
+		`env.GOSUMDB = "sum.golang.org";`,
 	}
 
 	for _, s := range requiredStrings {
@@ -134,19 +134,58 @@ func TestDevenvNixFragment(t *testing.T) {
 	}
 }
 
+// TestDevenvNixFragment_EnvVarsAreGoEnvironment guards against emitting
+// variables the go command does not read (GONOSUMCHECK) or no-op settings
+// (an empty GONOSUMDB is identical to unset). Every emitted env var must be
+// one listed by `go help environment`.
+func TestDevenvNixFragment_EnvVarsAreGoEnvironment(t *testing.T) {
+	t.Parallel()
+	known := map[string]bool{
+		"GOFLAGS": true, "GOPROXY": true, "GOSUMDB": true, "GONOSUMDB": true,
+		"GOPRIVATE": true, "GONOPROXY": true, "GOTOOLCHAIN": true, "GOINSECURE": true,
+	}
+	envLineRe := regexp.MustCompile(`(?m)^\s*env\.([A-Z0-9_]+) = (.*);$`)
+	for _, proxy := range []string{"", "https://goproxy.corp.example.com"} {
+		fragment, err := (&golang.Module{}).DevenvNixFragment(ecosystem.ModuleConfig{RegistryProxy: proxy})
+		if err != nil {
+			t.Fatalf("DevenvNixFragment() returned error: %v", err)
+		}
+		matches := envLineRe.FindAllStringSubmatch(fragment, -1)
+		if len(matches) == 0 {
+			t.Fatalf("no env vars emitted:\n%s", fragment)
+		}
+		for _, m := range matches {
+			if !known[m[1]] {
+				t.Errorf("env.%s is not a go environment variable\ngot:\n%s", m[1], fragment)
+			}
+			if m[2] == `""` {
+				t.Errorf("env.%s is set to an empty string, which the go command treats as unset", m[1])
+			}
+		}
+	}
+}
+
 func TestDevenvNixFragment_VersionMapping(t *testing.T) {
 	m := &golang.Module{}
 
 	tests := []struct {
-		name    string
-		version string
-		wantPkg string
+		name     string
+		version  string
+		wantPkg  string
+		wantNote bool
 	}{
-		{"empty version uses latest", "", "package = pkgs.go;"},
-		{"major.minor maps correctly", "1.24", "package = pkgs.go_1_24;"},
-		{"major.minor.patch extracts major.minor", "1.23.5", "package = pkgs.go_1_23;"},
-		{"patch version stripped", "1.24.1", "package = pkgs.go_1_24;"},
-		{"single component uses latest", "1", "package = pkgs.go;"},
+		{"empty version uses latest", "", "package = pkgs.go;", false},
+		{"supported major.minor maps exactly", "1.25", "package = pkgs.go_1_25;", false},
+		{"supported major.minor.patch maps to minor", "1.26.1", "package = pkgs.go_1_26;", false},
+		// The go directive is a minimum: older directives (very common in
+		// go.mod) map to the oldest packaged toolchain, never to a missing
+		// go_1_22 attribute.
+		{"old directive maps to oldest packaged", "1.22", "package = pkgs.go_1_25;", true},
+		{"unpackaged minor maps to next packaged", "1.24.3", "package = pkgs.go_1_25;", true},
+		{"newer than packaged uses latest", "1.99", "package = pkgs.go;", true},
+		{"single component uses latest", "1", "package = pkgs.go;", true},
+		{"non-numeric input uses latest", "1.x; builtins.abort", "package = pkgs.go;", true},
+		{"go 2 uses latest", "2.0", "package = pkgs.go;", true},
 	}
 
 	for _, tt := range tests {
@@ -157,6 +196,15 @@ func TestDevenvNixFragment_VersionMapping(t *testing.T) {
 			}
 			if !strings.Contains(fragment, tt.wantPkg) {
 				t.Errorf("DevenvNixFragment(version=%q) should contain %q\ngot:\n%s", tt.version, tt.wantPkg, fragment)
+			}
+			if hasNote := strings.HasPrefix(fragment, "  # "); hasNote != tt.wantNote {
+				t.Errorf("substitution note present = %v, want %v\ngot:\n%s", hasNote, tt.wantNote, fragment)
+			}
+			// go.mod is repo-controlled: its text may only appear in comments.
+			for line := range strings.SplitSeq(fragment, "\n") {
+				if strings.Contains(line, "abort") && !strings.HasPrefix(line, "  # ") {
+					t.Errorf("untrusted version text escaped the comment: %q", line)
+				}
 			}
 		})
 	}
@@ -177,7 +225,7 @@ func TestDevenvNixFragment_RegistryProxy(t *testing.T) {
 		t.Errorf("DevenvNixFragment() missing GOPROXY line\nwant: %s\ngot:\n%s", expected, fragment)
 	}
 	// Existing security settings must be preserved.
-	for _, s := range []string{"GOFLAGS", "GONOSUMCHECK", "GONOSUMDB"} {
+	for _, s := range []string{"GOFLAGS", "GOSUMDB"} {
 		if !strings.Contains(fragment, s) {
 			t.Errorf("DevenvNixFragment() missing %q when proxy is set\ngot:\n%s", s, fragment)
 		}
@@ -210,8 +258,7 @@ func TestDevenvNixFragment_RegistryProxyPreservesExisting(t *testing.T) {
 	// All existing env vars must still be present.
 	for _, s := range []string{
 		`env.GOFLAGS = "-mod=readonly"`,
-		`env.GONOSUMCHECK = ""`,
-		`env.GONOSUMDB = ""`,
+		`env.GOSUMDB = "sum.golang.org"`,
 		"languages.go",
 		"enable = true",
 	} {

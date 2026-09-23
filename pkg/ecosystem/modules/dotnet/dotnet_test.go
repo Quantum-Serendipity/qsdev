@@ -286,32 +286,65 @@ func TestDevenvNixFragment_SDK9(t *testing.T) {
 	}
 }
 
-func TestDevenvNixFragment_Default(t *testing.T) {
-	m := newModule()
-	config := ecosystem.ModuleConfig{} // no version set
-
-	frag, err := m.DevenvNixFragment(config)
-	if err != nil {
-		t.Fatalf("DevenvNixFragment() error: %v", err)
+func TestDevenvNixFragment_SDKVersionMapping(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		version  string
+		wantPkg  string
+		wantNote bool
+	}{
+		{name: "empty uses default LTS", version: "", wantPkg: "pkgs.dotnet-sdk_10"},
+		{name: "net10", version: "10", wantPkg: "pkgs.dotnet-sdk_10"},
+		{name: "net11", version: "11", wantPkg: "pkgs.dotnet-sdk_11"},
+		{name: "net8", version: "8", wantPkg: "pkgs.dotnet-sdk_8"},
+		{name: "insecure EOL net6 upgrades", version: "6", wantPkg: "pkgs.dotnet-sdk_8", wantNote: true},
+		{name: "insecure EOL net7 upgrades", version: "7", wantPkg: "pkgs.dotnet-sdk_8", wantNote: true},
+		{name: "older than any packaged SDK upgrades", version: "5", wantPkg: "pkgs.dotnet-sdk_8", wantNote: true},
+		{name: "newer than any packaged SDK uses newest", version: "12", wantPkg: "pkgs.dotnet-sdk_11", wantNote: true},
+		{name: "non-numeric uses default", version: "latest", wantPkg: "pkgs.dotnet-sdk_10", wantNote: true},
 	}
-
-	if !strings.Contains(frag, "pkgs.dotnet-sdk_8") {
-		t.Errorf("fragment should default to dotnet-sdk_8:\n%s", frag)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			frag, err := newModule().DevenvNixFragment(ecosystem.ModuleConfig{Version: tt.version})
+			if err != nil {
+				t.Fatalf("DevenvNixFragment() error: %v", err)
+			}
+			if !strings.Contains(frag, "package = "+tt.wantPkg+";") {
+				t.Errorf("fragment should use %s:\n%s", tt.wantPkg, frag)
+			}
+			if hasNote := strings.Contains(frag, "  # "); hasNote != tt.wantNote {
+				t.Errorf("substitution note present = %v, want %v:\n%s", hasNote, tt.wantNote, frag)
+			}
+		})
 	}
 }
 
-func TestDevenvNixFragment_UnknownVersion(t *testing.T) {
-	m := newModule()
-	config := ecosystem.ModuleConfig{Version: "5"}
-
-	frag, err := m.DevenvNixFragment(config)
-	if err != nil {
-		t.Fatalf("DevenvNixFragment() error: %v", err)
+func TestWizardFields_OfferedVersionsArePackaged(t *testing.T) {
+	t.Parallel()
+	f := newModule().WizardFields()[0]
+	values := make([]string, 0, len(f.Options))
+	for _, opt := range f.Options {
+		values = append(values, opt.Value)
+		frag, err := newModule().DevenvNixFragment(ecosystem.ModuleConfig{Version: opt.Value})
+		if err != nil {
+			t.Fatalf("DevenvNixFragment(%q) error: %v", opt.Value, err)
+		}
+		if !strings.Contains(frag, "pkgs.dotnet-sdk_"+opt.Value+";") {
+			t.Errorf("wizard option %q is not a packaged SDK:\n%s", opt.Value, frag)
+		}
 	}
-
-	// Unknown versions should fall back to dotnet-sdk_8.
-	if !strings.Contains(frag, "pkgs.dotnet-sdk_8") {
-		t.Errorf("fragment should fall back to dotnet-sdk_8 for unknown version:\n%s", frag)
+	for _, eol := range []string{"6", "7"} {
+		if slices.Contains(values, eol) {
+			t.Errorf("wizard offers EOL .NET %s", eol)
+		}
+	}
+	if !slices.Contains(values, "10") {
+		t.Errorf("wizard does not offer .NET 10 (LTS); options = %v", values)
+	}
+	if !slices.Contains(values, f.Default) {
+		t.Errorf("wizard default %q is not one of the options %v", f.Default, values)
 	}
 }
 
@@ -367,9 +400,15 @@ func TestSecurityConfigs_NugetConfig(t *testing.T) {
 		t.Error("nuget.config missing signatureValidationMode=require")
 	}
 
-	// Check certificate fingerprint.
-	if !strings.Contains(content, "0E5F38F57DC1BCC806D8494F4F90FBCEDD988B46760709CBEEC6F4219AA6157D") {
-		t.Error("nuget.config missing nuget.org certificate fingerprint")
+	// Check certificate fingerprints.
+	for _, fp := range []string{
+		"0E5F38F57DC1BCC806D8494F4F90FBCEDD988B46760709CBEEC6F4219AA6157D",
+		"5A2901D6ADA3D18260B9C6DFE2133C95D74B9EEF6AE0E5DC334C8454D1477DF4",
+		"1F4B311D9ACC115C8DC8018B5A49E00FCE6DA8E2855F9F014CA6F34570BC482D",
+	} {
+		if !strings.Contains(content, fp) {
+			t.Errorf("nuget.config missing nuget.org certificate fingerprint %s", fp)
+		}
 	}
 
 	// Check clear + source.
@@ -380,12 +419,12 @@ func TestSecurityConfigs_NugetConfig(t *testing.T) {
 		t.Error("nuget.config missing nuget.org source URL")
 	}
 
-	// Check audit settings.
-	if !strings.Contains(content, "audit-level") {
-		t.Error("nuget.config missing audit-level")
-	}
-	if !strings.Contains(content, "audit-mode") {
-		t.Error("nuget.config missing audit-mode")
+	// audit-level/audit-mode are not nuget.config <config> keys; NuGet audit
+	// is configured through MSBuild properties in Directory.Build.props.
+	for _, invalid := range []string{"audit-level", "audit-mode"} {
+		if strings.Contains(content, invalid) {
+			t.Errorf("nuget.config contains unsupported config key %q", invalid)
+		}
 	}
 
 	// Check strategy.
@@ -429,10 +468,10 @@ func TestSecurityConfigs_NugetConfig_ValidXMLStructure(t *testing.T) {
 		Content string `xml:",chardata"`
 	}
 	type xmlRepository struct {
-		Name         string         `xml:"name,attr"`
-		ServiceIndex string         `xml:"serviceIndex,attr"`
-		Certificate  xmlCertificate `xml:"certificate"`
-		Owners       xmlOwners      `xml:"owners"`
+		Name         string           `xml:"name,attr"`
+		ServiceIndex string           `xml:"serviceIndex,attr"`
+		Certificates []xmlCertificate `xml:"certificate"`
+		Owners       *xmlOwners       `xml:"owners"`
 	}
 	type xmlConfiguration struct {
 		XMLName xml.Name `xml:"configuration"`
@@ -459,11 +498,31 @@ func TestSecurityConfigs_NugetConfig_ValidXMLStructure(t *testing.T) {
 	if repo.Name != "nuget.org" {
 		t.Errorf("trustedSigners repository name = %q, want %q", repo.Name, "nuget.org")
 	}
-	if repo.Certificate.Fingerprint != "0E5F38F57DC1BCC806D8494F4F90FBCEDD988B46760709CBEEC6F4219AA6157D" {
-		t.Error("certificate fingerprint mismatch")
+	// Every published nuget.org repository certificate must be trusted, not
+	// just the original 2018 one, or packages signed after a rotation fail
+	// with NU3034 under signatureValidationMode=require.
+	wantFingerprints := []string{
+		"0E5F38F57DC1BCC806D8494F4F90FBCEDD988B46760709CBEEC6F4219AA6157D",
+		"5A2901D6ADA3D18260B9C6DFE2133C95D74B9EEF6AE0E5DC334C8454D1477DF4",
+		"1F4B311D9ACC115C8DC8018B5A49E00FCE6DA8E2855F9F014CA6F34570BC482D",
 	}
-	if repo.Certificate.HashAlgorithm != "SHA256" {
-		t.Errorf("hashAlgorithm = %q, want %q", repo.Certificate.HashAlgorithm, "SHA256")
+	gotFingerprints := make([]string, 0, len(repo.Certificates))
+	for _, c := range repo.Certificates {
+		gotFingerprints = append(gotFingerprints, c.Fingerprint)
+		if c.HashAlgorithm != "SHA256" {
+			t.Errorf("hashAlgorithm = %q, want %q", c.HashAlgorithm, "SHA256")
+		}
+		if c.AllowUntrustedRoot != "false" {
+			t.Errorf("allowUntrustedRoot = %q, want %q", c.AllowUntrustedRoot, "false")
+		}
+	}
+	if !slices.Equal(gotFingerprints, wantFingerprints) {
+		t.Errorf("certificate fingerprints = %v, want %v", gotFingerprints, wantFingerprints)
+	}
+	// <owners> is an account list with no wildcard; omitting it trusts any
+	// package with a valid nuget.org repository signature.
+	if repo.Owners != nil {
+		t.Errorf("trustedSigners repository has <owners>%s</owners>, want none", repo.Owners.Content)
 	}
 
 	// Verify package source.
@@ -502,9 +561,6 @@ func TestSecurityConfigs_NugetConfig_Comments(t *testing.T) {
 	}
 	if !strings.Contains(content, "<!-- Package sources -->") {
 		t.Error("nuget.config missing 'Package sources' comment")
-	}
-	if !strings.Contains(content, "<!-- Audit settings -->") {
-		t.Error("nuget.config missing 'Audit settings' comment")
 	}
 }
 
@@ -553,9 +609,10 @@ func TestSecurityConfigs_DirectoryBuildProps(t *testing.T) {
 		t.Errorf("Directory.Build.props missing Condition attribute on RestoreLockedMode.\nContent:\n%s", content)
 	}
 
-	// Check ManagePackageVersionsCentrally.
-	if !strings.Contains(content, "ManagePackageVersionsCentrally") {
-		t.Error("Directory.Build.props missing ManagePackageVersionsCentrally")
+	// Central package management must not be forced on: without a
+	// Directory.Packages.props every versioned PackageReference fails NU1008.
+	if strings.Contains(content, "ManagePackageVersionsCentrally") {
+		t.Error("Directory.Build.props must not enable ManagePackageVersionsCentrally")
 	}
 
 	// Check strategy is Skip.
@@ -587,9 +644,11 @@ func TestSecurityConfigs_DirectoryBuildProps_XMLStructure(t *testing.T) {
 
 	// Parse a simplified XML structure.
 	type xmlPropertyGroup struct {
-		RestorePackagesWithLockFile    string `xml:"RestorePackagesWithLockFile"`
-		RestoreLockedMode              string `xml:"RestoreLockedMode"`
-		ManagePackageVersionsCentrally string `xml:"ManagePackageVersionsCentrally"`
+		RestorePackagesWithLockFile string `xml:"RestorePackagesWithLockFile"`
+		RestoreLockedMode           string `xml:"RestoreLockedMode"`
+		NuGetAudit                  string `xml:"NuGetAudit"`
+		NuGetAuditLevel             string `xml:"NuGetAuditLevel"`
+		NuGetAuditMode              string `xml:"NuGetAuditMode"`
 	}
 	type xmlProject struct {
 		XMLName       xml.Name         `xml:"Project"`
@@ -609,9 +668,14 @@ func TestSecurityConfigs_DirectoryBuildProps_XMLStructure(t *testing.T) {
 		t.Errorf("RestoreLockedMode = %q, want %q",
 			proj.PropertyGroup.RestoreLockedMode, "true")
 	}
-	if proj.PropertyGroup.ManagePackageVersionsCentrally != "true" {
-		t.Errorf("ManagePackageVersionsCentrally = %q, want %q",
-			proj.PropertyGroup.ManagePackageVersionsCentrally, "true")
+	for _, prop := range []struct{ name, got, want string }{
+		{"NuGetAudit", proj.PropertyGroup.NuGetAudit, "true"},
+		{"NuGetAuditLevel", proj.PropertyGroup.NuGetAuditLevel, "moderate"},
+		{"NuGetAuditMode", proj.PropertyGroup.NuGetAuditMode, "all"},
+	} {
+		if prop.got != prop.want {
+			t.Errorf("%s = %q, want %q", prop.name, prop.got, prop.want)
+		}
 	}
 }
 
@@ -649,11 +713,25 @@ func TestSecurityConfigs_NugetConfig_RegistryProxy(t *testing.T) {
 	if !strings.Contains(content, `value="require"`) {
 		t.Error("nuget.config missing signatureValidationMode=require when proxy is set")
 	}
-	if !strings.Contains(content, "https://api.nuget.org/v3/index.json") {
-		t.Error("nuget.config missing nuget.org source when proxy is set")
+
+	// The proxy must be the only package source: keeping nuget.org next to
+	// it lets restores bypass the proxy and resolve same-named packages
+	// directly from nuget.org.
+	type xmlAdd struct {
+		Key   string `xml:"key,attr"`
+		Value string `xml:"value,attr"`
 	}
-	if !strings.Contains(content, "audit-level") {
-		t.Error("nuget.config missing audit-level when proxy is set")
+	var cfg struct {
+		PackageSources struct {
+			Add []xmlAdd `xml:"add"`
+		} `xml:"packageSources"`
+	}
+	if err := xml.Unmarshal(nugetConfig.Content, &cfg); err != nil {
+		t.Fatalf("failed to unmarshal nuget.config: %v", err)
+	}
+	want := []xmlAdd{{Key: "corporate-proxy", Value: proxy}}
+	if !slices.Equal(cfg.PackageSources.Add, want) {
+		t.Errorf("packageSources = %+v, want only %+v", cfg.PackageSources.Add, want)
 	}
 }
 
@@ -702,9 +780,9 @@ func TestSecurityConfigs_NugetConfig_RegistryProxyPreservesExisting(t *testing.T
 		"signatureValidationMode",
 		"trustedSigners",
 		"0E5F38F57DC1BCC806D8494F4F90FBCEDD988B46760709CBEEC6F4219AA6157D",
+		"5A2901D6ADA3D18260B9C6DFE2133C95D74B9EEF6AE0E5DC334C8454D1477DF4",
+		"1F4B311D9ACC115C8DC8018B5A49E00FCE6DA8E2855F9F014CA6F34570BC482D",
 		"<clear>",
-		"audit-level",
-		"audit-mode",
 	} {
 		if !strings.Contains(content, s) {
 			t.Errorf("nuget.config missing %q when proxy is set\ncontent:\n%s", s, content)
@@ -853,10 +931,10 @@ func TestWizardFields(t *testing.T) {
 	if f.Type != ecosystem.FieldTypeSelect {
 		t.Errorf("Type = %v, want FieldTypeSelect", f.Type)
 	}
-	if f.Default != "8" {
-		t.Errorf("Default = %q, want %q", f.Default, "8")
+	if f.Default != "10" {
+		t.Errorf("Default = %q, want %q", f.Default, "10")
 	}
-	// .NET 6 is EOL and not offered in the wizard; only 9, 8, 7 remain.
+	// EOL releases (.NET 6, 7) are not offered in the wizard.
 	if len(f.Options) != 3 {
 		t.Fatalf("Options count = %d, want 3", len(f.Options))
 	}
@@ -865,7 +943,7 @@ func TestWizardFields(t *testing.T) {
 	for _, o := range f.Options {
 		values[o.Value] = true
 	}
-	for _, v := range []string{"9", "8", "7"} {
+	for _, v := range []string{"10", "9", "8"} {
 		if !values[v] {
 			t.Errorf("missing option value %q", v)
 		}

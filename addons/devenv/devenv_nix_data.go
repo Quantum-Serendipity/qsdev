@@ -144,8 +144,11 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data.CustomHooks = hookResult.CustomHooks
 	data.Packages = append(data.Packages, hookResult.ExtraPackages...)
 
-	// 4b. Collect packages from modules that implement PackageProvider.
-	data.Packages = append(data.Packages, collectModulePackages(answers, registry)...)
+	// 4b. Collect packages from modules that implement PackageProvider and
+	// package expressions from modules that implement PackageExprProvider.
+	modPkgs, modExprs := collectModulePackages(answers, registry)
+	data.Packages = append(data.Packages, modPkgs...)
+	data.PackageExprs = append(data.PackageExprs, modExprs...)
 
 	// 4c. Collect packages for enabled tools that need binaries on PATH.
 	toolPkgs, toolExprs := collectToolPackages(answers)
@@ -426,21 +429,24 @@ func nixIndentLine(line string) string {
 	return "  " + line + "\n"
 }
 
-// collectModulePackages gathers Nix packages from ecosystem modules that
-// implement the PackageProvider interface.
-func collectModulePackages(answers types.WizardAnswers, registry *ecosystem.Registry) []string {
-	var pkgs []string
+// collectModulePackages gathers Nix package names from ecosystem modules that
+// implement the PackageProvider interface and raw Nix package expressions from
+// modules that implement the PackageExprProvider interface.
+func collectModulePackages(answers types.WizardAnswers, registry *ecosystem.Registry) (pkgs []string, exprs []string) {
 	for _, lang := range answers.Languages {
 		mod, ok := registry.ByName(lang.Name)
 		if !ok {
 			continue
 		}
+		cfg := ecosystem.ToModuleConfigWithProxy(lang, answers.Infrastructure)
 		if pp, ok := mod.(ecosystem.PackageProvider); ok {
-			cfg := ecosystem.ToModuleConfigWithProxy(lang, answers.Infrastructure)
 			pkgs = append(pkgs, pp.DevenvPackages(cfg)...)
 		}
+		if ep, ok := mod.(ecosystem.PackageExprProvider); ok {
+			exprs = append(exprs, ep.DevenvPackageExprs(cfg)...)
+		}
 	}
-	return pkgs
+	return pkgs, exprs
 }
 
 // collectToolPackages returns Nix package names and raw Nix expressions for

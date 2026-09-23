@@ -51,6 +51,16 @@ type PackageProvider interface {
 	DevenvPackages(config ModuleConfig) []string
 }
 
+// PackageExprProvider is an optional interface for modules that must add a
+// package that cannot be named by a bare nixpkgs attribute, such as a package
+// built with extra components. Each entry is a complete Nix expression that
+// evaluates to a derivation and may refer to pkgs; it is rendered verbatim as
+// one element of the devenv.nix package list, so function applications must be
+// parenthesized.
+type PackageExprProvider interface {
+	DevenvPackageExprs(config ModuleConfig) []string
+}
+
 // DevenvYamlInputProvider is an optional interface that ecosystem modules can
 // implement to contribute additional flake inputs to devenv.yaml. Modules that
 // do not need extra flake inputs simply omit this interface.

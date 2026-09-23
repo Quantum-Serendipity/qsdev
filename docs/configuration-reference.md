@@ -628,7 +628,8 @@ When GCP project files are detected (Cloud Build, Firebase, Terraform `google` p
 |---------|-----------|
 | Deny rules | Blocks `gcloud auth print-access-token`, `gcloud config set`, credential cat commands |
 | Read-deny rules | Blocks Read access to `~/.config/gcloud/application_default_credentials.json`, `~/.config/gcloud/credentials.db` |
-| Environment | Sets `CLOUDSDK_ACTIVE_CONFIG_NAME` placeholder in devenv.nix |
+| Environment | Documents `CLOUDSDK_ACTIVE_CONFIG_NAME`, `CLOUDSDK_CORE_PROJECT` and `GOOGLE_CLOUD_PROJECT` as comments in devenv.nix; set real values in `devenv.local.nix` or with `qsdev init --env` |
+| GKE auth | When Helm or container files are also detected, installs `google-cloud-sdk` with the `gke-gcloud-auth-plugin` component |
 
 ### Azure
 
@@ -638,7 +639,7 @@ When Azure project files are detected (Pipelines, Bicep, Terraform `azurerm` pro
 |---------|-----------|
 | Deny rules | Blocks `az account get-access-token`, `az login --service-principal`, credential cat commands |
 | Read-deny rules | Blocks Read access to `~/.azure/accessTokens.json`, `~/.azure/msal_token_cache.json` |
-| Environment | Sets `ARM_SUBSCRIPTION_ID` placeholder in devenv.nix |
+| Environment | Documents `ARM_SUBSCRIPTION_ID` and `ARM_TENANT_ID` as comments in devenv.nix; set real values in `devenv.local.nix` or with `qsdev init --env` |
 
 ---
 

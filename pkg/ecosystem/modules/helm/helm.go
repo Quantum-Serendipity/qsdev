@@ -6,12 +6,11 @@
 package helm
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -26,14 +25,16 @@ func init() {
 	ecosystem.MustRegisterModule(&Module{})
 }
 
-// chartVersionRe matches the "version: X.Y.Z" line in Chart.yaml.
-var chartVersionRe = regexp.MustCompile(`^\s*version:\s*(.+)$`)
+// chartVersionExtra is the ModuleConfig.Extras key holding the chart's own
+// version. It is not the Helm tool version, so it does not go in
+// ModuleConfig.Version.
+const chartVersionExtra = "chart_version"
 
 // Module is the stateless Helm ecosystem module.
 type Module struct{}
 
 // Name returns the canonical module identifier.
-func (m *Module) Name() string { return "helm" }
+func (m *Module) Name() string { return ecosystem.NameHelm }
 
 // DisplayName returns the human-readable label.
 func (m *Module) DisplayName() string { return "Helm" }
@@ -43,25 +44,23 @@ func (m *Module) Tier() int { return 2 }
 
 // Detect scans projectRoot for Helm chart indicators.
 // Chart.yaml yields Certain confidence; Chart.lock alone yields Probable.
-// The chart version is extracted from Chart.yaml when present.
+// The chart version is extracted from Chart.yaml when present and reported in
+// Extras["chart_version"].
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	chartPath := filepath.Join(projectRoot, "Chart.yaml")
 	lockPath := filepath.Join(projectRoot, "Chart.lock")
 
 	if fileutil.FileExists(chartPath) {
-		evidence := []string{"Chart.yaml found"}
-		version := parseChartVersion(chartPath)
-		if version != "" {
-			evidence = append(evidence, fmt.Sprintf("chart version %s", version))
-		}
-		return ecosystem.DetectionResult{
+		result := ecosystem.DetectionResult{
 			Detected:   true,
 			Confidence: ecosystem.ConfidenceCertain,
-			Evidence:   evidence,
-			SuggestedConfig: ecosystem.ModuleConfig{
-				Version: version,
-			},
+			Evidence:   []string{"Chart.yaml found"},
 		}
+		if version := parseChartVersion(chartPath); version != "" {
+			result.Evidence = append(result.Evidence, fmt.Sprintf("chart version %s", version))
+			result.SuggestedConfig.Extras = map[string]string{chartVersionExtra: version}
+		}
+		return result
 	}
 
 	if fileutil.FileExists(lockPath) {
@@ -72,10 +71,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		}
 	}
 
-	return ecosystem.DetectionResult{
-		Detected:   false,
-		Confidence: ecosystem.ConfidenceAbsent,
-	}
+	return ecosystem.DetectionAbsent()
 }
 
 // DevenvPackages returns the Nix packages required for the Helm ecosystem.
@@ -166,21 +162,21 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 	return ecosystem.VerificationCommands{}
 }
 
-// parseChartVersion reads Chart.yaml and extracts the version field using a
-// simple line-based regex. Returns an empty string if the field is not found
-// or the file cannot be read.
+// parseChartVersion reads Chart.yaml and returns its top-level version field.
+// Parsing the YAML (rather than matching lines) ignores the version keys of
+// entries under dependencies and strips quoting and trailing comments.
+// Returns an empty string if the field is missing or the file cannot be read
+// or parsed.
 func parseChartVersion(path string) string {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
-	defer f.Close() //nolint:errcheck // best-effort read
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		if matches := chartVersionRe.FindStringSubmatch(scanner.Text()); matches != nil {
-			return strings.TrimSpace(matches[1])
-		}
+	var chart struct {
+		Version string `yaml:"version"`
 	}
-	return ""
+	if err := yaml.Unmarshal(data, &chart); err != nil {
+		return ""
+	}
+	return chart.Version
 }

@@ -3,6 +3,7 @@ package helm_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -49,27 +50,62 @@ func TestDetect_ChartYamlPresent(t *testing.T) {
 }
 
 func TestDetect_ChartYamlVersionExtracted(t *testing.T) {
-	dir := t.TempDir()
-	chartYaml := "apiVersion: v2\nname: my-chart\nversion: 1.2.3\n"
-	if err := os.WriteFile(filepath.Join(dir, "Chart.yaml"), []byte(chartYaml), 0o644); err != nil {
-		t.Fatal(err)
+	t.Parallel()
+	tests := []struct {
+		name      string
+		chartYaml string
+		want      string
+	}{
+		{
+			name:      "plain",
+			chartYaml: "apiVersion: v2\nname: my-chart\nversion: 1.2.3\n",
+			want:      "1.2.3",
+		},
+		{
+			// A dependency's indented version must not be mistaken for the
+			// chart's own version, even when it appears first.
+			name: "dependencies before version",
+			chartYaml: "apiVersion: v2\nname: my-chart\ndependencies:\n" +
+				"  - name: redis\n    version: 17.0.0\n" +
+				"version: \"1.2.3\" # chart\n",
+			want: "1.2.3",
+		},
+		{
+			name:      "single quoted",
+			chartYaml: "apiVersion: v2\nversion: '0.4.0'\n",
+			want:      "0.4.0",
+		},
+		{
+			name:      "no version",
+			chartYaml: "apiVersion: v2\nname: my-chart\n",
+			want:      "",
+		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "Chart.yaml"), []byte(tt.chartYaml), 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-	m := &helm.Module{}
-	result := m.Detect(dir)
+			result := (&helm.Module{}).Detect(dir)
 
-	if result.SuggestedConfig.Version != "1.2.3" {
-		t.Errorf("Version = %q, want %q", result.SuggestedConfig.Version, "1.2.3")
-	}
-
-	foundVersion := false
-	for _, e := range result.Evidence {
-		if strings.Contains(e, "1.2.3") {
-			foundVersion = true
-		}
-	}
-	if !foundVersion {
-		t.Error("evidence should mention the detected version")
+			if got := result.SuggestedConfig.Extras["chart_version"]; got != tt.want {
+				t.Errorf("Extras[chart_version] = %q, want %q", got, tt.want)
+			}
+			// The chart version is not the Helm tool version.
+			if result.SuggestedConfig.Version != "" {
+				t.Errorf("Version = %q, want empty", result.SuggestedConfig.Version)
+			}
+			if tt.want == "" {
+				return
+			}
+			wantEvidence := "chart version " + tt.want
+			if !slices.Contains(result.Evidence, wantEvidence) {
+				t.Errorf("evidence %v should contain %q", result.Evidence, wantEvidence)
+			}
+		})
 	}
 }
 

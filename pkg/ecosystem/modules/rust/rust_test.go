@@ -256,6 +256,80 @@ func TestDevenvNixFragment_Default(t *testing.T) {
 	}
 }
 
+// TestDevenvNixFragment_PinnedToolchain guards devenv's channel enum:
+// languages.rust.channel only accepts stable/beta/nightly, so a pinned release
+// or dated nightly must be split into channel + version.
+func TestDevenvNixFragment_PinnedToolchain(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		config      ecosystem.ModuleConfig
+		wantChannel string
+		wantVersion string // empty: no version line
+	}{
+		{name: "stable", config: ecosystem.ModuleConfig{Extras: map[string]string{"channel": "stable"}}, wantChannel: "stable"},
+		{name: "beta", config: ecosystem.ModuleConfig{Extras: map[string]string{"channel": "beta"}}, wantChannel: "beta"},
+		{name: "toolchain file release", config: ecosystem.ModuleConfig{Extras: map[string]string{"channel": "1.80.0"}}, wantChannel: "stable", wantVersion: "1.80.0"},
+		{name: "toolchain file minor", config: ecosystem.ModuleConfig{Extras: map[string]string{"channel": "1.80"}}, wantChannel: "stable", wantVersion: "1.80.0"},
+		{name: "dated nightly", config: ecosystem.ModuleConfig{Extras: map[string]string{"channel": "nightly-2024-05-01"}}, wantChannel: "nightly", wantVersion: "2024-05-01"},
+		{name: "flag version", config: ecosystem.ModuleConfig{Version: "1.79.0"}, wantChannel: "stable", wantVersion: "1.79.0"},
+		{name: "flag channel", config: ecosystem.ModuleConfig{Version: "nightly"}, wantChannel: "nightly"},
+		{name: "flag overrides stable extra", config: ecosystem.ModuleConfig{Version: "beta", Extras: map[string]string{"channel": "stable"}}, wantChannel: "beta"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			frag, err := newModule().DevenvNixFragment(tt.config)
+			if err != nil {
+				t.Fatalf("DevenvNixFragment() error: %v", err)
+			}
+			if want := `channel = "` + tt.wantChannel + `";`; !strings.Contains(frag, want) {
+				t.Errorf("fragment missing %s:\n%s", want, frag)
+			}
+			hasVersion := strings.Contains(frag, "version = ")
+			if tt.wantVersion == "" && hasVersion {
+				t.Errorf("fragment should not pin a version:\n%s", frag)
+			}
+			if want := `version = "` + tt.wantVersion + `";`; tt.wantVersion != "" && !strings.Contains(frag, want) {
+				t.Errorf("fragment missing %s:\n%s", want, frag)
+			}
+		})
+	}
+}
+
+func TestDevenvNixFragment_RejectsInvalidToolchain(t *testing.T) {
+	t.Parallel()
+	for _, spec := range []string{"1.80.0-x86_64-unknown-linux-gnu", "my-custom", `stable"; x = "`, "nightly-2024"} {
+		t.Run(spec, func(t *testing.T) {
+			t.Parallel()
+			cfg := ecosystem.ModuleConfig{Extras: map[string]string{"channel": spec}}
+			if frag, err := newModule().DevenvNixFragment(cfg); err == nil {
+				t.Errorf("DevenvNixFragment(channel=%q) error = nil, want error\ngot:\n%s", spec, frag)
+			}
+		})
+	}
+}
+
+func TestDetect_UnsupportedToolchainFallsBackToStable(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"Cargo.toml":          "[package]\nname = \"x\"\n",
+		"rust-toolchain.toml": "[toolchain]\nchannel = \"1.80.0-x86_64-unknown-linux-gnu\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := newModule().Detect(dir)
+	if ch := r.SuggestedConfig.Extras["channel"]; ch != "stable" {
+		t.Errorf("channel = %q, want %q", ch, "stable")
+	}
+	if _, err := newModule().DevenvNixFragment(r.SuggestedConfig); err != nil {
+		t.Errorf("detected config does not render: %v", err)
+	}
+}
+
 // --- SecurityConfigs tests ---
 
 func TestSecurityConfigs_Base(t *testing.T) {

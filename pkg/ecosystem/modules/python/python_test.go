@@ -331,6 +331,86 @@ func TestDevenvNixFragment_CustomVersion(t *testing.T) {
 	assertNotContains(t, fragment, `version = "3.12"`)
 }
 
+// TestDetect_PythonVersionFileRejectsNonVersions guards against Nix
+// antiquotation injection: .python-version is repo-controlled and its value is
+// rendered into devenv.nix, so anything but a plain version must be dropped.
+func TestDetect_PythonVersionFileRejectsNonVersions(t *testing.T) {
+	t.Parallel()
+	for _, content := range []string{
+		"3.12${builtins.readFile /etc/hostname}",
+		`3.12"; imports = [ ./evil.nix ]; x = "`,
+		"3.12\u0000",
+		"pypy3.10",
+		"system",
+	} {
+		t.Run(content, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeFile(t, dir, "pyproject.toml", "[project]\nname = \"myapp\"\nrequires-python = \">=3.11\"\n")
+			writeFile(t, dir, ".python-version", content+"\n")
+
+			result := (&python.Module{}).Detect(dir)
+			if result.SuggestedConfig.Version != "3.11" {
+				t.Errorf("Version = %q, want fallback to requires-python %q", result.SuggestedConfig.Version, "3.11")
+			}
+		})
+	}
+}
+
+func TestDevenvNixFragment_RejectsInvalidVersion(t *testing.T) {
+	t.Parallel()
+	for _, version := range []string{
+		"3.12${builtins.readFile /etc/hostname}",
+		`3.12"; x = "`,
+		"3.12\u0000",
+		`3.12\`,
+		"latest",
+		"3",
+	} {
+		t.Run(version, func(t *testing.T) {
+			t.Parallel()
+			fragment, err := (&python.Module{}).DevenvNixFragment(ecosystem.ModuleConfig{Version: version})
+			if err == nil {
+				t.Errorf("DevenvNixFragment(%q) error = nil, want error\ngot:\n%s", version, fragment)
+			}
+		})
+	}
+}
+
+// TestDevenvNixFragment_PipConfigWired asserts the generated pip.conf is
+// actually applied: pip never reads a project-root pip.conf on its own.
+func TestDevenvNixFragment_PipConfigWired(t *testing.T) {
+	t.Parallel()
+	const wiring = `env.PIP_CONFIG_FILE = "${config.devenv.root}/pip.conf";`
+	tests := []struct {
+		pm   string
+		want bool
+	}{
+		{pm: "", want: true},
+		{pm: "pip", want: true},
+		{pm: "uv", want: false},
+		{pm: "poetry", want: false},
+	}
+	for _, tt := range tests {
+		t.Run("pm="+tt.pm, func(t *testing.T) {
+			t.Parallel()
+			cfg := ecosystem.ModuleConfig{PackageManager: tt.pm}
+			fragment, err := (&python.Module{}).DevenvNixFragment(cfg)
+			if err != nil {
+				t.Fatalf("DevenvNixFragment() error: %v", err)
+			}
+			if got := strings.Contains(fragment, wiring); got != tt.want {
+				t.Errorf("PIP_CONFIG_FILE wiring present = %v, want %v\ngot:\n%s", got, tt.want, fragment)
+			}
+			// Wiring must point at the file SecurityConfigs generates.
+			files := (&python.Module{}).SecurityConfigs(cfg)
+			if tt.want && (len(files) != 1 || files[0].Path != "pip.conf") {
+				t.Errorf("SecurityConfigs() = %v, want a single pip.conf", files)
+			}
+		})
+	}
+}
+
 // --- SecurityConfigs tests ---
 
 func TestSecurityConfigs_Pip(t *testing.T) {

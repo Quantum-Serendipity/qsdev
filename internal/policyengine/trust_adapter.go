@@ -63,10 +63,13 @@ func (a *TrustAdapter) ApplyHardening(serverName string, tier trust.TrustTier, o
 		hardened = hardening.Datamark(hardened)
 		hardened = hardening.Frame(hardened, serverName, int(tier), source)
 	default:
+		// The warning is qsdev's own annotation, so it goes outside the
+		// datamarked (untrusted) region where the model can read it as is.
+		var warning string
 		if res := hardening.Sanitize(hardened, hardening.StrictMode); res.Detections > 0 {
-			hardened = injectionWarning(res.Patterns) + hardened
+			warning = injectionWarning(res.Patterns)
 		}
-		hardened = hardening.Datamark(hardened)
+		hardened = warning + hardening.Datamark(hardened)
 		hardened = hardening.Frame(hardened, serverName, int(tier), source)
 	}
 

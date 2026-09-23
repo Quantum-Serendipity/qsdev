@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
+	"sync"
 	"sync/atomic"
 )
 
@@ -14,9 +15,15 @@ type SessionStateReader interface {
 }
 
 type PolicyEngine struct {
-	current    atomic.Pointer[CompiledPolicySet]
-	files      []string
-	state      SessionStateReader
+	current atomic.Pointer[CompiledPolicySet]
+	files   []string
+	state   SessionStateReader
+	// reloadMu serializes Reload so the swap-compare-publish sequence of one
+	// reload cannot interleave with another's.
+	reloadMu sync.Mutex
+	// denyRuleCh carries the latest normalized deny-rule set after a reload
+	// changed it. It holds at most one value, and a stale value still buffered
+	// is replaced by the newer one (latest wins).
 	denyRuleCh chan []DenyRule
 }
 
@@ -48,7 +55,13 @@ func (e *PolicyEngine) Evaluate(ctx *EvalContext) PolicyDecision {
 	return Evaluate(e.current.Load(), ctx)
 }
 
+// Reload re-reads and recompiles the policy files and swaps in the result. When
+// the file-path deny rules changed, the new normalized set is published on
+// DenyRuleChanges, replacing any earlier set a consumer has not yet received.
 func (e *PolicyEngine) Reload() error {
+	e.reloadMu.Lock()
+	defer e.reloadMu.Unlock()
+
 	sp, err := LoadPolicyFiles(e.files...)
 	if err != nil {
 		return fmt.Errorf("reloading policy engine: %w", err)
@@ -59,25 +72,43 @@ func (e *PolicyEngine) Reload() error {
 		return fmt.Errorf("reloading policy engine: %w", err)
 	}
 
-	old := e.current.Load()
-	e.current.Store(compiled)
+	old := e.current.Swap(compiled)
 
-	if !denyRulesEqual(old.DenyRules, compiled.DenyRules) {
-		select {
-		case e.denyRuleCh <- compiled.DenyRules:
-		default:
-		}
+	next := normalizeDenyRules(compiled.DenyRules)
+	if !denyRulesEqual(normalizeDenyRules(old.DenyRules), next) {
+		e.publishDenyRules(next)
 	}
 
 	return nil
 }
 
+// publishDenyRules delivers rules on denyRuleCh with latest-wins semantics: a
+// previously published set that the consumer has not received yet is dropped
+// in favor of rules, so a consumer never applies an outdated deny set.
+func (e *PolicyEngine) publishDenyRules(rules []DenyRule) {
+	select {
+	case <-e.denyRuleCh:
+	default:
+	}
+	select {
+	case e.denyRuleCh <- rules:
+	default:
+	}
+}
+
+// DenyRuleChanges returns a channel that receives the normalized file-path deny
+// rules (the same form FilePathDenyRules returns) whenever Reload changes them.
 func (e *PolicyEngine) DenyRuleChanges() <-chan []DenyRule {
 	return e.denyRuleCh
 }
 
 func (e *PolicyEngine) FilePathDenyRules() []DenyRule {
-	raw := e.current.Load().DenyRules
+	return normalizeDenyRules(e.current.Load().DenyRules)
+}
+
+// normalizeDenyRules returns a copy of raw with every type normalized by
+// normalizeDenyRuleType.
+func normalizeDenyRules(raw []DenyRule) []DenyRule {
 	normalized := make([]DenyRule, len(raw))
 	for i, r := range raw {
 		normalized[i] = normalizeDenyRuleType(r)

@@ -121,10 +121,11 @@ func indexKeyForCondition(cond Condition) string {
 // extractDenyRules projects the path patterns of every rule that actually
 // blocks onto DenyRules for the MCP confused-deputy check. A rule contributes
 // only when it is enabled, not in monitor mode, and its action blocks (block,
-// or prompt with a fail-closed default): a warn/audit rule or a monitor-only
-// rule must not become a hard block for MCP tools while the first-party tool it
-// targets is allowed. Each DenyRule carries its rule ID and bypass tier so the
-// deputy check can honor session overrides exactly as Evaluate does.
+// or prompt with a fail-closed default): a warn, audit, allow-default prompt or
+// monitor-only rule never blocks the first-party call, so projecting its
+// pattern as a hard deny would block MCP access the policy allows. Each
+// DenyRule carries its rule ID and bypass tier so the deputy check can honor
+// session overrides exactly as Evaluate does.
 func extractDenyRules(rules []CompiledRule) []DenyRule {
 	var result []DenyRule
 	for i := range rules {

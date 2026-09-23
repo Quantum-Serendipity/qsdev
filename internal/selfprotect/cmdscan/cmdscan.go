@@ -29,7 +29,10 @@ type Command struct {
 	Args           []string
 	WriteRedirects []string
 	ReadRedirects  []string
-	HasExpansion   bool
+	// Heredocs holds the literal bodies of the command's here-documents
+	// (`<<EOF ... EOF`), which a shell such as `sh <<EOF` executes as a script.
+	Heredocs     []string
+	HasExpansion bool
 	// Assigns names the variables this statement sets for the command or the
 	// rest of the shell line: prefix assignments (`GIT_EXTERNAL_DIFF=x git
 	// diff`) and bare assignment statements (`PATH=/tmp/x`, emitted as a
@@ -261,6 +264,10 @@ func Parse(command string) ([]Command, error) {
 				c.WriteRedirects = append(c.WriteRedirects, t)
 			} else {
 				c.ReadRedirects = append(c.ReadRedirects, t)
+			}
+			if r.Hdoc != nil {
+				body, _ := wordText(r.Hdoc)
+				c.Heredocs = append(c.Heredocs, body)
 			}
 		}
 

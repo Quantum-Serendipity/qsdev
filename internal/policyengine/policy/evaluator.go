@@ -5,6 +5,12 @@ import (
 	"slices"
 )
 
+// Evaluate runs the candidate rules for ctx's tool in (tier, severity) order and
+// returns the decision. A Block ends evaluation immediately. An allowing Prompt
+// (default_on_timeout allow) is recorded but does not end evaluation: a later
+// rule that blocks the same call must still block it, so the prompt decision is
+// returned only once every candidate rule has been checked. Monitor-mode rules
+// are evaluated like any other rule, but a match only records a finding.
 func Evaluate(set *CompiledPolicySet, ctx *EvalContext) (decision PolicyDecision) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -60,44 +66,27 @@ func Evaluate(set *CompiledPolicySet, ctx *EvalContext) (decision PolicyDecision
 		result := rule.Action.Execute(&rule.Rule, ctx)
 
 		if rule.Rule.MonitorMode {
-			for i := range result.Findings {
-				result.Findings[i].Monitor = true
-			}
-			if result.Action == Block {
-				findings = append(findings, Finding{
-					RuleID:   rule.Rule.ID,
-					Category: rule.Rule.Category,
-					Severity: rule.Rule.Severity,
-					Message:  result.Message,
-					Monitor:  true,
-				})
-				continue
-			}
-			findings = append(findings, result.Findings...)
+			findings = append(findings, monitorFindings(&rule.Rule, result)...)
 			continue
 		}
 
-		if result.Action == Block {
+		switch result.Action {
+		case Block:
 			return result
-		}
-
-		if result.Action == Prompt {
-			// A prompt reaches here only when it resolved to allow (its
-			// fail-closed form returns Block above). It must not end
-			// evaluation: a later rule may still block the call, and returning
-			// here would let an allow-by-default prompt rule shadow it.
+		case Prompt:
 			if prompt == nil {
 				prompt = &result
 			}
+		default:
 			findings = append(findings, result.Findings...)
-			continue
 		}
-
-		findings = append(findings, result.Findings...)
 	}
 
 	if prompt != nil {
-		prompt.Findings = findings
+		// A prompt reaches here only when it resolved to allow (its
+		// fail-closed form returns Block above); it did not end evaluation,
+		// so a later rule could still block the call.
+		prompt.Findings = append(prompt.Findings, findings...)
 		return *prompt
 	}
 
@@ -106,6 +95,25 @@ func Evaluate(set *CompiledPolicySet, ctx *EvalContext) (decision PolicyDecision
 		ExitCode: 0,
 		Findings: findings,
 	}
+}
+
+// monitorFindings downgrades a matched monitor-mode rule's decision to
+// findings: a would-be Block becomes a single monitor finding, and any findings
+// the action produced are marked as monitor findings.
+func monitorFindings(rule *PolicyRule, result PolicyDecision) []Finding {
+	if result.Action == Block {
+		return []Finding{{
+			RuleID:   rule.ID,
+			Category: rule.Category,
+			Severity: rule.Severity,
+			Message:  result.Message,
+			Monitor:  true,
+		}}
+	}
+	for i := range result.Findings {
+		result.Findings[i].Monitor = true
+	}
+	return result.Findings
 }
 
 func matchesTierFilter(tier BypassTier, filter TierFilter) bool {

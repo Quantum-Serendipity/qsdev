@@ -3,6 +3,7 @@ package aws_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -252,29 +253,22 @@ func TestDenyRules_AllPresent(t *testing.T) {
 	m := newModule()
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 
-	if len(rules) != 11 {
-		t.Fatalf("expected 11 deny rules, got %d: %v", len(rules), rules)
+	if len(rules) != 42 {
+		t.Fatalf("expected 42 deny rules, got %d: %v", len(rules), rules)
 	}
 
-	expected := []string{
-		"configure set",
-		"sts get-session-token",
-		"sts assume-role",
-		"sts get-federation-token",
-		"configure export-credentials",
+	denied := []string{
+		"aws configure set aws_secret_access_key x",
+		"aws sts get-session-token",
+		"aws sts assume-role --role-arn x",
+		"aws sts get-federation-token --name n",
+		"aws configure export-credentials",
 		"cat ~/.aws/credentials",
 		"cat ~/.aws/config",
 	}
-	for _, exp := range expected {
-		found := false
-		for _, rule := range rules {
-			if strings.Contains(rule, exp) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected deny rule containing %q, got %v", exp, rules)
+	for _, cmd := range denied {
+		if !slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) }) {
+			t.Errorf("no deny rule blocks %q, got %v", cmd, rules)
 		}
 	}
 }

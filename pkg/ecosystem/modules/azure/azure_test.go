@@ -3,9 +3,11 @@ package azure_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/azure"
 )
@@ -150,26 +152,19 @@ func TestDenyRules_AllPresent(t *testing.T) {
 	m := newModule()
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 
-	if len(rules) != 4 {
-		t.Fatalf("expected 4 deny rules, got %d: %v", len(rules), rules)
+	if len(rules) != 31 {
+		t.Fatalf("expected 31 deny rules, got %d: %v", len(rules), rules)
 	}
 
-	expected := []string{
+	denied := []string{
 		"az account get-access-token",
-		"az ad sp credential",
-		"cat ~/.azure/",
-		"az login --service-principal",
+		"az ad sp credential reset --id x",
+		"cat ~/.azure/msal_token_cache.json",
+		"az login --service-principal -u id -p x --tenant t",
 	}
-	for _, want := range expected {
-		found := false
-		for _, rule := range rules {
-			if strings.Contains(rule, want) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected deny rule containing %q, got %v", want, rules)
+	for _, cmd := range denied {
+		if !slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) }) {
+			t.Errorf("no deny rule blocks %q, got %v", cmd, rules)
 		}
 	}
 }

@@ -39,9 +39,9 @@ func TestBashDenyRules(t *testing.T) {
 		provider CloudProvider
 		want     int
 	}{
-		{name: "AWS", provider: AWS, want: 11},
-		{name: "GCP", provider: GCP, want: 6},
-		{name: "Azure", provider: Azure, want: 4},
+		{name: "AWS", provider: AWS, want: 42},
+		{name: "GCP", provider: GCP, want: 17},
+		{name: "Azure", provider: Azure, want: 31},
 	}
 
 	for _, tt := range tests {
@@ -121,9 +121,9 @@ func TestAllBashDenyRules_MultiProvider(t *testing.T) {
 		t.Error("AllBashDenyRules result is not sorted")
 	}
 
-	// Total should be 11 + 6 + 4 = 21 (no overlaps between providers).
-	if len(rules) != 21 {
-		t.Errorf("AllBashDenyRules returned %d rules, want 21", len(rules))
+	// Total should be 42 + 17 + 31 = 90 (no overlaps between providers).
+	if len(rules) != 90 {
+		t.Errorf("AllBashDenyRules returned %d rules, want 90", len(rules))
 	}
 }
 

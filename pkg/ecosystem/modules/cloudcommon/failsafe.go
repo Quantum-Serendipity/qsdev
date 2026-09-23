@@ -61,13 +61,16 @@ func ValidateFailSafe(
 	}
 	report.Statuses = append(report.Statuses, layer2)
 
-	// Layer 3: Agent deny rules — Bash deny patterns present.
+	// Layer 3: Agent deny rules — Bash deny patterns present. Bash rules match
+	// command text, so a complete rule set blocks the invocations Claude
+	// usually writes, not every way of running the CLI; the report says the
+	// rules are present, not that credential access is impossible.
 	layer3 := FailSafeStatus{Provider: provider, Layer: LayerAgentDenyRules}
 	requiredRules := BashDenyRules(provider)
 	missingRules := findMissing(requiredRules, denyRules)
 	if len(missingRules) == 0 {
 		layer3.Active = true
-		layer3.Details = "all credential commands blocked"
+		layer3.Details = "all credential-command deny rules present"
 	} else {
 		layer3.Details = "missing Deny for: " + strings.Join(missingRules, ", ")
 		allActive = false

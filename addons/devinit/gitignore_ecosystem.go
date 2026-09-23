@@ -112,6 +112,28 @@ var ecosystemGitignoreEntries = map[string][]string{
 		"*.pem",
 		"*.key",
 	},
+	// Terraform/OpenTofu: state and variable files hold plaintext secrets,
+	// .terraform/ is the provider/module cache (with backend credentials in
+	// .terraform/terraform.tfstate), and override files are local-only.
+	// .terraform.lock.hcl is not matched and stays committed, and neither is
+	// the .terraformrc the terraform module generates for the team.
+	"terraform": {
+		".terraform/",
+		"*.tfstate",
+		"*.tfstate.*",
+		"*.tfvars",
+		"*.tfvars.json",
+		"crash.log",
+		"crash.*.log",
+		"override.tf",
+		"override.tf.json",
+		"*_override.tf",
+		"*_override.tf.json",
+		".env",
+		".env.*",
+		"*.pem",
+		"*.key",
+	},
 	"zig": {
 		"zig-cache/",
 		"zig-out/",

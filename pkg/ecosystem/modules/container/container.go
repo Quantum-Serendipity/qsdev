@@ -7,6 +7,7 @@ package container
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -20,9 +21,9 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.SecretDeclarer = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
-var _ ecosystem.DevenvYamlInputProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.DenyRuleProvider = (*Module)(nil)
+var _ ecosystem.ReadDenyRuleProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
 
 func init() {
@@ -157,22 +158,6 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	}
 }
 
-// DevenvYamlInputs returns additional flake inputs for devenv.yaml.
-// Podman on NixOS adds the quadlet-nix input for systemd integration.
-func (m *Module) DevenvYamlInputs(config ecosystem.ModuleConfig) []ecosystem.DevenvInput {
-	rt := config.Extra("container_runtime", "")
-	osFamily := config.Extra("os_family", "")
-
-	if (rt == "podman-rootless" || rt == "podman-rootful") && osFamily == "nixos" {
-		return []ecosystem.DevenvInput{
-			{
-				URL: "github:SEIAROTg/quadlet-nix",
-			},
-		}
-	}
-	return nil
-}
-
 // hadolintConfig is the structured representation of .hadolint.yaml.
 type hadolintConfig struct {
 	TrustedRegistries []string `yaml:"trustedRegistries"`
@@ -287,18 +272,35 @@ var containerEscapeArgs = []string{
 	"*src=/,*",
 }
 
+// registryAuthFiles are where the Docker and Podman CLIs store registry
+// credentials (base64-encoded passwords or tokens) after `login`.
+var registryAuthFiles = []string{
+	"~/.docker/config.json",
+	"~/.config/containers/auth.json",
+}
+
 // DenyRules returns Claude Code deny-rule patterns for the container ecosystem.
 // For both Docker-compatible CLIs it prevents uncontrolled image pulls and
-// blocks the container-escape arguments listed in containerEscapeArgs.
+// blocks the container-escape arguments listed in containerEscapeArgs. It
+// also blocks printing the registry credential files with cat.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	rules := make([]string, 0, len(containerCLIs)*(1+len(containerEscapeArgs)))
+	rules := make([]string, 0, len(containerCLIs)*(1+len(containerEscapeArgs))+len(registryAuthFiles))
 	for _, cli := range containerCLIs {
 		rules = append(rules, "Bash("+cli+" pull *)")
 		for _, arg := range containerEscapeArgs {
 			rules = append(rules, "Bash("+cli+" "+arg+")")
 		}
 	}
+	for _, f := range registryAuthFiles {
+		rules = append(rules, "Bash(cat "+f+"*)")
+	}
 	return rules
+}
+
+// ReadDenyRules returns the registry credential files the agent's Read tool
+// must not open.
+func (m *Module) ReadDenyRules(_ ecosystem.ModuleConfig) []string {
+	return slices.Clone(registryAuthFiles)
 }
 
 // CICommands returns CI pipeline commands for the container ecosystem.

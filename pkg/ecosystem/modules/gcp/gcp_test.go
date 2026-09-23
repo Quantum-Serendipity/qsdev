@@ -56,6 +56,28 @@ func TestDetect_TerraformProviderGoogle(t *testing.T) {
 	assertEvidenceContains(t, result.Evidence, `Terraform provider "google" found`)
 }
 
+// TestDetect_TerraformProviderGoogleBeta covers W136: a configuration that
+// uses only the google-beta provider is detected as GCP.
+func TestDetect_TerraformProviderGoogleBeta(t *testing.T) {
+	t.Parallel()
+	for name, content := range map[string]string{
+		"provider block":  "provider \"google-beta\" {\n  project = \"p\"\n}\n",
+		"required source": "terraform {\n  required_providers {\n    google-beta = { source = \"hashicorp/google-beta\" }\n  }\n}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			result := newModule().Detect(dir)
+			if !result.Detected || result.Confidence != ecosystem.ConfidenceCertain {
+				t.Errorf("Detect = (%v, %v), want detected with certain confidence", result.Detected, result.Confidence)
+			}
+		})
+	}
+}
+
 func TestDetect_Firebase(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -146,8 +168,8 @@ func TestDetect_NoGCPIndicators(t *testing.T) {
 func TestDenyRules_AllPresent(t *testing.T) {
 	t.Parallel()
 	rules := newModule().DenyRules(ecosystem.ModuleConfig{})
-	if len(rules) != 6 {
-		t.Fatalf("expected 6 deny rules, got %d: %v", len(rules), rules)
+	if len(rules) != 17 {
+		t.Fatalf("expected 17 deny rules, got %d: %v", len(rules), rules)
 	}
 
 	// Verify each rule contains "gcloud" or "Bash(".

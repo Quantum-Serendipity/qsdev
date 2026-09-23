@@ -118,6 +118,12 @@ func TestGitignoreEntriesForLanguages_EcosystemSpecific(t *testing.T) {
 			notWant: []string{"vendor/"},
 		},
 		{
+			name:    "terraform ignores state, variables and cache but keeps the lock file",
+			lang:    "terraform",
+			want:    []string{".terraform/", "*.tfstate", "*.tfstate.*", "*.tfvars", "*.tfvars.json", "crash.log"},
+			notWant: []string{".terraform.lock.hcl", "*.hcl"},
+		},
+		{
 			name: "java re-includes build wrapper jars after *.jar",
 			lang: "java",
 			want: []string{"*.jar", "!gradle/wrapper/gradle-wrapper.jar", "!.mvn/wrapper/maven-wrapper.jar"},

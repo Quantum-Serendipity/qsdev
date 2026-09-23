@@ -9,17 +9,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
-	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
+var _ ecosystem.DenyRuleProvider = (*Module)(nil)
+var _ ecosystem.ReadDenyRuleProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -42,28 +46,37 @@ func (m *Module) DisplayName() string { return "Helm" }
 // Tier returns the implementation priority tier (2 = standard).
 func (m *Module) Tier() int { return 2 }
 
-// Detect scans projectRoot for Helm chart indicators.
+// Detect scans projectRoot and its subdirectories (up to
+// ecosystem.ProjectScanDepth levels, so the charts/<name>/ layout `helm
+// create` and monorepos use is found) for Helm chart indicators.
 // Chart.yaml yields Certain confidence; Chart.lock alone yields Probable.
-// The chart version is extracted from Chart.yaml when present and reported in
-// Extras["chart_version"].
+// Chart directories below the root are recorded in Extras[ExtraChartDirs].
+// The chart version is extracted from the root Chart.yaml when present and
+// reported in Extras["chart_version"].
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
-	chartPath := filepath.Join(projectRoot, "Chart.yaml")
-	lockPath := filepath.Join(projectRoot, "Chart.lock")
-
-	if fileutil.FileExists(chartPath) {
+	chartDirs := ecosystem.ProjectDirsWith(projectRoot, func(name string) bool { return name == "Chart.yaml" })
+	if len(chartDirs) > 0 {
 		result := ecosystem.DetectionResult{
 			Detected:   true,
 			Confidence: ecosystem.ConfidenceCertain,
 			Evidence:   []string{"Chart.yaml found"},
 		}
-		if version := parseChartVersion(chartPath); version != "" {
+		extras := map[string]string{}
+		if dirs := ecosystem.ShellSafeDirs(chartDirs); len(dirs) > 0 && !slices.Equal(dirs, []string{"."}) {
+			extras[ExtraChartDirs] = strings.Join(dirs, ",")
+			result.Evidence = append(result.Evidence, "charts in: "+strings.Join(dirs, ", "))
+		}
+		if version := parseChartVersion(filepath.Join(projectRoot, "Chart.yaml")); version != "" {
 			result.Evidence = append(result.Evidence, fmt.Sprintf("chart version %s", version))
-			result.SuggestedConfig.Extras = map[string]string{chartVersionExtra: version}
+			extras[chartVersionExtra] = version
+		}
+		if len(extras) > 0 {
+			result.SuggestedConfig.Extras = extras
 		}
 		return result
 	}
 
-	if fileutil.FileExists(lockPath) {
+	if len(ecosystem.ProjectDirsWith(projectRoot, func(name string) bool { return name == "Chart.lock" })) > 0 {
 		return ecosystem.DetectionResult{
 			Detected:   true,
 			Confidence: ecosystem.ConfidenceProbable,
@@ -73,6 +86,11 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 
 	return ecosystem.DetectionAbsent()
 }
+
+// ExtraChartDirs is the ModuleConfig.Extras key holding the comma-separated
+// chart directories (relative to the project root, "." for the root). It is
+// unset when the only chart is the root one.
+const ExtraChartDirs = "chart_dirs"
 
 // DevenvPackages returns the Nix packages required for the Helm ecosystem.
 func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
@@ -92,13 +110,21 @@ func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile
 }
 
 // PreCommitHooks returns pre-commit hook definitions for the Helm ecosystem.
-func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
+// `helm lint` checks the recorded chart directories (ExtraChartDirs), or the
+// root chart when none are recorded.
+func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookConfig {
+	entry := "helm lint"
+	if raw := config.Extra(ExtraChartDirs, ""); raw != "" {
+		if dirs := ecosystem.ShellSafeDirs(strings.Split(raw, ",")); len(dirs) > 0 {
+			entry += " " + strings.Join(dirs, " ")
+		}
+	}
 	return []ecosystem.HookConfig{
 		{
 			ID:            "helmlint",
 			Name:          "helmlint",
 			Description:   "Lint Helm charts with helm lint",
-			Entry:         "helm lint",
+			Entry:         entry,
 			Language:      "system",
 			Types:         []string{"yaml"},
 			Stages:        []string{"pre-commit"},
@@ -110,12 +136,62 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 	}
 }
 
+// deniedSubcommands are the helm subcommands the agent must not run: ones
+// that change cluster state (install, upgrade, uninstall and its aliases
+// delete/del/un, rollback), run third-party code (plugin install/add, plugin
+// update/up), re-resolve dependencies past Chart.lock (dependency update, in
+// every alias spelling), add chart sources (repo add), or print release values
+// and manifests that carry secrets (get values/all/manifest).
+var deniedSubcommands = []string{
+	"install",
+	"upgrade",
+	"uninstall",
+	"delete",
+	"del",
+	"un",
+	"rollback",
+	"plugin install",
+	"plugin add",
+	"plugin update",
+	"plugin up",
+	"dependency update",
+	"dependency up",
+	"dep update",
+	"dep up",
+	"dependencies update",
+	"dependencies up",
+	"repo add",
+	"get values",
+	"get all",
+	"get manifest",
+}
+
+// kubeconfigDenyRules keep the agent from printing the kubeconfig helm uses,
+// which carries cluster credentials: `kubectl config view --raw` and reading
+// it with cat.
+var kubeconfigDenyRules = []string{
+	"Bash(kubectl *config *view*--raw*)",
+	"Bash(env *kubectl *config *view*--raw*)",
+	"Bash(cat ~/.kube/*)",
+}
+
 // DenyRules returns Claude Code deny-rule patterns for the Helm ecosystem.
-// These prevent direct helm install/upgrade outside of controlled workflows.
+// Each subcommand in deniedSubcommands is denied plain, after global flags
+// such as --kube-context or -n, and behind env (denyutil.SubcommandRules);
+// kubeconfigDenyRules cover printing the cluster credentials.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
+	return append(denyutil.SubcommandRules("helm", deniedSubcommands...), kubeconfigDenyRules...)
+}
+
+// ReadDenyRules returns the credential stores the agent's Read tool must not
+// open: the kubeconfig files helm talks to clusters with (~/.kube/config and
+// the per-cluster files commonly kept beside it), and helm's OCI registry and
+// chart repository credentials.
+func (m *Module) ReadDenyRules(_ ecosystem.ModuleConfig) []string {
 	return []string{
-		"Bash(helm install *)",
-		"Bash(helm upgrade *)",
+		"~/.kube/*",
+		"~/.config/helm/registry/*",
+		"~/.config/helm/repositories.yaml",
 	}
 }
 

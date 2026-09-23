@@ -185,8 +185,10 @@ func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.Verifi
 }
 
 // DenyRules returns Claude Code Bash deny-rule patterns that prevent the agent
-// from invoking dangerous AWS CLI commands (IAM mutations, STS assume-role,
-// credential configuration).
+// from changing AWS CLI credential configuration, printing temporary
+// credentials or tokens (STS, SSO, ECR, EKS, CodeArtifact), minting IAM
+// access keys, service-specific credentials or console passwords, and printing stored secrets (Secrets Manager, decrypted
+// SSM parameters). See cloudcommon.BashDenyRules.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	return cloudcommon.BashDenyRules(cloudcommon.AWS)
 }

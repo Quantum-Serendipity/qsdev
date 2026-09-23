@@ -3,6 +3,7 @@ package container_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/container"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance.
@@ -490,47 +492,16 @@ func TestDevenvNixFragment_NoRuntime(t *testing.T) {
 	}
 }
 
-// ---------- DevenvYamlInputs (runtime-aware) ----------
+// ---------- DevenvYamlInputs ----------
 
-func TestDevenvYamlInputs_PodmanNixOS(t *testing.T) {
+// TestNoDevenvYamlInputs covers W138: the module adds no flake inputs.
+// quadlet-nix exports only NixOS/Home Manager modules, which devenv cannot
+// import, so adding it only locked an unused third-party repository into
+// devenv.lock; the quadlet guidance lives in the NixOS Podman guide.
+func TestNoDevenvYamlInputs(t *testing.T) {
 	t.Parallel()
-	cfg := ecosystem.ModuleConfig{
-		Extras: map[string]string{
-			"container_runtime": "podman-rootless",
-			"os_family":         "nixos",
-		},
-	}
-	inputs := newModule().DevenvYamlInputs(cfg)
-	if len(inputs) != 1 {
-		t.Fatalf("expected 1 input, got %d", len(inputs))
-	}
-	if !strings.Contains(inputs[0].URL, "quadlet-nix") {
-		t.Errorf("input URL should reference quadlet-nix, got %q", inputs[0].URL)
-	}
-}
-
-func TestDevenvYamlInputs_PodmanNonNixOS(t *testing.T) {
-	t.Parallel()
-	cfg := ecosystem.ModuleConfig{
-		Extras: map[string]string{
-			"container_runtime": "podman-rootless",
-			"os_family":         "ubuntu",
-		},
-	}
-	inputs := newModule().DevenvYamlInputs(cfg)
-	if len(inputs) != 0 {
-		t.Errorf("expected nil/empty inputs for non-NixOS Podman, got %d", len(inputs))
-	}
-}
-
-func TestDevenvYamlInputs_Docker(t *testing.T) {
-	t.Parallel()
-	cfg := ecosystem.ModuleConfig{
-		Extras: map[string]string{"container_runtime": "docker"},
-	}
-	inputs := newModule().DevenvYamlInputs(cfg)
-	if len(inputs) != 0 {
-		t.Errorf("expected nil/empty inputs for Docker, got %d", len(inputs))
+	if _, ok := any(newModule()).(ecosystem.DevenvYamlInputProvider); ok {
+		t.Error("container module must not contribute devenv.yaml inputs")
 	}
 }
 
@@ -612,6 +583,37 @@ func TestDenyRules_BlocksEscapesForEveryRuntime(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRegistryCredentialsProtected covers W132: registry credential files
+// are read-denied and cannot be printed with cat.
+func TestRegistryCredentialsProtected(t *testing.T) {
+	t.Parallel()
+	m := newModule()
+	read := m.ReadDenyRules(ecosystem.ModuleConfig{})
+	for _, want := range []string{"~/.docker/config.json", "~/.config/containers/auth.json"} {
+		if !slices.Contains(read, want) {
+			t.Errorf("ReadDenyRules missing %q: %v", want, read)
+		}
+	}
+	rules := m.DenyRules(ecosystem.ModuleConfig{})
+	for _, cmd := range []string{"cat ~/.docker/config.json", "cat ~/.config/containers/auth.json"} {
+		if !slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) }) {
+			t.Errorf("%q is not denied", cmd)
+		}
+	}
+}
+
+// TestHadolintConfigIsCreateOnly covers W134: an existing .hadolint.yaml
+// (a team's restrictive trustedRegistries and ignored lists) must never be
+// replaced by the public-registry defaults.
+func TestHadolintConfigIsCreateOnly(t *testing.T) {
+	t.Parallel()
+	for _, f := range newModule().SecurityConfigs(ecosystem.ModuleConfig{}) {
+		if f.Path == ".hadolint.yaml" && f.Strategy != types.Skip {
+			t.Errorf(".hadolint.yaml Strategy = %v, want types.Skip", f.Strategy)
+		}
 	}
 }
 

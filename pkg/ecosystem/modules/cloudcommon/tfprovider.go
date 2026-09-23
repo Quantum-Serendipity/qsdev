@@ -2,74 +2,46 @@ package cloudcommon
 
 import (
 	"bufio"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 var (
-	providerBlockRe = regexp.MustCompile(`^\s*provider\s+"(aws|google|azurerm)"\s*\{?`)
+	providerBlockRe = regexp.MustCompile(`^\s*provider\s+"(aws|google(?:-beta)?|azurerm)"\s*\{?`)
 	// requiredProviderRe accepts both the short source address
 	// ("hashicorp/aws") and the fully-qualified registry forms.
-	requiredProviderRe = regexp.MustCompile(`source\s*=\s*"(?:registry\.terraform\.io/|registry\.opentofu\.org/)?hashicorp/(aws|google|azurerm)"`)
+	requiredProviderRe = regexp.MustCompile(`source\s*=\s*"(?:registry\.terraform\.io/|registry\.opentofu\.org/)?hashicorp/(aws|google(?:-beta)?|azurerm)"`)
 )
 
-// maxTFScanDepth bounds how many directory levels below projectRoot are
-// scanned for .tf files (root is depth 0), covering layouts such as
-// modules/aws/*.tf and infra/modules/aws/*.tf without walking a whole
-// monorepo.
-const maxTFScanDepth = 3
-
-// skippedTFDirs are directories that never hold the project's own Terraform
-// configuration: provider/module caches and vendored third-party trees.
-var skippedTFDirs = map[string]bool{
-	".terraform":   true,
-	"node_modules": true,
-	"vendor":       true,
-}
-
-// DetectTerraformProviders scans .tf files in projectRoot and its
-// subdirectories (up to maxTFScanDepth levels) for cloud provider
-// declarations. Returns a map of detected provider names.
+// DetectTerraformProviders scans the Terraform/OpenTofu configuration files
+// (.tf and .tofu) in projectRoot and its subdirectories, up to
+// ecosystem.ProjectScanDepth levels, for cloud provider declarations. Returns
+// a map of detected provider names.
 //
 // Subdirectories are always scanned: a root main.tf holding only the backend
 // commonly delegates all provider use to ./modules/*, and provider-specific
-// deny rules depend on seeing those.
+// deny rules depend on seeing those. The walk is the one the terraform module
+// uses for its own detection, so a provider found here implies Terraform is
+// detected too.
 func DetectTerraformProviders(projectRoot string) map[string]bool {
 	result := make(map[string]bool)
-
-	_ = filepath.WalkDir(projectRoot, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			// Unreadable entries are skipped; detection is best-effort.
-			return nil //nolint:nilerr // best-effort scan
-		}
-		if d.IsDir() {
-			if path == projectRoot {
-				return nil
-			}
-			name := d.Name()
-			if skippedTFDirs[name] || strings.HasPrefix(name, ".") || tfScanDepth(projectRoot, path) > maxTFScanDepth {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Type().IsRegular() && strings.HasSuffix(d.Name(), ".tf") {
+	ecosystem.WalkProjectFiles(projectRoot, ecosystem.ProjectScanDepth, func(path string) bool {
+		if IsTerraformHCLFile(filepath.Base(path)) {
 			scanTFFile(path, result)
 		}
-		return nil
+		return true
 	})
 	return result
 }
 
-// tfScanDepth returns how many directory levels dir is below root.
-func tfScanDepth(root, dir string) int {
-	rel, err := filepath.Rel(root, dir)
-	if err != nil {
-		return maxTFScanDepth + 1
-	}
-	return strings.Count(filepath.ToSlash(rel), "/") + 1
+// IsTerraformHCLFile reports whether name is a Terraform or OpenTofu
+// configuration file in HCL syntax (.tf, .tofu).
+func IsTerraformHCLFile(name string) bool {
+	return strings.HasSuffix(name, ".tf") || strings.HasSuffix(name, ".tofu")
 }
 
 func scanTFFile(path string, result map[string]bool) {

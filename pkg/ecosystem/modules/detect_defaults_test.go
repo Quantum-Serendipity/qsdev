@@ -83,7 +83,7 @@ func TestFillDefaults_CarriesSuggestedConfig(t *testing.T) {
 		},
 		{
 			name:       "opentofu with aws provider",
-			files:      map[string]string{".opentofu/.keep": "", "main.tf": "provider \"aws\" {}\n"},
+			files:      map[string]string{"infra/main.tofu": "provider \"aws\" {}\n"},
 			lang:       ecosystem.NameTerraform,
 			wantExtras: []string{"variant=opentofu", "cloud_providers=aws"},
 		},

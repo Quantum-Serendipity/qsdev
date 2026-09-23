@@ -2,16 +2,17 @@ package claudecode
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"path/filepath"
-	"time"
+	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
-	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -25,9 +26,11 @@ func (e *execRunner) Run(ctx context.Context, name string, args ...string) ([]by
 	return cmd.CombinedOutput()
 }
 
-// stateFilePath returns the path to the MCP state file within a project.
+// stateFilePath returns the path to the MCP state file within a project. MCP
+// lifecycle records share the claude addon's (branded) state file, whose
+// writers preserve them across regenerations.
 func stateFilePath(projectRoot string) string {
-	return filepath.Join(projectRoot, ".claude", ".qsdev-claude-state.yaml")
+	return filepath.Join(projectRoot, statePath())
 }
 
 // newLifecycle creates an McpLifecycle wired to the real command runner and
@@ -62,23 +65,7 @@ or nix package). The server must be known to the registry.`,
 				return err
 			}
 
-			lc := newLifecycle(projectRoot)
-			ctx := cmd.Context()
-
-			result, err := lc.Install(ctx, args[0])
-			if err != nil {
-				return err
-			}
-
-			if result.Installed {
-				fmt.Fprintf(cmd.OutOrStdout(), "Installed %s via %s (version: %s)\n",
-					result.ServerName, result.Method, result.Version)
-			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "Could not install %s: %s\n",
-					result.ServerName, result.Error)
-			}
-
-			return nil
+			return runMCPInstall(cmd.Context(), cmd.OutOrStdout(), newLifecycle(projectRoot), args[0])
 		},
 	}
 
@@ -100,44 +87,14 @@ to update all MCP servers recorded in the project state.`,
 				return err
 			}
 
-			lc := newLifecycle(projectRoot)
-			ctx := cmd.Context()
-
-			if all {
-				results, err := lc.UpdateAll(ctx)
-				if err != nil {
-					return err
-				}
-				for _, r := range results {
-					if r.Updated {
-						fmt.Fprintf(cmd.OutOrStdout(), "Updated %s: %s -> %s\n",
-							r.ServerName, r.PreviousVer, r.NewVersion)
-					} else {
-						fmt.Fprintf(cmd.OutOrStdout(), "Could not update %s: %s\n",
-							r.ServerName, r.Error)
-					}
-				}
-				return nil
-			}
-
-			if len(args) == 0 {
+			if !all && len(args) == 0 {
 				return fmt.Errorf("specify a server name or use --all")
 			}
-
-			result, err := lc.Update(ctx, args[0])
-			if err != nil {
-				return err
+			lc := newLifecycle(projectRoot)
+			if all {
+				return runMCPUpdateAll(cmd.Context(), cmd.OutOrStdout(), lc)
 			}
-
-			if result.Updated {
-				fmt.Fprintf(cmd.OutOrStdout(), "Updated %s: %s -> %s\n",
-					result.ServerName, result.PreviousVer, result.NewVersion)
-			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "Could not update %s: %s\n",
-					result.ServerName, result.Error)
-			}
-
-			return nil
+			return runMCPUpdate(cmd.Context(), cmd.OutOrStdout(), lc, args[0])
 		},
 	}
 
@@ -158,82 +115,109 @@ func mcpRemoveCmd() *cobra.Command {
 				return err
 			}
 
-			lc := newLifecycle(projectRoot)
-			ctx := cmd.Context()
-
-			result, err := lc.Remove(ctx, args[0])
-			if err != nil {
-				return err
-			}
-
-			if result.Removed {
-				fmt.Fprintf(cmd.OutOrStdout(), "Removed %s\n", result.ServerName)
-			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "Could not remove %s: %s\n",
-					result.ServerName, result.Error)
-			}
-
-			return nil
+			return runMCPRemove(cmd.Context(), cmd.OutOrStdout(), newLifecycle(projectRoot), args[0])
 		},
 	}
 
 	return cmd
 }
 
+// errMCPOperationFailed marks an install, update or remove whose package-manager
+// operation did not succeed, so the command exits non-zero.
+var errMCPOperationFailed = errors.New("MCP server operation failed")
+
+// runMCPInstall installs one server, returning errMCPOperationFailed when the
+// install did not succeed.
+func runMCPInstall(ctx context.Context, w io.Writer, lc *mcpregistry.McpLifecycle, name string) error {
+	result, err := lc.Install(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !result.Installed {
+		_, _ = fmt.Fprintf(w, "Could not install %s: %s\n", result.ServerName, result.Error)
+		return fmt.Errorf("%w: install %s: %s", errMCPOperationFailed, result.ServerName, result.Error)
+	}
+	_, _ = fmt.Fprintf(w, "Installed %s via %s (version: %s)\n", result.ServerName, result.Method, result.Version)
+	return nil
+}
+
+// runMCPUpdate updates one server, returning errMCPOperationFailed when the
+// update did not succeed.
+func runMCPUpdate(ctx context.Context, w io.Writer, lc *mcpregistry.McpLifecycle, name string) error {
+	result, err := lc.Update(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !reportUpdate(w, result) {
+		return fmt.Errorf("%w: update %s: %s", errMCPOperationFailed, result.ServerName, result.Error)
+	}
+	return nil
+}
+
+// runMCPUpdateAll updates every recorded server, printing each outcome, and
+// returns errMCPOperationFailed counting the failures.
+func runMCPUpdateAll(ctx context.Context, w io.Writer, lc *mcpregistry.McpLifecycle) error {
+	results, err := lc.UpdateAll(ctx)
+	if err != nil {
+		return err
+	}
+	var failed []string
+	for _, r := range results {
+		if !reportUpdate(w, r) {
+			failed = append(failed, r.ServerName)
+		}
+	}
+	if len(failed) > 0 {
+		slices.Sort(failed)
+		return fmt.Errorf("%w: %d of %d updates failed (%s)", errMCPOperationFailed, len(failed), len(results), strings.Join(failed, ", "))
+	}
+	return nil
+}
+
+// reportUpdate prints an update outcome and reports whether it succeeded.
+func reportUpdate(w io.Writer, r *mcpregistry.UpdateResult) bool {
+	if r.Updated {
+		_, _ = fmt.Fprintf(w, "Updated %s: %s -> %s\n", r.ServerName, r.PreviousVer, r.NewVersion)
+		return true
+	}
+	_, _ = fmt.Fprintf(w, "Could not update %s: %s\n", r.ServerName, r.Error)
+	return false
+}
+
+// runMCPRemove removes one server, returning errMCPOperationFailed when the
+// removal did not succeed.
+func runMCPRemove(ctx context.Context, w io.Writer, lc *mcpregistry.McpLifecycle, name string) error {
+	result, err := lc.Remove(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !result.Removed {
+		_, _ = fmt.Fprintf(w, "Could not remove %s: %s\n", result.ServerName, result.Error)
+		return fmt.Errorf("%w: remove %s: %s", errMCPOperationFailed, result.ServerName, result.Error)
+	}
+	_, _ = fmt.Fprintf(w, "Removed %s\n", result.ServerName)
+	return nil
+}
+
 func mcpHealthCmd() *cobra.Command {
-	var jsonOutput bool
+	opts := mcpProbeOptions{title: "MCP Server Health", failUnhealthy: true}
 
 	cmd := &cobra.Command{
 		Use:   "health",
 		Short: "Check health of configured MCP servers",
-		Long: `Probe all configured MCP servers via their stdio transport and report
-health status, tool counts, and response times.`,
+		Long: `Probe all configured MCP servers via their transport and report health
+status, tool counts, and response times. Exits non-zero when any server is not
+healthy, so it can gate CI.
+
+Only servers whose command matches a trusted definition are started; pass
+--probe-untrusted to also run repository-supplied commands.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRoot, err := cmdutil.ProjectRoot()
-			if err != nil {
-				return err
-			}
-
-			servers, err := loadMCPServers(projectRoot)
-			if err != nil {
-				return err
-			}
-
-			if len(servers) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No MCP servers configured.")
-				return nil
-			}
-
-			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
-			defer cancel()
-
-			report := mcphealth.CheckAll(ctx, servers)
-
-			if jsonOutput {
-				data, err := json.MarshalIndent(report, "", "  ")
-				if err != nil {
-					return fmt.Errorf("marshaling health report: %w", err)
-				}
-				fmt.Fprintln(cmd.OutOrStdout(), string(data))
-				return nil
-			}
-
-			fmt.Fprintf(cmd.OutOrStdout(), "MCP Server Health (%d servers)\n", report.TotalCount)
-			fmt.Fprintln(cmd.OutOrStdout(), "----------------------------------------")
-			for _, s := range report.Servers {
-				fmt.Fprintf(cmd.OutOrStdout(), "  %-20s  %-14s  tools: %d  %dms\n",
-					s.Name, s.Status, s.ToolCount, s.ResponseMs)
-				if s.Error != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "    error: %s\n", s.Error)
-				}
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "\n%d/%d healthy\n", report.HealthyCount, report.TotalCount)
-
-			return nil
+			return runMCPProbe(cmd, opts)
 		},
 	}
 
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+	cmd.Flags().BoolVar(&opts.jsonOutput, "json", false, "Output in JSON format")
+	cmd.Flags().BoolVar(&opts.probeUntrusted, "probe-untrusted", false, "Also start servers whose command matches no trusted definition")
 
 	return cmd
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -300,8 +301,8 @@ func TestAddSkill_TierSuppressedDoesNotPersist(t *testing.T) {
 }
 
 // TestAddSkill_RemovesLegacyFlatSkillFile guards the layout-migration cleanup:
-// a pre-migration flat .claude/skills/<name>.md is removed when the new
-// <name>/SKILL.md is (re)generated.
+// a qsdev-generated pre-migration flat .claude/skills/<name>.md is removed
+// when the new <name>/SKILL.md is (re)generated.
 func TestAddSkill_RemovesLegacyFlatSkillFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	chdir(t, tmpDir)
@@ -328,15 +329,19 @@ func TestAddSkill_RemovesLegacyFlatSkillFile(t *testing.T) {
 		t.Fatalf("saving answers: %v", err)
 	}
 
-	// Seed a stale flat skill file from the old layout.
+	// Seed a stale flat skill file from the old layout, recorded in the
+	// top-level init state as qsdev-generated (a project initialized by an
+	// older top-level `qsdev init`).
 	skillsDir := filepath.Join(tmpDir, ".claude", "skills")
 	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	legacy := filepath.Join(skillsDir, "deploy.md")
-	if err := os.WriteFile(legacy, []byte("stale flat skill"), 0o644); err != nil {
+	legacyContent := []byte("stale flat skill")
+	if err := os.WriteFile(legacy, legacyContent, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	recordState(t, filepath.Join(tmpDir, state.StateFilePaths()[0]), ".claude/skills/deploy.md", legacyContent)
 
 	runClaude("add-skill", "deploy")
 

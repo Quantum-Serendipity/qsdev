@@ -311,44 +311,44 @@ func TestBuildHookStatuses(t *testing.T) {
 		t.Fatalf("expected 15 statuses, got %d", len(statuses))
 	}
 
-	if statuses[0].Name != "self-protection" || statuses[0].Enabled {
-		t.Errorf("statuses[0]: want self-protection/disabled (no ClaudeCode), got %s/%v", statuses[0].Name, statuses[0].Enabled)
+	if statuses[0].Name != "self-protection" || statuses[0].Configured {
+		t.Errorf("statuses[0]: want self-protection/disabled (no ClaudeCode), got %s/%v", statuses[0].Name, statuses[0].Configured)
 	}
-	if statuses[1].Name != "package-guard" || !statuses[1].Enabled {
-		t.Errorf("statuses[1]: want package-guard/enabled, got %s/%v", statuses[1].Name, statuses[1].Enabled)
+	if statuses[1].Name != "package-guard" || !statuses[1].Configured {
+		t.Errorf("statuses[1]: want package-guard/enabled, got %s/%v", statuses[1].Name, statuses[1].Configured)
 	}
-	if statuses[2].Name != "credential-scan" || statuses[2].Enabled {
-		t.Errorf("statuses[2]: want credential-scan/disabled, got %s/%v", statuses[2].Name, statuses[2].Enabled)
+	if statuses[2].Name != "credential-scan" || statuses[2].Configured {
+		t.Errorf("statuses[2]: want credential-scan/disabled, got %s/%v", statuses[2].Name, statuses[2].Configured)
 	}
-	if statuses[3].Name != "destructive-prevention" || statuses[3].Enabled {
-		t.Errorf("statuses[3]: want destructive-prevention/disabled, got %s/%v", statuses[3].Name, statuses[3].Enabled)
+	if statuses[3].Name != "destructive-prevention" || statuses[3].Configured {
+		t.Errorf("statuses[3]: want destructive-prevention/disabled, got %s/%v", statuses[3].Name, statuses[3].Configured)
 	}
-	if statuses[4].Name != "file-boundary" || statuses[4].Enabled {
-		t.Errorf("statuses[4]: want file-boundary/disabled, got %s/%v", statuses[4].Name, statuses[4].Enabled)
+	if statuses[4].Name != "file-boundary" || statuses[4].Configured {
+		t.Errorf("statuses[4]: want file-boundary/disabled, got %s/%v", statuses[4].Name, statuses[4].Configured)
 	}
-	if statuses[5].Name != "tool-gates" || statuses[5].Enabled {
-		t.Errorf("statuses[5]: want tool-gates/disabled, got %s/%v", statuses[5].Name, statuses[5].Enabled)
+	if statuses[5].Name != "tool-gates" || statuses[5].Configured {
+		t.Errorf("statuses[5]: want tool-gates/disabled, got %s/%v", statuses[5].Name, statuses[5].Configured)
 	}
 	for i := 6; i <= 9; i++ {
-		if statuses[i].Name != "soc2-audit" || statuses[i].Enabled {
-			t.Errorf("statuses[%d]: want soc2-audit/disabled, got %s/%v", i, statuses[i].Name, statuses[i].Enabled)
+		if statuses[i].Name != "soc2-audit" || statuses[i].Configured {
+			t.Errorf("statuses[%d]: want soc2-audit/disabled, got %s/%v", i, statuses[i].Name, statuses[i].Configured)
 		}
 	}
-	if statuses[10].Name != "semble" || statuses[10].Enabled {
-		t.Errorf("statuses[10]: want semble/disabled, got %s/%v", statuses[10].Name, statuses[10].Enabled)
+	if statuses[10].Name != "semble" || statuses[10].Configured {
+		t.Errorf("statuses[10]: want semble/disabled, got %s/%v", statuses[10].Name, statuses[10].Configured)
 	}
-	if statuses[11].Name != "audit-log" || statuses[11].Enabled {
-		t.Errorf("statuses[11]: want audit-log/disabled, got %s/%v", statuses[11].Name, statuses[11].Enabled)
+	if statuses[11].Name != "audit-log" || statuses[11].Configured {
+		t.Errorf("statuses[11]: want audit-log/disabled, got %s/%v", statuses[11].Name, statuses[11].Configured)
 	}
 	for i := 12; i <= 13; i++ {
-		if statuses[i].Name != "security-enforcement" || statuses[i].Enabled {
-			t.Errorf("statuses[%d]: want security-enforcement/disabled, got %s/%v", i, statuses[i].Name, statuses[i].Enabled)
+		if statuses[i].Name != "security-enforcement" || statuses[i].Configured {
+			t.Errorf("statuses[%d]: want security-enforcement/disabled, got %s/%v", i, statuses[i].Name, statuses[i].Configured)
 		}
 	}
 	// lsp-guard is registered last and enabled by default (LSP enforcement
 	// defaults to "block" when unset).
-	if statuses[14].Name != "lsp-guard" || !statuses[14].Enabled {
-		t.Errorf("statuses[14]: want lsp-guard/enabled, got %s/%v", statuses[14].Name, statuses[14].Enabled)
+	if statuses[14].Name != "lsp-guard" || !statuses[14].Configured {
+		t.Errorf("statuses[14]: want lsp-guard/enabled, got %s/%v", statuses[14].Name, statuses[14].Configured)
 	}
 }
 

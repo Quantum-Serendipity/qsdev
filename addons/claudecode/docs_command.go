@@ -104,6 +104,9 @@ fails, for CI gating; --require-trusted additionally fails hash-only sets.`,
 // signed-verified).
 func runDocsVerify(cmd *cobra.Command, mgr *mcpregistry.DocsCorpusManager, manifest *mcpregistry.DocsManifest, keysDir string, requireTrusted, jsonOutput bool) error {
 	if len(manifest.DocSets) == 0 {
+		if jsonOutput {
+			return printVerifyResults(cmd, []docVerifyResult{}, true)
+		}
 		fmt.Fprintln(cmd.OutOrStdout(), "No documentation sets installed.")
 		return nil
 	}

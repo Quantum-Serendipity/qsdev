@@ -272,16 +272,20 @@ func wrapHooksForSandbox(hooks map[string][]HookMatcher, registry *HookRegistry,
 	for event, matchers := range hooks {
 		for i, m := range matchers {
 			for j, h := range m.Hooks {
-				cat := catMap[h.Command]
-				if cat == "" {
-					cat = "linter"
-				}
-				hooks[event][i].Hooks[j].Command = fmt.Sprintf(
-					`%s sandbox exec --category %s -- %s`, appName, cat, h.Command)
+				hooks[event][i].Hooks[j].Command = sandboxHookCommand(appName, catMap[h.Command], h.Command)
 			}
 		}
 	}
 	return hooks
+}
+
+// sandboxHookCommand wraps a hook command to run inside the sandbox under the
+// given category ("linter" when empty), invoking the branded binary appName.
+func sandboxHookCommand(appName, category, command string) string {
+	if category == "" {
+		category = "linter"
+	}
+	return fmt.Sprintf(`%s sandbox exec --category %s -- %s`, appName, category, command)
 }
 
 // GenerateSettings produces a .claude/settings.json file from the wizard

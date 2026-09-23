@@ -58,8 +58,8 @@ func TestBuildDevenvNixData_HookIDsDisjointForEveryModulePair(t *testing.T) {
 		for _, id := range data.SecurityHooks {
 			check("SecurityHooks", id)
 		}
-		for _, id := range data.BuiltInHooks {
-			check("BuiltInHooks", id)
+		for _, h := range data.BuiltInHooks {
+			check("BuiltInHooks", h.ID)
 		}
 		for _, h := range data.CustomHooks {
 			check("CustomHooks", h.ID)

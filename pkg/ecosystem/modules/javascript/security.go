@@ -18,6 +18,34 @@ import (
 // .yarnrc.yml, so it needs a different hardening file from Yarn Berry (v2+).
 const ExtraYarnClassic = "yarn_classic"
 
+// ExtraESLint and ExtraPrettier record that the project uses ESLint or
+// Prettier, and whether the hook should run the project's node_modules copy
+// ("node_modules") or the nixpkgs build ("nix"). Unset means the project does
+// not use the tool and its pre-commit hook is not enabled.
+const (
+	ExtraESLint   = "eslint"
+	ExtraPrettier = "prettier"
+)
+
+// ExtraPnpmVersion is the pnpm version (or range) package.json pins through
+// "packageManager" or devEngines.packageManager.
+const ExtraPnpmVersion = "pnpm_version"
+
+// pnpmHardeningMinVersion is the first pnpm release that understands every
+// setting pnpmSecurityConfig writes.
+const pnpmHardeningMinVersion = "10.16"
+
+// pnpmSupportsHardening reports whether the pinned pnpm version (or the lower
+// bound of a pinned range) understands the generated hardening settings. An
+// unparseable pin is given the benefit of the doubt.
+func pnpmSupportsHardening(pin string) bool {
+	major, minor, _, ok := parseVersion(pin)
+	if !ok {
+		return true
+	}
+	return major > 10 || (major == 10 && minor >= 16)
+}
+
 // bunMinimumReleaseAgeSeconds is the Bun install age gate. bunfig.toml's
 // install.minimumReleaseAge is an integer number of SECONDS; a string such
 // as "7d" makes `bun install` fail with "Invalid Bunfig".
@@ -36,27 +64,34 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 
 	switch pm {
 	case "npm":
-		return []types.GeneratedFile{npmSecurityConfig(config.RegistryProxy)}
+		return []types.GeneratedFile{npmSecurityConfig(config.RegistryProxy, config.Version)}
 	case "pnpm":
-		return []types.GeneratedFile{pnpmSecurityConfig(config.RegistryProxy)}
+		return []types.GeneratedFile{pnpmSecurityConfig(config.RegistryProxy, config.Extra(ExtraPnpmVersion, ""))}
 	case "yarn":
 		if config.Extra(ExtraYarnClassic, "") == "true" {
 			return []types.GeneratedFile{yarnClassicSecurityConfig(config.RegistryProxy)}
 		}
 		return []types.GeneratedFile{yarnSecurityConfig(config.RegistryProxy)}
 	case "bun":
-		return []types.GeneratedFile{bunSecurityConfig()}
+		return []types.GeneratedFile{bunSecurityConfig(config.RegistryProxy)}
 	default:
-		return []types.GeneratedFile{npmSecurityConfig(config.RegistryProxy)}
+		return []types.GeneratedFile{npmSecurityConfig(config.RegistryProxy, config.Version)}
 	}
 }
 
-// npmSecurityConfig generates a hardened .npmrc in INI format.
-func npmSecurityConfig(registryProxy string) types.GeneratedFile {
+// npmSecurityConfig generates a hardened .npmrc in INI format. nodeVersion
+// is the project's Node.js constraint: when it resolves to a Node.js whose
+// bundled npm predates min-release-age, the file says the age gate is inert
+// instead of implying it is enforced.
+func npmSecurityConfig(registryProxy, nodeVersion string) types.GeneratedFile {
 	var b strings.Builder
 	b.WriteString("# Security-hardened npm configuration\n")
 	b.WriteString("# " + branding.GeneratedBy() + " - do not remove security settings\n")
 	b.WriteString("# Requires: npm >= 11.10.0 for min-release-age support (Feb 2026)\n")
+	if major, _ := resolveNodeMajor(nodeVersion); major < npmMinReleaseAgeNodeMajor {
+		fmt.Fprintf(&b, "# WARNING: Node.js %d bundles npm 10, which ignores min-release-age:\n", major)
+		fmt.Fprintf(&b, "# the age gate below is NOT enforced until the project moves to Node.js >= %d.\n", npmMinReleaseAgeNodeMajor)
+	}
 	b.WriteString("\n")
 	if registryProxy != "" {
 		fmt.Fprintf(&b, "registry=%s\n", ecosystem.INIEscapeValue(registryProxy))
@@ -69,7 +104,8 @@ func npmSecurityConfig(registryProxy string) types.GeneratedFile {
 	b.WriteString("min-release-age=3\n")
 	b.WriteString("# Enable automatic security auditing on install\n")
 	b.WriteString("audit=true\n")
-	b.WriteString("# Fail on moderate and above vulnerabilities\n")
+	b.WriteString("# Make `npm audit` exit non-zero on moderate and above vulnerabilities\n")
+	b.WriteString("# (installs are not blocked; run `npm audit` in CI to gate on it)\n")
 	b.WriteString("audit-level=moderate\n")
 
 	return types.GeneratedFile{
@@ -82,17 +118,31 @@ func npmSecurityConfig(registryProxy string) types.GeneratedFile {
 
 // pnpmSecurityConfig generates a hardened pnpm-workspace.yaml using yaml.Node
 // for comment support. Note: pnpm uses MINUTES for minimumReleaseAge (4320 = 3 days).
-func pnpmSecurityConfig(registryProxy string) types.GeneratedFile {
+// pinnedVersion is the pnpm version package.json pins, if any.
+func pnpmSecurityConfig(registryProxy, pinnedVersion string) types.GeneratedFile {
 	mappingContent := []*yaml.Node{}
 
 	if registryProxy != "" {
 		mappingContent = append(mappingContent,
 			&yaml.Node{
 				Kind:        yaml.ScalarNode,
-				Value:       "npmRegistryServer",
+				Value:       "registry",
 				LineComment: "Corporate registry proxy",
 			},
 			&yaml.Node{Kind: yaml.ScalarNode, Value: registryProxy},
+		)
+	}
+
+	if pinnedVersion != "" && !pnpmSupportsHardening(pinnedVersion) {
+		// By default pnpm downloads and switches to the pinned release, which
+		// ignores every setting below; keep the Nix-provided pnpm instead.
+		mappingContent = append(mappingContent,
+			&yaml.Node{
+				Kind:        yaml.ScalarNode,
+				Value:       "pmOnFail",
+				LineComment: fmt.Sprintf("package.json pins pnpm %s, which ignores these settings; warn and keep the devenv pnpm instead of switching (bump the pin to >= %s)", pinnedVersion, pnpmHardeningMinVersion),
+			},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "warn"},
 		)
 	}
 
@@ -164,17 +214,14 @@ func yarnSecurityConfig(registryProxy string) types.GeneratedFile {
 		)
 	}
 
+	// enableImmutableInstalls is deliberately not set: Yarn already turns it
+	// on in CI, and committing it makes every local `yarn install` after a
+	// manifest change fail with YN0028.
 	mappingContent = append(mappingContent,
 		&yaml.Node{
 			Kind:        yaml.ScalarNode,
-			Value:       "enableImmutableInstalls",
-			LineComment: "Prevent lockfile modifications during install",
-		},
-		&yaml.Node{Kind: yaml.ScalarNode, Value: "true", Tag: "!!bool"},
-		&yaml.Node{
-			Kind:        yaml.ScalarNode,
 			Value:       "enableHardenedMode",
-			LineComment: "Enable Yarn's hardened security mode",
+			LineComment: "Validate lockfile resolutions against the registry (slower installs; trade-off accepted for security)",
 		},
 		&yaml.Node{Kind: yaml.ScalarNode, Value: "true", Tag: "!!bool"},
 		&yaml.Node{
@@ -196,7 +243,7 @@ func yarnSecurityConfig(registryProxy string) types.GeneratedFile {
 		Content: []*yaml.Node{
 			{
 				Kind:        yaml.MappingNode,
-				HeadComment: "Security-hardened Yarn configuration\n" + branding.GeneratedBy() + " - do not remove security settings\nRequires: Yarn >= 4.10.0 (Sep 2025)",
+				HeadComment: "Security-hardened Yarn configuration\n" + branding.GeneratedBy() + " - do not remove security settings\nRequires: Yarn >= 4.12 (npmMinimalAgeGate)",
 				Content:     mappingContent,
 			},
 		},
@@ -204,7 +251,7 @@ func yarnSecurityConfig(registryProxy string) types.GeneratedFile {
 
 	content, err := yaml.Marshal(doc)
 	if err != nil {
-		content = []byte("# Security-hardened Yarn configuration\nenableImmutableInstalls: true\nenableHardenedMode: true\nenableScripts: false\nnpmMinimalAgeGate: 7d\n")
+		content = []byte("# Security-hardened Yarn configuration\nenableHardenedMode: true\nenableScripts: false\nnpmMinimalAgeGate: 7d\n")
 	}
 
 	return types.GeneratedFile{
@@ -222,7 +269,7 @@ func yarnClassicSecurityConfig(registryProxy string) types.GeneratedFile {
 	var b strings.Builder
 	b.WriteString("# Security-hardened Yarn Classic (v1) configuration\n")
 	b.WriteString("# " + branding.GeneratedBy() + " - do not remove security settings\n")
-	b.WriteString("# Yarn Classic has no package age gate; migrate to Yarn >= 4.10\n")
+	b.WriteString("# Yarn Classic has no package age gate; migrate to Yarn >= 4.12\n")
 	b.WriteString("# (Berry, .yarnrc.yml) to enforce one.\n")
 	b.WriteString("\n")
 	if registryProxy != "" {
@@ -240,13 +287,20 @@ func yarnClassicSecurityConfig(registryProxy string) types.GeneratedFile {
 }
 
 // bunSecurityConfig generates a hardened bunfig.toml in string-built TOML format.
-func bunSecurityConfig() types.GeneratedFile {
+func bunSecurityConfig(registryProxy string) types.GeneratedFile {
 	var b strings.Builder
 	b.WriteString("# Security-hardened Bun configuration\n")
 	b.WriteString("# " + branding.GeneratedBy() + " - do not remove security settings\n")
 	b.WriteString("# Requires: Bun >= 1.3 (Oct 2025)\n")
 	b.WriteString("\n")
 	b.WriteString("[install]\n")
+	if registryProxy != "" {
+		b.WriteString("# Corporate registry proxy\n")
+		fmt.Fprintf(&b, "registry = \"%s\"\n", ecosystem.TOMLEscapeString(ecosystem.INIEscapeValue(registryProxy)))
+	}
+	b.WriteString("# Disable lifecycle scripts, including Bun's built-in list of\n")
+	b.WriteString("# default-trusted packages that otherwise run postinstall hooks\n")
+	b.WriteString("ignoreScripts = true\n")
 	b.WriteString("# Require packages to be published for at least 7 days\n")
 	fmt.Fprintf(&b, "minimumReleaseAge = %d\n", bunMinimumReleaseAgeSeconds)
 

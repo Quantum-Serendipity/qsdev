@@ -74,7 +74,19 @@
 {{- end}}
     # Enhanced hooks (language-aware, from ecosystem modules)
 {{- range .BuiltInHooks}}
-    {{ . }}.enable = true;
+{{- if or .TypesOr .Settings }}
+    {{ .ID }} = {
+      enable = true;
+{{- if .TypesOr }}
+      types_or = {{ nixStringList .TypesOr }};
+{{- end }}
+{{- range .Settings }}
+      settings.{{ .Key }} = {{ nixString .Value }};
+{{- end }}
+    };
+{{- else }}
+    {{ .ID }}.enable = true;
+{{- end }}
 {{- end}}
     # Specialized hooks (custom definitions)
 {{- range .CustomHooks}}

@@ -8,8 +8,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 // yarnClassicLockHeader is the marker line Yarn Classic (v1) writes at the
@@ -17,12 +18,78 @@ import (
 // "__metadata:" entry instead.
 const yarnClassicLockHeader = "# yarn lockfile v1"
 
+// packageJSON holds the package.json fields the module inspects.
+type packageJSON struct {
+	PackageManager string `json:"packageManager"`
+	DevEngines     struct {
+		// PackageManager is an object or an array of objects
+		// ({"name": "pnpm", "version": "^10"}).
+		PackageManager json.RawMessage `json:"packageManager"`
+	} `json:"devEngines"`
+	Engines struct {
+		Node string `json:"node"`
+	} `json:"engines"`
+	Dependencies    map[string]string `json:"dependencies"`
+	DevDependencies map[string]string `json:"devDependencies"`
+	ESLintConfig    json.RawMessage   `json:"eslintConfig"`
+	Prettier        json.RawMessage   `json:"prettier"`
+}
+
+// readPackageJSON parses the package.json at path. ok is false when the file
+// is missing or not valid JSON.
+func readPackageJSON(path string) (pkg packageJSON, ok bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return packageJSON{}, false
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return packageJSON{}, false
+	}
+	return pkg, true
+}
+
+// hasDependency reports whether name is a runtime or dev dependency.
+func (p packageJSON) hasDependency(name string) bool {
+	_, dep := p.Dependencies[name]
+	_, dev := p.DevDependencies[name]
+	return dep || dev
+}
+
+// packageManagerPin returns the package manager the project pins, as a name
+// ("pnpm") and version ("10.17.0", possibly a range for devEngines). The
+// Corepack "packageManager" field wins over devEngines.packageManager; both
+// are empty when neither is set.
+func (p packageJSON) packageManagerPin() (name, version string) {
+	if pin := strings.TrimSpace(p.PackageManager); pin != "" {
+		name, version, _ = strings.Cut(pin, "@")
+		// Corepack allows a "+sha512.<hash>" integrity suffix.
+		version, _, _ = strings.Cut(version, "+")
+		return name, version
+	}
+
+	type engine struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	}
+	var one engine
+	if err := json.Unmarshal(p.DevEngines.PackageManager, &one); err == nil && one.Name != "" {
+		return one.Name, one.Version
+	}
+	var many []engine
+	if err := json.Unmarshal(p.DevEngines.PackageManager, &many); err == nil && len(many) > 0 {
+		return many[0].Name, many[0].Version
+	}
+	return "", ""
+}
+
 // isYarnClassic reports whether the Yarn project at projectRoot uses Yarn
-// Classic (v1). An explicit package.json "packageManager" pin wins; otherwise
+// Classic (v1). An explicit package.json package-manager pin wins; otherwise
 // the yarn.lock header decides.
-func isYarnClassic(projectRoot string) bool {
-	if pin := packageManagerPin(filepath.Join(projectRoot, "package.json")); strings.HasPrefix(pin, "yarn@") {
-		return strings.HasPrefix(pin, "yarn@1.")
+func isYarnClassic(projectRoot string, pkg packageJSON) bool {
+	if name, version := pkg.packageManagerPin(); name == "yarn" {
+		if major, _, _, ok := parseVersion(version); ok {
+			return major == 1
+		}
 	}
 
 	f, err := os.Open(filepath.Join(projectRoot, "yarn.lock"))
@@ -42,85 +109,49 @@ func isYarnClassic(projectRoot string) bool {
 	return false
 }
 
-// packageManagerPin returns package.json's "packageManager" field
-// (e.g. "yarn@1.22.22"), or "" when absent or unparseable.
-func packageManagerPin(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
+// eslintConfigFiles and prettierConfigFiles are the project-root config files
+// each tool loads on its own.
+var (
+	eslintConfigFiles = []string{
+		"eslint.config.js", "eslint.config.mjs", "eslint.config.cjs",
+		"eslint.config.ts", "eslint.config.mts", "eslint.config.cts",
+		".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.yaml",
+		".eslintrc.yml", ".eslintrc.json",
 	}
-	var pkg struct {
-		PackageManager string `json:"packageManager"`
+	prettierConfigFiles = []string{
+		".prettierrc", ".prettierrc.json", ".prettierrc.yaml", ".prettierrc.yml",
+		".prettierrc.json5", ".prettierrc.js", ".prettierrc.cjs", ".prettierrc.mjs",
+		".prettierrc.ts", ".prettierrc.mts", ".prettierrc.cts", ".prettierrc.toml",
+		"prettier.config.js", "prettier.config.cjs", "prettier.config.mjs",
+		"prettier.config.ts", "prettier.config.mts", "prettier.config.cts",
 	}
-	if err := json.Unmarshal(data, &pkg); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(pkg.PackageManager)
-}
+)
 
-// nodeVersionFromPackageJSON extracts the Node.js version constraint from
-// the "engines.node" field in package.json at the given directory path.
-// Returns an empty string if the field is absent or unparseable.
-func nodeVersionFromPackageJSON(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
+// Values of the ExtraESLint / ExtraPrettier extras: where the tool comes from.
+const (
+	// toolFromNodeModules means the project depends on the tool, so the hook
+	// runs the project's own copy (and plugins) from node_modules/.bin.
+	toolFromNodeModules = "node_modules"
+	// toolFromNix means the project configures the tool without depending on
+	// it, so the hook runs the nixpkgs build.
+	toolFromNix = "nix"
+)
 
-	var pkg struct {
-		Engines struct {
-			Node string `json:"node"`
-		} `json:"engines"`
+// detectJSTool reports whether the project uses a JS tool (eslint, prettier)
+// and where its hook should run it from. It returns "" when the project has
+// neither a config file nor a dependency on the tool, so the hook is not
+// forced onto projects that never adopted it.
+func detectJSTool(projectRoot string, pkg packageJSON, dependency string, configFiles []string, inlineConfig json.RawMessage) string {
+	if pkg.hasDependency(dependency) {
+		return toolFromNodeModules
 	}
-	if err := json.Unmarshal(data, &pkg); err != nil {
-		return ""
+	if len(inlineConfig) > 0 {
+		return toolFromNix
 	}
-	return pkg.Engines.Node
-}
-
-// extractMajorVersion strips common version prefixes (v, >=, ^, ~, =)
-// and returns the first numeric segment as an integer.
-// Returns 0 if parsing fails.
-func extractMajorVersion(version string) int {
-	if version == "" {
-		return 0
-	}
-
-	// Strip common prefixes.
-	v := version
-	for _, prefix := range []string{">=", "<=", "^", "~", "=", "v", ">", "<"} {
-		v = strings.TrimPrefix(v, prefix)
-	}
-	v = strings.TrimSpace(v)
-
-	// Take the first numeric segment (before '.', '-', or ' ').
-	for i, ch := range v {
-		if ch == '.' || ch == '-' || ch == ' ' {
-			v = v[:i]
-			break
+	for _, name := range configFiles {
+		if fileutil.FileExists(filepath.Join(projectRoot, name)) {
+			return toolFromNix
 		}
 	}
-
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return 0
-	}
-	return n
-}
-
-// nodeNixPackage maps a major Node.js version to the corresponding
-// nixpkgs attribute. Defaults to pkgs.nodejs_22 for unknown versions.
-func nodeNixPackage(majorVersion int) string {
-	switch majorVersion {
-	case 18:
-		return "pkgs.nodejs_18"
-	case 20:
-		return "pkgs.nodejs_20"
-	case 22:
-		return "pkgs.nodejs_22"
-	case 24:
-		return "pkgs.nodejs_24"
-	default:
-		return "pkgs.nodejs_22"
-	}
+	return ""
 }

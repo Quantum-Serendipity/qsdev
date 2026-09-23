@@ -34,19 +34,19 @@ func (m *Module) DisplayName() string { return "JavaScript/TypeScript" }
 func (m *Module) Tier() int { return 1 }
 
 // Detect scans projectRoot for JavaScript/TypeScript indicators.
-// It checks for package.json (Certain confidence), determines the package manager
-// from lockfiles, reads Node.js version from .nvmrc or package.json engines,
-// and checks for TypeScript via tsconfig.json.
+// It checks for package.json (Certain confidence), determines the package
+// manager from the package.json pin or lockfiles, reads Node.js version from
+// .nvmrc or package.json engines, and checks for TypeScript via tsconfig.json.
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	pkgJSONPath := filepath.Join(projectRoot, "package.json")
 	if !fileutil.FileExists(pkgJSONPath) {
 		return ecosystem.DetectionAbsent()
 	}
+	pkg, _ := readPackageJSON(pkgJSONPath)
 
 	evidence := []string{"package.json found"}
 
-	// Determine package manager from lockfiles.
-	pm := detectPackageManager(projectRoot)
+	pm := detectPackageManager(projectRoot, pkg)
 	evidence = append(evidence, fmt.Sprintf("package manager: %s", pm))
 
 	// Determine Node.js version: .nvmrc takes priority over engines.node.
@@ -59,22 +59,40 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		}
 	}
 	if version == "" {
-		version = nodeVersionFromPackageJSON(pkgJSONPath)
+		version = pkg.Engines.Node
 		if version != "" {
 			evidence = append(evidence, fmt.Sprintf("node version %s (from engines.node)", version))
 		}
 	}
+	if _, note := resolveNodeMajor(version); note != "" {
+		evidence = append(evidence, "WARNING: "+note)
+	}
 
-	// Check for TypeScript.
 	extras := make(map[string]string)
 	tsconfigPath := filepath.Join(projectRoot, "tsconfig.json")
 	if fileutil.FileExists(tsconfigPath) {
 		extras["typescript"] = "true"
 		evidence = append(evidence, "tsconfig.json found")
 	}
-	if pm == "yarn" && isYarnClassic(projectRoot) {
+	if pm == "yarn" && isYarnClassic(projectRoot, pkg) {
 		extras[ExtraYarnClassic] = "true"
 		evidence = append(evidence, "Yarn Classic (v1) project")
+	}
+	if pm == "pnpm" {
+		if name, pin := pkg.packageManagerPin(); name == "pnpm" && pin != "" {
+			extras[ExtraPnpmVersion] = pin
+			if !pnpmSupportsHardening(pin) {
+				evidence = append(evidence, fmt.Sprintf("WARNING: package.json pins pnpm %s, which ignores the pnpm-workspace.yaml hardening (needs pnpm >= %s)", pin, pnpmHardeningMinVersion))
+			}
+		}
+	}
+	if src := detectJSTool(projectRoot, pkg, "eslint", eslintConfigFiles, pkg.ESLintConfig); src != "" {
+		extras[ExtraESLint] = src
+		evidence = append(evidence, "eslint configured")
+	}
+	if src := detectJSTool(projectRoot, pkg, "prettier", prettierConfigFiles, pkg.Prettier); src != "" {
+		extras[ExtraPrettier] = src
+		evidence = append(evidence, "prettier configured")
 	}
 
 	return ecosystem.DetectionResult{
@@ -89,9 +107,18 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 }
 
-// detectPackageManager determines the package manager by inspecting lockfiles.
-// Priority: pnpm-lock.yaml > yarn.lock > bun.lock/bun.lockb > package-lock.json > npm (default).
-func detectPackageManager(projectRoot string) string {
+// packageManagers lists the package managers the module supports.
+var packageManagers = []string{"npm", "pnpm", "yarn", "bun"}
+
+// detectPackageManager determines the package manager. A package.json pin
+// ("packageManager", then devEngines.packageManager) is authoritative, since
+// Corepack and the package managers themselves enforce it; otherwise the
+// lockfile decides, in priority order pnpm-lock.yaml > yarn.lock >
+// bun.lock/bun.lockb > package-lock.json > npm (default).
+func detectPackageManager(projectRoot string, pkg packageJSON) string {
+	if name, _ := pkg.packageManagerPin(); slices.Contains(packageManagers, name) {
+		return name
+	}
 	if fileutil.FileExists(filepath.Join(projectRoot, "pnpm-lock.yaml")) {
 		return "pnpm"
 	}
@@ -101,41 +128,46 @@ func detectPackageManager(projectRoot string) string {
 	if fileutil.FileExists(filepath.Join(projectRoot, "bun.lock")) || fileutil.FileExists(filepath.Join(projectRoot, "bun.lockb")) {
 		return "bun"
 	}
-	if fileutil.FileExists(filepath.Join(projectRoot, "package-lock.json")) {
-		return "npm"
-	}
 	return "npm"
 }
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for JavaScript/TypeScript support.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
-	major := extractMajorVersion(config.Version)
-	nodePkg := nodeNixPackage(major)
-
+	major, note := resolveNodeMajor(config.Version)
 	pm := config.PM("npm")
 
 	var b strings.Builder
+	if note != "" {
+		b.WriteString("  # " + note + "\n")
+	}
+	if pm == "npm" && major < npmMinReleaseAgeNodeMajor {
+		fmt.Fprintf(&b, "  # WARNING: the npm bundled with Node.js %d ignores min-release-age, so the\n", major)
+		fmt.Fprintf(&b, "  # .npmrc package age gate is not enforced; use Node.js >= %d.\n", npmMinReleaseAgeNodeMajor)
+	}
 	b.WriteString("  languages.javascript = {\n")
 	b.WriteString("    enable = true;\n")
-	fmt.Fprintf(&b, "    package = %s;\n", nodePkg)
-
-	// npm is enabled alongside Node.js by default.
-	if pm == "npm" {
-		b.WriteString("    npm.enable = true;\n")
-	}
-
-	b.WriteString("  };\n")
+	fmt.Fprintf(&b, "    package = %s;\n", nodeNixPackage(major))
 
 	// Package manager specific configuration.
 	switch pm {
+	case "npm":
+		b.WriteString("    npm.enable = true;\n")
 	case "pnpm":
-		b.WriteString("\n  languages.javascript.pnpm.enable = true;\n")
+		b.WriteString("    pnpm.enable = true;\n")
 	case "yarn":
-		b.WriteString("\n  languages.javascript.yarn.enable = true;\n")
+		b.WriteString("    yarn.enable = true;\n")
+		if config.Extra(ExtraYarnClassic, "") != "true" {
+			// devenv defaults to pkgs.yarn, which is Yarn Classic: it refuses
+			// to run in a project pinning Yarn >= 2 and never reads the
+			// generated .yarnrc.yml.
+			b.WriteString("    yarn.package = pkgs.yarn-berry;\n")
+		}
 	case "bun":
-		b.WriteString("\n  languages.bun.enable = true;\n")
+		b.WriteString("    bun.enable = true;\n")
 	}
+
+	b.WriteString("  };\n")
 
 	// TypeScript support.
 	if config.Extra("typescript", "") == "true" {
@@ -145,32 +177,69 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	return b.String(), nil
 }
 
-// PreCommitHooks returns pre-commit hook definitions for the JavaScript/TypeScript ecosystem.
-func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
-	return []ecosystem.HookConfig{
-		{
+// jsLintExtensions is the file pattern the eslint hook lints: JavaScript and
+// TypeScript, including their module and JSX variants. git-hooks.nix's
+// default (`\.js$`) skips TypeScript entirely.
+const jsLintExtensions = `\.(c|m)?[jt]sx?$`
+
+// prettierTypes are the pre-commit (identify) file types the prettier hook
+// formats. git-hooks.nix's default is every text file, which rewrites
+// qsdev-generated YAML, JSON and Markdown and fails the commit, so the hook
+// is limited to the JavaScript/TypeScript sources and stylesheets this module
+// covers.
+var prettierTypes = []string{"javascript", "jsx", "ts", "tsx", "css", "scss", "less"}
+
+// PreCommitHooks returns pre-commit hook definitions for the JavaScript/TypeScript
+// ecosystem. The eslint and prettier hooks are enabled only for projects that
+// use those tools (a config file or a dependency, recorded by Detect): forcing
+// them onto other projects fails every commit, since eslint without a config
+// exits with an error and prettier reformats files the project never
+// formatted. When the project depends on a tool, the hook runs the project's
+// own copy so its version and plugins match.
+func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookConfig {
+	var hooks []ecosystem.HookConfig
+	if src := config.Extra(ExtraPrettier, ""); src != "" {
+		hooks = append(hooks, ecosystem.HookConfig{
 			ID:            "prettier",
 			Name:          "prettier",
 			Description:   "Format JavaScript/TypeScript code with Prettier",
 			Entry:         "prettier --write --list-different",
 			Language:      "node",
-			Types:         []string{"javascript", "typescript", "json", "css"},
+			TypesOr:       prettierTypes,
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
 			BuiltIn:       true,
-		},
-		{
+			Settings:      nodeModulesBinPath(src, "prettier", nil),
+		})
+	}
+	if src := config.Extra(ExtraESLint, ""); src != "" {
+		hooks = append(hooks, ecosystem.HookConfig{
 			ID:            "eslint",
 			Name:          "eslint",
 			Description:   "Lint JavaScript/TypeScript code with ESLint",
 			Entry:         "eslint --fix",
 			Language:      "node",
-			Types:         []string{"javascript", "typescript"},
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
 			BuiltIn:       true,
-		},
+			Settings:      nodeModulesBinPath(src, "eslint", map[string]string{"extensions": jsLintExtensions}),
+		})
 	}
+	return hooks
+}
+
+// nodeModulesBinPath adds a git-hooks.nix binPath setting pointing at the
+// project's node_modules copy of bin when the project depends on it (src is
+// toolFromNodeModules). It returns nil when there is nothing to set.
+func nodeModulesBinPath(src, bin string, settings map[string]string) map[string]string {
+	if src != toolFromNodeModules {
+		return settings
+	}
+	if settings == nil {
+		settings = make(map[string]string, 1)
+	}
+	settings["binPath"] = "./node_modules/.bin/" + bin
+	return settings
 }
 
 // remotePackageExecDenyRules block every package manager's "download and run
@@ -187,6 +256,13 @@ var remotePackageExecDenyRules = []string{
 	"Bash(bun x *)",
 	"Bash(npm exec *)",
 	"Bash(npm x *)",
+	"Bash(deno x *)",
+	"Bash(deno run *npm:*)",
+	"Bash(deno run *jsr:*)",
+	"Bash(deno serve *npm:*)",
+	"Bash(deno serve *jsr:*)",
+	"Bash(deno npm:*)",
+	"Bash(deno jsr:*)",
 }
 
 // DenyRules returns Claude Code deny-rule patterns for the JavaScript/TypeScript ecosystem.

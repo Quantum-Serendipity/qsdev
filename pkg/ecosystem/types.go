@@ -100,6 +100,12 @@ type HookConfig struct {
 	AdditionalDependencies []string `yaml:"additional_dependencies"   json:"additional_dependencies"`
 	BuiltIn                bool     `yaml:"built_in"                  json:"built_in"`
 	NixPackage             string   `yaml:"nix_package,omitempty"     json:"nix_package,omitempty"`
+	// TypesOr limits the hook to files matching ANY of these identify tags.
+	// Unlike Types and Files, it is also rendered for BuiltIn hooks.
+	TypesOr []string `yaml:"types_or,omitempty" json:"types_or,omitempty"`
+	// Settings sets git-hooks.nix `settings.<key>` string options of a
+	// BuiltIn hook (e.g. binPath).
+	Settings map[string]string `yaml:"settings,omitempty" json:"settings,omitempty"`
 }
 
 // CIPhase categorizes a CI command into a build pipeline phase.

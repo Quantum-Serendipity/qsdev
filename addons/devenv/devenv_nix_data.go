@@ -31,7 +31,7 @@ type DevenvNixTemplateData struct {
 	Services           []ServiceTemplateData // Structured service configs.
 	GitHooksEnabled    bool                  // Whether the git-hooks block appears.
 	SecurityHooks      []string              // Always-present hooks (ripsecrets, etc.).
-	BuiltInHooks       []string              // Ecosystem hooks using .enable = true syntax.
+	BuiltInHooks       []BuiltInHookData     // Ecosystem hooks provided by git-hooks.nix.
 	CustomHooks        []CustomHookData      // Ecosystem hooks needing full attribute sets.
 	NeedsNativeLibPath bool                  // True when uv-tool MCP servers need LD_LIBRARY_PATH (NixOS).
 	EnterShell         string                // Shell script body for enterShell.
@@ -70,6 +70,24 @@ type ServiceScript struct {
 	Exec string // Shell command body.
 }
 
+// BuiltInHookData is an ecosystem hook provided by git-hooks.nix. A hook with
+// no TypesOr or Settings renders as `<id>.enable = true;`.
+type BuiltInHookData struct {
+	ID       string
+	TypesOr  []string
+	Settings []HookSetting // Sorted by Key.
+}
+
+// HookSetting is one git-hooks.nix `settings.<Key> = "<Value>";` option.
+type HookSetting struct {
+	Key   string
+	Value string
+}
+
+// hookSettingKeyRe restricts setting keys to plain Nix attribute names, since
+// keys are rendered unquoted.
+var hookSettingKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*$`)
+
 // CustomHookData holds all fields needed to render a custom pre-commit hook
 // as a full Nix attribute set in devenv.nix.
 type CustomHookData struct {
@@ -89,7 +107,7 @@ type CustomHookData struct {
 // languageHookResult holds the collected fragments and hooks from ecosystem modules.
 type languageHookResult struct {
 	Fragments     []LanguageFragment
-	BuiltInHooks  []string
+	BuiltInHooks  []BuiltInHookData
 	CustomHooks   []CustomHookData
 	ExtraPackages []string
 	SeenHookIDs   map[string]bool
@@ -219,7 +237,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 		securityHookIDs[id] = true
 		seenHookIDs[id] = true
 	}
-	data.BuiltInHooks = slices.DeleteFunc(data.BuiltInHooks, func(id string) bool { return securityHookIDs[id] })
+	data.BuiltInHooks = slices.DeleteFunc(data.BuiltInHooks, func(h BuiltInHookData) bool { return securityHookIDs[h.ID] })
 	data.CustomHooks = slices.DeleteFunc(data.CustomHooks, func(h CustomHookData) bool { return securityHookIDs[h.ID] })
 
 	// Specialized security custom hooks (always present), deduped against ecosystem hooks.
@@ -241,7 +259,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data.TaskScripts = buildTaskScripts(collectTaskDefinitions(answers, registry))
 
 	// Sort built-in hooks for deterministic output.
-	sort.Strings(data.BuiltInHooks)
+	slices.SortFunc(data.BuiltInHooks, func(a, b BuiltInHookData) int { return strings.Compare(a.ID, b.ID) })
 
 	return data, nil
 }
@@ -328,7 +346,11 @@ func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *eco
 			result.SeenHookIDs[hook.ID] = true
 
 			if hook.BuiltIn {
-				result.BuiltInHooks = append(result.BuiltInHooks, hook.ID)
+				builtIn, err := builtInHookData(hook)
+				if err != nil {
+					return result, fmt.Errorf("pre-commit hook for %s: %w", lang.Name, err)
+				}
+				result.BuiltInHooks = append(result.BuiltInHooks, builtIn)
 			} else {
 				entry := hook.Entry
 				rawEntry := false
@@ -669,4 +691,17 @@ func countEnabledTools(answers types.WizardAnswers) int {
 		}
 	}
 	return count
+}
+
+// builtInHookData converts a BuiltIn ecosystem hook into template data,
+// carrying the options git-hooks.nix exposes for its built-in hooks.
+func builtInHookData(hook ecosystem.HookConfig) (BuiltInHookData, error) {
+	data := BuiltInHookData{ID: hook.ID, TypesOr: hook.TypesOr}
+	for _, key := range slices.Sorted(maps.Keys(hook.Settings)) {
+		if !hookSettingKeyRe.MatchString(key) {
+			return BuiltInHookData{}, fmt.Errorf("hook %q: invalid setting name %q", hook.ID, key)
+		}
+		data.Settings = append(data.Settings, HookSetting{Key: key, Value: hook.Settings[key]})
+	}
+	return data, nil
 }

@@ -3,6 +3,7 @@ package javascript_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -194,7 +195,7 @@ func TestDevenvNixFragment_NPM(t *testing.T) {
 	m := &javascript.Module{}
 	config := ecosystem.ModuleConfig{
 		PackageManager: "npm",
-		Version:        "20.11.0",
+		Version:        "24.11.0",
 	}
 	fragment, err := m.DevenvNixFragment(config)
 	if err != nil {
@@ -204,7 +205,7 @@ func TestDevenvNixFragment_NPM(t *testing.T) {
 	requiredStrings := []string{
 		"languages.javascript",
 		"enable = true",
-		"pkgs.nodejs_20",
+		"pkgs.nodejs_24",
 		"npm.enable = true",
 	}
 	for _, s := range requiredStrings {
@@ -213,7 +214,7 @@ func TestDevenvNixFragment_NPM(t *testing.T) {
 		}
 	}
 	// npm should NOT have pnpm/yarn/bun enables
-	for _, s := range []string{"pnpm.enable", "yarn.enable", "languages.bun"} {
+	for _, s := range []string{"pnpm.enable", "yarn.enable", "bun.enable", "WARNING"} {
 		if strings.Contains(fragment, s) {
 			t.Errorf("DevenvNixFragment() should not contain %q for npm\ngot:\n%s", s, fragment)
 		}
@@ -250,18 +251,45 @@ func TestDevenvNixFragment_Yarn(t *testing.T) {
 	m := &javascript.Module{}
 	config := ecosystem.ModuleConfig{
 		PackageManager: "yarn",
-		Version:        "v18.17.0",
+		Version:        "v22.17.0",
 	}
 	fragment, err := m.DevenvNixFragment(config)
 	if err != nil {
 		t.Fatalf("DevenvNixFragment() error: %v", err)
 	}
 
-	if !strings.Contains(fragment, "pkgs.nodejs_18") {
-		t.Errorf("expected pkgs.nodejs_18, got:\n%s", fragment)
+	if !strings.Contains(fragment, "pkgs.nodejs_22") {
+		t.Errorf("expected pkgs.nodejs_22, got:\n%s", fragment)
 	}
 	if !strings.Contains(fragment, "yarn.enable = true") {
 		t.Errorf("expected yarn.enable, got:\n%s", fragment)
+	}
+}
+
+// TestDevenvNixFragment_YarnFlavorPackage verifies W053: devenv's default
+// yarn package is Yarn Classic, which refuses to run in a Berry project and
+// never reads .yarnrc.yml, so Berry projects must get pkgs.yarn-berry.
+func TestDevenvNixFragment_YarnFlavorPackage(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		extras    map[string]string
+		wantBerry bool
+	}{
+		{"berry (default)", nil, true},
+		{"classic", map[string]string{javascript.ExtraYarnClassic: "true"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fragment, err := (&javascript.Module{}).DevenvNixFragment(ecosystem.ModuleConfig{PackageManager: "yarn", Extras: tt.extras})
+			if err != nil {
+				t.Fatalf("DevenvNixFragment() error: %v", err)
+			}
+			if got := strings.Contains(fragment, "yarn.package = pkgs.yarn-berry;"); got != tt.wantBerry {
+				t.Errorf("yarn-berry package = %v, want %v\ngot:\n%s", got, tt.wantBerry, fragment)
+			}
+		})
 	}
 }
 
@@ -275,12 +303,17 @@ func TestDevenvNixFragment_Bun(t *testing.T) {
 		t.Fatalf("DevenvNixFragment() error: %v", err)
 	}
 
-	if !strings.Contains(fragment, "languages.bun.enable = true") {
-		t.Errorf("expected languages.bun.enable, got:\n%s", fragment)
+	// W052: devenv has no languages.bun module; Bun lives under
+	// languages.javascript.bun.
+	if !strings.Contains(fragment, "    bun.enable = true;") {
+		t.Errorf("expected bun.enable inside languages.javascript, got:\n%s", fragment)
+	}
+	if strings.Contains(fragment, "languages.bun") {
+		t.Errorf("fragment must not use the nonexistent languages.bun option, got:\n%s", fragment)
 	}
 	// Default version package
-	if !strings.Contains(fragment, "pkgs.nodejs_22") {
-		t.Errorf("expected default pkgs.nodejs_22 for bun, got:\n%s", fragment)
+	if !strings.Contains(fragment, "pkgs.nodejs_24") {
+		t.Errorf("expected default pkgs.nodejs_24 for bun, got:\n%s", fragment)
 	}
 }
 
@@ -303,30 +336,102 @@ func TestDevenvNixFragment_TypeScript(t *testing.T) {
 func TestDevenvNixFragment_VersionMapping(t *testing.T) {
 	m := &javascript.Module{}
 
+	// W055/W142: only majors packaged in nixpkgs (22, 24, 26) may be
+	// emitted; ranges resolve to the newest LTS (24) when accepted, else the
+	// newest accepted major, and any substitution is noted in the fragment
+	// rather than made silently.
 	tests := []struct {
 		version  string
 		expected string
+		wantNote bool
 	}{
-		{"18.17.0", "pkgs.nodejs_18"},
-		{">=20", "pkgs.nodejs_20"},
-		{"v22.1.0", "pkgs.nodejs_22"},
-		{"^24.0.0", "pkgs.nodejs_24"},
-		{"", "pkgs.nodejs_22"},       // default
-		{"16.0.0", "pkgs.nodejs_22"}, // unmapped -> default
+		{"", "pkgs.nodejs_24", false}, // default: newest LTS
+		// Open ranges prefer the newest LTS over a newer "Current" major.
+		{">=18", "pkgs.nodejs_24", false},
+		{">= 18", "pkgs.nodejs_24", false},
+		{"^18.18.0 || >=20", "pkgs.nodejs_24", false},
+		{"*", "pkgs.nodejs_24", false},
+		{">=25", "pkgs.nodejs_26", false},
+		{"^22 || ^26", "pkgs.nodejs_26", false},
+		{">=20 <25", "pkgs.nodejs_24", false},
+		{">18 <24", "pkgs.nodejs_22", false},
+		{"<24.0.0", "pkgs.nodejs_22", false},
+		{"22.x", "pkgs.nodejs_22", false},
+		{"20 - 22", "pkgs.nodejs_22", false},
+		{"v22.1.0", "pkgs.nodejs_22", false},
+		{"^24.0.0", "pkgs.nodejs_24", false},
+		{"26", "pkgs.nodejs_26", false},
+		{"lts/*", "pkgs.nodejs_24", false},
+		{"lts/krypton", "pkgs.nodejs_24", false},
+		{"node", "pkgs.nodejs_26", false},
+		{"18.17.0", "pkgs.nodejs_22", true}, // removed from nixpkgs
+		{"20", "pkgs.nodejs_22", true},      // throws in nixpkgs
+		{"lts/iron", "pkgs.nodejs_22", true},
+		{"25", "pkgs.nodejs_26", true},
+		{"27", "pkgs.nodejs_26", true},
+		{"banana", "pkgs.nodejs_24", true},
 	}
 
 	for _, tt := range tests {
 		t.Run("version_"+tt.version, func(t *testing.T) {
 			config := ecosystem.ModuleConfig{
-				PackageManager: "npm",
+				PackageManager: "pnpm",
 				Version:        tt.version,
 			}
 			fragment, err := m.DevenvNixFragment(config)
 			if err != nil {
 				t.Fatalf("DevenvNixFragment() error: %v", err)
 			}
-			if !strings.Contains(fragment, tt.expected) {
+			if !strings.Contains(fragment, "package = "+tt.expected+";") {
 				t.Errorf("version %q: expected %q in fragment\ngot:\n%s", tt.version, tt.expected, fragment)
+			}
+			for _, removed := range []string{"nodejs_18", "nodejs_20", "nodejs_25"} {
+				if strings.Contains(fragment, "pkgs."+removed) {
+					t.Errorf("version %q: fragment references removed pkgs.%s\ngot:\n%s", tt.version, removed, fragment)
+				}
+			}
+			if gotNote := strings.HasPrefix(fragment, "  # "); gotNote != tt.wantNote {
+				t.Errorf("version %q: substitution note = %v, want %v\ngot:\n%s", tt.version, gotNote, tt.wantNote, fragment)
+			}
+		})
+	}
+}
+
+// TestDevenvNixFragment_NPMAgeGateWarning verifies W054: npm 10 (bundled
+// with Node.js 22) ignores min-release-age, so an npm project resolving to
+// Node.js 22 is told the .npmrc age gate is inert, in both devenv.nix and
+// .npmrc, while the default Node.js (24, npm 11) gets no warning.
+func TestDevenvNixFragment_NPMAgeGateWarning(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		version string
+		pm      string
+		warn    bool
+	}{
+		{"", "npm", false},
+		{"24", "npm", false},
+		{">=20", "npm", false},
+		{"22", "npm", true},
+		{"22", "pnpm", false}, // pnpm has its own age gate
+	}
+	m := &javascript.Module{}
+	for _, tt := range tests {
+		t.Run(tt.pm+"_"+tt.version, func(t *testing.T) {
+			t.Parallel()
+			cfg := ecosystem.ModuleConfig{PackageManager: tt.pm, Version: tt.version}
+			fragment, err := m.DevenvNixFragment(cfg)
+			if err != nil {
+				t.Fatalf("DevenvNixFragment() error: %v", err)
+			}
+			if got := strings.Contains(fragment, "ignores min-release-age"); got != tt.warn {
+				t.Errorf("devenv.nix warning = %v, want %v\ngot:\n%s", got, tt.warn, fragment)
+			}
+			if tt.pm != "npm" {
+				return
+			}
+			npmrc := string(m.SecurityConfigs(cfg)[0].Content)
+			if got := strings.Contains(npmrc, "NOT enforced"); got != tt.warn {
+				t.Errorf(".npmrc warning = %v, want %v\ngot:\n%s", got, tt.warn, npmrc)
 			}
 		})
 	}
@@ -430,7 +535,6 @@ func TestSecurityConfigs_Yarn(t *testing.T) {
 
 	content := string(cfg.Content)
 	requiredStrings := []string{
-		"enableImmutableInstalls",
 		"enableHardenedMode",
 		"enableScripts",
 		"false",
@@ -445,7 +549,12 @@ func TestSecurityConfigs_Yarn(t *testing.T) {
 	if !strings.Contains(content, "Security-hardened") {
 		t.Errorf(".yarnrc.yml missing header comment\ncontent:\n%s", content)
 	}
-	if !strings.Contains(content, "Yarn >= 4.10.0") {
+	// W066: npmMinimalAgeGate arrived in Yarn 4.12, and a committed
+	// enableImmutableInstalls breaks every local install after a manifest edit.
+	if strings.Contains(content, "enableImmutableInstalls") {
+		t.Errorf(".yarnrc.yml must not force immutable installs locally\ncontent:\n%s", content)
+	}
+	if !strings.Contains(content, "Yarn >= 4.12") {
 		t.Errorf(".yarnrc.yml missing version requirement comment\ncontent:\n%s", content)
 	}
 }
@@ -546,8 +655,12 @@ func TestSecurityConfigs_PNPM_RegistryProxy(t *testing.T) {
 	}
 
 	content := string(configs[0].Content)
-	if !strings.Contains(content, "npmRegistryServer") {
-		t.Errorf("pnpm-workspace.yaml missing npmRegistryServer when proxy is set\ncontent:\n%s", content)
+	// W056: npmRegistryServer is a Yarn key; pnpm reads `registry`.
+	if !strings.Contains(content, "\nregistry: "+proxy) {
+		t.Errorf("pnpm-workspace.yaml missing registry when proxy is set\ncontent:\n%s", content)
+	}
+	if strings.Contains(content, "npmRegistryServer") {
+		t.Errorf("pnpm-workspace.yaml uses the Yarn-only npmRegistryServer key\ncontent:\n%s", content)
 	}
 	if !strings.Contains(content, proxy) {
 		t.Errorf("pnpm-workspace.yaml missing proxy URL\ncontent:\n%s", content)
@@ -590,7 +703,7 @@ func TestSecurityConfigs_Yarn_RegistryProxy(t *testing.T) {
 		t.Errorf(".yarnrc.yml missing proxy URL\ncontent:\n%s", content)
 	}
 	// Existing security settings must be preserved.
-	for _, s := range []string{"enableImmutableInstalls", "enableHardenedMode", "enableScripts", "npmMinimalAgeGate"} {
+	for _, s := range []string{"enableHardenedMode", "enableScripts", "npmMinimalAgeGate"} {
 		if !strings.Contains(content, s) {
 			t.Errorf(".yarnrc.yml missing %q when proxy is set\ncontent:\n%s", s, content)
 		}
@@ -611,7 +724,10 @@ func TestSecurityConfigs_Yarn_NoRegistryProxy(t *testing.T) {
 
 func TestPreCommitHooks(t *testing.T) {
 	m := &javascript.Module{}
-	hooks := m.PreCommitHooks(ecosystem.ModuleConfig{})
+	hooks := m.PreCommitHooks(ecosystem.ModuleConfig{Extras: map[string]string{
+		javascript.ExtraPrettier: "node_modules",
+		javascript.ExtraESLint:   "nix",
+	}})
 
 	if len(hooks) != 2 {
 		t.Fatalf("PreCommitHooks() returned %d hooks, want 2", len(hooks))
@@ -642,8 +758,8 @@ func TestDenyRules(t *testing.T) {
 
 	// Remote package executors + pipe-to-shell patterns (package installs
 	// moved to ask).
-	if len(rules) != 12 {
-		t.Fatalf("DenyRules() returned %d rules, want 12 (8 remote-exec + 4 pipe-to-shell)", len(rules))
+	if len(rules) != 19 {
+		t.Fatalf("DenyRules() returned %d rules, want 19 (15 remote-exec + 4 pipe-to-shell)", len(rules))
 	}
 
 	expectedPatterns := []string{
@@ -681,6 +797,15 @@ func TestDenyRules_RemotePackageExecutors(t *testing.T) {
 		"bun x evil-pkg",
 		"npm exec evil-pkg",
 		"npm x evil-pkg",
+		// W065: deno fetches and runs npm/JSR packages just like npx.
+		"deno x evil-pkg",
+		"deno x npm:evil-pkg",
+		"deno run npm:evil-cli@latest",
+		"deno run -A npm:evil-cli@latest",
+		"deno run --allow-all jsr:@evil/cli",
+		"deno serve -A jsr:@evil/server",
+		"deno npm:evil-cli",
+		"deno jsr:@evil/cli",
 	} {
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
@@ -688,6 +813,12 @@ func TestDenyRules_RemotePackageExecutors(t *testing.T) {
 				t.Errorf("no deny rule matches %q; rules: %v", cmd, rules)
 			}
 		})
+	}
+	// Running a local script stays allowed.
+	for _, cmd := range []string{"deno run main.ts", "deno run -A scripts/build.ts", "deno serve main.ts", "deno main.ts", "npm run build"} {
+		if slices.ContainsFunc(rules, func(r string) bool { return bashRuleMatches(r, cmd) }) {
+			t.Errorf("a deny rule matches the local command %q; rules: %v", cmd, rules)
+		}
 	}
 }
 
@@ -713,15 +844,16 @@ func TestDenyRules_MatchCatalog(t *testing.T) {
 	}
 }
 
-// bashRuleMatches reports whether a "Bash(<prefix> *)" rule matches cmd.
+// bashRuleMatches reports whether a "Bash(<pattern>)" rule matches cmd, with
+// each "*" in the pattern matching any run of characters.
 func bashRuleMatches(rule, cmd string) bool {
 	inner, ok := strings.CutPrefix(rule, "Bash(")
 	if !ok {
 		return false
 	}
 	inner = strings.TrimSuffix(inner, ")")
-	prefix, ok := strings.CutSuffix(inner, "*")
-	return ok && strings.HasPrefix(cmd, prefix)
+	re := "^" + strings.ReplaceAll(regexp.QuoteMeta(inner), `\*`, ".*") + "$"
+	return regexp.MustCompile(re).MatchString(cmd)
 }
 
 // --- CICommands tests ---

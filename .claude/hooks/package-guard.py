@@ -148,7 +148,9 @@ SAFETY_FLAGS: dict[str, str] = {
     "npm":     " --ignore-scripts",
     "yarn":    "",  # yarn 2+ has different flag semantics; leave to env config
     "pnpm":    "",  # pnpm v10+ blocks scripts by default
-    "bun":     "",  # bun blocks scripts by default
+    # bun runs lifecycle scripts for its built-in list of ~370 default-trusted
+    # packages (esbuild, sharp, puppeteer, ...), so scripts must be disabled.
+    "bun":     " --ignore-scripts",
     "pip":     " --only-binary :all:",
     "uv-pip":  " --only-binary :all:",
     "uv-add":  "",  # uv add does not support --only-binary
@@ -159,6 +161,7 @@ SAFETY_FLAGS: dict[str, str] = {
     "nix-env":     "",  # nix-env should be denied outright
     "nix-profile": "",
     "npx":     "",
+    "deno":    "",  # deno never runs npm lifecycle scripts unless --allow-scripts
 }
 
 # Flags that consume the next argument (so we skip them during extraction).
@@ -286,7 +289,37 @@ INSTALL_COMMANDS: dict[str, list[tuple[list[str], str, str]]] = {
     "go":       [(["get"], "Go", "go"), (["install"], "Go", "go")],
     "gem":      [(["install"], "RubyGems", "gem")],
     "composer": [(["require"], "Packagist", "composer")],
+    # deno is classified by _parse_deno_argv (packages are npm:/jsr: specifiers);
+    # the entry makes it a known manager for the wrapper fallback.
+    "deno":     [],
 }
+
+# Deno subcommands that fetch registry packages. add/install add dependencies
+# (a bare `deno install` installs from deno.json, like `npm install`); run,
+# serve, x and create download and execute a package, like npx / npm create.
+# `deno <module>` (no subcommand) is an implicit `deno run`.
+_DENO_INSTALL_VERBS: set[str] = {"add", "install", "i"}
+_DENO_EXEC_VERBS: set[str] = {"run", "serve", "x", "create"}
+# Deno flags that consume the following token as their value.
+_DENO_VALUE_FLAGS: set[str] = {
+    "--config", "-c", "--import-map", "--lock", "--cert", "--location",
+    "--seed", "--v8-flags", "--env-file", "--ext", "--root", "--name", "-n",
+    "--os", "--arch", "--log-level", "-L", "--preload", "--require",
+    "--port", "--host",
+}
+# Specifier prefixes naming a registry package in deno.
+_NPM_PREFIX = "npm:"
+_JSR_PREFIX = "jsr:"
+_DENO_REGISTRY_PREFIXES: tuple[str, ...] = (_NPM_PREFIX, _JSR_PREFIX)
+# Operands that name a local module or a URL rather than a registry package.
+_DENO_LOCAL_PREFIXES: tuple[str, ...] = ("./", "../", "/", "~", "file:", "http:", "https:", "data:")
+_DENO_SCRIPT_SUFFIXES: tuple[str, ...] = (
+    ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".json", ".jsonc",
+)
+
+# JSR packages have no OSV feed or age check in this guard, so they cannot be
+# validated automatically and are escalated to the user.
+_UNVALIDATED_PREFIXES: tuple[str, ...] = (_JSR_PREFIX,)
 
 # Characters that end a heredoc delimiter word (`cat <<EOF;` / `<<EOF)`).
 _HEREDOC_WORD_END = set(" \t\r\n;&|<>()")
@@ -898,12 +931,104 @@ def parse_install_argv(argv: list[str]) -> Optional[tuple[str, str, list[str]]]:
         if any(a == "profile" and b in ("add", "install") for a, b in zip(rest, rest[1:])):
             return ("nix", "nix-profile", [])
         return None
+    if exe == "deno":
+        return _parse_deno_argv(rest)
 
     for verb_tokens, ecosystem, manager in INSTALL_COMMANDS.get(exe, []):
         operands = _match_verb(rest, verb_tokens)
         if operands is not None:
             return (ecosystem, manager, _extract_package_args(operands, manager))
     return None
+
+
+def _deno_package(specifier: str) -> str:
+    """Map a deno `npm:` specifier to the npm package (with version, without
+    any subpath): `npm:@scope/pkg@1.2/bin` -> `@scope/pkg@1.2`. `jsr:`
+    specifiers are returned unchanged."""
+    if not specifier.startswith(_NPM_PREFIX):
+        return specifier
+    spec = specifier[len(_NPM_PREFIX):]
+    keep = 2 if spec.startswith("@") else 1
+    return "/".join(spec.split("/")[:keep])
+
+
+def _deno_operands(tokens: list[str]) -> tuple[list[str], set[str]]:
+    """Split deno arguments into positional operands and the flags seen.
+    Arguments after `--` belong to the executed program and are dropped, except
+    a module named right after it (`deno run -- npm:cli`). A registry specifier
+    is always kept as an operand, even where a value flag would consume it, so
+    a misjudged flag can never hide a package."""
+    operands: list[str] = []
+    flags: set[str] = set()
+    i, n = 0, len(tokens)
+    while i < n:
+        tok = tokens[i]
+        i += 1
+        if tok == "--":
+            if not operands and i < n:
+                operands.append(tokens[i])
+            break
+        if tok.startswith(_DENO_REGISTRY_PREFIXES) or not tok.startswith("-"):
+            operands.append(tok)
+            continue
+        flags.add(tok.split("=", 1)[0])
+        if "=" not in tok and tok in _DENO_VALUE_FLAGS and i < n:
+            if not tokens[i].startswith(_DENO_REGISTRY_PREFIXES):
+                i += 1  # consume the flag's value
+    return operands, flags
+
+
+def _deno_registry_package(operand: str, bare: str) -> Optional[str]:
+    """Return the registry specifier an operand names, or None for a local
+    module or URL. `bare` is the prefix given to an unprefixed name ("" when
+    unprefixed names are local modules in this position)."""
+    if operand.startswith(_DENO_REGISTRY_PREFIXES):
+        return _deno_package(operand)
+    if not bare or operand.startswith(_DENO_LOCAL_PREFIXES):
+        return None
+    return _deno_package(bare + operand)
+
+
+def _parse_deno_argv(rest: list[str]) -> Optional[tuple[str, str, list[str]]]:
+    """Classify a deno invocation (argv after `deno`). Registry packages are:
+    every operand of add/install (Deno >= 2.8 treats unprefixed names as npm
+    packages; `install -e`/`-g` operands may be local modules), and the module
+    run by run/serve/x/create or by an implicit `deno <module>`. `deno run
+    main.ts` runs a local script and is not an install."""
+    if not rest:
+        return None
+    verb = rest[0]
+    if verb.startswith("-") or verb.startswith(_DENO_REGISTRY_PREFIXES):
+        verb, args = "run", rest  # `deno -A npm:cli` == `deno run -A npm:cli`
+    elif verb in _DENO_INSTALL_VERBS or verb in _DENO_EXEC_VERBS:
+        args = rest[1:]
+    else:
+        return None
+    operands, flags = _deno_operands(args)
+
+    if verb in _DENO_INSTALL_VERBS:
+        if flags & {"-e", "--entrypoint"}:
+            bare = ""  # operands are local entrypoint modules
+        elif flags & {"-g", "--global"}:
+            # A global install takes a package, URL or local script.
+            operands = [o for o in operands if not o.endswith(_DENO_SCRIPT_SUFFIXES)]
+            bare = _NPM_PREFIX
+        else:
+            bare = _NPM_PREFIX
+        pkgs = [_deno_registry_package(o, bare) for o in operands]
+        return ("npm", "deno", [p for p in pkgs if p])
+
+    if not operands:
+        return None
+    target = operands[0]  # later operands are the program's own arguments
+    if verb == "x":
+        bare = "" if target.endswith(_DENO_SCRIPT_SUFFIXES) else _NPM_PREFIX
+    elif verb == "create":
+        bare = _JSR_PREFIX if "--jsr" in flags else _NPM_PREFIX if "--npm" in flags else ""
+    else:
+        bare = ""  # run/serve: an unprefixed module is a local file
+    pkg = _deno_registry_package(target, bare)
+    return ("npm", "deno", [pkg]) if pkg else None
 
 
 def strip_version(specifier: str) -> str:
@@ -1321,6 +1446,14 @@ def main() -> None:
 
         # Validate each package in this segment.
         for specifier in packages:
+            if specifier.startswith(_UNVALIDATED_PREFIXES):
+                reason = (
+                    f"Package '{specifier}' comes from a registry this guard cannot "
+                    f"check for vulnerabilities or publication age. Confirm it manually."
+                )
+                ask_reasons.append(reason)
+                checked_packages.append(specifier)
+                continue
             pkg_name = strip_version(specifier)
             version: Optional[str] = None
             if specifier != pkg_name:

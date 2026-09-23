@@ -517,3 +517,72 @@ func requireContains(t *testing.T, s, sub string) {
 		t.Errorf("output does not contain %q\n\nFull output:\n%s", sub, s)
 	}
 }
+
+// TestGenerateDevenvNix_BuiltInHookOptions verifies W063/W141: built-in
+// hooks carry their file-type limits and settings into devenv.nix instead of
+// rendering as a bare `.enable = true` that runs git-hooks.nix's defaults
+// (prettier on every text file, eslint on .js only, nixpkgs binaries).
+func TestGenerateDevenvNix_BuiltInHookOptions(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{{
+			Name:           "javascript",
+			PackageManager: "npm",
+			Extras:         []string{"prettier=node_modules", "eslint=node_modules"},
+		}},
+	}
+	got, err := devenv.GenerateDevenvNix(answers, ecosystem.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	content := string(got.Content)
+
+	requireContains(t, content, `    prettier = {
+      enable = true;
+      types_or = [ "javascript" "jsx" "ts" "tsx" "css" "scss" "less" ];
+      settings.binPath = "./node_modules/.bin/prettier";
+    };`)
+	requireContains(t, content, `    eslint = {
+      enable = true;
+      settings = {
+        binPath = "./node_modules/.bin/eslint";
+        extensions = "\\.(c|m)?[jt]sx?$";
+      };
+    };`)
+	if strings.Contains(content, "prettier.enable = true") {
+		t.Errorf("prettier rendered without its type limits:\n%s", content)
+	}
+}
+
+// TestGenerateDevenvNix_BuiltInHookWithoutProjectToolIsOff verifies that a
+// JavaScript project using neither ESLint nor Prettier gets neither hook, so
+// commits are not blocked by tools the project never adopted (W063).
+func TestGenerateDevenvNix_BuiltInHookWithoutProjectToolIsOff(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{{Name: "javascript", PackageManager: "npm"}},
+	}
+	got, err := devenv.GenerateDevenvNix(answers, ecosystem.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, id := range []string{"prettier", "eslint"} {
+		if strings.Contains(string(got.Content), "    "+id+" = {") || strings.Contains(string(got.Content), id+".enable") {
+			t.Errorf("%s hook enabled for a project that does not use it", id)
+		}
+	}
+}
+
+// TestGenerateDevenvNix_BuiltInHookRejectsBadSettingKey guards the unquoted
+// `settings.<key>` rendering against keys that are not Nix attribute names.
+func TestGenerateDevenvNix_BuiltInHookRejectsBadSettingKey(t *testing.T) {
+	t.Parallel()
+	mock := goMock()
+	mock.PreCommitHooksVal = []ecosystem.HookConfig{{
+		ID: "gofmt", BuiltIn: true, Settings: map[string]string{`x"; evil = "`: "v"},
+	}}
+	answers := types.WizardAnswers{Languages: []types.LanguageChoice{{Name: "go"}}}
+	if _, err := devenv.GenerateDevenvNix(answers, newTestRegistry(t, mock)); err == nil {
+		t.Fatal("expected an error for an invalid hook setting key")
+	}
+}

@@ -129,7 +129,7 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 			fmt.Fprintf(w, "  [fail] %s — %s%s\n", a.File, a.Description, errMsg)
 		}
 	}
-	if driftReport.TotalFindings == 0 {
+	if len(result.Fixed)+len(result.Skipped)+len(result.Failed) == 0 {
 		fmt.Fprintln(w, "No issues found. Project is healthy.")
 	}
 

@@ -121,14 +121,20 @@ func TestDoctorCmd_JSONContainsTools(t *testing.T) {
 		t.Error("expected at least one required tool in JSON output")
 	}
 
-	// Verify required tool names include expected ones.
+	// Required tools are the devenv environment prerequisites; language
+	// toolchains come from devenv per project and are optional.
 	names := make(map[string]bool)
 	for _, t := range report.RequiredTools {
 		names[t.Name] = true
 	}
-	for _, expected := range []string{"git", "go", "node", "npm"} {
+	for _, expected := range []string{"nix", "devenv", "direnv", "git"} {
 		if !names[expected] {
 			t.Errorf("expected required tool %q in JSON output", expected)
+		}
+	}
+	for _, optional := range []string{"go", "node", "npm"} {
+		if names[optional] {
+			t.Errorf("language toolchain %q must not be a required tool", optional)
 		}
 	}
 }

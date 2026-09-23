@@ -9,13 +9,25 @@ import (
 // CopyFile copies src to dst with the given permissions. If the copy or
 // final close fails the destination file is removed on a best-effort basis.
 func CopyFile(src, dst string, mode os.FileMode) error {
+	return copyFile(src, dst, mode, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+}
+
+// CopyFileExclusive copies src to dst like CopyFile, but fails with an error
+// satisfying errors.Is(err, fs.ErrExist) instead of overwriting when dst
+// already exists. Use it where an existing destination must never be
+// clobbered (e.g. backups).
+func CopyFileExclusive(src, dst string, mode os.FileMode) error {
+	return copyFile(src, dst, mode, os.O_CREATE|os.O_WRONLY|os.O_EXCL)
+}
+
+func copyFile(src, dst string, mode os.FileMode, flag int) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("opening source %s: %w", src, err)
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	out, err := os.OpenFile(dst, flag, mode)
 	if err != nil {
 		return fmt.Errorf("creating destination %s: %w", dst, err)
 	}

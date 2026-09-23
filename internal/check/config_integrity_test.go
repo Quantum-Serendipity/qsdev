@@ -1,8 +1,12 @@
 package check
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -136,5 +140,56 @@ func TestCheckConfigIntegrity_InvalidService(t *testing.T) {
 
 	if !hasFail {
 		t.Error("expected a validation failure for unknown service")
+	}
+}
+
+// TestCheckConfigIntegrity_ParseErrorIsNotNotFound verifies that a config that
+// exists but fails to parse is reported with its real error rather than as
+// "not found", and that dependent checks explain why they are skipped.
+func TestCheckConfigIntegrity_ParseErrorIsNotNotFound(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		content     string // "" means the file does not exist
+		wantName    string
+		wantMessage string
+		wantSkip    string
+	}{
+		{name: "missing", wantName: "config_exists", wantMessage: "not found", wantSkip: "found; skipping"},
+		{name: "newer schema", content: "version: 2\n", wantName: "config_parse", wantMessage: "newer than this binary", wantSkip: "could not be parsed"},
+		{name: "unknown key", content: "version: 1\nsecurity:\n  script_blockng: true\n", wantName: "config_parse", wantMessage: "script_blockng", wantSkip: "could not be parsed"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), ".qsdev.yaml")
+			if tt.content != "" {
+				if err := os.WriteFile(path, []byte(tt.content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg, err := config.ParseQsdevConfig(path)
+			ctx := CheckContext{QsdevConfig: cfg, ConfigErr: err}
+
+			results := CheckConfigIntegrity(ctx)
+			if len(results) != 1 {
+				t.Fatalf("expected 1 result, got %d", len(results))
+			}
+			r := results[0]
+			if r.Name != tt.wantName || r.Status != StatusFail || r.Severity != SeverityCritical {
+				t.Errorf("got %s %s/%s, want %s fail/critical", r.Name, r.Status, r.Severity, tt.wantName)
+			}
+			if !strings.Contains(r.Message, tt.wantMessage) {
+				t.Errorf("Message = %q, want it to contain %q", r.Message, tt.wantMessage)
+			}
+
+			for _, dep := range [][]CheckResult{CheckRequiredTools(ctx), CheckSecurityHardening(ctx), CheckBinaryCompatibility(ctx)} {
+				if len(dep) != 1 || dep[0].Status != StatusSkip || !strings.Contains(dep[0].Message, tt.wantSkip) {
+					t.Errorf("dependent check = %+v, want skip mentioning %q", dep, tt.wantSkip)
+				}
+			}
+		})
 	}
 }

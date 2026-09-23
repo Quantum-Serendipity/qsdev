@@ -5,13 +5,45 @@ import (
 	"io"
 )
 
-// categoryOrder defines the display order for categories in human output.
+// categoryOrder defines the display order for categories in human and JUnit output.
 var categoryOrder = []CheckCategory{
 	CategoryBinaryCompat,
 	CategoryConfigIntegrity,
 	CategoryRequiredTools,
 	CategoryFileState,
 	CategorySecurityHarden,
+	CategoryDenyConflicts,
+}
+
+// orderedCategories returns the categories present in results: those listed in
+// categoryOrder first, in that order, followed by any other category in
+// first-seen order. Formatters iterate this rather than categoryOrder directly
+// so a category missing from categoryOrder can never silently disappear from
+// the report while still counting toward the summary and exit code.
+func orderedCategories(results []CheckResult) []CheckCategory {
+	present := make(map[CheckCategory]bool)
+	var firstSeen []CheckCategory
+	for _, r := range results {
+		if !present[r.Category] {
+			present[r.Category] = true
+			firstSeen = append(firstSeen, r.Category)
+		}
+	}
+
+	ordered := make([]CheckCategory, 0, len(firstSeen))
+	listed := make(map[CheckCategory]bool, len(categoryOrder))
+	for _, cat := range categoryOrder {
+		listed[cat] = true
+		if present[cat] {
+			ordered = append(ordered, cat)
+		}
+	}
+	for _, cat := range firstSeen {
+		if !listed[cat] {
+			ordered = append(ordered, cat)
+		}
+	}
+	return ordered
 }
 
 func formatHuman(report *CheckReport, w io.Writer, useColor bool) error {
@@ -21,11 +53,8 @@ func formatHuman(report *CheckReport, w io.Writer, useColor bool) error {
 		byCategory[r.Category] = append(byCategory[r.Category], r)
 	}
 
-	for _, cat := range categoryOrder {
-		results, ok := byCategory[cat]
-		if !ok || len(results) == 0 {
-			continue
-		}
+	for _, cat := range orderedCategories(report.Checks) {
+		results := byCategory[cat]
 
 		// Category header.
 		header := categoryDisplayName(cat)

@@ -65,16 +65,21 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		StateFile:     filepath.Join(projectRoot, stateFilePath()),
 	}
 
-	// Parse config if present.
+	// Parse config if present. The error travels in the context so the report
+	// (including machine-readable formats) distinguishes "not found" from a
+	// parse failure.
 	cfgFile := branding.Get().ConfigFile
-	cfg, err := qsdevconfig.ParseQsdevConfig(filepath.Join(projectRoot, cfgFile))
-	if err != nil {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not parse %s: %v\n", cfgFile, err)
-	}
-	ctx.QsdevConfig = cfg
+	ctx.QsdevConfig, ctx.ConfigErr = qsdevconfig.ParseQsdevConfig(filepath.Join(projectRoot, cfgFile))
 
-	// Tool names from registry.
-	ctx.ToolNames = toolreg.DefaultRegistry().Names()
+	// Tool names from registry: all names for config validation, and the
+	// always-on subset for the required-tools check.
+	toolRegistry := toolreg.DefaultRegistry()
+	ctx.ToolNames = toolRegistry.Names()
+	for _, tool := range toolRegistry.All() {
+		if tool.Default == toolreg.AlwaysOn {
+			ctx.AlwaysOnToolNames = append(ctx.AlwaysOnToolNames, tool.Name)
+		}
+	}
 
 	// Profile names from registry.
 	ctx.ProfileNames = ensureProfileRegistry().Names()
@@ -88,7 +93,7 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 
 	// Required deny rules: every base rule the project's permission preset
 	// generates, so deleting any of them from settings.json is caught.
-	ctx.RequiredDenyRules, err = requiredDenyRules(answers, cfg)
+	ctx.RequiredDenyRules, err = requiredDenyRules(answers, ctx.QsdevConfig)
 	if err != nil {
 		return err
 	}
@@ -117,7 +122,7 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 				return freshFiles, err
 			}
 		}
-		report.Checks = check.ApplyAutoFixes(report.Checks, projectRoot, regen)
+		report.Checks = check.ApplyAutoFixes(report.Checks, projectRoot, ctx.StateFile, regen)
 		// Rebuild summary after fixes.
 		report = check.BuildReport(report.Checks, report.Version, report.Project)
 	}

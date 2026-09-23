@@ -3,8 +3,13 @@ package check
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	// Register the ecosystem modules whose generated security configs the
+	// hardening check derives its expected settings from.
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/javascript"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/python"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -65,117 +70,181 @@ func TestCheckSecurityHardening_LockFileMissing(t *testing.T) {
 	}
 }
 
-func TestCheckSecurityHardening_NpmrcPresent(t *testing.T) {
-	dir := t.TempDir()
+// hardenedNpmrc mirrors the settings the javascript module generates.
+const hardenedNpmrc = "save-exact=true\nignore-scripts=true\nmin-release-age=3\naudit=true\naudit-level=moderate\n"
 
-	// Create lock file and .npmrc.
-	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
+// findResult returns the result with the given name, or nil.
+func findResult(results []CheckResult, name string) *CheckResult {
+	for i := range results {
+		if results[i].Name == name {
+			return &results[i]
+		}
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".npmrc"), []byte("package-lock=true"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	return nil
+}
 
-	ctx := CheckContext{
-		ProjectRoot: dir,
-		QsdevConfig: &types.QsdevConfig{
-			Languages: []types.LanguageConfig{
-				{Name: "javascript"},
-			},
+func TestCheckSecurityHardening_SecurityConfigSettings(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		lang       types.LanguageConfig
+		files      map[string]string
+		wantStatus CheckStatus // "" means no security_config result expected
+	}{
+		{
+			name:       "npmrc with generated settings",
+			lang:       types.LanguageConfig{Name: "javascript"},
+			files:      map[string]string{".npmrc": hardenedNpmrc},
+			wantStatus: StatusPass,
+		},
+		{
+			name:       "npmrc with stricter release age and spacing",
+			lang:       types.LanguageConfig{Name: "javascript"},
+			files:      map[string]string{".npmrc": "# custom\nsave-exact = true\nignore-scripts = true\nmin-release-age = 7\naudit=true\naudit-level=moderate\nregistry=https://example.test/\n"},
+			wantStatus: StatusPass,
+		},
+		{
+			name:       "npmrc re-enables install scripts",
+			lang:       types.LanguageConfig{Name: "javascript"},
+			files:      map[string]string{".npmrc": strings.Replace(hardenedNpmrc, "ignore-scripts=true", "ignore-scripts=false", 1)},
+			wantStatus: StatusFail,
+		},
+		{
+			name:       "npmrc present but empty of hardening",
+			lang:       types.LanguageConfig{Name: "javascript"},
+			files:      map[string]string{".npmrc": "package-lock=true\n"},
+			wantStatus: StatusFail,
+		},
+		{
+			name:       "npmrc missing",
+			lang:       types.LanguageConfig{Name: "javascript"},
+			wantStatus: StatusFail,
+		},
+		{
+			name:       "pnpm workspace with hardening",
+			lang:       types.LanguageConfig{Name: "javascript", PackageManager: "pnpm"},
+			files:      map[string]string{"pnpm-workspace.yaml": "strictDepBuilds: true # comment\nminimumReleaseAge: 10080\ntrustPolicy: no-downgrade\nblockExoticSubdeps: true\npackages:\n  - app\n"},
+			wantStatus: StatusPass,
+		},
+		{
+			name:       "pip.conf with hardening",
+			lang:       types.LanguageConfig{Name: "python"},
+			files:      map[string]string{"pip.conf": "[global]\nrequire-hashes = true\nonly-binary = :all:\n"},
+			wantStatus: StatusPass,
+		},
+		{
+			name:       "pyproject.toml alone is not hardening",
+			lang:       types.LanguageConfig{Name: "python"},
+			files:      map[string]string{"pyproject.toml": "[project]\n"},
+			wantStatus: StatusFail,
+		},
+		{
+			name: "uv projects have no generated pip config",
+			lang: types.LanguageConfig{Name: "python", PackageManager: "uv"},
 		},
 	}
 
-	results := CheckSecurityHardening(ctx)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for name, content := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-	var npmrcResult *CheckResult
-	for i := range results {
-		if results[i].Name == "npmrc_exists" {
-			npmrcResult = &results[i]
-			break
-		}
-	}
+			results := CheckSecurityHardening(CheckContext{
+				ProjectRoot: dir,
+				QsdevConfig: &types.QsdevConfig{Languages: []types.LanguageConfig{tt.lang}},
+			})
 
-	if npmrcResult == nil {
-		t.Fatal("expected npmrc_exists result")
-		return
-	}
-	if npmrcResult.Status != StatusPass {
-		t.Errorf("npmrc_exists.Status = %s, want %s", npmrcResult.Status, StatusPass)
+			got := findResult(results, "security_config_"+tt.lang.Name)
+			if tt.wantStatus == "" {
+				if got != nil {
+					t.Fatalf("unexpected result: %+v", *got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("expected security_config_%s result, got %+v", tt.lang.Name, results)
+			}
+			if got.Status != tt.wantStatus {
+				t.Errorf("Status = %s, want %s (%s)", got.Status, tt.wantStatus, got.Message)
+			}
+		})
 	}
 }
 
-func TestCheckSecurityHardening_NpmrcMissing(t *testing.T) {
-	dir := t.TempDir()
+// TestCheckSecurityHardening_ManifestIsNotALockFile verifies that a file that
+// is both a manifest and a listed lock file never passes the lock-file check
+// on its own.
+func TestCheckSecurityHardening_ManifestIsNotALockFile(t *testing.T) {
+	t.Parallel()
 
-	// Create lock file but no .npmrc.
-	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		lang       string
+		files      []string
+		wantStatus CheckStatus
+	}{
+		{lang: "java", files: []string{"pom.xml"}, wantStatus: StatusWarn},
+		{lang: "java", files: []string{"pom.xml", "gradle.lockfile"}, wantStatus: StatusPass},
+		{lang: "python", files: []string{"requirements.txt"}, wantStatus: StatusWarn},
+		{lang: "python", files: []string{"requirements.txt", "uv.lock"}, wantStatus: StatusPass},
+		{lang: "cpp", files: []string{"vcpkg.json"}, wantStatus: StatusWarn},
+		{lang: "java", wantStatus: StatusFail},
 	}
 
-	ctx := CheckContext{
-		ProjectRoot: dir,
-		QsdevConfig: &types.QsdevConfig{
-			Languages: []types.LanguageConfig{
-				{Name: "javascript"},
-			},
-		},
-	}
+	for _, tt := range tests {
+		t.Run(tt.lang+"/"+strings.Join(tt.files, "+"), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for _, name := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-	results := CheckSecurityHardening(ctx)
-
-	var npmrcResult *CheckResult
-	for i := range results {
-		if results[i].Name == "npmrc_exists" {
-			npmrcResult = &results[i]
-			break
-		}
-	}
-
-	if npmrcResult == nil {
-		t.Fatal("expected npmrc_exists result")
-		return
-	}
-	if npmrcResult.Status != StatusFail {
-		t.Errorf("npmrc_exists.Status = %s, want %s", npmrcResult.Status, StatusFail)
+			results := CheckSecurityHardening(CheckContext{
+				ProjectRoot: dir,
+				QsdevConfig: &types.QsdevConfig{Languages: []types.LanguageConfig{{Name: tt.lang}}},
+			})
+			got := findResult(results, "lockfile_"+tt.lang)
+			if got == nil {
+				t.Fatalf("expected lockfile_%s result", tt.lang)
+			}
+			if got.Status != tt.wantStatus {
+				t.Errorf("Status = %s, want %s (%s)", got.Status, tt.wantStatus, got.Message)
+			}
+		})
 	}
 }
 
-func TestCheckSecurityHardening_PythonConfigPresent(t *testing.T) {
-	dir := t.TempDir()
+func TestSettingSatisfied(t *testing.T) {
+	t.Parallel()
 
-	// Create pyproject.toml and lock file.
-	if err := os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[project]"), 0o644); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		want, got string
+		ok        bool
+	}{
+		{"true", "true", true},
+		{"true", "TRUE", true},
+		{"true", "false", false},
+		{"3", "7", true},
+		{"3", "1", false},
+		{"7d", "14d", true},
+		{"7d", "3d", false},
+		{"7d", "14h", false},
+		{"moderate", "high", false},
 	}
-	if err := os.WriteFile(filepath.Join(dir, "uv.lock"), []byte("locked"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx := CheckContext{
-		ProjectRoot: dir,
-		QsdevConfig: &types.QsdevConfig{
-			Languages: []types.LanguageConfig{
-				{Name: "python"},
-			},
-		},
-	}
-
-	results := CheckSecurityHardening(ctx)
-
-	var pyResult *CheckResult
-	for i := range results {
-		if results[i].Name == "python_config_exists" {
-			pyResult = &results[i]
-			break
-		}
-	}
-
-	if pyResult == nil {
-		t.Fatal("expected python_config_exists result")
-		return
-	}
-	if pyResult.Status != StatusPass {
-		t.Errorf("python_config_exists.Status = %s, want %s", pyResult.Status, StatusPass)
+	for _, tt := range tests {
+		t.Run(tt.want+"_"+tt.got, func(t *testing.T) {
+			t.Parallel()
+			if got := settingSatisfied(tt.want, tt.got); got != tt.ok {
+				t.Errorf("settingSatisfied(%q, %q) = %v, want %v", tt.want, tt.got, got, tt.ok)
+			}
+		})
 	}
 }
 

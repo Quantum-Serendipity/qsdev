@@ -3,8 +3,10 @@ package check
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -65,7 +67,9 @@ func checkGeneratedFiles(ctx CheckContext) []CheckResult {
 	var results []CheckResult
 	hasIssues := false
 
-	for relPath, fs := range statuses {
+	// Iterate in sorted order so report output is reproducible across runs.
+	for _, relPath := range slices.Sorted(maps.Keys(statuses)) {
+		fs := statuses[relPath]
 		storedFile := genState.Files[relPath]
 
 		switch fs.Status {
@@ -125,37 +129,19 @@ func checkGeneratedFiles(ctx CheckContext) []CheckResult {
 	return results
 }
 
+// claudeSettingsRelPath is the project-relative, slash-separated path of the
+// Claude Code settings file that carries the deny rules.
+const claudeSettingsRelPath = ".claude/settings.json"
+
 func checkDenyRules(ctx CheckContext) []CheckResult {
 	if len(ctx.RequiredDenyRules) == 0 {
 		return nil
 	}
 
-	settingsPath := filepath.Join(ctx.ProjectRoot, ".claude", "settings.json")
+	settingsPath := filepath.Join(ctx.ProjectRoot, filepath.FromSlash(claudeSettingsRelPath))
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []CheckResult{
-				{
-					Category:    CategoryFileState,
-					Name:        "deny_rules_present",
-					Status:      StatusWarn,
-					Severity:    SeverityMedium,
-					Message:     ".claude/settings.json not found; cannot verify deny rules",
-					FilePath:    ".claude/settings.json",
-					Remediation: "Run 'qsdev init' with Claude Code enabled",
-				},
-			}
-		}
-		return []CheckResult{
-			{
-				Category: CategoryFileState,
-				Name:     "deny_rules_present",
-				Status:   StatusWarn,
-				Severity: SeverityMedium,
-				Message:  fmt.Sprintf("Could not read .claude/settings.json: %v", err),
-				FilePath: ".claude/settings.json",
-			},
-		}
+		return []CheckResult{settingsUnavailableResult(ctx, err)}
 	}
 
 	var settings struct {
@@ -171,7 +157,7 @@ func checkDenyRules(ctx CheckContext) []CheckResult {
 				Status:      StatusFail,
 				Severity:    SeverityMedium,
 				Message:     fmt.Sprintf("Could not parse .claude/settings.json: %v", err),
-				FilePath:    ".claude/settings.json",
+				FilePath:    claudeSettingsRelPath,
 				Remediation: "Fix JSON syntax in .claude/settings.json",
 			},
 		}
@@ -197,7 +183,7 @@ func checkDenyRules(ctx CheckContext) []CheckResult {
 				Status:   StatusPass,
 				Severity: SeverityInfo,
 				Message:  "All required deny rules are present in settings.json",
-				FilePath: ".claude/settings.json",
+				FilePath: claudeSettingsRelPath,
 			},
 		}
 	}
@@ -210,7 +196,7 @@ func checkDenyRules(ctx CheckContext) []CheckResult {
 			Status:      StatusFail,
 			Severity:    SeverityMedium,
 			Message:     fmt.Sprintf("Required deny rule missing: %s", rule),
-			FilePath:    ".claude/settings.json",
+			FilePath:    claudeSettingsRelPath,
 			Remediation: "Run 'qsdev check --auto-fix' to add missing deny rules",
 			AutoFixable: true,
 			Metadata:    map[string]string{"rule": rule},
@@ -218,4 +204,57 @@ func checkDenyRules(ctx CheckContext) []CheckResult {
 	}
 
 	return results
+}
+
+// settingsUnavailableResult reports a missing or unreadable settings.json. When
+// the project is configured for Claude Code the file is the only carrier of the
+// deny rules, so its absence is a high-severity failure (the agent would run
+// with no deny rules at all); otherwise there is nothing to enforce and the
+// result is only a warning.
+func settingsUnavailableResult(ctx CheckContext, err error) CheckResult {
+	message := fmt.Sprintf("Could not read %s: %v", claudeSettingsRelPath, err)
+	if os.IsNotExist(err) {
+		message = claudeSettingsRelPath + " not found; cannot verify deny rules"
+	}
+
+	if !claudeCodeConfigured(ctx) {
+		return CheckResult{
+			Category:    CategoryFileState,
+			Name:        "deny_rules_present",
+			Status:      StatusWarn,
+			Severity:    SeverityMedium,
+			Message:     message,
+			FilePath:    claudeSettingsRelPath,
+			Remediation: "Run 'qsdev init' with Claude Code enabled",
+		}
+	}
+
+	return CheckResult{
+		Category:    CategoryFileState,
+		Name:        "deny_rules_present",
+		Status:      StatusFail,
+		Severity:    SeverityHigh,
+		Message:     message + " (Claude Code is enabled, so no deny rules are enforced)",
+		FilePath:    claudeSettingsRelPath,
+		Remediation: "Run 'qsdev repair' or 'qsdev init --update' to restore " + claudeSettingsRelPath,
+	}
+}
+
+// claudeCodeConfigured reports whether the project is expected to carry a
+// qsdev-managed .claude/settings.json. An explicit claude_code.enabled value in
+// the config is authoritative; when the config is silent, the state file
+// recording settings.json as a generated file means Claude Code was set up.
+func claudeCodeConfigured(ctx CheckContext) bool {
+	if ctx.QsdevConfig != nil && ctx.QsdevConfig.ClaudeCode.Enabled != nil {
+		return *ctx.QsdevConfig.ClaudeCode.Enabled
+	}
+	if ctx.StateFile == "" {
+		return false
+	}
+	genState, err := state.LoadStateFromFile(ctx.StateFile)
+	if err != nil {
+		return false
+	}
+	_, tracked := genState.Files[claudeSettingsRelPath]
+	return tracked
 }

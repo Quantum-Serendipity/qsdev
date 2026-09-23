@@ -1,6 +1,63 @@
 package doctor
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+// TestRequiredChecks verifies the required set is the devenv environment's
+// prerequisites, and that language toolchains (provided per project by
+// devenv) are optional.
+func TestRequiredChecks(t *testing.T) {
+	t.Parallel()
+
+	var names []string
+	for _, tc := range RequiredChecks() {
+		names = append(names, tc.Name)
+		if tc.InstallHint == "" {
+			t.Errorf("required check %s has no install hint", tc.Name)
+		}
+	}
+	want := []string{"nix", "devenv", "direnv", "git"}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Errorf("RequiredChecks() = %v, want %v", names, want)
+	}
+
+	for _, name := range []string{"go", "node", "npm"} {
+		if findCheck(t, name).Required {
+			t.Errorf("%s must not be required", name)
+		}
+	}
+}
+
+// TestParseVersion_FullOutput verifies parsers against the full, multi-line
+// output real tools print.
+func TestParseVersion_FullOutput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		tool, raw, want string
+	}{
+		{"shellcheck", "ShellCheck - shell script analysis tool\nversion: 0.11.0\nlicense: GNU General Public License, version 3\n", "0.11.0"},
+		{"az", "{\n  \"azure-cli\": \"2.58.0\",\n  \"azure-cli-core\": \"2.58.0\"\n}\n", "2.58.0"},
+		{"az", "azure-cli                         2.58.0 *\n\ncore                              2.58.0 *\n", "2.58.0"},
+		{"gcloud", "Google Cloud SDK 462.0.1\nbq 2.0.101\n", "462.0.1"},
+		{"syft", "Application:   syft\nVersion:       1.4.1\nBuildDate:     2024-05-01\n", "1.4.1"},
+		{"grype", "Application:   grype\nVersion:       0.79.4\n", "0.79.4"},
+		{"devenv", "devenv 2.1.2 (x86_64-linux)\n", "2.1.2"},
+		{"nix", "nix (Nix) 2.34.8\n", "2.34.8"},
+		{"python3", "Python 3.12.1\n", "3.12.1"},
+		{"direnv", "2.37.1\n", "2.37.1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tool, func(t *testing.T) {
+			t.Parallel()
+			if got := findCheck(t, tt.tool).ParseVersion(tt.raw); got != tt.want {
+				t.Errorf("%s ParseVersion(%q) = %q, want %q", tt.tool, tt.raw, got, tt.want)
+			}
+		})
+	}
+}
 
 // findCheck looks up a ToolCheck by name from the default registry.
 func findCheck(t *testing.T, name string) ToolCheck {

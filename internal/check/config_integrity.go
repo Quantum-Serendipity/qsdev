@@ -1,6 +1,10 @@
 package check
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
+
 	"github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -10,6 +14,19 @@ import (
 // and has valid profile, language, and service names.
 func CheckConfigIntegrity(ctx CheckContext) []CheckResult {
 	if ctx.QsdevConfig == nil {
+		if configParseFailed(ctx) {
+			return []CheckResult{
+				{
+					Category:    CategoryConfigIntegrity,
+					Name:        "config_parse",
+					Status:      StatusFail,
+					Severity:    SeverityCritical,
+					Message:     fmt.Sprintf("%s could not be parsed: %v", branding.Get().ConfigFile, ctx.ConfigErr),
+					FilePath:    branding.Get().ConfigFile,
+					Remediation: "Fix the configuration in " + branding.Get().ConfigFile,
+				},
+			}
+		}
 		return []CheckResult{
 			{
 				Category:    CategoryConfigIntegrity,
@@ -108,4 +125,19 @@ func CheckConfigIntegrity(ctx CheckContext) []CheckResult {
 	}
 
 	return results
+}
+
+// configParseFailed reports whether the config is unavailable because it
+// exists but could not be read or parsed (as opposed to simply not existing).
+func configParseFailed(ctx CheckContext) bool {
+	return ctx.ConfigErr != nil && !errors.Is(ctx.ConfigErr, fs.ErrNotExist)
+}
+
+// configUnavailableMessage explains why config-dependent checks are skipped,
+// distinguishing a missing config from one that failed to parse.
+func configUnavailableMessage(ctx CheckContext, skipping string) string {
+	if configParseFailed(ctx) {
+		return branding.Get().ConfigFile + " could not be parsed; skipping " + skipping
+	}
+	return "No " + branding.Get().ConfigFile + " found; skipping " + skipping
 }

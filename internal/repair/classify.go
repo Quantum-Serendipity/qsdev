@@ -2,7 +2,6 @@ package repair
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -17,6 +16,10 @@ var neverAutoRepairFiles = map[string]bool{
 	"devenv.yaml": true,
 }
 
+// claudeMDPath is the project-relative path of the file that holds the
+// section markers checked by drift's marker-integrity category.
+const claudeMDPath = "CLAUDE.md"
+
 // classifyFindings maps drift findings from a posture DriftReport into
 // concrete RepairActions. The classification rules depend on the file's merge
 // strategy (from genState) and the drift category.
@@ -30,6 +33,7 @@ func classifyFindings(report *drift.Report, genState types.GeneratedState, opts 
 	for _, cat := range report.Categories {
 		for _, f := range cat.Findings {
 			action := classifyFinding(cat.Name, f, genState, opts)
+			action.Severity = f.Severity
 			actions = append(actions, action)
 		}
 	}
@@ -70,7 +74,7 @@ func classifyFileModification(f drift.Finding, genState types.GeneratedState, op
 	// A deleted file has no hand-edits to protect, so regenerate it — even one on
 	// the never-auto-modify list (the exemption below guards *modification* of an
 	// existing file, not recreation of a missing one).
-	if strings.Contains(f.Description, "has been deleted") {
+	if f.FileStatus == types.Deleted {
 		return RepairAction{
 			File:        file,
 			Category:    CategoryFileDrift,
@@ -88,6 +92,17 @@ func classifyFileModification(f drift.Finding, genState types.GeneratedState, op
 			Description: fmt.Sprintf("%s is never auto-modified", file),
 			ActionType:  ActionSkip,
 			AutoFixable: false,
+		}
+	}
+
+	// --reset regenerates every other managed file regardless of strategy.
+	if opts.Reset {
+		return RepairAction{
+			File:        file,
+			Category:    CategoryFileDrift,
+			Description: fmt.Sprintf("Regenerate %s (--reset)", file),
+			ActionType:  ActionRegenerate,
+			AutoFixable: true,
 		}
 	}
 
@@ -115,8 +130,8 @@ func classifyFileModification(f drift.Finding, genState types.GeneratedState, op
 		}
 
 	case types.SectionMarker, types.ThreeWayMerge, types.ManualMerge:
-		// Human-edited files: only fix with --force or --reset.
-		if opts.Force || opts.Reset {
+		// Human-edited files: only fix with --force (or --reset, handled above).
+		if opts.Force {
 			return RepairAction{
 				File:        file,
 				Category:    CategoryFileDrift,
@@ -145,26 +160,41 @@ func classifyFileModification(f drift.Finding, genState types.GeneratedState, op
 	}
 }
 
-// classifyHookDrift handles the "Pre-Commit Hook Drift" category.
+// classifyHookDrift handles the "Pre-Commit Hook Drift" category. Git hooks
+// are installed by the devenv shell (or qsdev update), not by writing a
+// generated file, so repair reports the finding with its remediation.
 func classifyHookDrift(f drift.Finding) RepairAction {
 	return RepairAction{
 		File:        f.Subject,
 		Category:    CategoryHookDrift,
-		Description: fmt.Sprintf("Reinstall hook: %s", f.Description),
-		ActionType:  ActionReinstall,
-		AutoFixable: true,
+		Description: withRemediation(f),
+		ActionType:  ActionSkip,
+		AutoFixable: false,
 	}
 }
 
-// classifyMarkerDrift handles the "Section Marker Integrity" category.
+// classifyMarkerDrift handles the "Section Marker Integrity" category. Marker
+// findings concern sections inside CLAUDE.md, a user-edited file, so they are
+// reported with their remediation; they count as resolved when CLAUDE.md
+// itself is regenerated in the same run.
 func classifyMarkerDrift(f drift.Finding) RepairAction {
 	return RepairAction{
 		File:        f.Subject,
 		Category:    CategoryMarkerDrift,
-		Description: fmt.Sprintf("Regenerate to fix marker: %s", f.Description),
-		ActionType:  ActionRegenerate,
-		AutoFixable: true,
+		Description: withRemediation(f),
+		ActionType:  ActionSkip,
+		AutoFixable: false,
+		ResolvedBy:  claudeMDPath,
 	}
+}
+
+// withRemediation formats a finding's description followed by its
+// remediation, when it has one.
+func withRemediation(f drift.Finding) string {
+	if f.Remediation == "" {
+		return f.Description
+	}
+	return f.Description + "; " + f.Remediation
 }
 
 // classifyVersionDrift handles the "Version Drift" category.

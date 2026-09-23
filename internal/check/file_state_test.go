@@ -319,3 +319,112 @@ func TestCheckDenyRules_EmptyRequired(t *testing.T) {
 		t.Errorf("expected 0 results for empty required rules, got %d", len(results))
 	}
 }
+
+func TestCheckDenyRules_SettingsMissingFailsWhenClaudeCodeConfigured(t *testing.T) {
+	t.Parallel()
+
+	enabled, disabled := true, false
+
+	// trackedState writes a state file recording settings.json as generated.
+	trackedState := func(t *testing.T, dir string) string {
+		t.Helper()
+		genState := state.RecordFiles([]types.GeneratedFile{
+			{Path: claudeSettingsRelPath, Content: []byte("{}"), Strategy: types.ThreeWayMerge},
+		})
+		stateFile := filepath.Join(dir, ".qsdev", "state.yaml")
+		if err := state.SaveStateToFile(stateFile, genState); err != nil {
+			t.Fatal(err)
+		}
+		return stateFile
+	}
+
+	tests := []struct {
+		name         string
+		cfg          *types.QsdevConfig
+		trackInState bool
+		wantStatus   CheckStatus
+		wantSeverity CheckSeverity
+	}{
+		{
+			name:         "config enables claude code",
+			cfg:          &types.QsdevConfig{Version: 1, ClaudeCode: types.ClaudeCodeConfig{Enabled: &enabled}},
+			wantStatus:   StatusFail,
+			wantSeverity: SeverityHigh,
+		},
+		{
+			name:         "config silent but state tracks settings.json",
+			cfg:          &types.QsdevConfig{Version: 1},
+			trackInState: true,
+			wantStatus:   StatusFail,
+			wantSeverity: SeverityHigh,
+		},
+		{
+			name:         "config explicitly disables claude code",
+			cfg:          &types.QsdevConfig{Version: 1, ClaudeCode: types.ClaudeCodeConfig{Enabled: &disabled}},
+			trackInState: true,
+			wantStatus:   StatusWarn,
+			wantSeverity: SeverityMedium,
+		},
+		{
+			name:         "claude code not configured",
+			cfg:          &types.QsdevConfig{Version: 1},
+			wantStatus:   StatusWarn,
+			wantSeverity: SeverityMedium,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			ctx := CheckContext{
+				ProjectRoot:       dir,
+				QsdevConfig:       tt.cfg,
+				RequiredDenyRules: []string{`Bash(rm -rf *)`},
+			}
+			if tt.trackInState {
+				ctx.StateFile = trackedState(t, dir)
+			}
+
+			results := checkDenyRules(ctx)
+			if len(results) != 1 {
+				t.Fatalf("expected 1 result, got %d", len(results))
+			}
+			if results[0].Status != tt.wantStatus || results[0].Severity != tt.wantSeverity {
+				t.Errorf("got %s/%s, want %s/%s", results[0].Status, results[0].Severity, tt.wantStatus, tt.wantSeverity)
+			}
+			if got := ShouldFail(results, AuditLevelMedium); got != (tt.wantStatus == StatusFail) {
+				t.Errorf("ShouldFail(medium) = %v", got)
+			}
+		})
+	}
+}
+
+func TestCheckGeneratedFiles_DeterministicOrder(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	var files []types.GeneratedFile
+	for _, name := range []string{"e.txt", "a.txt", "d.txt", "c.txt", "b.txt"} {
+		files = append(files, types.GeneratedFile{Path: name, Content: []byte(name)})
+	}
+	stateFile := filepath.Join(dir, ".qsdev", "state.yaml")
+	if err := state.SaveStateToFile(stateFile, state.RecordFiles(files)); err != nil {
+		t.Fatal(err)
+	}
+	// Every tracked file is absent on disk, so each yields one result.
+	ctx := CheckContext{ProjectRoot: dir, StateFile: stateFile}
+
+	want := []string{"a.txt", "b.txt", "c.txt", "d.txt", "e.txt"}
+	for range 10 {
+		results := checkGeneratedFiles(ctx)
+		if len(results) != len(want) {
+			t.Fatalf("got %d results, want %d", len(results), len(want))
+		}
+		for i, r := range results {
+			if r.FilePath != want[i] {
+				t.Fatalf("result %d = %s, want %s (order must be sorted)", i, r.FilePath, want[i])
+			}
+		}
+	}
+}

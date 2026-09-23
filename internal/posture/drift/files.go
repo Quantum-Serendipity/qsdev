@@ -30,6 +30,7 @@ func detectFileModification(projectDir string, genState types.GeneratedState) Ca
 				// Human-edited files are expected to diverge.
 				cat.Findings = append(cat.Findings, Finding{
 					Category:    categoryFileModification,
+					FileStatus:  fs.Status,
 					Severity:    Info,
 					Subject:     path,
 					Description: fmt.Sprintf("Human-edited file %q has been modified (strategy: %s)", path, storedFile.Strategy),
@@ -40,6 +41,7 @@ func detectFileModification(projectDir string, genState types.GeneratedState) Ca
 				// Machine-owned files should not be edited manually.
 				cat.Findings = append(cat.Findings, Finding{
 					Category:    categoryFileModification,
+					FileStatus:  fs.Status,
 					Severity:    Warning,
 					Subject:     path,
 					Description: fmt.Sprintf("Machine-owned file %q has been modified (strategy: %s)", path, storedFile.Strategy),
@@ -51,6 +53,7 @@ func detectFileModification(projectDir string, genState types.GeneratedState) Ca
 			default:
 				cat.Findings = append(cat.Findings, Finding{
 					Category:    categoryFileModification,
+					FileStatus:  fs.Status,
 					Severity:    Warning,
 					Subject:     path,
 					Description: fmt.Sprintf("File %q has been modified (strategy: %s)", path, storedFile.Strategy),
@@ -63,6 +66,7 @@ func detectFileModification(projectDir string, genState types.GeneratedState) Ca
 		case types.Deleted:
 			cat.Findings = append(cat.Findings, Finding{
 				Category:    categoryFileModification,
+				FileStatus:  fs.Status,
 				Severity:    Error,
 				Subject:     path,
 				Description: fmt.Sprintf("Generated file %q has been deleted", path),
@@ -73,6 +77,7 @@ func detectFileModification(projectDir string, genState types.GeneratedState) Ca
 		case types.Unknown:
 			cat.Findings = append(cat.Findings, Finding{
 				Category:    categoryFileModification,
+				FileStatus:  fs.Status,
 				Severity:    Info,
 				Subject:     path,
 				Description: fmt.Sprintf("Unable to determine status of %q: %v", path, fs.Error),

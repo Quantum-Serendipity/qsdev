@@ -157,7 +157,9 @@ type CheckContext struct {
 	ProjectRoot          string
 	BinaryVersion        string
 	QsdevConfig          *types.QsdevConfig
-	ToolNames            []string
+	ConfigErr            error    // why QsdevConfig is nil: not found vs. failed to parse
+	ToolNames            []string // every registered tool, for config name validation
+	AlwaysOnToolNames    []string // tools that must never appear in tools.disabled
 	ProfileNames         []string
 	RequiredDenyRules    []string
 	StateFile            string

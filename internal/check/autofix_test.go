@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -48,7 +50,7 @@ func TestApplyAutoFixes_DenyRules(t *testing.T) {
 		},
 	}
 
-	updated := ApplyAutoFixes(results, dir, nil)
+	updated := ApplyAutoFixes(results, dir, "", nil)
 
 	// The deny rule should be fixed.
 	if updated[0].Status != StatusPass {
@@ -108,7 +110,7 @@ func TestApplyAutoFixes_NoAutoFixable(t *testing.T) {
 		},
 	}
 
-	updated := ApplyAutoFixes(results, t.TempDir(), nil)
+	updated := ApplyAutoFixes(results, t.TempDir(), "", nil)
 
 	if updated[0].Status != StatusFail {
 		t.Errorf("non-fixable result should remain failed; got %s", updated[0].Status)
@@ -147,7 +149,7 @@ func TestApplyAutoFixes_DeletedFiles(t *testing.T) {
 		}, nil
 	}
 
-	updated := ApplyAutoFixes(results, dir, regen)
+	updated := ApplyAutoFixes(results, dir, "", regen)
 
 	if updated[0].Status != StatusPass {
 		t.Errorf("updated[0].Status = %s, want %s", updated[0].Status, StatusPass)
@@ -182,7 +184,7 @@ func TestApplyAutoFixes_DeletedFiles_NilRegenerate(t *testing.T) {
 		},
 	}
 
-	updated := ApplyAutoFixes(results, t.TempDir(), nil)
+	updated := ApplyAutoFixes(results, t.TempDir(), "", nil)
 
 	if updated[0].Status != StatusFail {
 		t.Errorf("should remain failed without regenerate func, got %s", updated[0].Status)
@@ -206,7 +208,7 @@ func TestApplyAutoFixes_DeletedFiles_RegenerateFails(t *testing.T) {
 		return nil, fmt.Errorf("generation failed")
 	}
 
-	updated := ApplyAutoFixes(results, t.TempDir(), regen)
+	updated := ApplyAutoFixes(results, t.TempDir(), "", regen)
 
 	if updated[0].Status != StatusFail {
 		t.Errorf("should remain failed on regen error, got %s", updated[0].Status)
@@ -232,7 +234,7 @@ func TestApplyAutoFixes_DeletedFiles_FileNotInFreshSet(t *testing.T) {
 		}, nil
 	}
 
-	updated := ApplyAutoFixes(results, t.TempDir(), regen)
+	updated := ApplyAutoFixes(results, t.TempDir(), "", regen)
 
 	if updated[0].Status != StatusFail {
 		t.Errorf("should remain failed when file not in fresh set, got %s", updated[0].Status)
@@ -264,7 +266,7 @@ func TestApplyAutoFixes_DeletedFiles_NestedDirectory(t *testing.T) {
 		}, nil
 	}
 
-	updated := ApplyAutoFixes(results, dir, regen)
+	updated := ApplyAutoFixes(results, dir, "", regen)
 
 	if updated[0].Status != StatusPass {
 		t.Errorf("should fix nested file, got %s", updated[0].Status)
@@ -276,5 +278,152 @@ func TestApplyAutoFixes_DeletedFiles_NestedDirectory(t *testing.T) {
 	}
 	if string(restored) != `{"test":true}` {
 		t.Errorf("unexpected content: %s", string(restored))
+	}
+}
+
+func TestAddDenyRules(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr string
+	}{
+		{
+			name:  "preserves key order and does not HTML-escape",
+			input: `{"z":1,"permissions":{"allow":["Bash(a > b && c)"],"deny":["Bash(x)"]},"a":"<tag>"}`,
+			want: "{\n  \"z\": 1,\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(a > b && c)\"\n    ],\n" +
+				"    \"deny\": [\n      \"Bash(x)\",\n      \"Bash(curl * | sh)\"\n    ]\n  },\n  \"a\": \"<tag>\"\n}\n",
+		},
+		{
+			name:  "creates permissions and deny",
+			input: `{"hooks":{}}`,
+			want:  "{\n  \"hooks\": {},\n  \"permissions\": {\n    \"deny\": [\n      \"Bash(curl * | sh)\"\n    ]\n  }\n}\n",
+		},
+		{
+			name:  "does not duplicate an existing rule",
+			input: `{"permissions":{"deny":["Bash(curl * | sh)"]}}`,
+			want:  "{\n  \"permissions\": {\n    \"deny\": [\n      \"Bash(curl * | sh)\"\n    ]\n  }\n}\n",
+		},
+		{name: "deny is not an array", input: `{"permissions":{"deny":"Bash(x)"}}`, wantErr: "not an array"},
+		{name: "permissions is not an object", input: `{"permissions":[]}`, wantErr: "not an object"},
+		{name: "not an object", input: `[]`, wantErr: "expected a JSON object"},
+		{name: "trailing data", input: `{} {}`, wantErr: "unexpected data"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := addDenyRules([]byte(tt.input), []string{"Bash(curl * | sh)"})
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("got:\n%s\nwant:\n%s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyAutoFixes_ReportsFixFailures(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"permissions":{"deny":"Bash(x)"}}`)
+	settingsPath := filepath.Join(dir, ".claude", "settings.json")
+	if err := os.WriteFile(settingsPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	results := []CheckResult{
+		{
+			Name:        "deny_rule_missing",
+			Status:      StatusFail,
+			Message:     "Required deny rule missing: Bash(rm -rf /)",
+			AutoFixable: true,
+			Metadata:    map[string]string{"rule": "Bash(rm -rf /)"},
+		},
+		{
+			Name:        "file_exists_gone.txt",
+			Status:      StatusFail,
+			Message:     "Generated file gone.txt has been deleted",
+			AutoFixable: true,
+			Metadata:    map[string]string{"file": "gone.txt"},
+		},
+	}
+	regen := func(_ string) (map[string]types.GeneratedFile, error) {
+		return nil, fmt.Errorf("generation failed")
+	}
+
+	updated := ApplyAutoFixes(results, dir, "", regen)
+
+	for _, r := range updated {
+		if r.Status != StatusFail || !strings.Contains(r.Message, "auto-fix failed") {
+			t.Errorf("%s: status %s, message %q; want failed with reason", r.Name, r.Status, r.Message)
+		}
+	}
+	after, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(original) {
+		t.Errorf("malformed settings.json must be left untouched, got %s", after)
+	}
+}
+
+func TestApplyAutoFixes_RecordsRestoredFilesInState(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateFile := filepath.Join(dir, ".qsdev", "state.yaml")
+	old := state.RecordFiles([]types.GeneratedFile{
+		{Path: "kept.txt", Content: []byte("kept")},
+		{Path: "restored.json", Content: []byte("old"), Strategy: types.ThreeWayMerge},
+	})
+	if err := state.SaveStateToFile(stateFile, old); err != nil {
+		t.Fatal(err)
+	}
+
+	results := []CheckResult{{
+		Name:        "file_exists_restored.json",
+		Status:      StatusFail,
+		AutoFixable: true,
+		Metadata:    map[string]string{"file": "restored.json"},
+	}}
+	fresh := []byte(`{"fresh":true}`)
+	regen := func(_ string) (map[string]types.GeneratedFile, error) {
+		return map[string]types.GeneratedFile{
+			"restored.json": {Path: "restored.json", Content: fresh, Strategy: types.ThreeWayMerge},
+		}, nil
+	}
+
+	updated := ApplyAutoFixes(results, dir, stateFile, regen)
+	if updated[0].Status != StatusPass {
+		t.Fatalf("restore failed: %s", updated[0].Message)
+	}
+
+	got, err := state.LoadStateFromFile(stateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs := got.Files["restored.json"]
+	if fs.Hash != state.ComputeHash(fresh) {
+		t.Errorf("state hash not updated for restored file")
+	}
+	if string(fs.BaseContent) != string(fresh) {
+		t.Errorf("three-way-merge base not recorded: %q", fs.BaseContent)
+	}
+	if got.Files["kept.txt"].Hash != old.Files["kept.txt"].Hash {
+		t.Errorf("unrelated state entry changed")
 	}
 }

@@ -49,11 +49,8 @@ func formatJUnit(report *CheckReport, w io.Writer) error {
 
 	var suites junitTestSuites
 
-	for _, cat := range categoryOrder {
-		results, ok := byCategory[cat]
-		if !ok || len(results) == 0 {
-			continue
-		}
+	for _, cat := range orderedCategories(report.Checks) {
+		results := byCategory[cat]
 
 		suite := junitTestSuite{
 			Name:  string(cat),

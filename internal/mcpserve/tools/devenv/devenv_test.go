@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -63,7 +64,7 @@ func TestEnvInfoReturnsPathAndFiltersSecrets(t *testing.T) {
 	secretValue := "sentinel-" + "leak-" + "marker-42"
 	t.Setenv("MY_SECRET_TOKEN", secretValue)
 
-	env := newEnvInfo(t.TempDir())
+	env := newEnvInfo()
 	res := call(t, env.handle, map[string]any{"probe": "all"})
 
 	// The whole serialized result must not contain the sensitive value.
@@ -108,7 +109,7 @@ func TestEnvInfoRedactsURLCredentials(t *testing.T) {
 	dsn := "postgres://" + user + ":" + pass + "@pg.example.com:5432/maindb"
 	t.Setenv("DATABASE_URL", dsn)
 
-	env := newEnvInfo(t.TempDir())
+	env := newEnvInfo()
 	res := call(t, env.handle, map[string]any{"probe": "env"})
 
 	blob, err := json.Marshal(res.Structured)
@@ -129,7 +130,7 @@ func TestEnvInfoRedactsURLCredentials(t *testing.T) {
 
 func TestEnvInfoUnknownProbe(t *testing.T) {
 	t.Parallel()
-	env := newEnvInfo(t.TempDir())
+	env := newEnvInfo()
 	res := call(t, env.handle, map[string]any{"probe": "bogus"})
 	if !res.IsError {
 		t.Fatal("expected IsError for unknown probe")
@@ -138,7 +139,7 @@ func TestEnvInfoUnknownProbe(t *testing.T) {
 
 func TestNixRunMissingCommand(t *testing.T) {
 	t.Parallel()
-	nix := newNixRunner()
+	nix := newNixRunner(t.TempDir())
 	res := call(t, nix.handle, map[string]any{})
 	if !res.IsError {
 		t.Fatal("expected IsError when command is missing")
@@ -155,7 +156,7 @@ func TestRunProcessGroupCapturesOutput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX shell semantics; not run on windows")
 	}
-	res := runProcessGroup(context.Background(), "sh",
+	res := runProcessGroup(context.Background(), "", "sh",
 		[]string{"-c", "printf out; printf err 1>&2; exit 3"}, "", 5*time.Second)
 	if res.startErr != nil {
 		t.Fatalf("start error: %v", res.startErr)
@@ -183,7 +184,7 @@ func TestRunProcessGroupTimeoutKillsGroup(t *testing.T) {
 		t.Skip("process-group kill semantics are unix-specific")
 	}
 	start := time.Now()
-	res := runProcessGroup(context.Background(), "sh",
+	res := runProcessGroup(context.Background(), "", "sh",
 		[]string{"-c", "sleep 5 & wait"}, "", 200*time.Millisecond)
 	elapsed := time.Since(start)
 
@@ -196,10 +197,12 @@ func TestRunProcessGroupTimeoutKillsGroup(t *testing.T) {
 }
 
 // TestInstallableRejection proves the nix_run installable policy: remote flake
-// references (URLs and schemed flakerefs) are rejected, while local references
-// and scheme-less registry aliases are allowed.
+// references (URLs and schemed flakerefs), option-shaped refs, and paths outside
+// the project root are rejected, while local references inside the project and
+// scheme-less registry aliases are allowed.
 func TestInstallableRejection(t *testing.T) {
 	t.Parallel()
+	root := t.TempDir()
 	tests := []struct {
 		name     string
 		ref      string
@@ -214,19 +217,33 @@ func TestInstallableRejection(t *testing.T) {
 		{"tarball url", "tarball+https://example.com/x.tar.gz", true},
 		{"file plus http url", "file+http://example.com/x", true},
 		{"flake plus scheme", "flake+github:owner/repo", true},
+		{"empty", "  ", true},
+		{"offline flag", "--offline", true},
+		{"impure flag", "--impure", true},
+		{"refresh flag", "--refresh", true},
+		{"short flag", "-L", true},
+		{"padded flag", " --impure", true},
+		{"parent path", "../flake#pkg", true},
+		{"absolute path outside root", "/srv/flake#pkg", true},
+		{"path scheme outside root", "path:/srv/flake", true},
+		{"path scheme escaping root", "path:../x", true},
+		{"underscore-led relative path escaping root", "_x/../../outside#pkg", true},
+		{"digit-led relative path escaping root", "1x/../../outside", true},
+		{"local relative path without dot", "_sub/flake#pkg", false},
 		{"bare attr", "hello", false},
 		{"project flake attr", ".#hello", false},
 		{"project flake root", ".", false},
 		{"local relative path", "./flake#pkg", false},
-		{"local absolute path", "/srv/flake#pkg", false},
+		{"local absolute path inside root", filepath.Join(root, "flake") + "#pkg", false},
 		{"local path scheme", "path:./flake#pkg", false},
 		{"registry alias", "nixpkgs#hello", false},
+		{"registry alias with branch", "nixpkgs/nixos-unstable#hello", false},
 	}
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, rejected := installableRejection(tt.ref)
+			_, rejected := installableRejection(root, tt.ref)
 			if rejected != tt.rejected {
 				t.Errorf("installableRejection(%q) rejected=%v, want %v", tt.ref, rejected, tt.rejected)
 			}
@@ -240,7 +257,7 @@ func TestInstallableRejection(t *testing.T) {
 func TestNixRunRejectsRemoteInstallable(t *testing.T) {
 	t.Parallel()
 	const ref = "github:owner/repo#pkg"
-	nix := newNixRunner()
+	nix := newNixRunner(t.TempDir())
 	res := call(t, nix.handle, map[string]any{"command": ref})
 	if !res.IsError {
 		t.Fatal("expected IsError for a remote installable")
@@ -257,6 +274,52 @@ func TestNixRunRejectsRemoteInstallable(t *testing.T) {
 	}
 }
 
+// TestNixRunRejectsFlagAsCommand is the regression test for the installable
+// guard bypass: a zero-arity nix flag passed as command would make the first
+// element of args the installable (`nix run --impure -- github:x/y`). The
+// handler must reject it before nix is looked up or run.
+func TestNixRunRejectsFlagAsCommand(t *testing.T) {
+	t.Parallel()
+	nix := newNixRunner(t.TempDir())
+	for _, flag := range []string{"--offline", "--impure", "--refresh", "-L"} {
+		t.Run(flag, func(t *testing.T) {
+			t.Parallel()
+			res := call(t, nix.handle, map[string]any{
+				"command": flag,
+				"args":    []any{"github:attacker/payload"},
+			})
+			if !res.IsError {
+				t.Fatal("expected IsError for a flag-shaped command")
+			}
+			if st := res.Structured.(map[string]any)["status"]; st != "error" {
+				t.Errorf("status = %v, want error (rejected, not not_configured)", st)
+			}
+		})
+	}
+}
+
+// TestRunProcessGroupUsesDir proves the process runs in the requested directory,
+// so nix_run resolves "." installables against the project root rather than the
+// server's working directory.
+func TestRunProcessGroupUsesDir(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell semantics; not run on windows")
+	}
+	dir := t.TempDir()
+	res := runProcessGroup(context.Background(), dir, "sh", []string{"-c", "pwd -P"}, "", 5*time.Second)
+	if res.startErr != nil {
+		t.Fatalf("start error: %v", res.startErr)
+	}
+	want, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(res.stdout); got != want {
+		t.Errorf("working directory = %q, want %q", got, want)
+	}
+}
+
 // TestRunProcessGroupTimeoutVsCancellation proves the unix process-group path
 // distinguishes a deadline timeout (timed_out=true) from a caller cancellation
 // (timed_out=false), matching the non-unix path.
@@ -267,13 +330,13 @@ func TestRunProcessGroupTimeoutVsCancellation(t *testing.T) {
 	t.Run("cancellation reports timed_out=false", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // cancel before running
-		res := runProcessGroup(ctx, "sh", []string{"-c", "sleep 5 & wait"}, "", 5*time.Second)
+		res := runProcessGroup(ctx, "", "sh", []string{"-c", "sleep 5 & wait"}, "", 5*time.Second)
 		if res.timedOut {
 			t.Error("cancellation must not be reported as timed_out")
 		}
 	})
 	t.Run("deadline reports timed_out=true", func(t *testing.T) {
-		res := runProcessGroup(context.Background(), "sh", []string{"-c", "sleep 5 & wait"}, "", 150*time.Millisecond)
+		res := runProcessGroup(context.Background(), "", "sh", []string{"-c", "sleep 5 & wait"}, "", 150*time.Millisecond)
 		if !res.timedOut {
 			t.Error("deadline must be reported as timed_out")
 		}
@@ -288,7 +351,7 @@ func TestNixRunExecutes(t *testing.T) {
 	if _, err := exec.LookPath("nix"); err != nil {
 		t.Skip("nix not installed; skipping live nix_run execution test")
 	}
-	nix := newNixRunner()
+	nix := newNixRunner(t.TempDir())
 	res := call(t, nix.handle, map[string]any{
 		"command": "nixpkgs#hello",
 		"args":    []any{"--version"},
@@ -351,7 +414,7 @@ func TestRunProcessGroupCapsOutput(t *testing.T) {
 	}
 	// Emit ~4 MiB on stdout and a short line on stderr.
 	script := "head -c 4194304 /dev/zero; printf small 1>&2"
-	res := runProcessGroup(context.Background(), "sh", []string{"-c", script}, "", 20*time.Second)
+	res := runProcessGroup(context.Background(), "", "sh", []string{"-c", script}, "", 20*time.Second)
 	if res.startErr != nil {
 		t.Fatalf("start error: %v", res.startErr)
 	}
@@ -378,7 +441,7 @@ func TestRunProcessGroupEscapedDescendantDoesNotHang(t *testing.T) {
 		t.Skip("setsid not available")
 	}
 	start := time.Now()
-	res := runProcessGroup(context.Background(), "sh",
+	res := runProcessGroup(context.Background(), "", "sh",
 		[]string{"-c", "setsid sleep 30 & printf launched"}, "", 20*time.Second)
 	elapsed := time.Since(start)
 	if res.startErr != nil {

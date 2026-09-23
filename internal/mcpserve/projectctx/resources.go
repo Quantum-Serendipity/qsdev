@@ -21,10 +21,9 @@ const (
 	mimeYAML = "text/yaml"
 )
 
-// Resources returns the five generic project context resources: four backed by
-// real data and one (the per-package monorepo context) that degrades to a
-// structured not_configured payload until the Unit 32.7 workspace graph lands
-// (Task T9).
+// Resources returns the five generic project context resources. The
+// per-package monorepo context is backed by the workspace graph and degrades to
+// a structured not_configured payload when the project is not a monorepo.
 func (pc *ProjectContext) Resources() []spi.ResourceRegistration {
 	return []spi.ResourceRegistration{
 		{

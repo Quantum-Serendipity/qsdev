@@ -6,12 +6,13 @@ import (
 	"path/filepath"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/container"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // Project-root resolution environment variables, consulted in this order.
 const (
-	envProjectRoot     = "QSDEV_PROJECT_ROOT"
+	envProjectRoot     = container.EnvProjectRoot
 	envGdevProjectRoot = "GDEV_PROJECT_ROOT"
 )
 

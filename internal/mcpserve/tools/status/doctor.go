@@ -14,13 +14,15 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/config"
-	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // registers the modules checkTools detects with
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // doctorTimeout bounds the whole parallel diagnostic run.
@@ -56,32 +58,50 @@ type checkResult struct {
 type doctorChecker struct {
 	projectRoot string
 
+	// timeout bounds the whole run; handle returns once it elapses even if a
+	// check ignores its context. Overridable so tests need not wait 5s.
+	timeout time.Duration
+
 	// mcpServers lists the MCP server configs the doctor probes. Injectable so
-	// tests can supply fakes without touching the global registry.
-	mcpServers func() []mcphealth.ServerConfig
+	// tests can supply fakes without touching the project's .mcp.json.
+	mcpServers func() ([]mcphealth.ServerConfig, error)
 	// probeMCP performs one server health probe. Injectable for testing.
 	probeMCP func(ctx context.Context, cfg mcphealth.ServerConfig) *mcphealth.ServerHealth
 }
 
 func newDoctorChecker(projectRoot string) *doctorChecker {
-	return &doctorChecker{
+	d := &doctorChecker{
 		projectRoot: projectRoot,
-		mcpServers:  defaultMCPServers,
+		timeout:     doctorTimeout,
 		probeMCP:    mcphealth.CheckServer,
 	}
+	d.mcpServers = d.configuredMCPServers
+	return d
 }
 
-// defaultMCPServers materializes the registered MCP servers as probe configs.
-func defaultMCPServers() []mcphealth.ServerConfig {
-	defs := mcpregistry.DefaultRegistry().All()
-	out := make([]mcphealth.ServerConfig, len(defs))
-	for i, def := range defs {
-		out[i] = mcphealth.ServerConfig{
-			Name: def.Name, Command: def.Command, Args: def.Args, URL: def.URL,
-			Env: def.Env, RequiredEnv: def.RequiredEnv,
-		}
+// configuredMCPServers materializes the servers the project's .mcp.json
+// configures as probe configs. Only the project's own servers are probed — not
+// the whole built-in catalog — so the doctor reports on what this project
+// actually runs. Required environment variables are taken from the matching
+// registry definition, since .mcp.json does not record them.
+func (d *doctorChecker) configuredMCPServers() ([]mcphealth.ServerConfig, error) {
+	defs, err := mcpregistry.ScanMcpJSON(d.projectRoot)
+	if err != nil {
+		return nil, fmt.Errorf("loading configured MCP servers: %w", err)
 	}
-	return out
+	reg := mcpregistry.DefaultRegistry()
+	out := make([]mcphealth.ServerConfig, 0, len(defs))
+	for name, def := range defs {
+		cfg := mcphealth.ServerConfig{
+			Name: name, Command: def.Command, Args: def.Args, URL: def.URL, Env: def.Env,
+		}
+		if known, ok := reg.ByName(name); ok {
+			cfg.RequiredEnv = known.RequiredEnv
+		}
+		out = append(out, cfg)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
 }
 
 // namedCheck pairs a check's stable name with its implementation.
@@ -103,10 +123,10 @@ func (d *doctorChecker) checks() []namedCheck {
 	}
 }
 
-// handle runs the selected checks in parallel (via errgroup) under a 5s timeout
-// and returns the per-check results plus an aggregate verdict.
+// handle runs the selected checks in parallel under the doctor's timeout and
+// returns the per-check results plus an aggregate verdict.
 func (d *doctorChecker) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, doctorTimeout)
+	ctx, cancel := context.WithTimeout(ctx, d.timeout)
 	defer cancel()
 
 	all := d.checks()
@@ -124,17 +144,7 @@ func (d *doctorChecker) handle(ctx context.Context, _ *spi.ToolCallContext, req 
 		}
 	}
 
-	results := make([]checkResult, len(selected))
-	g, gctx := errgroup.WithContext(ctx)
-	for i, c := range selected {
-		g.Go(func() error {
-			results[i] = c.run(gctx)
-			return nil
-		})
-	}
-	// Each check returns nil, so Wait only surfaces context cancellation; the
-	// per-check results are always populated for completed checks.
-	_ = g.Wait()
+	results := d.runChecks(ctx, selected)
 
 	pass, warn, fail := 0, 0, 0
 	for _, r := range results {
@@ -161,6 +171,41 @@ func (d *doctorChecker) handle(ctx context.Context, _ *spi.ToolCallContext, req 
 	}
 	text := fmt.Sprintf("devenv_doctor: %s — %d pass, %d warning, %d fail", overall, pass, warn, fail)
 	return toolutil.Result(text, structured), nil
+}
+
+// runChecks runs every check concurrently and returns their results in input
+// order. It returns as soon as ctx is done even when a check ignores ctx (e.g. a
+// hung subprocess), filling each unfinished check with a timed-out failure so the
+// advertised deadline actually bounds the tool call. A check that finishes late
+// writes into the buffered channel and is discarded.
+func (d *doctorChecker) runChecks(ctx context.Context, checks []namedCheck) []checkResult {
+	type indexed struct {
+		i int
+		r checkResult
+	}
+	done := make(chan indexed, len(checks))
+	for i, c := range checks {
+		go func() { done <- indexed{i, c.run(ctx)} }()
+	}
+
+	results := make([]checkResult, len(checks))
+	finished := make([]bool, len(checks))
+	for remaining := len(checks); remaining > 0; remaining-- {
+		select {
+		case o := <-done:
+			results[o.i], finished[o.i] = o.r, true
+		case <-ctx.Done():
+			for i, c := range checks {
+				if !finished[i] {
+					results[i] = checkResult{c.name, checkFail,
+						fmt.Sprintf("timed out after %s", d.timeout),
+						"re-run the check alone with `check: " + c.name + "` to investigate"}
+				}
+			}
+			return results
+		}
+	}
+	return results
 }
 
 // checkConfig parses the project config and the optional local overlay.
@@ -195,27 +240,15 @@ func (d *doctorChecker) checkState(_ context.Context) checkResult {
 }
 
 // checkTools verifies the primary toolchain binary for each detected language is
-// resolvable on PATH.
+// resolvable on PATH. It uses marker-file detection only (no container-runtime
+// or environment probing), so it stays cheap and cannot stall on a hung daemon.
 func (d *doctorChecker) checkTools(_ context.Context) checkResult {
-	det := detect.Detect(d.projectRoot)
-	want := map[string]string{} // binary -> language
-	if det.HasGoMod {
-		want["go"] = "go"
-	}
-	if det.HasPackageJSON {
-		want["node"] = "node"
-	}
-	if det.HasCargoToml {
-		want["cargo"] = "rust"
-	}
-	if det.HasPyProject {
-		want["python3"] = "python"
-	}
+	want := toolchainBinaries(ecosystem.DefaultRegistry().DetectAll(d.projectRoot).Project)
 	if len(want) == 0 {
 		return checkResult{"tools", checkPass, "no language toolchains required by detection", ""}
 	}
 	var missing []string
-	for bin := range want {
+	for _, bin := range want {
 		if _, err := exec.LookPath(bin); err != nil {
 			missing = append(missing, bin)
 		}
@@ -224,6 +257,26 @@ func (d *doctorChecker) checkTools(_ context.Context) checkResult {
 		return checkResult{"tools", checkFail, "missing on PATH: " + strings.Join(missing, ", "), "enter the devenv shell or install the toolchain"}
 	}
 	return checkResult{"tools", checkPass, fmt.Sprintf("%d toolchain binary/binaries present", len(want)), ""}
+}
+
+// toolchainBinaries returns the toolchain binaries the detected languages need
+// on PATH, covering the same languages as toolutil.DetectedLanguages. Maven and
+// Gradle projects usually ship a wrapper (mvnw/gradlew), so the JVM is what both
+// require.
+func toolchainBinaries(det types.DetectedProject) []string {
+	var bins []string
+	add := func(present bool, bin string) {
+		if present {
+			bins = append(bins, bin)
+		}
+	}
+	add(det.HasGoMod, "go")
+	add(det.HasPackageJSON, "node")
+	add(det.HasCargoToml, "cargo")
+	add(det.HasPyProject, "python3")
+	add(det.HasPomXML || det.HasBuildGradle, "java")
+	add(det.HasCsproj, "dotnet")
+	return bins
 }
 
 // checkNix verifies the nix binary and store are available.
@@ -237,56 +290,61 @@ func (d *doctorChecker) checkNix(_ context.Context) checkResult {
 	return checkResult{"nix", checkPass, "nix installed and store accessible", ""}
 }
 
-// checkMCP probes each registered MCP server's health concurrently, each within
-// a bounded per-probe deadline, so several slow servers cannot serialize past
-// the doctor's overall budget. Results are sorted by server name to keep output
-// deterministic.
+// checkMCP probes the health of each MCP server the project configures,
+// concurrently and each within a bounded per-probe deadline, so several slow
+// servers cannot serialize past the doctor's overall budget. Servers that are
+// unsafe to start from a diagnostic (see mcpregistry.ProbeSkipReason) are listed as not
+// probed rather than launched.
 func (d *doctorChecker) checkMCP(ctx context.Context) checkResult {
-	servers := d.mcpServers()
+	servers, err := d.mcpServers()
+	if err != nil {
+		return checkResult{"mcp", checkFail, err.Error(), "fix the JSON in .mcp.json"}
+	}
 	if len(servers) == 0 {
-		return checkResult{"mcp", checkPass, "no MCP servers registered", ""}
+		return checkResult{"mcp", checkPass, "no MCP servers configured", ""}
 	}
 
-	type outcome struct {
-		name    string
-		healthy bool
+	var probe []mcphealth.ServerConfig
+	var skipped []string
+	for _, cfg := range servers {
+		if reason := mcpregistry.ProbeSkipReason(cfg); reason != "" {
+			skipped = append(skipped, fmt.Sprintf("%s (%s)", cfg.Name, reason))
+			continue
+		}
+		probe = append(probe, cfg)
 	}
-	outcomes := make([]outcome, len(servers))
 
+	healthyFlags := make([]bool, len(probe))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(mcpProbeConcurrency)
-	for i, cfg := range servers {
+	for i, cfg := range probe {
 		g.Go(func() error {
 			probeCtx, cancel := context.WithTimeout(gctx, mcpProbeTimeout)
 			defer cancel()
-			h := d.probeMCP(probeCtx, cfg)
-			outcomes[i] = outcome{name: cfg.Name, healthy: h.Status == mcphealth.StatusHealthy}
+			healthyFlags[i] = d.probeMCP(probeCtx, cfg).Status == mcphealth.StatusHealthy
 			return nil
 		})
 	}
 	// Every probe returns nil, so Wait only surfaces context cancellation; the
-	// outcomes slice is fully populated for all completed probes regardless.
+	// flags are fully populated for all completed probes regardless.
 	_ = g.Wait()
 
-	sort.Slice(outcomes, func(i, j int) bool { return outcomes[i].name < outcomes[j].name })
-
-	healthy, unhealthy := 0, 0
-	for _, o := range outcomes {
-		if o.healthy {
+	healthy := 0
+	for _, ok := range healthyFlags {
+		if ok {
 			healthy++
-		} else {
-			unhealthy++
 		}
 	}
+	unhealthy := len(probe) - healthy
 	status := checkPass
 	if unhealthy > 0 {
 		status = checkWarn
 	}
-	return checkResult{
-		"mcp", status,
-		fmt.Sprintf("%d healthy, %d unhealthy of %d registered server(s)", healthy, unhealthy, len(servers)),
-		"investigate unhealthy servers with `qsdev mcp` diagnostics",
+	detail := fmt.Sprintf("%d healthy, %d unhealthy of %d probed server(s)", healthy, unhealthy, len(probe))
+	if len(skipped) > 0 {
+		detail += fmt.Sprintf("; %d not probed: %s", len(skipped), strings.Join(skipped, ", "))
 	}
+	return checkResult{"mcp", status, detail, "investigate unhealthy servers with `qsdev mcp status`"}
 }
 
 // checkHooks verifies hook files are deployed under .claude/hooks/.

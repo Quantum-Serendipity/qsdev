@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -37,6 +39,13 @@ const (
 	// not_configured rather than hanging.
 	credentialProbeTimeout = 8 * time.Second
 )
+
+// gcpServiceAccountPattern accepts the identifiers the IAM Credentials API takes
+// for a service account: its email address, or its numeric unique ID. It rejects
+// anything carrying URL syntax ("/", "?", "#", ":"), which would otherwise let
+// the argument rewrite the ADC-authorized request target (e.g. append
+// ":signJwt#" to call a different IAM method).
+var gcpServiceAccountPattern = regexp.MustCompile(`^(?:[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+|[0-9]+)$`)
 
 // awsScope / gcpScope / azureScope are the default audiences requested when the
 // caller does not override them.
@@ -180,6 +189,10 @@ func (cv *credentialVendor) vendGCP(ctx context.Context, args map[string]any, tt
 		return toolutil.NotConfigured("GCP credential vending requires a service_account email to impersonate",
 			map[string]any{"remediation": "pass service_account=<sa>@<project>.iam.gserviceaccount.com"}), nil
 	}
+	if !gcpServiceAccountPattern.MatchString(serviceAccount) {
+		return toolutil.NotConfigured("invalid service_account: expected a service account email or numeric unique ID",
+			map[string]any{"service_account": serviceAccount, "remediation": "pass service_account=<sa>@<project>.iam.gserviceaccount.com"}), nil
+	}
 
 	// DefaultClient resolves Application Default Credentials (env key file,
 	// gcloud ADC, or instance metadata) and returns an *http.Client that attaches
@@ -196,7 +209,7 @@ func (cv *credentialVendor) vendGCP(ctx context.Context, args map[string]any, tt
 	if ttl > maxGCPCredentialTTL {
 		ttl = maxGCPCredentialTTL
 	}
-	name := "projects/-/serviceAccounts/" + serviceAccount
+	name := "projects/-/serviceAccounts/" + url.PathEscape(serviceAccount)
 	endpoint := "https://iamcredentials.googleapis.com/v1/" + name + ":generateAccessToken"
 	reqBody, err := json.Marshal(map[string]any{
 		"scope":    []string{gcpCloudPlatformScope},

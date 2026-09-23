@@ -228,16 +228,26 @@ func (pc *ProjectContext) handleMCPList(ctx context.Context, _ *spi.ToolCallCont
 }
 
 // probeHealth runs a bounded live health check for a single server. It is only
-// reached behind the health flag because it starts the server process.
+// reached behind the health flag because it starts the server process. Servers
+// that are unsafe to start from a tool call (package launchers that would
+// download and run a package, or qsdev's own server) are reported as not probed.
 func (pc *ProjectContext) probeHealth(ctx context.Context, d *mcpregistry.McpServerDefinition) map[string]any {
-	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	h := mcphealth.CheckServer(cctx, mcphealth.ServerConfig{
+	cfg := mcphealth.ServerConfig{
 		Name: d.Name, Command: d.Command, Args: d.Args, URL: d.URL,
 		Env: d.Env, RequiredEnv: d.RequiredEnv,
-	})
+	}
+	if reason := mcpregistry.ProbeSkipReason(cfg); reason != "" {
+		return map[string]any{"status": healthNotProbed, "tool_count": 0, "error": "not probed: " + reason}
+	}
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	h := mcphealth.CheckServer(cctx, cfg)
 	return map[string]any{"status": h.Status, "tool_count": h.ToolCount, "error": h.Error}
 }
+
+// healthNotProbed is the mcp.list health status for a server probeHealth
+// declined to start.
+const healthNotProbed = "not_probed"
 
 // handleToolList delegates to the tool lifecycle registry, layering on the
 // enabled/disabled state recorded in the project's state ledger as it is now

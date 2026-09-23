@@ -251,7 +251,7 @@ func TestCheckMCPProbesConcurrently(t *testing.T) {
 	const n = 5 // below mcpProbeConcurrency so all probes may start at once
 	servers := make([]mcphealth.ServerConfig, n)
 	for i := range servers {
-		servers[i] = mcphealth.ServerConfig{Name: fmt.Sprintf("srv-%02d", i)}
+		servers[i] = mcphealth.ServerConfig{Name: fmt.Sprintf("srv-%02d", i), Command: "/opt/srv/bin/server"}
 	}
 
 	var entered sync.WaitGroup
@@ -259,7 +259,7 @@ func TestCheckMCPProbesConcurrently(t *testing.T) {
 	proceed := make(chan struct{})
 
 	doc := newDoctorChecker(t.TempDir())
-	doc.mcpServers = func() []mcphealth.ServerConfig { return servers }
+	doc.mcpServers = func() ([]mcphealth.ServerConfig, error) { return servers, nil }
 	doc.probeMCP = func(ctx context.Context, _ mcphealth.ServerConfig) *mcphealth.ServerHealth {
 		entered.Done()
 		select {
@@ -278,7 +278,7 @@ func TestCheckMCPProbesConcurrently(t *testing.T) {
 	if res.Status != checkPass {
 		t.Errorf("status = %q, want %q (all healthy)", res.Status, checkPass)
 	}
-	if !strings.Contains(res.Detail, fmt.Sprintf("%d healthy, 0 unhealthy of %d", n, n)) {
+	if !strings.Contains(res.Detail, fmt.Sprintf("%d healthy, 0 unhealthy of %d probed", n, n)) {
 		t.Errorf("detail = %q, want %d healthy/0 unhealthy", res.Detail, n)
 	}
 }
@@ -289,12 +289,13 @@ func TestCheckMCPProbesConcurrently(t *testing.T) {
 func TestCheckMCPCountsHealth(t *testing.T) {
 	t.Parallel()
 	servers := []mcphealth.ServerConfig{
-		{Name: "charlie"}, {Name: "alpha"}, {Name: "delta"}, {Name: "bravo"},
+		{Name: "charlie", Command: "charlie-mcp"}, {Name: "alpha", Command: "alpha-mcp"},
+		{Name: "delta", Command: "delta-mcp"}, {Name: "bravo", Command: "bravo-mcp"},
 	}
 	unhealthy := map[string]bool{"bravo": true, "delta": true}
 
 	doc := newDoctorChecker(t.TempDir())
-	doc.mcpServers = func() []mcphealth.ServerConfig { return servers }
+	doc.mcpServers = func() ([]mcphealth.ServerConfig, error) { return servers, nil }
 	doc.probeMCP = func(_ context.Context, cfg mcphealth.ServerConfig) *mcphealth.ServerHealth {
 		st := mcphealth.StatusHealthy
 		if unhealthy[cfg.Name] {
@@ -307,7 +308,7 @@ func TestCheckMCPCountsHealth(t *testing.T) {
 	if res.Status != checkWarn {
 		t.Errorf("status = %q, want %q", res.Status, checkWarn)
 	}
-	if !strings.Contains(res.Detail, "2 healthy, 2 unhealthy of 4") {
+	if !strings.Contains(res.Detail, "2 healthy, 2 unhealthy of 4 probed") {
 		t.Errorf("detail = %q, want 2 healthy/2 unhealthy/4", res.Detail)
 	}
 }
@@ -316,7 +317,7 @@ func TestCheckMCPCountsHealth(t *testing.T) {
 func TestCheckMCPNoServers(t *testing.T) {
 	t.Parallel()
 	doc := newDoctorChecker(t.TempDir())
-	doc.mcpServers = func() []mcphealth.ServerConfig { return nil }
+	doc.mcpServers = func() ([]mcphealth.ServerConfig, error) { return nil, nil }
 	res := doc.checkMCP(context.Background())
 	if res.Status != checkPass {
 		t.Errorf("status = %q, want %q for no servers", res.Status, checkPass)

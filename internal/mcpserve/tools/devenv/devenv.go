@@ -19,8 +19,8 @@ const tierStandard = 1
 
 // Tools returns the two devenv tool registrations bound to projectRoot.
 func Tools(projectRoot string) []spi.ToolRegistration {
-	env := newEnvInfo(projectRoot)
-	nix := newNixRunner()
+	env := newEnvInfo()
+	nix := newNixRunner(projectRoot)
 
 	return []spi.ToolRegistration{
 		{
@@ -34,7 +34,7 @@ func Tools(projectRoot string) []spi.ToolRegistration {
 		},
 		{
 			Name:        "qsdev_nix_run",
-			Description: "Execute a Nix package via `nix run <command> -- <args>` in a dedicated process group with a timeout (default 30s, max 10m). Captures stdout, stderr (each capped at 1 MiB; excess is discarded and flagged *_truncated), exit code, and duration; on timeout the entire process group is killed. Limited to 3 concurrent executions.",
+			Description: "Execute a Nix package via `nix run <command> -- <args>` from the project root, in a dedicated process group with a timeout (default 30s, max 10m). Remote flake references (URLs, github: and other schemes) and paths outside the project are rejected. Captures stdout, stderr (each capped at 1 MiB; excess is discarded and flagged *_truncated), exit code, and duration; on timeout the entire process group is killed. Limited to 3 concurrent executions.",
 			InputSchema: nixRunSchema(),
 			Category:    middleware.CategoryProcess,
 			Tier:        tierStandard,

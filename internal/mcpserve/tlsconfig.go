@@ -7,20 +7,22 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/container"
 )
 
 // Environment variable names for the mTLS material the HTTP transports consume.
 // They form the stable public contract the container/compose generator wires
-// into a gateway service (it redefines its own copies to avoid an import cycle,
-// the same way it does for QSDEV_DEPLOY_MODE). Keep the names stable.
+// into a gateway service, so they are defined from that package's constants:
+// the generated compose and the server always agree. Keep the names stable.
 const (
 	// EnvTLSCert names the server certificate (PEM) the server presents.
-	EnvTLSCert = "QSDEV_TLS_CERT"
+	EnvTLSCert = container.EnvTLSCert
 	// EnvTLSKey names the server private key (PEM) matching EnvTLSCert.
-	EnvTLSKey = "QSDEV_TLS_KEY"
+	EnvTLSKey = container.EnvTLSKey
 	// EnvTLSClientCA names the client-CA bundle (PEM) used to verify the
 	// presented client certificate in mTLS (ClientCAs).
-	EnvTLSClientCA = "QSDEV_TLS_CLIENT_CA"
+	EnvTLSClientCA = container.EnvTLSClientCA
 )
 
 // TLSMaterial is the resolved set of file paths for serving mutual TLS: the

@@ -142,6 +142,40 @@ func TestDetectLockFilePrefersDedicatedLock(t *testing.T) {
 	}
 }
 
+// TestDetectLockFilesCoversEveryEcosystem verifies polyglot detection returns
+// one lock file per ecosystem, preferring dedicated lock files within one.
+func TestDetectLockFilesCoversEveryEcosystem(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, name := range []string{"go.sum", "package-lock.json", "requirements.txt", "poetry.lock"} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	got := make(map[string]string)
+	for _, d := range DetectLockFiles(dir) {
+		if prev, dup := got[d.Ecosystem()]; dup {
+			t.Errorf("ecosystem %s detected twice (%s and %s)", d.Ecosystem(), prev, d.Name())
+		}
+		got[d.Ecosystem()] = d.Name()
+		if d.Path != filepath.Join(dir, d.Name()) {
+			t.Errorf("path = %q, want it under %q", d.Path, dir)
+		}
+	}
+	want := map[string]string{"Go": "go.sum", "npm": "package-lock.json", "PyPI": "poetry.lock"}
+	if len(got) != len(want) {
+		t.Errorf("detected %v, want %v", got, want)
+	}
+	for eco, name := range want {
+		if got[eco] != name {
+			t.Errorf("ecosystem %s: detected %q, want %q", eco, got[eco], name)
+		}
+	}
+	if files := DetectLockFiles(t.TempDir()); len(files) != 0 {
+		t.Errorf("empty dir detected %v, want none", files)
+	}
+}
+
 // TestParseTOMLPackagesCargo exercises the BurntSushi-backed parser against a
 // realistic Cargo.lock, including edge cases the line-oriented parser mishandled:
 // a top-level "version = 3" key, an inline "# comment" after a version value, a

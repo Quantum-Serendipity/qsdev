@@ -13,19 +13,20 @@ package middleware
 // constant here and a DefaultLimits entry for it — until then, an unknown or
 // empty category falls back to CategoryGeneral and the Default limit.
 //
-// The seven first-class tools named in Units 32.9 map here as: security_scan →
-// CategorySecurity, credential_vend → CategoryCredential, policy_check →
-// CategoryPolicy, env_info → CategoryEnvironment, nix_run → CategoryProcess,
-// gdev_doctor → CategoryDiagnostics, gdev_status → CategoryStatus.
+// The seven first-class tools named in Units 32.9 map here, by registered name,
+// as: qsdev_security_scan → CategorySecurity, qsdev_credential_vend →
+// CategoryCredential, qsdev_policy_check → CategoryPolicy, qsdev_env_info →
+// CategoryEnvironment, qsdev_nix_run → CategoryProcess, qsdev_devenv_doctor →
+// CategoryDiagnostics, qsdev_status → CategoryStatus.
 const (
 	CategorySearch      = "search"      // code/text search
-	CategorySecurity    = "security"    // vulnerability scanning (security_scan)
-	CategoryCredential  = "credential"  // credential vending (credential_vend)
-	CategoryPolicy      = "policy"      // policy evaluation (policy_check)
-	CategoryEnvironment = "environment" // env probing (env_info)
-	CategoryProcess     = "process"     // process execution (nix_run)
-	CategoryDiagnostics = "diagnostics" // health checks (gdev_doctor)
-	CategoryStatus      = "status"      // state/drift (gdev_status)
+	CategorySecurity    = "security"    // vulnerability scanning (qsdev_security_scan)
+	CategoryCredential  = "credential"  // credential vending (qsdev_credential_vend)
+	CategoryPolicy      = "policy"      // policy evaluation (qsdev_policy_check)
+	CategoryEnvironment = "environment" // env probing (qsdev_env_info)
+	CategoryProcess     = "process"     // process execution (qsdev_nix_run)
+	CategoryDiagnostics = "diagnostics" // health checks (qsdev_devenv_doctor)
+	CategoryStatus      = "status"      // state/drift (qsdev_status)
 	CategoryNetwork     = "network"     // outbound HTTP/API
 	CategoryGeneral     = "general"     // uncategorized / default
 )

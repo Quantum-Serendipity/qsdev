@@ -166,6 +166,27 @@ func TestScanMcpJSON_FileNotFound(t *testing.T) {
 	}
 }
 
+// TestScanMcpJSON_RemoteServer verifies URL-based (HTTP) entries keep their URL
+// and are classified as HTTP rather than as a stdio server with no command.
+func TestScanMcpJSON_RemoteServer(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	data := []byte(`{"mcpServers": {"remote": {"type": "http", "url": "https://mcp.example.test/mcp"}}}`)
+	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), data, 0o644); err != nil {
+		t.Fatalf("writing .mcp.json: %v", err)
+	}
+
+	result, err := ScanMcpJSON(dir)
+	if err != nil {
+		t.Fatalf("ScanMcpJSON() returned unexpected error: %v", err)
+	}
+	got := result["remote"]
+	if got.URL != "https://mcp.example.test/mcp" || got.Transport != TransportHTTP {
+		t.Errorf("remote = {URL: %q, Transport: %q}, want the URL with HTTP transport", got.URL, got.Transport)
+	}
+}
+
 func TestScanMcpJSON_InvalidJSON(t *testing.T) {
 	t.Parallel()
 

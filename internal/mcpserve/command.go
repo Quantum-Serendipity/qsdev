@@ -42,8 +42,8 @@ const defaultBindHost = "127.0.0.1"
 // overrides the bind host (default loopback). The mTLS material falls back to
 // the EnvTLS* keys defined in tlsconfig.go.
 const (
-	envDeployMode         = "QSDEV_DEPLOY_MODE"
-	envGatewayAgents      = "QSDEV_GATEWAY_AGENTS"
+	envDeployMode         = container.EnvDeployMode
+	envGatewayAgents      = container.EnvGatewayAgents
 	envGatewayRequireAuth = "QSDEV_GATEWAY_REQUIRE_AUTH"
 	envBind               = "QSDEV_BIND"
 )

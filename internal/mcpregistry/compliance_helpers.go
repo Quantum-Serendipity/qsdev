@@ -1,6 +1,7 @@
 package mcpregistry
 
 import (
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -20,7 +21,7 @@ var secretPrefixes = []string{
 
 // networkCommands are package-manager launchers that fetch packages from the
 // network at runtime.
-var networkCommands = []string{"npx", "npm", "uvx", "pipx"}
+var networkCommands = []string{"npx", "npm", "pnpx", "bunx", "uvx", "pipx"}
 
 // hasPlaintextSecrets returns true if any value in def.Env appears to be a
 // plaintext secret rather than a variable reference.
@@ -66,7 +67,34 @@ func looksLikeSecret(value string) bool {
 // isLocalOnly returns true when the server command runs locally without
 // fetching packages from the network at runtime.
 func isLocalOnly(def *McpServerDefinition) bool {
-	return !slices.Contains(networkCommands, def.Command)
+	return !LaunchesFromNetwork(def.Command)
+}
+
+// LaunchesFromNetwork reports whether command is a package-manager launcher
+// (npx, uvx, ...) that downloads and executes a package from the network when
+// started. It matches on the binary's name (see launcherName), so an absolute
+// path such as /usr/bin/npx or a Windows shim such as npx.cmd is classified the
+// same as the bare name. Callers that only want to observe a server, such as
+// health diagnostics, must not start such a command: doing so installs and runs
+// whatever version of the package is currently published.
+func LaunchesFromNetwork(command string) bool {
+	return slices.Contains(networkCommands, launcherName(command))
+}
+
+// windowsExecExts are the executable extensions Windows resolves a bare command
+// name to, so "npx.cmd" and "uvx.exe" name the same launchers as "npx"/"uvx".
+var windowsExecExts = []string{".exe", ".cmd", ".bat", ".ps1"}
+
+// launcherName reduces a command to the binary name it runs: the final path
+// element (splitting on both / and \ regardless of the host OS, since configs
+// are shared across platforms), lower-cased, without a Windows executable
+// extension.
+func launcherName(command string) string {
+	name := strings.ToLower(command[strings.LastIndexAny(command, `/\`)+1:])
+	if ext := filepath.Ext(name); slices.Contains(windowsExecExts, ext) {
+		name = strings.TrimSuffix(name, ext)
+	}
+	return name
 }
 
 // hasNpxDashY returns true when the command is "npx" and the arguments include

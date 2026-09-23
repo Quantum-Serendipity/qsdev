@@ -12,9 +12,9 @@
 // cannot create an import cycle.
 //
 // Graceful degradation: handlers that depend on configuration a project may not
-// have yet (a missing .qsdev.yaml, an absent state file, the not-yet-built
-// Unit 32.7 workspace graph) return a structured not_configured result with
-// IsError set rather than failing. They never crash.
+// have yet (a missing .qsdev.yaml, an absent state file, no monorepo workspace
+// graph) return a structured not_configured result with IsError set rather than
+// failing. They never crash.
 package projectctx
 
 import (
@@ -119,12 +119,7 @@ func detectWorkspaceGraph(projectRoot string) *workspace.WorkspaceGraph {
 		return nil
 	}
 
-	graph, err := workspace.DetectWorkspaces(projectRoot)
-	if err != nil {
-		slog.Warn("project context: workspace detection failed; per-package context disabled",
-			"root", projectRoot, "error", err)
-		return nil
-	}
+	graph := workspace.DetectWorkspaces(projectRoot)
 	if graph.Len() == 0 {
 		// A configuration file exists but declares no members (e.g. a single
 		// package.json without a "workspaces" field): not a monorepo.

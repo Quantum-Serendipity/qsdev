@@ -4,20 +4,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
 )
 
 // Defaults for the generated gateway deployment. They are overridable per call
 // via GenerateOptions; the constants keep a single source of truth.
 const (
-	// DefaultImage is the published gateway image reference.
-	DefaultImage = "ghcr.io/quantum-serendipity/qsdev:latest"
+	// ImageRepository is the repository the gateway image is published to. The
+	// generator pins it to a release tag (see ImageForVersion).
+	ImageRepository = "ghcr.io/quantum-serendipity/qsdev"
 	// DefaultServiceName is the docker-compose service name.
 	DefaultServiceName = "qsdev-mcp-gateway"
 	// DefaultMCPServerName is the key under which the gateway is registered in
@@ -29,17 +32,19 @@ const (
 	ContainerWorkspace = "/workspace"
 	// ComposeFileName is the conventional filename for the generated fragment.
 	ComposeFileName = "docker-compose.gateway.yaml"
-	// envDeployMode / envProjectRoot are the container's deploy-mode env keys.
-	envDeployMode   = "QSDEV_DEPLOY_MODE"
-	envProjectRoot  = "QSDEV_PROJECT_ROOT"
-	envGatewayAgent = "QSDEV_GATEWAY_AGENTS"
-	// envTLSCert / envTLSKey / envTLSClientCA name the mTLS material the gateway
-	// requires to boot (fail-closed). The names mirror internal/mcpserve's
-	// tlsconfig.go EnvTLS* contract; they are redefined here — like
-	// QSDEV_DEPLOY_MODE / QSDEV_PROJECT_ROOT above — to avoid an import cycle.
-	envTLSCert     = "QSDEV_TLS_CERT"
-	envTLSKey      = "QSDEV_TLS_KEY"
-	envTLSClientCA = "QSDEV_TLS_CLIENT_CA"
+	// EnvDeployMode, EnvProjectRoot and EnvGatewayAgents are the deploy-mode,
+	// project-root and gateway allow-list env keys the serve command reads.
+	// internal/mcpserve references these constants rather than redefining the
+	// names, so the generated compose and the server cannot drift apart.
+	EnvDeployMode    = "QSDEV_DEPLOY_MODE"
+	EnvProjectRoot   = "QSDEV_PROJECT_ROOT"
+	EnvGatewayAgents = "QSDEV_GATEWAY_AGENTS"
+	// EnvTLSCert / EnvTLSKey / EnvTLSClientCA name the mTLS material the gateway
+	// requires to boot (fail-closed). internal/mcpserve's EnvTLS* constants are
+	// defined from these.
+	EnvTLSCert     = "QSDEV_TLS_CERT"
+	EnvTLSKey      = "QSDEV_TLS_KEY"
+	EnvTLSClientCA = "QSDEV_TLS_CLIENT_CA"
 	// ContainerTLSCert / ContainerTLSKey / ContainerTLSClientCA are the in-container
 	// paths at which the mTLS material is mounted read-only.
 	ContainerTLSCert     = "/tls/server.crt"
@@ -166,7 +171,7 @@ func StandaloneProjectRoot(flagRoot string, getenv func(string) string) (string,
 		return r, nil
 	}
 	if getenv != nil {
-		if r := strings.TrimSpace(getenv(envProjectRoot)); r != "" {
+		if r := strings.TrimSpace(getenv(EnvProjectRoot)); r != "" {
 			return r, nil
 		}
 	}
@@ -174,9 +179,7 @@ func StandaloneProjectRoot(flagRoot string, getenv func(string) string) (string,
 }
 
 // MCPServerConfig is the .mcp.json entry that points a framework at the running
-// gateway container. The generator emits the Streamable HTTP form (Type+URL);
-// the docker-exec command form is documented in DockerExecEntry for clients
-// that prefer to attach to the container over stdio.
+// gateway container. The generator emits the Streamable HTTP form (Type+URL).
 type MCPServerConfig struct {
 	Type    string   `json:"type,omitempty"`
 	URL     string   `json:"url,omitempty"`
@@ -194,7 +197,8 @@ type GenerateOptions struct {
 	Frameworks []FrameworkProfile
 	// Port is the host:container Streamable HTTP port (default DefaultGatewayPort).
 	Port int
-	// Image overrides the container image (default DefaultImage).
+	// Image overrides the container image (default: ImageRepository pinned to
+	// this build's release, see ImageForVersion).
 	Image string
 	// ServiceName overrides the compose service name (default DefaultServiceName).
 	ServiceName string
@@ -221,9 +225,6 @@ type Artifacts struct {
 	MCPServerConfig MCPServerConfig
 	// MCPJSON is the full {"mcpServers": {name: cfg}} document.
 	MCPJSON string
-	// DockerExecEntry is an alternative stdio .mcp.json entry that attaches to
-	// the running container via `docker exec` instead of HTTP.
-	DockerExecEntry MCPServerConfig
 	// EnvVars are the container's deploy env settings.
 	EnvVars map[string]string
 }
@@ -259,22 +260,21 @@ func (ContainerConfigGenerator) Generate(opts GenerateOptions) (*Artifacts, erro
 	if port <= 0 {
 		port = DefaultGatewayPort
 	}
-	image := orDefault(opts.Image, DefaultImage)
+	image := orDefault(opts.Image, ImageForVersion(version.Info().Version))
 	service := orDefault(opts.ServiceName, DefaultServiceName)
 	mcpName := orDefault(opts.MCPServerName, DefaultMCPServerName)
 
 	gateway := gatewayFrameworks(opts.Frameworks)
-	env := map[string]string{
-		envDeployMode:  string(DeployGateway),
-		envProjectRoot: ContainerWorkspace,
-	}
 	art := &Artifacts{
 		NeedsGateway:      len(gateway) > 0,
 		GatewayFrameworks: gateway,
-		EnvVars:           env,
 	}
 	if !art.NeedsGateway {
 		return art, nil
+	}
+	art.EnvVars = map[string]string{
+		EnvDeployMode:  string(DeployGateway),
+		EnvProjectRoot: ContainerWorkspace,
 	}
 
 	composeYAML, err := renderCompose(service, image, port, hostMount(opts.ProjectRoot))
@@ -300,14 +300,25 @@ func (ContainerConfigGenerator) Generate(opts GenerateOptions) (*Artifacts, erro
 	art.MCPServerName = mcpName
 	art.MCPServerConfig = httpEntry
 	art.MCPJSON = mcpJSON
-	art.DockerExecEntry = MCPServerConfig{
-		Command: "docker",
-		Args: []string{
-			"exec", "-i", service,
-			"/qsdev", "mcp", "serve", "--deploy-mode", string(DeployGateway),
-		},
-	}
 	return art, nil
+}
+
+// releaseVersionPattern captures the MAJOR.MINOR.PATCH release a build version
+// descends from: "0.8.0", "v0.8.0", or a git-describe form like
+// "v0.8.0-3-gabc1234-dirty".
+var releaseVersionPattern = regexp.MustCompile(`^v?(\d+\.\d+\.\d+)`)
+
+// ImageForVersion returns the gateway image reference pinned to the release a
+// build version descends from, matching the published tags (which carry no
+// "v" prefix). A floating tag like :latest would let a re-tag silently swap the
+// enforcing gateway binary. A development build with no release version has no
+// published image of its own, so it falls back to :latest; pass
+// GenerateOptions.Image to pin one (ideally by digest).
+func ImageForVersion(buildVersion string) string {
+	if m := releaseVersionPattern.FindStringSubmatch(strings.TrimSpace(buildVersion)); m != nil {
+		return ImageRepository + ":" + m[1]
+	}
+	return ImageRepository + ":latest"
 }
 
 // gatewayFrameworks filters profiles to those needing the gateway, returning
@@ -360,18 +371,18 @@ func renderCompose(service, image string, port int, hostPath string) (string, er
 					"${QSDEV_TLS_CLIENT_CA:-./tls/client-ca.crt}:" + ContainerTLSClientCA + ":ro",
 				},
 				Environment: map[string]string{
-					envDeployMode:  string(DeployGateway),
-					envProjectRoot: ContainerWorkspace,
+					EnvDeployMode:  string(DeployGateway),
+					EnvProjectRoot: ContainerWorkspace,
 					// In-container paths to the mounted mTLS material. Authentication
 					// is the client certificate; the gateway will not start without
 					// all three files present (fail-closed).
-					envTLSCert:     ContainerTLSCert,
-					envTLSKey:      ContainerTLSKey,
-					envTLSClientCA: ContainerTLSClientCA,
+					EnvTLSCert:     ContainerTLSCert,
+					EnvTLSKey:      ContainerTLSKey,
+					EnvTLSClientCA: ContainerTLSClientCA,
 					// Authorization allow-list of client-cert CNs. Empty admits any
 					// certificate signed by the client CA; set it to restrict to
 					// named CNs. Authentication itself is mTLS (above), not this list.
-					envGatewayAgent: "",
+					EnvGatewayAgents: "",
 				},
 				ReadOnly:    true,
 				SecurityOpt: []string{noNewPrivileges},

@@ -10,6 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 )
 
@@ -309,6 +310,31 @@ func TestMCPList(t *testing.T) {
 	}
 	if structured["health_probed"] != false {
 		t.Errorf("expected health_probed=false without the flag")
+	}
+}
+
+// TestMCPListHealthSkipsPackageLaunchers is the regression test for mcp.list
+// health=true downloading and running unpinned packages: servers launched via a
+// package launcher (or qsdev's own server) must be reported as not probed
+// rather than started.
+func TestMCPListHealthSkipsPackageLaunchers(t *testing.T) {
+	t.Parallel()
+	_, pc := newGoProject(t)
+	tests := []struct {
+		name string
+		def  mcpregistry.McpServerDefinition
+	}{
+		{"npx -y", mcpregistry.McpServerDefinition{Name: "context7", Command: "npx", Args: []string{"-y", "@upstash/context7-mcp"}}},
+		{"uvx", mcpregistry.McpServerDefinition{Name: "semble", Command: "uvx", Args: []string{"--from", "semble[mcp]", "semble"}}},
+		{"self", mcpregistry.McpServerDefinition{Name: "qsdev", Command: "qsdev", Args: []string{"mcp", "serve"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := pc.probeHealth(context.Background(), &tt.def); got["status"] != healthNotProbed {
+				t.Errorf("probeHealth(%s) = %v, want status %q", tt.def.Name, got, healthNotProbed)
+			}
+		})
 	}
 }
 

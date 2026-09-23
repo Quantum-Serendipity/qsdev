@@ -19,6 +19,7 @@ type mcpJSONEntry struct {
 	Command string            `json:"command"`
 	Args    []string          `json:"args"`
 	Env     map[string]string `json:"env,omitempty"`
+	URL     string            `json:"url,omitempty"`
 }
 
 // ScanMcpJSON reads .mcp.json from projectRoot and returns a map of
@@ -42,12 +43,17 @@ func ScanMcpJSON(projectRoot string) (map[string]McpServerDefinition, error) {
 
 	result := make(map[string]McpServerDefinition, len(file.MCPServers))
 	for name, entry := range file.MCPServers {
+		transport := TransportStdio
+		if entry.URL != "" {
+			transport = TransportHTTP
+		}
 		result[name] = McpServerDefinition{
 			Name:      name,
 			Command:   entry.Command,
 			Args:      entry.Args,
 			Env:       entry.Env,
-			Transport: TransportStdio,
+			URL:       entry.URL,
+			Transport: transport,
 			Source:    SourceConfig,
 		}
 	}

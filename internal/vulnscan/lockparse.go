@@ -166,6 +166,34 @@ func LockFileForEcosystem(projectRoot, eco string) (LockFile, string, bool) {
 	return LockFile{}, "", false
 }
 
+// DetectedLockFile is a known lock file found in a project, with its full path.
+type DetectedLockFile struct {
+	LockFile
+	Path string
+}
+
+// DetectLockFiles returns the preferred lock file present in projectRoot for
+// every ecosystem, in the same order DetectLockFile searches. A polyglot project
+// (e.g. go.sum plus package-lock.json) yields one entry per ecosystem, so a scan
+// can cover all of them instead of only the first one found. Within an ecosystem
+// only the first present file is returned, matching DetectLockFile's preference
+// for dedicated lock files over loose manifests.
+func DetectLockFiles(projectRoot string) []DetectedLockFile {
+	var out []DetectedLockFile
+	seenEco := make(map[string]bool)
+	for _, lf := range knownLockFiles() {
+		if seenEco[lf.ecosystem] {
+			continue
+		}
+		p := filepath.Join(projectRoot, lf.name)
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			seenEco[lf.ecosystem] = true
+			out = append(out, DetectedLockFile{LockFile: lf, Path: p})
+		}
+	}
+	return out
+}
+
 // LockFileForPath resolves the parser for an explicitly supplied manifest path
 // by matching its base name against the known lock files.
 func LockFileForPath(path string) (LockFile, bool) {

@@ -9,18 +9,13 @@ import (
 	// provider set as qsdev without reaching into internal packages.
 	_ "github.com/Quantum-Serendipity/qsdev/internal/extlog/providers"
 
-	// Universal MCP server framework adapters. Concrete adapters under
-	// internal/mcpserve/adapters/* delegate to addon packages (e.g.
-	// addons/claudecode) and so MUST NOT be imported by the mcpserve server
-	// package itself — that would create an import cycle. They are wired in
+	// Universal MCP server framework adapters. The concrete adapters delegate
+	// to addon packages (e.g. addons/claudecode) and so MUST NOT be imported by
+	// the mcpserve server package itself — that would create an import cycle.
+	// internal/mcpserve/adapters is the single list of them; they are wired in
 	// explicitly by RegisterFrameworkAdapters rather than self-registering from
-	// init(), so registration order is visible. The aliases avoid colliding
-	// with the addon packages of the same name.
-	claudecodeadapter "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/claudecode"
-	clineadapter "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/cline"
-	codexadapter "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/codex"
-	cursoradapter "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/cursor"
-	windsurfadapter "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters/windsurf"
+	// init(), so registration order is visible.
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 )
@@ -43,13 +38,7 @@ var registerAdaptersOnce sync.Once
 func RegisterFrameworkAdapters() {
 	registerAdaptersOnce.Do(func() {
 		reg := spi.DefaultRegistry()
-		for _, a := range []spi.FrameworkAdapter{
-			claudecodeadapter.New(),
-			clineadapter.New(),
-			codexadapter.New(),
-			cursoradapter.New(),
-			windsurfadapter.New(),
-		} {
+		for _, a := range adapters.All() {
 			if err := reg.Register(a); err != nil {
 				panic(fmt.Sprintf("registering framework adapter %q: %v", a.ID(), err))
 			}

@@ -14,12 +14,14 @@ import (
 // launcher and every child it spawns share one group id. On timeout or context
 // cancellation it signals the whole group via a negative PID, killing orphaned
 // children (e.g. a nix build) rather than leaking them, then reaps the launcher.
-// stdout and stderr are captured separately.
-func runProcessGroup(ctx context.Context, name string, argv []string, stdin string, timeout time.Duration) procResult {
+// stdout and stderr are captured separately. The process runs in dir (the
+// server's working directory when dir is empty).
+func runProcessGroup(ctx context.Context, dir, name string, argv []string, stdin string, timeout time.Duration) procResult {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := exec.Command(name, argv...) //nolint:gosec // argv is an explicit array; no shell interpolation
+	cmd.Dir = dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	outBuf, errBuf := newCappedBuffer(maxProcOutputBytes), newCappedBuffer(maxProcOutputBytes)

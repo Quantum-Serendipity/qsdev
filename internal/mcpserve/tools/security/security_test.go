@@ -642,3 +642,133 @@ func TestCredentialVendAWSNoCredentials(t *testing.T) {
 		t.Errorf("status = %v, want not_configured", structuredMap(t, res)["status"])
 	}
 }
+
+// writePolyglotProject writes a go.sum and a package-lock.json, one pinned
+// dependency each, into a fresh directory.
+func writePolyglotProject(t *testing.T, npmLock string) string {
+	t.Helper()
+	dir := t.TempDir()
+	goSum := "example.com/mod v1.0.0 h1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.sum"), []byte(goSum), 0o644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte(npmLock), 0o644); err != nil {
+		t.Fatalf("write package-lock.json: %v", err)
+	}
+	return dir
+}
+
+// TestSecurityScanCoversEveryEcosystem is the regression test for polyglot
+// repos: with both go.sum and package-lock.json present, the auto-detected scan
+// must query both ecosystems and report a vulnerability in either, rather than
+// scanning only the first lock file and returning a clean-looking result.
+func TestSecurityScanCoversEveryEcosystem(t *testing.T) {
+	t.Parallel()
+	dir := writePolyglotProject(t,
+		`{"lockfileVersion":3,"packages":{"":{"name":"app"},"node_modules/left-pad":{"version":"1.3.0"}}}`)
+
+	srv := vulnscantest.NewServer(t,
+		map[int][]string{0: {"GHSA-VULN-0"}, 1: {"GHSA-VULN-1"}},
+		map[string]string{"GHSA-VULN-0": "HIGH", "GHSA-VULN-1": "HIGH"},
+	)
+	scanner := &securityScanner{
+		projectRoot: dir,
+		scanner:     &vulnscan.Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()},
+	}
+
+	res := call(t, scanner.handle, map[string]any{})
+	if res.IsError {
+		t.Fatalf("scan returned error: %+v", res.Structured)
+	}
+	m := structuredMap(t, res)
+	if got := m["ecosystems"]; !reflect.DeepEqual(got, []string{"Go", "npm"}) {
+		t.Errorf("ecosystems = %v, want [Go npm]", got)
+	}
+	if lockFiles, _ := m["lock_files"].([]string); len(lockFiles) != 2 {
+		t.Errorf("lock_files = %v, want both lock files", m["lock_files"])
+	}
+	if m["coverage"] != "complete" {
+		t.Errorf("coverage = %v, want complete", m["coverage"])
+	}
+	vulns, _ := m["vulnerabilities"].([]vulnReport)
+	ecos := map[string]bool{}
+	for _, v := range vulns {
+		ecos[v.Ecosystem] = true
+	}
+	if !ecos["Go"] || !ecos["npm"] {
+		t.Errorf("vulnerabilities = %+v, want findings from both Go and npm", vulns)
+	}
+}
+
+// TestSecurityScanReportsPartialCoverage verifies that when one of several lock
+// files cannot be parsed, the others are still scanned and the result says the
+// coverage is partial instead of implying a complete scan.
+func TestSecurityScanReportsPartialCoverage(t *testing.T) {
+	t.Parallel()
+	dir := writePolyglotProject(t, "{ not valid json")
+
+	srv := vulnscantest.NewServer(t, nil, nil)
+	scanner := &securityScanner{
+		projectRoot: dir,
+		scanner:     &vulnscan.Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()},
+	}
+
+	res := call(t, scanner.handle, map[string]any{})
+	if res.IsError {
+		t.Fatalf("scan returned error: %+v", res.Structured)
+	}
+	m := structuredMap(t, res)
+	if m["coverage"] != "partial" {
+		t.Errorf("coverage = %v, want partial", m["coverage"])
+	}
+	unscanned, _ := m["unscanned_lock_files"].([]unscannedLockFile)
+	if len(unscanned) != 1 || filepath.Base(unscanned[0].Path) != "package-lock.json" {
+		t.Errorf("unscanned_lock_files = %+v, want the broken package-lock.json", m["unscanned_lock_files"])
+	}
+	if !strings.Contains(res.Text, "PARTIAL coverage") {
+		t.Errorf("text = %q, want it to flag partial coverage", res.Text)
+	}
+}
+
+// TestCredentialVendGCPRejectsInvalidServiceAccount is the regression test for
+// the unvalidated IAM Credentials URL path: a service_account carrying URL
+// syntax must be rejected before any credential lookup or request, so it cannot
+// retarget the ADC-authorized call to a different IAM method. Valid emails and
+// numeric unique IDs are accepted.
+func TestCredentialVendGCPRejectsInvalidServiceAccount(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		sa    string
+		valid bool
+	}{
+		{"user-managed email", "deployer@my-project.iam.gserviceaccount.com", true},
+		{"compute default email", "123456789012-compute@developer.gserviceaccount.com", true},
+		{"appspot email", "my-project@appspot.gserviceaccount.com", true},
+		{"numeric unique id", "112233445566778899001", true},
+		{"method suffix and fragment", "x@y.iam.gserviceaccount.com:signJwt#", false},
+		{"query string", "x@y.iam.gserviceaccount.com:signJwt?alt=json", false},
+		{"path traversal", "../../projects/p/serviceAccounts/x@y.iam.gserviceaccount.com", false},
+		{"slash in local part", "a/b@y.iam.gserviceaccount.com", false},
+		{"not an email", "deployer", false},
+		{"whitespace", "x@y.iam.gserviceaccount.com ", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := gcpServiceAccountPattern.MatchString(tt.sa); got != tt.valid {
+				t.Errorf("gcpServiceAccountPattern.MatchString(%q) = %v, want %v", tt.sa, got, tt.valid)
+			}
+		})
+	}
+
+	cv := newCredentialVendor()
+	res := call(t, cv.handle, map[string]any{"provider": "gcp", "service_account": "x@y.iam.gserviceaccount.com:signJwt#"})
+	m := structuredMap(t, res)
+	if !res.IsError || m["status"] != "not_configured" {
+		t.Fatalf("got IsError=%t status=%v, want not_configured", res.IsError, m["status"])
+	}
+	if reason, _ := m["reason"].(string); !strings.Contains(reason, "invalid service_account") {
+		t.Errorf("reason = %q, want the invalid service_account rejection", reason)
+	}
+}

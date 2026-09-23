@@ -12,6 +12,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
 )
 
@@ -102,7 +103,7 @@ func TestStandaloneProjectRoot(t *testing.T) {
 
 	// Env fallback when flag is empty.
 	env := func(k string) string {
-		if k == envProjectRoot {
+		if k == EnvProjectRoot {
 			return "/mnt/proj"
 		}
 		return ""
@@ -144,8 +145,8 @@ func TestGenerateGatewayForHooklessFramework(t *testing.T) {
 	if len(art.GatewayFrameworks) != 1 || art.GatewayFrameworks[0] != aiframework.Cursor {
 		t.Fatalf("GatewayFrameworks = %v, want [cursor] (Claude Code is hook-tier)", art.GatewayFrameworks)
 	}
-	if art.EnvVars[envDeployMode] != string(DeployGateway) {
-		t.Errorf("env %s = %q, want gateway", envDeployMode, art.EnvVars[envDeployMode])
+	if art.EnvVars[EnvDeployMode] != string(DeployGateway) {
+		t.Errorf("env %s = %q, want gateway", EnvDeployMode, art.EnvVars[EnvDeployMode])
 	}
 
 	// The compose fragment must be valid YAML that round-trips.
@@ -166,11 +167,11 @@ func TestGenerateGatewayForHooklessFramework(t *testing.T) {
 	if !ok {
 		t.Fatalf("compose missing service %q; services=%v", DefaultServiceName, parsed.Services)
 	}
-	if svc.Image != DefaultImage {
-		t.Errorf("service image = %q, want %q", svc.Image, DefaultImage)
+	if want := ImageForVersion(version.Info().Version); svc.Image != want {
+		t.Errorf("service image = %q, want %q", svc.Image, want)
 	}
-	if svc.Environment[envDeployMode] != string(DeployGateway) {
-		t.Errorf("service env %s = %q, want gateway", envDeployMode, svc.Environment[envDeployMode])
+	if svc.Environment[EnvDeployMode] != string(DeployGateway) {
+		t.Errorf("service env %s = %q, want gateway", EnvDeployMode, svc.Environment[EnvDeployMode])
 	}
 	if !containsStr(svc.Ports, "9000:9000") {
 		t.Errorf("service ports = %v, want 9000:9000", svc.Ports)
@@ -196,9 +197,9 @@ func TestGenerateGatewayForHooklessFramework(t *testing.T) {
 		t.Errorf("command missing --bind %s; got %v", GatewayBindAll, svc.Command)
 	}
 	for env, want := range map[string]string{
-		envTLSCert:     ContainerTLSCert,
-		envTLSKey:      ContainerTLSKey,
-		envTLSClientCA: ContainerTLSClientCA,
+		EnvTLSCert:     ContainerTLSCert,
+		EnvTLSKey:      ContainerTLSKey,
+		EnvTLSClientCA: ContainerTLSClientCA,
 	} {
 		if got := svc.Environment[env]; got != want {
 			t.Errorf("service env %s = %q, want %q (fail-closed mTLS path)", env, got, want)
@@ -247,6 +248,36 @@ func TestGenerateNoGatewayForHookOnlyProject(t *testing.T) {
 	if art.ComposeYAML != "" || art.MCPJSON != "" {
 		t.Errorf("expected no compose/.mcp.json output for an all-native project; got compose=%q mcp=%q",
 			art.ComposeYAML, art.MCPJSON)
+	}
+	if art.EnvVars != nil {
+		t.Errorf("EnvVars = %v, want none when no gateway is needed", art.EnvVars)
+	}
+}
+
+// TestImageForVersion is the regression test for the unpinned gateway image: the
+// generated compose must reference the release tag the build descends from, not
+// a mutable :latest, whenever the build carries a release version.
+func TestImageForVersion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		version string
+		want    string
+	}{
+		{"release", "0.8.0", ImageRepository + ":0.8.0"},
+		{"v-prefixed tag", "v0.8.0", ImageRepository + ":0.8.0"},
+		{"git describe after release", "v0.8.0-3-gabc1234-dirty", ImageRepository + ":0.8.0"},
+		{"padded", " 1.2.3\n", ImageRepository + ":1.2.3"},
+		{"development build", "dev", ImageRepository + ":latest"},
+		{"bare commit", "abc1234", ImageRepository + ":latest"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ImageForVersion(tt.version); got != tt.want {
+				t.Errorf("ImageForVersion(%q) = %q, want %q", tt.version, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -384,4 +415,25 @@ func commandBindsAll(cmd []string) bool {
 		}
 	}
 	return false
+}
+
+// TestEnvContractNames pins the env-var names the generated compose sets and the
+// serve command reads (internal/mcpserve defines its names from these
+// constants). They are a public contract with operators and the hand-written
+// build/docker compose file, so a rename must be deliberate.
+func TestEnvContractNames(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ got, want string }{
+		{EnvDeployMode, "QSDEV_DEPLOY_MODE"},
+		{EnvProjectRoot, "QSDEV_PROJECT_ROOT"},
+		{EnvGatewayAgents, "QSDEV_GATEWAY_AGENTS"},
+		{EnvTLSCert, "QSDEV_TLS_CERT"},
+		{EnvTLSKey, "QSDEV_TLS_KEY"},
+		{EnvTLSClientCA, "QSDEV_TLS_CLIENT_CA"},
+	}
+	for _, tt := range tests {
+		if tt.got != tt.want {
+			t.Errorf("env name = %q, want %q", tt.got, tt.want)
+		}
+	}
 }

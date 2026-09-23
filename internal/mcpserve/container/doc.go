@@ -5,8 +5,9 @@
 //
 // It is a leaf package: it depends only on the neutral spi types, the built-in
 // middleware layers it REUSES (Guardrail, RateLimit, ContentSafety via
-// middleware.DefaultChain), and pkg/aiframework for framework identity and
-// enforcement tiers. It never imports the mcpserve server root, so it cannot
+// middleware.DefaultChain), pkg/aiframework for framework identity and
+// enforcement tiers, and internal/version to pin the generated gateway image to
+// this build's release. It never imports the mcpserve server root, so it cannot
 // create an import cycle; command.go imports this package, not the reverse.
 //
 // The three deployment modes are:

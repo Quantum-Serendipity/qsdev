@@ -44,7 +44,7 @@ func Tools(projectRoot string, enforced *middleware.Policy) []spi.ToolRegistrati
 		},
 		{
 			Name:        "qsdev_security_scan",
-			Description: "Scan the project's pinned dependencies (from go.sum, package-lock.json, Cargo.lock, poetry.lock, uv.lock, or requirements.txt) against the OSV.dev vulnerability database and report findings at or above a severity threshold.",
+			Description: "Scan the project's pinned dependencies (from the lock file of every detected ecosystem: go.sum, package-lock.json, Cargo.lock, poetry.lock, uv.lock, Pipfile.lock, or requirements.txt) against the OSV.dev vulnerability database and report findings at or above a severity threshold.",
 			InputSchema: securityScanSchema(),
 			Category:    middleware.CategorySecurity,
 			Tier:        tierStandard,
@@ -86,7 +86,7 @@ func securityScanSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"manifest_path": map[string]any{"type": "string", "description": "Explicit lock-file path. Omit to auto-detect a lock file under the project root."},
+			"manifest_path": map[string]any{"type": "string", "description": "Explicit lock-file path. Omit to scan the lock file of every ecosystem detected under the project root."},
 			"severity_threshold": map[string]any{
 				"type":        "string",
 				"enum":        []any{"low", "medium", "high", "critical"},

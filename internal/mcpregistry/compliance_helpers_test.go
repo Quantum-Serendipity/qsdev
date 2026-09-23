@@ -78,6 +78,12 @@ func TestIsLocalOnly(t *testing.T) {
 		{name: "uvx is not local", command: "uvx", want: false},
 		{name: "pipx is not local", command: "pipx", want: false},
 		{name: "npm is not local", command: "npm", want: false},
+		{name: "pnpx is not local", command: "pnpx", want: false},
+		{name: "bunx is not local", command: "bunx", want: false},
+		{name: "absolute path to npx is not local", command: "/usr/bin/npx", want: false},
+		{name: "nix store uvx is not local", command: "/nix/store/abc-uv/bin/uvx", want: false},
+		{name: "windows npx shim is not local", command: `C:\nodejs\npx.cmd`, want: false},
+		{name: "windows uvx exe is not local", command: "uvx.exe", want: false},
 		{name: "nix store path is local", command: "/nix/store/abc-server/bin/server", want: true},
 		{name: "custom binary is local", command: "my-custom-server", want: true},
 	}

@@ -2,7 +2,9 @@ package mcpserve
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
@@ -49,13 +51,21 @@ func New(opts ...Option) *Server {
 		server.WithToolCapabilities(true),
 		// Advertise log-message support; diagnostics may be surfaced to clients.
 		server.WithLogging(),
-		// Recover panics in tool handlers into protocol errors.
+		// Recover panics in tool, resource, and prompt handlers (including the
+		// middleware chain they run) into protocol errors. The stdio transport
+		// serves resources/read and prompts/get inline in its read loop, so an
+		// unrecovered panic there would take down the whole server.
 		server.WithRecovery(),
+		server.WithResourceRecovery(),
+		server.WithPromptHandlerMiddleware(recoverPromptPanics),
 		// Per-tools/list-request filter implementing the mount-all-then-filter
 		// model: the server mounts every project-applicable adapter's tools at
 		// construction, and this narrows each client's view to generic tools plus
 		// the tools of the frameworks that client matches (see toolFilter).
 		server.WithToolFilter(s.toolFilter),
+		// Apply the same per-client visibility when a tool is called, so a tool
+		// hidden from tools/list cannot be invoked by name.
+		server.WithToolHandlerMiddleware(s.enforceToolVisibility),
 	}
 	if cfg.instructions != "" {
 		mcpOpts = append(mcpOpts, server.WithInstructions(cfg.instructions))
@@ -68,6 +78,21 @@ func New(opts ...Option) *Server {
 	s.mountAdapters(context.Background())
 
 	return s
+}
+
+// recoverPromptPanics converts a panic anywhere in a prompt render — the
+// handler or any middleware layer around it — into an error, mirroring
+// mcp-go's WithRecovery and WithResourceRecovery, which have no prompt
+// counterpart.
+func recoverPromptPanics(next server.PromptHandlerFunc) server.PromptHandlerFunc {
+	return func(ctx context.Context, req mcp.GetPromptRequest) (result *mcp.GetPromptResult, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				result, err = nil, fmt.Errorf("panic recovered in %s prompt handler: %v", req.Params.Name, r)
+			}
+		}()
+		return next(ctx, req)
+	}
 }
 
 // MCPServer returns the underlying mcp-go server. Exposed so transports and

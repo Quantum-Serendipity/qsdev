@@ -2,6 +2,7 @@ package devenv
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
@@ -111,7 +112,11 @@ func defaultSpecializedHooks() []CustomHookData {
 }
 
 func buildNixSecretsCheckEntry(def catalog.CustomHookDef) string {
-	envPattern := def.EnvPattern
+	// The patterns are PCRE regexes full of backslashes (\., \w, \s). Inside a
+	// Nix double-quoted string an unescaped "\w" evaluates to a plain "w",
+	// which silently turns the regex into one that matches nothing, so every
+	// piece is Nix-escaped before it is placed between quotes.
+	envPattern := nixStr(def.EnvPattern)
 
 	// Build credential pattern using Nix string concatenation so the
 	// generated devenv.nix doesn't contain literal credential prefixes
@@ -122,22 +127,22 @@ func buildNixSecretsCheckEntry(def catalog.CustomHookDef) string {
 		if mid == 0 {
 			mid = 1
 		}
-		nixFragments = append(nixFragments, fmt.Sprintf(`"%s" + "%s"`, p[:mid], p[mid:]))
+		nixFragments = append(nixFragments, nixStr(p[:mid])+" + "+nixStr(p[mid:]))
 	}
 	credPatternExpr := `"(" + ` + strings.Join(nixFragments, ` + "|" + `) + ` + ")"`
 
 	return fmt.Sprintf(`let
-          envPattern = "%s";
+          envPattern = %s;
           credPattern = %s;
         in
         pkgs.writeShellScript "nix-secrets-check" ''
           ret=0
           for f in "$@"; do
-            if ${pkgs.gnugrep}/bin/grep -nP '${envPattern}' "$f" 2>/dev/null; then
+            if ${pkgs.gnugrep}/bin/grep -nP -e ${lib.escapeShellArg envPattern} "$f" 2>/dev/null; then
               echo "ERROR: $f appears to set a secret via env.*"
               ret=1
             fi
-            if ${pkgs.gnugrep}/bin/grep -nP '${credPattern}' "$f" 2>/dev/null; then
+            if ${pkgs.gnugrep}/bin/grep -nP -e ${lib.escapeShellArg credPattern} "$f" 2>/dev/null; then
               echo "ERROR: $f appears to contain a hardcoded credential"
               ret=1
             fi
@@ -146,27 +151,121 @@ func buildNixSecretsCheckEntry(def catalog.CustomHookDef) string {
         ''`, envPattern, credPatternExpr)
 }
 
-// buildEnterShellScript returns the shell script body for devenv.nix enterShell.
-func buildEnterShellScript() string {
-	prefix := branding.Get().EnvPrefix
-	return fmt.Sprintf(`echo ""
-echo "=== Security-Hardened Development Environment ==="
+// leakSpotCheckVars are the credential variables enterShell and enterTest
+// probe to confirm the unset list took effect. Only those still in the
+// generated unset list are probed: a variable a service sets on purpose (e.g.
+// MinIO's AWS_SECRET_ACCESS_KEY) is expected to be present.
+var leakSpotCheckVars = []string{"AWS_SECRET_ACCESS_KEY", "VAULT_TOKEN", "DATABASE_PASSWORD"}
 
-# Verify git hooks are installed
-if [ -d .git ] && [ ! -f .git/hooks/pre-commit ]; then
-  echo "  WARNING: Pre-commit hooks not installed."
-  echo "           Run 'devenv shell' to install them."
-else
-  echo "  Pre-commit hooks: active"
+// spotCheckVars returns the leakSpotCheckVars that appear in unset.
+func spotCheckVars(unset []string) []string {
+	var out []string
+	for _, v := range leakSpotCheckVars {
+		if slices.Contains(unset, v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// hooksStateShell resolves the hooks directory the way git does, so the check
+// works in linked worktrees and submodules (where .git is a file) and honours
+// core.hooksPath. It sets hooks_state to "active", "missing", or "unknown"
+// when the directory is not inside a git repository.
+const hooksStateShell = `hooks_state=unknown
+if command -v git >/dev/null 2>&1 && hooks_dir="$(git rev-parse --git-path hooks 2>/dev/null)"; then
+  if [ -f "$hooks_dir/pre-commit" ]; then
+    hooks_state=active
+  else
+    hooks_state=missing
+  fi
+fi
+unset hooks_dir`
+
+// mcpSecretsShell re-injects MCP credentials after clean-mode stripping, but
+// only variables the project's .mcp.json references as ${NAME}: a project
+// without a server that needs GITHUB_TOKEN never gets the user's gh token in
+// its environment. .qsdev/mcp-secrets.env is parsed as KEY=VALUE data, never
+// sourced as shell code. It can likewise only supply referenced names, never
+// overrides a variable that is already set (PATH, HOME, ...), and never sets
+// dynamic-loader or shell-startup variables (LD_PRELOAD, BASH_ENV, ...).
+const mcpSecretsShell = `# MCP credential provisioning — re-inject after clean mode stripping, limited
+# to the variables .mcp.json references as placeholders.
+mcp_refs() {
+  [ -f "$PWD/.mcp.json" ] && grep -Eq "[$][{]$1(:-[^}]*)?[}]" "$PWD/.mcp.json"
+}
+
+# GITHUB_TOKEN: sourced from gh CLI keyring (never touches disk).
+if mcp_refs GITHUB_TOKEN && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  export GITHUB_TOKEN="$(gh auth token 2>/dev/null)"
 fi
 
-# Verify clean environment is working (spot-check)
-if [ -n "${AWS_SECRET_ACCESS_KEY:-}" ]; then
-  echo "  WARNING: AWS_SECRET_ACCESS_KEY is set in environment!"
+# Project-scoped MCP secrets (.qsdev/ is gitignored), read as KEY=VALUE lines.
+if [ -f "$PWD/.qsdev/mcp-secrets.env" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    case "$line" in ""|"#"*) continue ;; esac
+    line="${line#export }"
+    key="${line%%=*}"
+    val="${line#*=}"
+    if [ "$key" = "$line" ] || ! [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      echo "  WARNING: ignoring malformed line in .qsdev/mcp-secrets.env"
+      continue
+    fi
+    if ! mcp_refs "$key"; then
+      echo "  WARNING: ignoring $key from .qsdev/mcp-secrets.env (not referenced by .mcp.json)"
+      continue
+    fi
+    case "$key" in
+      LD_*|DYLD_*|BASH_ENV|ENV|BASH_FUNC_*|PROMPT_COMMAND)
+        echo "  WARNING: ignoring $key from .qsdev/mcp-secrets.env (affects program loading)"
+        continue ;;
+    esac
+    if [ -n "${!key+x}" ]; then
+      echo "  WARNING: ignoring $key from .qsdev/mcp-secrets.env (already set)"
+      continue
+    fi
+    case "$val" in
+      \"*\"|\'*\') val="${val:1:${#val}-2}" ;;
+    esac
+    export "$key=$val"
+  done < "$PWD/.qsdev/mcp-secrets.env"
+  unset line key val
+fi
+unset -f mcp_refs`
+
+// buildEnterShellScript returns the shell script body for devenv.nix
+// enterShell. unset is the generated unsetEnvVars list.
+func buildEnterShellScript(unset []string) string {
+	prefix := branding.Get().EnvPrefix
+
+	var spotCheck strings.Builder
+	for _, v := range spotCheckVars(unset) {
+		fmt.Fprintf(&spotCheck, `if [ -n "${%[1]s:-}" ]; then
+  echo "  WARNING: %[1]s is set in environment!"
   echo "           This should have been stripped by clean mode."
   echo "           Check devenv.yaml clean.keep settings."
 fi
+`, v)
+	}
 
+	return `echo ""
+echo "=== Security-Hardened Development Environment ==="
+
+# Verify git hooks are installed
+` + hooksStateShell + `
+case "$hooks_state" in
+  active) echo "  Pre-commit hooks: active" ;;
+  missing)
+    echo "  WARNING: Pre-commit hooks not installed."
+    echo "           Run 'devenv shell' to install them."
+    ;;
+  *) echo "  Pre-commit hooks: unknown (not a git repository)" ;;
+esac
+unset hooks_state
+
+# Verify clean environment is working (spot-check)
+` + spotCheck.String() + `
 # Verify ripsecrets is available
 if command -v ripsecrets >/dev/null 2>&1; then
   echo "  Secret scanning: available (ripsecrets)"
@@ -174,22 +273,11 @@ else
   echo "  WARNING: ripsecrets not found in PATH"
 fi
 
-# MCP credential provisioning — re-inject after clean mode stripping.
-# GITHUB_TOKEN: sourced from gh CLI keyring (never touches disk).
-if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-  export GITHUB_TOKEN="$(gh auth token 2>/dev/null)"
-fi
-
-# Project-scoped MCP secrets (.qsdev/ is gitignored).
-if [ -f "$PWD/.qsdev/mcp-secrets.env" ]; then
-  set -a
-  . "$PWD/.qsdev/mcp-secrets.env"
-  set +a
-fi
+` + mcpSecretsShell + `
 
 echo "==================================================="
 echo ""
-echo "  ${%[1]sPROJECT_NAME:-unknown} | security: ${%[1]sSECURITY_PROFILE:-standard} | tools: ${%[1]sTOOL_COUNT:-0}"
+` + fmt.Sprintf(`echo "  ${%[1]sPROJECT_NAME:-unknown} | security: ${%[1]sSECURITY_PROFILE:-standard} | tools: ${%[1]sTOOL_COUNT:-0}"`, prefix) + `
 echo ""
 
 # Shell completions for qsdev
@@ -199,31 +287,39 @@ if command -v qsdev >/dev/null 2>&1; then
   elif [ -n "${BASH_VERSION:-}" ]; then
     eval "$(qsdev completion bash)"
   fi
-fi`, prefix)
+fi`
 }
 
-// buildEnterTestScript returns the shell script body for devenv.nix enterTest.
-func buildEnterTestScript() string {
-	return `echo "=== Security Validation ==="
-
-# 1. Verify pre-commit hooks are installed
-if [ -d .git ]; then
-  test -f .git/hooks/pre-commit || {
-    echo "FAIL: pre-commit hooks not installed"
-    exit 1
-  }
-  echo "PASS: pre-commit hooks installed"
-fi
-
-# 2. Verify ambient credential leakage is prevented.
-# GITHUB_TOKEN is intentionally re-injected for MCP servers via gh keyring.
-for var in AWS_SECRET_ACCESS_KEY VAULT_TOKEN DATABASE_PASSWORD; do
+// buildEnterTestScript returns the shell script body for devenv.nix
+// enterTest. unset is the generated unsetEnvVars list.
+func buildEnterTestScript(unset []string) string {
+	leakCheck := `echo "PASS: no ambient credential leakage"`
+	if vars := spotCheckVars(unset); len(vars) > 0 {
+		leakCheck = `for var in ` + strings.Join(vars, " ") + `; do
   if printenv "$var" >/dev/null 2>&1; then
     echo "FAIL: $var is set in the environment"
     exit 1
   fi
 done
-echo "PASS: no ambient credential leakage"
+` + leakCheck
+	}
+
+	return `echo "=== Security Validation ==="
+
+# 1. Verify pre-commit hooks are installed (worktree- and hooksPath-aware)
+` + hooksStateShell + `
+case "$hooks_state" in
+  active) echo "PASS: pre-commit hooks installed" ;;
+  missing)
+    echo "FAIL: pre-commit hooks not installed"
+    exit 1
+    ;;
+  *) echo "SKIP: not a git repository; pre-commit hook check skipped" ;;
+esac
+
+# 2. Verify ambient credential leakage is prevented.
+# Variables .mcp.json references (e.g. GITHUB_TOKEN) are re-injected on purpose.
+` + leakCheck + `
 
 # 3. Verify ripsecrets finds no issues in tracked files
 if command -v ripsecrets >/dev/null 2>&1; then

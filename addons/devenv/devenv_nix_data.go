@@ -3,6 +3,9 @@ package devenv
 import (
 	"fmt"
 	"maps"
+	"path"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -19,22 +22,22 @@ import (
 
 // DevenvNixTemplateData holds all data required to render the devenv.nix template.
 type DevenvNixTemplateData struct {
-	Overlays           []string                   // Nix overlay file paths (e.g. "./nix/go-overlay.nix").
-	Packages           []string                   // Base + extra packages (rendered as pkgs.NAME).
-	PackageExprs       []string                   // Raw Nix expressions that produce derivations.
-	EnvVars            map[string]string          // Non-sensitive env vars (always includes DEVENV_SECURITY_HARDENED).
-	UnsetEnvVars       []string                   // Credential-bearing vars stripped from the shell.
-	LanguageFragments  []LanguageFragment         // Pre-rendered Nix from ecosystem modules.
-	Services           []ServiceTemplateData      // Structured service configs.
-	GitHooksEnabled    bool                       // Whether the git-hooks block appears.
-	SecurityHooks      []string                   // Always-present hooks (ripsecrets, etc.).
-	BuiltInHooks       []string                   // Ecosystem hooks using .enable = true syntax.
-	CustomHooks        []CustomHookData           // Ecosystem hooks needing full attribute sets.
-	NeedsNativeLibPath bool                       // True when uv-tool MCP servers need LD_LIBRARY_PATH (NixOS).
-	EnterShell         string                     // Shell script body for enterShell.
-	EnterTest          string                     // Test script body for enterTest.
-	Tasks              []ecosystem.TaskDefinition // Development task definitions from ecosystem modules.
-	ServiceScripts     []ServiceScript            // Convenience scripts from services.
+	Overlays           []string              // Nix path expressions for overlay files (e.g. "./nix/go-overlay.nix").
+	Packages           []string              // Base + extra packages (rendered as pkgs.NAME).
+	PackageExprs       []string              // Raw Nix expressions that produce derivations.
+	EnvVars            map[string]string     // Non-sensitive env vars (always includes DEVENV_SECURITY_HARDENED).
+	UnsetEnvVars       []string              // Credential-bearing vars stripped from the shell.
+	LanguageFragments  []LanguageFragment    // Pre-rendered Nix from ecosystem modules.
+	Services           []ServiceTemplateData // Structured service configs.
+	GitHooksEnabled    bool                  // Whether the git-hooks block appears.
+	SecurityHooks      []string              // Always-present hooks (ripsecrets, etc.).
+	BuiltInHooks       []string              // Ecosystem hooks using .enable = true syntax.
+	CustomHooks        []CustomHookData      // Ecosystem hooks needing full attribute sets.
+	NeedsNativeLibPath bool                  // True when uv-tool MCP servers need LD_LIBRARY_PATH (NixOS).
+	EnterShell         string                // Shell script body for enterShell.
+	EnterTest          string                // Test script body for enterTest.
+	TaskScripts        []TaskScript          // Development tasks rendered as devenv scripts.
+	ServiceScripts     []ServiceScript       // Convenience scripts from services.
 }
 
 // LanguageFragment holds a pre-rendered Nix code block from an ecosystem module.
@@ -50,6 +53,15 @@ type ServiceTemplateData struct {
 	ConfigLines []string          // Nix attribute lines inside the service block.
 	EnvVars     map[string]string // Service-specific env vars merged into the global env block.
 	Scripts     []ServiceScript   // Convenience scripts (e.g. open-keycloak).
+}
+
+// TaskScript is a development task (build, test, lint, ...) emitted as a
+// devenv script so it is an executable on PATH, which works in direnv-activated
+// shells too (direnv exports variables only, never shell functions).
+type TaskScript struct {
+	Name        string // Script name (e.g. "qsdev-test").
+	Description string // Human-readable description.
+	Exec        string // Bash body; runs with errexit so any failing command fails the task.
 }
 
 // ServiceScript defines a convenience script emitted as scripts.<Name>.exec in devenv.nix.
@@ -90,7 +102,11 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data := &DevenvNixTemplateData{}
 
 	// 0. Overlays from user configuration.
-	data.Overlays = answers.Overlays
+	overlays, err := overlayPathExprs(answers.Overlays)
+	if err != nil {
+		return nil, err
+	}
+	data.Overlays = overlays
 
 	// 1. Packages: base + extras. Extras come from answers files and config
 	// that can be edited outside the add-package command, so re-validate them
@@ -157,6 +173,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data.LanguageFragments = append(data.LanguageFragments, toolFragments...)
 
 	// 5. Services.
+	serviceEnv := make(map[string]bool)
 	for _, svc := range answers.Services {
 		svcData, err := serviceToTemplateData(svc)
 		if err != nil {
@@ -165,8 +182,20 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 		data.Services = append(data.Services, svcData)
 		for k, v := range svcData.EnvVars {
 			data.EnvVars[k] = v
+			serviceEnv[k] = true
 		}
 		data.ServiceScripts = append(data.ServiceScripts, svcData.Scripts...)
+	}
+
+	// A variable a service sets on purpose (e.g. MinIO's local AWS_* client
+	// credentials) must not also be unset: devenv unsets after exporting env,
+	// so the service's value would silently disappear from the shell.
+	data.UnsetEnvVars = slices.DeleteFunc(data.UnsetEnvVars, func(name string) bool {
+		return serviceEnv[name]
+	})
+
+	if err := validateEnvVarNames(data.EnvVars); err != nil {
+		return nil, err
 	}
 
 	// 6. Security hooks are always present. An ecosystem module may declare
@@ -195,11 +224,11 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data.GitHooksEnabled = true
 
 	// 8. Shell scripts.
-	data.EnterShell = buildEnterShellScript()
-	data.EnterTest = buildEnterTestScript()
+	data.EnterShell = buildEnterShellScript(data.UnsetEnvVars)
+	data.EnterTest = buildEnterTestScript(data.UnsetEnvVars)
 
 	// 9. Task definitions from ecosystem modules.
-	data.Tasks = collectTaskDefinitions(answers, registry)
+	data.TaskScripts = buildTaskScripts(collectTaskDefinitions(answers, registry))
 
 	// Sort built-in hooks for deterministic output.
 	sort.Strings(data.BuiltInHooks)
@@ -419,8 +448,10 @@ func collectModulePackages(answers types.WizardAnswers, registry *ecosystem.Regi
 func collectToolPackages(answers types.WizardAnswers) (pkgs []string, exprs []string) {
 	nixPkgs := defaultToolNixPackages()
 	nixExprs := defaultToolNixExprs()
-	for toolName, enabled := range answers.EnabledTools {
-		if !enabled {
+	// Iterate in sorted order so regenerating with identical answers yields a
+	// byte-identical devenv.nix (map order would reshuffle the package list).
+	for _, toolName := range slices.Sorted(maps.Keys(answers.EnabledTools)) {
+		if !answers.EnabledTools[toolName] {
 			continue
 		}
 		if nixPkg, ok := nixPkgs[toolName]; ok {
@@ -503,6 +534,82 @@ func collectTaskDefinitions(answers types.WizardAnswers, registry *ecosystem.Reg
 		}
 	}
 	return ecosystem.AggregateTaskDefinitions(modules, configForFunc, answers.EnabledTools)
+}
+
+// taskScriptPrefix is prepended to task names to form script names. It must
+// match the names the generated CLAUDE.md advertises.
+const taskScriptPrefix = "qsdev-"
+
+// buildTaskScripts turns task definitions into devenv scripts. Each script
+// runs its commands under errexit, so a failing command fails the task instead
+// of being masked by a later passing one, and first runs the scripts of the
+// tasks it depends on (e.g. test runs build).
+func buildTaskScripts(tasks []ecosystem.TaskDefinition) []TaskScript {
+	defined := make(map[string]bool, len(tasks))
+	for _, t := range tasks {
+		defined[t.Name] = true
+	}
+
+	scripts := make([]TaskScript, 0, len(tasks))
+	for _, t := range tasks {
+		lines := []string{"set -euo pipefail"}
+		for _, dep := range t.DependsOn {
+			if defined[dep] && dep != t.Name {
+				lines = append(lines, taskScriptPrefix+dep)
+			}
+		}
+		lines = append(lines, t.Commands...)
+		scripts = append(scripts, TaskScript{
+			Name:        taskScriptPrefix + t.Name,
+			Description: t.Description,
+			Exec:        strings.Join(lines, "\n"),
+		})
+	}
+	return scripts
+}
+
+// envVarNameRe matches names that are valid both as shell environment
+// variables and as bare Nix attribute names in the env block.
+var envVarNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// validateEnvVarNames rejects env keys that would not render as a single Nix
+// attribute: "API.URL" would become a nested attrset and "MY VAR" or "a-b"
+// would not name a usable shell variable.
+func validateEnvVarNames(env map[string]string) error {
+	for _, name := range slices.Sorted(maps.Keys(env)) {
+		if !envVarNameRe.MatchString(name) {
+			return fmt.Errorf("invalid environment variable name %q: must match %s", name, envVarNameRe)
+		}
+	}
+	return nil
+}
+
+// nixPathLiteralRe matches relative paths that can be written as a bare Nix
+// path literal once prefixed with "./".
+var nixPathLiteralRe = regexp.MustCompile(`^[A-Za-z0-9._+-]+(/[A-Za-z0-9._+-]+)*$`)
+
+// overlayPathExprs normalizes project-relative overlay file paths and renders
+// each as a Nix path expression rooted at the project (devenv.nix's directory).
+// Absolute paths and paths escaping the project are rejected: they make
+// devenv.nix non-portable and fail under pure evaluation.
+func overlayPathExprs(overlays []string) ([]string, error) {
+	exprs := make([]string, 0, len(overlays))
+	for _, o := range overlays {
+		slashed := filepath.ToSlash(o)
+		if o == "" || path.IsAbs(slashed) || filepath.IsAbs(o) || filepath.VolumeName(o) != "" {
+			return nil, fmt.Errorf("overlay %q: must be a path relative to the project root", o)
+		}
+		rel := path.Clean(slashed)
+		if rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+			return nil, fmt.Errorf("overlay %q: must be a file inside the project", o)
+		}
+		if nixPathLiteralRe.MatchString(rel) {
+			exprs = append(exprs, "./"+rel)
+		} else {
+			exprs = append(exprs, "(./. + "+nixStr("/"+rel)+")")
+		}
+	}
+	return exprs, nil
 }
 
 // buildEcosystemsList returns a sorted, comma-separated list of selected

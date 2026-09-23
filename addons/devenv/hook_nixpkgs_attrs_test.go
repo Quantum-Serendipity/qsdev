@@ -20,16 +20,12 @@ import (
 // throw-alias) both shipped self-certified because a non-empty string was
 // treated as valid, breaking devenv.nix evaluation for Java/PHP at commit time.
 //
-// `nix eval` against nixpkgs is slow and needs network, so this runs only when
-// QSDEV_CHECK_NIX_ATTRS=1 (a dedicated CI job) and nix is on PATH.
+// It runs whenever nix is on PATH and can resolve the nixpkgs flake (about a
+// second with a warm cache), so every `go test ./...` on a Nix machine checks
+// it. QSDEV_CHECK_NIX_ATTRS=1 makes it mandatory (fail instead of skip when
+// nix or nixpkgs is unavailable); QSDEV_CHECK_NIX_ATTRS=0 or -short skips it.
 func TestCustomHookNixPackagesResolve(t *testing.T) {
-	if os.Getenv("QSDEV_CHECK_NIX_ATTRS") != "1" {
-		t.Skip("set QSDEV_CHECK_NIX_ATTRS=1 to validate hook NixPackage attributes against nixpkgs")
-	}
-	nixBin, err := exec.LookPath("nix")
-	if err != nil {
-		t.Skip("nix not available; skipping NixPackage attribute validation")
-	}
+	nixBin := requireNixpkgs(t)
 
 	// Collect the unique declared attributes across all modules, including
 	// variants toggled by common Extra flags (e.g. Kotlin's ktlint), so
@@ -60,6 +56,34 @@ func TestCustomHookNixPackagesResolve(t *testing.T) {
 			}
 		})
 	}
+}
+
+// requireNixpkgs returns the nix binary when the nixpkgs flake is resolvable,
+// honouring QSDEV_CHECK_NIX_ATTRS (see TestCustomHookNixPackagesResolve).
+func requireNixpkgs(t *testing.T) string {
+	t.Helper()
+	mode := os.Getenv("QSDEV_CHECK_NIX_ATTRS")
+	required := mode == "1"
+	unavailable := func(format string, args ...any) {
+		t.Helper()
+		if required {
+			t.Fatalf(format, args...)
+		}
+		t.Skipf(format, args...)
+	}
+	if !required && (mode == "0" || testing.Short()) {
+		t.Skip("NixPackage attribute validation disabled (QSDEV_CHECK_NIX_ATTRS=0 or -short)")
+	}
+	nixBin, err := exec.LookPath("nix")
+	if err != nil {
+		unavailable("nix not available; cannot validate hook NixPackage attributes")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, nixBin, "eval", "--raw", "nixpkgs#lib.version").CombinedOutput(); err != nil {
+		unavailable("nixpkgs flake not resolvable (offline?): %v\n%s", err, out)
+	}
+	return nixBin
 }
 
 // withExtra returns a ModuleConfig carrying a single Extra key/value.

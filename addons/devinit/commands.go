@@ -84,7 +84,7 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 	// c. Detect or override mode.
 	var result *ModeDetectionResult
 	if opts.Mode != "" {
-		result, err = overrideMode(opts.Mode, projectRoot)
+		result, err = overrideMode(opts.Mode)
 		if err != nil {
 			return err
 		}
@@ -119,7 +119,7 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 			DryRun: opts.DryRun,
 		})
 	case ModeRepair:
-		return runRepair(cmd, opts, projectRoot, result)
+		return runRepair(cmd, opts)
 	default:
 		return fmt.Errorf("unexpected onboarding mode: %s", result.Mode)
 	}
@@ -245,6 +245,10 @@ func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot st
 
 	if opts.Yes {
 		answers.Confirmed = true
+	}
+	// Answers that are already confirmed (--yes, --profile, --answers-file)
+	// skip the wizard, so they all get the same catalog defaults.
+	if answers.Confirmed {
 		cat, err := catalog.Default()
 		if err != nil {
 			return types.WizardAnswers{}, fmt.Errorf("loading catalog for defaults: %w", err)
@@ -252,28 +256,46 @@ func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot st
 		answers.FillDefaults(detected, cat)
 	}
 
-	treg, err := toolreg.Default()
-	if err != nil {
-		return types.WizardAnswers{}, fmt.Errorf("loading tool registry: %w", err)
-	}
-	toolreg.MergeInferredTools(&answers, treg)
-
 	if opts.Yes && !answers.IsComplete() {
 		missing := incompleteAnswersMessage(answers)
 		return types.WizardAnswers{}, fmt.Errorf("non-interactive mode (--yes) requires complete answers; missing:\n%s\nProvide --lang, --profile, or run in a project with detectable language files", missing)
 	}
 
 	if !answers.IsComplete() && !opts.Yes {
-		if !term.IsTerminal(os.Stdin.Fd()) {
-			return types.WizardAnswers{}, fmt.Errorf("stdin is not a terminal; use --yes or --profile for non-interactive mode")
-		}
-		wizardAnswers, err := RunWizard(projectRoot, detected, answers, flagSet, opts.Theme)
+		answers, err = runInitWizard(opts, projectRoot, detected, answers, flagSet)
 		if err != nil {
-			return types.WizardAnswers{}, fmt.Errorf("running wizard: %w", err)
+			return types.WizardAnswers{}, err
 		}
-		answers = wizardAnswers
 	}
 
+	// Infer tools only from the final answers: tools inferred from the
+	// pre-wizard flags would outlive a wizard choice that turned them off.
+	treg, err := toolreg.Default()
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("loading tool registry: %w", err)
+	}
+	toolreg.MergeInferredTools(&answers, treg)
+
+	enforceAnswerInvariants(&answers)
+	return answers, nil
+}
+
+// runInitWizard collects the remaining answers interactively and validates
+// the result the same way as non-interactive answers.
+func runInitWizard(opts InitOptions, projectRoot string, detected types.DetectedProject, partial types.WizardAnswers, flagSet *FlagSet) (types.WizardAnswers, error) {
+	if !term.IsTerminal(os.Stdin.Fd()) {
+		return types.WizardAnswers{}, fmt.Errorf("stdin is not a terminal; use --yes or --profile for non-interactive mode")
+	}
+	answers, err := RunWizard(projectRoot, detected, partial, flagSet, opts.Theme)
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("running wizard: %w", err)
+	}
+	if !answers.Confirmed {
+		return answers, nil
+	}
+	if err := ValidateAnswers(answers); err != nil {
+		return types.WizardAnswers{}, err
+	}
 	return answers, nil
 }
 
@@ -373,8 +395,9 @@ func finalizeProject(cmd *cobra.Command, opts InitOptions, answers types.WizardA
 	return nil
 }
 
-// runRepair delegates to the full repair command logic.
-func runRepair(cmd *cobra.Command, opts InitOptions, _ string, _ *ModeDetectionResult) error {
+// runRepair delegates to the full repair command logic, which computes its
+// own drift report.
+func runRepair(cmd *cobra.Command, opts InitOptions) error {
 	return runRepairCommand(cmd, repair.RepairOptions{
 		Force:  opts.Force,
 		DryRun: opts.DryRun,

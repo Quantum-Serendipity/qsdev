@@ -4,7 +4,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
-	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // ExportLanguageSpec re-exports LanguageSpec for external tests.
@@ -170,9 +169,6 @@ type ExportOnboardingMode = OnboardingMode
 // ExportModeDetectionResult re-exports ModeDetectionResult for external tests.
 type ExportModeDetectionResult = ModeDetectionResult
 
-// ExportDriftReport re-exports DriftReport for external tests.
-type ExportDriftReport = DriftReport
-
 // ExportPrerequisiteStatus re-exports PrerequisiteStatus for external tests.
 type ExportPrerequisiteStatus = PrerequisiteStatus
 
@@ -256,9 +252,7 @@ var ExportBuildWizardForm = buildWizardForm
 var ExportBuildPlanPreview = buildPlanPreview
 
 // ExportBuildDetailedDefaults exposes buildDetailedDefaults for external tests.
-var ExportBuildDetailedDefaults = func(detected types.DetectedProject, defaults types.WizardAnswers) string {
-	return buildDetailedDefaults(detected, defaults)
-}
+var ExportBuildDetailedDefaults = buildDetailedDefaults
 
 // NewExportFormState constructs a formState with the given options for external tests.
 func NewExportFormState(opts ...func(*formState)) *formState {

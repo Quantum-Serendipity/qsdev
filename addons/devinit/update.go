@@ -176,6 +176,7 @@ func loadAndRefreshForUpdate(projectRoot string) (types.WizardAnswers, error) {
 
 	// Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
 	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
+	enforceAnswerInvariants(&answers)
 
 	return answers, nil
 }

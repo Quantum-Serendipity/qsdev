@@ -429,6 +429,7 @@ func TestExtractRepoName(t *testing.T) {
 		{"SSH with .git", "git@github.com:org/repo.git", "repo"},
 		{"SSH without .git", "git@github.com:org/repo", "repo"},
 		{"HTTPS trailing slash", "https://github.com/org/repo/", "repo"},
+		{"HTTPS .git with trailing slash", "https://github.com/org/repo.git/", "repo"},
 		{"HTTPS deep path", "https://gitlab.com/group/subgroup/repo.git", "repo"},
 		{"SSH deep path", "git@gitlab.com:group/subgroup/repo.git", "repo"},
 		{"Empty string", "", ""},

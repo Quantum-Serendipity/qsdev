@@ -150,6 +150,7 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 
 	// Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
 	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
+	enforceAnswerInvariants(&answers)
 
 	return answers, nil
 }

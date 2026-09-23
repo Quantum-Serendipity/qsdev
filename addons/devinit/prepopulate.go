@@ -2,9 +2,12 @@
 package devinit
 
 import (
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -85,19 +88,7 @@ func MapDetectionToDefaults(detected types.DetectedProject, projectRoot string) 
 		})
 	}
 
-	// Tier 2-4 ecosystems use the forward-compatible Ecosystems map.
-	ecosystemLanguages := []string{
-		"php", "ruby", "scala", "cpp", "helm", "ansible", "shell",
-		"elixir", "dart", "swift", "haskell", "clojure", "bazel", "nix",
-		"perl", "r", "lua", "zig", "powershell",
-	}
-	for _, name := range ecosystemLanguages {
-		if detected.Ecosystems[name] {
-			answers.Languages = append(answers.Languages, types.LanguageChoice{
-				Name: name,
-			})
-		}
-	}
+	answers.Languages = appendDetectedEcosystems(answers.Languages, detected)
 
 	// --- Scalar field mappings ---
 
@@ -110,6 +101,27 @@ func MapDetectionToDefaults(detected types.DetectedProject, projectRoot string) 
 	}
 
 	return answers
+}
+
+// appendDetectedEcosystems adds every other detected ecosystem (tiers 2-4)
+// that is a registered ecosystem module and not already in langs, in name
+// order. Deriving the list from the registry means a new module needs no change
+// here; detection-only aliases such as "node" are not modules and are skipped.
+func appendDetectedEcosystems(langs []types.LanguageChoice, detected types.DetectedProject) []types.LanguageChoice {
+	registry := ecosystem.DefaultRegistry()
+	for _, name := range slices.Sorted(maps.Keys(detected.Ecosystems)) {
+		if !detected.Ecosystems[name] {
+			continue
+		}
+		if slices.ContainsFunc(langs, func(l types.LanguageChoice) bool { return l.Name == name }) {
+			continue
+		}
+		if _, ok := registry.ByName(name); !ok {
+			continue
+		}
+		langs = append(langs, types.LanguageChoice{Name: name})
+	}
+	return langs
 }
 
 // projectNameFromDetection derives a project name from the detection results.
@@ -128,10 +140,9 @@ func projectNameFromDetection(detected types.DetectedProject, projectRoot string
 // It handles HTTPS URLs (https://github.com/org/repo.git), SSH URLs
 // (git@github.com:org/repo.git), and plain paths.
 func extractRepoName(url string) string {
-	// Remove trailing .git suffix
-	url = strings.TrimSuffix(url, ".git")
-	// Remove trailing slash
+	// Remove trailing slashes first so "repo.git/" still loses its .git suffix.
 	url = strings.TrimRight(url, "/")
+	url = strings.TrimSuffix(url, ".git")
 
 	if url == "" {
 		return ""

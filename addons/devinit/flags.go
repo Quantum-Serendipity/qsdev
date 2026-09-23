@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -29,8 +30,12 @@ func NewFlagSet(cmd *cobra.Command) *FlagSet {
 	return &FlagSet{changed: changed}
 }
 
-// IsSet reports whether a flag was explicitly set by the user.
+// IsSet reports whether a flag was explicitly set by the user. A nil FlagSet
+// has no flags set.
 func (f *FlagSet) IsSet(name string) bool {
+	if f == nil {
+		return false
+	}
 	return f.changed[name]
 }
 
@@ -131,7 +136,10 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 
 	// Claude Code flags.
 	cmd.Flags().BoolVar(&opts.ClaudeCode, "claude-code", true, "Enable Claude Code configuration")
-	cmd.Flags().StringVar(&opts.ClaudePermissions, "claude-permissions", "standard", "Permission preset (supply-chain-only, minimal, standard, permissive, custom)")
+	// No flag default: an unset permission level lets the tier's default
+	// preset apply (FillDefaults and the wizard fall back to standard when no
+	// tier is chosen either).
+	cmd.Flags().StringVar(&opts.ClaudePermissions, "claude-permissions", "", "Permission preset (supply-chain-only, minimal, standard, permissive, custom); defaults to the tier's preset, or standard")
 	cmd.Flags().StringSliceVar(&opts.ClaudeSkills, "claude-skills", nil, "Skills to install (e.g. deploy,review-pr)")
 	cmd.Flags().StringSliceVar(&opts.ClaudeHooks, "claude-hooks", nil, "Hook presets to enable (e.g. safety-block,auto-format)")
 	cmd.Flags().StringSliceVar(&opts.MCPServers, "mcp", nil, "MCP servers to configure (e.g. github,filesystem)")
@@ -166,6 +174,11 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 // Language-specific version flags implicitly add their language if it is
 // not already present in the --lang list.
 func AnswersFromFlags(opts InitOptions, projectRoot string) (types.WizardAnswers, error) {
+	cat, err := catalog.Default()
+	if err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("loading catalog for flag defaults: %w", err)
+	}
+
 	answers := types.WizardAnswers{
 		ProjectRoot:       projectRoot,
 		ProjectName:       filepath.Base(projectRoot),
@@ -182,7 +195,7 @@ func AnswersFromFlags(opts InitOptions, projectRoot string) (types.WizardAnswers
 		AgentTools: types.AgentToolsAnswers{
 			PostmortemEnabled:    opts.AgentPostmortem,
 			VersionSentinel:      opts.AgentVersionSentinel,
-			VersionSentinelHours: 24,
+			VersionSentinelHours: cat.DefaultVersionSentinelHours(),
 			SembleEnabled:        opts.AgentSemble,
 			SembleMode:           opts.AgentSembleMode,
 			SembleTextFiles:      opts.AgentSembleTextFiles,
@@ -258,7 +271,7 @@ func AnswersFromFlags(opts InitOptions, projectRoot string) (types.WizardAnswers
 		for _, kv := range opts.Env {
 			idx := strings.IndexByte(kv, '=')
 			if idx < 0 {
-				continue
+				return answers, fmt.Errorf("invalid --env value %q: must be KEY=VALUE", kv)
 			}
 			key := kv[:idx]
 			if !validEnvKey.MatchString(key) {

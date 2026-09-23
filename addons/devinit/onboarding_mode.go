@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/mod/module"
+
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -43,18 +45,12 @@ func (m OnboardingMode) String() string {
 }
 
 // ModeDetectionResult holds the outcome of onboarding mode detection.
+// Repair mode recomputes the full drift report itself, so detection only
+// summarizes the drift in Explanation.
 type ModeDetectionResult struct {
 	Mode         OnboardingMode
 	Explanation  string
 	AlreadySetUp bool
-	DriftReport  *DriftReport
-}
-
-// DriftReport describes files that have drifted from their expected state.
-type DriftReport struct {
-	Modified []string
-	Deleted  []string
-	Summary  string
 }
 
 // DetectOnboardingMode examines projectRoot to determine the correct onboarding
@@ -62,7 +58,7 @@ type DriftReport struct {
 //  1. No .qsdev.yaml -> ModeCreate
 //  2. No .devinit/.qsdev-init-state.yaml -> ModeJoin
 //  3. State file unreadable -> ModeRepair
-//  4. Version mismatch (non-dev) -> ModeUpdate
+//  4. Version mismatch between release builds -> ModeUpdate
 //  5. Files drifted (modified or deleted) -> ModeRepair
 //  6. All matches -> ModeJoin with AlreadySetUp=true
 func DetectOnboardingMode(projectRoot string) (*ModeDetectionResult, error) {
@@ -97,8 +93,7 @@ func DetectOnboardingMode(projectRoot string) (*ModeDetectionResult, error) {
 	// 4. Compare versions.
 	currentVersion := version.Info().Version
 	storedVersion := existingState.QsdevVersion
-	if storedVersion != "" && currentVersion != "" &&
-		storedVersion != "dev" && currentVersion != "dev" &&
+	if !isDevBuildVersion(storedVersion) && !isDevBuildVersion(currentVersion) &&
 		storedVersion != currentVersion {
 		return &ModeDetectionResult{
 			Mode:        ModeUpdate,
@@ -126,16 +121,9 @@ func DetectOnboardingMode(projectRoot string) (*ModeDetectionResult, error) {
 		if len(deleted) > 0 {
 			parts = append(parts, fmt.Sprintf("%d deleted", len(deleted)))
 		}
-		summary := fmt.Sprintf("Drift detected: %s.", strings.Join(parts, ", "))
-
 		return &ModeDetectionResult{
 			Mode:        ModeRepair,
-			Explanation: summary,
-			DriftReport: &DriftReport{
-				Modified: modified,
-				Deleted:  deleted,
-				Summary:  summary,
-			},
+			Explanation: fmt.Sprintf("Drift detected: %s.", strings.Join(parts, ", ")),
 		}, nil
 	}
 
@@ -147,9 +135,24 @@ func DetectOnboardingMode(projectRoot string) (*ModeDetectionResult, error) {
 	}, nil
 }
 
+// isDevBuildVersion reports whether v identifies an unreleased build: empty,
+// the "dev" ldflags default, Go's "(devel)", a VCS pseudo-version stamped on
+// source builds, or a build of a modified tree ("+dirty"). Such versions change
+// with every commit, so a difference does not mean qsdev was upgraded.
+func isDevBuildVersion(v string) bool {
+	switch {
+	case v == "", v == "dev", v == "(devel)":
+		return true
+	case strings.HasSuffix(v, "+dirty"):
+		return true
+	default:
+		return module.IsPseudoVersion(v)
+	}
+}
+
 // overrideMode parses a mode string and returns a forced ModeDetectionResult.
 // Valid values are "create", "join", "update", "repair".
-func overrideMode(modeStr string, projectRoot string) (*ModeDetectionResult, error) {
+func overrideMode(modeStr string) (*ModeDetectionResult, error) {
 	var mode OnboardingMode
 	switch strings.ToLower(modeStr) {
 	case "create":

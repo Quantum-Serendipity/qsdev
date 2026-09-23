@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
-
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -139,17 +137,14 @@ func TestEnsureGitignoreEntry_SectionCommentAddedOnce(t *testing.T) {
 	}
 }
 
-// TestFinalizeProject_IgnoresLocalConfig is the W166 regression test: join
-// adds the machine-local overrides file to .gitignore, so init must as well,
-// or every teammate's first join dirties the committed .gitignore.
-func TestFinalizeProject_IgnoresLocalConfig(t *testing.T) {
+// TestEnsureProjectGitignore_IgnoresLocalConfig is the W166 regression test:
+// join adds the machine-local overrides file to .gitignore, so init must as
+// well, or every teammate's first join dirties the committed .gitignore.
+func TestEnsureProjectGitignore_IgnoresLocalConfig(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	cmd := &cobra.Command{}
-	if err := finalizeProject(cmd, InitOptions{Quiet: true}, types.WizardAnswers{}, dir, false, false); err != nil {
-		t.Fatalf("finalizeProject: %v", err)
-	}
+	ensureProjectGitignore(dir, types.WizardAnswers{})
 	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
 	if err != nil {
 		t.Fatalf("reading .gitignore: %v", err)

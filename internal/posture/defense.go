@@ -1,6 +1,7 @@
 package posture
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,6 +30,7 @@ func init() {
 // Artifacts whose presence or content the defense layers inspect.
 const (
 	packageGuardPath    = ".claude/hooks/package-guard.py"
+	claudeSettingsPath  = ".claude/settings.json"
 	preCommitConfigPath = ".pre-commit-config.yaml"
 	devenvNixPath       = "devenv.nix"
 	grypeConfigPath     = ".grype.yaml"
@@ -125,6 +127,39 @@ func (in assessmentInput) ageUngatedLanguages() []string {
 	return out
 }
 
+// packageGuardRegistered reports whether .claude/settings.json registers
+// package-guard.py as a PreToolUse hook and does not disable all hooks. The script on disk does nothing
+// unless Claude Code is told to run it.
+func (in assessmentInput) packageGuardRegistered() bool {
+	data := in.content(claudeSettingsPath)
+	if data == nil {
+		return false
+	}
+	// Keys are read exactly, as Claude Code reads them (encoding/json would
+	// also accept a decoy "Hooks" key), and hooks switched off wholesale
+	// guard nothing.
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return false
+	}
+	if off, _ := settings["disableAllHooks"].(bool); off {
+		return false
+	}
+	events, _ := settings["hooks"].(map[string]any)
+	matchers, _ := events["PreToolUse"].([]any)
+	for _, m := range matchers {
+		mm, _ := m.(map[string]any)
+		hooks, _ := mm["hooks"].([]any)
+		for _, h := range hooks {
+			hm, _ := h.(map[string]any)
+			if cmd, _ := hm["command"].(string); strings.Contains(cmd, packageGuardPath) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // layerSpec defines one defense layer's metadata and assessment logic.
 type layerSpec struct {
 	Name    string
@@ -144,7 +179,12 @@ var layerTable = []layerSpec{
 			hasPackageGuard := input.has(packageGuardPath)
 
 			if attachGuardEnabled && hasPackageGuard {
-				return LayerEnabled, 0, "attach-guard enabled and package-guard.py present"
+				// Judged from the hook actually registered in settings.json:
+				// a script nothing runs guards nothing.
+				if !input.packageGuardRegistered() {
+					return LayerPartial, 5, "package-guard.py present but not run as a PreToolUse hook (not registered in " + claudeSettingsPath + ", or hooks are disabled)"
+				}
+				return LayerEnabled, 0, "attach-guard enabled and package-guard.py registered as a PreToolUse hook"
 			}
 			if attachGuardEnabled || hasPackageGuard {
 				if !attachGuardEnabled {

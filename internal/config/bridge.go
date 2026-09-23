@@ -43,6 +43,9 @@ func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, pro
 		})
 	}
 
+	answers.ExtraPackages = slices.Clone(cfg.Packages)
+	answers.Overlays = slices.Clone(cfg.Overlays)
+
 	mapClaudeCode(cfg, &answers)
 
 	// Map Tools to EnabledTools.

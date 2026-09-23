@@ -44,6 +44,7 @@ type InitOptions struct {
 	Services    []string
 	Yes         bool
 	Force       bool
+	Merge       bool
 	DryRun      bool
 	Update      bool
 	DevenvOnly  bool
@@ -104,6 +105,7 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.Flags().StringSliceVar(&opts.Services, "service", nil, "Services to configure (e.g. postgres,redis)")
 	cmd.Flags().BoolVarP(&opts.Yes, "yes", "y", false, "Accept all defaults, skip confirmation prompts")
 	cmd.Flags().BoolVar(&opts.Force, "force", false, "Overwrite existing configuration files")
+	cmd.Flags().BoolVar(&opts.Merge, "merge", false, "Onboard a project with existing configuration: merge into CLAUDE.md, settings.json and .mcp.json, keep devenv.nix and .envrc (devenv.nix.new is written for manual merge)")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview changes without writing files")
 	cmd.Flags().BoolVar(&opts.Update, "update", false, "Regenerate files from saved config, preserving user modifications")
 	cmd.Flags().BoolVar(&opts.DevenvOnly, "devenv-only", false, "Only generate devenv configuration (skip Claude Code)")
@@ -161,6 +163,7 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 
 	// Mark mutually exclusive flags.
 	cmd.MarkFlagsMutuallyExclusive("devenv-only", "claude-only")
+	cmd.MarkFlagsMutuallyExclusive("merge", "force")
 	cmd.MarkFlagsMutuallyExclusive("update", "lang")
 	cmd.MarkFlagsMutuallyExclusive("update", "service")
 	cmd.MarkFlagsMutuallyExclusive("update", "profile")

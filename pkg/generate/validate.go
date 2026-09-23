@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,9 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Validator checks the syntactic validity of file content.
@@ -52,6 +56,47 @@ func (r *ValidatorRegistry) Validate(path string, content []byte) ValidationResu
 	result := v.Validate(content)
 	result.Path = path
 	return result
+}
+
+// ErrInvalidContent marks generated content rejected by its syntax validator.
+var ErrInvalidContent = errors.New("invalid generated content")
+
+// defaultValidators is the registry shared by ValidateContent; validators
+// cache their tool lookups, so it is built once.
+var defaultValidators = sync.OnceValue(NewValidatorRegistry)
+
+// ValidateContent checks content destined for path with the syntax validator
+// for its file type (Nix, JSON, YAML, shell). It returns an error when the
+// content is invalid; a file type without a validator, or whose validator tool
+// is unavailable, passes.
+func ValidateContent(path string, content []byte) error {
+	vr := defaultValidators().Validate(path, content)
+	if !vr.Valid && !vr.Skipped {
+		return fmt.Errorf("%w: validation failed for %s: %w", ErrInvalidContent, path, vr.Error)
+	}
+	return nil
+}
+
+// WriteGeneratedFile validates f's content as WriteFiles does (unless
+// f.SkipValidation) and writes it atomically to projectRoot/f.Path with
+// f.Mode (default fileutil.ModeReadWrite). It is the write path for generated
+// content outside WriteFiles (update, enable/disable, repair, auto-fix, the
+// claude subcommands), so content WriteFiles rejects is never written by
+// another command.
+func WriteGeneratedFile(projectRoot string, f types.GeneratedFile) error {
+	if !f.SkipValidation {
+		if err := ValidateContent(f.Path, f.Content); err != nil {
+			return err
+		}
+	}
+	mode := f.Mode
+	if mode == 0 {
+		mode = fileutil.ModeReadWrite
+	}
+	if err := fileutil.WriteFileAtomic(filepath.Join(projectRoot, filepath.FromSlash(f.Path)), f.Content, mode); err != nil {
+		return fmt.Errorf("writing %s: %w", f.Path, err)
+	}
+	return nil
 }
 
 // NewNixValidator returns a new NixValidator.

@@ -1,14 +1,15 @@
 package check
 
 import (
-	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -66,6 +67,7 @@ func checkGeneratedFiles(ctx CheckContext) []CheckResult {
 
 	var results []CheckResult
 	hasIssues := false
+	var userEdited []string
 
 	// Iterate in sorted order so report output is reproducible across runs.
 	for _, relPath := range slices.Sorted(maps.Keys(statuses)) {
@@ -76,7 +78,9 @@ func checkGeneratedFiles(ctx CheckContext) []CheckResult {
 		case types.Modified:
 			switch storedFile.Strategy {
 			case types.ManualMerge, types.SectionMarker, types.ThreeWayMerge:
-				// User-editable strategies: modification is expected, not a failure.
+				// User-editable strategies: modification is expected, not a
+				// failure (their security content is checked separately).
+				userEdited = append(userEdited, relPath)
 			default:
 				hasIssues = true
 				results = append(results, CheckResult{
@@ -117,39 +121,72 @@ func checkGeneratedFiles(ctx CheckContext) []CheckResult {
 	}
 
 	if !hasIssues && len(results) == 0 {
+		message := "All generated files are unmodified"
+		if len(userEdited) > 0 {
+			message = fmt.Sprintf("No machine-owned generated file is modified; %d user-editable file(s) carry local edits: %s",
+				len(userEdited), strings.Join(userEdited, ", "))
+		}
 		results = append(results, CheckResult{
 			Category: CategoryFileState,
 			Name:     "generated_files",
 			Status:   StatusPass,
 			Severity: SeverityInfo,
-			Message:  "All generated files are unmodified",
+			Message:  message,
 		})
 	}
 
+	return append(results, checkGeneratedSyntax(ctx.ProjectRoot, statuses)...)
+}
+
+// checkGeneratedSyntax validates every tracked generated file still on disk
+// with the syntax validator init applies before writing (nix-instantiate
+// --parse for devenv.nix, JSON, YAML, shell). A generated file that no longer
+// parses, e.g. a devenv.nix broken by a later edit or write, breaks the
+// environment for everyone who pulls it.
+func checkGeneratedSyntax(projectRoot string, statuses map[string]state.FileStatus) []CheckResult {
+	var results []CheckResult
+	for _, relPath := range slices.Sorted(maps.Keys(statuses)) {
+		switch statuses[relPath].Status {
+		case types.Unmodified, types.Modified:
+		default:
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(projectRoot, filepath.FromSlash(relPath)))
+		if err != nil {
+			continue // reported by the modification check
+		}
+		if err := generate.ValidateContent(relPath, content); err != nil {
+			results = append(results, CheckResult{
+				Category:    CategoryFileState,
+				Name:        "file_syntax_" + relPath,
+				Status:      StatusFail,
+				Severity:    SeverityHigh,
+				Message:     fmt.Sprintf("Generated file %s does not parse: %v", relPath, err),
+				FilePath:    relPath,
+				Remediation: "Fix the syntax error or restore the file from version control",
+			})
+		}
+	}
 	return results
 }
 
-// claudeSettingsRelPath is the project-relative, slash-separated path of the
+// ClaudeSettingsRelPath is the project-relative, slash-separated path of the
 // Claude Code settings file that carries the deny rules.
-const claudeSettingsRelPath = ".claude/settings.json"
+const ClaudeSettingsRelPath = ".claude/settings.json"
 
 func checkDenyRules(ctx CheckContext) []CheckResult {
 	if len(ctx.RequiredDenyRules) == 0 {
 		return nil
 	}
 
-	settingsPath := filepath.Join(ctx.ProjectRoot, filepath.FromSlash(claudeSettingsRelPath))
+	settingsPath := filepath.Join(ctx.ProjectRoot, filepath.FromSlash(ClaudeSettingsRelPath))
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
 		return []CheckResult{settingsUnavailableResult(ctx, err)}
 	}
 
-	var settings struct {
-		Permissions struct {
-			Deny []string `json:"deny"`
-		} `json:"permissions"`
-	}
-	if err := json.Unmarshal(data, &settings); err != nil {
+	settings, err := parseSettingsPosture(data)
+	if err != nil {
 		return []CheckResult{
 			{
 				Category:    CategoryFileState,
@@ -157,14 +194,14 @@ func checkDenyRules(ctx CheckContext) []CheckResult {
 				Status:      StatusFail,
 				Severity:    SeverityMedium,
 				Message:     fmt.Sprintf("Could not parse .claude/settings.json: %v", err),
-				FilePath:    claudeSettingsRelPath,
+				FilePath:    ClaudeSettingsRelPath,
 				Remediation: "Fix JSON syntax in .claude/settings.json",
 			},
 		}
 	}
 
-	existingDeny := make(map[string]bool, len(settings.Permissions.Deny))
-	for _, rule := range settings.Permissions.Deny {
+	existingDeny := make(map[string]bool, len(settings.Deny))
+	for _, rule := range settings.Deny {
 		existingDeny[rule] = true
 	}
 
@@ -183,7 +220,7 @@ func checkDenyRules(ctx CheckContext) []CheckResult {
 				Status:   StatusPass,
 				Severity: SeverityInfo,
 				Message:  "All required deny rules are present in settings.json",
-				FilePath: claudeSettingsRelPath,
+				FilePath: ClaudeSettingsRelPath,
 			},
 		}
 	}
@@ -196,7 +233,7 @@ func checkDenyRules(ctx CheckContext) []CheckResult {
 			Status:      StatusFail,
 			Severity:    SeverityMedium,
 			Message:     fmt.Sprintf("Required deny rule missing: %s", rule),
-			FilePath:    claudeSettingsRelPath,
+			FilePath:    ClaudeSettingsRelPath,
 			Remediation: "Run 'qsdev check --auto-fix' to add missing deny rules",
 			AutoFixable: true,
 			Metadata:    map[string]string{"rule": rule},
@@ -212,9 +249,9 @@ func checkDenyRules(ctx CheckContext) []CheckResult {
 // with no deny rules at all); otherwise there is nothing to enforce and the
 // result is only a warning.
 func settingsUnavailableResult(ctx CheckContext, err error) CheckResult {
-	message := fmt.Sprintf("Could not read %s: %v", claudeSettingsRelPath, err)
+	message := fmt.Sprintf("Could not read %s: %v", ClaudeSettingsRelPath, err)
 	if os.IsNotExist(err) {
-		message = claudeSettingsRelPath + " not found; cannot verify deny rules"
+		message = ClaudeSettingsRelPath + " not found; cannot verify deny rules"
 	}
 
 	if !claudeCodeConfigured(ctx) {
@@ -224,7 +261,7 @@ func settingsUnavailableResult(ctx CheckContext, err error) CheckResult {
 			Status:      StatusWarn,
 			Severity:    SeverityMedium,
 			Message:     message,
-			FilePath:    claudeSettingsRelPath,
+			FilePath:    ClaudeSettingsRelPath,
 			Remediation: "Run 'qsdev init' with Claude Code enabled",
 		}
 	}
@@ -235,8 +272,8 @@ func settingsUnavailableResult(ctx CheckContext, err error) CheckResult {
 		Status:      StatusFail,
 		Severity:    SeverityHigh,
 		Message:     message + " (Claude Code is enabled, so no deny rules are enforced)",
-		FilePath:    claudeSettingsRelPath,
-		Remediation: "Run 'qsdev repair' or 'qsdev init --update' to restore " + claudeSettingsRelPath,
+		FilePath:    ClaudeSettingsRelPath,
+		Remediation: "Run 'qsdev repair' or 'qsdev init --update' to restore " + ClaudeSettingsRelPath,
 	}
 }
 
@@ -255,6 +292,6 @@ func claudeCodeConfigured(ctx CheckContext) bool {
 	if err != nil {
 		return false
 	}
-	_, tracked := genState.Files[claudeSettingsRelPath]
+	_, tracked := genState.Files[ClaudeSettingsRelPath]
 	return tracked
 }

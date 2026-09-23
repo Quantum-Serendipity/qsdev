@@ -48,7 +48,7 @@ func createAnswers(t *testing.T, dir string, args ...string) types.WizardAnswers
 func commitConfig(t *testing.T, dir string, answers types.WizardAnswers) {
 	t.Helper()
 	path := filepath.Join(dir, branding.Get().ConfigFile)
-	if err := writeQsdevConfig(path, buildQsdevConfig(answers, "test")); err != nil {
+	if err := qsdevconfig.WriteProjectConfig(path, qsdevconfig.AnswersToConfig(answers, "test")); err != nil {
 		t.Fatalf("writing config: %v", err)
 	}
 }
@@ -238,7 +238,7 @@ func TestBuildQsdevConfig_RoundTripsThroughJoin(t *testing.T) {
 			RegistryProxyPaths: map[string]string{"npm": "/npm/"},
 		},
 	}
-	cfg := buildQsdevConfig(in, "test")
+	cfg := qsdevconfig.AnswersToConfig(in, "test")
 	out := qsdevconfig.ConfigToAnswers(&cfg, types.DetectedProject{}, "/tmp/proj")
 
 	if out.Services[0].Settings["initial_db"] != "app" {
@@ -386,8 +386,10 @@ func TestWarnIgnoredInitFlags(t *testing.T) {
 			t.Errorf("warning %q does not mention %s", out, want)
 		}
 	}
+	// The remedy names --yes --force; only the ignored-flag list must not.
+	listed, _, _ := strings.Cut(out, " because")
 	for _, unwanted := range []string{"--yes", "--quiet"} {
-		if strings.Contains(out, unwanted) {
+		if strings.Contains(listed, unwanted) {
 			t.Errorf("warning %q lists run-control flag %s", out, unwanted)
 		}
 	}

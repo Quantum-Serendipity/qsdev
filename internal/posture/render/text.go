@@ -8,6 +8,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
+	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -72,12 +73,12 @@ func renderHeader(w io.Writer, report *posture.PostureReport, v verbosity) {
 				} else {
 					fmt.Fprintf(w, "  Next tier: %s\n", report.Tier.NextTier)
 				}
-				fmt.Fprintf(w, "  Upgrade: qsdev init --tier %s --dry-run\n", report.Tier.NextTier)
+				fmt.Fprintf(w, "  Upgrade: %s\n", tier.PreviewCommand(branding.Get().AppName, report.Tier.NextTier))
 			}
 		} else {
 			tierLine := fmt.Sprintf("Tier: %s (%d/%d)", report.Tier.Current, report.Tier.Position, report.Tier.Total)
 			if report.Tier.NextTier != "" {
-				tierLine += fmt.Sprintf(" | Next: qsdev init --tier %s --dry-run", report.Tier.NextTier)
+				tierLine += " | Next: " + tier.PreviewCommand(branding.Get().AppName, report.Tier.NextTier)
 			}
 			fmt.Fprintln(w, tierLine)
 		}
@@ -356,7 +357,7 @@ func renderDefault(report *posture.PostureReport, w io.Writer, opts Options) err
 	if sec == "" {
 		fmt.Fprintf(w, "Run 'qsdev status --verbose' for details or 'qsdev status --fix' for remediation commands.\n")
 		if report.Tier.Current != "" && report.Tier.NextTier != "" {
-			fmt.Fprintf(w, "Upgrade tier: qsdev init --tier %s --dry-run\n", report.Tier.NextTier)
+			fmt.Fprintf(w, "Upgrade tier: %s\n", tier.PreviewCommand(branding.Get().AppName, report.Tier.NextTier))
 		}
 	}
 	return nil

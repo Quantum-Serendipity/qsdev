@@ -114,6 +114,14 @@ func NextTier(current string) (string, bool) {
 	return "", false
 }
 
+// PreviewCommand returns the command that previews regenerating an
+// initialized project at tier name. --yes and --force are required: without
+// them init leaves a set-up project untouched ("Nothing to do") and a
+// non-terminal run cannot start the wizard, so nothing would be previewed.
+func PreviewCommand(appName, name string) string {
+	return fmt.Sprintf("%s init --yes --force --tier %s --dry-run", appName, name)
+}
+
 // Position returns the 1-based position of the named tier in the ordering,
 // or 0 if the tier is not recognized.
 func Position(name string) int {

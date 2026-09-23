@@ -329,7 +329,7 @@ func TestCheckDenyRules_SettingsMissingFailsWhenClaudeCodeConfigured(t *testing.
 	trackedState := func(t *testing.T, dir string) string {
 		t.Helper()
 		genState := state.RecordFiles([]types.GeneratedFile{
-			{Path: claudeSettingsRelPath, Content: []byte("{}"), Strategy: types.ThreeWayMerge},
+			{Path: ClaudeSettingsRelPath, Content: []byte("{}"), Strategy: types.ThreeWayMerge},
 		})
 		stateFile := filepath.Join(dir, ".qsdev", "state.yaml")
 		if err := state.SaveStateToFile(stateFile, genState); err != nil {
@@ -426,5 +426,65 @@ func TestCheckGeneratedFiles_DeterministicOrder(t *testing.T) {
 				t.Fatalf("result %d = %s, want %s (order must be sorted)", i, r.FilePath, want[i])
 			}
 		}
+	}
+}
+
+// TestCheckFileState_ReportsUnparseableGeneratedFile checks `qsdev check`
+// fails on a tracked generated file that no longer parses (the syntax
+// validation init applies), including a user-editable file whose edits are
+// otherwise expected.
+func TestCheckFileState_ReportsUnparseableGeneratedFile(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		strategy types.MergeStrategy
+		content  string
+		wantFail bool
+	}{
+		{"valid machine-owned json", types.Overwrite, `{"a": 1}`, false},
+		{"broken machine-owned json", types.Overwrite, `{"a": `, true},
+		{"broken user-editable json", types.ThreeWayMerge, `{"a": `, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			const rel = "cfg/x.json"
+			if err := os.MkdirAll(filepath.Join(dir, "cfg"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, rel), []byte(tt.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			st := state.RecordFiles([]types.GeneratedFile{{Path: rel, Content: []byte(tt.content), Strategy: tt.strategy}})
+			stateFile := filepath.Join(dir, "state.yaml")
+			if err := state.SaveStateToFile(stateFile, st); err != nil {
+				t.Fatal(err)
+			}
+
+			results := CheckFileState(CheckContext{ProjectRoot: dir, StateFile: stateFile})
+			var failed bool
+			for _, r := range results {
+				if r.Name == "file_syntax_"+rel && r.Status == StatusFail {
+					failed = true
+				}
+			}
+			if failed != tt.wantFail {
+				t.Errorf("syntax failure reported = %v, want %v: %+v", failed, tt.wantFail, results)
+			}
+		})
+	}
+}
+
+// TestCheckDenyRules_DecoyKeyCase checks a "Permissions" key in another case
+// cannot stand in for the "permissions" key Claude Code reads.
+func TestCheckDenyRules_DecoyKeyCase(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeTestFile(t, dir, ClaudeSettingsRelPath,
+		`{"permissions": {"deny": []}, "Permissions": {"deny": ["Bash(rm -rf *)"]}}`)
+	results := checkDenyRules(CheckContext{ProjectRoot: dir, RequiredDenyRules: []string{`Bash(rm -rf *)`}})
+	if !ShouldFail(results, AuditLevelLow) {
+		t.Errorf("decoy-cased Permissions key satisfied the deny-rule check: %+v", results)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
@@ -365,7 +366,8 @@ func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, proje
 // ThreeWayMerge base content (storing the un-merged generated "ours" content so
 // future merges diff against it, not the merged result), carries forward state
 // entries for untouched files, optionally stamps the template/skill versions,
-// and saves both the state file and answers. It is the shared tail of init,
+// and saves the state file, the answers and the answer-derived keys of
+// .qsdev.yaml. It is the shared tail of init,
 // update, add-skill and add-hook.
 //
 // The new state starts from a copy of existingState, so everything this
@@ -406,7 +408,9 @@ func persistRegenState(
 	if err := saveAnswers(projectRoot, answers); err != nil {
 		return fmt.Errorf("saving answers: %w", err)
 	}
-	return nil
+	// Keep the committed .qsdev.yaml in step so a teammate's join rebuilds
+	// the same Claude Code configuration.
+	return qsdevconfig.SyncProjectConfig(projectRoot, answers)
 }
 
 func addSkillCmd() *cobra.Command {

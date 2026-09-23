@@ -90,6 +90,14 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	if err != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not read saved answers: %v\n", err)
 	}
+	// The answers file is local (gitignored), so a CI checkout has none;
+	// rebuild them from the committed config the way join does, so CI still
+	// knows what the project must enforce.
+	if answers.ProjectName == "" && ctx.QsdevConfig != nil {
+		if answers, err = buildJoinAnswers(cmd, InitOptions{}, projectRoot); err != nil {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not derive answers from %s: %v\n", cfgFile, err)
+		}
+	}
 
 	// Required deny rules: every base rule the project's permission preset
 	// generates, so deleting any of them from settings.json is caught.
@@ -110,6 +118,20 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	}
 	ctx.ExpectedConflictKeys = claudecode.ExpectedConflicts()
 
+	// The generator's output for the saved answers is what the on-disk
+	// settings.json must still enforce (hook registrations, bypass mode).
+	var freshFiles map[string]types.GeneratedFile
+	var genErr error
+	if answers.ProjectName != "" {
+		freshFiles, _, genErr = regenerateFreshFiles(answers)
+		if genErr != nil {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not regenerate expected files: %v\n", genErr)
+		}
+	}
+	if settings, ok := freshFiles[check.ClaudeSettingsRelPath]; ok {
+		ctx.ExpectedClaudeSettings = settings.Content
+	}
+
 	// Run all checks.
 	report := check.RunAllChecks(ctx)
 
@@ -118,8 +140,7 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		var regen check.RegenerateFunc
 		if answers.ProjectName != "" {
 			regen = func(_ string) (map[string]types.GeneratedFile, error) {
-				freshFiles, _, err := regenerateFreshFiles(answers)
-				return freshFiles, err
+				return freshFiles, genErr
 			}
 		}
 		report.Checks = check.ApplyAutoFixes(report.Checks, projectRoot, ctx.StateFile, regen)

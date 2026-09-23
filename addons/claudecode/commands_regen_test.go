@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -307,5 +309,26 @@ func TestRegen_KeepsUnrecordedLegacyFlatSkill(t *testing.T) {
 	}
 	if !strings.Contains(out, "review-pr.md") {
 		t.Errorf("expected a warning naming the kept legacy file, got:\n%s", out)
+	}
+}
+
+// TestRegen_AddSkillRecordedInProjectConfig checks claude subcommands record
+// their change in the committed .qsdev.yaml, so a teammate's join generates
+// the same Claude Code configuration.
+func TestRegen_AddSkillRecordedInProjectConfig(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	initFullTier(t, dir)
+	cfgPath := filepath.Join(dir, ".qsdev.yaml")
+	writeFile(t, cfgPath, "version: 1\nclaude_code:\n  enabled: true\n  permission_level: standard\n")
+
+	mustRunClaude(t, "add-skill", "deploy")
+
+	cfg, err := qsdevconfig.ParseQsdevConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parsing synced config: %v", err)
+	}
+	if !slices.Contains(cfg.ClaudeCode.Skills, "deploy") {
+		t.Errorf("claude_code.skills = %v, want deploy recorded", cfg.ClaudeCode.Skills)
 	}
 }

@@ -1,6 +1,7 @@
 package repair
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -336,5 +338,29 @@ func TestClassifyFileModification_UsesTypedStatus(t *testing.T) {
 				t.Errorf("ActionType = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestRepair_RefusesInvalidFreshContent checks repair writes generated
+// content through the same syntax validation as init: a regenerated file that
+// does not parse is reported as failed and never written.
+func TestRepair_RefusesInvalidFreshContent(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	const rel = ".mcp.json"
+	genState := state.RecordFiles([]types.GeneratedFile{{Path: rel, Content: []byte(`{}`), Strategy: types.Overwrite}})
+	report := fileModificationReport(drift.Finding{Subject: rel, Severity: drift.Error, FileStatus: types.Deleted, Description: "deleted"})
+	fresh := map[string]types.GeneratedFile{rel: {Path: rel, Content: []byte(`{"mcpServers": `), Strategy: types.Overwrite}}
+
+	result, _, err := Repair(root, RepairOptions{}, genState, fresh, report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Failed) != 1 || !errors.Is(result.Failed[0].Error, generate.ErrInvalidContent) {
+		t.Fatalf("failed = %+v, want one invalid-content failure", result.Failed)
+	}
+	if _, err := os.Stat(filepath.Join(root, rel)); !os.IsNotExist(err) {
+		t.Errorf("invalid content was written (err=%v)", err)
 	}
 }

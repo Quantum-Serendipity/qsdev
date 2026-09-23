@@ -36,6 +36,11 @@ const preCommitWithLockAudit = `repos:
         name: Lock file change audit
 `
 
+// settingsWithPackageGuard is a .claude/settings.json registering the package
+// guard as a PreToolUse hook, as the generator writes it.
+const settingsWithPackageGuard = `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+  {"type": "command", "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/package-guard.py"}]}]}}`
+
 // writeProjectFiles writes files (relative path -> content) under a fresh
 // project directory and returns it with a generated state listing them.
 func writeProjectFiles(t *testing.T, files map[string]string) (string, types.GeneratedState) {
@@ -182,6 +187,7 @@ func TestAssessDefenseLayers_CountsAreTierRelative(t *testing.T) {
 	t.Parallel()
 	dir, genState := writeProjectFiles(t, map[string]string{
 		".claude/hooks/package-guard.py": "",
+		".claude/settings.json":          settingsWithPackageGuard,
 		".pre-commit-config.yaml":        preCommitWithLockAudit,
 	})
 	tools := map[string]bool{"attach-guard": true}

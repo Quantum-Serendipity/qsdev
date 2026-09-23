@@ -166,6 +166,10 @@ type CheckContext struct {
 	DenyRules            []string
 	SkillOps             []SkillOps
 	ExpectedConflictKeys map[string]string
+	// ExpectedClaudeSettings is the .claude/settings.json the generator
+	// produces for the project's saved answers (nil when unknown); its hook
+	// registrations and bypass setting must still be in force on disk.
+	ExpectedClaudeSettings []byte
 }
 
 // CheckFailedError signals that checks failed at the given audit level.

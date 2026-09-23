@@ -13,6 +13,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -198,9 +199,12 @@ func executeRepair(
 		mode = fileutil.ModeReadWrite
 	}
 
-	// Write the fresh content atomically.
-	if err := fileutil.WriteFileAtomic(absPath, fresh.Content, mode); err != nil {
-		action.Error = fmt.Errorf("writing %s: %w", action.File, err)
+	// Write the fresh content atomically, refusing content that fails the
+	// same syntax validation as init.
+	fresh.Path = action.File
+	fresh.Mode = mode
+	if err := generate.WriteGeneratedFile(projectRoot, fresh); err != nil {
+		action.Error = err
 		return action
 	}
 

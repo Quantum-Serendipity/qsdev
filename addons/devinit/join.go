@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
@@ -235,7 +234,7 @@ func restoreToolToggles(a *types.WizardAnswers, registry *toolreg.Registry) {
 // runControlFlags are init flags that steer the run rather than describe the
 // project, so they are never "ignored" configuration.
 var runControlFlags = map[string]bool{
-	"mode": true, "yes": true, "quiet": true, "theme": true, "dry-run": true, "force": true,
+	"mode": true, "yes": true, "quiet": true, "theme": true, "dry-run": true, "force": true, "merge": true,
 }
 
 // warnIgnoredInitFlags reports configuration flags given to a run that
@@ -251,7 +250,8 @@ func warnIgnoredInitFlags(cmd *cobra.Command) {
 	if len(ignored) == 0 {
 		return
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "Note: ignoring %s because the project is already set up; re-run with --force to regenerate with them.\n",
+	fmt.Fprintf(cmd.ErrOrStderr(), "Note: ignoring %s because the project is already set up, so nothing was generated or previewed.\n"+
+		"To regenerate the project from these flags, re-run with --yes --force (add --dry-run to preview first).\n",
 		strings.Join(ignored, ", "))
 }
 
@@ -265,9 +265,6 @@ func writeJoinResults(
 	accResult accumulatorResult,
 	allFiles []types.GeneratedFile,
 ) error {
-	devenvGenerated := accResult.devenvGenerated
-	claudeGenerated := accResult.claudeGenerated
-
 	// Write files. The merge funcs preserve user-owned keys (e.g. settings.json
 	// "env", per-server .mcp.json fields, CLAUDE.md sections outside markers)
 	// when join writes over an existing, unrecorded file.
@@ -286,42 +283,47 @@ func writeJoinResults(
 	genState.QsdevVersion = version.Info().Version
 	genState.EnabledTools = answers.EnabledTools
 	genState.Fragments = state.RecordFragments(accResult.fragments)
-	stampTemplateVersions(&genState, claudeGenerated)
+	stampTemplateVersions(&genState, accResult.claudeGenerated)
 	stateFile := filepath.Join(projectRoot, stateFilePath())
 	if err := state.SaveStateToFile(stateFile, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
 	}
 
+	// Save answers, also after a partial write: they are what a re-run and
+	// repair regenerate from.
+	if err := saveAddonAnswers(cmd, projectRoot, answers, accResult); err != nil {
+		return err
+	}
 	if result.HasFailures() {
-		var details strings.Builder
-		for _, ff := range result.FailedFiles() {
-			fmt.Fprintf(&details, "\n  - %s: %v", ff.Path, ff.Error)
-		}
-		return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); run "+branding.Get().AppName+" repair to recover%s",
-			result.Failed, len(successfulFiles), details.String())
-	}
-
-	// Save answers.
-	if err := saveAnswers(projectRoot, answers); err != nil {
-		return fmt.Errorf("saving answers: %w", err)
-	}
-	if devenvGenerated {
-		if err := devenv.SaveAnswers(projectRoot, answers); err != nil {
-			return fmt.Errorf("saving devenv answers: %w", err)
-		}
-	}
-	if claudeGenerated {
-		if err := claudecode.SaveAnswers(projectRoot, answers); err != nil {
-			return fmt.Errorf("saving Claude Code answers: %w", err)
-		}
+		return partialWriteError(result, len(successfulFiles), "'"+branding.Get().AppName+" init --mode join'")
 	}
 
 	// Print join-specific summary.
 	if !opts.Quiet {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Joined project successfully from %s configuration.\n", branding.Get().ConfigFile)
-		_, _ = fmt.Fprint(cmd.OutOrStdout(), postGenerationMessage(answers, devenvGenerated, claudeGenerated))
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), joinOutcome(result))
+		_, _ = fmt.Fprint(cmd.OutOrStdout(), postGenerationMessage(answers, accResult))
 	}
 
 	return nil
+}
+
+// joinOutcome is the join result line. It reports success only when every
+// file matches what the committed config generates: a committed file with
+// changes the config does not describe (e.g. a hand edit to devenv.nix) is
+// kept and gets a sidecar, which the teammate must reconcile.
+func joinOutcome(result generate.WriteResult) string {
+	var sidecars int
+	for _, fr := range result.Files {
+		if fr.SidecarPath != "" {
+			sidecars++
+		}
+	}
+	cfgFile := branding.Get().ConfigFile
+	if sidecars == 0 {
+		return fmt.Sprintf("Joined project successfully from %s configuration.", cfgFile)
+	}
+	return fmt.Sprintf("Joined project from %s configuration, but %d committed file(s) differ from what it generates; "+
+		"they were kept unchanged. Merge the %s file(s) listed above, or record the change with %s commands so %s describes it.",
+		cfgFile, sidecars, generate.SidecarSuffix, branding.Get().AppName, cfgFile)
 }

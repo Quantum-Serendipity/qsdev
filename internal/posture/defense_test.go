@@ -22,6 +22,7 @@ func TestAssessDefenseLayers_AllEnabled(t *testing.T) {
 	}
 	dir, genState := writeProjectFiles(t, map[string]string{
 		".claude/hooks/package-guard.py": "",
+		".claude/settings.json":          settingsWithPackageGuard,
 		".pre-commit-config.yaml":        preCommitWithLockAudit,
 		".grype.yaml":                    "",
 		"devenv.nix":                     hardenedDevenvNix,
@@ -165,28 +166,35 @@ func TestAssessDefenseLayers_PreToolUsePartial(t *testing.T) {
 	t.Error("pretooluse-hooks layer not found")
 }
 
+// TestAssessDefenseLayers_PreToolUseFull checks the layer is judged from the
+// hook registered in settings.json, not from package-guard.py existing: with
+// the registration removed the script guards nothing.
 func TestAssessDefenseLayers_PreToolUseFull(t *testing.T) {
-	enabledTools := map[string]bool{
-		"attach-guard": true,
+	t.Parallel()
+	tests := []struct {
+		name     string
+		settings string
+		want     LayerStatus
+	}{
+		{"registered", settingsWithPackageGuard, LayerEnabled},
+		{"hooks stripped", `{"permissions": {"defaultMode": "bypassPermissions"}}`, LayerPartial},
+		{"guard registered under another event", strings.Replace(settingsWithPackageGuard, "PreToolUse", "PostToolUse", 1), LayerPartial},
+		{"all hooks disabled", strings.Replace(settingsWithPackageGuard, "{", `{"disableAllHooks": true, `, 1), LayerPartial},
+		{"guard only under a decoy-cased key", strings.Replace(settingsWithPackageGuard, `"hooks"`, `"Hooks"`, 1), LayerPartial},
 	}
-	detected := types.DetectedProject{}
-	genState := types.GeneratedState{
-		Files: map[string]types.FileState{
-			".claude/hooks/package-guard.py": {},
-		},
-	}
-
-	result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
-
-	for _, l := range result.Layers {
-		if l.Name == "pretooluse-hooks" {
-			if l.Status != LayerEnabled {
-				t.Errorf("pretooluse-hooks full: status = %q, want %q", l.Status, LayerEnabled)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir, genState := writeProjectFiles(t, map[string]string{
+				".claude/hooks/package-guard.py": "",
+				".claude/settings.json":          tt.settings,
+			})
+			result := AssessDefenseLayers(dir, map[string]bool{"attach-guard": true}, types.DetectedProject{}, genState, 3)
+			if got := layerByName(t, result, "pretooluse-hooks"); got.Status != tt.want {
+				t.Errorf("pretooluse-hooks: status = %q (%s), want %q", got.Status, got.Reason, tt.want)
 			}
-			return
-		}
+		})
 	}
-	t.Error("pretooluse-hooks layer not found")
 }
 
 func TestAssessDefenseLayers_NixHardening(t *testing.T) {

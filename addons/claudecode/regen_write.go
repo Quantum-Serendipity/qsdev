@@ -15,6 +15,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -183,9 +184,18 @@ func applyRegenPlan(plan *regenPlan, projectRoot string, warn io.Writer) error {
 			_, _ = fmt.Fprintf(warn, "Warning: could not remove stale skill file %s: %v\n", legacy, err)
 		}
 	}
+	// Validate every write first so invalid content is refused before any
+	// file changes, as the init pipeline would refuse it.
 	for _, f := range plan.writes {
-		if err := fileutil.WriteFileAtomic(filepath.Join(projectRoot, f.Path), f.Content, f.Mode); err != nil {
-			return fmt.Errorf("writing %s: %w", f.Path, err)
+		if !f.SkipValidation {
+			if err := generate.ValidateContent(f.Path, f.Content); err != nil {
+				return err
+			}
+		}
+	}
+	for _, f := range plan.writes {
+		if err := generate.WriteGeneratedFile(projectRoot, f); err != nil {
+			return err
 		}
 	}
 	return nil

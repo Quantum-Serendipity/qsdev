@@ -52,7 +52,6 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 	w := &fileWriter{
 		opts:         opts,
 		resolvedRoot: resolvedRoot,
-		registry:     NewValidatorRegistry(),
 	}
 	for _, file := range files {
 		w.write(file)
@@ -64,7 +63,6 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 type fileWriter struct {
 	opts         PipelineOptions
 	resolvedRoot string
-	registry     *ValidatorRegistry
 	result       WriteResult
 
 	// priorStates holds the project's recorded generation states, loaded on
@@ -192,10 +190,7 @@ func (w *fileWriter) validatePath(file types.GeneratedFile) error {
 		return fmt.Errorf("file path contains path traversal: %q", file.Path)
 	}
 	if !w.opts.SkipValidate && !file.SkipValidation {
-		vr := w.registry.Validate(file.Path, file.Content)
-		if !vr.Valid && !vr.Skipped {
-			return fmt.Errorf("validation failed for %s: %w", file.Path, vr.Error)
-		}
+		return ValidateContent(file.Path, file.Content)
 	}
 	return nil
 }

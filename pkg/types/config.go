@@ -16,6 +16,8 @@ type QsdevConfig struct {
 	Profile        string           `yaml:"profile,omitempty"`
 	Languages      []LanguageConfig `yaml:"languages,omitempty"`
 	Services       []ServiceConfig  `yaml:"services,omitempty"`
+	Packages       []string         `yaml:"packages,omitempty"` // extra nixpkgs attribute paths (devenv add-package)
+	Overlays       []string         `yaml:"overlays,omitempty"` // Nix overlay files (devenv add-overlay)
 	Security       SecurityConfig   `yaml:"security,omitempty"`
 	Tools          ToolsConfig      `yaml:"tools,omitempty"`
 	ClaudeCode     ClaudeCodeConfig `yaml:"claude_code,omitempty"`

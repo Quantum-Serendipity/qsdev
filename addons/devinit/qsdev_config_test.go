@@ -23,7 +23,7 @@ func TestBuildQsdevConfig_QsdevVersionIsLowerBound(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			cfg := buildQsdevConfig(types.WizardAnswers{}, tt.binaryVersion)
+			cfg := qsdevconfig.AnswersToConfig(types.WizardAnswers{}, tt.binaryVersion)
 			if cfg.QsdevVersion != tt.want {
 				t.Fatalf("QsdevVersion = %q, want %q", cfg.QsdevVersion, tt.want)
 			}

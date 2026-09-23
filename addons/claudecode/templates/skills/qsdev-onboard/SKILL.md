@@ -27,7 +27,7 @@ argument-hint: "[--profile <name>]"
 
 3. **Get confirmation**: Present the planned changes and ask the user to confirm before proceeding.
 
-4. **Run onboarding**: Execute `qsdev init --yes` to merge qsdev configuration into the existing project; without `--force` it does not overwrite user customizations. Pass through any `--profile` argument.
+4. **Run onboarding**: Execute `qsdev init --yes --merge` to merge qsdev configuration into the existing project. `--merge` merges into CLAUDE.md, `.claude/settings.json` and `.mcp.json`, and keeps an existing devenv.nix and .envrc (the generated devenv.nix is written to `devenv.nix.new` for a manual merge). Never use `--force` here: it overwrites existing files. Pass through any `--profile` argument.
 
 5. **Verify results**: Run `qsdev devenv doctor --json` to confirm onboarding succeeded. Compare before and after states.
 

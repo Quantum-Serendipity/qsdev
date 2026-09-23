@@ -300,6 +300,15 @@ func validateSplicedValues(cfg *types.QsdevConfig) []ValidationError {
 			})
 		}
 	}
+	for i, pkg := range cfg.Packages {
+		if !validation.IsValidNixAttrPath(pkg) {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("packages[%d]", i),
+				Value:   pkg,
+				Message: "invalid package; must be a Nix attribute path such as jq or python3Packages.black",
+			})
+		}
+	}
 	for i, svc := range cfg.Services {
 		if svc.Version != "" && !validation.IsValidToken(svc.Version) {
 			errs = append(errs, ValidationError{

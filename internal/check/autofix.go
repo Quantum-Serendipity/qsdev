@@ -14,6 +14,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -108,19 +109,18 @@ func fixDeletedFiles(results []CheckResult, projectRoot, stateFile string, regen
 			continue
 		}
 
-		absPath := filepath.Join(projectRoot, filepath.FromSlash(relPath))
 		mode := fresh.Mode
 		if mode == 0 {
 			mode = fileutil.ModeReadWrite
 		}
-		if err := fileutil.WriteFileAtomic(absPath, fresh.Content, mode); err != nil {
+		fresh.Path = relPath
+		fresh.Mode = mode
+		if err := generate.WriteGeneratedFile(projectRoot, fresh); err != nil {
 			slog.Warn("auto-fix: restoring file failed", "file", relPath, "error", err)
-			markFixResult(&results[idx], fmt.Errorf("writing %s: %w", relPath, err))
+			markFixResult(&results[idx], err)
 			continue
 		}
 
-		fresh.Path = relPath
-		fresh.Mode = mode
 		restored = append(restored, fresh)
 		markFixResult(&results[idx], nil)
 	}
@@ -153,7 +153,7 @@ func recordRestoredFiles(stateFile string, restored []types.GeneratedFile) error
 // writes it back. Only permissions.deny is changed: every other key keeps its
 // position and its original encoding.
 func fixDenyRules(projectRoot string, missingRules []string) error {
-	settingsPath := filepath.Join(projectRoot, filepath.FromSlash(claudeSettingsRelPath))
+	settingsPath := filepath.Join(projectRoot, filepath.FromSlash(ClaudeSettingsRelPath))
 
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {

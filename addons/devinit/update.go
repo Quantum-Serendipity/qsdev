@@ -304,6 +304,9 @@ func saveUpdateResults(
 	if err := saveAnswers(projectRoot, answers); err != nil {
 		return fmt.Errorf("saving answers: %w", err)
 	}
+	if err := qsdevconfig.SyncProjectConfig(projectRoot, answers); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -575,10 +578,9 @@ func executeUpdatePlan(
 			if skipExistingUserFile(fp, absPath) {
 				continue
 			}
-			if err := fileutil.WriteFileAtomic(absPath, fp.NewContent, mode); err != nil {
-				return out, fmt.Errorf("writing %s: %w", fp.Path, err)
+			if stop, err := out.writeValidated(projectRoot, fp, fp.NewContent, mode); stop {
+				return out, err
 			}
-			out.recordWrite(fp, fp.NewContent, mode)
 
 		case UpdateActionMerge:
 			merged, err := dispatchMerge(fp, projectRoot)
@@ -586,12 +588,17 @@ func executeUpdatePlan(
 				out.failures = append(out.failures, fileFailure{Path: fp.Path, Err: fmt.Errorf("merge failed: %w", err)})
 				continue
 			}
-			if err := fileutil.WriteFileAtomic(absPath, merged, mode); err != nil {
-				return out, fmt.Errorf("writing merged %s: %w", fp.Path, err)
+			if stop, err := out.writeValidated(projectRoot, fp, merged, mode); stop {
+				return out, err
 			}
-			out.recordWrite(fp, merged, mode)
 
 		case UpdateActionSidecar:
+			// Validate before the regenerate-or-sidecar decision, so neither
+			// the file nor its sidecar receives content init would reject.
+			if err := generate.ValidateContent(fp.Path, fp.NewContent); err != nil {
+				out.failures = append(out.failures, fileFailure{Path: fp.Path, Err: err})
+				continue
+			}
 			if err := executeSidecar(fp, projectRoot, mode, opts, &out); err != nil {
 				return out, err
 			}
@@ -612,6 +619,23 @@ func executeUpdatePlan(
 	}
 
 	return out, nil
+}
+
+// writeValidated writes content for fp through the validated generated-file
+// writer and records it. Content that fails validation is recorded as a
+// per-file failure (the file keeps its previous content and state); stop is
+// true only for a write error, which ends execution.
+func (o *updateOutcome) writeValidated(projectRoot string, fp FileUpdatePlan, content []byte, mode os.FileMode) (stop bool, err error) {
+	err = generate.WriteGeneratedFile(projectRoot, types.GeneratedFile{Path: fp.Path, Content: content, Mode: mode})
+	switch {
+	case errors.Is(err, generate.ErrInvalidContent):
+		o.failures = append(o.failures, fileFailure{Path: fp.Path, Err: err})
+		return false, nil
+	case err != nil:
+		return true, err
+	}
+	o.recordWrite(fp, content, mode)
+	return false, nil
 }
 
 // recordWrite notes a file written with content and mode.

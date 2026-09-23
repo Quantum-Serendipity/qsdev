@@ -69,7 +69,11 @@ func TestAssess_StateListedFilesMustExistOnDisk(t *testing.T) {
 					if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 						t.Fatal(err)
 					}
-					if err := os.WriteFile(abs, []byte("x\n"), 0o644); err != nil {
+					content := "x\n"
+					if rel == ".claude/settings.json" {
+						content = settingsWithPackageGuard
+					}
+					if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
 						t.Fatal(err)
 					}
 				}

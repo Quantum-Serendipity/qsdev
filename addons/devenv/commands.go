@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
@@ -634,7 +635,7 @@ type regenerateOpts struct {
 }
 
 // regenerateAndPersist generates files from answers, writes them to disk, and
-// persists both state and answers. Unless force is set it refuses to overwrite
+// persists state, answers and the answer-derived keys of .qsdev.yaml. Unless force is set it refuses to overwrite
 // generated files that have been modified locally. For remove commands, set
 // cleanup=true to detect and delete orphaned files that are no longer produced.
 func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, opts regenerateOpts) (*generate.WriteResult, error) {
@@ -666,7 +667,16 @@ func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, opts 
 		return nil, fmt.Errorf("loading state: %w", err)
 	}
 
-	return writeAndPersist(cmd, opts.projectRoot, answers, files, oldState, opts.cleanup, opts.force)
+	result, err := writeAndPersist(cmd, opts.projectRoot, answers, files, oldState, opts.cleanup, opts.force)
+	if err != nil {
+		return result, err
+	}
+	// Record the change in the committed .qsdev.yaml so a teammate's join
+	// rebuilds the same environment.
+	if err := qsdevconfig.SyncProjectConfig(opts.projectRoot, answers); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 // writeAndPersist writes files to disk, records their state and saves the

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -343,5 +344,60 @@ func TestLoadAnswers_Sources(t *testing.T) {
 				t.Errorf("ProjectName = %q, want %q", got.ProjectName, tt.wantName)
 			}
 		})
+	}
+}
+
+// TestDayTwoCommands_RecordChangesInProjectConfig is the regression test for
+// devenv add/remove-* updating only the gitignored answers: a teammate's
+// `qsdev init --mode join` rebuilt devenv.nix from the stale .qsdev.yaml and
+// silently dropped every service, language and package added after init.
+func TestDayTwoCommands_RecordChangesInProjectConfig(t *testing.T) {
+	dir := initProject(t)
+	cfgPath := filepath.Join(dir, ".qsdev.yaml")
+	writeFile(t, cfgPath, "version: 1\nlanguages:\n  - name: go\nclient:\n  name: acme\n")
+
+	steps := [][]string{
+		{"add-package", "jq", "ripgrep"},
+		{"add-service", "redis"},
+		{"add-language", "python"},
+		{"remove-package", "ripgrep"},
+	}
+	for _, args := range steps {
+		if out, err := runDevenv(t, args...); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+
+	cfg, err := qsdevconfig.ParseQsdevConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parsing synced config: %v", err)
+	}
+	if !slices.Equal(cfg.Packages, []string{"jq"}) {
+		t.Errorf("packages = %v, want [jq]", cfg.Packages)
+	}
+	if len(cfg.Services) != 1 || cfg.Services[0].Name != "redis" {
+		t.Errorf("services = %+v, want redis", cfg.Services)
+	}
+	var langs []string
+	for _, l := range cfg.Languages {
+		langs = append(langs, l.Name)
+	}
+	if !slices.Contains(langs, "python") {
+		t.Errorf("languages = %v, want python recorded", langs)
+	}
+	if cfg.Client == nil || cfg.Client.Name != "acme" {
+		t.Errorf("client block not preserved: %+v", cfg.Client)
+	}
+}
+
+// TestDayTwoCommands_NoProjectConfigIsNotCreated checks a standalone devenv
+// project (no .qsdev.yaml) does not gain one from a day-2 command.
+func TestDayTwoCommands_NoProjectConfigIsNotCreated(t *testing.T) {
+	dir := initProject(t)
+	if out, err := runDevenv(t, "add-package", "jq"); err != nil {
+		t.Fatalf("add-package: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".qsdev.yaml")); !os.IsNotExist(err) {
+		t.Errorf(".qsdev.yaml created by add-package (err=%v)", err)
 	}
 }

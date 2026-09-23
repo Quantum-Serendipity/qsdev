@@ -412,11 +412,11 @@ func TestRenderText_DefaultTierLineShown(t *testing.T) {
 	if !strings.Contains(output, "Tier: standard (2/3)") {
 		t.Errorf("missing tier line in default output:\n%s", output)
 	}
-	if !strings.Contains(output, "Next: qsdev init --tier full --dry-run") {
+	if !strings.Contains(output, "Next: qsdev init --yes --force --tier full --dry-run") {
 		t.Errorf("missing next-tier hint in default output:\n%s", output)
 	}
 	// Footer should also have the upgrade hint.
-	if !strings.Contains(output, "Upgrade tier: qsdev init --tier full --dry-run") {
+	if !strings.Contains(output, "Upgrade tier: qsdev init --yes --force --tier full --dry-run") {
 		t.Errorf("missing upgrade tier footer hint:\n%s", output)
 	}
 }
@@ -539,7 +539,7 @@ func TestRenderText_VerboseTierExpanded(t *testing.T) {
 	if !strings.Contains(output, "Full tooling: MCP servers, agent tools, consulting workflows, AlwaysOn tools") {
 		t.Errorf("missing tier description in verbose output:\n%s", output)
 	}
-	if !strings.Contains(output, "Upgrade: qsdev init --tier full --dry-run") {
+	if !strings.Contains(output, "Upgrade: qsdev init --yes --force --tier full --dry-run") {
 		t.Errorf("missing upgrade command in verbose output:\n%s", output)
 	}
 }

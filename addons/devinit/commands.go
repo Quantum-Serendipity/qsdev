@@ -14,6 +14,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/repair"
@@ -95,6 +96,15 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 		}
 	}
 
+	// --force on a project that is already set up re-creates it; say so
+	// instead of announcing "Nothing to do" and then regenerating everything.
+	if result.Mode == ModeJoin && result.AlreadySetUp && opts.Force {
+		result = &ModeDetectionResult{
+			Mode:        ModeCreate,
+			Explanation: "Project is already set up; --force regenerates its configuration from the given flags and detection.",
+		}
+	}
+
 	slog.Info("onboarding mode detected", "mode", result.Mode)
 
 	// d. Print explanation.
@@ -105,9 +115,6 @@ func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
 	case ModeCreate:
 		return runCreate(cmd, opts, projectRoot)
 	case ModeJoin:
-		if result.AlreadySetUp && opts.Force {
-			return runCreate(cmd, opts, projectRoot)
-		}
 		if result.AlreadySetUp {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Project is already set up.")
 			warnIgnoredInitFlags(cmd)
@@ -150,11 +157,11 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		return nil
 	}
 
-	if !opts.Force {
+	if !opts.Force && !opts.Merge {
 		existing := DetectExistingConfig(detected)
 		if existing.NeedsMergeMode() {
-			return fmt.Errorf("existing configuration found (%s); use --force to overwrite",
-				strings.Join(existing.Files, ", "))
+			return fmt.Errorf("existing configuration found (%s); use --merge to merge %s configuration into it, or --force to overwrite",
+				strings.Join(existing.Files, ", "), branding.Get().AppName)
 		}
 	}
 
@@ -171,11 +178,15 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 		return nil
 	}
 
+	// Ignore the state directories before anything is written into them, so
+	// a partial write never leaves them to be committed by `git add -A`.
+	ensureProjectGitignore(projectRoot, answers)
+
 	if err := writeAndRecordResults(cmd, opts, projectRoot, answers, accResult); err != nil {
 		return err
 	}
 
-	return finalizeProject(cmd, opts, answers, projectRoot, accResult.devenvGenerated, accResult.claudeGenerated)
+	return finalizeProject(cmd, opts, answers, projectRoot, accResult)
 }
 
 func warnOrInstallPrereqs(cmd *cobra.Command, opts InitOptions) {
@@ -335,15 +346,44 @@ func writeAndRecordResults(cmd *cobra.Command, opts InitOptions, projectRoot str
 		"skipped", result.Skipped,
 		"failed", result.Failed)
 
+	// The answers are saved even when some files failed: they are the input
+	// a re-run and repair regenerate from.
+	if err := saveAddonAnswers(cmd, projectRoot, answers, accResult); err != nil {
+		return err
+	}
 	if result.HasFailures() {
-		var details strings.Builder
-		for _, ff := range result.FailedFiles() {
-			fmt.Fprintf(&details, "\n  - %s: %v", ff.Path, ff.Error)
+		// .qsdev.yaml is only written once every file is, so the project
+		// stays in create mode and the re-run finishes the setup.
+		// The re-run builds its answers from its own flags again, so it must
+		// repeat them; --merge gets past the files this run did write.
+		rerun := "the same init command"
+		if !opts.Force && !opts.Merge {
+			rerun += " with --merge added"
 		}
-		return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); run "+branding.Get().AppName+" repair to recover%s",
-			result.Failed, len(successfulFiles), details.String())
+		return partialWriteError(result, len(successfulFiles), rerun)
 	}
 
+	if !opts.Quiet {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
+	}
+
+	return nil
+}
+
+// partialWriteError reports the files a write failed on and the command that
+// finishes the setup once their errors are fixed.
+func partialWriteError(result generate.WriteResult, recorded int, rerun string) error {
+	var details strings.Builder
+	for _, ff := range result.FailedFiles() {
+		fmt.Fprintf(&details, "\n  - %s: %v", ff.Path, ff.Error)
+	}
+	return fmt.Errorf("partial write: %d files failed (state saved for %d successful files); fix the errors below and re-run %s to finish setup%s",
+		result.Failed, recorded, rerun, details.String())
+}
+
+// saveAddonAnswers persists answers to the primary answers file and to each
+// generated addon's copy.
+func saveAddonAnswers(cmd *cobra.Command, projectRoot string, answers types.WizardAnswers, accResult accumulatorResult) error {
 	if err := saveAnswers(projectRoot, answers); err != nil {
 		return fmt.Errorf("saving answers: %w", err)
 	}
@@ -363,11 +403,6 @@ func writeAndRecordResults(cmd *cobra.Command, opts InitOptions, projectRoot str
 			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Warning: "+w)
 		}
 	}
-
-	if !opts.Quiet {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
-	}
-
 	return nil
 }
 
@@ -382,13 +417,23 @@ func stampTemplateVersions(st *types.GeneratedState, claudeGenerated bool) {
 	st.SkillLibraryVersion = claudecode.ComputeSkillLibraryVersion()
 }
 
-func finalizeProject(cmd *cobra.Command, opts InitOptions, answers types.WizardAnswers, projectRoot string, devenvGenerated, claudeGenerated bool) error {
-	qsdevCfg := buildQsdevConfig(answers, version.Info().Version)
+func finalizeProject(cmd *cobra.Command, opts InitOptions, answers types.WizardAnswers, projectRoot string, accResult accumulatorResult) error {
+	qsdevCfg := qsdevconfig.AnswersToConfig(answers, version.Info().Version)
 	qsdevCfgPath := filepath.Join(projectRoot, branding.Get().ConfigFile)
-	if err := writeQsdevConfig(qsdevCfgPath, qsdevCfg); err != nil {
-		return fmt.Errorf("writing %s: %w", branding.Get().ConfigFile, err)
+	if err := qsdevconfig.WriteProjectConfig(qsdevCfgPath, qsdevCfg); err != nil {
+		return err
 	}
 
+	if !opts.Quiet {
+		_, _ = fmt.Fprint(cmd.OutOrStdout(), postGenerationMessage(answers, accResult))
+	}
+
+	return nil
+}
+
+// ensureProjectGitignore adds the qsdev state directories and the
+// language-specific entries to .gitignore. Failures are logged, not fatal.
+func ensureProjectGitignore(projectRoot string, answers types.WizardAnswers) {
 	// The local overrides file is machine-specific; join also ignores it, so
 	// init must too or every teammate's first join dirties .gitignore.
 	for _, entry := range []string{branding.Get().StateDir + "/", "." + branding.Get().AppName + "/", branding.Get().LocalConfig, ".direnv/", ".devenv/"} {
@@ -406,12 +451,6 @@ func finalizeProject(cmd *cobra.Command, opts InitOptions, answers types.WizardA
 			slog.Warn("could not update .gitignore", "entry", entry, "error", err)
 		}
 	}
-
-	if !opts.Quiet {
-		_, _ = fmt.Fprint(cmd.OutOrStdout(), postGenerationMessage(answers, devenvGenerated, claudeGenerated))
-	}
-
-	return nil
 }
 
 // runRepair delegates to the full repair command logic, which computes its

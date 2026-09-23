@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/surgery"
@@ -107,6 +108,9 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 	}
 	if err := saveAnswers(projectRoot, answers); err != nil {
 		return fmt.Errorf("saving answers: %w", err)
+	}
+	if err := qsdevconfig.SyncProjectConfig(projectRoot, answers); err != nil {
+		return err
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Enabled %q.\n", tool.DisplayName)
@@ -251,8 +255,8 @@ func noToolOutputError(toolName string, missing []toolreg.FileOwnership, answers
 	if t < tier.Full {
 		return fmt.Errorf(
 			"tool %q generated none of its files (%s) at the %q tier: it may require a higher tier to produce them. "+
-				"Raise the tier (e.g. run '%s init --tier full') and re-run '%s enable %s'",
-			toolName, files, t.String(), app, app, toolName)
+				"Raise the tier (preview with '%s') and re-run '%s enable %s'",
+			toolName, files, t.String(), tier.PreviewCommand(app, tier.Full.String()), app, toolName)
 	}
 	return fmt.Errorf(
 		"tool %q generated none of its files (%s) for the current project configuration (tier %q), so it was not enabled; "+
@@ -371,12 +375,15 @@ func untrackedExisting(fp *FileUpdatePlan) {
 // base (not the merged result) for three-way-merged files.
 func applyToolChange(projectRoot string, change toolChange, st types.GeneratedState) (toolChangeResult, error) {
 	var result toolChangeResult
+	if err := validateToolChange(change); err != nil {
+		return result, err
+	}
 	for _, f := range change.exclusive {
 		if f.Mode == 0 {
 			f.Mode = fileutil.ModeReadWrite
 		}
-		if err := fileutil.WriteFileAtomic(filepath.Join(projectRoot, f.Path), f.Content, f.Mode); err != nil {
-			return result, fmt.Errorf("writing %s: %w", f.Path, err)
+		if err := generate.WriteGeneratedFile(projectRoot, f); err != nil {
+			return result, err
 		}
 		result.written = append(result.written, f)
 	}
@@ -398,6 +405,11 @@ func applyToolChange(projectRoot string, change toolChange, st types.GeneratedSt
 			result.notices = append(result.notices, fmt.Sprintf("%s: merge failed; not updated (re-run after resolving, or run '%s update')", fp.Path, branding.Get().AppName))
 		}
 	}
+	for _, f := range outcome.failures {
+		if errors.Is(f.Err, generate.ErrInvalidContent) {
+			result.notices = append(result.notices, fmt.Sprintf("%s: not updated: %v", f.Path, f.Err))
+		}
+	}
 	result.written = append(result.written, sharedWritten...)
 
 	recorded := state.RecordFiles(result.written)
@@ -413,6 +425,26 @@ func applyToolChange(projectRoot string, change toolChange, st types.GeneratedSt
 		st.Files[path] = entry
 	}
 	return result, nil
+}
+
+// validateToolChange checks every file the change would write with generated
+// content before anything is written, so a tool change is refused as a whole
+// rather than leaving a file WriteFiles would reject. Merged content is
+// validated when it is written (see executeUpdatePlan).
+func validateToolChange(change toolChange) error {
+	var errs []error
+	for _, f := range change.exclusive {
+		if !f.SkipValidation {
+			errs = append(errs, generate.ValidateContent(f.Path, f.Content))
+		}
+	}
+	for _, fp := range change.shared.Files {
+		switch fp.Action {
+		case UpdateActionCreate, UpdateActionRegenerate, UpdateActionSidecar:
+			errs = append(errs, generate.ValidateContent(fp.Path, fp.NewContent))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // saveToolState records the tool's enabled flag and persists the state.
@@ -503,6 +535,9 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	}
 	if err := saveAnswers(projectRoot, answers); err != nil {
 		return fmt.Errorf("saving answers: %w", err)
+	}
+	if err := qsdevconfig.SyncProjectConfig(projectRoot, answers); err != nil {
+		return err
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Disabled %q.\n", tool.DisplayName)
@@ -668,7 +703,7 @@ func removeStaleSections(tool *toolreg.Tool, projectRoot string, change toolChan
 			notices = append(notices, fmt.Sprintf("%s: not updated: %v", sf.Path, err))
 			continue
 		}
-		if err := fileutil.WriteFileAtomic(filepath.Join(projectRoot, sf.Path), updated, fileutil.ModeReadWrite); err != nil {
+		if err := generate.WriteGeneratedFile(projectRoot, types.GeneratedFile{Path: sf.Path, Content: updated}); err != nil {
 			notices = append(notices, fmt.Sprintf("%s: could not write: %v", sf.Path, err))
 			continue
 		}

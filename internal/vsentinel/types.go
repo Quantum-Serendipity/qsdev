@@ -2,42 +2,42 @@ package vsentinel
 
 import "time"
 
+// VersionReport is the check_versions result: the dependencies each manifest in
+// the project root declares. It reports declarations only; it makes no claim
+// about whether a dependency is stale.
 type VersionReport struct {
-	Manifests     []ManifestStatus
-	StaleCount    int
-	LastCheckTime time.Time
+	Manifests     []ManifestStatus `json:"manifests"`
+	LastCheckTime time.Time        `json:"last_check_time"`
 }
 
 type ManifestStatus struct {
-	Path         string
-	Ecosystem    string
-	Dependencies []DepStatus
+	Path         string      `json:"path"`
+	Ecosystem    string      `json:"ecosystem"`
+	Dependencies []DepStatus `json:"dependencies"`
 }
 
+// DepStatus is one declared dependency and the version requirement the
+// manifest states for it (empty when it states none).
 type DepStatus struct {
-	Name            string
-	DeclaredVersion string
-	LockedVersion   string
-	LatestKnown     string
-	StaleDays       int
-	DriftDetected   bool
+	Name            string `json:"name"`
+	DeclaredVersion string `json:"declared_version"`
 }
 
 type DriftReport struct {
-	Manifests []DriftManifestStatus
+	Manifests []DriftManifestStatus `json:"manifests"`
 }
 
 type DriftManifestStatus struct {
-	Path       string
-	Ecosystem  string
-	DriftCount int
-	Drifted    []DriftEntry
+	Path       string       `json:"path"`
+	Ecosystem  string       `json:"ecosystem"`
+	DriftCount int          `json:"drift_count"`
+	Drifted    []DriftEntry `json:"drifted"`
 }
 
 type DriftEntry struct {
-	Name            string
-	DeclaredVersion string
-	LockedVersion   string
+	Name            string `json:"name"`
+	DeclaredVersion string `json:"declared_version"`
+	LockedVersion   string `json:"locked_version"`
 }
 
 type VersionEvent struct {

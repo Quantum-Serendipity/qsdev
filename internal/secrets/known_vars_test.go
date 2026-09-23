@@ -77,6 +77,76 @@ func TestMatchesSensitiveKeyPattern(t *testing.T) {
 	}
 }
 
+// TestSensitiveCamelCaseNames covers credential keys in camelCase/PascalCase
+// (the norm for JSON and structured payloads), where the credential word is
+// joined to its neighbour by a case change rather than a separator and so has
+// no token boundary until the words are split.
+func TestSensitiveCamelCaseNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		key  string
+		want bool
+	}{
+		{"camel access token", "accessToken", true},
+		{"camel client secret", "clientSecret", true},
+		{"camel db password", "dbPassword", true},
+		{"camel refresh token", "refreshToken", true},
+		{"camel secret key", "secretKey", true},
+		{"camel github token", "githubToken", true},
+		{"pascal access token", "AccessToken", true},
+		{"acronym api key", "APIKey", true},
+		{"digit before word", "s3SecretKey", true},
+		{"camel pwd", "mysqlPwd", true},
+		{"all caps concatenated client secret", "CLIENTSECRET", true},
+		{"all caps concatenated access token", "ACCESSTOKEN", true},
+		// Benign camelCase names must stay unredacted.
+		{"camel keyboard layout", "keyboardLayout", false},
+		{"camel tokenizer", "tokenizerConfig", false},
+		{"camel user name", "userName", false},
+		{"pascal working dir", "WorkingDir", false},
+		{"camel monkey patch", "monkeyPatch", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsSensitiveName(tt.key); got != tt.want {
+				t.Errorf("IsSensitiveName(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+			if got := MatchesSensitiveKeyPattern(tt.key); got != tt.want {
+				t.Errorf("MatchesSensitiveKeyPattern(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSplitCaseWords(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		in, want string
+	}{
+		{"accessToken", "access_Token"},
+		{"APIKey", "API_Key"},
+		{"OAuthToken", "O_Auth_Token"},
+		{"s3SecretKey", "s3_Secret_Key"},
+		{"GITHUB_TOKEN", "GITHUB_TOKEN"},
+		{"github_token", "github_token"},
+		{"api-key", "api-key"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			t.Parallel()
+			if got := splitCaseWords(tt.in); got != tt.want {
+				t.Errorf("splitCaseWords(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestSensitiveSubstringFallback covers the credential-root substring fallback:
 // token-boundary matching alone leaks values whose credential keyword is
 // concatenated to another word with no separator — "auth" inside AUTHORIZATION /

@@ -1,9 +1,11 @@
 package vsentinel
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -215,11 +217,105 @@ require (
 	if dep.DeclaredVersion != "v1.9.0" {
 		t.Errorf("dep version = %q, want %q", dep.DeclaredVersion, "v1.9.0")
 	}
-	if dep.LatestKnown != "" {
-		t.Errorf("latest known should be empty, got %q", dep.LatestKnown)
+}
+
+// TestCheckVersionsJSONShape pins the check_versions MCP output: snake_case keys
+// like the other version-sentinel payloads, and no staleness fields, since
+// nothing computes staleness and an always-zero stale count reads as "nothing
+// is stale".
+func TestCheckVersionsJSONShape(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFixtures(t, dir, map[string]string{
+		"go.mod": "module example.com/test\n\ngo 1.22\n\nrequire github.com/stretchr/testify v1.9.0\n",
+	})
+	report, err := CheckVersions(dir)
+	if err != nil {
+		t.Fatalf("CheckVersions() error = %v", err)
 	}
-	if dep.StaleDays != 0 {
-		t.Errorf("stale days should be 0, got %d", dep.StaleDays)
+	data, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	out := string(data)
+	for _, want := range []string{`"manifests"`, `"last_check_time"`, `"ecosystem"`, `"dependencies"`, `"declared_version"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing key %s: %s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"Stale", "stale", "LatestKnown", "latest_known", "DriftDetected", "Manifests"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("output contains %q: %s", unwanted, out)
+		}
+	}
+}
+
+// TestParsePythonDeps covers PEP 621/735 and Poetry pyproject declarations and
+// PEP 508 specifier splitting: single-line arrays, multi-clause specifiers,
+// extras, markers, comments and direct references.
+func TestParsePythonDeps(t *testing.T) {
+	t.Parallel()
+
+	t.Run("pyproject", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		writeFixtures(t, dir, map[string]string{"pyproject.toml": `[project]
+name = "x"
+dependencies = ["requests>=2", "flask"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7 ; python_version >= '3.8'"]
+
+[dependency-groups]
+lint = ["ruff==0.4.0", {include-group = "dev"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+django = "^5.0"
+httpx = { version = "^0.27", extras = ["http2"] }
+local = { path = "../local" }
+`})
+		deps, err := parsePyprojectToml(dir + "/pyproject.toml")
+		if err != nil {
+			t.Fatalf("parsePyprojectToml: %v", err)
+		}
+		got := make(map[string]string, len(deps))
+		for _, d := range deps {
+			got[d.Name] = d.DeclaredVersion
+		}
+		want := map[string]string{
+			"requests": ">=2", "flask": "", "pytest": ">=7", "ruff": "==0.4.0",
+			"django": "^5.0", "httpx": "^0.27", "local": "",
+		}
+		if len(got) != len(want) {
+			t.Errorf("deps = %v, want %v", got, want)
+		}
+		for name, ver := range want {
+			if gv, ok := got[name]; !ok || gv != ver {
+				t.Errorf("dep %q = %q (present %t), want %q", name, gv, ok, ver)
+			}
+		}
+	})
+
+	tests := []struct {
+		in, wantName, wantVer string
+	}{
+		{"pkg<2,>=1", "pkg", "<2,>=1"},
+		{"foo==1.0  # pinned", "foo", "==1.0"},
+		{"bar @ https://x/y.whl", "bar", "@ https://x/y.whl"},
+		{"baz[extra1,extra2]>=3.0; sys_platform == 'linux'", "baz", ">=3.0"},
+		{"Django===3.2.0", "Django", "===3.2.0"},
+		{"legacy (>=1.0)", "legacy", ">=1.0"},
+		{"plain", "plain", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			t.Parallel()
+			name, ver := splitPythonDep(tt.in)
+			if name != tt.wantName || ver != tt.wantVer {
+				t.Errorf("splitPythonDep(%q) = (%q, %q), want (%q, %q)", tt.in, name, ver, tt.wantName, tt.wantVer)
+			}
+		})
 	}
 }
 

@@ -4,25 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
-	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan"
 )
 
-// scanHTTPTimeout bounds the whole OSV interaction (batch query plus detail
-// fetches) so a slow or unreachable OSV endpoint cannot stall the tool past its
-// external-API budget.
-const scanHTTPTimeout = 20 * time.Second
-
 // securityScanner queries OSV.dev for vulnerabilities affecting the project's
-// pinned dependencies, extracted from its lock files. Lock-file parsing and the
-// OSV client live in internal/vulnscan; this type layers the MCP tool contract
-// (manifest-path confinement, severity-threshold filtering, and structured
-// graceful degradation) on top of that single implementation.
+// pinned dependencies, extracted from its lock files. Lock-file parsing, the OSV
+// client and the scan pipeline (including its deadline) live in
+// internal/vulnscan; this type layers the MCP tool contract (manifest-path
+// confinement, severity-threshold filtering, and structured graceful
+// degradation) on top of vulnscan.Scanner.ScanFile.
 type securityScanner struct {
 	projectRoot string
 	scanner     *vulnscan.Scanner
@@ -50,12 +44,12 @@ func (s *securityScanner) handle(ctx context.Context, _ *spi.ToolCallContext, re
 			map[string]any{"got": rawThreshold, "allowed": []string{"low", "moderate", "high", "critical", "medium (alias of moderate)"}}), nil
 	}
 
-	pkgs, lockPath, err := s.collectDeps(req.Arguments)
-	if errors.Is(err, errManifestEscapesRoot) {
+	res, lockPath, err := s.scan(ctx, req.Arguments)
+	switch {
+	case errors.Is(err, errManifestEscapesRoot):
 		return toolutil.NotConfigured("manifest_path escapes the project root",
 			map[string]any{"manifest_path": lockPath, "project_root": s.projectRoot}), nil
-	}
-	if err != nil {
+	case errors.Is(err, vulnscan.ErrLockParse), errors.Is(err, errUnsupportedLockFile):
 		// The lock file was located but could not be parsed (truncated, tampered,
 		// or an unsupported format). Distinguish this from "no lock file" below so
 		// a caller does not misread a broken lock file as a clean (zero-vuln) scan.
@@ -65,46 +59,45 @@ func (s *securityScanner) handle(ctx context.Context, _ *spi.ToolCallContext, re
 				"error": err.Error(),
 				"hint":  "the dependency scan did NOT complete — treat as unknown, not vulnerability-free",
 			}), nil
-	}
-	if len(pkgs) == 0 {
+	case errors.Is(err, vulnscan.ErrNoPinnedDeps), err == nil && res == nil:
 		return toolutil.NotConfigured("no lock file with pinned dependencies found",
 			map[string]any{
 				"project_root": s.projectRoot,
 				"remediation":  "generate a lock file (go.sum, package-lock.json, Cargo.lock, poetry.lock, uv.lock, or requirements.txt) then re-run the scan",
 			}), nil
+	case err != nil:
+		return toolutil.ErrorResult("OSV.dev vulnerability query failed",
+			map[string]any{"error": err.Error(), "lock_file": lockPath}), nil
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, scanHTTPTimeout)
-	defer cancel()
-
-	idsByQuery, err := s.scanner.QueryBatch(ctx, pkgs)
-	if err != nil {
-		return toolutil.ErrorResult("OSV.dev batch query failed",
-			map[string]any{"error": err.Error(), "dependencies": len(pkgs)}), nil
-	}
-
-	vulns := s.resolveVulns(ctx, pkgs, idsByQuery, threshold)
+	vulns := filterVulns(res.Vulnerabilities, threshold)
 	structured := map[string]any{
-		"lock_file":           lockPath,
-		"ecosystem":           pkgs[0].Ecosystem,
-		"dependencies":        len(pkgs),
+		"lock_file":           res.LockFile,
+		"ecosystem":           res.Ecosystem,
+		"dependencies":        res.Dependencies,
 		"severity_threshold":  threshold,
 		"vulnerabilities":     vulns,
 		"vulnerability_count": len(vulns),
 	}
 	text := fmt.Sprintf("security_scan: %d dependencies scanned; %d vulnerabilities at or above %q",
-		len(pkgs), len(vulns), threshold)
+		res.Dependencies, len(vulns), threshold)
 	return toolutil.Result(text, structured), nil
 }
 
-// errManifestEscapesRoot is returned by collectDeps when a caller-supplied
+// errManifestEscapesRoot is returned by scan when a caller-supplied
 // manifest_path resolves outside the project root; handle degrades it to a
 // not_configured result rather than reading the out-of-tree file.
 var errManifestEscapesRoot = errors.New("manifest_path escapes the project root")
 
-// collectDeps resolves the dependency set either from an explicit manifest_path
-// argument or by auto-detecting a lock file under the project root.
-func (s *securityScanner) collectDeps(args map[string]any) ([]vulnscan.Package, string, error) {
+// errUnsupportedLockFile is returned by scan when a caller-supplied
+// manifest_path names a file that is not a lock format the scanner can read.
+var errUnsupportedLockFile = errors.New("unsupported lock file")
+
+// scan resolves the lock file either from an explicit manifest_path argument or
+// by auto-detecting one under the project root, and scans it. It returns the
+// lock file path it resolved (for reporting) alongside the scan outcome; a nil
+// Result with a nil error means no lock file was found.
+func (s *securityScanner) scan(ctx context.Context, args map[string]any) (*vulnscan.Result, string, error) {
 	if mp, ok := toolutil.StringArg(args, "manifest_path"); ok && mp != "" {
 		// Confine a caller-supplied manifest_path to the project root. Without
 		// this the tool would open (and report dependency coordinates from) any
@@ -113,19 +106,18 @@ func (s *securityScanner) collectDeps(args map[string]any) ([]vulnscan.Package, 
 		if !ok {
 			return nil, mp, errManifestEscapesRoot
 		}
-		lf, ok := vulnscan.LockFileForPath(resolved)
-		if !ok {
-			return nil, resolved, fmt.Errorf("unsupported lock file %q", mp)
+		if _, ok := vulnscan.LockFileForPath(resolved); !ok {
+			return nil, resolved, fmt.Errorf("%w %q", errUnsupportedLockFile, mp)
 		}
-		pkgs, err := lf.Parse(resolved)
-		return pkgs, resolved, err
+		res, err := s.scanner.ScanFile(ctx, resolved)
+		return res, resolved, err
 	}
-	lf, path, ok := vulnscan.DetectLockFile(s.projectRoot)
+	_, path, ok := vulnscan.DetectLockFile(s.projectRoot)
 	if !ok {
 		return nil, "", nil
 	}
-	pkgs, err := lf.Parse(path)
-	return pkgs, path, err
+	res, err := s.scanner.ScanFile(ctx, path)
+	return res, path, err
 }
 
 // vulnReport is one reported vulnerability tied to the package that triggered it.
@@ -140,40 +132,27 @@ type vulnReport struct {
 	Summary     string `json:"summary,omitempty"`
 }
 
-// resolveVulns fetches details for each unique vulnerability id, maps it back to
-// the originating package, applies the severity threshold, and returns the
-// filtered, deterministically-ordered report list. A detail record that failed
-// to fetch (or was dropped by the fetch cap) carries an empty severity label,
-// which maps to "unknown" — always above the floor, so the vuln is reported
-// rather than silently dropped or given a fabricated severity.
-func (s *securityScanner) resolveVulns(ctx context.Context, pkgs []vulnscan.Package, idsByQuery [][]string, threshold string) []vulnReport {
-	details := s.scanner.FetchDetails(ctx, idsByQuery)
-
+// filterVulns applies the severity threshold to the scanner's (already
+// deterministically ordered) findings and renders them in the tool's report
+// shape. A detail record that failed to fetch (or was dropped by the fetch cap)
+// carries the "unknown" severity — always above the floor, so the vuln is
+// reported rather than silently dropped or given a fabricated severity.
+func filterVulns(vulns []vulnscan.Vulnerability, threshold string) []vulnReport {
 	var reports []vulnReport
-	for i, ids := range idsByQuery {
-		for _, id := range ids {
-			d := details[id]
-			sev := vulnscan.NormalizeSeverity(d.SeverityLabel)
-			if !vulnscan.SeverityAtOrAbove(sev, threshold) {
-				continue // below the requested floor ("unknown" always qualifies)
-			}
-			reports = append(reports, vulnReport{
-				ID:          id,
-				Package:     pkgs[i].Name,
-				Version:     pkgs[i].Version,
-				Ecosystem:   pkgs[i].Ecosystem,
-				Severity:    sev,
-				FixedIn:     d.FixedIn,
-				AdvisoryURL: d.AdvisoryURL,
-				Summary:     d.Summary,
-			})
+	for _, v := range vulns {
+		if !vulnscan.SeverityAtOrAbove(v.Severity, threshold) {
+			continue // below the requested floor ("unknown" always qualifies)
 		}
+		reports = append(reports, vulnReport{
+			ID:          v.ID,
+			Package:     v.Package,
+			Version:     v.Version,
+			Ecosystem:   v.Ecosystem,
+			Severity:    v.Severity,
+			FixedIn:     v.FixedIn,
+			AdvisoryURL: v.AdvisoryURL,
+			Summary:     v.Summary,
+		})
 	}
-	sort.Slice(reports, func(a, b int) bool {
-		if reports[a].Package != reports[b].Package {
-			return reports[a].Package < reports[b].Package
-		}
-		return reports[a].ID < reports[b].ID
-	})
 	return reports
 }

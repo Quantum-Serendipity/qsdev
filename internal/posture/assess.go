@@ -312,13 +312,20 @@ func buildEcosystemStatuses(detected types.DetectedProject, projectPath string, 
 			Name:     name,
 			Detected: true,
 		}
-		var lockAbs string
-		for _, lf := range ecosystem.LockFilesByEcosystem[name] {
-			absPath := filepath.Join(projectPath, lf)
-			if _, err := os.Stat(absPath); err == nil {
-				status.LockFile = lf
-				lockAbs = absPath
-				break
+		// Prefer the lock file the scanner would choose (dedicated locks such as
+		// poetry.lock before a loose requirements.txt), so a scan reads the
+		// authoritative pins; fall back to any catalog lock file for display.
+		lf, lockAbs, scannable := vulnscan.LockFileForEcosystem(projectPath, name)
+		if scannable {
+			status.LockFile = lf.Name()
+		} else {
+			for _, lf := range ecosystem.LockFilesByEcosystem[name] {
+				absPath := filepath.Join(projectPath, lf)
+				if _, err := os.Stat(absPath); err == nil {
+					status.LockFile = lf
+					lockAbs = absPath
+					break
+				}
 			}
 		}
 		if status.LockFile == "" {
@@ -350,11 +357,19 @@ func buildEcosystemStatuses(detected types.DetectedProject, projectPath string, 
 }
 
 // scanEcosystem runs the OSV scanner against a single lock file and populates
-// the ecosystem's vulnerability counts. A scan failure or an unsupported lock
-// format leaves the ecosystem unscanned (Scanned stays false, counts stay
-// zero) rather than falsely reporting it clean.
+// the ecosystem's vulnerability counts. A scan failure, an unsupported lock
+// format, or a lock file with no pinned dependencies leaves the ecosystem
+// unscanned (Scanned stays false, counts stay zero) rather than falsely
+// reporting it clean.
 func scanEcosystem(status *EcosystemStatus, scanner *vulnscan.Scanner, lockAbs string) {
 	res, err := scanner.ScanFile(context.Background(), lockAbs)
+	if errors.Is(err, vulnscan.ErrNoPinnedDeps) {
+		// Nothing pinned to query (e.g. a requirements.txt of loose specifiers):
+		// the ecosystem was not scanned, which is not the same as scanned clean.
+		slog.Warn("posture: lock file has no pinned dependencies; ecosystem left unscanned",
+			"ecosystem", status.Name, "lockFile", status.LockFile)
+		return
+	}
 	if err != nil {
 		slog.Warn("posture: dependency vulnerability scan failed; ecosystem left unscanned",
 			"ecosystem", status.Name, "lockFile", status.LockFile, "error", err)

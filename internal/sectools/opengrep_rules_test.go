@@ -10,8 +10,12 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Quantum-Serendipity/qsdev/rules"
 )
 
+// rulesRoot returns the on-disk rules/core directory, for tools that need a
+// path. The library is a tracked repo invariant, so its absence is a failure.
 func rulesRoot(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -20,7 +24,7 @@ func rulesRoot(t *testing.T) string {
 	}
 	root := filepath.Join(filepath.Dir(thisFile), "..", "..", "rules", "core")
 	if _, err := os.Stat(root); err != nil {
-		t.Skipf("rules/core not found at %s: %v", root, err)
+		t.Fatalf("rules/core not found at %s: %v", root, err)
 	}
 	return root
 }
@@ -51,48 +55,29 @@ type ruleFile struct {
 	Rules []ruleEntry `yaml:"rules"`
 }
 
-func findRuleFiles(t *testing.T, root string) []string {
+// coreRuleFiles returns the rule library exactly as it is embedded and
+// delivered into projects (rules.CoreRuleFiles), so these checks follow the
+// library wherever it lives. An empty library is a failure, not a skip: the
+// validation below must never silently stop running.
+func coreRuleFiles(t *testing.T) []rules.RuleFile {
 	t.Helper()
-	var files []string
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			if info.Name() == "testdata" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if filepath.Ext(path) == ".yaml" && info.Name() != "manifest.yaml" {
-			files = append(files, path)
-		}
-		return nil
-	})
+	files, err := rules.CoreRuleFiles()
 	if err != nil {
-		t.Fatalf("walking rules directory: %v", err)
+		t.Fatalf("loading embedded rule library: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("embedded rule library contains no rule files")
 	}
 	return files
 }
 
 func TestRuleFiles_YAMLSyntax(t *testing.T) {
 	t.Parallel()
-	root := rulesRoot(t)
-	files := findRuleFiles(t, root)
-	if len(files) == 0 {
-		t.Skip("no rule files found")
-	}
-
-	for _, path := range files {
-		relPath, _ := filepath.Rel(root, path)
-		t.Run(relPath, func(t *testing.T) {
+	for _, file := range coreRuleFiles(t) {
+		t.Run(file.RelPath, func(t *testing.T) {
 			t.Parallel()
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("reading file: %v", err)
-			}
 			var rf ruleFile
-			if err := yaml.Unmarshal(data, &rf); err != nil {
+			if err := yaml.Unmarshal(file.Content, &rf); err != nil {
 				t.Fatalf("YAML parse error: %v", err)
 			}
 			if len(rf.Rules) == 0 {
@@ -104,22 +89,11 @@ func TestRuleFiles_YAMLSyntax(t *testing.T) {
 
 func TestRuleFiles_RequiredFields(t *testing.T) {
 	t.Parallel()
-	root := rulesRoot(t)
-	files := findRuleFiles(t, root)
-	if len(files) == 0 {
-		t.Skip("no rule files found")
-	}
-
-	for _, path := range files {
-		relPath, _ := filepath.Rel(root, path)
-		t.Run(relPath, func(t *testing.T) {
+	for _, file := range coreRuleFiles(t) {
+		t.Run(file.RelPath, func(t *testing.T) {
 			t.Parallel()
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("reading file: %v", err)
-			}
 			var rf ruleFile
-			if err := yaml.Unmarshal(data, &rf); err != nil {
+			if err := yaml.Unmarshal(file.Content, &rf); err != nil {
 				t.Fatalf("YAML parse error: %v", err)
 			}
 
@@ -167,22 +141,11 @@ func TestRuleFiles_RequiredFields(t *testing.T) {
 
 func TestRuleFiles_MetadataSchema(t *testing.T) {
 	t.Parallel()
-	root := rulesRoot(t)
-	files := findRuleFiles(t, root)
-	if len(files) == 0 {
-		t.Skip("no rule files found")
-	}
-
-	for _, path := range files {
-		relPath, _ := filepath.Rel(root, path)
-		t.Run(relPath, func(t *testing.T) {
+	for _, file := range coreRuleFiles(t) {
+		t.Run(file.RelPath, func(t *testing.T) {
 			t.Parallel()
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("reading file: %v", err)
-			}
 			var rf ruleFile
-			if err := yaml.Unmarshal(data, &rf); err != nil {
+			if err := yaml.Unmarshal(file.Content, &rf); err != nil {
 				t.Fatalf("YAML parse error: %v", err)
 			}
 
@@ -215,29 +178,18 @@ func TestRuleFiles_MetadataSchema(t *testing.T) {
 
 func TestRuleFiles_IDUniqueness(t *testing.T) {
 	t.Parallel()
-	root := rulesRoot(t)
-	files := findRuleFiles(t, root)
-	if len(files) == 0 {
-		t.Skip("no rule files found")
-	}
-
 	seen := make(map[string]string)
-	for _, path := range files {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("reading %s: %v", path, err)
-		}
+	for _, file := range coreRuleFiles(t) {
 		var rf ruleFile
-		if err := yaml.Unmarshal(data, &rf); err != nil {
-			t.Fatalf("YAML parse error in %s: %v", path, err)
+		if err := yaml.Unmarshal(file.Content, &rf); err != nil {
+			t.Fatalf("YAML parse error in %s: %v", file.RelPath, err)
 		}
 
-		relPath, _ := filepath.Rel(root, path)
 		for _, rule := range rf.Rules {
 			if prev, ok := seen[rule.ID]; ok {
-				t.Errorf("duplicate rule ID %q in %s (first seen in %s)", rule.ID, relPath, prev)
+				t.Errorf("duplicate rule ID %q in %s (first seen in %s)", rule.ID, file.RelPath, prev)
 			}
-			seen[rule.ID] = relPath
+			seen[rule.ID] = file.RelPath
 		}
 	}
 }

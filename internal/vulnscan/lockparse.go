@@ -32,9 +32,10 @@ type lockParser func(path, eco string) ([]Package, error)
 // present file wins. Obtain one via DetectLockFile or LockFileForPath; the zero
 // value is not usable.
 type LockFile struct {
-	name      string
-	ecosystem string
-	parse     func(path string) ([]Package, error)
+	name       string
+	ecosystem  string
+	catalogEco string // pkg/ecosystem name, e.g. ecosystem.NamePython
+	parse      func(path string) ([]Package, error)
 }
 
 // Name returns the lock file's base name (e.g. "go.sum").
@@ -104,8 +105,9 @@ func buildKnownLockFiles() []LockFile {
 				continue // no parser for this lock format yet
 			}
 			out = append(out, LockFile{
-				name:      name,
-				ecosystem: osvEco,
+				name:       name,
+				ecosystem:  osvEco,
+				catalogEco: eco,
 				parse: func(path string) ([]Package, error) {
 					return parser(path, osvEco)
 				},
@@ -145,6 +147,25 @@ func DetectLockFile(projectRoot string) (LockFile, string, bool) {
 	return LockFile{}, "", false
 }
 
+// LockFileForEcosystem returns the preferred scannable lock file present in
+// projectRoot for one pkg/ecosystem ecosystem (e.g. ecosystem.NamePython),
+// along with its full path, or a false ok when that ecosystem has none. It uses
+// the same preference order as DetectLockFile, so a dedicated lock file such as
+// poetry.lock wins over a loose requirements.txt; callers choosing which file to
+// scan per ecosystem must use this rather than the raw catalog order.
+func LockFileForEcosystem(projectRoot, eco string) (LockFile, string, bool) {
+	for _, lf := range knownLockFiles() {
+		if lf.catalogEco != eco {
+			continue
+		}
+		p := filepath.Join(projectRoot, lf.name)
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return lf, p, true
+		}
+	}
+	return LockFile{}, "", false
+}
+
 // LockFileForPath resolves the parser for an explicitly supplied manifest path
 // by matching its base name against the known lock files.
 func LockFileForPath(path string) (LockFile, bool) {
@@ -157,11 +178,14 @@ func LockFileForPath(path string) (LockFile, bool) {
 	return LockFile{}, false
 }
 
-// parseGoSum extracts module@version pairs from a go.sum file. Each module
-// appears on both a "<mod> <ver> h1:..." and a "<mod> <ver>/go.mod h1:..." line;
-// the "/go.mod" suffix is stripped and duplicates are collapsed. The leading "v"
-// of the module version is dropped because OSV's Go ecosystem indexes versions
-// without it.
+// parseGoSum extracts the module@version pairs that are actually part of the
+// build from a go.sum file. A module version that is downloaded and compiled has
+// a module-zip hash line ("<mod> <ver> h1:..."); a line whose version carries a
+// "/go.mod" suffix only records the go.mod hash module graph pruning read, and on
+// its own marks a version that is never built. Only zip-hash versions are
+// emitted, so advisories against stale graph-only versions are not reported as
+// project vulnerabilities. The leading "v" of the module version is dropped
+// because OSV's Go ecosystem indexes versions without it.
 func parseGoSum(path, eco string) ([]Package, error) {
 	f, err := os.Open(path) //nolint:gosec // path is a project-root lock file, not user input
 	if err != nil {
@@ -175,12 +199,11 @@ func parseGoSum(path, eco string) ([]Package, error) {
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
-		if len(fields) < 2 {
+		if len(fields) < 2 || strings.HasSuffix(fields[1], "/go.mod") {
 			continue
 		}
 		mod := fields[0]
-		ver := strings.TrimSuffix(fields[1], "/go.mod")
-		ver = strings.TrimPrefix(ver, "v")
+		ver := strings.TrimPrefix(fields[1], "v")
 		key := mod + "@" + ver
 		if seen[key] || mod == "" || ver == "" {
 			continue
@@ -191,19 +214,37 @@ func parseGoSum(path, eco string) ([]Package, error) {
 	return pkgs, sc.Err()
 }
 
-// npmLock models the subset of package-lock.json (lockfileVersion 2/3) we read.
+// npmLock models the subset of package-lock.json we read: the lockfileVersion
+// 2/3 "packages" map and the lockfileVersion 1 "dependencies" tree.
 type npmLock struct {
-	Packages map[string]struct {
-		Version string `json:"version"`
-	} `json:"packages"`
-	Dependencies map[string]struct {
-		Version string `json:"version"`
-	} `json:"dependencies"`
+	Packages     map[string]npmPackageEntry `json:"packages"`
+	Dependencies map[string]npmV1Dep        `json:"dependencies"`
+}
+
+// npmPackageEntry is one lockfileVersion 2/3 "packages" entry. Name is set when
+// the installed package differs from its node_modules folder name (an npm alias
+// such as "foo": "npm:lodash@4.17.4"); Link marks a symlink to a workspace or
+// local folder, which is not a registry package.
+type npmPackageEntry struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Link    bool   `json:"link"`
+}
+
+// npmV1Dep is one lockfileVersion 1 "dependencies" entry. Transitive packages
+// that could not be hoisted are nested under their parent's Dependencies, so the
+// tree must be walked recursively to see them. An aliased package records its
+// real coordinates in Version as "npm:<name>@<version>".
+type npmV1Dep struct {
+	Version      string              `json:"version"`
+	Dependencies map[string]npmV1Dep `json:"dependencies"`
 }
 
 // parseNPMLock extracts name@version pairs from a package-lock.json. It reads the
-// lockfileVersion 2/3 "packages" map (keyed by node_modules path) and falls back
-// to the lockfileVersion 1 "dependencies" map.
+// lockfileVersion 2/3 "packages" map (keyed by node_modules path) and the
+// lockfileVersion 1 "dependencies" tree, including its nested entries. Aliased
+// packages are reported under their real registry name, since that is the name
+// OSV indexes advisories under.
 func parseNPMLock(path, eco string) ([]Package, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // project-root lock file
 	if err != nil {
@@ -228,20 +269,38 @@ func parseNPMLock(path, eco string) ([]Package, error) {
 		pkgs = append(pkgs, Package{Name: name, Version: ver, Ecosystem: eco})
 	}
 	for k, v := range lock.Packages {
-		if k == "" {
-			continue // the root package has an empty key
+		if k == "" || v.Link {
+			continue // the root package has an empty key; links are local folders
 		}
-		idx := strings.LastIndex(k, "node_modules/")
-		name := k
-		if idx >= 0 {
-			name = k[idx+len("node_modules/"):]
+		name := v.Name
+		if name == "" {
+			name = k
+			if idx := strings.LastIndex(k, "node_modules/"); idx >= 0 {
+				name = k[idx+len("node_modules/"):]
+			}
 		}
 		add(name, v.Version)
 	}
-	for name, v := range lock.Dependencies {
-		add(name, v.Version)
-	}
+	walkNPMV1Deps(lock.Dependencies, add)
 	return pkgs, nil
+}
+
+// walkNPMV1Deps visits every entry of a lockfileVersion 1 dependency tree,
+// descending into nested dependencies, and resolves npm aliases
+// ("npm:<name>@<version>") to their real coordinates.
+func walkNPMV1Deps(deps map[string]npmV1Dep, add func(name, ver string)) {
+	for name, d := range deps {
+		ver := d.Version
+		if spec, ok := strings.CutPrefix(ver, "npm:"); ok {
+			// The real name may itself be scoped ("@scope/pkg@1.0.0"), so split
+			// at the last "@".
+			if at := strings.LastIndex(spec, "@"); at > 0 {
+				name, ver = spec[:at], spec[at+1:]
+			}
+		}
+		add(name, ver)
+		walkNPMV1Deps(d.Dependencies, add)
+	}
 }
 
 // tomlLock models the [[package]] table array that Cargo.lock, poetry.lock, and
@@ -347,7 +406,12 @@ func parseRequirementsTxt(path, eco string) ([]Package, error) {
 		if i := strings.Index(line, "#"); i >= 0 {
 			line = strings.TrimSpace(line[:i])
 		}
-		name, ver, ok := strings.Cut(line, "==")
+		// "===" is PEP 440 arbitrary equality; check it before "==" so the
+		// version is not left with a stray leading "=".
+		name, ver, ok := strings.Cut(line, "===")
+		if !ok {
+			name, ver, ok = strings.Cut(line, "==")
+		}
 		if !ok {
 			continue
 		}

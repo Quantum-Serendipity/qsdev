@@ -1,26 +1,90 @@
 package outdated
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestCommandsForEcosystem(t *testing.T) {
 	cmds := CommandsForEcosystem("javascript")
-	if len(cmds) != 3 {
-		t.Fatalf("expected 3 javascript commands, got %d", len(cmds))
+	if len(cmds) != 4 {
+		t.Fatalf("expected 4 javascript commands, got %d", len(cmds))
 	}
 
-	expectedBinaries := []string{"npm", "pnpm", "yarn"}
+	expected := []struct {
+		binary          string
+		outdatedOnExit1 bool
+	}{{"npm", true}, {"pnpm", true}, {"yarn", true}, {"bun", false}}
 	for i, cmd := range cmds {
-		if cmd.Binary != expectedBinaries[i] {
-			t.Errorf("javascript command[%d]: expected binary %q, got %q", i, expectedBinaries[i], cmd.Binary)
+		if cmd.Binary != expected[i].binary {
+			t.Errorf("javascript command[%d]: expected binary %q, got %q", i, expected[i].binary, cmd.Binary)
 		}
 		if cmd.Ecosystem != "javascript" {
 			t.Errorf("javascript command[%d]: expected ecosystem %q, got %q", i, "javascript", cmd.Ecosystem)
 		}
-		if !cmd.OutdatedOnExit1 {
-			t.Errorf("javascript command[%d]: expected OutdatedOnExit1 to be true", i)
+		if cmd.OutdatedOnExit1 != expected[i].outdatedOnExit1 {
+			t.Errorf("javascript command[%d]: OutdatedOnExit1 = %t, want %t", i, cmd.OutdatedOnExit1, expected[i].outdatedOnExit1)
 		}
+	}
+}
+
+// TestCommandsExitCodeContract pins the flags that make exit status 1 mean
+// "outdated packages found" for tools that otherwise exit 0 when packages are
+// outdated and use 1 for their own failures.
+func TestCommandsExitCodeContract(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		eco      string
+		binary   string
+		wantArgs []string
+	}{
+		{"rust", "cargo", []string{"outdated", "--exit-code", "1"}},
+		{"php", "composer", []string{"outdated", "--direct", "--strict"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.binary, func(t *testing.T) {
+			t.Parallel()
+			cmds := CommandsForEcosystem(tt.eco)
+			if len(cmds) != 1 || cmds[0].Binary != tt.binary {
+				t.Fatalf("commands for %s = %+v, want one %s command", tt.eco, cmds, tt.binary)
+			}
+			if !cmds[0].OutdatedOnExit1 {
+				t.Error("OutdatedOnExit1 = false, want true")
+			}
+			if strings.Join(cmds[0].Args, " ") != strings.Join(tt.wantArgs, " ") {
+				t.Errorf("args = %v, want %v", cmds[0].Args, tt.wantArgs)
+			}
+		})
+	}
+}
+
+func TestYarnBerryUnsupported(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		files map[string]string
+		want  bool
+	}{
+		{"yarnrc.yml", map[string]string{".yarnrc.yml": "nodeLinker: pnp\n"}, true},
+		{"packageManager yarn 4", map[string]string{"package.json": `{"packageManager":"yarn@4.1.0"}`}, true},
+		{"packageManager yarn 1", map[string]string{"package.json": `{"packageManager":"yarn@1.22.19"}`}, false},
+		{"classic without markers", map[string]string{"package.json": `{"name":"x"}`}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for name, body := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := yarnBerryUnsupported(dir) != ""; got != tt.want {
+				t.Errorf("unsupported = %t, want %t", got, tt.want)
+			}
+		})
 	}
 }
 

@@ -278,9 +278,10 @@ golang.org/x/sys v0.1.0/go.mod h1:ghi=
 		if err != nil {
 			t.Fatalf("parseGoSum: %v", err)
 		}
+		// golang.org/x/sys v0.1.0 has only a /go.mod line: it is module graph
+		// metadata, never built, so it must not be queried.
 		want := []string{
 			"github.com/pkg/errors@0.9.1 (Go)",
-			"golang.org/x/sys@0.1.0 (Go)",
 		}
 		if got := pkgKeys(pkgs); !equalKeys(got, want) {
 			t.Errorf("packages = %v, want %v", got, want)

@@ -60,6 +60,13 @@ func runSelfprotect(cmd *cobra.Command) (err error) {
 
 	input := hookio.ParseInput(call.ToolInput)
 	evalCtx := buildSelfprotectContext(call.ToolName, &input)
+	// The envelope's cwd is the session directory, which the Bash tool keeps
+	// across calls (a `cd` in one call moves the next); relative paths must be
+	// resolved against it, not against the hook process's own directory.
+	if call.CWD != "" {
+		evalCtx.CWD = call.CWD
+	}
+	evalCtx.ToolInput = call.ToolInput
 
 	// Parse the Bash command once here (memoized on evalCtx); the rules below
 	// reuse the same parse via ctx.ParsedCommands().
@@ -81,6 +88,13 @@ func runSelfprotect(cmd *cobra.Command) (err error) {
 			return errSelfprotectDeny
 		}
 	}
+
+	if isWriteOrEditTool(call.ToolName) {
+		if blocked, ruleID, reason := gatedodge.DetectChange(input.FilePath, evalCtx.FileChange); blocked {
+			hookio.WriteDeny(stderr, ruleID, reason)
+			return errSelfprotectDeny
+		}
+	}
 	return nil
 }
 
@@ -90,6 +104,7 @@ func buildSelfprotectContext(toolName string, input *hookio.ToolInput) *rules.Ev
 		FilePath: input.FilePath,
 		Command:  input.Command,
 		Content:  input.EditedContent(),
+		Edits:    textEdits(toolName, input),
 	}
 
 	if cwd, err := os.Getwd(); err == nil {
@@ -122,6 +137,23 @@ func targetPath(filePath string) string {
 		return abs
 	}
 	return filepath.Clean(expanded)
+}
+
+// textEdits returns the replacements of an Edit/MultiEdit call, which rules
+// apply to the current file to see what the call leaves behind.
+func textEdits(toolName string, input *hookio.ToolInput) []rules.TextEdit {
+	switch toolName {
+	case "Edit":
+		return []rules.TextEdit{{OldString: input.OldString, NewString: input.NewString, ReplaceAll: input.ReplaceAll}}
+	case "MultiEdit":
+		edits := make([]rules.TextEdit, 0, len(input.Edits))
+		for _, e := range input.Edits {
+			edits = append(edits, rules.TextEdit{OldString: e.OldString, NewString: e.NewString, ReplaceAll: e.ReplaceAll})
+		}
+		return edits
+	default:
+		return nil
+	}
 }
 
 func isWriteOrEditTool(toolName string) bool {

@@ -9,9 +9,15 @@ import (
 )
 
 // ToolCall represents the JSON envelope received from Claude Code's hook system.
+//
+// CWD is the session's working directory when the tool call was made. Claude
+// Code's Bash tool keeps its working directory across calls, so a `cd` in one
+// call changes where the next call's relative paths land; rules resolve
+// relative paths against this rather than the hook process's own directory.
 type ToolCall struct {
 	ToolName  string          `json:"tool_name"`
 	ToolInput json.RawMessage `json:"tool_input"`
+	CWD       string          `json:"cwd"`
 }
 
 // ToolInput represents the parsed tool_input fields relevant to self-protection.
@@ -21,18 +27,20 @@ type ToolCall struct {
 // EditedContent so an Edit/MultiEdit (which has no `content` field) is inspected
 // too — otherwise injected content slips past those rules.
 type ToolInput struct {
-	FilePath  string   `json:"file_path"`
-	Content   string   `json:"content"`    // Write
-	Command   string   `json:"command"`    // Bash
-	OldString string   `json:"old_string"` // Edit
-	NewString string   `json:"new_string"` // Edit
-	Edits     []EditOp `json:"edits"`      // MultiEdit
+	FilePath   string   `json:"file_path"`
+	Content    string   `json:"content"`     // Write
+	Command    string   `json:"command"`     // Bash
+	OldString  string   `json:"old_string"`  // Edit
+	NewString  string   `json:"new_string"`  // Edit
+	ReplaceAll bool     `json:"replace_all"` // Edit
+	Edits      []EditOp `json:"edits"`       // MultiEdit
 }
 
 // EditOp is one edit within a MultiEdit tool call.
 type EditOp struct {
-	OldString string `json:"old_string"`
-	NewString string `json:"new_string"`
+	OldString  string `json:"old_string"`
+	NewString  string `json:"new_string"`
+	ReplaceAll bool   `json:"replace_all"`
 }
 
 // EditedContent returns the text a Write/Edit/MultiEdit introduces: Content for

@@ -183,10 +183,15 @@ func appendPipeStmt(s *syntax.Stmt, out *[]*syntax.Stmt) {
 	*out = append(*out, s)
 }
 
-// wordText renders a shell word to its literal text (quotes removed) and reports
-// whether any part of it was a shell expansion. Expansions contribute no literal
-// text but flip the expansion flag, so `"$X"` yields ("", true) while the
-// single-quoted literal `'eval "$("'` yields (`eval "$("`, false).
+// wordText renders a shell word to the literal text the shell would pass to the
+// command (quotes and escapes removed) and reports whether any part of it was a
+// shell expansion. Expansions contribute no literal text but flip the expansion
+// flag, so `"$X"` yields ("", true) while the single-quoted literal
+// `'eval "$("'` yields (`eval "$("`, false). Backslash escapes are removed the
+// way the shell removes them (`.cl\aude` is `.claude`) and ANSI-C `$'..'`
+// strings are decoded (`$'\x2e'claude` is `.claude`), so a protected path cannot
+// hide behind an escape spelling. Glob and brace characters are left in the
+// text for callers to interpret.
 func wordText(w *syntax.Word) (string, bool) {
 	if w == nil {
 		return "", false
@@ -196,13 +201,19 @@ func wordText(w *syntax.Word) (string, bool) {
 	for _, part := range w.Parts {
 		switch p := part.(type) {
 		case *syntax.Lit:
-			b.WriteString(p.Value)
+			b.WriteString(unescapeUnquoted(p.Value))
 		case *syntax.SglQuoted:
-			b.WriteString(p.Value)
+			if p.Dollar {
+				text, ok := decodeANSIC(p.Value)
+				b.WriteString(text)
+				hasExpansion = hasExpansion || !ok
+			} else {
+				b.WriteString(p.Value)
+			}
 		case *syntax.DblQuoted:
 			for _, dp := range p.Parts {
 				if lit, ok := dp.(*syntax.Lit); ok {
-					b.WriteString(lit.Value)
+					b.WriteString(unescapeDoubleQuoted(lit.Value))
 				} else {
 					hasExpansion = true
 				}
@@ -214,4 +225,126 @@ func wordText(w *syntax.Word) (string, bool) {
 		}
 	}
 	return b.String(), hasExpansion
+}
+
+// unescapeUnquoted performs the shell's quote removal on an unquoted literal: a
+// backslash escapes the next character (a backslash-newline is a line
+// continuation and disappears).
+func unescapeUnquoted(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 >= len(s) {
+			b.WriteByte(s[i])
+			continue
+		}
+		i++
+		if s[i] != '\n' {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
+}
+
+// unescapeDoubleQuoted performs quote removal inside double quotes, where a
+// backslash only escapes `$`, a backtick, `"`, `\` and newline; before any other
+// character it is kept literally.
+func unescapeDoubleQuoted(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 >= len(s) || !strings.ContainsRune("$`\"\\\n", rune(s[i+1])) {
+			b.WriteByte(s[i])
+			continue
+		}
+		i++
+		if s[i] != '\n' {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
+}
+
+// ansiCSimple maps the single-character ANSI-C escapes to their values.
+var ansiCSimple = map[byte]string{
+	'a': "\a", 'b': "\b", 'e': "\x1b", 'E': "\x1b", 'f': "\f", 'n': "\n",
+	'r': "\r", 't': "\t", 'v': "\v", '\\': `\`, '\'': "'", '"': `"`, '?': "?",
+}
+
+// decodeANSIC decodes the body of a bash `$'...'` string. It reports ok=false
+// when it meets an escape it does not model (such as `\cX`), so the caller can
+// treat the word as opaque (fail closed) instead of trusting a wrong rendering.
+func decodeANSIC(s string) (string, bool) {
+	var b strings.Builder
+	ok := true
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 >= len(s) {
+			b.WriteByte(s[i])
+			continue
+		}
+		i++
+		c := s[i]
+		if v, simple := ansiCSimple[c]; simple {
+			b.WriteString(v)
+			continue
+		}
+		switch {
+		case c >= '0' && c <= '7':
+			n, width := parseDigits(s[i:], 8, 3)
+			b.WriteByte(byte(n))
+			i += width - 1
+		case c == 'x' || c == 'u' || c == 'U':
+			maxDigits := map[byte]int{'x': 2, 'u': 4, 'U': 8}[c]
+			n, width := parseDigits(s[i+1:], 16, maxDigits)
+			if width == 0 {
+				b.WriteByte('\\')
+				b.WriteByte(c)
+				continue
+			}
+			if c == 'x' {
+				b.WriteByte(byte(n))
+			} else {
+				b.WriteRune(rune(n))
+			}
+			i += width
+		default:
+			// Unknown escapes (and \c control escapes) are not modelled.
+			b.WriteByte('\\')
+			b.WriteByte(c)
+			ok = false
+		}
+	}
+	return b.String(), ok
+}
+
+// parseDigits parses up to maxDigits leading digits of s in the given base
+// (8 or 16) and returns the value and how many bytes it consumed.
+func parseDigits(s string, base, maxDigits int) (int, int) {
+	n, width := 0, 0
+	for width < maxDigits && width < len(s) {
+		d := digitValue(s[width])
+		if d < 0 || d >= base {
+			break
+		}
+		n = n*base + d
+		width++
+	}
+	return n, width
+}
+
+func digitValue(c byte) int {
+	switch {
+	case c >= '0' && c <= '9':
+		return int(c - '0')
+	case c >= 'a' && c <= 'f':
+		return int(c-'a') + 10
+	case c >= 'A' && c <= 'F':
+		return int(c-'A') + 10
+	default:
+		return -1
+	}
 }

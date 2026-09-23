@@ -53,9 +53,10 @@ func TestGenerateDevenvNix_Structure(t *testing.T) {
 		{"no imports line", "imports =", false},
 		// Extends devenv's default unset list instead of replacing it.
 		{"unset list keeps devenv defaults", "unsetEnvVars = options.unsetEnvVars.default ++ [", true},
-		{"module takes options", "{ pkgs, lib, config, options, ... }:", true},
+		// config is referenced by no section here, so deadnix would flag it.
+		{"module takes only used args", "{ pkgs, lib, options, ... }:", true},
 		// Tasks are PATH scripts (usable under direnv), not shell functions.
-		{"task as script", `scripts."qsdev-lint" = {`, true},
+		{"task as script", `"qsdev-lint" = {`, true},
 		{"task errexit", "set -euo pipefail", true},
 		{"no task shell function", "qsdev-lint() {", false},
 		{"overlay bare path", "(import ./nix/go-overlay.nix)", true},

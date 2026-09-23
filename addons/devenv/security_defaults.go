@@ -2,11 +2,14 @@ package devenv
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // defaultUnsetEnvVars returns the canonical list of credential-bearing
@@ -68,7 +71,9 @@ func defaultToolNixExprs() map[string]string {
 
 // defaultSpecializedHooks returns the specialized custom security hooks that
 // are always present. These use custom Nix expressions for advanced checks.
-func defaultSpecializedHooks() []CustomHookData {
+// lockFiles are the project's ecosystem lock files, which lock-file-audit
+// watches in addition to the Nix lock files the catalog lists.
+func defaultSpecializedHooks(lockFiles []string) []CustomHookData {
 	cat, err := catalog.Default()
 	if err != nil {
 		return nil
@@ -93,6 +98,7 @@ func defaultSpecializedHooks() []CustomHookData {
 				indentBlock(strings.TrimSpace(def.Entry), "        "))
 			hook.RawEntry = true
 			hook.NeedsToString = true
+			hook.Files = lockFilesPattern(def.Files, lockFiles)
 
 		case "nix-secrets-check":
 			hook.Entry = buildNixSecretsCheckEntry(def)
@@ -109,6 +115,39 @@ func defaultSpecializedHooks() []CustomHookData {
 	}
 
 	return hooks
+}
+
+// lockFilesPattern extends a pre-commit `files` regex so it also matches the
+// named lock files in any directory.
+func lockFilesPattern(base string, lockFiles []string) string {
+	if len(lockFiles) == 0 {
+		return base
+	}
+	quoted := make([]string, len(lockFiles))
+	for i, name := range lockFiles {
+		quoted[i] = regexp.QuoteMeta(name)
+	}
+	extra := `(^|/)(` + strings.Join(quoted, "|") + `)$`
+	if base == "" {
+		return extra
+	}
+	return base + "|" + extra
+}
+
+// projectLockFiles returns the lock files of the selected ecosystems, from
+// the ecosystem lock file catalog. Files that double as a hand-edited
+// manifest (requirements.txt, pom.xml) are left out: they are not lock files.
+func projectLockFiles(languages []types.LanguageChoice) []string {
+	var out []string
+	for _, lang := range languages {
+		manifests := ecosystem.ManifestsByEcosystem[lang.Name]
+		for _, name := range ecosystem.LockFilesByEcosystem[lang.Name] {
+			if !slices.Contains(manifests, name) && !slices.Contains(out, name) {
+				out = append(out, name)
+			}
+		}
+	}
+	return out
 }
 
 func buildNixSecretsCheckEntry(def catalog.CustomHookDef) string {

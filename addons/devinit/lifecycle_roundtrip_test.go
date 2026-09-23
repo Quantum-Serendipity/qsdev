@@ -187,8 +187,8 @@ func TestLifecycle_EnableProducesWellFormedSharedFiles(t *testing.T) {
 	}
 
 	nix := readProjectFile(t, dir, "devenv.nix")
-	for _, want := range []string{"STARSHIP_CONFIG", "git-hooks.hooks.commit-ticket"} {
-		if !strings.Contains(nix, want) {
+	for _, want := range []string{"env.STARSHIP_CONFIG", "git-hooks.hooks.commit-ticket"} {
+		if !devenvDefines(t, nix, want) {
 			t.Errorf("devenv.nix missing %q after enable", want)
 		}
 	}
@@ -219,15 +219,15 @@ func TestLifecycle_EnableThenUpdateKeepsNixSections(t *testing.T) {
 	}
 
 	nix := readProjectFile(t, dir, "devenv.nix")
-	for _, want := range []string{"STARSHIP_CONFIG", "git-hooks.hooks.commit-ticket"} {
-		if !strings.Contains(nix, want) {
+	for _, want := range []string{"env.STARSHIP_CONFIG", "git-hooks.hooks.commit-ticket"} {
+		if !devenvDefines(t, nix, want) {
 			t.Errorf("devenv.nix lost %q after update while the tool is still enabled", want)
 		}
 	}
 	assertSharedFilesWellFormed(t, dir)
 
 	mustDisable(t, dir, "commit-ticket")
-	if strings.Contains(readProjectFile(t, dir, "devenv.nix"), "git-hooks.hooks.commit-ticket") {
+	if devenvDefines(t, readProjectFile(t, dir, "devenv.nix"), "git-hooks.hooks.commit-ticket") {
 		t.Error("devenv.nix still has the commit-ticket hook after disable")
 	}
 }

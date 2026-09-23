@@ -201,6 +201,13 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 		return nil, err
 	}
 
+	// A variable set explicitly (--env, .qsdev.yaml env:, or a service)
+	// overrides the default an ecosystem module or tool writes as env.NAME;
+	// keeping both would define env.NAME twice.
+	if err := dropOverriddenEnv(data.LanguageFragments, data.EnvVars); err != nil {
+		return nil, err
+	}
+
 	// 6. Security hooks are always present. An ecosystem module may declare
 	// the same hook (shellcheck for shell, statix for nix); rendering both
 	// defines one git-hooks attribute twice and devenv.nix fails to evaluate,
@@ -216,7 +223,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data.CustomHooks = slices.DeleteFunc(data.CustomHooks, func(h CustomHookData) bool { return securityHookIDs[h.ID] })
 
 	// Specialized security custom hooks (always present), deduped against ecosystem hooks.
-	for _, hook := range defaultSpecializedHooks() {
+	for _, hook := range defaultSpecializedHooks(projectLockFiles(answers.Languages)) {
 		if !seenHookIDs[hook.ID] {
 			seenHookIDs[hook.ID] = true
 			data.CustomHooks = append(data.CustomHooks, hook)
@@ -266,6 +273,26 @@ func buildEnvVars(answers types.WizardAnswers) map[string]string {
 
 	maps.Copy(envVars, answers.EnvVars)
 	return envVars
+}
+
+// dropOverriddenEnv removes env.NAME bindings from fragments for every NAME
+// in env, which is rendered in the env block and takes precedence.
+func dropOverriddenEnv(fragments []LanguageFragment, env map[string]string) error {
+	overridden := func(path []string) bool {
+		if len(path) != 2 || path[0] != "env" {
+			return false
+		}
+		_, ok := env[path[1]]
+		return ok
+	}
+	for i := range fragments {
+		out, err := dropNixBindings(fragments[i].NixFragment, overridden)
+		if err != nil {
+			return fmt.Errorf("applying env overrides to the %s section: %w", fragments[i].DisplayName, err)
+		}
+		fragments[i].NixFragment = out
+	}
+	return nil
 }
 
 // collectLanguageFragmentsAndHooks iterates over selected languages, generates

@@ -1027,14 +1027,20 @@ custom_hooks:
     - id: lock-file-audit
       name: Lock file change audit
       description: Flag lock file changes for review — lock files redirect package sources
+      # files lists the Nix lock files; devenv adds the lock files of the
+      # project's ecosystems (package-lock.json, Cargo.lock, ...).
       entry: |
         for f in "$@"; do
+          echo "WARNING: $f has been modified."
+          echo "  Lock file changes redirect package sources."
+          echo "  Verify the diff carefully during code review."
           case "$f" in
-            devenv.lock|flake.lock)
-              echo "WARNING: $f has been modified."
-              echo "  Lock file changes redirect package sources."
-              echo "  Verify the diff carefully during code review."
+            devenv.lock|flake.lock|*/devenv.lock|*/flake.lock)
               echo "  Run 'nix flake metadata' to inspect resolved inputs."
+              ;;
+            *)
+              echo "  Check that every resolved/source URL points at your registry over https"
+              echo "  and that each package still carries an integrity hash."
               ;;
           esac
         done

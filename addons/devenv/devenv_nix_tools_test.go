@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
@@ -24,13 +23,13 @@ func TestGenerateDevenvNix_EnabledToolSections(t *testing.T) {
 		name    string
 		enabled map[string]bool
 		envVars map[string]string
-		want    []string
-		notWant []string
+		want    map[string]string // attribute path -> value ("" = any value)
+		notWant []string          // attribute paths that must be undefined
 	}{
 		{
 			name:    "no tools enabled emits no tool sections",
 			enabled: map[string]bool{},
-			notWant: []string{"STARSHIP_CONFIG", "git-hooks.hooks.commit-ticket", "git-hooks.hooks.branch-naming", "OTEL_SERVICE_NAME"},
+			notWant: []string{"env.STARSHIP_CONFIG", "git-hooks.hooks.commit-ticket", "git-hooks.hooks.branch-naming", "env.OTEL_SERVICE_NAME"},
 		},
 		{
 			name: "enabled tools emit their sections",
@@ -40,24 +39,23 @@ func TestGenerateDevenvNix_EnabledToolSections(t *testing.T) {
 				"branch-naming":        true,
 				"otel-config":          true,
 			},
-			want: []string{
-				`env.STARSHIP_CONFIG = "${config.devenv.root}/.starship.toml";`,
-				"git-hooks.hooks.commit-ticket = {",
-				"git-hooks.hooks.branch-naming = {",
-				"env.OTEL_SERVICE_NAME",
+			want: map[string]string{
+				"env.STARSHIP_CONFIG":                  `"${config.devenv.root}/.starship.toml"`,
+				"git-hooks.hooks.commit-ticket.enable": "true",
+				"git-hooks.hooks.branch-naming.enable": "true",
+				"env.OTEL_SERVICE_NAME":                "",
 			},
 		},
 		{
 			name:    "disabled tools emit nothing",
 			enabled: map[string]bool{"starship-integration": false, "commit-ticket": false},
-			notWant: []string{"STARSHIP_CONFIG", "git-hooks.hooks.commit-ticket"},
+			notWant: []string{"env.STARSHIP_CONFIG", "git-hooks.hooks.commit-ticket"},
 		},
 		{
 			name:    "user env var is not redefined by a tool section",
 			enabled: map[string]bool{"otel-config": true},
 			envVars: map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317"},
-			want:    []string{"OTEL_EXPORTER_OTLP_ENDPOINT = \"http://collector:4317\";", "env.OTEL_SERVICE_NAME"},
-			notWant: []string{"env.OTEL_EXPORTER_OTLP_ENDPOINT"},
+			want:    map[string]string{"env.OTEL_EXPORTER_OTLP_ENDPOINT": `"http://collector:4317"`, "env.OTEL_SERVICE_NAME": ""},
 		},
 	}
 	for _, tt := range tests {
@@ -73,13 +71,16 @@ func TestGenerateDevenvNix_EnabledToolSections(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GenerateDevenvNix: %v", err)
 			}
-			content := string(got.Content)
-			for _, w := range tt.want {
-				requireContains(t, content, w)
+			attrs := nixAttrs(t, got.Content)
+			for path, value := range tt.want {
+				requireNixAttr(t, attrs, path)
+				if got := attrs[path]; value != "" && got != value {
+					t.Errorf("%s = %s, want %s", path, got, value)
+				}
 			}
-			for _, nw := range tt.notWant {
-				if strings.Contains(content, nw) {
-					t.Errorf("devenv.nix unexpectedly contains %q", nw)
+			for _, path := range tt.notWant {
+				if hasNixAttr(attrs, path) {
+					t.Errorf("devenv.nix unexpectedly defines %s", path)
 				}
 			}
 			requireNixParses(t, got.Content)

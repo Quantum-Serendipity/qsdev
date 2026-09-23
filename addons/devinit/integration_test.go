@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 )
 
 // --- Helpers ---
@@ -40,6 +42,29 @@ func requireFileContains(t *testing.T, dir, relPath, substr string) {
 	content := readFileContent(t, dir, relPath)
 	if !strings.Contains(content, substr) {
 		t.Errorf("file %s does not contain %q (len=%d)", relPath, substr, len(content))
+	}
+}
+
+// devenvDefines reports whether devenv.nix content defines the attribute
+// path (or an attribute below it), however the definitions are nested.
+func devenvDefines(t *testing.T, content, path string) bool {
+	t.Helper()
+	attrs, err := devenv.NixModuleAttrs(content)
+	if err != nil {
+		t.Fatalf("parsing devenv.nix: %v", err)
+	}
+	for k := range attrs {
+		if k == path || strings.HasPrefix(k, path+".") {
+			return true
+		}
+	}
+	return false
+}
+
+func requireDevenvAttr(t *testing.T, dir, path string) {
+	t.Helper()
+	if !devenvDefines(t, readFileContent(t, dir, "devenv.nix"), path) {
+		t.Errorf("devenv.nix does not define %s", path)
 	}
 }
 
@@ -496,7 +521,7 @@ func TestIntegration_NodeDetection(t *testing.T) {
 		t.Fatalf("init failed: %v\nOutput: %s", err, output)
 	}
 	requireFileExists(t, dir, "devenv.nix")
-	requireFileContains(t, dir, "devenv.nix", "languages.javascript")
+	requireDevenvAttr(t, dir, "languages.javascript")
 }
 
 func TestIntegration_PythonDetection(t *testing.T) {
@@ -506,7 +531,7 @@ func TestIntegration_PythonDetection(t *testing.T) {
 		t.Fatalf("init failed: %v\nOutput: %s", err, output)
 	}
 	requireFileExists(t, dir, "devenv.nix")
-	requireFileContains(t, dir, "devenv.nix", "languages.python")
+	requireDevenvAttr(t, dir, "languages.python")
 }
 
 func TestIntegration_PolyglotDetection(t *testing.T) {
@@ -516,8 +541,8 @@ func TestIntegration_PolyglotDetection(t *testing.T) {
 		t.Fatalf("init failed: %v\nOutput: %s", err, output)
 	}
 	requireFileExists(t, dir, "devenv.nix")
-	requireFileContains(t, dir, "devenv.nix", "languages.go")
-	requireFileContains(t, dir, "devenv.nix", "languages.javascript")
+	requireDevenvAttr(t, dir, "languages.go")
+	requireDevenvAttr(t, dir, "languages.javascript")
 }
 
 func TestIntegration_PolyglotDetection_NoDuplicatePackages(t *testing.T) {
@@ -539,10 +564,10 @@ func TestIntegration_PolyglotDetection_NoDuplicatePackages(t *testing.T) {
 			t.Errorf("devenv.nix missing container package %q", pkg)
 		}
 	}
-	if !strings.Contains(devenvNix, "languages.go") {
+	if !devenvDefines(t, devenvNix, "languages.go") {
 		t.Error("devenv.nix missing Go language configuration")
 	}
-	if !strings.Contains(devenvNix, "languages.javascript") {
+	if !devenvDefines(t, devenvNix, "languages.javascript") {
 		t.Error("devenv.nix missing JavaScript language configuration")
 	}
 }
@@ -553,7 +578,7 @@ func TestIntegration_CrossFileConsistency_Go(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
-	requireFileContains(t, dir, "devenv.nix", "languages.go")
+	requireDevenvAttr(t, dir, "languages.go")
 	requireFileExists(t, dir, "CLAUDE.md")
 	assertValidJSON(t, dir, ".claude/settings.json")
 	requireFileExists(t, dir, ".claude/rules/go-conventions.md")

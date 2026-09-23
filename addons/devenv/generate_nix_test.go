@@ -1,9 +1,11 @@
 package devenv_test
 
 import (
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -80,7 +82,7 @@ func TestGenerateDevenvNix_SingleLanguage(t *testing.T) {
 	content := string(got.Content)
 
 	// Verify Go language block is present.
-	requireContains(t, content, "languages.go")
+	requireNixAttr(t, nixAttrs(t, got.Content), "languages.go.enable")
 	requireContains(t, content, `enable = true`)
 
 	// Verify security defaults.
@@ -119,9 +121,10 @@ func TestGenerateDevenvNix_MultiLanguage(t *testing.T) {
 
 	// Both language fragments appear.
 	requireContains(t, content, "# Go")
-	requireContains(t, content, "languages.go")
 	requireContains(t, content, "# Python")
-	requireContains(t, content, "languages.python")
+	attrs := nixAttrs(t, got.Content)
+	requireNixAttr(t, attrs, "languages.go.enable")
+	requireNixAttr(t, attrs, "languages.python.enable")
 }
 
 func TestGenerateDevenvNix_WithServices(t *testing.T) {
@@ -154,12 +157,13 @@ func TestGenerateDevenvNix_WithServices(t *testing.T) {
 
 	content := string(got.Content)
 
-	requireContains(t, content, "services.postgres")
+	attrs := nixAttrs(t, got.Content)
+	requireNixAttr(t, attrs, "services.postgres.enable")
 	requireContains(t, content, "enable = true")
 	requireContains(t, content, "postgresql_16")
 	requireContains(t, content, `"myapp"`)
 
-	requireContains(t, content, "services.redis")
+	requireNixAttr(t, attrs, "services.redis.enable")
 	requireContains(t, content, "port = 6380")
 }
 
@@ -477,6 +481,36 @@ type brokenError struct{}
 func (e *brokenError) Error() string { return "module is broken" }
 
 // requireContains asserts that s contains the substring sub.
+// nixAttrs returns the flattened attribute paths devenv.nix defines.
+func nixAttrs(t *testing.T, content []byte) map[string]string {
+	t.Helper()
+	attrs, err := devenv.NixModuleAttrs(string(content))
+	if err != nil {
+		t.Fatalf("NixModuleAttrs: %v\n%s", err, content)
+	}
+	return attrs
+}
+
+// hasNixAttr reports whether path, or an attribute below it, is defined.
+func hasNixAttr(attrs map[string]string, path string) bool {
+	if _, ok := attrs[path]; ok {
+		return true
+	}
+	for k := range attrs {
+		if strings.HasPrefix(k, path+".") {
+			return true
+		}
+	}
+	return false
+}
+
+func requireNixAttr(t *testing.T, attrs map[string]string, path string) {
+	t.Helper()
+	if !hasNixAttr(attrs, path) {
+		t.Errorf("devenv.nix does not define %s; defined: %v", path, slices.Sorted(maps.Keys(attrs)))
+	}
+}
+
 func requireContains(t *testing.T, s, sub string) {
 	t.Helper()
 	if !strings.Contains(s, sub) {

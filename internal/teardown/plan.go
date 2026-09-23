@@ -1,21 +1,23 @@
 package teardown
 
 import (
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // stateFilesForTeardown returns the state file paths that are removed as part
-// of the default teardown, built dynamically from branding.
+// of the default teardown: every addon state file (from state.StateFilePaths,
+// the single source of truth) plus the saved answers and project config.
 func stateFilesForTeardown() []string {
 	b := branding.Get()
-	return []string{
-		".devenv/." + b.AppName + "-state.yaml",
-		".claude/." + b.AppName + "-claude-state.yaml",
-		b.StateDir + "/." + b.AppName + "-init-state.yaml",
-		b.StateDir + "/." + b.AppName + "-init-answers.yaml",
+	statePaths := state.StateFilePaths()
+	files := make([]string, 0, len(statePaths)+2)
+	files = append(files, statePaths[:]...)
+	return append(files,
+		b.StateDir+"/."+b.AppName+"-init-answers.yaml",
 		b.ConfigFile,
-	}
+	)
 }
 
 // BuildPlan creates a TeardownPlan from classified files and options.

@@ -26,7 +26,7 @@ const AddonDir = ".claude"
 
 // statePath returns the path to the claude state file, using the branding app name.
 func statePath() string {
-	return ".claude/." + branding.Get().AppName + "-claude-state.yaml"
+	return state.ClaudeStateFile()
 }
 
 func claudeCmd() *cobra.Command {

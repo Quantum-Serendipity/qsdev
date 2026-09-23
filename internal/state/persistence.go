@@ -41,6 +41,26 @@ func LoadStateFromFile(path string) (types.GeneratedState, error) {
 	return state, nil
 }
 
+// LoadProjectStates loads every addon state file (see StateFilePaths) under
+// projectRoot. Missing files are skipped. A file that cannot be read or parsed
+// does not stop the others from loading; the joined errors are returned
+// alongside the states that did load.
+func LoadProjectStates(projectRoot string) ([]types.GeneratedState, error) {
+	var states []types.GeneratedState
+	var errs []error
+	for _, rel := range StateFilePaths() {
+		st, err := LoadStateFromFile(filepath.Join(projectRoot, rel))
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if len(st.Files) > 0 {
+			states = append(states, st)
+		}
+	}
+	return states, errors.Join(errs...)
+}
+
 // SaveStateToFile marshals state to YAML and writes it atomically to path.
 // It creates parent directories as needed.
 func SaveStateToFile(path string, state types.GeneratedState) error {
@@ -49,38 +69,10 @@ func SaveStateToFile(path string, state types.GeneratedState) error {
 		return fmt.Errorf("marshaling state: %w", err)
 	}
 
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, fileutil.ModeDirDefault); err != nil {
-		return fmt.Errorf("creating state directory %s: %w", dir, err)
+	// WriteFileAtomic creates parent directories, fsyncs the temp file before
+	// renaming, and retries transient Windows rename failures.
+	if err := fileutil.WriteFileAtomic(path, data, fileutil.ModeReadWrite); err != nil {
+		return fmt.Errorf("writing state file %s: %w", path, err)
 	}
-
-	// Atomic write: create a temp file with a random suffix in the same
-	// directory (guarantees same filesystem for rename), write, then rename.
-	tmp, err := os.CreateTemp(dir, ".qsdev-state-*")
-	if err != nil {
-		return fmt.Errorf("creating temp state file in %s: %w", dir, err)
-	}
-	tmpPath := tmp.Name()
-	defer func() {
-		// Clean up temp file on any failure path.
-		_ = os.Remove(tmpPath)
-	}()
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("writing temp state file %s: %w", tmpPath, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("closing temp state file %s: %w", tmpPath, err)
-	}
-	if err := os.Chmod(tmpPath, fileutil.ModeReadWrite); err != nil {
-		return fmt.Errorf("setting permissions on temp state file %s: %w", tmpPath, err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("renaming temp state file to %s: %w", path, err)
-	}
-
-	// Rename succeeded — prevent deferred Remove from deleting the final file.
-	tmpPath = ""
 	return nil
 }

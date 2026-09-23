@@ -1,9 +1,6 @@
 package teardown
 
 import (
-	"os"
-	"path/filepath"
-
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -50,6 +47,10 @@ func ClassifyFiles(genState types.GeneratedState, projectRoot string, registry *
 		}
 	}
 
+	// Share the modification check with update/check so a chmod-only change is
+	// "modified" everywhere (and the file is preserved rather than removed).
+	statuses := state.CheckModified(genState, projectRoot)
+
 	var classified []ClassifiedFile
 
 	for relPath, fs := range genState.Files {
@@ -59,27 +60,14 @@ func ClassifyFiles(genState types.GeneratedState, projectRoot string, registry *
 			BaseContent: fs.BaseContent,
 		}
 
-		absPath := filepath.Join(projectRoot, relPath)
-
-		// Check if file exists. Any other stat error (e.g. permission denied)
-		// means the file's state is unknown: treat it as modified so it is
-		// preserved rather than silently dropped from the plan.
-		if _, err := os.Stat(absPath); err != nil {
-			if os.IsNotExist(err) {
-				cf.Deleted = true
-			} else {
-				cf.Modified = true
-			}
-		}
-
-		// Check if modified.
-		if !cf.Deleted {
-			currentHash, hashErr := state.ComputeFileHash(absPath)
-			if hashErr != nil {
-				cf.Modified = true // Can't read -> treat as modified (preserve).
-			} else if currentHash != fs.Hash {
-				cf.Modified = true
-			}
+		switch statuses[relPath].Status {
+		case types.Deleted:
+			cf.Deleted = true
+		case types.Unmodified:
+			// Safe to remove or clean.
+		default:
+			// Modified, or Unknown (unreadable): preserve.
+			cf.Modified = true
 		}
 
 		// Determine ownership from registry.

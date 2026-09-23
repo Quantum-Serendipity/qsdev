@@ -17,7 +17,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
-	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // register all modules
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
@@ -30,7 +29,7 @@ const AddonDir = ".devenv"
 
 // statePath returns the path to the devenv state file, using the branding app name.
 func statePath() string {
-	return ".devenv/." + branding.Get().AppName + "-state.yaml"
+	return state.DevenvStateFile()
 }
 
 // validServices references the canonical service list for shell completion.
@@ -127,7 +126,7 @@ func initCmd() *cobra.Command {
 			if err != nil {
 				oldState = types.GeneratedState{}
 			}
-			result, err := writeAndPersist(cmd, projectRoot, answers, files, oldState, false)
+			result, err := writeAndPersist(cmd, projectRoot, answers, files, oldState, false, force)
 			if err != nil {
 				return err
 			}
@@ -665,7 +664,7 @@ func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, opts 
 		return nil, fmt.Errorf("loading state: %w", err)
 	}
 
-	return writeAndPersist(cmd, opts.projectRoot, answers, files, oldState, opts.cleanup)
+	return writeAndPersist(cmd, opts.projectRoot, answers, files, oldState, opts.cleanup, opts.force)
 }
 
 // writeAndPersist writes files to disk, records their state and saves the
@@ -674,12 +673,15 @@ func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, opts 
 // were skipped or failed are carried forward so their modification tracking
 // survives. Answers are saved only when every file was written; otherwise an
 // error listing the failures is returned so the command exits non-zero and
-// the configuration change is not recorded.
-func writeAndPersist(cmd *cobra.Command, projectRoot string, answers types.WizardAnswers, files []types.GeneratedFile, oldState types.GeneratedState, cleanup bool) (*generate.WriteResult, error) {
+// the configuration change is not recorded. force is passed to the pipeline.
+func writeAndPersist(cmd *cobra.Command, projectRoot string, answers types.WizardAnswers, files []types.GeneratedFile, oldState types.GeneratedState, cleanup, force bool) (*generate.WriteResult, error) {
 	toWrite, preserved := splitPreservedFiles(projectRoot, files)
 
+	// force lets a ManualMerge file with local edits (devenv.nix) be replaced
+	// instead of getting a sidecar; it never overrides Skip.
 	result, err := generate.WriteFiles(toWrite, generate.PipelineOptions{
 		ProjectRoot: projectRoot,
+		Force:       force,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("writing files: %w", err)

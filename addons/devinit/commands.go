@@ -27,8 +27,7 @@ import (
 )
 
 func stateFilePath() string {
-	b := branding.Get()
-	return b.StateDir + "/." + b.AppName + "-init-state.yaml"
+	return state.InitStateFile()
 }
 
 func answersDirectory() string {
@@ -314,6 +313,7 @@ func runInitWizard(opts InitOptions, projectRoot string, detected types.Detected
 func writeAndRecordResults(cmd *cobra.Command, opts InitOptions, projectRoot string, answers types.WizardAnswers, accResult accumulatorResult) error {
 	result, err := generate.WriteFiles(accResult.allFiles, generate.PipelineOptions{
 		ProjectRoot:       projectRoot,
+		Force:             opts.Force,
 		SectionMergeFunc:  merge.SectionMarkersOrAppend,
 		ThreeWayMergeFunc: merge.MergeOnCreate,
 	})

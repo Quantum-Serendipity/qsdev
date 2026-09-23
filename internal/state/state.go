@@ -104,7 +104,10 @@ func CheckModified(stored types.GeneratedState, projectRoot string) map[string]F
 		status.CurrentHash = hash
 
 		hashMatch := hash == fs.Hash
-		modeMatch := runtime.GOOS == "windows" || info.Mode().Perm() == fs.Mode.Perm()
+		// A zero stored mode means the mode was never recorded (legacy state or a
+		// generator that relied on the pipeline default), so only the hash can
+		// be compared.
+		modeMatch := runtime.GOOS == "windows" || fs.Mode == 0 || info.Mode().Perm() == fs.Mode.Perm()
 
 		switch {
 		case hashMatch && modeMatch:

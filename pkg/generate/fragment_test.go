@@ -124,9 +124,14 @@ func TestCollectAll_ErrorAggregation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// One producer succeeds, so CollectAll should not return an error.
-	if err := a.CollectAll(types.WizardAnswers{}); err != nil {
-		t.Fatalf("expected nil error when at least one producer succeeds, got: %v", err)
+	// A partial failure must be surfaced, not swallowed because another
+	// producer succeeded.
+	err := a.CollectAll(types.WizardAnswers{})
+	if err == nil {
+		t.Fatal("expected error when a producer fails, got nil")
+	}
+	if !strings.Contains(err.Error(), `producer "failing"`) {
+		t.Errorf("error should name the failing producer, got: %v", err)
 	}
 
 	if got := len(a.FragmentSet()); got != 1 {

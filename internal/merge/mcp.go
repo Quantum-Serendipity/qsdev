@@ -91,6 +91,12 @@ func MergeMcpJson(base, theirs, ours []byte) ([]byte, error) {
 				// but preserve any unmodeled fields the user added (e.g. headers).
 				resultRaw[name] = mergeServerRaw(theirsServers[name], oursServers[name])
 			}
+		} else if inTheirs {
+			// Newly generated server whose name the user already configured
+			// (always the case on the nil-base create path): ours' modeled
+			// fields win, but the user's env keys and unmodeled fields (e.g.
+			// headers carrying tokens) survive.
+			resultRaw[name] = mergeServerRaw(theirsServers[name], oursServers[name])
 		} else {
 			// Newly generated server — add from ours.
 			resultRaw[name] = oursServers[name]

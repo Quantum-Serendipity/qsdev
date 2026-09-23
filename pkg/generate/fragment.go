@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"gopkg.in/yaml.v3"
@@ -52,28 +53,29 @@ func (a *FragmentAccumulator) AddBatch(fragments []types.FragmentEntry) {
 }
 
 // CollectAll iterates producers in registration order and collects fragments.
-// If a producer fails, its error is recorded but collection continues. An error
-// is returned only when every producer fails.
+// If a producer fails, its error is recorded and collection continues so every
+// failure is reported, but any failure makes CollectAll return the joined
+// errors: a partial collection would silently omit an addon's files while the
+// command reports success.
 func (a *FragmentAccumulator) CollectAll(answers types.WizardAnswers) error {
 	if len(a.producerOrder) == 0 {
 		return nil
 	}
 
 	var errs []error
-	successes := 0
 
 	for _, name := range a.producerOrder {
 		p := a.producers[name]
 		fragments, err := p.Produce(answers)
 		if err != nil {
+			slog.Warn("fragment producer failed", "producer", name, "error", err)
 			errs = append(errs, fmt.Errorf("producer %q: %w", name, err))
 			continue
 		}
 		a.fragments = append(a.fragments, fragments...)
-		successes++
 	}
 
-	if successes == 0 && len(errs) > 0 {
+	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
 
@@ -108,6 +110,7 @@ func (a *FragmentAccumulator) Resolve() ([]types.GeneratedFile, error) {
 	var files []types.GeneratedFile
 	for _, target := range orderedTargets(sorted) {
 		group := groups[target]
+		sortByPriority(group)
 
 		if err := validateComposeMode(target, group); err != nil {
 			return nil, err
@@ -152,6 +155,23 @@ func groupByTarget(sorted []types.FragmentEntry) map[string][]types.FragmentEntr
 	return groups
 }
 
+// sortByPriority orders one target's fragments highest priority first, with
+// source then tag as deterministic tie-breakers. The global SortKey cannot be
+// reused here: it orders by source first, so across sources the "highest"
+// fragment would be the alphabetically-first source, not the top priority.
+func sortByPriority(group []types.FragmentEntry) {
+	sort.SliceStable(group, func(i, j int) bool {
+		a, b := group[i], group[j]
+		if a.Priority != b.Priority {
+			return a.Priority > b.Priority
+		}
+		if a.Source != b.Source {
+			return a.Source < b.Source
+		}
+		return a.Tag < b.Tag
+	})
+}
+
 // orderedTargets returns unique target paths preserving first-seen order
 // from the already-sorted slice.
 func orderedTargets(sorted []types.FragmentEntry) []string {
@@ -183,7 +203,7 @@ func validateComposeMode(target string, group []types.FragmentEntry) error {
 }
 
 func resolveGroup(target string, group []types.FragmentEntry) (types.GeneratedFile, error) {
-	// The group is already sorted by SortKey (higher priority first).
+	// The group is sorted by sortByPriority (highest priority first).
 	highest := group[0]
 
 	mode := highest.Mode
@@ -200,6 +220,7 @@ func resolveGroup(target string, group []types.FragmentEntry) (types.GeneratedFi
 
 	switch highest.ComposeMode {
 	case types.ComposeReplace:
+		warnDiscardedReplacements(target, group)
 		base.Content = highest.Content
 		return base, nil
 
@@ -243,16 +264,36 @@ func resolveGroup(target string, group []types.FragmentEntry) (types.GeneratedFi
 	}
 }
 
+// warnDiscardedReplacements logs when ComposeReplace drops content contributed
+// by a different source than the winning (highest-priority) fragment, so a
+// priority conflict between producers is visible instead of silent.
+func warnDiscardedReplacements(target string, group []types.FragmentEntry) {
+	winner := group[0]
+	for _, f := range group[1:] {
+		if f.Source != winner.Source && !bytes.Equal(f.Content, winner.Content) {
+			slog.Warn("replace fragment discarded by higher-priority source",
+				"target", target,
+				"winner", winner.Source, "winner_priority", winner.Priority,
+				"discarded", f.Source, "discarded_priority", f.Priority)
+		}
+	}
+}
+
 // resolveSection merges fragments using section markers. A fragment with
-// Tag=="" is the base document; if multiple exist the last in sort order wins.
+// Tag=="" is the base document; if multiple exist the highest-priority one
+// wins. Each tagged fragment replaces the section carrying its own tag, or
+// is appended when the document has no section for that tag yet.
 func resolveSection(group []types.FragmentEntry) ([]byte, error) {
-	// Find the base fragment (empty tag).
+	// Find the base fragment (empty tag). The group is sorted highest
+	// priority first, so the first base fragment wins.
 	var baseContent []byte
 	var tagged []types.FragmentEntry
 
 	for _, f := range group {
 		if f.Tag == "" {
-			baseContent = f.Content
+			if baseContent == nil {
+				baseContent = f.Content
+			}
 		} else {
 			tagged = append(tagged, f)
 		}
@@ -266,24 +307,18 @@ func resolveSection(group []types.FragmentEntry) ([]byte, error) {
 			if i > 0 {
 				buf.WriteByte('\n')
 			}
-			buf.WriteString(merge.BeginMarkerPrefix + " — " + f.Tag + " -->\n")
-			buf.Write(f.Content)
-			if len(f.Content) > 0 && f.Content[len(f.Content)-1] != '\n' {
-				buf.WriteByte('\n')
-			}
-			buf.WriteString(merge.EndMarker + "\n")
+			buf.Write(buildSectionBlock(f.Tag, f.Content))
 		}
 		return buf.Bytes(), nil
 	}
 
-	// Start with base content, then insert each tagged fragment using
-	// section markers. Each tagged fragment produces a new-content blob
-	// with markers that SectionMarkers splices into the running result.
+	// Start with base content, then splice each tagged fragment into the
+	// section carrying its tag.
 	result := baseContent
 	for _, f := range tagged {
 		sectionBlock := buildSectionBlock(f.Tag, f.Content)
 
-		merged, err := merge.SectionMarkers(result, sectionBlock)
+		merged, err := merge.ReplaceTaggedSection(result, f.Tag, sectionBlock)
 		if err != nil {
 			if errors.Is(err, merge.ErrMarkersNotFound) {
 				// Base doesn't have markers for this tag yet -- append the section.
@@ -306,7 +341,7 @@ func resolveSection(group []types.FragmentEntry) ([]byte, error) {
 
 func buildSectionBlock(tag string, content []byte) []byte {
 	var buf bytes.Buffer
-	buf.WriteString(merge.BeginMarkerPrefix + " — " + tag + " -->\n")
+	buf.WriteString(merge.SectionBeginLine(tag) + "\n")
 	buf.Write(content)
 	if len(content) > 0 && content[len(content)-1] != '\n' {
 		buf.WriteByte('\n')

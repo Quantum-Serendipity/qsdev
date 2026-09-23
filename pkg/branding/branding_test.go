@@ -465,3 +465,35 @@ func TestConfigZeroValue(t *testing.T) {
 		t.Errorf("zero Config.GitHubRepo = %q, want empty", zero.GitHubRepo)
 	}
 }
+
+// TestConcurrentSetDoesNotLoseUpdates guards the read-modify-write in Set:
+// concurrent calls setting disjoint fields must all take effect.
+func TestConcurrentSetDoesNotLoseUpdates(t *testing.T) {
+	for range 50 {
+		resetToDefault(t)
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		updates := []Config{
+			{AppName: "a-app"}, {ConfigFile: ".a.yaml"}, {LocalConfig: ".a.local.yaml"},
+			{StateDir: ".a-state"}, {EnvPrefix: "A_"}, {GitHubRepo: "a-repo"},
+		}
+		for _, u := range updates {
+			wg.Go(func() {
+				<-start
+				Set(u)
+			})
+		}
+		close(start)
+		wg.Wait()
+
+		got := Get()
+		want := Default()
+		want.AppName, want.ConfigFile, want.LocalConfig = "a-app", ".a.yaml", ".a.local.yaml"
+		want.StateDir, want.EnvPrefix, want.GitHubRepo = ".a-state", "A_", "a-repo"
+		if got != want {
+			t.Fatalf("lost update: got %+v, want %+v", got, want)
+		}
+	}
+	resetToDefault(t)
+}

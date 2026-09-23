@@ -1,9 +1,11 @@
 package devinit_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devinit"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -468,6 +470,45 @@ func TestExtractRepoName(t *testing.T) {
 			got := devinit.ExportExtractRepoName(tt.url)
 			if got != tt.want {
 				t.Errorf("extractRepoName(%q) = %q, want %q", tt.url, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMapDetectionToDefaults_ParityWithFillDefaults asserts the wizard's
+// pre-populated languages match what the quick/--yes path (FillDefaults)
+// generates, including module-suggested extras.
+func TestMapDetectionToDefaults_ParityWithFillDefaults(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		detected types.DetectedProject
+	}{
+		{"maven", types.DetectedProject{HasPomXML: true}},
+		{"polyglot tier-2", types.DetectedProject{
+			HasGoMod: true, GoVersion: "1.24",
+			Ecosystems: map[string]bool{"go": true, "php": true, "cpp": true, "gcp": true, "helm": true},
+			Suggested: map[string]types.LanguageChoice{
+				"cpp": {Extras: []string{"build_system=meson"}},
+				"php": {Version: "8.3"},
+			},
+		}},
+		{"container with runtime", types.DetectedProject{
+			HasDockerfile: true, ContainerRuntime: "podman", OSFamily: "nixos",
+			Ecosystems: map[string]bool{"container": true},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			wizard := devinit.ExportMapDetectionToDefaults(tt.detected, "/tmp/p").Languages
+
+			var quick types.WizardAnswers
+			quick.FillDefaults(tt.detected, catalog.MustDefault())
+
+			if !reflect.DeepEqual(wizard, quick.Languages) {
+				t.Errorf("wizard defaults %+v != FillDefaults %+v", wizard, quick.Languages)
 			}
 		})
 	}

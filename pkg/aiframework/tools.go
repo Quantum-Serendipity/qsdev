@@ -2,9 +2,9 @@ package aiframework
 
 import (
 	"context"
-	"fmt"
 	"os"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/enumtext"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -38,29 +38,14 @@ var enforcementTierNames = [...]string{
 	TierExternal: "external",
 }
 
-func (t EnforcementTier) String() string {
-	if int(t) >= 0 && int(t) < len(enforcementTierNames) {
-		return enforcementTierNames[t]
-	}
-	return "unknown"
-}
+var enforcementTierText = enumtext.New[EnforcementTier]("EnforcementTier", "enforcement tier", "unknown", enforcementTierNames[:])
 
-func (t EnforcementTier) MarshalText() ([]byte, error) {
-	s := t.String()
-	if s == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown EnforcementTier value %d", int(t))
-	}
-	return []byte(s), nil
-}
+func (t EnforcementTier) String() string { return enforcementTierText.String(t) }
+
+func (t EnforcementTier) MarshalText() ([]byte, error) { return enforcementTierText.MarshalText(t) }
 
 func (t *EnforcementTier) UnmarshalText(text []byte) error {
-	for i, name := range enforcementTierNames {
-		if name == string(text) {
-			*t = EnforcementTier(i)
-			return nil
-		}
-	}
-	return fmt.Errorf("unknown enforcement tier: %q", string(text))
+	return enforcementTierText.UnmarshalText(text, t)
 }
 
 // Strength returns a numeric value for tier comparison.
@@ -111,29 +96,14 @@ var ignoreCategoryNames = [...]string{
 	CategoryQsdevInternal:  "qsdev_internal",
 }
 
-func (c IgnoreCategory) String() string {
-	if int(c) >= 0 && int(c) < len(ignoreCategoryNames) {
-		return ignoreCategoryNames[c]
-	}
-	return "unknown"
-}
+var ignoreCategoryText = enumtext.New[IgnoreCategory]("IgnoreCategory", "ignore category", "unknown", ignoreCategoryNames[:])
 
-func (c IgnoreCategory) MarshalText() ([]byte, error) {
-	s := c.String()
-	if s == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown IgnoreCategory value %d", int(c))
-	}
-	return []byte(s), nil
-}
+func (c IgnoreCategory) String() string { return ignoreCategoryText.String(c) }
+
+func (c IgnoreCategory) MarshalText() ([]byte, error) { return ignoreCategoryText.MarshalText(c) }
 
 func (c *IgnoreCategory) UnmarshalText(text []byte) error {
-	for i, name := range ignoreCategoryNames {
-		if name == string(text) {
-			*c = IgnoreCategory(i)
-			return nil
-		}
-	}
-	return fmt.Errorf("unknown ignore category: %q", string(text))
+	return ignoreCategoryText.UnmarshalText(text, c)
 }
 
 type IgnorePattern struct {

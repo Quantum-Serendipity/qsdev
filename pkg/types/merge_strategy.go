@@ -1,6 +1,6 @@
 package types
 
-import "fmt"
+import "github.com/Quantum-Serendipity/qsdev/internal/enumtext"
 
 // MergeStrategy defines how a generated file should be handled
 // when it already exists on disk.
@@ -28,13 +28,7 @@ var mergeStrategyNames = [...]string{
 	ManualMerge:    "manual-merge",
 }
 
-var mergeStrategyFromString = func() map[string]MergeStrategy {
-	m := make(map[string]MergeStrategy, len(mergeStrategyNames))
-	for i, name := range mergeStrategyNames {
-		m[name] = MergeStrategy(i)
-	}
-	return m
-}()
+var mergeStrategyText = enumtext.New[MergeStrategy]("MergeStrategy", "merge strategy", "unknown", mergeStrategyNames[:])
 
 // IsHumanEdited reports whether files written with this strategy are expected
 // to be edited by people, so a divergence from the generated content is
@@ -50,26 +44,10 @@ func (m MergeStrategy) IsHumanEdited() bool {
 	}
 }
 
-func (m MergeStrategy) String() string {
-	if int(m) >= 0 && int(m) < len(mergeStrategyNames) {
-		return mergeStrategyNames[m]
-	}
-	return "unknown"
-}
+func (m MergeStrategy) String() string { return mergeStrategyText.String(m) }
 
-func (m MergeStrategy) MarshalText() ([]byte, error) {
-	s := m.String()
-	if s == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown MergeStrategy value %d", int(m))
-	}
-	return []byte(s), nil
-}
+func (m MergeStrategy) MarshalText() ([]byte, error) { return mergeStrategyText.MarshalText(m) }
 
 func (m *MergeStrategy) UnmarshalText(text []byte) error {
-	s := string(text)
-	if v, ok := mergeStrategyFromString[s]; ok {
-		*m = v
-		return nil
-	}
-	return fmt.Errorf("unknown merge strategy: %q", s)
+	return mergeStrategyText.UnmarshalText(text, m)
 }

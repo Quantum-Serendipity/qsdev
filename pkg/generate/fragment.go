@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 
 	"gopkg.in/yaml.v3"
@@ -101,9 +102,7 @@ func (a *FragmentAccumulator) Resolve() ([]types.GeneratedFile, error) {
 
 	sorted := make([]types.FragmentEntry, len(a.fragments))
 	copy(sorted, a.fragments)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].SortKey() < sorted[j].SortKey()
-	})
+	slices.SortStableFunc(sorted, types.CompareFragments)
 
 	groups := groupByTarget(sorted)
 

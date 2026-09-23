@@ -2,8 +2,8 @@ package aiframework
 
 import (
 	"context"
-	"fmt"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/enumtext"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -51,29 +51,16 @@ var validationSeverityNames = [...]string{
 	SeverityError:   "error",
 }
 
-func (s ValidationSeverity) String() string {
-	if int(s) >= 0 && int(s) < len(validationSeverityNames) {
-		return validationSeverityNames[s]
-	}
-	return "unknown"
-}
+var validationSeverityText = enumtext.New[ValidationSeverity]("ValidationSeverity", "validation severity", "unknown", validationSeverityNames[:])
+
+func (s ValidationSeverity) String() string { return validationSeverityText.String(s) }
 
 func (s ValidationSeverity) MarshalText() ([]byte, error) {
-	str := s.String()
-	if str == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown ValidationSeverity value %d", int(s))
-	}
-	return []byte(str), nil
+	return validationSeverityText.MarshalText(s)
 }
 
 func (s *ValidationSeverity) UnmarshalText(text []byte) error {
-	for i, name := range validationSeverityNames {
-		if name == string(text) {
-			*s = ValidationSeverity(i)
-			return nil
-		}
-	}
-	return fmt.Errorf("unknown validation severity: %q", string(text))
+	return validationSeverityText.UnmarshalText(text, s)
 }
 
 // ValidationIssue reports a problem found during config validation.

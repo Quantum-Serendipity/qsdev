@@ -602,9 +602,6 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 	t.Run("catalog-backed tier-to-compliance derivation", func(t *testing.T) {
 		tierMap := catalog.MustDefault().TierToCompliance()
 		for tier, wantLevel := range tierMap {
-			if tier == "supply-chain-only" {
-				continue // early return path, tested separately
-			}
 			a := types.WizardAnswers{ClaudeCode: true, Tier: tier}
 			a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 			if a.ComplianceLevel != wantLevel {
@@ -616,9 +613,6 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 	t.Run("catalog-backed tier-to-enabled-tools derivation", func(t *testing.T) {
 		tierTools := catalog.MustDefault().TierToEnabledTools()
 		for tier, wantTools := range tierTools {
-			if tier == "supply-chain-only" {
-				continue // early return path, tested separately
-			}
 			a := types.WizardAnswers{ClaudeCode: true, Tier: tier}
 			a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 			for _, tool := range wantTools {
@@ -642,8 +636,8 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 		if a.AgentTools.PostmortemEnabled {
 			t.Error("supply-chain-only should skip agent tool defaults")
 		}
-		if a.ComplianceLevel != "" {
-			t.Errorf("supply-chain-only early return should leave ComplianceLevel empty, got %q", a.ComplianceLevel)
+		if a.ComplianceLevel != "baseline" {
+			t.Errorf("supply-chain-only should derive ComplianceLevel baseline, got %q", a.ComplianceLevel)
 		}
 		if a.EnabledTools != nil {
 			t.Errorf("supply-chain-only should leave EnabledTools nil, got %v", a.EnabledTools)

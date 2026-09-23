@@ -3,6 +3,8 @@ package branding
 import (
 	"regexp"
 	"sync/atomic"
+
+	gdevinstance "fastcat.org/go/gdev/instance"
 )
 
 // githubActionsOIDCIssuer is the OIDC token issuer for keyless (Sigstore /
@@ -46,55 +48,54 @@ func Default() Config {
 	}
 }
 
-var active atomic.Pointer[Config]
+// active holds the current branding. It is initialized with the defaults at
+// package initialization, so Get never observes a nil configuration.
+var active = newActive()
 
-func init() {
+func newActive() *atomic.Pointer[Config] {
+	var p atomic.Pointer[Config]
 	d := Default()
-	active.Store(&d)
+	p.Store(&d)
+	return &p
 }
 
 // Set merges non-empty fields from cfg into the active branding configuration.
-// Must be called early in main(), before cmd.Main(). The gdev lockdown lifecycle
-// prevents Set from being called after initialization.
+// Must be called early in main(), before cmd.Main(): it panics once the gdev
+// lifecycle has locked customizations down, so addons can never observe the
+// branding change after they captured it. Concurrent calls are safe; each
+// merge is applied atomically and none is lost.
 func Set(cfg Config) {
-	current := *active.Load()
-	if cfg.AppName != "" {
-		current.AppName = cfg.AppName
+	gdevinstance.CheckCanCustomize()
+	for {
+		old := active.Load()
+		next := merged(*old, cfg)
+		if active.CompareAndSwap(old, &next) {
+			return
+		}
 	}
-	if cfg.ConfigFile != "" {
-		current.ConfigFile = cfg.ConfigFile
+}
+
+// merged returns current with every non-empty field of cfg applied.
+func merged(current, cfg Config) Config {
+	setIfNonEmpty(&current.AppName, cfg.AppName)
+	setIfNonEmpty(&current.ConfigFile, cfg.ConfigFile)
+	setIfNonEmpty(&current.LocalConfig, cfg.LocalConfig)
+	setIfNonEmpty(&current.StateDir, cfg.StateDir)
+	setIfNonEmpty(&current.EnvLogVar, cfg.EnvLogVar)
+	setIfNonEmpty(&current.EnvLogDirVar, cfg.EnvLogDirVar)
+	setIfNonEmpty(&current.EnvNoUpdate, cfg.EnvNoUpdate)
+	setIfNonEmpty(&current.EnvPrefix, cfg.EnvPrefix)
+	setIfNonEmpty(&current.LogFilePrefix, cfg.LogFilePrefix)
+	setIfNonEmpty(&current.TempPrefix, cfg.TempPrefix)
+	setIfNonEmpty(&current.GitHubOwner, cfg.GitHubOwner)
+	setIfNonEmpty(&current.GitHubRepo, cfg.GitHubRepo)
+	return current
+}
+
+func setIfNonEmpty(dst *string, v string) {
+	if v != "" {
+		*dst = v
 	}
-	if cfg.LocalConfig != "" {
-		current.LocalConfig = cfg.LocalConfig
-	}
-	if cfg.StateDir != "" {
-		current.StateDir = cfg.StateDir
-	}
-	if cfg.EnvLogVar != "" {
-		current.EnvLogVar = cfg.EnvLogVar
-	}
-	if cfg.EnvLogDirVar != "" {
-		current.EnvLogDirVar = cfg.EnvLogDirVar
-	}
-	if cfg.EnvNoUpdate != "" {
-		current.EnvNoUpdate = cfg.EnvNoUpdate
-	}
-	if cfg.EnvPrefix != "" {
-		current.EnvPrefix = cfg.EnvPrefix
-	}
-	if cfg.LogFilePrefix != "" {
-		current.LogFilePrefix = cfg.LogFilePrefix
-	}
-	if cfg.TempPrefix != "" {
-		current.TempPrefix = cfg.TempPrefix
-	}
-	if cfg.GitHubOwner != "" {
-		current.GitHubOwner = cfg.GitHubOwner
-	}
-	if cfg.GitHubRepo != "" {
-		current.GitHubRepo = cfg.GitHubRepo
-	}
-	active.Store(&current)
 }
 
 // Get returns the current branding configuration.

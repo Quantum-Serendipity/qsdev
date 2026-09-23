@@ -2,8 +2,9 @@ package aiframework
 
 import (
 	"context"
-	"fmt"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/enumtext"
 )
 
 // StateBackend persists chronicle entries and task state for multi-agent coordination.
@@ -82,30 +83,13 @@ var taskStatusNames = [...]string{
 	TaskBlocked:    "blocked",
 }
 
-func (s TaskStatus) String() string {
-	if int(s) >= 0 && int(s) < len(taskStatusNames) {
-		return taskStatusNames[s]
-	}
-	return "unknown"
-}
+var taskStatusText = enumtext.New[TaskStatus]("TaskStatus", "task status", "unknown", taskStatusNames[:])
 
-func (s TaskStatus) MarshalText() ([]byte, error) {
-	str := s.String()
-	if str == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown TaskStatus value %d", int(s))
-	}
-	return []byte(str), nil
-}
+func (s TaskStatus) String() string { return taskStatusText.String(s) }
 
-func (s *TaskStatus) UnmarshalText(text []byte) error {
-	for i, name := range taskStatusNames {
-		if name == string(text) {
-			*s = TaskStatus(i)
-			return nil
-		}
-	}
-	return fmt.Errorf("unknown task status: %q", string(text))
-}
+func (s TaskStatus) MarshalText() ([]byte, error) { return taskStatusText.MarshalText(s) }
+
+func (s *TaskStatus) UnmarshalText(text []byte) error { return taskStatusText.UnmarshalText(text, s) }
 
 // TaskOutcome records how a completed task finished.
 type TaskOutcome int
@@ -122,30 +106,13 @@ var taskOutcomeNames = [...]string{
 	OutcomeFailure: "failure",
 }
 
-func (o TaskOutcome) String() string {
-	if int(o) >= 0 && int(o) < len(taskOutcomeNames) {
-		return taskOutcomeNames[o]
-	}
-	return "unknown"
-}
+var taskOutcomeText = enumtext.New[TaskOutcome]("TaskOutcome", "task outcome", "unknown", taskOutcomeNames[:])
 
-func (o TaskOutcome) MarshalText() ([]byte, error) {
-	s := o.String()
-	if s == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown TaskOutcome value %d", int(o))
-	}
-	return []byte(s), nil
-}
+func (o TaskOutcome) String() string { return taskOutcomeText.String(o) }
 
-func (o *TaskOutcome) UnmarshalText(text []byte) error {
-	for i, name := range taskOutcomeNames {
-		if name == string(text) {
-			*o = TaskOutcome(i)
-			return nil
-		}
-	}
-	return fmt.Errorf("unknown task outcome: %q", string(text))
-}
+func (o TaskOutcome) MarshalText() ([]byte, error) { return taskOutcomeText.MarshalText(o) }
+
+func (o *TaskOutcome) UnmarshalText(text []byte) error { return taskOutcomeText.UnmarshalText(text, o) }
 
 // ValidTaskTransition reports whether moving from one status to another is allowed.
 // Valid transitions: open->assigned, assigned->in_progress, in_progress->blocked,

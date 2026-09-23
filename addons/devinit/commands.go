@@ -396,7 +396,7 @@ func finalizeProject(cmd *cobra.Command, opts InitOptions, answers types.WizardA
 		return fmt.Errorf("writing %s: %w", branding.Get().ConfigFile, err)
 	}
 
-	for _, entry := range []string{".devinit/", "." + branding.Get().AppName + "/", ".direnv/", ".devenv/"} {
+	for _, entry := range []string{branding.Get().StateDir + "/", "." + branding.Get().AppName + "/", ".direnv/", ".devenv/"} {
 		if err := EnsureGitignoreEntry(projectRoot, entry); err != nil {
 			slog.Warn("could not update .gitignore", "entry", entry, "error", err)
 		}

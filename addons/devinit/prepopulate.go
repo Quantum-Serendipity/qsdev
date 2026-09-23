@@ -2,7 +2,6 @@
 package devinit
 
 import (
-	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -21,74 +20,11 @@ func MapDetectionToDefaults(detected types.DetectedProject, projectRoot string) 
 		Detected:    detected,
 	}
 
-	// --- Language mappings ---
-
-	if detected.HasGoMod {
-		answers.Languages = append(answers.Languages, types.LanguageChoice{
-			Name:    "go",
-			Version: detected.GoVersion,
-		})
-	}
-
-	// CRITICAL: detection sets Ecosystems["node"] but the canonical name is "javascript"
-	if detected.HasPackageJSON {
-		answers.Languages = append(answers.Languages, types.LanguageChoice{
-			Name:           "javascript",
-			Version:        detected.NodeVersion,
-			PackageManager: detected.PackageManager,
-		})
-	}
-
-	if detected.HasPyProject {
-		answers.Languages = append(answers.Languages, types.LanguageChoice{
-			Name:    "python",
-			Version: detected.PythonVersion,
-		})
-	}
-
-	if detected.HasCargoToml {
-		answers.Languages = append(answers.Languages, types.LanguageChoice{
-			Name: "rust",
-		})
-	}
-
-	if detected.HasPomXML || detected.HasBuildGradle {
-		jc := types.LanguageChoice{Name: "java"}
-		switch {
-		case detected.HasPomXML && detected.HasBuildGradle:
-			jc.Extras = []string{"build_tool=both"}
-		case detected.HasPomXML:
-			jc.Extras = []string{"build_tool=maven"}
-		case detected.HasBuildGradle:
-			jc.Extras = []string{"build_tool=gradle"}
-		}
-		answers.Languages = append(answers.Languages, jc)
-	}
-
-	if detected.HasCsproj {
-		answers.Languages = append(answers.Languages, types.LanguageChoice{
-			Name: "dotnet",
-		})
-	}
-
-	if detected.HasDockerfile {
-		dc := types.LanguageChoice{Name: "container"}
-		if detected.ContainerRuntime != "" {
-			dc.Extras = append(dc.Extras, "container_runtime="+detected.ContainerRuntime)
-		}
-		if detected.OSFamily != "" {
-			dc.Extras = append(dc.Extras, "os_family="+detected.OSFamily)
-		}
-		answers.Languages = append(answers.Languages, dc)
-	}
-
-	if detected.HasTerraform {
-		answers.Languages = append(answers.Languages, types.LanguageChoice{
-			Name: "terraform",
-		})
-	}
-
-	answers.Languages = appendDetectedEcosystems(answers.Languages, detected)
+	// Languages come from the same detection mapping FillDefaults uses, so
+	// the wizard's defaults match what the quick/--yes path generates. Only
+	// registered ecosystem modules are offered (detection-only aliases are
+	// not modules).
+	answers.Languages = registeredLanguages(detected.LanguageChoices())
 
 	// --- Scalar field mappings ---
 
@@ -103,25 +39,15 @@ func MapDetectionToDefaults(detected types.DetectedProject, projectRoot string) 
 	return answers
 }
 
-// appendDetectedEcosystems adds every other detected ecosystem (tiers 2-4)
-// that is a registered ecosystem module and not already in langs, in name
-// order. Deriving the list from the registry means a new module needs no change
-// here; detection-only aliases such as "node" are not modules and are skipped.
-func appendDetectedEcosystems(langs []types.LanguageChoice, detected types.DetectedProject) []types.LanguageChoice {
+// registeredLanguages keeps the language choices that name a registered
+// ecosystem module, in order. Deriving the check from the registry means a new
+// module needs no change here.
+func registeredLanguages(langs []types.LanguageChoice) []types.LanguageChoice {
 	registry := ecosystem.DefaultRegistry()
-	for _, name := range slices.Sorted(maps.Keys(detected.Ecosystems)) {
-		if !detected.Ecosystems[name] {
-			continue
-		}
-		if slices.ContainsFunc(langs, func(l types.LanguageChoice) bool { return l.Name == name }) {
-			continue
-		}
-		if _, ok := registry.ByName(name); !ok {
-			continue
-		}
-		langs = append(langs, types.LanguageChoice{Name: name})
-	}
-	return langs
+	return slices.DeleteFunc(langs, func(l types.LanguageChoice) bool {
+		_, ok := registry.ByName(l.Name)
+		return !ok
+	})
 }
 
 // projectNameFromDetection derives a project name from the detection results.

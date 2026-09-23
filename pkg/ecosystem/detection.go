@@ -160,7 +160,9 @@ func parseOriginURL(configPath string) string {
 		if inOrigin && strings.HasPrefix(line, "url") {
 			parts := strings.SplitN(line, "=", 2)
 			if len(parts) == 2 {
-				return strings.TrimSpace(parts[1])
+				// Never carry embedded credentials (CI token URLs) into
+				// detection results, which are persisted to answer files.
+				return types.RedactURLCredentials(strings.TrimSpace(parts[1]))
 			}
 		}
 	}
@@ -185,16 +187,15 @@ func applyEnvironment(p *types.DetectedProject, env EnvironmentState) {
 // well-known fields of types.DetectedProject. Modules whose names do not
 // correspond to a dedicated field are recorded in the Ecosystems map.
 func aggregateDetections(results map[string]DetectionResult) types.DetectedProject {
-	p := types.DetectedProject{
-		Ecosystems: make(map[string]bool),
-	}
+	p := types.NewDetectedProject()
 
 	for name, dr := range results {
 		if !dr.Detected {
 			continue
 		}
 
-		// Record every detected ecosystem in the extensible map.
+		// Record every detected ecosystem in the extensible map, along with
+		// the module's suggested configuration so defaults keep it.
 		p.Ecosystems[name] = true
 		recordSuggestion(&p, name, dr)
 

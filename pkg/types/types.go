@@ -1,7 +1,6 @@
 package types
 
 import (
-	"maps"
 	"os"
 	"slices"
 	"time"
@@ -135,15 +134,18 @@ type DetectedProject struct {
 	HasEnvrc          bool `yaml:"has_envrc"           json:"has_envrc"`
 	HasMcpJson        bool `yaml:"has_mcp_json"        json:"has_mcp_json"`
 
-	IsGitRepo   bool   `yaml:"is_git_repo"   json:"is_git_repo"`
-	HasGitHooks bool   `yaml:"has_git_hooks" json:"has_git_hooks"`
-	RemoteURL   string `yaml:"remote_url"    json:"remote_url"`
+	IsGitRepo   bool `yaml:"is_git_repo"   json:"is_git_repo"`
+	HasGitHooks bool `yaml:"has_git_hooks" json:"has_git_hooks"`
+	// RemoteURL is the origin remote with any embedded credentials removed
+	// (see RedactURLCredentials); it is persisted to the answers file.
+	RemoteURL string `yaml:"remote_url" json:"remote_url"`
 }
 
 // NewDetectedProject returns a DetectedProject with all maps initialized.
 func NewDetectedProject() DetectedProject {
 	return DetectedProject{
 		Ecosystems: make(map[string]bool),
+		Suggested:  make(map[string]LanguageChoice),
 	}
 }
 
@@ -256,66 +258,7 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 	a.Detected = detected
 	// Fill languages from detection if none set.
 	if len(a.Languages) == 0 {
-		if detected.HasGoMod {
-			a.Languages = append(a.Languages, LanguageChoice{Name: "go", Version: detected.GoVersion})
-		}
-		if detected.HasPackageJSON {
-			a.Languages = append(a.Languages, LanguageChoice{Name: "javascript", Version: detected.NodeVersion, PackageManager: detected.PackageManager})
-		}
-		if detected.HasPyProject {
-			a.Languages = append(a.Languages, LanguageChoice{Name: "python", Version: detected.PythonVersion})
-		}
-		if detected.HasCargoToml {
-			a.Languages = append(a.Languages, LanguageChoice{Name: "rust"})
-		}
-		if detected.HasPomXML || detected.HasBuildGradle {
-			a.Languages = append(a.Languages, LanguageChoice{Name: "java"})
-		}
-		if detected.HasCsproj {
-			a.Languages = append(a.Languages, LanguageChoice{Name: "dotnet"})
-		}
-		if detected.HasDockerfile {
-			lc := LanguageChoice{Name: "container"}
-			if detected.ContainerRuntime != "" {
-				lc.Extras = append(lc.Extras, "container_runtime="+detected.ContainerRuntime)
-			}
-			if detected.OSFamily != "" {
-				lc.Extras = append(lc.Extras, "os_family="+detected.OSFamily)
-			}
-			a.Languages = append(a.Languages, lc)
-		}
-		if detected.HasTerraform {
-			a.Languages = append(a.Languages, LanguageChoice{Name: "terraform"})
-		}
-
-		// Tier 2+ ecosystems: add any detected ecosystem not covered above.
-		// Ecosystems seen only through generic, probable markers (a bare
-		// Makefile, *.ps1 scripts, a roles/ directory) are not auto-enabled:
-		// that would install toolchains, hooks and build/test tasks for an
-		// unrelated project. Names are sorted for deterministic output.
-		tier1Names := map[string]bool{
-			"go": true, "javascript": true, "python": true,
-			"rust": true, "java": true, "dotnet": true,
-			"container": true, "terraform": true,
-			"node": true, "docker": true,
-		}
-		for _, name := range slices.Sorted(maps.Keys(detected.Ecosystems)) {
-			if tier1Names[name] || !detected.Ecosystems[name] || detected.ProbableEcosystems[name] {
-				continue
-			}
-			a.Languages = append(a.Languages, LanguageChoice{Name: name})
-		}
-
-		// Cloud co-detection: when cloud + K8s/Helm co-occur, set extras for auth plugins.
-		hasK8s := detected.Ecosystems["helm"] || detected.Ecosystems["container"]
-		if hasK8s {
-			for i := range a.Languages {
-				switch a.Languages[i].Name {
-				case "gcp", "azure":
-					a.Languages[i].Extras = appendUnique(a.Languages[i].Extras, "k8s=true")
-				}
-			}
-		}
+		a.Languages = detected.LanguageChoices()
 	}
 
 	// Merge detected configuration into language entries: versions from the
@@ -345,15 +288,11 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 		a.PermissionLevel = "standard"
 	}
 
-	// Self-protection is always on when Claude is enabled.
-	if a.ClaudeCode {
-		a.Hooks.SelfProtection = true
-	}
+	a.ApplyClaudeHookDefaults()
 
-	// Default hooks when Claude is enabled.
-	if a.ClaudeCode && !a.Hooks.SafetyBlock && !a.Hooks.AutoFormat && !a.Hooks.PreCommit && !a.Hooks.AuditLog {
-		a.Hooks.SafetyBlock = true
-	}
+	// Tier-derived posture applies to every tier, including supply-chain-only,
+	// so the recorded compliance level always matches the selected tier.
+	a.deriveFromTier(defaults)
 
 	if a.Tier == "supply-chain-only" || (a.Tier == "" && a.PermissionLevel == "supply-chain-only") {
 		return
@@ -378,16 +317,33 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 	if a.ClaudeCode && len(a.MCPServers) == 0 {
 		a.MCPServers = append(a.MCPServers, defaults.DefaultMCPServers()...)
 	}
+}
 
-	// Derive ComplianceLevel from Tier when not explicitly set.
-	if a.ComplianceLevel == "" && a.Tier != "" {
-		if level := defaults.TierCompliance(a.Tier); level != "" {
-			a.ComplianceLevel = level
-		}
+// ApplyClaudeHookDefaults enforces the hook invariants every Claude Code
+// configuration must carry, whichever path produced the answers: the
+// self-protection hook is always on, and the package-guard safety block is
+// enabled when no other primary hook was chosen. It is a no-op when Claude
+// Code is disabled.
+func (a *WizardAnswers) ApplyClaudeHookDefaults() {
+	if !a.ClaudeCode {
+		return
 	}
+	a.Hooks.SelfProtection = true
+	if !a.Hooks.SafetyBlock && !a.Hooks.AutoFormat && !a.Hooks.PreCommit && !a.Hooks.AuditLog {
+		a.Hooks.SafetyBlock = true
+	}
+}
 
-	// Derive EnabledTools from Tier when not explicitly set.
-	if a.EnabledTools == nil && a.Tier != "" {
+// deriveFromTier fills ComplianceLevel and EnabledTools from the selected
+// Tier when they are not explicitly set.
+func (a *WizardAnswers) deriveFromTier(defaults DefaultsProvider) {
+	if a.Tier == "" {
+		return
+	}
+	if a.ComplianceLevel == "" {
+		a.ComplianceLevel = defaults.TierCompliance(a.Tier)
+	}
+	if a.EnabledTools == nil {
 		if tools := defaults.TierEnabledTools(a.Tier); len(tools) > 0 {
 			a.EnabledTools = make(map[string]bool, len(tools))
 			for _, t := range tools {
@@ -395,7 +351,6 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 			}
 		}
 	}
-
 }
 
 // appendUnique appends val to slice only if it is not already present.

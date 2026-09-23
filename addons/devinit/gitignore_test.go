@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 func TestEnsureGitignoreEntry_CreatesMissing(t *testing.T) {
@@ -23,7 +25,7 @@ func TestEnsureGitignoreEntry_CreatesMissing(t *testing.T) {
 	if !strings.Contains(string(content), ".qsdev.local.yaml") {
 		t.Errorf(".gitignore does not contain entry, got:\n%s", content)
 	}
-	if !strings.Contains(string(content), gitignoreSectionComment) {
+	if !strings.Contains(string(content), fileutil.GitignoreSectionComment()) {
 		t.Error(".gitignore should contain section comment")
 	}
 }
@@ -126,7 +128,7 @@ func TestEnsureGitignoreEntry_SectionCommentAddedOnce(t *testing.T) {
 		t.Fatalf("reading .gitignore: %v", err)
 	}
 
-	count := strings.Count(string(content), gitignoreSectionComment)
+	count := strings.Count(string(content), fileutil.GitignoreSectionComment())
 	if count != 1 {
 		t.Errorf("section comment appears %d times, want 1; content:\n%s", count, content)
 	}

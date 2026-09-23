@@ -2,8 +2,8 @@ package aiframework
 
 import (
 	"context"
-	"fmt"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/enumtext"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -33,30 +33,13 @@ var hookEventNames = [...]string{
 	EventSessionEnd:   "session_end",
 }
 
-func (e HookEvent) String() string {
-	if int(e) >= 0 && int(e) < len(hookEventNames) {
-		return hookEventNames[e]
-	}
-	return "unknown"
-}
+var hookEventText = enumtext.New[HookEvent]("HookEvent", "hook event", "unknown", hookEventNames[:])
 
-func (e HookEvent) MarshalText() ([]byte, error) {
-	s := e.String()
-	if s == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown HookEvent value %d", int(e))
-	}
-	return []byte(s), nil
-}
+func (e HookEvent) String() string { return hookEventText.String(e) }
 
-func (e *HookEvent) UnmarshalText(text []byte) error {
-	for i, name := range hookEventNames {
-		if name == string(text) {
-			*e = HookEvent(i)
-			return nil
-		}
-	}
-	return fmt.Errorf("unknown hook event: %q", string(text))
-}
+func (e HookEvent) MarshalText() ([]byte, error) { return hookEventText.MarshalText(e) }
+
+func (e *HookEvent) UnmarshalText(text []byte) error { return hookEventText.UnmarshalText(text, e) }
 
 // HookInputFormat describes how hook input is provided.
 type HookInputFormat int
@@ -75,29 +58,14 @@ var hookInputFormatNames = [...]string{
 	InputActionsYAML:  "actions_yaml",
 }
 
-func (f HookInputFormat) String() string {
-	if int(f) >= 0 && int(f) < len(hookInputFormatNames) {
-		return hookInputFormatNames[f]
-	}
-	return "unknown"
-}
+var hookInputFormatText = enumtext.New[HookInputFormat]("HookInputFormat", "hook input format", "unknown", hookInputFormatNames[:])
 
-func (f HookInputFormat) MarshalText() ([]byte, error) {
-	s := f.String()
-	if s == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown HookInputFormat value %d", int(f))
-	}
-	return []byte(s), nil
-}
+func (f HookInputFormat) String() string { return hookInputFormatText.String(f) }
+
+func (f HookInputFormat) MarshalText() ([]byte, error) { return hookInputFormatText.MarshalText(f) }
 
 func (f *HookInputFormat) UnmarshalText(text []byte) error {
-	for i, name := range hookInputFormatNames {
-		if name == string(text) {
-			*f = HookInputFormat(i)
-			return nil
-		}
-	}
-	return fmt.Errorf("unknown hook input format: %q", string(text))
+	return hookInputFormatText.UnmarshalText(text, f)
 }
 
 // HookResponseFormat describes how a hook communicates its result.
@@ -115,29 +83,16 @@ var hookResponseFormatNames = [...]string{
 	ResponseStarlarkReturn: "starlark_return",
 }
 
-func (f HookResponseFormat) String() string {
-	if int(f) >= 0 && int(f) < len(hookResponseFormatNames) {
-		return hookResponseFormatNames[f]
-	}
-	return "unknown"
-}
+var hookResponseFormatText = enumtext.New[HookResponseFormat]("HookResponseFormat", "hook response format", "unknown", hookResponseFormatNames[:])
+
+func (f HookResponseFormat) String() string { return hookResponseFormatText.String(f) }
 
 func (f HookResponseFormat) MarshalText() ([]byte, error) {
-	s := f.String()
-	if s == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown HookResponseFormat value %d", int(f))
-	}
-	return []byte(s), nil
+	return hookResponseFormatText.MarshalText(f)
 }
 
 func (f *HookResponseFormat) UnmarshalText(text []byte) error {
-	for i, name := range hookResponseFormatNames {
-		if name == string(text) {
-			*f = HookResponseFormat(i)
-			return nil
-		}
-	}
-	return fmt.Errorf("unknown hook response format: %q", string(text))
+	return hookResponseFormatText.UnmarshalText(text, f)
 }
 
 // HookEnforcementMode describes how strictly a hook's result is enforced.
@@ -155,29 +110,16 @@ var hookEnforcementModeNames = [...]string{
 	EnforcementAuditOnly: "audit_only",
 }
 
-func (m HookEnforcementMode) String() string {
-	if int(m) >= 0 && int(m) < len(hookEnforcementModeNames) {
-		return hookEnforcementModeNames[m]
-	}
-	return "unknown"
-}
+var hookEnforcementModeText = enumtext.New[HookEnforcementMode]("HookEnforcementMode", "hook enforcement mode", "unknown", hookEnforcementModeNames[:])
+
+func (m HookEnforcementMode) String() string { return hookEnforcementModeText.String(m) }
 
 func (m HookEnforcementMode) MarshalText() ([]byte, error) {
-	s := m.String()
-	if s == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown HookEnforcementMode value %d", int(m))
-	}
-	return []byte(s), nil
+	return hookEnforcementModeText.MarshalText(m)
 }
 
 func (m *HookEnforcementMode) UnmarshalText(text []byte) error {
-	for i, name := range hookEnforcementModeNames {
-		if name == string(text) {
-			*m = HookEnforcementMode(i)
-			return nil
-		}
-	}
-	return fmt.Errorf("unknown hook enforcement mode: %q", string(text))
+	return hookEnforcementModeText.UnmarshalText(text, m)
 }
 
 // HookProtocol describes the invocation protocol for a framework's hooks.

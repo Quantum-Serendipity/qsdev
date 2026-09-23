@@ -43,7 +43,7 @@ var LockFilesByEcosystem = map[string][]string{
 	// is listed first. bun.lock is Bun's text lockfile (the default since Bun
 	// 1.2); bun.lockb is the legacy binary format.
 	NameJavaScript: {"npm-shrinkwrap.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb"},
-	NamePython:     {"requirements.txt", "poetry.lock", "uv.lock", "Pipfile.lock"},
+	NamePython:     {"requirements.txt", "poetry.lock", "uv.lock", "pdm.lock", "Pipfile.lock"},
 	NameRust:       {"Cargo.lock"},
 	NameJava:       {"gradle.lockfile", "pom.xml"},
 	NameDotnet:     {"packages.lock.json"},
@@ -70,6 +70,7 @@ var ManifestLockfilePairs = []LockFilePair{
 	{"package.json", "bun.lockb"},
 	{"pyproject.toml", "uv.lock"},
 	{"pyproject.toml", "poetry.lock"},
+	{"pyproject.toml", "pdm.lock"},
 	{"Pipfile", "Pipfile.lock"},
 	{"go.mod", "go.sum"},
 	{"Cargo.toml", "Cargo.lock"},

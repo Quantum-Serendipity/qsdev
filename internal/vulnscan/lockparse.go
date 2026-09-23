@@ -72,6 +72,7 @@ var lockParsers = map[string]lockParser{
 	"Cargo.lock":          parseTOMLPackages,
 	"poetry.lock":         parseTOMLPackages,
 	"uv.lock":             parseTOMLPackages,
+	"pdm.lock":            parseTOMLPackages,
 	"Pipfile.lock":        parsePipfileLock,
 	"requirements.txt":    parseRequirementsTxt,
 }

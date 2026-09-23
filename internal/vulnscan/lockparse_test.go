@@ -100,6 +100,7 @@ func TestCatalogLockFileRecognized(t *testing.T) {
 		{"Cargo.lock", true, "crates.io", "preserved"},
 		{"poetry.lock", true, "PyPI", "preserved"},
 		{"uv.lock", true, "PyPI", "preserved"},
+		{"pdm.lock", true, "PyPI", "newly covered"},
 		{"package-lock.json", true, "npm", "preserved"},
 		{"go.sum", true, "Go", "preserved"},
 		{"requirements.txt", true, "PyPI", "preserved"},
@@ -246,6 +247,39 @@ name = "certifi"
 version = "2024.2.2"
 `
 	_, path := writeFile(t, "poetry.lock", body)
+	pkgs, err := parseTOMLPackages(path, "PyPI")
+	if err != nil {
+		t.Fatalf("parseTOMLPackages: %v", err)
+	}
+	want := []string{"certifi@2024.2.2 (PyPI)", "requests@2.31.0 (PyPI)"}
+	if got := pkgKeys(pkgs); !equalKeys(got, want) {
+		t.Errorf("packages = %v, want %v", got, want)
+	}
+}
+
+// TestParseTOMLPackagesPDM confirms pdm.lock (PyPI) parses with the shared
+// [[package]] TOML parser, ignoring its [metadata] table and per-package files.
+func TestParseTOMLPackagesPDM(t *testing.T) {
+	t.Parallel()
+	const body = `[metadata]
+groups = ["default"]
+strategy = ["inherit_metadata"]
+lock_version = "4.5.0"
+
+[[package]]
+name = "requests"
+version = "2.31.0"
+requires_python = ">=3.7"
+dependencies = ["certifi>=2017.4.17"]
+files = [
+    {file = "requests-2.31.0-py3-none-any.whl", hash = "sha256:00"},
+]
+
+[[package]]
+name = "certifi"
+version = "2024.2.2"
+`
+	_, path := writeFile(t, "pdm.lock", body)
 	pkgs, err := parseTOMLPackages(path, "PyPI")
 	if err != nil {
 		t.Fatalf("parseTOMLPackages: %v", err)

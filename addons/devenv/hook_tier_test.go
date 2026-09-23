@@ -14,14 +14,14 @@ func TestFilterHooksByTier_Baseline(t *testing.T) {
 		"lock-file-audit", "nix-secrets-check", "statix",
 	}
 
-	result := devenv.FilterHooksByTier(hooks, "baseline")
+	result := mustFilterHooksByTier(t, hooks, "baseline")
 
 	expected := map[string]bool{
-		"ripsecrets":            true,
-		"gitleaks":              true,
+		"ripsecrets":              true,
+		"gitleaks":                true,
 		"check-added-large-files": true,
-		"no-commit-to-branch":  true,
-		"check-merge-conflicts": true,
+		"no-commit-to-branch":     true,
+		"check-merge-conflicts":   true,
 	}
 
 	if len(result) != len(expected) {
@@ -43,17 +43,17 @@ func TestFilterHooksByTier_Enhanced(t *testing.T) {
 		"lock-file-audit", "nix-secrets-check", "statix",
 	}
 
-	result := devenv.FilterHooksByTier(hooks, "enhanced")
+	result := mustFilterHooksByTier(t, hooks, "enhanced")
 
 	expected := map[string]bool{
-		"ripsecrets":            true,
-		"gitleaks":              true,
+		"ripsecrets":              true,
+		"gitleaks":                true,
 		"check-added-large-files": true,
-		"no-commit-to-branch":  true,
-		"check-merge-conflicts": true,
-		"semgrep":              true,
-		"shellcheck":           true,
-		"formatters":           true,
+		"no-commit-to-branch":     true,
+		"check-merge-conflicts":   true,
+		"semgrep":                 true,
+		"shellcheck":              true,
+		"formatters":              true,
 	}
 
 	if len(result) != len(expected) {
@@ -75,7 +75,7 @@ func TestFilterHooksByTier_Specialized(t *testing.T) {
 		"lock-file-audit", "nix-secrets-check", "statix",
 	}
 
-	result := devenv.FilterHooksByTier(hooks, "specialized")
+	result := mustFilterHooksByTier(t, hooks, "specialized")
 
 	// Specialized includes baseline + enhanced + specialized = all 11.
 	if len(result) != 11 {
@@ -92,7 +92,7 @@ func TestFilterHooksByTier_Full(t *testing.T) {
 		"custom-hook-1", "custom-hook-2",
 	}
 
-	result := devenv.FilterHooksByTier(hooks, "full")
+	result := mustFilterHooksByTier(t, hooks, "full")
 
 	// Full tier returns all hooks, including unknown ones.
 	if len(result) != len(hooks) {
@@ -103,7 +103,7 @@ func TestFilterHooksByTier_Full(t *testing.T) {
 func TestFilterHooksByTier_EmptyTier(t *testing.T) {
 	hooks := []string{"ripsecrets", "semgrep", "custom-hook"}
 
-	result := devenv.FilterHooksByTier(hooks, "")
+	result := mustFilterHooksByTier(t, hooks, "")
 
 	// Empty tier treated as full.
 	if len(result) != len(hooks) {
@@ -112,7 +112,7 @@ func TestFilterHooksByTier_EmptyTier(t *testing.T) {
 }
 
 func TestFilterHooksByTier_EmptyHooks(t *testing.T) {
-	result := devenv.FilterHooksByTier(nil, "baseline")
+	result := mustFilterHooksByTier(t, nil, "baseline")
 	if result != nil {
 		t.Errorf("expected nil for empty hooks, got %v", result)
 	}
@@ -121,7 +121,7 @@ func TestFilterHooksByTier_EmptyHooks(t *testing.T) {
 func TestFilterHooksByTier_PreservesOrder(t *testing.T) {
 	hooks := []string{"check-merge-conflicts", "ripsecrets", "gitleaks"}
 
-	result := devenv.FilterHooksByTier(hooks, "baseline")
+	result := mustFilterHooksByTier(t, hooks, "baseline")
 
 	if len(result) != 3 {
 		t.Fatalf("expected 3 hooks, got %d", len(result))
@@ -140,17 +140,27 @@ func TestFilterHooksByTier_PreservesOrder(t *testing.T) {
 func TestFilterHooksByTier_BaselineExcludesHigherTiers(t *testing.T) {
 	hooks := []string{"semgrep", "lock-file-audit", "statix"}
 
-	result := devenv.FilterHooksByTier(hooks, "baseline")
+	result := mustFilterHooksByTier(t, hooks, "baseline")
 
 	if len(result) != 0 {
 		t.Errorf("baseline should exclude enhanced/specialized hooks, got %v", result)
 	}
 }
 
+// mustFilterHooksByTier calls FilterHooksByTier and fails the test on error.
+func mustFilterHooksByTier(t *testing.T, hooks []string, tier string) []string {
+	t.Helper()
+	result, err := devenv.FilterHooksByTier(hooks, tier)
+	if err != nil {
+		t.Fatalf("FilterHooksByTier(%v, %q): %v", hooks, tier, err)
+	}
+	return result
+}
+
 func TestFilterHooksByTier_EnhancedExcludesSpecialized(t *testing.T) {
 	hooks := []string{"lock-file-audit", "nix-secrets-check", "statix"}
 
-	result := devenv.FilterHooksByTier(hooks, "enhanced")
+	result := mustFilterHooksByTier(t, hooks, "enhanced")
 
 	if len(result) != 0 {
 		t.Errorf("enhanced should exclude specialized hooks, got %v", result)

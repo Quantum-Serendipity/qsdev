@@ -3,6 +3,7 @@ package devenv
 import (
 	"fmt"
 	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -91,7 +92,14 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	// 0. Overlays from user configuration.
 	data.Overlays = answers.Overlays
 
-	// 1. Packages: base + extras.
+	// 1. Packages: base + extras. Extras come from answers files and config
+	// that can be edited outside the add-package command, so re-validate them
+	// here before they are rendered verbatim into devenv.nix.
+	for _, name := range answers.ExtraPackages {
+		if err := validateNixPackageName(name); err != nil {
+			return nil, fmt.Errorf("extra packages: %w", err)
+		}
+	}
 	basePkgs := defaultBasePackages()
 	data.Packages = make([]string, 0, len(basePkgs)+len(answers.ExtraPackages))
 	data.Packages = append(data.Packages, basePkgs...)
@@ -161,11 +169,21 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 		data.ServiceScripts = append(data.ServiceScripts, svcData.Scripts...)
 	}
 
-	// 6. Security hooks are always present.
+	// 6. Security hooks are always present. An ecosystem module may declare
+	// the same hook (shellcheck for shell, statix for nix); rendering both
+	// defines one git-hooks attribute twice and devenv.nix fails to evaluate,
+	// so the always-on security entry wins.
 	data.SecurityHooks = defaultSecurityHooks()
+	seenHookIDs := hookResult.SeenHookIDs
+	securityHookIDs := make(map[string]bool, len(data.SecurityHooks))
+	for _, id := range data.SecurityHooks {
+		securityHookIDs[id] = true
+		seenHookIDs[id] = true
+	}
+	data.BuiltInHooks = slices.DeleteFunc(data.BuiltInHooks, func(id string) bool { return securityHookIDs[id] })
+	data.CustomHooks = slices.DeleteFunc(data.CustomHooks, func(h CustomHookData) bool { return securityHookIDs[h.ID] })
 
 	// Specialized security custom hooks (always present), deduped against ecosystem hooks.
-	seenHookIDs := hookResult.SeenHookIDs
 	for _, hook := range defaultSpecializedHooks() {
 		if !seenHookIDs[hook.ID] {
 			seenHookIDs[hook.ID] = true

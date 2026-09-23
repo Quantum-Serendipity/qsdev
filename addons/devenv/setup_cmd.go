@@ -2,8 +2,10 @@ package devenv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -21,8 +23,9 @@ import (
 
 // AutoSetupPrerequisites installs missing core prerequisites (nix, devenv, direnv)
 // non-interactively. It is called by the init/join flow when --yes is set to deliver
-// on the "one command and go" promise. Returns nil if all prerequisites are already
-// present or were successfully installed.
+// on the "one command and go" promise. Returns nil only if all prerequisites are
+// already present or were successfully installed; otherwise the error names every
+// prerequisite that is still missing.
 func AutoSetupPrerequisites(ctx context.Context, w io.Writer) error {
 	if os.Getenv(branding.Get().EnvPrefix+"SKIP_SETUP") == "1" {
 		return nil
@@ -32,12 +35,10 @@ func AutoSetupPrerequisites(ctx context.Context, w io.Writer) error {
 	checks := doctor.RunAllChecks(ctx, osInfo)
 
 	coreTools := map[string]bool{"nix": true, "devenv": true, "direnv": true}
-	var missing []string
+	var missing []doctor.ToolStatus
 	for _, ts := range checks {
-		if coreTools[ts.Name] && (!ts.Installed || (ts.MinVersion != "" && !ts.VersionOK)) {
-			if ts.AutoInstallable {
-				missing = append(missing, ts.Name)
-			}
+		if coreTools[ts.Name] && needsSetup(ts) {
+			missing = append(missing, ts)
 		}
 	}
 
@@ -47,11 +48,20 @@ func AutoSetupPrerequisites(ctx context.Context, w io.Writer) error {
 
 	// NixOS: prerequisites come from the system config, not imperative install.
 	if osInfo.Distro == "nixos" {
-		return nil
+		return fmt.Errorf("missing prerequisites on NixOS: %s; add them to your system configuration",
+			strings.Join(toolNames(missing), ", "))
 	}
 
-	_, _ = fmt.Fprintf(w, "Installing prerequisites: %s\n", strings.Join(missing, ", "))
-	if err := installToolsInOrder(ctx, w, missing, osInfo); err != nil {
+	installable, manual := partitionInstallable(missing)
+	var errs []error
+	if len(installable) > 0 {
+		_, _ = fmt.Fprintf(w, "Installing prerequisites: %s\n", strings.Join(installable, ", "))
+		errs = append(errs, installToolsInOrder(ctx, w, installable, osInfo))
+	}
+	if len(manual) > 0 {
+		errs = append(errs, fmt.Errorf("manual installation required for: %s", strings.Join(manual, ", ")))
+	}
+	if err := errors.Join(errs...); err != nil {
 		return err
 	}
 
@@ -59,26 +69,88 @@ func AutoSetupPrerequisites(ctx context.Context, w io.Writer) error {
 	return nil
 }
 
-// installLevel groups tools by dependency order.
-type installLevel struct {
-	level int
-	tools []string
+// installDependencies records, for each tool that has one, the tool that must
+// be installed first. Tools absent from this map have no install-time
+// dependency. The install plan is derived from the selected doctor checks plus
+// these edges, so every auto-installable check is always part of the plan.
+var installDependencies = map[string]string{
+	"nix":    "curl", // the Nix installer script downloads its binary with curl
+	"devenv": "nix",  // installed with `nix profile install`
+	"npm":    "node", // bundled with node
+	"claude": "npm",  // installed with `npm install -g`
 }
 
-// toolLevels defines installation order: lower levels install first.
-// Level 0: independent tools
-// Level 1: nix (custom installer)
-// Level 2: devenv, direnv (need nix)
-// Level 3: node (can be level 0 from PM, but listed separately for clarity)
-// Level 4: npm (bundled with node)
-// Level 5: claude (needs npm)
-var toolLevels = []installLevel{
-	{0, []string{"git", "curl", "jq", "shellcheck", "shfmt", "hadolint", "python3", "pre-commit"}},
-	{1, []string{"nix"}},
-	{2, []string{"devenv", "direnv"}},
-	{3, []string{"node"}},
-	{4, []string{"npm"}},
-	{5, []string{"claude"}},
+// installDepth returns how many dependency edges precede name in the plan.
+func installDepth(name string) int {
+	depth := 0
+	for dep, ok := installDependencies[name]; ok && depth <= len(installDependencies); dep, ok = installDependencies[dep] {
+		depth++
+	}
+	return depth
+}
+
+// installPlan groups the selected tools into levels so that every tool is
+// installed after its dependencies. Each selected tool appears exactly once;
+// order within a level follows the selection order.
+func installPlan(selected []string) [][]string {
+	var levels [][]string
+	seen := make(map[string]bool, len(selected))
+	for _, name := range selected {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		depth := installDepth(name)
+		for len(levels) <= depth {
+			levels = append(levels, nil)
+		}
+		levels[depth] = append(levels[depth], name)
+	}
+	return levels
+}
+
+// needsSetup reports whether a doctor result calls for installation.
+func needsSetup(ts doctor.ToolStatus) bool {
+	return !ts.Installed || (ts.MinVersion != "" && !ts.VersionOK)
+}
+
+// partitionInstallable splits missing tools into those setup can install and
+// those that need manual installation. A tool that is not auto-installable only
+// because its dependency is absent (e.g. devenv without Nix) becomes
+// installable when that dependency is itself being installed in the same run.
+func partitionInstallable(missing []doctor.ToolStatus) (installable, manual []string) {
+	planned := make(map[string]bool, len(missing))
+	for _, ts := range missing {
+		if ts.AutoInstallable {
+			planned[ts.Name] = true
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, ts := range missing {
+			if !planned[ts.Name] && planned[installDependencies[ts.Name]] {
+				planned[ts.Name] = true
+				changed = true
+			}
+		}
+	}
+	for _, ts := range missing {
+		if planned[ts.Name] {
+			installable = append(installable, ts.Name)
+		} else {
+			manual = append(manual, ts.Name)
+		}
+	}
+	return installable, manual
+}
+
+// toolNames returns the names of the given tool statuses.
+func toolNames(statuses []doctor.ToolStatus) []string {
+	names := make([]string, len(statuses))
+	for i, ts := range statuses {
+		names[i] = ts.Name
+	}
+	return names
 }
 
 func setupCmd() *cobra.Command {
@@ -114,14 +186,10 @@ func runSetup(cmd *cobra.Command, yes, dryRun bool) error {
 	osInfo := sysinfo.DetectOS()
 	checks := doctor.RunAllChecks(ctx, osInfo)
 
-	// Filter to missing tools that are auto-installable.
-	var missing []missingTool
+	var missing []doctor.ToolStatus
 	for _, ts := range checks {
-		if !ts.Installed || (ts.MinVersion != "" && !ts.VersionOK) {
-			missing = append(missing, missingTool{
-				name:            ts.Name,
-				autoInstallable: ts.AutoInstallable,
-			})
+		if needsSetup(ts) {
+			missing = append(missing, ts)
 		}
 	}
 
@@ -132,19 +200,10 @@ func runSetup(cmd *cobra.Command, yes, dryRun bool) error {
 
 	// NixOS special case: print declarative Nix expressions instead of installing.
 	if osInfo.Distro == "nixos" {
-		return printNixOSInstructions(w, missing)
+		return printNixOSInstructions(w, toolNames(missing))
 	}
 
-	// Filter to only auto-installable tools.
-	var installable []string
-	var notInstallable []string
-	for _, m := range missing {
-		if m.autoInstallable {
-			installable = append(installable, m.name)
-		} else {
-			notInstallable = append(notInstallable, m.name)
-		}
-	}
+	installable, notInstallable := partitionInstallable(missing)
 
 	if len(installable) == 0 {
 		_, _ = fmt.Fprintln(w, "No auto-installable tools to set up.")
@@ -179,10 +238,9 @@ func runSetup(cmd *cobra.Command, yes, dryRun bool) error {
 		return nil
 	}
 
-	// Install tools in dependency order.
-	if err := installToolsInOrder(ctx, w, selected, osInfo); err != nil {
-		return err
-	}
+	// Install tools in dependency order. Failures are returned after the
+	// verification summary so the command still exits non-zero.
+	installErr := installToolsInOrder(ctx, w, selected, osInfo)
 
 	// Re-run checks and print verification summary.
 	_, _ = fmt.Fprintln(w)
@@ -198,16 +256,19 @@ func runSetup(cmd *cobra.Command, yes, dryRun bool) error {
 		}
 	}
 
+	if installErr != nil {
+		return fmt.Errorf("setup incomplete: %w", installErr)
+	}
 	return nil
 }
 
 // printNixOSInstructions prints declarative Nix package expressions for NixOS users.
-func printNixOSInstructions(w io.Writer, missing []missingTool) error {
+func printNixOSInstructions(w io.Writer, missing []string) error {
 	_, _ = fmt.Fprintln(w, "NixOS detected. Add the following to your configuration.nix or home-manager config:")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "  environment.systemPackages = with pkgs; [")
-	for _, m := range missing {
-		nixPkg := toolToNixPkg(m.name)
+	for _, name := range missing {
+		nixPkg := toolToNixPkg(name)
 		if nixPkg != "" {
 			_, _ = fmt.Fprintf(w, "    %s\n", nixPkg)
 		}
@@ -274,7 +335,7 @@ func installCommandForTool(name, family, mgr string) string {
 	case "claude":
 		return "npm install -g @anthropic-ai/claude-code"
 	case "devenv":
-		return "nix profile install nixpkgs#devenv"
+		return strings.Join(devenvSpec.InstallCmd, " ")
 	default:
 		cmd := pkgmanager.InstallCommand(name, family, mgr)
 		if cmd == "" {
@@ -320,51 +381,56 @@ func promptSetupSelection(tools []string) (selected []string, confirmed bool, er
 	return selected, confirmed, nil
 }
 
-// installToolsInOrder installs tools in dependency order.
+// installFunc installs a single tool by name.
+type installFunc func(ctx context.Context, w io.Writer, name string) error
+
+// installToolsInOrder installs tools in dependency order using the system
+// package manager or a tool-specific installer. It returns an error joining
+// every tool that failed or was skipped because a dependency failed.
 func installToolsInOrder(ctx context.Context, w io.Writer, selected []string, osInfo *sysinfo.OSInfo) error {
-	selectedSet := make(map[string]bool, len(selected))
-	for _, name := range selected {
-		selectedSet[name] = true
-	}
-
 	pm := pkgmanager.DetectPackageManager(osInfo)
-	family := osInfo.Family
-	mgr := osInfo.PackageManager
-
-	for _, level := range toolLevels {
-		var levelTools []string
-		for _, name := range level.tools {
-			if selectedSet[name] {
-				levelTools = append(levelTools, name)
-			}
-		}
-		if len(levelTools) == 0 {
-			continue
-		}
-
-		for _, name := range levelTools {
-			_, _ = fmt.Fprintf(w, "Installing %s...\n", name)
-
-			var err error
-			switch name {
-			case "nix":
-				err = installNix(ctx, w)
-			case "claude":
-				err = installClaude(ctx, w)
-			default:
-				err = installWithPM(ctx, w, name, family, mgr, pm)
-			}
-
-			if err != nil {
-				_, _ = fmt.Fprintf(w, "  Failed to install %s: %v\n", name, err)
-				// Continue with other tools rather than aborting entirely.
-			} else {
-				_, _ = fmt.Fprintf(w, "  %s installed successfully.\n", name)
-			}
+	install := func(ctx context.Context, w io.Writer, name string) error {
+		switch name {
+		case "nix":
+			return installNix(ctx, w)
+		case "devenv":
+			return installDevenv(ctx, w)
+		case "claude":
+			return installClaude(ctx, w)
+		default:
+			return installWithPM(ctx, w, name, osInfo.Family, osInfo.PackageManager, pm)
 		}
 	}
+	return runInstallPlan(ctx, w, selected, install)
+}
 
-	return nil
+// runInstallPlan installs the selected tools level by level. A failed tool
+// does not abort the run, but tools depending on it are skipped. The returned
+// error joins every failure so callers never report success while a selected
+// tool is still missing.
+func runInstallPlan(ctx context.Context, w io.Writer, selected []string, install installFunc) error {
+	failed := make(map[string]bool)
+	var errs []error
+	for _, level := range installPlan(selected) {
+		for _, name := range level {
+			if dep := installDependencies[name]; failed[dep] {
+				failed[name] = true
+				_, _ = fmt.Fprintf(w, "Skipping %s: dependency %s failed to install.\n", name, dep)
+				errs = append(errs, fmt.Errorf("%s: skipped because %s failed to install", name, dep))
+				continue
+			}
+
+			_, _ = fmt.Fprintf(w, "Installing %s...\n", name)
+			if err := install(ctx, w, name); err != nil {
+				failed[name] = true
+				_, _ = fmt.Fprintf(w, "  Failed to install %s: %v\n", name, err)
+				errs = append(errs, fmt.Errorf("installing %s: %w", name, err))
+				continue
+			}
+			_, _ = fmt.Fprintf(w, "  %s installed successfully.\n", name)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // installWithPM installs a tool using the detected package manager.
@@ -423,17 +489,119 @@ func pmInstallArgs(pm pkgmanager.PackageManager, pkg string) []string {
 	}
 }
 
-// installNix installs Nix using the Determinate Systems installer.
+// nixInstallerURL is the Determinate Systems Nix installer script.
+var nixInstallerURL = "https://install.determinate.systems/nix"
+
+// nixInstallerClient downloads the Nix installer. It refuses to follow a
+// redirect away from HTTPS.
+var nixInstallerClient = &http.Client{
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if req.URL.Scheme != "https" {
+			return fmt.Errorf("refusing non-HTTPS redirect to %s", req.URL.Redacted())
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	},
+}
+
+// maxNixInstallerSize bounds the installer script download.
+const maxNixInstallerSize = 16 << 20
+
+// nixDefaultProfileBin is where a multi-user Nix install places the nix
+// binary. A Nix installed earlier in the same run is not yet on PATH.
+const nixDefaultProfileBin = "/nix/var/nix/profiles/default/bin/nix"
+
+// installNix installs Nix using the Determinate Systems installer. The script
+// is downloaded to a private temp file first and then executed directly, so a
+// failed or empty download is reported as an error instead of being piped
+// into a shell that exits 0 on empty input.
 func installNix(ctx context.Context, w io.Writer) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c",
-		"curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install --no-confirm")
+	script, err := downloadNixInstaller(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(script) }()
+
+	cmd := exec.CommandContext(ctx, "sh", script, "install", "--no-confirm")
 	cmd.WaitDelay = 10 * time.Second
 	cmd.Stdout = w
 	cmd.Stderr = w
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("running Nix installer: %w", err)
+	}
+	return nil
+}
+
+// downloadNixInstaller fetches the installer script over HTTPS into a new
+// private temp file (mode 0600) and returns its path. The caller removes it.
+func downloadNixInstaller(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, nixInstallerURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("building Nix installer request: %w", err)
+	}
+	if req.URL.Scheme != "https" {
+		return "", fmt.Errorf("refusing to download Nix installer over %s", req.URL.Scheme)
+	}
+
+	resp, err := nixInstallerClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("downloading Nix installer: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("downloading Nix installer: unexpected HTTP status %s", resp.Status)
+	}
+
+	f, err := os.CreateTemp("", "nix-installer-*.sh")
+	if err != nil {
+		return "", fmt.Errorf("creating Nix installer temp file: %w", err)
+	}
+	path := f.Name()
+	n, copyErr := io.Copy(f, io.LimitReader(resp.Body, maxNixInstallerSize+1))
+	closeErr := f.Close()
+
+	var fail error
+	switch {
+	case copyErr != nil:
+		fail = fmt.Errorf("downloading Nix installer: %w", copyErr)
+	case closeErr != nil:
+		fail = fmt.Errorf("writing Nix installer: %w", closeErr)
+	case n == 0:
+		fail = errors.New("downloading Nix installer: empty response")
+	case n > maxNixInstallerSize:
+		fail = fmt.Errorf("downloading Nix installer: script exceeds %d bytes", maxNixInstallerSize)
+	}
+	if fail != nil {
+		_ = os.Remove(path)
+		return "", fail
+	}
+	return path, nil
+}
+
+// installDevenv installs devenv with Nix. It resolves the nix binary from
+// PATH or the default multi-user profile so that a Nix installed earlier in
+// the same run can be used without restarting the shell.
+func installDevenv(ctx context.Context, w io.Writer) error {
+	nixBin, err := exec.LookPath("nix")
+	if err != nil {
+		if _, statErr := os.Stat(nixDefaultProfileBin); statErr != nil {
+			return errors.New("nix not found on PATH or in the default profile; install Nix first")
+		}
+		nixBin = nixDefaultProfileBin
+	}
+
+	cmd := exec.CommandContext(ctx, nixBin, devenvSpec.InstallCmd[1:]...)
+	cmd.Stdout = w
+	cmd.Stderr = w
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("installing devenv with nix: %w", err)
+	}
+	return nil
 }
 
 // installClaude installs Claude Code via npm.
@@ -492,10 +660,4 @@ func offerDirenvHook(w io.Writer, osInfo *sysinfo.OSInfo) {
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "To enable direnv, add the following to your shell configuration:")
 	_, _ = fmt.Fprintf(w, "  echo '%s' >> %s\n", hookLine, osInfo.ShellRCFile)
-}
-
-// missingTool is used internally by runSetup.
-type missingTool struct {
-	name            string
-	autoInstallable bool
 }

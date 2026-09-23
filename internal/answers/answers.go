@@ -60,6 +60,12 @@ func FilePath(projectRoot, dir, filename string) string {
 	return filepath.Join(projectRoot, dir, filename)
 }
 
+// PrimaryFilePath returns the full path to the primary (devinit) answers file.
+func PrimaryFilePath(projectRoot string) string {
+	b := branding.Get()
+	return filepath.Join(projectRoot, b.StateDir, "."+b.AppName+"-init-answers.yaml")
+}
+
 // SavePrimary persists answers to the primary (devinit) answers file so that
 // per-addon modifications stay in sync with the unified init state.
 func SavePrimary(projectRoot string, a types.WizardAnswers) error {
@@ -72,8 +78,7 @@ func SavePrimary(projectRoot string, a types.WizardAnswers) error {
 // unparseable file returns an error so the corruption is surfaced to callers
 // rather than being silently treated as empty state (config data loss).
 func LoadPrimary(projectRoot string) (types.WizardAnswers, error) {
-	b := branding.Get()
-	path := filepath.Join(projectRoot, b.StateDir, "."+b.AppName+"-init-answers.yaml")
+	path := PrimaryFilePath(projectRoot)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

@@ -17,6 +17,9 @@ var ExportSaveAnswers = saveAnswers
 // ExportLoadAnswers exposes loadAnswers for external tests.
 var ExportLoadAnswers = loadAnswers
 
+// ExportValidateNixPackageName exposes validateNixPackageName for external tests.
+var ExportValidateNixPackageName = validateNixPackageName
+
 // ExportBuildAnswersFromFlags exposes buildAnswersFromFlags for external tests.
 var ExportBuildAnswersFromFlags = buildAnswersFromFlags
 

@@ -1,11 +1,15 @@
 package devenv_test
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -316,14 +320,59 @@ func TestGenerateDevenvNix_EnterShellEscaping(t *testing.T) {
 	requireContains(t, content, `''${DEVENV_SECURITY_HARDENED:-}`)
 }
 
+// TestGenerateDevenvNix_NixInstantiateParse checks that the devenv.nix
+// generated for each ecosystem module, with every service and catalog tool
+// enabled, is syntactically valid Nix. devenv.nix is a function of
+// { pkgs, lib, config, ... }, so raw expressions that reference pkgs are in
+// scope for `nix-instantiate --parse`, which also rejects references to
+// undefined variables.
 func TestGenerateDevenvNix_NixInstantiateParse(t *testing.T) {
-	// Specialized hooks use raw Nix expressions (e.g. ${pkgs.writeShellScript ...})
-	// that require function arguments in scope. nix-instantiate --parse cannot
-	// validate these in isolation, so this test is skipped.
-	t.Skip("skipping nix-instantiate parse: generated Nix now contains raw expressions requiring function arguments (pkgs)")
-	_, err := exec.LookPath("nix-instantiate")
+	nixInstantiate, err := exec.LookPath("nix-instantiate")
 	if err != nil {
 		t.Skip("nix-instantiate not available, skipping syntax validation")
+	}
+
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatalf("loading catalog: %v", err)
+	}
+	enabledTools := make(map[string]bool)
+	for name := range cat.Tools() {
+		enabledTools[name] = true
+	}
+	var services []types.ServiceChoice
+	for _, name := range validation.Services() {
+		services = append(services, types.ServiceChoice{Name: name})
+	}
+
+	reg := ecosystem.DefaultRegistry()
+	for _, lang := range reg.Names() {
+		t.Run(lang, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{
+				ProjectName:   "parse-check",
+				Direnv:        true,
+				Languages:     []types.LanguageChoice{{Name: lang}},
+				Services:      services,
+				ExtraPackages: []string{"jq", "python3Packages.requests"},
+				EnvVars:       map[string]string{"EDITOR": "vim"},
+				Overlays:      []string{"./nix/overlay.nix"},
+				EnabledTools:  enabledTools,
+			}
+			got, err := devenv.GenerateDevenvNix(answers, reg)
+			if err != nil {
+				t.Fatalf("GenerateDevenvNix: %v", err)
+			}
+
+			path := filepath.Join(t.TempDir(), "devenv.nix")
+			if err := os.WriteFile(path, got.Content, 0o644); err != nil {
+				t.Fatalf("writing devenv.nix: %v", err)
+			}
+			out, err := exec.Command(nixInstantiate, "--parse", path).CombinedOutput()
+			if err != nil {
+				t.Fatalf("nix-instantiate --parse rejected generated devenv.nix: %v\n%s", err, out)
+			}
+		})
 	}
 }
 
@@ -367,6 +416,33 @@ func TestGenerateDevenvNix_HookDeduplication(t *testing.T) {
 	count := strings.Count(content, "shared-lint.enable = true")
 	if count != 1 {
 		t.Errorf("shared-lint.enable = true appeared %d times, want exactly 1", count)
+	}
+}
+
+func TestGenerateDevenvNix_ModuleHookMatchingSecurityHookRenderedOnce(t *testing.T) {
+	t.Parallel()
+	mod := &ecosystem.MockModule{
+		NameVal:              "shelly",
+		DisplayNameVal:       "Shelly",
+		TierVal:              1,
+		DevenvNixFragmentVal: "  # shelly fragment",
+		PreCommitHooksVal: []ecosystem.HookConfig{
+			{ID: "shellcheck", Name: "shellcheck", Entry: "shellcheck", Language: "system", BuiltIn: true},
+			{ID: "statix", Name: "statix", Entry: "statix check", Language: "system", NixPackage: "statix"},
+		},
+	}
+	reg := newTestRegistry(t, mod)
+	answers := types.WizardAnswers{Languages: []types.LanguageChoice{{Name: "shelly"}}}
+
+	got, err := devenv.GenerateDevenvNix(answers, reg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	content := string(got.Content)
+	for _, id := range []string{"shellcheck", "statix"} {
+		if n := strings.Count(content, "    "+id+".enable = true;") + strings.Count(content, "    "+id+" = {"); n != 1 {
+			t.Errorf("hook %q defined %d times in devenv.nix, want exactly 1", id, n)
+		}
 	}
 }
 

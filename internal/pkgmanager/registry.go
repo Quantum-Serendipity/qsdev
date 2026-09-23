@@ -88,7 +88,7 @@ var toolRegistry = map[string]ToolEntry{
 		},
 	},
 	// Keyed "node" (not "nodejs") to match the tool name that flows through
-	// doctor checks and the setup toolLevels; the installable package name is
+	// doctor checks and the setup install plan; the installable package name is
 	// still "nodejs" on most Linux managers.
 	"node": {
 		Name: "node", Binary: "node", VersionFlag: "--version",

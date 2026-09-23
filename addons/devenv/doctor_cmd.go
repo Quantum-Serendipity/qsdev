@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
 )
 
 func doctorCmd() *cobra.Command {
@@ -61,7 +63,7 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 	checks := doctor.RunAllChecks(ctx, osInfo)
 	wg.Wait()
 
-	report := doctor.BuildReport(osInfo, checks, "0.1.0")
+	report := doctor.BuildReport(osInfo, checks, version.Info().Version)
 	report.SetContainerSection(containerSection)
 	report.SetSandboxSection(sandboxSection)
 	slog.Info("doctor check complete",
@@ -71,20 +73,28 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 		"arch", report.System.Arch)
 
 	w := cmd.OutOrStdout()
+	return renderDoctorReport(w, report, jsonOutput, checkMode)
+}
+
+// renderDoctorReport writes report to w as JSON, a pass/fail check summary,
+// or the formatted human report. In check mode it returns an error when any
+// required tool is missing, including when the report is emitted as JSON.
+func renderDoctorReport(w io.Writer, report *doctor.Report, jsonOutput, checkMode bool) error {
+	missing := missingRequiredTools(report)
 
 	if jsonOutput {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(report)
+		if err := enc.Encode(report); err != nil {
+			return fmt.Errorf("encoding doctor report: %w", err)
+		}
+		if checkMode && len(missing) > 0 {
+			return fmt.Errorf("missing %d required tool(s): %s", len(missing), strings.Join(missing, ", "))
+		}
+		return nil
 	}
 
 	if checkMode {
-		var missing []string
-		for _, t := range report.RequiredTools {
-			if !t.Found || !t.VersionOK {
-				missing = append(missing, t.Name)
-			}
-		}
 		if len(missing) > 0 {
 			_, _ = fmt.Fprintf(w, "Missing required tools: %s\n", strings.Join(missing, ", "))
 			return fmt.Errorf("missing %d required tool(s)", len(missing))
@@ -93,6 +103,25 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 		return nil
 	}
 
-	doctor.FormatReport(w, report, doctor.UseColor(os.Stdout.Fd()))
+	doctor.FormatReport(w, report, writerUsesColor(w))
 	return nil
+}
+
+// missingRequiredTools returns the names of required tools that are absent
+// or below their minimum version.
+func missingRequiredTools(report *doctor.Report) []string {
+	var missing []string
+	for _, t := range report.RequiredTools {
+		if !t.Found || !t.VersionOK {
+			missing = append(missing, t.Name)
+		}
+	}
+	return missing
+}
+
+// writerUsesColor reports whether colored output suits w: only a terminal
+// file gets color, never a buffer or pipe that the command was redirected to.
+func writerUsesColor(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	return ok && doctor.UseColor(f.Fd())
 }

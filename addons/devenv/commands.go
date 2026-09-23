@@ -1,9 +1,11 @@
 package devenv
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -118,23 +120,16 @@ func initCmd() *cobra.Command {
 				return nil
 			}
 
-			// Write files to disk.
-			result, err := generate.WriteFiles(files, generate.PipelineOptions{
-				ProjectRoot: projectRoot,
-			})
+			// Write files and persist state and answers. A stale or corrupt
+			// state file from an earlier run must not block a fresh init, so a
+			// load failure starts from empty state.
+			oldState, err := state.LoadStateFromFile(filepath.Join(projectRoot, statePath()))
 			if err != nil {
-				return fmt.Errorf("writing files: %w", err)
+				oldState = types.GeneratedState{}
 			}
-
-			// Save state and answers.
-			successfulFiles := result.SuccessfulFiles(files)
-			genState := state.RecordFiles(successfulFiles)
-			stateFile := filepath.Join(projectRoot, statePath())
-			if err := state.SaveStateToFile(stateFile, genState); err != nil {
-				return fmt.Errorf("saving state: %w", err)
-			}
-			if err := saveAnswers(projectRoot, answers); err != nil {
-				return fmt.Errorf("saving answers: %w", err)
+			result, err := writeAndPersist(cmd, projectRoot, answers, files, oldState, false)
+			if err != nil {
+				return err
 			}
 
 			// Print summary.
@@ -182,59 +177,16 @@ func updateCmd() *cobra.Command {
 			// Refresh detection.
 			answers.Detected = detect.Detect(projectRoot)
 
-			// Check for existing devenv.nix unless --force is set.
-			if !force {
-				stateFile := filepath.Join(projectRoot, statePath())
-				existingState, err := state.LoadStateFromFile(stateFile)
-				if err != nil {
-					return fmt.Errorf("loading state: %w", err)
-				}
-				modified := state.CheckModified(existingState, projectRoot)
-				var modifiedPaths []string
-				for path, status := range modified {
-					if status.Status == types.Modified {
-						modifiedPaths = append(modifiedPaths, path)
-					}
-				}
-				if len(modifiedPaths) > 0 {
-					sort.Strings(modifiedPaths)
-					return fmt.Errorf("modified files found (use --force to overwrite):\n  %s",
-						strings.Join(modifiedPaths, "\n  "))
-				}
-			}
-
-			// Generate files.
-			registry := ecosystem.DefaultRegistry()
-			gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
-			files, err := gen.Generate(answers)
-			if err != nil {
-				return fmt.Errorf("generating files: %w", err)
-			}
-
-			// Dry-run: show preview and exit.
-			if dryRun {
-				preview := generate.PreviewFiles(files, nil, projectRoot)
-				_, _ = fmt.Fprint(cmd.OutOrStdout(), preview)
-				return nil
-			}
-
-			// Write files to disk.
-			result, err := generate.WriteFiles(files, generate.PipelineOptions{
-				ProjectRoot: projectRoot,
+			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
+				projectRoot: projectRoot,
+				dryRun:      dryRun,
+				force:       force,
 			})
 			if err != nil {
-				return fmt.Errorf("writing files: %w", err)
+				return err
 			}
-
-			// Save state and answers.
-			successfulFiles := result.SuccessfulFiles(files)
-			genState := state.RecordFiles(successfulFiles)
-			stateFile := filepath.Join(projectRoot, statePath())
-			if err := state.SaveStateToFile(stateFile, genState); err != nil {
-				return fmt.Errorf("saving state: %w", err)
-			}
-			if err := saveAnswers(projectRoot, answers); err != nil {
-				return fmt.Errorf("saving answers: %w", err)
+			if result == nil {
+				return nil // dry-run
 			}
 
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
@@ -259,7 +211,7 @@ type itemSpec struct {
 	long      string   // cobra Long description
 	validArgs []string // for shell completion (nil if not applicable)
 	multiArg  bool     // true if the command accepts multiple args
-	hasForce  bool     // true if the add command supports --force
+	hasForce  bool     // true if --force re-adds an entry that is already configured
 
 	// validate checks whether name is an acceptable value. Return nil to skip.
 	validate func(name string, projectRoot string) error
@@ -312,37 +264,36 @@ func makeAddCmd(spec itemSpec) *cobra.Command {
 				return err
 			}
 
-			// Collect the names that are actually new.
+			// Collect the names that are actually new. With --force, entries
+			// that are already configured still regenerate the environment.
+			reAdd := force && spec.hasForce
 			var added []string
 			for _, name := range args {
-				if spec.contains(&answers, name) {
-					if !force {
-						if spec.multiArg {
-							_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
-								"Package %q already configured (use --force to re-add)\n", name)
-							continue
-						}
-						if spec.hasForce {
-							return fmt.Errorf("%s %q is already configured; use --force to overwrite", spec.singular, name)
-						}
-						return fmt.Errorf("%s %q is already configured", spec.singular, name)
-					}
-					// --force on a duplicate: skip the append but count as success.
+				if !spec.contains(&answers, name) {
+					spec.add(&answers, name)
+					added = append(added, name)
 					continue
 				}
-				spec.add(&answers, name)
-				added = append(added, name)
-			}
-			if len(added) == 0 {
-				if spec.multiArg {
-					return fmt.Errorf("no new packages to add")
+				switch {
+				case reAdd:
+					// Already present: nothing to append, but still regenerate.
+				case spec.multiArg:
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+						"Package %q already configured (use --force to regenerate anyway)\n", name)
+				case spec.hasForce:
+					return fmt.Errorf("%s %q is already configured; use --force to overwrite", spec.singular, name)
+				default:
+					return fmt.Errorf("%s %q is already configured", spec.singular, name)
 				}
-				// Single-arg with --force on existing item: still regenerate.
+			}
+			if len(added) == 0 && spec.multiArg && !reAdd {
+				return fmt.Errorf("no new packages to add")
 			}
 
 			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
 				projectRoot: projectRoot,
 				dryRun:      dryRun,
+				force:       force,
 			})
 			if err != nil {
 				return err
@@ -351,10 +302,14 @@ func makeAddCmd(spec itemSpec) *cobra.Command {
 				return nil // dry-run
 			}
 
-			if spec.multiArg {
+			switch {
+			case spec.multiArg && len(added) == 0:
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Package(s) already configured; regenerated environment.\n%s\n",
+					result.Summary())
+			case spec.multiArg:
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added package(s): %s\n%s\n",
 					strings.Join(added, ", "), result.Summary())
-			} else {
+			default:
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added %s %q.\n%s\n",
 					spec.singular, args[0], result.Summary())
 			}
@@ -365,9 +320,11 @@ func makeAddCmd(spec itemSpec) *cobra.Command {
 		},
 	}
 
+	forceUsage := "Overwrite generated files even if they have local modifications"
 	if spec.hasForce {
-		cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing configuration")
+		forceUsage = "Re-add existing entries and overwrite generated files even if they have local modifications"
 	}
+	cmd.Flags().BoolVar(&force, "force", false, forceUsage)
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
 
 	return cmd
@@ -376,7 +333,10 @@ func makeAddCmd(spec itemSpec) *cobra.Command {
 // makeRemoveCmd builds a cobra.Command that removes one or more items from
 // the devenv configuration using the behavior described by spec.
 func makeRemoveCmd(spec itemSpec) *cobra.Command {
-	var dryRun bool
+	var (
+		force  bool
+		dryRun bool
+	)
 
 	argsValidator := cobra.ExactArgs(1)
 	if spec.multiArg {
@@ -416,6 +376,7 @@ func makeRemoveCmd(spec itemSpec) *cobra.Command {
 			result, err := regenerateAndPersist(cmd, answers, regenerateOpts{
 				projectRoot: projectRoot,
 				dryRun:      dryRun,
+				force:       force,
 				cleanup:     true,
 			})
 			if err != nil {
@@ -439,6 +400,7 @@ func makeRemoveCmd(spec itemSpec) *cobra.Command {
 		},
 	}
 
+	cmd.Flags().BoolVar(&force, "force", false, "Overwrite generated files even if they have local modifications")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without writing")
 
 	return cmd
@@ -544,6 +506,35 @@ func languageSpec(add bool) itemSpec {
 
 const devenvActivateMessage = "Run 'direnv allow' or re-enter 'devenv shell' to activate."
 
+// nixAttrPathPattern matches a dotted nixpkgs attribute path such as "jq" or
+// "python3Packages.requests". Every segment must be a plain Nix identifier;
+// quoted attribute names, whitespace and all other Nix syntax are rejected.
+var nixAttrPathPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_'-]*(\.[A-Za-z_][A-Za-z0-9_'-]*)*$`)
+
+// nixKeywords are the reserved words of the Nix language. They match the
+// identifier grammar but change how an expression parses, so they may not be
+// used as attribute path segments.
+var nixKeywords = map[string]bool{
+	"assert": true, "else": true, "if": true, "in": true, "inherit": true,
+	"let": true, "or": true, "rec": true, "then": true, "with": true,
+}
+
+// validateNixPackageName reports whether name is safe to splice into
+// devenv.nix as `pkgs.<name>`. Package names are rendered verbatim as Nix
+// code, so anything other than a plain attribute path would let a caller
+// inject arbitrary Nix expressions into the generated environment.
+func validateNixPackageName(name string) error {
+	if !nixAttrPathPattern.MatchString(name) {
+		return fmt.Errorf("invalid package name %q: must be a nixpkgs attribute path such as \"jq\" or \"python3Packages.requests\"", name)
+	}
+	for segment := range strings.SplitSeq(name, ".") {
+		if nixKeywords[segment] {
+			return fmt.Errorf("invalid package name %q: %q is a reserved Nix keyword", name, segment)
+		}
+	}
+	return nil
+}
+
 // packageSpec returns the itemSpec for package add/remove commands.
 func packageSpec(add bool) itemSpec {
 	s := itemSpec{
@@ -551,6 +542,9 @@ func packageSpec(add bool) itemSpec {
 		multiArg:    true,
 		hasForce:    add,
 		postMessage: devenvActivateMessage,
+		validate: func(name string, _ string) error {
+			return validateNixPackageName(name)
+		},
 		contains: func(a *types.WizardAnswers, name string) bool {
 			return slices.Contains(a.ExtraPackages, name)
 		},
@@ -634,18 +628,27 @@ func overlaySpec(add bool) itemSpec {
 type regenerateOpts struct {
 	projectRoot string
 	dryRun      bool
-	cleanup     bool // load old state and remove orphaned files after write
+	force       bool // overwrite generated files even if they were modified locally
+	cleanup     bool // remove orphaned files that are no longer produced
 }
 
 // regenerateAndPersist generates files from answers, writes them to disk, and
-// persists both state and answers. For remove commands, set cleanup=true to
-// detect and delete orphaned files that are no longer produced.
+// persists both state and answers. Unless force is set it refuses to overwrite
+// generated files that have been modified locally. For remove commands, set
+// cleanup=true to detect and delete orphaned files that are no longer produced.
 func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, opts regenerateOpts) (*generate.WriteResult, error) {
 	registry := ecosystem.DefaultRegistry()
 	gen := NewDevenvGenerator(registry, WithProfileRegistry(profile.DefaultProfileRegistry()))
 	files, err := gen.Generate(answers)
 	if err != nil {
 		return nil, fmt.Errorf("generating files: %w", err)
+	}
+
+	// Refuse to clobber local edits to previously generated files.
+	if !opts.force {
+		if err := checkModifiedGeneratedFiles(opts.projectRoot, files); err != nil {
+			return nil, err
+		}
 	}
 
 	// Dry-run: show preview and exit.
@@ -655,36 +658,57 @@ func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, opts 
 		return nil, nil
 	}
 
-	// Load old state before writing so we can detect orphans.
-	stateFile := filepath.Join(opts.projectRoot, statePath())
-	var oldState types.GeneratedState
-	if opts.cleanup {
-		oldState, _ = state.LoadStateFromFile(stateFile)
+	// Load old state before writing so entries for files that are not
+	// rewritten survive, and so orphans can be detected.
+	oldState, err := state.LoadStateFromFile(filepath.Join(opts.projectRoot, statePath()))
+	if err != nil {
+		return nil, fmt.Errorf("loading state: %w", err)
 	}
 
-	// Write files to disk.
-	result, err := generate.WriteFiles(files, generate.PipelineOptions{
-		ProjectRoot: opts.projectRoot,
+	return writeAndPersist(cmd, opts.projectRoot, answers, files, oldState, opts.cleanup)
+}
+
+// writeAndPersist writes files to disk, records their state and saves the
+// answers. Existing files whose strategy is Skip are left untouched. State is
+// saved for every file that was written, while prior entries for files that
+// were skipped or failed are carried forward so their modification tracking
+// survives. Answers are saved only when every file was written; otherwise an
+// error listing the failures is returned so the command exits non-zero and
+// the configuration change is not recorded.
+func writeAndPersist(cmd *cobra.Command, projectRoot string, answers types.WizardAnswers, files []types.GeneratedFile, oldState types.GeneratedState, cleanup bool) (*generate.WriteResult, error) {
+	toWrite, preserved := splitPreservedFiles(projectRoot, files)
+
+	result, err := generate.WriteFiles(toWrite, generate.PipelineOptions{
+		ProjectRoot: projectRoot,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("writing files: %w", err)
 	}
-
-	// Cleanup orphaned files from prior generation.
-	if opts.cleanup {
-		cleanupOrphanedFiles(cmd, oldState, files, opts.projectRoot)
+	for _, path := range preserved {
+		result.Files = append(result.Files, generate.FileResult{Path: path, Action: generate.ActionSkipped})
+		result.Skipped++
 	}
 
-	// Save state and answers.
-	successfulFiles := result.SuccessfulFiles(files)
-	genState := state.RecordFiles(successfulFiles)
-	if err := state.SaveStateToFile(stateFile, genState); err != nil {
+	// Only remove orphans when the new configuration was fully written;
+	// otherwise the previous configuration may still need them.
+	var released []string
+	if cleanup && !result.HasFailures() {
+		released = cleanupOrphanedFiles(cmd, oldState, files, projectRoot)
+	}
+
+	genState := state.RecordFiles(result.SuccessfulFiles(toWrite))
+	carryForwardState(&genState, oldState, released)
+	if err := state.SaveStateToFile(filepath.Join(projectRoot, statePath()), genState); err != nil {
 		return nil, fmt.Errorf("saving state: %w", err)
 	}
-	if err := saveAnswers(opts.projectRoot, answers); err != nil {
-		return nil, fmt.Errorf("saving answers: %w", err)
+
+	if result.HasFailures() {
+		return &result, partialWriteError(result)
 	}
 
+	if err := saveAnswers(projectRoot, answers); err != nil {
+		return nil, fmt.Errorf("saving answers: %w", err)
+	}
 	return &result, nil
 }
 
@@ -711,10 +735,109 @@ func buildAnswersFromFlags(projectRoot string, langs, services []string, direnv 
 	return answers
 }
 
+// checkModifiedGeneratedFiles returns an error naming every file in files
+// whose on-disk content differs from all versions qsdev recorded for it. The
+// devenv, init and Claude Code state files are all consulted because the
+// devinit lifecycle (qsdev enable/disable/init --update) also rewrites devenv
+// files. Untracked, missing and Skip-strategy files are never reported: the
+// first carry no generation record and Skip files are not overwritten.
+func checkModifiedGeneratedFiles(projectRoot string, files []types.GeneratedFile) error {
+	recorded, err := recordedFileHashes(projectRoot)
+	if err != nil {
+		return err
+	}
+
+	var modified []string
+	for _, f := range files {
+		hashes := recorded[f.Path]
+		if f.Strategy == types.Skip || len(hashes) == 0 {
+			continue
+		}
+		current, err := state.ComputeFileHash(filepath.Join(projectRoot, f.Path))
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("checking %s for local modifications: %w", f.Path, err)
+		}
+		if !hashes[current] {
+			modified = append(modified, f.Path)
+		}
+	}
+	if len(modified) == 0 {
+		return nil
+	}
+	sort.Strings(modified)
+	return fmt.Errorf("modified files found (use --force to overwrite):\n  %s",
+		strings.Join(modified, "\n  "))
+}
+
+// recordedFileHashes maps each generated path to the set of content hashes
+// recorded for it across all qsdev state files.
+func recordedFileHashes(projectRoot string) (map[string]map[string]bool, error) {
+	recorded := make(map[string]map[string]bool)
+	for _, rel := range state.StateFilePaths() {
+		st, err := state.LoadStateFromFile(filepath.Join(projectRoot, rel))
+		if err != nil {
+			return nil, fmt.Errorf("loading state: %w", err)
+		}
+		for path, fs := range st.Files {
+			if recorded[path] == nil {
+				recorded[path] = make(map[string]bool)
+			}
+			recorded[path][fs.Hash] = true
+		}
+	}
+	return recorded, nil
+}
+
+// splitPreservedFiles separates files whose Skip strategy means an existing
+// on-disk copy must be left alone (e.g. a user-owned .envrc) from the files
+// that should be written. It returns the files to write and the paths kept.
+func splitPreservedFiles(projectRoot string, files []types.GeneratedFile) ([]types.GeneratedFile, []string) {
+	toWrite := make([]types.GeneratedFile, 0, len(files))
+	var preserved []string
+	for _, f := range files {
+		if f.Strategy == types.Skip {
+			if _, err := os.Lstat(filepath.Join(projectRoot, f.Path)); err == nil {
+				preserved = append(preserved, f.Path)
+				continue
+			}
+		}
+		toWrite = append(toWrite, f)
+	}
+	return toWrite, preserved
+}
+
+// carryForwardState copies entries from oldState into newState for paths that
+// were not rewritten in this run (skipped, failed, or orphaned but kept),
+// except for released paths that are no longer tracked.
+func carryForwardState(newState *types.GeneratedState, oldState types.GeneratedState, released []string) {
+	for path, fs := range oldState.Files {
+		if _, written := newState.Files[path]; written || slices.Contains(released, path) {
+			continue
+		}
+		newState.Files[path] = fs
+	}
+}
+
+// partialWriteError describes the files that WriteFiles failed to write.
+func partialWriteError(result generate.WriteResult) error {
+	var details strings.Builder
+	for _, ff := range result.FailedFiles() {
+		fmt.Fprintf(&details, "\n  - %s: %v", ff.Path, ff.Error)
+	}
+	return fmt.Errorf("%d file(s) failed to write; configuration change not saved:%s",
+		result.Failed, details.String())
+}
+
 // cleanupOrphanedFiles removes files that were previously tracked in state but
 // are no longer produced after a configuration change. Modified orphans are
-// preserved with a warning.
-func cleanupOrphanedFiles(cmd *cobra.Command, oldState types.GeneratedState, newFiles []types.GeneratedFile, projectRoot string) {
+// preserved with a warning and handed over to the user. It returns the orphan
+// paths that should no longer be tracked in state: those removed (or already
+// gone) and those left in place because of local modifications.
+func cleanupOrphanedFiles(cmd *cobra.Command, oldState types.GeneratedState, newFiles []types.GeneratedFile, projectRoot string) []string {
+	var released []string
 	orphans := state.OrphanedFiles(oldState, newFiles)
 	for _, orphanPath := range orphans {
 		absPath := filepath.Join(projectRoot, orphanPath)
@@ -723,13 +846,20 @@ func cleanupOrphanedFiles(cmd *cobra.Command, oldState types.GeneratedState, new
 			currentHash, err := state.ComputeFileHash(absPath)
 			if err == nil && currentHash != fs.Hash {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  Orphaned file %s has local modifications; not removing\n", orphanPath)
+				released = append(released, orphanPath)
 				continue
 			}
 		}
-		if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  Warning: could not remove orphaned file %s: %v\n", orphanPath, err)
-		} else if err == nil {
+		err := os.Remove(absPath)
+		switch {
+		case err == nil:
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Removed orphaned file: %s\n", orphanPath)
+			released = append(released, orphanPath)
+		case os.IsNotExist(err):
+			released = append(released, orphanPath)
+		default:
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  Warning: could not remove orphaned file %s: %v\n", orphanPath, err)
 		}
 	}
+	return released
 }

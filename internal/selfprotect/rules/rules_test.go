@@ -1546,6 +1546,30 @@ func TestSP014_CLISecurityControlBlock(t *testing.T) {
 			verdict: Deny,
 		},
 		{
+			name: "deny qsdev session allow (agent self-granted policy bypass)",
+			ctx: EvalContext{
+				ToolName: "Bash",
+				Command:  "qsdev session allow SC-001",
+			},
+			verdict: Deny,
+		},
+		{
+			name: "deny qsdev session allow via --rules",
+			ctx: EvalContext{
+				ToolName: "Bash",
+				Command:  "cd /repo && qsdev  session   allow --rules SC-001,SC-002",
+			},
+			verdict: Deny,
+		},
+		{
+			name: "allow qsdev session list",
+			ctx: EvalContext{
+				ToolName: "Bash",
+				Command:  "qsdev session list",
+			},
+			verdict: Allow,
+		},
+		{
 			name: "allow qsdev enable tool",
 			ctx: EvalContext{
 				ToolName: "Bash",

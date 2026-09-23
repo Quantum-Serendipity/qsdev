@@ -666,6 +666,7 @@ tools:
         category: ai-agent
         description: Semantic code search via MCP server or sub-agent for codebase navigation
         default_policy: always-on
+        toggle_field: agent_tools.semble_enabled
         owned_files:
             - path: .mcp.json
               ownership: shared

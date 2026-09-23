@@ -179,7 +179,7 @@ YAML-based security policies define fine-grained rules evaluated at tool invocat
 
 **Bypass tiers** (3):
 - `enforce_always` — Cannot be bypassed. Used for self-protection rules.
-- `session` — Can be bypassed with `qsdev session allow <rule-id>` for the current session.
+- `session` — Can be bypassed with `qsdev session allow <rule-id>` (interactive confirmation required; applies machine-wide until `qsdev session clear`).
 - `command` — Can be bypassed per-invocation.
 
 Policy evaluation runs in under 50 microseconds per rule. Output is available in human-readable, JSON, and SARIF 2.1.0 formats.

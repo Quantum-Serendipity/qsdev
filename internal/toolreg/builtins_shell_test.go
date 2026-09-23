@@ -111,7 +111,7 @@ func TestStarshipSharedContent(t *testing.T) {
 		t.Fatal("SharedContent map is nil")
 	}
 
-	fn, ok := tool.SharedContent["starship"]
+	fn, ok := tool.SharedContent[SharedSection{Path: DevenvNixFile, SectionID: "starship"}]
 	if !ok {
 		t.Fatal("SharedContent missing 'starship' key")
 	}
@@ -141,7 +141,7 @@ func TestOtelConfigSharedContent(t *testing.T) {
 		t.Fatal("SharedContent map is nil")
 	}
 
-	fn, ok := tool.SharedContent["otel-config"]
+	fn, ok := tool.SharedContent[SharedSection{Path: DevenvNixFile, SectionID: "otel-config"}]
 	if !ok {
 		t.Fatal("SharedContent missing 'otel-config' key")
 	}
@@ -197,9 +197,15 @@ func TestOtelConfigSharedContent_CustomEndpoint(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	// The custom endpoint is rendered from answers.EnvVars by devenv.nix's env
+	// block; re-defining env.OTEL_EXPORTER_OTLP_ENDPOINT here would be a Nix
+	// "attribute already defined" error.
 	s := string(content)
-	if !strings.Contains(s, "http://collector:4317") {
-		t.Error("custom endpoint should be used when provided in EnvVars")
+	if strings.Contains(s, "OTEL_EXPORTER_OTLP_ENDPOINT") {
+		t.Errorf("endpoint set in EnvVars must not be defined again:\n%s", s)
+	}
+	if strings.Contains(s, "localhost:4317") {
+		t.Errorf("default endpoint must not override the user's endpoint:\n%s", s)
 	}
 	if !strings.Contains(s, `"myservice"`) {
 		t.Error("project name should appear in OTEL_SERVICE_NAME")

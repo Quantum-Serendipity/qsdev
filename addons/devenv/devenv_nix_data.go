@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -136,6 +137,16 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	// enable/disable lines for every detected ecosystem (plus always-on nixd).
 	// Analyzer config lives in the generated .lsp.json, not devenv.
 	collectLSPSection(answers, data)
+
+	// 4f. Sections enabled tools contribute to devenv.nix (e.g. the starship
+	// env var, commit-ticket/branch-naming hooks). Rendering them here makes
+	// the generator their single source: init, update and `enable` all emit
+	// them, so a routine update no longer drops a tool that is still enabled.
+	toolFragments, err := collectToolNixSections(answers)
+	if err != nil {
+		return nil, err
+	}
+	data.LanguageFragments = append(data.LanguageFragments, toolFragments...)
 
 	// 5. Services.
 	for _, svc := range answers.Services {
@@ -339,6 +350,27 @@ func collectLSPSection(answers types.WizardAnswers, data *DevenvNixTemplateData)
 		DisplayName: lspDisplayName,
 		NixFragment: b.String(),
 	})
+}
+
+// collectToolNixSections renders the devenv.nix section of every enabled tool
+// that declares one, in registry order, as fragments labelled with the tool's
+// display name.
+func collectToolNixSections(answers types.WizardAnswers) ([]LanguageFragment, error) {
+	sections, err := toolreg.DefaultRegistry().SharedSectionsFor(toolreg.DevenvNixFile, answers)
+	if err != nil {
+		return nil, fmt.Errorf("collecting tool devenv.nix sections: %w", err)
+	}
+	fragments := make([]LanguageFragment, 0, len(sections))
+	for _, s := range sections {
+		if strings.TrimSpace(string(s.Content)) == "" {
+			continue
+		}
+		fragments = append(fragments, LanguageFragment{
+			DisplayName: s.Tool.DisplayName,
+			NixFragment: string(s.Content),
+		})
+	}
+	return fragments, nil
 }
 
 // nixIndentLine returns line with the 2-space devenv.nix indentation and a

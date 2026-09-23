@@ -20,6 +20,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // register all modules
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -373,6 +374,13 @@ func executeUpdatePlan(
 		mode := fp.NewMode
 		if mode == 0 {
 			mode = fileutil.ModeReadWrite
+		}
+		// Same containment guarantee as generate.WriteFiles: never write
+		// through a symlink (or a crafted path) to outside the project.
+		if fp.Action != UpdateActionSkip {
+			if err := generate.ValidateDestination(projectRoot, fp.Path); err != nil {
+				return writtenFiles, nixResult, fmt.Errorf("refusing to write %s: %w", fp.Path, err)
+			}
 		}
 
 		switch fp.Action {

@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/registry"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Registry is a thread-safe collection of Tool definitions.
@@ -113,7 +114,7 @@ func (r *Registry) AttachBehavior(name string, b ToolBehavior) {
 		}
 		if b.SharedContent != nil {
 			if t.SharedContent == nil {
-				t.SharedContent = make(map[string]SharedContentFunc)
+				t.SharedContent = make(map[SharedSection]SharedContentFunc)
 			}
 			for k, v := range b.SharedContent {
 				t.SharedContent[k] = v
@@ -136,7 +137,7 @@ type ToolBehavior struct {
 	DisableFunc     DisableFunc
 	DetectFunc      DetectFunc
 	GenerateFunc    GenerateFunc
-	SharedContent   map[string]SharedContentFunc
+	SharedContent   map[SharedSection]SharedContentFunc
 	SectionDataFunc SectionDataFunc
 }
 
@@ -172,4 +173,38 @@ func ResetDefaultRegistry() {
 	defaultRegistryOnce = sync.Once{}
 	defaultRegistryVal = nil
 	defaultRegistryErr = nil
+}
+
+// SharedSectionContent is one enabled tool's rendered section of a shared file.
+type SharedSectionContent struct {
+	Tool      *Tool
+	SectionID string
+	Content   []byte
+}
+
+// SharedSectionsFor renders the section every enabled tool contributes to the
+// shared file at path, in registry order. Tools without content for that
+// file (e.g. whose contribution a generator renders directly) are skipped.
+func (r *Registry) SharedSectionsFor(path string, answers types.WizardAnswers) ([]SharedSectionContent, error) {
+	var out []SharedSectionContent
+	for _, t := range r.All() {
+		if !answers.EnabledTools[t.Name] {
+			continue
+		}
+		for _, f := range t.SharedFiles() {
+			if f.Path != path {
+				continue
+			}
+			fn, ok := t.SharedContent[SectionOf(f)]
+			if !ok {
+				continue
+			}
+			content, err := fn(answers)
+			if err != nil {
+				return nil, fmt.Errorf("rendering %s section %q of tool %q: %w", path, f.SectionID, t.Name, err)
+			}
+			out = append(out, SharedSectionContent{Tool: t, SectionID: f.SectionID, Content: content})
+		}
+	}
+	return out, nil
 }

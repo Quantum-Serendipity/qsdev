@@ -45,8 +45,8 @@ func registerMCPServerContent(r *toolreg.Registry) {
 		}
 
 		r.AttachBehavior(name, toolreg.ToolBehavior{
-			SharedContent: map[string]toolreg.SharedContentFunc{
-				mcpSectionID: mcpServerContentFunc(serverName),
+			SharedContent: map[toolreg.SharedSection]toolreg.SharedContentFunc{
+				{Path: ".mcp.json", SectionID: mcpSectionID}: mcpServerContentFunc(serverName),
 			},
 		})
 	}

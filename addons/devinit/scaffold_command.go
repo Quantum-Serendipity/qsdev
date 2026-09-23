@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/instance"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
@@ -30,6 +31,12 @@ type ScaffoldData struct {
 	Module       string
 	GitHubOwner  string
 	GitHubRepo   string
+	// QsdevVersion is the qsdev release to require ("" lets go mod tidy pick).
+	QsdevVersion string
+	// GdevReplacement is the "path version" target of the gdev replace.
+	GdevReplacement string
+	// VersionPackage is the import path release builds stamp via -ldflags -X.
+	VersionPackage string
 }
 
 var validAppName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -92,6 +99,10 @@ func runScaffold(cmd *cobra.Command, appName string, opts ScaffoldOptions) error
 		Module:       opts.Module,
 		GitHubOwner:  opts.GitHubOwner,
 		GitHubRepo:   opts.GitHubRepo,
+
+		QsdevVersion:    scaffoldQsdevVersion(),
+		GdevReplacement: scaffoldGdevReplacement(),
+		VersionPackage:  instance.VersionPackage,
 	}
 
 	files := []struct {

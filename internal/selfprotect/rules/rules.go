@@ -28,7 +28,7 @@ var (
 	reBypassExport  = regexp.MustCompile(`\b(export|unset)\s+(GDEV_HOOK_BYPASS|GDEV_BYPASS_\w+|GDEV_SELF_PROTECTION)`)
 	reBypassCmd     = regexp.MustCompile(`\bqsdev\s+hook\s+bypass`)
 	reAuditPath     = regexp.MustCompile(`\.qsdev/audit`)
-	reCliControl    = regexp.MustCompile(`\bqsdev\s+(disable\s+hooks|enable\s+hooks\s+--force)`)
+	reCliControl    = regexp.MustCompile(`\bqsdev\s+(disable\s+hooks|enable\s+hooks\s+--force|session\s+allow\b)`)
 	reSystemctl     = regexp.MustCompile(`\bsystemctl\s+(stop|disable)\b.*\b(qsdev|gdev)\b`)
 	reProcInfo      = regexp.MustCompile(`/proc/(?:self|\d+)/(environ|cmdline|fd/)`)
 	reAuditModCmd   = regexp.MustCompile(`\b(rm|cp|mv|tee)\b|>`)

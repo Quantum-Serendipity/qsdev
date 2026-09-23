@@ -37,8 +37,8 @@ func init() {
 			ensureEnabledTools(a)
 			a.EnabledTools["branch-naming"] = false
 		},
-		SharedContent: map[string]SharedContentFunc{
-			"branch-naming": branchNamingNixContent,
+		SharedContent: map[SharedSection]SharedContentFunc{
+			{Path: DevenvNixFile, SectionID: "branch-naming"}: branchNamingNixContent,
 		},
 	})
 
@@ -51,8 +51,8 @@ func init() {
 			ensureEnabledTools(a)
 			a.EnabledTools["commit-ticket"] = false
 		},
-		SharedContent: map[string]SharedContentFunc{
-			"commit-ticket": commitTicketNixContent,
+		SharedContent: map[SharedSection]SharedContentFunc{
+			{Path: DevenvNixFile, SectionID: "commit-ticket"}: commitTicketNixContent,
 		},
 	})
 
@@ -71,6 +71,11 @@ func init() {
 	})
 }
 
+// The hook scripts below are Nix indented strings (delimited by two single
+// quotes), so shell double quotes need no escaping; only an antiquotation
+// opener or two consecutive single quotes are special inside them. A
+// backslash escape is a syntax error in Nix expression context, which is why
+// the derivation is built with toString (...) rather than inside "${...}".
 func branchNamingNixContent(_ types.WizardAnswers) ([]byte, error) {
 	pattern := `^(feat|fix|chore|docs|refactor|test|ci)/[a-z0-9._-]+$`
 
@@ -78,18 +83,18 @@ func branchNamingNixContent(_ types.WizardAnswers) ([]byte, error) {
     enable = true;
     name = "Branch naming convention";
     description = "Validates branch name against allowed patterns";
-    entry = "${pkgs.writeShellScript \"branch-naming\" ''
+    entry = toString (pkgs.writeShellScript "branch-naming" ''
       branch=$(git rev-parse --abbrev-ref HEAD)
-      pattern=\"%s\"
-      if [ \"$branch\" = \"main\" ] || [ \"$branch\" = \"master\" ] || [ \"$branch\" = \"develop\" ]; then
+      pattern='%s'
+      if [ "$branch" = "main" ] || [ "$branch" = "master" ] || [ "$branch" = "develop" ]; then
         exit 0
       fi
-      if ! echo \"$branch\" | grep -qE \"$pattern\"; then
-        echo \"ERROR: Branch name '$branch' does not match convention.\"
-        echo \"Expected: feat|fix|chore|docs|refactor|test|ci/<description>\"
+      if ! echo "$branch" | grep -qE "$pattern"; then
+        echo "ERROR: Branch name '$branch' does not match convention."
+        echo "Expected: feat|fix|chore|docs|refactor|test|ci/<description>"
         exit 1
       fi
-    ''}";
+    '');
     language = "system";
     stages = [ "pre-push" ];
     pass_filenames = false;
@@ -103,7 +108,7 @@ func commitTicketNixContent(_ types.WizardAnswers) ([]byte, error) {
     enable = true;
     name = "Commit ticket extraction";
     description = "Extracts ticket ID from branch name and prepends to commit message";
-    entry = "${pkgs.writeShellScript \"commit-ticket\" ''
+    entry = toString (pkgs.writeShellScript "commit-ticket" ''
       COMMIT_MSG_FILE="$1"
       COMMIT_SOURCE="$2"
       # Only prepend for new commits (not amend, merge, etc.)
@@ -119,7 +124,7 @@ func commitTicketNixContent(_ types.WizardAnswers) ([]byte, error) {
           printf '%s %s' "$ticket" "$msg" > "$COMMIT_MSG_FILE"
         fi
       fi
-    ''}";
+    '');
     language = "system";
     stages = [ "prepare-commit-msg" ];
     pass_filenames = false;

@@ -2,8 +2,10 @@ package toolreg
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/shellenv"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -26,8 +28,8 @@ func init() {
 			}
 			return []types.GeneratedFile{*f}, nil
 		},
-		SharedContent: map[string]SharedContentFunc{
-			"starship": func(_ types.WizardAnswers) ([]byte, error) {
+		SharedContent: map[SharedSection]SharedContentFunc{
+			{Path: DevenvNixFile, SectionID: "starship"}: func(_ types.WizardAnswers) ([]byte, error) {
 				return []byte(`  env.STARSHIP_CONFIG = ".starship.toml";`), nil
 			},
 		},
@@ -42,8 +44,8 @@ func init() {
 			ensureEnabledTools(a)
 			a.EnabledTools["otel-config"] = false
 		},
-		SharedContent: map[string]SharedContentFunc{
-			"otel-config": otelConfigNixContent,
+		SharedContent: map[SharedSection]SharedContentFunc{
+			{Path: DevenvNixFile, SectionID: "otel-config"}: otelConfigNixContent,
 		},
 	})
 }
@@ -54,18 +56,23 @@ func otelConfigNixContent(answers types.WizardAnswers) ([]byte, error) {
 		projectName = "unknown"
 	}
 
-	endpoint := "http://localhost:4317"
-	if answers.EnvVars != nil {
-		if ep, ok := answers.EnvVars["OTEL_EXPORTER_OTLP_ENDPOINT"]; ok && ep != "" {
-			endpoint = ep
-		}
+	// Defaults only: a value the user set in answers.EnvVars (e.g. a custom
+	// collector endpoint) is already rendered in devenv.nix's env block.
+	vars := []struct{ name, value string }{
+		{"OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"},
+		{"OTEL_EXPORTER_OTLP_PROTOCOL", "grpc"},
+		{"OTEL_SERVICE_NAME", projectName},
+		{"OTEL_TRACES_SAMPLER", "parentbased_traceidratio"},
+		{"OTEL_TRACES_SAMPLER_ARG", "0.1"},
 	}
-
-	nix := fmt.Sprintf(`  env.OTEL_EXPORTER_OTLP_ENDPOINT = "%s";
-  env.OTEL_EXPORTER_OTLP_PROTOCOL = "grpc";
-  env.OTEL_SERVICE_NAME = "%s";
-  env.OTEL_TRACES_SAMPLER = "parentbased_traceidratio";
-  env.OTEL_TRACES_SAMPLER_ARG = "0.1";`, endpoint, projectName)
-
-	return []byte(nix), nil
+	var lines []string
+	for _, v := range vars {
+		// devenv.nix already renders answers.EnvVars in its env block; defining
+		// the same attribute again is a Nix "already defined" error.
+		if _, userSet := answers.EnvVars[v.name]; userSet {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("  env.%s = %s;", v.name, ecosystem.NixString(v.value)))
+	}
+	return []byte(strings.Join(lines, "\n")), nil
 }

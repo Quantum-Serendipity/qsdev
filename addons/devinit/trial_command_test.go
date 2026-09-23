@@ -2,11 +2,136 @@ package devinit
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// initTrialTestRepo creates a real repository with one commit on branch
+// "trunk" and isolates git from the user's global/system configuration.
+func initTrialTestRepo(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	emptyCfg := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(emptyCfg, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", emptyCfg)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_AUTHOR_NAME", "Test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.com")
+	t.Setenv("GIT_COMMITTER_NAME", "Test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.com")
+
+	dir := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README"), []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "--quiet", "--initial-branch", "trunk"},
+		{"add", "README"},
+		{"commit", "--quiet", "-m", "initial"},
+	} {
+		if err := runGit(dir, io.Discard, os.Stderr, args...); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+	return dir
+}
+
+// runTrialIn executes the trial command from dir and returns its output.
+func runTrialIn(t *testing.T, dir string, args ...string) (string, error) {
+	t.Helper()
+	t.Chdir(dir)
+	cmd := trialCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	return buf.String(), err
+}
+
+// TestTrialCmd_InitFailure_CleansUpWorktreeAndBranch is the F045 regression:
+// a failure after the worktree is created must remove the worktree and branch
+// so a retry does not fail with "path already exists".
+func TestTrialCmd_InitFailure_CleansUpWorktreeAndBranch(t *testing.T) {
+	repo := initTrialTestRepo(t)
+	worktree := filepath.Join(filepath.Dir(repo), "trial-wt")
+
+	orig := trialInitRunner
+	t.Cleanup(func() { trialInitRunner = orig })
+	calls := 0
+	trialInitRunner = func(string, io.Writer, io.Writer, ...string) error {
+		calls++
+		return errors.New("simulated init failure")
+	}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		out, err := runTrialIn(t, repo, "--path", worktree, "--branch", "trial-x")
+		if err == nil || !strings.Contains(err.Error(), "init in worktree failed") {
+			t.Fatalf("attempt %d: want init failure, got err=%v\n%s", attempt, err, out)
+		}
+		if _, statErr := os.Stat(worktree); !os.IsNotExist(statErr) {
+			t.Fatalf("attempt %d: worktree %s must be removed after failure (stat err=%v)", attempt, worktree, statErr)
+		}
+		if runGit(repo, io.Discard, io.Discard, "rev-parse", "--verify", "--quiet", "refs/heads/trial-x") == nil {
+			t.Fatalf("attempt %d: branch trial-x must be deleted after failure", attempt)
+		}
+	}
+	if calls != 2 {
+		t.Errorf("init runner calls = %d, want 2 (retry must reach init again)", calls)
+	}
+}
+
+// TestTrialCmd_KeepHintUsesOriginBranch checks the "Keep it" hint merges back
+// into the branch the trial was created from rather than a hard-coded main.
+func TestTrialCmd_KeepHintUsesOriginBranch(t *testing.T) {
+	repo := initTrialTestRepo(t)
+	worktree := filepath.Join(filepath.Dir(repo), "trial-ok")
+
+	orig := trialInitRunner
+	t.Cleanup(func() { trialInitRunner = orig })
+	trialInitRunner = func(dir string, _, _ io.Writer, _ ...string) error {
+		return os.WriteFile(filepath.Join(dir, "generated.txt"), []byte("x\n"), 0o644)
+	}
+
+	out, err := runTrialIn(t, repo, "--path", worktree, "--branch", "trial-ok")
+	if err != nil {
+		t.Fatalf("trial: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "git checkout trunk && git merge trial-ok") {
+		t.Errorf("keep hint should target the origin branch trunk, got:\n%s", out)
+	}
+	if strings.Contains(out, "checkout main") {
+		t.Errorf("keep hint must not hard-code main, got:\n%s", out)
+	}
+}
+
+// TestTrialCmd_DryRunRejectsInvalidBranch ensures --dry-run validates the
+// branch name instead of previewing a run that would fail.
+func TestTrialCmd_DryRunRejectsInvalidBranch(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatalf("setup .git: %v", err)
+	}
+	out, err := runTrialIn(t, dir, "--dry-run", "--branch", "bad..name")
+	if err == nil || !strings.Contains(err.Error(), "validating branch name") {
+		t.Fatalf("dry-run with invalid branch: want validation error, got err=%v\n%s", err, out)
+	}
+	if strings.Contains(out, "Would create") {
+		t.Errorf("dry-run must not preview an invalid branch, got:\n%s", out)
+	}
+}
 
 func TestTrialCmd_HasCorrectUseAndFlags(t *testing.T) {
 	cmd := trialCmd()

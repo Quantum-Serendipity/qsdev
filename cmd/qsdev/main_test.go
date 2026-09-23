@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/instance"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
 )
@@ -10,9 +11,11 @@ import (
 // TestRegisterFrameworkAdapters proves all five framework adapters are wired into
 // the default registry by the explicit registration that replaced the former
 // per-package init() self-registration — and that registration does not panic on
-// a duplicate. It is the regression guard for the init()->explicit-wiring refactor.
+// a duplicate (it is called twice here, as qsdev and a downstream tool both may).
+// It is the regression guard for the init()->explicit-wiring refactor.
 func TestRegisterFrameworkAdapters(t *testing.T) {
-	registerFrameworkAdapters()
+	instance.RegisterFrameworkAdapters()
+	instance.RegisterFrameworkAdapters()
 
 	got := map[aiframework.FrameworkID]bool{}
 	for _, a := range spi.DefaultRegistry().All() {

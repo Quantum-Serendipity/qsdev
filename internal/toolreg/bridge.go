@@ -59,10 +59,10 @@ func buildRegistryFromCatalog(cat *catalog.Catalog) *Registry {
 		for _, owned := range t.OwnedFiles {
 			if owned.Ownership == Shared && owned.SectionID != "" && owned.SectionContent != "" {
 				if t.SharedContent == nil {
-					t.SharedContent = make(map[string]SharedContentFunc)
+					t.SharedContent = make(map[SharedSection]SharedContentFunc)
 				}
 				content := owned.SectionContent
-				t.SharedContent[owned.SectionID] = func(_ types.WizardAnswers) ([]byte, error) {
+				t.SharedContent[SectionOf(owned)] = func(_ types.WizardAnswers) ([]byte, error) {
 					return []byte(content), nil
 				}
 			}

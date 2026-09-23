@@ -1,8 +1,14 @@
 package devinit
 
-// ecosystemGitignoreEntries maps ecosystem names to their recommended .gitignore
-// entries. These cover build artifacts, dependency directories, and secret files
-// that should never be committed.
+// ecosystemGitignoreEntries maps ecosystem module names (EcosystemModule.Name(),
+// the value stored in WizardAnswers.Languages[].Name) to their recommended
+// .gitignore entries. These cover build artifacts, dependency directories, and
+// secret files that should never be committed.
+//
+// Entries must never ignore files the ecosystem needs committed: Go's vendor/
+// directory is deliberately absent (vendored modules are committed for
+// reproducible -mod=vendor builds), and the Java build-wrapper jars are
+// re-included after *.jar so ./gradlew and ./mvnw work on a fresh clone.
 var ecosystemGitignoreEntries = map[string][]string{
 	"javascript": {
 		"node_modules/",
@@ -23,8 +29,7 @@ var ecosystemGitignoreEntries = map[string][]string{
 		"*.pem",
 		"*.key",
 	},
-	"golang": {
-		"vendor/",
+	"go": {
 		"*.exe",
 		".env",
 		".env.*",
@@ -59,6 +64,8 @@ var ecosystemGitignoreEntries = map[string][]string{
 		"build/",
 		"*.class",
 		"*.jar",
+		"!gradle/wrapper/gradle-wrapper.jar",
+		"!.mvn/wrapper/maven-wrapper.jar",
 		".env",
 		".env.*",
 		"*.pem",

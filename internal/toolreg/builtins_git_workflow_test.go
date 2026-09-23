@@ -151,7 +151,7 @@ func TestGitWorkflowSharedContent_BranchNaming(t *testing.T) {
 		t.Fatal("branch-naming should have SharedContent map")
 	}
 
-	fn, ok := tool.SharedContent["branch-naming"]
+	fn, ok := tool.SharedContent[SharedSection{Path: DevenvNixFile, SectionID: "branch-naming"}]
 	if !ok {
 		t.Fatal("SharedContent missing 'branch-naming' key")
 	}
@@ -186,7 +186,7 @@ func TestGitWorkflowSharedContent_CommitTicket(t *testing.T) {
 		t.Fatal("commit-ticket should have SharedContent map")
 	}
 
-	fn, ok := tool.SharedContent["commit-ticket"]
+	fn, ok := tool.SharedContent[SharedSection{Path: DevenvNixFile, SectionID: "commit-ticket"}]
 	if !ok {
 		t.Fatal("SharedContent missing 'commit-ticket' key")
 	}
@@ -297,4 +297,3 @@ func TestGitWorkflowCommitTicketNoGenerateFunc(t *testing.T) {
 		t.Error("commit-ticket should not have GenerateFunc (uses SharedContent only)")
 	}
 }
-

@@ -1,5 +1,56 @@
 package devinit
 
+import (
+	"runtime/debug"
+	"strings"
+
+	"golang.org/x/mod/semver"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
+)
+
+// gdevModulePath is the framework module qsdev builds on. qsdev requires it at
+// a placeholder version satisfied only by a replace directive, and Go ignores
+// replace directives of dependencies, so every scaffolded instance must repeat
+// the replacement in its own go.mod.
+const gdevModulePath = "fastcat.org/go/gdev"
+
+// defaultGdevReplacement is the replacement target used when the running
+// binary carries no module build info (e.g. some test binaries). It must match
+// the replace directive in qsdev's go.mod; a test enforces this.
+const defaultGdevReplacement = "github.com/Quantum-Serendipity/gdev v0.0.0-20260515232304-7ffd0edf72e3"
+
+// scaffoldGdevReplacement returns the "path version" replacement target for
+// gdev, taken from the running binary's build info so it always matches the
+// gdev this qsdev was built against.
+func scaffoldGdevReplacement() string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, dep := range bi.Deps {
+			// A directory replacement (no version) is only meaningful on the
+			// machine that built qsdev, so fall back to the published fork.
+			if dep.Path == gdevModulePath && dep.Replace != nil && dep.Replace.Version != "" {
+				return dep.Replace.Path + " " + dep.Replace.Version
+			}
+		}
+	}
+	return defaultGdevReplacement
+}
+
+// scaffoldQsdevVersion returns the qsdev module version the scaffold should
+// require: the running release (so the scaffold builds against the framework
+// that generated it), or "" for development builds, in which case the require
+// is omitted and `go mod tidy` resolves the latest release.
+func scaffoldQsdevVersion() string {
+	v := version.Info().Version
+	if !strings.HasPrefix(v, "v") {
+		v = "v" + v
+	}
+	if !semver.IsValid(v) {
+		return ""
+	}
+	return v
+}
+
 const scaffoldMainGoTmpl = `package main
 
 import (
@@ -29,6 +80,10 @@ func main() {
 		GitHubOwner:   "{{.GitHubOwner}}",
 		GitHubRepo:    "{{.GitHubRepo}}",
 	})
+	// Same runtime wiring as qsdev itself: MCP framework adapters, external-log
+	// providers, and the release version stamped via -ldflags (see Makefile).
+	instance.RegisterFrameworkAdapters()
+	instance.ApplyBuildVersion()
 
 	bootstrap.Configure(
 		bootstrap.WithSteps(
@@ -40,7 +95,10 @@ func main() {
 
 	devenv.Configure(devenv.WithDirenv(true))
 	claudecode.Configure(claudecode.WithDefaultPermissions(claudecode.PermissionPresetStandard))
-	devinit.Configure(devinit.WithDetectProjectType(true))
+	devinit.Configure(
+		devinit.WithDetectProjectType(true),
+		devinit.WithPlanPreview(true),
+	)
 
 	cmd.Main()
 }
@@ -49,17 +107,24 @@ func main() {
 const scaffoldGoModTmpl = `module {{.Module}}
 
 go 1.24
+{{- if .QsdevVersion}}
 
-require (
-	github.com/Quantum-Serendipity/qsdev v0.6.1
-)
+require github.com/Quantum-Serendipity/qsdev {{.QsdevVersion}}
+{{- end}}
+
+// qsdev builds on a gdev fork reachable only through a replace directive, and
+// Go ignores replace directives of dependencies, so it is repeated here.
+replace fastcat.org/go/gdev => {{.GdevReplacement}}
 `
 
 const scaffoldMakefileTmpl = `MODULE  := {{.Module}}
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  := $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
-LDFLAGS := -X $(MODULE)/internal/version.version=$(VERSION) \
-           -X $(MODULE)/internal/version.commit=$(COMMIT)
+# The framework reads its version from qsdev's version package (self-update,
+# version ratchet, generated state), so that is the package to stamp.
+VERSION_PKG := {{.VersionPackage}}
+LDFLAGS := -X $(VERSION_PKG).version=$(VERSION) \
+           -X $(VERSION_PKG).commit=$(COMMIT)
 
 .PHONY: build test lint clean
 
@@ -87,8 +152,8 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X {{.Module}}/internal/version.version={{"{{"}} .Version {{"}}"}}
-      - -X {{.Module}}/internal/version.commit={{"{{"}} .Commit {{"}}"}}
+      - -X {{.VersionPackage}}.version={{"{{"}} .Version {{"}}"}}
+      - -X {{.VersionPackage}}.commit={{"{{"}} .Commit {{"}}"}}
     goos:
       - linux
       - darwin

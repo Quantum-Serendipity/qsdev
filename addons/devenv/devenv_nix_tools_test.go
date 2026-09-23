@@ -41,7 +41,7 @@ func TestGenerateDevenvNix_EnabledToolSections(t *testing.T) {
 				"otel-config":          true,
 			},
 			want: []string{
-				`env.STARSHIP_CONFIG = ".starship.toml";`,
+				`env.STARSHIP_CONFIG = "${config.devenv.root}/.starship.toml";`,
 				"git-hooks.hooks.commit-ticket = {",
 				"git-hooks.hooks.branch-naming = {",
 				"env.OTEL_SERVICE_NAME",

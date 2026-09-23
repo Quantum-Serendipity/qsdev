@@ -101,6 +101,12 @@ func buildMCPHandler(def mcpserver.ToolDef) server.ToolHandlerFunc {
 // call from concurrent tests.
 var registerMCPProvidersOnce sync.Once
 
+// RegisterMCPProviders registers the embedded MCP server providers (see
+// registerMCPProviders). The addon's initialize already calls it; it is
+// exported for callers that need the provider registry before addons are
+// initialized, such as tests of the entry point. It is idempotent.
+func RegisterMCPProviders() { registerMCPProviders() }
+
 // registerMCPProviders registers the embedded MCP server providers and wires
 // attestation into the compliance grader. It is called explicitly from the
 // addon's initialize (not from a package init), so importing this package has

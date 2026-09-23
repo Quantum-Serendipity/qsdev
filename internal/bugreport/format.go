@@ -9,16 +9,16 @@ import (
 
 // BugReport holds all data for composing a GitHub issue.
 type BugReport struct {
-	Title          string
-	Description    string
-	Steps          string
-	Severity       string
-	Category       string
-	Environment    Environment
-	IncludeEnv     bool
-	LogExcerpt     string
-	SessionInfo    string
-	ExtLogExcerpt  string
+	Title         string
+	Description   string
+	Steps         string
+	Severity      string
+	Category      string
+	Environment   Environment
+	IncludeEnv    bool
+	LogExcerpt    string
+	SessionInfo   string
+	ExtLogExcerpt string
 }
 
 // FormatIssueBody renders the bug report as a markdown issue body.

@@ -12,8 +12,8 @@ import (
 func shellBehaviors() map[string]ToolBehavior {
 	return map[string]ToolBehavior{
 		"starship-integration": {
-			GenerateFunc: func(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
-				f, err := shellenv.GenerateStarshipToml(answers)
+			GenerateFunc: func(_ types.WizardAnswers) ([]types.GeneratedFile, error) {
+				f, err := shellenv.GenerateStarshipToml()
 				if err != nil {
 					return nil, err
 				}
@@ -21,7 +21,7 @@ func shellBehaviors() map[string]ToolBehavior {
 			},
 			SharedContent: map[SharedSection]SharedContentFunc{
 				{Path: DevenvNixFile, SectionID: "starship"}: func(_ types.WizardAnswers) ([]byte, error) {
-					return []byte(`  env.STARSHIP_CONFIG = ".starship.toml";`), nil
+					return shellenv.StarshipNixContent(), nil
 				},
 			},
 		},

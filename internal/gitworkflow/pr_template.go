@@ -1,8 +1,11 @@
 package gitworkflow
 
 import (
+	"fmt"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -35,28 +38,9 @@ func GeneratePRTemplate(answers types.WizardAnswers) (*types.GeneratedFile, erro
 	b.WriteString("- [ ] Unit tests added/updated\n")
 	b.WriteString("- [ ] Manual testing performed\n")
 
-	// Per-ecosystem items.
-	for _, lang := range answers.Languages {
-		switch lang.Name {
-		case "go":
-			b.WriteString("- [ ] `go vet ./...` passes\n")
-			b.WriteString("- [ ] `go test ./...` passes\n")
-		case "javascript", "typescript":
-			b.WriteString("- [ ] TypeScript types exported correctly\n")
-			b.WriteString("- [ ] `npm audit` clean\n")
-		case "python":
-			b.WriteString("- [ ] Type hints added\n")
-			b.WriteString("- [ ] Linter passes\n")
-		case "rust":
-			b.WriteString("- [ ] `cargo clippy` clean\n")
-			b.WriteString("- [ ] `cargo test` passes\n")
-		case "java":
-			b.WriteString("- [ ] Build passes\n")
-			b.WriteString("- [ ] Static analysis clean\n")
-		case "dotnet":
-			b.WriteString("- [ ] `dotnet build` passes\n")
-			b.WriteString("- [ ] `dotnet test` passes\n")
-		}
+	// Per-ecosystem items: each selected language's own verification commands.
+	for _, cmd := range verificationCommands(answers, ecosystem.DefaultRegistry()) {
+		fmt.Fprintf(&b, "- [ ] `%s` passes\n", cmd)
 	}
 
 	// Docker section if Dockerfile detected.
@@ -77,6 +61,23 @@ func GeneratePRTemplate(answers types.WizardAnswers) (*types.GeneratedFile, erro
 		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
 	}, nil
+}
+
+// verificationCommands returns the build, test, lint, type-check and format
+// commands the ecosystem modules of the selected languages declare, in language
+// order and without duplicates. Sourcing them from the modules keeps the
+// checklist in step with every catalog language and its configured package
+// manager, instead of a hand-maintained per-language table.
+func verificationCommands(answers types.WizardAnswers, registry *ecosystem.Registry) []string {
+	var cmds []string
+	for _, lang := range answers.Languages {
+		mod, ok := registry.ByName(lang.Name)
+		if !ok {
+			continue
+		}
+		cmds = append(cmds, mod.VerificationCommands(ecosystem.ToModuleConfig(lang)).All()...)
+	}
+	return sliceutil.Dedup(cmds)
 }
 
 func hasSecurityTools(answers types.WizardAnswers) bool {

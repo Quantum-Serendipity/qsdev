@@ -1,6 +1,8 @@
 package bugreport
 
 import (
+	"os"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -256,6 +258,25 @@ func TestSaveToFile(t *testing.T) {
 	}
 	if !strings.HasSuffix(path, ".md") {
 		t.Errorf("path = %q, want .md extension", path)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("report mode = %o, want 600 (it embeds log excerpts)", perm)
+		}
+	}
+}
+
+func TestSaveToFile_NoHomeNoTempFallback(t *testing.T) {
+	// Not parallel: t.Setenv is incompatible with t.Parallel.
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	t.Setenv("home", "")
+	if path, err := SaveToFile("Test Bug", "Body"); err == nil {
+		t.Errorf("SaveToFile without a home directory wrote %q", path)
 	}
 }
 

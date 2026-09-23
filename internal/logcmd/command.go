@@ -1,7 +1,6 @@
 package logcmd
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -140,7 +139,7 @@ func discoverSessions(dir string) ([]sessionInfo, error) {
 		if lines, last, err := readHeadAndTail(path, 3); err == nil {
 			for _, line := range lines {
 				if si.ID == "" {
-					si.ID = jsonField(line, "session")
+					si.ID = recordSessionID(line)
 				}
 				if si.Command == "" {
 					si.Command = jsonField(line, "command")
@@ -266,7 +265,7 @@ func runShow(cmd *cobra.Command, sessionID string) error {
 	// secrets, so never emit an unredacted line to the terminal (F-CAP-29.5-1).
 	red := logging.NewRedactor()
 
-	scanner := bufio.NewScanner(f)
+	scanner := logging.NewLineScanner(f)
 	w := cmd.OutOrStdout()
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -365,7 +364,7 @@ func readHeadAndTail(path string, headCount int) (head []string, last string, er
 	}
 	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
+	scanner := logging.NewLineScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if len(head) < headCount {
@@ -374,6 +373,21 @@ func readHeadAndTail(path string, headCount int) (head []string, last string, er
 		last = line
 	}
 	return head, last, scanner.Err()
+}
+
+// recordSessionID returns the session ID a log record is tagged with. Logs
+// written before the ID moved to logging.SessionAttrKey carry it under the
+// legacy "session" key, which the redacting handler replaced with the
+// redaction marker; such a value is ignored so the caller falls back to the
+// ID in the file name.
+func recordSessionID(line string) string {
+	if id := jsonField(line, logging.SessionAttrKey); id != "" {
+		return id
+	}
+	if id := jsonField(line, "session"); id != logging.RedactionMarker {
+		return id
+	}
+	return ""
 }
 
 func jsonField(line, key string) string {
@@ -452,7 +466,7 @@ func parseDuration(s string) (time.Duration, error) {
 // redaction missed it or the file was edited by hand (F-CAP-29.5-1).
 func WriteTo(w io.Writer, r io.Reader, levelFilter string, maxLines int) (int, error) {
 	red := logging.NewRedactor()
-	scanner := bufio.NewScanner(r)
+	scanner := logging.NewLineScanner(r)
 	count := 0
 	for scanner.Scan() {
 		if maxLines > 0 && count >= maxLines {

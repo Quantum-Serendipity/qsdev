@@ -147,10 +147,14 @@ func runServe(ctx context.Context, opts serveOptions) error {
 
 	// Force stderr logging: in stdio mode stdout carries the protocol, so every
 	// diagnostic must land on stderr instead. A logging failure is non-fatal.
+	// The server is launched by the agent for every session, so its log is
+	// kept with the other automated sessions rather than evicting the logs of
+	// user-run commands.
 	session, _ := logging.Init(logging.Config{
 		StderrToo:     true,
 		ProjectRoot:   root,
 		ProjectScoped: root != "",
+		Automated:     true,
 	})
 	defer session.Close() // Close is nil-safe.
 

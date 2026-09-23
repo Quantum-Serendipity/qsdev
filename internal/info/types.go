@@ -8,7 +8,7 @@ type ProjectInfo struct {
 	Ecosystems        []string       `json:"ecosystems"`
 	ActiveToolCount   int            `json:"active_tool_count"`
 	SecurityProfile   string         `json:"security_profile"`
-	QsdevVersion       string         `json:"qsdev_version"`
+	QsdevVersion      string         `json:"qsdev_version"`
 	ConfigVersion     int            `json:"config_version"`
 	LastUpdated       time.Time      `json:"last_updated"`
 	ToolsByCategory   map[string]int `json:"tools_by_category"`

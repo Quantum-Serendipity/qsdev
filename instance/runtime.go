@@ -33,17 +33,22 @@ var registerAdaptersOnce sync.Once
 
 // RegisterFrameworkAdapters wires the universal MCP server's framework
 // adapters into the default registry. It is safe to call more than once.
-// A duplicate-id error can only mean an adapter was listed twice — a build
-// wiring mistake worth surfacing loudly.
 func RegisterFrameworkAdapters() {
 	registerAdaptersOnce.Do(func() {
-		reg := spi.DefaultRegistry()
-		for _, a := range adapters.All() {
-			if err := reg.Register(a); err != nil {
-				panic(fmt.Sprintf("registering framework adapter %q: %v", a.ID(), err))
-			}
-		}
+		RegisterFrameworkAdaptersInto(spi.DefaultRegistry())
 	})
+}
+
+// RegisterFrameworkAdaptersInto registers every shipped framework adapter
+// (adapters.All) into reg. A duplicate-id error can only mean an adapter was
+// listed twice, or reg already holds them — a build wiring mistake worth
+// surfacing loudly, so it panics.
+func RegisterFrameworkAdaptersInto(reg *spi.AdapterRegistry) {
+	for _, a := range adapters.All() {
+		if err := reg.Register(a); err != nil {
+			panic(fmt.Sprintf("registering framework adapter %q: %v", a.ID(), err))
+		}
+	}
 }
 
 // ApplyBuildVersion propagates the version stamped into VersionPackage to the

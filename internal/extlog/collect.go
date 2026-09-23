@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"time"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 )
 
 // CollectionWindow defines the time range for log collection.
@@ -25,7 +27,11 @@ func DefaultWindow(minutes int) CollectionWindow {
 // CollectAll discovers and collects logs from all detected providers
 // within the given time window.
 func CollectAll(projectRoot, homeDir string, window CollectionWindow) (map[string][]LogEntry, []CollectionSummary) {
-	registry := DefaultRegistry()
+	return collectFrom(DefaultRegistry(), projectRoot, homeDir, window)
+}
+
+// collectFrom is CollectAll over an explicit registry.
+func collectFrom(registry *Registry, projectRoot, homeDir string, window CollectionWindow) (map[string][]LogEntry, []CollectionSummary) {
 	available := registry.DetectAll(projectRoot, homeDir)
 	scrubber := NewScrubber(homeDir, projectRoot)
 
@@ -61,13 +67,18 @@ func CollectAll(projectRoot, homeDir string, window CollectionWindow) (map[strin
 			parsed, err := provider.Parse(f, lf.Path)
 			f.Close()
 			if err != nil {
+				// Keep what was parsed before the failure: a read error late
+				// in a file must not discard the entries that precede it.
 				summary.CollectionErrors = append(summary.CollectionErrors,
 					fmt.Sprintf("parse %s: %v", lf.Path, err))
-				continue
 			}
 
+			// Private-key blocks span lines, so their state is carried across
+			// the entries of one file; the per-line scrub alone would see only
+			// the BEGIN line and pass the key body through.
+			var keys logging.PrivateKeyLineFilter
 			for i := range parsed {
-				parsed[i].Message = scrubber.Scrub(parsed[i].Message)
+				parsed[i].Message = scrubber.Scrub(keys.Filter(parsed[i].Message))
 				if parsed[i].File != "" {
 					parsed[i].File = scrubber.Scrub(parsed[i].File)
 				}

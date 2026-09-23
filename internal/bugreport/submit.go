@@ -70,9 +70,11 @@ func BrowserURL(title, body string) string {
 
 // SaveToFile writes the report to the app's home directory and returns the path.
 func SaveToFile(title, body string) (string, error) {
+	// No shared-temp fallback: a predictable path there could be pre-created
+	// or symlinked by another local user.
 	home, err := os.UserHomeDir()
 	if err != nil {
-		home = os.TempDir()
+		return "", fmt.Errorf("locating home directory for the bug report: %w", err)
 	}
 	dir := filepath.Join(home, "."+branding.Get().AppName)
 	if err := os.MkdirAll(dir, fileutil.ModeDirDefault); err != nil {
@@ -82,8 +84,9 @@ func SaveToFile(title, body string) (string, error) {
 	filename := fmt.Sprintf("bug-report-%s.md", time.Now().Format("2006-01-02T15-04-05"))
 	path := filepath.Join(dir, filename)
 
+	// Owner-only: the report embeds log excerpts and environment details.
 	content := fmt.Sprintf("# %s\n\n%s", title, body)
-	if err := os.WriteFile(path, []byte(content), fileutil.ModeReadWrite); err != nil {
+	if err := os.WriteFile(path, []byte(content), fileutil.ModePrivate); err != nil {
 		return "", err
 	}
 	return path, nil

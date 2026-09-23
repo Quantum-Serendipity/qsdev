@@ -17,6 +17,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/bugreport"
 	"github.com/Quantum-Serendipity/qsdev/internal/logcmd"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserver"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -93,19 +94,24 @@ func extractDebugFlag(args []string) []string {
 // initLogging is called by cobra.OnInitialize during Execute(), before any
 // command's PreRun. It sets up the two-tier structured logging system.
 func initLogging() {
+	class := classifyInvocation(os.Args[1:])
+	if class == logging.ClassUnlogged {
+		return
+	}
+
 	level := logging.LevelFromEnv()
 	stderrToo := strings.EqualFold(os.Getenv(branding.Get().EnvLogVar), "debug")
 
 	projectRoot := logging.DetectProjectRoot()
 	commandPath := detectCommandFromArgs()
-	isProjectCmd := logging.IsProjectScopedCommand(commandPath)
 
 	var err error
 	logSession, err = logging.Init(logging.Config{
 		Level:         level,
 		StderrToo:     stderrToo,
 		ProjectRoot:   projectRoot,
-		ProjectScoped: isProjectCmd && projectRoot != "",
+		ProjectScoped: class != logging.ClassGlobal && projectRoot != "",
+		Automated:     class == logging.ClassAutomated,
 	})
 	if err != nil {
 		slog.Warn("logging init failed", "error", err)
@@ -115,6 +121,20 @@ func initLogging() {
 		logSession.Command = commandPath
 		slog.Info("command starting", "command", commandPath)
 	}
+}
+
+// classifyInvocation extends logging.ClassifyInvocation with the embedded MCP
+// servers ("mcp <provider>"), which are launched by the agent for every session
+// and are therefore automated. They are derived from the provider registry so
+// a newly registered server is classified without further wiring.
+func classifyInvocation(args []string) logging.CommandClass {
+	class := logging.ClassifyInvocation(args)
+	if class == logging.ClassProject && len(args) >= 2 && args[0] == "mcp" {
+		if _, ok := mcpserver.DefaultRegistry().Get(args[1]); ok {
+			return logging.ClassAutomated
+		}
+	}
+	return class
 }
 
 // detectCommandFromArgs builds a rough command path from os.Args for the

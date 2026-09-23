@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -48,59 +50,82 @@ func TestGeneratePRTemplate_EmptyAnswers(t *testing.T) {
 	}
 }
 
-func TestGeneratePRTemplate_GoEcosystem(t *testing.T) {
-	answers := types.WizardAnswers{
-		Languages: []types.LanguageChoice{
-			{Name: "go", Version: "1.22"},
+func TestGeneratePRTemplate_EcosystemChecklist(t *testing.T) {
+	tests := []struct {
+		name      string
+		languages []types.LanguageChoice
+		want      []string
+	}{
+		{
+			name:      "go",
+			languages: []types.LanguageChoice{{Name: "go", Version: "1.22"}},
+			want:      []string{"- [ ] `go vet ./...` passes", "- [ ] `go test ./...` passes"},
+		},
+		{
+			name:      "javascript follows the configured package manager",
+			languages: []types.LanguageChoice{{Name: "javascript", PackageManager: "pnpm"}},
+			want:      []string{"- [ ] `pnpm test` passes", "- [ ] `pnpm run lint` passes"},
+		},
+		{
+			name:      "multiple ecosystems",
+			languages: []types.LanguageChoice{{Name: "go"}, {Name: "python"}, {Name: "rust"}},
+			want:      []string{"`go test ./...`", "`cargo test`"},
+		},
+		{
+			name:      "unknown language contributes nothing",
+			languages: []types.LanguageChoice{{Name: "not-a-language"}},
 		},
 	}
-
-	f, err := GeneratePRTemplate(answers)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	content := string(f.Content)
-	if !strings.Contains(content, "`go vet ./...`") {
-		t.Error("content missing go vet checklist item")
-	}
-	if !strings.Contains(content, "`go test ./...`") {
-		t.Error("content missing go test checklist item")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := GeneratePRTemplate(types.WizardAnswers{Languages: tt.languages})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			content := string(f.Content)
+			for _, w := range tt.want {
+				if !strings.Contains(content, w) {
+					t.Errorf("content missing %q:\n%s", w, content)
+				}
+			}
+		})
 	}
 }
 
-func TestGeneratePRTemplate_MultipleEcosystems(t *testing.T) {
-	answers := types.WizardAnswers{
-		Languages: []types.LanguageChoice{
-			{Name: "go"},
-			{Name: "python"},
-			{Name: "rust"},
-		},
-	}
-
-	f, err := GeneratePRTemplate(answers)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	content := string(f.Content)
-
-	expectations := []struct {
-		lang  string
-		check string
-	}{
-		{"go", "`go vet ./...`"},
-		{"go", "`go test ./...`"},
-		{"python", "Type hints added"},
-		{"python", "Linter passes"},
-		{"rust", "`cargo clippy`"},
-		{"rust", "`cargo test`"},
-	}
-
-	for _, exp := range expectations {
-		if !strings.Contains(content, exp.check) {
-			t.Errorf("content missing %s checklist item: %q", exp.lang, exp.check)
+// TestGeneratePRTemplate_EveryCatalogLanguage proves the checklist covers every
+// registered ecosystem module — the hardcoded table covered only six languages
+// and carried a dead "typescript" case.
+func TestGeneratePRTemplate_EveryCatalogLanguage(t *testing.T) {
+	for _, mod := range ecosystem.DefaultRegistry().All() {
+		cmds := mod.VerificationCommands(ecosystem.ModuleConfig{}).All()
+		if len(cmds) == 0 {
+			continue
 		}
+		t.Run(mod.Name(), func(t *testing.T) {
+			f, err := GeneratePRTemplate(types.WizardAnswers{Languages: []types.LanguageChoice{{Name: mod.Name()}}})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			for _, c := range cmds {
+				if !strings.Contains(string(f.Content), "`"+c+"`") {
+					t.Errorf("checklist missing %s command %q", mod.Name(), c)
+				}
+			}
+		})
+	}
+}
+
+func TestVerificationCommands_Dedup(t *testing.T) {
+	got := verificationCommands(types.WizardAnswers{Languages: []types.LanguageChoice{{Name: "go"}, {Name: "go"}}}, ecosystem.DefaultRegistry())
+	seen := map[string]bool{}
+	for _, c := range got {
+		if seen[c] {
+			t.Errorf("duplicate command %q in %v", c, got)
+		}
+		seen[c] = true
+	}
+	if len(got) == 0 {
+		t.Error("no commands for go")
 	}
 }
 
@@ -159,69 +184,6 @@ func TestGeneratePRTemplate_DockerfileDetected(t *testing.T) {
 	}
 	if !strings.Contains(content, "Image scanned for vulnerabilities") {
 		t.Error("content missing Docker scan checklist item")
-	}
-}
-
-func TestGeneratePRTemplate_JavascriptEcosystem(t *testing.T) {
-	answers := types.WizardAnswers{
-		Languages: []types.LanguageChoice{
-			{Name: "javascript"},
-		},
-	}
-
-	f, err := GeneratePRTemplate(answers)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	content := string(f.Content)
-	if !strings.Contains(content, "TypeScript types exported correctly") {
-		t.Error("content missing TypeScript types checklist item")
-	}
-	if !strings.Contains(content, "`npm audit`") {
-		t.Error("content missing npm audit checklist item")
-	}
-}
-
-func TestGeneratePRTemplate_JavaEcosystem(t *testing.T) {
-	answers := types.WizardAnswers{
-		Languages: []types.LanguageChoice{
-			{Name: "java"},
-		},
-	}
-
-	f, err := GeneratePRTemplate(answers)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	content := string(f.Content)
-	if !strings.Contains(content, "Build passes") {
-		t.Error("content missing Java build checklist item")
-	}
-	if !strings.Contains(content, "Static analysis clean") {
-		t.Error("content missing Java static analysis checklist item")
-	}
-}
-
-func TestGeneratePRTemplate_DotnetEcosystem(t *testing.T) {
-	answers := types.WizardAnswers{
-		Languages: []types.LanguageChoice{
-			{Name: "dotnet"},
-		},
-	}
-
-	f, err := GeneratePRTemplate(answers)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	content := string(f.Content)
-	if !strings.Contains(content, "`dotnet build`") {
-		t.Error("content missing dotnet build checklist item")
-	}
-	if !strings.Contains(content, "`dotnet test`") {
-		t.Error("content missing dotnet test checklist item")
 	}
 }
 

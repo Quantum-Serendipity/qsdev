@@ -21,18 +21,18 @@ import (
 
 func main() {
 	instance.SetBranding(branding.Config{
-		AppName:      "acmedev",
-		ConfigFile:   ".acmedev.yaml",
-		LocalConfig:  ".acmedev.local.yaml",
-		StateDir:     ".acmedev",
-		EnvLogVar:    "ACMEDEV_LOG",
-		EnvLogDirVar: "ACMEDEV_LOG_DIR",
-		EnvNoUpdate:  "ACMEDEV_NO_UPDATE_CHECK",
-		EnvPrefix:    "ACMEDEV_",
+		AppName:       "acmedev",
+		ConfigFile:    ".acmedev.yaml",
+		LocalConfig:   ".acmedev.local.yaml",
+		StateDir:      ".acmedev",
+		EnvLogVar:     "ACMEDEV_LOG",
+		EnvLogDirVar:  "ACMEDEV_LOG_DIR",
+		EnvNoUpdate:   "ACMEDEV_NO_UPDATE_CHECK",
+		EnvPrefix:     "ACMEDEV_",
 		LogFilePrefix: "acmedev-",
-		TempPrefix:   ".acmedev-tmp-",
-		GitHubOwner:  "acme-corp",
-		GitHubRepo:   "acmedev",
+		TempPrefix:    ".acmedev-tmp-",
+		GitHubOwner:   "acme-corp",
+		GitHubRepo:    "acmedev",
 	})
 
 	bootstrap.Configure(

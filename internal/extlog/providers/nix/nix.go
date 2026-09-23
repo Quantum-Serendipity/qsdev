@@ -1,7 +1,6 @@
 package nix
 
 import (
-	"bufio"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/extlog"
+	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -26,19 +26,14 @@ type Provider struct{}
 func (p *Provider) Name() string        { return "nix" }
 func (p *Provider) DisplayName() string { return "nix build" }
 
-func (p *Provider) Detect(projectRoot, homeDir string) bool {
+// Detect reports whether Discover has anything to read: nix capture files in
+// the project's capture directory. (Leftover /tmp/nix-build-* directories are
+// build sandboxes, not logs, so they are deliberately not a detection signal.)
+func (p *Provider) Detect(projectRoot, _ string) bool {
 	captureDir := filepath.Join(projectRoot, "."+branding.Get().AppName, "logs", "capture")
 	entries, _ := os.ReadDir(captureDir)
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), "nix-") {
-			return true
-		}
-	}
-
-	// Check /tmp for nix build logs.
-	entries, _ = os.ReadDir("/tmp")
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "nix-build-") {
 			return true
 		}
 	}
@@ -78,7 +73,7 @@ var nixLevelRe = regexp.MustCompile(`^(error|warning|trace):\s*(.*)$`)
 
 func (p *Provider) Parse(r io.Reader, sourceFile string) ([]extlog.LogEntry, error) {
 	fileMtime := extlog.FileModTime(sourceFile)
-	scanner := bufio.NewScanner(r)
+	scanner := logging.NewLineScanner(r)
 	var entries []extlog.LogEntry
 	lineNo := 0
 

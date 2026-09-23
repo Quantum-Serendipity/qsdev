@@ -1,7 +1,6 @@
 package bugreport
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"os"
@@ -63,9 +62,13 @@ func RunWizard(projectRoot string) error {
 	report.SessionInfo = sessionInfo
 
 	if ws.includeExtLogs {
-		homeDir, _ := os.UserHomeDir()
 		window := extlog.DefaultWindow(60)
-		entries, _ := extlog.CollectAll(projectRoot, homeDir, window)
+		entries, summaries := extlog.CollectAll(projectRoot, userHomeDir(), window)
+		for _, s := range summaries {
+			for _, e := range s.CollectionErrors {
+				fmt.Fprintf(os.Stderr, "warning: %s logs incomplete: %s\n", s.Provider, e)
+			}
+		}
 		if len(entries) > 0 {
 			report.ExtLogExcerpt = formatExtLogExcerpt(entries)
 		}
@@ -173,7 +176,7 @@ func buildForm(ws *wizardState, projectRoot string, env Environment) *huh.Form {
 			Value(&ws.logWindow),
 		huh.NewConfirm().
 			Title("Include external tool logs?").
-			Description("Auto-detected logs from npm, nix, devenv (scrubbed for secrets).").
+			Description(extLogDescription(extlog.DefaultRegistry(), projectRoot, userHomeDir())).
 			Value(&ws.includeExtLogs),
 	)
 
@@ -190,6 +193,31 @@ func buildForm(ws *wizardState, projectRoot string, env Environment) *huh.Form {
 	)
 
 	return huh.NewForm(summaryGroup, reproGroup, envGroup, logGroup, submitGroup)
+}
+
+// extLogDescription names the external log sources that currently have logs to
+// attach, derived from the registered providers' own detection rather than a
+// fixed list, so the prompt never advertises a source with nothing to offer.
+func extLogDescription(reg *extlog.Registry, projectRoot, homeDir string) string {
+	var names []string
+	for _, p := range reg.DetectAll(projectRoot, homeDir) {
+		names = append(names, p.DisplayName())
+	}
+	if len(names) == 0 {
+		return "No external tool logs detected."
+	}
+	sort.Strings(names)
+	return "Auto-detected logs from " + strings.Join(names, ", ") + " (scrubbed for secrets)."
+}
+
+// userHomeDir returns the user's home directory, or "" when it is unknown
+// (providers that read from it then detect nothing).
+func userHomeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
 }
 
 func collectLogs(ws *wizardState, projectRoot string) (excerpt, sessionInfo string) {
@@ -270,7 +298,7 @@ func collectLogs(ws *wizardState, projectRoot string) (excerpt, sessionInfo stri
 		if err != nil {
 			continue
 		}
-		scanner := bufio.NewScanner(bytes.NewReader(data))
+		scanner := logging.NewLineScanner(bytes.NewReader(data))
 		for scanner.Scan() {
 			if totalLines >= maxLines {
 				fmt.Fprintf(&buf, "... (truncated, %d files total)\n", len(selected))
@@ -280,6 +308,9 @@ func collectLogs(ws *wizardState, projectRoot string) (excerpt, sessionInfo stri
 			buf.WriteString(line)
 			buf.WriteByte('\n')
 			totalLines++
+		}
+		if err := scanner.Err(); err != nil {
+			fmt.Fprintf(&buf, "... (reading %s failed: %v)\n", filepath.Base(f.path), err)
 		}
 	}
 done:

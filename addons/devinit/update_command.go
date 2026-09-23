@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/extlog/capture"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -529,6 +531,16 @@ func runDevenvInputStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult
 	devenvCmd.Dir = projectRoot
 	devenvCmd.Stdout = cmd.OutOrStdout()
 	devenvCmd.Stderr = cmd.ErrOrStderr()
+	// Keep a copy of the output for `report bug`, whose devenv log provider
+	// reads these capture files. Capture is best-effort: without it the
+	// update still runs with its output on the terminal.
+	if cw, err := capture.New(devenvCmd.Stdout, capture.CaptureDir(projectRoot), "devenv"); err == nil {
+		defer cw.Close()
+		devenvCmd.Stdout = cw
+		devenvCmd.Stderr = cw.Tee(devenvCmd.Stderr)
+	} else {
+		slog.Debug("devenv output capture unavailable", "error", err)
+	}
 
 	if err := devenvCmd.Run(); err != nil {
 		return StageResult{

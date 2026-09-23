@@ -34,17 +34,17 @@ security:
 	}
 
 	genState := types.GeneratedState{
-		LastRun:     time.Date(2026, 5, 14, 10, 0, 0, 0, time.UTC),
+		LastRun:      time.Date(2026, 5, 14, 10, 0, 0, 0, time.UTC),
 		QsdevVersion: "1.2.3",
 		Files: map[string]types.FileState{
-			"devenv.nix":   {Hash: "abc123"},
-			"devenv.yaml":  {Hash: "def456"},
-			".envrc":       {Hash: "ghi789"},
+			"devenv.nix":  {Hash: "abc123"},
+			"devenv.yaml": {Hash: "def456"},
+			".envrc":      {Hash: "ghi789"},
 		},
 		EnabledTools: map[string]bool{
-			"attach-guard":      true,
-			"agent-postmortem":  true,
-			"changelog":         false,
+			"attach-guard":     true,
+			"agent-postmortem": true,
+			"changelog":        false,
 		},
 	}
 	statePath := filepath.Join(devinitDir, ".qsdev-init-state.yaml")
@@ -173,7 +173,7 @@ languages:
 		t.Fatalf("creating .devinit dir: %v", err)
 	}
 	genState := types.GeneratedState{
-		LastRun:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		LastRun:      time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		QsdevVersion: "0.9.0",
 		Files: map[string]types.FileState{
 			"devenv.nix": {Hash: "aaa"},

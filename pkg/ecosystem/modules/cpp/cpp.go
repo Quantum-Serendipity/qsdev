@@ -157,7 +157,7 @@ func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
 		pkgs = append(pkgs, "gnumake")
 	}
 
-	if config.Extra("build_cache", "") == "sccache" {
+	if config.Extra(ecosystem.ExtraBuildCache, "") == "sccache" {
 		pkgs = append(pkgs, "sccache")
 	}
 

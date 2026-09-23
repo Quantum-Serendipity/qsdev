@@ -7,10 +7,12 @@ package golang
 import (
 	"bufio"
 	"fmt"
+	goversion "go/version"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"golang.org/x/mod/modfile"
 
@@ -26,6 +28,7 @@ var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
 var _ ecosystem.DependencyDeclarer = (*Module)(nil)
+var _ ecosystem.DevenvYamlInputProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -34,14 +37,23 @@ func init() {
 // goVersionRe matches the "go X.Y" or "go X.Y.Z" directive in go.mod.
 var goVersionRe = regexp.MustCompile(`^go\s+(\d+\.\d+(?:\.\d+)?)`)
 
-// goReleaseRe parses a Go 1.x release version ("1.24" or "1.24.1") and
-// captures the minor version.
-var goReleaseRe = regexp.MustCompile(`^1\.(\d+)(?:\.\d+)?$`)
+// goToolchainRe matches the "toolchain goX.Y.Z" (or "goX.YrcN") directive in
+// go.mod, capturing the version without its "go" prefix.
+var goToolchainRe = regexp.MustCompile(`^toolchain\s+go(\d+\.\d+(?:\.\d+|rc\d+)?)\s*$`)
 
-// supportedGoMinors lists the Go 1.x minor versions that have a stable
-// go_1_<minor> attribute in nixpkgs, in ascending order. goVersionToNixPackage
-// never emits an attribute outside this list.
-var supportedGoMinors = []int{25, 26}
+// goReleaseRe parses a Go 1.x release version ("1.24", "1.24.1" or
+// "1.24rc1"), capturing the minor version and the optional patch or
+// release-candidate suffix.
+var goReleaseRe = regexp.MustCompile(`^1\.(\d+)(\.\d+|rc\d+)?$`)
+
+// ExtraToolchain is the ModuleConfig extra holding go.mod's toolchain
+// directive (for example "1.26.8"). It takes precedence over Version, the go
+// directive, as the release the project needs.
+const ExtraToolchain = "toolchain"
+
+// goOverlayInput is the flake input devenv's languages.go.version selects
+// exact Go releases from.
+const goOverlayInput = "github:purpleclay/go-overlay"
 
 // Module implements ecosystem.EcosystemModule for the Go programming language.
 type Module struct{}
@@ -62,37 +74,45 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		return ecosystem.DetectionAbsent()
 	}
 
-	version := parseGoVersion(projectRoot)
+	version, toolchain := parseGoMod(projectRoot)
 
 	evidence := []string{"go.mod found"}
 	if version != "" {
 		evidence = append(evidence, fmt.Sprintf("go version %s", version))
 	}
+	suggested := ecosystem.ModuleConfig{Version: version}
+	if toolchain != "" {
+		evidence = append(evidence, fmt.Sprintf("toolchain go%s", toolchain))
+		suggested.Extras = map[string]string{ExtraToolchain: toolchain}
+	}
 
 	return ecosystem.DetectionResult{
-		Detected:   true,
-		Confidence: ecosystem.ConfidenceCertain,
-		Evidence:   evidence,
-		SuggestedConfig: ecosystem.ModuleConfig{
-			Version: version,
-		},
+		Detected:        true,
+		Confidence:      ecosystem.ConfidenceCertain,
+		Evidence:        evidence,
+		SuggestedConfig: suggested,
 	}
 }
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for Go language support with supply-chain security hardening.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
-	envVars := []ecosystem.NixEnvVar{
-		{
-			Key:     "GOFLAGS",
-			Value:   `"-mod=readonly"`,
-			Comment: "Fail instead of silently updating go.mod/go.sum — prevents unvetted dependency additions",
-		},
-	}
+	// GOFLAGS is deliberately left unset. Build commands already default to
+	// -mod=readonly, which does not stop `go get` or `go mod tidy` from adding
+	// dependencies, and an explicit -mod=readonly would override the -mod=vendor
+	// default of a module with a vendor/ directory, so builds would bypass the
+	// reviewed vendored sources.
+	var envVars []ecosystem.NixEnvVar
 	if config.RegistryProxy != "" {
+		// No ",direct" fallback: the go command moves to the next GOPROXY
+		// entry on any 404/410, so a proxy that refuses a module (allow-list,
+		// quarantine) would be bypassed by fetching straight from its origin.
+		// Private modules matched by GOPRIVATE/GONOPROXY are still fetched
+		// directly.
 		envVars = append(envVars, ecosystem.NixEnvVar{
-			Key:   "GOPROXY",
-			Value: fmt.Sprintf(`"%s,direct"`, ecosystem.NixEscapeString(config.RegistryProxy)),
+			Key:     "GOPROXY",
+			Value:   ecosystem.NixString(config.RegistryProxy),
+			Comment: "Fetch every public module through the registry proxy, with no direct fallback",
 		})
 	}
 	// GOSUMDB is the variable that controls checksum verification; pinning it
@@ -105,18 +125,38 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 		Comment: "Verify all public modules against the Go checksum database",
 	})
 
-	pkg, note := goVersionToNixPackage(config.Version)
+	release, note := requiredGoRelease(config)
+	var props []ecosystem.NixProperty
+	if release != "" {
+		// devenv sets GOTOOLCHAIN=local, so the shell's Go must be at least
+		// the release go.mod requires. nixpkgs' Go (binary-cached, and what
+		// gopls and the other Go tools are built against) is kept whenever it
+		// is new enough; otherwise that exact release comes from go-overlay.
+		v := ecosystem.NixString(release)
+		props = append(props, ecosystem.NixProperty{
+			Key:   "version",
+			Value: fmt.Sprintf("lib.mkIf (!(lib.versionAtLeast pkgs.go.version %s)) %s", v, v),
+		})
+	}
 	fragment := ecosystem.BuildLanguageFragment(ecosystem.NixLangConfig{
 		EnablePath: "languages.go",
-		Properties: []ecosystem.NixProperty{
-			{Key: "package", Value: pkg},
-		},
-		EnvVars: envVars,
+		Properties: props,
+		EnvVars:    envVars,
 	})
 	if note != "" {
 		fragment = "  # " + note + "\n" + fragment
 	}
 	return fragment, nil
+}
+
+// DevenvYamlInputs contributes the go-overlay flake input when the fragment
+// sets languages.go.version; devenv refuses to evaluate the version option
+// without it. The input and the version line are an invariant pair.
+func (m *Module) DevenvYamlInputs(config ecosystem.ModuleConfig) []ecosystem.DevenvInput {
+	if release, _ := requiredGoRelease(config); release == "" {
+		return nil
+	}
+	return []ecosystem.DevenvInput{{URL: goOverlayInput, Follows: "nixpkgs"}}
 }
 
 // SecurityConfigs returns generated security configuration files.
@@ -271,58 +311,80 @@ func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
 	return []string{"gopls", "golangci-lint", "delve", "goreleaser"}
 }
 
-// goVersionToNixPackage maps a Go version string to a nixpkgs attribute.
-// The go.mod directive is a minimum, so the requested minor version maps to
-// the oldest supported go_1_<minor> attribute at or above it (for example,
-// "1.22" maps to "pkgs.go_1_25" and "1.26.1" to "pkgs.go_1_26"). An empty
-// version maps to "pkgs.go" (latest). A version that is not a Go 1.x release,
-// or is newer than every supported attribute, also maps to "pkgs.go". note is
-// non-empty whenever the result differs from the requested version, so the
-// substitution can be surfaced instead of emitting a nonexistent attribute.
-func goVersionToNixPackage(version string) (pkg, note string) {
-	if version == "" {
-		return "pkgs.go", ""
+// requiredGoRelease returns the minimum Go release the project needs, as a
+// go-overlay release name: the newer of Version (the go directive or
+// --go-version) and the toolchain extra (go.mod's toolchain directive), so
+// neither a toolchain line nor an explicit newer --go-version is dropped. It
+// returns "" when no usable version is configured. note is non-empty when a
+// configured version is not a Go 1.x release and is ignored, so the fragment
+// never carries untrusted text outside a comment.
+func requiredGoRelease(config ecosystem.ModuleConfig) (release, note string) {
+	var ignored []string
+	for _, v := range []string{config.Version, config.Extra(ExtraToolchain, "")} {
+		if v == "" {
+			continue
+		}
+		r, ok := goOverlayRelease(v)
+		if !ok {
+			ignored = append(ignored, strconv.Quote(v))
+			continue
+		}
+		if release == "" || goversion.Compare("go"+r, "go"+release) > 0 {
+			release = r
+		}
 	}
+	if len(ignored) > 0 {
+		note = fmt.Sprintf("unrecognized Go version %s ignored", strings.Join(ignored, ", "))
+		if release == "" {
+			note += "; using pkgs.go (latest)"
+		}
+	}
+	return release, note
+}
+
+// goOverlayRelease converts a go.mod version ("1.24", "1.24.3", "1.26rc1")
+// into the name of the Go release go-overlay publishes it under. A bare
+// language version means its first release: "1.Y.0" from Go 1.21 on, and
+// "1.Y" before that, when the first release of a minor had no ".0".
+func goOverlayRelease(version string) (string, bool) {
 	m := goReleaseRe.FindStringSubmatch(version)
 	if m == nil {
-		return "pkgs.go", fmt.Sprintf("unrecognized Go version %q; using pkgs.go (latest)", version)
+		return "", false
 	}
 	minor, err := strconv.Atoi(m[1])
 	if err != nil {
-		return "pkgs.go", fmt.Sprintf("unrecognized Go version %q; using pkgs.go (latest)", version)
+		return "", false
 	}
-	for _, v := range supportedGoMinors {
-		if v < minor {
-			continue
-		}
-		attr := fmt.Sprintf("pkgs.go_1_%d", v)
-		if v == minor {
-			return attr, ""
-		}
-		return attr, fmt.Sprintf("go %s is not packaged in nixpkgs; using %s (Go is backward compatible)", version, attr)
+	switch suffix := m[2]; {
+	case suffix == "" && minor >= 21:
+		return version + ".0", true
+	case suffix == ".0" && minor < 21:
+		return strings.TrimSuffix(version, ".0"), true
 	}
-	return "pkgs.go", fmt.Sprintf("go %s is newer than any pinned toolchain; using pkgs.go (latest)", version)
+	return version, true
 }
 
-// parseGoVersion reads go.mod in projectRoot and extracts the Go version
-// from the "go X.Y" or "go X.Y.Z" directive. Returns an empty string
-// if the directive is not found or the file cannot be read.
-func parseGoVersion(projectRoot string) string {
-	modPath := filepath.Join(projectRoot, "go.mod")
-
-	f, err := os.Open(modPath)
+// parseGoMod reads go.mod in projectRoot and extracts the version from the
+// "go X.Y[.Z]" directive and, if present, the "toolchain goX.Y.Z" directive.
+// Missing directives, or an unreadable file, yield empty strings.
+func parseGoMod(projectRoot string) (version, toolchain string) {
+	f, err := os.Open(filepath.Join(projectRoot, "go.mod"))
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	defer f.Close() //nolint:errcheck // best-effort read
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		if m := goVersionRe.FindStringSubmatch(scanner.Text()); m != nil {
-			return m[1]
+		line := scanner.Text()
+		if m := goVersionRe.FindStringSubmatch(line); m != nil && version == "" {
+			version = m[1]
+		}
+		if m := goToolchainRe.FindStringSubmatch(line); m != nil && toolchain == "" {
+			toolchain = m[1]
 		}
 	}
-	return ""
+	return version, toolchain
 }
 
 // SemgrepRuleSets returns Semgrep rule set identifiers relevant to Go projects.

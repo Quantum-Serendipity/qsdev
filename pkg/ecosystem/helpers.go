@@ -29,6 +29,11 @@ func DetectionAbsent() DetectionResult {
 	}
 }
 
+// ExtraBuildCache is the ModuleConfig extra naming the shared build cache
+// (for example "sccache"); ToModuleConfigWithInfra fills it from
+// infrastructure.build_cache.
+const ExtraBuildCache = "build_cache"
+
 // ToModuleConfig converts a LanguageChoice from wizard answers into a
 // ModuleConfig suitable for passing to EcosystemModule methods.
 func ToModuleConfig(lang types.LanguageChoice) ModuleConfig {
@@ -39,10 +44,20 @@ func ToModuleConfig(lang types.LanguageChoice) ModuleConfig {
 	}
 }
 
-// ToModuleConfigWithProxy converts a LanguageChoice into a ModuleConfig with
-// the registry proxy URL resolved for the specific ecosystem.
-func ToModuleConfigWithProxy(lang types.LanguageChoice, infra types.InfraConfig) ModuleConfig {
+// ToModuleConfigWithInfra converts a LanguageChoice into a ModuleConfig with
+// the project's infrastructure applied: the registry proxy URL resolved for
+// the specific ecosystem, and infrastructure.build_cache as the "build_cache"
+// extra unless the language sets that extra itself.
+func ToModuleConfigWithInfra(lang types.LanguageChoice, infra types.InfraConfig) ModuleConfig {
 	cfg := ToModuleConfig(lang)
+	if infra.BuildCache != "" {
+		if cfg.Extras == nil {
+			cfg.Extras = make(map[string]string, 1)
+		}
+		if _, ok := cfg.Extras[ExtraBuildCache]; !ok {
+			cfg.Extras[ExtraBuildCache] = infra.BuildCache
+		}
+	}
 	// Some ecosystems (e.g. Java) record their build tool in
 	// Extras["build_tool"] when it was detected rather than set explicitly;
 	// an explicit PackageManager still wins.

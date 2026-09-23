@@ -6,10 +6,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// TestToModuleConfigWithProxy_JavaBuildTool verifies the proxy key follows
+// TestToModuleConfigWithInfra_JavaBuildTool verifies the proxy key follows
 // the Java build tool wherever it is recorded: explicitly as PackageManager
 // (--java-build-tool) or via detection in Extras["build_tool"].
-func TestToModuleConfigWithProxy_JavaBuildTool(t *testing.T) {
+func TestToModuleConfigWithInfra_JavaBuildTool(t *testing.T) {
 	t.Parallel()
 
 	infra := types.InfraConfig{
@@ -32,9 +32,34 @@ func TestToModuleConfigWithProxy_JavaBuildTool(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := ToModuleConfigWithProxy(tt.lang, infra).RegistryProxy
+			got := ToModuleConfigWithInfra(tt.lang, infra).RegistryProxy
 			if got != tt.want {
 				t.Errorf("RegistryProxy = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestToModuleConfigWithInfra_BuildCache verifies infrastructure.build_cache
+// reaches modules as the build_cache extra (it was persisted but never
+// applied), without overriding a language's own setting.
+func TestToModuleConfigWithInfra_BuildCache(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		lang  types.LanguageChoice
+		infra types.InfraConfig
+		want  string
+	}{
+		{"infra sets extra", types.LanguageChoice{Name: NameRust}, types.InfraConfig{BuildCache: "sccache"}, "sccache"},
+		{"language extra wins", types.LanguageChoice{Name: NameRust, Extras: []string{"build_cache=none"}}, types.InfraConfig{BuildCache: "sccache"}, "none"},
+		{"unset stays unset", types.LanguageChoice{Name: NameRust}, types.InfraConfig{}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ToModuleConfigWithInfra(tt.lang, tt.infra).Extra(ExtraBuildCache, ""); got != tt.want {
+				t.Errorf("build_cache = %q, want %q", got, tt.want)
 			}
 		})
 	}

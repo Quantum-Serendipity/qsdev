@@ -1,6 +1,6 @@
 // Package dotnet implements the C#/.NET ecosystem module for qsdev.
-// It detects .NET projects via *.csproj, *.fsproj, *.sln, Directory.Build.props, and
-// global.json, then generates devenv.nix fragments, security configs (nuget.config and
+// It detects .NET projects via project files (*.csproj, *.fsproj, *.vbproj), solutions
+// (*.sln, *.slnx), Directory.Build.props, and global.json, then generates devenv.nix fragments, security configs (nuget.config and
 // Directory.Build.props), pre-commit hooks, deny rules, and CI commands for a hardened
 // .NET development environment.
 package dotnet
@@ -10,9 +10,12 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -23,6 +26,7 @@ import (
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
+var _ ecosystem.ReadDenyRuleProvider = (*Module)(nil)
 
 // Module is the stateless C#/.NET ecosystem module.
 type Module struct{}
@@ -49,29 +53,16 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		},
 	}
 
-	// Check for *.csproj files.
-	csprojMatches, _ := filepath.Glob(filepath.Join(projectRoot, "*.csproj"))
-	if len(csprojMatches) > 0 {
+	// Project and solution files. Solutions sit at the root, but projects
+	// conventionally live below it (src/App/App.csproj), so they are
+	// searched a few levels deep.
+	for _, ext := range findDotnetFiles(projectRoot) {
 		result.Detected = true
 		result.Confidence = ecosystem.ConfidenceCertain
-		result.Evidence = append(result.Evidence, "*.csproj")
-	}
-
-	// Check for *.fsproj files.
-	fsprojMatches, _ := filepath.Glob(filepath.Join(projectRoot, "*.fsproj"))
-	if len(fsprojMatches) > 0 {
-		result.Detected = true
-		result.Confidence = ecosystem.ConfidenceCertain
-		result.Evidence = append(result.Evidence, "*.fsproj")
-		result.SuggestedConfig.Extras["has_fsharp"] = "true"
-	}
-
-	// Check for *.sln files.
-	slnMatches, _ := filepath.Glob(filepath.Join(projectRoot, "*.sln"))
-	if len(slnMatches) > 0 {
-		result.Detected = true
-		result.Confidence = ecosystem.ConfidenceCertain
-		result.Evidence = append(result.Evidence, "*.sln")
+		result.Evidence = append(result.Evidence, "*"+ext)
+		if ext == ".fsproj" {
+			result.SuggestedConfig.Extras["has_fsharp"] = "true"
+		}
 	}
 
 	// Check for Directory.Build.props.
@@ -90,6 +81,72 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	return result
+}
+
+// dotnetProjectExts are the MSBuild project file extensions (C#, F#, VB).
+var dotnetProjectExts = []string{".csproj", ".fsproj", ".vbproj"}
+
+// dotnetSolutionExts are the solution file extensions; .slnx is the default
+// `dotnet new sln` format since .NET 10.
+var dotnetSolutionExts = []string{".sln", ".slnx"}
+
+// maxProjectScanDepth bounds how many directory levels below projectRoot are
+// searched for project files (root is depth 0), covering src/App/App.csproj
+// and src/Services/Api/Api.csproj without walking a whole monorepo.
+const maxProjectScanDepth = 3
+
+// skippedScanDirs never hold the project's own project files: build output
+// and third-party trees. Hidden directories (.git, .vs, ...) are skipped too.
+var skippedScanDirs = map[string]bool{
+	"bin":          true,
+	"obj":          true,
+	"node_modules": true,
+	"packages":     true,
+}
+
+// findDotnetFiles returns, in a stable order, the project and solution file
+// extensions present in projectRoot: solutions at the root only, projects
+// down to maxProjectScanDepth levels.
+func findDotnetFiles(projectRoot string) []string {
+	projectRoot = filepath.Clean(projectRoot)
+	seen := make(map[string]bool)
+	_ = filepath.WalkDir(projectRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil //nolint:nilerr // best-effort scan
+		}
+		if d.IsDir() {
+			if path == projectRoot {
+				return nil
+			}
+			name := d.Name()
+			if skippedScanDirs[name] || strings.HasPrefix(name, ".") || scanDepth(projectRoot, path) > maxProjectScanDepth {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(d.Name()))
+		atRoot := filepath.Dir(path) == projectRoot
+		if slices.Contains(dotnetProjectExts, ext) || (atRoot && slices.Contains(dotnetSolutionExts, ext)) {
+			seen[ext] = true
+		}
+		return nil
+	})
+	var found []string
+	for _, ext := range append(slices.Clone(dotnetProjectExts), dotnetSolutionExts...) {
+		if seen[ext] {
+			found = append(found, ext)
+		}
+	}
+	return found
+}
+
+// scanDepth returns how many directory levels dir is below root.
+func scanDepth(root, dir string) int {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return maxProjectScanDepth + 1
+	}
+	return strings.Count(filepath.ToSlash(rel), "/") + 1
 }
 
 // DevenvNixFragment returns a Nix fragment that enables .NET in devenv.sh.
@@ -131,7 +188,12 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 }
 
 // PreCommitHooks returns pre-commit hook definitions for .NET.
-func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
+//
+// The hook runs `dotnet` from the same SDK attribute as languages.dotnet, so
+// it can build the project's target frameworks and satisfy its global.json,
+// and no second, colliding dotnet binary is added to the profile.
+func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookConfig {
+	sdk, _ := sdkVersionToNixPackage(config.Version)
 	return []ecosystem.HookConfig{
 		{
 			ID:          "dotnet-format",
@@ -142,16 +204,47 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Files:       `\.(cs|fs)$`,
 			Stages:      []string{"pre-commit"},
 			BuiltIn:     false,
-			NixPackage:  "dotnet-sdk",
+			NixPackage:  sdk,
 		},
 	}
 }
 
 // DenyRules returns Claude Code deny-rule patterns for .NET.
+//
+// package-guard has no NuGet support, so every command that adds a package
+// reference or downloads and runs a NuGet package is denied outright,
+// including each documented spelling: the project argument before `package`,
+// the .NET 10 noun-first `dotnet package add`, tool installs and one-shot
+// tool execution (`dotnet tool exec`, `dnx` and the `dotnet dnx` it forwards
+// to), template packages (including the pre-.NET 7 `dotnet new -i` form), and
+// the standalone nuget CLI.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	return []string{
 		"Bash(dotnet add package *)",
-		"Bash(nuget install *)",
+		"Bash(dotnet add * package *)",
+		"Bash(dotnet package add *)",
+		"Bash(dotnet package update *)",
+		"Bash(dotnet tool install *)",
+		"Bash(dotnet tool update *)",
+		"Bash(dotnet tool exec *)",
+		"Bash(dotnet tool run *)",
+		"Bash(dnx *)",
+		"Bash(dotnet dnx *)",
+		"Bash(dotnet new install *)",
+		"Bash(dotnet new -i *)",
+		"Bash(dotnet new --install *)",
+		"Bash(nuget *)",
+		"Bash(nuget.exe *)",
+		"Bash(mono nuget.exe *)",
+	}
+}
+
+// ReadDenyRules returns the user-level NuGet configuration files, which hold
+// packageSourceCredentials and push API keys for the user's feeds.
+func (m *Module) ReadDenyRules(_ ecosystem.ModuleConfig) []string {
+	return []string{
+		"~/.nuget/NuGet/NuGet.Config",
+		"~/.config/NuGet/NuGet.Config",
 	}
 }
 

@@ -23,7 +23,9 @@ func (p *InfraProfile) EnvironmentVars() map[string]string {
 			case "pypi":
 				env["PIP_INDEX_URL"] = u
 			case "go":
-				env["GOPROXY"] = u + ",direct"
+				// No ",direct": the go command falls back to the next
+				// entry on any 404/410, bypassing the proxy's policy.
+				env["GOPROXY"] = u
 			case "cargo":
 				env["CARGO_REGISTRIES_INTERNAL_INDEX"] = u
 			case "maven":

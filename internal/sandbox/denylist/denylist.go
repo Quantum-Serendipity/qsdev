@@ -52,6 +52,16 @@ func HomeDenyRelPaths() []string {
 		".kube",
 		".docker/config.json",
 		".netrc",
+		// Package-registry publish tokens and feed credentials.
+		".cargo/credentials.toml",
+		".cargo/credentials",
+		".nuget/NuGet/NuGet.Config",
+		".config/NuGet/NuGet.Config",
+		// Container registry, Terraform and Helm credential stores.
+		".config/containers/auth.json",
+		".terraform.d/credentials.tfrc.json",
+		".config/helm/registry",
+		".config/helm/repositories.yaml",
 	}
 }
 

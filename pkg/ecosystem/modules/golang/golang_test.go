@@ -119,17 +119,30 @@ func TestDevenvNixFragment(t *testing.T) {
 	}
 
 	requiredStrings := []string{
-		"languages.go",
-		"enable = true",
-		"package = pkgs.go;",
-		"GOFLAGS",
-		`"-mod=readonly"`,
+		"languages.go.enable = true;",
 		`env.GOSUMDB = "sum.golang.org";`,
 	}
 
 	for _, s := range requiredStrings {
 		if !strings.Contains(fragment, s) {
 			t.Errorf("DevenvNixFragment() missing %q\ngot:\n%s", s, fragment)
+		}
+	}
+}
+
+// TestDevenvNixFragment_NoGOFLAGS guards against GOFLAGS=-mod=readonly: it
+// is already the build default, does not stop `go get`/`go mod tidy` from
+// adding dependencies, and overrides the -mod=vendor default so builds of a
+// vendored module silently bypass the reviewed vendor/ tree.
+func TestDevenvNixFragment_NoGOFLAGS(t *testing.T) {
+	t.Parallel()
+	for _, cfg := range []ecosystem.ModuleConfig{{}, {Version: "1.22"}, {RegistryProxy: "https://goproxy.corp.example.com"}} {
+		fragment, err := (&golang.Module{}).DevenvNixFragment(cfg)
+		if err != nil {
+			t.Fatalf("DevenvNixFragment() returned error: %v", err)
+		}
+		if strings.Contains(fragment, "GOFLAGS") || strings.Contains(fragment, "-mod=") {
+			t.Errorf("fragment sets GOFLAGS/-mod, which overrides vendor mode:\n%s", fragment)
 		}
 	}
 }
@@ -165,46 +178,104 @@ func TestDevenvNixFragment_EnvVarsAreGoEnvironment(t *testing.T) {
 	}
 }
 
+// TestDevenvNixFragment_VersionMapping verifies the go.mod version becomes
+// a minimum: nixpkgs' Go is kept when it is new enough, and otherwise the
+// exact release comes from go-overlay (devenv sets GOTOOLCHAIN=local, so an
+// older Go refuses to build the module). No go_1_X attribute is ever named,
+// since nixpkgs removes them as Go releases reach end of life.
 func TestDevenvNixFragment_VersionMapping(t *testing.T) {
+	t.Parallel()
 	m := &golang.Module{}
 
 	tests := []struct {
-		name     string
-		version  string
-		wantPkg  string
-		wantNote bool
+		name        string
+		config      ecosystem.ModuleConfig
+		wantRelease string // "" means no version line: nixpkgs' Go
+		wantNote    bool
 	}{
-		{"empty version uses latest", "", "package = pkgs.go;", false},
-		{"supported major.minor maps exactly", "1.25", "package = pkgs.go_1_25;", false},
-		{"supported major.minor.patch maps to minor", "1.26.1", "package = pkgs.go_1_26;", false},
-		// The go directive is a minimum: older directives (very common in
-		// go.mod) map to the oldest packaged toolchain, never to a missing
-		// go_1_22 attribute.
-		{"old directive maps to oldest packaged", "1.22", "package = pkgs.go_1_25;", true},
-		{"unpackaged minor maps to next packaged", "1.24.3", "package = pkgs.go_1_25;", true},
-		{"newer than packaged uses latest", "1.99", "package = pkgs.go;", true},
-		{"single component uses latest", "1", "package = pkgs.go;", true},
-		{"non-numeric input uses latest", "1.x; builtins.abort", "package = pkgs.go;", true},
-		{"go 2 uses latest", "2.0", "package = pkgs.go;", true},
+		{"empty version uses nixpkgs go", ecosystem.ModuleConfig{}, "", false},
+		{"bare minor is its first release", ecosystem.ModuleConfig{Version: "1.24"}, "1.24.0", false},
+		{"eol minor still resolves", ecosystem.ModuleConfig{Version: "1.23"}, "1.23.0", false},
+		{"patch release kept exactly", ecosystem.ModuleConfig{Version: "1.26.8"}, "1.26.8", false},
+		{"pre-1.21 minor has no .0", ecosystem.ModuleConfig{Version: "1.20"}, "1.20", false},
+		{"pre-1.21 .0 is the bare release", ecosystem.ModuleConfig{Version: "1.20.0"}, "1.20", false},
+		{"release candidate", ecosystem.ModuleConfig{Version: "1.27rc1"}, "1.27rc1", false},
+		{"toolchain directive wins", ecosystem.ModuleConfig{Version: "1.24", Extras: map[string]string{golang.ExtraToolchain: "1.26.8"}}, "1.26.8", false},
+		// --go-version sets Version while detection still supplies the
+		// toolchain extra: an explicit newer version must not be dropped.
+		{"newer explicit version beats toolchain", ecosystem.ModuleConfig{Version: "1.27.1", Extras: map[string]string{golang.ExtraToolchain: "1.26.8"}}, "1.27.1", false},
+		{"invalid toolchain falls back to version", ecosystem.ModuleConfig{Version: "1.25.3", Extras: map[string]string{golang.ExtraToolchain: "1.26\nbuiltins.abort"}}, "1.25.3", true},
+		{"single component ignored", ecosystem.ModuleConfig{Version: "1"}, "", true},
+		{"non-numeric input ignored", ecosystem.ModuleConfig{Version: "1.x; builtins.abort"}, "", true},
+		{"go 2 ignored", ecosystem.ModuleConfig{Version: "2.0"}, "", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fragment, err := m.DevenvNixFragment(ecosystem.ModuleConfig{Version: tt.version})
+			t.Parallel()
+			fragment, err := m.DevenvNixFragment(tt.config)
 			if err != nil {
 				t.Fatalf("DevenvNixFragment() returned error: %v", err)
 			}
-			if !strings.Contains(fragment, tt.wantPkg) {
-				t.Errorf("DevenvNixFragment(version=%q) should contain %q\ngot:\n%s", tt.version, tt.wantPkg, fragment)
+			if strings.Contains(fragment, "package =") || strings.Contains(fragment, "go_1_") {
+				t.Errorf("fragment must not pin a nixpkgs go_1_X attribute:\n%s", fragment)
+			}
+			if tt.wantRelease == "" {
+				if strings.Contains(fragment, "version =") {
+					t.Errorf("unexpected version line:\n%s", fragment)
+				}
+			} else {
+				want := `version = lib.mkIf (!(lib.versionAtLeast pkgs.go.version "` + tt.wantRelease + `")) "` + tt.wantRelease + `";`
+				if !strings.Contains(fragment, want) {
+					t.Errorf("fragment missing %s\ngot:\n%s", want, fragment)
+				}
 			}
 			if hasNote := strings.HasPrefix(fragment, "  # "); hasNote != tt.wantNote {
-				t.Errorf("substitution note present = %v, want %v\ngot:\n%s", hasNote, tt.wantNote, fragment)
+				t.Errorf("note present = %v, want %v\ngot:\n%s", hasNote, tt.wantNote, fragment)
 			}
 			// go.mod is repo-controlled: its text may only appear in comments.
 			for line := range strings.SplitSeq(fragment, "\n") {
 				if strings.Contains(line, "abort") && !strings.HasPrefix(line, "  # ") {
 					t.Errorf("untrusted version text escaped the comment: %q", line)
 				}
+			}
+			// The version option needs the go-overlay input, and only then.
+			inputs := m.DevenvYamlInputs(tt.config)
+			if hasInput := len(inputs) == 1 && inputs[0].URL == "github:purpleclay/go-overlay" && inputs[0].Follows == "nixpkgs"; hasInput != (tt.wantRelease != "") {
+				t.Errorf("DevenvYamlInputs() = %+v, want go-overlay input = %v", inputs, tt.wantRelease != "")
+			}
+		})
+	}
+}
+
+// TestDetect_GoModToolchain verifies the toolchain directive is detected,
+// since it names the release the project actually builds with.
+func TestDetect_GoModToolchain(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		goMod         string
+		wantVersion   string
+		wantToolchain string
+	}{
+		{"toolchain after go", "module x\n\ngo 1.24\n\ntoolchain go1.26.8\n", "1.24", "1.26.8"},
+		{"release candidate toolchain", "module x\n\ngo 1.26.0\ntoolchain go1.27rc1\n", "1.26.0", "1.27rc1"},
+		{"no toolchain", "module x\n\ngo 1.25.3\n", "1.25.3", ""},
+		{"custom toolchain ignored", "module x\n\ngo 1.25.3\ntoolchain default\n", "1.25.3", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(tt.goMod), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			r := (&golang.Module{}).Detect(dir)
+			if r.SuggestedConfig.Version != tt.wantVersion {
+				t.Errorf("Version = %q, want %q", r.SuggestedConfig.Version, tt.wantVersion)
+			}
+			if got := r.SuggestedConfig.Extra(golang.ExtraToolchain, ""); got != tt.wantToolchain {
+				t.Errorf("toolchain = %q, want %q", got, tt.wantToolchain)
 			}
 		})
 	}
@@ -220,12 +291,17 @@ func TestDevenvNixFragment_RegistryProxy(t *testing.T) {
 		t.Fatalf("DevenvNixFragment() returned error: %v", err)
 	}
 
-	expected := `env.GOPROXY = "` + proxy + `,direct";`
+	// No ",direct": the go command falls back to the next entry on any
+	// 404/410, so a proxy refusing a module would be silently bypassed.
+	expected := `env.GOPROXY = "` + proxy + `";`
 	if !strings.Contains(fragment, expected) {
 		t.Errorf("DevenvNixFragment() missing GOPROXY line\nwant: %s\ngot:\n%s", expected, fragment)
 	}
+	if strings.Contains(fragment, ",direct") {
+		t.Errorf("GOPROXY must not fall back to direct:\n%s", fragment)
+	}
 	// Existing security settings must be preserved.
-	for _, s := range []string{"GOFLAGS", "GOSUMDB"} {
+	for _, s := range []string{"GOSUMDB"} {
 		if !strings.Contains(fragment, s) {
 			t.Errorf("DevenvNixFragment() missing %q when proxy is set\ngot:\n%s", s, fragment)
 		}
@@ -257,7 +333,6 @@ func TestDevenvNixFragment_RegistryProxyPreservesExisting(t *testing.T) {
 
 	// All existing env vars must still be present.
 	for _, s := range []string{
-		`env.GOFLAGS = "-mod=readonly"`,
 		`env.GOSUMDB = "sum.golang.org"`,
 		"languages.go",
 		"enable = true",

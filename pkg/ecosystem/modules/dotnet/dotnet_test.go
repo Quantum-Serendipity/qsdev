@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/dotnet"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -817,8 +818,8 @@ func TestPreCommitHooks(t *testing.T) {
 	if h.BuiltIn {
 		t.Error("BuiltIn should be false (dotnet-format is not a git-hooks.nix built-in)")
 	}
-	if h.NixPackage != "dotnet-sdk" {
-		t.Errorf("NixPackage = %q, want %q", h.NixPackage, "dotnet-sdk")
+	if h.NixPackage != "dotnet-sdk_10" {
+		t.Errorf("NixPackage = %q, want the default SDK %q", h.NixPackage, "dotnet-sdk_10")
 	}
 	if h.Files != `\.(cs|fs)$` {
 		t.Errorf("Files = %q, want %q", h.Files, `\.(cs|fs)$`)
@@ -830,22 +831,137 @@ func TestPreCommitHooks(t *testing.T) {
 
 // --- DenyRules tests ---
 
+// TestDenyRules checks every documented way to add a NuGet package or to
+// download and run one is denied, since package-guard has no NuGet support:
+// the old rules only matched `dotnet add package` and `nuget install`.
 func TestDenyRules(t *testing.T) {
-	m := newModule()
-	rules := m.DenyRules(ecosystem.ModuleConfig{})
+	t.Parallel()
+	rules := newModule().DenyRules(ecosystem.ModuleConfig{})
 
-	if len(rules) != 2 {
-		t.Fatalf("DenyRules() returned %d rules, want 2", len(rules))
+	denied := []string{
+		"dotnet add package Newtonsoft.Json",
+		"dotnet add src/App/App.csproj package Newtonsoft.Json",
+		"dotnet add App.csproj package Evil --version 1.0.0",
+		"dotnet package add Evil",
+		"dotnet package add Evil --project src/App/App.csproj",
+		"dotnet package update Evil",
+		"dotnet tool install -g evil-tool",
+		"dotnet tool install evil-tool --local",
+		"dotnet tool update -g evil-tool",
+		"dotnet tool exec evil-tool",
+		"dotnet tool run evil-tool",
+		"dnx evil-tool",
+		"dotnet dnx evil-tool",
+		"dotnet new install Evil.Templates",
+		"dotnet new -i Evil.Templates",
+		"dotnet new --install Evil.Templates",
+		"nuget install Evil",
+		"nuget restore App.sln",
+		"nuget.exe install Evil",
+		"mono nuget.exe install Evil",
 	}
-
-	expected := map[string]bool{
-		"Bash(dotnet add package *)": true,
-		"Bash(nuget install *)":      true,
-	}
-	for _, r := range rules {
-		if !expected[r] {
-			t.Errorf("unexpected deny rule: %q", r)
+	for _, cmd := range denied {
+		op := "Bash(" + cmd + ")"
+		if !slices.ContainsFunc(rules, func(rule string) bool { return denyutil.MatchesDenyRule(rule, op) }) {
+			t.Errorf("%q is not denied by %v", cmd, rules)
 		}
+	}
+
+	allowed := []string{
+		"dotnet build",
+		"dotnet test",
+		"dotnet restore --locked-mode",
+		"dotnet format --verify-no-changes",
+		"dotnet list package --vulnerable --include-transitive",
+		"dotnet add reference ../Lib/Lib.csproj",
+		"dotnet new console -o App",
+		"dotnet tool restore",
+	}
+	for _, cmd := range allowed {
+		op := "Bash(" + cmd + ")"
+		if slices.ContainsFunc(rules, func(rule string) bool { return denyutil.MatchesDenyRule(rule, op) }) {
+			t.Errorf("%q should not be denied", cmd)
+		}
+	}
+}
+
+// TestReadDenyRules verifies the user-level NuGet configs, which hold feed
+// credentials and API keys, are read-denied to the agent.
+func TestReadDenyRules(t *testing.T) {
+	t.Parallel()
+	got := newModule().ReadDenyRules(ecosystem.ModuleConfig{})
+	for _, want := range []string{"~/.nuget/NuGet/NuGet.Config", "~/.config/NuGet/NuGet.Config"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("ReadDenyRules() = %v, missing %q", got, want)
+		}
+	}
+}
+
+// TestPreCommitHooks_UsesProjectSDK guards the dotnet-format hook against a
+// fixed SDK: it must run the same SDK attribute as languages.dotnet, or it
+// cannot build net9/net10 targets or honour global.json, and it would add a
+// second colliding dotnet to the profile.
+func TestPreCommitHooks_UsesProjectSDK(t *testing.T) {
+	t.Parallel()
+	m := newModule()
+	for _, version := range []string{"", "8", "9", "10", "7"} {
+		cfg := ecosystem.ModuleConfig{Version: version}
+		frag, err := m.DevenvNixFragment(cfg)
+		if err != nil {
+			t.Fatalf("DevenvNixFragment(%q) error: %v", version, err)
+		}
+		hooks := m.PreCommitHooks(cfg)
+		if len(hooks) != 1 {
+			t.Fatalf("PreCommitHooks() returned %d hooks, want 1", len(hooks))
+		}
+		if want := "package = pkgs." + hooks[0].NixPackage + ";"; !strings.Contains(frag, want) {
+			t.Errorf("version %q: hook uses pkgs.%s but the fragment is:\n%s", version, hooks[0].NixPackage, frag)
+		}
+	}
+}
+
+// TestDetect_NestedProjectsAndSlnx covers the default .NET 10 layout, an
+// .slnx solution with projects under src/, which a root-only glob missed,
+// while build output and hidden directories stay out of the scan.
+func TestDetect_NestedProjectsAndSlnx(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		files        []string
+		wantDetected bool
+		wantEvidence []string
+	}{
+		{"slnx only", []string{"App.slnx"}, true, []string{"*.slnx"}},
+		{"slnx with src project", []string{"App.slnx", "src/Api/Api.csproj"}, true, []string{"*.csproj", "*.slnx"}},
+		{"nested project only", []string{"src/Api/Api.csproj"}, true, []string{"*.csproj"}},
+		{"three levels deep", []string{"src/Services/Api/Api.fsproj"}, true, []string{"*.fsproj"}},
+		{"vb project", []string{"Legacy.vbproj"}, true, []string{"*.vbproj"}},
+		{"too deep", []string{"a/b/c/d/Deep.csproj"}, false, nil},
+		{"build output ignored", []string{"bin/Debug/Foo.csproj", "obj/Foo.csproj"}, false, nil},
+		{"hidden dir ignored", []string{".git/Foo.csproj"}, false, nil},
+		{"nested solution ignored", []string{"samples/Sample.sln"}, false, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for _, f := range tt.files {
+				path := filepath.Join(dir, filepath.FromSlash(f))
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("<Project />\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			r := newModule().Detect(dir)
+			if r.Detected != tt.wantDetected {
+				t.Fatalf("Detected = %v, want %v (evidence %v)", r.Detected, tt.wantDetected, r.Evidence)
+			}
+			if !slices.Equal(r.Evidence, tt.wantEvidence) {
+				t.Errorf("Evidence = %v, want %v", r.Evidence, tt.wantEvidence)
+			}
+		})
 	}
 }
 

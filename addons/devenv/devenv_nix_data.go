@@ -308,7 +308,7 @@ func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *eco
 			return result, fmt.Errorf("unknown language module: %q", lang.Name)
 		}
 
-		cfg := ecosystem.ToModuleConfigWithProxy(lang, answers.Infrastructure)
+		cfg := ecosystem.ToModuleConfigWithInfra(lang, answers.Infrastructure)
 		fragment, err := mod.DevenvNixFragment(cfg)
 		if err != nil {
 			return result, fmt.Errorf("generating Nix fragment for %s: %w", lang.Name, err)
@@ -465,7 +465,7 @@ func collectModulePackages(answers types.WizardAnswers, registry *ecosystem.Regi
 		if !ok {
 			continue
 		}
-		cfg := ecosystem.ToModuleConfigWithProxy(lang, answers.Infrastructure)
+		cfg := ecosystem.ToModuleConfigWithInfra(lang, answers.Infrastructure)
 		if pp, ok := mod.(ecosystem.PackageProvider); ok {
 			pkgs = append(pkgs, pp.DevenvPackages(cfg)...)
 		}
@@ -556,7 +556,7 @@ func collectTaskDefinitions(answers types.WizardAnswers, registry *ecosystem.Reg
 	configForFunc := func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
 		for _, lang := range answers.Languages {
 			if lang.Name == mod.Name() {
-				return ecosystem.ToModuleConfigWithProxy(lang, answers.Infrastructure)
+				return ecosystem.ToModuleConfigWithInfra(lang, answers.Infrastructure)
 			}
 		}
 		return ecosystem.ModuleConfig{}

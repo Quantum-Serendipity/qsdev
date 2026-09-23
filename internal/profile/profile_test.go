@@ -21,11 +21,10 @@ func TestConsultingDefault_EnvironmentVars(t *testing.T) {
 		}
 	}
 
-	// GOPROXY must end with ,direct
-	if gp, ok := env["GOPROXY"]; ok {
-		if !strings.HasSuffix(gp, ",direct") {
-			t.Errorf("GOPROXY = %q, want suffix ,direct", gp)
-		}
+	// GOPROXY must not fall back to direct: the go command takes the next
+	// entry on any 404/410, bypassing a proxy that refuses a module.
+	if gp, ok := env["GOPROXY"]; !ok || strings.Contains(gp, ",direct") {
+		t.Errorf("GOPROXY = %q (set %v), want the proxy with no ,direct fallback", gp, ok)
 	}
 
 	// RUSTC_WRAPPER should be sccache

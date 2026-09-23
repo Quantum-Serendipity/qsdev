@@ -81,7 +81,7 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 			if !ok {
 				return nil, fmt.Errorf("unknown language module: %q", lang.Name)
 			}
-			cfg := ecosystem.ToModuleConfigWithProxy(lang, answers.Infrastructure)
+			cfg := ecosystem.ToModuleConfigWithInfra(lang, answers.Infrastructure)
 			secFiles := mod.SecurityConfigs(cfg)
 			files = append(files, secFiles...)
 		}

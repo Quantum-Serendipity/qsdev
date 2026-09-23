@@ -248,6 +248,10 @@ func TestIsNewerVersion(t *testing.T) {
 		{"0.8.0", "v0.8.0-3-gabc1234-dirty", false}, // describe build is after its tag
 		{"0.8.0", "v0.8.0-dirty", false},
 		{"0.8.1", "v0.8.0-3-gabc1234", true},
+		// W150: a go-install pseudo-version build of a commit after v0.7.9 must
+		// not be offered v0.7.9 (the old dot-split compare saw 0.7.0.0 < 0.7.9).
+		{"0.7.9", "v0.7.10-0.20260826231511-039466f3f4e2+dirty", false},
+		{"0.7.10", "v0.7.10-0.20260826231511-039466f3f4e2", true},
 		{"garbage", "1.0.0", false},
 		{"", "1.0.0", false},
 	}

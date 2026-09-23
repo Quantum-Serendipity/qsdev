@@ -186,6 +186,26 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 		{"control: go build", `go build ./...`, false, nil},
 		{"control: bash -c echo install text", `bash -c "echo pip install docs"`, false, nil},
 		{"control: python script named pip-install", `python analyze.py --mode pip-install`, false, nil},
+
+		// W165: the stale dogfooded hook regex-matched the imperative-Nix phrase
+		// anywhere in the raw command, denying searches and notes about it.
+		{"grep for imperative nix phrase", `grep -rn "nix profile install" --include='*.go' .`, false, nil},
+		{"rg for imperative nix phrase", `rg -n "nix profile install" .`, false, nil},
+		{"git log grep imperative nix phrase", `git log --grep='nix profile install'`, false, nil},
+		{"commit message mentioning imperative nix", `git commit -m 'docs: forbid nix profile install'`, false, nil},
+		{"commit message listing package words", `git commit -m 'docs: explain npm install flow for fs is git'`, false, nil},
+		{"grep for pip install literal", `grep -rn 'pip install' docs/`, false, nil},
+		{"real imperative nix install still detected", `nix profile install nixpkgs#hello`, true, nil}, // manager-level deny downstream; no package lookups
+		// `nix profile add` is the current verb (`install` is its alias), global
+		// options may precede the subcommand, and unknown wrappers must not
+		// hide it.
+		{"nix profile add detected", `nix profile add nixpkgs#hello`, true, nil},
+		{"nix global option before profile add", `nix --extra-experimental-features 'nix-command flakes' profile add nixpkgs#hello`, true, nil},
+		{"wrapped nix profile add", `setpriv --reuid 1000 nix profile add nixpkgs#hello`, true, nil},
+		{"wrapped nix-env install", `nsenter -t 1 nix-env -iA nixpkgs.hello`, true, nil},
+		{"control: nix profile list", `nix profile list`, false, nil},
+		{"control: nix build", `nix build .#qsdev`, false, nil},
+		{"control: grep for nix profile add", `grep -rn "nix profile add" docs/`, false, nil},
 	}
 
 	for _, tc := range cases {

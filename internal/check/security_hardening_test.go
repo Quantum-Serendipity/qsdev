@@ -8,8 +8,11 @@ import (
 
 	// Register the ecosystem modules whose generated security configs the
 	// hardening check derives its expected settings from.
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/golang"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/helm"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/javascript"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/python"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/terraform"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -312,5 +315,65 @@ func TestCheckSecurityHardening_MultipleLanguages(t *testing.T) {
 	}
 	if !jsFail {
 		t.Error("expected lockfile_javascript to fail")
+	}
+}
+
+// TestCheckSecurityHardening_LockFileRequirement covers lock file enforcement
+// that depends on the ecosystem module: manifests without dependencies need
+// no lock file (W163), ecosystems outside the shared lockfile catalog use the
+// lock files their module declares (W124), and npm's publishable lockfile is
+// accepted (W062).
+func TestCheckSecurityHardening_LockFileRequirement(t *testing.T) {
+	t.Parallel()
+
+	const goModNoDeps = "module example.com/m\n\ngo 1.24\n"
+	const goModWithDeps = goModNoDeps + "\nrequire golang.org/x/mod v0.40.0\n"
+	const chartWithDeps = "apiVersion: v2\nname: app\nversion: 0.1.0\ndependencies:\n  - name: redis\n    version: 18.0.0\n    repository: https://charts.example.test\n"
+	const chartNoDeps = "apiVersion: v2\nname: app\nversion: 0.1.0\n"
+
+	tests := []struct {
+		name       string
+		lang       string
+		files      map[string]string
+		resultName string
+		wantStatus CheckStatus
+	}{
+		{"go without requires needs no go.sum", "go", map[string]string{"go.mod": goModNoDeps}, "lockfile_go", StatusSkip},
+		{"go with requires needs go.sum", "go", map[string]string{"go.mod": goModWithDeps}, "lockfile_go", StatusFail},
+		{"go with requires and go.sum", "go", map[string]string{"go.mod": goModWithDeps, "go.sum": "h"}, "lockfile_go", StatusPass},
+		{"unreadable go.mod still enforces go.sum", "go", nil, "lockfile_go", StatusFail},
+		{"terraform without provider lock fails", "terraform", map[string]string{"main.tf": "provider \"google\" {}\n"}, "lockfile_terraform", StatusFail},
+		{"terraform with provider lock passes", "terraform", map[string]string{"main.tf": "provider \"google\" {}\n", ".terraform.lock.hcl": "# lock\n"}, "lockfile_terraform", StatusPass},
+		{"terraform with no root config is skipped not passed", "terraform", nil, "security_hardening", StatusSkip},
+		{"helm chart with dependencies warns without Chart.lock", "helm", map[string]string{"Chart.yaml": chartWithDeps}, "lockfile_helm", StatusWarn},
+		{"helm chart with dependencies and Chart.lock passes", "helm", map[string]string{"Chart.yaml": chartWithDeps, "Chart.lock": "digest: x\n"}, "lockfile_helm", StatusPass},
+		{"helm chart without dependencies needs no Chart.lock", "helm", map[string]string{"Chart.yaml": chartNoDeps}, "lockfile_helm", StatusSkip},
+		{"npm-shrinkwrap.json is a JavaScript lock file", "javascript", map[string]string{"npm-shrinkwrap.json": "{}"}, "lockfile_javascript", StatusPass},
+		{"bun.lock is a JavaScript lock file", "javascript", map[string]string{"bun.lock": "{}"}, "lockfile_javascript", StatusPass},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for name, content := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			results := CheckSecurityHardening(CheckContext{
+				ProjectRoot: dir,
+				QsdevConfig: &types.QsdevConfig{Languages: []types.LanguageConfig{{Name: tt.lang}}},
+			})
+
+			got := findResult(results, tt.resultName)
+			if got == nil {
+				t.Fatalf("expected %s result, got %+v", tt.resultName, results)
+			}
+			if got.Status != tt.wantStatus {
+				t.Errorf("Status = %s, want %s (%s)", got.Status, tt.wantStatus, got.Message)
+			}
+		})
 	}
 }

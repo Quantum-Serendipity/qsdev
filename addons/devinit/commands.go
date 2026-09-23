@@ -389,7 +389,9 @@ func finalizeProject(cmd *cobra.Command, opts InitOptions, answers types.WizardA
 		return fmt.Errorf("writing %s: %w", branding.Get().ConfigFile, err)
 	}
 
-	for _, entry := range []string{branding.Get().StateDir + "/", "." + branding.Get().AppName + "/", ".direnv/", ".devenv/"} {
+	// The local overrides file is machine-specific; join also ignores it, so
+	// init must too or every teammate's first join dirties .gitignore.
+	for _, entry := range []string{branding.Get().StateDir + "/", "." + branding.Get().AppName + "/", branding.Get().LocalConfig, ".direnv/", ".devenv/"} {
 		if err := EnsureGitignoreEntry(projectRoot, entry); err != nil {
 			slog.Warn("could not update .gitignore", "entry", entry, "error", err)
 		}

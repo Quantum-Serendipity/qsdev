@@ -1222,6 +1222,7 @@ permission_deny_rules:
         - "Bash(nix-env --erase *)"
         - "Bash(nix-env --uninstall *)"
         - "Bash(nix profile install *)"
+        - "Bash(nix profile add *)"
         - "Bash(nix profile remove *)"
         - "Bash(cachix use *)"
     system:

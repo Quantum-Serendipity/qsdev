@@ -189,11 +189,11 @@ func MergeSettings(base, theirs, ours []byte) ([]byte, error) {
 		delete(merged, "hooks")
 	}
 
-	out, err := json.MarshalIndent(merged, "", "  ")
+	out, err := json.Marshal(merged)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling final settings: %w", err)
 	}
-	return append(out, '\n'), nil
+	return CanonicalJSON(out)
 }
 
 // deepMergeObject deep-merges the typed (merged) object for the top-level key

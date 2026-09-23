@@ -192,14 +192,22 @@ jobs:
         uses: goreleaser/goreleaser-action@1a80836c5c9d9e5755a25cb59ec6f45a3b5f41a8 # v7.2.1
         with:
           distribution: goreleaser
-          version: "~> v2"
+          # Exact pin: this binary runs with the release signing identity
+          # and tap tokens. Keep ci.yml and release.yml on the same version;
+          # Renovate's custom manager (renovate.json) bumps both.
+          # renovate: datasource=github-releases depName=goreleaser/goreleaser
+          version: v2.18.2
           args: check
 
       - name: Run GoReleaser (snapshot)
         uses: goreleaser/goreleaser-action@1a80836c5c9d9e5755a25cb59ec6f45a3b5f41a8 # v7.2.1
         with:
           distribution: goreleaser
-          version: "~> v2"
+          # Exact pin: this binary runs with the release signing identity
+          # and tap tokens. Keep ci.yml and release.yml on the same version;
+          # Renovate's custom manager (renovate.json) bumps both.
+          # renovate: datasource=github-releases depName=goreleaser/goreleaser
+          version: v2.18.2
           args: release --snapshot --clean --skip=publish,sign
 
       - name: Upload snapshot artifacts

@@ -46,9 +46,7 @@ func CheckSecurityHardening(ctx CheckContext) []CheckResult {
 
 	// Check lock files for each language.
 	for _, lang := range ctx.QsdevConfig.Languages {
-		if r, ok := checkLockFile(ctx.ProjectRoot, lang.Name); ok {
-			results = append(results, r)
-		}
+		results = append(results, checkLanguageLockFiles(ctx.ProjectRoot, lang)...)
 	}
 
 	// Check that the package-manager security configs qsdev generates for
@@ -61,16 +59,101 @@ func CheckSecurityHardening(ctx CheckContext) []CheckResult {
 	}
 
 	if len(results) == 0 {
+		// Nothing was verified, so report a skip rather than a pass: a green
+		// result here would claim hardening that was never checked.
 		results = append(results, CheckResult{
 			Category: CategorySecurityHarden,
 			Name:     "security_hardening",
-			Status:   StatusPass,
+			Status:   StatusSkip,
 			Severity: SeverityInfo,
 			Message:  "No ecosystem-specific hardening checks applicable",
 		})
 	}
 
 	return results
+}
+
+// checkLanguageLockFiles returns the lock file results for one configured
+// language. An ecosystem whose manifest declares no dependencies is skipped
+// (its package manager writes no lock file). Ecosystems in the shared
+// LockFilesByEcosystem catalog use checkLockFile; every other ecosystem falls
+// back to the lock files its module declares via ManifestFileProvider, so
+// ecosystems such as Terraform (.terraform.lock.hcl) are not silently passed.
+func checkLanguageLockFiles(projectRoot string, lang types.LanguageConfig) []CheckResult {
+	mod, hasMod := ecosystem.DefaultRegistry().ByName(lang.Name)
+	if hasMod {
+		if dd, ok := mod.(ecosystem.DependencyDeclarer); ok {
+			// An error leaves the answer unknown: enforce the lock file.
+			if declares, err := dd.DeclaresDependencies(projectRoot); err == nil && !declares {
+				return []CheckResult{{
+					Category: CategorySecurityHarden,
+					Name:     "lockfile_" + lang.Name,
+					Status:   StatusSkip,
+					Severity: SeverityInfo,
+					Message:  fmt.Sprintf("%s manifest declares no dependencies; no lock file expected", lang.Name),
+				}}
+			}
+		}
+	}
+
+	if r, ok := checkLockFile(projectRoot, lang.Name); ok {
+		return []CheckResult{r}
+	}
+	if !hasMod {
+		return nil
+	}
+	mfp, ok := mod.(ecosystem.ManifestFileProvider)
+	if !ok {
+		return nil
+	}
+	var results []CheckResult
+	for _, mf := range mfp.ManifestFiles(ecosystem.ModuleConfig{PackageManager: lang.PackageManager}) {
+		if r, ok := checkDeclaredLockFile(projectRoot, lang.Name, mf); ok {
+			results = append(results, r)
+		}
+	}
+	return results
+}
+
+// checkDeclaredLockFile checks one module-declared manifest/lock file pair.
+// It applies only when the pair has a lock file with a required or
+// recommended policy and the manifest (which may be a glob such as "*.tf") is
+// present in the project root, where ecosystem detection looks. A missing
+// required lock file fails; a missing recommended one warns.
+func checkDeclaredLockFile(projectRoot, langName string, mf ecosystem.ManifestFileInfo) (CheckResult, bool) {
+	if mf.LockFile == "" || mf.LockFilePolicy == ecosystem.LockFilePolicyNone {
+		return CheckResult{}, false
+	}
+	matches, err := filepath.Glob(filepath.Join(projectRoot, mf.Path))
+	if err != nil || len(matches) == 0 {
+		return CheckResult{}, false
+	}
+
+	name := "lockfile_" + langName
+	if _, err := os.Stat(filepath.Join(projectRoot, mf.LockFile)); err == nil {
+		return CheckResult{
+			Category: CategorySecurityHarden,
+			Name:     name,
+			Status:   StatusPass,
+			Severity: SeverityInfo,
+			Message:  fmt.Sprintf("Lock file %s found for %s", mf.LockFile, langName),
+			FilePath: mf.LockFile,
+		}, true
+	}
+
+	status, severity := StatusFail, SeverityMedium
+	if mf.LockFilePolicy == ecosystem.LockFilePolicyRecommended {
+		status, severity = StatusWarn, SeverityLow
+	}
+	return CheckResult{
+		Category:    CategorySecurityHarden,
+		Name:        name,
+		Status:      status,
+		Severity:    severity,
+		Message:     fmt.Sprintf("No lock file found for %s (%s expected alongside %s)", langName, mf.LockFile, mf.Path),
+		FilePath:    mf.LockFile,
+		Remediation: fmt.Sprintf("Generate and commit %s to pin dependency versions", mf.LockFile),
+	}, true
 }
 
 // checkLockFile verifies that a pinned lock file exists for the ecosystem. A

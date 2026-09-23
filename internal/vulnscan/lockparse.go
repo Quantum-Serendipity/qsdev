@@ -67,11 +67,13 @@ var osvEcosystems = map[string]string{
 var lockParsers = map[string]lockParser{
 	"go.sum":            parseGoSum,
 	"package-lock.json": parseNPMLock,
-	"Cargo.lock":        parseTOMLPackages,
-	"poetry.lock":       parseTOMLPackages,
-	"uv.lock":           parseTOMLPackages,
-	"Pipfile.lock":      parsePipfileLock,
-	"requirements.txt":  parseRequirementsTxt,
+	// npm-shrinkwrap.json shares package-lock.json's format.
+	"npm-shrinkwrap.json": parseNPMLock,
+	"Cargo.lock":          parseTOMLPackages,
+	"poetry.lock":         parseTOMLPackages,
+	"uv.lock":             parseTOMLPackages,
+	"Pipfile.lock":        parsePipfileLock,
+	"requirements.txt":    parseRequirementsTxt,
 }
 
 // knownLockFiles returns the memoized lock-file table. The table is invariant
@@ -262,7 +264,7 @@ func parseNPMLock(path, eco string) ([]Package, error) {
 	}
 	var lock npmLock
 	if err := json.Unmarshal(data, &lock); err != nil {
-		return nil, fmt.Errorf("decoding package-lock.json %q: %w", path, err)
+		return nil, fmt.Errorf("decoding npm lockfile %q: %w", path, err)
 	}
 
 	seen := make(map[string]bool)

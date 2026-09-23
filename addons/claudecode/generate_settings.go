@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -325,13 +326,16 @@ func GenerateSettings(answers types.WizardAnswers, registry *ecosystem.Registry,
 		Hooks:       buildHooks(answers),
 	}
 
-	jsonBytes, err := json.MarshalIndent(settings, "", "  ")
+	raw, err := json.Marshal(settings)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling settings.json: %w", err)
 	}
-
-	// Append trailing newline for POSIX compliance.
-	jsonBytes = append(jsonBytes, '\n')
+	// Emit the same canonical form the three-way merge writes, so the first
+	// update after init is not a key-reorder rewrite.
+	jsonBytes, err := merge.CanonicalJSON(raw)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalizing settings.json: %w", err)
+	}
 
 	return &types.GeneratedFile{
 		Path:     ".claude/settings.json",

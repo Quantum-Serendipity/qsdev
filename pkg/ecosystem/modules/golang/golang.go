@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strconv"
 
+	"golang.org/x/mod/modfile"
+
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -23,6 +25,7 @@ var _ ecosystem.PackageProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
+var _ ecosystem.DependencyDeclarer = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -245,6 +248,22 @@ func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFil
 			LockFilePolicy: ecosystem.LockFilePolicyRecommended,
 		},
 	}
+}
+
+// DeclaresDependencies reports whether go.mod has any require directive. A
+// module that requires nothing never gets a go.sum (`go mod tidy` does not
+// create one), so there is no lock file to enforce.
+func (m *Module) DeclaresDependencies(projectRoot string) (bool, error) {
+	path := filepath.Join(projectRoot, "go.mod")
+	data, err := os.ReadFile(path) //nolint:gosec // project-root manifest
+	if err != nil {
+		return false, fmt.Errorf("reading go.mod: %w", err)
+	}
+	mf, err := modfile.ParseLax(path, data, nil)
+	if err != nil {
+		return false, fmt.Errorf("parsing go.mod: %w", err)
+	}
+	return len(mf.Require) > 0, nil
 }
 
 // DevenvPackages returns standard Go development tool packages.

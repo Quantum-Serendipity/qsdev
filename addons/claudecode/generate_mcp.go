@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -63,13 +64,15 @@ func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedF
 		mcp.MCPServers[srv.Name] = entry
 	}
 
-	jsonBytes, err := json.MarshalIndent(mcp, "", "  ")
+	raw, err := json.Marshal(mcp)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling .mcp.json: %w", err)
 	}
-
-	// Append trailing newline for POSIX compliance.
-	jsonBytes = append(jsonBytes, '\n')
+	// Emit the same canonical form the three-way merge writes.
+	jsonBytes, err := merge.CanonicalJSON(raw)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalizing .mcp.json: %w", err)
+	}
 
 	return &types.GeneratedFile{
 		Path:     ".mcp.json",

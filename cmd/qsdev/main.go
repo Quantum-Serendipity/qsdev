@@ -17,6 +17,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/devinit"
 	"github.com/Quantum-Serendipity/qsdev/instance"
 	"github.com/Quantum-Serendipity/qsdev/internal/bugreport"
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/logcmd"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserver"
@@ -63,9 +64,7 @@ func main() {
 	// command inside cmd.Main, and a statically registered command is attached
 	// to it directly, so logsCmd.Root() reaches the root once execution starts.
 	logsCmd := logcmd.Command()
-	instance.AddCommands(selfupdate.Command())
-	instance.AddCommands(logsCmd)
-	instance.AddCommands(bugreport.Command())
+	instance.AddCommands(cmdutil.RejectUnknownSubcommands(selfupdate.Command(), logsCmd, bugreport.Command())...)
 
 	// Pre-parse --debug from args before cobra processes them.
 	// Sets QSDEV_LOG=debug so the OnInitialize callback picks it up.

@@ -62,7 +62,8 @@ func TestBuildReport(t *testing.T) {
 }
 
 // TestBuildReport_NixRecommendations verifies the doctor never recommends the
-// denied imperative Nix profile install, and prints no empty install commands.
+// denied imperative Nix profile install, and gives unmapped tools explicit
+// guidance instead of an empty install command.
 func TestBuildReport_NixRecommendations(t *testing.T) {
 	osInfo := &sysinfo.OSInfo{OS: "linux", Arch: "amd64", Family: "nixos", Distro: "nixos", PackageManager: "nix", HasNix: true}
 	checks := []ToolStatus{
@@ -76,6 +77,7 @@ func TestBuildReport_NixRecommendations(t *testing.T) {
 	want := []string{
 		"Install direnv: qsdev devenv setup",
 		"Install shfmt: qsdev devenv add-package shfmt",
+		"Install no-such-tool-xyz: no nix package is known for no-such-tool-xyz; install it from its official distribution",
 	}
 	if !slices.Equal(r.Recommendations, want) {
 		t.Errorf("Recommendations = %q, want %q", r.Recommendations, want)
@@ -130,7 +132,7 @@ func TestFormatReportNoColor(t *testing.T) {
 			{Name: "shellcheck", Found: true, Version: "0.10.0", VersionOK: true, Path: "/usr/bin/shellcheck"},
 		},
 		Recommendations: []string{
-			"Install node: nix profile install nixpkgs#nodejs",
+			"Install node: qsdev devenv setup",
 		},
 		AllRequiredPresent: false,
 	}
@@ -272,5 +274,45 @@ func TestUseColorNonTerminal(t *testing.T) {
 
 	if UseColor(f.Fd()) {
 		t.Error("UseColor should return false for a non-terminal file descriptor")
+	}
+}
+
+// TestBuildReport_FixCommands is the W162 regression test: on a Nix host the
+// doctor must not recommend an imperative profile install (forbidden by the
+// generated security rules and deny list), and a tool with no package mapping
+// must get guidance rather than an empty command.
+func TestBuildReport_FixCommands(t *testing.T) {
+	t.Parallel()
+
+	nixHost := &sysinfo.OSInfo{OS: "linux", Family: "nixos", Distro: "nixos", PackageManager: "nix", HasNix: true}
+	aptHost := &sysinfo.OSInfo{OS: "linux", Family: "debian", Distro: "ubuntu", PackageManager: "apt"}
+
+	tests := []struct {
+		name   string
+		osInfo *sysinfo.OSInfo
+		tool   ToolStatus
+		want   string
+	}{
+		{"nix optional tool is pinned in the project", nixHost, ToolStatus{Name: "shfmt"}, "qsdev devenv add-package shfmt"},
+		{"nix required prerequisite uses setup", nixHost, ToolStatus{Name: "direnv", Required: true}, "qsdev devenv setup"},
+		{"nix outdated optional tool is pinned in the project", nixHost, ToolStatus{Name: "shfmt", Installed: true, MinVersion: "9", Version: "3"}, "qsdev devenv add-package shfmt"},
+		{"unmapped tool gets guidance", nixHost, ToolStatus{Name: "no-such-tool"}, "no nix package is known for no-such-tool"},
+		{"apt host keeps its native install command", aptHost, ToolStatus{Name: "shfmt"}, "apt"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := BuildReport(tt.osInfo, []ToolStatus{tt.tool}, "0.1.0")
+			if len(r.Recommendations) != 1 {
+				t.Fatalf("Recommendations = %q, want exactly 1", r.Recommendations)
+			}
+			rec := r.Recommendations[0]
+			if !strings.Contains(rec, tt.want) {
+				t.Errorf("recommendation = %q, want it to contain %q", rec, tt.want)
+			}
+			if strings.Contains(rec, "profile install") || strings.HasSuffix(strings.TrimSpace(rec), ":") {
+				t.Errorf("recommendation = %q: imperative Nix install or empty command", rec)
+			}
+		})
 	}
 }

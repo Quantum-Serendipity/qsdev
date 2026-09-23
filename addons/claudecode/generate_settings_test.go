@@ -646,6 +646,7 @@ func TestGenerateSettings_CriticalDenyRulesPresent(t *testing.T) {
 		// Nix imperative installs
 		`Bash(nix-env -i *)`,
 		`Bash(nix profile install *)`,
+		`Bash(nix profile add *)`,
 
 		// System package managers
 		`Bash(apt install *)`,

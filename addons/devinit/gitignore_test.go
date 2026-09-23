@@ -3,10 +3,15 @@ package devinit
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestEnsureGitignoreEntry_CreatesMissing(t *testing.T) {
@@ -131,5 +136,37 @@ func TestEnsureGitignoreEntry_SectionCommentAddedOnce(t *testing.T) {
 	count := strings.Count(string(content), fileutil.GitignoreSectionComment())
 	if count != 1 {
 		t.Errorf("section comment appears %d times, want 1; content:\n%s", count, content)
+	}
+}
+
+// TestFinalizeProject_IgnoresLocalConfig is the W166 regression test: join
+// adds the machine-local overrides file to .gitignore, so init must as well,
+// or every teammate's first join dirties the committed .gitignore.
+func TestFinalizeProject_IgnoresLocalConfig(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	cmd := &cobra.Command{}
+	if err := finalizeProject(cmd, InitOptions{Quiet: true}, types.WizardAnswers{}, dir, false, false); err != nil {
+		t.Fatalf("finalizeProject: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("reading .gitignore: %v", err)
+	}
+	local := branding.Get().LocalConfig
+	if !slices.Contains(strings.Split(string(data), "\n"), local) {
+		t.Errorf(".gitignore does not list %s:\n%s", local, data)
+	}
+	// Join's own EnsureGitignoreEntry call must then be a no-op.
+	if err := EnsureGitignoreEntry(dir, local); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(data) {
+		t.Errorf("join changed .gitignore after init:\n--- init\n%s\n--- join\n%s", data, after)
 	}
 }

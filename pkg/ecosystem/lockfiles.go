@@ -38,9 +38,11 @@ var ManifestsByEcosystem = map[string][]string{
 // "is there a real lockfile" must skip them (see ManifestsByEcosystem).
 var LockFilesByEcosystem = map[string][]string{
 	NameGo: {"go.sum"},
-	// bun.lock is Bun's text lockfile (the default since Bun 1.2); bun.lockb
-	// is the legacy binary format.
-	NameJavaScript: {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb"},
+	// npm-shrinkwrap.json is npm's publishable lockfile (same format as
+	// package-lock.json) and takes precedence over it when both exist, so it
+	// is listed first. bun.lock is Bun's text lockfile (the default since Bun
+	// 1.2); bun.lockb is the legacy binary format.
+	NameJavaScript: {"npm-shrinkwrap.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb"},
 	NamePython:     {"requirements.txt", "poetry.lock", "uv.lock", "Pipfile.lock"},
 	NameRust:       {"Cargo.lock"},
 	NameJava:       {"gradle.lockfile", "pom.xml"},
@@ -55,11 +57,12 @@ var LockFilesByEcosystem = map[string][]string{
 // for drift detection.
 //
 // Pairs that share a manifest are ALTERNATIVES, one per package manager
-// (package.json is locked by exactly one of package-lock.json, pnpm-lock.yaml,
-// yarn.lock, bun.lock or bun.lockb). A manifest is satisfied when ANY of its
+// (package.json is locked by exactly one of npm-shrinkwrap.json,
+// package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock or bun.lockb). A manifest is satisfied when ANY of its
 // lockfiles exists; consumers must group pairs by manifest and must not report
 // the unused alternatives as missing.
 var ManifestLockfilePairs = []LockFilePair{
+	{"package.json", "npm-shrinkwrap.json"},
 	{"package.json", "package-lock.json"},
 	{"package.json", "pnpm-lock.yaml"},
 	{"package.json", "yarn.lock"},

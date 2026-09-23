@@ -140,7 +140,7 @@ INSTALL_PATTERNS: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r'\bcomposer\s+require\b'), "Packagist", "composer"),
     # nix (imperative installs — these should generally be blocked entirely)
     (re.compile(r'\bnix-env\s+-i\b'), "nix", "nix-env"),
-    (re.compile(r'\bnix\s+profile\s+install\b'), "nix", "nix-profile"),
+    (re.compile(r'\bnix\s+profile\s+(install|add)\b'), "nix", "nix-profile"),
 ]
 
 # Safety flags to append via updatedInput, keyed by manager label.
@@ -892,7 +892,10 @@ def parse_install_argv(argv: list[str]) -> Optional[tuple[str, str, list[str]]]:
             return ("nix", "nix-env", [])
         return None
     if exe == "nix":
-        if _match_verb(rest, ["profile", "install"]) is not None:
+        # `nix profile add` is the current verb (`install` remains an alias),
+        # and global options such as --extra-experimental-features may come
+        # before the subcommand.
+        if any(a == "profile" and b in ("add", "install") for a, b in zip(rest, rest[1:])):
             return ("nix", "nix-profile", [])
         return None
 
@@ -962,7 +965,7 @@ def _classified_exe(exe: str) -> bool:
 
 def _embedded_install(argv: list[str]) -> Optional[tuple[str, str, list[str]]]:
     """Parse of the first genuine install invocation embedded past argv[0]: the
-    token must itself BE an INSTALL_COMMANDS manager whose tail parse_install_argv
+    token must itself BE an INSTALL_COMMANDS manager (or nix/nix-env) whose tail parse_install_argv
     classifies as an install — one classifier for the primary path and this
     fallback, so the two can never disagree. Purely catalog-driven — no wrapper
     names are consulted, so wrappers unknown to COMMAND_PREFIXES (setpriv,
@@ -971,7 +974,7 @@ def _embedded_install(argv: list[str]) -> Optional[tuple[str, str, list[str]]]:
     carries no bare `npm` token and can never match. Returns None when argv
     embeds no install."""
     for k in range(1, len(argv)):
-        if argv[k] in INSTALL_COMMANDS:
+        if argv[k] in INSTALL_COMMANDS or argv[k] in ("nix", "nix-env"):
             parsed = parse_install_argv(argv[k:])
             if parsed is not None:
                 return parsed

@@ -177,6 +177,26 @@ func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFil
 	}}
 }
 
+// Compile-time check that the Helm module reports chart dependencies.
+var _ ecosystem.DependencyDeclarer = (*Module)(nil)
+
+// DeclaresDependencies reports whether Chart.yaml lists any dependencies.
+// `helm dependency update` writes Chart.lock only for charts that have some,
+// so a chart without dependencies has no lock file to enforce.
+func (m *Module) DeclaresDependencies(projectRoot string) (bool, error) {
+	data, err := os.ReadFile(filepath.Join(projectRoot, "Chart.yaml")) //nolint:gosec // project-root manifest
+	if err != nil {
+		return false, fmt.Errorf("reading Chart.yaml: %w", err)
+	}
+	var chart struct {
+		Dependencies []yaml.Node `yaml:"dependencies"`
+	}
+	if err := yaml.Unmarshal(data, &chart); err != nil {
+		return false, fmt.Errorf("parsing Chart.yaml: %w", err)
+	}
+	return len(chart.Dependencies) > 0, nil
+}
+
 // parseChartVersion reads Chart.yaml and returns its top-level version field.
 // Parsing the YAML (rather than matching lines) ignores the version keys of
 // entries under dependencies and strips quoting and trailing comments.

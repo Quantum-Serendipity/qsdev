@@ -13,6 +13,7 @@ import (
 
 	_ "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	_ "github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/defaults"
 )
 
@@ -67,7 +68,7 @@ func initialize() error {
 		return fmt.Errorf("configuring devinit profiles: %w", err)
 	}
 	gdevcmd.AddConfigCommandBuilder(configShowCmd, migrateCmd)
-	instance.AddCommands(
+	instance.AddCommands(cmdutil.RejectUnknownSubcommands(
 		initCmd(),
 		trialCmd(),
 		scaffoldCmd(),
@@ -90,6 +91,6 @@ func initialize() error {
 		sessionCmd(),
 		policyCmd(),
 		defaults.Command(),
-	)
+	)...)
 	return nil
 }

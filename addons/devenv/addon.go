@@ -3,6 +3,8 @@ package devenv
 import (
 	"fastcat.org/go/gdev/addons"
 	"fastcat.org/go/gdev/instance"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 )
 
 var addon = addons.Addon[config]{
@@ -26,6 +28,6 @@ func Configure(opts ...option) {
 }
 
 func initialize() error {
-	instance.AddCommands(devenvCmd(), completionCmd())
+	instance.AddCommands(cmdutil.RejectUnknownSubcommands(devenvCmd(), completionCmd())...)
 	return nil
 }

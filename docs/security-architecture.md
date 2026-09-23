@@ -137,9 +137,9 @@ Both are configured automatically during `qsdev init`. No manual setup required.
 
 When a Dockerfile or Containerfile is detected, qsdev generates runtime-aware security configs for both Docker and Podman:
 
-- **Hadolint configuration** — Linting rules for Dockerfile best practices (no `latest` tags, no root user, etc.).
+- **Hadolint configuration** — Linting rules for Dockerfile best practices (no `latest` tags, no root user, etc.) and a DL3026 trusted-registry allowlist. The default allowlist is `docker.io`, `gcr.io` and `ghcr.io`. Hadolint matches registries only, not namespaces, so trusting `docker.io` admits every Docker Hub account, including typosquats. Narrow the list to the registries your organization actually uses in the `qsdev init` wizard's "Trusted container registries" field (comma-separated, stored as the `trusted_registries` extra).
 - **Syft SBOM generation + Grype vulnerability scanning** — CI workflow steps that produce a software bill of materials and scan built images for OS and library vulnerabilities. (Trivy was removed after the March 2026 supply chain compromise.)
-- **Base image pinning** — Generated Dockerfiles pin base images to digest, not tag.
+- **Base image pinning (not enforced)** — qsdev does not generate Dockerfiles and does not check that base images are pinned. Hadolint rejects `latest` and untagged images (DL3006/DL3007) but accepts any mutable tag such as `node:20`. Pin each `FROM` to a digest (`image:tag@sha256:...`) yourself, and let Dependabot or Renovate update the digests.
 - **Runtime-aware deny rules** — In Podman mode, Docker socket mount commands are blocked to prevent accidental privilege escalation.
 
 ### Layer 10: License Compliance

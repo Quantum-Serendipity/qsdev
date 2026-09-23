@@ -82,6 +82,18 @@ type ManifestFileProvider interface {
 	ManifestFiles(config ModuleConfig) []ManifestFileInfo
 }
 
+// DependencyDeclarer is an optional interface that ecosystem modules can
+// implement to report whether the project's manifest declares any external
+// dependencies. Package managers write no lock file for a manifest without
+// dependencies (a go.mod with no require directives never gets a go.sum), so
+// lock file enforcement skips such projects instead of demanding a file that
+// cannot be generated. Modules that omit this interface are assumed to
+// declare dependencies. An error means the answer is unknown, and callers
+// must then enforce the lock file as usual.
+type DependencyDeclarer interface {
+	DeclaresDependencies(projectRoot string) (bool, error)
+}
+
 // DenyRuleProvider is an optional interface that ecosystem modules can
 // implement to contribute Claude Code deny-rule patterns. Modules that
 // need no deny rules simply omit this interface.

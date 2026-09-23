@@ -136,11 +136,11 @@ func MergeMcpJson(base, theirs, ours []byte) ([]byte, error) {
 	}
 	top["mcpServers"] = serversBytes
 
-	out, err := json.MarshalIndent(top, "", "  ")
+	out, err := json.Marshal(top)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling merged mcp.json: %w", err)
 	}
-	return append(out, '\n'), nil
+	return CanonicalJSON(out)
 }
 
 // rawServersFrom parses the mcpServers object of a document into per-server raw

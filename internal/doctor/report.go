@@ -183,13 +183,11 @@ func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, qsdevVersion strin
 		}
 	}
 
-	// Build recommendations. A tool with no known install command gets none:
-	// "Install X: " with nothing after it is noise, and the tool is already
-	// listed as missing above.
+	// Build recommendations. fixCommand never returns "": a tool with no known
+	// package gets explicit guidance rather than an empty "Install X: ".
 	for _, ts := range checks {
 		cmd := fixCommand(pm, family, ts)
 		switch {
-		case cmd == "":
 		case !ts.Installed:
 			r.Recommendations = append(r.Recommendations, fmt.Sprintf("Install %s: %s", ts.Name, cmd))
 		case ts.MinVersion != "" && !ts.VersionOK:
@@ -200,25 +198,26 @@ func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, qsdevVersion strin
 	return r
 }
 
-// fixCommand returns the command that installs or upgrades ts, or "" when
-// none is known. With Nix it never suggests an imperative profile install:
-// that bypasses the project's pinned environment, and the generated security
-// rules, settings.json deny list and package guard all forbid it. Required
-// prerequisites come from `devenv setup` instead, and optional tools (which
-// devenv provides per project) are added to the pinned environment.
+// fixCommand returns the remediation for a missing or outdated tool. On a Nix
+// host it never suggests an imperative profile install, which the generated
+// security rules and deny list forbid: required prerequisites point at
+// `devenv setup`, and other tools at `devenv add-package <attr>`, which pins
+// them in the project's devenv.nix. A tool with no known package for the
+// manager gets an explicit note instead of an empty command.
 func fixCommand(pm pkgmanager.PackageManager, family string, ts ToolStatus) string {
-	if pm.Name() != "nix" {
-		return pkgmanager.InstallCommand(pm, family, ts.Name)
-	}
 	app := branding.Get().AppName
-	if ts.Required {
-		return app + " devenv setup"
+	if _, isNix := pm.(*pkgmanager.Nix); isNix {
+		if ts.Required {
+			return app + " devenv setup"
+		}
+		if pkg, ok := pkgmanager.PackageFor(pm, family, ts.Name); ok {
+			return fmt.Sprintf("%s devenv add-package %s", app, pkg)
+		}
 	}
-	pkg, ok := pkgmanager.PackageFor(pm, family, ts.Name)
-	if !ok {
-		return ""
+	if cmd := pkgmanager.InstallCommand(pm, family, ts.Name); cmd != "" {
+		return cmd
 	}
-	return app + " devenv add-package " + pkg
+	return fmt.Sprintf("no %s package is known for %s; install it from its official distribution", pm.Name(), ts.Name)
 }
 
 // UseColor returns true if color output should be used for the given

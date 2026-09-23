@@ -4,6 +4,7 @@ import (
 	"fastcat.org/go/gdev/addons"
 	"fastcat.org/go/gdev/instance"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules"
 )
 
@@ -36,9 +37,6 @@ func initialize() error {
 	// Register the embedded MCP providers before mcpCmd enumerates them.
 	registerMCPProviders()
 
-	instance.AddCommands(claudeCmd())
-	instance.AddCommands(mcpCmd())
-	instance.AddCommands(docsCmd())
-	instance.AddCommands(contentCmd())
+	instance.AddCommands(cmdutil.RejectUnknownSubcommands(claudeCmd(), mcpCmd(), docsCmd(), contentCmd())...)
 	return nil
 }

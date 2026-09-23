@@ -37,7 +37,12 @@ func RecordFiles(files []types.GeneratedFile) types.GeneratedState {
 			Owner:    f.Owner,
 		}
 		if f.Strategy == types.ThreeWayMerge {
+			// The merge base is what the generator produced ("ours"), which
+			// differs from Content when a merge preserved user additions.
 			fs.BaseContent = f.Content
+			if f.BaseContent != nil {
+				fs.BaseContent = f.BaseContent
+			}
 		}
 		state.Files[f.Path] = fs
 	}

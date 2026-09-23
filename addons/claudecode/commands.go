@@ -114,7 +114,7 @@ func initCmd() *cobra.Command {
 			// an existing file.
 			result, err := generate.WriteFiles(files, generate.PipelineOptions{
 				ProjectRoot:       projectRoot,
-				SectionMergeFunc:  merge.SectionMarkers,
+				SectionMergeFunc:  merge.SectionMarkersOrAppend,
 				ThreeWayMergeFunc: merge.MergeOnCreate,
 			})
 			if err != nil {

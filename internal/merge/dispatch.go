@@ -31,7 +31,7 @@ func Dispatch(relPath string, strategy types.MergeStrategy, base, theirs, ours [
 			return nil, fmt.Errorf("no three-way merge handler for %q", relPath)
 		}
 	case types.SectionMarker:
-		return SectionMarkers(theirs, ours)
+		return SectionMarkersOrAppend(theirs, ours)
 	case types.LibraryManaged:
 		return ours, nil
 	default:

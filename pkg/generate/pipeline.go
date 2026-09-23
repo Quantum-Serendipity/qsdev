@@ -164,6 +164,20 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 			}
 		}
 
+		// Skip byte- and mode-identical files: rewriting them only bumps the
+		// mtime, which makes direnv/devenv re-evaluate on every run.
+		if statErr == nil {
+			var identical bool
+			fr.PrevHash, identical = compareOnDisk(fullPath, contentToWrite, mode)
+			if identical {
+				fr.Action = ActionSkipped
+				fr.DiskContent = contentToWrite
+				result.Files = append(result.Files, fr)
+				result.Skipped++
+				continue
+			}
+		}
+
 		// Write atomically.
 		if err := fileutil.WriteFileAtomic(fullPath, contentToWrite, mode); err != nil {
 			fr.Action = ActionFailed
@@ -174,6 +188,7 @@ func WriteFiles(files []types.GeneratedFile, opts PipelineOptions) (WriteResult,
 			continue
 		}
 		slog.Debug("file written", "path", file.Path, "action", fr.Action, "bytes", fr.BytesSize)
+		fr.DiskContent = contentToWrite
 
 		result.Files = append(result.Files, fr)
 		switch fr.Action {

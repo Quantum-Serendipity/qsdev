@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestSectionMarkers_BasicMerge(t *testing.T) {
@@ -61,6 +63,89 @@ func TestSectionMarkers_MarkersNotFound(t *testing.T) {
 	_, err := SectionMarkers(existing, newGenerated)
 	if !errors.Is(err, ErrMarkersNotFound) {
 		t.Errorf("expected ErrMarkersNotFound, got %v", err)
+	}
+}
+
+func TestSectionMarkersOrAppend(t *testing.T) {
+	gen := []byte("# CLAUDE.md\n\n<!-- BEGIN GENERATED SECTION -->\nnew\n<!-- END GENERATED SECTION -->\n\n## Custom\n")
+	block := "<!-- BEGIN GENERATED SECTION -->\nnew\n<!-- END GENERATED SECTION -->\n"
+
+	tests := []struct {
+		name     string
+		existing string
+		want     string
+		wantErr  error
+	}{
+		{
+			name:     "handwritten_file_is_kept_and_block_appended",
+			existing: "# my handwritten notes\n",
+			want:     "# my handwritten notes\n\n" + block,
+		},
+		{
+			name:     "no_trailing_newline",
+			existing: "notes",
+			want:     "notes\n\n" + block,
+		},
+		{
+			name:     "already_blank_line_separated",
+			existing: "notes\n\n",
+			want:     "notes\n\n" + block,
+		},
+		{
+			name:     "empty_existing",
+			existing: "",
+			want:     block,
+		},
+		{
+			name:     "existing_markers_are_replaced_not_appended",
+			existing: "top\n<!-- BEGIN GENERATED SECTION -->\nold\n<!-- END GENERATED SECTION -->\nbottom\n",
+			want:     "top\n" + block + "bottom\n",
+		},
+		{
+			name:     "malformed_markers_still_error",
+			existing: "<!-- BEGIN GENERATED SECTION -->\nuser text\n",
+			wantErr:  ErrMalformedMarkers,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := SectionMarkersOrAppend([]byte(tt.existing), gen)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("got:\n%q\nwant:\n%q", got, tt.want)
+			}
+			// Idempotent: a second run replaces the appended section in place.
+			again, err := SectionMarkersOrAppend(got, gen)
+			if err != nil {
+				t.Fatalf("second run: %v", err)
+			}
+			if !bytes.Equal(again, got) {
+				t.Errorf("second run changed content:\n%q\nwant:\n%q", again, got)
+			}
+		})
+	}
+}
+
+func TestDispatch_SectionMarkerAppendsToHandwrittenFile(t *testing.T) {
+	existing := []byte("# my handwritten notes\n")
+	gen := []byte("<!-- BEGIN GENERATED SECTION -->\ngen\n<!-- END GENERATED SECTION -->\n")
+	got, err := Dispatch("CLAUDE.md", types.SectionMarker, nil, existing, gen)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if !bytes.HasPrefix(got, existing) {
+		t.Errorf("user content lost: %q", got)
+	}
+	if !bytes.Contains(got, gen) {
+		t.Errorf("generated section missing: %q", got)
 	}
 }
 

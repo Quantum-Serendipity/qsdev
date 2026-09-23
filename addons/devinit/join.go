@@ -273,7 +273,7 @@ func writeJoinResults(
 	// when join writes over an existing, unrecorded file.
 	result, err := generate.WriteFiles(allFiles, generate.PipelineOptions{
 		ProjectRoot:       projectRoot,
-		SectionMergeFunc:  merge.SectionMarkers,
+		SectionMergeFunc:  merge.SectionMarkersOrAppend,
 		ThreeWayMergeFunc: merge.MergeOnCreate,
 	})
 	if err != nil {

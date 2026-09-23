@@ -18,6 +18,9 @@ type ClassifiedFile struct {
 	SectionIDs []string // For shared files: all section IDs from all tools.
 	Modified   bool
 	Deleted    bool
+	// BaseContent is the generated content recorded in state (set for
+	// three-way-merged files such as settings.json).
+	BaseContent []byte
 }
 
 // ClassifyFiles examines each file in genState against its on-disk state
@@ -51,21 +54,21 @@ func ClassifyFiles(genState types.GeneratedState, projectRoot string, registry *
 
 	for relPath, fs := range genState.Files {
 		cf := ClassifiedFile{
-			Path:  relPath,
-			Owner: fs.Owner,
+			Path:        relPath,
+			Owner:       fs.Owner,
+			BaseContent: fs.BaseContent,
 		}
 
 		absPath := filepath.Join(projectRoot, relPath)
 
-		// Check if file exists.
-		_, err := os.Stat(absPath)
-		if err != nil {
+		// Check if file exists. Any other stat error (e.g. permission denied)
+		// means the file's state is unknown: treat it as modified so it is
+		// preserved rather than silently dropped from the plan.
+		if _, err := os.Stat(absPath); err != nil {
 			if os.IsNotExist(err) {
 				cf.Deleted = true
-			}
-			// For other errors, treat as deleted for teardown purposes.
-			if !os.IsNotExist(err) {
-				cf.Deleted = true
+			} else {
+				cf.Modified = true
 			}
 		}
 

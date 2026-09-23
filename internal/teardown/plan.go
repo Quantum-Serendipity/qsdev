@@ -52,8 +52,9 @@ func BuildPlan(classified []ClassifiedFile, opts TeardownOptions) *TeardownPlan 
 			}
 		case toolreg.Shared:
 			plan.Clean = append(plan.Clean, FileAction{
-				Path:   cf.Path,
-				Reason: "surgically remove " + branding.Get().AppName + " sections",
+				Path:        cf.Path,
+				Reason:      "surgically remove " + branding.Get().AppName + " sections",
+				BaseContent: cf.BaseContent,
 			})
 		}
 	}

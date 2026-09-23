@@ -41,14 +41,10 @@ func NewValidatorRegistry() *ValidatorRegistry {
 
 // Validate checks the content of the file at the given path using the
 // appropriate validator for the file extension. Unknown extensions are skipped.
+// Dotfiles such as .envrc need no special case: filepath.Ext(".envrc") is
+// ".envrc".
 func (r *ValidatorRegistry) Validate(path string, content []byte) ValidationResult {
-	ext := filepath.Ext(path)
-	// .envrc has no normal extension; match on base name.
-	if ext == "" && filepath.Base(path) == ".envrc" {
-		ext = ".envrc"
-	}
-
-	v, ok := r.validators[ext]
+	v, ok := r.validators[filepath.Ext(path)]
 	if !ok {
 		return ValidationResult{Path: path, Valid: true, Skipped: true}
 	}

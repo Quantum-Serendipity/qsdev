@@ -5,6 +5,7 @@ package tmpl
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -31,13 +32,14 @@ func MarkdownFuncMap() template.FuncMap {
 // nixSpecificFuncMap returns the Nix-only template functions.
 func nixSpecificFuncMap() template.FuncMap {
 	return template.FuncMap{
-		"nixPkgList":   nixPkgList,
-		"nixList":      nixList,
+		"nixPkgList":    nixPkgList,
+		"nixList":       nixList,
 		"nixStringList": nixStringList,
-		"nixString":    nixString,
-		"nixBool":      nixBool,
-		"nixMultiline": nixMultiline,
-		"nixAttrSet":   nixAttrSet,
+		"nixString":     nixString,
+		"nixBool":       nixBool,
+		"nixMultiline":  nixMultiline,
+		"nixAttrSet":    nixAttrSet,
+		"nixAttrName":   NixAttrName,
 	}
 }
 
@@ -59,28 +61,83 @@ func generalFuncMap() template.FuncMap {
 	}
 }
 
+// nixIdentPattern matches a single plain Nix identifier (the lexer's ID
+// token): a letter or underscore, then letters, digits, underscores,
+// apostrophes or hyphens.
+const nixIdentPattern = `[A-Za-z_][A-Za-z0-9_'-]*`
+
+var (
+	// nixIdentRe matches an attribute name that needs no quoting.
+	nixIdentRe = regexp.MustCompile(`^` + nixIdentPattern + `$`)
+	// nixAttrPathRe matches a dotted attribute path of plain identifiers,
+	// e.g. "jq" or "python312Packages.pip".
+	nixAttrPathRe = regexp.MustCompile(`^` + nixIdentPattern + `(\.` + nixIdentPattern + `)*$`)
+)
+
+// nixKeywords are the Nix language keywords. They lex as keywords rather
+// than identifiers, so they are rejected in attribute paths and quoted when
+// used as attribute names.
+var nixKeywords = []string{"assert", "else", "if", "in", "inherit", "let", "or", "rec", "then", "with"}
+
+// ValidateNixAttrPath returns an error unless s is a dotted Nix attribute
+// path made only of plain identifiers (e.g. "jq", "nodePackages.pnpm").
+// Anything else (whitespace, brackets, quotes, ';', interpolation) could
+// splice arbitrary Nix code into generated source, so it is rejected.
+func ValidateNixAttrPath(s string) error {
+	if !nixAttrPathRe.MatchString(s) {
+		return fmt.Errorf("invalid Nix attribute path %q: must be dot-separated identifiers matching %s", s, nixIdentPattern)
+	}
+	for _, part := range strings.Split(s, ".") {
+		if slices.Contains(nixKeywords, part) {
+			return fmt.Errorf("invalid Nix attribute path %q: %q is a Nix keyword", s, part)
+		}
+	}
+	return nil
+}
+
+// NixAttrName renders key as a Nix attribute name: bare when it is a plain
+// identifier, otherwise (including keywords) as an escaped Nix string
+// (`"my.key" = ...;`), so a key can never break out of the attribute set it
+// is written into.
+func NixAttrName(key string) string {
+	if nixIdentRe.MatchString(key) && !slices.Contains(nixKeywords, key) {
+		return key
+	}
+	return nixString(key)
+}
+
 // nixPkgList formats a string slice as a Nix package list with pkgs. prefix.
 // Example: ["git", "curl"] -> "[ pkgs.git pkgs.curl ]"
-// Empty input returns "[ ]".
-func nixPkgList(items []string) string {
+// Empty input returns "[ ]". Every item must be a plain attribute path (see
+// ValidateNixAttrPath); anything else is an error, never raw Nix code.
+func nixPkgList(items []string) (string, error) {
 	if len(items) == 0 {
-		return "[ ]"
+		return "[ ]", nil
 	}
 	parts := make([]string, len(items))
 	for i, item := range items {
+		if err := ValidateNixAttrPath(item); err != nil {
+			return "", fmt.Errorf("nixPkgList: %w", err)
+		}
 		parts[i] = "pkgs." + item
 	}
-	return "[ " + strings.Join(parts, " ") + " ]"
+	return "[ " + strings.Join(parts, " ") + " ]", nil
 }
 
 // nixList formats a string slice as a bare Nix list (no quoting, no pkgs. prefix).
 // Example: ["git", "curl"] -> "[ git curl ]"
-// Empty input returns "[ ]".
-func nixList(items []string) string {
+// Empty input returns "[ ]". Every item must be a plain attribute path (see
+// ValidateNixAttrPath); anything else is an error, never raw Nix code.
+func nixList(items []string) (string, error) {
 	if len(items) == 0 {
-		return "[ ]"
+		return "[ ]", nil
 	}
-	return "[ " + strings.Join(items, " ") + " ]"
+	for _, item := range items {
+		if err := ValidateNixAttrPath(item); err != nil {
+			return "", fmt.Errorf("nixList: %w", err)
+		}
+	}
+	return "[ " + strings.Join(items, " ") + " ]", nil
 }
 
 // nixStringList formats a string slice as a Nix list of quoted strings,
@@ -116,8 +173,8 @@ func nixBool(b bool) string {
 	return "false"
 }
 
-// nixMultiline escapes a string for use inside Nix '' ... '' multiline strings.
-// '' -> ''' and ${ -> ''${
+// nixMultiline escapes a string for use inside Nix ” ... ” multiline strings.
+// ” -> ”' and ${ -> ”${
 func nixMultiline(s string) string {
 	s = strings.ReplaceAll(s, "''", "'''")
 	s = strings.ReplaceAll(s, "${", "''${")
@@ -125,7 +182,8 @@ func nixMultiline(s string) string {
 }
 
 // nixAttrSet formats a map as a Nix attribute set with sorted keys and
-// nixString-escaped values.
+// nixString-escaped values. Keys that are not plain identifiers are quoted
+// (see NixAttrName).
 // Example: {"a": "1", "b": "2"} -> `{ a = "1"; b = "2"; }`
 // Empty map returns "{ }".
 func nixAttrSet(kvPairs map[string]string) string {
@@ -140,7 +198,7 @@ func nixAttrSet(kvPairs map[string]string) string {
 
 	parts := make([]string, len(keys))
 	for i, k := range keys {
-		parts[i] = k + " = " + nixString(kvPairs[k]) + ";"
+		parts[i] = NixAttrName(k) + " = " + nixString(kvPairs[k]) + ";"
 	}
 	return "{ " + strings.Join(parts, " ") + " }"
 }

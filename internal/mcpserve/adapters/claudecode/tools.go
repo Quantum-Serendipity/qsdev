@@ -217,7 +217,7 @@ func (a *Adapter) handleConfigRender(ctx context.Context, cc *spi.ToolCallContex
 	if write {
 		res, werr := generate.WriteFiles(files, generate.PipelineOptions{
 			ProjectRoot:       cc.ProjectRoot,
-			SectionMergeFunc:  merge.SectionMarkers,
+			SectionMergeFunc:  merge.SectionMarkersOrAppend,
 			ThreeWayMergeFunc: merge.MergeOnCreate,
 		})
 		if werr != nil {

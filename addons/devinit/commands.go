@@ -314,7 +314,7 @@ func runInitWizard(opts InitOptions, projectRoot string, detected types.Detected
 func writeAndRecordResults(cmd *cobra.Command, opts InitOptions, projectRoot string, answers types.WizardAnswers, accResult accumulatorResult) error {
 	result, err := generate.WriteFiles(accResult.allFiles, generate.PipelineOptions{
 		ProjectRoot:       projectRoot,
-		SectionMergeFunc:  merge.SectionMarkers,
+		SectionMergeFunc:  merge.SectionMarkersOrAppend,
 		ThreeWayMergeFunc: merge.MergeOnCreate,
 	})
 	if err != nil {

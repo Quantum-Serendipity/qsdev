@@ -173,6 +173,11 @@ type GeneratedFile struct {
 	Strategy       MergeStrategy `yaml:"strategy"        json:"strategy"`
 	SkipValidation bool          `yaml:"skip_validation" json:"skip_validation"`
 	Owner          string        `yaml:"owner,omitempty" json:"owner,omitempty"`
+	// BaseContent, when non-nil, is the generator's own output for a file
+	// whose Content holds the merged bytes written to disk. State recording
+	// keeps it as the three-way merge base instead of Content. Generators
+	// leave it nil.
+	BaseContent []byte `yaml:"-" json:"-"`
 }
 
 // McpServerState tracks the lifecycle state of an installed MCP server.

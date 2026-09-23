@@ -1,15 +1,22 @@
 package ecosystem
 
 import (
-	"testing"
-
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+// TestReporter is the subset of testing.TB the test helpers in this file use.
+// Accepting it instead of *testing.T keeps the "testing" package (and its
+// flags) out of every binary that imports pkg/ecosystem; *testing.T and
+// *testing.B satisfy it.
+type TestReporter interface {
+	Helper()
+	Errorf(format string, args ...any)
+}
 
 // AssertModuleIdentity checks the three identity properties (Name, DisplayName,
 // Tier) of an EcosystemModule. It is intended for cross-package use in module
 // test files to eliminate boilerplate.
-func AssertModuleIdentity(t *testing.T, m EcosystemModule, wantName, wantDisplay string, wantTier int) {
+func AssertModuleIdentity(t TestReporter, m EcosystemModule, wantName, wantDisplay string, wantTier int) {
 	t.Helper()
 
 	if got := m.Name(); got != wantName {

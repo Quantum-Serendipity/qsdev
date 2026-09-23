@@ -1,6 +1,11 @@
 package ecosystem
 
-import "github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+import (
+	"slices"
+	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+)
 
 // TaskDefinition represents a standard development task composed of commands
 // from one or more ecosystem modules.
@@ -39,7 +44,7 @@ func AggregateTaskDefinitions(
 	// Security-scan from enabled tools.
 	secScan := &TaskDefinition{Name: "security-scan", Description: "Run security scanners"}
 	if enabledTools["semgrep"] {
-		secScan.Commands = append(secScan.Commands, "semgrep --config auto --error .")
+		secScan.Commands = append(secScan.Commands, semgrepScanCommand(modules))
 	}
 	if enabledTools["gitleaks"] {
 		secScan.Commands = append(secScan.Commands, "gitleaks detect --no-banner")
@@ -62,4 +67,35 @@ func AggregateTaskDefinitions(
 	}
 
 	return result
+}
+
+// defaultSemgrepRuleSet is scanned when no selected module declares rule sets.
+const defaultSemgrepRuleSet = "p/owasp-top-ten"
+
+// semgrepScanCommand builds the semgrep invocation from the rule sets the
+// selected modules declare via SASTModule, one --config flag per set (sorted
+// and deduplicated). This scans the project's ecosystem rules rather than
+// `--config auto`, which lets the registry pick rules and requires metrics to
+// be enabled; explicit rule sets allow --metrics=off.
+func semgrepScanCommand(modules []EcosystemModule) string {
+	var ruleSets []string
+	for _, mod := range modules {
+		if sast, ok := mod.(SASTModule); ok {
+			ruleSets = append(ruleSets, sast.SemgrepRuleSets()...)
+		}
+	}
+	slices.Sort(ruleSets)
+	ruleSets = slices.Compact(ruleSets)
+	if len(ruleSets) == 0 {
+		ruleSets = []string{defaultSemgrepRuleSet}
+	}
+
+	var b strings.Builder
+	b.WriteString("semgrep")
+	for _, rs := range ruleSets {
+		b.WriteString(" --config ")
+		b.WriteString(rs)
+	}
+	b.WriteString(" --metrics=off --error .")
+	return b.String()
 }

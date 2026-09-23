@@ -1,6 +1,7 @@
 package php_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,8 +58,51 @@ func TestDetect_ComposerJsonVersionExtracted(t *testing.T) {
 	m := &php.Module{}
 	result := m.Detect(dir)
 
-	if result.SuggestedConfig.Version != "8.2" {
-		t.Errorf("Version = %q, want %q", result.SuggestedConfig.Version, "8.2")
+	// ">=8.2" resolves to the newest supported series, not its lower bound.
+	if result.SuggestedConfig.Version != "8.5" {
+		t.Errorf("Version = %q, want %q", result.SuggestedConfig.Version, "8.5")
+	}
+}
+
+func TestDetect_ComposerConstraintResolution(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		constraint string
+		want       string
+	}{
+		{"^8.1", "8.5"},
+		{">=8.1", "8.5"},
+		{">= 8.1, <8.4", "8.3"},
+		{"~8.2.0", "8.2"},
+		{"8.3.*", "8.3"},
+		{"^7.4 || ^8.0", "8.5"},
+		{"^7.4|^8.2", "8.5"},
+		{"8.4.1", "8.4"},
+		{">=8.2 <8.3", "8.2"},
+		{"^8.2@dev", "8.5"},
+		{">8.3.5 <8.3.7", "8.3"},
+		// Only end-of-life series satisfy these: no version is suggested
+		// rather than one that fails devenv.nix evaluation.
+		{"~8.1.0", ""},
+		{"^7.4", ""},
+		{"8.1", ""},
+		// Unparseable constraints suggest nothing instead of guessing.
+		{"not-a-version", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.constraint, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			composerJSON := `{"require": {"php": "` + tt.constraint + `"}}`
+			if err := os.WriteFile(filepath.Join(dir, "composer.json"), []byte(composerJSON), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got := (&php.Module{}).Detect(dir).SuggestedConfig.Version
+			if got != tt.want {
+				t.Errorf("Detect(require.php=%q).Version = %q, want %q", tt.constraint, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -124,10 +168,13 @@ func TestDevenvNixFragment_VersionMapping(t *testing.T) {
 		version string
 		wantPkg string
 	}{
-		{"empty version uses latest", "", "pkgs.php83"},
+		{"empty version uses default", "", "pkgs.php83"},
+		{"8.5 maps correctly", "8.5", "pkgs.php85"},
+		{"8.4 maps correctly", "8.4", "pkgs.php84"},
 		{"8.3 maps correctly", "8.3", "pkgs.php83"},
 		{"8.2 maps correctly", "8.2", "pkgs.php82"},
-		{"8.1 maps correctly", "8.1", "pkgs.php81"},
+		{"patch version maps to its series", "8.4.2", "pkgs.php84"},
+		{"constraint resolves to newest match", "^8.2", "pkgs.php85"},
 	}
 
 	for _, tt := range tests {
@@ -140,6 +187,39 @@ func TestDevenvNixFragment_VersionMapping(t *testing.T) {
 				t.Errorf("DevenvNixFragment(version=%q) should contain %q\ngot:\n%s", tt.version, tt.wantPkg, fragment)
 			}
 		})
+	}
+}
+
+// TestDevenvNixFragment_UnsupportedVersion verifies end-of-life or unknown
+// versions fail loudly instead of emitting a throw-alias (php81) or silently
+// substituting a different PHP series.
+func TestDevenvNixFragment_UnsupportedVersion(t *testing.T) {
+	t.Parallel()
+	for _, version := range []string{"8.1", "8.0", "7.4", "9.0", "latest"} {
+		t.Run(version, func(t *testing.T) {
+			t.Parallel()
+			frag, err := (&php.Module{}).DevenvNixFragment(ecosystem.ModuleConfig{Version: version})
+			if !errors.Is(err, php.ErrUnsupportedPHPVersion) {
+				t.Fatalf("DevenvNixFragment(%q) error = %v, want ErrUnsupportedPHPVersion (fragment %q)", version, err, frag)
+			}
+		})
+	}
+}
+
+func TestWizardFields_OnlySupportedVersions(t *testing.T) {
+	t.Parallel()
+	m := &php.Module{}
+	fields := m.WizardFields()
+	if len(fields) != 1 {
+		t.Fatalf("WizardFields() returned %d fields, want 1", len(fields))
+	}
+	for _, opt := range fields[0].Options {
+		if _, err := m.DevenvNixFragment(ecosystem.ModuleConfig{Version: opt.Value}); err != nil {
+			t.Errorf("wizard offers PHP %q, which DevenvNixFragment rejects: %v", opt.Value, err)
+		}
+		if opt.Value == "8.1" {
+			t.Error("wizard must not offer end-of-life PHP 8.1")
+		}
 	}
 }
 

@@ -119,7 +119,9 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // These prevent direct dependency updates outside of controlled workflows.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	return []string{
-		"Bash(swift package update *)",
+		// No space before the glob: bare `swift package update` bumps every
+		// dependency past Package.resolved, so the rule must match it too.
+		"Bash(swift package update*)",
 	}
 }
 

@@ -43,7 +43,10 @@ func ToModuleConfig(lang types.LanguageChoice) ModuleConfig {
 // the registry proxy URL resolved for the specific ecosystem.
 func ToModuleConfigWithProxy(lang types.LanguageChoice, infra types.InfraConfig) ModuleConfig {
 	cfg := ToModuleConfig(lang)
-	proxyKey := ProxyKeyForLanguage(lang.Name, lang.PackageManager)
+	// Some ecosystems (e.g. Java) record their build tool in
+	// Extras["build_tool"] when it was detected rather than set explicitly;
+	// an explicit PackageManager still wins.
+	proxyKey := ProxyKeyForLanguage(lang.Name, cfg.PM(cfg.Extra("build_tool", "")))
 	if proxyKey != "" {
 		cfg.RegistryProxy = ResolveProxyURL(infra.RegistryProxy, infra.RegistryProxyOverrides, proxyKey, infra.RegistryProxyPaths)
 	}

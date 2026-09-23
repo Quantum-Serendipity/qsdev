@@ -124,14 +124,34 @@ func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
 	}
 }
 
+// podmanRootlessDockerHost points Docker-API clients at the per-user Podman
+// socket. The fragment is Nix, not shell: a bare ${XDG_RUNTIME_DIR} would be a
+// Nix antiquotation of an undefined variable (breaking devenv.nix evaluation),
+// and env.* values are exported literally, never shell-expanded. The runtime
+// directory is therefore read at evaluation time with builtins.getEnv, which
+// devenv itself relies on to place its runtime directory. Without a runtime
+// directory there is no rootless socket to point at, so any DOCKER_HOST the
+// user already had is kept.
+const podmanRootlessDockerHost = `  env.DOCKER_HOST =
+    let xdgRuntimeDir = builtins.getEnv "XDG_RUNTIME_DIR";
+    in if xdgRuntimeDir != "" then "unix://${xdgRuntimeDir}/podman/podman.sock" else builtins.getEnv "DOCKER_HOST";
+`
+
+// podmanRootfulDockerHost points Docker-API clients at the system Podman
+// socket, which lives at a fixed path rather than under XDG_RUNTIME_DIR.
+const podmanRootfulDockerHost = `  env.DOCKER_HOST = "unix:///run/podman/podman.sock";
+`
+
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for container tooling. Podman runtimes set env.DOCKER_HOST; Docker runtimes
-// produce an empty fragment (packages are provided via DevenvPackages).
+// for container tooling. Podman runtimes set env.DOCKER_HOST to the matching
+// Podman socket; Docker runtimes produce an empty fragment (packages are
+// provided via DevenvPackages).
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
-	rt := config.Extra("container_runtime", "")
-	switch rt {
-	case "podman-rootless", "podman-rootful":
-		return "  env.DOCKER_HOST = \"unix://${XDG_RUNTIME_DIR}/podman/podman.sock\";\n", nil
+	switch config.Extra("container_runtime", "") {
+	case "podman-rootless":
+		return podmanRootlessDockerHost, nil
+	case "podman-rootful":
+		return podmanRootfulDockerHost, nil
 	default:
 		return "", nil
 	}
@@ -236,23 +256,49 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 	}
 }
 
+// containerCLIs are the Docker-compatible CLIs the deny rules cover. Both are
+// always covered, whatever the configured runtime: Docker's daemon socket is
+// root-equivalent, and a host may have either binary installed (Podman ships
+// a `docker` shim), so gating the escape rules on the runtime leaves the
+// other CLI open.
+var containerCLIs = []string{"docker", "podman"}
+
+// containerEscapeArgs are argument fragments that break container isolation:
+// privileged mode, host PID/network namespaces, container-engine socket
+// mounts, and mounting the host root filesystem (via -v/--volume or a
+// --mount bind whose source is /). They are matched anywhere in the command
+// so run, create, exec and `container run` are all covered.
+var containerEscapeArgs = []string{
+	"*--privileged*",
+	"*--pid=host*",
+	"*--pid host*",
+	"*--network=host*",
+	"*--network host*",
+	"*--net=host*",
+	"*--net host*",
+	"*docker.sock*",
+	"*podman.sock*",
+	"* -v /:*",
+	"* -v=/:*",
+	"* -v/:*",
+	"*--volume /:*",
+	"*--volume=/:*",
+	"*source=/,*",
+	"*src=/,*",
+}
+
 // DenyRules returns Claude Code deny-rule patterns for the container ecosystem.
-// Prevents uncontrolled image pulls and, for Podman, blocks privileged
-// containers and Docker socket mounts.
-func (m *Module) DenyRules(config ecosystem.ModuleConfig) []string {
-	rt := config.Extra("container_runtime", "")
-	switch rt {
-	case "podman-rootless", "podman-rootful":
-		return []string{
-			"Bash(docker run -v /var/run/docker.sock*)",
-			"Bash(docker pull *)",
-			"Bash(podman run --privileged *)",
-		}
-	default:
-		return []string{
-			"Bash(docker pull *)",
+// For both Docker-compatible CLIs it prevents uncontrolled image pulls and
+// blocks the container-escape arguments listed in containerEscapeArgs.
+func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
+	rules := make([]string, 0, len(containerCLIs)*(1+len(containerEscapeArgs)))
+	for _, cli := range containerCLIs {
+		rules = append(rules, "Bash("+cli+" pull *)")
+		for _, arg := range containerEscapeArgs {
+			rules = append(rules, "Bash("+cli+" "+arg+")")
 		}
 	}
+	return rules
 }
 
 // CICommands returns CI pipeline commands for the container ecosystem.

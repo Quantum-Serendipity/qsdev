@@ -6,6 +6,7 @@
 package aws
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,10 +131,29 @@ func (m *Module) detectSAMTemplate(projectRoot string, result *ecosystem.Detecti
 }
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for AWS environment variable placeholders.
-func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
-	return `  env.AWS_PROFILE = "PLACEHOLDER -- set to your SSO/vault profile name";
-  env.AWS_DEFAULT_REGION = "PLACEHOLDER -- set to your default region (e.g. us-east-1)";`, nil
+// for the AWS environment. AWS_PROFILE and AWS_DEFAULT_REGION are exported
+// only when configured (Extras aws_profile / aws_default_region): devenv env
+// values override the user's shell, so emitting a placeholder would clobber a
+// working profile and make every AWS CLI/SDK call fail. Unconfigured variables
+// are left to the user's environment and noted in a comment.
+func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
+	vars := []struct{ name, extra string }{
+		{"AWS_PROFILE", "aws_profile"},
+		{"AWS_DEFAULT_REGION", "aws_default_region"},
+	}
+	var b strings.Builder
+	var unset []string
+	for _, v := range vars {
+		if val := strings.TrimSpace(config.Extra(v.extra, "")); val != "" {
+			fmt.Fprintf(&b, "  env.%s = %s;\n", v.name, ecosystem.NixString(val))
+		} else {
+			unset = append(unset, v.name)
+		}
+	}
+	if len(unset) > 0 {
+		fmt.Fprintf(&b, "  # %s: not set here; inherited from your shell environment.\n", strings.Join(unset, ", "))
+	}
+	return b.String(), nil
 }
 
 // DevenvPackages returns the Nix packages required for the AWS ecosystem.

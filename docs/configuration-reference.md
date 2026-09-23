@@ -618,7 +618,7 @@ When AWS project files are detected (CDK, SAM, Terraform `aws` provider):
 |---------|-----------|
 | Deny rules | Blocks `aws configure`, `aws sts assume-role`, credential cat commands |
 | Read-deny rules | Blocks Read access to `~/.aws/credentials`, `~/.aws/config`, `~/.aws/sso/cache/` |
-| Environment | Sets `AWS_PROFILE` placeholder in devenv.nix for per-project isolation |
+| Environment | Sets `AWS_PROFILE` / `AWS_DEFAULT_REGION` in devenv.nix only when the `aws_profile` / `aws_default_region` extras are configured; otherwise they are inherited from your shell |
 
 ### GCP
 

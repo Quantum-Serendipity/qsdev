@@ -352,19 +352,60 @@ func TestReadDenyRules_AllPresent(t *testing.T) {
 
 // --- DevenvNix tests ---
 
-func TestDevenvNix_ContainsAWSProfile(t *testing.T) {
+// TestDevenvNix_AWSEnvOnlyWhenConfigured verifies AWS_PROFILE and
+// AWS_DEFAULT_REGION are exported only with real configured values. devenv env
+// overrides the user's shell, so a placeholder would clobber a working profile.
+func TestDevenvNix_AWSEnvOnlyWhenConfigured(t *testing.T) {
 	t.Parallel()
 
-	m := newModule()
-	fragment, err := m.DevenvNixFragment(ecosystem.ModuleConfig{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name    string
+		extras  map[string]string
+		want    []string
+		notWant []string
+	}{
+		{
+			name:    "unconfigured exports nothing",
+			want:    []string{"# AWS_PROFILE, AWS_DEFAULT_REGION: not set here"},
+			notWant: []string{"env.AWS_PROFILE", "env.AWS_DEFAULT_REGION", "PLACEHOLDER"},
+		},
+		{
+			name:    "profile only",
+			extras:  map[string]string{"aws_profile": "dev-sso"},
+			want:    []string{`env.AWS_PROFILE = "dev-sso";`, "# AWS_DEFAULT_REGION: not set here"},
+			notWant: []string{"env.AWS_DEFAULT_REGION", "PLACEHOLDER"},
+		},
+		{
+			name:    "both configured",
+			extras:  map[string]string{"aws_profile": "dev-sso", "aws_default_region": "eu-west-1"},
+			want:    []string{`env.AWS_PROFILE = "dev-sso";`, `env.AWS_DEFAULT_REGION = "eu-west-1";`},
+			notWant: []string{"not set here", "PLACEHOLDER"},
+		},
+		{
+			name:    "value is Nix-escaped",
+			extras:  map[string]string{"aws_profile": `a"${b}`},
+			want:    []string{`env.AWS_PROFILE = "a\"\${b}";`},
+			notWant: []string{"PLACEHOLDER"},
+		},
 	}
-	if !strings.Contains(fragment, "AWS_PROFILE") {
-		t.Errorf("expected fragment to contain AWS_PROFILE, got:\n%s", fragment)
-	}
-	if !strings.Contains(fragment, "AWS_DEFAULT_REGION") {
-		t.Errorf("expected fragment to contain AWS_DEFAULT_REGION, got:\n%s", fragment)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fragment, err := newModule().DevenvNixFragment(ecosystem.ModuleConfig{Extras: tt.extras})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(fragment, w) {
+					t.Errorf("fragment missing %q, got:\n%s", w, fragment)
+				}
+			}
+			for _, nw := range tt.notWant {
+				if strings.Contains(fragment, nw) {
+					t.Errorf("fragment must not contain %q, got:\n%s", nw, fragment)
+				}
+			}
+		})
 	}
 }
 

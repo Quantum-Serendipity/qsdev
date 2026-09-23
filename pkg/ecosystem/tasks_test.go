@@ -115,8 +115,42 @@ func TestAggregateTaskDefinitions_SecurityScan(t *testing.T) {
 		return
 	}
 
-	if len(secTask.Commands) != 1 || secTask.Commands[0] != "semgrep --config auto --error ." {
-		t.Errorf("security-scan commands = %v, want [semgrep --config auto --error .]", secTask.Commands)
+	// No SAST-capable module selected: fall back to the baseline rule set,
+	// never the registry-chosen, metrics-requiring `--config auto`.
+	const want = "semgrep --config p/owasp-top-ten --metrics=off --error ."
+	if len(secTask.Commands) != 1 || secTask.Commands[0] != want {
+		t.Errorf("security-scan commands = %v, want [%s]", secTask.Commands, want)
+	}
+}
+
+// sastMock adds SemgrepRuleSets to MockModule.
+type sastMock struct {
+	*MockModule
+	ruleSets []string
+}
+
+func (m sastMock) SemgrepRuleSets() []string { return m.ruleSets }
+
+func TestAggregateTaskDefinitions_SecurityScanUsesModuleRuleSets(t *testing.T) {
+	t.Parallel()
+
+	goMod := sastMock{&MockModule{NameVal: "go"}, []string{"p/golang", "p/owasp-top-ten"}}
+	jsMod := sastMock{&MockModule{NameVal: "javascript"}, []string{"p/javascript", "p/owasp-top-ten"}}
+	plain := &MockModule{NameVal: "plain"}
+
+	tasks := AggregateTaskDefinitions(
+		[]EcosystemModule{goMod, plain, jsMod},
+		staticConfig,
+		map[string]bool{"semgrep": true},
+	)
+	secTask := findTask(tasks, "security-scan")
+	if secTask == nil {
+		t.Fatal("security-scan task not found when semgrep is enabled")
+	}
+
+	const want = "semgrep --config p/golang --config p/javascript --config p/owasp-top-ten --metrics=off --error ."
+	if len(secTask.Commands) != 1 || secTask.Commands[0] != want {
+		t.Errorf("security-scan commands = %v, want [%s]", secTask.Commands, want)
 	}
 }
 

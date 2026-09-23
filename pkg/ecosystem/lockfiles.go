@@ -21,7 +21,7 @@ type LockFilePair struct {
 var ManifestsByEcosystem = map[string][]string{
 	NameGo:         {"go.mod"},
 	NameJavaScript: {"package.json"},
-	NamePython:     {"pyproject.toml", "requirements.txt"},
+	NamePython:     {"pyproject.toml", "requirements.txt", "Pipfile"},
 	NameRust:       {"Cargo.toml"},
 	NameJava:       {"pom.xml", "build.gradle", "build.gradle.kts"},
 	NameDotnet:     {"*.csproj"},
@@ -32,9 +32,15 @@ var ManifestsByEcosystem = map[string][]string{
 }
 
 // LockFilesByEcosystem maps ecosystem names to their expected lock file(s).
+// Entries that also appear in ManifestsByEcosystem for the same ecosystem
+// (requirements.txt, pom.xml, vcpkg.json) are listed so pinned-version
+// consumers such as the vulnerability scanner can read them; a check for
+// "is there a real lockfile" must skip them (see ManifestsByEcosystem).
 var LockFilesByEcosystem = map[string][]string{
-	NameGo:         {"go.sum"},
-	NameJavaScript: {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"},
+	NameGo: {"go.sum"},
+	// bun.lock is Bun's text lockfile (the default since Bun 1.2); bun.lockb
+	// is the legacy binary format.
+	NameJavaScript: {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb"},
 	NamePython:     {"requirements.txt", "poetry.lock", "uv.lock", "Pipfile.lock"},
 	NameRust:       {"Cargo.lock"},
 	NameJava:       {"gradle.lockfile", "pom.xml"},
@@ -47,13 +53,24 @@ var LockFilesByEcosystem = map[string][]string{
 
 // ManifestLockfilePairs maps manifest files to their corresponding lock files
 // for drift detection.
+//
+// Pairs that share a manifest are ALTERNATIVES, one per package manager
+// (package.json is locked by exactly one of package-lock.json, pnpm-lock.yaml,
+// yarn.lock, bun.lock or bun.lockb). A manifest is satisfied when ANY of its
+// lockfiles exists; consumers must group pairs by manifest and must not report
+// the unused alternatives as missing.
 var ManifestLockfilePairs = []LockFilePair{
 	{"package.json", "package-lock.json"},
 	{"package.json", "pnpm-lock.yaml"},
 	{"package.json", "yarn.lock"},
+	{"package.json", "bun.lock"},
 	{"package.json", "bun.lockb"},
 	{"pyproject.toml", "uv.lock"},
 	{"pyproject.toml", "poetry.lock"},
+	{"Pipfile", "Pipfile.lock"},
 	{"go.mod", "go.sum"},
 	{"Cargo.toml", "Cargo.lock"},
+	{"Gemfile", "Gemfile.lock"},
+	{"composer.json", "composer.lock"},
+	{"flake.nix", "flake.lock"},
 }

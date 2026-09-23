@@ -14,6 +14,7 @@ package powershell
 
 import (
 	"path/filepath"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -117,10 +118,21 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // DenyRules returns Claude Code deny-rule patterns for the PowerShell ecosystem.
 // These prevent direct PSGallery module installation outside of controlled workflows.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	return []string{
-		"Bash(Install-Module *)",
-		"Bash(pwsh -Command *Install-Module*)",
+	// Cover both installer cmdlets (PowerShellGet's Install-Module and
+	// PSResourceGet's Install-PSResource), bare or inside any pwsh/powershell
+	// invocation (-c, -Command, -NoProfile -Command, pwsh.exe, ...). Cmdlet
+	// names are case-insensitive, so the all-lowercase spelling is covered too.
+	var rules []string
+	for _, cmdlet := range []string{"Install-Module", "Install-PSResource"} {
+		for _, spelling := range []string{cmdlet, strings.ToLower(cmdlet)} {
+			rules = append(rules,
+				"Bash("+spelling+"*)",
+				"Bash(pwsh*"+spelling+"*)",
+				"Bash(powershell*"+spelling+"*)",
+			)
+		}
 	}
+	return rules
 }
 
 // CICommands returns CI pipeline commands for the PowerShell ecosystem.

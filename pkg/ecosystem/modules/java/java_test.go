@@ -347,8 +347,7 @@ func TestSecurityConfigs_GradleOnly(t *testing.T) {
 		t.Errorf("Path = %q, want %q", f.Path, "gradle.properties")
 	}
 	content := string(f.Content)
-	assertContains(t, content, "dependencyLocking.lockMode=STRICT")
-	assertContains(t, content, "systemProp.org.gradle.dependency.verification=strict")
+	assertContains(t, content, "\norg.gradle.dependency.verification=strict\n")
 }
 
 func TestSecurityConfigs_Both(t *testing.T) {
@@ -459,8 +458,19 @@ func TestSecurityConfigs_GradlePropertiesContent(t *testing.T) {
 	files := m.SecurityConfigs(cfg)
 	content := string(files[0].Content)
 
-	assertContains(t, content, "dependencyLocking.lockMode=STRICT")
-	assertContains(t, content, "systemProp.org.gradle.dependency.verification=strict")
+	// org.gradle.dependency.verification is a real gradle.properties key; the
+	// systemProp. prefix and a dependencyLocking.* "property" are not honoured
+	// by Gradle and must not be emitted as if they were active controls.
+	assertContains(t, content, "\norg.gradle.dependency.verification=strict\n")
+	assertNotContains(t, content, "systemProp.org.gradle.dependency.verification")
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "dependencyLocking") {
+			t.Errorf("gradle.properties sets non-existent Gradle property %q", line)
+		}
+	}
+	// Locking and verification bootstrap steps are documented.
+	assertContains(t, content, "--write-locks")
+	assertContains(t, content, "--write-verification-metadata")
 	// Should have comment header.
 	assertContains(t, content, "qsdev")
 	assertContains(t, content, "Gradle >= 6.1")
@@ -535,7 +545,7 @@ func TestSecurityConfigs_Gradle_RegistryProxy(t *testing.T) {
 
 	// gradle.properties should still have existing settings.
 	gradleContent := paths["gradle.properties"]
-	assertContains(t, gradleContent, "dependencyLocking.lockMode=STRICT")
+	assertContains(t, gradleContent, "org.gradle.dependency.verification=strict")
 }
 
 func TestSecurityConfigs_Gradle_NoRegistryProxy(t *testing.T) {
@@ -648,12 +658,16 @@ func TestDenyRules_Maven(t *testing.T) {
 	}
 	rules := m.DenyRules(cfg)
 
-	if len(rules) != 2 {
-		t.Fatalf("DenyRules() returned %d rules, want 2", len(rules))
-	}
 	expected := []string{
 		"Bash(mvn install *)",
 		"Bash(mvn dependency:resolve *)",
+		"Bash(mvn *dependency*:get*)",
+		"Bash(mvn *dependency*:copy*)",
+		"Bash(./mvnw *dependency*:get*)",
+		"Bash(./mvnw *dependency*:copy*)",
+	}
+	if len(rules) != len(expected) {
+		t.Fatalf("DenyRules() returned %d rules, want %d", len(rules), len(expected))
 	}
 	for i, rule := range rules {
 		if rule != expected[i] {
@@ -690,14 +704,18 @@ func TestDenyRules_Both(t *testing.T) {
 	}
 	rules := m.DenyRules(cfg)
 
-	if len(rules) != 4 {
-		t.Fatalf("DenyRules() returned %d rules, want 4", len(rules))
-	}
 	expected := []string{
 		"Bash(mvn install *)",
 		"Bash(mvn dependency:resolve *)",
+		"Bash(mvn *dependency*:get*)",
+		"Bash(mvn *dependency*:copy*)",
+		"Bash(./mvnw *dependency*:get*)",
+		"Bash(./mvnw *dependency*:copy*)",
 		"Bash(gradle dependencies *)",
 		"Bash(./gradlew dependencies *)",
+	}
+	if len(rules) != len(expected) {
+		t.Fatalf("DenyRules() returned %d rules, want %d", len(rules), len(expected))
 	}
 	for i, rule := range rules {
 		if rule != expected[i] {
@@ -735,20 +753,20 @@ func TestCICommands_Gradle(t *testing.T) {
 	}
 	cmds := m.CICommands(cfg)
 
-	if len(cmds) != 2 {
-		t.Fatalf("CICommands() returned %d commands, want 2", len(cmds))
+	if len(cmds) != 1 {
+		t.Fatalf("CICommands() returned %d commands, want 1", len(cmds))
 	}
-	if cmds[0].Command != "./gradlew build" {
-		t.Errorf("cmds[0].Command = %q, want %q", cmds[0].Command, "./gradlew build")
-	}
-	if cmds[1].Command != "./gradlew --write-verification-metadata sha256,pgp" {
-		t.Errorf("cmds[1].Command = %q, want %q", cmds[1].Command, "./gradlew --write-verification-metadata sha256,pgp")
+	const want = "./gradlew build --dependency-verification strict"
+	if cmds[0].Command != want {
+		t.Errorf("cmds[0].Command = %q, want %q", cmds[0].Command, want)
 	}
 	if cmds[0].Phase != ecosystem.CIPhaseTest {
 		t.Errorf("cmds[0].Phase = %v, want CIPhaseTest", cmds[0].Phase)
 	}
-	if cmds[1].Phase != ecosystem.CIPhaseScan {
-		t.Errorf("cmds[1].Phase = %v, want CIPhaseScan", cmds[1].Phase)
+	// CI must verify against committed metadata, never regenerate it
+	// (regenerating in CI is trust-on-first-use).
+	for _, c := range cmds {
+		assertNotContains(t, c.Command, "--write-verification-metadata")
 	}
 }
 
@@ -759,19 +777,16 @@ func TestCICommands_Both(t *testing.T) {
 	}
 	cmds := m.CICommands(cfg)
 
-	if len(cmds) != 3 {
-		t.Fatalf("CICommands() returned %d commands, want 3", len(cmds))
+	if len(cmds) != 2 {
+		t.Fatalf("CICommands() returned %d commands, want 2", len(cmds))
 	}
 	// First should be Maven.
 	if cmds[0].Command != "mvn verify --strict-checksums" {
 		t.Errorf("cmds[0].Command = %q, want Maven verify", cmds[0].Command)
 	}
-	// Then Gradle build + verification metadata.
-	if cmds[1].Command != "./gradlew build" {
-		t.Errorf("cmds[1].Command = %q, want Gradle build", cmds[1].Command)
-	}
-	if cmds[2].Command != "./gradlew --write-verification-metadata sha256,pgp" {
-		t.Errorf("cmds[2].Command = %q, want Gradle verification metadata", cmds[2].Command)
+	// Then the strictly verified Gradle build.
+	if cmds[1].Command != "./gradlew build --dependency-verification strict" {
+		t.Errorf("cmds[1].Command = %q, want strict Gradle build", cmds[1].Command)
 	}
 }
 

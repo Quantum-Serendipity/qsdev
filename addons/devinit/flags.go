@@ -121,7 +121,7 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.Flags().StringVar(&opts.PythonPkgMgr, "python-pkg-mgr", "", "Python package manager (pip, uv, poetry)")
 	cmd.Flags().StringVar(&opts.RustChannel, "rust-channel", "", "Rust channel (stable, beta, nightly)")
 	cmd.Flags().StringVar(&opts.JavaVersion, "java-version", "", "Java version (e.g. 21)")
-	cmd.Flags().StringVar(&opts.JavaBuildTool, "java-build-tool", "", "Java build tool (maven, gradle)")
+	cmd.Flags().StringVar(&opts.JavaBuildTool, "java-build-tool", "", "Java build tool (maven, gradle, both)")
 
 	// Dev environment flags.
 	cmd.Flags().BoolVar(&opts.Direnv, "direnv", true, "Enable direnv integration")

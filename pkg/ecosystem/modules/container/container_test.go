@@ -8,6 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/container"
 )
@@ -313,18 +314,6 @@ func TestPreCommitHooks(t *testing.T) {
 	}
 }
 
-// ---------- DenyRules ----------
-
-func TestDenyRules(t *testing.T) {
-	rules := newModule().DenyRules(ecosystem.ModuleConfig{})
-	if len(rules) != 1 {
-		t.Fatalf("expected 1 deny rule, got %d", len(rules))
-	}
-	if rules[0] != "Bash(docker pull *)" {
-		t.Errorf("deny rule = %q, want %q", rules[0], "Bash(docker pull *)")
-	}
-}
-
 // ---------- CICommands ----------
 
 func TestCICommands(t *testing.T) {
@@ -571,69 +560,68 @@ func TestVerificationCommands_PodmanRuntime(t *testing.T) {
 
 // ---------- DenyRules (runtime-aware) ----------
 
-func TestDenyRules_DockerRuntime(t *testing.T) {
+// TestDenyRules_BlocksEscapesForEveryRuntime runs representative commands
+// through the project's deny matcher. Container-escape arguments and image
+// pulls must be denied for both CLIs whatever runtime is configured, while
+// ordinary build/run commands stay allowed.
+func TestDenyRules_BlocksEscapesForEveryRuntime(t *testing.T) {
 	t.Parallel()
-	cfg := ecosystem.ModuleConfig{
-		Extras: map[string]string{"container_runtime": "docker"},
-	}
-	rules := newModule().DenyRules(cfg)
-	if len(rules) != 1 {
-		t.Fatalf("expected 1 deny rule for docker, got %d: %v", len(rules), rules)
-	}
-	if rules[0] != "Bash(docker pull *)" {
-		t.Errorf("deny rule = %q, want %q", rules[0], "Bash(docker pull *)")
-	}
-}
 
-func TestDenyRules_PodmanRuntime(t *testing.T) {
-	t.Parallel()
-	for _, rt := range []string{"podman-rootless", "podman-rootful"} {
-		t.Run(rt, func(t *testing.T) {
+	denied := []string{
+		"docker pull evil/image",
+		"docker pull",
+		"podman pull evil/image",
+		"docker run --privileged -v /:/host alpine chroot /host",
+		"podman run --privileged alpine",
+		"docker run -v /var/run/docker.sock:/var/run/docker.sock alpine",
+		"podman run -v /run/podman/podman.sock:/sock alpine",
+		"docker run --rm -v /:/host alpine",
+		"docker run --volume=/:/host alpine",
+		"docker run -v/:/host alpine",
+		"docker run --mount type=bind,source=/,target=/host alpine",
+		"podman run --mount type=bind,src=/,dst=/host alpine",
+		"docker run --pid=host alpine",
+		"podman run --network=host alpine",
+		"docker run --net host alpine",
+		"docker exec --privileged ctr sh",
+		"docker container run --privileged alpine",
+	}
+	allowed := []string{
+		"docker build .",
+		"podman build .",
+		"docker run --rm -v ./src:/src alpine ls",
+		"docker run --mount type=bind,source=/home/me/src,target=/src alpine",
+		"docker images -q",
+		"podman ps",
+	}
+
+	for _, rt := range []string{"", "docker", "podman-rootless", "podman-rootful"} {
+		t.Run("runtime="+rt, func(t *testing.T) {
 			t.Parallel()
-			cfg := ecosystem.ModuleConfig{
+			rules := newModule().DenyRules(ecosystem.ModuleConfig{
 				Extras: map[string]string{"container_runtime": rt},
-			}
-			rules := newModule().DenyRules(cfg)
-			if len(rules) != 3 {
-				t.Fatalf("expected 3 deny rules for podman, got %d: %v", len(rules), rules)
-			}
-
-			hasSocketBlock := false
-			hasDockerPull := false
-			hasPrivileged := false
-			for _, r := range rules {
-				if strings.Contains(r, "docker.sock") {
-					hasSocketBlock = true
-				}
-				if r == "Bash(docker pull *)" {
-					hasDockerPull = true
-				}
-				if r == "Bash(podman run --privileged *)" {
-					hasPrivileged = true
+			})
+			for _, cmd := range denied {
+				if !deniedBy(rules, cmd) {
+					t.Errorf("%q is not denied", cmd)
 				}
 			}
-			if !hasSocketBlock {
-				t.Error("missing docker.sock mount block rule")
-			}
-			if !hasDockerPull {
-				t.Error("missing docker pull deny rule")
-			}
-			if !hasPrivileged {
-				t.Error("missing podman privileged deny rule")
+			for _, cmd := range allowed {
+				if deniedBy(rules, cmd) {
+					t.Errorf("%q is unexpectedly denied", cmd)
+				}
 			}
 		})
 	}
 }
 
-func TestDenyRules_NoRuntime(t *testing.T) {
-	t.Parallel()
-	rules := newModule().DenyRules(ecosystem.ModuleConfig{})
-	if len(rules) != 1 {
-		t.Fatalf("expected 1 deny rule for no runtime (default), got %d: %v", len(rules), rules)
+func deniedBy(rules []string, cmd string) bool {
+	for _, r := range rules {
+		if denyutil.MatchesDenyRule(r, "Bash("+cmd+")") {
+			return true
+		}
 	}
-	if rules[0] != "Bash(docker pull *)" {
-		t.Errorf("deny rule = %q, want %q", rules[0], "Bash(docker pull *)")
-	}
+	return false
 }
 
 // ---------- helpers ----------

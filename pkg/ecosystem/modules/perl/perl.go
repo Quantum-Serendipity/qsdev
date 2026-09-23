@@ -16,8 +16,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.DenyRuleProvider = (*Module)(nil)
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -106,14 +108,22 @@ func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile
 	return nil
 }
 
+// perltidyEntry is the perltidy pre-commit hook command. perltidy has no
+// --check mode (that spelling exits 0 and litters <file>.tdy outputs).
+// --assert-tidy exits non-zero when the tidied output differs from the input;
+// rewriting in place without a backup file and sending errors to stderr keeps
+// the working tree free of .tdy/.bak/.ERR files and, unlike -o or -st, works
+// with the multiple filenames pre-commit passes.
+const perltidyEntry = "perltidy --assert-tidy --backup-and-modify-in-place --backup-file-extension=/ --standard-error-output"
+
 // PreCommitHooks returns pre-commit hook definitions for the Perl ecosystem.
 func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	return []ecosystem.HookConfig{
 		{
 			ID:            "perltidy",
 			Name:          "perltidy",
-			Description:   "Check Perl source formatting with perltidy",
-			Entry:         "perltidy --check",
+			Description:   "Format Perl source with perltidy (fails when a file needed reformatting)",
+			Entry:         perltidyEntry,
 			Language:      "system",
 			Types:         []string{"perl"},
 			Stages:        []string{"pre-commit"},
@@ -130,7 +140,9 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // These prevent direct CPAN module installation outside of controlled workflows.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	return []string{
-		"Bash(cpan install *)",
+		// Every cpan invocation can install: `cpan Foo::Bar` and `cpan -i Foo`
+		// are the canonical forms, not just `cpan install`.
+		"Bash(cpan *)",
 		"Bash(cpanm *)",
 	}
 }

@@ -8,6 +8,7 @@ package java
 import (
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,55 @@ var _ ecosystem.SASTModule = (*Module)(nil)
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
 }
+
+// JVM build tool identifiers.
+const (
+	buildToolMaven  = "maven"
+	buildToolGradle = "gradle"
+	buildToolBoth   = "both"
+
+	// defaultBuildTool is used when neither the package manager nor the
+	// detection extras name a build tool. It matches the wizard default.
+	defaultBuildTool = buildToolMaven
+)
+
+// resolveBuildTool returns the configured JVM build tool. It is the single
+// source of truth for every Module method: the --java-build-tool flag stores
+// the tool as the language's PackageManager, while detection and
+// prepopulation store it in Extras["build_tool"]. An explicit PackageManager
+// wins; when neither is set the default applies. An unrecognized explicit
+// value is reported as an error (alongside the Extras/default fallback) so
+// callers that can fail do so rather than silently ignoring the user's choice.
+func resolveBuildTool(config ecosystem.ModuleConfig) (string, error) {
+	var invalid error
+	for _, raw := range []string{config.PackageManager, config.Extra("build_tool", "")} {
+		v := strings.ToLower(strings.TrimSpace(raw))
+		switch v {
+		case "":
+			continue
+		case buildToolMaven, buildToolGradle, buildToolBoth:
+			return v, invalid
+		default:
+			if invalid == nil {
+				invalid = fmt.Errorf("unsupported Java build tool %q (want %s, %s, or %s)",
+					raw, buildToolMaven, buildToolGradle, buildToolBoth)
+			}
+		}
+	}
+	return defaultBuildTool, invalid
+}
+
+// buildTool is resolveBuildTool for methods that cannot report errors.
+func buildTool(config ecosystem.ModuleConfig) string {
+	bt, _ := resolveBuildTool(config)
+	return bt
+}
+
+// usesMaven reports whether the build tool includes Maven.
+func usesMaven(bt string) bool { return bt == buildToolMaven || bt == buildToolBoth }
+
+// usesGradle reports whether the build tool includes Gradle.
+func usesGradle(bt string) bool { return bt == buildToolGradle || bt == buildToolBoth }
 
 // Module implements ecosystem.EcosystemModule for the Java/Kotlin (JVM) ecosystem.
 type Module struct{}
@@ -65,13 +115,13 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	// Determine build tool.
 	switch {
 	case hasMaven && hasGradle:
-		extras["build_tool"] = "both"
+		extras["build_tool"] = buildToolBoth
 		evidence = append(evidence, "pom.xml found", "Gradle build file found")
 	case hasMaven:
-		extras["build_tool"] = "maven"
+		extras["build_tool"] = buildToolMaven
 		evidence = append(evidence, "pom.xml found")
 	default:
-		extras["build_tool"] = "gradle"
+		extras["build_tool"] = buildToolGradle
 		evidence = append(evidence, "Gradle build file found")
 	}
 
@@ -105,7 +155,10 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 // for JVM language support with the appropriate JDK and build tools.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
 	jdkPkg := jdkPackage(config.Version)
-	buildTool := config.Extra("build_tool", "")
+	bt, err := resolveBuildTool(config)
+	if err != nil {
+		return "", err
+	}
 	kotlin := config.Extra("kotlin", "") == "true"
 
 	var b strings.Builder
@@ -113,10 +166,10 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	b.WriteString("  languages.java = {\n")
 	b.WriteString("    enable = true;\n")
 	fmt.Fprintf(&b, "    jdk.package = pkgs.%s;\n", jdkPkg)
-	if buildTool == "maven" || buildTool == "both" {
+	if usesMaven(bt) {
 		b.WriteString("    maven.enable = true;\n")
 	}
-	if buildTool == "gradle" || buildTool == "both" {
+	if usesGradle(bt) {
 		b.WriteString("    gradle.enable = true;\n")
 	}
 	b.WriteString("  };\n")
@@ -132,10 +185,10 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 // SecurityConfigs returns generated security configuration files for Maven
 // and/or Gradle based on the detected build tool.
 func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {
-	buildTool := config.Extra("build_tool", "")
+	bt := buildTool(config)
 	var files []types.GeneratedFile
 
-	if buildTool == "maven" || buildTool == "both" {
+	if usesMaven(bt) {
 		settings := buildSecuritySettings()
 		if config.RegistryProxy != "" {
 			// Replace the default central-only mirror with the corporate proxy.
@@ -148,20 +201,22 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 				},
 			}
 		}
-		content, err := renderSettingsXML(settings)
-		if err != nil {
-			// Fallback: return an empty slice rather than crashing.
-			return nil
+		// A render failure drops only the Maven file: the Gradle hardening
+		// below is independent and must still be generated for "both".
+		// SecurityConfigs has no error return, so the failure is logged.
+		if content, err := renderSettingsXML(settings); err != nil {
+			slog.Warn("java: skipping .mvn/settings.xml: rendering failed", "error", err)
+		} else {
+			files = append(files, types.GeneratedFile{
+				Path:     ".mvn/settings.xml",
+				Content:  content,
+				Mode:     fileutil.ModeReadWrite,
+				Strategy: types.Overwrite,
+			})
 		}
-		files = append(files, types.GeneratedFile{
-			Path:     ".mvn/settings.xml",
-			Content:  content,
-			Mode:     fileutil.ModeReadWrite,
-			Strategy: types.Overwrite,
-		})
 	}
 
-	if buildTool == "gradle" || buildTool == "both" {
+	if usesGradle(bt) {
 		content := buildGradleProperties()
 		files = append(files, types.GeneratedFile{
 			Path:     "gradle.properties",
@@ -241,19 +296,28 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 }
 
 // DenyRules returns Claude Code deny-rule patterns for the JVM ecosystem.
-// Rules are included conditionally based on the detected build tool.
+// Rules are included conditionally based on the configured build tool.
 func (m *Module) DenyRules(config ecosystem.ModuleConfig) []string {
-	buildTool := config.Extra("build_tool", "")
+	bt := buildTool(config)
 	var rules []string
 
-	if buildTool == "maven" || buildTool == "both" {
+	if usesMaven(bt) {
 		rules = append(rules,
 			"Bash(mvn install *)",
 			"Bash(mvn dependency:resolve *)",
+			// dependency:get and dependency:copy fetch an arbitrary artifact
+			// named on the command line (-Dartifact=g:a:v), bypassing the
+			// project's declared and reviewed dependencies. The globs cover
+			// the Maven wrapper, options placed before the goal, and the fully
+			// qualified plugin form (maven-dependency-plugin:<ver>:get).
+			"Bash(mvn *dependency*:get*)",
+			"Bash(mvn *dependency*:copy*)",
+			"Bash(./mvnw *dependency*:get*)",
+			"Bash(./mvnw *dependency*:copy*)",
 		)
 	}
 
-	if buildTool == "gradle" || buildTool == "both" {
+	if usesGradle(bt) {
 		rules = append(rules,
 			"Bash(gradle dependencies *)",
 			"Bash(./gradlew dependencies *)",
@@ -265,10 +329,10 @@ func (m *Module) DenyRules(config ecosystem.ModuleConfig) []string {
 
 // CICommands returns CI pipeline commands for the JVM ecosystem.
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
-	buildTool := config.Extra("build_tool", "")
+	bt := buildTool(config)
 	var cmds []ecosystem.CICommand
 
-	if buildTool == "maven" || buildTool == "both" {
+	if usesMaven(bt) {
 		cmds = append(cmds, ecosystem.CICommand{
 			Name:        "maven-verify",
 			Command:     "mvn verify --strict-checksums",
@@ -277,18 +341,15 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 		})
 	}
 
-	if buildTool == "gradle" || buildTool == "both" {
+	if usesGradle(bt) {
+		// CI verifies against the committed gradle/verification-metadata.xml.
+		// It must never (re)generate that file: --write-verification-metadata
+		// in CI would trust whatever the network serves on that run.
 		cmds = append(cmds, ecosystem.CICommand{
 			Name:        "gradle-build",
-			Command:     "./gradlew build",
-			Description: "Build Gradle project",
+			Command:     "./gradlew build --dependency-verification strict",
+			Description: "Build Gradle project with strict dependency verification",
 			Phase:       ecosystem.CIPhaseTest,
-		})
-		cmds = append(cmds, ecosystem.CICommand{
-			Name:        "gradle-verification-metadata",
-			Command:     "./gradlew --write-verification-metadata sha256,pgp",
-			Description: "Generate Gradle dependency verification metadata",
-			Phase:       ecosystem.CIPhaseScan,
 		})
 	}
 
@@ -359,13 +420,13 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 // VerificationCommands returns project verification commands for the JVM
 // ecosystem, switching on the configured build tool (maven, gradle, or both).
 func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.VerificationCommands {
-	switch config.Extra("build_tool", "maven") {
-	case "gradle":
+	switch buildTool(config) {
+	case buildToolGradle:
 		return ecosystem.VerificationCommands{
 			Build: []string{"./gradlew build"},
 			Test:  []string{"./gradlew test"},
 		}
-	case "both":
+	case buildToolBoth:
 		return ecosystem.VerificationCommands{
 			Build: []string{"mvn compile", "./gradlew build"},
 			Test:  []string{"mvn test", "./gradlew test"},
@@ -380,9 +441,8 @@ func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.V
 
 // ManifestFiles returns manifest file metadata for the JVM ecosystem.
 func (m *Module) ManifestFiles(config ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
-	bt := config.Extra("build_tool", "maven")
-	switch bt {
-	case "gradle":
+	switch buildTool(config) {
+	case buildToolGradle:
 		return []ecosystem.ManifestFileInfo{
 			{
 				Path:           "build.gradle",
@@ -392,7 +452,7 @@ func (m *Module) ManifestFiles(config ecosystem.ModuleConfig) []ecosystem.Manife
 				LockFilePolicy: ecosystem.LockFilePolicyRecommended,
 			},
 		}
-	case "both":
+	case buildToolBoth:
 		return []ecosystem.ManifestFileInfo{
 			{
 				Path:           "pom.xml",
@@ -436,19 +496,26 @@ func jdkPackage(version string) string {
 
 // buildGradleProperties returns the content of a security-hardened
 // gradle.properties file.
+//
+// Only settings Gradle actually reads from gradle.properties belong here.
+// Dependency locking has no gradle.properties switch (it is configured in a
+// build or settings script), so the file documents the required bootstrap
+// steps instead of emitting a property Gradle would silently ignore.
 func buildGradleProperties() string {
 	var b strings.Builder
 	b.WriteString("# " + branding.GeneratedBy() + " — supply-chain security hardened.\n")
 	b.WriteString("# Requires: Gradle >= 6.1 (dependency locking), >= 6.2 (dependency verification).\n")
-	b.WriteString("#\n")
-	b.WriteString("# Strict dependency locking requires all dependencies to be locked.\n")
-	b.WriteString("# Strict dependency verification validates checksums and signatures.\n")
 	b.WriteString("\n")
-	b.WriteString("# Enforce strict dependency locking across all configurations.\n")
-	b.WriteString("dependencyLocking.lockMode=STRICT\n")
+	b.WriteString("# Strict dependency verification (checksums + signatures). Gradle enforces it\n")
+	b.WriteString("# only once gradle/verification-metadata.xml exists. Bootstrap it once, review\n")
+	b.WriteString("# the result, and commit it (never regenerate it in CI):\n")
+	b.WriteString("#   ./gradlew --write-verification-metadata sha256,pgp help\n")
+	b.WriteString("org.gradle.dependency.verification=strict\n")
 	b.WriteString("\n")
-	b.WriteString("# Require strict dependency verification (checksum + signature validation).\n")
-	b.WriteString("systemProp.org.gradle.dependency.verification=strict\n")
+	b.WriteString("# Dependency locking cannot be enabled from gradle.properties. Add to your\n")
+	b.WriteString("# build script, then run ./gradlew dependencies --write-locks and commit the\n")
+	b.WriteString("# generated gradle.lockfile:\n")
+	b.WriteString("#   dependencyLocking { lockAllConfigurations(); lockMode = LockMode.STRICT }\n")
 	return b.String()
 }
 

@@ -9,8 +9,9 @@
 // Mutable references are impossible by design — if a dependency's content
 // changes, the hash will not match and the build will fail. This is the
 // strongest integrity model of any language ecosystem after Nix itself.
-// No deny rules are needed because the content-addressed model inherently
-// prevents supply chain attacks.
+// Hashing guarantees integrity, not trust: `zig fetch --save <url>` records
+// whatever the URL serves on first fetch (trust on first use), so the agent
+// is denied `zig fetch` and new dependencies must be added deliberately.
 package zig
 
 import (
@@ -19,8 +20,9 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -99,6 +101,15 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			BuiltIn:       false,
 			NixPackage:    "zig",
 		},
+	}
+}
+
+// DenyRules returns Claude Code deny-rule patterns for the Zig ecosystem.
+// `zig fetch` (with or without --save) pulls an arbitrary URL and, with
+// --save, pins whatever it served into build.zig.zon.
+func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
+	return []string{
+		"Bash(zig fetch*)",
 	}
 }
 

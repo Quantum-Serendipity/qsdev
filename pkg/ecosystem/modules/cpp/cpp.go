@@ -7,9 +7,7 @@ package cpp
 
 import (
 	"path/filepath"
-	"strings"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -173,85 +171,55 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	return "  languages.cplusplus.enable = true;\n", nil
 }
 
-// SecurityConfigs returns generated security configuration files for the
-// detected C/C++ package manager.
-func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {
-	pm := config.Extra("package_manager", "")
-
-	switch pm {
-	case "conan":
-		return []types.GeneratedFile{conanSecurityConfig()}
-	case "vcpkg":
-		return []types.GeneratedFile{vcpkgSecurityConfig()}
-	default:
-		return nil
-	}
+// SecurityConfigs returns nil. Neither C/C++ package manager has a
+// project-level file qsdev can harden: Conan resolves profiles from
+// CONAN_HOME (never the project) and has no conf that requires a lockfile,
+// and a vcpkg registry baseline must be the project's real vcpkg commit, which
+// a template cannot know (vcpkg rejects a placeholder). Lockfile use and
+// baseline pinning are enforced by CICommands instead.
+func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile {
+	return nil
 }
 
-// conanSecurityConfig generates a Conan 2 security profile that enforces
-// lockfile usage.
-func conanSecurityConfig() types.GeneratedFile {
-	var b strings.Builder
-	b.WriteString("# Security-hardened Conan 2 profile\n")
-	b.WriteString("# " + branding.GeneratedBy() + ".\n")
-	b.WriteString("# Requires: Conan >= 2.0 for lockfile_policy support.\n")
-	b.WriteString("\n")
-	b.WriteString("[conf]\n")
-	b.WriteString("tools.graph:lockfile_policy=require\n")
+// vcpkgBaselineCheck fails unless the project pins its vcpkg registry to a
+// commit, either as vcpkg.json's builtin-baseline or as the default
+// registry's baseline in vcpkg-configuration.json. Without one, versions float
+// with whatever vcpkg checkout the machine has.
+const vcpkgBaselineCheck = `jq -e '."builtin-baseline" | test("^[0-9a-f]{40}$")' vcpkg.json >/dev/null 2>&1 || ` +
+	`jq -e '."default-registry".baseline | test("^[0-9a-f]{40}$")' vcpkg-configuration.json >/dev/null 2>&1 || ` +
+	`{ echo 'vcpkg baseline is not pinned: set builtin-baseline in vcpkg.json (vcpkg x-update-baseline --add-initial-baseline)' >&2; false; }`
 
-	return types.GeneratedFile{
-		Path:     ".conan2/profiles/security",
-		Content:  []byte(b.String()),
-		Mode:     fileutil.ModeReadWrite,
-		Strategy: types.Overwrite,
-	}
-}
-
-// vcpkgSecurityConfig generates a vcpkg-configuration.json with a baseline
-// pinning template for supply chain security.
-func vcpkgSecurityConfig() types.GeneratedFile {
-	var b strings.Builder
-	b.WriteString("{\n")
-	b.WriteString("  \"$comment\": \"Security-hardened vcpkg configuration. " + branding.GeneratedBy() + ". Pin the baseline to a specific vcpkg commit for reproducible builds.\",\n")
-	b.WriteString("  \"default-registry\": {\n")
-	b.WriteString("    \"kind\": \"git\",\n")
-	b.WriteString("    \"repository\": \"https://github.com/microsoft/vcpkg\",\n")
-	b.WriteString("    \"baseline\": \"REPLACE_WITH_VCPKG_COMMIT_SHA\"\n")
-	b.WriteString("  }\n")
-	b.WriteString("}\n")
-
-	return types.GeneratedFile{
-		Path:    "vcpkg-configuration.json",
-		Content: []byte(b.String()),
-		Mode:    fileutil.ModeReadWrite,
-		// Skip: an existing vcpkg-configuration.json carries the project's
-		// real baseline and registries; never replace it with the template.
-		Strategy: types.Skip,
-	}
-}
+// cFamilyTypes are the identify tags of the files the C/C++ formatter owns.
+var cFamilyTypes = []string{"c", "c++", "cuda", "objective-c"}
 
 // PreCommitHooks returns pre-commit hook definitions for the C/C++ ecosystem.
 func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	return []ecosystem.HookConfig{
 		{
-			ID:            "clang-format",
-			Name:          "clang-format",
-			Description:   "Format C/C++ source code with clang-format",
-			Entry:         "clang-format -i",
-			Language:      "system",
-			Types:         []string{"c", "c++"},
+			ID:          "clang-format",
+			Name:        "clang-format",
+			Description: "Format C/C++ source code with clang-format",
+			Entry:       "clang-format -i",
+			Language:    "system",
+			// git-hooks.nix's built-in clang-format also runs on c#, java,
+			// javascript, json and proto files, rewriting package.json,
+			// qsdev's generated JSON and JS sources against the other
+			// ecosystems' formatters. Scope it to the C-family files this
+			// module owns.
+			TypesOr:       cFamilyTypes,
 			Stages:        []string{"pre-commit"},
-			Files:         `\.(c|cc|cpp|cxx|h|hh|hpp|hxx)$`,
 			PassFilenames: true,
 			BuiltIn:       true,
 		},
 		{
-			ID:            "cppcheck",
-			Name:          "cppcheck",
-			Description:   "Static analysis of C/C++ code with cppcheck",
-			Entry:         "cppcheck --error-exitcode=1",
-			Language:      "system",
-			Types:         []string{"c", "c++"},
+			ID:          "cppcheck",
+			Name:        "cppcheck",
+			Description: "Static analysis of C/C++ code with cppcheck",
+			Entry:       "cppcheck --error-exitcode=1",
+			Language:    "system",
+			// types_or, not types: types is an AND filter and identify tags
+			// only headers with both c and c++, so .c/.cpp files were skipped.
+			TypesOr:       []string{"c", "c++"},
 			Stages:        []string{"pre-commit"},
 			Files:         `\.(c|cc|cpp|cxx|h|hh|hpp|hxx)$`,
 			PassFilenames: true,
@@ -319,13 +287,22 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 		})
 	}
 
-	// Conan lock verify if conan is the package manager.
-	pm := config.Extra("package_manager", "")
-	if pm == "conan" {
+	// Lockfile / baseline enforcement for the detected package manager.
+	switch config.Extra("package_manager", "") {
+	case "conan":
+		// --lockfile is strict unless --lockfile-partial is given: any
+		// requirement the lockfile does not pin fails the command.
 		cmds = append(cmds, ecosystem.CICommand{
 			Name:        "conan-lock-verify",
 			Command:     "conan lock create . --lockfile=conan.lock --lockfile-out=/dev/null",
 			Description: "Verify Conan lockfile is up to date",
+			Phase:       ecosystem.CIPhaseInstall,
+		})
+	case "vcpkg":
+		cmds = append(cmds, ecosystem.CICommand{
+			Name:        "vcpkg-baseline-verify",
+			Command:     vcpkgBaselineCheck,
+			Description: "Verify the vcpkg registry baseline is pinned to a commit",
 			Phase:       ecosystem.CIPhaseInstall,
 		})
 	}

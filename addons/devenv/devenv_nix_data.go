@@ -32,6 +32,7 @@ type DevenvNixTemplateData struct {
 	GitHooksEnabled    bool                  // Whether the git-hooks block appears.
 	SecurityHooks      []string              // Always-present hooks (ripsecrets, etc.).
 	BuiltInHooks       []BuiltInHookData     // Ecosystem hooks provided by git-hooks.nix.
+	HookOverrides      []HookOverrideData    // File-type scoping for always-on security hooks.
 	CustomHooks        []CustomHookData      // Ecosystem hooks needing full attribute sets.
 	NeedsNativeLibPath bool                  // True when uv-tool MCP servers need LD_LIBRARY_PATH (NixOS).
 	EnterShell         string                // Shell script body for enterShell.
@@ -71,11 +72,12 @@ type ServiceScript struct {
 }
 
 // BuiltInHookData is an ecosystem hook provided by git-hooks.nix. A hook with
-// no TypesOr or Settings renders as `<id>.enable = true;`.
+// no TypesOr, ExcludeTypes or Settings renders as `<id>.enable = true;`.
 type BuiltInHookData struct {
-	ID       string
-	TypesOr  []string
-	Settings []HookSetting // Sorted by Key.
+	ID           string
+	TypesOr      []string
+	ExcludeTypes []string
+	Settings     []HookSetting // Sorted by Key.
 }
 
 // HookSetting is one git-hooks.nix `settings.<Key> = "<Value>";` option.
@@ -99,9 +101,24 @@ type CustomHookData struct {
 	NeedsToString bool // When true, wrap Entry in toString() (for Nix derivations like writeShellScript).
 	Language      string
 	Types         []string
+	TypesOr       []string
+	ExcludeTypes  []string
 	Stages        []string
 	Files         string
 	PassFilenames bool
+	// Package is the nixpkgs attribute rendered as the hook's `package`. A
+	// custom hook whose ID matches a git-hooks.nix built-in merges with that
+	// definition, whose default package would otherwise be evaluated (and may
+	// no longer exist in nixpkgs) even though Entry names another binary.
+	Package string
+}
+
+// HookOverrideData scopes an enabled git-hooks.nix built-in hook: the listed
+// fields replace upstream's (mkDefault) values.
+type HookOverrideData struct {
+	ID           string
+	TypesOr      []string
+	ExcludeTypes []string
 }
 
 // languageHookResult holds the collected fragments and hooks from ecosystem modules.
@@ -237,8 +254,20 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 		securityHookIDs[id] = true
 		seenHookIDs[id] = true
 	}
-	data.BuiltInHooks = slices.DeleteFunc(data.BuiltInHooks, func(h BuiltInHookData) bool { return securityHookIDs[h.ID] })
 	data.CustomHooks = slices.DeleteFunc(data.CustomHooks, func(h CustomHookData) bool { return securityHookIDs[h.ID] })
+
+	// A selected module's scoping for a security hook survives as an
+	// override of the always-on entry; the registry supplies the rest.
+	overridden := make(map[string]bool, len(data.SecurityHooks))
+	for _, h := range data.BuiltInHooks {
+		if !securityHookIDs[h.ID] || (len(h.TypesOr) == 0 && len(h.ExcludeTypes) == 0) {
+			continue
+		}
+		overridden[h.ID] = true
+		data.HookOverrides = append(data.HookOverrides, HookOverrideData{ID: h.ID, TypesOr: h.TypesOr, ExcludeTypes: h.ExcludeTypes})
+	}
+	data.HookOverrides = append(data.HookOverrides, securityHookOverrides(registry, data.SecurityHooks, overridden)...)
+	data.BuiltInHooks = slices.DeleteFunc(data.BuiltInHooks, func(h BuiltInHookData) bool { return securityHookIDs[h.ID] })
 
 	// Specialized security custom hooks (always present), deduped against ecosystem hooks.
 	for _, hook := range defaultSpecializedHooks(projectLockFiles(answers.Languages)) {
@@ -383,9 +412,12 @@ func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *eco
 					NeedsToString: needsToString,
 					Language:      hook.Language,
 					Types:         hook.Types,
+					TypesOr:       hook.TypesOr,
+					ExcludeTypes:  hook.ExcludeTypes,
 					Stages:        hook.Stages,
 					Files:         hook.Files,
 					PassFilenames: hook.PassFilenames,
+					Package:       hook.NixPackage,
 				})
 			}
 		}
@@ -411,6 +443,44 @@ func scriptHookEntry(hook ecosystem.HookConfig) string {
 	b.WriteString(indentBlock(body, "        "))
 	b.WriteString("\n      ''")
 	return b.String()
+}
+
+// hookOverride returns the file-type scoping a built-in hook declares, if any.
+func hookOverride(hook ecosystem.HookConfig) (HookOverrideData, bool) {
+	if len(hook.TypesOr) == 0 && len(hook.ExcludeTypes) == 0 {
+		return HookOverrideData{}, false
+	}
+	return HookOverrideData{ID: hook.ID, TypesOr: hook.TypesOr, ExcludeTypes: hook.ExcludeTypes}, true
+}
+
+// securityHookOverrides returns the scoping for always-on security hooks that
+// no selected module supplied. The module that declares the same git-hooks.nix
+// built-in (shell for shellcheck) is the authority on how it must be scoped,
+// whether or not that ecosystem is selected, so the whole registry is
+// consulted. have lists the IDs already overridden.
+func securityHookOverrides(registry *ecosystem.Registry, securityIDs []string, have map[string]bool) []HookOverrideData {
+	if registry == nil {
+		return nil
+	}
+	want := make(map[string]bool, len(securityIDs))
+	for _, id := range securityIDs {
+		if !have[id] {
+			want[id] = true
+		}
+	}
+	var out []HookOverrideData
+	for _, mod := range registry.All() {
+		for _, hook := range mod.PreCommitHooks(ecosystem.ModuleConfig{}) {
+			if !hook.BuiltIn || !want[hook.ID] {
+				continue
+			}
+			if override, ok := hookOverride(hook); ok {
+				out = append(out, override)
+				want[hook.ID] = false
+			}
+		}
+	}
+	return out
 }
 
 // lspDisplayName is the human-readable label for the synthetic LSP language
@@ -723,7 +793,7 @@ func countEnabledTools(answers types.WizardAnswers) int {
 // builtInHookData converts a BuiltIn ecosystem hook into template data,
 // carrying the options git-hooks.nix exposes for its built-in hooks.
 func builtInHookData(hook ecosystem.HookConfig) (BuiltInHookData, error) {
-	data := BuiltInHookData{ID: hook.ID, TypesOr: hook.TypesOr}
+	data := BuiltInHookData{ID: hook.ID, TypesOr: hook.TypesOr, ExcludeTypes: hook.ExcludeTypes}
 	for _, key := range slices.Sorted(maps.Keys(hook.Settings)) {
 		if !hookSettingKeyRe.MatchString(key) {
 			return BuiltInHookData{}, fmt.Errorf("hook %q: invalid setting name %q", hook.ID, key)

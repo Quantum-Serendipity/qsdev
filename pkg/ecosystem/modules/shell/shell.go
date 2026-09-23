@@ -86,6 +86,12 @@ func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile
 	return nil
 }
 
+// unsupportedShellTypes are identify tags of shell files that shellcheck and
+// shfmt cannot parse. identify tags *.zsh as both "shell" and "zsh", so
+// without the exclusion the hooks fail every commit touching zsh completions
+// or dotfiles (ShellCheck only supports sh/bash/dash/ksh).
+var unsupportedShellTypes = []string{"zsh"}
+
 // PreCommitHooks returns pre-commit hook definitions for the Shell ecosystem.
 func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	return []ecosystem.HookConfig{
@@ -96,6 +102,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Entry:         "shellcheck",
 			Language:      "system",
 			Types:         []string{"shell"},
+			ExcludeTypes:  unsupportedShellTypes,
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
 			BuiltIn:       true,
@@ -107,6 +114,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Entry:         "shfmt -d",
 			Language:      "system",
 			Types:         []string{"shell"},
+			ExcludeTypes:  unsupportedShellTypes,
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
 			BuiltIn:       true,

@@ -74,11 +74,14 @@
 {{- end}}
     # Enhanced hooks (language-aware, from ecosystem modules)
 {{- range .BuiltInHooks}}
-{{- if or .TypesOr .Settings }}
+{{- if or .TypesOr .ExcludeTypes .Settings }}
     {{ .ID }} = {
       enable = true;
 {{- if .TypesOr }}
       types_or = {{ nixStringList .TypesOr }};
+{{- end }}
+{{- if .ExcludeTypes }}
+      exclude_types = {{ nixStringList .ExcludeTypes }};
 {{- end }}
 {{- range .Settings }}
       settings.{{ .Key }} = {{ nixString .Value }};
@@ -87,6 +90,14 @@
 {{- else }}
     {{ .ID }}.enable = true;
 {{- end }}
+{{- end}}
+{{- range .HookOverrides}}
+{{- if .TypesOr}}
+    {{ .ID }}.types_or = {{ nixStringList .TypesOr }};
+{{- end}}
+{{- if .ExcludeTypes}}
+    {{ .ID }}.exclude_types = {{ nixStringList .ExcludeTypes }};
+{{- end}}
 {{- end}}
     # Specialized hooks (custom definitions)
 {{- range .CustomHooks}}
@@ -104,8 +115,17 @@
       entry = {{ nixString .Entry }};
 {{- end }}
       language = {{ nixString .Language }};
+{{- if .Package }}
+      package = pkgs.{{ .Package }};
+{{- end }}
 {{- if .Types}}
       types = {{ nixStringList .Types }};
+{{- end}}
+{{- if .TypesOr}}
+      types_or = {{ nixStringList .TypesOr }};
+{{- end}}
+{{- if .ExcludeTypes}}
+      exclude_types = {{ nixStringList .ExcludeTypes }};
 {{- end}}
 {{- if .Stages}}
       stages = {{ nixStringList .Stages }};

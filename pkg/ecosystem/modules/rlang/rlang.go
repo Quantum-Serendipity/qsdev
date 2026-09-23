@@ -24,6 +24,7 @@ import (
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
+var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -151,6 +152,23 @@ func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile
 // CLIs, so no pre-commit hooks are provided.
 func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	return nil
+}
+
+// DenyRules returns Claude Code deny-rule patterns for the R ecosystem.
+// Packages are installed by R code, so any R/Rscript invocation whose
+// expression installs (install.packages, remotes::install_github,
+// renv::install, pak::pkg_install, BiocManager::install, pak::pak,
+// update.packages) is denied; the lockfile restore (renv::restore) stays open.
+func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
+	var rules []string
+	for _, exe := range []string{"Rscript", "R"} {
+		rules = append(rules,
+			"Bash("+exe+" *install*)",
+			"Bash("+exe+" *update.packages*)",
+			"Bash("+exe+" *pak::*)",
+		)
+	}
+	return rules
 }
 
 // CICommands returns CI pipeline commands for the R ecosystem.

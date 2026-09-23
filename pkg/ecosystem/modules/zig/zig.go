@@ -15,6 +15,11 @@
 package zig
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -65,17 +70,61 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		return ecosystem.DetectionAbsent()
 	}
 
+	version := parseMinimumZigVersion(projectRoot)
+	if version != "" {
+		evidence = append(evidence, fmt.Sprintf("Zig version %s (from build.zig.zon minimum_zig_version)", version))
+	}
+
 	return ecosystem.DetectionResult{
-		Detected:   true,
-		Confidence: confidence,
-		Evidence:   evidence,
+		Detected:        true,
+		Confidence:      confidence,
+		Evidence:        evidence,
+		SuggestedConfig: ecosystem.ModuleConfig{Version: version},
 	}
 }
 
+// minimumZigVersionRe extracts `.minimum_zig_version = "0.14.0"` from
+// build.zig.zon.
+var minimumZigVersionRe = regexp.MustCompile(`\.minimum_zig_version\s*=\s*"([^"]*)"`)
+
+// zigVersionRe matches a Zig release or dev version (0.14.0,
+// 0.15.0-dev.1+abc) and captures its major and minor numbers.
+var zigVersionRe = regexp.MustCompile(`^([0-9]+)\.([0-9]+)\.[0-9]+(-[0-9A-Za-z.+]+)?$`)
+
+// parseMinimumZigVersion returns build.zig.zon's minimum_zig_version, or ""
+// when absent or not a Zig version (repository content never reaches
+// devenv.nix unvalidated).
+func parseMinimumZigVersion(projectRoot string) string {
+	data, err := os.ReadFile(filepath.Join(projectRoot, "build.zig.zon"))
+	if err != nil {
+		return ""
+	}
+	m := minimumZigVersionRe.FindSubmatch(data)
+	if m == nil || !zigVersionRe.Match(m[1]) {
+		return ""
+	}
+	return string(m[1])
+}
+
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for Zig language support.
-func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
-	return "  languages.zig.enable = true;\n", nil
+// for Zig language support. Zig breaks the build.zig API on every minor
+// release, so a configured version selects the matching nixpkgs zig_<major>_<minor>
+// series; a series nixpkgs no longer ships falls back to pkgs.zig with an
+// evaluation warning rather than failing the whole shell.
+func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
+	const enable = "  languages.zig.enable = true;\n"
+	if config.Version == "" {
+		return enable, nil
+	}
+	parts := zigVersionRe.FindStringSubmatch(config.Version)
+	if parts == nil {
+		return "", fmt.Errorf("invalid Zig version %q: want a version such as 0.14.0", config.Version)
+	}
+	// config.Version is validated by zigVersionRe, so it is safe inside the
+	// Nix warning string.
+	pkg := ecosystem.NixPkgsAttrOr(fmt.Sprintf("zig_%s_%s", parts[1], parts[2]), "pkgs.zig",
+		"Zig "+config.Version+" is not in nixpkgs; using Zig ${pkgs.zig.version}")
+	return enable + "  languages.zig.package = " + pkg + ";\n", nil
 }
 
 // SecurityConfigs returns generated security configuration files.

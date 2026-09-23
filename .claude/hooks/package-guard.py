@@ -30,6 +30,8 @@ Security invariants (not configurable):
   - Allowlist is capped at 200 entries.
 """
 
+import base64
+import binascii
 import json
 import os
 import re
@@ -270,6 +272,10 @@ _MAX_SHELL_RECURSION = 6
 # nested past the recursion cap). main() denies these to fail closed.
 _SUSPICIOUS_MANAGER = "__suspicious__"
 
+# Manager-label prefix for installs through an UNVALIDATED_INSTALLS manager (or
+# a PowerShell / R / perl -MCPAN installer); main() denies these outright.
+UNVALIDATED_MANAGER_PREFIX = "unvalidated:"
+
 # A leading VAR=value environment assignment (e.g. `FOO=bar npm install ...`).
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
@@ -320,6 +326,74 @@ _DENO_SCRIPT_SUFFIXES: tuple[str, ...] = (
 # JSR packages have no OSV feed or age check in this guard, so they cannot be
 # validated automatically and are escalated to the user.
 _UNVALIDATED_PREFIXES: tuple[str, ...] = (_JSR_PREFIX,)
+
+# Installers the guard has no registry validation for (no OSV / publication-age
+# lookup exists for their ecosystem), so nothing they fetch can be checked. Like
+# imperative Nix installs they are denied outright: a new dependency is declared
+# in the project manifest and installed from the lockfile instead.
+# Executable -> subcommand token sequences that install, or re-resolve and
+# rewrite the lockfile; an empty sequence means every invocation installs
+# (bare `cpan` is its interactive shell, which also reads commands from stdin). A sequence may appear anywhere after the executable, so
+# global flags placed before the verb (`luarocks --tree /x install foo`) cannot
+# hide it. A versioned executable (`luarocks-5.4`) is matched by its base name.
+UNVALIDATED_INSTALLS: dict[str, list[list[str]]] = {
+    "cpan":     [[]],  # `cpan Foo::Bar` installs; -i is implied
+    "cpanm":    [[]],
+    "cpm":      [["install"]],
+    # carton install re-resolves cpanfile and rewrites cpanfile.snapshot unless
+    # --deployment (see UNVALIDATED_FROZEN_FLAGS).
+    "carton":   [["install"], ["update"]],
+    "mix":      [["archive.install"], ["escript.install"], ["deps.update"],
+                 ["deps.unlock"], ["igniter.install"]],
+    "zig":      [["fetch"]],
+    "dart":     [["pub", "add"], ["pub", "upgrade"], ["pub", "downgrade"],
+                 ["pub", "global", "activate"]],
+    "flutter":  [["pub", "add"], ["pub", "upgrade"], ["pub", "downgrade"],
+                 ["pub", "global", "activate"]],
+    "lx":       [["add"], ["install"]],
+    "luarocks": [["install"], ["build"]],
+}
+
+# (executable, verb) -> flag that turns the verb into a restore of exactly what
+# the lockfile pins, which stays allowed.
+UNVALIDATED_FROZEN_FLAGS: dict[tuple[str, str], str] = {
+    ("carton", "install"): "--deployment",
+}
+
+# A version suffix on an installer executable (`luarocks-5.4`, `luarocks5.1`).
+_EXE_VERSION_SUFFIX_RE = re.compile(r"-?[0-9][0-9.]*$")
+
+# PowerShell hosts and the cmdlets (and PSResourceGet's aliases isres/udres)
+# that install or update from PSGallery / NuGet. Cmdlet names are
+# case-insensitive.
+_POWERSHELLS: set[str] = {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}
+_PS_INSTALL_RE = re.compile(
+    r"(?<![\w-])(install-module|install-psresource|save-module|save-psresource|"
+    r"install-script|install-package|update-module|update-script|"
+    r"update-psresource|isres|udres)(?![\w-])",
+    re.IGNORECASE,
+)
+# PowerShell parameter names are case-insensitive, accept a `/` prefix on
+# Windows PowerShell and may be abbreviated: -c/-com.../-Command take the rest
+# of the line as a script, -e/-ec/-enc.../-EncodedCommand a base64 UTF-16LE
+# script.
+_PS_COMMAND_FLAG_RE = re.compile(
+    r"^[-/](c|com|comm|comma|comman|command|cwa|commandwithargs)$", re.IGNORECASE)
+_PS_ENCODED_FLAG_RE = re.compile(r"^[-/](e|ec|en|enc|enco|encod|encode|encoded[a-z]*)$", re.IGNORECASE)
+
+# R interpreters whose `-e <expr>` runs R code; any expression that installs
+# (install.packages, remotes::install_github, renv::install, pak::pkg_install,
+# BiocManager::install) fetches and runs unvalidated package code.
+_R_EXES: set[str] = {"R", "Rscript"}
+_R_INSTALL_RE = re.compile(
+    r"install|update\.packages|\bpak(::pak)?\s*\(|renv::(update|hydrate)",
+    re.IGNORECASE,
+)
+
+# `perl -MCPAN -e 'install Foo'`, `perl -M CPAN ...`, `perl -e 'use CPAN; ...'`
+# and cpanminus/cpm driven as modules. CPAN::Meta and friends are not
+# installers, so only CPAN itself (or CPAN::Shell) matches.
+_PERL_CPAN_RE = re.compile(r"\bCPAN(::Shell)?\b(?!::)|\bApp::(cpanminus|cpm)\b")
 
 # Characters that end a heredoc delimiter word (`cat <<EOF;` / `<<EOF)`).
 _HEREDOC_WORD_END = set(" \t\r\n;&|<>()")
@@ -741,6 +815,9 @@ def _strip_wrappers(tokens: list[str]) -> list[str]:
         if _ENV_ASSIGN_RE.match(tok):
             i += 1
             continue
+        if tok == "command" and i + 1 < n and tokens[i + 1] in ("-v", "-V"):
+            # `command -v cpan` looks the name up; it runs nothing.
+            return []
         if tok in COMMAND_PREFIXES:
             # Consult this specific wrapper's value-flag grammar; timeout's value
             # flags apply only to timeout, never to sudo/env/etc.
@@ -896,6 +973,76 @@ def _suspicious_detection(segment: str) -> tuple[str, str, str, list[str]]:
     return ("suspicious", _SUSPICIOUS_MANAGER, segment[:200], [])
 
 
+def _contains_sequence(args: list[str], seq: list[str]) -> bool:
+    """True when seq occurs as consecutive tokens anywhere in args (an empty
+    seq always matches)."""
+    n = len(seq)
+    return any(args[i:i + n] == seq for i in range(len(args) - n + 1))
+
+
+def _unvalidated_base(exe: str) -> str:
+    """The UNVALIDATED_INSTALLS key exe names (`luarocks-5.4` -> `luarocks`),
+    or exe unchanged."""
+    if exe not in UNVALIDATED_INSTALLS:
+        base = _EXE_VERSION_SUFFIX_RE.sub("", exe)
+        if base in UNVALIDATED_INSTALLS:
+            return base
+    return exe
+
+
+def _pwsh_script(args: list[str]) -> Optional[str]:
+    """The script a pwsh/powershell invocation runs: the rest of the line after
+    -Command (or its abbreviations), or the decoded -EncodedCommand. Returns
+    None when it runs no inline script (-File, interactive). Raises ValueError
+    for an -EncodedCommand that cannot be decoded, so the caller fails closed."""
+    for i, a in enumerate(args):
+        if _PS_COMMAND_FLAG_RE.match(a):
+            return " ".join(args[i + 1:])
+        if _PS_ENCODED_FLAG_RE.match(a):
+            if i + 1 >= len(args):
+                return None
+            try:
+                return base64.b64decode(args[i + 1], validate=True).decode("utf-16-le")
+            except (binascii.Error, UnicodeDecodeError) as exc:
+                raise ValueError(f"undecodable -EncodedCommand: {exc}") from exc
+        if not a.startswith(("-", "/")):
+            return None  # first positional: a script file (pwsh) or command
+    return None
+
+
+def _perl_cpan(args: list[str]) -> bool:
+    """True when perl loads the CPAN installer: -MCPAN, -M CPAN, or an -e/-E
+    program (possibly in a switch cluster such as -wle) that uses it."""
+    return any(_PERL_CPAN_RE.search(a[2:] if a[:2] in ("-M", "-m") else a) for a in args)
+
+
+def _unvalidated_install(exe: str, args: list[str]) -> bool:
+    """True when `exe args` installs through a manager in UNVALIDATED_INSTALLS,
+    a PowerShell installer cmdlet, an installing R expression, or perl's CPAN
+    module. Raises ValueError for a PowerShell script that cannot be decoded."""
+    exe = _unvalidated_base(exe)
+    if exe in UNVALIDATED_INSTALLS:
+        for seq in UNVALIDATED_INSTALLS[exe]:
+            if not _contains_sequence(args, seq):
+                continue
+            frozen = UNVALIDATED_FROZEN_FLAGS.get((exe, seq[0])) if seq else None
+            if frozen is None or frozen not in args:
+                return True
+        return False
+    if exe.lower() in _POWERSHELLS:
+        script = _pwsh_script(args)
+        return any(_PS_INSTALL_RE.search(a) for a in args + ([script] if script else []))
+    if exe in _R_EXES:
+        for i, a in enumerate(args):
+            expr = args[i + 1] if a == "-e" and i + 1 < len(args) else (a[2:] if a.startswith("-e") else "")
+            if _R_INSTALL_RE.search(expr):
+                return True
+        return False
+    if exe == "perl":
+        return _perl_cpan(args)
+    return False
+
+
 def parse_install_argv(argv: list[str]) -> Optional[tuple[str, str, list[str]]]:
     """Parse an already-tokenized argv (wrappers/env-assignments stripped by
     _strip_wrappers). Return (ecosystem, manager_label, packages) when it is a
@@ -933,6 +1080,9 @@ def parse_install_argv(argv: list[str]) -> Optional[tuple[str, str, list[str]]]:
         return None
     if exe == "deno":
         return _parse_deno_argv(rest)
+
+    if _unvalidated_install(exe, rest):
+        return ("unvalidated", UNVALIDATED_MANAGER_PREFIX + _unvalidated_base(exe), [])
 
     for verb_tokens, ecosystem, manager in INSTALL_COMMANDS.get(exe, []):
         operands = _match_verb(rest, verb_tokens)
@@ -1080,8 +1230,12 @@ def _classified_exe(exe: str) -> bool:
     interpreter. The catalog wrapper fallback must not second-guess these: a
     known manager with a non-install verb (`go build ./...`) really is not an
     install, and shells/pythons have their own dedicated handling."""
+    # Interpreters (perl, R, pwsh) are deliberately NOT classified: like an
+    # unknown wrapper they can exec a following argv (`perl -e 'exec @ARGV'
+    # npm install evil`), so the embedded-install fallback must still run.
     return (
         exe in INSTALL_COMMANDS
+        or _unvalidated_base(exe) in UNVALIDATED_INSTALLS
         or exe in ("nix", "nix-env")
         or exe in _SHELLS
         or bool(_PYTHON_RE.match(exe))
@@ -1090,7 +1244,8 @@ def _classified_exe(exe: str) -> bool:
 
 def _embedded_install(argv: list[str]) -> Optional[tuple[str, str, list[str]]]:
     """Parse of the first genuine install invocation embedded past argv[0]: the
-    token must itself BE an INSTALL_COMMANDS manager (or nix/nix-env) whose tail parse_install_argv
+    token must itself BE an INSTALL_COMMANDS manager (or nix/nix-env, or an
+    unvalidated installer) whose tail parse_install_argv
     classifies as an install — one classifier for the primary path and this
     fallback, so the two can never disagree. Purely catalog-driven — no wrapper
     names are consulted, so wrappers unknown to COMMAND_PREFIXES (setpriv,
@@ -1098,12 +1253,25 @@ def _embedded_install(argv: list[str]) -> Optional[tuple[str, str, list[str]]]:
     collapsed quoted text into single tokens, so `grep -rn "npm install" .`
     carries no bare `npm` token and can never match. Returns None when argv
     embeds no install."""
-    for k in range(1, len(argv)):
-        if argv[k] in INSTALL_COMMANDS or argv[k] in ("nix", "nix-env"):
+    # A manager token with nothing after it is a name, not an invocation
+    # (`which cpan`, `man cpanm`), so the last token is never a candidate.
+    for k in range(1, len(argv) - 1):
+        if (argv[k] in INSTALL_COMMANDS or argv[k] in ("nix", "nix-env")
+                or _is_unvalidated_manager(os.path.basename(argv[k]))):
             parsed = parse_install_argv(argv[k:])
             if parsed is not None:
                 return parsed
     return None
+
+
+def _is_unvalidated_manager(exe: str) -> bool:
+    """True when exe is an installer _unvalidated_install classifies."""
+    return (
+        _unvalidated_base(exe) in UNVALIDATED_INSTALLS
+        or exe.lower() in _POWERSHELLS
+        or exe in _R_EXES
+        or exe == "perl"
+    )
 
 
 def _recurse_script(
@@ -1221,26 +1389,52 @@ def detect_install_commands(
                 continue
             exe = os.path.basename(argv[0])
 
-        parsed = parse_install_argv(argv)
-        if parsed is None and _depth == 0 and not _classified_exe(exe):
-            # Catalog-driven wrapper fallback. argv[0] failed every
-            # classification above, so this segment was about to be dropped —
-            # exactly how an exec-style wrapper missing from COMMAND_PREFIXES
-            # (setpriv, nsenter, systemd-run, ...) used to smuggle an install
-            # through fail-open. If a catalog manager token whose tail
-            # classifies as one of its install verbs appears later in argv,
-            # re-classify from that token so the real package specifiers are
-            # extracted and validated. Top level only: inside recursed
-            # -c/eval/substitution scripts a manager-verb pair is routinely
-            # inert data (`bash -c "echo pip install docs"` is pinned as
-            # must-allow by the false-positive suite), while the explicit
-            # classifications above still run at every depth.
-            parsed = _embedded_install(argv)
+        try:
+            parsed = _classify_argv(argv, exe, _depth, results)
+        except ValueError:
+            # An inline script that cannot be inspected (undecodable
+            # -EncodedCommand): fail closed.
+            results.append(_suspicious_detection(segment))
+            continue
         if parsed is not None:
             ecosystem, manager, packages = parsed
             results.append((ecosystem, manager, segment, packages))
 
     return results
+
+
+def _classify_argv(
+    argv: list[str],
+    exe: str,
+    _depth: int,
+    results: list[tuple[str, str, str, list[str]]],
+) -> Optional[tuple[str, str, list[str]]]:
+    """Classify one segment's argv (see detect_install_commands): its install
+    parse, or None. A PowerShell -Command script is recursed into (appending to
+    results) like a shell -c. Raises ValueError for an uninspectable script."""
+    parsed = parse_install_argv(argv)
+    if parsed is None and exe.lower() in _POWERSHELLS:
+        # `pwsh -c "npm install evil"`: the -Command / -EncodedCommand script
+        # is a command line of its own; scan it like a shell -c.
+        script = _pwsh_script(argv[1:])
+        if script is not None:
+            _recurse_script(script, _depth, results)
+            return None
+    if parsed is None and _depth == 0 and not _classified_exe(exe):
+        # Catalog-driven wrapper fallback. argv[0] failed every
+        # classification above, so this segment was about to be dropped —
+        # exactly how an exec-style wrapper missing from COMMAND_PREFIXES
+        # (setpriv, nsenter, systemd-run, ...) used to smuggle an install
+        # through fail-open. If a catalog manager token whose tail
+        # classifies as one of its install verbs appears later in argv,
+        # re-classify from that token so the real package specifiers are
+        # extracted and validated. Top level only: inside recursed
+        # -c/eval/substitution scripts a manager-verb pair is routinely
+        # inert data (`bash -c "echo pip install docs"` is pinned as
+        # must-allow by the false-positive suite), while the explicit
+        # classifications above still run at every depth.
+        parsed = _embedded_install(argv)
+    return parsed
 
 
 # ---------------------------------------------------------------------------
@@ -1431,6 +1625,25 @@ def main() -> None:
             deny_reasons.append(reason)
             audit_log({
                 "event": "deny_nix",
+                "command": command,
+                "segment": segment,
+                "manager": manager,
+                "reason": reason,
+            })
+            continue
+
+        # Installers with no registry validation: deny outright.
+        if manager.startswith(UNVALIDATED_MANAGER_PREFIX):
+            tool = manager[len(UNVALIDATED_MANAGER_PREFIX):]
+            reason = (
+                f"`{tool}` installs packages the package guard cannot validate "
+                f"(no vulnerability or publication-age check exists for its "
+                f"registry). Declare the dependency in the project manifest and "
+                f"install it from the lockfile, or ask the user to run it."
+            )
+            deny_reasons.append(reason)
+            audit_log({
+                "event": "deny_unvalidated",
                 "command": command,
                 "segment": segment,
                 "manager": manager,

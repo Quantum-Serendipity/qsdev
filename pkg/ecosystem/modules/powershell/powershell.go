@@ -122,10 +122,13 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	// PSResourceGet's Install-PSResource), bare or inside any pwsh/powershell
 	// invocation (-c, -Command, -NoProfile -Command, pwsh.exe, ...). Cmdlet
 	// names are case-insensitive, so the all-lowercase spelling is covered too.
+	// The PowerShell(...) rules cover Claude Code's PowerShell tool (the
+	// default shell on Windows), which Bash(...) rules never match.
 	var rules []string
-	for _, cmdlet := range []string{"Install-Module", "Install-PSResource"} {
+	for _, cmdlet := range psInstallCmdlets {
 		for _, spelling := range []string{cmdlet, strings.ToLower(cmdlet)} {
 			rules = append(rules,
+				"PowerShell("+spelling+" *)",
 				"Bash("+spelling+"*)",
 				"Bash(pwsh*"+spelling+"*)",
 				"Bash(powershell*"+spelling+"*)",
@@ -133,6 +136,17 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 		}
 	}
 	return rules
+}
+
+// psInstallCmdlets install or update modules or scripts from PSGallery or
+// NuGet: PowerShellGet's Install-/Save-/Update-Module and Install-/
+// Update-Script, PSResourceGet's Install-/Save-/Update-PSResource (bundled
+// since PowerShell 7.4) and PackageManagement's Install-Package.
+var psInstallCmdlets = []string{
+	"Install-Module", "Save-Module", "Update-Module",
+	"Install-Script", "Update-Script",
+	"Install-PSResource", "Save-PSResource", "Update-PSResource",
+	"Install-Package",
 }
 
 // CICommands returns CI pipeline commands for the PowerShell ecosystem.

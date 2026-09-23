@@ -131,10 +131,19 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // DenyRules returns Claude Code deny-rule patterns for the Dart ecosystem.
 // These prevent direct dependency additions outside of controlled workflows.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	return []string{
-		"Bash(dart pub add *)",
-		"Bash(flutter pub add *)",
+	var rules []string
+	for _, tool := range []string{"dart", "flutter"} {
+		rules = append(rules,
+			"Bash("+tool+" pub add *)",
+			// upgrade/downgrade re-resolve and rewrite pubspec.lock.
+			"Bash("+tool+" pub upgrade*)",
+			"Bash("+tool+" pub downgrade*)",
+			// global activate installs and runs arbitrary executables,
+			// including from --source git URLs.
+			"Bash("+tool+" pub global activate *)",
+		)
 	}
+	return rules
 }
 
 // CICommands returns CI pipeline commands for the Dart ecosystem.

@@ -145,6 +145,11 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 		// Glob on both sides of the subcommand so global flags placed before
 		// it (`luarocks --local install foo`) are covered too.
 		"Bash(luarocks *install*)",
+		// luarocks build <rock> fetches and installs like install does.
+		"Bash(luarocks *build*)",
+		// Lux (lux.toml) adds and installs dependencies with lx.
+		"Bash(lx *add *)",
+		"Bash(lx *install*)",
 	}
 }
 

@@ -7,7 +7,11 @@
 package swift
 
 import (
+	"bufio"
+	"fmt"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -71,19 +75,69 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		evidence = append(evidence, "*.xcodeproj found")
 	}
 
-	return ecosystem.DetectionResult{
-		Detected:   true,
-		Confidence: confidence,
-		Evidence:   evidence,
+	toolsVersion := parseToolsVersion(filepath.Join(projectRoot, "Package.swift"))
+	if toolsVersion != "" {
+		evidence = append(evidence, fmt.Sprintf("swift-tools-version %s (from Package.swift)", toolsVersion))
 	}
+
+	return ecosystem.DetectionResult{
+		Detected:        true,
+		Confidence:      confidence,
+		Evidence:        evidence,
+		SuggestedConfig: ecosystem.ModuleConfig{Version: toolsVersion},
+	}
+}
+
+// toolsVersionRe matches SwiftPM's mandatory first-line tools-version
+// comment: "// swift-tools-version:5.9", "// swift-tools-version: 6.0".
+var toolsVersionRe = regexp.MustCompile(`^//\s*swift-tools-version:\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?)`)
+
+// swiftVersionRe validates a configured Swift version before it is written
+// into devenv.nix.
+var swiftVersionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+(\.[0-9]+)?$`)
+
+// parseToolsVersion returns the swift-tools-version Package.swift declares on
+// its first line, or "" when the file or the declaration is missing.
+func parseToolsVersion(packageSwift string) string {
+	f, err := os.Open(packageSwift)
+	if err != nil {
+		return ""
+	}
+	defer f.Close() //nolint:errcheck // read-only
+	sc := bufio.NewScanner(f)
+	if !sc.Scan() {
+		return ""
+	}
+	m := toolsVersionRe.FindStringSubmatch(strings.TrimSpace(sc.Text()))
+	if m == nil {
+		return ""
+	}
+	return m[1]
 }
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for Swift language support. Includes a comment about SE-0391 TOFU
 // (Trust On First Use) for package integrity.
-func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
+//
+// config.Version is the swift-tools-version the package requires. nixpkgs'
+// Swift can lag it (SwiftPM refuses to load a tools-version newer than the
+// toolchain), so the fragment compares versions at evaluation time and warns
+// with the remedy instead of leaving `swift build` to fail with a
+// tools-version error.
+func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
 	var b strings.Builder
 	b.WriteString("  languages.swift.enable = true;\n")
+	if v := config.Version; v != "" {
+		if !swiftVersionRe.MatchString(v) {
+			return "", fmt.Errorf("invalid Swift tools version %q: want a version such as 5.9 or 6.0", v)
+		}
+		fmt.Fprintf(&b, `  languages.swift.package =
+    if lib.versionOlder pkgs.swift.version "%[1]s" then
+      lib.warn "Package.swift requires swift-tools-version %[1]s but nixpkgs provides Swift ${pkgs.swift.version}; build with the host Xcode or a swiftly-managed toolchain" pkgs.swift
+    else
+      pkgs.swift;
+`, v)
+	}
 	b.WriteString("  # SE-0391: Package.resolved provides TOFU (Trust On First Use) integrity.\n")
 	b.WriteString("  # Always commit Package.resolved to version control.\n")
 	return b.String(), nil

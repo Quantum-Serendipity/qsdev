@@ -110,10 +110,14 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			NixPackage: "statix",
 		},
 		{
-			ID:            "deadnix",
-			Name:          "deadnix",
-			Description:   "Find dead code in Nix files with deadnix",
-			Entry:         "deadnix --fail",
+			ID:          "deadnix",
+			Name:        "deadnix",
+			Description: "Find dead code in Nix files with deadnix",
+			// --no-lambda-pattern-names: module headers such as devenv.nix's
+			// `{ pkgs, lib, config, ... }:` (and NixOS/callPackage files)
+			// routinely name arguments they do not use; flagging those would
+			// reject qsdev's own generated devenv.nix on every commit.
+			Entry:         "deadnix --fail --no-lambda-pattern-names",
 			Language:      "system",
 			Types:         []string{"nix"},
 			Stages:        []string{"pre-commit"},
@@ -143,6 +147,13 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 		// Matches every install spelling: -i, -iA, --install, and flags placed
 		// before the operation.
 		"Bash(nix-env *-i*)",
+		// `nix profile add` is the current name (Nix 2.34+); `install` remains
+		// an alias.
+		"Bash(nix profile add *)",
+		"Bash(nix profile install *)",
+		// Global options may precede the subcommand.
+		"Bash(nix * profile add *)",
+		"Bash(nix * profile install *)",
 	}
 }
 

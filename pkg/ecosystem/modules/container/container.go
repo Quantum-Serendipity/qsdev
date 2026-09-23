@@ -237,6 +237,9 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			PassFilenames: true,
 			Files:         `(Dockerfile|Containerfile)`,
 			BuiltIn:       false,
+			// Pins the hook's package: the ID is also a git-hooks.nix
+			// built-in, whose default package would otherwise be evaluated.
+			NixPackage: "hadolint",
 		},
 	}
 }

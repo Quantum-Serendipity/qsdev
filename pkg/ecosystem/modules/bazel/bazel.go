@@ -7,6 +7,13 @@
 package bazel
 
 import (
+	"bufio"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -16,6 +23,7 @@ import (
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
+var _ ecosystem.PackageExprProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -67,16 +75,65 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		evidence = append(evidence, ".bazelrc found")
 	}
 
+	version := parseBazelVersion(filepath.Join(projectRoot, ".bazelversion"))
+	if version != "" {
+		evidence = append(evidence, fmt.Sprintf("Bazel version %s (from .bazelversion)", version))
+	}
+
 	return ecosystem.DetectionResult{
-		Detected:   true,
-		Confidence: confidence,
-		Evidence:   evidence,
+		Detected:        true,
+		Confidence:      confidence,
+		Evidence:        evidence,
+		SuggestedConfig: ecosystem.ModuleConfig{Version: version},
 	}
 }
 
+// bazelVersionRe matches a Bazel release version as .bazelversion pins it
+// (8.2.1, 8.0.0rc1, 7.x) and captures the major version.
+var bazelVersionRe = regexp.MustCompile(`^([0-9]+)(\.[0-9A-Za-z*]+)*(-?[0-9A-Za-z]+)?$`)
+
+// parseBazelVersion returns the Bazel version .bazelversion pins, or "" when
+// the file is absent or names something else (a fork such as
+// "mycorp/7.0.0", "latest", a commit).
+func parseBazelVersion(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close() //nolint:errcheck // read-only
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if bazelVersionRe.MatchString(line) {
+			return line
+		}
+		return ""
+	}
+	return ""
+}
+
 // DevenvPackages returns the Nix packages required for the Bazel ecosystem.
+// Bazel itself is selected by DevenvPackageExprs.
 func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
-	return []string{"bazel_7", "buildifier"}
+	return []string{"buildifier"}
+}
+
+// DevenvPackageExprs returns the Bazel package matching the configured
+// (.bazelversion) major version, nixpkgs' bazel_<major>, so a Bazel 8 project
+// does not get Bazel 7 (which cannot read Bazel 8 MODULE.bazel features and
+// rewrites MODULE.bazel.lock in its own format). A major nixpkgs does not ship (or
+// has removed, like bazel_6) falls back to its default Bazel with an evaluation warning; no version
+// selects the nixpkgs default.
+func (m *Module) DevenvPackageExprs(config ecosystem.ModuleConfig) []string {
+	parts := bazelVersionRe.FindStringSubmatch(config.Version)
+	if parts == nil {
+		return []string{"pkgs.bazel"}
+	}
+	return []string{ecosystem.NixPkgsAttrOr("bazel_"+parts[1], "pkgs.bazel",
+		"Bazel "+parts[1]+" is not in nixpkgs; using Bazel ${pkgs.bazel.version}")}
 }
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
@@ -106,8 +163,11 @@ func (m *Module) SecurityConfigs(_ ecosystem.ModuleConfig) []types.GeneratedFile
 		"# Activate by adding this line to your .bazelrc:\n" +
 		"#   " + bazelrcImport + "\n" +
 		"\n" +
-		"build --lockfile_mode=update\n" +
-		"# In CI, use: build --lockfile_mode=error\n" +
+		"# MODULE.bazel.lock must match MODULE.bazel: an unreviewed dependency\n" +
+		"# change fails every command instead of silently rewriting the lock.\n" +
+		"# After an intended MODULE.bazel edit, refresh it explicitly with:\n" +
+		"#   bazel mod deps --lockfile_mode=update\n" +
+		"common --lockfile_mode=error\n" +
 		"\n" +
 		"build --spawn_strategy=sandboxed\n" +
 		"build --sandbox_default_allow_network=false\n"
@@ -144,8 +204,10 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Types:         []string{"bazel"},
 			Stages:        []string{"pre-commit"},
 			PassFilenames: true,
-			Files:         `(BUILD|BUILD\.bazel|WORKSPACE|WORKSPACE\.bazel|\.bzl)$`,
-			BuiltIn:       false,
+			// MODULE.bazel (and *.MODULE.bazel includes) is the Bzlmod
+			// dependency manifest, the default since Bazel 7.
+			Files:   `(^|/)(BUILD|WORKSPACE|MODULE)(\.bazel)?$|\.bzl$|\.MODULE\.bazel$`,
+			BuiltIn: false,
 		},
 	}
 }

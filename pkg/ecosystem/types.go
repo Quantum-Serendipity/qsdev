@@ -87,6 +87,12 @@ type DevenvInput struct {
 }
 
 // HookConfig represents a pre-commit hook configuration entry.
+//
+// Types is an AND filter (a file must carry every listed identify tag), so a
+// custom hook lists at most one tag there; alternatives go in TypesOr (files
+// matching ANY listed tag). For BuiltIn hooks only TypesOr, ExcludeTypes and
+// Settings are rendered, replacing the git-hooks.nix defaults (its other
+// fields come from upstream).
 type HookConfig struct {
 	ID                     string   `yaml:"id"                        json:"id"`
 	Name                   string   `yaml:"name"                      json:"name"`
@@ -94,15 +100,14 @@ type HookConfig struct {
 	Entry                  string   `yaml:"entry"                     json:"entry"`
 	Language               string   `yaml:"language"                  json:"language"`
 	Types                  []string `yaml:"types"                     json:"types"`
+	TypesOr                []string `yaml:"types_or,omitempty"        json:"types_or,omitempty"`
+	ExcludeTypes           []string `yaml:"exclude_types,omitempty"   json:"exclude_types,omitempty"`
 	Stages                 []string `yaml:"stages"                    json:"stages"`
 	PassFilenames          bool     `yaml:"pass_filenames"            json:"pass_filenames"`
 	Files                  string   `yaml:"files"                     json:"files"`
 	AdditionalDependencies []string `yaml:"additional_dependencies"   json:"additional_dependencies"`
 	BuiltIn                bool     `yaml:"built_in"                  json:"built_in"`
 	NixPackage             string   `yaml:"nix_package,omitempty"     json:"nix_package,omitempty"`
-	// TypesOr limits the hook to files matching ANY of these identify tags.
-	// Unlike Types and Files, it is also rendered for BuiltIn hooks.
-	TypesOr []string `yaml:"types_or,omitempty" json:"types_or,omitempty"`
 	// Settings sets git-hooks.nix `settings.<key>` string options of a
 	// BuiltIn hook (e.g. binPath).
 	Settings map[string]string `yaml:"settings,omitempty" json:"settings,omitempty"`

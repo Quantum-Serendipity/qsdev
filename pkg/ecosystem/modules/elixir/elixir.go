@@ -98,8 +98,18 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // DenyRules returns Claude Code deny-rule patterns for the Elixir ecosystem.
 // These prevent direct dependency fetching outside of controlled workflows.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
+	// mix deps.get only fetches what mix.lock pins (it is the frozen restore,
+	// with --check-locked), so it stays open. These change the supply chain:
+	// deps.update/deps.unlock re-resolve and rewrite mix.lock, and
+	// archive.install/escript.install put code in ~/.mix that every later mix
+	// invocation (in any project) loads or runs.
 	return []string{
-		"Bash(mix deps.get *)",
+		"Bash(mix deps.update*)",
+		"Bash(mix deps.unlock*)",
+		"Bash(mix archive.install*)",
+		"Bash(mix escript.install*)",
+		// igniter.install adds a dependency to mix.exs and fetches it.
+		"Bash(mix igniter.install*)",
 	}
 }
 

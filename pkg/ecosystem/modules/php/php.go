@@ -103,14 +103,35 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		}
 	}
 
-	return ecosystem.DetectionResult{
-		Detected:   true,
-		Confidence: confidence,
-		Evidence:   evidence,
-		SuggestedConfig: ecosystem.ModuleConfig{
-			Version: version,
-		},
+	suggested := ecosystem.ModuleConfig{Version: version}
+	if cfg, ok := findPHPCSConfig(projectRoot); ok {
+		evidence = append(evidence, cfg+" found")
+		suggested.Extras = map[string]string{ExtraPHPCSConfig: "true"}
 	}
+
+	return ecosystem.DetectionResult{
+		Detected:        true,
+		Confidence:      confidence,
+		Evidence:        evidence,
+		SuggestedConfig: suggested,
+	}
+}
+
+// ExtraPHPCSConfig marks a project that ships its own PHP_CodeSniffer ruleset.
+const ExtraPHPCSConfig = "phpcs_config"
+
+// phpcsConfigFiles are the rulesets PHP_CodeSniffer loads from the working
+// directory when no --standard is given.
+var phpcsConfigFiles = []string{".phpcs.xml", "phpcs.xml", ".phpcs.xml.dist", "phpcs.xml.dist"}
+
+// findPHPCSConfig returns the project's PHP_CodeSniffer ruleset, if any.
+func findPHPCSConfig(projectRoot string) (string, bool) {
+	for _, name := range phpcsConfigFiles {
+		if fileutil.FileExists(projectRoot, name) {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
@@ -181,28 +202,21 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 }
 
 // PreCommitHooks returns pre-commit hook definitions for the PHP ecosystem.
-func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig {
+func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	return []ecosystem.HookConfig{
+		phpcsHook(config),
 		{
-			ID:            "phpcs",
-			Name:          "phpcs",
-			Description:   "Run PHP_CodeSniffer to check coding standards",
-			Entry:         "phpcs",
-			Language:      "system",
-			Types:         []string{"php"},
-			Stages:        []string{"pre-commit"},
+			ID:          "phpstan",
+			Name:        "phpstan",
+			Description: "Run PHPStan static analysis",
+			Entry:       "phpstan analyse --no-progress",
+			Language:    "system",
+			Types:       []string{"php"},
+			Stages:      []string{"pre-commit"},
+			// PHPStan needs paths on the command line unless phpstan.neon
+			// sets parameters.paths, which most Composer projects lack
+			// ("At least one path must be specified to analyse").
 			PassFilenames: true,
-			BuiltIn:       true,
-		},
-		{
-			ID:            "phpstan",
-			Name:          "phpstan",
-			Description:   "Run PHPStan static analysis",
-			Entry:         "phpstan analyse",
-			Language:      "system",
-			Types:         []string{"php"},
-			Stages:        []string{"pre-commit"},
-			PassFilenames: false,
 			BuiltIn:       false,
 			// phpstan is a top-level nixpkgs attribute; the old
 			// `phpPackages.phpstan` is a removed throw-alias ("has been removed,
@@ -210,6 +224,30 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			NixPackage: "phpstan",
 		},
 	}
+}
+
+// phpcsHook returns the PHP_CodeSniffer hook. A project ruleset is picked up
+// by git-hooks.nix's built-in phpcs; without one PHP_CodeSniffer falls back
+// to the PEAR standard, which rejects ordinary PSR-12 and Laravel code, so
+// the hook runs PSR-12 explicitly.
+func phpcsHook(config ecosystem.ModuleConfig) ecosystem.HookConfig {
+	hook := ecosystem.HookConfig{
+		ID:            "phpcs",
+		Name:          "phpcs",
+		Description:   "Run PHP_CodeSniffer to check coding standards",
+		Entry:         "phpcs",
+		Language:      "system",
+		Types:         []string{"php"},
+		Stages:        []string{"pre-commit"},
+		PassFilenames: true,
+		BuiltIn:       true,
+	}
+	if config.Extra(ExtraPHPCSConfig, "") != "true" {
+		hook.Entry = "phpcs --standard=PSR12"
+		hook.BuiltIn = false
+		hook.NixPackage = "phpPackages.php-codesniffer"
+	}
+	return hook
 }
 
 // CICommands returns CI pipeline commands for the PHP ecosystem.

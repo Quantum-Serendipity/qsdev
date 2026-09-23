@@ -144,6 +144,16 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 		// are the canonical forms, not just `cpan install`.
 		"Bash(cpan *)",
 		"Bash(cpanm *)",
+		"Bash(cpm *install*)",
+		// perl -MCPAN -e 'install Foo' drives the same installer (CPAN::Meta
+		// and friends are not installers and stay usable).
+		"Bash(perl *-MCPAN *)",
+		"Bash(perl *-MCPAN=*)",
+		"Bash(perl *-M CPAN *)",
+		"Bash(perl *CPAN::Shell*)",
+		// carton update re-resolves cpanfile and rewrites cpanfile.snapshot;
+		// carton install (--deployment) restores the snapshot and stays open.
+		"Bash(carton update*)",
 	}
 }
 

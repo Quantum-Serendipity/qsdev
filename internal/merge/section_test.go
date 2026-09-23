@@ -282,3 +282,32 @@ func TestIndexLinePrefix_NotFound(t *testing.T) {
 		t.Errorf("expected -1, got %d", idx)
 	}
 }
+
+func TestRemoveSection(t *testing.T) {
+	t.Parallel()
+	const block = BeginMarkerPrefix + " -->\ngenerated\n" + EndMarker + "\n"
+	tests := []struct {
+		name, in, want string
+		wantErr        bool
+	}{
+		{"only the block", block, "", false},
+		{"scaffold title kept for the caller", "# CLAUDE.md\n\n" + block, "# CLAUDE.md\n", false},
+		{"user text before, appended block", "# Mine\n\nnotes\n\n" + block, "# Mine\n\nnotes\n", false},
+		{"user text after", block + "after\n", "after\n", false},
+		{"no markers", "plain\n", "plain\n", false},
+		{"end before begin", EndMarker + "\n" + BeginMarkerPrefix + " -->\n", "", true},
+		{"begin without end", BeginMarkerPrefix + " -->\nx\n", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := RemoveSection([]byte(tt.in))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("RemoveSection error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && string(got) != tt.want {
+				t.Errorf("RemoveSection = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

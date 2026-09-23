@@ -2,6 +2,7 @@ package devinit
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -599,6 +600,33 @@ func TestIntegration_AllProfiles_Smoke(t *testing.T) {
 			requireFileExists(t, dir, "devenv.nix")
 			requireFileExists(t, dir, ".claude/settings.json")
 			assertValidJSON(t, dir, ".claude/settings.json")
+		})
+	}
+}
+
+// TestIntegration_JavaWebProfile_Gradle verifies the shipped java-web profile
+// ("Java 21 (Gradle)", encoded as package_manager: gradle) actually yields a
+// Gradle environment: gradle enabled in devenv.nix, the Gradle hardening file
+// and the Gradle deny rules. The profile used to produce a JDK-only shell.
+func TestIntegration_JavaWebProfile_Gradle(t *testing.T) {
+	for _, withBuildFile := range []bool{true, false} {
+		t.Run(fmt.Sprintf("build.gradle.kts=%v", withBuildFile), func(t *testing.T) {
+			dir := t.TempDir()
+			if withBuildFile {
+				if err := os.WriteFile(filepath.Join(dir, "build.gradle.kts"), []byte("plugins { java }\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := executeInitCmd(t, dir, "--profile", "java-web", "--yes"); err != nil {
+				t.Fatalf("init --profile java-web failed: %v", err)
+			}
+			if nix := readFileContent(t, dir, "devenv.nix"); !strings.Contains(nix, "gradle.enable = true") {
+				t.Errorf("devenv.nix does not enable gradle:\n%s", nix)
+			}
+			requireFileExists(t, dir, "gradle.properties")
+			if settings := readFileContent(t, dir, ".claude/settings.json"); !strings.Contains(settings, "./gradlew dependencies") {
+				t.Error("settings.json lacks the Gradle deny rules")
+			}
 		})
 	}
 }

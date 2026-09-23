@@ -103,6 +103,14 @@ func runSelfprotect(cmd *cobra.Command) (err error) {
 		hookio.WriteDeny(stderr, ruleID, reason)
 		return errSelfprotectDeny
 	}
+	if blocked, ruleID, reason := detectBashGateDodge(evalCtx); blocked {
+		hookio.WriteDeny(stderr, ruleID, reason)
+		return errSelfprotectDeny
+	}
+	if reason, blocked := rules.GitCodeExecution(evalCtx); blocked {
+		hookio.WriteDeny(stderr, rules.GitCodeExecutionRuleID, reason)
+		return errSelfprotectDeny
+	}
 	return nil
 }
 

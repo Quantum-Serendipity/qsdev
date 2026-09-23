@@ -293,7 +293,7 @@ If `devenv test` reports credential variables are set:
 
 ### MCP server "unknown" error
 
-qsdev configures 4 default MCP servers in `.mcp.json`: `context7`, `github`, `socket`, `semble`. Additional servers (`agent-postmortem`, `version-sentinel`, `local-docs-devdocs`, `local-docs-zim`, `man-pages`, `mcp-nixos`) activate based on tool enablement and project detection. Custom servers can be added by editing `.mcp.json` directly after generation — the three-way merge preserves custom entries on update.
+qsdev configures 3 default MCP servers in `.mcp.json`: `context7`, `github`, `socket`. Additional servers (`semble` when opted in with `--agent-semble`, `agent-postmortem`, `version-sentinel`, `local-docs-devdocs`, `local-docs-zim`, `man-pages`, `mcp-nixos`) activate based on tool enablement and project detection. Custom servers can be added by editing `.mcp.json` directly after generation — the three-way merge preserves custom entries on update.
 
 ### Corrupted or drifted configuration files
 

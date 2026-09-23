@@ -4,20 +4,21 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
+	"path/filepath"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
-	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // answersFile returns the answers file name, using the branding app name.
 func answersFile() string {
-	return "." + branding.Get().AppName + "-answers.yaml"
+	return path.Base(answers.DevenvCopyFile())
 }
 
 // answersPath returns the full path to the legacy per-addon answers file.
 func answersPath(projectRoot string) string {
-	return answers.FilePath(projectRoot, AddonDir, answersFile())
+	return filepath.Join(projectRoot, filepath.FromSlash(answers.DevenvCopyFile()))
 }
 
 // saveAnswers persists the wizard answers to the primary answers file and

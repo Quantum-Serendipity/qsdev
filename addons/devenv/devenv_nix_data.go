@@ -485,7 +485,7 @@ func collectMCPPackages(answers types.WizardAnswers) []string {
 
 	seen := make(map[string]bool)
 	var pkgs []string
-	for _, name := range answers.MCPServers {
+	for _, name := range answers.ConfiguredMCPServers() {
 		def, ok := cat.MCPServer(name)
 		if !ok {
 			continue
@@ -510,7 +510,7 @@ func needsNativeLibPath(answers types.WizardAnswers) bool {
 	if err != nil {
 		return false
 	}
-	for _, name := range answers.MCPServers {
+	for _, name := range answers.ConfiguredMCPServers() {
 		def, ok := cat.MCPServer(name)
 		if !ok {
 			continue

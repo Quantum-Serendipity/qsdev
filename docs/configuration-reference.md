@@ -191,7 +191,7 @@ Top-level structure:
   "permissions": {
     "defaultMode": "default",
     "disableBypassPermissionsMode": "disable",
-    "allow": ["Read(*)", "Edit(*)", "Write(*)", "Bash(git *)", "..."],
+    "allow": ["Read(*)", "Edit(*)", "Write(*)", "Bash(git status *)", "..."],
     "deny": ["Bash(npx *)", "Bash(nix-env -i *)", "...~90 rules"],
     "ask": ["Bash(npm install *)", "Bash(pip install *)", "...~60 rules"]
   },
@@ -347,14 +347,14 @@ Contains project name, detected languages, build commands, security policies, an
 | **Merge strategy** | `three-way-merge` |
 | **Purpose** | MCP server configuration for Claude Code |
 
-Four servers are configured by default in `.mcp.json` (context7, github, socket, semble), with additional servers activated based on tool enablement and project detection:
+Three servers are configured by default in `.mcp.json` (context7, github, socket), with additional servers activated based on tool enablement and project detection. Servers passed with `--mcp` are added to these, not a replacement for them:
 
 | Server | Command | Purpose | Activation |
 |--------|---------|---------|------------|
 | `context7` | `npx -y @upstash/context7-mcp` | Library documentation lookup | Default |
 | `github` | `npx @anthropic-ai/mcp-github` | GitHub API access | Default |
 | `socket` | `npx @anthropic-ai/mcp-socket` | Behavioral dependency analysis | Default |
-| `semble` | `uvx --from semble[mcp] semble` | Semantic code search | Default |
+| `semble` | `uvx --from semble[mcp] semble` | Semantic code search | Opt-in (`--agent-semble` or `qsdev enable semble`) |
 | `agent-postmortem` | `qsdev mcp agent-postmortem` | Session analysis and failure patterns | Enabled when tool active |
 | `version-sentinel` | `qsdev mcp version-sentinel` | Dependency version monitoring | Enabled when tool active |
 | `local-docs-devdocs` | `npx devdocs-mcp-server` | Local DevDocs API references | On when detected |

@@ -1,6 +1,7 @@
 package posture
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -327,6 +328,44 @@ func TestAssessDefenseLayers_AgeGating(t *testing.T) {
 			}
 		}
 		t.Error("age-gating layer not found")
+	})
+
+	// W027: the guard has no age check for Go (or Ruby, PHP, Java, ...), so
+	// a project using one is only partly age-gated, and the report says which.
+	t.Run("partial for ecosystems the guard does not age-check", func(t *testing.T) {
+		enabledTools := map[string]bool{"attach-guard": true}
+		genState := types.GeneratedState{
+			Files: map[string]types.FileState{
+				".claude/hooks/package-guard.py": {},
+			},
+		}
+		tests := []struct {
+			name       string
+			detected   types.DetectedProject
+			wantStatus LayerStatus
+			wantInText string
+		}{
+			{"go", types.DetectedProject{HasGoMod: true}, LayerPartial, "not for: go"},
+			{"go and javascript", types.DetectedProject{HasGoMod: true, HasPackageJSON: true}, LayerPartial, "not for: go"},
+			{"java", types.DetectedProject{HasPomXML: true}, LayerPartial, "java"},
+			{"javascript only", types.DetectedProject{HasPackageJSON: true}, LayerEnabled, ""},
+			{"python and rust", types.DetectedProject{HasPyProject: true, HasCargoToml: true}, LayerEnabled, ""},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result := AssessDefenseLayers("", enabledTools, tt.detected, genState, 3)
+				for _, l := range result.Layers {
+					if l.Name != "age-gating" {
+						continue
+					}
+					if l.Status != tt.wantStatus || !strings.Contains(l.Reason, tt.wantInText) {
+						t.Errorf("age-gating = %q (%q), want %q containing %q", l.Status, l.Reason, tt.wantStatus, tt.wantInText)
+					}
+					return
+				}
+				t.Error("age-gating layer not found")
+			})
+		}
 	})
 
 	t.Run("disabled without attach-guard", func(t *testing.T) {

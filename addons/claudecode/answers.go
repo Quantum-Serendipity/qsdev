@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -29,7 +30,7 @@ func answersPath(projectRoot string) string {
 // another addon updated the primary file, so it is never read; saveAnswers
 // deletes it.
 func legacyAnswersPath(projectRoot string) string {
-	return answers.FilePath(projectRoot, AddonDir, "."+branding.Get().AppName+"-claude-answers.yaml")
+	return filepath.Join(projectRoot, filepath.FromSlash(answers.LegacyClaudeCopyFile()))
 }
 
 // saveAnswers persists the wizard answers to the primary answers file and

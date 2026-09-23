@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
@@ -108,6 +109,18 @@ func PrimaryDir() string {
 // PrimaryFilename returns the base name of the primary answers file.
 func PrimaryFilename() string {
 	return "." + branding.Get().AppName + "-init-answers.yaml"
+}
+
+// DevenvCopyFile returns the project-relative path of the devenv addon's
+// mirror of the answers.
+func DevenvCopyFile() string {
+	return path.Join(".devenv", "."+branding.Get().AppName+"-answers.yaml")
+}
+
+// LegacyClaudeCopyFile returns the project-relative path of the per-addon
+// answers copy older releases kept in .claude/.
+func LegacyClaudeCopyFile() string {
+	return path.Join(".claude", "."+branding.Get().AppName+"-claude-answers.yaml")
 }
 
 // PrimaryPath returns the full path to the primary answers file.

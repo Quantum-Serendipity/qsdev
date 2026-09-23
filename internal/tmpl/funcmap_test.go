@@ -1,6 +1,8 @@
 package tmpl
 
 import (
+	"encoding/json"
+	"os/exec"
 	"strings"
 	"testing"
 	"text/template"
@@ -189,12 +191,55 @@ func TestNixMultiline(t *testing.T) {
 		{"plain", "echo hello", "echo hello"},
 		{"with_interpolation", "echo ${var}", "echo ''${var}"},
 		{"with_literal_quotes", "echo ''done''", "echo '''done'''"},
+		// A lone quote before ${ must not fuse with the ${ escape into '''.
+		{"quote_before_interpolation", "echo '${HOME}' x", `echo ${"'"}''${HOME}' x`},
+		{"double_quote_before_interpolation", "echo ''${x}", "echo '''''${x}"},
+		{"triple_quote", "a'''b", "a''''b"},
+		{"triple_quote_before_interpolation", "'''${x}", `'''${"'"}''${x}`},
+		{"trailing_quote", "echo it'", `echo it${"'"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := nixMultiline(tt.input)
 			if got != tt.want {
 				t.Errorf("nixMultiline(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNixMultiline_NixRoundTrip evaluates the escaped text inside a real Nix
+// indented string and checks it decodes back to the input unchanged (no live
+// antiquotation, no lost or doubled quotes).
+func TestNixMultiline_NixRoundTrip(t *testing.T) {
+	nix, err := exec.LookPath("nix-instantiate")
+	if err != nil {
+		t.Skip("nix-instantiate not available")
+	}
+	inputs := []string{
+		"echo '${HOME}'",
+		"docker build --build-arg V='${VERSION}' .",
+		"echo ''${x}",
+		"a'''b",
+		"'''${x}",
+		"echo it'",
+		"'",
+		"''",
+		"$${x} ''\\n '$ ${",
+	}
+	for _, in := range inputs {
+		t.Run(in, func(t *testing.T) {
+			expr := "''\n" + nixMultiline(in) + "''"
+			out, err := exec.Command(nix, "--eval", "--json", "--expr", expr).CombinedOutput()
+			if err != nil {
+				t.Fatalf("nix eval of %q failed: %v\n%s", expr, err, out)
+			}
+			var got string
+			if err := json.Unmarshal(out, &got); err != nil {
+				t.Fatalf("decoding %q: %v", out, err)
+			}
+			if got != in {
+				t.Errorf("round trip of %q = %q", in, got)
 			}
 		})
 	}

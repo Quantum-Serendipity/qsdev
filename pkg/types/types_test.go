@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -787,5 +788,68 @@ func TestEnvVarsMapWithSpecialCharacters(t *testing.T) {
 	}
 	if !reflect.DeepEqual(original.EnvVars, got.EnvVars) {
 		t.Errorf("EnvVars mismatch.\nOriginal: %+v\nGot:      %+v", original.EnvVars, got.EnvVars)
+	}
+}
+
+// TestFillDefaults_AgentToolOptOutsSurvive verifies an explicit opt-out of
+// every agent tool is kept, while answers that never configured agent tools
+// still get the catalog defaults (semble among them only if the catalog opts
+// it in, which it does not).
+func TestFillDefaults_AgentToolOptOutsSurvive(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   types.AgentToolsAnswers
+		want types.AgentToolsAnswers
+	}{
+		{
+			name: "explicit all-false opt-out is kept",
+			in:   types.AgentToolsAnswers{VersionSentinelHours: 24, SembleMode: "mcp"},
+			want: types.AgentToolsAnswers{VersionSentinelHours: 24, SembleMode: "mcp"},
+		},
+		{
+			name: "unconfigured gets catalog defaults",
+			in:   types.AgentToolsAnswers{},
+			want: types.AgentToolsAnswers{PostmortemEnabled: true, VersionSentinel: true, VersionSentinelHours: 24, SembleMode: "both"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			a := types.WizardAnswers{ClaudeCode: true, Tier: "standard", AgentTools: tt.in}
+			a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
+			if a.AgentTools != tt.want {
+				t.Errorf("AgentTools = %+v, want %+v", a.AgentTools, tt.want)
+			}
+			if slices.Contains(a.ConfiguredMCPServers(), types.SembleMCPServer) {
+				t.Errorf("semble configured although not opted in: %v", a.ConfiguredMCPServers())
+			}
+		})
+	}
+}
+
+// TestConfiguredMCPServers verifies the semble server follows the semble agent
+// tool toggle, whatever MCPServers says.
+func TestConfiguredMCPServers(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		servers []string
+		tools   types.AgentToolsAnswers
+		want    []string
+	}{
+		{"stale semble entry dropped when disabled", []string{"context7", "semble"}, types.AgentToolsAnswers{}, []string{"context7"}},
+		{"enabled semble added", []string{"context7"}, types.AgentToolsAnswers{SembleEnabled: true, SembleMode: "mcp"}, []string{"context7", "semble"}},
+		{"enabled semble not duplicated", []string{"semble", "github"}, types.AgentToolsAnswers{SembleEnabled: true, SembleMode: "both"}, []string{"github", "semble"}},
+		{"subagent-only mode has no server", []string{"semble"}, types.AgentToolsAnswers{SembleEnabled: true, SembleMode: "subagent"}, []string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			a := types.WizardAnswers{MCPServers: tt.servers, AgentTools: tt.tools}
+			if got := a.ConfiguredMCPServers(); !slices.Equal(got, tt.want) {
+				t.Errorf("ConfiguredMCPServers() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

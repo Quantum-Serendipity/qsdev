@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -101,6 +103,28 @@ func (in assessmentInput) hasLockFileAuditHook() bool {
 	return false
 }
 
+// GuardAgeCheckedLanguages are the ecosystems whose registry publication age
+// package-guard.py checks (npm, PyPI and crates.io). The claudecode addon's
+// tests keep this list in sync with the hook template.
+var GuardAgeCheckedLanguages = []string{ecosystem.NameJavaScript, ecosystem.NamePython, ecosystem.NameRust}
+
+// ageUngatedLanguages lists the detected ecosystems that install packages (their
+// module declares package managers) but whose publication age package-guard.py
+// does not check.
+func (in assessmentInput) ageUngatedLanguages() []string {
+	registry := ecosystem.DefaultRegistry()
+	var out []string
+	for _, lc := range in.Detected.LanguageChoices() {
+		if slices.Contains(GuardAgeCheckedLanguages, lc.Name) || slices.Contains(out, lc.Name) {
+			continue
+		}
+		if mod, ok := registry.ByName(lc.Name); ok && len(mod.PackageManagers()) > 0 {
+			out = append(out, lc.Name)
+		}
+	}
+	return out
+}
+
 // layerSpec defines one defense layer's metadata and assessment logic.
 type layerSpec struct {
 	Name    string
@@ -139,12 +163,17 @@ var layerTable = []layerSpec{
 			if !input.EnabledTools["attach-guard"] {
 				return LayerDisabled, 0, "attach-guard not enabled; age-gating requires it"
 			}
-			// Age-gating is built into package-guard.py (MIN_AGE_DAYS). When the
-			// guard script is present and attach-guard is enabled, age-gating is active.
-			if input.has(packageGuardPath) {
-				return LayerEnabled, 0, "package-guard.py enforces publication age checks"
+			// Age-gating is built into package-guard.py (MIN_AGE_DAYS), which
+			// checks publication age only for some registries: a project using
+			// another package ecosystem is only partly gated.
+			if !input.has(packageGuardPath) {
+				return LayerDisabled, 0, "package-guard.py not present"
 			}
-			return LayerDisabled, 0, "package-guard.py not present"
+			if uncovered := input.ageUngatedLanguages(); len(uncovered) > 0 {
+				return LayerPartial, 5, fmt.Sprintf("package-guard.py checks publication age only for %s packages; not for: %s",
+					strings.Join(GuardAgeCheckedLanguages, ", "), strings.Join(uncovered, ", "))
+			}
+			return LayerEnabled, 0, "package-guard.py enforces publication age checks"
 		},
 	},
 	{

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -57,6 +58,32 @@ func TestBuildReport(t *testing.T) {
 	}
 	if len(r.Recommendations) != 1 {
 		t.Errorf("len(Recommendations) = %d, want 1", len(r.Recommendations))
+	}
+}
+
+// TestBuildReport_NixRecommendations verifies the doctor never recommends the
+// denied imperative Nix profile install, and prints no empty install commands.
+func TestBuildReport_NixRecommendations(t *testing.T) {
+	osInfo := &sysinfo.OSInfo{OS: "linux", Arch: "amd64", Family: "nixos", Distro: "nixos", PackageManager: "nix", HasNix: true}
+	checks := []ToolStatus{
+		{Name: "direnv", Required: true, Installed: false},
+		{Name: "shfmt", Required: false, Installed: false},
+		{Name: "no-such-tool-xyz", Required: false, Installed: false},
+	}
+
+	r := BuildReport(osInfo, checks, "0.1.0")
+
+	want := []string{
+		"Install direnv: qsdev devenv setup",
+		"Install shfmt: qsdev devenv add-package shfmt",
+	}
+	if !slices.Equal(r.Recommendations, want) {
+		t.Errorf("Recommendations = %q, want %q", r.Recommendations, want)
+	}
+	for _, e := range append(r.RequiredTools, r.OptionalTools...) {
+		if strings.Contains(e.FixCommand, "profile") {
+			t.Errorf("%s FixCommand = %q recommends a denied imperative install", e.Name, e.FixCommand)
+		}
 	}
 }
 

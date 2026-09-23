@@ -169,10 +169,8 @@ func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, qsdevVersion strin
 			Path:      ts.Path,
 		}
 
-		if !ts.Installed {
-			entry.FixCommand = pkgmanager.InstallCommand(pm, family, ts.Name)
-		} else if ts.MinVersion != "" && !ts.VersionOK {
-			entry.FixCommand = pkgmanager.InstallCommand(pm, family, ts.Name)
+		if !ts.Installed || (ts.MinVersion != "" && !ts.VersionOK) {
+			entry.FixCommand = fixCommand(pm, family, ts)
 		}
 
 		if ts.Required {
@@ -185,18 +183,42 @@ func BuildReport(osInfo *sysinfo.OSInfo, checks []ToolStatus, qsdevVersion strin
 		}
 	}
 
-	// Build recommendations
+	// Build recommendations. A tool with no known install command gets none:
+	// "Install X: " with nothing after it is noise, and the tool is already
+	// listed as missing above.
 	for _, ts := range checks {
-		if !ts.Installed {
-			cmd := pkgmanager.InstallCommand(pm, family, ts.Name)
+		cmd := fixCommand(pm, family, ts)
+		switch {
+		case cmd == "":
+		case !ts.Installed:
 			r.Recommendations = append(r.Recommendations, fmt.Sprintf("Install %s: %s", ts.Name, cmd))
-		} else if ts.MinVersion != "" && !ts.VersionOK {
-			cmd := pkgmanager.InstallCommand(pm, family, ts.Name)
+		case ts.MinVersion != "" && !ts.VersionOK:
 			r.Recommendations = append(r.Recommendations, fmt.Sprintf("Upgrade %s to >= %s: %s", ts.Name, ts.MinVersion, cmd))
 		}
 	}
 
 	return r
+}
+
+// fixCommand returns the command that installs or upgrades ts, or "" when
+// none is known. With Nix it never suggests an imperative profile install:
+// that bypasses the project's pinned environment, and the generated security
+// rules, settings.json deny list and package guard all forbid it. Required
+// prerequisites come from `devenv setup` instead, and optional tools (which
+// devenv provides per project) are added to the pinned environment.
+func fixCommand(pm pkgmanager.PackageManager, family string, ts ToolStatus) string {
+	if pm.Name() != "nix" {
+		return pkgmanager.InstallCommand(pm, family, ts.Name)
+	}
+	app := branding.Get().AppName
+	if ts.Required {
+		return app + " devenv setup"
+	}
+	pkg, ok := pkgmanager.PackageFor(pm, family, ts.Name)
+	if !ok {
+		return ""
+	}
+	return app + " devenv add-package " + pkg
 }
 
 // UseColor returns true if color output should be used for the given

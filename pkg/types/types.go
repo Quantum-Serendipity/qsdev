@@ -298,8 +298,11 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 		return
 	}
 
-	// Default agent tools when Claude is enabled — only if user hasn't configured any.
-	if a.ClaudeCode && !a.AgentTools.PostmortemEnabled && !a.AgentTools.VersionSentinel && !a.AgentTools.SembleEnabled {
+	// Default agent tools when Claude is enabled — only when no source set
+	// them at all. Every configuring source (flags, wizard, saved answers)
+	// also records a mode or window, so an all-false selection is an explicit
+	// opt-out and must survive; only the zero value means "unconfigured".
+	if a.ClaudeCode && a.AgentTools == (AgentToolsAnswers{}) {
 		a.AgentTools.PostmortemEnabled = defaults.DefaultPostmortem()
 		a.AgentTools.VersionSentinel = defaults.DefaultVersionSentinel()
 		a.AgentTools.SembleEnabled = defaults.DefaultSembleEnabled()
@@ -317,6 +320,31 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 	if a.ClaudeCode && len(a.MCPServers) == 0 {
 		a.MCPServers = append(a.MCPServers, defaults.DefaultMCPServers()...)
 	}
+}
+
+// SembleMCPServer is the MCP server provided by the semble agent tool.
+const SembleMCPServer = "semble"
+
+// ConfiguredMCPServers returns the MCP servers to configure: MCPServers, with
+// the semble server present exactly when the semble agent tool is enabled in a
+// mode that uses its MCP server. AgentTools.SembleEnabled is semble's single
+// source of truth, so a stale MCPServers entry (e.g. from an older default
+// server list) cannot keep launching a server the answers record as disabled,
+// and enabling semble always provisions its server.
+func (a *WizardAnswers) ConfiguredMCPServers() []string {
+	servers := make([]string, 0, len(a.MCPServers)+1)
+	for _, s := range a.MCPServers {
+		if s != SembleMCPServer {
+			servers = append(servers, s)
+		}
+	}
+	if a.AgentTools.SembleEnabled {
+		switch a.AgentTools.SembleMode {
+		case "", "mcp", "both":
+			servers = append(servers, SembleMCPServer)
+		}
+	}
+	return servers
 }
 
 // ApplyClaudeHookDefaults enforces the hook invariants every Claude Code

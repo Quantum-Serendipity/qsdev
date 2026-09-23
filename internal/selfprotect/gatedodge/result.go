@@ -2,9 +2,11 @@ package gatedodge
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -31,24 +33,42 @@ var (
 	precommitResult = &ResultRule{ID: "GD-003", check: checkPrecommitResult}
 )
 
+// resultRules maps each guarded file's lower-cased base name to its rule.
+var resultRules = map[string]*ResultRule{
+	".npmrc":                  npmrcResultRule,
+	".pre-commit-config.yaml": precommitResult,
+	"pnpm-workspace.yaml":     pnpmWorkspaceResult,
+	".yarnrc.yml":             yarnBerryResult,
+	".yarnrc":                 yarnClassicResult,
+	"bunfig.toml":             bunResult,
+}
+
 // ResultRuleFor returns the ResultRule guarding filePath's resulting content,
 // or nil when the file has none. The name matches regardless of case: on a
 // case-insensitive filesystem (macOS, Windows) .NPMRC opens .npmrc, and
 // guarding an unrelated differently-cased file elsewhere is harmless.
 func ResultRuleFor(filePath string) *ResultRule {
-	switch strings.ToLower(filepath.Base(filePath)) {
-	case ".npmrc":
-		return npmrcResultRule
-	case ".pre-commit-config.yaml":
-		return precommitResult
-	default:
-		return nil
-	}
+	return resultRules[strings.ToLower(filepath.Base(filePath))]
+}
+
+// GuardedFileNames returns the lower-cased base names of the files that have
+// a ResultRule, sorted. A shell command that rewrites one of them bypasses the
+// before/after comparison, so callers deny those instead.
+func GuardedFileNames() []string {
+	return slices.Sorted(maps.Keys(resultRules))
+}
+
+// npmrcSettings are the .npmrc hardening settings besides ignore-scripts:
+// npm's release-age gate (in days) and the registry packages come from.
+var npmrcSettings = []setting{
+	{key: "min-release-age", kind: minAge, ageUnit: 24 * time.Hour},
+	{key: "registry", kind: keepValue},
 }
 
 // checkNpmrcResult blocks an .npmrc change that turns npm install scripts back
-// on: setting ignore-scripts to anything but true, or dropping an effective
-// ignore-scripts=true.
+// on (setting ignore-scripts to anything but true, or dropping an effective
+// ignore-scripts=true), removes or lowers the min-release-age gate, or
+// removes or changes the registry.
 func checkNpmrcResult(before, after string) (bool, string) {
 	afterSet, afterOn := npmrcIgnoreScripts(after)
 	if afterSet && !afterOn {
@@ -57,7 +77,28 @@ func checkNpmrcResult(before, after string) (bool, string) {
 	if _, beforeOn := npmrcIgnoreScripts(before); beforeOn && !afterOn {
 		return true, "removing ignore-scripts=true re-enables install scripts"
 	}
+	prev, next := npmrcValues(before), npmrcValues(after)
+	for _, s := range npmrcSettings {
+		if reason := s.weakened(prev, next); reason != "" {
+			return true, reason
+		}
+	}
 	return false, ""
+}
+
+// npmrcValues parses an .npmrc as ini (the last assignment wins; ';' and '#'
+// start comments; values may be quoted).
+func npmrcValues(content string) map[string]any {
+	m := map[string]any{}
+	for line := range strings.Lines(content) {
+		line = strings.TrimSpace(line)
+		if line == "" || line[0] == ';' || line[0] == '#' {
+			continue
+		}
+		key, value, _ := strings.Cut(line, "=")
+		m[strings.ToLower(strings.TrimSpace(key))] = strings.Trim(strings.TrimSpace(value), `"'`)
+	}
+	return m
 }
 
 // npmrcIgnoreScripts reports whether an .npmrc assigns ignore-scripts and

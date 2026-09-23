@@ -41,7 +41,9 @@ func TestDetectResultGateDodge(t *testing.T) {
 		{"guarded name resolving to another name", "Edit", hookio.ToolInput{FilePath: filepath.Join(dir, "link", ".npmrc"), OldString: "ignore-scripts=true\n"}, shared, true, "GD-004"},
 		{"raw path when canonicalization failed", "Edit", hookio.ToolInput{FilePath: npmrc, OldString: "ignore-scripts=true\n"}, "", true, "GD-004"},
 
-		{"edit keeps ignore-scripts", "Edit", hookio.ToolInput{FilePath: npmrc, OldString: "https://r", NewString: "https://s"}, npmrc, false, ""},
+		{"edit replacing the registry", "Edit", hookio.ToolInput{FilePath: npmrc, OldString: "https://r", NewString: "https://s"}, npmrc, true, "GD-004"},
+
+		{"edit keeps ignore-scripts", "Edit", hookio.ToolInput{FilePath: npmrc, OldString: "registry=https://r\n", NewString: "registry=https://r\nsave-exact=true\n"}, npmrc, false, ""},
 		{"new file without the setting", "Write", hookio.ToolInput{FilePath: missing, Content: "registry=https://r\n"}, missing, false, ""},
 		{"unguarded file", "Write", hookio.ToolInput{FilePath: other}, other, false, ""},
 		{"read tool", "Read", hookio.ToolInput{FilePath: npmrc}, npmrc, false, ""},

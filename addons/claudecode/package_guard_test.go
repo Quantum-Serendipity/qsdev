@@ -5,9 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 )
 
 // pgDriver imports the package-guard hook template as a module and prints, as
@@ -209,5 +212,37 @@ func TestPackageGuard_ExtractsOnlyRealInstalls(t *testing.T) {
 				t.Errorf("packages = %v, want %v (command: %s)", res.Packages, tc.wantPackages, tc.command)
 			}
 		})
+	}
+}
+
+// TestPackageGuard_AgeCheckedEcosystemsMatchPosture keeps the posture report's
+// age-gating coverage (posture.GuardAgeCheckedLanguages) in sync with the
+// registries the hook template actually age-checks, so posture never reports
+// an ecosystem as age-gated that the guard lets through unchecked.
+func TestPackageGuard_AgeCheckedEcosystemsMatchPosture(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("templates", "hooks", "package-guard.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(data)
+	start := strings.Index(src, "# 4. Check publication age")
+	end := strings.Index(src, "if age_days is not None")
+	if start < 0 || end < start {
+		t.Fatal("age-check block not found in package-guard.py")
+	}
+	// OSV ecosystem name -> qsdev language name.
+	languageOf := map[string]string{"npm": "javascript", "PyPI": "python", "crates.io": "rust"}
+	var checked []string
+	for _, m := range regexp.MustCompile(`ecosystem == "([^"]+)"`).FindAllStringSubmatch(src[start:end], -1) {
+		lang, ok := languageOf[m[1]]
+		if !ok {
+			t.Fatalf("package-guard.py age-checks %q; map it to its language here and add it to posture.GuardAgeCheckedLanguages", m[1])
+		}
+		checked = append(checked, lang)
+	}
+	slices.Sort(checked)
+	want := slices.Sorted(slices.Values(posture.GuardAgeCheckedLanguages))
+	if !slices.Equal(checked, want) {
+		t.Errorf("package-guard.py age-checks %v, posture.GuardAgeCheckedLanguages = %v", checked, want)
 	}
 }

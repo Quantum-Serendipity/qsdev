@@ -3,11 +3,13 @@ package devinit
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -440,6 +442,103 @@ func TestLifecycle_SembleEnableDisable(t *testing.T) {
 	assertSharedFilesWellFormed(t, dir)
 	if strings.Contains(readProjectFile(t, dir, ".mcp.json"), `"semble"`) {
 		t.Error(".mcp.json still lists semble after disable")
+	}
+}
+
+// TestLifecycle_SembleOptInOnly verifies semble (an unpinned uvx server) is
+// only configured when opted in: a default init neither lists it in .mcp.json
+// nor provisions uv for it, and explicit --agent-*=false opt-outs are kept
+// instead of being re-enabled from catalog defaults.
+func TestLifecycle_SembleOptInOnly(t *testing.T) {
+	t.Run("default init", func(t *testing.T) {
+		dir := initLifecycleProject(t)
+		if mcp := readProjectFile(t, dir, ".mcp.json"); strings.Contains(mcp, `"semble"`) {
+			t.Errorf(".mcp.json lists semble without opt-in:\n%s", mcp)
+		}
+		if nix := readProjectFile(t, dir, "devenv.nix"); strings.Contains(nix, "pkgs.uv") {
+			t.Error("devenv.nix provisions uv for a Go project without semble")
+		}
+		a := loadProjectAnswers(t, dir)
+		if a.AgentTools.SembleEnabled || a.EnabledTools["semble"] || slices.Contains(a.MCPServers, "semble") {
+			t.Errorf("semble recorded as configured: agent_tools=%+v mcp=%v", a.AgentTools, a.MCPServers)
+		}
+	})
+	t.Run("explicit opt-outs survive", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/lc\n\ngo 1.24\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := executeInitCmd(t, dir, "--yes", "--lang", "go", "--tier", "full",
+			"--agent-semble=false", "--agent-postmortem=false", "--agent-version-sentinel=false"); err != nil {
+			t.Fatalf("init: %v\n%s", err, out)
+		}
+		a := loadProjectAnswers(t, dir)
+		if a.AgentTools.PostmortemEnabled || a.AgentTools.VersionSentinel || a.AgentTools.SembleEnabled {
+			t.Errorf("explicit opt-outs were re-enabled: %+v", a.AgentTools)
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "agent-postmortem")); err == nil {
+			t.Error("agent-postmortem skill generated despite --agent-postmortem=false")
+		}
+	})
+}
+
+// TestLifecycle_TeardownRemovesGeneratedCore is the W161 regression: teardown
+// used to strip only tool sections, leaving the whole generated devenv.nix,
+// CLAUDE.md's generated block (advertising the skills it had just deleted),
+// the devenv.nix sidecar, the answers copies and empty skill directories.
+// User content in a shared file must survive.
+func TestLifecycle_TeardownRemovesGeneratedCore(t *testing.T) {
+	for _, withUserText := range []bool{false, true} {
+		t.Run(fmt.Sprintf("user CLAUDE.md content=%v", withUserText), func(t *testing.T) {
+			dir := initLifecycleProject(t)
+			claudeMD := filepath.Join(dir, "CLAUDE.md")
+			const userText = "# My project\n\nHand-written notes.\n"
+			if withUserText {
+				// As init leaves a pre-existing CLAUDE.md: the user's text,
+				// then the appended generated block.
+				generated, err := os.ReadFile(claudeMD)
+				if err != nil {
+					t.Fatal(err)
+				}
+				block := generated[strings.Index(string(generated), "<!-- BEGIN GENERATED SECTION"):]
+				if err := os.WriteFile(claudeMD, append([]byte(userText+"\n"), block...), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, rel := range []string{"devenv.nix.new", filepath.Join(".claude", ".qsdev-claude-answers.yaml")} {
+				if err := os.WriteFile(filepath.Join(dir, rel), []byte("x\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if out, err := runLifecycleCmd(t, dir, teardownCmd(), "--force"); err != nil {
+				t.Fatalf("teardown: %v\n%s", err, out)
+			}
+
+			gone := []string{
+				"devenv.nix", "devenv.nix.new", "devenv.yaml",
+				filepath.Join(".claude", ".qsdev-claude-answers.yaml"),
+				filepath.Join(".devenv", ".qsdev-answers.yaml"),
+				filepath.Join(".claude", "skills"),
+			}
+			if !withUserText {
+				gone = append(gone, "CLAUDE.md")
+			}
+			for _, rel := range gone {
+				if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
+					t.Errorf("%s survived teardown", rel)
+				}
+			}
+			if withUserText {
+				md, err := os.ReadFile(claudeMD)
+				if err != nil {
+					t.Fatalf("CLAUDE.md with user content was removed: %v", err)
+				}
+				if string(md) != userText {
+					t.Errorf("CLAUDE.md after teardown = %q, want only the user's text", md)
+				}
+			}
+		})
 	}
 }
 

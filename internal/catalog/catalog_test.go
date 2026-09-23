@@ -525,7 +525,8 @@ func TestDefaultMCPServers(t *testing.T) {
 	t.Parallel()
 	cat := loadTestCatalog(t)
 	servers := cat.DefaultMCPServers()
-	want := []string{"context7", "github", "socket", "semble"}
+	// semble is opt-in (agent_tools.semble_enabled), never a default server.
+	want := []string{"context7", "github", "socket"}
 	if len(servers) != len(want) {
 		t.Fatalf("DefaultMCPServers() = %v, want %v", servers, want)
 	}
@@ -549,8 +550,8 @@ func TestDefaultAgentToolConfig(t *testing.T) {
 	if cfg.VersionSentinelHours != 24 {
 		t.Errorf("version_sentinel_hours = %d, want 24", cfg.VersionSentinelHours)
 	}
-	if !cfg.SembleEnabled {
-		t.Error("semble_enabled should be true")
+	if cfg.SembleEnabled {
+		t.Error("semble_enabled should default to false (opt-in, like --agent-semble)")
 	}
 	if cfg.SembleMode != "both" {
 		t.Errorf("semble_mode = %q, want both", cfg.SembleMode)

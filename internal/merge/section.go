@@ -97,6 +97,38 @@ func SectionMarkersOrAppend(existing, newGenerated []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// RemoveSection removes the generated-section block (the begin marker line
+// through the end marker line) from existing and keeps everything around it;
+// the blank line SectionMarkersOrAppend put between user text and the block
+// goes with it. existing is returned unchanged when it has no markers, and
+// ErrMalformedMarkers when they are malformed.
+func RemoveSection(existing []byte) ([]byte, error) {
+	begin := indexLinePrefix(existing, []byte(BeginMarkerPrefix))
+	end := indexLinePrefix(existing, []byte(EndMarker))
+	switch {
+	case begin < 0 && end < 0:
+		return existing, nil
+	case begin < 0 || end <= begin:
+		return nil, ErrMalformedMarkers
+	}
+	endLineEnd := end + len(EndMarker)
+	if endLineEnd < len(existing) && existing[endLineEnd] == '\n' {
+		endLineEnd++
+	}
+	before, after := existing[:begin], existing[endLineEnd:]
+	var buf bytes.Buffer
+	if len(after) == 0 {
+		if trimmed := bytes.TrimRight(before, "\n"); len(trimmed) > 0 {
+			buf.Write(trimmed)
+			buf.WriteByte('\n')
+		}
+	} else {
+		buf.Write(before)
+		buf.Write(after)
+	}
+	return buf.Bytes(), nil
+}
+
 // markedSection returns the begin..end marker block (including the end
 // marker's trailing newline, if any) from generated content.
 func markedSection(generated []byte) ([]byte, error) {

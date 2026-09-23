@@ -152,6 +152,36 @@ func TestSelfprotectHook_Decisions(t *testing.T) {
 			toolCallJSON(t, "Write", map[string]any{"file_path": "README.md", "content": "hello\n"}),
 			0, "",
 		},
+		// W061: the other JS package-manager hardening files, and shell
+		// rewrites that skip the Write/Edit before/after check.
+		{
+			"write allowing all pnpm builds is blocked",
+			toolCallJSON(t, "Write", map[string]any{"file_path": "pnpm-workspace.yaml", "content": "strictDepBuilds: false\ndangerouslyAllowAllBuilds: true\nminimumReleaseAge: 0\n"}),
+			2, "GD-004",
+		},
+		{
+			"write enabling yarn scripts is blocked",
+			toolCallJSON(t, "Write", map[string]any{"file_path": ".yarnrc.yml", "content": "enableScripts: true\nnpmMinimalAgeGate: 0\n"}),
+			2, "GD-004",
+		},
+		{"bash append to .npmrc is blocked", bash("echo ignore-scripts=false >> .npmrc"), 2, "GD-004"},
+		{"bash delete of .npmrc is blocked", bash("rm .npmrc"), 2, "GD-004"},
+		{"bash in-place edit of bunfig.toml is blocked", bash("sed -i 's/604800/0/' bunfig.toml"), 2, "GD-004"},
+		{"bash variable-carried rewrite is blocked", bash(`f=pnpm-workspace.yaml; echo 'dangerouslyAllowAllBuilds: true' >> "$f"`), 2, "GD-004"},
+		{"bash read of .npmrc is allowed", bash("cat .npmrc && grep ignore-scripts .npmrc"), 0, ""},
+		{"bash staging .npmrc is allowed", bash("git add .npmrc pnpm-workspace.yaml && git commit -m 'chore: harden' .npmrc"), 0, ""},
+		{"bash restoring .npmrc from git is blocked", bash("git checkout -- .npmrc"), 2, "GD-004"},
+		{"shell -c rewrite of .npmrc is blocked", bash(`sh -c 'echo ignore-scripts=false >> .npmrc'`), 2, "GD-004"},
+		{"inline program rewriting .npmrc is blocked", bash(`python3 -c "open('.npmrc','w').write('')"`), 2, "GD-004"},
+		{"dd onto .npmrc is blocked", bash("dd if=/tmp/x of=.npmrc"), 2, "GD-004"},
+		{"yarn config set is blocked", bash("yarn config set enableScripts true"), 2, "GD-004"},
+		{"pnpm approve-builds is blocked", bash("pnpm approve-builds esbuild"), 2, "GD-004"},
+		{"pr text naming .npmrc is allowed", bash(`gh pr create --title "chore: harden .npmrc" --body "x"`), 0, ""},
+		// W139: git spellings the permission globs cannot express.
+		{"git -c after another global option is blocked", bash(`git -C . -c alias.x='!npm i evil-pkg' x`), 2, "GIT-001"},
+		{"clustered commit -n is blocked", bash("git commit -m wip -qn"), 2, "GIT-001"},
+		{"git output into .git/config is blocked", bash("git log -1 --format=%B --output .git/config"), 2, "GIT-001"},
+		{"commit message mentioning git options is allowed", bash(`git commit -m "handle sh -c and --no-verify"`), 0, ""},
 		{"malformed input fails closed", "{not json", 2, "internal error"},
 		{"empty input fails closed", "", 2, "internal error"},
 	}

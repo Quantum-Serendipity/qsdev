@@ -19,9 +19,27 @@ var lookPathFunc = exec.LookPath
 // commandTimeout bounds each ecosystem's outdated command.
 const commandTimeout = 60 * time.Second
 
+// ErrUnknownEcosystem is returned when the ecosystem filter names an
+// ecosystem qsdev has no outdated check for.
+var ErrUnknownEcosystem = errors.New("unknown ecosystem")
+
+// ErrEcosystemNotConfigured is returned when the ecosystem filter names a
+// supported ecosystem that is not among the project's ecosystems.
+var ErrEcosystemNotConfigured = errors.New("ecosystem not configured for this project")
+
 // RunOutdated checks for outdated dependencies across detected ecosystems.
 // Output is streamed to w with ecosystem headers.
 func RunOutdated(ctx context.Context, w io.Writer, projectRoot string, ecosystems []string, opts OutdatedOptions) (*OutdatedResult, error) {
+	// A filter that matches nothing must fail loudly: silently checking
+	// nothing is indistinguishable from "nothing outdated".
+	if opts.Ecosystem != "" {
+		if supported := SupportedEcosystems(); !slices.Contains(supported, opts.Ecosystem) {
+			return nil, fmt.Errorf("%w %q (supported: %s)", ErrUnknownEcosystem, opts.Ecosystem, strings.Join(supported, ", "))
+		}
+		if !slices.Contains(ecosystems, opts.Ecosystem) {
+			return nil, fmt.Errorf("%w: %q (configured: %s)", ErrEcosystemNotConfigured, opts.Ecosystem, strings.Join(ecosystems, ", "))
+		}
+	}
 	if len(ecosystems) == 0 {
 		fmt.Fprintln(w, "No ecosystems detected in this project.")
 		return &OutdatedResult{}, nil

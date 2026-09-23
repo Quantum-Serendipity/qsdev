@@ -123,9 +123,14 @@ func buildPermissions(preset PermissionPreset, answers types.WizardAnswers, regi
 
 	switch preset {
 	case PermissionPresetPermissive:
-		// Add Podman commands to permissive allow list when Podman is detected.
+		// Mirror the permissive docker allows for Podman when it is detected.
+		// Never `podman *`: container daemon access is root-equivalent.
 		if answers.Detected.ContainerRuntime == "podman-rootless" || answers.Detected.ContainerRuntime == "podman-rootful" {
-			allow = append(allow, `Bash(podman *)`)
+			for _, rule := range cat.PermissionAllowRules("permissive_extra") {
+				if podman, ok := strings.CutPrefix(rule, "Bash(docker "); ok {
+					allow = append(allow, "Bash(podman "+podman)
+				}
+			}
 		}
 
 	case PermissionPresetSupplyChainOnly:

@@ -50,7 +50,7 @@ func TestStandardTier_MCPGeneratedNoFullOnlyArtifacts(t *testing.T) {
 	answers := types.WizardAnswers{
 		Tier:       "standard",
 		Languages:  []types.LanguageChoice{{Name: "go"}},
-		MCPServers: []string{"semble"},
+		MCPServers: []string{"github"},
 		AgentTools: types.AgentToolsAnswers{PostmortemEnabled: true},
 	}
 
@@ -235,5 +235,67 @@ func TestAlwaysOnTools_ForceDisabledNotRegenerated(t *testing.T) {
 	}
 	if !sawSemgrep {
 		t.Error(".semgrep.yml should still be generated for the always-on semgrep tool")
+	}
+}
+
+// TestGenerate_StaleSembleServerDropped verifies a semble entry left in
+// mcp_servers (e.g. by the old default server list) is not written to
+// .mcp.json while the semble agent tool is disabled.
+func TestGenerate_StaleSembleServerDropped(t *testing.T) {
+	reg := newTestRegistry(t, goMock())
+	for _, enabled := range []bool{false, true} {
+		answers := types.WizardAnswers{
+			Tier:       "full",
+			Languages:  []types.LanguageChoice{{Name: "go"}},
+			MCPServers: []string{"context7", "semble"},
+			AgentTools: types.AgentToolsAnswers{SembleEnabled: enabled, SembleMode: "mcp"},
+		}
+		files, err := claudecode.NewClaudeCodeGenerator(reg, claudecode.Config{}).Generate(answers)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var mcp string
+		for _, f := range files {
+			if f.Path == ".mcp.json" {
+				mcp = string(f.Content)
+			}
+		}
+		if got := strings.Contains(mcp, `"semble"`); got != enabled {
+			t.Errorf("semble enabled=%v: .mcp.json lists semble = %v\n%s", enabled, got, mcp)
+		}
+	}
+}
+
+// TestGenerate_SembleEnabledAtStandardTier verifies that enabling semble
+// provisions it on a standard-tier project that configured no other MCP
+// server: its .mcp.json entry in mcp mode, its sub-agent in subagent mode.
+func TestGenerate_SembleEnabledAtStandardTier(t *testing.T) {
+	reg := newTestRegistry(t, goMock())
+	for _, mode := range []string{"mcp", "subagent"} {
+		answers := types.WizardAnswers{
+			Tier:       "standard",
+			Languages:  []types.LanguageChoice{{Name: "go"}},
+			AgentTools: types.AgentToolsAnswers{SembleEnabled: true, SembleMode: mode},
+		}
+		files, err := claudecode.NewClaudeCodeGenerator(reg, claudecode.Config{}).Generate(answers)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var mcp string
+		var agent bool
+		for _, f := range files {
+			switch {
+			case f.Path == ".mcp.json":
+				mcp = string(f.Content)
+			case strings.Contains(f.Path, "semble"):
+				agent = true
+			}
+		}
+		if got := strings.Contains(mcp, `"semble"`); got != (mode == "mcp") {
+			t.Errorf("mode %s: .mcp.json lists semble = %v\n%s", mode, got, mcp)
+		}
+		if mode == "subagent" && !agent {
+			t.Errorf("mode %s: semble sub-agent not generated", mode)
+		}
 	}
 }

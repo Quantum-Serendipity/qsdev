@@ -140,7 +140,7 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.Flags().StringVar(&opts.ClaudePermissions, "claude-permissions", "", "Permission preset (supply-chain-only, minimal, standard, permissive, custom); defaults to the tier's preset, or standard")
 	cmd.Flags().StringSliceVar(&opts.ClaudeSkills, "claude-skills", nil, "Skills to install (e.g. deploy,review-pr)")
 	cmd.Flags().StringSliceVar(&opts.ClaudeHooks, "claude-hooks", nil, "Hook presets to enable (e.g. safety-block,auto-format)")
-	cmd.Flags().StringSliceVar(&opts.MCPServers, "mcp", nil, "MCP servers to configure (e.g. github,filesystem)")
+	cmd.Flags().StringSliceVar(&opts.MCPServers, "mcp", nil, "MCP servers to configure (e.g. github,filesystem); added to the servers enabled tools provide")
 	cmd.Flags().BoolVar(&opts.ListProfiles, "list-profiles", false, "List available project-type profiles and exit")
 
 	// AI Agent Tools flags.

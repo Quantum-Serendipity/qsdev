@@ -143,7 +143,10 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 	// superset of the previous Full-only behavior, so Full-tier output is
 	// unchanged, while a standard-tier project that configured mcp_servers now
 	// gets its .mcp.json instead of silently nothing.
-	if t >= tier.Full || len(answers.MCPServers) > 0 {
+	// Enabling semble provisions its server or sub-agent at any tier.
+	if t >= tier.Full || len(answers.MCPServers) > 0 || answers.AgentTools.SembleEnabled {
+		answers.MCPServers = answers.ConfiguredMCPServers()
+
 		// 6. Auto-inject MCP servers for enabled tools that declare mcp_server_name.
 		cat := catalog.MustDefault()
 		for name, def := range cat.Tools() {

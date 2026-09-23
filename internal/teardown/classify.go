@@ -18,6 +18,8 @@ type ClassifiedFile struct {
 	// BaseContent is the generated content recorded in state (set for
 	// three-way-merged files such as settings.json).
 	BaseContent []byte
+	// Strategy is the merge strategy the file was written with.
+	Strategy types.MergeStrategy
 }
 
 // ClassifyFiles examines each file in genState against its on-disk state
@@ -58,6 +60,7 @@ func ClassifyFiles(genState types.GeneratedState, projectRoot string, registry *
 			Path:        relPath,
 			Owner:       fs.Owner,
 			BaseContent: fs.BaseContent,
+			Strategy:    fs.Strategy,
 		}
 
 		switch statuses[relPath].Status {

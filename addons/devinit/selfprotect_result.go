@@ -4,9 +4,11 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/gatedodge"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/hookio"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/rules"
 )
 
 // detectResultGateDodge checks the content a Write/Edit/MultiEdit leaves in a
@@ -46,4 +48,37 @@ func detectResultGateDodge(toolName string, input hookio.ToolInput, canonicalPat
 		return true, rule.ID, reason
 	}
 	return false, "", ""
+}
+
+// detectBashGateDodge blocks a Bash command that rewrites a file guarded by a
+// gate-dodge result rule: the before/after check runs only for Write and Edit,
+// so a shell append, delete or in-place edit, or a package manager's config
+// command, would skip it. Reading the file stays allowed.
+func detectBashGateDodge(ctx *rules.EvalContext) (bool, string, string) {
+	name, ok := rules.BashRewritesFile(ctx, gatedodge.GuardedFileNames())
+	if !ok {
+		name = configCommandTarget(ctx)
+	}
+	if name == "" {
+		return false, "", ""
+	}
+	return true, gatedodge.ResultRuleFor(name).ID,
+		"shell command changes " + name + ", whose security settings are only verified for the Edit and Write tools; make the change with Edit or Write"
+}
+
+// configCommandTarget returns the guarded file a package-manager command on
+// the line rewrites (see gatedodge.ConfigCommandTarget), or "". An
+// unparseable line is left to BashRewritesFile, which fails closed when it
+// names a guarded file.
+func configCommandTarget(ctx *rules.EvalContext) string {
+	cmds, err := ctx.ParsedCommands()
+	if err != nil {
+		return ""
+	}
+	for _, c := range cmds {
+		if name := gatedodge.ConfigCommandTarget(path.Base(c.Name), c.Args); name != "" {
+			return name
+		}
+	}
+	return ""
 }

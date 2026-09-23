@@ -241,6 +241,8 @@ All 18 rules use deny-override combining: if any rule denies, the tool call is b
 - `/dev/fd/` and `/proc/self/fd/` file descriptor tricks
 - `/proc/self/root/` and `/proc/PID/root/` traversal
 
+**Git code-execution check (GIT-001)** parses every git invocation, including one inside `sh -c` or `eval`, and blocks the forms that run a program no permission rule or hook sees, or that skip the repository's hooks: per-invocation config (`-c`, `--config-env`, `GIT_CONFIG_*` variables), `--exec-path=`, `GIT_EXTERNAL_DIFF`, `git config`, `--no-verify` and its abbreviations, a clustered `-n` on commit or am, and `--output`. The permission deny rules cover the plain spellings; this check covers what a prefix glob cannot express, and leaves commit messages that mention these options alone.
+
 **Path canonicalization** resolves all file paths through `canon.Canonicalize` before rule evaluation, preventing relative-path and symlink-based evasion.
 
 ## Hook Execution Isolation

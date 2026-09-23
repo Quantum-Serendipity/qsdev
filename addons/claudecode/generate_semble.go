@@ -73,7 +73,7 @@ func ValidateSemblePrerequisites(mode string) []string {
 }
 
 // sembleServerName is the catalog name of the semble MCP server.
-const sembleServerName = "semble"
+const sembleServerName = types.SembleMCPServer
 
 // sembleTextFilesServer returns the .mcp.json definition written for semble
 // when text-file indexing is enabled: the catalog definition plus

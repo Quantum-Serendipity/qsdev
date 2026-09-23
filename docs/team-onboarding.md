@@ -75,8 +75,8 @@ Package installs are hook-gated (the user is asked for confirmation), not blocke
 | Preset | Allow | Deny | Ask | Notes |
 |--------|-------|------|-----|-------|
 | `minimal` | `Read(*)`, basic build/test commands | All base deny rules + ecosystem-specific | `nix flake update` | Read-only by default; every write requires approval |
-| `standard` | `Read(*)`, `Edit(*)`, `Write(*)`, `Bash(git *)`, build/test/lint, Nix dev commands | All base deny rules + ecosystem-specific | `nix flake update`, `pip install -r`, `pip install -e .` | Recommended for most teams |
-| `permissive` | Everything in standard + `Bash(make *)`, `Bash(docker *)` | All base deny rules + ecosystem-specific | Same as standard | For teams with Docker/Make workflows |
+| `standard` | `Read(*)`, `Edit(*)`, `Write(*)`, read-only and commit `git` subcommands (never `git *`), build/test/lint, Nix dev shells | All base deny rules + ecosystem-specific | `nix flake update`, `pip install -r`, `pip install -e .` | Recommended for most teams |
+| `permissive` | Everything in standard + `Bash(make *)` and docker/podman build, ps and images (never `docker *`: daemon access is root-equivalent) | All base deny rules + ecosystem-specific | Same as standard | For teams with Docker/Make workflows |
 | `supply-chain-only` | Minimal | All base + ecosystem deny rules | (none) | Supply chain defense only; no dev tooling permissions |
 | `custom` | Only `ExtraAllowPatterns` from config | All base + ecosystem + `ExtraDenyPatterns` | (none) | Full manual control |
 
@@ -187,7 +187,7 @@ MCP servers are configured by default or activated based on project detection:
 | `context7` | Library documentation lookup | Default |
 | `github` | GitHub API integration | Default |
 | `socket` | Package security analysis | Default |
-| `semble` | Semantic code search | Default |
+| `semble` | Semantic code search | Opt-in (`--agent-semble` or `qsdev enable semble`) |
 | `agent-postmortem` | Session analysis and failure patterns | Default |
 | `version-sentinel` | Dependency version monitoring | Default |
 | `local-docs-devdocs` | Offline DevDocs API references | On when detected |

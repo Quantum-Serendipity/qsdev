@@ -175,10 +175,39 @@ func nixBool(b bool) string {
 
 // nixMultiline escapes a string for use inside Nix ” ... ” multiline strings.
 // ” -> ”' and ${ -> ”${
+//
+// It works in a single pass over runs of quotes so escapes cannot merge: a
+// lone quote directly before ${ (or at the very end) would otherwise fuse with
+// the following two-quote escape into three quotes (an escaped pair) and leave
+// ${ as a live antiquotation, so that quote is written as ${"'"} instead.
 func nixMultiline(s string) string {
-	s = strings.ReplaceAll(s, "''", "'''")
-	s = strings.ReplaceAll(s, "${", "''${")
-	return s
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		switch {
+		case s[i] == '\'':
+			j := i
+			for j < len(s) && s[j] == '\'' {
+				j++
+			}
+			n := j - i
+			b.WriteString(strings.Repeat("'''", n/2))
+			if n%2 == 1 {
+				if j == len(s) || strings.HasPrefix(s[j:], "${") {
+					b.WriteString(`${"'"}`)
+				} else {
+					b.WriteByte('\'')
+				}
+			}
+			i = j
+		case strings.HasPrefix(s[i:], "${"):
+			b.WriteString("''${")
+			i += 2
+		default:
+			b.WriteByte(s[i])
+			i++
+		}
+	}
+	return b.String()
 }
 
 // nixAttrSet formats a map as a Nix attribute set with sorted keys and

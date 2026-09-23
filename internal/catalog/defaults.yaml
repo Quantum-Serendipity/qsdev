@@ -668,7 +668,7 @@ tools:
         display_name: Semble Semantic Code Search
         category: ai-agent
         description: Semantic code search via MCP server or sub-agent for codebase navigation
-        default_policy: always-on
+        default_policy: opt-in
         toggle_field: agent_tools.semble_enabled
         owned_files:
             - path: .mcp.json
@@ -1090,16 +1090,19 @@ tier_to_enabled_tools:
     standard:
         - gitleaks
     supply-chain-only: []
+# semble is not listed: it is provisioned only when the semble agent tool is
+# enabled (agent_tools.semble_enabled), its single source of truth.
 default_mcp_servers:
     - context7
     - github
     - socket
-    - semble
 default_agent_tools:
     postmortem_enabled: true
     version_sentinel: true
     version_sentinel_hours: 24
-    semble_enabled: true
+    # Opt-in (matches --agent-semble's default): the server runs an unpinned
+    # PyPI package through uvx at every session start.
+    semble_enabled: false
     semble_mode: both
 languages:
     all:
@@ -1306,6 +1309,68 @@ permission_deny_rules:
         - "Bash(xargs npm install *)"
         - "Bash(xargs pip install *)"
         - "Bash(xargs cargo install *)"
+    # git runs arbitrary programs through per-invocation config (`-c
+    # alias.x='!cmd'`, core.pager, core.sshCommand, core.hooksPath) and skips
+    # the pre-commit secret scan with --no-verify / -n. Persistent config
+    # (git config, .git/config, .git/hooks) is the same vector, and --output
+    # lets an allowed diff/log/show write .git/config. Globs cannot express a
+    # global -c after another global option, clustered flags (-qn) or option
+    # text inside a commit message; the selfprotect hook (GIT-001) parses
+    # those. A `git * -c *` rule is left to it too: it would deny every commit
+    # message that mentions `sh -c`.
+    # --no-veri* covers the abbreviations git accepts (--no-veri, --no-verif).
+    git_code_execution:
+        - "Bash(git -c *)"
+        - "Bash(git --config-env*)"
+        - "Bash(git * --config-env*)"
+        - "Bash(git --exec-path*)"
+        - "Bash(git * --exec-path*)"
+        - "Bash(git config *)"
+        - "Bash(git * --no-veri*)"
+        - "Bash(git commit -n*)"
+        - "Bash(git commit * -n)"
+        - "Bash(git commit * -n *)"
+        - "Bash(git diff --output*)"
+        - "Bash(git diff * --output*)"
+        - "Bash(git log --output*)"
+        - "Bash(git log * --output*)"
+        - "Bash(git show --output*)"
+        - "Bash(git show * --output*)"
+        - "Edit(.git/**)"
+        - "Write(.git/**)"
+    # Access to the Docker/Podman daemon is root-equivalent: these rules close
+    # the direct host escapes (privileged containers, host namespaces, the
+    # daemon socket, the host root mounted in). They do not stop a container
+    # from reading files it is given, so container commands are never
+    # auto-approved wholesale (see permissive_extra).
+    container_escape:
+        - "Bash(docker * --privileged*)"
+        - "Bash(docker * --pid=host*)"
+        - "Bash(docker * --pid host*)"
+        - "Bash(docker * --network=host*)"
+        - "Bash(docker * --net=host*)"
+        - "Bash(docker * --userns=host*)"
+        - "Bash(docker * --cap-add*)"
+        - "Bash(docker * --security-opt*)"
+        - "Bash(docker *docker.sock*)"
+        - "Bash(docker * -v /:*)"
+        - "Bash(docker * --volume /:*)"
+        - "Bash(docker * --volume=/:*)"
+        - "Bash(docker * --mount *source=/,*)"
+        - "Bash(podman * --privileged*)"
+        - "Bash(podman * --pid=host*)"
+        - "Bash(podman * --pid host*)"
+        - "Bash(podman * --network=host*)"
+        - "Bash(podman * --net=host*)"
+        - "Bash(podman * --userns=host*)"
+        - "Bash(podman * --cap-add*)"
+        - "Bash(podman * --security-opt*)"
+        - "Bash(podman *podman.sock*)"
+        - "Bash(podman *docker.sock*)"
+        - "Bash(podman * -v /:*)"
+        - "Bash(podman * --volume /:*)"
+        - "Bash(podman * --volume=/:*)"
+        - "Bash(podman * --mount *source=/,*)"
     # Prefix globs cannot enumerate every spelling of a destructive command,
     # so this set lists the common flag orders and short/long forms, plus the
     # bare form of each "cmd *" rule (Claude Code's " *" needs trailing args).
@@ -1366,6 +1431,7 @@ permission_supply_chain_deny_sets:
     - sudo_prefix
     - subprocess_escape
     - eval_xargs
+    - git_code_execution
 
 # All base deny sets include supply chain + destructive_ops + sandbox_config_edits.
 permission_all_deny_sets:
@@ -1379,6 +1445,8 @@ permission_all_deny_sets:
     - sudo_prefix
     - subprocess_escape
     - eval_xargs
+    - git_code_execution
+    - container_escape
     - destructive_ops
     - sandbox_config_edits
 
@@ -1397,11 +1465,26 @@ permission_allow_rules:
         - "Bash(npm test *)"
         - "Bash(npm test)"
         - "Bash(npm run build *)"
+    # git is allowed per subcommand, never as `git *`: a blanket rule would
+    # auto-approve `git -c alias.x='!cmd' x` (arbitrary code) and hook skips.
     standard_base:
         - "Read(*)"
         - "Edit(*)"
         - "Write(*)"
-        - "Bash(git *)"
+        - "Bash(git status)"
+        - "Bash(git status *)"
+        - "Bash(git diff)"
+        - "Bash(git diff *)"
+        - "Bash(git log)"
+        - "Bash(git log *)"
+        - "Bash(git show)"
+        - "Bash(git show *)"
+        - "Bash(git branch)"
+        - "Bash(git branch *)"
+        - "Bash(git add *)"
+        - "Bash(git commit -m *)"
+        - "Bash(git switch *)"
+        - "Bash(git checkout *)"
     standard_build_test_lint:
         - "Bash(npm test *)"
         - "Bash(npm test)"
@@ -1414,11 +1497,11 @@ permission_allow_rules:
         - "Bash(cargo build)"
         - "Bash(cargo test *)"
         - "Bash(cargo test)"
-        - "Bash(nix develop *)"
+        # Only the bare shells: `nix develop -c <cmd>` / `devenv shell <cmd>`
+        # run an arbitrary command and are not auto-approved.
         - "Bash(nix develop)"
         - "Bash(nix flake check *)"
         - "Bash(nix flake show *)"
-        - "Bash(devenv shell *)"
         - "Bash(devenv shell)"
         - "Bash(npm list *)"
         - "Bash(npm ls *)"
@@ -1434,18 +1517,25 @@ permission_allow_rules:
         - "Bash(vulnix *)"
         - "Bash(nix flake info *)"
         - "Bash(nix flake metadata *)"
+    # Exact forms only: a trailing wildcard would auto-approve flags that undo
+    # the generated hardening (`npm ci --ignore-scripts=false`). pnpm, yarn and
+    # bun installs of any form match the js_package_managers ask rules, which
+    # Claude Code applies before allow rules, so they are not listed here.
     frozen_lockfile_installs:
         - "Bash(npm ci)"
-        - "Bash(npm ci *)"
-        - "Bash(pnpm install --frozen-lockfile)"
-        - "Bash(pnpm install --frozen-lockfile *)"
-        - "Bash(yarn install --immutable)"
-        - "Bash(yarn install --immutable *)"
-        - "Bash(bun install --frozen-lockfile)"
-        - "Bash(bun install --frozen-lockfile *)"
+        - "Bash(npm ci --ignore-scripts)"
+    # Container commands are allowed per read-only or build subcommand, never
+    # as `docker *`: daemon access is root-equivalent (see container_escape).
+    # `make *` still runs arbitrary recipes; the preset is not a sandbox.
     permissive_extra:
         - "Bash(make *)"
-        - "Bash(docker *)"
+        - "Bash(docker build *)"
+        - "Bash(docker images)"
+        - "Bash(docker images *)"
+        - "Bash(docker ps)"
+        - "Bash(docker ps *)"
+        - "Bash(docker compose build)"
+        - "Bash(docker compose build *)"
 
 permission_ask_rules:
     js_package_managers:
@@ -1567,6 +1657,8 @@ permission_preset_defs:
             - sudo_prefix
             - subprocess_escape
             - eval_xargs
+            - git_code_execution
+            - container_escape
             - destructive_ops
             - sandbox_config_edits
         ask_sets:
@@ -1596,6 +1688,8 @@ permission_preset_defs:
             - sudo_prefix
             - subprocess_escape
             - eval_xargs
+            - git_code_execution
+            - container_escape
             - destructive_ops
             - sandbox_config_edits
         ask_sets:
@@ -1626,6 +1720,8 @@ permission_preset_defs:
             - sudo_prefix
             - subprocess_escape
             - eval_xargs
+            - git_code_execution
+            - container_escape
             - destructive_ops
             - sandbox_config_edits
         ask_sets:
@@ -1650,6 +1746,7 @@ permission_preset_defs:
             - sudo_prefix
             - subprocess_escape
             - eval_xargs
+            - git_code_execution
         ask_sets:
             - js_package_managers
             - python
@@ -1669,6 +1766,8 @@ permission_preset_defs:
             - sudo_prefix
             - subprocess_escape
             - eval_xargs
+            - git_code_execution
+            - container_escape
             - destructive_ops
             - sandbox_config_edits
         ask_sets:

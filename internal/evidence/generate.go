@@ -25,22 +25,29 @@ func Generate(fw *Framework, report *posture.PostureReport, projectName string) 
 
 	for _, def := range controls {
 		cm := DeriveControlMapping(def, report.Defense.Layers)
+		cm.Artifacts = DeriveArtifacts(cm, report, report.ProjectPath)
 		mappings = append(mappings, cm)
 	}
 
 	summary := computeSummary(mappings)
 
+	// The report is meant to be shared with auditors; embed the posture with
+	// its path relative to the project root rather than the author's absolute
+	// path (which leaks e.g. their home directory).
+	embedded := *report
+	embedded.ProjectPath = "."
+
 	return &EvidenceReport{
 		SchemaVersion: posture.SchemaVersion,
 		GeneratedAt:   time.Now().UTC(),
-		QsdevVersion:   version.Info().Version,
+		QsdevVersion:  version.Info().Version,
 		ProjectName:   projectName,
 		Framework:     fw.Name,
 		FrameworkVer:  fw.Version,
 		Disclaimer:    Disclaimer,
 		Summary:       summary,
 		Controls:      mappings,
-		Posture:       report,
+		Posture:       &embedded,
 	}, nil
 }
 

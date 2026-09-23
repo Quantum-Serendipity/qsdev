@@ -178,7 +178,7 @@ func TestEvidenceCmd_ParityWithPostureAssess(t *testing.T) {
 
 	// Each control's mapped-layer statuses must also equal posture.Assess.
 	for _, cm := range report.Controls {
-		for _, le := range cm.GdevLayers {
+		for _, le := range cm.Layers {
 			expected, ok := want[le.LayerName]
 			if !ok {
 				t.Errorf("control %s references unknown layer %q", cm.ControlID, le.LayerName)

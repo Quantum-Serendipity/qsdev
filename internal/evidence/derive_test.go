@@ -32,8 +32,8 @@ func TestDeriveControlMapping_AllPrimaryEnabled_Addressed(t *testing.T) {
 	if cm.ControlID != "TEST-1" {
 		t.Errorf("expected ControlID %q, got %q", "TEST-1", cm.ControlID)
 	}
-	if len(cm.GdevLayers) != 3 {
-		t.Errorf("expected 3 layers, got %d", len(cm.GdevLayers))
+	if len(cm.Layers) != 3 {
+		t.Errorf("expected 3 layers, got %d", len(cm.Layers))
 	}
 }
 
@@ -209,11 +209,11 @@ func TestDeriveControlMapping_LayerNotInReport_TreatedAsDisabled(t *testing.T) {
 	if cm.Status != StatusNotAddressed {
 		t.Errorf("expected %q when layer is missing from report, got %q", StatusNotAddressed, cm.Status)
 	}
-	if len(cm.GdevLayers) != 1 {
-		t.Fatalf("expected 1 layer evidence, got %d", len(cm.GdevLayers))
+	if len(cm.Layers) != 1 {
+		t.Fatalf("expected 1 layer evidence, got %d", len(cm.Layers))
 	}
-	if cm.GdevLayers[0].Status != string(posture.LayerDisabled) {
-		t.Errorf("missing layer should show as disabled, got %q", cm.GdevLayers[0].Status)
+	if cm.Layers[0].Status != string(posture.LayerDisabled) {
+		t.Errorf("missing layer should show as disabled, got %q", cm.Layers[0].Status)
 	}
 }
 
@@ -240,8 +240,8 @@ func TestDeriveControlMapping_DescriptionGatedOnEnforcement(t *testing.T) {
 
 	cm := DeriveControlMapping(def, layers)
 
-	byName := make(map[string]LayerEvidence, len(cm.GdevLayers))
-	for _, le := range cm.GdevLayers {
+	byName := make(map[string]LayerEvidence, len(cm.Layers))
+	for _, le := range cm.Layers {
 		byName[le.LayerName] = le
 	}
 

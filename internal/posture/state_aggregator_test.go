@@ -17,16 +17,16 @@ func TestLoadAllStates_AllPresent(t *testing.T) {
 	states := map[string]types.GeneratedState{
 		".devinit/.qsdev-init-state.yaml": {
 			QsdevVersion: "1.0.0",
-			LastRun:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+			LastRun:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 			Files: map[string]types.FileState{
 				"devenv.nix": {Hash: "abc123"},
 			},
 		},
 		".devenv/.qsdev-state.yaml": {
 			QsdevVersion: "1.1.0",
-			LastRun:     time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC),
+			LastRun:      time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC),
 			Files: map[string]types.FileState{
-				".envrc":    {Hash: "def456"},
+				".envrc":     {Hash: "def456"},
 				"devenv.nix": {Hash: "ghi789"}, // overrides devinit's entry
 			},
 			EnabledTools: map[string]bool{
@@ -35,7 +35,7 @@ func TestLoadAllStates_AllPresent(t *testing.T) {
 		},
 		".claude/.qsdev-claude-state.yaml": {
 			QsdevVersion: "1.2.0",
-			LastRun:     time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC),
+			LastRun:      time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC),
 			Files: map[string]types.FileState{
 				".claude/settings.json": {Hash: "jkl012"},
 			},
@@ -100,14 +100,14 @@ func TestLoadAllStates_OneMissing(t *testing.T) {
 	// Only create devinit and devenv state files — claude is missing.
 	writeState(t, root, ".devinit/.qsdev-init-state.yaml", types.GeneratedState{
 		QsdevVersion: "1.0.0",
-		LastRun:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		LastRun:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 		Files: map[string]types.FileState{
 			"devenv.nix": {Hash: "aaa"},
 		},
 	})
 	writeState(t, root, ".devenv/.qsdev-state.yaml", types.GeneratedState{
 		QsdevVersion: "1.0.0",
-		LastRun:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		LastRun:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 		Files: map[string]types.FileState{
 			".envrc": {Hash: "bbb"},
 		},
@@ -135,7 +135,7 @@ func TestLoadAllStates_OneCorrupt(t *testing.T) {
 	// Create a valid state file.
 	writeState(t, root, ".devinit/.qsdev-init-state.yaml", types.GeneratedState{
 		QsdevVersion: "1.0.0",
-		LastRun:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		LastRun:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 		Files: map[string]types.FileState{
 			"devenv.nix": {Hash: "valid"},
 		},
@@ -201,6 +201,89 @@ func TestLoadAllStates_NonePresent(t *testing.T) {
 	}
 	if merged.HasAnyState() {
 		t.Error("HasAnyState() should be false when no state files exist")
+	}
+}
+
+// TestLoadAllStates_AnswersFallback guards the legacy EnabledTools fallback:
+// inference (which turns every always-on tool on) may only run over an answers
+// file that exists; without one, tool state is unknown and nothing is credited.
+func TestLoadAllStates_AnswersFallback(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		answers     string // "" means no answers file
+		wantUnknown bool
+		wantErrors  int
+		wantTools   bool
+	}{
+		{name: "no answers file", wantUnknown: true},
+		{name: "answers file present", answers: "languages: []\n", wantTools: true},
+		{name: "corrupt answers file", answers: "{{corrupt", wantUnknown: true, wantErrors: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeState(t, root, ".claude/.qsdev-claude-state.yaml", types.GeneratedState{
+				QsdevVersion: "1.0.0",
+				LastRun:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+			})
+			if tt.answers != "" {
+				dir := filepath.Join(root, ".devinit")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, ".qsdev-init-answers.yaml"), []byte(tt.answers), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			merged := LoadAllStates(root)
+
+			if merged.ToolStateUnknown != tt.wantUnknown {
+				t.Errorf("ToolStateUnknown = %v, want %v", merged.ToolStateUnknown, tt.wantUnknown)
+			}
+			if len(merged.Errors) != tt.wantErrors {
+				t.Errorf("Errors = %v, want %d", merged.Errors, tt.wantErrors)
+			}
+			if got := len(merged.EnabledTools) > 0; got != tt.wantTools {
+				t.Errorf("EnabledTools = %v, want non-empty=%v", merged.EnabledTools, tt.wantTools)
+			}
+		})
+	}
+}
+
+// TestAssess_UnknownToolStateCreditsNothing checks the report end to end: with
+// no record of enabled tools, no tool-backed layer is credited and the gap is
+// reported as a state-files finding.
+func TestAssess_UnknownToolStateCreditsNothing(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeState(t, root, ".claude/.qsdev-claude-state.yaml", types.GeneratedState{
+		QsdevVersion: "1.0.0",
+		LastRun:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+
+	report, err := Assess(root, AssessOptions{})
+	if err != nil {
+		t.Fatalf("Assess: %v", err)
+	}
+
+	for _, name := range []string{"vulnerability-scanning", "sast", "secrets-scanning"} {
+		if l := FindLayerByName(report.Defense.Layers, name); l == nil || l.Status != LayerDisabled {
+			t.Errorf("layer %s = %+v, want disabled", name, l)
+		}
+	}
+	found := false
+	for _, cat := range report.Drift.Categories {
+		for _, f := range cat.Findings {
+			found = found || (cat.Name == stateFilesCategory && f.Subject == "enabled tools")
+		}
+	}
+	if !found {
+		t.Error("expected a state-files finding for unknown tool enablement")
 	}
 }
 

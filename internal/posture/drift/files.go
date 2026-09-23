@@ -25,8 +25,18 @@ func detectFileModification(projectDir string, genState types.GeneratedState) Ca
 
 		switch fs.Status {
 		case types.Modified:
-			switch storedFile.Strategy {
-			case types.Overwrite, types.LibraryManaged:
+			switch {
+			case storedFile.Strategy.IsHumanEdited():
+				// Human-edited files are expected to diverge.
+				cat.Findings = append(cat.Findings, Finding{
+					Category:    categoryFileModification,
+					Severity:    Info,
+					Subject:     path,
+					Description: fmt.Sprintf("Human-edited file %q has been modified (strategy: %s)", path, storedFile.Strategy),
+					Expected:    fs.StoredHash,
+					Actual:      fs.CurrentHash,
+				})
+			case storedFile.Strategy == types.Overwrite || storedFile.Strategy == types.LibraryManaged:
 				// Machine-owned files should not be edited manually.
 				cat.Findings = append(cat.Findings, Finding{
 					Category:    categoryFileModification,
@@ -37,16 +47,6 @@ func detectFileModification(projectDir string, genState types.GeneratedState) Ca
 					Actual:      fs.CurrentHash,
 					Remediation: "Run qsdev update to regenerate this file",
 					AutoFixable: true,
-				})
-			case types.SectionMarker, types.ThreeWayMerge:
-				// Human-edited files are expected to diverge.
-				cat.Findings = append(cat.Findings, Finding{
-					Category:    categoryFileModification,
-					Severity:    Info,
-					Subject:     path,
-					Description: fmt.Sprintf("Human-edited file %q has been modified (strategy: %s)", path, storedFile.Strategy),
-					Expected:    fs.StoredHash,
-					Actual:      fs.CurrentHash,
 				})
 			default:
 				cat.Findings = append(cat.Findings, Finding{

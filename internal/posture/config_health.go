@@ -11,16 +11,13 @@ const (
 	ConfigScoreDrifted = 50.0
 )
 
-// FileCategory returns "machine-owned" or "human-edited" based on MergeStrategy.
+// FileCategory returns "machine-owned" or "human-edited" based on MergeStrategy,
+// using the same classification as drift detection.
 func FileCategory(strategy types.MergeStrategy) string {
-	switch strategy {
-	case types.Overwrite, types.LibraryManaged, types.Skip, types.Append:
-		return "machine-owned"
-	case types.SectionMarker, types.ThreeWayMerge, types.ManualMerge, types.Merge:
+	if strategy.IsHumanEdited() {
 		return "human-edited"
-	default:
-		return "machine-owned"
 	}
+	return "machine-owned"
 }
 
 // ComputeConfigScore scores config file health (0-100).

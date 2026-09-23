@@ -2,8 +2,11 @@ package posture
 
 import (
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -34,6 +37,40 @@ func TestFileCategory_HumanEdited(t *testing.T) {
 		if got != "human-edited" {
 			t.Errorf("FileCategory(%s) = %q, want %q", s, got, "human-edited")
 		}
+	}
+}
+
+// TestFileCategory_AgreesWithDrift guards against config health and drift
+// detection classifying the same modified file differently: a file healthy in
+// config health must not raise a machine-owned drift warning, and vice versa.
+func TestFileCategory_AgreesWithDrift(t *testing.T) {
+	t.Parallel()
+	for s := types.MergeStrategy(0); s.String() != "unknown"; s++ {
+		t.Run(s.String(), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "f"), []byte("edited\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			genState := types.GeneratedState{Files: map[string]types.FileState{
+				"f": {Hash: "stale", Strategy: s},
+			}}
+
+			report := drift.Detect(dir, genState, nil)
+
+			driftHumanEdited := false
+			for _, cat := range report.Categories {
+				for _, f := range cat.Findings {
+					if f.Subject == "f" {
+						driftHumanEdited = f.Severity == drift.Info
+					}
+				}
+			}
+			if healthHumanEdited := FileCategory(s) == "human-edited"; healthHumanEdited != driftHumanEdited {
+				t.Errorf("strategy %s: config health human-edited=%v, drift human-edited=%v",
+					s, healthHumanEdited, driftHumanEdited)
+			}
+		})
 	}
 }
 
@@ -115,12 +152,12 @@ func TestComputeConfigScore_Outdated(t *testing.T) {
 
 func TestComputeConfigScore_MixedStates(t *testing.T) {
 	files := []ConfigFileInfo{
-		{Path: "a", State: "current", Category: "machine-owned"},     // 100
-		{Path: "b", State: "modified", Category: "machine-owned"},    // 50  (machine-owned)
-		{Path: "c", State: "modified", Category: "human-edited"},     // 100 (human-edited)
-		{Path: "d", State: "outdated", Category: "machine-owned"},    // 50
-		{Path: "e", State: "missing", Category: "machine-owned"},     // 0
-		{Path: "f", State: "corrupt", Category: "machine-owned"},     // 0
+		{Path: "a", State: "current", Category: "machine-owned"},  // 100
+		{Path: "b", State: "modified", Category: "machine-owned"}, // 50  (machine-owned)
+		{Path: "c", State: "modified", Category: "human-edited"},  // 100 (human-edited)
+		{Path: "d", State: "outdated", Category: "machine-owned"}, // 50
+		{Path: "e", State: "missing", Category: "machine-owned"},  // 0
+		{Path: "f", State: "corrupt", Category: "machine-owned"},  // 0
 	}
 	// Total = (100 + 50 + 100 + 50 + 0 + 0) / 6 = 300 / 6 = 50
 	got := ComputeConfigScore(files)

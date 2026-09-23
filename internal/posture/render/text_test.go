@@ -628,3 +628,62 @@ func TestRenderText_DefaultWithNoColor(t *testing.T) {
 		t.Error("no-color output should not contain ANSI escape sequences")
 	}
 }
+
+// TestRenderText_DriftSeverityOrder guards against ranging over the
+// BySeverity map: the summary lines must come out in a fixed order.
+func TestRenderText_DriftSeverityOrder(t *testing.T) {
+	t.Parallel()
+	report := baseReport()
+	report.Drift.TotalFindings = 10
+	report.Drift.BySeverity = map[drift.Severity]int{
+		drift.Info: 1, drift.Warning: 2, drift.Error: 3, drift.Critical: 4,
+	}
+
+	want := "  critical: 4\n  error: 3\n  warning: 2\n  info: 1\n"
+	for range 20 {
+		var buf bytes.Buffer
+		if err := RenderText(report, &buf, Options{}); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), want) {
+			t.Fatalf("drift summary not in severity order; got:\n%s", buf.String())
+		}
+	}
+}
+
+// TestRenderText_ConfigCorruptCount guards the config health breakdown: an
+// unreadable file gets its own line so the counts account for every file.
+func TestRenderText_ConfigCorruptCount(t *testing.T) {
+	t.Parallel()
+	report := baseReport()
+	report.Config.Total = 1
+	report.Config.Corrupt = 1
+
+	var buf bytes.Buffer
+	if err := RenderText(report, &buf, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "Corrupt:  1") {
+		t.Errorf("expected a Corrupt line; got:\n%s", buf.String())
+	}
+}
+
+// TestRenderText_FixCriticalVulnsUsesStatusScan guards the remediation for
+// no-critical-vulns: --scan is a status flag, and check has no such flag.
+func TestRenderText_FixCriticalVulnsUsesStatusScan(t *testing.T) {
+	t.Parallel()
+	report := baseReport()
+	report.Conformance.Baseline = posture.ConformanceLevel{
+		Pass:   false,
+		Checks: []posture.ConformanceCheck{{Name: posture.CheckNoCriticalVulns, Pass: false}},
+	}
+
+	var buf bytes.Buffer
+	if err := RenderText(report, &buf, Options{Fix: true}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "qsdev status --scan") || strings.Contains(out, "check --scan") {
+		t.Errorf("remediation should suggest 'qsdev status --scan'; got:\n%s", out)
+	}
+}

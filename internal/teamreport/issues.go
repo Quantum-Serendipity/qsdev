@@ -24,18 +24,15 @@ func GenerateIssues(report *TeamReport, history *HistoryStore) []IssueSpec {
 		return nil
 	}
 
-	// Build a lookup of project summaries.
-	projectMap := make(map[string]ProjectSummary)
-	for _, p := range report.Projects {
-		projectMap[p.Name] = p
-	}
-
+	// Walk the projects in report order rather than ranging over the map, so
+	// the issues come out in the same order on every run.
 	var issues []IssueSpec
-	for projectName, alerts := range projectAlerts {
-		p, ok := projectMap[projectName]
+	for _, p := range report.Projects {
+		alerts, ok := projectAlerts[p.Name]
 		if !ok {
 			continue
 		}
+		delete(projectAlerts, p.Name) // one issue per project, even if listed twice
 
 		title := buildIssueTitle(p, history)
 		body := buildIssueBody(p, alerts, history)

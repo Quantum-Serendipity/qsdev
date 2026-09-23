@@ -36,6 +36,20 @@ var mergeStrategyFromString = func() map[string]MergeStrategy {
 	return m
 }()
 
+// IsHumanEdited reports whether files written with this strategy are expected
+// to be edited by people, so a divergence from the generated content is
+// normal rather than drift. Overwrite, Append, Skip and LibraryManaged files
+// are machine-owned. It is the single classifier every consumer should use,
+// so that one file is never healthy in one report and drifted in another.
+func (m MergeStrategy) IsHumanEdited() bool {
+	switch m {
+	case SectionMarker, ThreeWayMerge, ManualMerge, Merge:
+		return true
+	default:
+		return false
+	}
+}
+
 func (m MergeStrategy) String() string {
 	if int(m) >= 0 && int(m) < len(mergeStrategyNames) {
 		return mergeStrategyNames[m]

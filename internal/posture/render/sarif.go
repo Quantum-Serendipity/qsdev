@@ -71,7 +71,7 @@ func ruleID(suffix string) string {
 	return branding.Get().AppName + "/" + suffix
 }
 
-// buildAllRules constructs the 13 rule definitions using branded IDs.
+// buildAllRules constructs the rule definitions using branded IDs.
 func buildAllRules() []sarifRule {
 	return []sarifRule{
 		{ID: ruleID("defense-disabled"), ShortDescription: sarifMultiText{Text: "A defense layer is disabled"}, DefaultConfig: sarifConfig{Level: "warning"}},
@@ -79,6 +79,7 @@ func buildAllRules() []sarifRule {
 		{ID: ruleID("config-missing"), ShortDescription: sarifMultiText{Text: "A managed configuration file is missing"}, DefaultConfig: sarifConfig{Level: "error"}},
 		{ID: ruleID("config-outdated"), ShortDescription: sarifMultiText{Text: "A managed configuration file is outdated"}, DefaultConfig: sarifConfig{Level: "warning"}},
 		{ID: ruleID("config-modified"), ShortDescription: sarifMultiText{Text: "A machine-owned configuration file was modified"}, DefaultConfig: sarifConfig{Level: "warning"}},
+		{ID: ruleID("config-corrupt"), ShortDescription: sarifMultiText{Text: "A managed configuration file could not be read"}, DefaultConfig: sarifConfig{Level: "error"}},
 		{ID: ruleID("vuln-critical"), ShortDescription: sarifMultiText{Text: "Critical vulnerabilities detected"}, DefaultConfig: sarifConfig{Level: "error"}},
 		{ID: ruleID("vuln-high"), ShortDescription: sarifMultiText{Text: "High vulnerabilities detected"}, DefaultConfig: sarifConfig{Level: "warning"}},
 		{ID: ruleID("scan-unresolved"), ShortDescription: sarifMultiText{Text: "Dependency scan is inconclusive (failed ecosystem scan or unresolved-severity vulnerabilities)"}, DefaultConfig: sarifConfig{Level: "error"}},
@@ -148,6 +149,17 @@ func RenderSARIF(report *posture.PostureReport) ([]byte, error) {
 				RuleID:  ruleID("config-missing"),
 				Level:   "error",
 				Message: sarifMultiText{Text: fmt.Sprintf("Configuration file %q is missing", f.Path)},
+				Locations: []sarifLocation{{
+					PhysicalLocation: sarifPhysicalLocation{
+						ArtifactLocation: sarifArtifactLocation{URI: f.Path},
+					},
+				}},
+			})
+		case "corrupt":
+			*results = append(*results, sarifResult{
+				RuleID:  ruleID("config-corrupt"),
+				Level:   "error",
+				Message: sarifMultiText{Text: fmt.Sprintf("Configuration file %q could not be read", f.Path)},
 				Locations: []sarifLocation{{
 					PhysicalLocation: sarifPhysicalLocation{
 						ArtifactLocation: sarifArtifactLocation{URI: f.Path},
@@ -227,6 +239,11 @@ func RenderSARIF(report *posture.PostureReport) ([]byte, error) {
 					},
 				}}
 			}
+			// A deleted file is reported both by config health and by drift
+			// detection; emit one result per rule and file, not two.
+			if len(r.Locations) > 0 && hasLocatedResult(*results, id, f.Subject) {
+				continue
+			}
 			*results = append(*results, r)
 		}
 	}
@@ -237,6 +254,22 @@ func RenderSARIF(report *posture.PostureReport) ([]byte, error) {
 	}
 	data = append(data, '\n')
 	return data, nil
+}
+
+// hasLocatedResult reports whether results already holds a result for rule id
+// located at uri.
+func hasLocatedResult(results []sarifResult, id, uri string) bool {
+	for _, r := range results {
+		if r.RuleID != id {
+			continue
+		}
+		for _, loc := range r.Locations {
+			if loc.PhysicalLocation.ArtifactLocation.URI == uri {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // driftToSARIF maps a drift category + finding to a SARIF rule ID and level.

@@ -120,6 +120,7 @@ type ConfigHealth struct {
 	Modified int              `json:"modified"`
 	Outdated int              `json:"outdated"`
 	Missing  int              `json:"missing"`
+	Corrupt  int              `json:"corrupt"`
 	Files    []ConfigFileInfo `json:"files"`
 }
 

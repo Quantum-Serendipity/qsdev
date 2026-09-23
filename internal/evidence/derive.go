@@ -1,7 +1,12 @@
 package evidence
 
 import (
+	"fmt"
+	"path/filepath"
+	"time"
+
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
 )
 
 // DeriveControlMapping determines the status of a control mapping based on
@@ -21,7 +26,7 @@ func DeriveControlMapping(def ControlDefinition, layers []posture.DefenseLayer) 
 		ControlName: def.Name,
 		ControlDesc: def.Desc,
 		Category:    def.Category,
-		GdevLayers:  make([]LayerEvidence, 0, len(def.Layers)),
+		Layers:      make([]LayerEvidence, 0, len(def.Layers)),
 		Artifacts:   []EvidenceArtifact{},
 	}
 
@@ -67,7 +72,7 @@ func DeriveControlMapping(def ControlDefinition, layers []posture.DefenseLayer) 
 			Description: gateLayerDescription(mapping.Description, status),
 		}
 
-		cm.GdevLayers = append(cm.GdevLayers, le)
+		cm.Layers = append(cm.Layers, le)
 
 		if mapping.Relevance == "primary" {
 			primaryCount++
@@ -89,7 +94,7 @@ func DeriveControlMapping(def ControlDefinition, layers []posture.DefenseLayer) 
 	if primaryCount == 0 {
 		// No primary layers — check supporting layers.
 		hasAnyEnabled := false
-		for _, le := range cm.GdevLayers {
+		for _, le := range cm.Layers {
 			if le.Status == string(posture.LayerEnabled) || le.Status == string(posture.LayerPartial) {
 				hasAnyEnabled = true
 				break
@@ -109,6 +114,53 @@ func DeriveControlMapping(def ControlDefinition, layers []posture.DefenseLayer) 
 	}
 
 	return cm
+}
+
+// vulnerabilityScanningLayer is the defense layer a dependency scan evidences.
+const vulnerabilityScanningLayer = "vulnerability-scanning"
+
+// DeriveArtifacts returns the evidence artifacts backing a control: for a
+// control mapped to the vulnerability-scanning layer, one scan-result artifact
+// per ecosystem the posture assessment actually scanned, carrying the scan
+// time and the hash of the exact lock file that was scanned. Ecosystems that
+// were not scanned, or whose scan failed, contribute nothing: an artifact must
+// prove a check ran, not merely that it could have. projectPath locates the
+// lock files for hashing; a lock file that cannot be read is listed unhashed.
+func DeriveArtifacts(cm ControlMapping, report *posture.PostureReport, projectPath string) []EvidenceArtifact {
+	artifacts := []EvidenceArtifact{}
+	if cm.Status == StatusNotApplicable || !mapsLayer(cm, vulnerabilityScanningLayer) {
+		return artifacts
+	}
+	for _, eco := range report.Dependencies.Ecosystems {
+		if !eco.Scanned || eco.ScanError {
+			continue
+		}
+		a := EvidenceArtifact{
+			Type: "scan-result",
+			Path: eco.LockFile,
+			Description: fmt.Sprintf("OSV vulnerability scan of %s dependencies: %d critical, %d high, %d moderate, %d low, %d unknown-severity",
+				eco.Name, eco.VulnCounts.Critical, eco.VulnCounts.High, eco.VulnCounts.Moderate,
+				eco.VulnCounts.Low, eco.VulnCounts.Unknown),
+		}
+		if eco.LastScan != nil {
+			a.Timestamp = eco.LastScan.UTC().Format(time.RFC3339)
+		}
+		if hash, err := state.ComputeFileHash(filepath.Join(projectPath, eco.LockFile)); err == nil {
+			a.Hash = hash
+		}
+		artifacts = append(artifacts, a)
+	}
+	return artifacts
+}
+
+// mapsLayer reports whether the control maps the named defense layer.
+func mapsLayer(cm ControlMapping, layer string) bool {
+	for _, le := range cm.Layers {
+		if le.LayerName == layer {
+			return true
+		}
+	}
+	return false
 }
 
 // gateLayerDescription returns the description to surface for a mapped defense

@@ -1,9 +1,15 @@
 package evidence
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
 )
 
 func TestGenerate_NilFramework_Error(t *testing.T) {
@@ -63,8 +69,89 @@ func TestGenerate_SOC2_ProducesValidReport(t *testing.T) {
 	if result.Summary.TotalControls != 8 {
 		t.Errorf("TotalControls = %d, want 8", result.Summary.TotalControls)
 	}
-	if result.Posture != pr {
-		t.Error("Posture should reference the input report")
+	if result.Posture == nil || result.Posture.SchemaVersion != pr.SchemaVersion ||
+		len(result.Posture.Defense.Layers) != len(pr.Defense.Layers) {
+		t.Error("Posture should embed the input report")
+	}
+}
+
+// TestGenerate_EmbeddedPostureHasRelativePath guards against leaking the
+// author's absolute project path into a report meant for auditors.
+func TestGenerate_EmbeddedPostureHasRelativePath(t *testing.T) {
+	t.Parallel()
+	fw := SOC2Framework()
+	pr := &posture.PostureReport{ProjectPath: "/home/someone/src/project"}
+
+	result, err := Generate(&fw, pr, "project")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	if result.Posture.ProjectPath != "." {
+		t.Errorf("embedded ProjectPath = %q, want %q", result.Posture.ProjectPath, ".")
+	}
+	if pr.ProjectPath != "/home/someone/src/project" {
+		t.Errorf("Generate mutated the input report's ProjectPath to %q", pr.ProjectPath)
+	}
+	var buf bytes.Buffer
+	if err := RenderMarkdown(result, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "/home/someone") {
+		t.Error("rendered evidence report contains the absolute project path")
+	}
+}
+
+// TestGenerate_ScanResultArtifacts guards the evidence artifacts: a control
+// mapped to vulnerability scanning cites each ecosystem that was actually
+// scanned, with the scanned lock file's hash, and nothing for unscanned ones.
+func TestGenerate_ScanResultArtifacts(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	lock := []byte("example.com/mod v1.0.0 h1:abc=\n")
+	if err := os.WriteFile(filepath.Join(root, "go.sum"), lock, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scannedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	fw := SOC2Framework()
+	pr := &posture.PostureReport{
+		ProjectPath: root,
+		Defense: posture.DefenseCoverage{Layers: []posture.DefenseLayer{
+			{Name: "vulnerability-scanning", Status: posture.LayerEnabled},
+		}},
+		Dependencies: posture.DependencyHealth{Ecosystems: []posture.EcosystemStatus{
+			{Name: "go", Detected: true, LockFile: "go.sum", Scanned: true, LastScan: &scannedAt,
+				VulnCounts: posture.VulnSeverityCounts{High: 2}},
+			{Name: "javascript", Detected: true, LockFile: "yarn.lock"}, // not scanned
+			{Name: "rust", Detected: true, LockFile: "Cargo.lock", ScanError: true},
+		}},
+	}
+
+	result, err := Generate(&fw, pr, "project")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	cited := 0
+	for _, cm := range result.Controls {
+		if !mapsLayer(cm, "vulnerability-scanning") {
+			if len(cm.Artifacts) != 0 {
+				t.Errorf("control %s cites artifacts without mapping vulnerability scanning", cm.ControlID)
+			}
+			continue
+		}
+		cited++
+		if len(cm.Artifacts) != 1 {
+			t.Fatalf("control %s: artifacts = %+v, want exactly the go.sum scan", cm.ControlID, cm.Artifacts)
+		}
+		a := cm.Artifacts[0]
+		if a.Type != "scan-result" || a.Path != "go.sum" || a.Timestamp != "2026-01-02T03:04:05Z" ||
+			a.Hash != state.ComputeHash(lock) || !strings.Contains(a.Description, "2 high") {
+			t.Errorf("control %s: unexpected artifact %+v", cm.ControlID, a)
+		}
+	}
+	if cited == 0 {
+		t.Fatal("no SOC2 control maps vulnerability-scanning; the test guards nothing")
 	}
 }
 
@@ -93,7 +180,7 @@ func TestGenerate_AllLayersDisabled(t *testing.T) {
 	// All controls with primary layers should be not-addressed.
 	for _, cm := range result.Controls {
 		hasPrimary := false
-		for _, l := range cm.GdevLayers {
+		for _, l := range cm.Layers {
 			if l.Relevance == "primary" {
 				hasPrimary = true
 				break

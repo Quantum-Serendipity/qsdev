@@ -51,11 +51,11 @@ func asvsControls() []ControlDefinition {
 			},
 		},
 		{
-			ID:       "10.3.3",
-			Name:     "Unused Dependencies",
-			Desc:     "Verify that the application does not include unused packages, frameworks, or libraries that are not necessary for its operation.",
-			Category: "Malicious Code",
-			Layers:   []LayerMapping{},
+			ID:                  "10.3.3",
+			Name:                "Unused Dependencies",
+			Desc:                "Verify that the application does not include unused packages, frameworks, or libraries that are not necessary for its operation.",
+			Category:            "Malicious Code",
+			Layers:              []LayerMapping{},
 			NotApplicableReason: "Unused dependency detection requires language-specific dead-code analysis beyond the scope of qsdev's supply chain security layers. Recommend using language-specific tools (e.g., depcheck for Node.js, go mod tidy for Go).",
 		},
 		{

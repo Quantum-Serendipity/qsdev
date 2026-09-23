@@ -1,6 +1,7 @@
 package posture
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
@@ -246,16 +247,65 @@ func TestShouldExitNonZero_Uncertifiable(t *testing.T) {
 }
 
 func TestShouldExitNonZero_UnknownLevel(t *testing.T) {
-	// Unknown levels default to "high" behavior.
+	// Unknown levels fail closed, even for a clean report: a gate that cannot
+	// tell what it enforces must not pass.
 	report := &PostureReport{
-		Dependencies: DependencyHealth{
-			Totals: VulnSeverityCounts{High: 1},
-		},
+		Dependencies: DependencyHealth{Scanned: true},
 		Conformance: ConformanceResult{
 			Baseline: ConformanceLevel{Pass: true},
 		},
 	}
 	if !ShouldExitNonZero(report, "unknown") {
-		t.Error("unknown level should default to 'high' behavior")
+		t.Error("unknown level should fail closed")
+	}
+}
+
+// TestShouldExitNonZero_MediumAlias guards against "medium" (the spelling
+// `check --audit-level` uses) silently loosening the gate to "high".
+func TestShouldExitNonZero_MediumAlias(t *testing.T) {
+	t.Parallel()
+	report := &PostureReport{
+		Dependencies: DependencyHealth{Scanned: true, Totals: VulnSeverityCounts{Moderate: 3}},
+		Conformance:  ConformanceResult{Baseline: ConformanceLevel{Pass: true}},
+	}
+	for _, level := range []string{"medium", "MEDIUM", "moderate"} {
+		if !ShouldExitNonZero(report, level) {
+			t.Errorf("ShouldExitNonZero(%q) = false with moderate vulnerabilities, want true", level)
+		}
+	}
+}
+
+func TestParseAuditLevel(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{in: "none", want: "none"},
+		{in: "info", want: "info"},
+		{in: "any", want: "info"},
+		{in: "low", want: "low"},
+		{in: "moderate", want: "moderate"},
+		{in: "medium", want: "moderate"},
+		{in: " High ", want: "high"},
+		{in: "critical", want: "critical"},
+		{in: "", wantErr: true},
+		{in: "hgih", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			t.Parallel()
+			got, err := ParseAuditLevel(tt.in)
+			if tt.wantErr {
+				if !errors.Is(err, ErrUnknownAuditLevel) {
+					t.Errorf("ParseAuditLevel(%q) error = %v, want ErrUnknownAuditLevel", tt.in, err)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Errorf("ParseAuditLevel(%q) = %q, %v; want %q", tt.in, got, err, tt.want)
+			}
+		})
 	}
 }

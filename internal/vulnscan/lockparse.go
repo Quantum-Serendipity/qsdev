@@ -99,7 +99,7 @@ func buildKnownLockFiles() []LockFile {
 		if !ok {
 			continue // no OSV namespace for this ecosystem; nothing to scan
 		}
-		for _, name := range orderedLockNames(ecosystem.LockFilesByEcosystem[eco]) {
+		for _, name := range ecosystem.OrderedLockFiles(eco) {
 			parser, ok := lockParsers[name]
 			if !ok {
 				continue // no parser for this lock format yet
@@ -115,24 +115,6 @@ func buildKnownLockFiles() []LockFile {
 		}
 	}
 	return out
-}
-
-// orderedLockNames copies the catalog's lock file names for one ecosystem and
-// stably reorders them so dedicated lock files (whose name contains "lock") come
-// before loose manifests like requirements.txt. The input slice is never
-// mutated.
-func orderedLockNames(names []string) []string {
-	out := append([]string(nil), names...)
-	sort.SliceStable(out, func(i, j int) bool {
-		return isDedicatedLock(out[i]) && !isDedicatedLock(out[j])
-	})
-	return out
-}
-
-// isDedicatedLock reports whether name denotes a purpose-built lock file (its
-// name contains "lock") rather than a manifest that doubles as a pin source.
-func isDedicatedLock(name string) bool {
-	return strings.Contains(strings.ToLower(name), "lock")
 }
 
 // DetectLockFile returns the first known lock file present in projectRoot,

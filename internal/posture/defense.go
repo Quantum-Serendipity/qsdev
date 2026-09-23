@@ -168,12 +168,11 @@ var layerTable = []layerSpec{
 		Weight:  WeightMedium,
 		MinTier: 2,
 		Assess: func(input assessmentInput) (LayerStatus, int, string) {
+			// A scanner counts when it is enabled or when the pre-commit config
+			// runs it as a hook (Assess folds those hook ids into EnabledTools);
+			// the config file merely existing credits nothing.
 			gitleaksEnabled := input.EnabledTools["gitleaks"]
 			ripsecrets := input.EnabledTools["ripsecrets"]
-			if !ripsecrets {
-				_, hasPreCommit := input.GenState.Files[".pre-commit-config.yaml"]
-				ripsecrets = hasPreCommit
-			}
 
 			if gitleaksEnabled && ripsecrets {
 				return LayerEnabled, 10, "both gitleaks and ripsecrets enabled"

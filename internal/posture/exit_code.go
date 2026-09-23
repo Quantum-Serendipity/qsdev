@@ -1,5 +1,43 @@
 package posture
 
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
+// ErrUnknownAuditLevel is returned by ParseAuditLevel for a level it does not
+// recognize.
+var ErrUnknownAuditLevel = errors.New("unknown audit level")
+
+// auditLevels lists the canonical audit levels, most permissive first.
+var auditLevels = []string{"none", "critical", "high", "moderate", "low", "info"}
+
+// auditLevelAliases maps accepted spellings onto canonical levels. "medium" is
+// the name `check --audit-level` uses for the same threshold, and "any" is a
+// long-standing synonym for "info".
+var auditLevelAliases = map[string]string{
+	"medium": "moderate",
+	"any":    "info",
+}
+
+// ParseAuditLevel validates an audit level and returns its canonical form. It
+// accepts the canonical levels and their aliases in any case, and rejects
+// everything else so a typo cannot silently select a different threshold.
+func ParseAuditLevel(level string) (string, error) {
+	l := strings.ToLower(strings.TrimSpace(level))
+	if canonical, ok := auditLevelAliases[l]; ok {
+		return canonical, nil
+	}
+	for _, known := range auditLevels {
+		if l == known {
+			return known, nil
+		}
+	}
+	return "", fmt.Errorf("%w %q: must be one of %s (or medium, any)",
+		ErrUnknownAuditLevel, level, strings.Join(auditLevels, ", "))
+}
+
 // ShouldExitNonZero determines whether the posture assessment warrants a
 // non-zero exit code, based on the configured audit level.
 //
@@ -15,8 +53,18 @@ package posture
 // certified clean — a failed scan (ScanFailed) or any unresolved-severity
 // vulnerability (Totals.Unknown > 0) — fails closed. Both are captured by the
 // single Certifiable predicate, so the gate and every other consumer agree.
+//
+// Levels are resolved with ParseAuditLevel, so aliases such as "medium" select
+// the same threshold as their canonical level. A level that cannot be resolved
+// fails closed: a gate that cannot tell what it is enforcing must not pass.
+// Callers should validate user input with ParseAuditLevel up front to report
+// the mistake instead.
 func ShouldExitNonZero(report *PostureReport, auditLevel string) bool {
-	if auditLevel == "none" {
+	level, err := ParseAuditLevel(auditLevel)
+	if err != nil {
+		return true
+	}
+	if level == "none" {
 		return false
 	}
 	// A failed scan leaves vulnerability status unknown, and a vulnerability whose
@@ -26,7 +74,7 @@ func ShouldExitNonZero(report *PostureReport, auditLevel string) bool {
 	if !report.Dependencies.Certifiable() {
 		return true
 	}
-	switch auditLevel {
+	switch level {
 	case "critical":
 		return report.Dependencies.Totals.Critical > 0
 	case "high":
@@ -42,14 +90,8 @@ func ShouldExitNonZero(report *PostureReport, auditLevel string) bool {
 		totals := report.Dependencies.Totals
 		return totals.Critical > 0 || totals.High > 0 ||
 			totals.Moderate > 0 || totals.Low > 0
-	case "info", "any":
+	default: // "info"
 		return hasAnyFindings(report)
-	default:
-		// Unknown levels default to "high" behavior.
-		if report.Dependencies.Totals.Critical > 0 || report.Dependencies.Totals.High > 0 {
-			return true
-		}
-		return !report.Conformance.Baseline.Pass
 	}
 }
 

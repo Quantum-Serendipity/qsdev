@@ -67,9 +67,9 @@ func TestDetectToolAvailability_NonBinaryToolsSkipped(t *testing.T) {
 	// MCP servers and skills don't have binary requirements.
 	enabledTools := map[string]bool{
 		"context7":             true,
-		"github-mcp":          true,
-		"socket-dev-mcp":      true,
-		"agent-postmortem":    true,
+		"github-mcp":           true,
+		"socket-dev-mcp":       true,
+		"agent-postmortem":     true,
 		"trail-of-bits-skills": true,
 	}
 

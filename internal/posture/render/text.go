@@ -8,6 +8,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // verbosity controls the detail level of section renderers.
@@ -165,6 +166,9 @@ func renderConfigHealth(w io.Writer, report *posture.PostureReport, ind [4]strin
 		if report.Config.Missing > 0 {
 			fmt.Fprintf(w, "  Missing:  %d\n", report.Config.Missing)
 		}
+		if report.Config.Corrupt > 0 {
+			fmt.Fprintf(w, "  Corrupt:  %d\n", report.Config.Corrupt)
+		}
 	}
 
 	fmt.Fprintln(w)
@@ -287,8 +291,12 @@ func renderDriftFindings(w io.Writer, report *posture.PostureReport, ind [4]stri
 			}
 		}
 	} else {
-		for sev, count := range report.Drift.BySeverity {
-			fmt.Fprintf(w, "  %s: %d\n", sev, count)
+		// Fixed severity order: ranging over the map would shuffle the lines
+		// from run to run.
+		for _, sev := range drift.Severities() {
+			if count := report.Drift.BySeverity[sev]; count > 0 {
+				fmt.Fprintf(w, "  %s: %d\n", sev, count)
+			}
 		}
 	}
 
@@ -419,7 +427,8 @@ func conformanceRemediation(checkName posture.CheckName) string {
 	case posture.CheckLockFilesPresent:
 		return "Run your package manager's install/lock command to generate lock files"
 	case posture.CheckNoCriticalVulns:
-		return "Run qsdev check --scan to identify and remediate critical vulnerabilities"
+		// --scan belongs to status; check has no such flag.
+		return "Run " + branding.Get().AppName + " status --scan to identify and remediate critical vulnerabilities"
 	case posture.CheckClaudeMDPresent:
 		return "Run qsdev init to generate CLAUDE.md"
 	case posture.CheckSettingsJSONPresent:

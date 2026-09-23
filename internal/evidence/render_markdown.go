@@ -52,11 +52,11 @@ func RenderMarkdown(report *EvidenceReport, w io.Writer) error {
 		fmt.Fprintf(&b, "**Status:** %s\n\n", statusEmoji(cm.Status))
 		fmt.Fprintf(&b, "> %s\n\n", cm.ControlDesc)
 
-		if len(cm.GdevLayers) > 0 {
+		if len(cm.Layers) > 0 {
 			b.WriteString("**Defense Layers:**\n\n")
 			b.WriteString("| Layer | Relevance | Status | Description |\n")
 			b.WriteString("|-------|-----------|--------|-------------|\n")
-			for _, le := range cm.GdevLayers {
+			for _, le := range cm.Layers {
 				fmt.Fprintf(&b, "| %s | %s | %s | %s |\n",
 					le.LayerName, le.Relevance, le.Status, le.Description)
 			}

@@ -162,3 +162,29 @@ func TestMergeStrategyAllValuesYAMLRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+func TestMergeStrategyIsHumanEdited(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		strategy types.MergeStrategy
+		want     bool
+	}{
+		{types.Overwrite, false},
+		{types.Append, false},
+		{types.Merge, true},
+		{types.Skip, false},
+		{types.SectionMarker, true},
+		{types.ThreeWayMerge, true},
+		{types.LibraryManaged, false},
+		{types.ManualMerge, true},
+		{types.MergeStrategy(99), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.strategy.String(), func(t *testing.T) {
+			t.Parallel()
+			if got := tt.strategy.IsHumanEdited(); got != tt.want {
+				t.Errorf("%v.IsHumanEdited() = %v, want %v", tt.strategy, got, tt.want)
+			}
+		})
+	}
+}

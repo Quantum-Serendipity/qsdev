@@ -71,6 +71,31 @@ type ClaudeMdTemplateData struct {
 	LSPEnabled       bool
 }
 
+// configuredPackageManagers returns the package managers CLAUDE.md names for
+// one language: the one the project is configured with (its PackageManager,
+// else a detected build tool), or the module's default — its first manager,
+// the same default the module generates for — when none is configured. Listing
+// every manager a module supports (pip, uv and poetry for any Python project)
+// invites the agent to mutate a uv project's venv with pip. The full list is
+// kept only when the configured value names none of them (a Java project
+// using both Maven and Gradle).
+func configuredPackageManagers(managers []ecosystem.PackageManagerInfo, config ecosystem.ModuleConfig) []string {
+	if len(managers) == 0 {
+		return nil
+	}
+	configured := config.PM(config.Extra("build_tool", managers[0].Name))
+	for _, pm := range managers {
+		if strings.EqualFold(pm.Name, configured) {
+			return []string{pm.Name}
+		}
+	}
+	names := make([]string, 0, len(managers))
+	for _, pm := range managers {
+		names = append(names, pm.Name)
+	}
+	return names
+}
+
 // BuildClaudeMdData assembles all template data from wizard answers and ecosystem
 // modules. It maps language choices to display names, derives commands from
 // ecosystem module VerificationCommands, and collects package manager metadata.
@@ -87,11 +112,9 @@ func BuildClaudeMdData(answers types.WizardAnswers, registry *ecosystem.Registry
 			continue
 		}
 		data.Languages = append(data.Languages, mod.DisplayName())
-		for _, pm := range mod.PackageManagers() {
-			data.PackageManagers = append(data.PackageManagers, pm.Name)
-		}
-
 		config := ecosystem.ToModuleConfig(lang)
+		data.PackageManagers = append(data.PackageManagers, configuredPackageManagers(mod.PackageManagers(), config)...)
+
 		vc := mod.VerificationCommands(config)
 		buildCmds = append(buildCmds, vc.Build...)
 		testCmds = append(testCmds, vc.Test...)

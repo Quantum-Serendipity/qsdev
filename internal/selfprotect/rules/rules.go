@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/canon"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
 var (
@@ -171,15 +172,17 @@ func traversalReachesProtected(ctx *EvalContext) bool {
 	return false
 }
 
-// auditTrailMutated reports whether a Bash command writes to, deletes, or
-// relocates the audit trail: a mutation of .qsdev/audit (or a recursive one of
-// .qsdev), or a copy-family command naming it. Reads clear.
+// auditTrailMutated reports whether a shell command writes to, deletes, or
+// relocates an audit trail (auditAreas): a mutation of one (or a recursive one
+// of its ancestor), or a copy-family command naming it. Reads clear.
 func auditTrailMutated(ctx *EvalContext) bool {
-	if bashMutatesArea(ctx, auditArea) {
-		return true
-	}
 	scs, err := ctx.scannedCommands()
-	return err == nil && copiesFromArea(scs, auditArea)
+	for _, a := range auditAreas {
+		if bashMutatesArea(ctx, a) || (err == nil && copiesFromArea(scs, a)) {
+			return true
+		}
+	}
+	return false
 }
 
 // procInfoInCommand reports whether a Bash command reaches a sensitive /proc
@@ -257,7 +260,7 @@ var sp003 = Rule{
 	Name:     "Config file delete block",
 	Category: "self-protection",
 	Evaluate: func(ctx *EvalContext) (Verdict, string) {
-		if ctx.ToolName != "Bash" {
+		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
 		if deleteTargetsProtected(ctx) {
@@ -272,7 +275,7 @@ var sp004 = Rule{
 	Name:     "Config link creation block",
 	Category: "self-protection",
 	Evaluate: func(ctx *EvalContext) (Verdict, string) {
-		if ctx.ToolName != "Bash" {
+		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
 		if linkTargetsProtected(ctx) {
@@ -287,7 +290,7 @@ var sp005 = Rule{
 	Name:     "Config path traversal block",
 	Category: "self-protection",
 	Evaluate: func(ctx *EvalContext) (Verdict, string) {
-		if ctx.ToolName != "Bash" {
+		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
 		if traversalReachesProtected(ctx) {
@@ -302,13 +305,13 @@ var sp006 = Rule{
 	Name:     "Proc filesystem read block",
 	Category: "self-protection",
 	Evaluate: func(ctx *EvalContext) (Verdict, string) {
-		if ctx.ToolName != "Read" && ctx.ToolName != "Bash" {
+		if ctx.ToolName != "Read" && !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
 		if ctx.CanonicalPath != "" && reProcInfo.MatchString(ctx.CanonicalPath) {
 			return Deny, "access to sensitive proc filesystem path"
 		}
-		if ctx.ToolName == "Bash" && procInfoInCommand(ctx) {
+		if cmdscan.IsShellTool(ctx.ToolName) && procInfoInCommand(ctx) {
 			return Deny, "access to sensitive proc filesystem path"
 		}
 		return Allow, ""
@@ -320,7 +323,7 @@ var sp007 = Rule{
 	Name:     "Config mutation and exfiltration block",
 	Category: "self-protection",
 	Evaluate: func(ctx *EvalContext) (Verdict, string) {
-		if ctx.ToolName != "Bash" {
+		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
 		if copyIsDangerous(ctx) {
@@ -335,7 +338,7 @@ var sp008 = Rule{
 	Name:     "Environment variable manipulation block",
 	Category: "self-protection",
 	Evaluate: func(ctx *EvalContext) (Verdict, string) {
-		if ctx.ToolName != "Bash" {
+		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
 		if reEnvManip.MatchString(ctx.Command) || reEnvAssign.MatchString(ctx.Command) {
@@ -350,7 +353,7 @@ var sp009 = Rule{
 	Name:     "Process management block",
 	Category: "self-protection",
 	Evaluate: func(ctx *EvalContext) (Verdict, string) {
-		if ctx.ToolName != "Bash" {
+		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
 		if (reKillCmd.MatchString(ctx.Command) && reProcessTarget.MatchString(ctx.Command)) ||
@@ -366,7 +369,7 @@ var sp010 = Rule{
 	Name:     "Hook script modification block",
 	Category: "self-protection",
 	Evaluate: func(ctx *EvalContext) (Verdict, string) {
-		if ctx.ToolName != "Bash" {
+		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
 		if bashMutatesArea(ctx, hooksArea) {
@@ -430,7 +433,7 @@ var mcp005 = Rule{
 		}
 		// A Bash command that mutates (writes/redirects to) an MCP config is a
 		// blind, un-inspectable overwrite; deny it. Reads are allowed.
-		if ctx.ToolName == "Bash" && bashMutatesMcpConfig(ctx) {
+		if cmdscan.IsShellTool(ctx.ToolName) && bashMutatesMcpConfig(ctx) {
 			return Deny, "modification of MCP server configuration"
 		}
 		return Allow, ""
@@ -442,7 +445,7 @@ var int001 = Rule{
 	Name:     "Binary modification block",
 	Category: "integrity",
 	Evaluate: func(ctx *EvalContext) (Verdict, string) {
-		if ctx.ToolName != "Bash" {
+		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
 		if bashMutatesArea(ctx, binaryArea) {
@@ -457,7 +460,7 @@ var sp011 = Rule{
 	Name:     "Bypass export block",
 	Category: "self-protection",
 	Evaluate: func(ctx *EvalContext) (Verdict, string) {
-		if ctx.ToolName != "Bash" {
+		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
 		if reBypassExport.MatchString(ctx.Command) {
@@ -472,7 +475,7 @@ var sp012 = Rule{
 	Name:     "Bypass command block",
 	Category: "self-protection",
 	Evaluate: func(ctx *EvalContext) (Verdict, string) {
-		if ctx.ToolName != "Bash" {
+		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
 		if reBypassCmd.MatchString(ctx.Command) {
@@ -493,7 +496,7 @@ var sp013 = Rule{
 				return Deny, "write to audit trail"
 			}
 		}
-		if ctx.ToolName == "Bash" && auditTrailMutated(ctx) {
+		if cmdscan.IsShellTool(ctx.ToolName) && auditTrailMutated(ctx) {
 			return Deny, "write to audit trail"
 		}
 		return Allow, ""
@@ -505,7 +508,7 @@ var sp014 = Rule{
 	Name:     "CLI security control block",
 	Category: "self-protection",
 	Evaluate: func(ctx *EvalContext) (Verdict, string) {
-		if ctx.ToolName != "Bash" {
+		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
 		if reCliControl.MatchString(ctx.Command) {

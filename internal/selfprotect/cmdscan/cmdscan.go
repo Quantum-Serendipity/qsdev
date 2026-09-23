@@ -8,10 +8,23 @@
 package cmdscan
 
 import (
+	"slices"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
 )
+
+// ShellTools are the Claude Code tools whose tool_input.command runs in a
+// shell: Bash, PowerShell (the primary shell on Windows, where Bash may not
+// exist) and Monitor (a background command run in the same shell environment
+// as Bash). Every hook and rule that inspects shell commands must cover all of
+// them, or the others bypass it.
+var ShellTools = []string{"Bash", "PowerShell", "Monitor"}
+
+// IsShellTool reports whether toolName runs its tool_input.command in a shell.
+func IsShellTool(toolName string) bool {
+	return slices.Contains(ShellTools, toolName)
+}
 
 // Command is one simple command extracted from a shell line: its command word
 // (after any leading VAR=val assignments), its literal argument words, the

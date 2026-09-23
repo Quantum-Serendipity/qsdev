@@ -340,6 +340,11 @@ type segmentEntry struct {
 // protects; TestProtectedSegmentsCoveredByCommandScan enforces that.
 var protectedSegments = []segmentEntry{
 	{".qsdev/audit/", "audit"},
+	// Hook audit logs and the SOC 2 session trail (~/.claude/audit).
+	{".claude/logs/", "audit"},
+	{".claude/audit/", "audit"},
+	{".claude/hook-audit.log", "audit"},
+	{".claude/hook-audit.log.1", "audit"},
 	{".qsdev/", "config"},
 	{".gdev/", "config"},
 	{".claude/settings.json", "claude-settings"},

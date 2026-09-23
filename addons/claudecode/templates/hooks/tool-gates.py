@@ -38,12 +38,22 @@ AUDIT_LOG: Path = Path(
 ) / ".claude" / "logs" / "hook-audit.jsonl"
 
 
+AUDIT_LOG_MAX_BYTES = 10 * 1024 * 1024
+
+
 def audit_log(entry: dict) -> None:
-    """Append a JSON entry to the audit log. Never raises."""
+    """Append a JSON entry to the audit log. Never raises. The file is created
+    0600 and rotated to <name>.1 once it exceeds AUDIT_LOG_MAX_BYTES."""
     try:
-        AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+        AUDIT_LOG.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            if AUDIT_LOG.stat().st_size > AUDIT_LOG_MAX_BYTES:
+                os.replace(AUDIT_LOG, AUDIT_LOG.with_name(AUDIT_LOG.name + ".1"))
+        except FileNotFoundError:
+            pass
         entry["timestamp"] = datetime.now(timezone.utc).isoformat()
-        with open(AUDIT_LOG, "a") as f:
+        fd = os.open(AUDIT_LOG, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "a") as f:
             f.write(json.dumps(entry) + "\n")
     except OSError:
         pass  # Audit logging must not interrupt hook decisions.

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
 // MaxInputBytes caps a hook's stdin envelope to prevent OOM. Claude Code puts
@@ -246,7 +248,7 @@ func fieldEvaluated(toolName, name string) bool {
 	case "file_path", "notebook_path":
 		return true
 	case "command":
-		return toolName == "Bash"
+		return cmdscan.IsShellTool(toolName)
 	default:
 		return toolName == "Write" || toolName == "Edit" || toolName == "MultiEdit"
 	}

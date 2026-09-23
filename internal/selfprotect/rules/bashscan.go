@@ -870,6 +870,21 @@ var (
 	hooksArea  = protectedArea{frag: ".claude/hooks", ancestors: []string{".claude"}}
 	auditArea  = protectedArea{frag: ".qsdev/audit", ancestors: []string{".qsdev"}}
 	binaryArea = protectedArea{frag: ".qsdev/bin", ancestors: []string{".qsdev"}}
+
+	// auditAreas are every audit trail a command may not mutate or relocate:
+	// qsdev's own, the hook audit logs Claude Code hooks write under .claude/
+	// (logs/ and package-guard's hook-audit.log with its rotated copy) and the
+	// SOC 2 session trail (~/.claude/audit). The .claude ones list no
+	// ancestors: a recursive mutation of .claude itself is already denied
+	// through hooksArea, and a copy that merely names .claude (an --exclude)
+	// relocates nothing.
+	auditAreas = []protectedArea{
+		auditArea,
+		{frag: ".claude/logs"},
+		{frag: ".claude/audit"},
+		{frag: ".claude/hook-audit.log"},
+		{frag: ".claude/hook-audit.log.1"},
+	}
 )
 
 // mentionedIn reports whether text names the area or an ancestor, used as the

@@ -32,6 +32,7 @@ Security invariants (not configurable):
 
 import base64
 import binascii
+import hashlib
 import json
 import os
 import re
@@ -99,6 +100,11 @@ SOC2_AUDIT_ENABLED: bool = os.environ.get("PACKAGE_GUARD_SOC2_AUDIT", "").lower(
 
 # Timeout per individual API call in seconds.
 API_TIMEOUT: int = 10
+
+# Tools whose tool_input.command runs in a shell. The hook's settings.json
+# matcher must list exactly these tools (hook_registry.go shellToolMatcher;
+# kept in sync by TestHookMatchersCoverScriptTools).
+SHELL_TOOLS: tuple[str, ...] = ("Bash", "PowerShell", "Monitor")
 
 # Audit log file path. Uses CLAUDE_PROJECT_DIR if available, else /tmp.
 AUDIT_LOG: Path = Path(
@@ -238,6 +244,16 @@ _WRAPPER_LEADING_POSITIONAL: set[str] = {"flock", "taskset", "chrt"}
 # invocation must be resolved to the underlying installer (pip/uv), so that
 # `python -m pip install <pkg>` is validated like a bare `pip install <pkg>`.
 _PYTHON_RE = re.compile(r"^python[0-9.]*$")
+
+# Windows launcher suffixes: PowerShell runs `npm.cmd install x` or
+# `C:\tools\pip.exe install x` exactly like `npm install x`.
+_WINDOWS_EXE_SUFFIX_RE = re.compile(r"\.(exe|cmd|bat|ps1)$", re.IGNORECASE)
+
+
+def _exe_name(token: str) -> str:
+    """The program a command word runs: its basename with any Windows
+    launcher suffix removed, so npm.cmd and pip.exe classify as npm and pip."""
+    return _WINDOWS_EXE_SUFFIX_RE.sub("", os.path.basename(token.replace("\\", "/")))
 
 # Shells whose `-c "<script>"` argument is itself a command line that must be
 # recursively scanned, so `bash -c "npm install evil"` cannot hide the install
@@ -402,12 +418,30 @@ _HEREDOC_WORD_END = set(" \t\r\n;&|<>()")
 # Logging
 # ---------------------------------------------------------------------------
 
+AUDIT_LOG_MAX_BYTES = 10 * 1024 * 1024
+
+# Entry fields holding command text, which can carry credentials (index URLs
+# with tokens, bearer headers): the log records their fingerprint instead.
+_COMMAND_FIELDS: tuple[str, ...] = ("command", "segment", "rewritten")
+
+
 def audit_log(entry: dict) -> None:
-    """Append a JSON entry to the audit log file."""
+    """Append a JSON entry to the audit log file. The file is created 0600 and
+    rotated to <name>.1 once it exceeds AUDIT_LOG_MAX_BYTES."""
+    for key in _COMMAND_FIELDS:
+        text = entry.pop(key, None)
+        if isinstance(text, str):
+            entry[key + "_sha256"] = hashlib.sha256(text.encode("utf-8", "surrogateescape")).hexdigest()
     try:
-        AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with open(AUDIT_LOG, "a") as f:
-            entry["timestamp"] = datetime.now(timezone.utc).isoformat()
+        AUDIT_LOG.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            if AUDIT_LOG.stat().st_size > AUDIT_LOG_MAX_BYTES:
+                os.replace(AUDIT_LOG, AUDIT_LOG.with_name(AUDIT_LOG.name + ".1"))
+        except FileNotFoundError:
+            pass
+        entry["timestamp"] = datetime.now(timezone.utc).isoformat()
+        fd = os.open(AUDIT_LOG, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "a") as f:
             f.write(json.dumps(entry) + "\n")
     except OSError:
         # Logging failure must not block the hook decision.
@@ -1053,7 +1087,7 @@ def parse_install_argv(argv: list[str]) -> Optional[tuple[str, str, list[str]]]:
     before matching."""
     if not argv:
         return None
-    exe = os.path.basename(argv[0])
+    exe = _exe_name(argv[0])
     rest = argv[1:]
 
     # `python -m pip install …` / `python3 -m uv pip install …`: the real
@@ -1062,7 +1096,7 @@ def parse_install_argv(argv: list[str]) -> Optional[tuple[str, str, list[str]]]:
     if _PYTHON_RE.match(exe) and rest and rest[0] == "-m":
         if len(rest) < 2:
             return None
-        exe = os.path.basename(rest[1])
+        exe = _exe_name(rest[1])
         rest = rest[2:]
 
     # Imperative Nix installs are matched specially (denied downstream) and carry
@@ -1256,8 +1290,9 @@ def _embedded_install(argv: list[str]) -> Optional[tuple[str, str, list[str]]]:
     # A manager token with nothing after it is a name, not an invocation
     # (`which cpan`, `man cpanm`), so the last token is never a candidate.
     for k in range(1, len(argv) - 1):
-        if (argv[k] in INSTALL_COMMANDS or argv[k] in ("nix", "nix-env")
-                or _is_unvalidated_manager(os.path.basename(argv[k]))):
+        name = _exe_name(argv[k])
+        if (name in INSTALL_COMMANDS or name in ("nix", "nix-env")
+                or _is_unvalidated_manager(name)):
             parsed = parse_install_argv(argv[k:])
             if parsed is not None:
                 return parsed
@@ -1577,14 +1612,19 @@ def main() -> None:
         sys.exit(2)
 
     tool_name = input_data.get("tool_name", "")
-    command = input_data.get("tool_input", {}).get("command", "")
+    tool_input = input_data.get("tool_input") or {}
+    command = tool_input.get("command") or ""
 
-    # 2. Only process Bash tool calls.
-    if tool_name != "Bash" or not command:
+    # 2. Only process tools that run shell commands (a Monitor watching a
+    # WebSocket has no command).
+    if tool_name not in SHELL_TOOLS or not command:
         sys.exit(0)
 
     # 3. Detect ALL package install commands (handles compound commands).
-    detections = detect_install_commands(command)
+    # PowerShell uses backslash as a path separator, not an escape.
+    detections = detect_install_commands(
+        command.replace("\\", "/") if tool_name == "PowerShell" else command
+    )
     if not detections:
         # Not a package install command — allow silently.
         sys.exit(0)
@@ -1770,7 +1810,10 @@ def main() -> None:
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "allow",
-                "updatedInput": {"command": rewritten},
+                # updatedInput replaces the whole tool input: keep the other
+                # fields (Monitor's required description, Bash's timeout and
+                # run_in_background).
+                "updatedInput": {**tool_input, "command": rewritten},
                 "additionalContext": (
                     f"Packages validated and safety flags appended. "
                     f"Checked: {', '.join(checked_packages)}. "
@@ -1785,4 +1828,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        # Fail closed: an internal error must block the install, not let
+        # Claude Code treat exit 1 as a non-blocking hook error.
+        print(f"package guard error: {type(e).__name__}: {e}", file=sys.stderr)
+        sys.exit(2)

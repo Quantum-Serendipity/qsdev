@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -289,6 +290,26 @@ func TestInitCmd_SavesPerAddonAnswers(t *testing.T) {
 	primaryAnswers := filepath.Join(dir, ".devinit", ".qsdev-init-answers.yaml")
 	if _, err := os.Stat(primaryAnswers); err != nil {
 		t.Errorf("primary answers file not saved: %v", err)
+	}
+}
+
+// TestInitCmd_GitignoresHookAuditLogs verifies init ignores the audit logs the
+// Claude Code hooks write under .claude/ (W047): they hold tool inputs and
+// commands, while the rest of .claude/ is meant to be committed.
+func TestInitCmd_GitignoresHookAuditLogs(t *testing.T) {
+	dir := t.TempDir()
+	if output, err := executeInitCmd(t, dir, "--lang", "go", "--yes"); err != nil {
+		t.Fatalf("init failed: %v\nOutput: %s", err, output)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("reading .gitignore: %v", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, want := range []string{".claude/logs/", ".claude/hook-audit.log*"} {
+		if !slices.Contains(lines, want) {
+			t.Errorf(".gitignore missing %q:\n%s", want, data)
+		}
 	}
 }
 

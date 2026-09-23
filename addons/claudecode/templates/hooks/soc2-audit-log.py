@@ -2,11 +2,18 @@
 """
 Claude Code Hook: SOC 2 Audit Logging
 
-Metadata-only session audit trail across four Claude Code hook events:
-  session_start   — logged at session/resume start
-  tool_use        — logged after each tool invocation (metadata only)
-  session_checkpoint — logged on stop/pause
-  session_end     — logged at session termination with cost summary
+Metadata-only session audit trail across Claude Code hook events:
+  session_start      — SessionStart, every source (startup, resume, clear,
+                       compact, fork), so each session_id has an
+                       attributable start record
+  tool_use           — PostToolUse: a tool call that ran
+  tool_failure       — PostToolUseFailure: a tool call that failed
+  permission_denied  — PermissionDenied: a tool call that was refused
+  session_checkpoint — Stop
+  session_end        — SessionEnd, with the reason the session ended
+
+Claude Code's hook input carries no cost or token counts, so none are
+recorded here.
 
 SOC 2 Trust Services Criteria coverage:
   CC6.1 (Access Controls), CC6.2 (Access Restriction),
@@ -19,6 +26,8 @@ Configuration via environment variables:
   SOC2_CLIENT_DIR_PATTERN — regex for client name extraction (default: .*/clients/([^/]*)/.*  )
   CLAUDE_AUDIT_DIR        — output directory (default: ~/.claude/audit)
 """
+
+from __future__ import annotations
 
 import getpass
 import json
@@ -46,10 +55,12 @@ def detect_client(cwd: str) -> str:
 
 
 def write_entry(entry: dict) -> None:
-    """Append a JSON entry to the monthly audit file. Never raises."""
+    """Append a JSON entry to the monthly audit file, created 0600 in a 0700
+    directory. Never raises."""
     try:
-        AUDIT_DIR.mkdir(parents=True, exist_ok=True)
-        with open(AUDIT_FILE, "a") as f:
+        AUDIT_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd = os.open(AUDIT_FILE, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "a") as f:
             f.write(json.dumps(entry) + "\n")
     except OSError:
         print("warning: failed to write SOC2 audit entry", file=sys.stderr)
@@ -81,6 +92,29 @@ def handle_tool_use(input_data: dict) -> None:
     })
 
 
+def handle_tool_failure(input_data: dict) -> None:
+    cwd = os.environ.get("CLAUDE_PROJECT_DIR", "")
+    write_entry({
+        "event": "tool_failure",
+        "session_id": input_data.get("session_id", ""),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "tool_name": input_data.get("tool_name", ""),
+        "is_interrupt": bool(input_data.get("is_interrupt", False)),
+        "client_engagement": detect_client(cwd),
+    })
+
+
+def handle_permission_denied(input_data: dict) -> None:
+    cwd = os.environ.get("CLAUDE_PROJECT_DIR", "")
+    write_entry({
+        "event": "permission_denied",
+        "session_id": input_data.get("session_id", ""),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "tool_name": input_data.get("tool_name", ""),
+        "client_engagement": detect_client(cwd),
+    })
+
+
 def handle_session_checkpoint(input_data: dict) -> None:
     cwd = os.environ.get("CLAUDE_PROJECT_DIR", "")
     write_entry({
@@ -101,18 +135,16 @@ def handle_session_end(input_data: dict) -> None:
         "hostname": platform.node(),
         "project_dir": cwd,
         "client_engagement": detect_client(cwd),
+        "end_reason": input_data.get("reason", ""),
     }
-    session_data = input_data.get("session", {})
-    if session_data:
-        entry["estimated_cost_usd"] = session_data.get("costUSD", 0)
-        entry["input_tokens"] = session_data.get("inputTokens", 0)
-        entry["output_tokens"] = session_data.get("outputTokens", 0)
     write_entry(entry)
 
 
 HANDLERS = {
     "session_start": handle_session_start,
     "tool_use": handle_tool_use,
+    "tool_failure": handle_tool_failure,
+    "permission_denied": handle_permission_denied,
     "session_checkpoint": handle_session_checkpoint,
     "session_end": handle_session_end,
 }

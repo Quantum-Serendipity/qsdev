@@ -158,12 +158,12 @@ Hook presets control Claude Code runtime behavior:
 
 | Hook | Effect |
 |------|--------|
-| `safety-block` | Installs `package-guard.py` as a PreToolUse hook; intercepts package install commands in real-time |
+| `safety-block` | Installs `package-guard.py` as a PreToolUse hook; intercepts package install commands sent through Bash, PowerShell or Monitor in real-time |
 | `credential-scan` | Scans Write/Edit operations for credentials before they reach disk |
-| `destructive-prevention` | Blocks destructive Bash commands (rm -rf, git push --force, etc.) |
-| `file-boundary` | Prevents Write/Edit/Read operations outside the project tree |
+| `destructive-prevention` | Blocks destructive shell commands sent through Bash, PowerShell or Monitor (rm -rf, git push --force, etc.) |
+| `file-boundary` | Prevents Write/Edit/Read/Grep/Glob operations outside the project tree (reads of dependency caches such as the Go module cache and /nix/store are allowed). Shell commands are out of its scope; use the sandbox to confine them |
 | `tool-gates` | Enforces per-tool approval policies on all tool invocations |
-| `soc2-audit` | Logs session start/end, tool invocations, and checkpoints for SOC 2 compliance (4-event audit trail with monthly rotation) |
+| `soc2-audit` | Logs session start/end (with the end reason), tool invocations, failed and denied tool calls, and checkpoints for SOC 2 compliance (metadata-only audit trail with monthly rotation) |
 | `auto-format` | Runs formatters after file writes |
 | `pre-commit` | Runs pre-commit checks before git operations |
 | `audit-log` | Logs all tool invocations for compliance auditing (simpler alternative to soc2-audit) |

@@ -1,6 +1,9 @@
 package claudecode
 
 import (
+	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -143,6 +146,11 @@ func (r *HookRegistry) Definitions() []HookDefinition {
 	return result
 }
 
+// shellToolMatcher matches every tool that runs a shell command, for the hooks
+// that inspect tool_input.command. A hook matching only "Bash" never sees the
+// same command sent through PowerShell or Monitor.
+var shellToolMatcher = strings.Join(cmdscan.ShellTools, "|")
+
 // defaultHookRegistry returns a registry pre-populated with the built-in hooks
 // (package-guard and audit-log).
 func defaultHookRegistry() *HookRegistry {
@@ -165,7 +173,7 @@ func defaultHookRegistry() *HookRegistry {
 	r.Register(HookDefinition{
 		Owner:           "package-guard",
 		Event:           "PreToolUse",
-		Matcher:         "Bash",
+		Matcher:         shellToolMatcher,
 		Command:         guardCmd,
 		Timeout:         30,
 		StatusMessage:   "Checking package install safety...",
@@ -187,7 +195,7 @@ func defaultHookRegistry() *HookRegistry {
 	r.Register(HookDefinition{
 		Owner:           "destructive-prevention",
 		Event:           "PreToolUse",
-		Matcher:         "Bash",
+		Matcher:         shellToolMatcher,
 		Command:         `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/block-destructive.py`,
 		Timeout:         5,
 		StatusMessage:   "Checking command safety...",
@@ -198,7 +206,7 @@ func defaultHookRegistry() *HookRegistry {
 	r.Register(HookDefinition{
 		Owner:           "file-boundary",
 		Event:           "PreToolUse",
-		Matcher:         "Write|Edit|MultiEdit|NotebookEdit|Read",
+		Matcher:         "Write|Edit|MultiEdit|NotebookEdit|Read|Grep|Glob",
 		Command:         `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/file-boundary.py`,
 		Timeout:         5,
 		StatusMessage:   "Checking file boundary...",
@@ -220,10 +228,11 @@ func defaultHookRegistry() *HookRegistry {
 	soc2Cmd := `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/soc2-audit-log.py`
 	soc2Enabled := func(a types.WizardAnswers) bool { return a.Hooks.SOC2Audit }
 
+	// No matcher: sessions started by /clear, compaction or a fork need a
+	// start record too, or their tool activity has no attributable user.
 	r.Register(HookDefinition{
 		Owner:           "soc2-audit",
 		Event:           "SessionStart",
-		Matcher:         "startup|resume",
 		Command:         soc2Cmd + " session_start",
 		Timeout:         5,
 		StatusMessage:   "Logging session start...",
@@ -238,6 +247,30 @@ func defaultHookRegistry() *HookRegistry {
 		Command:         soc2Cmd + " tool_use",
 		Timeout:         3,
 		StatusMessage:   "Logging tool action...",
+		SandboxCategory: "generator",
+		EnabledFunc:     soc2Enabled,
+	})
+
+	// Failed and refused tool calls are the attempts an access-control audit
+	// (CC6.x) cares about most; PostToolUse sees neither.
+	r.Register(HookDefinition{
+		Owner:           "soc2-audit",
+		Event:           "PostToolUseFailure",
+		Matcher:         "*",
+		Command:         soc2Cmd + " tool_failure",
+		Timeout:         3,
+		StatusMessage:   "Logging failed tool action...",
+		SandboxCategory: "generator",
+		EnabledFunc:     soc2Enabled,
+	})
+
+	r.Register(HookDefinition{
+		Owner:           "soc2-audit",
+		Event:           "PermissionDenied",
+		Matcher:         "*",
+		Command:         soc2Cmd + " permission_denied",
+		Timeout:         3,
+		StatusMessage:   "Logging denied tool action...",
 		SandboxCategory: "generator",
 		EnabledFunc:     soc2Enabled,
 	})

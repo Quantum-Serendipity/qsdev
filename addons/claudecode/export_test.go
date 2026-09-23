@@ -87,6 +87,9 @@ type ExportHookStatus = HookStatus
 // ExportDefaultSecretPatterns exposes DefaultSecretPatterns for external tests.
 var ExportDefaultSecretPatterns = DefaultSecretPatterns
 
+// ExportConfigSecretPatterns exposes ConfigSecretPatterns for external tests.
+var ExportConfigSecretPatterns = ConfigSecretPatterns
+
 // ExportPlaceholderIndicators exposes PlaceholderIndicators for external tests.
 var ExportPlaceholderIndicators = PlaceholderIndicators
 

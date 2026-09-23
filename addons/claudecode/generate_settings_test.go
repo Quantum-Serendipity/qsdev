@@ -517,8 +517,8 @@ func TestGenerateSettings_HooksSection(t *testing.T) {
 	if len(preToolUse) != 1 {
 		t.Fatalf("PreToolUse should have 1 matcher, got %d", len(preToolUse))
 	}
-	if preToolUse[0].Matcher != "Bash" {
-		t.Errorf("PreToolUse matcher should be 'Bash', got %q", preToolUse[0].Matcher)
+	if preToolUse[0].Matcher != "Bash|PowerShell|Monitor" {
+		t.Errorf("PreToolUse matcher should cover every shell tool, got %q", preToolUse[0].Matcher)
 	}
 	if len(preToolUse[0].Hooks) != 1 {
 		t.Fatalf("PreToolUse Bash matcher should have 1 hook, got %d", len(preToolUse[0].Hooks))

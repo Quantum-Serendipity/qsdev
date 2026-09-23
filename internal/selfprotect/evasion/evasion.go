@@ -48,7 +48,7 @@ var (
 func Check(toolName string, command string, filePath string) (bool, string, string) {
 	var cmds []cmdscan.Command
 	var parseErr error
-	if toolName == "Bash" && command != "" {
+	if cmdscan.IsShellTool(toolName) && command != "" {
 		cmds, parseErr = cmdscan.Parse(command)
 	}
 	return CheckParsed(toolName, command, filePath, cmds, parseErr)
@@ -58,13 +58,13 @@ func Check(toolName string, command string, filePath string) (bool, string, stri
 // from a single cmdscan.Parse of command (parseErr non-nil ⇒ unparseable, so the
 // obfuscation check falls back to its whole-string regex).
 func CheckParsed(toolName string, command string, filePath string, cmds []cmdscan.Command, parseErr error) (bool, string, string) {
-	if toolName == "Bash" && command != "" {
+	if cmdscan.IsShellTool(toolName) && command != "" {
 		if blocked, reason := checkObfuscation(command, cmds, parseErr); blocked {
 			return true, "obfuscation", reason
 		}
 	}
 
-	if toolName == "Bash" && command != "" {
+	if cmdscan.IsShellTool(toolName) && command != "" {
 		if blocked, reason := checkHardlink(command, cmds, parseErr); blocked {
 			return true, "hardlink", reason
 		}
@@ -278,7 +278,7 @@ func checkFDTricks(toolName string, command string, filePath string) (bool, stri
 	}
 
 	// Check command for Bash tool.
-	if toolName == "Bash" && command != "" {
+	if cmdscan.IsShellTool(toolName) && command != "" {
 		if reDevFD.MatchString(command) {
 			return true, "file descriptor path /dev/fd/ in command"
 		}
@@ -313,7 +313,7 @@ func checkProcRoot(toolName string, command string, filePath string) (bool, stri
 	}
 
 	// Check command for Bash tool.
-	if toolName == "Bash" && command != "" {
+	if cmdscan.IsShellTool(toolName) && command != "" {
 		if reProcSelfRoot.MatchString(command) {
 			return true, "proc self root traversal in command"
 		}

@@ -1,6 +1,7 @@
 package claudecode_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -702,6 +703,49 @@ func TestGenerateClaudeMd_ToolSectionOnlyWhenToolEmitsFiles(t *testing.T) {
 			}
 			if has := strings.Contains(string(got.Content), "<!-- qsdev:lookup-docs -->"); has != tc.want {
 				t.Errorf("lookup-docs section present = %v, want %v", has, tc.want)
+			}
+		})
+	}
+}
+
+// TestBuildClaudeMdData_ConfiguredPackageManager lists only the package
+// manager a language is configured with (W079): a uv project must not be told
+// that pip and poetry apply too.
+func TestBuildClaudeMdData_ConfiguredPackageManager(t *testing.T) {
+	t.Parallel()
+	py := &ecosystem.MockModule{
+		NameVal:        "python",
+		DisplayNameVal: "Python",
+		TierVal:        1,
+		PackageManagersVal: []ecosystem.PackageManagerInfo{
+			{Name: "pip"}, {Name: "uv"}, {Name: "poetry"},
+		},
+	}
+	java := &ecosystem.MockModule{
+		NameVal:            "java",
+		DisplayNameVal:     "Java",
+		TierVal:            1,
+		PackageManagersVal: []ecosystem.PackageManagerInfo{{Name: "maven"}, {Name: "gradle"}},
+	}
+	reg := newTestRegistry(t, py, java)
+
+	tests := []struct {
+		name string
+		lang types.LanguageChoice
+		want []string
+	}{
+		{"configured uv", types.LanguageChoice{Name: "python", PackageManager: "uv"}, []string{"uv"}},
+		{"configured poetry", types.LanguageChoice{Name: "python", PackageManager: "poetry"}, []string{"poetry"}},
+		{"unconfigured uses module default", types.LanguageChoice{Name: "python"}, []string{"pip"}},
+		{"detected build tool", types.LanguageChoice{Name: "java", Extras: []string{"build_tool=gradle"}}, []string{"gradle"}},
+		{"both build tools", types.LanguageChoice{Name: "java", Extras: []string{"build_tool=both"}}, []string{"maven", "gradle"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := claudecode.BuildClaudeMdData(types.WizardAnswers{Languages: []types.LanguageChoice{tt.lang}}, reg)
+			if !slices.Equal(data.PackageManagers, tt.want) {
+				t.Errorf("PackageManagers = %v, want %v", data.PackageManagers, tt.want)
 			}
 		})
 	}

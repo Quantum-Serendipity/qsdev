@@ -173,8 +173,8 @@ func TestDefaultHookRegistry_PackageGuardRegistered(t *testing.T) {
 	if len(matchers) != 1 {
 		t.Fatalf("expected 1 PreToolUse matcher, got %d", len(matchers))
 	}
-	if matchers[0].Matcher != "Bash" {
-		t.Errorf("matcher = %q, want Bash", matchers[0].Matcher)
+	if matchers[0].Matcher != "Bash|PowerShell|Monitor" {
+		t.Errorf("matcher = %q, want Bash|PowerShell|Monitor", matchers[0].Matcher)
 	}
 	if matchers[0].Hooks[0].Timeout != 30 {
 		t.Errorf("timeout = %d, want 30", matchers[0].Hooks[0].Timeout)
@@ -307,8 +307,8 @@ func TestBuildHookStatuses(t *testing.T) {
 	}
 
 	statuses := claudecode.ExportBuildHookStatuses(r, answers)
-	if len(statuses) != 15 {
-		t.Fatalf("expected 15 statuses, got %d", len(statuses))
+	if len(statuses) != 17 {
+		t.Fatalf("expected 17 statuses, got %d", len(statuses))
 	}
 
 	if statuses[0].Name != "self-protection" || statuses[0].Configured {
@@ -329,26 +329,26 @@ func TestBuildHookStatuses(t *testing.T) {
 	if statuses[5].Name != "tool-gates" || statuses[5].Configured {
 		t.Errorf("statuses[5]: want tool-gates/disabled, got %s/%v", statuses[5].Name, statuses[5].Configured)
 	}
-	for i := 6; i <= 9; i++ {
+	for i := 6; i <= 11; i++ {
 		if statuses[i].Name != "soc2-audit" || statuses[i].Configured {
 			t.Errorf("statuses[%d]: want soc2-audit/disabled, got %s/%v", i, statuses[i].Name, statuses[i].Configured)
 		}
 	}
-	if statuses[10].Name != "semble" || statuses[10].Configured {
-		t.Errorf("statuses[10]: want semble/disabled, got %s/%v", statuses[10].Name, statuses[10].Configured)
+	if statuses[12].Name != "semble" || statuses[12].Configured {
+		t.Errorf("statuses[12]: want semble/disabled, got %s/%v", statuses[12].Name, statuses[12].Configured)
 	}
-	if statuses[11].Name != "audit-log" || statuses[11].Configured {
-		t.Errorf("statuses[11]: want audit-log/disabled, got %s/%v", statuses[11].Name, statuses[11].Configured)
+	if statuses[13].Name != "audit-log" || statuses[13].Configured {
+		t.Errorf("statuses[13]: want audit-log/disabled, got %s/%v", statuses[13].Name, statuses[13].Configured)
 	}
-	for i := 12; i <= 13; i++ {
+	for i := 14; i <= 15; i++ {
 		if statuses[i].Name != "security-enforcement" || statuses[i].Configured {
 			t.Errorf("statuses[%d]: want security-enforcement/disabled, got %s/%v", i, statuses[i].Name, statuses[i].Configured)
 		}
 	}
 	// lsp-guard is registered last and enabled by default (LSP enforcement
 	// defaults to "block" when unset).
-	if statuses[14].Name != "lsp-guard" || !statuses[14].Configured {
-		t.Errorf("statuses[14]: want lsp-guard/enabled, got %s/%v", statuses[14].Name, statuses[14].Configured)
+	if statuses[16].Name != "lsp-guard" || !statuses[16].Configured {
+		t.Errorf("statuses[16]: want lsp-guard/enabled, got %s/%v", statuses[16].Name, statuses[16].Configured)
 	}
 }
 
@@ -468,7 +468,8 @@ func TestSecretPatterns_MatchPythonHook(t *testing.T) {
 	}
 	content := string(pyContent)
 
-	for i, goPattern := range claudecode.ExportDefaultSecretPatterns {
+	all := append(append([]string{}, claudecode.ExportDefaultSecretPatterns...), claudecode.ExportConfigSecretPatterns...)
+	for i, goPattern := range all {
 		if !strings.Contains(content, goPattern) {
 			t.Errorf("Go pattern [%d] %q not found in scan-secrets.py (patterns may be out of sync)", i, goPattern)
 		}

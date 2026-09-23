@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -25,6 +26,11 @@ func TestStateFilesForTeardown_CoversStateFilePaths(t *testing.T) {
 	}
 	if cfg := branding.Get().ConfigFile; !slices.Contains(got, cfg) {
 		t.Errorf("stateFilesForTeardown() missing config file %q; got %v", cfg, got)
+	}
+	// W154: an older release's tracked .claude answers copy (origin URL,
+	// username, absolute path) must not survive teardown.
+	if legacy := answers.LegacyClaudeCopyFile(); !slices.Contains(got, legacy) {
+		t.Errorf("stateFilesForTeardown() missing legacy Claude answers %q; got %v", legacy, got)
 	}
 }
 

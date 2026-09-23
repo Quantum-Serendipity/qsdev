@@ -417,6 +417,20 @@ func stampTemplateVersions(st *types.GeneratedState, claudeGenerated bool) {
 	st.SkillLibraryVersion = claudecode.ComputeSkillLibraryVersion()
 }
 
+// projectGitignoreEntries are the local-state paths every initialized project
+// ignores: qsdev's state directories, the machine-specific local overrides file
+// (join also ignores it, so init must too or every teammate's first join
+// dirties .gitignore), the devenv/direnv caches, and the audit logs Claude Code
+// hooks write under .claude/ (tool inputs and commands that can hold secrets,
+// and must never be committed with the rest of .claude/).
+func projectGitignoreEntries() []string {
+	b := branding.Get()
+	return []string{
+		b.StateDir + "/", "." + b.AppName + "/", b.LocalConfig, ".direnv/", ".devenv/",
+		claudecode.AddonDir + "/logs/", claudecode.AddonDir + "/hook-audit.log*",
+	}
+}
+
 func finalizeProject(cmd *cobra.Command, opts InitOptions, answers types.WizardAnswers, projectRoot string, accResult accumulatorResult) error {
 	qsdevCfg := qsdevconfig.AnswersToConfig(answers, version.Info().Version)
 	qsdevCfgPath := filepath.Join(projectRoot, branding.Get().ConfigFile)
@@ -434,9 +448,7 @@ func finalizeProject(cmd *cobra.Command, opts InitOptions, answers types.WizardA
 // ensureProjectGitignore adds the qsdev state directories and the
 // language-specific entries to .gitignore. Failures are logged, not fatal.
 func ensureProjectGitignore(projectRoot string, answers types.WizardAnswers) {
-	// The local overrides file is machine-specific; join also ignores it, so
-	// init must too or every teammate's first join dirties .gitignore.
-	for _, entry := range []string{branding.Get().StateDir + "/", "." + branding.Get().AppName + "/", branding.Get().LocalConfig, ".direnv/", ".devenv/"} {
+	for _, entry := range projectGitignoreEntries() {
 		if err := EnsureGitignoreEntry(projectRoot, entry); err != nil {
 			slog.Warn("could not update .gitignore", "entry", entry, "error", err)
 		}

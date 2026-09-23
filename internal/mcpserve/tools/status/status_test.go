@@ -324,6 +324,41 @@ func TestCheckMCPNoServers(t *testing.T) {
 	}
 }
 
+// TestCheckMCPCatalogLoadFailureWarns is the F279 regression: when the MCP
+// catalog fails to load, its servers silently vanish from the registry. The
+// doctor must warn about that instead of passing over the smaller set.
+func TestCheckMCPCatalogLoadFailureWarns(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		servers []mcphealth.ServerConfig
+	}{
+		{name: "no servers left"},
+		{name: "only built-in servers left", servers: []mcphealth.ServerConfig{{Name: "builtin"}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			doc := newDoctorChecker(t.TempDir())
+			doc.mcpServers = func() ([]mcphealth.ServerConfig, error) { return tt.servers, nil }
+			doc.probeMCP = func(context.Context, mcphealth.ServerConfig) *mcphealth.ServerHealth {
+				return &mcphealth.ServerHealth{Status: mcphealth.StatusHealthy}
+			}
+			doc.mcpCatalogErr = func() error { return fmt.Errorf("loading MCP server catalog: bad yaml") }
+
+			res := doc.checkMCP(context.Background())
+			if res.Status != checkWarn {
+				t.Errorf("status = %q, want %q", res.Status, checkWarn)
+			}
+			if !strings.Contains(res.Detail, "bad yaml") {
+				t.Errorf("detail = %q, want it to carry the catalog error", res.Detail)
+			}
+		})
+	}
+}
+
 // TestStatusTier2DoesNotHoldLockDuringDetect (R21) verifies the checker mutex is
 // not held while detection runs. The injected detect tries TryLock: it succeeds
 // only if the lock is free, proving the fast path is not blocked by detection.

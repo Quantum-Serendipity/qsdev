@@ -1,6 +1,9 @@
 package mcpregistry
 
 // ZIMEntry describes a single ZIM archive available for local documentation.
+// ExpectedHash, when set, pins the archive's hex SHA-256 digest; when empty,
+// DownloadZIM verifies against the digest the publisher serves beside the
+// archive and refuses the download if it cannot be obtained.
 type ZIMEntry struct {
 	Slug         string
 	DisplayName  string
@@ -17,7 +20,7 @@ var BuiltinZIMCatalog = []ZIMEntry{
 		Slug:         "unix.stackexchange.com_en_all_2026-02",
 		DisplayName:  "Unix & Linux Stack Exchange",
 		URL:          "https://download.kiwix.org/zim/stack_exchange/unix.stackexchange.com_en_all_2026-02.zim",
-		ExpectedHash: "", // populated when hash is known
+		ExpectedHash: "", // verified against download.kiwix.org's published .sha256
 		SizeBytes:    850_000_000,
 		Ecosystems:   []string{"go", "python", "rust", "javascript"},
 	},

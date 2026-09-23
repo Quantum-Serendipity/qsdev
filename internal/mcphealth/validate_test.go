@@ -76,6 +76,43 @@ func TestValidateConfig(t *testing.T) {
 			wantContains: "QSDEV_TEST_MISSING_REF_ABC_67890",
 		},
 		{
+			name: "env reference with default produces no warning",
+			servers: map[string]ServerConfig{
+				"default-env": {
+					Name:    "default-env",
+					Command: "bash",
+					Env:     map[string]string{"P": "${QSDEV_TEST_MISSING_REF_DEF_111:-x}"},
+				},
+			},
+			wantCount: 0,
+		},
+		{
+			name: "unset reference in args produces warning",
+			servers: map[string]ServerConfig{
+				"ref-arg": {
+					Name:    "ref-arg",
+					Command: "bash",
+					Args:    []string{"--db", "${QSDEV_TEST_MISSING_ARG_222}"},
+				},
+			},
+			wantCount:    1,
+			wantSeverity: "warning",
+			wantContains: "QSDEV_TEST_MISSING_ARG_222",
+		},
+		{
+			name: "unset reference in header produces warning",
+			servers: map[string]ServerConfig{
+				"ref-header": {
+					Name:    "ref-header",
+					Command: "bash",
+					Headers: map[string]string{"Authorization": "Bearer ${QSDEV_TEST_MISSING_HDR_333}"},
+				},
+			},
+			wantCount:    1,
+			wantSeverity: "warning",
+			wantContains: "QSDEV_TEST_MISSING_HDR_333",
+		},
+		{
 			name: "set env reference produces no warning",
 			servers: map[string]ServerConfig{
 				"ok-env": {

@@ -3,6 +3,7 @@ package mcphealth
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -132,16 +133,34 @@ func TestCheckAll_MixedResults(t *testing.T) {
 	}
 }
 
-// mcpInitResult writes a minimal JSON-RPC initialize result and, for a bare GET
-// (the SSE-stream open), replies 405 exactly like a spec-compliant Streamable-
-// HTTP MCP server that offers no server-initiated stream.
+// mcpInitResult answers MCP requests with minimal valid results and, for a bare
+// GET (the SSE-stream open), replies 405 exactly like a spec-compliant
+// Streamable-HTTP MCP server that offers no server-initiated stream.
 func mcpInitResult(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{}}}`))
+	_, _ = w.Write(mcpReply(r))
+}
+
+// mcpReply builds a valid JSON-RPC reply to an MCP request: an initialize
+// result naming a protocol version, or a one-tool tools/list result, echoing
+// the request id as a real server does.
+func mcpReply(r *http.Request) []byte {
+	body, _ := io.ReadAll(r.Body)
+	var req struct {
+		ID     int    `json:"id"`
+		Method string `json:"method"`
+	}
+	_ = json.Unmarshal(body, &req)
+
+	result := `{"tools":[{"name":"a"}]}`
+	if req.Method == "initialize" {
+		result = `{"protocolVersion":"2025-03-26","capabilities":{}}`
+	}
+	return []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"result":%s}`, req.ID, result))
 }
 
 // TestCheckServer_HTTPProbesMCP is the M7 regression. The old check did a bare
@@ -165,9 +184,9 @@ func TestCheckServer_HTTPProbesMCP(t *testing.T) {
 		},
 		{
 			name: "mcp server replying over SSE is healthy",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
+			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = w.Write([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n"))
+				_, _ = w.Write([]byte("event: message\ndata: " + string(mcpReply(r)) + "\n\n"))
 			},
 			want: StatusHealthy,
 		},
@@ -306,36 +325,25 @@ func TestCountTools(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
-		input string
-		want  int
+		name    string
+		input   string
+		want    int
+		wantErr bool
 	}{
-		{
-			name:  "two tools",
-			input: `{"tools":[{"name":"a"},{"name":"b"}]}`,
-			want:  2,
-		},
-		{
-			name:  "empty tools list",
-			input: `{"tools":[]}`,
-			want:  0,
-		},
-		{
-			name:  "invalid json",
-			input: `not json`,
-			want:  0,
-		},
-		{
-			name:  "missing tools key",
-			input: `{"other":"value"}`,
-			want:  0,
-		},
+		{name: "two tools", input: `{"tools":[{"name":"a"},{"name":"b"}]}`, want: 2},
+		{name: "empty tools list", input: `{"tools":[]}`, want: 0},
+		{name: "invalid json", input: `not json`, wantErr: true},
+		{name: "missing tools key", input: `{"other":"value"}`, wantErr: true},
+		{name: "tools is not an array", input: `{"tools":{}}`, wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := countTools([]byte(tt.input))
+			got, err := countTools([]byte(tt.input))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("countTools(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
 			if got != tt.want {
 				t.Errorf("countTools(%q) = %d, want %d", tt.input, got, tt.want)
 			}

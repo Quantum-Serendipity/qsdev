@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -49,6 +50,7 @@ func CheckServer(ctx context.Context, cfg ServerConfig) *ServerHealth {
 	}
 
 	start := time.Now()
+	cfg = expandConfig(cfg, os.LookupEnv)
 
 	if cfg.URL != "" {
 		return checkHTTPServer(ctx, cfg, h, start)
@@ -64,6 +66,8 @@ func CheckServer(ctx context.Context, cfg ServerConfig) *ServerHealth {
 
 	// The stdio transport's SendRequest cannot observe ctx cancellation, so run
 	// the shared handshake in a goroutine and enforce the deadline via select.
+	// On timeout the process is killed at once: that closes its stdout and
+	// unblocks the handshake's pending read, so neither it nor Close can hang.
 	type probeResult struct {
 		status    string
 		err       string
@@ -80,6 +84,7 @@ func CheckServer(ctx context.Context, cfg ServerConfig) *ServerHealth {
 	select {
 	case r = <-ch:
 	case <-ctx.Done():
+		proc.kill()
 		r = probeResult{status: StatusUnreachable, err: "health check timed out"}
 	}
 
@@ -158,12 +163,32 @@ type toolsListResult struct {
 	Tools []json.RawMessage `json:"tools"`
 }
 
-func countTools(result json.RawMessage) int {
+// countTools returns the number of tools in a tools/list result. A result that
+// is not a {"tools": [...]} object is not a valid MCP reply.
+func countTools(result json.RawMessage) (int, error) {
 	var tlr toolsListResult
 	if err := json.Unmarshal(result, &tlr); err != nil {
-		return 0
+		return 0, fmt.Errorf("result is not a tools list: %w", err)
 	}
-	return len(tlr.Tools)
+	if tlr.Tools == nil {
+		return 0, errors.New("result has no tools array")
+	}
+	return len(tlr.Tools), nil
+}
+
+// checkInitializeResult requires an initialize result to name the protocol
+// version the server speaks, as every MCP InitializeResult must.
+func checkInitializeResult(result json.RawMessage) error {
+	var init struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if err := json.Unmarshal(result, &init); err != nil {
+		return fmt.Errorf("result is not an initialize result: %w", err)
+	}
+	if init.ProtocolVersion == "" {
+		return errors.New("result has no protocolVersion")
+	}
+	return nil
 }
 
 // transport is the minimal request/response surface a health probe needs. Both
@@ -178,20 +203,28 @@ type transport interface {
 // HTTP probes agree on what "healthy" means — a server whose initialize succeeds
 // but whose tools/list fails is Unreachable on both transports, not just stdio.
 func handshake(t transport) (status, errMsg string, toolCount int) {
-	if _, err := t.SendRequest(1, "initialize", initializeParams); err != nil {
+	result, err := t.SendRequest(1, "initialize", initializeParams)
+	if err == nil {
+		err = checkInitializeResult(result)
+	}
+	if err != nil {
 		return StatusUnreachable, fmt.Sprintf("initialize: %s", err), 0
 	}
 
-	result, err := t.SendRequest(2, "tools/list", toolsListParams)
+	result, err = t.SendRequest(2, "tools/list", toolsListParams)
+	if err != nil {
+		return StatusUnreachable, fmt.Sprintf("tools/list: %s", err), 0
+	}
+	count, err := countTools(result)
 	if err != nil {
 		return StatusUnreachable, fmt.Sprintf("tools/list: %s", err), 0
 	}
 
-	return StatusHealthy, "", countTools(result)
+	return StatusHealthy, "", count
 }
 
 func checkHTTPServer(ctx context.Context, cfg ServerConfig, h *ServerHealth, start time.Time) *ServerHealth {
-	status, errMsg, toolCount := handshake(&httpTransport{ctx: ctx, url: cfg.URL})
+	status, errMsg, toolCount := handshake(&httpTransport{ctx: ctx, url: cfg.URL, headers: cfg.Headers})
 
 	h.Status = status
 	h.Error = errMsg
@@ -204,8 +237,9 @@ func checkHTTPServer(ctx context.Context, cfg ServerConfig, h *ServerHealth, sta
 // JSON-RPC request and validates the reply, so the shared handshake behaves the
 // same as it does over stdio.
 type httpTransport struct {
-	ctx context.Context
-	url string
+	ctx     context.Context
+	url     string
+	headers map[string]string
 }
 
 // SendRequest POSTs a real MCP JSON-RPC request rather than a bare GET. A bare
@@ -224,6 +258,9 @@ func (t *httpTransport) SendRequest(id int, method string, params json.RawMessag
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)
 	}
+	for k, v := range t.headers {
+		req.Header.Set(k, v)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 
@@ -241,17 +278,18 @@ func (t *httpTransport) SendRequest(id int, method string, params json.RawMessag
 	if err != nil {
 		return nil, fmt.Errorf("endpoint did not return a valid MCP response: %w", err)
 	}
-	if rpc.Error != nil {
-		return nil, fmt.Errorf("server error %d: %s", rpc.Error.Code, rpc.Error.Message)
+	if !rpc.answers(id) {
+		return nil, fmt.Errorf("endpoint did not return a valid MCP response: reply does not answer request id %d", id)
 	}
 
-	return rpc.Result, nil
+	return rpc.outcome()
 }
 
-// decodeJSONRPCResponse extracts the JSON-RPC response from an MCP
-// Streamable-HTTP initialize reply, which may be a direct application/json body
-// or a single SSE `data:` event (text/event-stream). It returns an error when
-// the body is not a JSON-RPC 2.0 message — i.e. the endpoint does not speak MCP.
+// decodeJSONRPCResponse extracts the JSON-RPC message from an MCP
+// Streamable-HTTP reply, which may be a direct application/json body or a
+// single SSE `data:` event (text/event-stream). It returns an error when the
+// body is not JSON at all; the caller validates it with answers and outcome,
+// exactly as the stdio transport does.
 func decodeJSONRPCResponse(resp *http.Response) (*jsonRPCResponse, error) {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHealthResponseBytes))
 	if err != nil {
@@ -267,9 +305,6 @@ func decodeJSONRPCResponse(resp *http.Response) (*jsonRPCResponse, error) {
 	var rpc jsonRPCResponse
 	if err := json.Unmarshal(bytes.TrimSpace(payload), &rpc); err != nil {
 		return nil, fmt.Errorf("response is not JSON-RPC: %w", err)
-	}
-	if rpc.JSONRPC != "2.0" || (rpc.Result == nil && rpc.Error == nil) {
-		return nil, fmt.Errorf("response is not a JSON-RPC 2.0 result")
 	}
 	return &rpc, nil
 }

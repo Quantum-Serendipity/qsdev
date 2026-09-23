@@ -564,11 +564,12 @@ func catalogZIMEntries(cat *catalog.Catalog) []mcpregistry.ZIMEntry {
 	entries := make([]mcpregistry.ZIMEntry, len(defs))
 	for i, d := range defs {
 		entries[i] = mcpregistry.ZIMEntry{
-			Slug:        d.Slug,
-			DisplayName: d.DisplayName,
-			URL:         d.URL,
-			SizeBytes:   d.SizeBytes,
-			Ecosystems:  d.Ecosystems,
+			Slug:         d.Slug,
+			DisplayName:  d.DisplayName,
+			URL:          d.URL,
+			ExpectedHash: d.SHA256,
+			SizeBytes:    d.SizeBytes,
+			Ecosystems:   d.Ecosystems,
 		}
 	}
 	return entries

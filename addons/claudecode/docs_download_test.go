@@ -12,6 +12,11 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 )
 
+// okBodySHA256 is the SHA-256 of the "{}" body the test server returns. ZIM
+// entries pin it because unpinned downloads require an HTTPS-published hash
+// (F263), which the plain-HTTP test server cannot provide.
+const okBodySHA256 = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+
 // newDocsTestServer serves ok for paths under /ok/ and 404 for everything else.
 func newDocsTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -38,7 +43,7 @@ func TestDownloadHelpers_ReportFailures(t *testing.T) {
 		zim        []mcpregistry.ZIMEntry
 		wantFailed int
 	}{
-		{name: "all succeed", slugs: map[string][]string{"go": {"ok"}}, zim: []mcpregistry.ZIMEntry{{Slug: "a", DisplayName: "A", URL: srv.URL + "/ok/a.zim"}}},
+		{name: "all succeed", slugs: map[string][]string{"go": {"ok"}}, zim: []mcpregistry.ZIMEntry{{Slug: "a", DisplayName: "A", URL: srv.URL + "/ok/a.zim", ExpectedHash: okBodySHA256}}},
 		{name: "devdocs failure", slugs: map[string][]string{"go": {"ok", "missing"}}, wantFailed: 1},
 		{name: "zim failure", zim: []mcpregistry.ZIMEntry{{Slug: "b", DisplayName: "B", URL: srv.URL + "/missing/b.zim"}}, wantFailed: 1},
 	}
@@ -75,7 +80,7 @@ func TestUpdateOutdatedSets(t *testing.T) {
 	t.Parallel()
 	srv := newDocsTestServer(t)
 	zimEntries := []mcpregistry.ZIMEntry{
-		{Slug: "site_2026-08", URL: srv.URL + "/ok/site_2026-08.zim"},
+		{Slug: "site_2026-08", URL: srv.URL + "/ok/site_2026-08.zim", ExpectedHash: okBodySHA256},
 		{Slug: "broken_2026-08", URL: srv.URL + "/missing/broken_2026-08.zim"},
 	}
 

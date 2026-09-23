@@ -16,10 +16,12 @@ type McpJSON struct {
 }
 
 // MCPServerEntry represents a single MCP server entry in .mcp.json.
-// HTTP-transport servers use Type+URL; stdio servers use Command+Args.
+// HTTP-transport servers use Type+URL (plus optional Headers); stdio servers
+// use Command+Args.
 type MCPServerEntry struct {
 	Type        string            `json:"type,omitempty"`
 	URL         string            `json:"url,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
 	Command     string            `json:"command,omitempty"`
 	Args        []string          `json:"args,omitempty"`
 	Env         map[string]string `json:"env,omitempty"`

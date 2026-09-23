@@ -31,7 +31,7 @@ func GradeServer(def *McpServerDefinition) GradeResult {
 	criteria = append(criteria, CriterionResult{
 		Name:   "no-plaintext-secrets",
 		Passed: noSecrets,
-		Detail: boolDetail(noSecrets, "env values contain no plaintext secrets", "env values may contain plaintext secrets"),
+		Detail: boolDetail(noSecrets, "config values contain no plaintext secrets", "env, args, headers or url may contain plaintext secrets"),
 	})
 
 	stdioTransport := def.Transport == TransportStdio
@@ -51,7 +51,7 @@ func GradeServer(def *McpServerDefinition) GradeResult {
 	criteria = append(criteria, CriterionResult{
 		Name:   "local-only",
 		Passed: localOnly,
-		Detail: boolDetail(localOnly, "command runs locally", "command may fetch from network"),
+		Detail: boolDetail(localOnly, "server runs locally", "server is remote or its command may fetch from network"),
 	})
 
 	noNpxY := !hasNpxDashY(def)

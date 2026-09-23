@@ -1,6 +1,8 @@
 package mcpregistry
 
 import (
+	"net"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -23,11 +25,57 @@ var secretPrefixes = []string{
 // network at runtime.
 var networkCommands = []string{"npx", "npm", "pnpx", "bunx", "uvx", "pipx"}
 
-// hasPlaintextSecrets returns true if any value in def.Env appears to be a
-// plaintext secret rather than a variable reference.
+// hasPlaintextSecrets returns true if any configured value appears to be a
+// plaintext secret rather than a variable reference: an env value, an arg, a
+// header value, or a credential embedded in the URL.
 func hasPlaintextSecrets(def *McpServerDefinition) bool {
 	for _, v := range def.Env {
 		if looksLikeSecret(v) {
+			return true
+		}
+	}
+	for _, a := range def.Args {
+		if containsSecret(a) {
+			return true
+		}
+	}
+	for _, v := range def.Headers {
+		if containsSecret(v) {
+			return true
+		}
+	}
+	return urlHasSecret(def.URL)
+}
+
+// containsSecret reports whether any word of a composite value looks like a
+// secret, so "--token=ghp_..." and "Bearer ghp_..." are caught as well as a
+// bare token.
+func containsSecret(value string) bool {
+	words := strings.FieldsFunc(value, func(r rune) bool {
+		return r == '=' || r == ' ' || r == '\t' || r == ','
+	})
+	return slices.ContainsFunc(words, looksLikeSecret)
+}
+
+// urlHasSecret reports whether a URL embeds a credential: a userinfo password,
+// a path segment (as in https://host/mcp/<key>/sse) or a query parameter value.
+func urlHasSecret(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		// Unparseable: fall back to scanning the raw string.
+		return containsSecret(raw)
+	}
+	if pw, ok := u.User.Password(); ok && pw != "" && !strings.Contains(pw, "${") {
+		return true
+	}
+	if slices.ContainsFunc(strings.Split(u.Path, "/"), looksLikeSecret) {
+		return true
+	}
+	for _, vals := range u.Query() {
+		if slices.ContainsFunc(vals, containsSecret) {
 			return true
 		}
 	}
@@ -64,9 +112,13 @@ func looksLikeSecret(value string) bool {
 	return false
 }
 
-// isLocalOnly returns true when the server command runs locally without
-// fetching packages from the network at runtime.
+// isLocalOnly returns true when the server runs locally: a command that does
+// not fetch packages from the network at runtime, or a URL on the loopback
+// interface. A remote endpoint is never local.
 func isLocalOnly(def *McpServerDefinition) bool {
+	if def.URL != "" {
+		return isLoopbackURL(def.URL)
+	}
 	return !LaunchesFromNetwork(def.Command)
 }
 
@@ -97,11 +149,25 @@ func launcherName(command string) string {
 	return name
 }
 
+// isLoopbackURL reports whether raw points at localhost or a loopback address.
+func isLoopbackURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // hasNpxDashY returns true when the command is "npx" and the arguments include
 // the -y or --yes flag, which enables automatic installation of unreviewed
 // packages.
 func hasNpxDashY(def *McpServerDefinition) bool {
-	if def.Command != "npx" {
+	if launcherName(def.Command) != "npx" {
 		return false
 	}
 	return slices.Contains(def.Args, "-y") || slices.Contains(def.Args, "--yes")

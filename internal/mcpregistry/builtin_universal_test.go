@@ -29,8 +29,8 @@ func TestRegistryIntegration(t *testing.T) {
 	if def.Source != SourceBuiltin {
 		t.Errorf("Source = %q, want %q", def.Source, SourceBuiltin)
 	}
-	if def.ComplianceGrade != ComplianceVerified {
-		t.Errorf("ComplianceGrade = %q, want %q", def.ComplianceGrade, ComplianceVerified)
+	if got := GradeServer(def).Level; got < ComplianceVerified {
+		t.Errorf("GradeServer level = %s, want at least %s", got, ComplianceVerified)
 	}
 	if def.Command != "qsdev" {
 		t.Errorf("Command = %q, want %q", def.Command, "qsdev")

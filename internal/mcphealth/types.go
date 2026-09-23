@@ -2,12 +2,16 @@ package mcphealth
 
 import "time"
 
+// ServerConfig describes one MCP server to probe, as configured in .mcp.json.
+// Command, Args, URL, Env values and Headers values may contain ${VAR} and
+// ${VAR:-default} references, which are expanded as Claude Code expands them.
 type ServerConfig struct {
 	Name        string
 	Command     string
 	Args        []string
 	URL         string
 	Env         map[string]string
+	Headers     map[string]string
 	RequiredEnv []string
 }
 

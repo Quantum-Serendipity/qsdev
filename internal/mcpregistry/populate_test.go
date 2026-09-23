@@ -2,9 +2,12 @@ package mcpregistry
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 )
 
 func TestBuildDefault_RegistersKnownServers(t *testing.T) {
@@ -13,6 +16,30 @@ func TestBuildDefault_RegistersKnownServers(t *testing.T) {
 	r := buildDefault()
 	if r.Count() < 13 {
 		t.Errorf("buildDefault() registry count = %d, want >= 13", r.Count())
+	}
+}
+
+// TestBuildRegistry_CatalogLoadFailure is the F279 regression: a catalog that
+// fails to load used to be swallowed, leaving a silently smaller registry. The
+// built-in servers must still register and the failure must be reported.
+func TestBuildRegistry_CatalogLoadFailure(t *testing.T) {
+	t.Parallel()
+
+	loadErr := errors.New("parsing override: bad yaml")
+	r := buildRegistry(func() (*catalog.Catalog, error) { return nil, loadErr })
+
+	if err := r.CatalogErr(); !errors.Is(err, loadErr) {
+		t.Errorf("CatalogErr() = %v, want it to wrap %v", err, loadErr)
+	}
+	if _, ok := r.ByName(universalServerName); !ok {
+		t.Errorf("built-in %s missing after a catalog failure", universalServerName)
+	}
+	if _, ok := r.ByName("context7"); ok {
+		t.Error("catalog server registered despite the catalog failing to load")
+	}
+
+	if err := buildDefault().CatalogErr(); err != nil {
+		t.Errorf("default catalog: CatalogErr() = %v, want nil", err)
 	}
 }
 

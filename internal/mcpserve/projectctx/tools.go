@@ -214,7 +214,7 @@ func (pc *ProjectContext) handleMCPList(ctx context.Context, _ *spi.ToolCallCont
 		entry := map[string]any{
 			"name": d.Name, "display_name": d.DisplayName,
 			"category": string(d.Category), "transport": string(d.Transport),
-			"grade": d.ComplianceGrade.String(), "source": string(d.Source),
+			"grade": mcpregistry.GradeServer(d).Level.String(), "source": string(d.Source),
 		}
 		if withHealth {
 			entry["health"] = pc.probeHealth(ctx, d)

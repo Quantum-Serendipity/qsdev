@@ -2,8 +2,13 @@ package mcpregistry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -25,6 +30,49 @@ func (m *mockRunner) Run(_ context.Context, name string, args ...string) ([]byte
 	return nil, m.err
 }
 
+// isInventoryQuery reports whether a command lists installed packages
+// (`uv tool list` or `npm ls`) rather than changing them.
+func isInventoryQuery(name string, args []string) bool {
+	return (name == "uv" && len(args) >= 2 && args[1] == "list") ||
+		(name == "npm" && len(args) >= 1 && args[0] == "ls")
+}
+
+// inventoryOutput renders pkgs (name -> version) as the matching package
+// manager's inventory listing.
+func inventoryOutput(name string, pkgs map[string]string) []byte {
+	if name == "uv" {
+		var b strings.Builder
+		for p, v := range pkgs {
+			fmt.Fprintf(&b, "%s v%s\n- %s\n", p, v, p)
+		}
+		return []byte(b.String())
+	}
+	deps := make(map[string]map[string]string, len(pkgs))
+	for p, v := range pkgs {
+		deps[p] = map[string]string{"version": v}
+	}
+	out, _ := json.Marshal(map[string]any{"dependencies": deps})
+	return out
+}
+
+// inventory returns a responder under which every package-manager command
+// succeeds and the inventory listings report pkgs as installed.
+func inventory(pkgs map[string]string) func(string, []string) ([]byte, error) {
+	return func(name string, args []string) ([]byte, error) {
+		if isInventoryQuery(name, args) {
+			return inventoryOutput(name, pkgs), nil
+		}
+		return nil, nil
+	}
+}
+
+// catalogPackages reports every test server's package as installed.
+var catalogPackages = map[string]string{
+	"man-mcp-server":                 "1.0.0",
+	"@madhan-g-p/devdocs-mcp-server": "1.0.0",
+	"@upstash/context7-mcp":          "1.0.0",
+}
+
 func testStateLoader(state *types.GeneratedState) func() (*types.GeneratedState, error) {
 	return func() (*types.GeneratedState, error) { return state, nil }
 }
@@ -33,14 +81,36 @@ func testStateSaver(state *types.GeneratedState) func(*types.GeneratedState) err
 	return func(s *types.GeneratedState) error { *state = *s; return nil }
 }
 
+// testNow is the fixed clock tests run at, so release-age cutoffs are stable.
+var testNow = time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+
+const (
+	testNpmCutoff = "2026-09-20T12:00:00Z" // testNow - npmMinReleaseAge
+	testUvCutoff  = "2026-09-16T12:00:00Z" // testNow - uvMinReleaseAge
+)
+
 func newTestLifecycle(runner *mockRunner, state *types.GeneratedState) *McpLifecycle {
 	return &McpLifecycle{
 		CmdRunner:   runner,
 		StateLoader: testStateLoader(state),
 		StateSaver:  testStateSaver(state),
+		Now:         func() time.Time { return testNow },
 	}
 }
 
+func assertFirstCommand(t *testing.T, runner *mockRunner, want []string) {
+	t.Helper()
+	if len(runner.commands) == 0 {
+		t.Fatal("expected at least 1 command, got 0")
+	}
+	if got := runner.commands[0]; !slices.Equal(got, want) {
+		t.Errorf("command = %q, want %q", got, want)
+	}
+}
+
+// TestInstall also covers F260: installs are age-gated and npm lifecycle
+// scripts are disabled, since a global install bypasses the project .npmrc and
+// the package-guard hook.
 func TestInstall(t *testing.T) {
 	t.Parallel()
 
@@ -54,13 +124,13 @@ func TestInstall(t *testing.T) {
 		{
 			name:        "UvTool",
 			serverName:  "man-pages",
-			wantCmd:     []string{"uv", "tool", "install", "man-mcp-server"},
+			wantCmd:     []string{"uv", "tool", "install", "--exclude-newer", testUvCutoff, "man-mcp-server"},
 			wantInstall: true,
 		},
 		{
 			name:        "NpmGlobal",
 			serverName:  "local-docs-devdocs",
-			wantCmd:     []string{"npm", "install", "-g", "@madhan-g-p/devdocs-mcp-server"},
+			wantCmd:     []string{"npm", "install", "-g", "--ignore-scripts", "--before=" + testNpmCutoff, "@madhan-g-p/devdocs-mcp-server"},
 			wantInstall: true,
 		},
 		{
@@ -74,7 +144,7 @@ func TestInstall(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			runner := &mockRunner{}
+			runner := &mockRunner{responder: inventory(catalogPackages)}
 			state := &types.GeneratedState{
 				McpServers: make(map[string]types.McpServerState),
 			}
@@ -92,25 +162,12 @@ func TestInstall(t *testing.T) {
 			}
 
 			if result.Installed != tt.wantInstall {
-				t.Errorf("Installed = %v, want %v", result.Installed, tt.wantInstall)
+				t.Errorf("Installed = %v, want %v (error=%q)", result.Installed, tt.wantInstall, result.Error)
 			}
 
-			if tt.wantCmd != nil {
-				// A successful install runs the install command first, then a
-				// version-resolution probe, so assert on the first command.
-				if len(runner.commands) == 0 {
-					t.Fatal("expected at least 1 command, got 0")
-				}
-				got := runner.commands[0]
-				if len(got) != len(tt.wantCmd) {
-					t.Fatalf("command = %v, want %v", got, tt.wantCmd)
-				}
-				for i := range got {
-					if got[i] != tt.wantCmd[i] {
-						t.Errorf("command[%d] = %q, want %q", i, got[i], tt.wantCmd[i])
-					}
-				}
-			}
+			// A successful install runs the install command first, then a
+			// version-resolution probe, so assert on the first command.
+			assertFirstCommand(t, runner, tt.wantCmd)
 		})
 	}
 }
@@ -168,13 +225,13 @@ func TestUpdate(t *testing.T) {
 		{
 			name:       "UvTool",
 			serverName: "man-pages",
-			wantCmd:    []string{"uv", "tool", "upgrade", "man-mcp-server"},
+			wantCmd:    []string{"uv", "tool", "upgrade", "--exclude-newer", testUvCutoff, "man-mcp-server"},
 			wantUpdate: true,
 		},
 		{
 			name:       "NpmGlobal",
 			serverName: "context7",
-			wantCmd:    []string{"npm", "update", "-g", "@upstash/context7-mcp"},
+			wantCmd:    []string{"npm", "update", "-g", "--ignore-scripts", "--before=" + testNpmCutoff, "@upstash/context7-mcp"},
 			wantUpdate: true,
 		},
 	}
@@ -183,9 +240,9 @@ func TestUpdate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			runner := &mockRunner{}
+			runner := &mockRunner{responder: inventory(catalogPackages)}
 			state := &types.GeneratedState{
-				McpServers: make(map[string]types.McpServerState),
+				McpServers: map[string]types.McpServerState{tt.serverName: {InstalledVersion: "0.9.0"}},
 			}
 			lc := newTestLifecycle(runner, state)
 
@@ -195,23 +252,12 @@ func TestUpdate(t *testing.T) {
 			}
 
 			if result.Updated != tt.wantUpdate {
-				t.Errorf("Updated = %v, want %v", result.Updated, tt.wantUpdate)
+				t.Errorf("Updated = %v, want %v (error=%q)", result.Updated, tt.wantUpdate, result.Error)
 			}
 
 			// A successful update runs the upgrade command first, then a
 			// version-resolution probe, so assert on the first command.
-			if len(runner.commands) == 0 {
-				t.Fatal("expected at least 1 command, got 0")
-			}
-			got := runner.commands[0]
-			if len(got) != len(tt.wantCmd) {
-				t.Fatalf("command = %v, want %v", got, tt.wantCmd)
-			}
-			for i := range got {
-				if got[i] != tt.wantCmd[i] {
-					t.Errorf("command[%d] = %q, want %q", i, got[i], tt.wantCmd[i])
-				}
-			}
+			assertFirstCommand(t, runner, tt.wantCmd)
 		})
 	}
 }
@@ -241,18 +287,13 @@ func TestRemove(t *testing.T) {
 		if len(runner.commands) != 1 {
 			t.Fatalf("expected 1 command, got %d", len(runner.commands))
 		}
-		got := runner.commands[0]
-		for i := range got {
-			if got[i] != wantCmd[i] {
-				t.Errorf("command[%d] = %q, want %q", i, got[i], wantCmd[i])
-			}
-		}
+		assertFirstCommand(t, runner, wantCmd)
 	})
 
 	t.Run("ClearsState", func(t *testing.T) {
 		t.Parallel()
 
-		runner := &mockRunner{}
+		runner := &mockRunner{responder: inventory(catalogPackages)}
 		state := &types.GeneratedState{
 			McpServers: make(map[string]types.McpServerState),
 		}
@@ -276,6 +317,57 @@ func TestRemove(t *testing.T) {
 			t.Error("expected man-pages removed from state after removal")
 		}
 	})
+}
+
+// TestRemove_FailedUninstall is the F273 regression: a failed uninstall used
+// to drop the state entry anyway, orphaning a still-installed package from
+// every future `mcp update --all`. The entry must survive while the package is
+// still installed, and go only once the package is confirmed absent.
+func TestRemove_FailedUninstall(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		stillPresent    bool
+		inventoryBroken bool
+		wantStateKept   bool
+	}{
+		{name: "package still installed keeps state", stillPresent: true, wantStateKept: true},
+		{name: "package already gone drops stale state", stillPresent: false, wantStateKept: false},
+		{name: "unreadable inventory keeps state", inventoryBroken: true, wantStateKept: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			present := map[string]string{}
+			if tt.stillPresent {
+				present["man-mcp-server"] = "1.0.0"
+			}
+			runner := &mockRunner{responder: func(name string, args []string) ([]byte, error) {
+				if isInventoryQuery(name, args) && !tt.inventoryBroken {
+					return inventoryOutput(name, present), nil
+				}
+				return []byte("EACCES"), errors.New("exit status 1")
+			}}
+			state := &types.GeneratedState{
+				McpServers: map[string]types.McpServerState{"man-pages": {InstalledVersion: "1.0.0"}},
+			}
+			lc := newTestLifecycle(runner, state)
+
+			result, err := lc.Remove(context.Background(), "man-pages")
+			if err != nil {
+				t.Fatalf("unexpected Go error: %v", err)
+			}
+			if result.Removed || result.Error == "" {
+				t.Errorf("Removed = %v, Error = %q; want a reported failure", result.Removed, result.Error)
+			}
+			if _, kept := state.McpServers["man-pages"]; kept != tt.wantStateKept {
+				t.Errorf("state entry kept = %v, want %v", kept, tt.wantStateKept)
+			}
+		})
+	}
 }
 
 // TestInstall_FailedCommandDoesNotWriteState guards the fail-closed contract:
@@ -390,21 +482,14 @@ func TestInstall_RecordsResolvedVersionNpm(t *testing.T) {
 	}
 }
 
-// TestInstall_UnverifiedWhenPackageNotFound asserts that when the install
-// command succeeds but the package cannot be found in the manager inventory,
-// the version is recorded as unknown and health as unverified (an honest
-// unknown rather than a fake "latest"/"installed").
-func TestInstall_UnverifiedWhenPackageNotFound(t *testing.T) {
+// TestInstall_NotInstalledWhenPackageNotFound is the F272 regression: when the
+// install command exits 0 but the package is absent from the manager's
+// inventory, the server is not installed. It must not be reported as Installed
+// nor recorded in state.
+func TestInstall_NotInstalledWhenPackageNotFound(t *testing.T) {
 	t.Parallel()
 
-	runner := &mockRunner{
-		responder: func(name string, args []string) ([]byte, error) {
-			if name == "uv" && len(args) >= 2 && args[1] == "list" {
-				return []byte("some-other-tool v1.0.0\n- some-other-tool\n"), nil
-			}
-			return nil, nil // install succeeds
-		},
-	}
+	runner := &mockRunner{responder: inventory(map[string]string{"some-other-tool": "1.0.0"})}
 	state := &types.GeneratedState{
 		McpServers: make(map[string]types.McpServerState),
 	}
@@ -414,15 +499,14 @@ func TestInstall_UnverifiedWhenPackageNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Version != "unknown" {
-		t.Errorf("result.Version = %q, want %q", result.Version, "unknown")
+	if result.Installed {
+		t.Error("Installed = true for a package missing from the inventory")
 	}
-	st := state.McpServers["man-pages"]
-	if st.InstalledVersion != "unknown" {
-		t.Errorf("state InstalledVersion = %q, want %q", st.InstalledVersion, "unknown")
+	if !strings.Contains(result.Error, "not in its inventory") {
+		t.Errorf("Error = %q, want it to explain the package is missing", result.Error)
 	}
-	if st.LastHealthStatus != "unverified" {
-		t.Errorf("state LastHealthStatus = %q, want %q", st.LastHealthStatus, "unverified")
+	if _, ok := state.McpServers["man-pages"]; ok {
+		t.Error("an unverified install must not be recorded in state")
 	}
 }
 
@@ -474,13 +558,16 @@ func TestUpdate_RecordsResolvedVersion(t *testing.T) {
 		},
 	}
 	state := &types.GeneratedState{
-		McpServers: make(map[string]types.McpServerState),
+		McpServers: map[string]types.McpServerState{"man-pages": {InstalledVersion: "2.4.0"}},
 	}
 	lc := newTestLifecycle(runner, state)
 
 	result, err := lc.Update(context.Background(), "man-pages")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.PreviousVer != "2.4.0" {
+		t.Errorf("result.PreviousVer = %q, want %q", result.PreviousVer, "2.4.0")
 	}
 	if result.NewVersion != "2.5.0" {
 		t.Errorf("result.NewVersion = %q, want %q", result.NewVersion, "2.5.0")
@@ -494,5 +581,52 @@ func TestUpdate_RecordsResolvedVersion(t *testing.T) {
 	}
 	if st.LastHealthStatus != "installed" {
 		t.Errorf("state LastHealthStatus = %q, want %q", st.LastHealthStatus, "installed")
+	}
+}
+
+// TestUpdate_UnverifiedOutcomes is the F272 regression for Update: updating a
+// server qsdev never installed (`npm update -g` exits 0 for it) or whose
+// package vanished must not report Updated nor create a state entry.
+func TestUpdate_UnverifiedOutcomes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		tracked   bool
+		wantCmds  int
+		wantError string
+	}{
+		{name: "never installed", tracked: false, wantCmds: 0, wantError: "not installed"},
+		{name: "missing after upgrade", tracked: true, wantCmds: 2, wantError: "not in its inventory"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			runner := &mockRunner{responder: inventory(nil)}
+			state := &types.GeneratedState{McpServers: map[string]types.McpServerState{}}
+			if tt.tracked {
+				state.McpServers["context7"] = types.McpServerState{InstalledVersion: "1.0.0"}
+			}
+			lc := newTestLifecycle(runner, state)
+
+			result, err := lc.Update(context.Background(), "context7")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.Updated {
+				t.Error("Updated = true for an unverified update")
+			}
+			if !strings.Contains(result.Error, tt.wantError) {
+				t.Errorf("Error = %q, want it to contain %q", result.Error, tt.wantError)
+			}
+			if len(runner.commands) != tt.wantCmds {
+				t.Errorf("ran %d commands, want %d: %v", len(runner.commands), tt.wantCmds, runner.commands)
+			}
+			if st, ok := state.McpServers["context7"]; ok != tt.tracked || (ok && st.InstalledVersion != "1.0.0") {
+				t.Errorf("state entry = %+v (present %v), want it unchanged", st, ok)
+			}
+		})
 	}
 }

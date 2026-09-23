@@ -288,6 +288,7 @@ func loadMCPServers(projectRoot string) (map[string]mcphealth.ServerConfig, erro
 			Args:    entry.Args,
 			URL:     entry.URL,
 			Env:     entry.Env,
+			Headers: entry.Headers,
 		}
 		if catErr == nil {
 			if def, ok := cat.MCPServer(name); ok {

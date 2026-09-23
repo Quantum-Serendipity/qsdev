@@ -305,11 +305,24 @@ func TestMCPList(t *testing.T) {
 		t.Fatalf("mcp_list error: %q", res.Text)
 	}
 	structured := res.Structured.(map[string]any)
-	if _, ok := structured["servers"].([]map[string]any); !ok {
+	servers, ok := structured["servers"].([]map[string]any)
+	if !ok {
 		t.Errorf("mcp_list structured missing servers list: %v", structured)
 	}
 	if structured["health_probed"] != false {
 		t.Errorf("expected health_probed=false without the flag")
+	}
+
+	// F274: the reported grade must be the computed one `qsdev mcp grade`
+	// shows, not a stale stored field.
+	for _, s := range servers {
+		def, found := pc.mcpReg.ByName(s["name"].(string))
+		if !found {
+			t.Fatalf("mcp_list server %v not in registry", s["name"])
+		}
+		if want := mcpregistry.GradeServer(def).Level.String(); s["grade"] != want {
+			t.Errorf("server %v grade = %v, want computed %q", s["name"], s["grade"], want)
+		}
 	}
 }
 

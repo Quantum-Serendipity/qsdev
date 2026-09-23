@@ -20,6 +20,74 @@ type McpLifecycle struct {
 	CmdRunner   CommandRunner
 	StateLoader func() (*types.GeneratedState, error)
 	StateSaver  func(*types.GeneratedState) error
+	// Now returns the current time, from which the release-age cutoff is
+	// computed. Nil means time.Now.
+	Now func() time.Time
+}
+
+// Minimum release ages for MCP server packages. They mirror the policy qsdev
+// generates for project dependencies (min-release-age=3 in .npmrc, and
+// --exclude-newer=7d for uv), which a global install would otherwise bypass:
+// npm does not read the project .npmrc in global mode, and the package-guard
+// hook only sees the agent's own commands, not qsdev's subprocesses.
+const (
+	npmMinReleaseAge = 3 * 24 * time.Hour
+	uvMinReleaseAge  = 7 * 24 * time.Hour
+)
+
+// packageOp is a package-manager operation on an MCP server package.
+type packageOp int
+
+const (
+	opInstall packageOp = iota
+	opUpgrade
+)
+
+// packageCommand builds the package-manager command for op on pkg. Every
+// command is hardened the way project installs are: only releases older than
+// the minimum release age are eligible, and npm lifecycle scripts never run.
+func (lc *McpLifecycle) packageCommand(method McpInstallMethod, op packageOp, pkg string) (string, []string) {
+	now := time.Now
+	if lc.Now != nil {
+		now = lc.Now
+	}
+	cutoff := func(age time.Duration) string {
+		return now().Add(-age).UTC().Format(time.RFC3339)
+	}
+
+	switch method {
+	case InstallUvTool:
+		verb := "install"
+		if op == opUpgrade {
+			verb = "upgrade"
+		}
+		return "uv", []string{"tool", verb, "--exclude-newer", cutoff(uvMinReleaseAge), pkg}
+	case InstallNpmGlobal:
+		verb := "install"
+		if op == opUpgrade {
+			verb = "update"
+		}
+		return "npm", []string{verb, "-g", "--ignore-scripts", "--before=" + cutoff(npmMinReleaseAge), pkg}
+	default:
+		return "", nil
+	}
+}
+
+// runPackageCommand runs op for pkg and returns a failure description, or ""
+// on success.
+func (lc *McpLifecycle) runPackageCommand(ctx context.Context, method McpInstallMethod, op packageOp, pkg string) string {
+	name, args := lc.packageCommand(method, op, pkg)
+	out, err := lc.CmdRunner.Run(ctx, name, args...)
+	if err != nil {
+		return fmt.Sprintf("%s %s %s failed: %v: %s", name, args[0], args[1], err, out)
+	}
+	return ""
+}
+
+// notInInventory describes a package-manager command that exited 0 without
+// the package appearing in the manager's inventory afterwards.
+func notInInventory(method McpInstallMethod, pkg string) string {
+	return fmt.Sprintf("%s reported success but %s is not in its inventory", method, pkg)
 }
 
 // InstallResult reports the outcome of installing an MCP server.
@@ -65,16 +133,8 @@ func (lc *McpLifecycle) Install(ctx context.Context, serverName string) (*Instal
 	}
 
 	switch def.InstallMethod {
-	case InstallUvTool:
-		out, err := lc.CmdRunner.Run(ctx, "uv", "tool", "install", def.PackageName)
-		if err != nil {
-			result.Error = fmt.Sprintf("uv tool install failed: %v: %s", err, out)
-		}
-	case InstallNpmGlobal:
-		out, err := lc.CmdRunner.Run(ctx, "npm", "install", "-g", def.PackageName)
-		if err != nil {
-			result.Error = fmt.Sprintf("npm install -g failed: %v: %s", err, out)
-		}
+	case InstallUvTool, InstallNpmGlobal:
+		result.Error = lc.runPackageCommand(ctx, def.InstallMethod, opInstall, def.PackageName)
 	case InstallNixPackage:
 		result.Error = "nix packages are declarative; add to devenv.nix instead"
 		return result, nil
@@ -91,12 +151,17 @@ func (lc *McpLifecycle) Install(ctx context.Context, serverName string) (*Instal
 	}
 
 	// The command succeeded; resolve the real installed version and verify the
-	// package is actually present before recording success.
-	version, healthStatus := lc.verifyInstalled(ctx, def.InstallMethod, def.PackageName)
-	result.Installed = true
+	// package is actually present before recording success. A package missing
+	// from the inventory is not installed, whatever the exit code said.
+	version, found := lc.resolveInstalledVersion(ctx, def.InstallMethod, def.PackageName)
 	result.Version = version
+	if !found {
+		result.Error = notInInventory(def.InstallMethod, def.PackageName)
+		return result, nil
+	}
+	result.Installed = true
 
-	if err := lc.updateServerState(serverName, def.InstallMethod, version, healthStatus); err != nil {
+	if err := lc.updateServerState(serverName, def.InstallMethod, version); err != nil {
 		return result, fmt.Errorf("saving state for %q: %w", serverName, err)
 	}
 
@@ -123,23 +188,19 @@ func (lc *McpLifecycle) Update(ctx context.Context, serverName string) (*UpdateR
 	if err != nil {
 		return nil, fmt.Errorf("loading state: %w", err)
 	}
-	if state.McpServers != nil {
-		if prev, exists := state.McpServers[serverName]; exists {
-			result.PreviousVer = prev.InstalledVersion
-		}
+	prev, tracked := state.McpServers[serverName]
+	if !tracked {
+		// Only servers qsdev installed can be updated: `npm update -g` exits
+		// 0 for a package that is not installed, which would otherwise record
+		// a phantom install that UpdateAll then keeps "updating".
+		result.Error = fmt.Sprintf("%s is not installed; run `qsdev mcp install %s` first", serverName, serverName)
+		return result, nil
 	}
+	result.PreviousVer = prev.InstalledVersion
 
 	switch def.InstallMethod {
-	case InstallUvTool:
-		out, err := lc.CmdRunner.Run(ctx, "uv", "tool", "upgrade", def.PackageName)
-		if err != nil {
-			result.Error = fmt.Sprintf("uv tool upgrade failed: %v: %s", err, out)
-		}
-	case InstallNpmGlobal:
-		out, err := lc.CmdRunner.Run(ctx, "npm", "update", "-g", def.PackageName)
-		if err != nil {
-			result.Error = fmt.Sprintf("npm update -g failed: %v: %s", err, out)
-		}
+	case InstallUvTool, InstallNpmGlobal:
+		result.Error = lc.runPackageCommand(ctx, def.InstallMethod, opUpgrade, def.PackageName)
 	case InstallNixPackage:
 		result.Error = "nix packages are declarative; update devenv.nix instead"
 		return result, nil
@@ -155,11 +216,15 @@ func (lc *McpLifecycle) Update(ctx context.Context, serverName string) (*UpdateR
 	}
 
 	// Resolve the real post-upgrade version and verify presence.
-	version, healthStatus := lc.verifyInstalled(ctx, def.InstallMethod, def.PackageName)
-	result.Updated = true
+	version, found := lc.resolveInstalledVersion(ctx, def.InstallMethod, def.PackageName)
 	result.NewVersion = version
+	if !found {
+		result.Error = notInInventory(def.InstallMethod, def.PackageName)
+		return result, nil
+	}
+	result.Updated = true
 
-	if err := lc.updateServerState(serverName, def.InstallMethod, version, healthStatus); err != nil {
+	if err := lc.updateServerState(serverName, def.InstallMethod, version); err != nil {
 		return result, fmt.Errorf("saving state for %q: %w", serverName, err)
 	}
 
@@ -226,7 +291,17 @@ func (lc *McpLifecycle) Remove(ctx context.Context, serverName string) (*RemoveR
 		return result, nil
 	}
 
-	// Remove from state regardless of command success.
+	// Fail closed: a failed uninstall leaves the package installed, so keep
+	// its state entry and it stays covered by UpdateAll. Drop the entry only
+	// when the manager's inventory could be read and no longer lists the
+	// package; an unreadable inventory proves nothing.
+	if result.Error != "" {
+		_, found, err := lc.queryInventory(ctx, def.InstallMethod, def.PackageName)
+		if found || err != nil {
+			return result, nil
+		}
+	}
+
 	state, err := lc.StateLoader()
 	if err != nil {
 		return result, fmt.Errorf("loading state: %w", err)
@@ -242,9 +317,8 @@ func (lc *McpLifecycle) Remove(ctx context.Context, serverName string) (*RemoveR
 }
 
 // updateServerState records an MCP server's install state in generated state.
-// healthStatus is derived from a post-install verification probe and must
-// reflect the real outcome — it is never assumed to be "installed".
-func (lc *McpLifecycle) updateServerState(serverName string, method McpInstallMethod, version, healthStatus string) error {
+// Callers record only installs the post-install probe confirmed present.
+func (lc *McpLifecycle) updateServerState(serverName string, method McpInstallMethod, version string) error {
 	state, err := lc.StateLoader()
 	if err != nil {
 		return fmt.Errorf("loading state: %w", err)
@@ -259,7 +333,7 @@ func (lc *McpLifecycle) updateServerState(serverName string, method McpInstallMe
 		InstalledVersion: version,
 		InstallMethod:    method.String(),
 		LastHealthCheck:  &now,
-		LastHealthStatus: healthStatus,
+		LastHealthStatus: "installed",
 	}
 
 	return lc.StateSaver(state)
@@ -268,39 +342,40 @@ func (lc *McpLifecycle) updateServerState(serverName string, method McpInstallMe
 // versionUnknown is recorded when the installed version cannot be determined.
 const versionUnknown = "unknown"
 
-// verifyInstalled resolves the actually-installed version of a package and
-// probes that it is present in the package manager's inventory. For `uv tool`
-// and `npm -g`, a package appearing in that inventory means its entry-point
-// binary is on PATH. It returns the resolved version plus an honest health
-// status: "installed" when the package is confirmed present, "unverified" when
-// the install command reported success but presence could not be confirmed.
-func (lc *McpLifecycle) verifyInstalled(ctx context.Context, method McpInstallMethod, pkg string) (version, healthStatus string) {
-	version, found := lc.resolveInstalledVersion(ctx, method, pkg)
-	if found {
-		return version, "installed"
-	}
-	return version, "unverified"
-}
-
 // resolveInstalledVersion queries the relevant package manager for the
 // installed version of pkg. The second return value reports whether the
-// package was found in the manager's inventory.
+// package was found in the manager's inventory; an inventory that cannot be
+// read counts as not found.
 func (lc *McpLifecycle) resolveInstalledVersion(ctx context.Context, method McpInstallMethod, pkg string) (string, bool) {
+	version, found, _ := lc.queryInventory(ctx, method, pkg)
+	return version, found
+}
+
+// queryInventory is resolveInstalledVersion with the difference between "not
+// in the inventory" (found false, nil error) and "the inventory could not be
+// read" (non-nil error) preserved, for callers that must not mistake the
+// latter for proof of absence.
+func (lc *McpLifecycle) queryInventory(ctx context.Context, method McpInstallMethod, pkg string) (string, bool, error) {
 	switch method {
 	case InstallUvTool:
 		out, err := lc.CmdRunner.Run(ctx, "uv", "tool", "list")
 		if err != nil {
-			return versionUnknown, false
+			return versionUnknown, false, fmt.Errorf("listing uv tools: %w", err)
 		}
-		return parseUvToolVersion(out, pkg)
+		version, found := parseUvToolVersion(out, pkg)
+		return version, found, nil
 	case InstallNpmGlobal:
-		// `npm ls` exits non-zero on peer/extraneous warnings while still
-		// emitting valid JSON, so the exit code is intentionally ignored and
-		// the output parsed directly.
-		out, _ := lc.CmdRunner.Run(ctx, "npm", "ls", "-g", "--json", pkg)
-		return parseNpmVersion(out, pkg)
+		// `npm ls` exits non-zero on peer/extraneous warnings, and when pkg
+		// is not installed, while still emitting valid JSON, so the exit code
+		// is intentionally ignored and the output parsed directly.
+		out, runErr := lc.CmdRunner.Run(ctx, "npm", "ls", "-g", "--json", pkg)
+		if !json.Valid(out) {
+			return versionUnknown, false, fmt.Errorf("listing global npm packages: unreadable output (%v)", runErr)
+		}
+		version, found := parseNpmVersion(out, pkg)
+		return version, found, nil
 	default:
-		return versionUnknown, false
+		return versionUnknown, false, fmt.Errorf("install method %s has no inventory", method)
 	}
 }
 

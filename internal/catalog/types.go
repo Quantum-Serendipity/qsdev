@@ -245,6 +245,9 @@ type ZIMArchiveDef struct {
 	URL         string   `yaml:"url"`
 	SizeBytes   int64    `yaml:"size_bytes"`
 	Ecosystems  []string `yaml:"ecosystems"`
+	// SHA256 optionally pins the archive's hex SHA-256 digest. When empty,
+	// the digest published beside the archive (URL + ".sha256") is used.
+	SHA256 string `yaml:"sha256,omitempty"`
 }
 
 // PermissionPresetDef defines a permission preset's composition.

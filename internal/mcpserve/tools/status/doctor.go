@@ -67,6 +67,9 @@ type doctorChecker struct {
 	mcpServers func() ([]mcphealth.ServerConfig, error)
 	// probeMCP performs one server health probe. Injectable for testing.
 	probeMCP func(ctx context.Context, cfg mcphealth.ServerConfig) *mcphealth.ServerHealth
+	// mcpCatalogErr reports why catalog-defined MCP servers are missing from
+	// mcpServers, or nil. Injectable for testing.
+	mcpCatalogErr func() error
 }
 
 func newDoctorChecker(projectRoot string) *doctorChecker {
@@ -74,6 +77,9 @@ func newDoctorChecker(projectRoot string) *doctorChecker {
 		projectRoot: projectRoot,
 		timeout:     doctorTimeout,
 		probeMCP:    mcphealth.CheckServer,
+		mcpCatalogErr: func() error {
+			return mcpregistry.DefaultRegistry().CatalogErr()
+		},
 	}
 	d.mcpServers = d.configuredMCPServers
 	return d
@@ -300,7 +306,8 @@ func (d *doctorChecker) checkMCP(ctx context.Context) checkResult {
 	if err != nil {
 		return checkResult{"mcp", checkFail, err.Error(), "fix the JSON in .mcp.json"}
 	}
-	if len(servers) == 0 {
+	catalogErr := d.mcpCatalogErr()
+	if len(servers) == 0 && catalogErr == nil {
 		return checkResult{"mcp", checkPass, "no MCP servers configured", ""}
 	}
 
@@ -344,7 +351,16 @@ func (d *doctorChecker) checkMCP(ctx context.Context) checkResult {
 	if len(skipped) > 0 {
 		detail += fmt.Sprintf("; %d not probed: %s", len(skipped), strings.Join(skipped, ", "))
 	}
-	return checkResult{"mcp", status, detail, "investigate unhealthy servers with `qsdev mcp status`"}
+	remediation := "investigate unhealthy servers with `qsdev mcp status`"
+	if catalogErr != nil {
+		// A broken catalog silently drops its server definitions (and the
+		// required environment the probes rely on); never report that as a
+		// clean pass.
+		status = checkWarn
+		detail += fmt.Sprintf("; catalog-defined servers are missing (%v)", catalogErr)
+		remediation = "fix the MCP catalog or catalog override file named in the error"
+	}
+	return checkResult{"mcp", status, detail, remediation}
 }
 
 // checkHooks verifies hook files are deployed under .claude/hooks/.

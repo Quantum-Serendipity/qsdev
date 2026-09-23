@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -267,9 +268,17 @@ func (m *DocsCorpusManager) VerifyHash(entry *DocSetEntry) (ok bool, computed st
 	return strings.EqualFold(sum, entry.SHA256), sum, nil
 }
 
-// DownloadZIM fetches a ZIM archive and verifies its SHA256 hash against
-// the expected value in the catalog entry.
+// DownloadZIM fetches a ZIM archive and verifies its SHA-256 digest before
+// recording it. The expected digest is the catalog entry's ExpectedHash or,
+// when the catalog pins none, the digest the publisher serves beside the
+// archive (see expectedZIMHash). The download fails closed when no expected
+// digest can be obtained: an unverified archive is never trusted.
 func (m *DocsCorpusManager) DownloadZIM(ctx context.Context, entry ZIMEntry) error {
+	expectedHash, err := m.expectedZIMHash(ctx, entry)
+	if err != nil {
+		return fmt.Errorf("verifying zim %q: %w", entry.Slug, err)
+	}
+
 	dir := filepath.Join(m.DataDir, "zim")
 	if err := os.MkdirAll(dir, fileutil.ModeDirDefault); err != nil {
 		return fmt.Errorf("creating zim dir: %w", err)
@@ -308,9 +317,9 @@ func (m *DocsCorpusManager) DownloadZIM(ctx context.Context, entry ZIMEntry) err
 	}
 
 	computedHash := hex.EncodeToString(hasher.Sum(nil))
-	if entry.ExpectedHash != "" && computedHash != entry.ExpectedHash {
+	if computedHash != expectedHash {
 		_ = os.Remove(destPath)
-		return fmt.Errorf("hash mismatch for %q: expected %s, got %s", entry.Slug, entry.ExpectedHash, computedHash)
+		return fmt.Errorf("hash mismatch for %q: expected %s, got %s", entry.Slug, expectedHash, computedHash)
 	}
 
 	manifest, err := m.LoadManifest()
@@ -329,6 +338,85 @@ func (m *DocsCorpusManager) DownloadZIM(ctx context.Context, entry ZIMEntry) err
 	}
 
 	return m.SaveManifest(manifest)
+}
+
+// zimHashSuffix is appended to a ZIM archive URL to fetch the SHA-256 digest
+// that download.kiwix.org publishes for every archive it hosts.
+const zimHashSuffix = ".sha256"
+
+// maxZIMHashBytes bounds the published-digest response ("<hex>  <name>\n").
+const maxZIMHashBytes = 4 << 10
+
+// expectedZIMHash returns the lowercase hex SHA-256 a ZIM download must match:
+// the catalog-pinned ExpectedHash when set, otherwise the digest published at
+// entry.URL + ".sha256". The published digest is only accepted over HTTPS from
+// the archive's own host or one of its subdomains (download.kiwix.org answers
+// from lb.download.kiwix.org): archive downloads are redirected to third-party
+// mirrors, and a digest served by the same mirror as the archive would verify
+// nothing. It never returns an empty digest without an error.
+func (m *DocsCorpusManager) expectedZIMHash(ctx context.Context, entry ZIMEntry) (string, error) {
+	if entry.ExpectedHash != "" {
+		if !isSHA256Hex(entry.ExpectedHash) {
+			return "", fmt.Errorf("catalog hash %q is not a hex SHA-256 digest", entry.ExpectedHash)
+		}
+		return strings.ToLower(entry.ExpectedHash), nil
+	}
+
+	hashURL, err := url.Parse(entry.URL + zimHashSuffix)
+	if err != nil {
+		return "", fmt.Errorf("parsing archive URL: %w", err)
+	}
+	if hashURL.Scheme != "https" {
+		return "", fmt.Errorf("no pinned hash, and the published hash at %s is not served over HTTPS", hashURL)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, hashURL.String(), nil)
+	if err != nil {
+		return "", fmt.Errorf("creating hash request: %w", err)
+	}
+	resp, err := m.HTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetching published hash: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetching published hash %s: HTTP %d", hashURL, resp.StatusCode)
+	}
+	if resp.Request != nil && !sameOrigin(hashURL, resp.Request.URL) {
+		return "", fmt.Errorf("published hash %s was redirected to %s; refusing a digest not served by %s over HTTPS",
+			hashURL, resp.Request.URL.Redacted(), hashURL.Host)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxZIMHashBytes))
+	if err != nil {
+		return "", fmt.Errorf("reading published hash: %w", err)
+	}
+	fields := strings.Fields(string(body))
+	if len(fields) == 0 || !isSHA256Hex(fields[0]) {
+		return "", fmt.Errorf("published hash %s is not a SHA-256 digest", hashURL)
+	}
+	return strings.ToLower(fields[0]), nil
+}
+
+// sameOrigin reports whether final, the URL a request ended at after
+// redirects, is still HTTPS on the host of orig or a subdomain of it, i.e.
+// under the control of the same publisher rather than a third-party mirror.
+func sameOrigin(orig, final *url.URL) bool {
+	if final.Scheme != "https" {
+		return false
+	}
+	host, finalHost := strings.ToLower(orig.Hostname()), strings.ToLower(final.Hostname())
+	return finalHost == host || strings.HasSuffix(finalHost, "."+host)
+}
+
+// isSHA256Hex reports whether s is a hex-encoded SHA-256 digest.
+func isSHA256Hex(s string) bool {
+	if len(s) != hex.EncodedLen(sha256.Size) {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
 }
 
 // CheckOutdated compares installed ZIM entries against the provided catalog

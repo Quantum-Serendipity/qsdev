@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -23,7 +25,11 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
-var logSession *logging.Session
+var (
+	logSession *logging.Session
+	updateCh   <-chan string
+	finishOnce sync.Once
+)
 
 func main() {
 	instance.SetBranding(branding.Default())
@@ -53,8 +59,12 @@ func main() {
 		devinit.WithPlanPreview(true),
 	)
 
+	// logsCmd doubles as a handle on the command tree: gdev builds the root
+	// command inside cmd.Main, and a statically registered command is attached
+	// to it directly, so logsCmd.Root() reaches the root once execution starts.
+	logsCmd := logcmd.Command()
 	instance.AddCommands(selfupdate.Command())
-	instance.AddCommands(logcmd.Command())
+	instance.AddCommands(logsCmd)
 	instance.AddCommands(bugreport.Command())
 
 	// Pre-parse --debug from args before cobra processes them.
@@ -63,22 +73,96 @@ func main() {
 	// doesn't reject it as unknown.
 	os.Args = extractDebugFlag(os.Args)
 
-	cobra.OnInitialize(initLogging)
+	cobra.OnInitialize(initLogging, func() { instrumentCommandErrors(logsCmd.Root()) })
+	// gdev's cmd.Main calls os.Exit when a command fails, so nothing after it
+	// runs on failure. Cobra runs finalizers for the executed command whether
+	// or not it failed, so the session is closed (and the update notice shown)
+	// from there; the call after cmd.Main covers paths that never reach a
+	// command's execution (e.g. --help).
+	cobra.OnFinalize(finishSession)
 
-	updateCh := selfupdate.BackgroundCheck(version.Info().Version)
+	updateCh = selfupdate.BackgroundCheck(version.Info().Version)
 	cmd.Main()
-	if logSession != nil {
-		logSession.Close()
+	finishSession()
+}
+
+// finishSession writes the session's closing record and prints any pending
+// update notice, exactly once per process.
+func finishSession() {
+	finishOnce.Do(func() {
+		if logSession != nil {
+			logSession.Close()
+		}
+		selfupdate.PrintNotice(updateCh)
+	})
+}
+
+// instrumentCommandErrors wraps every error-returning hook in the command tree
+// under root so a failing command logs its error to the session log before
+// gdev prints it and exits. It must run before the executing command's hooks
+// are invoked (cobra initializers do), and at most once per tree.
+func instrumentCommandErrors(root *cobra.Command) {
+	if root == nil {
+		return
 	}
-	selfupdate.PrintNotice(updateCh)
+	wrapRun := func(fn func(*cobra.Command, []string) error) func(*cobra.Command, []string) error {
+		if fn == nil {
+			return nil
+		}
+		return func(c *cobra.Command, args []string) error {
+			err := fn(c, args)
+			logCommandFailure(c, err)
+			return err
+		}
+	}
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if c.Args != nil {
+			validate := c.Args
+			c.Args = func(c *cobra.Command, args []string) error {
+				err := validate(c, args)
+				logCommandFailure(c, err)
+				return err
+			}
+		}
+		c.PersistentPreRunE = wrapRun(c.PersistentPreRunE)
+		c.PreRunE = wrapRun(c.PreRunE)
+		c.RunE = wrapRun(c.RunE)
+		c.PostRunE = wrapRun(c.PostRunE)
+		c.PersistentPostRunE = wrapRun(c.PersistentPostRunE)
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
+}
+
+// logCommandFailure records a command's error (and its exit code, when it
+// carries one) in the session log.
+func logCommandFailure(c *cobra.Command, err error) {
+	if err == nil {
+		return
+	}
+	attrs := []any{"command", c.CommandPath(), "error", err.Error()}
+	var ece cmd.ExitCodeErr
+	if errors.As(err, &ece) {
+		attrs = append(attrs, "exit_code", ece.ExitCode())
+	}
+	slog.Error("command failed", attrs...)
 }
 
 // extractDebugFlag scans args for --debug, sets QSDEV_LOG=debug if found,
-// and returns args with --debug removed.
+// and returns args with --debug removed. Scanning stops at the "--"
+// terminator: everything after it belongs to a child command (e.g.
+// `sandbox exec -- tool --debug`) and is passed through verbatim.
 func extractDebugFlag(args []string) []string {
-	var filtered []string
+	filtered := make([]string, 0, len(args))
 	found := false
-	for _, arg := range args {
+	for i, arg := range args {
+		if arg == "--" {
+			filtered = append(filtered, args[i:]...)
+			break
+		}
 		if arg == "--debug" {
 			found = true
 			continue

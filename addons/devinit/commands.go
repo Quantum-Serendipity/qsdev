@@ -69,8 +69,9 @@ func updateOptionsFromInit(opts InitOptions) UpdateOptions {
 // runInitWithModeDetection auto-detects the onboarding mode and dispatches
 // to the appropriate handler (create, join, update, repair).
 func runInitWithModeDetection(cmd *cobra.Command, opts InitOptions) error {
-	// a. Get project root.
-	projectRoot, err := cmdutil.ProjectRoot()
+	// a. Get project root. init creates (or re-initializes) the project in the
+	// directory it is run from, so it does not walk up to an enclosing project.
+	projectRoot, err := cmdutil.WorkingDir()
 	if err != nil {
 		return err
 	}

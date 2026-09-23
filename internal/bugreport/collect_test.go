@@ -206,7 +206,7 @@ func TestBrowserURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := BrowserURL(tt.title, tt.body)
+			got, _ := BrowserURL(tt.title, tt.body)
 
 			for _, sub := range tt.wantSubs {
 				if !strings.Contains(got, sub) {
@@ -220,12 +220,18 @@ func TestBrowserURL(t *testing.T) {
 func TestBrowserURLTruncation(t *testing.T) {
 	t.Parallel()
 
-	// Body exceeding browserMaxLen (8000) should be truncated.
+	// Body whose URL would exceed browserMaxURLLen should be truncated.
 	longBody := strings.Repeat("x", 9000)
-	got := BrowserURL("title", longBody)
+	got, truncated := BrowserURL("title", longBody)
 
+	if !truncated {
+		t.Error("long body should be reported as truncated")
+	}
 	if !strings.Contains(got, "truncated") {
 		t.Error("long body should include truncation notice")
+	}
+	if len(got) > browserMaxURLLen {
+		t.Errorf("URL length %d exceeds %d", len(got), browserMaxURLLen)
 	}
 }
 
@@ -233,9 +239,9 @@ func TestBrowserURLShortBodyNotTruncated(t *testing.T) {
 	t.Parallel()
 
 	shortBody := strings.Repeat("y", 100)
-	got := BrowserURL("title", shortBody)
+	got, truncated := BrowserURL("title", shortBody)
 
-	if strings.Contains(got, "truncated") {
+	if truncated || strings.Contains(got, "truncated") {
 		t.Error("short body should not be truncated")
 	}
 }

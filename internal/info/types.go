@@ -14,6 +14,7 @@ type ProjectInfo struct {
 	ToolsByCategory   map[string]int `json:"tools_by_category"`
 	ManagedFileCount  int            `json:"managed_file_count"`
 	ClaudeCodeEnabled bool           `json:"claude_code_enabled"`
+	Warnings          []string       `json:"warnings,omitempty"`
 }
 
 // OutputMode selects the rendering format.

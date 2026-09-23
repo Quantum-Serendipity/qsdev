@@ -2,6 +2,7 @@ package info
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,6 +15,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+// SecurityProfileUnknown is reported when the project configuration cannot be
+// parsed, so a broken config is never displayed as a healthy default profile.
+const SecurityProfileUnknown = "unknown"
 
 // ErrNotQsdevProject is returned when the project root does not contain a
 // .qsdev.yaml configuration file.
@@ -35,9 +40,10 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 	// 2. Parse .qsdev.yaml.
 	cfg, cfgErr := qsdevconfig.ParseQsdevConfig(configPath)
 
-	// 3. Load state (graceful if missing).
+	// 3. Load state (graceful if missing; LoadStateFromFile returns an empty
+	// state for a missing file, so any error here means it is unreadable).
 	statePath := filepath.Join(projectRoot, branding.Get().StateDir, "."+branding.Get().AppName+"-init-state.yaml")
-	genState, _ := state.LoadStateFromFile(statePath)
+	genState, stateErr := state.LoadStateFromFile(statePath)
 
 	// 4. Load answers (graceful if missing).
 	wizardAnswers := loadAnswersBestEffort(projectRoot)
@@ -45,6 +51,16 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 	// 5. Build ProjectInfo.
 	info := &ProjectInfo{
 		ToolsByCategory: make(map[string]int),
+	}
+
+	// Surface unreadable project files instead of silently reporting defaults
+	// that make a broken project look healthy.
+	if cfgErr != nil {
+		info.Warnings = append(info.Warnings, fmt.Sprintf("config could not be parsed: %v", cfgErr))
+		info.SecurityProfile = SecurityProfileUnknown
+	}
+	if stateErr != nil {
+		info.Warnings = append(info.Warnings, fmt.Sprintf("state could not be loaded: %v", stateErr))
 	}
 
 	// From config.

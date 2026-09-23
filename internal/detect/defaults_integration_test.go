@@ -29,6 +29,9 @@ func TestDetect_FillDefaults_CarriesSuggestedConfig(t *testing.T) {
 		{"flutter", map[string]string{"pubspec.yaml": "name: app\nflutter:\n  uses-material-design: true\n"}, "dart", "flutter", "true"},
 		{"meson", map[string]string{"meson.build": "project('x', 'c')\n"}, "cpp", "build_system", "meson"},
 		{"mill", map[string]string{"build.sc": "import mill._\n"}, "scala", "build_tool", "mill"},
+		{"mill 1.x", map[string]string{"build.mill": "package build\n", ".mill-version": "1.0.4\n"}, "scala", "build_tool", "mill"},
+		{"leiningen", map[string]string{"project.clj": "(defproject x \"0.1.0\")\n"}, "clojure", "build_tool", "leiningen"},
+		{"gradle kotlin dsl manifests", map[string]string{"build.gradle.kts": "plugins { java }\n"}, "java", "manifests", "build.gradle.kts"},
 		{"stack", map[string]string{"stack.yaml": "resolver: lts-22.0\n", "app.cabal": "name: app\n"}, "haskell", "build_tool", "stack"},
 	}
 	for _, tt := range tests {

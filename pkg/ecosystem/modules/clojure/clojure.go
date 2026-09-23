@@ -17,6 +17,13 @@ import (
 // Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
+var _ ecosystem.PackageExprProvider = (*Module)(nil)
+
+// Clojure build tool identifiers, as stored in Extras["build_tool"].
+const (
+	buildToolDeps      = "tools-deps"
+	buildToolLeiningen = "leiningen"
+)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -61,9 +68,9 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	// Determine build tool. Prefer tools-deps if both are present.
 	switch {
 	case hasDepsEdn:
-		extras["build_tool"] = "tools-deps"
+		extras["build_tool"] = buildToolDeps
 	default:
-		extras["build_tool"] = "leiningen"
+		extras["build_tool"] = buildToolLeiningen
 	}
 
 	return ecosystem.DetectionResult{
@@ -87,6 +94,17 @@ func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
 	b.WriteString("  # hashes are not verified. Consider using clj-watson or lein-nvd for\n")
 	b.WriteString("  # vulnerability scanning.\n")
 	return b.String(), nil
+}
+
+// DevenvPackageExprs returns Leiningen for Leiningen projects. devenv's
+// languages.clojure provides only the clojure (tools.deps) CLI, so without it
+// a project.clj project has no lein. It is built against the project JDK
+// (languages.java.jdk.package), as devenv builds the clojure CLI.
+func (m *Module) DevenvPackageExprs(config ecosystem.ModuleConfig) []string {
+	if config.Extra("build_tool", buildToolDeps) != buildToolLeiningen {
+		return nil
+	}
+	return []string{"(pkgs.leiningen.override { jdk = config.languages.java.jdk.package; })"}
 }
 
 // SecurityConfigs returns generated security configuration files.
@@ -118,9 +136,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // CICommands returns CI pipeline commands for the Clojure ecosystem.
 // Commands vary based on the configured build tool.
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
-	buildTool := config.Extra("build_tool", "tools-deps")
-
-	if buildTool == "leiningen" {
+	if config.Extra("build_tool", buildToolDeps) == buildToolLeiningen {
 		return []ecosystem.CICommand{
 			{
 				Name:        "lein-nvd-check",
@@ -168,10 +184,10 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 			Description: "Select the Clojure build tool for this project",
 			Type:        ecosystem.FieldTypeSelect,
 			Options: []ecosystem.WizardOption{
-				{Label: "tools.deps", Value: "tools-deps"},
-				{Label: "Leiningen", Value: "leiningen"},
+				{Label: "tools.deps", Value: buildToolDeps},
+				{Label: "Leiningen", Value: buildToolLeiningen},
 			},
-			Default: "tools-deps",
+			Default: buildToolDeps,
 		},
 	}
 }

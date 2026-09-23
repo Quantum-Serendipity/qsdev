@@ -353,9 +353,16 @@ func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *eco
 				result.BuiltInHooks = append(result.BuiltInHooks, builtIn)
 			} else {
 				entry := hook.Entry
-				rawEntry := false
+				rawEntry, needsToString := false, false
 
-				if hook.NixPackage != "" {
+				switch {
+				case hook.Script != "":
+					entry = scriptHookEntry(hook)
+					rawEntry, needsToString = true, true
+					if hook.NixPackage != "" {
+						result.ExtraPackages = append(result.ExtraPackages, hook.NixPackage)
+					}
+				case hook.NixPackage != "":
 					parts := strings.SplitN(hook.Entry, " ", 2)
 					binary := parts[0]
 					args := ""
@@ -373,6 +380,7 @@ func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *eco
 					Description:   hook.Description,
 					Entry:         entry,
 					RawEntry:      rawEntry,
+					NeedsToString: needsToString,
 					Language:      hook.Language,
 					Types:         hook.Types,
 					Stages:        hook.Stages,
@@ -384,6 +392,25 @@ func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *eco
 	}
 
 	return result, nil
+}
+
+// scriptHookEntry renders a module hook's Script as a pkgs.writeShellScript
+// derivation. The script is plain bash: it is escaped for the Nix indented
+// string, so shell antiquotes and quote pairs reach bash unchanged. NixPackage's bin
+// directory is prepended to PATH so the script runs the pinned tool.
+func scriptHookEntry(hook ecosystem.HookConfig) string {
+	body := strings.TrimSpace(hook.Script)
+	body = strings.ReplaceAll(body, "''", "'''")
+	body = strings.ReplaceAll(body, "${", "''${")
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "pkgs.writeShellScript %s ''\n", nixStr(hook.ID))
+	if hook.NixPackage != "" {
+		fmt.Fprintf(&b, "        export PATH=${pkgs.%s}/bin:$PATH\n", hook.NixPackage)
+	}
+	b.WriteString(indentBlock(body, "        "))
+	b.WriteString("\n      ''")
+	return b.String()
 }
 
 // lspDisplayName is the human-readable label for the synthetic LSP language

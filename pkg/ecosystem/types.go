@@ -106,6 +106,11 @@ type HookConfig struct {
 	// Settings sets git-hooks.nix `settings.<key>` string options of a
 	// BuiltIn hook (e.g. binPath).
 	Settings map[string]string `yaml:"settings,omitempty" json:"settings,omitempty"`
+	// Script, when set, is a bash script run as the hook instead of Entry,
+	// for checks that need logic around the tool (preconditions, clear
+	// failure messages). Staged files arrive as "$@" when PassFilenames is
+	// set, and NixPackage's bin directory is first on PATH.
+	Script string `yaml:"script,omitempty" json:"script,omitempty"`
 }
 
 // CIPhase categorizes a CI command into a build pipeline phase.

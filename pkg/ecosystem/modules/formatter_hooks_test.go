@@ -21,6 +21,9 @@ func TestFormatterHooksReceiveFileOperands(t *testing.T) {
 		{module: ecosystem.NameZig, hookID: "zig-fmt"},
 		{module: ecosystem.NameDart, hookID: "dart-format"},
 		{module: ecosystem.NameSwift, hookID: "swiftformat"},
+		// scalafmt --check without files checks the whole tree (and every
+		// commit then fails on unrelated files).
+		{module: ecosystem.NameScala, hookID: "scalafmt"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.hookID, func(t *testing.T) {

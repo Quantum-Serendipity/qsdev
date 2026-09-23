@@ -66,7 +66,7 @@ func TestBuildTool_PackageManagerHonoured(t *testing.T) {
 			if got := strings.Contains(build, "mvn "); got != tt.wantMaven {
 				t.Errorf("maven verification present = %v, want %v (%q)", got, tt.wantMaven, build)
 			}
-			if got := strings.Contains(build, "gradlew"); got != tt.wantGradle {
+			if got := strings.Contains(build, "gradle build"); got != tt.wantGradle {
 				t.Errorf("gradle verification present = %v, want %v (%q)", got, tt.wantGradle, build)
 			}
 

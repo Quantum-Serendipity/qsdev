@@ -25,13 +25,20 @@ type Profiles struct {
 
 // Profile is a single Maven build profile.
 type Profile struct {
-	ID           string       `xml:"id"`
-	Repositories Repositories `xml:"repositories"`
+	ID                 string             `xml:"id"`
+	Repositories       Repositories       `xml:"repositories"`
+	PluginRepositories PluginRepositories `xml:"pluginRepositories"`
 }
 
 // Repositories wraps a list of Maven repositories.
 type Repositories struct {
 	Repository []Repository `xml:"repository"`
+}
+
+// PluginRepositories wraps the repositories Maven resolves build plugins
+// (code executed during the build) from.
+type PluginRepositories struct {
+	PluginRepository []Repository `xml:"pluginRepository"`
 }
 
 // Repository defines a single Maven artifact repository.
@@ -66,9 +73,28 @@ type Mirror struct {
 	MirrorOf string `xml:"mirrorOf"`
 }
 
+// hardenedCentral returns the Maven Central repository definition with
+// checksum failures fatal and snapshots disabled.
+func hardenedCentral() Repository {
+	return Repository{
+		ID:  "central",
+		URL: "https://repo.maven.apache.org/maven2",
+		Releases: Policy{
+			Enabled:        "true",
+			ChecksumPolicy: "fail",
+		},
+		Snapshots: Policy{
+			Enabled: "false",
+		},
+	}
+}
+
 // buildSecuritySettings returns a Settings struct configured for supply-chain
-// security: strict checksum enforcement, snapshot blocking, and a mirror that
-// forces all traffic through Maven Central.
+// security: strict checksum enforcement for dependencies and build plugins,
+// snapshot blocking, and a mirror that forces all traffic through Maven
+// Central. Plugins resolve from pluginRepositories, not repositories, so
+// overriding only the dependency repository would leave plugin downloads at
+// Maven's default checksumPolicy of warn.
 func buildSecuritySettings() Settings {
 	return Settings{
 		Xmlns: "http://maven.apache.org/SETTINGS/1.2.0",
@@ -77,19 +103,10 @@ func buildSecuritySettings() Settings {
 				{
 					ID: "security-hardened",
 					Repositories: Repositories{
-						Repository: []Repository{
-							{
-								ID:  "central",
-								URL: "https://repo.maven.apache.org/maven2",
-								Releases: Policy{
-									Enabled:        "true",
-									ChecksumPolicy: "fail",
-								},
-								Snapshots: Policy{
-									Enabled: "false",
-								},
-							},
-						},
+						Repository: []Repository{hardenedCentral()},
+					},
+					PluginRepositories: PluginRepositories{
+						PluginRepository: []Repository{hardenedCentral()},
 					},
 				},
 			},
@@ -114,8 +131,10 @@ func buildSecuritySettings() Settings {
 func xmlHeader() string {
 	return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
 		"<!-- " + branding.GeneratedBy() + " — supply-chain security hardened.\n" +
-		"     Requires: Maven >= 3.2.5 for checksumPolicy, Maven >= 3.8.1 for HTTP blocking.\n" +
-		"     checksumPolicy=fail, snapshots disabled, non-central repos blocked via mirror. -->\n"
+		"     Requires: Maven >= 3.2.5 for checksumPolicy.\n" +
+		"     checksumPolicy=fail for dependencies and plugins, snapshots disabled,\n" +
+		"     all repositories redirected to Maven Central via a mirror.\n" +
+		"     Maven reads this file only when passed with -s .mvn/settings.xml. -->\n"
 }
 
 // renderSettingsXML marshals a Settings struct to indented XML with

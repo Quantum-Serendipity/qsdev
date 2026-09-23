@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -40,6 +42,47 @@ const (
 	// detection extras name a build tool. It matches the wizard default.
 	defaultBuildTool = buildToolMaven
 )
+
+// gradleCmd runs Gradle builds. It is the Nix-provisioned gradle that
+// languages.java.gradle.enable puts on PATH (pinned, hash-verified, and built
+// against the configured JDK), not the project's ./gradlew: the wrapper runs
+// the committed gradle-wrapper.jar, which downloads whatever distribution
+// gradle-wrapper.properties names, and neither is verified by anything.
+const gradleCmd = "gradle"
+
+// mavenConfigPath is the per-project Maven CLI options file (Maven >= 3.3.1),
+// and mavenConfigContent the options qsdev puts in it.
+const (
+	mavenConfigPath    = ".mvn/maven.config"
+	mavenConfigContent = "--strict-checksums\n"
+)
+
+// mavenManifests and gradleManifests list the files that declare JVM
+// dependencies, plugins or their versions (path.Match patterns, see
+// ecosystem.DetectedManifests); the fallbacks name the conventional build
+// file when detection recorded none.
+var (
+	mavenManifests = []ecosystem.ManifestFileInfo{
+		{Path: "pom.xml", Ecosystem: "maven", LockFilePolicy: ecosystem.LockFilePolicyNone},
+	}
+	gradleManifests = []ecosystem.ManifestFileInfo{
+		{Path: "build.gradle", Ecosystem: "gradle", LockFile: "gradle.lockfile", LockFilePolicy: ecosystem.LockFilePolicyRecommended},
+		{Path: "build.gradle.kts", Ecosystem: "gradle", LockFile: "gradle.lockfile", LockFilePolicy: ecosystem.LockFilePolicyRecommended},
+		{Path: "settings.gradle", Ecosystem: "gradle", LockFilePolicy: ecosystem.LockFilePolicyNone},
+		{Path: "settings.gradle.kts", Ecosystem: "gradle", LockFilePolicy: ecosystem.LockFilePolicyNone},
+		{Path: "gradle/libs.versions.toml", Ecosystem: "gradle", LockFile: "gradle.lockfile", LockFilePolicy: ecosystem.LockFilePolicyRecommended},
+	}
+	gradleManifestFallback = gradleManifests[:1]
+)
+
+// manifestPatterns returns the Path of every candidate manifest.
+func manifestPatterns() []string {
+	var patterns []string
+	for _, m := range append(slices.Clone(mavenManifests), gradleManifests...) {
+		patterns = append(patterns, m.Path)
+	}
+	return patterns
+}
 
 // resolveBuildTool returns the configured JVM build tool. It is the single
 // source of truth for every Module method: the --java-build-tool flag stores
@@ -125,10 +168,21 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		evidence = append(evidence, "Gradle build file found")
 	}
 
+	if manifests := ecosystem.RecordManifests(projectRoot, manifestPatterns()...); manifests != "" {
+		extras[ecosystem.ExtraManifests] = manifests
+	}
+
 	// Parse Java version from .java-version file.
 	version := parseJavaVersion(projectRoot)
 	if version != "" {
-		evidence = append(evidence, fmt.Sprintf("Java version %s (from .java-version)", version))
+		if _, err := ecosystem.JDKPackage(version); err != nil {
+			// Suggesting it would make generation fail; leave the version
+			// unset (default JDK) and say why, so the user can pick one.
+			evidence = append(evidence, fmt.Sprintf(".java-version %q ignored: %v", version, err))
+			version = ""
+		} else {
+			evidence = append(evidence, fmt.Sprintf("Java version %s (from .java-version)", version))
+		}
 	}
 
 	// Detect Kotlin via .kt files or build.gradle content.
@@ -153,8 +207,16 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for JVM language support with the appropriate JDK and build tools.
+//
+// Options are written as dotted leaf assignments. Other JVM modules (Scala,
+// Clojure) and the LSP section also contribute languages.java settings to the
+// same devenv.nix attribute set, where Nix merges distinct leaves but rejects
+// any leaf defined twice.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
-	jdkPkg := jdkPackage(config.Version)
+	jdkPkg, err := ecosystem.JDKPackage(config.Version)
+	if err != nil {
+		return "", fmt.Errorf("java: %w", err)
+	}
 	bt, err := resolveBuildTool(config)
 	if err != nil {
 		return "", err
@@ -163,16 +225,14 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 
 	var b strings.Builder
 
-	b.WriteString("  languages.java = {\n")
-	b.WriteString("    enable = true;\n")
-	fmt.Fprintf(&b, "    jdk.package = pkgs.%s;\n", jdkPkg)
+	b.WriteString("  languages.java.enable = true;\n")
+	fmt.Fprintf(&b, "  languages.java.jdk.package = pkgs.%s;\n", jdkPkg)
 	if usesMaven(bt) {
-		b.WriteString("    maven.enable = true;\n")
+		b.WriteString("  languages.java.maven.enable = true;\n")
 	}
 	if usesGradle(bt) {
-		b.WriteString("    gradle.enable = true;\n")
+		b.WriteString("  languages.java.gradle.enable = true;\n")
 	}
-	b.WriteString("  };\n")
 
 	if kotlin {
 		b.WriteString("\n")
@@ -214,6 +274,15 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 				Strategy: types.Skip,
 			})
 		}
+		// Maven reads .mvn/maven.config from the project root on every run.
+		// --strict-checksums makes a checksum mismatch fatal for dependencies
+		// and build plugins alike, whichever repository serves them.
+		files = append(files, types.GeneratedFile{
+			Path:     mavenConfigPath,
+			Content:  []byte(mavenConfigContent),
+			Mode:     fileutil.ModeReadWrite,
+			Strategy: types.Skip,
+		})
 	}
 
 	if usesGradle(bt) {
@@ -263,14 +332,19 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 			// .class files). PMD provides equivalent Java static analysis over
 			// SOURCE with its bundled quickstart ruleset (no project config file),
 			// and is packaged as the top-level `pmd` attribute.
+			//
+			// Only the staged Java files are analyzed: pre-commit appends them
+			// after -d, which takes a variable number of paths in PMD 6 (the
+			// nixpkgs release). Scanning "." instead failed every commit on
+			// violations in untouched files, build output and generated sources.
 			ID:            "pmd",
 			Name:          "pmd",
-			Description:   "Run PMD static analysis on Java source (quickstart ruleset)",
-			Entry:         "pmd -R rulesets/java/quickstart.xml -f text -d .",
+			Description:   "Run PMD static analysis on staged Java source (quickstart ruleset)",
+			Entry:         "pmd -R rulesets/java/quickstart.xml -f text --no-cache -d",
 			Language:      "system",
 			Types:         []string{"java"},
 			Stages:        []string{"pre-commit"},
-			PassFilenames: false,
+			PassFilenames: true,
 			BuiltIn:       false,
 			NixPackage:    "pmd",
 		},
@@ -347,7 +421,7 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 		// in CI would trust whatever the network serves on that run.
 		cmds = append(cmds, ecosystem.CICommand{
 			Name:        "gradle-build",
-			Command:     "./gradlew build --dependency-verification strict",
+			Command:     gradleCmd + " build --dependency-verification strict",
 			Description: "Build Gradle project with strict dependency verification",
 			Phase:       ecosystem.CIPhaseTest,
 		})
@@ -370,9 +444,9 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 		{
 			Name:                 "gradle",
 			LockFile:             "gradle.lockfile",
-			InstallCommand:       "./gradlew build",
-			FrozenInstallCommand: "./gradlew build --dependency-verification strict",
-			AuditCommand:         "./gradlew dependencyCheckAnalyze",
+			InstallCommand:       gradleCmd + " build",
+			FrozenInstallCommand: gradleCmd + " build --dependency-verification strict",
+			AuditCommand:         gradleCmd + " dependencyCheckAnalyze",
 			AgeGatingSupport:     false,
 		},
 	}
@@ -399,13 +473,9 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 			Label:       "JDK version",
 			Description: "Select the JDK version to use",
 			Type:        ecosystem.FieldTypeSelect,
-			Options: []ecosystem.WizardOption{
-				{Label: "JDK 21 (LTS)", Value: "21"},
-				{Label: "JDK 17 (LTS)", Value: "17"},
-				{Label: "JDK 11 (LTS)", Value: "11"},
-			},
-			Default:  "21",
-			Required: true,
+			Options:     ecosystem.JDKWizardOptions(),
+			Default:     strconv.Itoa(ecosystem.DefaultJDKMajor),
+			Required:    true,
 		},
 		{
 			Key:         "java_kotlin",
@@ -423,13 +493,13 @@ func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.V
 	switch buildTool(config) {
 	case buildToolGradle:
 		return ecosystem.VerificationCommands{
-			Build: []string{"./gradlew build"},
-			Test:  []string{"./gradlew test"},
+			Build: []string{gradleCmd + " build"},
+			Test:  []string{gradleCmd + " test"},
 		}
 	case buildToolBoth:
 		return ecosystem.VerificationCommands{
-			Build: []string{"mvn compile", "./gradlew build"},
-			Test:  []string{"mvn test", "./gradlew test"},
+			Build: []string{"mvn compile", gradleCmd + " build"},
+			Test:  []string{"mvn test", gradleCmd + " test"},
 		}
 	default:
 		return ecosystem.VerificationCommands{
@@ -439,59 +509,20 @@ func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.V
 	}
 }
 
-// ManifestFiles returns manifest file metadata for the JVM ecosystem.
+// ManifestFiles returns manifest file metadata for the JVM ecosystem: the
+// build tool's manifests that Detect found (Kotlin-DSL build scripts, settings
+// scripts and the gradle/libs.versions.toml version catalog included), or the
+// conventional build file when none were recorded.
 func (m *Module) ManifestFiles(config ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
-	switch buildTool(config) {
-	case buildToolGradle:
-		return []ecosystem.ManifestFileInfo{
-			{
-				Path:           "build.gradle",
-				Ecosystem:      "gradle",
-				VSSupported:    false,
-				LockFile:       "gradle.lockfile",
-				LockFilePolicy: ecosystem.LockFilePolicyRecommended,
-			},
-		}
-	case buildToolBoth:
-		return []ecosystem.ManifestFileInfo{
-			{
-				Path:           "pom.xml",
-				Ecosystem:      "maven",
-				VSSupported:    false,
-				LockFilePolicy: ecosystem.LockFilePolicyNone,
-			},
-			{
-				Path:           "build.gradle",
-				Ecosystem:      "gradle",
-				VSSupported:    false,
-				LockFile:       "gradle.lockfile",
-				LockFilePolicy: ecosystem.LockFilePolicyRecommended,
-			},
-		}
-	default:
-		return []ecosystem.ManifestFileInfo{
-			{
-				Path:           "pom.xml",
-				Ecosystem:      "maven",
-				VSSupported:    false,
-				LockFilePolicy: ecosystem.LockFilePolicyNone,
-			},
-		}
+	bt := buildTool(config)
+	var out []ecosystem.ManifestFileInfo
+	if usesMaven(bt) {
+		out = append(out, ecosystem.DetectedManifests(config, mavenManifests, mavenManifests)...)
 	}
-}
-
-// jdkPackage maps a version string to the corresponding Nix JDK package name.
-func jdkPackage(version string) string {
-	switch version {
-	case "17":
-		return "jdk17"
-	case "11":
-		return "jdk11"
-	case "21":
-		return "jdk21"
-	default:
-		return "jdk21"
+	if usesGradle(bt) {
+		out = append(out, ecosystem.DetectedManifests(config, gradleManifests, gradleManifestFallback)...)
 	}
+	return out
 }
 
 // buildGradleProperties returns the content of a security-hardened
@@ -509,11 +540,11 @@ func buildGradleProperties() string {
 	b.WriteString("# Strict dependency verification (checksums + signatures). Gradle enforces it\n")
 	b.WriteString("# only once gradle/verification-metadata.xml exists. Bootstrap it once, review\n")
 	b.WriteString("# the result, and commit it (never regenerate it in CI):\n")
-	b.WriteString("#   ./gradlew --write-verification-metadata sha256,pgp help\n")
+	b.WriteString("#   gradle --write-verification-metadata sha256,pgp help\n")
 	b.WriteString("org.gradle.dependency.verification=strict\n")
 	b.WriteString("\n")
 	b.WriteString("# Dependency locking cannot be enabled from gradle.properties. Add to your\n")
-	b.WriteString("# build script, then run ./gradlew dependencies --write-locks and commit the\n")
+	b.WriteString("# build script, then run gradle dependencies --write-locks and commit the\n")
 	b.WriteString("# generated gradle.lockfile:\n")
 	b.WriteString("#   dependencyLocking { lockAllConfigurations(); lockMode = LockMode.STRICT }\n")
 	return b.String()

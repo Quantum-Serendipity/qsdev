@@ -314,8 +314,12 @@ func TestSecurityConfigs_MavenOnly(t *testing.T) {
 	}
 	files := m.SecurityConfigs(cfg)
 
-	if len(files) != 1 {
-		t.Fatalf("SecurityConfigs() returned %d files, want 1", len(files))
+	// settings.xml plus .mvn/maven.config.
+	if len(files) != 2 {
+		t.Fatalf("SecurityConfigs() returned %d files, want 2", len(files))
+	}
+	if files[1].Path != ".mvn/maven.config" || string(files[1].Content) != "--strict-checksums\n" {
+		t.Errorf("files[1] = %s %q, want .mvn/maven.config enabling --strict-checksums", files[1].Path, files[1].Content)
 	}
 
 	f := files[0]
@@ -357,8 +361,8 @@ func TestSecurityConfigs_Both(t *testing.T) {
 	}
 	files := m.SecurityConfigs(cfg)
 
-	if len(files) != 2 {
-		t.Fatalf("SecurityConfigs() returned %d files, want 2", len(files))
+	if len(files) != 3 {
+		t.Fatalf("SecurityConfigs() returned %d files, want 3", len(files))
 	}
 
 	paths := make(map[string]bool)
@@ -489,8 +493,8 @@ func TestSecurityConfigs_Maven_RegistryProxy(t *testing.T) {
 	}
 	files := m.SecurityConfigs(cfg)
 
-	if len(files) != 1 {
-		t.Fatalf("SecurityConfigs() returned %d files, want 1", len(files))
+	if len(files) != 2 {
+		t.Fatalf("SecurityConfigs() returned %d files, want 2", len(files))
 	}
 
 	content := string(files[0].Content)
@@ -573,9 +577,9 @@ func TestSecurityConfigs_Both_RegistryProxy(t *testing.T) {
 	}
 	files := m.SecurityConfigs(cfg)
 
-	// Should produce settings.xml, gradle.properties, and init.gradle.
-	if len(files) != 3 {
-		t.Fatalf("SecurityConfigs() returned %d files, want 3", len(files))
+	// Should produce settings.xml, maven.config, gradle.properties, and init.gradle.
+	if len(files) != 4 {
+		t.Fatalf("SecurityConfigs() returned %d files, want 4", len(files))
 	}
 
 	paths := make(map[string]bool)
@@ -756,7 +760,8 @@ func TestCICommands_Gradle(t *testing.T) {
 	if len(cmds) != 1 {
 		t.Fatalf("CICommands() returned %d commands, want 1", len(cmds))
 	}
-	const want = "./gradlew build --dependency-verification strict"
+	// The Nix-provisioned gradle, never the unverified committed wrapper.
+	const want = "gradle build --dependency-verification strict"
 	if cmds[0].Command != want {
 		t.Errorf("cmds[0].Command = %q, want %q", cmds[0].Command, want)
 	}
@@ -785,7 +790,7 @@ func TestCICommands_Both(t *testing.T) {
 		t.Errorf("cmds[0].Command = %q, want Maven verify", cmds[0].Command)
 	}
 	// Then the strictly verified Gradle build.
-	if cmds[1].Command != "./gradlew build --dependency-verification strict" {
+	if cmds[1].Command != "gradle build --dependency-verification strict" {
 		t.Errorf("cmds[1].Command = %q, want strict Gradle build", cmds[1].Command)
 	}
 }
@@ -857,15 +862,15 @@ func TestWizardFields(t *testing.T) {
 	if jdk.Type != ecosystem.FieldTypeSelect {
 		t.Errorf("fields[1].Type = %v, want FieldTypeSelect", jdk.Type)
 	}
-	// Should have 21, 17, 11 options.
-	if len(jdk.Options) != 3 {
-		t.Errorf("fields[1].Options has %d entries, want 3", len(jdk.Options))
+	// One option per provisionable JDK (25, 21, 17, 11, 8).
+	if len(jdk.Options) != len(ecosystem.SupportedJDKMajors) {
+		t.Errorf("fields[1].Options has %d entries, want %d", len(jdk.Options), len(ecosystem.SupportedJDKMajors))
 	}
 	foundVersions := make(map[string]bool)
 	for _, opt := range jdk.Options {
 		foundVersions[opt.Value] = true
 	}
-	for _, v := range []string{"21", "17", "11"} {
+	for _, v := range []string{"25", "21", "17", "11", "8"} {
 		if !foundVersions[v] {
 			t.Errorf("JDK version options missing %q", v)
 		}

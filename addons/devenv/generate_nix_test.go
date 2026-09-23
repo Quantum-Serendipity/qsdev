@@ -586,3 +586,71 @@ func TestGenerateDevenvNix_BuiltInHookRejectsBadSettingKey(t *testing.T) {
 		t.Fatal("expected an error for an invalid hook setting key")
 	}
 }
+
+// TestGenerateDevenvNix_JVMCombinationsParse renders the JVM modules
+// together. Java, Scala and Clojure all configure languages.java, and their
+// fragments share one devenv.nix attribute set, where a leaf defined twice
+// (languages.java.enable, jdk.package) is a Nix parse error that left
+// `qsdev init` without a devenv.nix for any Java+Scala repository.
+func TestGenerateDevenvNix_JVMCombinationsParse(t *testing.T) {
+	nixInstantiate, err := exec.LookPath("nix-instantiate")
+	if err != nil {
+		t.Skip("nix-instantiate not available, skipping syntax validation")
+	}
+
+	java := types.LanguageChoice{Name: "java", Version: "17", Extras: []string{"build_tool=both", "kotlin=true"}}
+	scalaSbt := types.LanguageChoice{Name: "scala", Extras: []string{"build_tool=sbt", "jdk_version=21"}}
+	scalaMill := types.LanguageChoice{Name: "scala", Extras: []string{"build_tool=mill", "jdk_version=25"}}
+	lein := types.LanguageChoice{Name: "clojure", Extras: []string{"build_tool=leiningen"}}
+
+	tests := []struct {
+		name  string
+		langs []types.LanguageChoice
+		want  []string
+	}{
+		{
+			name:  "java+scala",
+			langs: []types.LanguageChoice{java, scalaSbt},
+			want: []string{
+				"    java = {\n      # Java/Kotlin (JVM)\n      enable = true;\n      jdk.package = pkgs.jdk17;",
+				"imports = [ { languages.java.jdk.package = lib.mkDefault pkgs.jdk21; } ];",
+				`pkgs.writeShellScript "scalafmt"`,
+			},
+		},
+		{
+			name:  "java+scala mill+leiningen",
+			langs: []types.LanguageChoice{java, scalaMill, lein},
+			want: []string{
+				"    scala = {\n      enable = true;\n      mill.enable = true;",
+				"(pkgs.leiningen.override { jdk = config.languages.java.jdk.package; })",
+			},
+		},
+		{name: "scala+leiningen", langs: []types.LanguageChoice{scalaSbt, lein}},
+	}
+	reg := ecosystem.DefaultRegistry()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := devenv.GenerateDevenvNix(types.WizardAnswers{ProjectName: "jvm", Languages: tt.langs}, reg)
+			if err != nil {
+				t.Fatalf("GenerateDevenvNix: %v", err)
+			}
+			content := string(got.Content)
+			for _, w := range tt.want {
+				requireContains(t, content, w)
+			}
+			if n := strings.Count(content, "languages.java.enable"); n > 1 {
+				t.Errorf("languages.java.enable defined %d times", n)
+			}
+
+			path := filepath.Join(t.TempDir(), "devenv.nix")
+			if err := os.WriteFile(path, got.Content, 0o644); err != nil {
+				t.Fatalf("writing devenv.nix: %v", err)
+			}
+			out, err := exec.Command(nixInstantiate, "--parse", path).CombinedOutput()
+			if err != nil {
+				t.Fatalf("nix-instantiate --parse rejected generated devenv.nix: %v\n%s\n%s", err, out, content)
+			}
+		})
+	}
+}

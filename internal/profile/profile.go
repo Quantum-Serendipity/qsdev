@@ -66,26 +66,39 @@ func (p *InfraProfile) EnvironmentVars() map[string]string {
 
 // ConfigFiles returns generated configuration files implied by the profile's
 // update-tool selection (e.g., renovate.json or .github/dependabot.yml),
-// CI vulnerability scanning workflow, and security documentation.
-func (p *InfraProfile) ConfigFiles() []types.GeneratedFile {
+// CI vulnerability scanning workflow, and security documentation. in carries
+// the project facts (such as its package ecosystems) the files depend on.
+func (p *InfraProfile) ConfigFiles(in ProjectInputs) ([]types.GeneratedFile, error) {
 	var files []types.GeneratedFile
 
 	switch p.Updates.Type {
 	case UpdateToolRenovate:
 		files = append(files, p.generateRenovateJSON())
 	case UpdateToolDependabot:
-		files = append(files, p.generateDependabotYML())
+		f, err := p.generateDependabotYML(in)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, f)
 	}
 
 	// CI vulnerability scanning workflow
-	if p.Scanning.Vulnerability != VulnScannerNone || p.Scanning.CIProtection != CIProtectionNone {
-		files = append(files, p.generateSecurityScanWorkflow())
+	if p.generatesSecurityScanWorkflow() {
+		f, err := p.generateSecurityScanWorkflow()
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, f)
 	}
 
 	// Security documentation
-	files = append(files, p.generateSecurityDoc())
+	doc, err := p.generateSecurityDoc()
+	if err != nil {
+		return nil, err
+	}
+	files = append(files, doc)
 
-	return files
+	return files, nil
 }
 
 // NixCacheNixConfig returns nix.conf snippet values for substituters and

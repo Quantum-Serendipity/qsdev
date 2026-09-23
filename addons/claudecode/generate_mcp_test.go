@@ -317,10 +317,13 @@ func TestGenerateMcpJson_FetchServer(t *testing.T) {
 	if !ok {
 		t.Fatal("expected 'fetch' key in mcpServers")
 	}
-	if entry.Command != "npx" {
-		t.Errorf("expected command 'npx', got %q", entry.Command)
+	// The reference fetch server is the PyPI package mcp-server-fetch,
+	// launched through uvx with an exact version pin.
+	if entry.Command != "uvx" {
+		t.Errorf("expected command 'uvx', got %q", entry.Command)
 	}
-	if len(entry.Args) != 1 || entry.Args[0] != "@anthropic-ai/mcp-fetch" {
+	if len(entry.Args) != 3 || entry.Args[0] != "--from" ||
+		!strings.HasPrefix(entry.Args[1], "mcp-server-fetch==") || entry.Args[2] != "mcp-server-fetch" {
 		t.Errorf("unexpected args: %v", entry.Args)
 	}
 	// fetch server should have no env vars.

@@ -8,7 +8,7 @@ import (
 )
 
 func TestGenerateSecurityScanWorkflow_ConsultingDefault(t *testing.T) {
-	f := ConsultingDefault.generateSecurityScanWorkflow()
+	f := mustWorkflow(t, ConsultingDefault)
 
 	if f.Path != ".github/workflows/security-scan.yml" {
 		t.Errorf("Path = %q, want .github/workflows/security-scan.yml", f.Path)
@@ -40,7 +40,7 @@ func TestGenerateSecurityScanWorkflow_ConsultingDefault(t *testing.T) {
 }
 
 func TestGenerateSecurityScanWorkflow_Enterprise(t *testing.T) {
-	f := Enterprise.generateSecurityScanWorkflow()
+	f := mustWorkflow(t, Enterprise)
 
 	content := string(f.Content)
 
@@ -76,7 +76,7 @@ func TestGenerateSecurityScanWorkflow_HardenRunnerAbsent(t *testing.T) {
 		},
 	}
 
-	f := p.generateSecurityScanWorkflow()
+	f := mustWorkflow(t, p)
 	content := string(f.Content)
 
 	if strings.Contains(content, "Harden Runner") {
@@ -95,7 +95,7 @@ func TestGenerateSecurityScanWorkflow_GrypeScanner(t *testing.T) {
 		},
 	}
 
-	f := p.generateSecurityScanWorkflow()
+	f := mustWorkflow(t, p)
 	content := string(f.Content)
 
 	if !strings.Contains(content, "Grype") {
@@ -114,7 +114,7 @@ func TestGenerateSecurityScanWorkflow_LockFileValidationAlwaysPresent(t *testing
 
 	for _, p := range profiles {
 		t.Run(p.Name, func(t *testing.T) {
-			f := p.generateSecurityScanWorkflow()
+			f := mustWorkflow(t, p)
 			content := string(f.Content)
 
 			if !strings.Contains(content, "Validate lock files") {
@@ -136,7 +136,7 @@ func TestGenerateSecurityScanWorkflow_LockFileValidationCanFail(t *testing.T) {
 
 	for _, p := range profiles {
 		t.Run(p.Name, func(t *testing.T) {
-			content := string(p.generateSecurityScanWorkflow().Content)
+			content := string(mustWorkflow(t, p).Content)
 
 			if !strings.Contains(content, "Lock file validation failed.") {
 				t.Error("lock file validation must report failure and exit non-zero")
@@ -167,7 +167,7 @@ func TestGenerateSecurityScanWorkflow_ValidYAML(t *testing.T) {
 
 	for _, p := range profiles {
 		t.Run(p.Name, func(t *testing.T) {
-			f := p.generateSecurityScanWorkflow()
+			f := mustWorkflow(t, p)
 			var parsed map[string]any
 			if err := yaml.Unmarshal(f.Content, &parsed); err != nil {
 				t.Errorf("generated workflow is not valid YAML: %v\nContent:\n%s", err, string(f.Content))

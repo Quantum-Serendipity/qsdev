@@ -845,7 +845,10 @@ mcp_servers:
         category: integration
         description: "Local filesystem access"
         command: npx
-        args: ["@anthropic-ai/mcp-filesystem"]
+        # Exact pin; "." limits access to the project root the server runs in.
+        # No -y: npx assumes --yes when stdin is not a TTY (as for stdio MCP
+        # servers), and -y fails the registry's no-npx-dash-y criterion.
+        args: ["@modelcontextprotocol/server-filesystem@2026.8.31", "."]
         transport: stdio
     postgres:
         display_name: "PostgreSQL MCP"
@@ -860,8 +863,9 @@ mcp_servers:
         display_name: "Fetch MCP"
         category: integration
         description: "HTTP fetch for web content retrieval"
-        command: npx
-        args: ["@anthropic-ai/mcp-fetch"]
+        # The reference fetch server is published to PyPI, not npm.
+        command: uvx
+        args: ["--from", "mcp-server-fetch==2026.8.18", "mcp-server-fetch"]
         transport: stdio
     socket:
         display_name: "Socket.dev Security"
@@ -1294,11 +1298,35 @@ permission_deny_rules:
         - "Bash(xargs npm install *)"
         - "Bash(xargs pip install *)"
         - "Bash(xargs cargo install *)"
+    # Prefix globs cannot enumerate every spelling of a destructive command,
+    # so this set lists the common flag orders and short/long forms, plus the
+    # bare form of each "cmd *" rule (Claude Code's " *" needs trailing args).
     destructive_ops:
         - "Bash(git push --force *)"
+        - "Bash(git push --force)"
         - "Bash(git push * --force)"
+        - "Bash(git push * --force *)"
+        - "Bash(git push --force-with-lease*)"
+        - "Bash(git push * --force-with-lease*)"
+        - "Bash(git push --force-if-includes*)"
+        - "Bash(git push * --force-if-includes*)"
+        - "Bash(git push -f *)"
+        - "Bash(git push -f)"
+        - "Bash(git push * -f)"
+        - "Bash(git push * -f *)"
+        - "Bash(git push * +*)"
         - "Bash(git reset --hard *)"
+        - "Bash(git reset --hard)"
         - "Bash(rm -rf *)"
+        - "Bash(rm -fr *)"
+        - "Bash(rm -Rf *)"
+        - "Bash(rm -fR *)"
+        - "Bash(rm -r -f *)"
+        - "Bash(rm -f -r *)"
+        - "Bash(rm -R -f *)"
+        - "Bash(rm -f -R *)"
+        - "Bash(rm --recursive --force *)"
+        - "Bash(rm --force --recursive *)"
         - "Read(./.env)"
         - "Read(./.env.*)"
         - "Read(./secrets/**)"

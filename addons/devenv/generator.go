@@ -120,7 +120,11 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 		p, ok := g.profileRegistry.Get(profileName)
 		switch {
 		case ok:
-			files = append(files, p.ConfigFiles()...)
+			profileFiles, err := p.ConfigFiles(profile.ProjectInputsFromAnswers(answers))
+			if err != nil {
+				return nil, fmt.Errorf("generating %s infra profile files: %w", profileName, err)
+			}
+			files = append(files, profileFiles...)
 		case explicit:
 			// An explicit --infra-profile that does not resolve is a user error, not
 			// a silent no-op that drops CI/renovate/dependabot configs. Mirror the

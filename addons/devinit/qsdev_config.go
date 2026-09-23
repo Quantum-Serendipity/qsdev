@@ -7,6 +7,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -14,11 +15,13 @@ import (
 // buildQsdevConfig converts the create path's answers into the committed
 // .qsdev.yaml. Join mode rebuilds a teammate's answers from this file through
 // config.ConfigToAnswers, so every choice that shapes generation and has a
-// config key is persisted here.
-func buildQsdevConfig(answers types.WizardAnswers, qsdevVersion string) types.QsdevConfig {
+// config key is persisted here. binaryVersion is the running qsdev version; it
+// is recorded as a minimum version constraint (never an exact pin, which would
+// fail every teammate or CI runner on a newer release).
+func buildQsdevConfig(answers types.WizardAnswers, binaryVersion string) types.QsdevConfig {
 	cfg := types.QsdevConfig{
 		Version:      types.ConfigVersionCurrent,
-		QsdevVersion: qsdevVersion,
+		QsdevVersion: qsdevconfig.MinimumVersionConstraint(binaryVersion),
 		Tier:         answers.Tier,
 		Profile:      answers.ProfileName,
 	}

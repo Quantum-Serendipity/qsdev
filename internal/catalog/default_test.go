@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // These tests exercise the global Default/SetProjectRoot/ResetDefault
@@ -115,6 +117,102 @@ func TestMustDefault_Panics(t *testing.T) {
 	}()
 
 	MustDefault()
+}
+
+// Regression: an invalid user-level org overlay used to make Default fail,
+// and MustDefault (called during package init) then panicked every qsdev
+// command, including `defaults validate/reset` that exist to repair it.
+func TestDefault_InvalidOrgOverlayFallsBack(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"partially uncommented tier", "tiers:\n  standard:\n    order: 2\n"},
+		{"yaml syntax error", "tiers: [unclosed\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ResetDefault()
+			t.Cleanup(ResetDefault)
+
+			orgFile := filepath.Join(t.TempDir(), "defaults.yaml")
+			if err := os.WriteFile(orgFile, []byte(tt.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", orgFile)
+
+			cat, err := Default()
+			if err != nil {
+				t.Fatalf("Default() error = %v, want fallback to built-in defaults", err)
+			}
+			if cat == nil {
+				t.Fatal("Default() returned nil catalog")
+			}
+			if _, ok := cat.TierDef("standard"); !ok {
+				t.Error("fallback catalog is missing the built-in standard tier")
+			}
+			overlayErr := OrgOverlayError()
+			if overlayErr == nil {
+				t.Fatal("OrgOverlayError() = nil, want the overlay's load error")
+			}
+			if !strings.Contains(overlayErr.Error(), orgFile) {
+				t.Errorf("OrgOverlayError() = %q, want it to name %s", overlayErr, orgFile)
+			}
+
+			// The init-time accessor must not panic either.
+			_ = MustDefault()
+		})
+	}
+}
+
+func TestDefault_ValidOrgOverlayHasNoOverlayError(t *testing.T) {
+	ResetDefault()
+	t.Cleanup(ResetDefault)
+
+	orgFile := filepath.Join(t.TempDir(), "defaults.yaml")
+	if err := os.WriteFile(orgFile, []byte("# all commented out\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", orgFile)
+
+	if _, err := Default(); err != nil {
+		t.Fatalf("Default() error: %v", err)
+	}
+	if err := OrgOverlayError(); err != nil {
+		t.Errorf("OrgOverlayError() = %v, want nil", err)
+	}
+}
+
+// Regression: tests loaded the developer's ~/.config/qsdev/defaults.yaml, so
+// local results depended on the host's org overlay.
+func TestOrgConfigPath_IgnoresHomeOverlayInTests(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", "")
+
+	overlay := filepath.Join(home, ".config", branding.Get().AppName, "defaults.yaml")
+	if err := os.MkdirAll(filepath.Dir(overlay), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(overlay, []byte("tiers: [unclosed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := OrgConfigPath(); got != "" {
+		t.Errorf("OrgConfigPath() = %q in a test binary, want \"\"", got)
+	}
+	if got := OrgConfigFile(); got != "" {
+		t.Errorf("OrgConfigFile() = %q in a test binary, want \"\"", got)
+	}
+	if got := homeOrgConfigPath(); got != overlay {
+		t.Errorf("homeOrgConfigPath() = %q, want %q", got, overlay)
+	}
+
+	// An explicit env override is still honoured.
+	t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", overlay)
+	if got := OrgConfigPath(); got != overlay {
+		t.Errorf("OrgConfigPath() with env override = %q, want %q", got, overlay)
+	}
 }
 
 func TestResetDefault(t *testing.T) {

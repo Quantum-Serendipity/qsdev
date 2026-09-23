@@ -1,7 +1,10 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,8 +41,15 @@ func ParseLocalConfig(path string) (*LocalConfig, error) {
 		return nil, fmt.Errorf("reading local config %s: %w", path, err)
 	}
 
+	// Strict (known-field) decode: the local file is the highest-precedence
+	// layer, so a misspelled key must surface as an error rather than silently
+	// dropping the developer's intended override (e.g. a local tool deny).
 	var local LocalConfig
-	if err := yaml.Unmarshal(data, &local); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&local); err != nil && !errors.Is(err, io.EOF) {
+		// io.EOF means the file is empty or comments-only (the generated
+		// template), which is a valid empty override.
 		return nil, fmt.Errorf("parsing local config %s: %w", path, err)
 	}
 

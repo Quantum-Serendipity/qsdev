@@ -71,6 +71,63 @@ func TestParseLocalConfig_InvalidYAML(t *testing.T) {
 	}
 }
 
+// Regression: the local override file is decoded strictly, so a misspelled
+// key (which would otherwise silently drop a local deny) is an error, while
+// an empty or comments-only file is a valid empty override.
+func TestParseLocalConfig_StrictKeys(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		content string
+		wantErr bool
+	}{
+		{"misspelled nested key", "tools:\n  disable: [semgrep]\n", true},
+		{"misspelled top-level key", "tools:\n  disabled: [semgrep]\nsecurty:\n  level: baseline\n", true},
+		{"valid keys", "tools:\n  disabled: [semgrep]\n", false},
+		{"empty file", "", false},
+		{"comments only", "# extra_packages:\n#   - neovim\n", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), ".qsdev.local.yaml")
+			if err := os.WriteFile(path, []byte(tt.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := ParseLocalConfig(path)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got config %+v", cfg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cfg == nil {
+				t.Fatal("expected non-nil config for an existing file")
+			}
+		})
+	}
+}
+
+// Regression: the generated template must itself parse under strict decoding.
+func TestGenerateLocalTemplate_ParsesStrictly(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	enabled := true
+	resolved := &types.QsdevConfig{
+		Languages:  []types.LanguageConfig{{Name: "go", Version: "1.22"}},
+		ClaudeCode: types.ClaudeCodeConfig{Enabled: &enabled},
+	}
+	if err := GenerateLocalTemplate(dir, resolved); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseLocalConfig(filepath.Join(dir, ".qsdev.local.yaml")); err != nil {
+		t.Fatalf("generated template does not parse: %v", err)
+	}
+}
+
 func TestGenerateLocalTemplate_CreatesFile(t *testing.T) {
 	dir := t.TempDir()
 	resolved := &types.QsdevConfig{}

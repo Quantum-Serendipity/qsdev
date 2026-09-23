@@ -20,8 +20,15 @@ type SecurityDocData struct {
 	SBOMGenerator  string
 }
 
+// securityDocTmpl is parsed once from the embedded templates, so a broken
+// template fails the tests (and startup) instead of being written over the
+// committed security overview at generation time.
+var securityDocTmpl = template.Must(
+	template.New("security-overview.md.tmpl").Option("missingkey=error").
+		ParseFS(templateFS, "templates/security-overview.md.tmpl"))
+
 // generateSecurityDoc produces docs/security-overview.md.
-func (p *InfraProfile) generateSecurityDoc() types.GeneratedFile {
+func (p *InfraProfile) generateSecurityDoc() (types.GeneratedFile, error) {
 	data := SecurityDocData{
 		ProfileName:    p.Name,
 		VulnScanner:    string(p.Scanning.Vulnerability),
@@ -32,34 +39,9 @@ func (p *InfraProfile) generateSecurityDoc() types.GeneratedFile {
 		SBOMGenerator:  string(p.SBOM.Generator),
 	}
 
-	tmplContent, err := templateFS.ReadFile("templates/security-overview.md.tmpl")
-	if err != nil {
-		return types.GeneratedFile{
-			Path:     "docs/security-overview.md",
-			Content:  []byte("# Error: could not load security overview template\n"),
-			Mode:     fileutil.ModeReadWrite,
-			Strategy: types.Overwrite,
-		}
-	}
-
-	tmpl, err := template.New("security-doc").Parse(string(tmplContent))
-	if err != nil {
-		return types.GeneratedFile{
-			Path:     "docs/security-overview.md",
-			Content:  []byte(fmt.Sprintf("# Error parsing template: %v\n", err)),
-			Mode:     fileutil.ModeReadWrite,
-			Strategy: types.Overwrite,
-		}
-	}
-
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return types.GeneratedFile{
-			Path:     "docs/security-overview.md",
-			Content:  []byte(fmt.Sprintf("# Error rendering template: %v\n", err)),
-			Mode:     fileutil.ModeReadWrite,
-			Strategy: types.Overwrite,
-		}
+	if err := securityDocTmpl.Execute(&buf, data); err != nil {
+		return types.GeneratedFile{}, fmt.Errorf("rendering security overview: %w", err)
 	}
 
 	return types.GeneratedFile{
@@ -67,5 +49,5 @@ func (p *InfraProfile) generateSecurityDoc() types.GeneratedFile {
 		Content:  buf.Bytes(),
 		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
-	}
+	}, nil
 }

@@ -93,7 +93,7 @@ func TestNoHardcodedSecrets(t *testing.T) {
 }
 
 func TestConsultingDefault_ConfigFiles_Renovate(t *testing.T) {
-	files := ConsultingDefault.ConfigFiles()
+	files := mustConfigFiles(t, ConsultingDefault, ProjectInputs{})
 	found := false
 	for _, f := range files {
 		if f.Path == "renovate.json" {
@@ -116,7 +116,7 @@ func TestConsultingDefault_ConfigFiles_Renovate(t *testing.T) {
 }
 
 func TestStartupGitHub_ConfigFiles_Dependabot(t *testing.T) {
-	files := StartupGitHub.ConfigFiles()
+	files := mustConfigFiles(t, StartupGitHub, ProjectInputs{Ecosystems: []string{"npm"}})
 	foundDependabot := false
 	foundRenovate := false
 	for _, f := range files {
@@ -143,7 +143,7 @@ func TestStartupGitHub_ConfigFiles_Dependabot(t *testing.T) {
 }
 
 func TestConsultingDefault_ConfigFiles_IncludesWorkflow(t *testing.T) {
-	files := ConsultingDefault.ConfigFiles()
+	files := mustConfigFiles(t, ConsultingDefault, ProjectInputs{})
 	found := false
 	for _, f := range files {
 		if f.Path == ".github/workflows/security-scan.yml" {
@@ -163,7 +163,7 @@ func TestConsultingDefault_ConfigFiles_IncludesWorkflow(t *testing.T) {
 }
 
 func TestConsultingDefault_ConfigFiles_IncludesSecurityDoc(t *testing.T) {
-	files := ConsultingDefault.ConfigFiles()
+	files := mustConfigFiles(t, ConsultingDefault, ProjectInputs{})
 	found := false
 	for _, f := range files {
 		if f.Path == "docs/security-overview.md" {
@@ -180,7 +180,7 @@ func TestConsultingDefault_ConfigFiles_IncludesSecurityDoc(t *testing.T) {
 }
 
 func TestEnterprise_ConfigFiles_IncludesWorkflow(t *testing.T) {
-	files := Enterprise.ConfigFiles()
+	files := mustConfigFiles(t, Enterprise, ProjectInputs{})
 	foundWorkflow := false
 	foundSecDoc := false
 	for _, f := range files {

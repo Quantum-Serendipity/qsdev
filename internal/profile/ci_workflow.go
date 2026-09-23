@@ -28,8 +28,21 @@ type CIWorkflowData struct {
 	ActionGrype        cigeneration.ActionRef
 }
 
+// securityScanWorkflowTmpl is parsed once from the embedded templates, so a
+// broken template fails the tests (and startup) instead of being written
+// over a working workflow at generation time.
+var securityScanWorkflowTmpl = template.Must(
+	template.New("security-scan-workflow.yml.tmpl").Option("missingkey=error").
+		ParseFS(templateFS, "templates/security-scan-workflow.yml.tmpl"))
+
+// generatesSecurityScanWorkflow reports whether the profile's scanning
+// settings call for the CI security-scan workflow.
+func (p *InfraProfile) generatesSecurityScanWorkflow() bool {
+	return p.Scanning.Vulnerability != VulnScannerNone || p.Scanning.CIProtection != CIProtectionNone
+}
+
 // generateSecurityScanWorkflow produces .github/workflows/security-scan.yml.
-func (p *InfraProfile) generateSecurityScanWorkflow() types.GeneratedFile {
+func (p *InfraProfile) generateSecurityScanWorkflow() (types.GeneratedFile, error) {
 	data := CIWorkflowData{
 		HasHardenRunner: p.Scanning.CIProtection == CIProtectionHardenRunner,
 		HasOSV:          p.Scanning.Vulnerability == VulnScannerOSV,
@@ -43,36 +56,9 @@ func (p *InfraProfile) generateSecurityScanWorkflow() types.GeneratedFile {
 		ActionGrype:        cigeneration.ActionGrype,
 	}
 
-	// Parse and render template
-	tmplContent, err := templateFS.ReadFile("templates/security-scan-workflow.yml.tmpl")
-	if err != nil {
-		// Fallback: return a comment-only file
-		return types.GeneratedFile{
-			Path:     ".github/workflows/security-scan.yml",
-			Content:  []byte("# Error: could not load workflow template\n"),
-			Mode:     fileutil.ModeReadWrite,
-			Strategy: types.Overwrite,
-		}
-	}
-
-	tmpl, err := template.New("workflow").Parse(string(tmplContent))
-	if err != nil {
-		return types.GeneratedFile{
-			Path:     ".github/workflows/security-scan.yml",
-			Content:  []byte(fmt.Sprintf("# Error parsing template: %v\n", err)),
-			Mode:     fileutil.ModeReadWrite,
-			Strategy: types.Overwrite,
-		}
-	}
-
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return types.GeneratedFile{
-			Path:     ".github/workflows/security-scan.yml",
-			Content:  []byte(fmt.Sprintf("# Error rendering template: %v\n", err)),
-			Mode:     fileutil.ModeReadWrite,
-			Strategy: types.Overwrite,
-		}
+	if err := securityScanWorkflowTmpl.Execute(&buf, data); err != nil {
+		return types.GeneratedFile{}, fmt.Errorf("rendering security-scan workflow: %w", err)
 	}
 
 	return types.GeneratedFile{
@@ -80,5 +66,5 @@ func (p *InfraProfile) generateSecurityScanWorkflow() types.GeneratedFile {
 		Content:  buf.Bytes(),
 		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
-	}
+	}, nil
 }

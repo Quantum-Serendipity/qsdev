@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"fmt"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -9,18 +10,28 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// generateDependabotYML produces a .github/dependabot.yml GeneratedFile from
-// the profile's update configuration.
-func (p *InfraProfile) generateDependabotYML() types.GeneratedFile {
+// generateDependabotYML produces a .github/dependabot.yml GeneratedFile.
+//
+// Update entries come from the ecosystems the project actually uses, not from
+// p.Registry.Ecosystems: that list names what the organization's package
+// proxy serves, and entries for manifests the repository does not have make
+// Dependabot fail while the project's real ecosystems go unwatched. The
+// profile's age gate is emitted as Dependabot's cooldown.
+func (p *InfraProfile) generateDependabotYML(in ProjectInputs) (types.GeneratedFile, error) {
 	type schedule struct {
 		Interval string `yaml:"interval"`
 	}
 
+	type cooldown struct {
+		DefaultDays int `yaml:"default-days"`
+	}
+
 	type updateEntry struct {
-		PackageEcosystem      string   `yaml:"package-ecosystem"`
-		Directory             string   `yaml:"directory"`
-		Schedule              schedule `yaml:"schedule"`
-		OpenPullRequestsLimit int      `yaml:"open-pull-requests-limit"`
+		PackageEcosystem      string    `yaml:"package-ecosystem"`
+		Directory             string    `yaml:"directory"`
+		Schedule              schedule  `yaml:"schedule"`
+		Cooldown              *cooldown `yaml:"cooldown,omitempty"`
+		OpenPullRequestsLimit int       `yaml:"open-pull-requests-limit"`
 	}
 
 	type dependabotConfig struct {
@@ -28,42 +39,41 @@ func (p *InfraProfile) generateDependabotYML() types.GeneratedFile {
 		Updates []updateEntry `yaml:"updates"`
 	}
 
-	cfg := dependabotConfig{
-		Version: 2,
+	var cd *cooldown
+	if p.Updates.AgeGatingDays > 0 {
+		cd = &cooldown{DefaultDays: p.Updates.AgeGatingDays}
 	}
 
-	for _, eco := range p.Registry.Ecosystems {
-		depEco := ecosystemToDependabotEcosystem(eco)
-		if depEco == "" {
+	var depEcos []string
+	for _, eco := range in.Ecosystems {
+		depEcos = append(depEcos, ecosystemToDependabotEcosystem(eco))
+	}
+	// The profile's own security-scan workflow pins actions by SHA; keep
+	// those pins current through the github-actions ecosystem.
+	if p.generatesSecurityScanWorkflow() {
+		depEcos = append(depEcos, "github-actions")
+	}
+
+	cfg := dependabotConfig{Version: 2}
+	seen := make(map[string]bool)
+	for _, depEco := range depEcos {
+		if depEco == "" || seen[depEco] {
 			continue
 		}
+		seen[depEco] = true
 		cfg.Updates = append(cfg.Updates, updateEntry{
 			PackageEcosystem:      depEco,
 			Directory:             "/",
 			Schedule:              schedule{Interval: "weekly"},
+			Cooldown:              cd,
 			OpenPullRequestsLimit: 10,
 		})
 	}
 
-	// Always include docker and terraform if not already covered by registry
-	// ecosystems, since Dependabot supports them natively.
-	seen := make(map[string]bool)
-	for _, u := range cfg.Updates {
-		seen[u.PackageEcosystem] = true
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return types.GeneratedFile{}, fmt.Errorf("marshaling dependabot config: %w", err)
 	}
-	for _, extra := range []string{"container", "terraform"} {
-		depEco := ecosystemToDependabotEcosystem(extra)
-		if depEco != "" && !seen[depEco] {
-			cfg.Updates = append(cfg.Updates, updateEntry{
-				PackageEcosystem:      depEco,
-				Directory:             "/",
-				Schedule:              schedule{Interval: "weekly"},
-				OpenPullRequestsLimit: 10,
-			})
-		}
-	}
-
-	data, _ := yaml.Marshal(cfg)
 
 	// Prepend a comment header.
 	var buf strings.Builder
@@ -75,7 +85,7 @@ func (p *InfraProfile) generateDependabotYML() types.GeneratedFile {
 		Content:  []byte(buf.String()),
 		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.Overwrite,
-	}
+	}, nil
 }
 
 // ecosystemToDependabotEcosystem maps ecosystem names to Dependabot
@@ -92,8 +102,12 @@ func ecosystemToDependabotEcosystem(eco string) string {
 		return "cargo"
 	case "maven":
 		return "maven"
+	case "gradle":
+		return "gradle"
 	case "nuget":
 		return "nuget"
+	case "composer":
+		return "composer"
 	case "container":
 		return "docker"
 	case "terraform":

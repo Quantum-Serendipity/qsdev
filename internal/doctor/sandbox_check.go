@@ -55,11 +55,9 @@ func RunSandboxCheck(ctx context.Context, prober sandbox.SandboxProber) *Sandbox
 		section.Recommendations = append(section.Recommendations,
 			"Install bubblewrap for full namespace isolation (currently using systemd-run only)")
 	case sandbox.TierBwrapWithoutLandlock:
-		section.Recommendations = append(section.Recommendations,
-			"Upgrade kernel to >= 5.13 for Landlock filesystem restriction")
+		section.Recommendations = append(section.Recommendations, sandbox.LandlockRemediation)
 	case sandbox.TierBwrapWithoutSeccomp:
-		section.Recommendations = append(section.Recommendations,
-			"Enable seccomp support for syscall filtering")
+		section.Recommendations = append(section.Recommendations, sandbox.SeccompRemediation)
 	case sandbox.TierBwrapOnly:
 		section.Recommendations = append(section.Recommendations,
 			"Use a qsdev build that ships the ll-restrict helper and seccomp filter (the Nix build) for Landlock and seccomp layers")
@@ -108,6 +106,6 @@ func landlockItem(abi int) ContainerCheckItem {
 	return ContainerCheckItem{
 		Label:   "Landlock",
 		Status:  "warn",
-		Summary: "not enforceable (needs ll-restrict helper and kernel >= 5.13)",
+		Summary: "not enforceable (needs the ll-restrict helper and Landlock enabled in the kernel's boot lsm= list)",
 	}
 }

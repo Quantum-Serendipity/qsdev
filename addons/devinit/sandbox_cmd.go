@@ -90,7 +90,7 @@ wrapped Claude Code hook fails closed.`,
 			// defaults, which would discard the user's stricter rules.
 			spec, err := policy.CompilePolicy(ctx, policyPath)
 			if err != nil {
-				return sandboxSetupFailure(fmt.Errorf("compiling sandbox policy: %w", err))
+				return sandboxSetupFailure(fmt.Errorf("sandbox policy: %w", err))
 			}
 
 			if hookName == "" {
@@ -100,13 +100,15 @@ wrapped Claude Code hook fails closed.`,
 			cfg := policy.ToSandboxConfig(spec, sandbox.ParseHookCategory(category), hookName)
 			cfg.ProjectDir = projectDir
 			cfg.HookCommand = args
-			cfg.Stdin = cmd.InOrStdin()
+			cfg.ExecOpts = hookStdio(cmd)
 
 			result, err := runSandboxed(ctx, cfg, probe(ctx), cmd.ErrOrStderr())
 			if err != nil {
 				return sandboxSetupFailure(err)
 			}
 
+			// Output is streamed through hookStdio; anything a backend still
+			// captured (no writer set) is replayed here.
 			if len(result.Stdout) > 0 {
 				_, _ = cmd.OutOrStdout().Write(result.Stdout)
 			}
@@ -322,13 +324,29 @@ func printSandboxStatusJSON(cmd *cobra.Command, caps *sandbox.SystemCapabilities
 	return nil
 }
 
-// runSandboxed resolves the strongest available sandbox backend for the probed
-// capabilities and runs the hook inside it. Any weaker-than-full isolation, and
-// any layer the tier advertises but cannot enforce, is reported on warn as well
-// as the log: the log file is not visible by default, and an unsandboxed run
-// must never look like a sandboxed one.
+// hookStdio connects the hook to the command's own streams. Claude Code delivers
+// the tool-call payload on the hook's stdin, so it must reach the sandboxed
+// command, and its output is streamed rather than buffered until exit.
+func hookStdio(cmd *cobra.Command) sandbox.ExecOpts {
+	return sandbox.ExecOpts{
+		Stdin:  cmd.InOrStdin(),
+		Stdout: cmd.OutOrStdout(),
+		Stderr: cmd.ErrOrStderr(),
+	}
+}
+
+// runSandboxed resolves the sandbox backend the policy asks for (the strongest
+// available one by default) for the probed capabilities and runs the hook
+// inside it. A backend the policy names that is unknown or unavailable is a
+// setup failure (sandbox.ErrSetupFailed), never silently replaced. Any
+// weaker-than-full isolation, and any layer the tier advertises but cannot
+// enforce, is reported on warn as well as the log: the log file is not visible
+// by default, and an unsandboxed run must never look like a sandboxed one.
 func runSandboxed(ctx context.Context, cfg *sandbox.SandboxConfig, caps *sandbox.SystemCapabilities, warn io.Writer) (*sandbox.SandboxResult, error) {
-	backend, tier := backendselect.ResolveBackend(*caps)
+	backend, tier, err := backendselect.ResolvePreferredBackend(*caps, cfg.Backend)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", sandbox.ErrSetupFailed, err)
+	}
 	app := branding.Get().AppName
 
 	if msg := sandbox.TierMessage(tier); msg != "" {

@@ -416,7 +416,7 @@ func TestBuildArgs_NetworkModeIsAuthoritative(t *testing.T) {
 				t.Errorf("resolv.conf mounted = %v, want %v", resolv, !tt.wantIsolated)
 			}
 			// Landlock's --deny-net must agree with bwrap's decision.
-			if got := slices.Contains(prepareLandlockFlags(&cfg), "--deny-net"); got != tt.wantIsolated {
+			if got := slices.Contains(landlockFlags(&cfg), "--deny-net"); got != tt.wantIsolated {
 				t.Errorf("landlock --deny-net = %v, want %v", got, tt.wantIsolated)
 			}
 		})

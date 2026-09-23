@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -19,7 +20,7 @@ func ProbeCapabilities(ctx context.Context, prober SandboxProber) *SystemCapabil
 	// Unprivileged user namespaces.
 	caps.HasUserNS = probeUserNamespaces(prober)
 
-	// Landlock ABI version (kernel >= 5.13).
+	// Landlock ABI version, as reported by the ll-restrict helper.
 	caps.LandlockABI = probeLandlock(ctx, prober)
 
 	// Seccomp support.
@@ -84,36 +85,31 @@ func probeUserNamespaces(prober SandboxProber) bool {
 // but the sandbox applies no filesystem restriction. Reporting bare kernel
 // capability here would let DetermineTier advertise "full" isolation the tool
 // cannot deliver (NF-3), so the reported ABI is gated on the helper.
+//
+// The ABI is whatever `ll-restrict --version` reports ("landlock-abi:N", from
+// the kernel's own landlock_create_ruleset version query). There is no
+// kernel-version fallback: a >= 5.13 kernel can still have Landlock disabled
+// (e.g. missing from the boot lsm= list), and then every ll-restrict run fails,
+// so a helper that cannot confirm an ABI means Landlock is not enforceable.
 func probeLandlock(ctx context.Context, prober SandboxProber) int {
 	llPath := prober.LandlockHelperPath()
 	if llPath == "" {
 		return 0
 	}
 
-	// Helper present — prefer its self-reported ABI version.
-	if out, err := prober.Output(ctx, llPath, "--version"); err == nil {
-		version := strings.TrimSpace(string(out))
-		if abiStr, ok := strings.CutPrefix(version, "landlock-abi:"); ok {
-			if v, parseErr := strconv.Atoi(abiStr); parseErr == nil {
-				return v
-			}
-		}
-	}
-
-	// ABI indeterminate — fall back to the kernel-version heuristic, which still
-	// requires kernel >= 5.13 for Landlock v1. A helper on an older kernel can
-	// restrict nothing, so report 0 there.
-	if data, err := prober.ReadFile("/proc/version"); err == nil {
-		kver := parseKernelVersion(string(data))
-		major, minor := parseKernelMajorMinor(kver)
-		if major > 5 || (major == 5 && minor >= 13) {
-			return 1
-		}
+	out, err := prober.Output(ctx, llPath, "--version")
+	if err != nil {
 		return 0
 	}
-
-	// Helper present but kernel version unknown — trust the helper's presence.
-	return 1
+	abiStr, ok := strings.CutPrefix(strings.TrimSpace(string(out)), "landlock-abi:")
+	if !ok {
+		return 0
+	}
+	v, err := strconv.Atoi(abiStr)
+	if err != nil || v < 0 {
+		return 0
+	}
+	return v
 }
 
 // probeSeccomp reports whether seccomp syscall filtering is ENFORCEABLE. It is
@@ -146,33 +142,47 @@ func probeCgroupV2(prober SandboxProber) bool {
 	return err == nil
 }
 
-// probeCgroupDelegation checks whether the current user has cgroup delegation.
+// probeCgroupDelegation checks whether the current user's systemd service
+// manager has the memory and pids controllers delegated to it. Those are what
+// the transient `systemd-run --user --scope` units used for hook resource
+// limits (MemoryMax=, TasksMax=) need; they live under user@UID.service, not in
+// the root-owned user-UID.slice above it.
 func probeCgroupDelegation(prober SandboxProber) bool {
-	// On systems with systemd, check user slice delegation.
-	uid := prober.Getenv("UID")
-	if uid == "" {
-		// Try reading from /proc/self/status.
-		if data, err := prober.ReadFile("/proc/self/status"); err == nil {
-			for line := range strings.SplitSeq(string(data), "\n") {
-				if strings.HasPrefix(line, "Uid:") {
-					fields := strings.Fields(line)
-					if len(fields) >= 2 {
-						uid = fields[1]
-					}
-					break
-				}
-			}
-		}
-	}
+	uid := processUID(prober)
 	if uid == "" {
 		return false
 	}
 
-	path := "/sys/fs/cgroup/user.slice/user-" + uid + ".slice/cgroup.controllers"
-	if data, err := prober.ReadFile(path); err == nil {
-		return len(strings.TrimSpace(string(data))) > 0
+	path := "/sys/fs/cgroup/user.slice/user-" + uid + ".slice/user@" + uid + ".service/cgroup.controllers"
+	data, err := prober.ReadFile(path)
+	if err != nil {
+		return false
 	}
-	return false
+	controllers := strings.Fields(string(data))
+	return slices.Contains(controllers, "memory") && slices.Contains(controllers, "pids")
+}
+
+// processUID returns the real UID of the current process from
+// /proc/self/status. It deliberately does not consult $UID, which is a shell
+// variable any parent can set.
+func processUID(prober SandboxProber) string {
+	data, err := prober.ReadFile("/proc/self/status")
+	if err != nil {
+		return ""
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if rest, ok := strings.CutPrefix(line, "Uid:"); ok {
+			fields := strings.Fields(rest)
+			if len(fields) == 0 {
+				return ""
+			}
+			if _, err := strconv.ParseUint(fields[0], 10, 32); err != nil {
+				return ""
+			}
+			return fields[0]
+		}
+	}
+	return ""
 }
 
 // parseKernelVersion extracts the kernel version string from /proc/version.
@@ -182,15 +192,4 @@ func parseKernelVersion(procVersion string) string {
 		return fields[2]
 	}
 	return ""
-}
-
-// parseKernelMajorMinor extracts major.minor from a kernel version string.
-func parseKernelMajorMinor(kver string) (int, int) {
-	parts := strings.SplitN(kver, ".", 3)
-	if len(parts) < 2 {
-		return 0, 0
-	}
-	major, _ := strconv.Atoi(parts[0])
-	minor, _ := strconv.Atoi(parts[1])
-	return major, minor
 }

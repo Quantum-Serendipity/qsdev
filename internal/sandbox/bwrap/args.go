@@ -70,7 +70,7 @@ func BuildArgs(cfg *sandbox.SandboxConfig, _ sandbox.DegradationTier) ([]string,
 	// empty path emits `--ro-bind "" ""`, which bwrap rejects with "Can't find
 	// source path" and would break `sandbox exec` (which sets no ProjectDir).
 	if cfg.ProjectDir != "" {
-		if cfg.HookCategory.WorktreeReadOnly() {
+		if cfg.WorktreeReadOnly() {
 			args = append(args, "--ro-bind", cfg.ProjectDir, cfg.ProjectDir)
 		} else {
 			args = append(args, "--bind", cfg.ProjectDir, cfg.ProjectDir)

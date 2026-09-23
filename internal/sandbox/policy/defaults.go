@@ -11,6 +11,7 @@ import (
 // for most projects. Credential directories are denied, network is blocked,
 // and the five standard hook categories are pre-configured.
 func DefaultPolicy() *PolicySpec {
+	limits := sandbox.DefaultResourceLimits()
 	return &PolicySpec{
 		Filesystem: FilesystemPolicy{
 			Deny: denylist.AllDenyPaths(),
@@ -20,9 +21,9 @@ func DefaultPolicy() *PolicySpec {
 			DenyLAN: true,
 		},
 		Resources: ResourceSpec{
-			MemoryBytes:     2 * 1024 * 1024 * 1024, // 2 GB
-			MaxPIDs:         4096,
-			CPUQuotaPercent: 200, // 2 cores
+			MemoryBytes:     limits.MemoryBytes,
+			MaxPIDs:         limits.MaxPIDs,
+			CPUQuotaPercent: limits.CPUQuotaPercent,
 		},
 		HookCategories: map[string]CategoryPolicy{
 			"linter":         {WorktreeAccess: "ro", Network: "deny"},
@@ -38,7 +39,8 @@ func DefaultPolicy() *PolicySpec {
 // ToSandboxConfig merges the policy spec with a category profile and optional
 // per-hook overrides into a concrete sandbox.SandboxConfig. The merge proceeds
 // in three layers:
-//  1. Base policy (filesystem deny list, network mode, resource limits)
+//  1. Base policy (filesystem deny list and allowRead/allowWrite binds, network
+//     mode, resource limits, backend)
 //  2. Category profile (worktree access, network mode, extra mounts)
 //  3. Per-hook override (extra mounts, network override, category reassignment)
 func ToSandboxConfig(spec *PolicySpec, category sandbox.HookCategory, hookName string) *sandbox.SandboxConfig {
@@ -53,6 +55,7 @@ func ToSandboxConfig(spec *PolicySpec, category sandbox.HookCategory, hookName s
 			Mode:    spec.Network.Mode,
 			DenyLAN: spec.Network.DenyLAN,
 		},
+		Backend: spec.Backend,
 	}
 
 	// Copy base egress rules.
@@ -66,6 +69,12 @@ func ToSandboxConfig(spec *PolicySpec, category sandbox.HookCategory, hookName s
 	// Carry filesystem deny paths as explicit deny intent. They must never be
 	// encoded as mounts: a mount exposes its source, a deny entry hides it.
 	cfg.Deny = append(cfg.Deny, spec.Filesystem.Deny...)
+
+	// Explicitly allowed paths are bound at the same location inside the
+	// sandbox: allowRead read-only, allowWrite read-write. They pass the same
+	// validation as extra mounts, so they can never re-expose a deny path.
+	appendMounts(cfg, pathMounts(spec.Filesystem.AllowRead, true), "filesystem.allowRead")
+	appendMounts(cfg, pathMounts(spec.Filesystem.AllowWrite, false), "filesystem.allowWrite")
 
 	// Determine the effective category name, which a hook override may replace.
 	effectiveCategory := category.String()
@@ -85,18 +94,8 @@ func ToSandboxConfig(spec *PolicySpec, category sandbox.HookCategory, hookName s
 		if catPolicy.Network != "" {
 			cfg.Network.Mode = catPolicy.Network
 		}
-
-		for _, m := range catPolicy.ExtraMounts {
-			if err := ValidateMountDecl(m); err != nil {
-				slog.Warn("skipping invalid category mount", "category", effectiveCategory, "error", err)
-				continue
-			}
-			cfg.Mounts = append(cfg.Mounts, sandbox.MountSpec{
-				Source:   m.Source,
-				Target:   m.Target,
-				ReadOnly: m.ReadOnly,
-			})
-		}
+		cfg.WorktreeAccess = worktreeAccess(catPolicy.WorktreeAccess, effectiveCategory)
+		appendMounts(cfg, catPolicy.ExtraMounts, "hookCategories."+effectiveCategory)
 	}
 
 	// Apply per-hook overrides on top of category.
@@ -105,18 +104,48 @@ func ToSandboxConfig(spec *PolicySpec, category sandbox.HookCategory, hookName s
 			cfg.Network.Mode = override.NetworkOverride
 		}
 
-		for _, m := range override.ExtraMounts {
-			if err := ValidateMountDecl(m); err != nil {
-				slog.Warn("skipping invalid override mount", "hook", hookName, "error", err)
-				continue
-			}
-			cfg.Mounts = append(cfg.Mounts, sandbox.MountSpec{
-				Source:   m.Source,
-				Target:   m.Target,
-				ReadOnly: m.ReadOnly,
-			})
-		}
+		appendMounts(cfg, override.ExtraMounts, "hookOverrides."+hookName)
 	}
 
 	return cfg
+}
+
+// worktreeAccess validates a category's worktreeAccess value. An empty value
+// leaves the HookCategory default in force. An unrecognised value is reported
+// and mapped to read-only, so a typo can never widen access to the worktree.
+func worktreeAccess(access, category string) string {
+	switch access {
+	case "", sandbox.WorktreeAccessReadOnly, sandbox.WorktreeAccessReadWrite:
+		return access
+	default:
+		slog.Warn("invalid worktreeAccess in sandbox policy; using read-only",
+			"category", category, "worktreeAccess", access)
+		return sandbox.WorktreeAccessReadOnly
+	}
+}
+
+// pathMounts turns a list of paths into same-path bind declarations.
+func pathMounts(paths []string, readOnly bool) []MountDecl {
+	decls := make([]MountDecl, 0, len(paths))
+	for _, p := range paths {
+		decls = append(decls, MountDecl{Source: p, Target: p, ReadOnly: readOnly})
+	}
+	return decls
+}
+
+// appendMounts validates each declaration and appends the valid ones to
+// cfg.Mounts. Invalid ones are skipped with a warning naming the policy field
+// they came from.
+func appendMounts(cfg *sandbox.SandboxConfig, decls []MountDecl, field string) {
+	for _, m := range decls {
+		if err := ValidateMountDecl(m); err != nil {
+			slog.Warn("skipping invalid sandbox policy mount", "field", field, "error", err)
+			continue
+		}
+		cfg.Mounts = append(cfg.Mounts, sandbox.MountSpec{
+			Source:   m.Source,
+			Target:   m.Target,
+			ReadOnly: m.ReadOnly,
+		})
+	}
 }

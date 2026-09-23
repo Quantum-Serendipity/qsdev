@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 )
 
@@ -12,20 +13,21 @@ func runUnsandboxed(ctx context.Context, cfg *SandboxConfig) (*SandboxResult, er
 	}
 
 	cmd := exec.CommandContext(ctx, cfg.HookCommand[0], cfg.HookCommand[1:]...)
+	cfg.Attach(cmd)
 
-	// Claude Code delivers the tool call on stdin; RunCommand captures
-	// stdout and stderr.
-	cmd.Stdin = cfg.Stdin
-
+	// A caller-supplied environment replaces the inherited one entirely. EnvList
+	// never returns nil, so an empty map stays empty instead of inheriting.
 	if cfg.Environment != nil {
-		for k, v := range cfg.Environment {
-			cmd.Env = append(cmd.Env, k+"="+v)
-		}
+		cmd.Env = EnvList(cfg.Environment)
 	}
 
 	if cfg.ProjectDir != "" {
 		cmd.Dir = cfg.ProjectDir
 	}
 
-	return RunCommand(ctx, cmd, TierUnsandboxed)
+	result, err := RunCommand(ctx, cmd, TierUnsandboxed)
+	if err != nil {
+		return nil, fmt.Errorf("running hook: %w", err)
+	}
+	return result, nil
 }

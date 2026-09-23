@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strconv"
 	"time"
@@ -21,16 +22,27 @@ const MaxCapturedOutput = 16 << 20
 const commandWaitDelay = 5 * time.Second
 
 // RunCommand runs cmd to completion and collects its result at the given tier.
-// cmd must have been created with exec.CommandContext(ctx, ...). Stdout and
-// stderr are captured, each capped at MaxCapturedOutput. A non-zero exit is
-// reported through SandboxResult.ExitCode with a nil error. When ctx ends
-// before the command completes, the error wraps ctx.Err() instead of reporting
-// the kill as an exit code.
-func RunCommand(ctx context.Context, cmd *exec.Cmd, tier DegradationTier) (*SandboxResult, error) {
-	stdout := &cappedBuffer{limit: MaxCapturedOutput}
-	stderr := &cappedBuffer{limit: MaxCapturedOutput}
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+// cmd must have been created with exec.CommandContext(ctx, ...). A stream the
+// caller already connected (cmd.Stdout/cmd.Stderr, e.g. via ExecOpts.Attach
+// for streaming) is left as is; an unset stream is captured into the result,
+// capped at MaxCapturedOutput. Each stderrTap receives a copy of stderr, which
+// lets a backend inspect the child's diagnostics without taking the stream
+// over. A non-zero exit is reported through SandboxResult.ExitCode with a nil
+// error. When ctx ends before the command completes, the error wraps ctx.Err()
+// instead of reporting the kill as an exit code.
+func RunCommand(ctx context.Context, cmd *exec.Cmd, tier DegradationTier, stderrTaps ...io.Writer) (*SandboxResult, error) {
+	var stdout, stderr *cappedBuffer
+	if cmd.Stdout == nil {
+		stdout = &cappedBuffer{limit: MaxCapturedOutput}
+		cmd.Stdout = stdout
+	}
+	if cmd.Stderr == nil {
+		stderr = &cappedBuffer{limit: MaxCapturedOutput}
+		cmd.Stderr = stderr
+	}
+	if len(stderrTaps) > 0 {
+		cmd.Stderr = io.MultiWriter(append([]io.Writer{cmd.Stderr}, stderrTaps...)...)
+	}
 	if cmd.WaitDelay == 0 {
 		cmd.WaitDelay = commandWaitDelay
 	}
@@ -83,8 +95,11 @@ func (c *cappedBuffer) Write(p []byte) (int, error) {
 }
 
 // Bytes returns the captured output, followed by a notice when some of it was
-// dropped.
+// dropped. A nil buffer (a stream the caller streamed elsewhere) has none.
 func (c *cappedBuffer) Bytes() []byte {
+	if c == nil {
+		return nil
+	}
 	if c.truncated == 0 {
 		return c.buf.Bytes()
 	}

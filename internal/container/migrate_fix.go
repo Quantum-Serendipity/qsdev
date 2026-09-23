@@ -108,7 +108,8 @@ func applyImageQualification(doc *yaml.Node, serviceName string) error {
 	return nil
 }
 
-// applyPortRemap remaps host ports below 1024 to port+8000.
+// applyPortRemap remaps host ports below 1024 to port+8000, except where that
+// port is already published in the file (see portRemapTarget).
 func applyPortRemap(doc *yaml.Node, serviceName string) error {
 	svcNode := findServiceNode(doc, serviceName)
 	if svcNode == nil {
@@ -120,33 +121,83 @@ func applyPortRemap(doc *yaml.Node, serviceName string) error {
 		return nil
 	}
 
+	published := documentPublishedPorts(doc)
 	for _, item := range portsNode.Content {
 		switch item.Kind {
 		case yaml.ScalarNode:
-			item.Value = remapPort(item.Value)
+			item.Value = remapPort(item.Value, published)
 		case yaml.MappingNode:
-			remapMappingPort(item)
+			remapMappingPort(item, published)
 		}
 	}
 
 	return nil
 }
 
-// remapMappingPort remaps the "published" key in a map-style port entry.
-func remapMappingPort(node *yaml.Node) {
-	_, pubNode := findMappingKey(node, "published")
-	if pubNode == nil || pubNode.Kind != yaml.ScalarNode {
-		return
+// documentPublishedPorts returns every host port the document's services
+// publish, as it stands before any remapping.
+func documentPublishedPorts(doc *yaml.Node) map[publishedPort]bool {
+	result := make(map[publishedPort]bool)
+	for _, svcNode := range serviceNodes(doc) {
+		_, portsNode := findMappingKey(svcNode, "ports")
+		if portsNode == nil || portsNode.Kind != yaml.SequenceNode {
+			continue
+		}
+		for _, item := range portsNode.Content {
+			if p, ok := nodePort(item); ok {
+				result[p] = true
+			}
+		}
 	}
-	n, err := strconv.Atoi(pubNode.Value)
-	if err != nil || n <= 0 || n >= 1024 {
-		return
-	}
-	pubNode.Value = strconv.Itoa(n + portRemapOffset)
+	return result
 }
 
-// remapPort remaps a port string's host port if it is below 1024.
-func remapPort(portStr string) string {
+// nodePort parses a port entry node (short or long syntax) into the host port
+// it publishes.
+func nodePort(node *yaml.Node) (publishedPort, bool) {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		return parsePortSpec(node.Value)
+	case yaml.MappingNode:
+		_, pub := findMappingKey(node, "published")
+		if pub == nil || pub.Kind != yaml.ScalarNode {
+			return publishedPort{}, false
+		}
+		protocol := ""
+		if _, proto := findMappingKey(node, "protocol"); proto != nil {
+			protocol = proto.Value
+		}
+		return longPortSpec(pub.Value, protocol)
+	}
+	return publishedPort{}, false
+}
+
+// remapMappingPort remaps the "published" key in a map-style port entry.
+func remapMappingPort(node *yaml.Node, published map[publishedPort]bool) {
+	p, ok := nodePort(node)
+	if !ok || p.port >= 1024 {
+		return
+	}
+	target, ok := portRemapTarget(p, published)
+	if !ok {
+		return
+	}
+	_, pubNode := findMappingKey(node, "published")
+	pubNode.Value = strconv.Itoa(target)
+}
+
+// remapPort remaps a port string's host port if it is below 1024 and its
+// remap target is free.
+func remapPort(portStr string, published map[publishedPort]bool) string {
+	p, ok := parsePortSpec(portStr)
+	if !ok || p.port >= 1024 {
+		return portStr
+	}
+	target, ok := portRemapTarget(p, published)
+	if !ok {
+		return portStr
+	}
+
 	// Strip protocol suffix.
 	proto := ""
 	if idx := strings.Index(portStr, "/"); idx >= 0 {
@@ -158,16 +209,10 @@ func remapPort(portStr string) string {
 	switch len(parts) {
 	case 2:
 		// host:container
-		hostPort, err := strconv.Atoi(parts[0])
-		if err == nil && hostPort > 0 && hostPort < 1024 {
-			parts[0] = strconv.Itoa(hostPort + portRemapOffset)
-		}
+		parts[0] = strconv.Itoa(target)
 	case 3:
 		// ip:host:container
-		hostPort, err := strconv.Atoi(parts[1])
-		if err == nil && hostPort > 0 && hostPort < 1024 {
-			parts[1] = strconv.Itoa(hostPort + portRemapOffset)
-		}
+		parts[1] = strconv.Itoa(target)
 	}
 
 	return strings.Join(parts, ":") + proto
@@ -197,7 +242,10 @@ func applySocketReplacement(doc *yaml.Node, serviceName string) error {
 	return nil
 }
 
-// applySELinuxSuffix appends :Z to bind mount volumes that lack SELinux labels.
+// applySELinuxSuffix adds an SELinux relabel option to the service's
+// project-relative bind mounts that lack one: :Z for a path only this service
+// mounts, :z for one several services share. Other bind mounts (system paths,
+// the home directory, sockets) are left alone; see selinuxRelabelOption.
 func applySELinuxSuffix(doc *yaml.Node, serviceName string) error {
 	svcNode := findServiceNode(doc, serviceName)
 	if svcNode == nil {
@@ -209,34 +257,55 @@ func applySELinuxSuffix(doc *yaml.Node, serviceName string) error {
 		return nil
 	}
 
+	bindHosts := countBindHosts(documentVolumes(doc))
 	for _, item := range volsNode.Content {
-		if item.Kind != yaml.ScalarNode {
+		if item.Kind != yaml.ScalarNode || !strings.Contains(item.Value, ":") || hasSELinuxOption(item.Value) {
 			continue
 		}
-		vol := item.Value
-		parts := strings.Split(vol, ":")
-		if len(parts) < 2 {
+		option, ok := selinuxRelabelOption(bindHostOf(item.Value), bindHosts)
+		if !ok {
 			continue
 		}
-		host := parts[0]
-		if !strings.HasPrefix(host, ".") && !strings.HasPrefix(host, "/") && !strings.HasPrefix(host, "~") {
-			continue
-		}
-		// Check if already has z/Z option.
-		if len(parts) >= 3 {
-			opts := parts[len(parts)-1]
-			if strings.Contains(opts, "z") || strings.Contains(opts, "Z") {
-				continue
-			}
-			// Append Z to existing options as comma-separated.
-			parts[len(parts)-1] = parts[len(parts)-1] + ",Z"
-			item.Value = strings.Join(parts, ":")
-		} else {
-			item.Value = vol + ":Z"
-		}
+		item.Value = appendSELinuxOption(item.Value, option)
 	}
 
 	return nil
+}
+
+// documentVolumes returns each service's short-syntax volume entries.
+func documentVolumes(doc *yaml.Node) map[string][]string {
+	result := make(map[string][]string)
+	for name, svcNode := range serviceNodes(doc) {
+		_, volsNode := findMappingKey(svcNode, "volumes")
+		if volsNode == nil || volsNode.Kind != yaml.SequenceNode {
+			continue
+		}
+		for _, item := range volsNode.Content {
+			if item.Kind == yaml.ScalarNode {
+				result[name] = append(result[name], item.Value)
+			}
+		}
+	}
+	return result
+}
+
+// serviceNodes returns the document's service mapping nodes by name.
+func serviceNodes(doc *yaml.Node) map[string]*yaml.Node {
+	result := make(map[string]*yaml.Node)
+	root := doc
+	if root != nil && root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+		root = root.Content[0]
+	}
+	_, servicesVal := findMappingKey(root, "services")
+	if servicesVal == nil || servicesVal.Kind != yaml.MappingNode {
+		return result
+	}
+	for i := 0; i+1 < len(servicesVal.Content); i += 2 {
+		if svc := servicesVal.Content[i+1]; svc.Kind == yaml.MappingNode {
+			result[servicesVal.Content[i].Value] = svc
+		}
+	}
+	return result
 }
 
 // findServiceNode locates a service mapping node by name within the document.

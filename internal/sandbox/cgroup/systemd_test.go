@@ -83,7 +83,7 @@ func TestBuildArgs(t *testing.T) {
 				},
 			},
 			want: []string{
-				"--user", "--scope",
+				"--user", "--scope", "--quiet",
 				"-p", "MemoryMax=2147483648",
 				"-p", "TasksMax=4096",
 				"-p", "CPUQuota=200%",
@@ -98,7 +98,7 @@ func TestBuildArgs(t *testing.T) {
 				Resources:   sandbox.ResourceLimits{},
 			},
 			want: []string{
-				"--user", "--scope",
+				"--user", "--scope", "--quiet",
 				"--",
 				"echo", "hello",
 			},
@@ -112,7 +112,7 @@ func TestBuildArgs(t *testing.T) {
 				},
 			},
 			want: []string{
-				"--user", "--scope",
+				"--user", "--scope", "--quiet",
 				"-p", "MemoryMax=536870912",
 				"--",
 				"lint",
@@ -127,7 +127,7 @@ func TestBuildArgs(t *testing.T) {
 				},
 			},
 			want: []string{
-				"--user", "--scope",
+				"--user", "--scope", "--quiet",
 				"-p", "TasksMax=64",
 				"--",
 				"test",
@@ -142,7 +142,7 @@ func TestBuildArgs(t *testing.T) {
 				},
 			},
 			want: []string{
-				"--user", "--scope",
+				"--user", "--scope", "--quiet",
 				"-p", "CPUQuota=100%",
 				"--",
 				"build",
@@ -155,7 +155,7 @@ func TestBuildArgs(t *testing.T) {
 				Resources:   sandbox.DefaultResourceLimits(),
 			},
 			want: []string{
-				"--user", "--scope",
+				"--user", "--scope", "--quiet",
 				"-p", "MemoryMax=2147483648",
 				"-p", "TasksMax=4096",
 				"-p", "CPUQuota=200%",

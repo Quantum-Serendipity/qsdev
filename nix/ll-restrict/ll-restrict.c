@@ -1,16 +1,29 @@
 /* ll-restrict.c -- Landlock restriction helper for hook sandboxing
  *
- * Usage: ll-restrict [--ro PATH...] [--rw PATH...] [--deny-net] -- CMD [ARGS...]
+ * Usage: ll-restrict [--verbose] [--ro PATH...] [--rw PATH...] [--deny-net]
+ *                    -- CMD [ARGS...]
+ *        ll-restrict --version
  *
  * Applies Landlock filesystem (and optionally network) restrictions,
  * then execs CMD. Designed to run INSIDE a bubblewrap namespace as
  * the inner wrapper stage.
  *
- * Exit codes:
- *   0   - (never reached, exec replaces process)
- *   1   - Usage error
- *   2   - Landlock unsupported (caller should fall back)
- *   3   - Landlock setup failed
+ * --version prints "landlock-abi:N", the Landlock ABI the running kernel
+ * enforces (0 when Landlock is unsupported or disabled, e.g. missing from
+ * the boot lsm= list), and exits 0. qsdev's capability probe relies on it.
+ *
+ * Nothing is written to stderr on success unless --verbose is given, so
+ * the wrapped hook's stderr is not polluted. Every diagnostic starts with
+ * "ll-restrict: ".
+ *
+ * Exit codes are in a range hooks do not normally use, so the caller can
+ * tell a helper failure (CMD never ran) from CMD's own exit status. Keep
+ * them in sync with internal/sandbox/bwrap/llrestrict.go.
+ *   0   - --version only (otherwise exec replaces the process)
+ *   120 - Usage error
+ *   121 - Landlock unsupported
+ *   122 - Landlock setup failed
+ *   123 - exec of CMD failed
  */
 
 #define _GNU_SOURCE
@@ -70,6 +83,11 @@ static inline int landlock_restrict_self(int ruleset_fd, __u32 flags) {
 
 #define MAX_PATHS 64
 
+#define EXIT_USAGE       120
+#define EXIT_UNSUPPORTED 121
+#define EXIT_SETUP       122
+#define EXIT_EXEC        123
+
 struct path_entry {
     const char *path;
     int writable;
@@ -79,7 +97,15 @@ int main(int argc, char *argv[]) {
     struct path_entry paths[MAX_PATHS];
     int path_count = 0;
     int deny_net = 0;
+    int verbose = 0;
     int cmd_start = -1;
+
+    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+        int v = landlock_create_ruleset(NULL, 0,
+                                        LANDLOCK_CREATE_RULESET_VERSION);
+        printf("landlock-abi:%d\n", v < 0 ? 0 : v);
+        return 0;
+    }
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--") == 0) {
@@ -88,27 +114,30 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--ro") == 0 && i + 1 < argc) {
             if (path_count >= MAX_PATHS) {
                 fprintf(stderr, "ll-restrict: too many paths\n");
-                return 1;
+                return EXIT_USAGE;
             }
             paths[path_count++] = (struct path_entry){argv[++i], 0};
         } else if (strcmp(argv[i], "--rw") == 0 && i + 1 < argc) {
             if (path_count >= MAX_PATHS) {
                 fprintf(stderr, "ll-restrict: too many paths\n");
-                return 1;
+                return EXIT_USAGE;
             }
             paths[path_count++] = (struct path_entry){argv[++i], 1};
         } else if (strcmp(argv[i], "--deny-net") == 0) {
             deny_net = 1;
+        } else if (strcmp(argv[i], "--verbose") == 0) {
+            verbose = 1;
         } else {
             fprintf(stderr, "ll-restrict: unknown option: %s\n", argv[i]);
-            return 1;
+            return EXIT_USAGE;
         }
     }
 
     if (cmd_start < 0 || cmd_start >= argc) {
-        fprintf(stderr, "Usage: ll-restrict [--ro PATH] [--rw PATH] "
-                        "[--deny-net] -- CMD [ARGS...]\n");
-        return 1;
+        fprintf(stderr, "ll-restrict: usage: ll-restrict [--verbose] "
+                        "[--ro PATH] [--rw PATH] [--deny-net] "
+                        "-- CMD [ARGS...] | --version\n");
+        return EXIT_USAGE;
     }
 
     int abi = landlock_create_ruleset(NULL, 0,
@@ -117,12 +146,14 @@ int main(int argc, char *argv[]) {
         if (errno == ENOSYS || errno == EOPNOTSUPP) {
             fprintf(stderr, "ll-restrict: Landlock unavailable "
                             "(kernel too old or disabled)\n");
-            return 2;
+            return EXIT_UNSUPPORTED;
         }
         perror("ll-restrict: landlock_create_ruleset version check");
-        return 3;
+        return EXIT_SETUP;
     }
-    fprintf(stderr, "ll-restrict: Landlock ABI v%d\n", abi);
+    if (verbose) {
+        fprintf(stderr, "ll-restrict: Landlock ABI v%d\n", abi);
+    }
 
     __u64 handled_fs;
     if (abi >= 3)      handled_fs = ACCESS_FS_V3;
@@ -144,14 +175,17 @@ int main(int argc, char *argv[]) {
                                             sizeof(ruleset_attr), 0);
     if (ruleset_fd < 0) {
         perror("ll-restrict: landlock_create_ruleset");
-        return 3;
+        return EXIT_SETUP;
     }
 
     for (int i = 0; i < path_count; i++) {
         int parent_fd = open(paths[i].path, O_PATH | O_CLOEXEC);
         if (parent_fd < 0) {
-            fprintf(stderr, "ll-restrict: skipping %s: %s\n",
-                    paths[i].path, strerror(errno));
+            /* A missing path only narrows access, so it is not an error. */
+            if (verbose) {
+                fprintf(stderr, "ll-restrict: skipping %s: %s\n",
+                        paths[i].path, strerror(errno));
+            }
             continue;
         }
         struct landlock_path_beneath_attr path_beneath = {
@@ -168,7 +202,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (deny_net && abi < 4) {
+    if (verbose && deny_net && abi < 4) {
         fprintf(stderr, "ll-restrict: ABI < 4, network deny via "
                         "bwrap --unshare-net only\n");
     }
@@ -176,17 +210,17 @@ int main(int argc, char *argv[]) {
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)) {
         perror("ll-restrict: prctl(PR_SET_NO_NEW_PRIVS)");
         close(ruleset_fd);
-        return 3;
+        return EXIT_SETUP;
     }
 
     if (landlock_restrict_self(ruleset_fd, 0)) {
         perror("ll-restrict: landlock_restrict_self");
         close(ruleset_fd);
-        return 3;
+        return EXIT_SETUP;
     }
 
     close(ruleset_fd);
     execvp(argv[cmd_start], &argv[cmd_start]);
     perror("ll-restrict: execvp");
-    return 3;
+    return EXIT_EXEC;
 }

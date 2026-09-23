@@ -121,10 +121,13 @@ func TestTierMessage(t *testing.T) {
 		{TierBwrapWithoutSeccomp, true, "Seccomp"},
 		{TierBwrapOnly, true, "namespace isolation"},
 		{TierSystemdRun, true, "systemd-run"},
-		{TierUnsandboxed, true, "qsdev doctor"},
+		{TierBwrapWithoutLandlock, true, "ll-restrict"},
+		{TierBwrapWithoutLandlock, true, "lsm="},
+		{TierBwrapWithoutSeccomp, true, "BPF filter"},
+		{TierUnsandboxed, true, "'qsdev devenv doctor'"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.tier.String(), func(t *testing.T) {
+		t.Run(tt.tier.String()+"/"+tt.contains, func(t *testing.T) {
 			t.Parallel()
 			msg := TierMessage(tt.tier)
 			if tt.wantMsg && msg == "" {

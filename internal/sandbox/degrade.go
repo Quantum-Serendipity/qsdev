@@ -30,6 +30,18 @@ func DetermineTier(caps *SystemCapabilities) DegradationTier {
 	}
 }
 
+// LandlockRemediation explains what Landlock enforcement needs. Either part can
+// be the missing one: the ll-restrict helper ships only with the Nix-built
+// qsdev, and a kernel >= 5.13 can still have Landlock disabled when it is not
+// in the boot lsm= list.
+const LandlockRemediation = "Landlock needs the ll-restrict helper (shipped with the Nix-built qsdev) " +
+	"and a kernel with Landlock enabled (>= 5.13, with \"landlock\" in the boot lsm= list)."
+
+// SeccompRemediation explains what seccomp enforcement needs: the compiled BPF
+// filter, which ships only with the Nix-built qsdev, and kernel support.
+const SeccompRemediation = "Seccomp filtering needs the compiled BPF filter (shipped with the Nix-built qsdev) " +
+	"and kernel seccomp support (see /proc/sys/kernel/seccomp/actions_avail)."
+
 // TierMessage returns a human-readable description and remediation for a
 // degradation tier. Empty string for TierFull (no message needed).
 func TierMessage(tier DegradationTier) string {
@@ -39,11 +51,11 @@ func TierMessage(tier DegradationTier) string {
 	case TierBwrapWithoutLandlock:
 		return "Landlock filesystem restriction unavailable. Sandbox provides namespace " +
 			"isolation but cannot restrict filesystem access within the namespace. " +
-			"Upgrade to kernel >= 5.13 for full isolation."
+			LandlockRemediation
 	case TierBwrapWithoutSeccomp:
 		return "Seccomp syscall filtering unavailable. Sandbox provides namespace and " +
 			"filesystem isolation but cannot block dangerous syscalls. " +
-			"Check /proc/sys/kernel/seccomp/actions_avail."
+			SeccompRemediation
 	case TierBwrapOnly:
 		return "Landlock filesystem restriction and seccomp syscall filtering are unavailable " +
 			"in this build. Sandbox provides bubblewrap namespace isolation (private filesystem " +
@@ -57,7 +69,7 @@ func TierMessage(tier DegradationTier) string {
 	case TierUnsandboxed:
 		return "No sandbox isolation available. Hooks run with full user permissions. " +
 			"Install bubblewrap, or enable systemd-run --user for basic resource limits. " +
-			"Run 'qsdev doctor' for detailed remediation."
+			"Run 'qsdev devenv doctor' for detailed remediation."
 	default:
 		return ""
 	}

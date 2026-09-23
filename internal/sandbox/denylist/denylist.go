@@ -22,30 +22,26 @@ func SystemDenyPaths() []string {
 }
 
 // HomeDenyPaths returns home-relative paths that must never be bind-mounted
-// into a sandbox. Each entry is joined with the current user's home directory.
-// If the home directory cannot be determined, "/home/unknown" is used as a
-// fallback so that the deny list is never empty.
+// into a sandbox. Each HomeDenyRelPaths entry is joined with the current
+// user's home directory. If the home directory cannot be determined,
+// "/home/unknown" is used as a fallback so that the deny list is never empty.
 func HomeDenyPaths() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "/home/unknown"
 	}
 
-	return []string{
-		filepath.Join(home, ".ssh"),
-		filepath.Join(home, ".gnupg"),
-		filepath.Join(home, ".aws"),
-		filepath.Join(home, ".azure"),
-		filepath.Join(home, ".config", "gcloud"),
-		filepath.Join(home, ".kube"),
-		filepath.Join(home, ".docker", "config.json"),
-		filepath.Join(home, ".netrc"),
+	rels := HomeDenyRelPaths()
+	paths := make([]string, 0, len(rels))
+	for _, rel := range rels {
+		paths = append(paths, filepath.Join(home, filepath.FromSlash(rel)))
 	}
+	return paths
 }
 
-// HomeDenyRelPaths returns the home-relative deny paths without the home
-// directory prefix. Callers that already have the home directory can use this
-// to avoid redundant os.UserHomeDir calls.
+// HomeDenyRelPaths returns the home-relative deny paths, slash-separated,
+// without the home directory prefix. It is the single definition of the
+// per-user credential stores; HomeDenyPaths expands it.
 func HomeDenyRelPaths() []string {
 	return []string{
 		".ssh",

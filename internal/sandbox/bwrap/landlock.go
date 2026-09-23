@@ -1,7 +1,10 @@
 package bwrap
 
 import (
+	"path/filepath"
+
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
 )
 
 // PrepareLandlockFlags builds the ll-restrict CLI flags for the given config.
@@ -10,13 +13,12 @@ func PrepareLandlockFlags(cfg *sandbox.SandboxConfig) []string {
 	if sandbox.LLRestrictBin() == "" {
 		return nil
 	}
-	return prepareLandlockFlags(cfg)
+	return landlockFlags(cfg)
 }
 
-// prepareLandlockFlags builds the ll-restrict flags for cfg. ll-restrict runs
-// INSIDE the bwrap mount namespace, so every path it is given must be the
-// in-sandbox path, and anything not listed here is denied by Landlock.
-func prepareLandlockFlags(cfg *sandbox.SandboxConfig) []string {
+// landlockFlags builds the ll-restrict CLI flags for cfg. It performs no binary
+// lookup, so the policy it encodes can be tested on hosts without ll-restrict.
+func landlockFlags(cfg *sandbox.SandboxConfig) []string {
 	var flags []string
 
 	// Nix store is always read-only.
@@ -36,7 +38,7 @@ func prepareLandlockFlags(cfg *sandbox.SandboxConfig) []string {
 
 	// Project directory: ro for linters, rw for formatters/generators.
 	if cfg.ProjectDir != "" {
-		if cfg.HookCategory.WorktreeReadOnly() {
+		if cfg.WorktreeReadOnly() {
 			flags = append(flags, "--ro", cfg.ProjectDir)
 		} else {
 			flags = append(flags, "--rw", cfg.ProjectDir)
@@ -45,9 +47,12 @@ func prepareLandlockFlags(cfg *sandbox.SandboxConfig) []string {
 
 	// Extra mounts from config, granted at the Target where bwrap mounted
 	// them. Deny entries are never Mounts (cfg.Deny carries them and
-	// BuildArgs rejects any mount that would expose one), so no path the
-	// policy declared off-limits is granted here.
+	// BuildArgs rejects any mount that would expose one); as defense in depth
+	// a mount touching a built-in or policy deny path is still never granted.
 	for _, m := range cfg.Mounts {
+		if touchesDenyPath(m, cfg.Deny) {
+			continue
+		}
 		if m.ReadOnly {
 			flags = append(flags, "--ro", m.Target)
 		} else {
@@ -79,4 +84,20 @@ func InjectLandlock(hookCmd []string, cfg *sandbox.SandboxConfig) []string {
 	result = append(result, "--")
 	result = append(result, hookCmd...)
 	return result
+}
+
+// touchesDenyPath reports whether mount m's source or target overlaps the
+// built-in credential deny list or lies under one of the policy's deny entries.
+func touchesDenyPath(m sandbox.MountSpec, deny []string) bool {
+	if IsDenyPath(m.Source) || IsDenyPath(m.Target) {
+		return true
+	}
+	for _, d := range deny {
+		for _, p := range []string{m.Source, m.Target} {
+			if denylist.Overlaps(filepath.Clean(p), filepath.Clean(d)) {
+				return true
+			}
+		}
+	}
+	return false
 }

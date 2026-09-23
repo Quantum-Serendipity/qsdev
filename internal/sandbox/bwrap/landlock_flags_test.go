@@ -6,7 +6,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 )
 
-// landlockGrant returns the access flag ("--ro"/"--rw") prepareLandlockFlags
+// landlockGrant returns the access flag ("--ro"/"--rw") landlockFlags
 // emitted for path, or "" when the path is not granted at all.
 func landlockGrant(flags []string, path string) string {
 	for i := 0; i+1 < len(flags); i++ {
@@ -65,7 +65,7 @@ func TestPrepareLandlockFlags_Grants(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			flags := prepareLandlockFlags(&tt.cfg)
+			flags := landlockFlags(&tt.cfg)
 			for path, want := range tt.want {
 				if got := landlockGrant(flags, path); got != want {
 					t.Errorf("grant for %q = %q, want %q; flags: %v", path, got, want, flags)

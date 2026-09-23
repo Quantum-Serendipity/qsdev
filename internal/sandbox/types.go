@@ -9,12 +9,15 @@ import (
 // current system. The degradation engine selects the strongest tier supported.
 type DegradationTier int
 
+// Degradation tiers, strongest first. Every bwrap tier additionally applies
+// cgroup resource limits by running the sandbox inside a transient systemd
+// --user scope when one is usable; the bwrap backend warns when it cannot.
 const (
-	TierFull                 DegradationTier = iota // bwrap + Landlock + seccomp + cgroups
-	TierBwrapWithoutLandlock                        // bwrap + seccomp + cgroups (no Landlock)
-	TierBwrapWithoutSeccomp                         // bwrap + Landlock + cgroups (no seccomp)
-	TierBwrapOnly                                   // bwrap namespaces only (no Landlock, no seccomp)
-	TierSystemdRun                                  // systemd-run scope only (no namespaces)
+	TierFull                 DegradationTier = iota // bwrap + Landlock + seccomp (+ cgroup limits)
+	TierBwrapWithoutLandlock                        // bwrap + seccomp (+ cgroup limits), no Landlock
+	TierBwrapWithoutSeccomp                         // bwrap + Landlock (+ cgroup limits), no seccomp
+	TierBwrapOnly                                   // bwrap namespaces (+ cgroup limits), no Landlock, no seccomp
+	TierSystemdRun                                  // systemd-run scope resource limits only (no namespaces)
 	TierUnsandboxed                                 // no isolation
 )
 
@@ -94,28 +97,54 @@ func (c HookCategory) NetworkAllowed() bool {
 	return c == CategoryNetworkLinter || c == CategoryTestRunner
 }
 
+// Worktree access modes accepted by SandboxConfig.WorktreeAccess and the
+// policy's per-category worktreeAccess field.
+const (
+	WorktreeAccessReadOnly  = "ro"
+	WorktreeAccessReadWrite = "rw"
+)
+
 // SandboxConfig is the configuration for a single sandboxed hook execution.
 type SandboxConfig struct {
-	ProjectDir    string
-	HookCommand   []string
-	HookCategory  HookCategory
-	Environment   map[string]string
-	NixStorePaths []string
-	Mounts        []MountSpec
+	ProjectDir   string
+	HookCommand  []string
+	HookCategory HookCategory
+	// WorktreeAccess overrides the category's default worktree mount mode
+	// ("ro" or "rw"). Empty means the HookCategory default; see
+	// WorktreeReadOnly.
+	WorktreeAccess string
+	Environment    map[string]string
+	NixStorePaths  []string
+	Mounts         []MountSpec
 	// Deny lists absolute paths that must be neither readable nor writable
 	// inside the sandbox (the policy's filesystem.deny). Backends mask every
 	// entry, whether or not it is on the built-in credential deny list, and
 	// never grant one to an inner restriction layer. A Mount always exposes its
 	// Source; a Deny entry always hides its path.
-	Deny              []string
-	Resources         ResourceLimits
-	Network           NetworkPolicy
-	SeccompFilterPath string
-	PolicyPath        string
-	// Stdin is connected to the hook's standard input. Claude Code delivers the
-	// tool-call JSON payload on stdin, so a wrapper such as `sandbox exec` must
-	// forward it; nil means the hook reads from the null device.
-	Stdin io.Reader
+	Deny      []string
+	Resources ResourceLimits
+	Network   NetworkPolicy
+	// Backend names the sandbox backend the policy requires ("bubblewrap",
+	// "systemd-run", "unsandboxed"). Empty or "auto" selects the strongest
+	// available one.
+	Backend string
+
+	// ExecOpts carries the hook's stdio. Stdin is forwarded to the hook (Claude
+	// Code delivers the tool-call payload there, so a wrapper such as `sandbox
+	// exec` must forward it); a nil output writer means that stream is captured
+	// into the SandboxResult instead of streamed.
+	ExecOpts
+}
+
+// WorktreeReadOnly reports whether the project directory is mounted read-only
+// for this execution. An explicit WorktreeAccess wins, and any value other than
+// "rw" counts as read-only so a malformed setting fails closed. Without one,
+// the HookCategory default applies.
+func (c *SandboxConfig) WorktreeReadOnly() bool {
+	if c.WorktreeAccess == "" {
+		return c.HookCategory.WorktreeReadOnly()
+	}
+	return c.WorktreeAccess != WorktreeAccessReadWrite
 }
 
 // MountSpec describes a single bind mount in the sandbox.
@@ -212,6 +241,11 @@ type ResourceLimits struct {
 	CPUQuotaPercent int
 }
 
+// Any reports whether at least one limit is set.
+func (r ResourceLimits) Any() bool {
+	return r.MemoryBytes > 0 || r.MaxPIDs > 0 || r.CPUQuotaPercent > 0
+}
+
 // DefaultResourceLimits returns the default resource limits for hook execution.
 func DefaultResourceLimits() ResourceLimits {
 	return ResourceLimits{
@@ -231,7 +265,7 @@ type SandboxResult struct {
 	Tier            DegradationTier
 }
 
-// ExecOpts controls how a command is executed inside the sandbox.
+// ExecOpts carries the stdio streams of a sandboxed command.
 type ExecOpts struct {
 	Stdin  io.Reader
 	Stdout io.Writer

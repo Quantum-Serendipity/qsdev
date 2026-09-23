@@ -21,7 +21,7 @@ import (
 // RunHook must emit a warning per un-applied layer instead of silently
 // overclaiming. This is a pure unit test of the warning logic.
 func TestBubblewrapBackend_WarnsWhenLayersUnapplied(t *testing.T) {
-	t.Parallel()
+	// Not parallel: it swaps the global slog default.
 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -46,7 +46,7 @@ func TestBubblewrapBackend_WarnsWhenLayersUnapplied(t *testing.T) {
 // TestBubblewrapBackend_NoFalseWarnWhenApplied ensures no warning is emitted
 // when the claimed layers are actually applied.
 func TestBubblewrapBackend_NoFalseWarnWhenApplied(t *testing.T) {
-	t.Parallel()
+	// Not parallel: it swaps the global slog default.
 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))

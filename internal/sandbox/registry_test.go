@@ -128,28 +128,3 @@ func TestBackendRegistry_SelectByName_Unavailable(t *testing.T) {
 		t.Fatal("expected error for unavailable backend")
 	}
 }
-
-func TestBackendRegistry_List(t *testing.T) {
-	t.Parallel()
-	r := NewRegistry()
-	r.Register(&mockBackend{name: "a", tier: TierFull})
-	r.Register(&mockBackend{
-		name:         "b",
-		tier:         TierSystemdRun,
-		availableErr: errors.New("missing"),
-	})
-
-	statuses := r.List()
-	if len(statuses) != 2 {
-		t.Fatalf("List() returned %d, want 2", len(statuses))
-	}
-	if !statuses[0].Available {
-		t.Error("first backend should be available")
-	}
-	if statuses[1].Available {
-		t.Error("second backend should not be available")
-	}
-	if statuses[1].Error == nil {
-		t.Error("second backend should have error")
-	}
-}

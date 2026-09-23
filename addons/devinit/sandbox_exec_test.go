@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -380,4 +381,88 @@ func TestSandboxStatus_ReportsExecBackend(t *testing.T) {
 			t.Errorf("backend = %q, want %q", status.Backend, want.Name())
 		}
 	})
+}
+
+// TestHookStdio pins that `sandbox exec` hands the hook the command's own
+// streams. Claude Code delivers the tool-call payload on stdin; a hook that
+// sees /dev/null instead either blocks everything or lets everything through.
+func TestHookStdio(t *testing.T) {
+	t.Parallel()
+
+	cmd := newSandboxExecCmd(noSandboxProbe)
+	in := strings.NewReader(`{"tool_name":"Bash"}`)
+	var out, errOut bytes.Buffer
+	cmd.SetIn(in)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	opts := hookStdio(cmd)
+
+	if opts.Stdin != in {
+		t.Errorf("Stdin = %v, want the command's input reader", opts.Stdin)
+	}
+	if opts.Stdout != &out {
+		t.Errorf("Stdout = %v, want the command's output writer", opts.Stdout)
+	}
+	if opts.Stderr != &errOut {
+		t.Errorf("Stderr = %v, want the command's error writer", opts.Stderr)
+	}
+}
+
+// TestSandboxExec_BrokenPolicyFailsClosed pins that a policy file which exists
+// but cannot be compiled stops `sandbox exec` instead of silently running the
+// hook under the default policy.
+func TestSandboxExec_BrokenPolicyFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.nix")
+	if err := os.WriteFile(policyPath, []byte("{ this is not nix"), 0o600); err != nil {
+		t.Fatalf("writing policy: %v", err)
+	}
+	marker := filepath.Join(dir, "hook-ran")
+
+	cmd := newSandboxExecCmd(noSandboxProbe)
+	cmd.SetArgs([]string{"--policy", policyPath, "--", "touch", marker})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("sandbox exec with an uncompilable policy succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "sandbox policy") {
+		t.Errorf("error = %v, want a sandbox policy error", err)
+	}
+	// Exit 1 is a non-blocking hook error in Claude Code, which would let the
+	// tool call through with the guard hook never having run.
+	var coded *exitcode.Error
+	if !errors.As(err, &coded) || coded.Code != hookBlockExitCode {
+		t.Errorf("error = %#v, want exit code %d (blocking)", err, hookBlockExitCode)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Error("hook ran despite the uncompilable policy")
+	}
+}
+
+// TestRunSandboxed_UnavailablePolicyBackendIsSetupFailure pins that a backend
+// the policy requires but the host cannot provide is reported as a sandbox
+// setup failure (which `sandbox exec` turns into a blocking exit), never as a
+// hook result, and that the hook does not run under another backend.
+func TestRunSandboxed_UnavailablePolicyBackendIsSetupFailure(t *testing.T) {
+	t.Parallel()
+
+	marker := filepath.Join(t.TempDir(), "hook-ran")
+	cfg := &sandbox.SandboxConfig{
+		HookCommand: []string{"touch", marker},
+		Backend:     "bubblewrap",
+	}
+	// No bwrap was probed, so the required backend is not a candidate.
+	_, err := runSandboxed(context.Background(), cfg, &sandbox.SystemCapabilities{}, io.Discard)
+	if !errors.Is(err, sandbox.ErrSetupFailed) {
+		t.Fatalf("runSandboxed error = %v, want one wrapping sandbox.ErrSetupFailed", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Error("hook ran under a backend the policy did not ask for")
+	}
 }

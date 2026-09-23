@@ -177,11 +177,9 @@ func TestToSandboxConfig_SkipsInvalidCategoryMounts(t *testing.T) {
 
 	cfg := ToSandboxConfig(spec, 0, "test-hook") // CategoryLinter = 0
 
-	// Count extra mounts beyond the deny-list mounts.
-	denyCount := len(spec.Filesystem.Deny)
-	extraCount := len(cfg.Mounts) - denyCount
-	if extraCount != 1 {
-		t.Errorf("expected 1 valid extra mount, got %d (total mounts: %d, deny: %d)", extraCount, len(cfg.Mounts), denyCount)
+	// Deny entries travel in cfg.Deny, so Mounts holds only the extra mounts.
+	if len(cfg.Mounts) != 1 {
+		t.Errorf("expected 1 valid extra mount, got %d: %v", len(cfg.Mounts), cfg.Mounts)
 	}
 }
 
@@ -200,9 +198,7 @@ func TestToSandboxConfig_SkipsInvalidOverrideMounts(t *testing.T) {
 
 	cfg := ToSandboxConfig(spec, 0, "my-hook") // CategoryLinter = 0
 
-	denyCount := len(spec.Filesystem.Deny)
-	extraCount := len(cfg.Mounts) - denyCount
-	if extraCount != 1 {
-		t.Errorf("expected 1 valid extra mount, got %d", extraCount)
+	if len(cfg.Mounts) != 1 {
+		t.Errorf("expected 1 valid extra mount, got %d: %v", len(cfg.Mounts), cfg.Mounts)
 	}
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/container"
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
@@ -50,11 +51,14 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 
 	osInfo := sysinfo.DetectOS()
 
+	// An unknown working directory only disables the project-scoped NFS check.
+	projectRoot, _ := cmdutil.ProjectRoot()
+
 	var containerSection *doctor.ContainerSection
 	var sandboxSection *doctor.SandboxSection
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		containerSection = doctor.RunContainerCheck(ctx, &container.ExecProber{}, osInfo)
+		containerSection = doctor.RunContainerCheck(ctx, &container.ExecProber{}, osInfo, projectRoot)
 	})
 	wg.Go(func() {
 		sandboxSection = doctor.RunSandboxCheck(ctx, &sandbox.ExecSandboxProber{})

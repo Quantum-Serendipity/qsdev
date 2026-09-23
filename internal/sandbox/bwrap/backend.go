@@ -1,21 +1,22 @@
 package bwrap
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 )
 
 // BubblewrapBackend implements SandboxBackend using bubblewrap for namespace
-// isolation. It supports three tiers depending on available kernel features:
-// Full (bwrap + Landlock + seccomp), BwrapWithoutLandlock, BwrapWithoutSeccomp.
+// isolation. It supports four tiers depending on the available LSM layers:
+// Full (bwrap + Landlock + seccomp), BwrapWithoutLandlock, BwrapWithoutSeccomp
+// and BwrapOnly (namespaces alone).
 type BubblewrapBackend struct {
 	tier      sandbox.DegradationTier
 	bwrapBin  string
@@ -66,6 +67,20 @@ func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 		return nil, fmt.Errorf("building sandbox args: %w", err)
 	}
 
+	// Forbid nested user namespaces at the kernel level when this bwrap can
+	// (>= 0.8): seccomp cannot filter clone3's flags, so this is the only
+	// complete block on user-namespace-gated kernel attack surface.
+	if supportsDisableUserNS(ctx, b.bwrapBin) {
+		args = append(args, "--disable-userns")
+	}
+
+	// Honesty: "filtered" network has no egress filter yet, so say so rather
+	// than let the policy imply an allowlist that is not applied.
+	if unenforced := cfg.UnenforcedNetworkControls(); len(unenforced) > 0 {
+		slog.Warn("sandbox network controls NOT enforced",
+			"category", cfg.HookCategory.String(), "detail", strings.Join(unenforced, "; "))
+	}
+
 	// Seccomp layer: pass the compiled BPF filter to bwrap through an inherited
 	// file descriptor when one is available (the Nix build injects the path via
 	// ldflags). This is a no-op in builds without a filter, so exec still runs.
@@ -105,15 +120,13 @@ func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 	args = append(args, hookCmd...)
 
 	sandboxOverhead := time.Since(setupStart)
-	execStart := time.Now()
 
 	cmd := exec.CommandContext(ctx, b.bwrapBin, args...)
 	cmd.ExtraFiles = extraFiles
 
-	var stdout, stderr bytes.Buffer
+	// Claude Code delivers the tool call on stdin; RunCommand captures
+	// stdout and stderr.
 	cmd.Stdin = cfg.Stdin
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
 
 	// Set filtered environment.
 	filteredEnv := FilterEnvironment(currentEnv(cfg), cfg.HookCategory)
@@ -121,26 +134,12 @@ func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 
-	err = cmd.Run()
-	duration := time.Since(execStart)
-
-	exitCode := 0
+	result, err := sandbox.RunCommand(ctx, cmd, b.tier)
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			return nil, fmt.Errorf("executing bwrap: %w", err)
-		}
+		return nil, fmt.Errorf("executing bwrap: %w", err)
 	}
-
-	return &sandbox.SandboxResult{
-		ExitCode:        exitCode,
-		Stdout:          stdout.Bytes(),
-		Stderr:          stderr.Bytes(),
-		Duration:        duration,
-		SandboxOverhead: sandboxOverhead,
-		Tier:            b.tier,
-	}, nil
+	result.SandboxOverhead = sandboxOverhead
+	return result, nil
 }
 
 // warnUnappliedLayers emits a warning for each LSM layer the backend's tier

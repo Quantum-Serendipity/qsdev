@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
@@ -116,6 +117,29 @@ func TestRunSandboxCheck_FullSupport(t *testing.T) {
 	}
 }
 
+// TestRunSandboxCheck_ReportsUnenforcedFilteredNetwork verifies doctor states
+// that "filtered" network mode is not enforced, even at the full tier, rather
+// than implying an egress allowlist is applied.
+func TestRunSandboxCheck_ReportsUnenforcedFilteredNetwork(t *testing.T) {
+	t.Parallel()
+	mock := newMockSandboxProber()
+	mock.lookPathResults["bwrap"] = stubBinary(t, "bwrap")
+	mock.landlockHelper = "/usr/bin/ll-restrict"
+	mock.seccompFilter = "/nix/store/seccomp.bpf"
+	mock.files["/proc/sys/kernel/unprivileged_userns_clone"] = []byte("1\n")
+	mock.files["/proc/sys/kernel/seccomp/actions_avail"] = []byte("kill errno\n")
+	mock.files["/proc/version"] = []byte("Linux version 6.8.0-generic\n")
+
+	section := RunSandboxCheck(context.Background(), mock)
+	if section == nil {
+		t.Fatal("expected non-nil section")
+		return
+	}
+	if !slices.Contains(section.Warnings, sandbox.FilteredNetworkNotice) {
+		t.Errorf("expected the filtered-network notice in warnings, got %v", section.Warnings)
+	}
+}
+
 func TestRunSandboxCheck_NoBwrap(t *testing.T) {
 	t.Parallel()
 	mock := newMockSandboxProber()
@@ -198,6 +222,11 @@ func TestRunSandboxCheck_NotFullWithoutEnforcementTools(t *testing.T) {
 	}
 	if section.SecurityLevel == "strong" {
 		t.Errorf("SecurityLevel = %q; must not be strong without enforcement tools", section.SecurityLevel)
+	}
+	// bwrap still runs with namespace isolation, so it must not be reported as
+	// the weaker systemd-run or unsandboxed tier either.
+	if section.Tier != "bwrap-only" {
+		t.Errorf("Tier = %q, want %q (bwrap namespaces without LSM layers)", section.Tier, "bwrap-only")
 	}
 }
 

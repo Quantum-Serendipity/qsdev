@@ -43,6 +43,7 @@ func RunSandboxCheck(ctx context.Context, prober sandbox.SandboxProber) *Sandbox
 	if msg := sandbox.TierMessage(tier); msg != "" {
 		section.Warnings = append(section.Warnings, msg)
 	}
+	section.Warnings = append(section.Warnings, sandbox.FilteredNetworkNotice)
 
 	switch tier {
 	case sandbox.TierUnsandboxed:
@@ -59,6 +60,9 @@ func RunSandboxCheck(ctx context.Context, prober sandbox.SandboxProber) *Sandbox
 	case sandbox.TierBwrapWithoutSeccomp:
 		section.Recommendations = append(section.Recommendations,
 			"Enable seccomp support for syscall filtering")
+	case sandbox.TierBwrapOnly:
+		section.Recommendations = append(section.Recommendations,
+			"Use a qsdev build that ships the ll-restrict helper and seccomp filter (the Nix build) for Landlock and seccomp layers")
 	case sandbox.TierFull:
 		// no recommendations needed
 	}

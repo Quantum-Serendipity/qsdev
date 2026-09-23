@@ -207,11 +207,9 @@ func TestToSandboxConfig_HookOverride(t *testing.T) {
 				t.Errorf("expected network mode %q, got %q", tt.wantNetwork, cfg.Network.Mode)
 			}
 
-			// Count extra mounts beyond the deny-list mounts.
-			denyCount := len(spec.Filesystem.Deny)
-			extraCount := len(cfg.Mounts) - denyCount
-			if extraCount != tt.wantExtraMounts {
-				t.Errorf("expected %d extra mounts, got %d", tt.wantExtraMounts, extraCount)
+			// Deny entries travel in cfg.Deny, so Mounts holds only extras.
+			if len(cfg.Mounts) != tt.wantExtraMounts {
+				t.Errorf("expected %d extra mounts, got %d", tt.wantExtraMounts, len(cfg.Mounts))
 			}
 		})
 	}

@@ -76,6 +76,26 @@ func TestResolveBackend(t *testing.T) {
 			wantSandboxed: false,
 		},
 		{
+			// Regression: a build without ll-restrict or a seccomp filter
+			// probes no LSM layer. bwrap used to be registered at the
+			// systemd-run (or unsandboxed) tier and mis-reported as such.
+			name: "bwrap without LSM layers reports bwrap-only, not systemd-run",
+			caps: sandbox.SystemCapabilities{
+				HasBwrap: true, BwrapPath: realBwrap, HasUserNS: true,
+				HasSystemdRun: true, SystemdRunPath: realSystemd,
+			},
+			wantName:      "bubblewrap",
+			wantTier:      sandbox.TierBwrapOnly,
+			wantSandboxed: true,
+		},
+		{
+			name:          "bwrap without LSM layers or systemd-run is not reported unsandboxed",
+			caps:          sandbox.SystemCapabilities{HasBwrap: true, BwrapPath: realBwrap, HasUserNS: true},
+			wantName:      "bubblewrap",
+			wantTier:      sandbox.TierBwrapOnly,
+			wantSandboxed: true,
+		},
+		{
 			name:          "bubblewrap preferred over systemd-run when both available",
 			caps:          fullCaps(realBwrap, realSystemd),
 			wantName:      "bubblewrap",

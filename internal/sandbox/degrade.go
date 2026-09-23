@@ -18,6 +18,11 @@ func DetermineTier(caps *SystemCapabilities) DegradationTier {
 		return TierBwrapWithoutLandlock
 	case hasBwrapUserns && hasLandlock:
 		return TierBwrapWithoutSeccomp
+	case hasBwrapUserns:
+		// bwrap still isolates namespaces without either LSM layer (the
+		// normal state of a build that ships neither ll-restrict nor a seccomp
+		// filter), which is stronger than a bare systemd-run scope.
+		return TierBwrapOnly
 	case caps.HasSystemdRun:
 		return TierSystemdRun
 	default:
@@ -39,6 +44,12 @@ func TierMessage(tier DegradationTier) string {
 		return "Seccomp syscall filtering unavailable. Sandbox provides namespace and " +
 			"filesystem isolation but cannot block dangerous syscalls. " +
 			"Check /proc/sys/kernel/seccomp/actions_avail."
+	case TierBwrapOnly:
+		return "Landlock filesystem restriction and seccomp syscall filtering are unavailable " +
+			"in this build. Sandbox provides bubblewrap namespace isolation (private filesystem " +
+			"view, PID, IPC and network namespaces) but cannot restrict filesystem access within " +
+			"the namespace or block dangerous syscalls. Use a qsdev build that ships the " +
+			"ll-restrict helper and seccomp filter (the Nix build) for full isolation."
 	case TierSystemdRun:
 		return "Bubblewrap namespace isolation unavailable. Using systemd-run for " +
 			"resource limits only (no filesystem or network isolation). " +
@@ -72,6 +83,8 @@ func TierSecurityLevel(tier DegradationTier) string {
 		return "strong"
 	case TierBwrapWithoutLandlock, TierBwrapWithoutSeccomp:
 		return "moderate"
+	case TierBwrapOnly:
+		return "basic"
 	case TierSystemdRun:
 		return "minimal"
 	case TierUnsandboxed:

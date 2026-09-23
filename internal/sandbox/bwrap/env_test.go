@@ -72,7 +72,9 @@ func TestFilterEnvironment(t *testing.T) {
 			denyKeys: nil,
 		},
 		{
-			name: "deny overrides allowlist",
+			// PATH_TOKEN is not allowlisted, so the allowlist alone drops it;
+			// this case covers the allowlist, not the deny layer.
+			name: "unallowlisted credential-looking name is stripped",
 			env: map[string]string{
 				"PATH_TOKEN": "should-be-stripped",
 				"PATH":       "/usr/bin",
@@ -80,6 +82,26 @@ func TestFilterEnvironment(t *testing.T) {
 			category: sandbox.CategoryLinter,
 			wantKeys: []string{"PATH"},
 			denyKeys: []string{"PATH_TOKEN"},
+		},
+		{
+			// Every name here passes the allowlist (GIT_AUTHOR_, GIT_COMMITTER_
+			// and LC_ prefixes), so only the credential deny layer strips them.
+			name: "deny overrides allowlist",
+			env: map[string]string{
+				"GIT_AUTHOR_TOKEN":       "t",
+				"GIT_COMMITTER_KEY":      "k",
+				"GIT_AUTHOR_CREDENTIALS": "c",
+				"LC_API_SECRET":          "s",
+				"LC_FOO_PASSWORD":        "p",
+				"GIT_AUTHOR_NAME":        "Test",
+				"LC_ALL":                 "C",
+			},
+			category: sandbox.CategoryFormatter,
+			wantKeys: []string{"GIT_AUTHOR_NAME", "LC_ALL"},
+			denyKeys: []string{
+				"GIT_AUTHOR_TOKEN", "GIT_COMMITTER_KEY", "GIT_AUTHOR_CREDENTIALS",
+				"LC_API_SECRET", "LC_FOO_PASSWORD",
+			},
 		},
 	}
 

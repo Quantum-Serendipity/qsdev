@@ -28,7 +28,7 @@ func Analyze(ctx context.Context, projectRoot string, prober Prober) (*Migration
 		return nil, fmt.Errorf("detecting container runtime: %w", err)
 	}
 
-	caps, err := DetectCapabilities(ctx, prober, info)
+	caps, err := DetectCapabilities(ctx, prober, info, projectRoot)
 	if err != nil {
 		return nil, fmt.Errorf("detecting capabilities: %w", err)
 	}

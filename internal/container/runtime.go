@@ -33,6 +33,7 @@ type RuntimeInfo struct {
 	SocketPath      string    // Unix socket path for API access
 	ComposeMethod   string    // "podman-compose", "docker-compose-via-socket", "docker-compose", "none"
 	HasDockerCompat bool      // docker command is a Podman alias
+	Warnings        []string  // installed runtimes that failed their health probe
 }
 
 // Capabilities describes what the detected container runtime can do.
@@ -57,7 +58,7 @@ func (c *Capabilities) NeedsRootfulFallback() []string {
 		reasons = append(reasons, "NVIDIA/AMD GPU detected: rootless containers cannot pass through GPU devices (requires CAP_MKNOD)")
 	}
 	if c.NFSMounts {
-		reasons = append(reasons, "NFS mounts detected: rootless containers cannot bind-mount NFS paths due to UID remapping incompatibility")
+		reasons = append(reasons, "NFS mount overlaps the project: rootless containers cannot bind-mount NFS paths due to UID remapping incompatibility")
 	}
 	return reasons
 }

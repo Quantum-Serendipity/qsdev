@@ -39,6 +39,23 @@ func TestDetermineTier(t *testing.T) {
 			want: TierBwrapWithoutSeccomp,
 		},
 		{
+			name: "bwrap and userns without either LSM layer",
+			caps: &SystemCapabilities{
+				HasBwrap:      true,
+				HasUserNS:     true,
+				HasSystemdRun: true,
+			},
+			want: TierBwrapOnly,
+		},
+		{
+			name: "bwrap and userns without LSM layers or systemd-run",
+			caps: &SystemCapabilities{
+				HasBwrap:  true,
+				HasUserNS: true,
+			},
+			want: TierBwrapOnly,
+		},
+		{
 			name: "bwrap but no userns",
 			caps: &SystemCapabilities{
 				HasBwrap:      true,
@@ -102,6 +119,7 @@ func TestTierMessage(t *testing.T) {
 		{TierFull, false, ""},
 		{TierBwrapWithoutLandlock, true, "Landlock"},
 		{TierBwrapWithoutSeccomp, true, "Seccomp"},
+		{TierBwrapOnly, true, "namespace isolation"},
 		{TierSystemdRun, true, "systemd-run"},
 		{TierUnsandboxed, true, "qsdev doctor"},
 	}
@@ -133,6 +151,7 @@ func TestTierSecurityLevel(t *testing.T) {
 		{TierFull, "strong"},
 		{TierBwrapWithoutLandlock, "moderate"},
 		{TierBwrapWithoutSeccomp, "moderate"},
+		{TierBwrapOnly, "basic"},
 		{TierSystemdRun, "minimal"},
 		{TierUnsandboxed, "none"},
 	}

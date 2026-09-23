@@ -173,6 +173,61 @@ func TestDetect_PodmanRootfulOnly(t *testing.T) {
 	}
 }
 
+// TestDetect_PodmanInfoFails is the regression for a podman whose `podman
+// info` fails (no subuid entries, broken storage) being reported as a healthy
+// rootless runtime.
+func TestDetect_PodmanInfoFails(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		withDocker bool
+		wantActive Runtime
+	}{
+		{"podman alone is not selected", false, RuntimeNone},
+		{"docker is selected instead", true, RuntimeDocker},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			prober := newPodmanRootlessProber()
+			prober.outputResults["podman info --format {{.Host.Security.Rootless}}"] = outputResult{
+				err: fmt.Errorf("cannot find UID/GID mappings"),
+			}
+			if tt.withDocker {
+				prober.lookPathResults["docker"] = "/usr/bin/docker"
+				prober.outputResults["docker --version"] = outputResult{output: []byte("Docker version 24.0.7, build afdd53b\n")}
+			}
+
+			info, err := Detect(context.Background(), prober)
+			if err != nil {
+				t.Fatalf("Detect() error = %v", err)
+			}
+			if info.Active != tt.wantActive {
+				t.Errorf("Active = %v, want %v", info.Active, tt.wantActive)
+			}
+			if info.Rootless {
+				t.Error("Rootless = true for a podman whose mode could not be probed")
+			}
+			for _, r := range info.Available {
+				if r.IsPodman() {
+					t.Errorf("unusable podman listed as available: %v", info.Available)
+				}
+			}
+			if len(info.Warnings) != 1 || !strings.Contains(info.Warnings[0], "podman info") {
+				t.Errorf("Warnings = %v, want one podman info failure", info.Warnings)
+			}
+			caps, err := DetectCapabilities(context.Background(), prober, info, "/work/p")
+			if err != nil {
+				t.Fatalf("DetectCapabilities() error = %v", err)
+			}
+			if caps.RootlessSupported {
+				t.Error("RootlessSupported = true for an unusable podman")
+			}
+		})
+	}
+}
+
 func TestDetect_DockerOnly(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

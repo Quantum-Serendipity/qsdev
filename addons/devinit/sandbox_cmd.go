@@ -229,6 +229,9 @@ func printSandboxStatusText(cmd *cobra.Command, caps *sandbox.SystemCapabilities
 		fmt.Fprintf(w, "Note: %s\n", msg)
 	}
 
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "Warning: %s\n", sandbox.FilteredNetworkNotice)
+
 	if layers := unenforceableLayers(tier); len(layers) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintf(w, "Warning: the kernel supports %s, but the enforcement tool(s) are not\n",
@@ -267,12 +270,14 @@ func pluralLayers(layers []string) string {
 // `sandbox status --json`. Backend names the backend `sandbox exec` will use.
 // UnenforceableLayers reports layers the tier advertises but cannot enforce, so
 // machine consumers do not treat "full" as a guarantee that every layer is
-// applied.
+// applied. UnenforcedControls lists policy controls no backend enforces yet
+// (the "filtered" network mode).
 type sandboxStatusJSON struct {
 	Backend             string                  `json:"backend"`
 	Tier                string                  `json:"tier"`
 	SecurityLevel       string                  `json:"security_level"`
 	UnenforceableLayers []string                `json:"unenforceable_layers"`
+	UnenforcedControls  []string                `json:"unenforced_controls"`
 	Capabilities        sandboxCapabilitiesJSON `json:"capabilities"`
 }
 
@@ -297,6 +302,7 @@ func printSandboxStatusJSON(cmd *cobra.Command, caps *sandbox.SystemCapabilities
 		Tier:                tier.String(),
 		SecurityLevel:       sandbox.TierSecurityLevel(tier),
 		UnenforceableLayers: unenforceable,
+		UnenforcedControls:  []string{sandbox.FilteredNetworkNotice},
 		Capabilities: sandboxCapabilitiesJSON{
 			Bwrap:       caps.HasBwrap,
 			UserNS:      caps.HasUserNS,

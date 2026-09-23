@@ -1,10 +1,14 @@
 package bwrap
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
+	"github.com/Quantum-Serendipity/qsdev/internal/sandbox/denylist"
 )
 
 // BuildArgs constructs the bwrap command-line arguments for the given sandbox
@@ -18,35 +22,21 @@ func BuildArgs(cfg *sandbox.SandboxConfig, _ sandbox.DegradationTier) ([]string,
 		}
 	}
 
-	// The policy layer encodes each deny-list path as a self-referential
-	// read-only mount (Source == Target == a sensitive path) to declare "this
-	// path must be blocked". bwrap builds from an empty root, so a path that is
-	// never bound is already absent inside the sandbox. Rather than silently
-	// dropping these directives (which would leave the path exposed AND writable
-	// if a broader bind ever mounted one of its ancestors, e.g. $HOME), we record
-	// them and emit an explicit MASK below -- after every bind -- so the deny
-	// path is always replaced with an empty tmpfs (dirs) or read-only /dev/null
-	// (files). A mount that tries to EXPOSE a sensitive path at a different
-	// location (Source != Target) is still rejected below, keeping the guard
-	// fail-closed against real exfiltration.
-	mounts := make([]sandbox.MountSpec, 0, len(cfg.Mounts))
-	denyMasks := make([]string, 0)
-	seenMask := make(map[string]bool)
+	deny, err := normalizeDenyPaths(cfg.Deny)
+	if err != nil {
+		return nil, err
+	}
+
 	for _, m := range cfg.Mounts {
-		if m.Source == m.Target && IsDenyPath(m.Source) {
-			if !seenMask[m.Source] {
-				seenMask[m.Source] = true
-				denyMasks = append(denyMasks, m.Source)
-			}
-			continue
-		}
 		if err := ValidateMountPath(m.Source); err != nil {
 			return nil, fmt.Errorf("validating mount source: %w", err)
 		}
 		if err := ValidateMountPath(m.Target); err != nil {
 			return nil, fmt.Errorf("validating mount target: %w", err)
 		}
-		mounts = append(mounts, m)
+		if d, ok := matchedDenyPath(denylist.CandidatePaths(m.Source), deny); ok {
+			return nil, fmt.Errorf("mount source %q is denied by policy: overlaps %q", m.Source, d)
+		}
 	}
 
 	for _, p := range cfg.NixStorePaths {
@@ -60,10 +50,10 @@ func BuildArgs(cfg *sandbox.SandboxConfig, _ sandbox.DegradationTier) ([]string,
 	// 1. Namespace flags.
 	args = append(args, "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts")
 
-	networkAllowed := cfg.HookCategory.NetworkAllowed() ||
-		cfg.Network.Mode == "allow" ||
-		cfg.Network.Mode == "filtered"
-	if !networkAllowed {
+	// The network decision comes from the resolved mode alone, so an explicit
+	// "deny" always wins over a category that would otherwise get the network.
+	networkIsolated := cfg.NetworkIsolated()
+	if networkIsolated {
 		args = append(args, "--unshare-net")
 	}
 
@@ -93,12 +83,12 @@ func BuildArgs(cfg *sandbox.SandboxConfig, _ sandbox.DegradationTier) ([]string,
 		"--ro-bind", "/etc/group", "/etc/group",
 		"--ro-bind", "/etc/hosts", "/etc/hosts",
 	)
-	if networkAllowed {
+	if !networkIsolated {
 		args = append(args, "--ro-bind", "/etc/resolv.conf", "/etc/resolv.conf")
 	}
 
-	// 7. Extra mounts (deny directives already filtered out above).
-	for _, m := range mounts {
+	// 7. Extra mounts.
+	for _, m := range cfg.Mounts {
 		if m.ReadOnly {
 			args = append(args, "--ro-bind", m.Source, m.Target)
 		} else {
@@ -111,28 +101,89 @@ func BuildArgs(cfg *sandbox.SandboxConfig, _ sandbox.DegradationTier) ([]string,
 		args = append(args, "--ro-bind", p, p)
 	}
 
-	// 9. Mask every deny directive. Emitted LAST so the mask always wins over any
+	// 9. Mask every deny entry. Emitted LAST so the mask always wins over any
 	// earlier bind: even if a broader mount above exposed an ancestor directory
-	// (e.g. $HOME), the sensitive credential store underneath is replaced with an
-	// empty tmpfs (directories) or a read-only /dev/null (files) and can be
-	// neither read nor written. These paths were matched as deny entries above,
-	// so they are trusted and bypass ValidateMountPath (which would reject them).
-	for _, p := range denyMasks {
-		args = append(args, maskDenyPathArgs(p)...)
+	// (e.g. $HOME or a policy extra mount), the denied path underneath is
+	// replaced with an empty tmpfs (directories) or a read-only /dev/null
+	// (files) and can be neither read nor written. The masks are trusted
+	// directives, so they bypass ValidateMountPath (which would reject them).
+	for _, m := range denyMasks(deny, cfg.Mounts) {
+		args = append(args, m.args()...)
 	}
 
 	return args, nil
 }
 
-// maskDenyPathArgs returns the bwrap arguments that mask a single deny-list path
-// so its contents can never be read or written inside the sandbox, even if a
-// broader bind exposed one of its ancestor directories. A directory (or a path
-// absent on the host) is masked with an empty tmpfs; a regular file is masked
-// with a read-only bind of /dev/null. Callers must emit these AFTER every bind
-// so the mask wins.
-func maskDenyPathArgs(path string) []string {
-	if info, err := os.Stat(path); err == nil && !info.IsDir() {
-		return []string{"--ro-bind", "/dev/null", path}
+// normalizeDenyPaths validates the configured deny entries and returns them
+// cleaned, together with their symlink-resolved forms, without duplicates. A
+// relative entry cannot be located inside the sandbox, so it is rejected
+// rather than silently ignored.
+func normalizeDenyPaths(deny []string) ([]string, error) {
+	var out []string
+	seen := make(map[string]bool)
+	for _, p := range deny {
+		if !filepath.IsAbs(p) {
+			return nil, fmt.Errorf("deny path must be absolute: %q", p)
+		}
+		for _, c := range denylist.CandidatePaths(p) {
+			if !seen[c] {
+				seen[c] = true
+				out = append(out, c)
+			}
+		}
 	}
-	return []string{"--tmpfs", path}
+	return out, nil
+}
+
+// denyMask is one masking directive: the host path whose contents must stay
+// hidden and the in-sandbox path where they would otherwise appear.
+type denyMask struct {
+	host   string
+	target string
+}
+
+// denyMasks returns every masking directive for the deny entries: each entry
+// at its own location, plus its image under any extra mount whose Source is an
+// ancestor of it (a mount of /opt at /mnt/opt re-exposes /opt/secret at
+// /mnt/opt/secret). An entry that does not exist on the host has nothing to
+// expose and is skipped: masking it would make bwrap create a mount point,
+// which fails beneath a read-only bind and would break every hook.
+func denyMasks(deny []string, mounts []sandbox.MountSpec) []denyMask {
+	var out []denyMask
+	seen := make(map[string]bool)
+	add := func(host, target string) {
+		if !seen[target] {
+			seen[target] = true
+			out = append(out, denyMask{host: host, target: target})
+		}
+	}
+	for _, d := range deny {
+		if _, err := os.Lstat(d); errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		add(d, d)
+		for _, m := range mounts {
+			for _, src := range denylist.CandidatePaths(m.Source) {
+				if !denylist.IsStrictAncestor(src, d) {
+					continue
+				}
+				if rel, err := filepath.Rel(src, d); err == nil {
+					add(d, filepath.Join(m.Target, rel))
+				}
+			}
+		}
+	}
+	return out
+}
+
+// args returns the bwrap arguments that mask one deny path so its contents can
+// never be read or written inside the sandbox, even if a broader bind exposed
+// one of its ancestor directories. A directory is masked with an empty tmpfs; a
+// regular file with a read-only bind of /dev/null. Callers must emit these
+// AFTER every bind so the mask wins.
+func (m denyMask) args() []string {
+	if info, err := os.Stat(m.host); err == nil && !info.IsDir() {
+		return []string{"--ro-bind", "/dev/null", m.target}
+	}
+	return []string{"--tmpfs", m.target}
 }

@@ -3,6 +3,7 @@ package container
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -17,34 +18,7 @@ func Detect(ctx context.Context, prober Prober) (*RuntimeInfo, error) {
 
 	// Check Podman first (preferred).
 	if path, err := prober.LookPath("podman"); err == nil {
-		info.Path = path
-		info.Available = append(info.Available, RuntimePodmanRootless) // may be corrected below
-
-		// Determine version.
-		if out, err := prober.Output(ctx, "podman", "version", "--format", "{{.Client.Version}}"); err == nil {
-			info.Version = strings.TrimSpace(string(out))
-		}
-
-		// Determine rootless status.
-		rootless := true
-		if out, err := prober.Output(ctx, "podman", "info", "--format", "{{.Host.Security.Rootless}}"); err == nil {
-			rootless = strings.TrimSpace(string(out)) == "true"
-		}
-		info.Rootless = rootless
-
-		if rootless {
-			info.Active = RuntimePodmanRootless
-			// Replace the provisional entry.
-			info.Available[len(info.Available)-1] = RuntimePodmanRootless
-			xdg := prober.Getenv("XDG_RUNTIME_DIR")
-			if xdg != "" {
-				info.SocketPath = xdg + "/podman/podman.sock"
-			}
-		} else {
-			info.Active = RuntimePodmanRootful
-			info.Available[len(info.Available)-1] = RuntimePodmanRootful
-			info.SocketPath = "/run/podman/podman.sock"
-		}
+		detectPodman(ctx, prober, info, path)
 	}
 
 	// Check Docker.
@@ -88,6 +62,37 @@ func Detect(ctx context.Context, prober Prober) (*RuntimeInfo, error) {
 	return info, nil
 }
 
+// detectPodman records the Podman installation at path in info. Its mode comes
+// from `podman info`; when that fails (no subuid entries, broken storage, ...)
+// the mode is unknown and Podman cannot run containers, so it is neither
+// claimed rootless nor selected, and the failure is kept as a warning.
+func detectPodman(ctx context.Context, prober Prober, info *RuntimeInfo, path string) {
+	out, err := prober.Output(ctx, "podman", "info", "--format", "{{.Host.Security.Rootless}}")
+	if err != nil {
+		info.Warnings = append(info.Warnings, fmt.Sprintf(
+			"podman found at %s but `podman info` failed (%v); it is unusable until fixed "+
+				"(check /etc/subuid, /etc/subgid and the storage configuration)", path, err))
+		return
+	}
+
+	info.Path = path
+	if ver, verErr := prober.Output(ctx, "podman", "version", "--format", "{{.Client.Version}}"); verErr == nil {
+		info.Version = strings.TrimSpace(string(ver))
+	}
+
+	info.Rootless = strings.TrimSpace(string(out)) == "true"
+	if info.Rootless {
+		info.Active = RuntimePodmanRootless
+		if xdg := prober.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
+			info.SocketPath = xdg + "/podman/podman.sock"
+		}
+	} else {
+		info.Active = RuntimePodmanRootful
+		info.SocketPath = "/run/podman/podman.sock"
+	}
+	info.Available = append(info.Available, info.Active)
+}
+
 // DetectDefault runs Detect with the default ExecProber.
 func DetectDefault(ctx context.Context) (*RuntimeInfo, error) {
 	return Detect(ctx, &ExecProber{})
@@ -119,30 +124,21 @@ func detectComposeMethod(ctx context.Context, prober Prober, info *RuntimeInfo) 
 }
 
 // DetectCapabilities probes the system for container runtime capabilities
-// that affect whether rootless mode is sufficient.
-func DetectCapabilities(ctx context.Context, prober Prober, info *RuntimeInfo) (*Capabilities, error) {
+// that affect whether rootless mode is sufficient for the project rooted at
+// projectRoot. Only NFS mounts that overlap projectRoot count; with an empty
+// projectRoot no NFS mount is attributed to the project.
+func DetectCapabilities(ctx context.Context, prober Prober, info *RuntimeInfo, projectRoot string) (*Capabilities, error) {
 	if info == nil {
 		return nil, fmt.Errorf("detecting capabilities: nil RuntimeInfo")
 	}
 	caps := &Capabilities{}
 
-	// GPU detection: check for NVIDIA devices.
-	if matches, err := prober.Glob("/dev/nvidia*"); err == nil && len(matches) > 0 {
-		caps.GPUPassthrough = true
-	}
+	caps.GPUPassthrough = hasGPUDevices(prober)
 
-	// NFS detection: parse /proc/mounts for nfs/nfs4 entries.
-	if data, err := prober.ReadFile("/proc/mounts"); err == nil {
-		for line := range strings.SplitSeq(string(data), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				fsType := fields[2]
-				if fsType == "nfs" || fsType == "nfs4" {
-					caps.NFSMounts = true
-					break
-				}
-			}
-		}
+	// NFS detection: parse /proc/mounts for nfs/nfs4 entries that overlap
+	// the project tree.
+	if data, err := prober.ReadFile("/proc/mounts"); err == nil && projectRoot != "" {
+		caps.NFSMounts = nfsMountOverlaps(string(data), projectRoot)
 	}
 
 	// subuid check: verify current user has user namespace mapping.
@@ -176,4 +172,59 @@ func DetectCapabilities(ctx context.Context, prober Prober, info *RuntimeInfo) (
 	caps.RootlessSupported = info.Active.IsPodman() && info.Rootless
 
 	return caps, nil
+}
+
+// hasGPUDevices reports whether GPU device nodes that rootless containers
+// cannot pass through are present: NVIDIA (/dev/nvidia*) or AMD ROCm
+// (/dev/kfd).
+func hasGPUDevices(prober Prober) bool {
+	if matches, err := prober.Glob("/dev/nvidia*"); err == nil && len(matches) > 0 {
+		return true
+	}
+	_, err := prober.Stat("/dev/kfd")
+	return err == nil
+}
+
+// nfsMountOverlaps reports whether any nfs/nfs4 entry of the /proc/mounts
+// content overlaps projectRoot: a mount at or above it (the project lives on
+// NFS) or below it (part of the project tree is NFS).
+func nfsMountOverlaps(procMounts, projectRoot string) bool {
+	root := filepath.Clean(projectRoot)
+	for line := range strings.SplitSeq(procMounts, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || (fields[2] != "nfs" && fields[2] != "nfs4") {
+			continue
+		}
+		mountPoint := filepath.Clean(unescapeMountField(fields[1]))
+		if pathContains(mountPoint, root) || pathContains(root, mountPoint) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathContains reports whether path is dir or lies beneath it.
+func pathContains(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// unescapeMountField decodes the octal escapes the kernel uses in /proc/mounts
+// fields (\040 for a space, \011 tab, \012 newline, \134 backslash).
+func unescapeMountField(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+3 < len(s) {
+			if n, err := strconv.ParseUint(s[i+1:i+4], 8, 8); err == nil {
+				b.WriteByte(byte(n))
+				i += 3
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }

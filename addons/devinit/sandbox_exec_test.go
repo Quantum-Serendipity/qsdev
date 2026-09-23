@@ -301,6 +301,26 @@ func TestNamespaceHookCommand(t *testing.T) {
 	}
 }
 
+// TestSandboxVisibility_HidesPolicyDenyEntries verifies a path under a
+// policy deny entry (masked inside the sandbox) is not treated as visible,
+// even when it lies inside the project directory.
+func TestSandboxVisibility_HidesPolicyDenyEntries(t *testing.T) {
+	t.Parallel()
+	cfg := &sandbox.SandboxConfig{ProjectDir: "/proj", Deny: []string{"/proj/secrets"}}
+	visible := sandboxVisibility(cfg)
+	tests := map[string]bool{
+		"/proj/hooks/x.sh":     true,
+		"/proj/secrets":        false,
+		"/proj/secrets/key.sh": false,
+		"/elsewhere/bin/tool":  false,
+	}
+	for p, want := range tests {
+		if got := visible(p); got != want {
+			t.Errorf("visible(%q) = %v, want %v", p, got, want)
+		}
+	}
+}
+
 func TestDefaultHookName(t *testing.T) {
 	t.Parallel()
 	tests := map[string]string{

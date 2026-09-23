@@ -76,7 +76,16 @@ func sandboxVisibility(cfg *sandbox.SandboxConfig) func(string) bool {
 		}
 		roots = append(roots, dst)
 	}
+	deny := make([]string, 0, len(cfg.Deny))
+	for _, d := range cfg.Deny {
+		deny = append(deny, filepath.Clean(d))
+	}
 	return func(p string) bool {
+		for _, d := range deny {
+			if pathWithin(p, d) {
+				return false // masked by a policy deny entry
+			}
+		}
 		for _, root := range roots {
 			if pathWithin(p, root) {
 				return true

@@ -7,11 +7,16 @@ import (
 // PrepareLandlockFlags builds the ll-restrict CLI flags for the given config.
 // Returns nil if ll-restrict is unavailable.
 func PrepareLandlockFlags(cfg *sandbox.SandboxConfig) []string {
-	llBin := sandbox.LLRestrictBin()
-	if llBin == "" {
+	if sandbox.LLRestrictBin() == "" {
 		return nil
 	}
+	return prepareLandlockFlags(cfg)
+}
 
+// prepareLandlockFlags builds the ll-restrict flags for cfg. ll-restrict runs
+// INSIDE the bwrap mount namespace, so every path it is given must be the
+// in-sandbox path, and anything not listed here is denied by Landlock.
+func prepareLandlockFlags(cfg *sandbox.SandboxConfig) []string {
 	var flags []string
 
 	// Nix store is always read-only.
@@ -23,6 +28,12 @@ func PrepareLandlockFlags(cfg *sandbox.SandboxConfig) []string {
 	// Tmp is always writable.
 	flags = append(flags, "--rw", "/tmp")
 
+	// Device nodes and procfs. bwrap's --dev already limits /dev to a minimal
+	// set (null, zero, full, random, urandom, tty, pts, shm), and ordinary
+	// hooks need it (`cmd >/dev/null`, /dev/urandom); /proc/self is read by
+	// most runtimes.
+	flags = append(flags, "--rw", "/dev", "--ro", "/proc")
+
 	// Project directory: ro for linters, rw for formatters/generators.
 	if cfg.ProjectDir != "" {
 		if cfg.HookCategory.WorktreeReadOnly() {
@@ -32,22 +43,21 @@ func PrepareLandlockFlags(cfg *sandbox.SandboxConfig) []string {
 		}
 	}
 
-	// Extra mounts from config. Skip deny directives (self-referential mounts of
-	// sensitive paths) so we never grant Landlock read/write access to a path the
-	// policy declared off-limits.
+	// Extra mounts from config, granted at the Target where bwrap mounted
+	// them. Deny entries are never Mounts (cfg.Deny carries them and
+	// BuildArgs rejects any mount that would expose one), so no path the
+	// policy declared off-limits is granted here.
 	for _, m := range cfg.Mounts {
-		if m.Source == m.Target && IsDenyPath(m.Source) {
-			continue
-		}
 		if m.ReadOnly {
-			flags = append(flags, "--ro", m.Source)
+			flags = append(flags, "--ro", m.Target)
 		} else {
-			flags = append(flags, "--rw", m.Source)
+			flags = append(flags, "--rw", m.Target)
 		}
 	}
 
-	// Network denial.
-	if !cfg.HookCategory.NetworkAllowed() {
+	// Network denial, derived from the same resolved mode as bwrap's
+	// --unshare-net so the two layers never disagree.
+	if cfg.NetworkIsolated() {
 		flags = append(flags, "--deny-net")
 	}
 

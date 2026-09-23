@@ -63,14 +63,9 @@ func ToSandboxConfig(spec *PolicySpec, category sandbox.HookCategory, hookName s
 		})
 	}
 
-	// Copy filesystem deny paths as read-only deny mounts.
-	for _, p := range spec.Filesystem.Deny {
-		cfg.Mounts = append(cfg.Mounts, sandbox.MountSpec{
-			Source:   p,
-			Target:   p,
-			ReadOnly: true,
-		})
-	}
+	// Carry filesystem deny paths as explicit deny intent. They must never be
+	// encoded as mounts: a mount exposes its source, a deny entry hides it.
+	cfg.Deny = append(cfg.Deny, spec.Filesystem.Deny...)
 
 	// Determine the effective category name, which a hook override may replace.
 	effectiveCategory := category.String()
@@ -83,8 +78,13 @@ func ToSandboxConfig(spec *PolicySpec, category sandbox.HookCategory, hookName s
 	}
 
 	// Apply the category profile.
+	// An empty network setting at any layer inherits the layer below; when
+	// every layer is empty, sandbox.SandboxConfig.EffectiveNetworkMode falls
+	// back to the category default.
 	if catPolicy, ok := spec.HookCategories[effectiveCategory]; ok {
-		cfg.Network.Mode = catPolicy.Network
+		if catPolicy.Network != "" {
+			cfg.Network.Mode = catPolicy.Network
+		}
 
 		for _, m := range catPolicy.ExtraMounts {
 			if err := ValidateMountDecl(m); err != nil {

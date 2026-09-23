@@ -1,7 +1,6 @@
 package cgroup
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -81,14 +80,12 @@ func (s *SystemdRunBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 	args := BuildArgs(cfg)
 
 	sandboxOverhead := time.Since(setupStart)
-	execStart := time.Now()
 
 	cmd := exec.CommandContext(ctx, s.systemdRunPath, args...)
 
-	var stdout, stderr bytes.Buffer
+	// Claude Code delivers the tool call on stdin; RunCommand captures
+	// stdout and stderr.
 	cmd.Stdin = cfg.Stdin
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
 
 	if cfg.Environment != nil {
 		filtered := bwrap.FilterEnvironment(cfg.Environment, cfg.HookCategory)
@@ -101,26 +98,12 @@ func (s *SystemdRunBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 		cmd.Dir = cfg.ProjectDir
 	}
 
-	err := cmd.Run()
-	duration := time.Since(execStart)
-
-	exitCode := 0
+	result, err := sandbox.RunCommand(ctx, cmd, sandbox.TierSystemdRun)
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			return nil, fmt.Errorf("executing systemd-run: %w", err)
-		}
+		return nil, fmt.Errorf("executing systemd-run: %w", err)
 	}
-
-	return &sandbox.SandboxResult{
-		ExitCode:        exitCode,
-		Stdout:          stdout.Bytes(),
-		Stderr:          stderr.Bytes(),
-		Duration:        duration,
-		SandboxOverhead: sandboxOverhead,
-		Tier:            sandbox.TierSystemdRun,
-	}, nil
+	result.SandboxOverhead = sandboxOverhead
+	return result, nil
 }
 
 // Compile-time interface compliance check.

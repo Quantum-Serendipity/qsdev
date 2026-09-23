@@ -13,6 +13,7 @@ const (
 	TierFull                 DegradationTier = iota // bwrap + Landlock + seccomp + cgroups
 	TierBwrapWithoutLandlock                        // bwrap + seccomp + cgroups (no Landlock)
 	TierBwrapWithoutSeccomp                         // bwrap + Landlock + cgroups (no seccomp)
+	TierBwrapOnly                                   // bwrap namespaces only (no Landlock, no seccomp)
 	TierSystemdRun                                  // systemd-run scope only (no namespaces)
 	TierUnsandboxed                                 // no isolation
 )
@@ -25,6 +26,8 @@ func (t DegradationTier) String() string {
 		return "bwrap-without-landlock"
 	case TierBwrapWithoutSeccomp:
 		return "bwrap-without-seccomp"
+	case TierBwrapOnly:
+		return "bwrap-only"
 	case TierSystemdRun:
 		return "systemd-run"
 	case TierUnsandboxed:
@@ -93,12 +96,18 @@ func (c HookCategory) NetworkAllowed() bool {
 
 // SandboxConfig is the configuration for a single sandboxed hook execution.
 type SandboxConfig struct {
-	ProjectDir        string
-	HookCommand       []string
-	HookCategory      HookCategory
-	Environment       map[string]string
-	NixStorePaths     []string
-	Mounts            []MountSpec
+	ProjectDir    string
+	HookCommand   []string
+	HookCategory  HookCategory
+	Environment   map[string]string
+	NixStorePaths []string
+	Mounts        []MountSpec
+	// Deny lists absolute paths that must be neither readable nor writable
+	// inside the sandbox (the policy's filesystem.deny). Backends mask every
+	// entry, whether or not it is on the built-in credential deny list, and
+	// never grant one to an inner restriction layer. A Mount always exposes its
+	// Source; a Deny entry always hides its path.
+	Deny              []string
 	Resources         ResourceLimits
 	Network           NetworkPolicy
 	SeccompFilterPath string
@@ -116,11 +125,78 @@ type MountSpec struct {
 	ReadOnly bool
 }
 
+// Network modes accepted in NetworkPolicy.Mode.
+const (
+	NetworkModeDeny     = "deny"
+	NetworkModeAllow    = "allow"
+	NetworkModeFiltered = "filtered"
+)
+
 // NetworkPolicy controls network access within the sandbox.
 type NetworkPolicy struct {
-	Mode        string // "deny", "allow", "filtered"
+	Mode string // "deny", "allow", "filtered"; empty means the category default
+	// EgressRules and DenyLAN describe the egress filter intended for
+	// "filtered" mode. No backend enforces them yet, so "filtered" currently
+	// shares the host network like "allow" (see UnenforcedNetworkControls).
 	EgressRules []EgressRule
 	DenyLAN     bool
+}
+
+// DefaultNetworkMode returns the network mode a category gets when the policy
+// sets none: "filtered" for categories that need the network, "deny" otherwise.
+func (c HookCategory) DefaultNetworkMode() string {
+	if c.NetworkAllowed() {
+		return NetworkModeFiltered
+	}
+	return NetworkModeDeny
+}
+
+// EffectiveNetworkMode resolves the network mode the sandbox must enforce: the
+// configured Network.Mode, or the category default when it is empty. Every
+// isolation layer derives its network decision from this one value, so an
+// explicit "deny" is honoured even for categories that default to network.
+func (c *SandboxConfig) EffectiveNetworkMode() string {
+	if c.Network.Mode != "" {
+		return c.Network.Mode
+	}
+	return c.HookCategory.DefaultNetworkMode()
+}
+
+// NetworkIsolated reports whether the hook must be cut off from the host
+// network. Only "allow" and "filtered" share it; "deny" and any unrecognised
+// mode fail closed.
+func (c *SandboxConfig) NetworkIsolated() bool {
+	switch c.EffectiveNetworkMode() {
+	case NetworkModeAllow, NetworkModeFiltered:
+		return false
+	default:
+		return true
+	}
+}
+
+// FilteredNetworkNotice states, for status and doctor output, that the
+// "filtered" network mode has no egress filter yet. The default policy gives
+// it to the network-linter and test-runner categories, so it applies to every
+// install whatever its tier.
+const FilteredNetworkNotice = `Network mode "filtered" (the network-linter and test-runner default) is not ` +
+	`enforced: those hooks share the host network, and egressRules/denyLAN are not applied.`
+
+// UnenforcedNetworkControls describes configured network controls that no
+// backend can enforce yet. "filtered" has no egress filter implementation, so
+// the hook shares the host network and any egress allowlist or LAN denial is
+// not applied. The result is empty when every network control is enforced.
+func (c *SandboxConfig) UnenforcedNetworkControls() []string {
+	if c.EffectiveNetworkMode() != NetworkModeFiltered {
+		return nil
+	}
+	controls := []string{`network mode "filtered" is not enforced: the hook shares the host network`}
+	if len(c.Network.EgressRules) > 0 {
+		controls = append(controls, "network egress allowlist is not enforced")
+	}
+	if c.Network.DenyLAN {
+		controls = append(controls, "network denyLAN is not enforced")
+	}
+	return controls
 }
 
 // EgressRule allows a specific outbound connection.

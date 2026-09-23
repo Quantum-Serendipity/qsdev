@@ -223,7 +223,11 @@ func runContainerDetect(ctx context.Context, cmd *cobra.Command, asJSON bool) er
 		return fmt.Errorf("detecting container runtime: %w", err)
 	}
 
-	caps, err := container.DetectCapabilities(ctx, prober, info)
+	projectRoot, err := cmdutil.ProjectRoot()
+	if err != nil {
+		return err
+	}
+	caps, err := container.DetectCapabilities(ctx, prober, info, projectRoot)
 	if err != nil {
 		return fmt.Errorf("detecting capabilities: %w", err)
 	}
@@ -268,7 +272,7 @@ func runContainerDetect(ctx context.Context, cmd *cobra.Command, asJSON bool) er
 
 	fmt.Fprintln(w, "\nCapabilities:")
 	fmt.Fprintf(w, "  GPU passthrough: %v\n", caps.GPUPassthrough)
-	fmt.Fprintf(w, "  NFS mounts: %v\n", caps.NFSMounts)
+	fmt.Fprintf(w, "  NFS mounts in project: %v\n", caps.NFSMounts)
 	fmt.Fprintf(w, "  Privileged ports: %v\n", caps.PrivilegedPorts)
 	fmt.Fprintf(w, "  Rootless supported: %v\n", caps.RootlessSupported)
 	fmt.Fprintf(w, "  User namespace configured: %v\n", caps.UserNamespaceConfigured)
@@ -279,6 +283,13 @@ func runContainerDetect(ctx context.Context, cmd *cobra.Command, asJSON bool) er
 		fmt.Fprintln(w, "\nRootful fallback needed:")
 		for _, r := range reasons {
 			fmt.Fprintf(w, "  - %s\n", r)
+		}
+	}
+
+	if len(info.Warnings) > 0 {
+		fmt.Fprintln(w, "\nWarnings:")
+		for _, warn := range info.Warnings {
+			fmt.Fprintf(w, "  - %s\n", warn)
 		}
 	}
 

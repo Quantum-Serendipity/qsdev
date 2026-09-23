@@ -19,20 +19,10 @@ func Evaluate(set *CompiledPolicySet, ctx *EvalContext) (decision PolicyDecision
 	candidates := RulesForTool(set, ctx.ToolName)
 
 	var findings []Finding
+	var prompt *PolicyDecision
 
 	for _, rule := range candidates {
 		if !matchesTierFilter(rule.Rule.BypassTier, ctx.TierFilter) {
-			continue
-		}
-
-		if rule.Rule.MonitorMode && rule.Rule.Action.Type == Block {
-			findings = append(findings, Finding{
-				RuleID:   rule.Rule.ID,
-				Category: rule.Rule.Category,
-				Severity: rule.Rule.Severity,
-				Message:  interpolateMessage(rule.Rule.Action.Message, ctx),
-				Monitor:  true,
-			})
 			continue
 		}
 
@@ -43,6 +33,17 @@ func Evaluate(set *CompiledPolicySet, ctx *EvalContext) (decision PolicyDecision
 
 		matched, err := rule.Condition.Evaluate(ctx)
 		if err != nil {
+			if rule.Rule.MonitorMode {
+				// A monitor-only rule never blocks, not even on an error.
+				findings = append(findings, Finding{
+					RuleID:   rule.Rule.ID,
+					Category: rule.Rule.Category,
+					Severity: rule.Rule.Severity,
+					Message:  fmt.Sprintf("evaluating condition for rule %s: %v", rule.Rule.ID, err),
+					Monitor:  true,
+				})
+				continue
+			}
 			return PolicyDecision{
 				Action:   Block,
 				ExitCode: 2,
@@ -81,11 +82,23 @@ func Evaluate(set *CompiledPolicySet, ctx *EvalContext) (decision PolicyDecision
 		}
 
 		if result.Action == Prompt {
-			result.Findings = append(result.Findings, findings...)
-			return result
+			// A prompt reaches here only when it resolved to allow (its
+			// fail-closed form returns Block above). It must not end
+			// evaluation: a later rule may still block the call, and returning
+			// here would let an allow-by-default prompt rule shadow it.
+			if prompt == nil {
+				prompt = &result
+			}
+			findings = append(findings, result.Findings...)
+			continue
 		}
 
 		findings = append(findings, result.Findings...)
+	}
+
+	if prompt != nil {
+		prompt.Findings = findings
+		return *prompt
 	}
 
 	return PolicyDecision{

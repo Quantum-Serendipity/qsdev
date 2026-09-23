@@ -2,6 +2,7 @@ package policy
 
 import (
 	"cmp"
+	"fmt"
 	"slices"
 )
 
@@ -11,6 +12,10 @@ type CompiledRule struct {
 	Action    ActionHandler
 }
 
+// CompiledPolicySet is the evaluation-ready form of a SecurityPolicy. Rules
+// holds every loaded rule, including disabled ones, so posture and listing
+// reflect the whole policy; only enabled rules are reachable through ToolIndex
+// (and therefore Evaluate) or contribute DenyRules.
 type CompiledPolicySet struct {
 	Rules     []CompiledRule
 	ToolIndex map[string][]*CompiledRule
@@ -21,13 +26,9 @@ func Compile(policy *SecurityPolicy) (*CompiledPolicySet, error) {
 	compiled := make([]CompiledRule, 0, len(policy.Rules))
 
 	for _, r := range policy.Rules {
-		if !r.IsEnabled() {
-			continue
-		}
-
 		cond, err := CompileCondition(r.Conditions)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("compiling rule %q: %w", r.ID, err)
 		}
 
 		handler := ResolveAction(r.Action.Type)
@@ -95,6 +96,9 @@ func buildToolIndex(rules []CompiledRule) map[string][]*CompiledRule {
 
 	for i := range rules {
 		r := &rules[i]
+		if !r.Rule.IsEnabled() {
+			continue
+		}
 		cond := r.Rule.Conditions
 
 		toolName := indexKeyForCondition(cond)
@@ -114,27 +118,52 @@ func indexKeyForCondition(cond Condition) string {
 	return "*"
 }
 
+// extractDenyRules projects the path patterns of every rule that actually
+// blocks onto DenyRules for the MCP confused-deputy check. A rule contributes
+// only when it is enabled, not in monitor mode, and its action blocks (block,
+// or prompt with a fail-closed default): a warn/audit rule or a monitor-only
+// rule must not become a hard block for MCP tools while the first-party tool it
+// targets is allowed. Each DenyRule carries its rule ID and bypass tier so the
+// deputy check can honor session overrides exactly as Evaluate does.
 func extractDenyRules(rules []CompiledRule) []DenyRule {
 	var result []DenyRule
-	for _, r := range rules {
-		collectDenyRules(r.Rule.Conditions, &result)
+	for i := range rules {
+		rule := &rules[i].Rule
+		if !ruleBlocks(rule) {
+			continue
+		}
+		collectDenyRules(rule.Conditions, rule, &result)
 	}
 	return result
 }
 
-func collectDenyRules(cond Condition, out *[]DenyRule) {
+// ruleBlocks reports whether a matching rule denies the tool call.
+func ruleBlocks(rule *PolicyRule) bool {
+	if !rule.IsEnabled() || rule.MonitorMode {
+		return false
+	}
+	switch rule.Action.Type {
+	case Block:
+		return true
+	case Prompt:
+		return !promptDefaultAllows(rule.Action.DefaultOnTimeout)
+	default:
+		return false
+	}
+}
+
+// collectDenyRules gathers path patterns from positive condition positions
+// only. A pattern under `not` means "anything except this path", so denying
+// that path would invert the rule's meaning; negated subtrees are skipped.
+func collectDenyRules(cond Condition, rule *PolicyRule, out *[]DenyRule) {
 	switch cond.Type {
 	case DeniedPathCheck:
-		*out = append(*out, DenyRule{Pattern: cond.Pattern, Type: "denied_path"})
+		*out = append(*out, DenyRule{Pattern: cond.Pattern, Type: "denied_path", RuleID: rule.ID, BypassTier: rule.BypassTier})
 	case PathGlob:
-		*out = append(*out, DenyRule{Pattern: cond.Pattern, Type: "path_glob"})
+		*out = append(*out, DenyRule{Pattern: cond.Pattern, Type: "path_glob", RuleID: rule.ID, BypassTier: rule.BypassTier})
 	case All, Any:
 		for _, child := range cond.Conditions {
-			collectDenyRules(child, out)
-		}
-	case Not:
-		if cond.Condition != nil {
-			collectDenyRules(*cond.Condition, out)
+			collectDenyRules(child, rule, out)
 		}
 	}
 }

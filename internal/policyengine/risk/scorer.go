@@ -1,6 +1,7 @@
 package risk
 
 import (
+	"maps"
 	"slices"
 	"time"
 )
@@ -34,7 +35,10 @@ func ScorePackage(info *PackageInfo) PackageScore {
 	weightedSum := 0.0
 	activeWeightSum := 0.0
 
-	for cat, weight := range categoryWeights {
+	// Iterate categories in a fixed order so Categories and the floating-point
+	// weighted sum are identical from run to run.
+	for _, cat := range slices.Sorted(maps.Keys(categoryWeights)) {
+		weight := categoryWeights[cat]
 		cp := categoryProbes[cat]
 		if len(cp) == 0 {
 			continue

@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"sync/atomic"
@@ -123,18 +124,13 @@ func denyRulesEqual(a, b []DenyRule) bool {
 	return true
 }
 
+// compareDenyRules totally orders DenyRules over every field, so sorting two
+// equal sets yields identical sequences for the element-wise comparison.
 func compareDenyRules(a, b DenyRule) int {
-	if a.Pattern < b.Pattern {
-		return -1
-	}
-	if a.Pattern > b.Pattern {
-		return 1
-	}
-	if a.Type < b.Type {
-		return -1
-	}
-	if a.Type > b.Type {
-		return 1
-	}
-	return 0
+	return cmp.Or(
+		cmp.Compare(a.Pattern, b.Pattern),
+		cmp.Compare(a.Type, b.Type),
+		cmp.Compare(a.RuleID, b.RuleID),
+		cmp.Compare(a.BypassTier, b.BypassTier),
+	)
 }

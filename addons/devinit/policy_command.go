@@ -96,7 +96,7 @@ func runPolicyCheck(cmd *cobra.Command, opts policyCheckOptions) error {
 		return err
 	}
 
-	orchestrator := newProductionOrchestrator(engine)
+	orchestrator := newProductionOrchestrator(engine, "", cmd.ErrOrStderr())
 	posture, _, _ := orchestrator.PostureSnapshot()
 
 	return evaluatePolicyPosture(cmd, posture, enforcingRuleCount(engine.CurrentRules()), opts)
@@ -184,7 +184,7 @@ func renderPolicySARIF(posture *sarif.PolicyPosture, enforcing int) ([]byte, err
 
 // posturefindings converts the policy posture into SARIF results. A posture
 // check evaluates no specific tool call, so it reports a warning-level result
-// when no loaded rule is enforcing (an empty, fully disabled, or monitor-only
+// when no loaded rule is enforcing (an empty, fully disabled or monitor-only
 // policy), which is the only posture condition that gates the exit code.
 func posturefindings(posture *sarif.PolicyPosture, enforcing int) []sarif.SarifResult {
 	if posture == nil || enforcing > 0 {

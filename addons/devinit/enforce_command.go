@@ -16,6 +16,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/risk"
@@ -105,12 +106,13 @@ func runEnforce(cmd *cobra.Command, hookEvent string) error {
 	}
 
 	evalCtx := buildEvalContext(&input, projectRoot)
-	orchestrator := newProductionOrchestrator(engine)
+	orchestrator := newProductionOrchestrator(engine, projectRoot, cmd.ErrOrStderr())
 
 	if hookEvent == hookEventPreToolUse {
-		code := orchestrator.RunPreToolUse(evalCtx)
+		decision, code := orchestrator.RunPreToolUse(evalCtx)
+		writePolicyFindings(cmd.ErrOrStderr(), decision.Findings)
 		if code != 0 {
-			return exitcode.New(code, "policy enforcement blocked tool call (exit code %d)", code)
+			return exitcode.New(code, "%s", policyBlockMessage(decision))
 		}
 		return nil
 	}
@@ -130,13 +132,17 @@ func readHookInput(r io.Reader) (hookInput, error) {
 }
 
 func newEnforcementEngine(policyFiles []string) (*policy.PolicyEngine, error) {
-	sessionPath, err := sessionStatePath()
-	if err != nil {
-		return nil, err
+	// Without a resolvable session state file there are no session bypass
+	// overrides, which is the strictest state; it must not skip enforcement.
+	var stateReader policy.SessionStateReader
+	if sessionPath, err := sessionStatePath(); err == nil {
+		stateReader = policy.NewFileSessionStateReader(sessionPath)
 	}
-	engine, err := policy.NewPolicyEngine(policyFiles, policy.NewFileSessionStateReader(sessionPath), policy.EngineOptions{})
+	engine, err := policy.NewPolicyEngine(policyFiles, stateReader, policy.EngineOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("loading policy engine: %w", err)
+		// A policy that exists but cannot be loaded (malformed rule, YAML typo,
+		// security-floor violation) must not silently disable every rule.
+		return nil, fmt.Errorf("loading policy engine (security policy failed to load): %w", err)
 	}
 	return engine, nil
 }
@@ -166,7 +172,8 @@ func enforceFailure(cmd *cobra.Command, hookEvent string, failOpen bool, cause e
 // policyFailOpen reports whether evaluation failures may allow the call. It
 // is true only when every policy file can be parsed far enough to read its
 // settings and each one explicitly sets fail_mode: fail_open; anything else,
-// including a file too broken to parse, defaults to fail_closed.
+// including a file too broken to parse, defaults to fail_closed. Since the base
+// policy must opt in too, an overlay can never opt the set into failing open.
 func policyFailOpen(policyFiles []string) bool {
 	if len(policyFiles) == 0 {
 		return false
@@ -189,6 +196,33 @@ func policyFailOpen(policyFiles []string) bool {
 		}
 	}
 	return true
+}
+
+// policyBlockMessage renders a blocking decision for Claude Code, which relays a
+// PreToolUse hook's stderr to the model on exit 2, so the denial names the rule
+// and its authored reason instead of a bare exit code.
+func policyBlockMessage(decision policy.PolicyDecision) string {
+	ruleID := decision.RuleID
+	if ruleID == "" {
+		ruleID = "policy"
+	}
+	msg := decision.Message
+	if msg == "" {
+		msg = "tool call blocked by security policy"
+	}
+	return fmt.Sprintf("qsdev-policy: %s — %s", ruleID, msg)
+}
+
+// writePolicyFindings reports the non-blocking warn, audit and monitor-mode
+// findings of an allowed tool call on stderr, one line per finding.
+func writePolicyFindings(w io.Writer, findings []policy.Finding) {
+	for _, f := range findings {
+		kind := "warning"
+		if f.Monitor {
+			kind = "audit"
+		}
+		fmt.Fprintf(w, "qsdev-policy: %s: %s — %s\n", kind, f.RuleID, f.Message)
+	}
 }
 
 func buildEvalContext(input *hookInput, projectRoot string) *policy.EvalContext {
@@ -320,8 +354,9 @@ func sessionStatePath() (string, error) {
 }
 
 // trustConfigPath returns the path to the user's MCP trust configuration.
-// NewMcpTrustEngine tolerates a missing file (it falls back to an empty config),
-// so an empty path when the home directory cannot be resolved is acceptable.
+// NewMcpTrustEngine treats a missing file (or an empty path) as "no manual
+// overrides", so an empty path when the home directory cannot be resolved is
+// acceptable.
 func trustConfigPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -331,15 +366,56 @@ func trustConfigPath() string {
 }
 
 // newProductionOrchestrator wires the SecurityOrchestrator with the real risk
-// scorer and MCP trust adapter so the confused-deputy check, PostToolUse output
-// hardening, and package risk scoring are actually reachable in the hook path.
-// Both production call sites (enforce and policy check) must go through this
-// seam; constructing the orchestrator with nil risk/trust silently disables
+// scorer and MCP trust adapter so the confused-deputy check and PostToolUse
+// output hardening are actually reachable in the hook path. The risk scorer is
+// wired for interface completeness; no hook path scores packages yet. Both
+// production call sites (enforce and policy check) must go through this seam;
+// constructing the orchestrator with a nil trust adapter silently disables
 // every MCP-poisoning defense.
-func newProductionOrchestrator(engine *policy.PolicyEngine) *policyengine.SecurityOrchestrator {
-	trustEngine := trust.NewMcpTrustEngine(trustConfigPath())
+//
+// Server trust tiers are scored from the .mcp.json definitions in projectRoot
+// (the current directory when empty). A
+// trust config or .mcp.json that cannot be loaded is reported on warn and
+// degrades to the strictest (fallback-tier) hardening rather than failing the
+// hook.
+func newProductionOrchestrator(engine *policy.PolicyEngine, projectRoot string, warn io.Writer) *policyengine.SecurityOrchestrator {
+	trustEngine, err := trust.NewMcpTrustEngine(trustConfigPath())
+	if err != nil {
+		fmt.Fprintf(warn, "Warning: %v\n", err)
+	}
+
+	if projectRoot == "" {
+		projectRoot = "."
+	}
+	servers, err := configuredMcpServers(projectRoot)
+	if err != nil {
+		fmt.Fprintf(warn, "Warning: scoring every MCP server as %s: %v\n", trust.Tier3Fallback, err)
+	}
+
 	trustAdapter := policyengine.NewTrustAdapter(trustEngine)
-	return policyengine.NewSecurityOrchestrator(engine, risk.NewScorer(), trustAdapter)
+	return policyengine.NewSecurityOrchestrator(engine, risk.NewScorer(), trustAdapter).
+		WithMcpServers(servers)
+}
+
+// configuredMcpServers reads the MCP server definitions from projectRoot's
+// .mcp.json as trust-scoring input. A missing file yields no servers.
+func configuredMcpServers(projectRoot string) (map[string]trust.McpServerInfo, error) {
+	defs, err := mcpregistry.ScanMcpJSON(projectRoot)
+	if err != nil {
+		return nil, fmt.Errorf("loading MCP server definitions: %w", err)
+	}
+
+	servers := make(map[string]trust.McpServerInfo, len(defs))
+	for name, def := range defs {
+		servers[name] = trust.McpServerInfo{
+			Name:      name,
+			Command:   def.Command,
+			Args:      def.Args,
+			Env:       def.Env,
+			Transport: string(def.Transport),
+		}
+	}
+	return servers, nil
 }
 
 // postToolUseSpecific is Claude Code's hookSpecificOutput for PostToolUse.

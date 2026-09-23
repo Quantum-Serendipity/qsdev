@@ -1,8 +1,14 @@
 package trust
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"maps"
 	"os"
+	"slices"
 
 	"gopkg.in/yaml.v3"
 
@@ -12,17 +18,35 @@ import (
 type McpTrustEngine struct {
 	configPath string
 	config     *TrustConfig
+	// forceFallback pins every server to Tier3Fallback. It is set when the
+	// trust config exists but cannot be loaded, so the operator's manual
+	// overrides are never silently replaced by computed (possibly higher) tiers.
+	forceFallback bool
 }
 
-func NewMcpTrustEngine(configPath string) *McpTrustEngine {
-	cfg, err := LoadTrustConfig(configPath)
-	if err != nil {
-		cfg = &TrustConfig{Servers: make(map[string]TrustServerEntry)}
-	}
-	return &McpTrustEngine{
+// NewMcpTrustEngine loads the manual tier overrides from configPath. A missing
+// file (or an empty path) is not an error: the engine scores servers from their
+// signals alone. A file that exists but cannot be read or parsed returns an
+// error together with a usable engine that assigns every server
+// Tier3Fallback, the strictest hardening, so a caller that reports the error
+// and continues degrades safely instead of ignoring the overrides.
+func NewMcpTrustEngine(configPath string) (*McpTrustEngine, error) {
+	engine := &McpTrustEngine{
 		configPath: configPath,
-		config:     cfg,
+		config:     &TrustConfig{Servers: make(map[string]TrustServerEntry)},
 	}
+
+	cfg, err := LoadTrustConfig(configPath)
+	switch {
+	case err == nil:
+		engine.config = cfg
+	case errors.Is(err, fs.ErrNotExist):
+	default:
+		engine.forceFallback = true
+		return engine, fmt.Errorf("loading MCP trust config %s (treating every server as %s): %w", configPath, Tier3Fallback, err)
+	}
+
+	return engine, nil
 }
 
 func (e *McpTrustEngine) ScoreServer(info *McpServerInfo) TrustScore {
@@ -38,6 +62,9 @@ func (e *McpTrustEngine) ScoreServer(info *McpServerInfo) TrustScore {
 
 	if entry, ok := e.config.Servers[info.Name]; ok && entry.ManualOverride {
 		tier = entry.Tier
+	}
+	if e.forceFallback {
+		tier = Tier3Fallback
 	}
 
 	return TrustScore{
@@ -72,8 +99,11 @@ func buildCategoryScores(probes []ProbeResult) []CategoryScore {
 		grouped[p.Category] = append(grouped[p.Category], p)
 	}
 
+	// Iterate categories in a fixed order so the result (and the float sum in
+	// aggregateScore) is identical from run to run.
 	categories := make([]CategoryScore, 0, len(grouped))
-	for name, catProbes := range grouped {
+	for _, name := range slices.Sorted(maps.Keys(grouped)) {
+		catProbes := grouped[name]
 		catWeight, ok := categoryWeights[name]
 		if !ok {
 			continue
@@ -147,6 +177,9 @@ func assignTier(score int) TrustTier {
 	}
 }
 
+// LoadTrustConfig reads a trust config strictly: an unknown key (for example a
+// misspelled manual_override) is an error rather than a silently ignored field.
+// An empty file yields an empty config.
 func LoadTrustConfig(path string) (*TrustConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -154,7 +187,9 @@ func LoadTrustConfig(path string) (*TrustConfig, error) {
 	}
 
 	var cfg TrustConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("parsing trust config: %w", err)
 	}
 
@@ -171,7 +206,7 @@ func SaveTrustConfig(path string, config *TrustConfig) error {
 		return fmt.Errorf("marshaling trust config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, fileutil.ModeReadWrite); err != nil {
+	if err := fileutil.WriteFileAtomic(path, data, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing trust config: %w", err)
 	}
 

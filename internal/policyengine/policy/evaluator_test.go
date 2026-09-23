@@ -3,6 +3,7 @@ package policy
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -523,5 +524,115 @@ func TestSessionState_RoundTrip(t *testing.T) {
 	postClear := reader.SessionOverrides()
 	if len(postClear) != 0 {
 		t.Errorf("expected empty overrides after clear, got %v", postClear)
+	}
+}
+
+// TestSaveSessionOverrides_AtomicReplace covers F199: the state file is
+// replaced atomically (parent directory created, no temp files left behind)
+// and an overwrite fully replaces the previous overrides.
+func TestSaveSessionOverrides_AtomicReplace(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), "nested", ".qsdev")
+	path := filepath.Join(dir, "session-state.json")
+
+	if err := SaveSessionOverrides(path, []string{"RULE-A", "RULE-B"}); err != nil {
+		t.Fatalf("SaveSessionOverrides: %v", err)
+	}
+	if err := SaveSessionOverrides(path, []string{"RULE-C"}); err != nil {
+		t.Fatalf("SaveSessionOverrides overwrite: %v", err)
+	}
+
+	if got := NewFileSessionStateReader(path).SessionOverrides(); len(got) != 1 || got[0] != "RULE-C" {
+		t.Errorf("overrides after overwrite = %v, want [RULE-C]", got)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading state dir: %v", err)
+	}
+	if len(entries) != 1 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("state dir holds %v, want only the state file", names)
+	}
+}
+
+// TestEvaluate_MonitorModeReportsOnlyMatches pins that a monitor-mode block
+// rule reports a finding only when its conditions match the call, like any
+// other rule; it must not report a violation for every call to the tool.
+func TestEvaluate_MonitorModeReportsOnlyMatches(t *testing.T) {
+	t.Parallel()
+
+	rule := makeRule("MON-002", Session, Medium, All, Block)
+	rule.Conditions = Condition{Type: All, Conditions: []Condition{
+		{Type: ToolMatch, ToolName: "Bash"},
+		{Type: CommandMatch, Pattern: "curl"},
+	}}
+	rule.MonitorMode = true
+	set := compileTestPolicy(t, makePolicy(rule))
+
+	tests := []struct {
+		name        string
+		command     string
+		wantFinding bool
+	}{
+		{name: "matching call reported", command: "curl https://example.com", wantFinding: true},
+		{name: "non-matching call not reported", command: "ls -la", wantFinding: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			decision := Evaluate(set, &EvalContext{ToolName: "Bash", Command: tt.command})
+			if decision.ExitCode != 0 {
+				t.Fatalf("monitor-mode rule blocked: exit %d", decision.ExitCode)
+			}
+			if got := len(decision.Findings) > 0; got != tt.wantFinding {
+				t.Errorf("findings = %+v, want finding: %v", decision.Findings, tt.wantFinding)
+			}
+		})
+	}
+}
+
+// TestEvaluate_PromptAllowDoesNotShadowBlock pins that a prompt rule resolving
+// to allow does not end evaluation: a later-sorted block rule that matches the
+// same call still blocks. Otherwise any rule (for example one an overlay adds)
+// with a more severe or more tool-specific allow-by-default prompt would
+// neutralize an enforce_always block rule.
+func TestEvaluate_PromptAllowDoesNotShadowBlock(t *testing.T) {
+	t.Parallel()
+
+	block := makeRule("BLOCK-001", EnforceAlways, High, CommandMatch, Block)
+	block.Conditions = Condition{Type: CommandMatch, Pattern: "curl"}
+
+	tests := []struct {
+		name   string
+		prompt PolicyRule
+	}{
+		{name: "more severe prompt", prompt: makeRule("PROMPT-SEV", EnforceAlways, Critical, ToolMatch, Prompt)},
+		{name: "tool-specific prompt of equal severity", prompt: makeRule("PROMPT-TOOL", EnforceAlways, High, ToolMatch, Prompt)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tt.prompt.Action.DefaultOnTimeout = "allow"
+			set := compileTestPolicy(t, makePolicy(block, tt.prompt))
+
+			blocked := Evaluate(set, &EvalContext{ToolName: "Bash", Command: "curl https://example.com"})
+			if blocked.ExitCode != 2 || blocked.RuleID != "BLOCK-001" {
+				t.Errorf("decision = %s/%d by %q, want block by BLOCK-001", blocked.Action, blocked.ExitCode, blocked.RuleID)
+			}
+
+			allowed := Evaluate(set, &EvalContext{ToolName: "Bash", Command: "ls"})
+			if allowed.ExitCode != 0 || allowed.Action != Prompt || allowed.RuleID != tt.prompt.ID {
+				t.Errorf("decision = %s/%d by %q, want allowed prompt by %s", allowed.Action, allowed.ExitCode, allowed.RuleID, tt.prompt.ID)
+			}
+		})
 	}
 }

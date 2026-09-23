@@ -112,6 +112,14 @@ var AllRules = []RuleDefinition{
 		Tags:             []string{"supply-chain", "malware"},
 	},
 	{
+		ID:               "qsdev/dep-risk/moderate-risk",
+		Name:             "moderate-risk",
+		ShortDescription: "Moderate-risk dependency (grade C)",
+		DefaultLevel:     "note",
+		SecuritySeverity: 4.0,
+		Tags:             []string{"supply-chain", "risk"},
+	},
+	{
 		ID:               "qsdev/dep-risk/high-risk",
 		Name:             "high-risk",
 		ShortDescription: "High-risk dependency (grade D)",

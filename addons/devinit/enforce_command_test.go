@@ -220,7 +220,10 @@ func TestRunEnforce_PreToolUse(t *testing.T) {
 			wantCode: 0,
 		},
 		{
-			name:   "unresolvable session state is blocked under fail_closed",
+			// Without a session state file there are no session bypass
+			// overrides, the strictest state, so the policy is still fully
+			// enforced (policyengine-1) rather than skipped.
+			name:   "unresolvable session state still enforces the policy",
 			policy: validClosed,
 			setup: func(t *testing.T, e enforceEnv) {
 				t.Setenv(envClaudeProjectDir, e.project)
@@ -229,9 +232,11 @@ func TestRunEnforce_PreToolUse(t *testing.T) {
 				t.Setenv("home", "") // plan9
 				t.Chdir(e.project)
 			},
-			stdin:    func(e enforceEnv) string { return editPayload(filepath.Join(e.project, "main.go"), e.project) },
+			stdin: func(e enforceEnv) string {
+				return editPayload(filepath.Join(e.project, ".claude", "settings.json"), e.project)
+			},
 			wantCode: 2,
-			wantMsg:  "home directory",
+			wantMsg:  "SP-001",
 		},
 	}
 

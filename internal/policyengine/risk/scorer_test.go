@@ -3,6 +3,7 @@ package risk
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -527,5 +528,44 @@ func TestGradeFromScore(t *testing.T) {
 				t.Errorf("gradeFromScore(%d) = %s, want %s", tt.score, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestScorePackageDeterministicCategories guards F197: Categories used to be
+// built by ranging over a map, so identical input produced a different order
+// (and serialized score) from run to run.
+func TestScorePackageDeterministicCategories(t *testing.T) {
+	t.Parallel()
+
+	published := time.Now().Add(-2 * 365 * 24 * time.Hour)
+	info := PackageInfo{
+		Name:                    "stable-pkg",
+		Version:                 "1.0.0",
+		Ecosystem:               EcosystemNpm,
+		FirstPublishedAt:        &published,
+		PublishedAt:             &published,
+		VulnDataAvailable:       true,
+		HasChecksumVerification: true,
+	}
+
+	names := func(s PackageScore) []string {
+		out := make([]string, len(s.Categories))
+		for i, c := range s.Categories {
+			out[i] = c.Name
+		}
+		return out
+	}
+
+	want := names(ScorePackage(&info))
+	if len(want) < 2 {
+		t.Fatalf("expected several scored categories, got %v", want)
+	}
+	if !slices.IsSorted(want) {
+		t.Errorf("categories %v are not in a fixed (sorted) order", want)
+	}
+	for range 50 {
+		if got := names(ScorePackage(&info)); !slices.Equal(got, want) {
+			t.Fatalf("category order changed between runs: %v vs %v", got, want)
+		}
 	}
 }

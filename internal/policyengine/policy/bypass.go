@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
@@ -43,12 +42,10 @@ func (r *StaticSessionStateReader) SessionOverrides() []string {
 	return r.Overrides
 }
 
+// SaveSessionOverrides writes the session bypass overrides atomically, so a
+// hook reading the state concurrently sees either the previous or the new
+// overrides and never a truncated file.
 func SaveSessionOverrides(path string, overrides []string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, fileutil.ModeDirDefault); err != nil {
-		return fmt.Errorf("creating session state directory: %w", err)
-	}
-
 	state := sessionState{
 		SessionBypassOverrides: overrides,
 	}
@@ -58,7 +55,7 @@ func SaveSessionOverrides(path string, overrides []string) error {
 		return fmt.Errorf("marshaling session state: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, fileutil.ModeReadWrite); err != nil {
+	if err := fileutil.WriteFileAtomic(path, data, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing session state: %w", err)
 	}
 

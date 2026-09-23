@@ -3,6 +3,7 @@ package policy
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"gopkg.in/yaml.v3"
 )
@@ -218,7 +219,19 @@ type Finding struct {
 	Monitor  bool
 }
 
+// DenyRule is a path pattern projected from a blocking policy rule for the
+// MCP confused-deputy check. RuleID and BypassTier identify the originating
+// rule so session overrides apply to the projection as they do to the rule.
 type DenyRule struct {
-	Pattern string
-	Type    string
+	Pattern    string
+	Type       string
+	RuleID     string
+	BypassTier BypassTier
+}
+
+// Bypassed reports whether a session override lifts this deny rule. As in
+// Evaluate, only session- and command-tier rules can be bypassed.
+func (d DenyRule) Bypassed(sessionOverrides []string) bool {
+	return (d.BypassTier == Session || d.BypassTier == Command) &&
+		slices.Contains(sessionOverrides, d.RuleID)
 }

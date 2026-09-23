@@ -62,7 +62,8 @@ func (c *CacheManager) Put(score *PackageScore) error {
 	}
 
 	path := c.cachePath(string(score.Ecosystem), score.PackageName, score.PackageVersion)
-	if err := os.WriteFile(path, data, fileutil.ModeReadWrite); err != nil {
+	// Atomic so a concurrent Get never decodes a half-written score.
+	if err := fileutil.WriteFileAtomic(path, data, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing cache file: %w", err)
 	}
 

@@ -221,13 +221,21 @@ type MCPServerDef struct {
 // developer's machine, outside any project and so outside the package guard,
 // the project's age gate and its lockfile.
 type BootstrapToolDef struct {
-	// InstallMethod names the package manager: npm-global.
+	// InstallMethod names the package manager: npm-global or nix-profile.
 	InstallMethod string `yaml:"install_method"`
-	PackageName   string `yaml:"package_name"`
+	// PackageName is the npm package (npm-global) or the attribute path
+	// within Flake (nix-profile).
+	PackageName string `yaml:"package_name"`
 	// Version is the exact release installed; never a range or dist-tag.
 	// The install is age-gated, so a release younger than the minimum
-	// release age fails to install until it has aged.
-	Version string `yaml:"version"`
+	// release age fails to install until it has aged. Required for
+	// npm-global; nix-profile takes its version from the Flake revision.
+	Version string `yaml:"version,omitempty"`
+	// Flake is the flake reference PackageName is installed from
+	// (nix-profile), pinned to an exact commit, e.g.
+	// github:NixOS/nixpkgs/<40-hex rev>. A branch, tag or registry name
+	// such as "nixpkgs" is refused.
+	Flake string `yaml:"flake,omitempty"`
 	// AllowInstallScripts lets the package manager run the package's
 	// lifecycle scripts. Off by default (npm --ignore-scripts); set it only
 	// for a package that verifiably cannot work without them, and record why

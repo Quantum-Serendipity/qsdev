@@ -338,7 +338,6 @@ func TestSetupCmd_InstallCommandForTool(t *testing.T) {
 		want   string
 	}{
 		{"nix", "debian", pkgmanager.NewApt(nil), "curl -sSf -L https://install.determinate.systems/nix | sh -s -- install"},
-		{"devenv", "debian", pkgmanager.NewApt(nil), strings.Join(devenvSpec.InstallCmd, " ")},
 		{"git", "debian", pkgmanager.NewApt(nil), "sudo apt-get install -y git"},
 		{"git", "macos", pkgmanager.NewBrew(nil), "brew install git"},
 		// F466: on a debian host with Nix, setup installs through Nix, so the
@@ -384,6 +383,32 @@ func TestSetupCmd_InstallCommandForClaude(t *testing.T) {
 	}
 	if slices.Contains(got, "--ignore-scripts") == def.AllowInstallScripts {
 		t.Errorf("--ignore-scripts present = %v with allow_install_scripts = %v", !def.AllowInstallScripts, def.AllowInstallScripts)
+	}
+}
+
+// TestSetupCmd_InstallCommandForDevenv covers F289: `devenv setup` installs
+// devenv from nixpkgs pinned to the commit the catalog names, never through
+// the mutable nixpkgs registry entry, and does not accept the flake's
+// nixConfig.
+func TestSetupCmd_InstallCommandForDevenv(t *testing.T) {
+	t.Parallel()
+
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatalf("catalog.Default: %v", err)
+	}
+	def, ok := cat.BootstrapTool(catalog.BootstrapToolDevenv)
+	if !ok {
+		t.Fatal("catalog has no bootstrap_tools.devenv pin")
+	}
+
+	got := strings.Fields(installCommandForTool("devenv", "debian", pkgmanager.NewApt(nil)))
+	want := []string{"nix", "profile", "install", "--option", "accept-flake-config", "false", def.Flake + "#" + def.PackageName}
+	if !slices.Equal(got, want) {
+		t.Errorf("install command = %q, want %q", got, want)
+	}
+	if slices.Contains(got, "--accept-flake-config") {
+		t.Errorf("install command %q accepts the flake's nixConfig", got)
 	}
 }
 

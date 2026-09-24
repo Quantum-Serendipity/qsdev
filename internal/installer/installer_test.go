@@ -3,8 +3,11 @@ package installer_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -129,8 +132,14 @@ func TestInstall_ManagerSucceeds(t *testing.T) {
 	}
 	tmp := t.TempDir()
 	// Manager exists and succeeds, but the tool itself is not on PATH
-	// before install. The fake manager just exits 0.
-	writeScript(t, tmp, "fake-mgr", `exit 0`)
+	// before install. The fake manager puts the tool on PATH; chmod is
+	// resolved first because PATH holds only tmp while it runs.
+	chmod, err := exec.LookPath("chmod")
+	if err != nil {
+		t.Skipf("chmod not found: %v", err)
+	}
+	tool := filepath.Join(tmp, "fake-tool-binary")
+	writeScript(t, tmp, "fake-mgr", fmt.Sprintf("printf '#!/bin/sh\\necho v9.9.9\\n' > %q\n%q +x %q\n", tool, chmod, tool))
 	withPATH(t, tmp)
 
 	spec := testSpec()
@@ -144,8 +153,33 @@ func TestInstall_ManagerSucceeds(t *testing.T) {
 	if !strings.Contains(out, "Installing fake-tool") {
 		t.Errorf("expected install message in output, got: %s", out)
 	}
-	if !strings.Contains(out, "installed successfully") {
-		t.Errorf("expected success message in output, got: %s", out)
+	if !strings.Contains(out, "installed successfully") || !strings.Contains(out, "v9.9.9") {
+		t.Errorf("expected success message with the detected version in output, got: %s", out)
+	}
+}
+
+// TestInstall_ManagerSucceedsBinaryMissing covers F289: an install command
+// that exits 0 but leaves the binary unresolvable on PATH (e.g. the profile
+// bin directory is not on PATH) is an error, not a success.
+func TestInstall_ManagerSucceedsBinaryMissing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("installer tests use Unix shell scripts")
+	}
+	tmp := t.TempDir()
+	writeScript(t, tmp, "fake-mgr", `exit 0`)
+	withPATH(t, tmp)
+
+	spec := testSpec()
+	var installErr error
+	out := captureStdout(t, func() {
+		installErr = installer.Install(context.Background(), spec)
+	})
+
+	if !errors.Is(installErr, installer.ErrNotFoundAfterInstall) {
+		t.Fatalf("error = %v, want %v", installErr, installer.ErrNotFoundAfterInstall)
+	}
+	if strings.Contains(out, "installed successfully") {
+		t.Errorf("reported success although the binary is missing: %s", out)
 	}
 }
 

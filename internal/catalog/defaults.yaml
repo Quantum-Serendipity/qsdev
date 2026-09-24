@@ -891,10 +891,11 @@ mcp_servers:
         bin: mcp-nixos
 bootstrap_tools:
     # Tools the qsdev bootstrap installs onto the developer's machine. Each is
-    # an exact release installed under the release-age cutoff (npm --before),
-    # so a pinned release younger than the minimum age fails until it ages.
-    # Bump a pin by editing version here (or in ~/.config/qsdev/defaults.yaml)
-    # to a release older than that minimum.
+    # an exact release: npm packages are installed under the release-age
+    # cutoff (npm --before), so a pinned release younger than the minimum age
+    # fails until it ages; Nix packages come from a flake pinned to a commit.
+    # Bump a pin by editing version (npm) or flake (nix) here, or in
+    # ~/.config/qsdev/defaults.yaml, to a release older than that minimum.
     claude-code:
         install_method: npm-global
         package_name: "@anthropic-ai/claude-code"
@@ -905,6 +906,19 @@ bootstrap_tools:
         # bin/claude.exe placeholder; with --ignore-scripts `claude` is a stub
         # that only prints an error. It is the only script in the install.
         allow_install_scripts: true
+    # devenv and direnv are installed with `nix profile install` from nixpkgs
+    # pinned to one commit (the nixpkgs-unstable revision of 2026-05-15, which
+    # provides devenv 2.1.2 and direnv 2.37.1; generated devenv.yaml files
+    # require devenv >=2.1), never through the mutable `nixpkgs` registry
+    # entry, and without accepting the flake's nixConfig.
+    devenv:
+        install_method: nix-profile
+        flake: "github:NixOS/nixpkgs/d233902339c02a9c334e7e593de68855ad26c4cb"
+        package_name: devenv
+    direnv:
+        install_method: nix-profile
+        flake: "github:NixOS/nixpkgs/d233902339c02a9c334e7e593de68855ad26c4cb"
+        package_name: direnv
 docs_corpus:
     devdocs_base_url: "https://documents.devdocs.io"
     devdocs_slugs:

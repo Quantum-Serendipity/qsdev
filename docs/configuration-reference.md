@@ -646,6 +646,30 @@ Both run `npm install -g [--ignore-scripts] --before=<now - 3 days> @anthropic-a
 
 To move to a newer release before qsdev ships a new pin, set `version` in `~/.config/qsdev/defaults.yaml` (`qsdev defaults edit`) to an exact release at least 3 days old; the entry is deep-merged, so only the fields you set change. An already installed `claude` is left as it is.
 
+### devenv and direnv install (`bootstrap_tools.devenv`, `bootstrap_tools.direnv`)
+
+When `devenv` or `direnv` is not on `PATH`, the bootstrap steps "Install devenv" and "Install direnv" (and, for devenv, `qsdev devenv setup`) install the attribute pinned in the catalog from nixpkgs pinned to one commit:
+
+```yaml
+bootstrap_tools:
+    devenv:
+        install_method: nix-profile
+        flake: "github:NixOS/nixpkgs/d233902339c02a9c334e7e593de68855ad26c4cb"
+        package_name: devenv            # attribute path within the flake
+    direnv:
+        install_method: nix-profile
+        flake: "github:NixOS/nixpkgs/d233902339c02a9c334e7e593de68855ad26c4cb"
+        package_name: direnv
+```
+
+Both run `nix profile install --option accept-flake-config false <flake>#<package_name>`. The flake must name a single commit: a `github:`/`gitlab:`/`sourcehut:` reference written `<owner>/<repo>/<40-hex rev>` or `<owner>/<repo>?rev=<40-hex rev>`, or a `git+` reference with a `rev=<40-hex rev>` query parameter. A registry name such as `nixpkgs` (which resolves through the mutable user and system flake registries), even with a `rev=` (the registry could map it to a `path:` or tarball flake that ignores the rev), a `path:`, tarball or file reference, a branch or a tag is refused, as is a flake starting with `-` or an attribute that is not a plain attribute path. `accept-flake-config` is forced off, so a `nixConfig` the flake declares (extra substituters, trusted public keys) is ignored even if your `nix.conf` would accept it. The shipped revision is the nixpkgs-unstable commit qsdev itself builds against; it provides devenv 2.1.2, which satisfies the `require_version: '>=2.1'` in generated `devenv.yaml` files.
+
+To install from a newer nixpkgs, set `flake` in `~/.config/qsdev/defaults.yaml` to `github:NixOS/nixpkgs/<commit>`.
+
+### Post-install check
+
+After any bootstrap install command exits successfully, qsdev detects the tool's binary again. If it is still not resolvable on `PATH` (for example because `~/.nix-profile/bin` or npm's global `bin` directory is not on `PATH` in the current shell), the step fails with an error telling you to add that package manager's bin directory to `PATH` (or open a new shell) and re-run, rather than reporting success.
+
 ---
 
 ## Policy Engine Files

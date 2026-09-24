@@ -55,3 +55,10 @@ var ExportDefaultRCFile = defaultRCFile
 // (NewDevenvGenerator is already exported, but this pattern keeps the export
 // file consistent.)
 var _ types.Generator = (*DevenvGenerator)(nil)
+
+// ExportDevenvToolSpec and ExportDirenvToolSpec expose the bootstrap install
+// specs, built from a given catalog, for external tests.
+var (
+	ExportDevenvToolSpec = devenvTool.toolSpec
+	ExportDirenvToolSpec = direnvTool.toolSpec
+)

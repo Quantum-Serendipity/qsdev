@@ -118,3 +118,111 @@ func TestNpmGlobalInstallCmd(t *testing.T) {
 		})
 	}
 }
+
+// testRev is a full nixpkgs commit hash used by the flake-pin tests.
+const testRev = "d233902339c02a9c334e7e593de68855ad26c4cb"
+
+// TestIsPinnedFlakeRef covers F289: only a flake reference naming one commit
+// counts as pinned; registry names, branches and tags follow whatever they
+// point at when the install runs.
+func TestIsPinnedFlakeRef(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		ref  string
+		want bool
+	}{
+		{"github rev path", "github:NixOS/nixpkgs/" + testRev, true},
+		{"gitlab rev path", "gitlab:owner/repo/" + testRev, true},
+		{"github rev query", "github:NixOS/nixpkgs?rev=" + testRev, true},
+		{"git url rev query", "git+https://example.com/nixpkgs.git?ref=main&rev=" + testRev, true},
+		{"registry name", "nixpkgs", false},
+		{"indirect registry ref", "flake:nixpkgs", false},
+		{"branch", "github:NixOS/nixpkgs/nixpkgs-unstable", false},
+		{"tag", "github:NixOS/nixpkgs/26.05", false},
+		{"no ref", "github:NixOS/nixpkgs", false},
+		{"short rev", "github:NixOS/nixpkgs/d2339023", false},
+		{"uppercase rev", "github:NixOS/nixpkgs/D233902339C02A9C334E7E593DE68855AD26C4CB", false},
+		{"extra path segment", "github:NixOS/nixpkgs/" + testRev + "/x", false},
+		{"empty owner", "github:/nixpkgs/" + testRev, false},
+		{"short rev query", "git+https://example.com/x.git?rev=d2339023", false},
+		{"attribute embedded", "github:NixOS/nixpkgs/" + testRev + "#devenv", false},
+		{"whitespace", "github:NixOS/nixpkgs/" + testRev + " nixpkgs", false},
+		{"empty", "", false},
+		// A rev query only pins a fetcher that checks the commit out.
+		{"indirect registry rev query", "nixpkgs?rev=" + testRev, false},
+		{"indirect flake: rev query", "flake:nixpkgs?rev=" + testRev, false},
+		{"path rev query", "path:/tmp/nixpkgs?rev=" + testRev, false},
+		{"tarball rev query", "tarball+https://example.com/nixpkgs.tar.gz?rev=" + testRev, false},
+		{"https tarball rev query", "https://example.com/nixpkgs.tar.gz?rev=" + testRev, false},
+		{"file rev query", "file+https://example.com/nixpkgs.tar.gz?rev=" + testRev, false},
+		{"github branch path with rev query", "github:NixOS/nixpkgs/nixos-26.05/x?rev=" + testRev, false},
+		{"git without rev", "git+https://example.com/nixpkgs.git?ref=main", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := installer.IsPinnedFlakeRef(tt.ref); got != tt.want {
+				t.Errorf("IsPinnedFlakeRef(%q) = %v, want %v", tt.ref, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNixProfileInstallCmd covers F289: the command installs from the pinned
+// flake, overrides accept-flake-config to false, never passes
+// --accept-flake-config, and refuses unpinned or malformed input.
+func TestNixProfileInstallCmd(t *testing.T) {
+	t.Parallel()
+
+	pinned := "github:NixOS/nixpkgs/" + testRev
+	tests := []struct {
+		name     string
+		pkg      installer.NixPackage
+		want     []string
+		wantErr  error // nil with wantFail: any error
+		wantFail bool
+	}{
+		{
+			name: "pinned",
+			pkg:  installer.NixPackage{Flake: pinned, Attribute: "devenv"},
+			want: []string{"nix", "profile", "install", "--option", "accept-flake-config", "false", pinned + "#devenv"},
+		},
+		{
+			name: "nested attribute",
+			pkg:  installer.NixPackage{Flake: pinned, Attribute: "python3Packages.black"},
+			want: []string{"nix", "profile", "install", "--option", "accept-flake-config", "false", pinned + "#python3Packages.black"},
+		},
+		{name: "registry name", pkg: installer.NixPackage{Flake: "nixpkgs", Attribute: "devenv"}, wantErr: installer.ErrUnpinned, wantFail: true},
+		{name: "branch", pkg: installer.NixPackage{Flake: "github:NixOS/nixpkgs/nixos-26.05", Attribute: "devenv"}, wantErr: installer.ErrUnpinned, wantFail: true},
+		{name: "option-like flake", pkg: installer.NixPackage{Flake: "--accept-flake-config", Attribute: "devenv"}, wantFail: true},
+		{name: "empty attribute", pkg: installer.NixPackage{Flake: pinned}, wantFail: true},
+		{name: "attribute with selector", pkg: installer.NixPackage{Flake: pinned, Attribute: "devenv^out"}, wantFail: true},
+		{name: "attribute with space", pkg: installer.NixPackage{Flake: pinned, Attribute: "devenv --impure"}, wantFail: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := installer.NixProfileInstallCmd(tt.pkg)
+			if tt.wantFail {
+				if err == nil {
+					t.Fatalf("NixProfileInstallCmd(%+v) = %q, want an error", tt.pkg, got)
+				}
+				if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
+					t.Errorf("error = %v, want %v", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NixProfileInstallCmd: %v", err)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("NixProfileInstallCmd = %q, want %q", got, tt.want)
+			}
+			if slices.Contains(got, "--accept-flake-config") {
+				t.Errorf("command %q accepts the flake's nixConfig", got)
+			}
+		})
+	}
+}

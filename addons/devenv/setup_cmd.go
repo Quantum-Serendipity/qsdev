@@ -77,7 +77,7 @@ func AutoSetupPrerequisites(ctx context.Context, w io.Writer) error {
 // these edges, so every auto-installable check is always part of the plan.
 var installDependencies = map[string]string{
 	"nix":    "curl", // the Nix installer script downloads its binary with curl
-	"devenv": "nix",  // installed with `nix profile install`
+	"devenv": "nix",  // installed with `nix profile install` from pinned nixpkgs
 	"npm":    "node", // bundled with node
 	"claude": "npm",  // installed with an age-gated, pinned `npm install -g`
 }
@@ -335,14 +335,12 @@ func installCommandForTool(name, family string, pm pkgmanager.PackageManager) st
 	switch name {
 	case "nix":
 		return "curl -sSf -L https://install.determinate.systems/nix | sh -s -- install"
-	case "claude":
-		cmd, err := claudeInstallCmd()
+	case "claude", "devenv":
+		cmd, err := bootstrapToolCmd(setupBootstrapTools[name])
 		if err != nil {
 			return fmt.Sprintf("(refused: %v)", err)
 		}
 		return strings.Join(cmd, " ")
-	case "devenv":
-		return strings.Join(devenvSpec.InstallCmd, " ")
 	default:
 		cmd := pkgmanager.InstallCommand(pm, family, name)
 		if cmd == "" {
@@ -563,7 +561,9 @@ func downloadNixInstaller(ctx context.Context) (string, error) {
 	return path, nil
 }
 
-// installDevenv installs devenv with Nix. It resolves the nix binary from
+// installDevenv installs the devenv the catalog pins
+// (bootstrap_tools.devenv) with Nix, from nixpkgs pinned to a commit and
+// with the flake's nixConfig ignored. It resolves the nix binary from
 // PATH or the default multi-user profile so that a Nix installed earlier in
 // the same run can be used without restarting the shell.
 func installDevenv(ctx context.Context, w io.Writer) error {
@@ -575,7 +575,11 @@ func installDevenv(ctx context.Context, w io.Writer) error {
 		nixBin = nixDefaultProfileBin
 	}
 
-	cmd := exec.CommandContext(ctx, nixBin, devenvSpec.InstallCmd[1:]...)
+	argv, err := bootstrapToolCmd(catalog.BootstrapToolDevenv)
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, nixBin, argv[1:]...)
 	cmd.Stdout = w
 	cmd.Stderr = w
 	if err := cmd.Run(); err != nil {
@@ -584,20 +588,27 @@ func installDevenv(ctx context.Context, w io.Writer) error {
 	return nil
 }
 
-// claudeInstallCmd returns the age-gated npm command that installs the
-// Claude Code release the catalog pins (bootstrap_tools.claude-code), the
-// same command the "Install Claude Code" bootstrap step runs.
-func claudeInstallCmd() ([]string, error) {
+// setupBootstrapTools maps the setup tools installed from a catalog
+// bootstrap_tools pin to that entry.
+var setupBootstrapTools = map[string]string{
+	"claude": catalog.BootstrapToolClaudeCode,
+	"devenv": catalog.BootstrapToolDevenv,
+}
+
+// bootstrapToolCmd returns the command that installs the release the
+// catalog's bootstrap_tools.<name> entry pins, the same command the
+// matching bootstrap step runs.
+func bootstrapToolCmd(name string) ([]string, error) {
 	cat, err := catalog.Default()
 	if err != nil {
 		return nil, fmt.Errorf("loading catalog: %w", err)
 	}
-	return installer.BootstrapToolInstallCmd(cat, catalog.BootstrapToolClaudeCode, time.Now())
+	return installer.BootstrapToolInstallCmd(cat, name, time.Now())
 }
 
 // installClaude installs the catalog's pinned Claude Code release via npm.
 func installClaude(ctx context.Context, w io.Writer) error {
-	argv, err := claudeInstallCmd()
+	argv, err := bootstrapToolCmd(catalog.BootstrapToolClaudeCode)
 	if err != nil {
 		return err
 	}

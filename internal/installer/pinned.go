@@ -74,3 +74,97 @@ func NpmGlobalInstallCmd(pkg NpmPackage, now time.Time) ([]string, error) {
 	}
 	return append(cmd, "--before="+ReleaseCutoff(now, NpmMinReleaseAge), pkg.Name+"@"+pkg.Version), nil
 }
+
+// commitRevPattern matches a full 40-hex-digit git commit hash.
+var commitRevPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// nixAttrPathPattern matches a Nix attribute path such as devenv or
+// python3Packages.black.
+var nixAttrPathPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_'-]*(\.[A-Za-z_][A-Za-z0-9_'-]*)*$`)
+
+// forgeFlakeSchemes are the flake reference types whose path may carry the
+// revision as its third segment (github:owner/repo/<rev>).
+var forgeFlakeSchemes = []string{"github:", "gitlab:", "sourcehut:"}
+
+// gitFlakeSchemePrefix prefixes the git flake reference types (git+https:,
+// git+ssh:, git+file:, ...). Nix checks a git fetch out at the rev it names,
+// so a rev query parameter on one of these pins it.
+const gitFlakeSchemePrefix = "git+"
+
+// IsPinnedFlakeRef reports whether ref names exactly one commit: a forge
+// reference whose revision is a full commit hash, either as its third path
+// segment (github:NixOS/nixpkgs/<rev>) or as a rev=<commit> query parameter
+// (github:NixOS/nixpkgs?rev=<rev>), or a git+ reference with a rev=<commit>
+// query parameter. A registry name (nixpkgs, flake:nixpkgs), branch or tag
+// resolves to whatever that name points at when the install runs, so it is
+// not pinned. Neither is an indirect reference with a rev (nixpkgs?rev=...),
+// which the registry can map to a path: or tarball flake that ignores the
+// rev, nor any path:, tarball or file reference.
+func IsPinnedFlakeRef(ref string) bool {
+	if strings.ContainsAny(ref, "# \t\n") {
+		return false
+	}
+	path, query, _ := strings.Cut(ref, "?")
+	hasRev := false
+	for param := range strings.SplitSeq(query, "&") {
+		if rev, ok := strings.CutPrefix(param, "rev="); ok && commitRevPattern.MatchString(rev) {
+			hasRev = true
+		}
+	}
+	if strings.HasPrefix(path, gitFlakeSchemePrefix) {
+		return hasRev
+	}
+	for _, scheme := range forgeFlakeSchemes {
+		rest, ok := strings.CutPrefix(path, scheme)
+		if !ok {
+			continue
+		}
+		segs := strings.Split(rest, "/")
+		if len(segs) < 2 || segs[0] == "" || segs[1] == "" {
+			return false
+		}
+		switch len(segs) {
+		case 2:
+			return hasRev
+		case 3:
+			return commitRevPattern.MatchString(segs[2])
+		}
+		return false
+	}
+	return false
+}
+
+// NixPackage is one package to install into the user's Nix profile from a
+// flake pinned to an exact commit.
+type NixPackage struct {
+	// Flake is the pinned flake reference, e.g. github:NixOS/nixpkgs/<rev>.
+	Flake string
+	// Attribute is the package's attribute path within Flake, e.g. devenv.
+	Attribute string
+}
+
+// NixProfileInstallCmd returns the command that installs pkg.Attribute from
+// pkg.Flake into the user's Nix profile. The flake must be pinned to a
+// commit (see [IsPinnedFlakeRef]) so the install cannot follow the mutable
+// user or system registry, and the command sets accept-flake-config to
+// false so a nixConfig the flake declares (extra substituters, trusted
+// public keys) is ignored even when the user's nix.conf would accept it.
+// An unpinned flake is refused with [ErrUnpinned].
+func NixProfileInstallCmd(pkg NixPackage) ([]string, error) {
+	if strings.HasPrefix(pkg.Flake, "-") {
+		// nix would parse it as an option.
+		return nil, fmt.Errorf("flake reference %q starts with '-'", pkg.Flake)
+	}
+	if !IsPinnedFlakeRef(pkg.Flake) {
+		return nil, fmt.Errorf("%w: flake %q is not pinned to a commit; refusing to install %s from it",
+			ErrUnpinned, pkg.Flake, pkg.Attribute)
+	}
+	if !nixAttrPathPattern.MatchString(pkg.Attribute) {
+		return nil, fmt.Errorf("invalid Nix attribute path %q", pkg.Attribute)
+	}
+	return []string{
+		"nix", "profile", "install",
+		"--option", "accept-flake-config", "false",
+		pkg.Flake + "#" + pkg.Attribute,
+	}, nil
+}

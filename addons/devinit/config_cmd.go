@@ -100,16 +100,22 @@ func runMigrate(cmd *cobra.Command, write bool) error {
 		return nil
 	}
 
-	// MigrateConfig rejects versions newer than this binary supports and
+	// CheckMigration rejects versions newer than this binary supports and
 	// versions below the minimum, so an unsupported schema is reported as an
 	// error instead of being mistaken for "already current".
-	migrated, err := qsdevconfig.MigrateConfig(raw, versionInt)
-	if err != nil {
+	if _, err := qsdevconfig.CheckMigration(versionInt); err != nil {
 		return fmt.Errorf("migrating %s from schema version %d (supported: %d-%d): %w",
 			cfgFile, versionInt, types.ConfigVersionMin, types.ConfigVersionCurrent, err)
 	}
 
-	newData, err := yaml.Marshal(migrated)
+	// The parser strictly decodes the file and migrates it to the current
+	// schema with every value kept as written, and the result is rendered in
+	// the layout init writes, so the written file is one this binary accepts.
+	migrated, err := qsdevconfig.ParseQsdevConfigBytes(data)
+	if err != nil {
+		return fmt.Errorf("migrating %s from schema version %d: %w", cfgFile, versionInt, err)
+	}
+	newData, err := qsdevconfig.MarshalProjectConfig(*migrated)
 	if err != nil {
 		return fmt.Errorf("marshaling migrated config: %w", err)
 	}

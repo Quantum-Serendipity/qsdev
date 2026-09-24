@@ -203,9 +203,9 @@ func TestConfigToAnswers_JoinSemantics(t *testing.T) {
 				t.Errorf("ProjectTypeProfile=%q ProfileName=%q", a.ProjectTypeProfile, a.ProfileName)
 			}
 		}},
-		{"legacy infra profile under profile", types.QsdevConfig{Profile: "acme", Infrastructure: infra}, func(t *testing.T, a types.WizardAnswers) {
-			if a.ProfileName != "acme" || a.Infrastructure.RegistryProxy != infra.RegistryProxy {
-				t.Errorf("ProfileName=%q Infrastructure=%+v", a.ProfileName, a.Infrastructure)
+		{"infra_profile is the infrastructure profile", types.QsdevConfig{Profile: "go-web", InfraProfile: "enterprise", Infrastructure: infra}, func(t *testing.T, a types.WizardAnswers) {
+			if a.ProfileName != "enterprise" || a.ProjectTypeProfile != "go-web" || a.Infrastructure.RegistryProxy != infra.RegistryProxy {
+				t.Errorf("ProfileName=%q ProjectTypeProfile=%q Infrastructure=%+v", a.ProfileName, a.ProjectTypeProfile, a.Infrastructure)
 			}
 		}},
 	}

@@ -1,6 +1,7 @@
 package check
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,6 +119,54 @@ func TestCheckConfigIntegrity_InvalidProfile(t *testing.T) {
 	}
 }
 
+// Regression: init wrote the infra profile under `profile`, which check
+// validated against project-type profiles, so `qsdev init --infra-profile
+// enterprise` followed by `qsdev check` failed. Each key now has its own
+// registry.
+func TestCheckConfigIntegrity_ProfileKeys(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		cfg      types.QsdevConfig
+		wantFail string // substring of the failing message, "" for none
+		wantPass []string
+	}{
+		{"infra profile init writes", types.QsdevConfig{InfraProfile: "enterprise"}, "", []string{"infra_profile_valid"}},
+		{"both profiles", types.QsdevConfig{Profile: "go-web", InfraProfile: "startup-github"}, "",
+			[]string{"profile_valid", "infra_profile_valid"}},
+		{"unknown infra profile", types.QsdevConfig{InfraProfile: "go-web"}, "infra_profile", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := tt.cfg
+			cfg.Version = types.ConfigVersionCurrent
+			results := CheckConfigIntegrity(CheckContext{QsdevConfig: &cfg, ProfileNames: []string{"go-web", "ts-fullstack"}})
+			passed := map[string]bool{}
+			var fails []string
+			for _, r := range results {
+				switch r.Status {
+				case StatusPass:
+					passed[r.Name] = true
+				case StatusFail:
+					fails = append(fails, r.Message)
+				}
+			}
+			if tt.wantFail == "" && len(fails) != 0 {
+				t.Errorf("unexpected failures: %v", fails)
+			}
+			if tt.wantFail != "" && (len(fails) != 1 || !strings.Contains(fails[0], tt.wantFail)) {
+				t.Errorf("failures = %v, want one mentioning %q", fails, tt.wantFail)
+			}
+			for _, name := range tt.wantPass {
+				if !passed[name] {
+					t.Errorf("missing %s pass result", name)
+				}
+			}
+		})
+	}
+}
+
 func TestCheckConfigIntegrity_InvalidService(t *testing.T) {
 	ctx := CheckContext{
 		QsdevConfig: &types.QsdevConfig{
@@ -157,7 +206,7 @@ func TestCheckConfigIntegrity_ParseErrorIsNotNotFound(t *testing.T) {
 		wantSkip    string
 	}{
 		{name: "missing", wantName: "config_exists", wantMessage: "not found", wantSkip: "found; skipping"},
-		{name: "newer schema", content: "version: 2\n", wantName: "config_parse", wantMessage: "newer than this binary", wantSkip: "could not be parsed"},
+		{name: "newer schema", content: fmt.Sprintf("version: %d\n", types.ConfigVersionMax+1), wantName: "config_parse", wantMessage: "newer than this binary", wantSkip: "could not be parsed"},
 		{name: "unknown key", content: "version: 1\nsecurity:\n  script_blockng: true\n", wantName: "config_parse", wantMessage: "script_blockng", wantSkip: "could not be parsed"},
 	}
 

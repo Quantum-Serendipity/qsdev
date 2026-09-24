@@ -89,8 +89,9 @@ languages:
 	if info.QsdevVersion != "1.2.3" {
 		t.Errorf("QsdevVersion = %q, want %q", info.QsdevVersion, "1.2.3")
 	}
-	if info.ConfigVersion != 1 {
-		t.Errorf("ConfigVersion = %d, want 1", info.ConfigVersion)
+	// The version 1 fixture is migrated to the current schema on load.
+	if info.ConfigVersion != types.ConfigVersionCurrent {
+		t.Errorf("ConfigVersion = %d, want %d", info.ConfigVersion, types.ConfigVersionCurrent)
 	}
 	if info.ManagedFileCount != 3 {
 		t.Errorf("ManagedFileCount = %d, want 3", info.ManagedFileCount)

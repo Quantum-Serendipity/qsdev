@@ -18,7 +18,7 @@ func TestSyncProjectConfig(t *testing.T) {
 	t.Parallel()
 
 	const committed = `# team notes
-version: 1
+version: 2
 qsdev_version: ">= 0.8.0"
 tier: standard
 languages:

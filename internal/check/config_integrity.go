@@ -55,8 +55,10 @@ func CheckConfigIntegrity(ctx CheckContext) []CheckResult {
 		ProfileNames: ctx.ProfileNames,
 		ToolNames:    ctx.ToolNames,
 	}
+	invalidFields := make(map[string]bool)
 	if errs := config.ValidateQsdevConfig(ctx.QsdevConfig, opts); len(errs) > 0 {
 		for _, ve := range errs {
+			invalidFields[ve.Field] = true
 			results = append(results, CheckResult{
 				Category:    CategoryConfigIntegrity,
 				Name:        "config_validation",
@@ -103,25 +105,25 @@ func CheckConfigIntegrity(ctx CheckContext) []CheckResult {
 		})
 	}
 
-	// Check profile name.
-	if ctx.QsdevConfig.Profile != "" && ctx.ProfileNames != nil {
-		found := false
-		for _, p := range ctx.ProfileNames {
-			if p == ctx.QsdevConfig.Profile {
-				found = true
-				break
-			}
-		}
-		if found {
-			results = append(results, CheckResult{
-				Category: CategoryConfigIntegrity,
-				Name:     "profile_valid",
-				Status:   StatusPass,
-				Severity: SeverityInfo,
-				Message:  "Profile " + ctx.QsdevConfig.Profile + " is valid",
-			})
-		}
-		// If not found, ValidateQsdevConfig already reported it.
+	// Profile names: an invalid one was already reported by
+	// ValidateQsdevConfig, each against its own registry.
+	if p := ctx.QsdevConfig.Profile; p != "" && ctx.ProfileNames != nil && !invalidFields["profile"] {
+		results = append(results, CheckResult{
+			Category: CategoryConfigIntegrity,
+			Name:     "profile_valid",
+			Status:   StatusPass,
+			Severity: SeverityInfo,
+			Message:  "Project-type profile " + p + " is valid",
+		})
+	}
+	if p := ctx.QsdevConfig.InfraProfile; p != "" && !invalidFields["infra_profile"] {
+		results = append(results, CheckResult{
+			Category: CategoryConfigIntegrity,
+			Name:     "infra_profile_valid",
+			Status:   StatusPass,
+			Severity: SeverityInfo,
+			Message:  "Infrastructure profile " + p + " is valid",
+		})
 	}
 
 	return results

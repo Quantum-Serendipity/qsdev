@@ -1,19 +1,30 @@
 package types
 
 // Schema version constants for .qsdev.yaml configuration files.
+//
+// Version 2 split the v1 `profile` key, which held the infrastructure profile
+// name when written by init, into `infra_profile` (infrastructure profile) and
+// `profile` (project-type profile). Version 1 files still load: the parser
+// migrates them in memory and the next write records version 2.
 const (
 	ConfigVersionMin     = 1
-	ConfigVersionMax     = 1
-	ConfigVersionCurrent = 1
+	ConfigVersionMax     = 2
+	ConfigVersionCurrent = 2
 )
 
 // QsdevConfig represents the parsed contents of a .qsdev.yaml file.
 // It is the declarative project configuration that drives devinit behavior.
 type QsdevConfig struct {
-	Version        int              `yaml:"version"`
-	QsdevVersion   string           `yaml:"qsdev_version,omitempty"`
-	Tier           string           `yaml:"tier,omitempty"`
-	Profile        string           `yaml:"profile,omitempty"`
+	Version      int    `yaml:"version"`
+	QsdevVersion string `yaml:"qsdev_version,omitempty"`
+	Tier         string `yaml:"tier,omitempty"`
+	// Profile is the project-type profile (go-web, ts-fullstack, ...) the
+	// project was created from; `qsdev init --profile` records it.
+	Profile string `yaml:"profile,omitempty"`
+	// InfraProfile is the infrastructure profile (consulting-default,
+	// startup-github, enterprise) that selects the generated CI, dependency
+	// update and security docs; `qsdev init --infra-profile` records it.
+	InfraProfile   string           `yaml:"infra_profile,omitempty"`
 	Languages      []LanguageConfig `yaml:"languages,omitempty"`
 	Services       []ServiceConfig  `yaml:"services,omitempty"`
 	Packages       []string         `yaml:"packages,omitempty"` // extra nixpkgs attribute paths (devenv add-package)

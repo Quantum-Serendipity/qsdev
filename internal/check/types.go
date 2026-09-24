@@ -160,7 +160,7 @@ type CheckContext struct {
 	ConfigErr            error    // why QsdevConfig is nil: not found vs. failed to parse
 	ToolNames            []string // every registered tool, for config name validation
 	AlwaysOnToolNames    []string // tools that must never appear in tools.disabled
-	ProfileNames         []string
+	ProfileNames         []string // project-type profiles, for validating `profile`
 	RequiredDenyRules    []string
 	StateFile            string
 	DenyRules            []string

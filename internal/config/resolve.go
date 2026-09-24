@@ -183,6 +183,11 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 		result.Profile = overlay.Profile
 	}
 
+	// InfraProfile: NOT merged, only from project.
+	if overlay.InfraProfile != "" {
+		result.InfraProfile = overlay.InfraProfile
+	}
+
 	// Version: NOT merged, only from project.
 	if overlay.Version != 0 {
 		result.Version = overlay.Version
@@ -360,6 +365,7 @@ func cloneQsdevConfig(cfg *types.QsdevConfig) *types.QsdevConfig {
 		QsdevVersion: cfg.QsdevVersion,
 		Tier:         cfg.Tier,
 		Profile:      cfg.Profile,
+		InfraProfile: cfg.InfraProfile,
 		Security: types.SecurityConfig{
 			Level:           cfg.Security.Level,
 			AgeGating:       cloneBoolPtr(cfg.Security.AgeGating),

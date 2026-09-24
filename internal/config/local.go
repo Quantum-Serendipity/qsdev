@@ -18,8 +18,8 @@ import (
 
 // LocalConfig represents the .qsdev.local.yaml file, which contains
 // per-developer overrides. It omits project-level fields (Version,
-// QsdevVersion, Profile, Client, Infrastructure) that only belong in
-// the shared .qsdev.yaml.
+// QsdevVersion, Profile, InfraProfile, Client, Infrastructure) that only
+// belong in the shared .qsdev.yaml.
 type LocalConfig struct {
 	Languages     []types.LanguageConfig `yaml:"languages,omitempty"`
 	Services      []types.ServiceConfig  `yaml:"services,omitempty"`
@@ -58,7 +58,7 @@ func ParseLocalConfig(path string) (*LocalConfig, error) {
 
 // localToQsdevConfig converts a LocalConfig to a QsdevConfig for use in the
 // merge chain. Fields that exist only in QsdevConfig (Version, QsdevVersion,
-// Profile, Client, Infrastructure) are left at zero values.
+// Profile, InfraProfile, Client, Infrastructure) are left at zero values.
 func localToQsdevConfig(local *LocalConfig) *types.QsdevConfig {
 	if local == nil {
 		return nil

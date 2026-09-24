@@ -2,12 +2,15 @@ package devinit
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestRunMigrate_Versions(t *testing.T) {
@@ -19,8 +22,8 @@ func TestRunMigrate_Versions(t *testing.T) {
 	}{
 		{
 			name:    "current version needs no migration",
-			config:  "version: 1\n",
-			wantOut: "already at schema version 1 (current)",
+			config:  fmt.Sprintf("version: %d\n", types.ConfigVersionCurrent),
+			wantOut: fmt.Sprintf("already at schema version %d (current)", types.ConfigVersionCurrent),
 		},
 		{
 			name:    "newer version is rejected",
@@ -86,5 +89,41 @@ func TestRunMigrate_Versions(t *testing.T) {
 				t.Errorf("config was rewritten:\n%s", data)
 			}
 		})
+	}
+}
+
+// `config migrate --write` moves a version 1 infra profile out of `profile`
+// into `infra_profile` and records the current schema version.
+func TestRunMigrate_SplitsV1Profile(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, branding.Get().ConfigFile)
+	legacy := "version: 1\nprofile: enterprise\nlanguages:\n  - name: python\n    version: 3.10\n"
+	if err := os.WriteFile(cfgPath, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	cmd, buf := newTestCmd()
+	if err := runMigrate(cmd, true); err != nil {
+		t.Fatalf("runMigrate: %v (output %q)", err, buf.String())
+	}
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := qsdevconfig.ParseQsdevConfigBytes(data)
+	if err != nil {
+		t.Fatalf("migrated config does not parse: %v\n%s", err, data)
+	}
+	for _, want := range []string{fmt.Sprintf("version: %d\n", types.ConfigVersionCurrent), "infra_profile: enterprise\n"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("migrated config lacks %q:\n%s", want, data)
+		}
+	}
+	if cfg.Profile != "" || cfg.InfraProfile != "enterprise" {
+		t.Errorf("Profile=%q InfraProfile=%q, want \"\" enterprise", cfg.Profile, cfg.InfraProfile)
+	}
+	if got := cfg.Languages[0].Version; got != "3.10" {
+		t.Errorf("language version = %q, want 3.10 as written", got)
 	}
 }

@@ -3,6 +3,9 @@ package config
 import (
 	"fmt"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -15,10 +18,51 @@ type Migration struct {
 	Migrate     func(raw map[string]any) (map[string]any, error)
 }
 
-// migrationChain is the ordered list of migrations. Currently empty because
-// only v1 exists; future schema changes will add entries here. It is
-// unexported so importers cannot alter the migration path.
-var migrationChain = []Migration{}
+// migrationChain is the ordered list of migrations. It is unexported so
+// importers cannot alter the migration path.
+var migrationChain = []Migration{
+	{
+		FromVersion: 1,
+		ToVersion:   2,
+		Description: "split profile into infra_profile and project-type profile",
+		Migrate:     migrateV1SplitProfile,
+	},
+}
+
+// migrateV1SplitProfile moves an infrastructure profile name out of the v1
+// `profile` key, which init filled with the infra profile, into v2's
+// `infra_profile`. Only names of built-in infrastructure profiles move (that
+// set is fixed, so the split is unambiguous); any other value was written by
+// hand as the project-type profile the key now means, and stays.
+func migrateV1SplitProfile(raw map[string]any) (map[string]any, error) {
+	if _, ok := raw["infra_profile"]; ok {
+		return nil, fmt.Errorf("infra_profile is not a version 1 key; set \"version: 2\" to use it")
+	}
+	name, ok := scalarString(raw["profile"])
+	if !ok {
+		return raw, nil
+	}
+	if _, isInfra := profile.DefaultProfileRegistry().Get(name); isInfra {
+		raw["infra_profile"] = raw["profile"]
+		delete(raw, "profile")
+	}
+	return raw, nil
+}
+
+// scalarString returns the string held by a raw config value: a decoded
+// string, or a string scalar node when the document is migrated with its
+// values kept as nodes (see migrateParsed).
+func scalarString(v any) (string, bool) {
+	switch v := v.(type) {
+	case string:
+		return v, true
+	case *yaml.Node:
+		if v.Kind == yaml.ScalarNode && v.ShortTag() == "!!str" {
+			return v.Value, true
+		}
+	}
+	return "", false
+}
 
 // ParseConfigVersion converts a YAML-decoded "version" value to an int.
 // It reports false when the value is not a whole number.

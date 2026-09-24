@@ -71,16 +71,13 @@ func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, pro
 		answers.Tier = tier.Infer(cfg.ClaudeCode.PermissionLevel, cfg.ClaudeCode.MCPServers).String()
 	}
 
-	// `profile` is the project-type profile (validated against that registry).
+	// `profile` is the project-type profile and `infra_profile` the
+	// infrastructure profile. A version 1 file that held the infra profile
+	// under `profile` has already been split by the v1->v2 migration.
 	answers.ProjectTypeProfile = cfg.Profile
+	answers.ProfileName = cfg.InfraProfile
 
 	answers.Infrastructure = cloneInfra(cfg.Infrastructure)
-	// Legacy: configs written before project-type and infra profiles were
-	// separated stored the infra profile name under `profile`. An infra block
-	// marks such a config, so the name still selects the infra profile.
-	if cfg.Infrastructure.RegistryProxy != "" || cfg.Infrastructure.NixCache != "" || cfg.Infrastructure.BuildCache != "" {
-		answers.ProfileName = cfg.Profile
-	}
 
 	return answers
 }

@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -36,6 +37,8 @@ func (e ValidationError) Error() string {
 
 // ValidateOptions provides additional context for config validation.
 type ValidateOptions struct {
+	// ProfileNames are the project-type profiles `profile` must name (the
+	// devinit project-profile registry, which embedders can extend).
 	ProfileNames []string
 	ToolNames    []string
 }
@@ -47,6 +50,8 @@ type ValidateOptions struct {
 // (known-field) struct unmarshal into QsdevConfig. Unknown/misspelled YAML
 // keys are rejected with an error rather than silently dropped, so a typo in
 // a security key (e.g. "script_blockng:") cannot silently discard its setting.
+// A config at an older supported schema version is migrated to the current
+// schema through the migration chain before it is returned.
 func ParseQsdevConfig(path string) (*types.QsdevConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -116,6 +121,48 @@ func ParseQsdevConfigBytes(data []byte) (*types.QsdevConfig, error) {
 			"merge everything after the first \"---\" into a single document in %s", branding.Get().ConfigFile)
 	}
 
+	if versionInt < types.ConfigVersionCurrent {
+		return migrateParsed(data, versionInt)
+	}
+	return &cfg, nil
+}
+
+// migrateParsed brings an older-schema config to the current schema in
+// memory, so callers only ever see the current layout (cfg.Version is the
+// current version). The file itself is rewritten by the next config write
+// (`qsdev init --update` or `qsdev config migrate --write`). The document was
+// already strictly decoded, so any error here is a migration failure rather
+// than a user typo.
+//
+// The migration steps see each top-level value as the document's own node,
+// so re-encoding reproduces every scalar exactly as written; a round trip
+// through plain Go values would turn an unquoted `version: 3.10` into 3.1.
+func migrateParsed(data []byte, fromVersion int) (*types.QsdevConfig, error) {
+	fail := func(err error) (*types.QsdevConfig, error) {
+		return nil, fmt.Errorf("migrating %s: %w", branding.Get().ConfigFile, err)
+	}
+	var nodes map[string]yaml.Node
+	if err := yaml.Unmarshal(data, &nodes); err != nil {
+		return fail(err)
+	}
+	raw := make(map[string]any, len(nodes))
+	for k, n := range nodes {
+		raw[k] = &n
+	}
+	migrated, err := MigrateConfig(raw, fromVersion)
+	if err != nil {
+		return fail(err)
+	}
+	out, err := yaml.Marshal(migrated)
+	if err != nil {
+		return fail(err)
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(out))
+	dec.KnownFields(true)
+	var cfg types.QsdevConfig
+	if err := dec.Decode(&cfg); err != nil {
+		return fail(err)
+	}
 	return &cfg, nil
 }
 
@@ -181,7 +228,7 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 		errs = append(errs, ValidationError{
 			Field:   "security.level",
 			Value:   cfg.Security.Level,
-			Message: "invalid security level; valid values: baseline, enhanced, strict",
+			Message: "invalid security level; " + validValues(validation.SecurityLevels()),
 		})
 	}
 
@@ -191,7 +238,7 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 		errs = append(errs, ValidationError{
 			Field:   "tier",
 			Value:   cfg.Tier,
-			Message: "unknown tier; valid values: " + strings.Join(validation.Tiers(), ", "),
+			Message: "unknown tier; " + validValues(validation.Tiers()),
 		})
 	}
 
@@ -200,7 +247,7 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 		errs = append(errs, ValidationError{
 			Field:   "claude_code.permission_level",
 			Value:   cfg.ClaudeCode.PermissionLevel,
-			Message: "invalid permission level; valid values: minimal, standard, permissive, custom",
+			Message: "invalid permission level; " + validValues(validation.PermissionPresets()),
 		})
 	}
 
@@ -227,17 +274,7 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 		}
 	}
 
-	// Validate profile against known profile names.
-	if cfg.Profile != "" && len(opts.ProfileNames) > 0 {
-		knownProfiles := toSet(opts.ProfileNames)
-		if !knownProfiles[cfg.Profile] {
-			errs = append(errs, ValidationError{
-				Field:   "profile",
-				Value:   cfg.Profile,
-				Message: "unknown profile name",
-			})
-		}
-	}
+	errs = append(errs, validateProfiles(cfg, opts)...)
 
 	// Validate qsdev_version syntax (if present).
 	if cfg.QsdevVersion != "" {
@@ -262,19 +299,50 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 			errs = append(errs, ValidationError{
 				Field:   "client.security_level",
 				Value:   cfg.Client.SecurityLevel,
-				Message: "invalid security level; valid values: baseline, enhanced, strict",
+				Message: "invalid security level; " + validValues(validation.SecurityLevels()),
 			})
 		}
 		if cfg.Client.DataClassification != "" && !validation.IsValidDataClassification(cfg.Client.DataClassification) {
 			errs = append(errs, ValidationError{
 				Field:   "client.data_classification",
 				Value:   cfg.Client.DataClassification,
-				Message: "invalid data classification; valid values: public, internal, confidential",
+				Message: "invalid data classification; " + validValues(validation.DataClassifications()),
 			})
 		}
 	}
 
 	return errs
+}
+
+// validateProfiles checks each profile key against its own registry: the
+// project-type `profile` against opts.ProfileNames (skipped when none are
+// given) and `infra_profile` against the built-in infrastructure profiles.
+func validateProfiles(cfg *types.QsdevConfig, opts ValidateOptions) []ValidationError {
+	var errs []ValidationError
+	if cfg.Profile != "" && len(opts.ProfileNames) > 0 && !slices.Contains(opts.ProfileNames, cfg.Profile) {
+		errs = append(errs, ValidationError{
+			Field:   "profile",
+			Value:   cfg.Profile,
+			Message: "unknown project-type profile; " + validValues(opts.ProfileNames),
+		})
+	}
+	if cfg.InfraProfile != "" {
+		infra := profile.DefaultProfileRegistry()
+		if _, ok := infra.Get(cfg.InfraProfile); !ok {
+			errs = append(errs, ValidationError{
+				Field:   "infra_profile",
+				Value:   cfg.InfraProfile,
+				Message: "unknown infrastructure profile; " + validValues(infra.Names()),
+			})
+		}
+	}
+	return errs
+}
+
+// validValues renders the accepted values of an enumerated field, in the
+// order its source (catalog or registry) lists them, for a validation message.
+func validValues(values []string) string {
+	return "valid values: " + strings.Join(values, ", ")
 }
 
 // validateSplicedValues checks the syntax of the free-form language and

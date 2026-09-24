@@ -71,8 +71,9 @@ client:
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.Version != 1 {
-		t.Errorf("Version = %d, want 1", cfg.Version)
+	// A version 1 file is migrated to the current schema on load.
+	if cfg.Version != types.ConfigVersionCurrent {
+		t.Errorf("Version = %d, want %d", cfg.Version, types.ConfigVersionCurrent)
 	}
 	if cfg.QsdevVersion != ">= 0.15.0" {
 		t.Errorf("QsdevVersion = %q, want %q", cfg.QsdevVersion, ">= 0.15.0")
@@ -137,8 +138,9 @@ func TestParseQsdevConfig_MinimalConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Version != 1 {
-		t.Errorf("Version = %d, want 1", cfg.Version)
+	// A version 1 file is migrated to the current schema on load.
+	if cfg.Version != types.ConfigVersionCurrent {
+		t.Errorf("Version = %d, want %d", cfg.Version, types.ConfigVersionCurrent)
 	}
 	if len(cfg.Languages) != 0 {
 		t.Errorf("Languages should be empty, got %d", len(cfg.Languages))
@@ -261,8 +263,9 @@ func TestParseQsdevConfig_FromFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Version != 1 {
-		t.Errorf("Version = %d, want 1", cfg.Version)
+	// A version 1 file is migrated to the current schema on load.
+	if cfg.Version != types.ConfigVersionCurrent {
+		t.Errorf("Version = %d, want %d", cfg.Version, types.ConfigVersionCurrent)
 	}
 	if len(cfg.Languages) != 1 || cfg.Languages[0].Name != "go" {
 		t.Errorf("Languages = %+v", cfg.Languages)

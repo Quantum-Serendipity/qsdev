@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 
@@ -30,7 +31,8 @@ func AnswersToConfig(answers types.WizardAnswers, binaryVersion string) types.Qs
 		Version:      types.ConfigVersionCurrent,
 		QsdevVersion: MinimumVersionConstraint(binaryVersion),
 		Tier:         answers.Tier,
-		Profile:      answers.ProfileName,
+		Profile:      answers.ProjectTypeProfile,
+		InfraProfile: answers.ProfileName,
 		Packages:     slices.Clone(answers.ExtraPackages),
 		Overlays:     slices.Clone(answers.Overlays),
 	}
@@ -88,8 +90,23 @@ func AnswersToConfig(answers types.WizardAnswers, binaryVersion string) types.Qs
 	return cfg
 }
 
-// marshalProjectConfig renders cfg as .qsdev.yaml content, header included.
-func marshalProjectConfig(cfg types.QsdevConfig) ([]byte, error) {
+// olderSchema reports whether the .qsdev.yaml content data declares a schema
+// version older than the current one. data has already parsed, so its
+// version is present and valid.
+func olderSchema(data []byte) bool {
+	var head struct {
+		Version any `yaml:"version"`
+	}
+	if err := yaml.Unmarshal(data, &head); err != nil {
+		return false
+	}
+	v, ok := toInt(head.Version)
+	return ok && v < types.ConfigVersionCurrent
+}
+
+// MarshalProjectConfig renders cfg as .qsdev.yaml content, header included,
+// in the layout init and SyncProjectConfig write.
+func MarshalProjectConfig(cfg types.QsdevConfig) ([]byte, error) {
 	data, err := yaml.Marshal(&cfg)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling config: %w", err)
@@ -99,7 +116,7 @@ func marshalProjectConfig(cfg types.QsdevConfig) ([]byte, error) {
 
 // WriteProjectConfig atomically writes cfg to path as .qsdev.yaml content.
 func WriteProjectConfig(path string, cfg types.QsdevConfig) error {
-	content, err := marshalProjectConfig(cfg)
+	content, err := MarshalProjectConfig(cfg)
 	if err != nil {
 		return err
 	}
@@ -117,17 +134,22 @@ func WriteProjectConfig(path string, cfg types.QsdevConfig) error {
 //
 // Only answer-derived keys are replaced (tier, languages, services, packages,
 // overlays, claude_code and tool decisions); keys the answers do not carry
-// (version, qsdev_version, security, profile, infrastructure, client, git,
-// tools.config) are kept as committed. A project without .qsdev.yaml (e.g. a
-// standalone `devenv init`) is left alone, and the file is rewritten only
-// when a synced key actually changed.
+// (qsdev_version, security, profile, infra_profile, infrastructure, client,
+// git, tools.config) are kept as committed. A project without .qsdev.yaml
+// (e.g. a standalone `devenv init`) is left alone, and the file is rewritten
+// only when a synced key actually changed or it is at an older schema
+// version, which is thereby migrated to the current one.
 func SyncProjectConfig(projectRoot string, answers types.WizardAnswers) error {
 	cfgFile := branding.Get().ConfigFile
 	path := filepath.Join(projectRoot, cfgFile)
-	current, err := ParseQsdevConfig(path)
+	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
+	if err != nil {
+		return fmt.Errorf("updating %s: reading config file %s: %w", cfgFile, path, err)
+	}
+	current, err := ParseQsdevConfigBytes(data)
 	if err != nil {
 		return fmt.Errorf("updating %s: %w", cfgFile, err)
 	}
@@ -145,15 +167,15 @@ func SyncProjectConfig(projectRoot string, answers types.WizardAnswers) error {
 	synced.Tools.Enabled = fresh.Tools.Enabled
 	synced.Tools.Disabled = fresh.Tools.Disabled
 
-	before, err := marshalProjectConfig(*current)
+	before, err := MarshalProjectConfig(*current)
 	if err != nil {
 		return err
 	}
-	after, err := marshalProjectConfig(synced)
+	after, err := MarshalProjectConfig(synced)
 	if err != nil {
 		return err
 	}
-	if bytes.Equal(before, after) {
+	if bytes.Equal(before, after) && !olderSchema(data) {
 		return nil
 	}
 	if err := WriteProjectConfig(path, synced); err != nil {

@@ -325,7 +325,7 @@ Exit code 2 from a PreToolUse hook indicates a self-protection denial. Review th
 
 ### Cloud deny rules appeared after update
 
-When `qsdev update` detects AWS, GCP, or Azure project files, it adds deny rules blocking credential file access and authentication commands. Cloud CLIs remain available for read-only operations. To use cloud authentication within the agent, configure per-project credential isolation through the cloud ecosystem module's environment variables.
+When `qsdev update` detects AWS, GCP, or Azure project files, it adds deny rules blocking credential file access and authentication commands. Cloud CLIs remain available for read-only operations. To keep each project's Azure and Google Cloud logins separate, set `cloud.isolate_cli_config: true` in `.qsdev.yaml` (see [Cloud CLI configuration isolation](configuration-reference.md#cloud-cli-configuration-isolation)).
 
 ### Policy warnings on existing dependencies
 

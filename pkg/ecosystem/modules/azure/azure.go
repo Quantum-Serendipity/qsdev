@@ -98,8 +98,10 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 }
 
-// envHints are the per-project variables the Azure CLI and Terraform's
-// azurerm provider read to select a subscription and tenant.
+// envHints are the per-project variables Terraform's azurerm provider reads
+// to select a subscription and tenant. The Azure CLI ignores them: `az` uses
+// the subscription last chosen with `az account set` in its configuration
+// directory (see cloudcommon.IsolatedCLIConfigFragment).
 var envHints = []cloudcommon.EnvVarHint{
 	{Name: "ARM_SUBSCRIPTION_ID", Description: "Azure subscription ID"},
 	{Name: "ARM_TENANT_ID", Description: "Azure tenant ID"},
@@ -107,9 +109,14 @@ var envHints = []cloudcommon.EnvVarHint{
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for Azure CLI support. It documents ARM_SUBSCRIPTION_ID and ARM_TENANT_ID
-// without setting them; see cloudcommon.EnvGuidanceFragment.
-func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
-	return cloudcommon.EnvGuidanceFragment("Azure", envHints), nil
+// without setting them (see cloudcommon.EnvGuidanceFragment) and, with
+// cloud.isolate_cli_config, sets AZURE_CONFIG_DIR to a per-project directory.
+func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
+	fragment := cloudcommon.EnvGuidanceFragment("Azure", envHints)
+	if config.IsolateCLIConfig {
+		fragment += "\n" + cloudcommon.IsolatedCLIConfigFragment(cloudcommon.Azure)
+	}
+	return fragment, nil
 }
 
 // DevenvPackages returns the Nix packages required for the Azure ecosystem.

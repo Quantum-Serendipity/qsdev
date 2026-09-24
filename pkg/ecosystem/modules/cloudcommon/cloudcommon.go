@@ -46,7 +46,13 @@ func DisplayName(provider CloudProvider) string {
 	}
 }
 
-// EnvVarForProvider returns the per-project isolation env var name for a provider.
+// EnvVarForProvider returns the per-project variable that selects a
+// provider's default account: the AWS profile, the gcloud configuration or,
+// for Terraform's azurerm provider, the Azure subscription. It selects a
+// default only; the CLI still reads the logins and tokens every project
+// shares under the home directory (the Azure CLI ignores ARM_* entirely). See
+// CLIConfigDirEnvVar for the variables that give a CLI a per-project
+// configuration directory.
 func EnvVarForProvider(provider CloudProvider) string {
 	switch provider {
 	case AWS:
@@ -60,7 +66,10 @@ func EnvVarForProvider(provider CloudProvider) string {
 	}
 }
 
-// ReadDenyPaths returns the Sandbox.ReadDeny paths for a provider.
+// ReadDenyPaths returns the Sandbox.ReadDeny paths for a provider: its CLI's
+// credential files under the home directory and, for a CLI that
+// cloud.isolate_cli_config can isolate, its per-project configuration
+// directory (ProjectCLIConfigDir).
 func ReadDenyPaths(provider CloudProvider) []string {
 	switch provider {
 	case AWS:
@@ -73,7 +82,7 @@ func ReadDenyPaths(provider CloudProvider) []string {
 			"~/.aws/cli/cache/*",
 		}
 	case GCP:
-		return []string{
+		return append([]string{
 			"~/.config/gcloud/application_default_credentials.json",
 			"~/.config/gcloud/credentials.db",
 			"~/.config/gcloud/access_tokens.db",
@@ -82,14 +91,14 @@ func ReadDenyPaths(provider CloudProvider) []string {
 			// .boto) written by `gcloud auth login`.
 			"~/.config/gcloud/legacy_credentials/**",
 			"~/.config/gcloud/configurations/*",
-		}
+		}, projectCLIConfigReadDeny(GCP)...)
 	case Azure:
-		return []string{
+		return append([]string{
 			"~/.azure/accessTokens.json",
 			"~/.azure/msal_token_cache.json",
 			"~/.azure/azureProfile.json",
 			"~/.azure/service_principal_entries.json",
-		}
+		}, projectCLIConfigReadDeny(Azure)...)
 	default:
 		return nil
 	}
@@ -112,13 +121,15 @@ func BashDenyRules(provider CloudProvider) []string {
 			"Bash(cat ~/.aws/config*)",
 		)
 	case GCP:
-		return append(denyutil.InterspersedOptionRules("gcloud", gcpDeniedOps...),
+		rules := append(denyutil.InterspersedOptionRules("gcloud", gcpDeniedOps...),
 			"Bash(cat ~/.config/gcloud/*)",
 		)
+		return append(rules, projectCLIConfigBashDeny(GCP)...)
 	case Azure:
-		return append(denyutil.InterspersedOptionRules("az", azureDeniedOps...),
+		rules := append(denyutil.InterspersedOptionRules("az", azureDeniedOps...),
 			"Bash(cat ~/.azure/*)",
 		)
+		return append(rules, projectCLIConfigBashDeny(Azure)...)
 	default:
 		return nil
 	}

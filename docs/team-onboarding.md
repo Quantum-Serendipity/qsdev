@@ -243,9 +243,9 @@ Rules with `bypass_tier: enforce_always` (all 18 self-protection rules) cannot b
 
 ## Cloud Ecosystem Coverage
 
-When AWS, GCP, or Azure project files are detected (CDK, SAM, Terraform providers, CLI config files, etc.), qsdev generates cloud-specific security configuration with 3 layers of credential isolation:
+When AWS, GCP, or Azure project files are detected (CDK, SAM, Terraform providers, CLI config files, etc.), qsdev generates cloud-specific security configuration with 3 layers of credential protection:
 
-1. **Environment separation** — Cloud credential variables are unset in the devenv shell, preventing ambient credential access across projects.
+1. **Environment separation** — Cloud credential variables (`AWS_SECRET_ACCESS_KEY`, `AZURE_CLIENT_SECRET`, ...) are unset in the devenv shell, and devenv.nix documents per-project variables that select a default account. The CLIs still share their logins under the home directory. Set `cloud.isolate_cli_config: true` in `.qsdev.yaml` to give the Azure and Google Cloud CLIs a per-project configuration directory (see [Cloud CLI configuration isolation](configuration-reference.md#cloud-cli-configuration-isolation)).
 2. **Credential file masking** — Read-deny rules block agent access to `~/.aws/credentials`, `~/.config/gcloud/`, and `~/.azure/`.
 3. **Agent deny rules** — Authentication and credential modification commands (`aws configure`, `gcloud auth login`, `az login`) are denied.
 

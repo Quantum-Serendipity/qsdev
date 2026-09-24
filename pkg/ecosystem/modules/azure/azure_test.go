@@ -152,14 +152,16 @@ func TestDenyRules_AllPresent(t *testing.T) {
 	m := newModule()
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 
-	if len(rules) != 31 {
-		t.Fatalf("expected 31 deny rules, got %d: %v", len(rules), rules)
+	if len(rules) != 33 {
+		t.Fatalf("expected 33 deny rules, got %d: %v", len(rules), rules)
 	}
 
 	denied := []string{
 		"az account get-access-token",
 		"az ad sp credential reset --id x",
 		"cat ~/.azure/msal_token_cache.json",
+		"cat .qsdev/cloud/azure/msal_token_cache.json",
+		"cat ./.qsdev/cloud/azure/msal_token_cache.json",
 		"az login --service-principal -u id -p x --tenant t",
 	}
 	for _, cmd := range denied {
@@ -176,11 +178,12 @@ func TestReadDenyRules_AllPresent(t *testing.T) {
 	m := newModule()
 	paths := m.ReadDenyRules(ecosystem.ModuleConfig{})
 
-	if len(paths) != 4 {
-		t.Fatalf("expected 4 read-deny paths, got %d: %v", len(paths), paths)
+	if len(paths) != 5 {
+		t.Fatalf("expected 5 read-deny paths, got %d: %v", len(paths), paths)
 	}
 
 	expected := []string{
+		".qsdev/cloud/azure/**",
 		"accessTokens.json",
 		"msal_token_cache.json",
 		"service_principal_entries.json",
@@ -291,4 +294,35 @@ func containsEvidence(evidence []string, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestDevenvNix_IsolateCLIConfig checks cloud.isolate_cli_config (W135): the
+// fragment then points AZURE_CONFIG_DIR, which holds az's login, tokens and
+// active subscription, at the project's gitignored .qsdev/ directory; without
+// it the fragment stays comment-only.
+func TestDevenvNix_IsolateCLIConfig(t *testing.T) {
+	t.Parallel()
+	const line = `  env.AZURE_CONFIG_DIR = lib.mkDefault "${config.devenv.root}/.qsdev/cloud/azure";`
+	tests := []struct {
+		name    string
+		isolate bool
+	}{
+		{"off", false},
+		{"on", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fragment, err := newModule().DevenvNixFragment(ecosystem.ModuleConfig{IsolateCLIConfig: tt.isolate})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := strings.Contains(fragment, line+"\n"); got != tt.isolate {
+				t.Errorf("fragment contains %q = %v, want %v:\n%s", line, got, tt.isolate, fragment)
+			}
+			if !strings.Contains(fragment, "ARM_SUBSCRIPTION_ID") {
+				t.Errorf("fragment lost the ARM_SUBSCRIPTION_ID guidance:\n%s", fragment)
+			}
+		})
+	}
 }

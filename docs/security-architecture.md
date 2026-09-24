@@ -171,13 +171,32 @@ License compliance is opt-in (`qsdev enable license-compliance`). It uses [ScanC
 
 ### Layer 11: Cloud Credential Isolation
 
-When AWS, GCP, or Azure project files are detected, qsdev generates a 3-layer credential isolation configuration:
+When AWS, GCP, or Azure project files are detected, qsdev generates a 3-layer credential protection configuration:
 
 | Layer | Mechanism | Effect |
 |-------|-----------|--------|
-| Environment separation | Per-project credential variables in devenv.nix | Prevents ambient credential access across projects |
-| Credential file masking | Read-deny rules for credential file paths | Blocks agent access to stored credentials |
+| Environment separation | Per-project account variables documented in devenv.nix (`AWS_PROFILE`, `CLOUDSDK_ACTIVE_CONFIG_NAME`, `ARM_SUBSCRIPTION_ID`); with `cloud.isolate_cli_config`, per-project CLI configuration directories (`AZURE_CONFIG_DIR`, `CLOUDSDK_CONFIG`) | The variables only select a default account. The CLIs still share the logins and tokens under the home directory. Credentials are separated per project only for Azure and GCP, and only with `cloud.isolate_cli_config` |
+| Credential file masking | Read-deny rules for credential file paths, including the per-project CLI configuration directories | Blocks agent access to stored credentials |
 | Agent deny rules | Claude Code deny rules for auth CLI commands | Prevents credential refresh or modification |
+
+The environment-separation variables do not isolate credentials. `AWS_PROFILE`
+selects a profile from the shared `~/.aws` files, and
+`CLOUDSDK_ACTIVE_CONFIG_NAME` selects a named gcloud configuration whose
+credentials stay in the shared `~/.config/gcloud`. `ARM_SUBSCRIPTION_ID` is
+read only by Terraform's azurerm provider: `az` ignores it and acts on the
+subscription last chosen with `az account set`. Without isolation, every
+project uses the same cloud logins. An `az` or `gcloud` command in one project
+can act on an account selected in another.
+
+`cloud.isolate_cli_config: true` in `.qsdev.yaml` sets `AZURE_CONFIG_DIR` and
+`CLOUDSDK_CONFIG` in devenv.nix to `.qsdev/cloud/azure` and
+`.qsdev/cloud/gcp`, under the gitignored `.qsdev/` directory. Each project
+then has its own `az login` / `gcloud auth login`, token caches and active
+subscription or configuration (see
+[Cloud CLI configuration isolation](configuration-reference.md#cloud-cli-configuration-isolation)).
+AWS has no equivalent: `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE`
+move only the two INI files, and the SSO and CLI credential caches stay in
+`~/.aws`.
 
 Detection triggers:
 

@@ -116,9 +116,14 @@ const gkeAuthPluginExpr = "(pkgs.google-cloud-sdk.withExtraComponents " +
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for GCP. It documents the per-project environment variables without setting
-// them; see cloudcommon.EnvGuidanceFragment.
-func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
-	return cloudcommon.EnvGuidanceFragment("Google Cloud", envHints), nil
+// them (see cloudcommon.EnvGuidanceFragment) and, with
+// cloud.isolate_cli_config, sets CLOUDSDK_CONFIG to a per-project directory.
+func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
+	fragment := cloudcommon.EnvGuidanceFragment("Google Cloud", envHints)
+	if config.IsolateCLIConfig {
+		fragment += "\n" + cloudcommon.IsolatedCLIConfigFragment(cloudcommon.GCP)
+	}
+	return fragment, nil
 }
 
 // DevenvPackages returns the Nix packages required for the GCP ecosystem.

@@ -72,10 +72,11 @@ func ToModuleConfigWithInfra(lang types.LanguageChoice, infra types.InfraConfig)
 // ToGenerationConfig converts a LanguageChoice into the ModuleConfig
 // generation passes to a module: ToModuleConfigWithInfra plus the
 // project-level module settings the answers carry from .qsdev.yaml
-// (java.repository_allowlist).
+// (java.repository_allowlist, cloud.isolate_cli_config).
 func ToGenerationConfig(lang types.LanguageChoice, answers types.WizardAnswers) ModuleConfig {
 	cfg := ToModuleConfigWithInfra(lang, answers.Infrastructure)
 	cfg.RepositoryAllowlist = slices.Clone(answers.Java.RepositoryAllowlist)
+	cfg.IsolateCLIConfig = answers.Cloud.IsolateCLIConfig
 	return cfg
 }
 

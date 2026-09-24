@@ -91,6 +91,7 @@ func AnswersToConfig(answers types.WizardAnswers, binaryVersion string) types.Qs
 	}
 	cfg.Git.BranchPattern = answers.BranchPattern
 	cfg.Java = cloneJava(answers.Java)
+	cfg.Cloud = answers.Cloud
 
 	return cfg
 }
@@ -99,8 +100,8 @@ func AnswersToConfig(answers types.WizardAnswers, binaryVersion string) types.Qs
 // written for a re-created project (`qsdev init --force` or `--mode create`
 // over an existing file), the committed keys the answers cannot express or do
 // not own: the client block, the security bools, the hooks block, git
-// settings, the java block (which only .qsdev.yaml sets), tools.config and
-// mcp.disabled_tools.
+// settings, the java and cloud blocks (which only .qsdev.yaml sets),
+// tools.config and mcp.disabled_tools.
 // security.level keeps the stricter of the two, so re-creating a project never
 // silently drops its declared security floor or client policy.
 func PreserveCommittedPolicy(fresh, committed *types.QsdevConfig) {
@@ -117,6 +118,7 @@ func PreserveCommittedPolicy(fresh, committed *types.QsdevConfig) {
 	fresh.Hooks = committed.Hooks.Clone()
 	fresh.Git = committed.Git
 	fresh.Java = cloneJava(committed.Java)
+	fresh.Cloud = committed.Cloud
 	fresh.Tools.Config = mergeMapStringAny(nil, committed.Tools.Config)
 	fresh.MCP.DisabledTools = slices.Clone(committed.MCP.DisabledTools)
 }
@@ -166,7 +168,7 @@ func WriteProjectConfig(path string, cfg types.QsdevConfig) error {
 // Only answer-derived keys are replaced (tier, languages, services, packages,
 // overlays, claude_code and tool decisions); keys the answers do not carry
 // (qsdev_version, security, profile, infra_profile, hooks, infrastructure,
-// client, git, java, tools.config, mcp) are kept as committed. A project without .qsdev.yaml
+// client, git, java, cloud, tools.config, mcp) are kept as committed. A project without .qsdev.yaml
 // (e.g. a standalone `devenv init`) is left alone, and the file is rewritten
 // only when a synced key actually changed or it is at an older schema
 // version, which is thereby migrated to the current one.

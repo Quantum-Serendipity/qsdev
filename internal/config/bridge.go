@@ -81,6 +81,7 @@ func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, pro
 	answers.BranchPattern = cfg.Git.BranchPattern
 	answers.HookPolicy = cfg.Hooks.Clone()
 	answers.Java = cloneJava(cfg.Java)
+	answers.Cloud = cfg.Cloud
 
 	return answers
 }

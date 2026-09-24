@@ -56,6 +56,9 @@ type WizardAnswers struct {
 	// Java is the committed .qsdev.yaml java block. Like MCPPolicy it is
 	// refreshed from .qsdev.yaml by init, join and update.
 	Java JavaConfig `yaml:"java,omitempty" json:"java,omitempty"`
+	// Cloud is the committed .qsdev.yaml cloud block, refreshed from
+	// .qsdev.yaml by init, join and update like Java.
+	Cloud CloudConfig `yaml:"cloud,omitempty" json:"cloud,omitempty"`
 }
 
 // AgentToolsAnswers holds AI agent tool selections from the wizard.

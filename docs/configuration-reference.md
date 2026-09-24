@@ -113,6 +113,8 @@ mcp:
   disabled_tools: [qsdev_nix_run]   # MCP tools the qsdev MCP server refuses to run
 java:
   repository_allowlist: [confluent]   # pom.xml repository ids Maven resolves directly
+cloud:
+  isolate_cli_config: true            # per-project az/gcloud configuration under .qsdev/
 ```
 
 `version` is the schema version (currently `2`). Each profile key is
@@ -535,6 +537,60 @@ then warn that the file's `central-only` or `corporate-proxy` mirror has a
 stale `mirrorOf` and print the value to set by hand. The allowlist is
 team-wide policy: only `.qsdev.yaml` sets it (a `java` key in
 `.qsdev.local.yaml` is an error).
+
+### Cloud CLI configuration isolation
+
+The Azure and Google Cloud CLIs keep their logins, token caches and active
+subscription or configuration in one directory under your home directory
+(`~/.azure`, `~/.config/gcloud`). All projects share that directory by
+default. The per-project variables qsdev documents in devenv.nix only select
+a default account and do not separate credentials: `CLOUDSDK_ACTIVE_CONFIG_NAME`
+names a gcloud configuration in the shared directory, and `ARM_SUBSCRIPTION_ID`
+is read by Terraform's azurerm provider but ignored by `az`, which uses
+whichever subscription `az account set` last selected.
+
+To give each project its own CLI configuration, set:
+
+```yaml
+cloud:
+  isolate_cli_config: true
+```
+
+When the Azure or GCP ecosystem is enabled, devenv.nix then sets:
+
+| Provider | Variable | Directory |
+|----------|----------|-----------|
+| Azure | `AZURE_CONFIG_DIR` | `.qsdev/cloud/azure` |
+| GCP | `CLOUDSDK_CONFIG` | `.qsdev/cloud/gcp` |
+
+The directories are under `.qsdev/`, which `qsdev init` adds to
+`.gitignore`, and the CLI creates its directory the first time it runs. Inside the devenv shell,
+run `az login` or `gcloud auth login` (and `gcloud auth application-default
+login` for client libraries) once per project. Logins, tokens and
+`az account set` / `gcloud config set` choices then apply only to that
+project. Tools that authenticate through the CLI follow it too: Terraform's
+azurerm provider and the Azure SDK's `AzureCliCredential` call `az`, and
+Google client libraries find application-default credentials under
+`CLOUDSDK_CONFIG`.
+
+The variables are set with `lib.mkDefault`, so a definition in
+`devenv.local.nix` wins, and `qsdev init --env AZURE_CONFIG_DIR=...` replaces
+the generated line. The agent cannot read the directories:
+`.claude/settings.json` masks `./.qsdev/cloud/azure/**` and
+`./.qsdev/cloud/gcp/**` with Read deny rules, denies `cat` of their
+files as it does for `~/.azure` and `~/.config/gcloud` and, with the Bash
+sandbox enabled, adds them to `sandbox.filesystem.denyRead`, whether or not
+isolation is on. Self-protection already blocks agent writes under `.qsdev/`.
+
+AWS has no equivalent setting. `AWS_CONFIG_FILE` and
+`AWS_SHARED_CREDENTIALS_FILE` move only the two INI files, while the SSO
+token and CLI credential caches stay in `~/.aws`. `AWS_PROFILE` selects a
+profile but leaves credentials shared.
+
+The setting is off by default because each project then needs its own login.
+It is team-wide, like `java`, because it changes the committed devenv.nix:
+only `.qsdev.yaml` sets it (a `cloud` key in `.qsdev.local.yaml` is an
+error). `qsdev init --update` applies a change.
 
 ---
 
@@ -1416,8 +1472,9 @@ When GCP project files are detected (Cloud Build, Firebase, Terraform `google` p
 | Control | Mechanism |
 |---------|-----------|
 | Deny rules | Blocks `gcloud auth print-access-token`, `gcloud config set`, credential cat commands |
-| Read-deny rules | Blocks Read access to `~/.config/gcloud/application_default_credentials.json`, `~/.config/gcloud/credentials.db` |
-| Environment | Documents `CLOUDSDK_ACTIVE_CONFIG_NAME`, `CLOUDSDK_CORE_PROJECT` and `GOOGLE_CLOUD_PROJECT` as comments in devenv.nix; set real values in `devenv.local.nix` or with `qsdev init --env` |
+| Read-deny rules | Blocks Read access to `~/.config/gcloud/application_default_credentials.json`, `~/.config/gcloud/credentials.db` and the per-project `.qsdev/cloud/gcp/` |
+| Environment | Documents `CLOUDSDK_ACTIVE_CONFIG_NAME`, `CLOUDSDK_CORE_PROJECT` and `GOOGLE_CLOUD_PROJECT` as comments in devenv.nix; set real values in `devenv.local.nix` or with `qsdev init --env`. These select a default configuration and project; credentials stay shared in `~/.config/gcloud` |
+| CLI isolation | With `cloud.isolate_cli_config`, sets `CLOUDSDK_CONFIG` to `.qsdev/cloud/gcp` (see [Cloud CLI configuration isolation](#cloud-cli-configuration-isolation)) |
 | GKE auth | When Helm or container files are also detected, installs `google-cloud-sdk` with the `gke-gcloud-auth-plugin` component |
 
 ### Azure
@@ -1427,8 +1484,9 @@ When Azure project files are detected (Pipelines, Bicep, Terraform `azurerm` pro
 | Control | Mechanism |
 |---------|-----------|
 | Deny rules | Blocks `az account get-access-token`, `az login --service-principal`, credential cat commands |
-| Read-deny rules | Blocks Read access to `~/.azure/accessTokens.json`, `~/.azure/msal_token_cache.json` |
-| Environment | Documents `ARM_SUBSCRIPTION_ID` and `ARM_TENANT_ID` as comments in devenv.nix; set real values in `devenv.local.nix` or with `qsdev init --env` |
+| Read-deny rules | Blocks Read access to `~/.azure/accessTokens.json`, `~/.azure/msal_token_cache.json` and the per-project `.qsdev/cloud/azure/` |
+| Environment | Documents `ARM_SUBSCRIPTION_ID` and `ARM_TENANT_ID` as comments in devenv.nix; set real values in `devenv.local.nix` or with `qsdev init --env`. Only Terraform's azurerm provider reads them: `az` ignores them and uses the subscription last selected with `az account set` |
+| CLI isolation | With `cloud.isolate_cli_config`, sets `AZURE_CONFIG_DIR` to `.qsdev/cloud/azure` (see [Cloud CLI configuration isolation](#cloud-cli-configuration-isolation)) |
 
 ---
 

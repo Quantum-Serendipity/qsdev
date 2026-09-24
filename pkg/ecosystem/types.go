@@ -62,6 +62,9 @@ type ModuleConfig struct {
 	// of project-declared Maven repositories that a module's generated
 	// registry mirror must leave alone (resolved from their own URL).
 	RepositoryAllowlist []string `yaml:"repository_allowlist,omitempty" json:"repository_allowlist,omitempty"`
+	// IsolateCLIConfig is .qsdev.yaml cloud.isolate_cli_config: a cloud CLI
+	// module points its CLI's configuration directory into the project.
+	IsolateCLIConfig bool `yaml:"isolate_cli_config,omitempty" json:"isolate_cli_config,omitempty"`
 }
 
 // PM returns the configured PackageManager, falling back to defaultPM if empty.

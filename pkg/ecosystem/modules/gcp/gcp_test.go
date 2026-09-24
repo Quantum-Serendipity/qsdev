@@ -168,8 +168,8 @@ func TestDetect_NoGCPIndicators(t *testing.T) {
 func TestDenyRules_AllPresent(t *testing.T) {
 	t.Parallel()
 	rules := newModule().DenyRules(ecosystem.ModuleConfig{})
-	if len(rules) != 17 {
-		t.Fatalf("expected 17 deny rules, got %d: %v", len(rules), rules)
+	if len(rules) != 19 {
+		t.Fatalf("expected 19 deny rules, got %d: %v", len(rules), rules)
 	}
 
 	// Verify each rule contains "gcloud" or "Bash(".
@@ -185,8 +185,11 @@ func TestDenyRules_AllPresent(t *testing.T) {
 func TestReadDenyRules_AllPresent(t *testing.T) {
 	t.Parallel()
 	rules := newModule().ReadDenyRules(ecosystem.ModuleConfig{})
-	if len(rules) != 6 {
-		t.Fatalf("expected 6 read deny paths, got %d: %v", len(rules), rules)
+	if len(rules) != 7 {
+		t.Fatalf("expected 7 read deny paths, got %d: %v", len(rules), rules)
+	}
+	if !slices.Contains(rules, "./.qsdev/cloud/gcp/**") {
+		t.Errorf("read deny paths lack the per-project gcloud directory: %v", rules)
 	}
 }
 
@@ -372,5 +375,36 @@ func TestVerificationCommands_Empty(t *testing.T) {
 	vc := newModule().VerificationCommands(ecosystem.ModuleConfig{})
 	if !vc.IsEmpty() {
 		t.Errorf("VerificationCommands() should be empty, got %+v", vc)
+	}
+}
+
+// TestDevenvNix_IsolateCLIConfig checks cloud.isolate_cli_config (W135): the
+// fragment then points CLOUDSDK_CONFIG, which holds gcloud's credentials and
+// configurations, at the project's gitignored .qsdev/ directory; without it
+// the fragment stays comment-only.
+func TestDevenvNix_IsolateCLIConfig(t *testing.T) {
+	t.Parallel()
+	const line = `  env.CLOUDSDK_CONFIG = lib.mkDefault "${config.devenv.root}/.qsdev/cloud/gcp";`
+	tests := []struct {
+		name    string
+		isolate bool
+	}{
+		{"off", false},
+		{"on", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			frag, err := newModule().DevenvNixFragment(ecosystem.ModuleConfig{IsolateCLIConfig: tt.isolate})
+			if err != nil {
+				t.Fatalf("DevenvNixFragment error: %v", err)
+			}
+			if got := strings.Contains(frag, line+"\n"); got != tt.isolate {
+				t.Errorf("fragment contains %q = %v, want %v:\n%s", line, got, tt.isolate, frag)
+			}
+			if !strings.Contains(frag, "CLOUDSDK_ACTIVE_CONFIG_NAME") {
+				t.Errorf("fragment lost the CLOUDSDK_ACTIVE_CONFIG_NAME guidance:\n%s", frag)
+			}
+		})
 	}
 }

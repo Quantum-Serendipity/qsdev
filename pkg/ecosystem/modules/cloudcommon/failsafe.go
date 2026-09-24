@@ -60,7 +60,9 @@ func ValidateFailSafe(
 	report := FailSafeReport{Provider: provider}
 	allActive := true
 
-	// Layer 1: Environment separation — per-project env var is set.
+	// Layer 1: Environment separation — the per-project default-account
+	// variable is set. It selects a default; it does not isolate credentials
+	// (see EnvVarForProvider).
 	envVar := EnvVarForProvider(provider)
 	layer1 := FailSafeStatus{Provider: provider, Layer: LayerEnvironmentSeparation}
 	switch v, ok := envVars[envVar]; {

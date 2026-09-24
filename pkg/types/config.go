@@ -40,6 +40,7 @@ type QsdevConfig struct {
 	Git            GitConfig        `yaml:"git,omitempty"`
 	MCP            MCPConfig        `yaml:"mcp,omitempty"`
 	Java           JavaConfig       `yaml:"java,omitempty"`
+	Cloud          CloudConfig      `yaml:"cloud,omitempty"`
 }
 
 // LanguageConfig specifies a language/platform ecosystem in .qsdev.yaml.
@@ -258,6 +259,18 @@ type JavaConfig struct {
 	// from their own URL. The generated .mvn/settings.xml mirror redirects
 	// every other repository to Maven Central or the registry proxy.
 	RepositoryAllowlist []string `yaml:"repository_allowlist,omitempty" json:"repository_allowlist,omitempty"`
+}
+
+// CloudConfig holds cloud CLI settings in .qsdev.yaml.
+type CloudConfig struct {
+	// IsolateCLIConfig gives the Azure and Google Cloud CLIs a per-project
+	// configuration directory under the gitignored .qsdev/ directory: the
+	// Azure and GCP ecosystem modules set AZURE_CONFIG_DIR and CLOUDSDK_CONFIG
+	// in devenv.nix, so each project keeps its own logins, tokens and active
+	// subscription or configuration instead of sharing ~/.azure and
+	// ~/.config/gcloud. Off by default, because with it on every project
+	// needs its own login.
+	IsolateCLIConfig bool `yaml:"isolate_cli_config,omitempty" json:"isolate_cli_config,omitempty"`
 }
 
 // ClientConfig holds client-specific constraints in .qsdev.yaml.

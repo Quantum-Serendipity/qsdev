@@ -213,6 +213,8 @@ qsdev mcp install <name>       # Install a server from the registry
 qsdev mcp health               # Health check all configured servers
 ```
 
+`qsdev devenv doctor` also lists the configured servers under **MCP Servers**. It checks each `.mcp.json` entry without starting the server: the command is on `PATH`, a remote URL uses `https://`, and the environment variables the server needs are set. See [Layer 13](security-architecture.md#layer-13-package-and-mcp-risk-scoring).
+
 ## Managing Security Policies
 
 qsdev generates YAML security policies in `.qsdev/policy/`. These define fine-grained rules for what the AI agent can and cannot do, beyond the static deny/ask rules in `.claude/settings.json`.

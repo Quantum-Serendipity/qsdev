@@ -234,6 +234,8 @@ Probes produce a weighted score mapped to a letter grade (A through F). Grade ce
 
 Trust scores feed a 3-tier model (high / medium / low trust) and drive confused deputy mitigation via cross-tool deny rule projection.
 
+**MCP configuration in doctor.** `qsdev devenv doctor` lists each server in the project's `.mcp.json` under **MCP Servers** and validates its entry statically. It never starts a server, because `.mcp.json` is repository content and may name any command (a server launched through `npx` or `uvx` would also download a package). Doctor checks that each stdio command is on `PATH`, that each remote URL is an absolute `https://` URL (plain `http://` only for localhost), and that the environment variables a server needs are set: those its catalog definition requires and those its command, arguments, URL, `env` or `headers` reference as `${VAR}` without a `:-default`. A server is `ok`, `degraded` (only an unset variable) or `misconfigured` (a missing command or a bad URL). The section appears in `--json` output under `mcp_servers` and does not change the `--check` exit code. To check that a server actually answers, run `qsdev mcp status`, which starts only servers that match a trusted definition.
+
 ### Layer 14: Agent Self-Protection
 
 Self-protection runs as the first PreToolUse hook, before all other hooks. It blocks the AI agent from tampering with its own guardrails, security configuration, or audit trail.

@@ -16,6 +16,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/container"
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
@@ -31,8 +32,9 @@ func doctorCmd() *cobra.Command {
 		Long: `Check that required and recommended tools are installed and meet
 minimum version requirements. Outputs a formatted report of system info,
 detected tools, and actionable recommendations. Inside a project it also
-runs the health checks of the configured ecosystem modules statically: no
-cloud CLI or other check command is executed.
+validates the MCP servers in .mcp.json and runs the health checks of the
+configured ecosystem modules, both statically: no MCP server, cloud CLI or
+other check command is executed.
 
 Use --json for machine-readable output, or --check for a simple pass/fail
 exit code (suitable for CI).`,
@@ -56,7 +58,7 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 	osInfo := sysinfo.DetectOS()
 
 	// An unknown working directory only disables the project-scoped checks
-	// (NFS, cloud credential isolation, ecosystem module checks).
+	// (NFS, MCP servers, cloud credential isolation, ecosystem module checks).
 	projectRoot, _ := cmdutil.ProjectRoot()
 
 	var containerSection *doctor.ContainerSection
@@ -75,6 +77,7 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 	report := doctor.BuildReport(osInfo, checks, version.Info().Version)
 	report.SetContainerSection(containerSection)
 	report.SetSandboxSection(sandboxSection)
+	report.SetMCPSection(mcpConfigSection(projectRoot, mcpregistry.DefaultRegistry()))
 	report.SetCloudSection(cloudIsolationSection(projectRoot))
 	report.SetModuleCheckSection(moduleCheckSection(projectRoot, ecosystem.DefaultRegistry(), doctor.ModuleCheckEnv{
 		LookupEnv: os.LookupEnv,

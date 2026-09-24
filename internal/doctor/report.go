@@ -9,6 +9,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/mcphealth"
 	"github.com/Quantum-Serendipity/qsdev/internal/pkgmanager"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -42,19 +43,30 @@ func (r *Report) SetSandboxSection(ss *SandboxSection) {
 	r.SandboxRuntime = ss
 }
 
-// MCPSection holds MCP server health check results for the doctor report.
+// MCPSection holds the static validation of the MCP servers the project's
+// .mcp.json configures (see NewMCPSection). No server is started, so it
+// reports configuration problems, not whether a server answers.
 type MCPSection struct {
 	Detected bool            `json:"detected"`
 	Servers  []MCPServerInfo `json:"servers"`
 	Warnings []string        `json:"warnings,omitempty"`
 }
 
-// MCPServerInfo summarises a single MCP server's health status.
+// MCPServerInfo summarises one configured MCP server. Status is "ok",
+// "degraded" (only warnings, such as an unset environment variable) or
+// "misconfigured" (an error, such as a command that is not on PATH).
 type MCPServerInfo struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	Tools  int    `json:"tools"`
-	Detail string `json:"detail,omitempty"`
+	Name      string     `json:"name"`
+	Transport string     `json:"transport"`
+	Status    string     `json:"status"`
+	Issues    []MCPIssue `json:"issues,omitempty"`
+}
+
+// MCPIssue is one configuration problem found in an MCP server entry.
+type MCPIssue struct {
+	Severity    string `json:"severity"`
+	Message     string `json:"message"`
+	Remediation string `json:"remediation,omitempty"`
 }
 
 // SetMCPSection attaches MCP server health check results to the report.
@@ -314,24 +326,7 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 
 	// MCP Servers
 	if r.MCPServers != nil && r.MCPServers.Detected {
-		fmt.Fprintln(w, "MCP Servers")
-		for _, srv := range r.MCPServers.Servers {
-			sym := okSym
-			switch srv.Status {
-			case "degraded":
-				sym = warnSym
-			case "unreachable", "misconfigured":
-				sym = failSym
-			}
-			fmt.Fprintf(w, "  %-20s %s %s (tools: %d)\n", srv.Name, sym, srv.Status, srv.Tools)
-			if srv.Detail != "" {
-				fmt.Fprintf(w, "    %s\n", srv.Detail)
-			}
-		}
-		for _, warn := range r.MCPServers.Warnings {
-			fmt.Fprintf(w, "  %s %s\n", warnSym, warn)
-		}
-		fmt.Fprintln(w)
+		formatMCPSection(w, r.MCPServers, okSym, warnSym, failSym)
 	}
 
 	// Cloud Providers
@@ -445,6 +440,34 @@ func formatSandboxSection(w io.Writer, ss *SandboxSection, okSym, warnSym, _ str
 		for _, warn := range ss.Warnings {
 			fmt.Fprintf(w, "  %s %s\n", warnSym, warn)
 		}
+	}
+	fmt.Fprintln(w)
+}
+
+func formatMCPSection(w io.Writer, ms *MCPSection, okSym, warnSym, failSym string) {
+	fmt.Fprintln(w, "MCP Servers (configuration only; no server was started)")
+	for _, srv := range ms.Servers {
+		sym := okSym
+		switch srv.Status {
+		case MCPStatusDegraded:
+			sym = warnSym
+		case MCPStatusMisconfigured:
+			sym = failSym
+		}
+		fmt.Fprintf(w, "  %-20s %s %s (%s)\n", displayMCPServerName(srv.Name), sym, srv.Status, srv.Transport)
+		for _, is := range srv.Issues {
+			isym := warnSym
+			if is.Severity == mcphealth.SeverityError {
+				isym = failSym
+			}
+			fmt.Fprintf(w, "    %s %s\n", isym, is.Message)
+			if is.Remediation != "" {
+				fmt.Fprintf(w, "      fix: %s\n", is.Remediation)
+			}
+		}
+	}
+	for _, warn := range ms.Warnings {
+		fmt.Fprintf(w, "  %s %s\n", warnSym, warn)
 	}
 	fmt.Fprintln(w)
 }

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -88,26 +87,9 @@ func newDoctorChecker(projectRoot string) *doctorChecker {
 // configuredMCPServers materializes the servers the project's .mcp.json
 // configures as probe configs. Only the project's own servers are probed — not
 // the whole built-in catalog — so the doctor reports on what this project
-// actually runs. Required environment variables are taken from the matching
-// registry definition, since .mcp.json does not record them.
+// actually runs (see mcpregistry.ConfiguredServers).
 func (d *doctorChecker) configuredMCPServers() ([]mcphealth.ServerConfig, error) {
-	defs, err := mcpregistry.ScanMcpJSON(d.projectRoot)
-	if err != nil {
-		return nil, fmt.Errorf("loading configured MCP servers: %w", err)
-	}
-	reg := mcpregistry.DefaultRegistry()
-	out := make([]mcphealth.ServerConfig, 0, len(defs))
-	for name, def := range defs {
-		cfg := mcphealth.ServerConfig{
-			Name: name, Command: def.Command, Args: def.Args, URL: def.URL, Env: def.Env,
-		}
-		if known, ok := reg.ByName(name); ok {
-			cfg.RequiredEnv = known.RequiredEnv
-		}
-		out = append(out, cfg)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out, nil
+	return mcpregistry.ConfiguredServers(d.projectRoot, mcpregistry.DefaultRegistry())
 }
 
 // namedCheck pairs a check's stable name with its implementation.

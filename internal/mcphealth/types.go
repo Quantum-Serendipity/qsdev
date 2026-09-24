@@ -38,6 +38,9 @@ type PrerequisiteStatus struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+// ConfigWarning is one problem ValidateConfig found in a server entry. Severity
+// is SeverityError when the server cannot start as configured and
+// SeverityWarning when it may start but lack something it needs.
 type ConfigWarning struct {
 	Server      string `json:"server"`
 	Severity    string `json:"severity"`
@@ -50,4 +53,10 @@ const (
 	StatusDegraded      = "degraded"
 	StatusUnreachable   = "unreachable"
 	StatusMisconfigured = "misconfigured"
+)
+
+// ConfigWarning severities.
+const (
+	SeverityError   = "error"
+	SeverityWarning = "warning"
 )

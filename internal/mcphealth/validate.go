@@ -21,7 +21,7 @@ func ValidateConfig(servers map[string]ServerConfig) []ConfigWarning {
 		if name == "" {
 			warnings = append(warnings, ConfigWarning{
 				Server:   "(empty)",
-				Severity: "error",
+				Severity: SeverityError,
 				Message:  "server name is empty",
 			})
 			continue
@@ -44,7 +44,7 @@ func validateCommand(server, command string) []ConfigWarning {
 	if command == "" {
 		return []ConfigWarning{{
 			Server:      server,
-			Severity:    "error",
+			Severity:    SeverityError,
 			Message:     "command is empty",
 			Remediation: "specify a command binary for this MCP server",
 		}}
@@ -53,7 +53,7 @@ func validateCommand(server, command string) []ConfigWarning {
 	if _, err := exec.LookPath(command); err != nil {
 		return []ConfigWarning{{
 			Server:      server,
-			Severity:    "error",
+			Severity:    SeverityError,
 			Message:     fmt.Sprintf("command %q not found on PATH", command),
 			Remediation: fmt.Sprintf("install %q or add it to PATH", command),
 		}}
@@ -69,7 +69,7 @@ func validateURL(server, raw string) []ConfigWarning {
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
 		return []ConfigWarning{{
 			Server:      server,
-			Severity:    "error",
+			Severity:    SeverityError,
 			Message:     fmt.Sprintf("url %q is not a valid http(s) URL", raw),
 			Remediation: "specify an absolute https:// URL for this MCP server",
 		}}
@@ -77,7 +77,7 @@ func validateURL(server, raw string) []ConfigWarning {
 	if u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
 		return []ConfigWarning{{
 			Server:      server,
-			Severity:    "error",
+			Severity:    SeverityError,
 			Message:     fmt.Sprintf("url %q uses plain http to a non-local host", raw),
 			Remediation: "use https:// (plain http is only acceptable for localhost)",
 		}}
@@ -100,7 +100,7 @@ func validateRequiredEnv(server string, required []string, envSet map[string]boo
 		if !envSet[key] {
 			warnings = append(warnings, ConfigWarning{
 				Server:      server,
-				Severity:    "warning",
+				Severity:    SeverityWarning,
 				Message:     fmt.Sprintf("required environment variable %q is not set", key),
 				Remediation: fmt.Sprintf("set %s in your environment or .env file", key),
 			})
@@ -134,7 +134,7 @@ func validateEnvRefs(server string, cfg ServerConfig, envSet map[string]bool) []
 			}
 			warnings = append(warnings, ConfigWarning{
 				Server:      server,
-				Severity:    "warning",
+				Severity:    SeverityWarning,
 				Message:     fmt.Sprintf("%s references ${%s} which is not set", f.label, refVar),
 				Remediation: fmt.Sprintf("set %s in your environment or .env file", refVar),
 			})

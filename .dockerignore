@@ -21,6 +21,8 @@
 !cmd/
 !instance/
 !internal/
+# nix/ holds the derivations the binary embeds (nix/embed.go).
+!nix/
 !pkg/
 !rules/
 

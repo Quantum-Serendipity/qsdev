@@ -541,9 +541,14 @@ tools:
         category: security
         description: Taint-focused static analysis via OpenGrep with custom security rules
         default_policy: opt-in
-        nix_expr: '(pkgs.callPackage ./nix/opengrep {})'
+        # The derivation is generated into the project at
+        # .opengrep/nix/default.nix (from qsdev's nix/opengrep/default.nix), so
+        # this relative import resolves in every project that enables opengrep.
+        nix_expr: '(pkgs.callPackage ./.opengrep/nix {})'
         owned_files:
             - path: .opengrep/config.yaml
+              ownership: exclusive
+            - path: .opengrep/nix/default.nix
               ownership: exclusive
             # The embedded core taint-rule library is delivered here (one
             # GeneratedFile per rule, tracked individually in generated state so

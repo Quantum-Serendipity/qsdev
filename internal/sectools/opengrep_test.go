@@ -155,3 +155,54 @@ func TestGenerateOpengrepConfigYaml_Defaults(t *testing.T) {
 		t.Error("default timeout should be 300")
 	}
 }
+
+// TestGenerateOpengrepFiles_DeliversNixDerivation checks that the OpenGrep
+// package derivation the devenv.nix package list imports
+// (./.opengrep/nix) is written into the project, pinned to real release
+// asset hashes rather than placeholders.
+func TestGenerateOpengrepFiles_DeliversNixDerivation(t *testing.T) {
+	t.Parallel()
+
+	files, err := sectools.GenerateOpengrepFiles(types.WizardAnswers{})
+	if err != nil {
+		t.Fatalf("GenerateOpengrepFiles() error: %v", err)
+	}
+	var drv *types.GeneratedFile
+	for i := range files {
+		if files[i].Path == ".opengrep/nix/default.nix" {
+			drv = &files[i]
+		}
+	}
+	if drv == nil {
+		t.Fatal("expected .opengrep/nix/default.nix among generated files")
+	}
+	if drv.Owner != "opengrep" || drv.Mode != 0o644 || drv.Strategy != types.Overwrite {
+		t.Errorf("derivation file = owner %q mode %#o strategy %v, want opengrep 0644 Overwrite",
+			drv.Owner, drv.Mode, drv.Strategy)
+	}
+
+	content := string(drv.Content)
+	tests := []struct {
+		name, want string
+	}{
+		{"fetches a release asset", "https://github.com/opengrep/opengrep/releases/download/v${version}/${src.asset}"},
+		{"x86_64-linux asset", `asset = "opengrep_manylinux_x86";`},
+		{"aarch64-linux asset", `asset = "opengrep_manylinux_aarch64";`},
+		{"aarch64-darwin asset", `asset = "opengrep_osx_arm64";`},
+		{"x86_64-darwin asset", `asset = "opengrep_osx_x86";`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if !strings.Contains(content, tt.want) {
+				t.Errorf("derivation should contain %q", tt.want)
+			}
+		})
+	}
+	if strings.Contains(content, "fakeHash") || strings.Contains(content, "lib.fakeSha256") {
+		t.Error("derivation must pin real hashes, not placeholders")
+	}
+	if got, want := strings.Count(content, `hash = "sha256-`), 4; got != want {
+		t.Errorf("derivation has %d SRI sha256 hashes, want %d (one per platform)", got, want)
+	}
+}

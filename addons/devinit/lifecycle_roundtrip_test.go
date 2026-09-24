@@ -800,3 +800,46 @@ func TestLifecycle_DisableKeepsUntrackedFiles(t *testing.T) {
 		t.Errorf("untracked cliff.toml must be left in place: %v", err)
 	}
 }
+
+// TestLifecycle_DisableRemovesManualMergeSidecar is the F203 follow-on:
+// .cosign/policy.yaml is an exclusive manual-merge file, so an update over a
+// user-edited copy writes .cosign/policy.yaml.new beside it. Disable must
+// remove that sidecar with the file instead of leaving it orphaned.
+func TestLifecycle_DisableRemovesManualMergeSidecar(t *testing.T) {
+	tests := []struct {
+		name   string
+		edit   bool
+		extras []string
+	}{
+		{name: "unmodified policy", extras: nil},
+		{name: "edited policy with force", edit: true, extras: []string{"--force"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := initLifecycleProject(t)
+			mustEnable(t, dir, "container-security")
+
+			const policy = ".cosign/policy.yaml"
+			if got := loadProjectState(t, dir).Files[policy].Strategy; got != types.ManualMerge {
+				t.Fatalf("%s strategy = %v, want ManualMerge", policy, got)
+			}
+			if tt.edit {
+				if err := os.WriteFile(filepath.Join(dir, policy), []byte("# edited\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sidecar := filepath.Join(dir, policy+".new")
+			if err := os.WriteFile(sidecar, []byte("# regenerated\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			mustDisable(t, dir, append([]string{"container-security"}, tt.extras...)...)
+			if _, err := os.Stat(sidecar); !os.IsNotExist(err) {
+				t.Errorf("sidecar must be removed on disable (stat err=%v)", err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, ".cosign")); !os.IsNotExist(err) {
+				t.Errorf(".cosign must be pruned once empty (stat err=%v)", err)
+			}
+		})
+	}
+}

@@ -636,6 +636,9 @@ func planExclusiveRemoval(
 			modified = append(modified, p)
 		}
 		r.files = append(r.files, p)
+		if sidecar, ok := manualMergeSidecar(projectRoot, p, st.Files[p]); ok {
+			r.files = append(r.files, sidecar)
+		}
 	}
 	if len(modified) > 0 {
 		return exclusiveRemoval{}, fmt.Errorf(
@@ -643,6 +646,22 @@ func planExclusiveRemoval(
 			strings.Join(modified, "\n  "))
 	}
 	return r, nil
+}
+
+// manualMergeSidecar returns the sidecar (relPath + generate.SidecarSuffix)
+// that an update wrote beside a user-edited manual-merge file, so removing
+// the file does not leave qsdev's regenerated copy behind. The sidecar is
+// always qsdev output, so it needs no modification check of its own.
+func manualMergeSidecar(projectRoot, relPath string, entry types.FileState) (string, bool) {
+	if entry.Strategy != types.ManualMerge {
+		return "", false
+	}
+	sidecar := relPath + generate.SidecarSuffix
+	info, err := os.Lstat(filepath.Join(projectRoot, sidecar))
+	if err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	return sidecar, true
 }
 
 // apply deletes the planned files, forgets them in state, and prunes the

@@ -31,7 +31,7 @@ Ecosystem-specific files only appear when that language is selected.
 | `.syft.yaml` | Syft SBOM scanner configuration | `overwrite` |
 | `.grype.yaml` | Grype vulnerability scanner configuration | `overwrite` |
 | `.hadolint.yaml` | Dockerfile linting rules (when container detected; only created if absent) | `skip` |
-| `.cosign/policy.yaml` | Container image signing policy (when container-security enabled) | `overwrite` |
+| `.cosign/policy.yaml` | Sigstore policy-controller image signing policy (when container-security enabled). Enforcing only for a `github.com` origin remote; otherwise a commented-out template. See [Layer 9](security-architecture.md#layer-9-container-security) | `manual-merge` |
 | `.scancode.yml` | ScanCode license policy (when license-compliance enabled) | `overwrite` |
 | `.license-exceptions.yml` | Record of approved license exceptions (when license-compliance enabled; only created if absent) | `skip` |
 | `.qsdev/policy.nix` | Hook sandbox policies with 5 category profiles | `overwrite` |

@@ -12,12 +12,9 @@ import (
 var (
 	reDeleteCmd     = regexp.MustCompile(`\b(rm|rmdir|unlink|shred|find|truncate)\b`)
 	reLinkCmd       = regexp.MustCompile(`\b(ln|link)\b`)
-	reEnvManip      = regexp.MustCompile(`\b(export|unset)\s+(QSDEV_|CLAUDE_|ANTHROPIC_)`)
-	reEnvAssign     = regexp.MustCompile(`\b(QSDEV_CONFIG_PATH|QSDEV_BYPASS_ALL|QSDEV_DISABLE_HOOKS)\s*=`)
 	reKillCmd       = regexp.MustCompile(`\b(kill|pkill|killall)\b`)
 	reProcessTarget = regexp.MustCompile(`\b(qsdev|claude|gdev)\b`)
 	reMcpInjection  = regexp.MustCompile(`(?i)(system\s*prompt|ignore\s*previous|you\s+are\s+now|<\s*system\s*>|<\s*/?\s*instructions?\s*>)`)
-	reBypassExport  = regexp.MustCompile(`\b(export|unset)\s+(GDEV_HOOK_BYPASS|GDEV_BYPASS_\w+|GDEV_SELF_PROTECTION)`)
 	reBypassCmd     = regexp.MustCompile(`\bqsdev\s+hook\s+bypass`)
 	reCliControl    = regexp.MustCompile(`\bqsdev\s+(disable\s+hooks|enable\s+hooks\s+--force|session\s+allow\b)`)
 	reSystemctl     = regexp.MustCompile(`\bsystemctl\s+(stop|disable)\b.*\b(qsdev|gdev)\b`)
@@ -333,16 +330,21 @@ var sp007 = Rule{
 	},
 }
 
+// sp008 denies a shell command that changes the settings, and so the hooks,
+// of a Claude Code session: a nested session started with a hook-dropping
+// option, a settings override or a settings environment override, a
+// settings-writing subcommand, or a write through $CLAUDE_CONFIG_DIR (see
+// settingsOverride).
 var sp008 = Rule{
 	ID:       "SP-008",
-	Name:     "Environment variable manipulation block",
+	Name:     "Claude Code settings override block",
 	Category: "self-protection",
 	Evaluate: func(ctx *EvalContext) (Verdict, string) {
 		if !cmdscan.IsShellTool(ctx.ToolName) {
 			return Allow, ""
 		}
-		if reEnvManip.MatchString(ctx.Command) || reEnvAssign.MatchString(ctx.Command) {
-			return Deny, "manipulation of security-related environment variables"
+		if reason := settingsOverride(ctx); reason != "" {
+			return Deny, reason
 		}
 		return Allow, ""
 	},
@@ -455,16 +457,22 @@ var int001 = Rule{
 	},
 }
 
+// sp011 denies writing a file a registered hook command executes: a program
+// the hook names, resolved through PATH (a new file in an earlier PATH
+// directory shadows it), and a hook script's shebang interpreter (see
+// hookTargets).
 var sp011 = Rule{
 	ID:       "SP-011",
-	Name:     "Bypass export block",
+	Name:     "Hook command hijack block",
 	Category: "self-protection",
 	Evaluate: func(ctx *EvalContext) (Verdict, string) {
-		if !cmdscan.IsShellTool(ctx.ToolName) {
-			return Allow, ""
+		if isWriteOrEdit(ctx.ToolName) && ctx.CanonicalPath != "" && ctx.hookTargetsFor().has(ctx.CanonicalPath) {
+			return Deny, "write to a program a hook command runs: " + ctx.CanonicalPath
 		}
-		if reBypassExport.MatchString(ctx.Command) {
-			return Deny, "export of hook bypass environment variable"
+		if cmdscan.IsShellTool(ctx.ToolName) {
+			if p := writesHookTarget(ctx); p != "" {
+				return Deny, "command writes a program a hook command runs: " + p
+			}
 		}
 		return Allow, ""
 	},

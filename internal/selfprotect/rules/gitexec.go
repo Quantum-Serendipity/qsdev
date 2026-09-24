@@ -102,15 +102,21 @@ func isGitEnvVar(name string) bool {
 // gitEnvAssignment returns the name of a git variable that c sets: as a prefix
 // or bare assignment, through export/declare, or as an env operand.
 func gitEnvAssignment(c cmdscan.Command) string {
+	return envAssignment(c, isGitEnvVar)
+}
+
+// envAssignment returns the name of a variable accepted by match that c sets:
+// as a prefix or bare assignment, through export/declare, or as an env operand.
+func envAssignment(c cmdscan.Command, match func(string) bool) string {
 	for _, name := range c.Assigns {
-		if isGitEnvVar(name) {
+		if match(name) {
 			return name
 		}
 	}
 	switch path.Base(c.Name) {
 	case "export", "declare", "typeset", "local", "readonly", "env":
 		for _, a := range c.Args {
-			if name, _, _ := strings.Cut(a, "="); isGitEnvVar(name) {
+			if name, _, _ := strings.Cut(a, "="); match(name) {
 				return name
 			}
 		}
@@ -149,8 +155,14 @@ func commandWordIndexes(words []string) []int {
 
 // gitInvocation returns the arguments of the git program the words run.
 func gitInvocation(words []string) ([]string, bool) {
+	return programInvocation(words, func(name string) bool { return path.Base(name) == "git" })
+}
+
+// programInvocation returns the arguments of the program the words run when
+// isProgram accepts its command word, directly or through a wrapper.
+func programInvocation(words []string, isProgram func(string) bool) ([]string, bool) {
 	for _, i := range commandWordIndexes(words) {
-		if path.Base(words[i]) == "git" {
+		if isProgram(words[i]) {
 			return words[i+1:], true
 		}
 	}

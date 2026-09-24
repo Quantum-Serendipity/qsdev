@@ -53,14 +53,130 @@ func ensureInit() error {
 			// permission grants and trust decisions.
 			{filepath.Join(home, ".claude.json"), "claude-settings"},
 			{"/etc/gdev/", "system-config"},
-			{"/etc/claude-code/", "system-config"},
 		}...)
+		for _, dir := range managedSettingsDirs(runtime.GOOS, os.Getenv) {
+			protectedPrefixes = append(protectedPrefixes, protectedEntry{dir + string(filepath.Separator), "system-config"})
+		}
+		protectedPrefixes = append(protectedPrefixes, claudeConfigDirEntries(os.Getenv(ClaudeConfigDirEnv))...)
 
 		protectedSuffixes = []protectedEntry{
 			{string(filepath.Separator) + ".mcp.json", "mcp-config"},
 		}
 	})
 	return initErr
+}
+
+// ClaudeConfigDirEnv names the environment variable that relocates Claude
+// Code's user configuration directory (default ~/.claude). Claude Code passes
+// its environment to every hook, so the value a hook sees is the directory the
+// running session loads its user settings from.
+const ClaudeConfigDirEnv = "CLAUDE_CONFIG_DIR"
+
+// claudeConfigFiles are the entries of a Claude Code configuration directory
+// that register or steer enforcement, mirroring the .claude entries of
+// protectedSegments (a directory entry ends in "/"), plus .claude.json, which
+// Claude Code keeps inside a relocated configuration directory.
+var claudeConfigFiles = []string{
+	"settings.json", "settings.local.json", ".claude.json",
+	"hooks/", "agents/", "commands/", "skills/",
+}
+
+// claudeConfigDirEntries returns the protected entries for a Claude Code
+// configuration directory named by CLAUDE_CONFIG_DIR (dir, "" when unset). The
+// .claude segment entries only cover a directory named .claude, so a relocated
+// one (~/.config/claude) would otherwise leave the user settings, which can
+// disable or replace every hook, writable. The directory is protected under
+// its absolute spelling and, when it exists, its symlink-resolved one, since
+// rules compare canonical paths.
+func claudeConfigDirEntries(dir string) []protectedEntry {
+	if dir == "" {
+		return nil
+	}
+	abs, err := filepath.Abs(expandTildeOrSelf(dir))
+	if err != nil {
+		return nil
+	}
+	roots := []string{abs}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil && resolved != abs {
+		roots = append(roots, resolved)
+	}
+	sep := string(filepath.Separator)
+	var entries []protectedEntry
+	for _, root := range roots {
+		for _, f := range claudeConfigFiles {
+			p := filepath.Join(root, strings.TrimSuffix(f, "/"))
+			if strings.HasSuffix(f, "/") {
+				p += sep
+			}
+			entries = append(entries, protectedEntry{p, "claude-settings"})
+		}
+	}
+	return entries
+}
+
+// managedSettingsDirs returns the directories Claude Code reads its managed
+// (policy) settings from on goos: /etc/claude-code on Linux (also protected
+// elsewhere, where it is harmless), /Library/Application Support/ClaudeCode on
+// macOS, and ClaudeCode under Program Files (current) and ProgramData (older
+// releases) on Windows. getenv resolves the Windows folder variables.
+func managedSettingsDirs(goos string, getenv func(string) string) []string {
+	dirs := []string{"/etc/claude-code"}
+	switch goos {
+	case "darwin":
+		dirs = append(dirs, "/Library/Application Support/ClaudeCode")
+	case "windows":
+		for _, v := range []struct{ env, fallback string }{
+			{"ProgramFiles", `C:\Program Files`},
+			{"ProgramData", `C:\ProgramData`},
+		} {
+			root := getenv(v.env)
+			if root == "" {
+				root = v.fallback
+			}
+			dirs = append(dirs, filepath.Join(root, "ClaudeCode"))
+		}
+	}
+	return dirs
+}
+
+// ClaudeConfigDir returns the Claude Code user configuration directory the
+// running session uses: CLAUDE_CONFIG_DIR when set, else ~/.claude.
+func ClaudeConfigDir() (string, error) {
+	if dir := os.Getenv(ClaudeConfigDirEnv); dir != "" {
+		return expandTildeOrSelf(dir), nil
+	}
+	home, err := userHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolving home directory: %w", err)
+	}
+	return filepath.Join(home, ".claude"), nil
+}
+
+// ManagedSettingsFiles returns the managed-settings.json paths Claude Code
+// reads on this platform.
+func ManagedSettingsFiles() []string {
+	dirs := managedSettingsDirs(runtime.GOOS, os.Getenv)
+	files := make([]string, len(dirs))
+	for i, d := range dirs {
+		files[i] = filepath.Join(d, "managed-settings.json")
+	}
+	return files
+}
+
+// expandTildeOrSelf is ExpandTilde that returns path unchanged when the home
+// directory cannot be resolved.
+func expandTildeOrSelf(path string) string {
+	if expanded, err := ExpandTilde(path); err == nil {
+		return expanded
+	}
+	return path
+}
+
+// PathKey returns p in the form protected-path comparisons use on this
+// platform: slash-separated, case-folded on case-insensitive filesystems, and
+// with Windows name aliases removed. Two spellings of one file have equal keys.
+func PathKey(p string) string {
+	return platformMatch.key(p)
 }
 
 // installedBinaryEntries returns the protected entries for the qsdev binary,

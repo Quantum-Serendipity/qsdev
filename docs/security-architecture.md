@@ -338,13 +338,19 @@ Self-protection runs as the first PreToolUse hook, before all other hooks. It bl
 
 | Category | Rule IDs | What it protects |
 |----------|----------|------------------|
-| Config protection | SP-001–SP-008 | Config file writes/reads/deletes, symlinks, path traversal, /proc reads, copy/redirect, env var manipulation |
+| Config protection | SP-001–SP-008 | Config file writes/reads/deletes, symlinks, path traversal, /proc reads, copy/redirect, Claude Code settings overrides |
 | MCP integrity | MCP-001, MCP-002, MCP-005 | Tool description injection, cross-tool protected path access, server config tampering |
 | Binary integrity | INT-001 | Modification of security binaries in `.qsdev/bin/` |
-| Bypass prevention | SP-011–SP-014 | Bypass variable exports, bypass commands, audit trail writes, CLI security control commands |
+| Bypass prevention | SP-011–SP-014 | Hook command hijacking, bypass commands, audit trail writes, CLI security control commands |
 | Process protection | SP-009–SP-010 | Process management targeting qsdev/claude, hook script modification |
 
 All 18 rules use deny-override combining: if any rule denies, the tool call is blocked. All rules are evaluated on every call; multiple denials are collected and reported.
+
+**Hook-affecting surfaces.** Hooks are spawned by Claude Code with its own environment, so exporting or unsetting a variable in a Bash call cannot disable them, and the rules do not treat it as a bypass. The protected surfaces are the ones that do decide which hooks run:
+
+- *Settings files.* The project and user `settings.json` / `settings.local.json`, the hook scripts, agents, commands and skills are protected under `.claude/` wherever it lives, under a configuration directory relocated with `CLAUDE_CONFIG_DIR`, and in the platform's managed-settings directory (`/etc/claude-code`, `/Library/Application Support/ClaudeCode`, `%ProgramFiles%\ClaudeCode`). Their `disableAllHooks`, `hooks` and `env` keys can therefore only be changed by a person (SP-001, SP-003–SP-007).
+- *Nested sessions (SP-008).* A shell command may not start Claude Code (directly, by its native-installer release path or npm entry script, through a wrapper such as `env`, `sudo`, `xargs` or `npx @anthropic-ai/claude-code`, or inside `sh -c`/`eval`) with `--bare`, `--safe-mode` or `--restricted`; with `--setting-sources` that omits `user`, `project` or `local`; with `--settings` naming a file, or inline JSON that sets `disableAllHooks`, `hooks` or `env`; or with `CLAUDE_CONFIG_DIR`, `HOME`, `CLAUDE_CODE_SIMPLE` or `CLAUDE_CODE_SAFE_MODE` set. `claude import` (which writes settings) is denied unless it is a `--dry-run`, and so is a write whose target is built from `$CLAUDE_CONFIG_DIR`. Plain `claude -p` sessions, and inline `--settings` with other keys, stay allowed. A session started from a directory other than the project loads that directory's project settings instead; SP-008 does not judge the working directory, so such a session runs only the user and managed hooks.
+- *Hook command paths (SP-011).* SP-011 reads the hooks registered in the project, user and managed settings and resolves each hook's programs the way the hook shell will: a program named by path, a hook script's shebang interpreter (`#!/usr/bin/env python3` resolves `python3`), and every bare program name through `PATH`. A Write/Edit or shell command may not create a file of that name in a `PATH` directory ahead of the one it resolves to (which would shadow it), or rewrite, move, link or chmod the file it resolves to. Writes whose file names are not on the command line (archive extraction, a recursive directory copy, `go install`) and hooks registered by plugins are not resolved.
 
 **Evasion detection** runs alongside the rule set and catches:
 - Base64-to-shell pipelines (`base64 -d | bash`)

@@ -60,6 +60,12 @@ type EvalContext struct {
 	// bashMutatesProtected since several rules consult them.
 	mentions, mutates         bool
 	mentionsDone, mutatesDone bool
+
+	// hookEnv overrides the session description SP-011 resolves hook
+	// commands from (tests only; nil describes the running session), and
+	// hookTargets memoizes the result. Read through hookTargetsFor.
+	hookEnv     *hookEnv
+	hookTargets *hookTargets
 }
 
 // ParsedCommands returns Command shell-parsed into its simple commands, parsing

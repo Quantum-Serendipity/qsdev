@@ -915,75 +915,6 @@ func TestSP007_MoveRelocatesProtectedConfig(t *testing.T) {
 	}
 }
 
-func TestSP008_EnvironmentVariableManipulationBlock(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		ctx     EvalContext
-		verdict Verdict
-	}{
-		{
-			name: "deny export of QSDEV_ var",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "export QSDEV_BYPASS=1",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "deny unset of CLAUDE_ var",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "unset CLAUDE_API_KEY",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "deny export of ANTHROPIC_ var",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "export ANTHROPIC_API_KEY=sk-test",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "deny assign of QSDEV_BYPASS_ALL",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "QSDEV_BYPASS_ALL=1 qsdev hook run",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "deny assign of QSDEV_DISABLE_HOOKS",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "QSDEV_DISABLE_HOOKS=true",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "allow export of unrelated var",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "export PATH=/usr/bin:$PATH",
-			},
-			verdict: Allow,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			v, _ := sp008.Evaluate(&tt.ctx)
-			if v != tt.verdict {
-				t.Errorf("got %v, want %v", v, tt.verdict)
-			}
-		})
-	}
-}
-
 func TestSP009_ProcessManagementBlock(t *testing.T) {
 	t.Parallel()
 
@@ -1564,59 +1495,6 @@ func TestINT001_BinaryModificationBlock(t *testing.T) {
 	}
 }
 
-func TestSP011_BypassExportBlock(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		ctx     EvalContext
-		verdict Verdict
-	}{
-		{
-			name: "deny export of GDEV_HOOK_BYPASS",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "export GDEV_HOOK_BYPASS=1",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "deny unset of GDEV_SELF_PROTECTION",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "unset GDEV_SELF_PROTECTION",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "deny export of GDEV_BYPASS_HOOKS",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "export GDEV_BYPASS_HOOKS=true",
-			},
-			verdict: Deny,
-		},
-		{
-			name: "allow export of unrelated var",
-			ctx: EvalContext{
-				ToolName: "Bash",
-				Command:  "export HOME=/home/user",
-			},
-			verdict: Allow,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			v, _ := sp011.Evaluate(&tt.ctx)
-			if v != tt.verdict {
-				t.Errorf("got %v, want %v", v, tt.verdict)
-			}
-		})
-	}
-}
-
 func TestSP012_BypassCommandBlock(t *testing.T) {
 	t.Parallel()
 
@@ -1866,7 +1744,7 @@ func TestRuleSet_EvaluateAll(t *testing.T) {
 		t.Parallel()
 		ctx := &EvalContext{
 			ToolName: "Bash",
-			Command:  "rm -rf .qsdev/audit/events.log && export QSDEV_BYPASS_ALL=1",
+			Command:  "rm -rf .qsdev/audit/events.log && claude --bare -p x",
 		}
 		verdict, matches := Tier1Rules.EvaluateAll(ctx)
 		if verdict != Deny {

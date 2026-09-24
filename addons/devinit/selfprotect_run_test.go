@@ -117,3 +117,62 @@ func TestBuildSelfprotectContext_CanonicalizationFailureStaysProtected(t *testin
 		t.Errorf("write to protected path behind an unreadable directory = %v, want Deny", v)
 	}
 }
+
+// TestRunSelfprotect_HookSurfaces drives the hook entry point against the
+// surfaces that change which hooks run (F150): a nested Claude Code session
+// started without the hook settings (SP-008), and a file placed where a
+// registered hook program resolves through PATH (SP-011), read from the
+// environment Claude Code gives its hooks.
+func TestRunSelfprotect_HookSurfaces(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	early := filepath.Join(root, "early")
+	bin := filepath.Join(root, "bin")
+	settings := `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"hookprog run"}]}]}}`
+	for p, content := range map[string]string{
+		filepath.Join(project, ".claude", "settings.json"): settings,
+		filepath.Join(bin, "hookprog"):                     "binary",
+	} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(early, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDE_PROJECT_DIR", project)
+	t.Setenv("PATH", early+string(os.PathListSeparator)+bin)
+
+	payload := func(tool string, input map[string]string) string {
+		data, err := json.Marshal(map[string]any{"tool_name": tool, "tool_input": input, "cwd": project})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	tests := []struct {
+		name, stdin, wantRule string
+	}{
+		{"nested session without hooks", payload("Bash", map[string]string{"command": "claude --bare -p x"}), "SP-008"},
+		{"shadowed hook program", payload("Write", map[string]string{"file_path": filepath.Join(early, "hookprog"), "content": "exit 0"}), "SP-011"},
+		{"plain nested session", payload("Bash", map[string]string{"command": `claude -p "review"`}), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stderr, err := executeSelfprotect(t, tt.stdin)
+			if tt.wantRule == "" {
+				if err != nil {
+					t.Fatalf("expected allow, got %v (stderr %q)", err, stderr)
+				}
+				return
+			}
+			var exitErr *ExitError
+			if !errors.As(err, &exitErr) || exitErr.Code != 2 || !strings.Contains(stderr, tt.wantRule) {
+				t.Fatalf("expected %s deny with exit code 2, got %v (stderr %q)", tt.wantRule, err, stderr)
+			}
+		})
+	}
+}

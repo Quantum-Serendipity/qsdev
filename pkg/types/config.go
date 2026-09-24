@@ -35,6 +35,7 @@ type QsdevConfig struct {
 	Infrastructure InfraConfig      `yaml:"infrastructure,omitempty"`
 	Client         *ClientConfig    `yaml:"client,omitempty"`
 	Git            GitConfig        `yaml:"git,omitempty"`
+	MCP            MCPConfig        `yaml:"mcp,omitempty"`
 }
 
 // LanguageConfig specifies a language/platform ecosystem in .qsdev.yaml.
@@ -65,6 +66,16 @@ type ToolsConfig struct {
 	Enabled  []string                  `yaml:"enabled,omitempty"`
 	Disabled []string                  `yaml:"disabled,omitempty"`
 	Config   map[string]map[string]any `yaml:"config,omitempty"`
+}
+
+// MCPConfig holds settings for qsdev's own MCP server (`qsdev mcp serve`) in
+// .qsdev.yaml.
+type MCPConfig struct {
+	// DisabledTools names MCP tools (qsdev_nix_run, qsdev_security_scan, ...)
+	// the server's Guardrail refuses to run for every caller. The names are
+	// MCP tool names, not qsdev catalog tools (tools.disabled); `qsdev check`
+	// validates them against the tools the server can mount.
+	DisabledTools []string `yaml:"disabled_tools,omitempty"`
 }
 
 // ClaudeCodeConfig holds Claude Code agent settings in .qsdev.yaml.

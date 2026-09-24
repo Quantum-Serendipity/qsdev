@@ -40,7 +40,13 @@ type ValidateOptions struct {
 	// ProfileNames are the project-type profiles `profile` must name (the
 	// devinit project-profile registry, which embedders can extend).
 	ProfileNames []string
-	ToolNames    []string
+	// ToolNames are the qsdev catalog tools tools.enabled and tools.disabled
+	// must name.
+	ToolNames []string
+	// MCPToolNames are the tools qsdev's MCP server can mount
+	// (mcpserve.MountableToolNames); mcp.disabled_tools must name one of them.
+	// Validation of that list is skipped when none are given.
+	MCPToolNames []string
 }
 
 // ParseQsdevConfig reads and parses a .qsdev.yaml file at path.
@@ -263,17 +269,23 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 				})
 			}
 		}
+		mcpTools := toSet(opts.MCPToolNames)
 		for _, t := range cfg.Tools.Disabled {
 			if !knownTools[t] {
+				msg := "unknown tool name"
+				if mcpTools[t] {
+					msg = "is an MCP tool name, not a catalog tool; list it under mcp.disabled_tools to deny it"
+				}
 				errs = append(errs, ValidationError{
 					Field:   "tools.disabled",
 					Value:   t,
-					Message: "unknown tool name",
+					Message: msg,
 				})
 			}
 		}
 	}
 
+	errs = append(errs, validateMCPDisabledTools(cfg, opts)...)
 	errs = append(errs, validateProfiles(cfg, opts)...)
 
 	// git.branch_pattern is spliced into the branch-naming pre-push hook.
@@ -320,6 +332,29 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 		}
 	}
 
+	return errs
+}
+
+// validateMCPDisabledTools checks mcp.disabled_tools against the MCP tool
+// namespace (opts.MCPToolNames). An unknown name is an error rather than a
+// harmless no-op: the deny it was meant to install (typically a misspelled
+// tool) would otherwise leave the intended tool runnable. Catalog tool names
+// belong in tools.disabled and are rejected here the same way.
+func validateMCPDisabledTools(cfg *types.QsdevConfig, opts ValidateOptions) []ValidationError {
+	if len(opts.MCPToolNames) == 0 {
+		return nil
+	}
+	known := toSet(opts.MCPToolNames)
+	var errs []ValidationError
+	for _, t := range cfg.MCP.DisabledTools {
+		if !known[t] {
+			errs = append(errs, ValidationError{
+				Field:   "mcp.disabled_tools",
+				Value:   t,
+				Message: "unknown MCP tool name; " + validValues(opts.MCPToolNames),
+			})
+		}
+	}
 	return errs
 }
 

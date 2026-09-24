@@ -1,9 +1,13 @@
 package mcpserve
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/container"
@@ -16,7 +20,7 @@ import (
 // the enforcing Guardrail.
 func writeDisablingConfig(t *testing.T, dir, toolName string) {
 	t.Helper()
-	body := "version: 1\ntools:\n  disabled:\n    - " + toolName + "\n"
+	body := "version: 1\nmcp:\n  disabled_tools:\n    - " + toolName + "\n"
 	if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -41,7 +45,7 @@ func callThroughChain(t *testing.T, chain *spi.Chain, tool, category string) (ra
 }
 
 // TestChainForModeEnforcesDisabledTool is the BL-P1-3 regression: a tool disabled
-// in .qsdev.yaml (tools.disabled) must be BLOCKED by the enforcing Guardrail on an
+// in .qsdev.yaml (mcp.disabled_tools) must be BLOCKED by the enforcing Guardrail on an
 // MCP call — not merely reported denied by qsdev_policy_check. It exercises the
 // real server-construction seam (projectPolicy -> chainForMode) for BOTH native
 // and gateway modes.
@@ -62,7 +66,7 @@ func TestChainForModeEnforcesDisabledTool(t *testing.T) {
 		t.Fatalf("projectPolicy returned error for a valid config: %v", err)
 	}
 	if policy == nil {
-		t.Fatal("projectPolicy returned nil for a config with tools.disabled; the deny would never be enforced")
+		t.Fatal("projectPolicy returned nil for a config with mcp.disabled_tools; the deny would never be enforced")
 	}
 
 	for _, mode := range []container.DeployMode{container.DeployNative, container.DeployGateway} {
@@ -73,13 +77,13 @@ func TestChainForModeEnforcesDisabledTool(t *testing.T) {
 			// handler never runs).
 			ran, res := callThroughChain(t, enforced, disabledTool, middleware.CategorySecurity)
 			if ran {
-				t.Errorf("disabled tool %q ran despite tools.disabled — Guardrail not enforcing", disabledTool)
+				t.Errorf("disabled tool %q ran despite mcp.disabled_tools — Guardrail not enforcing", disabledTool)
 			}
 			if res == nil || !res.IsError {
 				t.Fatalf("disabled tool result = %+v, want IsError (denied by policy)", res)
 			}
 
-			// A tool NOT in tools.disabled still runs — deny rules only subtract.
+			// A tool NOT in mcp.disabled_tools still runs — deny rules only subtract.
 			ran, res = callThroughChain(t, enforced, allowedTool, middleware.CategoryStatus)
 			if !ran || res == nil || res.IsError {
 				t.Errorf("allowed tool %q was blocked; ran=%v res=%+v", allowedTool, ran, res)
@@ -101,7 +105,7 @@ func TestChainForModeEnforcesDisabledTool(t *testing.T) {
 // but unparseable .qsdev.yaml (an unknown/typo'd key the strict decoder rejects)
 // must fail closed — projectPolicy returns an error so the server refuses to
 // start un-narrowed — rather than a nil permissive policy that silently drops
-// every tools.disabled deny. An ABSENT config stays benign (nil policy, no error).
+// every mcp.disabled_tools deny. An ABSENT config stays benign (nil policy, no error).
 func TestProjectPolicyFailsClosedOnUnparseableConfig(t *testing.T) {
 	// Absent config: benign — no error, permissive (nil) policy.
 	empty := t.TempDir()
@@ -110,18 +114,93 @@ func TestProjectPolicyFailsClosedOnUnparseableConfig(t *testing.T) {
 	}
 
 	// Present but unparseable: an unknown top-level key the strict decoder rejects
-	// alongside a real tools.disabled deny.
+	// alongside a real mcp.disabled_tools deny.
 	bad := t.TempDir()
-	body := "version: 1\ntools:\n  disabled:\n    - qsdev_security_scan\nbogus_unknown_key: true\n"
+	body := "version: 1\nmcp:\n  disabled_tools:\n    - qsdev_security_scan\nbogus_unknown_key: true\n"
 	if err := os.WriteFile(filepath.Join(bad, ".qsdev.yaml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	policy, err := projectPolicy(bad)
 	if err == nil {
 		t.Fatal("unparseable config: projectPolicy returned nil error — the server would run " +
-			"permissively, silently dropping every tools.disabled deny (fail open)")
+			"permissively, silently dropping every mcp.disabled_tools deny (fail open)")
 	}
 	if policy != nil {
 		t.Errorf("unparseable config: policy = %v, want nil (must not hand back a usable permissive policy)", policy)
+	}
+}
+
+// TestProjectPolicyIgnoresCatalogDisables is the F228 regression: tools.disabled
+// names qsdev catalog tools (gitleaks, ...), a namespace separate from MCP tool
+// names, so it must never turn into an MCP Guardrail deny. Only
+// mcp.disabled_tools does.
+func TestProjectPolicyIgnoresCatalogDisables(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		body     string
+		wantDeny []string
+	}{
+		{
+			name: "catalog disable only",
+			body: "version: 2\ntools:\n  disabled:\n    - gitleaks\n",
+		},
+		{
+			name:     "catalog and mcp disables",
+			body:     "version: 2\ntools:\n  disabled:\n    - gitleaks\nmcp:\n  disabled_tools:\n    - qsdev_nix_run\n",
+			wantDeny: []string{"qsdev_nix_run"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte(tt.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			policy, err := projectPolicy(dir)
+			if err != nil {
+				t.Fatalf("projectPolicy: %v", err)
+			}
+			if got := policy.DenyToolSet(); !slices.Equal(got, tt.wantDeny) {
+				t.Errorf("enforced deny = %v, want %v", got, tt.wantDeny)
+			}
+		})
+	}
+}
+
+// TestWarnUnknownDisabledTools checks that serve logs each mcp.disabled_tools
+// entry it cannot mount (an inert deny, usually a misspelling) and nothing for
+// a mountable one.
+func TestWarnUnknownDisabledTools(t *testing.T) {
+	tests := []struct {
+		name     string
+		denied   []string
+		wantWarn []string
+	}{
+		{name: "all mountable", denied: []string{"qsdev_nix_run"}},
+		{name: "misspelled", denied: []string{"qsdev_nix_run", "qsdev_nixrun"}, wantWarn: []string{"qsdev_nixrun"}},
+		{name: "nothing denied"},
+	}
+	mountable := MountableToolNames(nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+
+			warnUnknownDisabledTools(tt.denied, mountable)
+
+			out := buf.String()
+			if got := strings.Count(out, "level=WARN"); got != len(tt.wantWarn) {
+				t.Errorf("warnings = %d, want %d; log:\n%s", got, len(tt.wantWarn), out)
+			}
+			for _, name := range tt.wantWarn {
+				if !strings.Contains(out, "tool="+name) {
+					t.Errorf("no warning for %q; log:\n%s", name, out)
+				}
+			}
+		})
 	}
 }

@@ -44,6 +44,18 @@ func optionalBoolSchema(name, desc string) map[string]any {
 	}
 }
 
+// ToolNames returns the names of the generic project context tools. It reads
+// them from Tools (building the registrations touches no ProjectContext
+// state), so the list cannot drift from what MountProjectContext mounts.
+func ToolNames() []string {
+	regs := new(ProjectContext).Tools()
+	names := make([]string, len(regs))
+	for i, r := range regs {
+		names[i] = r.Name
+	}
+	return names
+}
+
 // Tools returns the six generic project context tool registrations. Each is a
 // fully-implemented handler that delegates to an existing qsdev package; none is
 // a stub.

@@ -163,6 +163,7 @@ type CheckContext struct {
 	ConfigErr            error    // why QsdevConfig is nil: not found vs. failed to parse
 	ToolNames            []string // every registered tool, for config name validation
 	AlwaysOnToolNames    []string // tools that must never appear in tools.disabled
+	MCPToolNames         []string // tools the MCP server can mount, for validating mcp.disabled_tools
 	ProfileNames         []string // project-type profiles, for validating `profile`
 	RequiredDenyRules    []string
 	StateFile            string

@@ -62,6 +62,9 @@ tools:
     - semgrep
   disabled:
     - dangerous_tool
+mcp:
+  disabled_tools:
+    - qsdev_nix_run
 `
 
 func TestPolicyCheckEvaluatesDenyRule(t *testing.T) {
@@ -83,6 +86,22 @@ func TestPolicyCheckEvaluatesDenyRule(t *testing.T) {
 		}
 		if eval.Source != sourceProject || eval.Rule != "tools.disabled" {
 			t.Errorf("source/rule = %q/%q, want project/tools.disabled", eval.Source, eval.Rule)
+		}
+	})
+
+	t.Run("mcp disabled tool", func(t *testing.T) {
+		eval := structuredMap(t, call(t, pc.handle, map[string]any{"tool_name": "qsdev_nix_run"}))["evaluation"].(policyDecision)
+		want := policyDecision{Tool: "qsdev_nix_run", Decision: decisionDenied, Source: sourceProject, Rule: "mcp.disabled_tools"}
+		if eval != want {
+			t.Errorf("got %+v, want %+v", eval, want)
+		}
+	})
+
+	t.Run("inventory lists the mcp deny", func(t *testing.T) {
+		rules, _ := structuredMap(t, call(t, pc.handle, nil))["rules"].([]policyDecision)
+		want := policyDecision{Tool: "qsdev_nix_run", Decision: decisionDenied, Source: sourceProject, Rule: "mcp.disabled_tools"}
+		if !slices.Contains(rules, want) {
+			t.Errorf("rules = %+v, want one equal to %+v", rules, want)
 		}
 	})
 
@@ -109,7 +128,10 @@ func TestPolicyCheckEvaluatesDenyRule(t *testing.T) {
 func TestPolicyCheckReportsEnforcedDenySet(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeConfig(t, dir, "version: 1\ntools:\n  disabled:\n    - qsdev_security_scan\n    - qsdev_nix_run\n")
+	// tools.disabled is the catalog namespace: gitleaks must not become a
+	// phantom MCP deny next to the two mcp.disabled_tools entries.
+	writeConfig(t, dir, "version: 1\ntools:\n  disabled:\n    - gitleaks\n"+
+		"mcp:\n  disabled_tools:\n    - qsdev_security_scan\n    - qsdev_nix_run\n")
 	cfg, err := config.ParseQsdevConfig(filepath.Join(dir, ".qsdev.yaml"))
 	if err != nil {
 		t.Fatalf("parse config: %v", err)
@@ -127,8 +149,8 @@ func TestPolicyCheckReportsEnforcedDenySet(t *testing.T) {
 		t.Errorf("reported enforced deny = %v, want %v (reported must equal enforced)", reported, want)
 	}
 	// Guard against a vacuous pass where both sides are empty.
-	if len(reported) != 2 {
-		t.Fatalf("enforced deny set = %v, want the 2 disabled tools", reported)
+	if want := []string{"qsdev_nix_run", "qsdev_security_scan"}; !reflect.DeepEqual(reported, want) {
+		t.Fatalf("enforced deny set = %v, want %v (mcp.disabled_tools only)", reported, want)
 	}
 	if w := m["warnings"]; w != nil {
 		t.Errorf("file and enforced policy agree; want no warnings, got %v", w)
@@ -146,9 +168,9 @@ func TestPolicyCheckEnforcedDenyIgnoresFileDrift(t *testing.T) {
 	// Server started with nothing disabled: the installed Guardrail policy is nil.
 	pc := newPolicyChecker(dir, nil)
 	// The config now disables a tool (edited after startup).
-	writeConfig(t, dir, "version: 1\ntools:\n  disabled:\n    - qsdev_credential_vend\n")
+	writeConfig(t, dir, "version: 1\nmcp:\n  disabled_tools:\n    - qsdev_credential_vend\n")
 	other := filepath.Join(dir, "other.yaml")
-	if err := os.WriteFile(other, []byte("version: 1\ntools:\n  disabled:\n    - qsdev_nix_run\n"), 0o644); err != nil {
+	if err := os.WriteFile(other, []byte("version: 1\nmcp:\n  disabled_tools:\n    - qsdev_nix_run\n"), 0o644); err != nil {
 		t.Fatalf("write other policy: %v", err)
 	}
 

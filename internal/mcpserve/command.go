@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -159,7 +160,7 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	defer session.Close() // Close is nil-safe.
 
 	// Derive the Guardrail permission policy from the project's .qsdev.yaml
-	// (tools.disabled) BEFORE building the chain, so a disabled tool is actually
+	// (mcp.disabled_tools) BEFORE building the chain, so a disabled tool is actually
 	// enforced on MCP calls — not merely reported denied by qsdev_policy_check. A
 	// present-but-unparseable config fails startup rather than silently running
 	// un-narrowed (fail closed).
@@ -190,6 +191,7 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	// Mount the security and devenv tool surface (Unit 32.9). These are
 	// framework-agnostic and always visible, like the project context tools.
 	srv.MountTools(tools.All(root, policy))
+	warnUnknownDisabledTools(policy.DenyToolSet(), MountableToolNames(spi.DefaultRegistry().All()))
 
 	if ctx == nil {
 		ctx = context.Background()
@@ -255,12 +257,12 @@ func chainForMode(mode container.DeployMode, policy *middleware.Policy) *spi.Cha
 }
 
 // projectPolicy loads the project's .qsdev.yaml (when present) and derives the
-// Guardrail permission policy from its tools.disabled list via the single shared
+// Guardrail permission policy from its mcp.disabled_tools list via the single shared
 // middleware.PolicyFromConfig derivation (the same one qsdev_policy_check reports
 // from).
 //
 // It fails closed on a PRESENT-but-unparseable config: returning a nil
-// (permissive) policy there would silently drop every tools.disabled deny the
+// (permissive) policy there would silently drop every mcp.disabled_tools deny the
 // operator intended — the exact fail-open the strict decoder can now trigger
 // from a single unknown/typo'd key. An ABSENT config is benign (nothing to
 // narrow) and yields a nil policy with no error. errors.Is unwraps the
@@ -280,6 +282,20 @@ func projectPolicy(root string) (*middleware.Policy, error) {
 			"(refusing to serve un-narrowed): %w", path, err)
 	}
 	return middleware.PolicyFromConfig(cfg), nil
+}
+
+// warnUnknownDisabledTools logs every denied tool name the server cannot mount.
+// Such a deny is inert, and usually means a misspelling that leaves the tool the
+// operator meant to disable runnable. `qsdev check` fails on the same names
+// (config.ValidateQsdevConfig); the server still starts, with the deny
+// installed, so a config written for a newer qsdev does not take it down.
+func warnUnknownDisabledTools(denied, mountable []string) {
+	for _, name := range denied {
+		if !slices.Contains(mountable, name) {
+			slog.Warn("mcp.disabled_tools names a tool this server does not provide; the entry has no effect",
+				"tool", name)
+		}
+	}
 }
 
 // gatewayRequireAuth reports whether gateway allow-list authorization is being

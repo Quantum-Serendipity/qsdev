@@ -100,6 +100,8 @@ infrastructure:
   build_cache_url: ""                                       # e.g. a self-hosted Turborepo remote cache
 git:
   branch_pattern: '^(feat|fix|chore|docs|refactor|test|ci)/[a-z0-9._-]+$'   # optional; see Git settings
+mcp:
+  disabled_tools: [qsdev_nix_run]   # MCP tools the qsdev MCP server refuses to run
 ```
 
 `version` is the schema version (currently `2`). Each profile key is
@@ -185,6 +187,36 @@ override it). The pattern must compile as a POSIX ERE and be printable ASCII
 without a single quote, because it is embedded in a shell single-quoted string
 in `devenv.nix`; `qsdev check` reports an invalid pattern and generation
 refuses to render one.
+
+### MCP tool deny list
+
+`mcp.disabled_tools` lists tools of qsdev's own MCP server
+(`qsdev mcp serve`) that its guardrail refuses to run, for every caller. It
+names MCP tools such as `qsdev_nix_run`, `qsdev_security_scan` or
+`qsdev_credential_vend`, which are not the same thing as qsdev catalog
+tools. `tools.disabled` lists catalog tools (`gitleaks`, `semgrep`, ...);
+it controls what `qsdev init` generates and never blocks an MCP tool.
+
+```yaml
+mcp:
+  disabled_tools:
+    - qsdev_nix_run          # no process execution through MCP
+    - qsdev_credential_vend
+```
+
+- `qsdev check` fails (`config_validation`, high severity) on a name the
+  server cannot mount: its generic tools, its security, devenv and status
+  tools, and every framework adapter's tools. The same check fails on an MCP
+  tool name placed in `tools.disabled`.
+- The server reads the list once at startup, so restart it after a change.
+  It still starts when an entry names no tool it provides, but logs a warning
+  for each one, because such an entry leaves the tool you probably meant
+  runnable.
+- `qsdev_policy_check` reports the list as `mcp_enforced_deny`, and reports
+  a tool in it as denied with rule `mcp.disabled_tools`. It warns when the
+  file on disk differs from the list the running server enforces.
+- The key is set only in `.qsdev.yaml`: `.qsdev.local.yaml` cannot add to
+  or remove from it. Re-creating a project (`qsdev init --force`) keeps it.
 
 ### Infrastructure settings
 

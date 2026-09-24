@@ -242,3 +242,46 @@ func TestCheckConfigIntegrity_ParseErrorIsNotNotFound(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckConfigIntegrity_MCPDisabledTools is the F228 regression: an MCP
+// tool disabled through mcp.disabled_tools passes `qsdev check`, while a
+// misspelled one, or an MCP tool placed in the catalog's tools.disabled, fails
+// it.
+func TestCheckConfigIntegrity_MCPDisabledTools(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		cfg      types.QsdevConfig
+		wantFail string // substring of the failing message, "" for none
+	}{
+		{"mcp tool disabled", types.QsdevConfig{MCP: types.MCPConfig{DisabledTools: []string{"qsdev_nix_run"}}}, ""},
+		{"misspelled mcp tool", types.QsdevConfig{MCP: types.MCPConfig{DisabledTools: []string{"qsdev_nixrun"}}},
+			"mcp.disabled_tools"},
+		{"mcp tool in tools.disabled", types.QsdevConfig{Tools: types.ToolsConfig{Disabled: []string{"qsdev_nix_run"}}},
+			"tools.disabled"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := tt.cfg
+			cfg.Version = types.ConfigVersionCurrent
+			results := CheckConfigIntegrity(CheckContext{
+				QsdevConfig:  &cfg,
+				ToolNames:    []string{"gitleaks", "safety-block"},
+				MCPToolNames: []string{"qsdev_nix_run", "qsdev_status"},
+			})
+			var fails []string
+			for _, r := range results {
+				if r.Status == StatusFail {
+					fails = append(fails, r.Message)
+				}
+			}
+			if tt.wantFail == "" && len(fails) != 0 {
+				t.Errorf("unexpected failures: %v", fails)
+			}
+			if tt.wantFail != "" && (len(fails) != 1 || !strings.Contains(fails[0], tt.wantFail)) {
+				t.Errorf("failures = %v, want one mentioning %q", fails, tt.wantFail)
+			}
+		})
+	}
+}

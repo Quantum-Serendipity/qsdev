@@ -14,6 +14,8 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve"
+	mcpadapters "github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/conformance"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
@@ -97,6 +99,10 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 			ctx.AlwaysOnToolNames = append(ctx.AlwaysOnToolNames, tool.Name)
 		}
 	}
+
+	// mcp.disabled_tools names MCP tools, a namespace separate from the
+	// catalog: validate it against every tool the MCP server can mount.
+	ctx.MCPToolNames = mcpserve.MountableToolNames(mcpadapters.All())
 
 	// Profile names from registry.
 	ctx.ProfileNames = ensureProfileRegistry().Names()

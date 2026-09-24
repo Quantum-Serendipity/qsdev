@@ -135,6 +135,9 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 	// ClaudeCode.MCPServers: union.
 	result.ClaudeCode.MCPServers = mergeUnionStrings(base.ClaudeCode.MCPServers, overlay.ClaudeCode.MCPServers)
 
+	// MCP.DisabledTools: union, so an MCP tool denied at any layer stays denied.
+	result.MCP.DisabledTools = mergeUnionStrings(base.MCP.DisabledTools, overlay.MCP.DisabledTools)
+
 	// Infrastructure: last-wins scalars, map merge for overrides.
 	if overlay.Infrastructure.RegistryProxy != "" {
 		result.Infrastructure.RegistryProxy = overlay.Infrastructure.RegistryProxy
@@ -417,6 +420,7 @@ func cloneQsdevConfig(cfg *types.QsdevConfig) *types.QsdevConfig {
 		copy(result.ClaudeCode.MCPServers, cfg.ClaudeCode.MCPServers)
 	}
 
+	result.MCP.DisabledTools = slices.Clone(cfg.MCP.DisabledTools)
 	result.Client = cloneClient(cfg.Client)
 
 	return result

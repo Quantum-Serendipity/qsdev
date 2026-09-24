@@ -68,7 +68,7 @@ type policyDecision struct {
 	Tool     string `json:"tool"`
 	Decision string `json:"decision"` // allowed | denied | ask
 	Source   string `json:"source"`   // project | local | default
-	Rule     string `json:"rule"`     // tools.disabled | tools.enabled | default
+	Rule     string `json:"rule"`     // mcp.disabled_tools | tools.disabled | tools.enabled | default
 }
 
 // floorViolation is the JSON-facing form of a config.FloorViolation: an overlay
@@ -89,6 +89,9 @@ const (
 	sourceProject = "project"
 	sourceLocal   = "local"
 	sourceDefault = "default"
+
+	// ruleMCPDisabled is the rule behind a deny the MCP Guardrail enforces.
+	ruleMCPDisabled = "mcp.disabled_tools"
 )
 
 // handle evaluates the in-memory policy. With tool_name set it returns the
@@ -130,7 +133,8 @@ func (pc *policyChecker) handle(_ context.Context, _ *spi.ToolCallContext, req *
 	// tool calls, read from the Policy object the running server installed at
 	// startup — never re-derived from the file (which may have changed since) or
 	// from a caller-chosen policy_path. It reflects the project config's
-	// tools.disabled only; the local overlay drives advisory Claude Code semantics.
+	// mcp.disabled_tools only; the catalog tools lists and the local overlay
+	// drive advisory Claude Code semantics.
 	mcpEnforcedDeny := pc.enforced.DenyToolSet()
 
 	structured := map[string]any{
@@ -162,14 +166,14 @@ func (pc *policyChecker) handle(_ context.Context, _ *spi.ToolCallContext, req *
 // deny set the running server actually enforces, or returns "" when there is
 // none. A non-default policy_path is never what the Guardrail enforces, and the
 // default project config may have been edited since startup, in which case its
-// tools.disabled is not enforced until the server restarts.
+// mcp.disabled_tools is not enforced until the server restarts.
 func (pc *policyChecker) enforcementDrift(policyPath string, project *types.QsdevConfig, enforced []string) string {
 	if policyPath != pc.defaultPath {
 		return fmt.Sprintf("policy_path %s is not the project config the MCP server enforces; "+
 			"its verdicts are hypothetical and mcp_enforced_deny reflects the running server's policy", policyPath)
 	}
 	if onDisk := middleware.PolicyFromConfig(project).DenyToolSet(); !slices.Equal(onDisk, enforced) {
-		return fmt.Sprintf("%s tools.disabled %v differs from the deny set the running MCP server enforces %v "+
+		return fmt.Sprintf("%s mcp.disabled_tools %v differs from the deny set the running MCP server enforces %v "+
 			"(loaded at startup); restart the server to enforce the current file",
 			branding.Get().ConfigFile, onDisk, enforced)
 	}
@@ -255,17 +259,20 @@ func (pc *policyChecker) refreshLocalLocked() string {
 	return ""
 }
 
-// evaluateTool resolves the verdict for tool. The canonical resolver unions the
-// project and local tools lists, so a deny (tools.disabled) at ANY level wins
-// over an allow at any level: a local tools.enabled never re-enables a tool the
-// project disables (the MCP Guardrail still enforces that project deny). The
-// project deny is reported first because it is the one the Guardrail enforces.
+// evaluateTool resolves the verdict for tool. An MCP tool named in the
+// project's mcp.disabled_tools is reported first because that is the deny the
+// MCP Guardrail enforces. For the catalog tools lists the canonical resolver
+// unions the project and local lists, so a deny (tools.disabled) at ANY level
+// wins over an allow at any level: a local tools.enabled never re-enables a tool
+// the project disables.
 func evaluateTool(tool string, project *types.QsdevConfig, local *config.LocalConfig, defaultDecision string) policyDecision {
 	var localTools types.ToolsConfig
 	if local != nil {
 		localTools = local.Tools
 	}
 	switch {
+	case slices.Contains(project.MCP.DisabledTools, tool):
+		return policyDecision{Tool: tool, Decision: decisionDenied, Source: sourceProject, Rule: ruleMCPDisabled}
 	case slices.Contains(project.Tools.Disabled, tool):
 		return policyDecision{Tool: tool, Decision: decisionDenied, Source: sourceProject, Rule: "tools.disabled"}
 	case slices.Contains(localTools.Disabled, tool):
@@ -283,6 +290,9 @@ func evaluateTool(tool string, project *types.QsdevConfig, local *config.LocalCo
 // effective policy without naming a specific tool.
 func inventoryRules(project *types.QsdevConfig, local *config.LocalConfig) []policyDecision {
 	var rules []policyDecision
+	for _, t := range project.MCP.DisabledTools {
+		rules = append(rules, policyDecision{Tool: t, Decision: decisionDenied, Source: sourceProject, Rule: ruleMCPDisabled})
+	}
 	for _, t := range project.Tools.Disabled {
 		rules = append(rules, policyDecision{Tool: t, Decision: decisionDenied, Source: sourceProject, Rule: "tools.disabled"})
 	}

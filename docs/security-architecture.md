@@ -225,6 +225,15 @@ qsdev policy list               # List all active rules
 qsdev policy show <rule-id>     # Inspect a specific rule
 ```
 
+**MCP tool deny list.** qsdev's own MCP server (`qsdev mcp serve`) runs
+every tool call through a guardrail middleware. The tools named in
+`.qsdev.yaml` `mcp.disabled_tools` are refused for every caller. That list
+holds MCP tool names only: `tools.disabled` names qsdev catalog tools, a
+separate namespace, and never becomes an MCP deny. `qsdev check` fails on an
+`mcp.disabled_tools` entry that names no tool the server can mount, so a
+misspelling cannot silently leave a tool enabled in a CI-gated project. See
+[MCP tool deny list](configuration-reference.md#mcp-tool-deny-list).
+
 ### Layer 13: Package and MCP Risk Scoring
 
 **Package risk scoring** evaluates packages across 28 probes in 6 weighted categories:

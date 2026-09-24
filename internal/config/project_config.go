@@ -96,7 +96,8 @@ func AnswersToConfig(answers types.WizardAnswers, binaryVersion string) types.Qs
 // PreserveCommittedPolicy carries into fresh, the .qsdev.yaml about to be
 // written for a re-created project (`qsdev init --force` or `--mode create`
 // over an existing file), the committed keys answers cannot express: the
-// client block, the security bools, git settings and tools.config.
+// client block, the security bools, git settings, tools.config and
+// mcp.disabled_tools.
 // security.level keeps the stricter of the two, so re-creating a project never
 // silently drops its declared security floor or client policy.
 func PreserveCommittedPolicy(fresh, committed *types.QsdevConfig) {
@@ -112,6 +113,7 @@ func PreserveCommittedPolicy(fresh, committed *types.QsdevConfig) {
 	fresh.Client = cloneClient(committed.Client)
 	fresh.Git = committed.Git
 	fresh.Tools.Config = mergeMapStringAny(nil, committed.Tools.Config)
+	fresh.MCP.DisabledTools = slices.Clone(committed.MCP.DisabledTools)
 }
 
 // olderSchema reports whether the .qsdev.yaml content data declares a schema
@@ -159,7 +161,7 @@ func WriteProjectConfig(path string, cfg types.QsdevConfig) error {
 // Only answer-derived keys are replaced (tier, languages, services, packages,
 // overlays, claude_code and tool decisions); keys the answers do not carry
 // (qsdev_version, security, profile, infra_profile, infrastructure, client,
-// git, tools.config) are kept as committed. A project without .qsdev.yaml
+// git, tools.config, mcp) are kept as committed. A project without .qsdev.yaml
 // (e.g. a standalone `devenv init`) is left alone, and the file is rewritten
 // only when a synced key actually changed or it is at an older schema
 // version, which is thereby migrated to the current one.

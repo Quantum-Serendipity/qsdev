@@ -62,6 +62,9 @@ var (
 	// semgrepInvocationRe matches a script line that runs semgrep with an
 	// explicit rule config.
 	semgrepInvocationRe = regexp.MustCompile(`(?m)^\s*semgrep\s(?:.*\s)?--config\s`)
+	// scancodePolicyInvocationRe matches a script line that runs a ScanCode
+	// license scan with a license policy applied.
+	scancodePolicyInvocationRe = regexp.MustCompile(`(?m)^\s*scancode\s(?:.*\s)?--license\s(?:.*\s)?--license-policy\s`)
 
 	// nixHardeningSettings are the hardening settings qsdev renders into
 	// devenv.nix. A devenv.nix that is merely present, without them, provides
@@ -118,11 +121,11 @@ func (in assessmentInput) hasLockFileAuditHook() bool {
 	return false
 }
 
-// semgrepScanWired reports whether devenv.nix defines the security-scan task
-// script and that script runs semgrep with an explicit rule config. The
-// semgrep tool on its own only installs the binary and writes .semgrepignore;
-// SAST happens only where the task runs it.
-func (in assessmentInput) semgrepScanWired() bool {
+// securityScanRuns reports whether devenv.nix defines the security-scan task
+// script and a line of that script matches invocation. A scanner tool on its
+// own only installs the binary and writes its config or policy file; scanning
+// happens only where the task runs it.
+func (in assessmentInput) securityScanRuns(invocation *regexp.Regexp) bool {
 	data := in.content(devenvNixPath)
 	if data == nil {
 		return false
@@ -132,7 +135,7 @@ func (in assessmentInput) semgrepScanWired() bool {
 		return false
 	}
 	body, ok := nixIndentedStringBody(string(data[loc[1]:]))
-	return ok && semgrepInvocationRe.MatchString(body)
+	return ok && invocation.MatchString(body)
 }
 
 // nixIndentedStringBody returns the raw body of a Nix indented string, which
@@ -366,7 +369,7 @@ var layerTable = []layerSpec{
 			// task script in devenv.nix must invoke semgrep with its rule
 			// packs, and the tool must be enabled so the binary is installed.
 			semgrepEnabled := input.EnabledTools["semgrep"]
-			wired := input.semgrepScanWired()
+			wired := input.securityScanRuns(semgrepInvocationRe)
 
 			switch {
 			case semgrepEnabled && wired:
@@ -421,8 +424,18 @@ var layerTable = []layerSpec{
 		Weight:  WeightLow,
 		MinTier: 3,
 		Assess: func(input assessmentInput) (LayerStatus, int, string) {
-			if input.EnabledTools["license-compliance"] {
-				return LayerEnabled, 0, "license compliance scanning enabled"
+			// The policy file alone enforces nothing: licenses are checked
+			// only where the security-scan task runs ScanCode with it.
+			enabled := input.EnabledTools["license-compliance"]
+			wired := input.securityScanRuns(scancodePolicyInvocationRe)
+
+			switch {
+			case enabled && wired:
+				return LayerEnabled, 0, "license-compliance enabled and its ScanCode policy scan run by the " + securityScanScript + " task"
+			case enabled:
+				return LayerPartial, 5, "license-compliance enabled but the " + securityScanScript + " task in devenv.nix does not run the ScanCode policy scan (run qsdev update)"
+			case wired:
+				return LayerPartial, 5, securityScanScript + " task runs a ScanCode policy scan but license-compliance not enabled"
 			}
 			return LayerDisabled, 0, "license compliance not enabled"
 		},

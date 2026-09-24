@@ -525,17 +525,24 @@ tools:
     license-compliance:
         display_name: License Compliance (ScanCode)
         category: security
-        description: License compliance checking via ScanCode with SPDX allowlist/blocklist policies
+        description: License compliance scanning via ScanCode with an approved/restricted/prohibited license policy
         default_policy: opt-in
+        nix_package: python3Packages.scancode-toolkit
+        # .scancode.yml is a ScanCode --license-policy file; ScanCode reads no
+        # project config, so the security-scan task passes it on the command
+        # line and fails on any file with a prohibited license.
         owned_files:
             - path: .scancode.yml
               ownership: exclusive
             - path: .license-exceptions.yml
               ownership: exclusive
+            - path: devenv.nix
+              ownership: shared
+              section_id: license-compliance
             - path: CLAUDE.md
               ownership: shared
               section_id: license-compliance
-              section_content: "- **License Compliance** checks dependencies against SPDX allowlist/blocklist policies."
+              section_content: "- **License Compliance** scans the project and its dependencies with ScanCode; `qsdev-security-scan` fails on prohibited licenses (GPL, AGPL, SSPL, BUSL)."
     opengrep:
         display_name: OpenGrep SAST
         category: security

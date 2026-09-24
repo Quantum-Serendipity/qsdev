@@ -258,6 +258,8 @@ If your project was initialized before qsdev 0.7.0, running `qsdev update` intro
 
 **Semgrep config file removed** — qsdev used to generate a `.semgrep.yml` that Semgrep rejects (it listed registry rule packs under `rules:` and had a `paths:` key), and the `security-scan` task never read it. `qsdev update` now deletes that file if you have not edited it, or stops tracking it if you have. It writes a `.semgrepignore` with the scan exclusions in its place. The `security-scan` task now passes the ecosystem rule packs as `--config` flags, and runs your own rules too if you move them into a `.semgrep/` directory. As with the OpenGrep file, update only retires `.semgrep.yml` when it regenerates semgrep's files. In a project where it does not (for example one initialized with `--devenv-only`), delete the file by hand. `qsdev status` now reports the SAST layer as enabled only when the `security-scan` task in `devenv.nix` runs semgrep, so run `qsdev update` if it reports the layer as partial.
 
+**License policy rewritten** — The `.scancode.yml` generated for `license-compliance` used to list `allowed`, `blocked` and `review` licenses in a format ScanCode does not read, and nothing ran ScanCode. `qsdev update` rewrites it as a real ScanCode `license_policies` policy that also prohibits the `-or-later` GPL and AGPL variants. Update also adds ScanCode to the `devenv.nix` packages and a license scan to the `security-scan` task, which fails on prohibited licenses. `qsdev status` now reports the license-compliance layer as enabled only when that task runs the scan, so run `qsdev update` if it reports the layer as partial.
+
 ## Common Issues
 
 ### `devenv.nix already exists; use --force to overwrite`

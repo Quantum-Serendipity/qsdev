@@ -149,11 +149,17 @@ When a Dockerfile or Containerfile is detected, qsdev generates runtime-aware se
 
 ### Layer 10: License Compliance
 
-Generated CI configuration includes license scanning that:
+License compliance is opt-in (`qsdev enable license-compliance`). It uses [ScanCode Toolkit](https://github.com/aboutcode-org/scancode-toolkit), installed from nixpkgs (`python3Packages.scancode-toolkit`):
 
-- Detects non-permissive licenses (GPL, AGPL, SSPL) in transitive dependencies.
-- Generates a license report as part of SBOM output.
-- Blocks merges when policy-violating licenses are introduced (configurable per infrastructure profile).
+- `.scancode.yml` is a ScanCode license policy (the `license_policies` format that `scancode --license-policy` reads). Each entry names a ScanCode license key, its SPDX identifier, a label and a `compliance_alert`:
+  - **Approved** (no alert): MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, Unlicense, CC0-1.0.
+  - **Restricted** (`warning`): LGPL-2.0/2.1/3.0, MPL-1.1, MPL-2.0, EPL-1.0, EPL-2.0, CDDL-1.0, CDDL-1.1 and Artistic-2.0. The LGPL versions are listed in both their `-only` and `-or-later` forms.
+  - **Prohibited** (`error`): GPL-1.0/2.0/3.0 and AGPL-1.0/3.0 in both their `-only` and `-or-later` forms, plus SSPL-1.0 and BUSL-1.1. ScanCode maps the deprecated SPDX identifiers (`GPL-2.0`, `GPL-2.0+`, `AGPL-3.0` and so on) onto the same license keys, so they are covered too.
+- The generated `qsdev-security-scan` devenv task runs `scancode --license --license-policy .scancode.yml` over the project and pipes the JSON result through a `jq` check. The task fails when any scanned file has a license whose `compliance_alert` is `error`, and lists restricted licenses for manual review without failing. ScanCode itself only annotates files with the matching policy entries and never fails a scan, which is why the task needs the `jq` check. The check also fails when ScanCode reports an error in its scan headers, such as a policy file it rejects for a duplicate `license_key`; ScanCode then applies no policy but still exits 0.
+- The scan covers the dependency directories (`node_modules/`, `vendor/`, `third_party/`, virtual environments), because the licenses of your dependencies are stored there. It skips build output, caches, framework output, `.devenv/`, test fixtures and the policy files themselves. Scanning a large `node_modules/` tree takes a while. Dependencies stored outside the project, such as the Go module cache or the Cargo registry, are not scanned unless they are vendored.
+- ScanCode matches every license key in a detected expression, so a dual-licensed file such as `MIT OR GPL-2.0-or-later` is reported as prohibited even though the MIT option is allowed.
+- `.license-exceptions.yml` is a record of approved exceptions for reviewers. The scan does not read it.
+- The posture license-compliance layer counts as enabled only when the tool is enabled and the `qsdev-security-scan` task in `devenv.nix` runs the policy scan. If the task does not run it, the layer is partial.
 
 ### Layer 11: Cloud Credential Isolation
 

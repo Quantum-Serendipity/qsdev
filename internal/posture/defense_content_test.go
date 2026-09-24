@@ -30,6 +30,7 @@ const hardenedDevenvNix = `{ pkgs, ... }:
     exec = ''
       set -euo pipefail
       semgrep --config p/golang $(if [ -d .semgrep ]; then echo --config .semgrep; fi) --metrics=off --error .
+      scancode --quiet --license --license-policy .scancode.yml --ignore '.git' --json - . | jq -r '.files'
     '';
   };
 }

@@ -18,7 +18,8 @@ type TaskDefinition struct {
 }
 
 // SecurityScanTask is the name of the task that runs the enabled security
-// scanners (semgrep, opengrep, gitleaks).
+// scanners (semgrep, opengrep, gitleaks, and the ScanCode license scan of
+// the license-compliance tool).
 const SecurityScanTask = "security-scan"
 
 // TaskScriptPrefix is prepended to a task name to form the name of the devenv
@@ -67,6 +68,9 @@ func AggregateTaskDefinitions(
 	}
 	if enabledTools["gitleaks"] {
 		secScan.Commands = append(secScan.Commands, "gitleaks detect --no-banner")
+	}
+	if enabledTools["license-compliance"] {
+		secScan.Commands = append(secScan.Commands, licenseScanCommand())
 	}
 
 	// Collect non-empty tasks in stable order.

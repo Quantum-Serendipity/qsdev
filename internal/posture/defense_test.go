@@ -337,37 +337,71 @@ func TestAssessDefenseLayers_SAST(t *testing.T) {
 	}
 }
 
+// TestAssessDefenseLayers_LicenseCompliance is the F218 regression: the layer
+// is credited only when the security-scan task script in devenv.nix runs
+// ScanCode with the license policy, not merely because the tool is enabled
+// (the policy file on its own enforces nothing).
 func TestAssessDefenseLayers_LicenseCompliance(t *testing.T) {
-	detected := types.DetectedProject{}
-	genState := types.GeneratedState{Files: map[string]types.FileState{}}
+	t.Parallel()
 
-	t.Run("enabled", func(t *testing.T) {
-		enabledTools := map[string]bool{"license-compliance": true}
-		result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
-		for _, l := range result.Layers {
-			if l.Name == "license-compliance" {
-				if l.Status != LayerEnabled {
-					t.Errorf("license-compliance: status = %q, want %q", l.Status, LayerEnabled)
-				}
-				return
-			}
-		}
-		t.Error("license-compliance layer not found")
-	})
+	scanScript := func(exec string) string {
+		return "{ pkgs, ... }:\n{\n  scripts.\"qsdev-security-scan\" = {\n    description = \"Run security scanners\";\n    exec = ''\n" +
+			exec + "\n    '';\n  };\n}\n"
+	}
+	const scanLine = "      scancode --quiet --license --license-policy .scancode.yml --ignore '.git' --json - . | jq -r '.files'"
 
-	t.Run("disabled", func(t *testing.T) {
-		enabledTools := map[string]bool{}
-		result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
-		for _, l := range result.Layers {
-			if l.Name == "license-compliance" {
-				if l.Status != LayerDisabled {
-					t.Errorf("license-compliance: status = %q, want %q", l.Status, LayerDisabled)
-				}
-				return
+	tests := []struct {
+		name  string
+		tools map[string]bool
+		files map[string]string
+		want  LayerStatus
+	}{
+		{
+			name:  "enabled and run by the task",
+			tools: map[string]bool{"license-compliance": true},
+			files: map[string]string{"devenv.nix": scanScript("      set -euo pipefail\n" + scanLine)},
+			want:  LayerEnabled,
+		},
+		{
+			name:  "enabled with only the policy file",
+			tools: map[string]bool{"license-compliance": true},
+			files: map[string]string{".scancode.yml": "license_policies: []\n"},
+			want:  LayerPartial,
+		},
+		{
+			name:  "task scans licenses without a policy",
+			tools: map[string]bool{"license-compliance": true},
+			files: map[string]string{"devenv.nix": scanScript("      scancode --license --json - .")},
+			want:  LayerPartial,
+		},
+		{
+			name:  "scan commented out",
+			tools: map[string]bool{"license-compliance": true},
+			files: map[string]string{"devenv.nix": scanScript("      # " + scanLine[6:])},
+			want:  LayerPartial,
+		},
+		{
+			name:  "run by the task but not enabled",
+			tools: map[string]bool{},
+			files: map[string]string{"devenv.nix": scanScript(scanLine)},
+			want:  LayerPartial,
+		},
+		{
+			name:  "disabled",
+			tools: map[string]bool{},
+			want:  LayerDisabled,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir, genState := writeProjectFiles(t, tt.files)
+			l := layerByName(t, AssessDefenseLayers(dir, tt.tools, types.DetectedProject{}, genState, 3), "license-compliance")
+			if l.Status != tt.want {
+				t.Errorf("license-compliance: status = %q (%s), want %q", l.Status, l.Reason, tt.want)
 			}
-		}
-		t.Error("license-compliance layer not found")
-	})
+		})
+	}
 }
 
 func TestAssessDefenseLayers_LayerCount(t *testing.T) {

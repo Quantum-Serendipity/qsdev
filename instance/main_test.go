@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -86,7 +87,13 @@ func TestDownstreamExampleGetsDefaultRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(t.TempDir(), "acmedev")
+	// Windows only executes (and exec.LookPath only resolves) files carrying
+	// an executable extension, so the built binary must be named acmedev.exe.
+	exeName := "acmedev"
+	if runtime.GOOS == "windows" {
+		exeName += ".exe"
+	}
+	bin := filepath.Join(t.TempDir(), exeName)
 	const stamped = "v9.8.7"
 	build := exec.Command(goBin, "build", "-o", bin,
 		"-ldflags", "-X "+VersionPackage+".version="+stamped, "./examples/downstream")
@@ -100,6 +107,10 @@ func TestDownstreamExampleGetsDefaultRuntime(t *testing.T) {
 	logDir := t.TempDir()
 	env := append(os.Environ(),
 		"HOME="+home,
+		// Windows resolves the home and config dirs from these instead of HOME.
+		"USERPROFILE="+home,
+		"APPDATA="+filepath.Join(home, "AppData", "Roaming"),
+		"LOCALAPPDATA="+filepath.Join(home, "AppData", "Local"),
 		"XDG_CONFIG_HOME="+filepath.Join(home, ".config"),
 		"ACMEDEV_LOG_DIR="+logDir,
 		"ACMEDEV_NO_UPDATE_CHECK=1",

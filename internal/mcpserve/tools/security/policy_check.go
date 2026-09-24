@@ -119,7 +119,7 @@ func (pc *policyChecker) handle(_ context.Context, _ *spi.ToolCallContext, req *
 	// The effective config comes from the canonical resolver (as
 	// qsdev_config_show uses), so the local overlay cannot lower the security
 	// floor here any more than it can anywhere else.
-	resolved, err := config.ResolveConfig(&types.QsdevConfig{}, nil, project, local, false)
+	resolved, err := config.ResolveConfig(&types.QsdevConfig{}, project, local)
 	if err != nil {
 		return toolutil.NotConfigured("could not resolve effective policy",
 			map[string]any{"path": policyPath, "error": err.Error()}), nil

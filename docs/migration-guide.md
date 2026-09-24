@@ -248,6 +248,8 @@ If your project was initialized before qsdev 0.7.0, running `qsdev update` intro
 
 **Documentation servers** — Local documentation is now available via `qsdev docs enable`. Documentation MCP servers are opt-in and do not activate automatically.
 
+**Removed defaults sections** — The `profiles` and `profile_aliases` sections of the defaults file (`~/.config/qsdev/defaults.yaml`, see `qsdev defaults edit`) and of an organization catalog were never read by any command, so they have been removed. A file that still sets either section keeps loading: the section is ignored with a warning naming it and its line, and the rest of the file still applies. Delete the section to silence the warning. What a tier turns on is set by `tiers`, `tier_to_compliance` and `tier_to_enabled_tools`.
+
 ## Common Issues
 
 ### `devenv.nix already exists; use --force to overwrite`

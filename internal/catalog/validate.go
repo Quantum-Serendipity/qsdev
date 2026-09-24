@@ -29,7 +29,6 @@ func (c *Catalog) Validate() []CatalogError {
 	var errs []CatalogError
 
 	errs = append(errs, c.validateTiers()...)
-	errs = append(errs, c.validateProfiles()...)
 	errs = append(errs, c.validateDerivations()...)
 	errs = append(errs, c.validateHookTiers()...)
 	errs = append(errs, c.validateProjectProfiles()...)
@@ -88,32 +87,6 @@ func (c *Catalog) checkTierCycle(start string) error {
 		current = def.Inherits
 	}
 	return fmt.Errorf("inheritance chain exceeds maximum depth of %d", maxInheritanceDepth)
-}
-
-func (c *Catalog) validateProfiles() []CatalogError {
-	var errs []CatalogError
-
-	for name, def := range c.profiles.Profiles {
-		if def.Tier != "" {
-			if _, ok := c.tiers.Tiers[def.Tier]; !ok {
-				errs = append(errs, CatalogError{
-					"profiles.yaml", name,
-					fmt.Sprintf("references unknown tier %q", def.Tier),
-				})
-			}
-		}
-	}
-
-	for alias, target := range c.profiles.Aliases {
-		if _, ok := c.profiles.Profiles[target]; !ok {
-			errs = append(errs, CatalogError{
-				"profiles.yaml", fmt.Sprintf("aliases.%s", alias),
-				fmt.Sprintf("target profile %q does not exist", target),
-			})
-		}
-	}
-
-	return errs
 }
 
 func (c *Catalog) validateDerivations() []CatalogError {
@@ -250,8 +223,8 @@ func (c *Catalog) validatePermissionSets() []CatalogError {
 	return errs
 }
 
-// validateMCPServerRefs checks that MCP servers referenced by tiers, profiles
-// and default_mcp_servers are defined in mcp_servers.
+// validateMCPServerRefs checks that MCP servers referenced by tiers and
+// default_mcp_servers are defined in mcp_servers.
 func (c *Catalog) validateMCPServerRefs() []CatalogError {
 	var errs []CatalogError
 
@@ -268,18 +241,13 @@ func (c *Catalog) validateMCPServerRefs() []CatalogError {
 			check("tiers.yaml", name+".claude_code.mcp_servers", def.ClaudeCode.MCPServers)
 		}
 	}
-	for name, def := range c.profiles.Profiles {
-		if def.ClaudeCode != nil {
-			check("profiles.yaml", name+".claude_code.mcp_servers", def.ClaudeCode.MCPServers)
-		}
-	}
 	check("derivations.yaml", "default_mcp_servers", c.derivations.DefaultMCPServers)
 
 	return errs
 }
 
 // validatePresetRefs checks that every permission level referenced by tiers,
-// profiles, project profiles and compliance levels is a valid permission
+// project profiles and compliance levels is a valid permission
 // preset, and that every preset definition is a listed preset.
 func (c *Catalog) validatePresetRefs() []CatalogError {
 	var errs []CatalogError
@@ -298,11 +266,6 @@ func (c *Catalog) validatePresetRefs() []CatalogError {
 		check("tiers.yaml", name+".default_permission_preset", def.DefaultPermissionPreset)
 		if def.ClaudeCode != nil {
 			check("tiers.yaml", name+".claude_code.permission_level", def.ClaudeCode.PermissionLevel)
-		}
-	}
-	for name, def := range c.profiles.Profiles {
-		if def.ClaudeCode != nil {
-			check("profiles.yaml", name+".claude_code.permission_level", def.ClaudeCode.PermissionLevel)
 		}
 	}
 	for name, def := range c.projectProfiles.Profiles {

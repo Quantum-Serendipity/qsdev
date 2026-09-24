@@ -16,7 +16,7 @@ type TierDef struct {
 	ClaudeCode              *ClaudeCodeConfig `yaml:"claude_code,omitempty"`
 }
 
-// SecurityConfig holds security settings shared by tiers and profiles.
+// SecurityConfig holds security settings of a tier.
 type SecurityConfig struct {
 	Level           string `yaml:"level,omitempty"`
 	AgeGating       *bool  `yaml:"age_gating,omitempty"`
@@ -25,12 +25,12 @@ type SecurityConfig struct {
 	VulnScanning    *bool  `yaml:"vuln_scanning,omitempty"`
 }
 
-// ToolsConfig holds tool configuration shared by tiers and profiles.
+// ToolsConfig holds tool configuration of a tier.
 type ToolsConfig struct {
 	Enabled []string `yaml:"enabled"`
 }
 
-// ClaudeCodeConfig holds Claude Code settings shared by tiers and profiles.
+// ClaudeCodeConfig holds Claude Code settings of a tier.
 type ClaudeCodeConfig struct {
 	Enabled         *bool    `yaml:"enabled,omitempty"`
 	PermissionLevel string   `yaml:"permission_level,omitempty"`
@@ -53,21 +53,6 @@ type ComplianceLevelDef struct {
 	ClaudeAuditLog          bool     `yaml:"claude_audit_log"`
 	SBOMPolicy              string   `yaml:"sbom_policy"`
 	LicenseScanning         bool     `yaml:"license_scanning"`
-}
-
-// ProfilesFile represents the profiles.yaml schema.
-type ProfilesFile struct {
-	Profiles map[string]ProfileDef `yaml:"profiles"`
-	Aliases  map[string]string     `yaml:"aliases,omitempty"`
-}
-
-// ProfileDef defines a tier-based infrastructure profile.
-type ProfileDef struct {
-	Tier        string            `yaml:"tier"`
-	Description string            `yaml:"description"`
-	Security    *SecurityConfig   `yaml:"security,omitempty"`
-	Tools       *ToolsConfig      `yaml:"tools,omitempty"`
-	ClaudeCode  *ClaudeCodeConfig `yaml:"claude_code,omitempty"`
 }
 
 // ProjectProfilesFile represents the project_profiles.yaml schema.

@@ -261,54 +261,6 @@ func TestComplianceLevels_RequiredHooks(t *testing.T) {
 	}
 }
 
-// --- Profile Tests ---
-
-func TestProfiles_AllPresent(t *testing.T) {
-	t.Parallel()
-	cat := loadTestCatalog(t)
-	for _, name := range []string{"supply-chain-only", "standard", "full"} {
-		if _, ok := cat.Profile(name); !ok {
-			t.Errorf("profile %q not found", name)
-		}
-	}
-}
-
-func TestProfileAliases(t *testing.T) {
-	t.Parallel()
-	cat := loadTestCatalog(t)
-	aliases := cat.ProfileAliases()
-
-	tests := []struct {
-		alias  string
-		target string
-	}{
-		{"startup-fast", "standard"},
-		{"consulting-default", "full"},
-	}
-	for _, tt := range tests {
-		if aliases[tt.alias] != tt.target {
-			t.Errorf("alias %q = %q, want %q", tt.alias, aliases[tt.alias], tt.target)
-		}
-	}
-}
-
-func TestProfile_FullTools(t *testing.T) {
-	t.Parallel()
-	cat := loadTestCatalog(t)
-	p, ok := cat.Profile("full")
-	if !ok {
-		t.Fatal("full profile not found")
-	}
-	if p.Tools == nil {
-		t.Fatal("full profile has nil tools")
-	}
-	for _, tool := range []string{"semgrep", "gitleaks", "secretspec"} {
-		if !slices.Contains(p.Tools.Enabled, tool) {
-			t.Errorf("full profile tools = %v, should contain %q", p.Tools.Enabled, tool)
-		}
-	}
-}
-
 // --- Project Profile Tests ---
 
 func TestProjectProfiles_AllPresent(t *testing.T) {
@@ -485,7 +437,7 @@ func TestHookTiers_BaselineHooks(t *testing.T) {
 func TestTierToCompliance(t *testing.T) {
 	t.Parallel()
 	cat := loadTestCatalog(t)
-	m := cat.TierToCompliance()
+	m := cat.derivations.TierToCompliance
 
 	tests := []struct {
 		tier       string
@@ -505,7 +457,7 @@ func TestTierToCompliance(t *testing.T) {
 func TestTierToEnabledTools(t *testing.T) {
 	t.Parallel()
 	cat := loadTestCatalog(t)
-	m := cat.TierToEnabledTools()
+	m := cat.derivations.TierToEnabledTools
 
 	if len(m["supply-chain-only"]) != 0 {
 		t.Errorf("supply-chain-only tools = %v, want empty", m["supply-chain-only"])
@@ -571,14 +523,14 @@ func TestDerivations_CrossReferenceIntegrity(t *testing.T) {
 	cat := loadTestCatalog(t)
 
 	complianceLevels := cat.ComplianceLevels()
-	for tier, level := range cat.TierToCompliance() {
+	for tier, level := range cat.derivations.TierToCompliance {
 		if _, ok := complianceLevels[level]; !ok {
 			t.Errorf("tier_to_compliance: tier %q maps to unknown compliance level %q", tier, level)
 		}
 	}
 
 	tools := cat.Tools()
-	for tier, toolNames := range cat.TierToEnabledTools() {
+	for tier, toolNames := range cat.derivations.TierToEnabledTools {
 		for _, toolName := range toolNames {
 			if _, ok := tools[toolName]; !ok {
 				t.Errorf("tier_to_enabled_tools: tier %q references unknown tool %q", tier, toolName)
@@ -720,28 +672,6 @@ func TestContract_ComplianceLevelNames(t *testing.T) {
 	}
 }
 
-func TestContract_ProfileNames(t *testing.T) {
-	t.Parallel()
-	cat := loadTestCatalog(t)
-	for _, name := range []string{"supply-chain-only", "standard", "full"} {
-		if _, ok := cat.Profile(name); !ok {
-			t.Errorf("BACKWARD COMPAT: profile %q must exist", name)
-		}
-	}
-}
-
-func TestContract_ProfileAliases(t *testing.T) {
-	t.Parallel()
-	cat := loadTestCatalog(t)
-	aliases := cat.ProfileAliases()
-	if aliases["startup-fast"] != "standard" {
-		t.Error("BACKWARD COMPAT: alias startup-fast must resolve to standard")
-	}
-	if aliases["consulting-default"] != "full" {
-		t.Error("BACKWARD COMPAT: alias consulting-default must resolve to full")
-	}
-}
-
 func TestUnsetVars_SupersetOfKnownCredentialVars(t *testing.T) {
 	t.Parallel()
 	cat := loadTestCatalog(t)
@@ -763,8 +693,6 @@ func newMinimalCatalog() *Catalog {
 	cat := &Catalog{}
 	cat.tiers.Tiers = map[string]TierDef{}
 	cat.compliance.Levels = map[string]ComplianceLevelDef{}
-	cat.profiles.Profiles = map[string]ProfileDef{}
-	cat.profiles.Aliases = map[string]string{}
 	cat.projectProfiles.Profiles = map[string]ProjectProfileDef{}
 	cat.tools.Tools = map[string]ToolDef{}
 	cat.hookTiers.Tiers = map[string][]string{}
@@ -845,28 +773,6 @@ func TestValidate_TierZeroOrder(t *testing.T) {
 	errs := cat.Validate()
 	if !hasValidationError(errs, "order must be > 0") {
 		t.Errorf("expected zero order error, got: %v", errs)
-	}
-}
-
-func TestValidate_ProfileReferencesUnknownTier(t *testing.T) {
-	t.Parallel()
-	cat := loadTestCatalog(t)
-	cat.profiles.Profiles["broken"] = ProfileDef{Tier: "nonexistent"}
-
-	errs := cat.Validate()
-	if !hasValidationError(errs, `references unknown tier "nonexistent"`) {
-		t.Errorf("expected broken profile tier error, got: %v", errs)
-	}
-}
-
-func TestValidate_BrokenProfileAlias(t *testing.T) {
-	t.Parallel()
-	cat := loadTestCatalog(t)
-	cat.profiles.Aliases["bad-alias"] = "nonexistent-profile"
-
-	errs := cat.Validate()
-	if !hasValidationError(errs, "aliases.bad-alias") {
-		t.Errorf("expected broken alias error, got: %v", errs)
 	}
 }
 
@@ -1067,8 +973,6 @@ func TestMergeCatalogs_CustomHookOverrideByID(t *testing.T) {
 	base := &Catalog{}
 	base.tiers.Tiers = map[string]TierDef{}
 	base.compliance.Levels = map[string]ComplianceLevelDef{}
-	base.profiles.Profiles = map[string]ProfileDef{}
-	base.profiles.Aliases = map[string]string{}
 	base.projectProfiles.Profiles = map[string]ProjectProfileDef{}
 	base.tools.Tools = map[string]ToolDef{}
 	base.hookTiers.Tiers = map[string][]string{}
@@ -1219,7 +1123,7 @@ func TestEndToEnd_TierToComplianceChain(t *testing.T) {
 	t.Parallel()
 	cat := loadTestCatalog(t)
 
-	compliance := cat.TierToCompliance()["full"]
+	compliance := cat.derivations.TierToCompliance["full"]
 	if compliance != "strict" {
 		t.Fatalf("TierToCompliance[full] = %q, want strict", compliance)
 	}
@@ -1238,7 +1142,7 @@ func TestEndToEnd_TierToComplianceChain(t *testing.T) {
 		t.Errorf("strict MCP policy = %q, want explicit-only", level.MCPServerPolicy)
 	}
 
-	enabledTools := cat.TierToEnabledTools()["full"]
+	enabledTools := cat.derivations.TierToEnabledTools["full"]
 	tools := cat.Tools()
 	for _, toolName := range enabledTools {
 		if _, ok := tools[toolName]; !ok {

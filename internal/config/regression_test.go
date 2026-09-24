@@ -18,7 +18,7 @@ func TestResolveConfig_ClientNotAliased(t *testing.T) {
 			BlockedMCP: []string{"github"},
 		},
 	}
-	result, err := ResolveConfig(nil, nil, project, nil, false)
+	result, err := ResolveConfig(nil, project, nil)
 	if err != nil {
 		t.Fatalf("ResolveConfig: %v", err)
 	}

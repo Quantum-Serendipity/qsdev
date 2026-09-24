@@ -51,11 +51,11 @@ func LoadProjectPolicy(projectRoot string) (*ProjectPolicy, error) {
 // ResolveProjectPolicy resolves an already-parsed project config and optional
 // local overrides with an empty organization-defaults layer.
 func ResolveProjectPolicy(project *types.QsdevConfig, local *LocalConfig) (*ProjectPolicy, error) {
-	committed, err := ResolveConfig(nil, nil, project, nil, false)
+	committed, err := ResolveConfig(nil, project, nil)
 	if err != nil {
 		return nil, fmt.Errorf("resolving project config: %w", err)
 	}
-	effective, err := ResolveConfig(nil, nil, project, local, false)
+	effective, err := ResolveConfig(nil, project, local)
 	if err != nil {
 		return nil, fmt.Errorf("resolving local overrides: %w", err)
 	}
@@ -179,7 +179,7 @@ func addLocalServices(svcs []types.ServiceChoice, local []types.ServiceConfig) [
 	return svcs
 }
 
-// clientComplianceOverlay returns the layer-3 overlay for the committed
+// clientComplianceOverlay returns the layer-2 overlay for the committed
 // client security level, or nil when the project declares none.
 func (p *ProjectPolicy) clientComplianceOverlay() *types.QsdevConfig {
 	if p.Committed.Client == nil || p.Committed.Client.SecurityLevel == "" {

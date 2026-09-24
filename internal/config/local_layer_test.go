@@ -78,7 +78,7 @@ func TestResolveConfig_LocalPermissionLevel(t *testing.T) {
 			t.Parallel()
 			project := tt.project
 			local := &LocalConfig{ClaudeCode: types.ClaudeCodeConfig{PermissionLevel: tt.local}}
-			result, err := ResolveConfig(nil, nil, &project, local, false)
+			result, err := ResolveConfig(nil, &project, local)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -112,7 +112,7 @@ func TestResolveConfig_LocalCannotLoosenClientProject(t *testing.T) {
 		Tools:         types.ToolsConfig{Disabled: []string{"gitleaks", "semgrep"}},
 		ExtraPackages: []string{"neovim"},
 	}
-	result, err := ResolveConfig(nil, nil, project, local, false)
+	result, err := ResolveConfig(nil, project, local)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestResolveConfig_LocalLayerAddsOnly(t *testing.T) {
 		},
 		ClaudeCode: types.ClaudeCodeConfig{Enabled: &disabled},
 	}
-	result, err := ResolveConfig(nil, nil, project, local, false)
+	result, err := ResolveConfig(nil, project, local)
 	if err != nil {
 		t.Fatal(err)
 	}

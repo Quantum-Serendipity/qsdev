@@ -50,39 +50,8 @@ func TestMigrateConfig_VersionTooLow(t *testing.T) {
 	}
 }
 
-func TestNeedsMigration(t *testing.T) {
-	tests := []struct {
-		version int
-		want    bool
-	}{
-		{0, false},
-		{types.ConfigVersionCurrent, false},
-		{types.ConfigVersionCurrent + 1, false},
-		// Since ConfigVersionMin == ConfigVersionCurrent == 1, there's
-		// no version that would trigger migration. But if ConfigVersionCurrent
-		// were higher, versions below it would need migration.
-	}
-
-	for _, tt := range tests {
-		got := NeedsMigration(tt.version)
-		if got != tt.want {
-			t.Errorf("NeedsMigration(%d) = %v, want %v", tt.version, got, tt.want)
-		}
-	}
-}
-
-func TestNeedsMigration_FutureVersions(t *testing.T) {
-	// NeedsMigration should return false for versions at or above current.
-	if NeedsMigration(types.ConfigVersionCurrent) {
-		t.Error("NeedsMigration should return false for current version")
-	}
-	if NeedsMigration(types.ConfigVersionCurrent + 1) {
-		t.Error("NeedsMigration should return false for future version")
-	}
-}
-
-// Regression: NeedsMigration returned false for too-new and invalid versions,
-// which `config migrate` reported as "already current". CheckMigration must
+// Regression: a boolean needs-migration check returned false for too-new and
+// invalid versions, which `config migrate` reported as "already current". CheckMigration must
 // distinguish current, migratable and unsupported versions.
 func TestCheckMigration(t *testing.T) {
 	t.Parallel()
@@ -117,7 +86,8 @@ func TestCheckMigration(t *testing.T) {
 	}
 }
 
-func TestParseConfigVersion(t *testing.T) {
+// toInt reads the YAML-decoded "version" value; only whole numbers count.
+func TestToInt(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
@@ -135,9 +105,9 @@ func TestParseConfigVersion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, ok := ParseConfigVersion(tt.in)
+			got, ok := toInt(tt.in)
 			if got != tt.want || ok != tt.wantOK {
-				t.Errorf("ParseConfigVersion(%v) = (%d, %v), want (%d, %v)", tt.in, got, ok, tt.want, tt.wantOK)
+				t.Errorf("toInt(%v) = (%d, %v), want (%d, %v)", tt.in, got, ok, tt.want, tt.wantOK)
 			}
 		})
 	}

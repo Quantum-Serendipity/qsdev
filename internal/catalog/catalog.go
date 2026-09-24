@@ -15,7 +15,6 @@ import (
 type Catalog struct {
 	tiers           TiersFile
 	compliance      ComplianceFile
-	profiles        ProfilesFile
 	projectProfiles ProjectProfilesFile
 	tools           ToolsFile
 	security        SecurityFile

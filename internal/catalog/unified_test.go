@@ -185,8 +185,8 @@ func TestCatalog_ToUnified_RoundTrip(t *testing.T) {
 	if roundTripped.DefaultTier() != cat.DefaultTier() {
 		t.Errorf("round-trip default_tier = %q, want %q", roundTripped.DefaultTier(), cat.DefaultTier())
 	}
-	origTTC := cat.TierToCompliance()
-	rtTTC := roundTripped.TierToCompliance()
+	origTTC := cat.derivations.TierToCompliance
+	rtTTC := roundTripped.derivations.TierToCompliance
 	for tier, level := range origTTC {
 		if rtTTC[tier] != level {
 			t.Errorf("round-trip tier_to_compliance[%q] = %q, want %q",

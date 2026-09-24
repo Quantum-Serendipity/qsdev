@@ -601,8 +601,12 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 	})
 
 	t.Run("catalog-backed tier-to-compliance derivation", func(t *testing.T) {
-		tierMap := catalog.MustDefault().TierToCompliance()
-		for tier, wantLevel := range tierMap {
+		cat := catalog.MustDefault()
+		for _, tier := range cat.TierOrder() {
+			wantLevel := cat.TierCompliance(tier)
+			if wantLevel == "" {
+				continue
+			}
 			a := types.WizardAnswers{ClaudeCode: true, Tier: tier}
 			a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 			if a.ComplianceLevel != wantLevel {
@@ -612,8 +616,9 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 	})
 
 	t.Run("catalog-backed tier-to-enabled-tools derivation", func(t *testing.T) {
-		tierTools := catalog.MustDefault().TierToEnabledTools()
-		for tier, wantTools := range tierTools {
+		cat := catalog.MustDefault()
+		for _, tier := range cat.TierOrder() {
+			wantTools := cat.TierEnabledTools(tier)
 			a := types.WizardAnswers{ClaudeCode: true, Tier: tier}
 			a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 			for _, tool := range wantTools {

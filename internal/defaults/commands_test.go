@@ -27,8 +27,6 @@ func TestSectionFromUnified(t *testing.T) {
 	}{
 		{name: "tiers", section: "tiers"},
 		{name: "compliance", section: "compliance"},
-		{name: "profiles", section: "profiles", wantNil: true},
-		{name: "profile_aliases", section: "profile_aliases", wantNil: true},
 		{name: "project_profiles", section: "project_profiles", wantNil: true},
 		{name: "tools", section: "tools"},
 		{name: "security_hooks", section: "security_hooks", wantNil: true},

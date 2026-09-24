@@ -64,7 +64,7 @@ func TestResolveConfig_KeepsEveryProjectField(t *testing.T) {
 	var project types.QsdevConfig
 	fillValue(t, reflect.ValueOf(&project).Elem(), "cfg")
 
-	resolved, err := ResolveConfig(nil, nil, &project, nil, false)
+	resolved, err := ResolveConfig(nil, &project, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

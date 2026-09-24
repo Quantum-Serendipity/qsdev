@@ -284,3 +284,60 @@ func TestParseUnifiedBytes_AcceptsEmptyDocuments(t *testing.T) {
 		}
 	}
 }
+
+// The tier-profile sections were removed because nothing read them. A
+// defaults file from an older template may still set them; they must be
+// dropped without making the rest of the file (and its real overrides) fail.
+func TestParseUnifiedBytes_IgnoresRemovedProfileSections(t *testing.T) {
+	t.Parallel()
+
+	const rest = "default_tier: full\n"
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"profiles", "profiles:\n  full:\n    tier: full\n" + rest},
+		{"profile_aliases", "profile_aliases:\n  startup-fast: standard\n" + rest},
+		{"both, with comments", "# header\nprofiles: {}\nprofile_aliases: {}\n" + rest},
+		{"last section, trailing empty document", rest + "profiles:\n  full:\n    tier: full\n---\n"},
+		{"flow-style root", "{profiles: {full: {tier: full}}, default_tier: full}\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cat, err := parseUnifiedBytes([]byte(tt.content))
+			if err != nil {
+				t.Fatalf("parseUnifiedBytes(%q) error = %v, want nil", tt.content, err)
+			}
+			if got := cat.derivations.DefaultTier; got != "full" {
+				t.Errorf("default_tier = %q, want full (the rest of the file must still apply)", got)
+			}
+		})
+	}
+}
+
+// Dropping removed sections must not weaken strict parsing of the rest.
+func TestParseUnifiedBytes_RemovedSectionsKeepStrictness(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		content string
+		wantErr string
+	}{
+		{"misspelled key", "profiles: {}\npermision_deny_rules: {}\n", "permision_deny_rules"},
+		{"second document", "profiles: {}\n---\ntools: {}\n", "multiple YAML documents"},
+		// The error must point at the misspelled key's line in the file as
+		// written, not in a copy with the removed section taken out.
+		{"line numbers kept", "profiles:\n  full:\n    tier: full\n\ndefault_tier: full\npermision_deny_rules: {}\n", "line 6"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := parseUnifiedBytes([]byte(tt.content))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("parseUnifiedBytes(%q) error = %v, want it to contain %q", tt.content, err, tt.wantErr)
+			}
+		})
+	}
+}

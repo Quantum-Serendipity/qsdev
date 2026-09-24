@@ -192,7 +192,7 @@ func (pc *ProjectContext) handleConfigShow(_ context.Context, _ *spi.ToolCallCon
 	// Merge project over an empty base (no org defaults injected) then merge the
 	// optional local overlay, reusing the canonical resolver. The project config
 	// itself is passed as the security floor so local cannot weaken it.
-	resolved, err := config.ResolveConfig(&types.QsdevConfig{}, nil, project, local, false)
+	resolved, err := config.ResolveConfig(&types.QsdevConfig{}, project, local)
 	if err != nil {
 		return nil, fmt.Errorf("resolving config for display: %w", err)
 	}

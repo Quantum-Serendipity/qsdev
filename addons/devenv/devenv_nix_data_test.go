@@ -367,15 +367,15 @@ func TestBuildDevenvNixData_FillDefaultsThenBuild(t *testing.T) {
 
 	cat := catalog.MustDefault()
 
-	wantCompliance := cat.TierToCompliance()["full"]
+	wantCompliance := cat.TierCompliance("full")
 	if got := data.EnvVars["QSDEV_SECURITY_PROFILE"]; got != wantCompliance {
-		t.Errorf("QSDEV_SECURITY_PROFILE = %q, want %q (from catalog TierToCompliance)", got, wantCompliance)
+		t.Errorf("QSDEV_SECURITY_PROFILE = %q, want %q (from catalog TierCompliance)", got, wantCompliance)
 	}
 
-	wantTools := cat.TierToEnabledTools()["full"]
+	wantTools := cat.TierEnabledTools("full")
 	wantCount := strconv.Itoa(len(wantTools))
 	if got := data.EnvVars["QSDEV_TOOL_COUNT"]; got != wantCount {
-		t.Errorf("QSDEV_TOOL_COUNT = %q, want %q (from catalog TierToEnabledTools)", got, wantCount)
+		t.Errorf("QSDEV_TOOL_COUNT = %q, want %q (from catalog TierEnabledTools)", got, wantCount)
 	}
 
 	catPkgs := cat.BasePackages()

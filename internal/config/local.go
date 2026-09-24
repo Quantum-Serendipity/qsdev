@@ -6,13 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
-	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -54,62 +50,4 @@ func ParseLocalConfig(path string) (*LocalConfig, error) {
 	}
 
 	return &local, nil
-}
-
-// GenerateLocalTemplate writes a .qsdev.local.yaml template file with
-// commented-out examples. It only creates the file if it doesn't already
-// exist (idempotent). The template content is context-sensitive: it includes
-// language version overrides if the resolved config contains languages.
-func GenerateLocalTemplate(projectRoot string, resolved *types.QsdevConfig) error {
-	b := branding.Get()
-	path := filepath.Join(projectRoot, b.LocalConfig)
-
-	// Don't overwrite an existing file.
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	}
-
-	var sb strings.Builder
-	sb.WriteString("# " + b.LocalConfig + " — Local developer overrides (gitignored)\n")
-	sb.WriteString("# These settings add to " + b.ConfigFile + " for your checkout only. They can add\n")
-	sb.WriteString("# packages, languages, services, tools and MCP servers or tighten security,\n")
-	sb.WriteString("# never loosen it: weaker settings are ignored with a warning.\n")
-	sb.WriteString("#\n")
-	sb.WriteString("# extra_packages:\n")
-	sb.WriteString("#   - neovim\n")
-	sb.WriteString("#   - lazygit\n")
-	sb.WriteString("#\n")
-
-	// Include language version overrides if resolved config has languages.
-	if resolved != nil && len(resolved.Languages) > 0 {
-		sb.WriteString("# languages:\n")
-		for _, lang := range resolved.Languages {
-			version := lang.Version
-			if version == "" {
-				version = "latest"
-			}
-			fmt.Fprintf(&sb, "#   - name: %s\n", lang.Name)
-			fmt.Fprintf(&sb, "#     version: %q\n", version)
-		}
-		sb.WriteString("#\n")
-	}
-
-	// Include Claude Code section if enabled.
-	if resolved != nil && resolved.ClaudeCode.Enabled != nil && *resolved.ClaudeCode.Enabled {
-		sb.WriteString("# claude_code:\n")
-		sb.WriteString("#   permission_level: minimal   # only a stricter level than the committed one\n")
-		sb.WriteString("#\n")
-	}
-
-	sb.WriteString("# tools:\n")
-	sb.WriteString("#   enabled:\n")
-	sb.WriteString("#     - changelog\n")
-
-	return fileutil.WriteFileAtomic(path, []byte(sb.String()), fileutil.ModeReadWrite)
-}
-
-// EnsureGitignoreEntry ensures that entry appears in the .gitignore file at
-// projectRoot. It delegates to the canonical implementation in pkg/fileutil.
-func EnsureGitignoreEntry(projectRoot, entry string) error {
-	return fileutil.EnsureGitignoreEntry(projectRoot, entry)
 }

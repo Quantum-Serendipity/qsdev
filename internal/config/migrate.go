@@ -64,12 +64,6 @@ func scalarString(v any) (string, bool) {
 	return "", false
 }
 
-// ParseConfigVersion converts a YAML-decoded "version" value to an int.
-// It reports false when the value is not a whole number.
-func ParseConfigVersion(v any) (int, bool) {
-	return toInt(v)
-}
-
 // CheckMigration reports whether a config at configVersion must be migrated
 // to reach the current schema version. It returns an error when the version
 // cannot be migrated at all: newer than this binary supports, or older than
@@ -128,13 +122,4 @@ func MigrateConfig(raw map[string]any, fromVersion int) (map[string]any, error) 
 	raw["version"] = types.ConfigVersionCurrent
 
 	return raw, nil
-}
-
-// NeedsMigration returns true if configVersion is older than the current
-// schema version and a migration path exists. A false result does not mean
-// the version is current: unsupported (too new, zero or negative) versions
-// also return false. Use CheckMigration to tell those cases apart.
-func NeedsMigration(configVersion int) bool {
-	needed, err := CheckMigration(configVersion)
-	return err == nil && needed
 }

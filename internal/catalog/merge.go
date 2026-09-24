@@ -12,8 +12,8 @@ import (
 // overlay entries are added or replace base entries with the same key.
 // For slice fields, the overlay replaces the base if non-empty.
 //
-// Struct-valued map entries (tiers, compliance levels, profiles, project
-// profiles, tools, MCP servers, permission presets) parsed from a unified
+// Struct-valued map entries (tiers, compliance levels, project profiles,
+// tools, MCP servers, permission presets) parsed from a unified
 // defaults file are deep-merged: only the fields the overlay file actually
 // names replace the base entry's fields, so uncommenting one line of the
 // generated template does not wipe the rest of that entry. Entries of an
@@ -27,10 +27,6 @@ func MergeCatalogs(base, overlay *Catalog) *Catalog {
 
 	// Compliance: merge maps.
 	result.compliance.Levels = mergeEntries(base.compliance.Levels, overlay.compliance.Levels, nodes[sectionCompliance])
-
-	// Profiles: merge maps and aliases.
-	result.profiles.Profiles = mergeEntries(base.profiles.Profiles, overlay.profiles.Profiles, nodes[sectionProfiles])
-	result.profiles.Aliases = mergeStringMap(base.profiles.Aliases, overlay.profiles.Aliases)
 
 	// Project profiles: merge maps.
 	result.projectProfiles.Profiles = mergeEntries(

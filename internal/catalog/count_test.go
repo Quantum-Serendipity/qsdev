@@ -46,24 +46,3 @@ func TestCatalogProjectProfileCount(t *testing.T) {
 			got, wantProjectProfiles)
 	}
 }
-
-// TestCatalogInfraProfileCount pins the number of infrastructure profiles in
-// the embedded catalog.
-//
-// If this count changes, update the count in README.md ("N infrastructure
-// tiers") and internal-docs/profile-comparison.md ("Infrastructure profiles"
-// row).
-func TestCatalogInfraProfileCount(t *testing.T) {
-	t.Parallel()
-
-	cat, err := LoadEmbeddedOnly()
-	if err != nil {
-		t.Fatalf("LoadEmbeddedOnly() error: %v", err)
-	}
-
-	const wantInfraProfiles = 3
-	if got := len(cat.Profiles()); got != wantInfraProfiles {
-		t.Errorf("catalog infrastructure profiles = %d, want %d; if intentional, update README.md and internal-docs/profile-comparison.md",
-			got, wantInfraProfiles)
-	}
-}

@@ -13,7 +13,6 @@ type ResolvedConfig struct {
 	// to or tightens the committed layers (see sanitizeLocal). It is nil when
 	// no local layer was given.
 	Local      *types.QsdevConfig
-	Traces     []ResolutionTrace
 	Violations []FloorViolation
 }
 
@@ -28,57 +27,43 @@ type FloorViolation struct {
 	Reason    string
 }
 
-// ResolveConfig performs five-layer configuration resolution:
+// ResolveConfig performs four-layer configuration resolution:
 //  1. Organization defaults (orgDefaults)
-//  2. Profile overlay (if profile is not nil)
-//  3. Compliance level overlay (if project has Client.SecurityLevel)
-//  4. Project overrides (project)
-//  5. Local developer overrides (local), which may only add to or tighten
-//     layers 1-4: sanitizeLocal drops, as FloorViolations, whatever would
+//  2. Compliance level overlay (if project has Client.SecurityLevel)
+//  3. Project overrides (project)
+//  4. Local developer overrides (local), which may only add to or tighten
+//     layers 1-3: sanitizeLocal drops, as FloorViolations, whatever would
 //     remove or loosen something, including a permission level less strict
 //     than the committed one, and mergeLocal merges languages and services
 //     by name instead of replacing them.
 //
 // After merging, enforceSecurityFloor ensures security settings cannot be
 // weakened below the project's declared floor.
-func ResolveConfig(orgDefaults, profile, project *types.QsdevConfig, local *LocalConfig, verbose bool) (*ResolvedConfig, error) {
-	tracer := NewTracer(verbose)
-
+func ResolveConfig(orgDefaults, project *types.QsdevConfig, local *LocalConfig) (*ResolvedConfig, error) {
 	// Layer 1: Start from org defaults.
 	resolved := cloneQsdevConfig(orgDefaults)
 	if resolved == nil {
 		resolved = &types.QsdevConfig{}
 	}
-	tracer.Record("*", "org-defaults", "layer-1", nil, "base layer")
 
-	// Layer 2: Merge profile overlay.
-	if profile != nil {
-		resolved = deepMerge(resolved, profile)
-		tracer.Record("*", "profile", "layer-2", nil, "profile overlay applied")
-	}
-
-	// Layer 3: Compliance level overlay from client config.
+	// Layer 2: Compliance level overlay from client config.
 	if project != nil && project.Client != nil && project.Client.SecurityLevel != "" {
-		complianceOverlay := ComplianceLevelToConfig(project.Client.SecurityLevel)
-		if complianceOverlay != nil {
+		if complianceOverlay := ComplianceLevelToConfig(project.Client.SecurityLevel); complianceOverlay != nil {
 			resolved = deepMerge(resolved, complianceOverlay)
-			tracer.Record("security.level", project.Client.SecurityLevel, "layer-3", nil, "client compliance overlay")
 		}
 	}
 
-	// Layer 4: Merge project overrides.
+	// Layer 3: Merge project overrides.
 	if project != nil {
 		resolved = deepMerge(resolved, project)
-		tracer.Record("*", "project", "layer-4", nil, "project overrides applied")
 	}
 
-	// Layer 5: Merge local overrides, keeping only additions and tightenings.
+	// Layer 4: Merge local overrides, keeping only additions and tightenings.
 	var applied *types.QsdevConfig
 	var violations []FloorViolation
 	if local != nil {
 		applied, violations = sanitizeLocal(resolved, local)
 		resolved = mergeLocal(resolved, applied)
-		tracer.Record("*", "local", "layer-5", nil, "local overrides applied")
 	}
 
 	// Post-merge: enforce security floor.
@@ -87,7 +72,6 @@ func ResolveConfig(orgDefaults, profile, project *types.QsdevConfig, local *Loca
 	return &ResolvedConfig{
 		Config:     resolved,
 		Local:      applied,
-		Traces:     tracer.Traces(),
 		Violations: violations,
 	}, nil
 }

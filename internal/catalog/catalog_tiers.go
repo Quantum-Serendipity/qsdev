@@ -56,23 +56,3 @@ func (c *Catalog) ComplianceLevel(name string) (ComplianceLevelDef, bool) {
 	d, ok := c.compliance.Levels[name]
 	return d, ok
 }
-
-// --- Derivation accessors (tier/compliance mappings) ---
-
-// TierToCompliance returns the tier->compliance level mapping.
-func (c *Catalog) TierToCompliance() map[string]string {
-	out := make(map[string]string, len(c.derivations.TierToCompliance))
-	maps.Copy(out, c.derivations.TierToCompliance)
-	return out
-}
-
-// TierToEnabledTools returns the tier->enabled tools mapping.
-func (c *Catalog) TierToEnabledTools() map[string][]string {
-	out := make(map[string][]string, len(c.derivations.TierToEnabledTools))
-	for k, v := range c.derivations.TierToEnabledTools {
-		cp := make([]string, len(v))
-		copy(cp, v)
-		out[k] = cp
-	}
-	return out
-}

@@ -110,7 +110,7 @@ func TestResolveConfig_ClientComplianceLevelValidates(t *testing.T) {
 				Version: types.ConfigVersionCurrent,
 				Client:  &types.ClientConfig{Name: "acme", SecurityLevel: level},
 			}
-			result, err := ResolveConfig(DefaultQsdevConfig(), nil, project, nil, false)
+			result, err := ResolveConfig(DefaultQsdevConfig(), project, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -274,7 +274,7 @@ func TestResolveConfig_FloorRaisesTypodSecurityLevel(t *testing.T) {
 	local := &LocalConfig{
 		Security: types.SecurityConfig{Level: "strikt"},
 	}
-	result, err := ResolveConfig(org, nil, project, local, false)
+	result, err := ResolveConfig(org, project, local)
 	if err != nil {
 		t.Fatal(err)
 	}

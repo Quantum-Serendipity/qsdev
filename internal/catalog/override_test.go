@@ -202,7 +202,7 @@ func TestLoadWithOverlay_BreaksValidation(t *testing.T) {
 	t.Parallel()
 
 	f := writeUnifiedFile(t, `
-profiles:
+project_profiles:
   broken-profile:
     tier: nonexistent-tier
     description: "This profile references a bad tier"

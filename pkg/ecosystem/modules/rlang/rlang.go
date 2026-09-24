@@ -171,19 +171,29 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	return rules
 }
 
-// CICommands returns CI pipeline commands for the R ecosystem.
-func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
+// CICommands returns CI pipeline commands for the R ecosystem, for an renv
+// project (renv.lock, which detection records as the renv package manager);
+// a project without renv has no lock file to restore from or check. The
+// status check fails when the library, renv.lock and the packages the code
+// uses are out of sync: renv::status() itself exits 0 either way, so the
+// expression inspects its `synchronized` result (isTRUE fails closed on an
+// renv too old to report it). The expression is single-quoted so the shell
+// leaves `$synchronized` and `!` alone.
+func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
+	if config.PM("") != "renv" {
+		return nil
+	}
 	return []ecosystem.CICommand{
 		{
 			Name:        "renv-restore",
-			Command:     `Rscript -e "renv::restore()"`,
+			Command:     `Rscript -e 'renv::restore()'`,
 			Description: "Restore R package dependencies from renv.lock",
 			Phase:       ecosystem.CIPhaseInstall,
 		},
 		{
 			Name:        "renv-status",
-			Command:     `Rscript -e "renv::status()"`,
-			Description: "Check renv lock file consistency",
+			Command:     `Rscript -e 'if (!isTRUE(renv::status()$synchronized)) quit(status = 1)'`,
+			Description: "Fail when renv.lock, the project library and the code's package usage are out of sync",
 			Phase:       ecosystem.CIPhaseTest,
 		},
 	}

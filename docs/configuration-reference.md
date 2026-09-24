@@ -983,7 +983,16 @@ when the project's `languages` contribute CI commands, installs Nix and devenv
 and runs each language module's CI commands in the devenv shell, install phase
 first (frozen/locked installs), then test, then scan (audits). Which commands
 run follows each language's `package_manager` and `extras`, for example
-`javascript` with `package_manager: pnpm` runs `pnpm install --frozen-lockfile`.
+`javascript` with `package_manager: pnpm` runs `pnpm install --frozen-lockfile`,
+`haskell` with `build_tool=stack` runs `stack build --lock-file=error-on-write`,
+and `scala` with `build_tool=mill` gets no sbt steps. Some commands need a
+setting detection records: `r` runs its renv steps only with
+`package_manager: renv`, `lua` its LuaRocks install only with
+`package_manager: luarocks`, and `nix` its flake checks only with the `flake`
+extra (set when the project has a `flake.nix`). A setting the language entry
+does not record is taken from detection when the workflow is generated, so
+`qsdev init --update` adds these steps to projects created before detection
+recorded it.
 See [Security Architecture](security-architecture.md#generated-workflows).
 
 ---

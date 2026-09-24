@@ -73,12 +73,21 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		evidence = append(evidence, "shell.nix found")
 	}
 
-	return ecosystem.DetectionResult{
+	result := ecosystem.DetectionResult{
 		Detected:   true,
 		Confidence: confidence,
 		Evidence:   evidence,
 	}
+	if hasFlakeNix {
+		result.SuggestedConfig.Extras = map[string]string{ExtraFlake: "true"}
+	}
+	return result
 }
+
+// ExtraFlake is the ModuleConfig.Extras key detection sets to "true" when the
+// project root has a flake.nix. The flake CI commands need a flake, so a
+// default.nix or shell.nix project without one gets none.
+const ExtraFlake = "flake"
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for Nix language support.
@@ -157,8 +166,13 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	}
 }
 
-// CICommands returns CI pipeline commands for the Nix ecosystem.
-func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
+// CICommands returns CI pipeline commands for the Nix ecosystem: the flake
+// checks, for a flake project (ExtraFlake). A default.nix or shell.nix
+// project has no flake to check and no lock file, so it gets none.
+func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
+	if config.Extra(ExtraFlake, "") != "true" {
+		return nil
+	}
 	return []ecosystem.CICommand{
 		{
 			Name:        "nix-flake-check",

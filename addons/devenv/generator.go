@@ -139,7 +139,12 @@ func (g *DevenvGenerator) Generate(answers types.WizardAnswers) ([]types.Generat
 
 // ciCommands groups the CI commands of every selected language's module by
 // phase, each module configured as for its security configs (package
-// manager, extras and the effective infrastructure).
+// manager, extras and the effective infrastructure). Settings the language
+// entry leaves unset are completed from detection (WithSuggested), as a
+// create does: answers saved by an older qsdev lack settings some commands
+// are gated on (the renv or luarocks package manager, the Nix flake extra),
+// and update refreshes detection but not the saved entries, so without this
+// those projects would silently lose the lock-enforcing steps.
 func (g *DevenvGenerator) ciCommands(answers types.WizardAnswers) ([]ecosystem.CIPhaseGroup, error) {
 	if g.registry == nil {
 		return nil, nil
@@ -154,7 +159,7 @@ func (g *DevenvGenerator) ciCommands(answers types.WizardAnswers) ([]ecosystem.C
 		if _, dup := configs[mod.Name()]; !dup {
 			modules = append(modules, mod)
 		}
-		configs[mod.Name()] = ecosystem.ToModuleConfigWithInfra(lang, answers.Infrastructure)
+		configs[mod.Name()] = ecosystem.ToModuleConfigWithInfra(answers.Detected.WithSuggested(lang), answers.Infrastructure)
 	}
 	groups, err := ecosystem.AggregateCICommands(modules, func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
 		return configs[mod.Name()]

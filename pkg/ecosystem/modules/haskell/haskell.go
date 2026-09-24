@@ -139,7 +139,9 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 }
 
 // CICommands returns CI pipeline commands for the Haskell ecosystem.
-// Commands vary based on the configured build tool.
+// Commands vary based on the configured build tool. Stack's lock-file mode
+// error-on-write fails the build when stack.yaml.lock is missing or would
+// change (Stack has no --locked flag).
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
 	buildTool := config.Extra("build_tool", "cabal")
 
@@ -147,8 +149,8 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 		return []ecosystem.CICommand{
 			{
 				Name:        "stack-build-locked",
-				Command:     "stack build --locked",
-				Description: "Build Haskell project with Stack using locked dependencies",
+				Command:     "stack build --lock-file=error-on-write",
+				Description: "Build Haskell project with Stack, failing when stack.yaml.lock is missing or stale",
 				Phase:       ecosystem.CIPhaseInstall,
 			},
 		}

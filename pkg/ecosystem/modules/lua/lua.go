@@ -153,13 +153,31 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	}
 }
 
-// CICommands returns CI pipeline commands for the Lua ecosystem.
-func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
+// luarocksInstallDeps installs the dependencies of every root rockspec.
+// `luarocks install --only-deps` needs the rockspec as its operand, and takes
+// only one, so the command loops over them. No rockspec (the glob stays
+// unexpanded) fails the step rather than passing it with nothing installed.
+const luarocksInstallDeps = `for rockspec in ./*.rockspec; do
+  if [ ! -f "$rockspec" ]; then
+    echo "no *.rockspec in the project root to install dependencies from" >&2
+    exit 1
+  fi
+  luarocks install --local --only-deps "$rockspec" || exit 1
+done`
+
+// CICommands returns CI pipeline commands for the Lua ecosystem. Only a
+// LuaRocks project (a root *.rockspec, which detection records as the
+// luarocks package manager) gets a dependency install. Lux projects get none,
+// since the module does not provision the lx CLI.
+func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
+	if config.PM("") != "luarocks" {
+		return nil
+	}
 	return []ecosystem.CICommand{
 		{
 			Name:        "luarocks-install-deps",
-			Command:     "luarocks install --local --only-deps",
-			Description: "Install Lua dependencies locally from rockspec",
+			Command:     luarocksInstallDeps,
+			Description: "Install Lua dependencies locally from the project rockspecs",
 			Phase:       ecosystem.CIPhaseInstall,
 		},
 	}

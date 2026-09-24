@@ -128,6 +128,14 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	return ecosystem.PipeToShellDenyRules()
 }
 
+// bashSyntaxCheck runs `bash -n` on every *.sh file and fails when any of
+// them has a syntax error. bash -n checks only its first operand (the rest
+// become the script's positional parameters), so the files cannot be passed
+// to one `bash -n` with `find -exec ... +`; `find -exec ... \;` would check
+// each file but exits 0 whatever the checks return. The inner loop checks
+// every file and reports all errors, and `-exec ... +` propagates its status.
+const bashSyntaxCheck = `find . -name '*.sh' -type f -exec bash -c 'status=0; for script do bash -n "$script" || status=1; done; exit "$status"' bash-syntax-check {} +`
+
 // CICommands returns CI pipeline commands for the Shell ecosystem.
 func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 	return []ecosystem.CICommand{
@@ -139,7 +147,7 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 		},
 		{
 			Name:        "bash-syntax-check",
-			Command:     "find . -name '*.sh' -type f -exec bash -n {} +",
+			Command:     bashSyntaxCheck,
 			Description: "Check shell script syntax with bash -n",
 			Phase:       ecosystem.CIPhaseTest,
 		},

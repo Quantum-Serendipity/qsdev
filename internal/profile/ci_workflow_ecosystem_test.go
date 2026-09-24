@@ -9,6 +9,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/cigeneration"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // registers every module
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/nixlang"
 )
 
 // parsedJob is the subset of a GitHub Actions job the ecosystem-ci tests
@@ -202,13 +203,20 @@ func TestEcosystemCIJob_RejectsExpressions(t *testing.T) {
 }
 
 // TestEcosystemCIJob_RealModules renders every catalog module's CI commands
-// into the workflow and checks each one arrives as its own verbatim step.
+// into the workflow and checks each one arrives as its own verbatim step
+// (multi-line loops, quoted R and PowerShell scripts and all). Each module is
+// configured with its first package manager, and as a flake project, so the
+// commands gated on a package manager or a flake are rendered too.
 func TestEcosystemCIJob_RealModules(t *testing.T) {
 	t.Parallel()
 
 	modules := ecosystem.DefaultRegistry().All()
-	groups, err := ecosystem.AggregateCICommands(modules, func(ecosystem.EcosystemModule) ecosystem.ModuleConfig {
-		return ecosystem.ModuleConfig{}
+	groups, err := ecosystem.AggregateCICommands(modules, func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
+		config := ecosystem.ModuleConfig{Extras: map[string]string{nixlang.ExtraFlake: "true"}}
+		if pms := mod.PackageManagers(); len(pms) > 0 {
+			config.PackageManager = pms[0].Name
+		}
+		return config
 	})
 	if err != nil {
 		t.Fatalf("AggregateCICommands: %v", err)

@@ -75,6 +75,64 @@ func TestGenerate_WorkflowRunsModuleCICommands(t *testing.T) {
 	}
 }
 
+// TestGenerate_WorkflowCompletesGatedCommandsFromDetection is the F436
+// back-compat test: answers saved before detection recorded the package
+// manager or flake extra a module gates its CI commands on must still get
+// those commands, completed from the (refreshed) detection, while a setting
+// the language entry does record is kept.
+func TestGenerate_WorkflowCompletesGatedCommandsFromDetection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		lang      types.LanguageChoice
+		suggested types.LanguageChoice
+		want      []string
+		absent    []string
+	}{
+		{
+			name:      "renv from detection",
+			lang:      types.LanguageChoice{Name: "r"},
+			suggested: types.LanguageChoice{PackageManager: "renv"},
+			want:      []string{"Rscript -e 'renv::restore()'"},
+		},
+		{
+			name:      "flake from detection",
+			lang:      types.LanguageChoice{Name: "nix"},
+			suggested: types.LanguageChoice{Extras: []string{"flake=true"}},
+			want:      []string{"nix flake check"},
+		},
+		{
+			name:      "recorded setting wins",
+			lang:      types.LanguageChoice{Name: "nix", Extras: []string{"flake=false"}},
+			suggested: types.LanguageChoice{Extras: []string{"flake=true"}},
+			absent:    []string{"nix flake check"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			answers := infraAnswers("", types.InfraConfig{}, tt.lang)
+			answers.Detected.Suggested = map[string]types.LanguageChoice{tt.lang.Name: tt.suggested}
+			files, err := generateInfra(t, answers)
+			if err != nil {
+				t.Fatalf("Generate() error = %v", err)
+			}
+			wf := files[securityScanWorkflow]
+			for _, cmd := range tt.want {
+				if !strings.Contains(wf, "\n          "+cmd) {
+					t.Errorf("workflow does not run %q:\n%s", cmd, wf)
+				}
+			}
+			for _, cmd := range tt.absent {
+				if strings.Contains(wf, cmd) {
+					t.Errorf("workflow runs %q, which the recorded setting turns off", cmd)
+				}
+			}
+		})
+	}
+}
+
 func TestGenerate_WorkflowWithoutLanguagesHasNoEcosystemJob(t *testing.T) {
 	t.Parallel()
 

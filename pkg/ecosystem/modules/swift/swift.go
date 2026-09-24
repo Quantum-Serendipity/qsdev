@@ -179,18 +179,21 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	}
 }
 
-// CICommands returns CI pipeline commands for the Swift ecosystem.
+// CICommands returns CI pipeline commands for the Swift ecosystem. Plain
+// `swift package resolve` re-resolves and rewrites Package.resolved when it
+// is missing or stale; --force-resolved-versions resolves exactly the pinned
+// versions and fails instead, and the build keeps the same pins.
 func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 	return []ecosystem.CICommand{
 		{
 			Name:        "swift-package-resolve",
-			Command:     "swift package resolve",
-			Description: "Resolve Swift package dependencies",
+			Command:     "swift package resolve --force-resolved-versions",
+			Description: "Resolve Swift package dependencies exactly as pinned in Package.resolved",
 			Phase:       ecosystem.CIPhaseInstall,
 		},
 		{
 			Name:        "swift-build",
-			Command:     "swift build",
+			Command:     "swift build --force-resolved-versions",
 			Description: "Build the Swift project",
 			Phase:       ecosystem.CIPhaseTest,
 		},

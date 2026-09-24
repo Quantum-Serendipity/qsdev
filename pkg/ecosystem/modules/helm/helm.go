@@ -195,24 +195,63 @@ func (m *Module) ReadDenyRules(_ ecosystem.ModuleConfig) []string {
 	}
 }
 
-// CICommands returns CI pipeline commands for the Helm ecosystem.
-func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
+// chartDirs returns the recorded chart directories (ExtraChartDirs), or the
+// root chart when none are recorded.
+func chartDirs(config ecosystem.ModuleConfig) []string {
+	if raw := config.Extra(ExtraChartDirs, ""); raw != "" {
+		if dirs := ecosystem.ShellSafeDirs(strings.Split(raw, ",")); len(dirs) > 0 {
+			return dirs
+		}
+	}
+	return []string{"."}
+}
+
+// forEachChart wraps body in a loop over dirs, with the chart directory in
+// $chart; the loop stops at the first chart whose body fails.
+func forEachChart(dirs []string, body string) string {
+	return "for chart in " + strings.Join(dirs, " ") + "; do\n" + body + "\ndone"
+}
+
+// declaresDependencies is the extended regular expression matching a
+// top-level `dependencies:` key that lists dependencies, as a block sequence
+// (nothing but a comment after the colon) or a non-empty flow sequence.
+const declaresDependencies = `^dependencies:[[:space:]]*((#.*)?$|\[[[:space:]]*[^][:space:]])`
+
+// CICommands returns CI pipeline commands for the Helm ecosystem, run for
+// every chart directory (chartDirs). Each command fails on its own: the
+// dependency build refuses a chart that declares dependencies without their
+// lock file (Chart.yaml and Chart.lock, or requirements.yaml and
+// requirements.lock for an apiVersion v1 chart), since `helm dependency
+// build` would otherwise resolve them afresh, as `helm dependency update`
+// does; and the render-and-validate pipeline sets
+// pipefail, so a chart that fails to render is not reported as valid because
+// kubeconform accepted the empty output.
+func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
+	dirs := chartDirs(config)
 	return []ecosystem.CICommand{
 		{
-			Name:        "helm-dependency-build",
-			Command:     "helm dependency build",
-			Description: "Build Helm chart dependencies from Chart.lock",
+			Name: "helm-dependency-build",
+			Command: forEachChart(dirs,
+				`  for manifest in Chart requirements; do
+    if [ -f "$chart/$manifest.yaml" ] && [ ! -f "$chart/$manifest.lock" ] && grep -Eq '`+declaresDependencies+`' "$chart/$manifest.yaml"; then
+      echo "$chart: $manifest.yaml declares dependencies but $manifest.lock is missing; run helm dependency update and commit $manifest.lock" >&2
+      exit 1
+    fi
+  done
+  helm dependency build "$chart" || exit 1`),
+			Description: "Build Helm chart dependencies from Chart.lock, failing when it is missing or out of sync",
 			Phase:       ecosystem.CIPhaseInstall,
 		},
 		{
 			Name:        "helm-lint",
-			Command:     "helm lint .",
-			Description: "Lint Helm chart for best practices and errors",
+			Command:     "helm lint " + strings.Join(dirs, " "),
+			Description: "Lint Helm charts for best practices and errors",
 			Phase:       ecosystem.CIPhaseTest,
 		},
 		{
-			Name:        "helm-template-validate",
-			Command:     "helm template . | kubeconform --strict",
+			Name: "helm-template-validate",
+			Command: "set -o pipefail\n" + forEachChart(dirs,
+				`  helm template "$chart" | kubeconform --strict || exit 1`),
 			Description: "Validate rendered Helm templates against Kubernetes schemas",
 			Phase:       ecosystem.CIPhaseScan,
 		},

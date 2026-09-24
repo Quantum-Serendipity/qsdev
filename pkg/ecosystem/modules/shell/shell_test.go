@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/shelltest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/shell"
 )
@@ -225,6 +226,44 @@ func TestCICommands(t *testing.T) {
 
 	if len(cmds) != 2 {
 		t.Fatalf("CICommands() returned %d commands, want 2", len(cmds))
+	}
+}
+
+// TestCICommands_BashSyntaxCheckFailsOnAnyFile runs the bash-syntax-check
+// command: it must fail when any script, not only the first one find lists,
+// has a syntax error (F436: `bash -n a.sh b.sh` checks only a.sh).
+func TestCICommands_BashSyntaxCheckFailsOnAnyFile(t *testing.T) {
+	t.Parallel()
+
+	var command string
+	for _, c := range newModule().CICommands(ecosystem.ModuleConfig{}) {
+		if c.Name == "bash-syntax-check" {
+			command = c.Command
+		}
+	}
+	if command == "" {
+		t.Fatal("no bash-syntax-check CI command")
+	}
+
+	tests := []struct {
+		name     string
+		files    map[string]string
+		wantExit bool
+	}{
+		{name: "all valid", files: map[string]string{"a.sh": "echo a\n", "sub/b.sh": "echo b\n"}},
+		{name: "no scripts", files: map[string]string{"README": "x\n"}},
+		{name: "broken first", files: map[string]string{"a.sh": "if then\n", "b.sh": "echo b\n", "c.sh": "echo c\n"}, wantExit: true},
+		{name: "broken last", files: map[string]string{"a.sh": "echo a\n", "b.sh": "echo b\n", "z/zz.sh": "if then\n"}, wantExit: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := shelltest.WriteTree(t, t.TempDir(), tt.files)
+			res := shelltest.Run(t, dir, command, nil)
+			if (res.Exit != 0) != tt.wantExit {
+				t.Errorf("exit = %d, want failure %v; output:\n%s", res.Exit, tt.wantExit, res.Output)
+			}
+		})
 	}
 }
 

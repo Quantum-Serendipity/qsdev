@@ -440,7 +440,25 @@ vulnerability scanner or CI runner protection. It has two jobs:
   built container image). The modules add these audit tools (`cargo-audit`,
   `pip-audit`, `bundler-audit`, `syft`, `grype`, `govulncheck`) to the
   `devenv.nix` packages, so they are on the shell's PATH locally and in CI.
-  A drifted or missing lock entry therefore fails CI before anything builds. Commands come from each module configured with the
+  A drifted or missing lock entry therefore fails CI before anything builds.
+  Other lock-enforcing installs include `stack build --lock-file=error-on-write`,
+  `swift package resolve --force-resolved-versions`, `helm dependency build`
+  (refused when a chart declares dependencies without a `Chart.lock`), sbt's
+  `dependencyLockCheck` against `build.sbt.lock`, and `renv::restore()` followed
+  by a check that fails unless `renv::status()` reports the project in sync.
+  Every command fails on its own, whatever shell options run it: pipelines set
+  `pipefail` (`helm template | kubeconform`), loops fail when any item fails
+  (`bash -n` on each `*.sh` file, `luarocks install --only-deps` on each
+  rockspec), and scanners that only report are made to fail (PSScriptAnalyzer
+  error findings and parse errors; sbt-dependency-check at CVSS 7 and above).
+  Tools that are not nixpkgs packages are provisioned by the job itself: the sbt security
+  plugins through `sbt --addPluginSbtFile`, and a pinned PSScriptAnalyzer from
+  PSGallery. Commands that only apply to one package manager or project shape
+  are emitted only for it: the sbt tasks for sbt builds (not Mill), the renv
+  steps for renv projects (`renv.lock`), the LuaRocks install for rockspec
+  projects, and the flake checks for flake projects (`flake.nix`, recorded by
+  detection as the Nix module's `flake=true` extra).
+  Commands come from each module configured with the
   language's package manager and extras from `.qsdev.yaml`; a command
   containing a GitHub Actions expression (`${{`) is refused at generation
   time, since GitHub would evaluate it before the shell ran the step.

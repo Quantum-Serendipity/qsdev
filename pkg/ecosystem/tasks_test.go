@@ -1,7 +1,11 @@
 package ecosystem
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -118,7 +122,7 @@ func TestAggregateTaskDefinitions_SecurityScan(t *testing.T) {
 
 	// No SAST-capable module selected: fall back to the baseline rule set,
 	// never the registry-chosen, metrics-requiring `--config auto`.
-	const want = "semgrep --config p/owasp-top-ten --metrics=off --error ."
+	const want = "semgrep --config p/owasp-top-ten $(if [ -d .semgrep ]; then echo --config .semgrep; fi) --metrics=off --error ."
 	if len(secTask.Commands) != 1 || secTask.Commands[0] != want {
 		t.Errorf("security-scan commands = %v, want [%s]", secTask.Commands, want)
 	}
@@ -149,7 +153,7 @@ func TestAggregateTaskDefinitions_SecurityScanUsesModuleRuleSets(t *testing.T) {
 		t.Fatal("security-scan task not found when semgrep is enabled")
 	}
 
-	const want = "semgrep --config p/golang --config p/javascript --config p/owasp-top-ten --metrics=off --error ."
+	const want = "semgrep --config p/golang --config p/javascript --config p/owasp-top-ten $(if [ -d .semgrep ]; then echo --config .semgrep; fi) --metrics=off --error ."
 	if len(secTask.Commands) != 1 || secTask.Commands[0] != want {
 		t.Errorf("security-scan commands = %v, want [%s]", secTask.Commands, want)
 	}
@@ -273,6 +277,58 @@ func TestAggregateTaskDefinitions_SecurityScanOpengrep(t *testing.T) {
 			}
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("security-scan commands = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSemgrepScanCommand_LocalRules is the F202 regression: the security-scan
+// task runs the project's own rules from .semgrep/ alongside the ecosystem
+// packs when that directory exists, and scans cleanly when it does not. The
+// command is executed by bash (as the devenv task script runs it, under
+// errexit and nounset) against a stub semgrep that records its arguments.
+func TestSemgrepScanCommand_LocalRules(t *testing.T) {
+	t.Parallel()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+
+	goMod := sastMock{&MockModule{NameVal: "go"}, []string{"p/golang"}}
+	cmd := semgrepScanCommand([]EcosystemModule{goMod})
+
+	tests := []struct {
+		name     string
+		localDir bool
+		want     string
+	}{
+		{name: "no local rules", want: "--config p/golang --metrics=off --error ."},
+		{name: "local rules dir", localDir: true, want: "--config p/golang --config .semgrep --metrics=off --error ."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			project := t.TempDir()
+			if tt.localDir {
+				if err := os.Mkdir(filepath.Join(project, SemgrepLocalRulesDir), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			bin := t.TempDir()
+			stub := "#!" + bash + "\nprintf '%s\\n' \"$*\"\n"
+			if err := os.WriteFile(filepath.Join(bin, "semgrep"), []byte(stub), 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			run := exec.Command(bash, "-c", "set -euo pipefail\n"+cmd)
+			run.Dir = project
+			run.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			out, err := run.CombinedOutput()
+			if err != nil {
+				t.Fatalf("running %q: %v\n%s", cmd, err, out)
+			}
+			if got := strings.TrimSpace(string(out)); got != tt.want {
+				t.Errorf("semgrep args = %q, want %q", got, tt.want)
 			}
 		})
 	}

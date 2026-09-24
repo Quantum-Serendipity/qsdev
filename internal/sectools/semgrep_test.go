@@ -1,6 +1,8 @@
 package sectools_test
 
 import (
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -10,6 +12,7 @@ import (
 
 	// Import modules so they register with the default registry.
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/container"
+	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/cpp"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/dotnet"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/golang"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/java"
@@ -19,16 +22,14 @@ import (
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/terraform"
 )
 
-func TestGenerateSemgrepYml_GoProject(t *testing.T) {
-	answers := types.WizardAnswers{
-		Languages: []types.LanguageChoice{{Name: "go"}},
-	}
-	f, err := sectools.GenerateSemgrepYml(answers, ecosystem.DefaultRegistry())
+func TestGenerateSemgrepIgnore_Metadata(t *testing.T) {
+	t.Parallel()
+	f, err := sectools.GenerateSemgrepIgnore(types.WizardAnswers{})
 	if err != nil {
-		t.Fatalf("GenerateSemgrepYml() error: %v", err)
+		t.Fatalf("GenerateSemgrepIgnore() error: %v", err)
 	}
-	if f.Path != ".semgrep.yml" {
-		t.Errorf("Path = %q, want %q", f.Path, ".semgrep.yml")
+	if f.Path != ".semgrepignore" {
+		t.Errorf("Path = %q, want %q", f.Path, ".semgrepignore")
 	}
 	if f.Mode != 0o644 {
 		t.Errorf("Mode = %#o, want %#o", f.Mode, 0o644)
@@ -39,101 +40,91 @@ func TestGenerateSemgrepYml_GoProject(t *testing.T) {
 	if f.Owner != "semgrep" {
 		t.Errorf("Owner = %q, want %q", f.Owner, "semgrep")
 	}
-
-	content := string(f.Content)
-	if !strings.Contains(content, "p/golang") {
-		t.Error("content should contain p/golang rule set")
-	}
-	if !strings.Contains(content, "p/owasp-top-ten") {
-		t.Error("content should contain p/owasp-top-ten rule set")
-	}
 }
 
-func TestGenerateSemgrepYml_MultiEcosystemDedup(t *testing.T) {
-	// Both Go and Python include p/owasp-top-ten; it should appear only once.
-	answers := types.WizardAnswers{
-		Languages: []types.LanguageChoice{
-			{Name: "go"},
-			{Name: "python"},
-		},
-	}
-	f, err := sectools.GenerateSemgrepYml(answers, ecosystem.DefaultRegistry())
+// TestGenerateSemgrepIgnore_Content is the F202 regression: the generated file
+// is a gitignore-syntax ignore list, one pattern per line, not the rejected
+// .semgrep.yml shape (registry refs under rules: and a paths: key).
+func TestGenerateSemgrepIgnore_Content(t *testing.T) {
+	t.Parallel()
+	f, err := sectools.GenerateSemgrepIgnore(types.WizardAnswers{})
 	if err != nil {
-		t.Fatalf("GenerateSemgrepYml() error: %v", err)
+		t.Fatalf("GenerateSemgrepIgnore() error: %v", err)
 	}
-	content := string(f.Content)
+	var patterns []string
+	for _, line := range strings.Split(strings.TrimRight(string(f.Content), "\n"), "\n") {
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.TrimSpace(line) != line || line == "" {
+			t.Errorf("pattern line %q has surrounding whitespace or is empty", line)
+		}
+		patterns = append(patterns, line)
+	}
 
-	// Count occurrences of p/owasp-top-ten.
-	count := strings.Count(content, "p/owasp-top-ten")
-	if count != 1 {
-		t.Errorf("p/owasp-top-ten appears %d times, want exactly 1 (dedup)", count)
+	tests := []struct {
+		pattern string
+		present bool
+	}{
+		{"vendor/", true},
+		{"node_modules/", true},
+		{"dist/", true},
+		{".devenv/", true},
+		{"testdata/", true},
+		// Python build metadata directories are named <pkg>.egg-info.
+		{"*.egg-info/", true},
+		// The project's own rules are --config inputs, not scan targets.
+		{".semgrep/", true},
+		{".egg-info/", false},
+		{"rules:", false},
+		{"paths:", false},
+		{"exclude:", false},
 	}
-
-	// Both ecosystem-specific rules should be present.
-	if !strings.Contains(content, "p/golang") {
-		t.Error("content should contain p/golang")
+	for _, tt := range tests {
+		t.Run(tt.pattern, func(t *testing.T) {
+			t.Parallel()
+			if got := slices.Contains(patterns, tt.pattern); got != tt.present {
+				t.Errorf("pattern %q present = %v, want %v (patterns: %q)", tt.pattern, got, tt.present, patterns)
+			}
+		})
 	}
-	if !strings.Contains(content, "p/python") {
-		t.Error("content should contain p/python")
-	}
-}
-
-func TestGenerateSemgrepYml_PathExclusions(t *testing.T) {
-	answers := types.WizardAnswers{
-		Languages: []types.LanguageChoice{{Name: "go"}},
-	}
-	f, err := sectools.GenerateSemgrepYml(answers, ecosystem.DefaultRegistry())
-	if err != nil {
-		t.Fatalf("GenerateSemgrepYml() error: %v", err)
-	}
-	content := string(f.Content)
-
-	for _, path := range []string{"vendor/", "node_modules/", "dist/", ".devenv/"} {
-		if !strings.Contains(content, path) {
-			t.Errorf("content should exclude path %q", path)
+	for _, p := range patterns {
+		if strings.HasPrefix(p, "p/") || strings.HasPrefix(p, "- ") {
+			t.Errorf("pattern %q looks like a rule pack or YAML list item; the security-scan task passes rule packs", p)
 		}
 	}
 }
 
-func TestGenerateSemgrepYml_NoLanguages(t *testing.T) {
-	// When no languages are selected, should still produce a valid config
-	// with the fallback owasp-top-ten rule set.
-	answers := types.WizardAnswers{}
-	f, err := sectools.GenerateSemgrepYml(answers, ecosystem.DefaultRegistry())
-	if err != nil {
-		t.Fatalf("GenerateSemgrepYml() error: %v", err)
-	}
-	content := string(f.Content)
-	if !strings.Contains(content, "p/owasp-top-ten") {
-		t.Error("content should contain fallback p/owasp-top-ten")
-	}
-}
+// registryRuleSetRe matches a Semgrep registry rule pack reference. The
+// security-scan task splices these unquoted into a shell command line, so they
+// must be plain registry refs.
+var registryRuleSetRe = regexp.MustCompile(`^p/[a-z0-9][a-z0-9-]*$`)
 
-func TestGenerateSemgrepYml_NilRegistry(t *testing.T) {
-	answers := types.WizardAnswers{}
-	_, err := sectools.GenerateSemgrepYml(answers, nil)
-	if err == nil {
-		t.Error("expected error for nil registry, got nil")
+// TestSemgrepRuleSets_AreShellSafeRegistryRefs guards the rule packs every
+// SASTModule declares: each is passed as `semgrep --config <ref>`.
+func TestSemgrepRuleSets_AreShellSafeRegistryRefs(t *testing.T) {
+	t.Parallel()
+	var checked int
+	for _, mod := range ecosystem.DefaultRegistry().All() {
+		sast, ok := mod.(ecosystem.SASTModule)
+		if !ok {
+			continue
+		}
+		t.Run(mod.Name(), func(t *testing.T) {
+			t.Parallel()
+			sets := sast.SemgrepRuleSets()
+			if len(sets) == 0 {
+				t.Error("SASTModule declares no rule sets")
+			}
+			for _, rs := range sets {
+				if !registryRuleSetRe.MatchString(rs) {
+					t.Errorf("rule set %q is not a registry ref matching %s", rs, registryRuleSetRe)
+				}
+			}
+		})
+		checked++
 	}
-}
-
-func TestGenerateSemgrepYml_YAMLStructure(t *testing.T) {
-	answers := types.WizardAnswers{
-		Languages: []types.LanguageChoice{{Name: "javascript"}},
-	}
-	f, err := sectools.GenerateSemgrepYml(answers, ecosystem.DefaultRegistry())
-	if err != nil {
-		t.Fatalf("GenerateSemgrepYml() error: %v", err)
-	}
-	content := string(f.Content)
-
-	if !strings.Contains(content, "rules:") {
-		t.Error("content should contain 'rules:' key")
-	}
-	if !strings.Contains(content, "paths:") {
-		t.Error("content should contain 'paths:' key")
-	}
-	if !strings.Contains(content, "exclude:") {
-		t.Error("content should contain 'exclude:' key")
+	if checked == 0 {
+		t.Fatal("no SASTModule registered")
 	}
 }

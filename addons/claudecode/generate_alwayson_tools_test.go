@@ -27,7 +27,7 @@ func TestAlwaysOnTools_StandardTier(t *testing.T) {
 		if f.Path == ".gitleaks.toml" {
 			foundGitleaks = true
 		}
-		if f.Path == ".semgrep.yml" {
+		if f.Path == ".semgrepignore" {
 			foundSemgrep = true
 		}
 	}
@@ -35,7 +35,7 @@ func TestAlwaysOnTools_StandardTier(t *testing.T) {
 		t.Error("expected .gitleaks.toml at Standard tier")
 	}
 	if !foundSemgrep {
-		t.Error("expected .semgrep.yml at Standard tier")
+		t.Error("expected .semgrepignore at Standard tier")
 	}
 }
 
@@ -154,8 +154,8 @@ func TestAlwaysOnTools_FullTier_NoDuplication(t *testing.T) {
 	if counts[".gitleaks.toml"] != 1 {
 		t.Errorf(".gitleaks.toml generated %d times, want 1", counts[".gitleaks.toml"])
 	}
-	if counts[".semgrep.yml"] != 1 {
-		t.Errorf(".semgrep.yml generated %d times, want 1", counts[".semgrep.yml"])
+	if counts[".semgrepignore"] != 1 {
+		t.Errorf(".semgrepignore generated %d times, want 1", counts[".semgrepignore"])
 	}
 }
 
@@ -173,7 +173,7 @@ func TestAlwaysOnTools_SupplyChainTier_NoToolFiles(t *testing.T) {
 	}
 
 	for _, f := range files {
-		if f.Path == ".gitleaks.toml" || f.Path == ".semgrep.yml" {
+		if f.Path == ".gitleaks.toml" || f.Path == ".semgrepignore" {
 			t.Errorf("AlwaysOn tool file %q should not be generated at supply-chain-only tier", f.Path)
 		}
 	}
@@ -226,7 +226,7 @@ func TestAlwaysOnTools_ForceDisabledNotRegenerated(t *testing.T) {
 		switch f.Path {
 		case ".gitleaks.toml":
 			sawGitleaks = true
-		case ".semgrep.yml":
+		case ".semgrepignore":
 			sawSemgrep = true
 		}
 	}
@@ -234,7 +234,7 @@ func TestAlwaysOnTools_ForceDisabledNotRegenerated(t *testing.T) {
 		t.Error(".gitleaks.toml regenerated although gitleaks was force-disabled")
 	}
 	if !sawSemgrep {
-		t.Error(".semgrep.yml should still be generated for the always-on semgrep tool")
+		t.Error(".semgrepignore should still be generated for the always-on semgrep tool")
 	}
 }
 

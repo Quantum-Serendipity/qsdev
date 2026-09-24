@@ -53,7 +53,7 @@ git add README.md && git commit -m "initial commit"
 ```bash
 qsdev init --profile ts-fullstack --yes --dry-run
 ```
-Output: Preview listing all files without writing. Count total files (~35). Look for: devenv.yaml, devenv.nix, .envrc, .claude/settings.json, CLAUDE.md, .claude/hooks/package-guard.py, .claude/skills/, .claude/rules/, .claude/agents/semble-search.md, .mcp.json, .qsdev.yaml, .semgrep.yml, .gitleaks.toml, .github/labeler.yml, .github/workflows/labeler.yml, .github/pull_request_template.md.
+Output: Preview listing all files without writing. Count total files (~35). Look for: devenv.yaml, devenv.nix, .envrc, .claude/settings.json, CLAUDE.md, .claude/hooks/package-guard.py, .claude/skills/, .claude/rules/, .claude/agents/semble-search.md, .mcp.json, .qsdev.yaml, .semgrepignore, .gitleaks.toml, .github/labeler.yml, .github/workflows/labeler.yml, .github/pull_request_template.md.
 
 ### A1-2: Full init
 ```bash
@@ -79,7 +79,7 @@ Key files to confirm exist (~35 files total):
 - `.claude/agents/semble-search.md` (AlwaysOn — semantic code search agent)
 - `.claude/qsdev-reference.md`
 - `.mcp.json` (AlwaysOn MCP servers: context7, github, socket, semble)
-- `.semgrep.yml` (AlwaysOn — Semgrep SAST rules)
+- `.semgrepignore` (AlwaysOn — Semgrep scan exclusions; the rule packs run from the `qsdev-security-scan` task)
 - `.gitleaks.toml` (AlwaysOn — Gitleaks secret scanner config)
 - `CLAUDE.md`
 - `.devinit/.qsdev-init-state.yaml`

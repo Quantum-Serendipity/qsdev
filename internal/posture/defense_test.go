@@ -26,7 +26,7 @@ func TestAssessDefenseLayers_AllEnabled(t *testing.T) {
 		".pre-commit-config.yaml":        preCommitWithLockAudit,
 		".grype.yaml":                    "",
 		"devenv.nix":                     hardenedDevenvNix,
-		".semgrep.yml":                   "",
+		".semgrepignore":                 "",
 	})
 
 	result := AssessDefenseLayers(dir, enabledTools, detected, genState, 3)
@@ -232,42 +232,109 @@ func TestAssessDefenseLayers_NixHardening(t *testing.T) {
 	})
 }
 
+// TestAssessDefenseLayers_SAST is the F202 regression: SAST is credited only
+// when the security-scan task script in devenv.nix actually runs semgrep, not
+// for a config file's presence (the old .semgrep.yml was invalid and unused).
 func TestAssessDefenseLayers_SAST(t *testing.T) {
-	detected := types.DetectedProject{}
+	t.Parallel()
 
-	t.Run("fully enabled", func(t *testing.T) {
-		enabledTools := map[string]bool{"semgrep": true}
-		genState := types.GeneratedState{
-			Files: map[string]types.FileState{".semgrep.yml": {}},
-		}
-		result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
-		for _, l := range result.Layers {
-			if l.Name == "sast" {
-				if l.Status != LayerEnabled {
-					t.Errorf("sast: status = %q, want %q", l.Status, LayerEnabled)
-				}
-				return
-			}
-		}
-		t.Error("sast layer not found")
-	})
+	scanScript := func(exec string) string {
+		return "{ pkgs, ... }:\n{\n  scripts.\"qsdev-security-scan\" = {\n    description = \"Run security scanners\";\n    exec = ''\n" +
+			exec + "\n    '';\n  };\n}\n"
+	}
+	const semgrepLine = "      semgrep --config p/golang --metrics=off --error ."
 
-	t.Run("partial - tool only", func(t *testing.T) {
-		enabledTools := map[string]bool{"semgrep": true}
-		genState := types.GeneratedState{
-			Files: map[string]types.FileState{},
-		}
-		result := AssessDefenseLayers("", enabledTools, detected, genState, 3)
-		for _, l := range result.Layers {
-			if l.Name == "sast" {
-				if l.Status != LayerPartial {
-					t.Errorf("sast partial: status = %q, want %q", l.Status, LayerPartial)
-				}
-				return
+	tests := []struct {
+		name  string
+		tools map[string]bool
+		files map[string]string
+		want  LayerStatus
+	}{
+		{
+			name:  "enabled and wired",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": scanScript("      set -euo pipefail\n" + semgrepLine)},
+			want:  LayerEnabled,
+		},
+		{
+			name:  "grouped scripts attrset",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": "{\n  scripts = {\n    \"qsdev-build\" = {\n      exec = ''\n        go build\n      '';\n    };\n" +
+				"    \"qsdev-security-scan\" = {\n      description = \"Run security scanners\";\n      exec = ''\n  " + semgrepLine + "\n      '';\n    };\n  };\n}\n"},
+			want: LayerEnabled,
+		},
+		{
+			name:  "similarly named script",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": "{\n  scripts.\"my-qsdev-security-scan\".exec = ''\n" + semgrepLine + "\n  '';\n}\n"},
+			want:  LayerPartial,
+		},
+		{
+			name:  "dotted exec form",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": "{\n  scripts.qsdev-security-scan.exec = ''\n" + semgrepLine + "\n  '';\n}\n"},
+			want:  LayerEnabled,
+		},
+		{
+			name:  "escaped quotes before semgrep line",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": scanScript("      echo '''quoted''' ''${HOME}\n" + semgrepLine)},
+			want:  LayerEnabled,
+		},
+		{
+			name:  "stale ignore file alone is not SAST",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{".semgrepignore": "vendor/\n", ".semgrep.yml": "rules:\n  - p/golang\n"},
+			want:  LayerPartial,
+		},
+		{
+			name:  "task without semgrep",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": scanScript("      gitleaks detect --no-banner")},
+			want:  LayerPartial,
+		},
+		{
+			name:  "semgrep commented out",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": scanScript("      # " + semgrepLine[6:])},
+			want:  LayerPartial,
+		},
+		{
+			name:  "semgrep in another script",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": "{\n  scripts.\"qsdev-lint\" = {\n    exec = ''\n" + semgrepLine +
+				"\n    '';\n  };\n  scripts.\"qsdev-security-scan\" = {\n    exec = ''\n      gitleaks detect\n    '';\n  };\n}\n"},
+			want: LayerPartial,
+		},
+		{
+			name:  "unterminated script",
+			tools: map[string]bool{"semgrep": true},
+			files: map[string]string{"devenv.nix": "{\n  scripts.\"qsdev-security-scan\" = {\n    exec = ''\n" + semgrepLine + "\n"},
+			want:  LayerPartial,
+		},
+		{
+			name:  "wired but tool not enabled",
+			tools: map[string]bool{},
+			files: map[string]string{"devenv.nix": scanScript(semgrepLine)},
+			want:  LayerPartial,
+		},
+		{
+			name:  "not enabled",
+			tools: map[string]bool{},
+			files: map[string]string{},
+			want:  LayerDisabled,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir, genState := writeProjectFiles(t, tt.files)
+			l := layerByName(t, AssessDefenseLayers(dir, tt.tools, types.DetectedProject{}, genState, 3), "sast")
+			if l.Status != tt.want {
+				t.Errorf("sast: status = %q (%s), want %q", l.Status, l.Reason, tt.want)
 			}
-		}
-		t.Error("sast layer not found")
-	})
+		})
+	}
 }
 
 func TestAssessDefenseLayers_LicenseCompliance(t *testing.T) {

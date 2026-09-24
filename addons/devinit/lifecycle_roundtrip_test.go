@@ -392,6 +392,71 @@ func TestLifecycle_OpengrepUpdateRetiresConfig(t *testing.T) {
 	}
 }
 
+// TestLifecycle_SemgrepUpdateRetiresLegacyConfig is the F202 migration:
+// projects initialized before .semgrep.yml was dropped still track it as
+// semgrep-owned. Semgrep could not load it (registry refs under rules: and a
+// paths: key) and the security-scan task never read it. Update regenerates
+// semgrep's files, so the legacy file is retired (removed when unmodified,
+// untracked when edited) while .semgrepignore and the project's own .semgrep/
+// rules stay, and the task runs the rule packs plus those rules.
+func TestLifecycle_SemgrepUpdateRetiresLegacyConfig(t *testing.T) {
+	tests := []struct {
+		name     string
+		edit     bool
+		wantFile bool
+	}{
+		{name: "unmodified legacy config is removed", edit: false, wantFile: false},
+		{name: "edited legacy config is kept and untracked", edit: true, wantFile: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := initLifecycleProject(t)
+
+			const legacy = ".semgrep.yml"
+			st := loadProjectState(t, dir)
+			writeTrackedFile(t, &st, dir, legacy, "rules:\n  - p/golang\n\npaths:\n  exclude:\n    - vendor/\n", "semgrep")
+			saveProjectState(t, dir, st)
+			if tt.edit {
+				if err := os.WriteFile(filepath.Join(dir, legacy), []byte("# user edit\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			localRule := filepath.Join(dir, ".semgrep", "team.yml")
+			if err := os.MkdirAll(filepath.Dir(localRule), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(localRule, []byte("rules: []\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if out, err := executeInitCmd(t, dir, "--update"); err != nil {
+				t.Fatalf("update failed: %v\n%s", err, out)
+			}
+
+			_, statErr := os.Stat(filepath.Join(dir, legacy))
+			if exists := statErr == nil; exists != tt.wantFile {
+				t.Errorf("%s exists = %v after update, want %v", legacy, exists, tt.wantFile)
+			}
+			after := loadProjectState(t, dir)
+			if _, tracked := after.Files[legacy]; tracked {
+				t.Errorf("%s is still tracked after update", legacy)
+			}
+			if _, tracked := after.Files[".semgrepignore"]; !tracked {
+				t.Error("update untracked the still-generated .semgrepignore")
+			}
+			if _, err := os.Stat(localRule); err != nil {
+				t.Errorf("update must leave the project's own .semgrep/ rules alone: %v", err)
+			}
+			nixSrc := readProjectFile(t, dir, "devenv.nix")
+			for _, want := range []string{"semgrep --config p/golang", "echo --config .semgrep", "--metrics=off --error ."} {
+				if !strings.Contains(nixSrc, want) {
+					t.Errorf("devenv.nix security-scan task missing %q", want)
+				}
+			}
+		})
+	}
+}
+
 // opengrepRuleFiles lists the rule files under .opengrep/rules/core.
 func opengrepRuleFiles(t *testing.T, dir string) []string {
 	t.Helper()

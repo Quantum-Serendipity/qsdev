@@ -63,7 +63,9 @@ func coreBehaviors() map[string]ToolBehavior {
 		},
 		"semgrep": {
 			GenerateFunc: func(a types.WizardAnswers) ([]types.GeneratedFile, error) {
-				f, err := sectools.GenerateSemgrepYml(a, ecosystem.DefaultRegistry())
+				// Semgrep's rule packs are passed by the security-scan
+				// task; the tool generates only the scan exclusions.
+				f, err := sectools.GenerateSemgrepIgnore(a)
 				if err != nil {
 					return nil, err
 				}

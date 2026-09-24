@@ -638,8 +638,12 @@ tools:
         description: Static analysis via Semgrep with ecosystem-aware rule sets
         default_policy: always-on
         nix_expr: '(pkgs.writeShellScriptBin "semgrep" "exec -a osemgrep ''''${pkgs.semgrep-core}/bin/semgrep-core --experimental \"$@\"")'
+        # Semgrep config files may only hold rule objects, so the ecosystem
+        # rule packs and the project's .semgrep/ rules are passed by the
+        # security-scan task (`semgrep --config ...`); the tool owns only the
+        # scan exclusions. The .semgrep/ rules directory is the project's own.
         owned_files:
-            - path: .semgrep.yml
+            - path: .semgrepignore
               ownership: exclusive
             - path: devenv.nix
               ownership: shared

@@ -1,8 +1,9 @@
 package sectools
 
 // defaultScanExcludes contains directory and file patterns excluded from static
-// analysis tools. Shared between Semgrep and OpenGrep to ensure consistent
-// coverage boundaries.
+// analysis tools. The Semgrep ignore file lists all of them; the Gitleaks and
+// ScanCode configs reuse the relevant subset, keeping coverage boundaries
+// consistent.
 var defaultScanExcludes = []string{
 	// Build output
 	"build/",
@@ -38,7 +39,7 @@ var defaultScanExcludes = []string{
 	"vendor/",
 
 	// Virtual environments
-	".egg-info/",
+	"*.egg-info/",
 	".tox/",
 	".venv/",
 	"venv/",

@@ -29,7 +29,7 @@ func GenerateLabelerConfig(answers types.WizardAnswers) ([]types.GeneratedFile, 
 
 	lb.WriteString("security:\n")
 	lb.WriteString("  - changed-files:\n")
-	lb.WriteString("      - any-glob-to-any-file: ['.semgrep.yml', '.gitleaks.toml', '.scancode.yml']\n")
+	lb.WriteString("      - any-glob-to-any-file: ['.semgrepignore', '.semgrep/**', '.gitleaks.toml', '.scancode.yml']\n")
 	lb.WriteString("\n")
 
 	lb.WriteString("dependencies:\n")

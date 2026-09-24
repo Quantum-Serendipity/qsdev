@@ -17,6 +17,21 @@ type TaskDefinition struct {
 	DependsOn   []string
 }
 
+// SecurityScanTask is the name of the task that runs the enabled security
+// scanners (semgrep, opengrep, gitleaks).
+const SecurityScanTask = "security-scan"
+
+// TaskScriptPrefix is prepended to a task name to form the name of the devenv
+// script that runs it (e.g. "qsdev-security-scan"). The devenv addon renders
+// the scripts under these names and posture inspects them by it.
+const TaskScriptPrefix = "qsdev-"
+
+// SemgrepLocalRulesDir is the project-relative directory holding the project's
+// own Semgrep rules. The security-scan task passes it to semgrep alongside the
+// ecosystem rule packs whenever it exists, so teams can add custom rules
+// without qsdev overwriting them.
+const SemgrepLocalRulesDir = ".semgrep"
+
 // AggregateTaskDefinitions builds standard development tasks from ecosystem modules.
 // Standard tasks: build, test, lint, format, typecheck, security-scan.
 // Empty tasks (no commands) are filtered out.
@@ -43,7 +58,7 @@ func AggregateTaskDefinitions(
 	}
 
 	// Security-scan from enabled tools.
-	secScan := &TaskDefinition{Name: "security-scan", Description: "Run security scanners"}
+	secScan := &TaskDefinition{Name: SecurityScanTask, Description: "Run security scanners"}
 	if enabledTools["semgrep"] {
 		secScan.Commands = append(secScan.Commands, semgrepScanCommand(modules))
 	}
@@ -81,11 +96,19 @@ const opengrepScanCommand = "opengrep scan --config " + rules.ProjectCoreDir + "
 // defaultSemgrepRuleSet is scanned when no selected module declares rule sets.
 const defaultSemgrepRuleSet = "p/owasp-top-ten"
 
+// semgrepLocalRulesArg expands, in the task's shell, to a --config flag for
+// SemgrepLocalRulesDir when that directory exists and to nothing otherwise,
+// so a project without custom rules still scans cleanly.
+const semgrepLocalRulesArg = "$(if [ -d " + SemgrepLocalRulesDir + " ]; then echo --config " + SemgrepLocalRulesDir + "; fi)"
+
 // semgrepScanCommand builds the semgrep invocation from the rule sets the
 // selected modules declare via SASTModule, one --config flag per set (sorted
-// and deduplicated). This scans the project's ecosystem rules rather than
+// and deduplicated), plus the project's local rules in SemgrepLocalRulesDir
+// when present. This scans the project's ecosystem rules rather than
 // `--config auto`, which lets the registry pick rules and requires metrics to
-// be enabled; explicit rule sets allow --metrics=off.
+// be enabled; explicit rule sets allow --metrics=off. Path exclusions come
+// from the .semgrepignore the semgrep tool generates, which semgrep reads from
+// the scan root.
 func semgrepScanCommand(modules []EcosystemModule) string {
 	var ruleSets []string
 	for _, mod := range modules {
@@ -105,6 +128,8 @@ func semgrepScanCommand(modules []EcosystemModule) string {
 		b.WriteString(" --config ")
 		b.WriteString(rs)
 	}
+	b.WriteString(" ")
+	b.WriteString(semgrepLocalRulesArg)
 	b.WriteString(" --metrics=off --error .")
 	return b.String()
 }

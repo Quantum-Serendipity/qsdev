@@ -698,8 +698,9 @@ func collectTaskDefinitions(answers types.WizardAnswers, registry *ecosystem.Reg
 }
 
 // taskScriptPrefix is prepended to task names to form script names. It must
-// match the names the generated CLAUDE.md advertises.
-const taskScriptPrefix = "qsdev-"
+// match the names the generated CLAUDE.md advertises, and posture reads the
+// security-scan script by this name.
+const taskScriptPrefix = ecosystem.TaskScriptPrefix
 
 // buildTaskScripts turns task definitions into devenv scripts. Each script
 // runs its commands under errexit, so a failing command fails the task instead

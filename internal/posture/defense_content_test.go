@@ -24,6 +24,14 @@ const hardenedDevenvNix = `{ pkgs, ... }:
       name = "Lock file change audit";
     };
   };
+
+  scripts."qsdev-security-scan" = {
+    description = "Run security scanners";
+    exec = ''
+      set -euo pipefail
+      semgrep --config p/golang $(if [ -d .semgrep ]; then echo --config .semgrep; fi) --metrics=off --error .
+    '';
+  };
 }
 `
 

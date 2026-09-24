@@ -34,7 +34,6 @@ const (
 	preCommitConfigPath = ".pre-commit-config.yaml"
 	devenvNixPath       = "devenv.nix"
 	grypeConfigPath     = ".grype.yaml"
-	semgrepConfigPath   = ".semgrep.yml"
 
 	// lockFileAuditHookID is the id of the catalog's lock file audit custom
 	// hook, which devenv.nix registers with git-hooks.nix and which is rendered
@@ -49,6 +48,20 @@ var (
 	// lockAuditPreCommitRe matches the lock-file-audit hook id entry in a
 	// rendered .pre-commit-config.yaml.
 	lockAuditPreCommitRe = regexp.MustCompile(`(?m)^\s*(?:-\s*)?id:\s*["']?` + regexp.QuoteMeta(lockFileAuditHookID) + `["']?\s*$`)
+
+	// securityScanScript is the devenv script that runs the security-scan
+	// task (e.g. "qsdev-security-scan").
+	securityScanScript = ecosystem.TaskScriptPrefix + ecosystem.SecurityScanTask
+	// securityScanExecRe matches the start of the security-scan script's
+	// indented-string exec body in devenv.nix. The devenv addon groups the
+	// scripts into one `scripts = { "qsdev-security-scan" = { ... exec = ''`
+	// attrset; the dotted forms (`scripts."qsdev-security-scan".exec = ''`)
+	// are accepted too. The key may be quoted or bare.
+	securityScanExecRe = regexp.MustCompile(`(?:^|[\s{;.])(?:"` + regexp.QuoteMeta(securityScanScript) + `"|` +
+		regexp.QuoteMeta(securityScanScript) + `)\s*(?:=\s*\{[^}]*?\bexec|\.exec)\s*=\s*''`)
+	// semgrepInvocationRe matches a script line that runs semgrep with an
+	// explicit rule config.
+	semgrepInvocationRe = regexp.MustCompile(`(?m)^\s*semgrep\s(?:.*\s)?--config\s`)
 
 	// nixHardeningSettings are the hardening settings qsdev renders into
 	// devenv.nix. A devenv.nix that is merely present, without them, provides
@@ -103,6 +116,42 @@ func (in assessmentInput) hasLockFileAuditHook() bool {
 		return true
 	}
 	return false
+}
+
+// semgrepScanWired reports whether devenv.nix defines the security-scan task
+// script and that script runs semgrep with an explicit rule config. The
+// semgrep tool on its own only installs the binary and writes .semgrepignore;
+// SAST happens only where the task runs it.
+func (in assessmentInput) semgrepScanWired() bool {
+	data := in.content(devenvNixPath)
+	if data == nil {
+		return false
+	}
+	loc := securityScanExecRe.FindIndex(data)
+	if loc == nil {
+		return false
+	}
+	body, ok := nixIndentedStringBody(string(data[loc[1]:]))
+	return ok && semgrepInvocationRe.MatchString(body)
+}
+
+// nixIndentedStringBody returns the raw body of a Nix indented string, which
+// is delimited by two single quotes, when s starts right after its opening
+// delimiter. It stops at the closing delimiter and skips the escapes formed by
+// the delimiter followed by a single quote, a dollar sign or a backslash. ok is
+// false when the string is unterminated.
+func nixIndentedStringBody(s string) (body string, ok bool) {
+	for i := 0; i+1 < len(s); i++ {
+		if s[i] != '\'' || s[i+1] != '\'' {
+			continue
+		}
+		if i+2 < len(s) && strings.ContainsRune(`'$\`, rune(s[i+2])) {
+			i += 2 // escape sequence: skip it whole
+			continue
+		}
+		return s[:i], true
+	}
+	return "", false
 }
 
 // GuardAgeCheckedLanguages are the ecosystems whose registry publication age
@@ -313,17 +362,19 @@ var layerTable = []layerSpec{
 		Weight:  WeightMedium,
 		MinTier: 3,
 		Assess: func(input assessmentInput) (LayerStatus, int, string) {
+			// SAST counts only when something runs it: the security-scan
+			// task script in devenv.nix must invoke semgrep with its rule
+			// packs, and the tool must be enabled so the binary is installed.
 			semgrepEnabled := input.EnabledTools["semgrep"]
-			hasSemgrepYml := input.has(semgrepConfigPath)
+			wired := input.semgrepScanWired()
 
-			if semgrepEnabled && hasSemgrepYml {
-				return LayerEnabled, 0, "semgrep enabled and .semgrep.yml present"
-			}
-			if semgrepEnabled || hasSemgrepYml {
-				if !semgrepEnabled {
-					return LayerPartial, 5, ".semgrep.yml present but semgrep not enabled"
-				}
-				return LayerPartial, 5, "semgrep enabled but .semgrep.yml not present"
+			switch {
+			case semgrepEnabled && wired:
+				return LayerEnabled, 0, "semgrep enabled and run by the " + securityScanScript + " task"
+			case semgrepEnabled:
+				return LayerPartial, 5, "semgrep enabled but the " + securityScanScript + " task in devenv.nix does not run it (run qsdev update)"
+			case wired:
+				return LayerPartial, 5, securityScanScript + " task runs semgrep but semgrep not enabled"
 			}
 			return LayerDisabled, 0, "semgrep not enabled"
 		},

@@ -118,11 +118,12 @@ The generated `devenv.nix` additionally:
 
 ### Layer 7: SAST (Semgrep)
 
-Semgrep runs as an AlwaysOn tool in the Claude Code environment, providing static analysis during development:
+Semgrep is an AlwaysOn tool that provides static analysis during development:
 
 - Detects dangerous code patterns (command injection, path traversal, unsafe deserialization).
-- Custom rule sets per ecosystem are included in the generated configuration.
-- Also runs in CI via the generated security-scan workflow.
+- The generated `qsdev-security-scan` devenv task runs `semgrep` with the registry rule packs of the detected ecosystems (`p/golang`, `p/python`, `p/owasp-top-ten` and so on), plus the project's own rules in `.semgrep/` when that directory exists. It runs with `--metrics=off --error`, so a finding fails the task.
+- The generated `.semgrepignore` excludes build output, caches, fixtures, vendored dependencies and virtual environments from the scan.
+- The posture SAST layer counts as enabled only when semgrep is enabled and the `qsdev-security-scan` task in `devenv.nix` runs it. If the task does not run semgrep, the layer is partial.
 
 **OpenGrep** (opt-in via `qsdev enable opengrep`) adds 96 taint-focused rules targeting injection flaws, deserialization, and authentication bypasses across 7 frameworks: Next.js, FastAPI, Gin, NestJS, SvelteKit, Prisma, and Drizzle. OpenGrep is not in nixpkgs, so enabling it writes a pinned derivation to `.opengrep/nix/default.nix`, which the devenv.nix package list imports. The derivation fetches the prebuilt release binary for the host platform (x86_64/aarch64 Linux and macOS) and checks it against the release asset's SHA-256 digest. The rule library goes to `.opengrep/rules/core/`, and the generated `security-scan` devenv task runs `opengrep scan --config .opengrep/rules/core --error`, so a finding fails the task. OpenGrep has no project config file, so none is generated. `qsdev disable opengrep` removes the derivation, the rule library and the task step.
 

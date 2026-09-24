@@ -256,6 +256,8 @@ If your project was initialized before qsdev 0.7.0, running `qsdev update` intro
 
 **OpenGrep config file removed** — Projects that enabled `opengrep` got an `.opengrep/config.yaml` that OpenGrep cannot parse and that nothing ran. `qsdev update` now deletes that file if you have not edited it, or stops tracking it if you have; delete an edited copy yourself. Update only retires it when it regenerates opengrep's files, so in a project where it does not (for example one initialized with `--devenv-only`), delete the file by hand. The `security-scan` devenv task now runs `opengrep scan --config .opengrep/rules/core --error` instead.
 
+**Semgrep config file removed** — qsdev used to generate a `.semgrep.yml` that Semgrep rejects (it listed registry rule packs under `rules:` and had a `paths:` key), and the `security-scan` task never read it. `qsdev update` now deletes that file if you have not edited it, or stops tracking it if you have. It writes a `.semgrepignore` with the scan exclusions in its place. The `security-scan` task now passes the ecosystem rule packs as `--config` flags, and runs your own rules too if you move them into a `.semgrep/` directory. As with the OpenGrep file, update only retires `.semgrep.yml` when it regenerates semgrep's files. In a project where it does not (for example one initialized with `--devenv-only`), delete the file by hand. `qsdev status` now reports the SAST layer as enabled only when the `security-scan` task in `devenv.nix` runs semgrep, so run `qsdev update` if it reports the layer as partial.
+
 ## Common Issues
 
 ### `devenv.nix already exists; use --force to overwrite`

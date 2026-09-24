@@ -625,6 +625,29 @@ Three-way merge preserves custom server entries you add while updating built-in 
 
 ---
 
+## Machine Bootstrap
+
+### Claude Code install (`bootstrap_tools.claude-code`)
+
+When `claude` is not on `PATH`, the bootstrap step "Install Claude Code" and `qsdev devenv setup` install the exact release pinned in the catalog's `bootstrap_tools` section, never the registry's latest:
+
+```yaml
+bootstrap_tools:
+    claude-code:
+        install_method: npm-global        # the only supported method
+        package_name: "@anthropic-ai/claude-code"
+        version: "2.1.273"                # exact release; ranges and dist-tags are refused
+        allow_install_scripts: true
+```
+
+Both run `npm install -g [--ignore-scripts] --before=<now - 3 days> @anthropic-ai/claude-code@<version>`. `--before` age-gates the install the way `min-release-age=3` gates project installs (a global install does not read the project `.npmrc`): npm resolves the package and its dependencies only among releases published before the cutoff, so a pinned release younger than 3 days fails to install until it has aged. A missing, unpinned or unsupported entry, or a `package_name` starting with `-`, stops the install with an error rather than falling back to an unpinned install.
+
+`allow_install_scripts` is off by default, which adds `--ignore-scripts`. It is on for Claude Code because the package needs its one lifecycle script: its `postinstall` (`install.cjs`) hard-links the native binary from the matching platform package (`@anthropic-ai/claude-code-<os>-<arch>`, pinned to the same exact version and carrying no scripts of its own) over the `bin/claude.exe` placeholder. Without it, `claude` is a stub that only prints an error.
+
+To move to a newer release before qsdev ships a new pin, set `version` in `~/.config/qsdev/defaults.yaml` (`qsdev defaults edit`) to an exact release at least 3 days old; the entry is deep-merged, so only the fields you set change. An already installed `claude` is left as it is.
+
+---
+
 ## Policy Engine Files
 
 ### `.qsdev/policy/*.yaml`

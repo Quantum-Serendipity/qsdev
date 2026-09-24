@@ -22,6 +22,7 @@ const (
 	sectionProjectProfiles      = "project_profiles"
 	sectionTools                = "tools"
 	sectionMCPServers           = "mcp_servers"
+	sectionBootstrapTools       = "bootstrap_tools"
 	sectionPermissionPresetDefs = "permission_preset_defs"
 )
 
@@ -48,6 +49,9 @@ type UnifiedDefaults struct {
 
 	// MCP Servers
 	MCPServers map[string]MCPServerDef `yaml:"mcp_servers,omitempty"`
+
+	// Bootstrap tools
+	BootstrapTools map[string]BootstrapToolDef `yaml:"bootstrap_tools,omitempty"`
 
 	// Security
 	SecurityHooks []string        `yaml:"security_hooks,omitempty"`
@@ -107,6 +111,9 @@ func (u *UnifiedDefaults) ToCatalog() *Catalog {
 
 	// MCP Servers
 	cat.mcpServers = u.MCPServers
+
+	// Bootstrap tools
+	cat.bootstrapTools = u.BootstrapTools
 
 	// Security
 	cat.security.Hooks.Default = u.SecurityHooks
@@ -175,6 +182,9 @@ func (c *Catalog) ToUnified() *UnifiedDefaults {
 	// MCP Servers
 	u.MCPServers = c.mcpServers
 
+	// Bootstrap tools
+	u.BootstrapTools = c.bootstrapTools
+
 	// Security
 	u.SecurityHooks = c.security.Hooks.Default
 	u.BasePackages = c.security.BasePackages
@@ -225,7 +235,7 @@ func (c *Catalog) ToUnified() *UnifiedDefaults {
 func SectionNames() []string {
 	return []string{
 		"tiers", "compliance", "project_profiles",
-		"tools", "mcp_servers", "security_hooks", "base_packages", "unset_vars", "keep_vars",
+		"tools", "mcp_servers", "bootstrap_tools", "security_hooks", "base_packages", "unset_vars", "keep_vars",
 		"custom_hooks", "hook_tier_order", "hook_tiers", "default_tier", "tier_to_compliance",
 		"tier_to_enabled_tools", "default_mcp_servers", "default_agent_tools",
 		"languages", "services", "permission_presets", "hook_presets",

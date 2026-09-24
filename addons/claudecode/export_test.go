@@ -110,3 +110,6 @@ var (
 )
 
 var ExportIsTemplateTestFixture = isTemplateTestFixture
+
+// ExportClaudeSpec exposes claudeSpec for external tests.
+var ExportClaudeSpec = claudeSpec

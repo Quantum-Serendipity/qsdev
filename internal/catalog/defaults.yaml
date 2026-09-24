@@ -889,6 +889,22 @@ mcp_servers:
         package_name: "mcp-nixos"
         version: "3.1.0"
         bin: mcp-nixos
+bootstrap_tools:
+    # Tools the qsdev bootstrap installs onto the developer's machine. Each is
+    # an exact release installed under the release-age cutoff (npm --before),
+    # so a pinned release younger than the minimum age fails until it ages.
+    # Bump a pin by editing version here (or in ~/.config/qsdev/defaults.yaml)
+    # to a release older than that minimum.
+    claude-code:
+        install_method: npm-global
+        package_name: "@anthropic-ai/claude-code"
+        version: "2.1.273"
+        # The package's postinstall (install.cjs) hard-links the native binary
+        # from the exact-pinned, script-free platform package
+        # (@anthropic-ai/claude-code-<os>-<arch>@<same version>) over the
+        # bin/claude.exe placeholder; with --ignore-scripts `claude` is a stub
+        # that only prints an error. It is the only script in the install.
+        allow_install_scripts: true
 docs_corpus:
     devdocs_base_url: "https://documents.devdocs.io"
     devdocs_slugs:

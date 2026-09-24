@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
 	"github.com/Quantum-Serendipity/qsdev/internal/pkgmanager"
 )
@@ -337,7 +338,6 @@ func TestSetupCmd_InstallCommandForTool(t *testing.T) {
 		want   string
 	}{
 		{"nix", "debian", pkgmanager.NewApt(nil), "curl -sSf -L https://install.determinate.systems/nix | sh -s -- install"},
-		{"claude", "debian", pkgmanager.NewApt(nil), "npm install -g @anthropic-ai/claude-code"},
 		{"devenv", "debian", pkgmanager.NewApt(nil), strings.Join(devenvSpec.InstallCmd, " ")},
 		{"git", "debian", pkgmanager.NewApt(nil), "sudo apt-get install -y git"},
 		{"git", "macos", pkgmanager.NewBrew(nil), "brew install git"},
@@ -354,6 +354,36 @@ func TestSetupCmd_InstallCommandForTool(t *testing.T) {
 				t.Errorf("installCommandForTool(%q, %q, %s) = %q, want %q", tt.name, tt.family, tt.pm.Name(), got, tt.want)
 			}
 		})
+	}
+}
+
+// TestSetupCmd_InstallCommandForClaude covers F110: `devenv setup` installs
+// the Claude Code release the catalog pins, age-gated, never the registry's
+// latest release.
+func TestSetupCmd_InstallCommandForClaude(t *testing.T) {
+	t.Parallel()
+
+	cat, err := catalog.Default()
+	if err != nil {
+		t.Fatalf("catalog.Default: %v", err)
+	}
+	def, ok := cat.BootstrapTool(catalog.BootstrapToolClaudeCode)
+	if !ok {
+		t.Fatal("catalog has no bootstrap_tools.claude-code pin")
+	}
+
+	got := strings.Fields(installCommandForTool("claude", "debian", pkgmanager.NewApt(nil)))
+	if len(got) < 5 || !slices.Equal(got[:3], []string{"npm", "install", "-g"}) {
+		t.Fatalf("install command = %q, want an npm install -g command", got)
+	}
+	if want := def.PackageName + "@" + def.Version; got[len(got)-1] != want {
+		t.Errorf("installs %q, want the pinned %q", got[len(got)-1], want)
+	}
+	if !strings.HasPrefix(got[len(got)-2], "--before=") {
+		t.Errorf("install command %q has no --before age gate", got)
+	}
+	if slices.Contains(got, "--ignore-scripts") == def.AllowInstallScripts {
+		t.Errorf("--ignore-scripts present = %v with allow_install_scripts = %v", !def.AllowInstallScripts, def.AllowInstallScripts)
 	}
 }
 

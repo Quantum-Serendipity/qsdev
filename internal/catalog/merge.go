@@ -13,9 +13,9 @@ import (
 // For slice fields, the overlay replaces the base if non-empty.
 //
 // Struct-valued map entries (tiers, compliance levels, project profiles,
-// tools, MCP servers, permission presets) parsed from a unified
-// defaults file are deep-merged: only the fields the overlay file actually
-// names replace the base entry's fields, so uncommenting one line of the
+// tools, MCP servers, bootstrap tools, permission presets) parsed from a
+// unified defaults file are deep-merged: only the fields the overlay file
+// actually names replace the base entry's fields, so uncommenting one line of the
 // generated template does not wipe the rest of that entry. Entries of an
 // overlay built in code (no source YAML) replace the base entry wholesale.
 func MergeCatalogs(base, overlay *Catalog) *Catalog {
@@ -38,6 +38,9 @@ func MergeCatalogs(base, overlay *Catalog) *Catalog {
 
 	// MCP Servers: merge maps.
 	result.mcpServers = mergeEntries(base.mcpServers, overlay.mcpServers, nodes[sectionMCPServers])
+
+	// Bootstrap tools: merge maps.
+	result.bootstrapTools = mergeEntries(base.bootstrapTools, overlay.bootstrapTools, nodes[sectionBootstrapTools])
 
 	// Security: merge lists and sub-structures.
 	result.security.Hooks.Default = mergeStringSlice(base.security.Hooks.Default, overlay.security.Hooks.Default)

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"unicode"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/installer"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
@@ -358,10 +359,6 @@ func hasAnySubcommand(args []string, subcommands [][]string) bool {
 	return false
 }
 
-// exactVersionPattern matches an exact semver-style version (1.2.3, 1.2.3-rc.1)
-// but not a range, tag or dist-tag (^1.2, latest, next).
-var exactVersionPattern = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$`)
-
 // pythonExactVersionPattern matches an exact PEP 440 release (1.2, 1.2.3,
 // 1.2.3rc1, 1.2.3.post1) but not a wildcard (1.2.*).
 var pythonExactVersionPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+)*([a-z]+[0-9]*)?(\.(post|dev)[0-9]+)?$`)
@@ -399,7 +396,7 @@ func npmPackagePinned(args []string) bool {
 	if at <= 0 {
 		return false
 	}
-	return exactVersionPattern.MatchString(spec[at+1:])
+	return installer.IsExactSemver(spec[at+1:])
 }
 
 // pythonPackagePinned reports whether a Python spec (name==1.2.3 or
@@ -413,7 +410,7 @@ func pythonPackagePinned(args []string) bool {
 	if at <= 0 {
 		return false
 	}
-	return exactVersionPattern.MatchString(spec[at+1:])
+	return installer.IsExactSemver(spec[at+1:])
 }
 
 // imageDigestPinned reports whether a container invocation runs an image

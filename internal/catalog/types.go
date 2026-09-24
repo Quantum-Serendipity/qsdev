@@ -217,6 +217,24 @@ type MCPServerDef struct {
 	NixPackage string   `yaml:"nix_package,omitempty"`
 }
 
+// BootstrapToolDef pins a tool that the qsdev bootstrap installs onto the
+// developer's machine, outside any project and so outside the package guard,
+// the project's age gate and its lockfile.
+type BootstrapToolDef struct {
+	// InstallMethod names the package manager: npm-global.
+	InstallMethod string `yaml:"install_method"`
+	PackageName   string `yaml:"package_name"`
+	// Version is the exact release installed; never a range or dist-tag.
+	// The install is age-gated, so a release younger than the minimum
+	// release age fails to install until it has aged.
+	Version string `yaml:"version"`
+	// AllowInstallScripts lets the package manager run the package's
+	// lifecycle scripts. Off by default (npm --ignore-scripts); set it only
+	// for a package that verifiably cannot work without them, and record why
+	// next to the pin.
+	AllowInstallScripts bool `yaml:"allow_install_scripts,omitempty"`
+}
+
 // PermissionRulesFile represents the permission_rules section of defaults.yaml.
 type PermissionRulesFile struct {
 	DenyRules           map[string][]string            `yaml:"permission_deny_rules"`

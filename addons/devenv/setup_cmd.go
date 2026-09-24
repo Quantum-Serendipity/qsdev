@@ -14,7 +14,9 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
+	"github.com/Quantum-Serendipity/qsdev/internal/installer"
 	"github.com/Quantum-Serendipity/qsdev/internal/pkgmanager"
 	"github.com/Quantum-Serendipity/qsdev/internal/privilege"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
@@ -77,7 +79,7 @@ var installDependencies = map[string]string{
 	"nix":    "curl", // the Nix installer script downloads its binary with curl
 	"devenv": "nix",  // installed with `nix profile install`
 	"npm":    "node", // bundled with node
-	"claude": "npm",  // installed with `npm install -g`
+	"claude": "npm",  // installed with an age-gated, pinned `npm install -g`
 }
 
 // installDepth returns how many dependency edges precede name in the plan.
@@ -334,7 +336,11 @@ func installCommandForTool(name, family string, pm pkgmanager.PackageManager) st
 	case "nix":
 		return "curl -sSf -L https://install.determinate.systems/nix | sh -s -- install"
 	case "claude":
-		return "npm install -g @anthropic-ai/claude-code"
+		cmd, err := claudeInstallCmd()
+		if err != nil {
+			return fmt.Sprintf("(refused: %v)", err)
+		}
+		return strings.Join(cmd, " ")
 	case "devenv":
 		return strings.Join(devenvSpec.InstallCmd, " ")
 	default:
@@ -578,12 +584,30 @@ func installDevenv(ctx context.Context, w io.Writer) error {
 	return nil
 }
 
-// installClaude installs Claude Code via npm.
+// claudeInstallCmd returns the age-gated npm command that installs the
+// Claude Code release the catalog pins (bootstrap_tools.claude-code), the
+// same command the "Install Claude Code" bootstrap step runs.
+func claudeInstallCmd() ([]string, error) {
+	cat, err := catalog.Default()
+	if err != nil {
+		return nil, fmt.Errorf("loading catalog: %w", err)
+	}
+	return installer.BootstrapToolInstallCmd(cat, catalog.BootstrapToolClaudeCode, time.Now())
+}
+
+// installClaude installs the catalog's pinned Claude Code release via npm.
 func installClaude(ctx context.Context, w io.Writer) error {
-	cmd := exec.CommandContext(ctx, "npm", "install", "-g", "@anthropic-ai/claude-code")
+	argv, err := claudeInstallCmd()
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Stdout = w
 	cmd.Stderr = w
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("installing Claude Code with npm: %w", err)
+	}
+	return nil
 }
 
 // printVerificationSummary re-checks installed tools and prints results.

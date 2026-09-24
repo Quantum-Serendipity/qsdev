@@ -108,8 +108,8 @@ func testStateSaver(state *types.GeneratedState) func(*types.GeneratedState) err
 var testNow = time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 
 const (
-	testNpmCutoff = "2026-09-20T12:00:00Z" // testNow - npmMinReleaseAge
-	testUvCutoff  = "2026-09-16T12:00:00Z" // testNow - uvMinReleaseAge
+	testNpmCutoff = "2026-09-20T12:00:00Z" // testNow - installer.NpmMinReleaseAge
+	testUvCutoff  = "2026-09-16T12:00:00Z" // testNow - installer.UvMinReleaseAge
 )
 
 func newTestLifecycle(runner *mockRunner, state *types.GeneratedState) *McpLifecycle {

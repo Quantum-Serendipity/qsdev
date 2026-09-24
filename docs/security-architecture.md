@@ -68,6 +68,8 @@ Per-ecosystem configuration files disable install-time script execution — the 
 
 pnpm workspaces additionally enforce `blockExoticSubdeps` to prevent subdependencies from pulling in unexpected transitive packages.
 
+**qsdev's own installs.** Packages qsdev installs globally itself (Claude Code in the bootstrap and `qsdev devenv setup`, MCP servers via `qsdev mcp install`) run outside the project `.npmrc` and the package guard, so each command carries the same controls: an exact pinned release from the catalog, an age gate (`npm --before`, `uv --exclude-newer`) and, for npm, `--ignore-scripts`. The one exception is the Claude Code bootstrap, whose pinned package needs its `postinstall` to place its native binary; that script runs, but only for the exact, age-gated release the catalog pins. See [Machine Bootstrap](configuration-reference.md#machine-bootstrap).
+
 ### Layer 3: Lockfile Enforcement
 
 - **Pre-commit hooks** — The `lock-file-audit` custom hook flags changes to `devenv.lock`, `flake.lock`, `package-lock.json`, and `pnpm-lock.yaml` with a warning to verify the diff during code review.
@@ -612,6 +614,7 @@ and passes these checks.
 ### Scope
 
 - **Runtime dependencies** — The system hardens the development environment and CI pipeline. It does not scan or constrain runtime container images or deployed artifacts beyond build-time scanning.
+- **Claude Code updates** — The bootstrap installs a pinned Claude Code release, but Claude Code's own auto-updater can later move that install to newer releases outside the pin and the age gate. Set `DISABLE_AUTOUPDATER=1` in the environment where the pin must hold.
 - **Secret management** — Credential stripping prevents accidental exposure in the dev shell but does not replace a proper secret management system (Vault, AWS Secrets Manager, etc.).
 
 ### Policy Engine Limitations

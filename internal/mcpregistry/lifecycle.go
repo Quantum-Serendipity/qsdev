@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/installer"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -25,16 +26,6 @@ type McpLifecycle struct {
 	Now func() time.Time
 }
 
-// Minimum release ages for MCP server packages. They mirror the policy qsdev
-// generates for project dependencies (min-release-age=3 in .npmrc, and
-// --exclude-newer=7d for uv), which a global install would otherwise bypass:
-// npm does not read the project .npmrc in global mode, and the package-guard
-// hook only sees the agent's own commands, not qsdev's subprocesses.
-const (
-	npmMinReleaseAge = 3 * 24 * time.Hour
-	uvMinReleaseAge  = 7 * 24 * time.Hour
-)
-
 // pinnedSpec returns the package-manager spec for def's exact Version
 // (name@1.2.3 for npm, name==1.2.3 for uv). A definition without an exact
 // version is refused: installing it would take whatever release the registry
@@ -42,7 +33,7 @@ const (
 func pinnedSpec(def *McpServerDefinition) (string, error) {
 	switch def.InstallMethod {
 	case InstallNpmGlobal:
-		if exactVersionPattern.MatchString(def.Version) {
+		if installer.IsExactSemver(def.Version) {
 			return def.PackageName + "@" + def.Version, nil
 		}
 	case InstallUvTool:
@@ -59,21 +50,22 @@ func pinnedSpec(def *McpServerDefinition) (string, error) {
 // same command installs and updates: spec pins an exact version, so updating
 // means installing the release the catalog now pins. Every command is
 // hardened the way project installs are: only releases older than the minimum
-// release age are eligible, and npm lifecycle scripts never run.
+// release age (installer.NpmMinReleaseAge, installer.UvMinReleaseAge) are
+// eligible, and npm lifecycle scripts never run.
 func (lc *McpLifecycle) packageCommand(method McpInstallMethod, spec string) (string, []string) {
 	now := time.Now
 	if lc.Now != nil {
 		now = lc.Now
 	}
 	cutoff := func(age time.Duration) string {
-		return now().Add(-age).UTC().Format(time.RFC3339)
+		return installer.ReleaseCutoff(now(), age)
 	}
 
 	switch method {
 	case InstallUvTool:
-		return "uv", []string{"tool", "install", "--exclude-newer", cutoff(uvMinReleaseAge), spec}
+		return "uv", []string{"tool", "install", "--exclude-newer", cutoff(installer.UvMinReleaseAge), spec}
 	case InstallNpmGlobal:
-		return "npm", []string{"install", "-g", "--ignore-scripts", "--before=" + cutoff(npmMinReleaseAge), spec}
+		return "npm", []string{"install", "-g", "--ignore-scripts", "--before=" + cutoff(installer.NpmMinReleaseAge), spec}
 	default:
 		return "", nil
 	}

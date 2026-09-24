@@ -36,7 +36,10 @@ const (
 	// started building it (the old 30MB ceiling was never exercised, since the
 	// image did not build); the ceiling leaves room for growth while still
 	// catching an accidental fat base image or unstripped binary.
-	maxImageBytes = 36 * 1024 * 1024
+	// In-process Sigstore verification of self-updates (sigstore-go, F290)
+	// added ~6.9MB to the stripped binary (30.6MB -> 37.5MB), taking the image
+	// to ~39.9MB; the ceiling keeps the same ~13% headroom above that.
+	maxImageBytes = 45 * 1024 * 1024
 )
 
 // dockerOrSkip skips the test when docker is unusable in this environment.
@@ -107,7 +110,7 @@ func TestImageSizeUnderCeiling(t *testing.T) {
 	}
 	t.Logf("gateway image size: %d bytes (%.1f MB)", size, float64(size)/(1024*1024))
 	if size > maxImageBytes {
-		t.Errorf("image size %d bytes exceeds ceiling %d bytes (~36MB)", size, maxImageBytes)
+		t.Errorf("image size %d bytes exceeds ceiling %d bytes (%.1f MB)", size, maxImageBytes, float64(maxImageBytes)/(1024*1024))
 	}
 }
 

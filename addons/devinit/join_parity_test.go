@@ -270,6 +270,103 @@ func TestBuildQsdevConfig_RoundTripsThroughJoin(t *testing.T) {
 	}
 }
 
+// TestJoin_InfraProfileRoundTrips is the regression test for the infra
+// profile being persisted into the project-type `profile` key: `qsdev check`
+// then rejected it as an unknown project-type profile, and a teammate joining
+// lost it and got the consulting-default CI/Renovate files. The infra profile
+// must land in `infra_profile`, the project-type --profile in `profile`, and
+// join must restore both and generate the same profile-driven files.
+func TestJoin_InfraProfileRoundTrips(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantInfra   string
+		wantProject string
+	}{
+		{"infra profile only", []string{"--infra-profile", "enterprise"}, "enterprise", ""},
+		{"infra profile without an infrastructure block", []string{"--infra-profile", "startup-github"}, "startup-github", ""},
+		{"default infra profile", []string{"--infra-profile", "consulting-default"}, "consulting-default", ""},
+		{"both profiles", []string{"--infra-profile", "startup-github", "--profile", "go-web"}, "startup-github", "go-web"},
+		{"project-type profile only", []string{"--profile", "go-web"}, "", "go-web"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("QSDEV_SKIP_SETUP", "1")
+			dir := newGoProject(t)
+			created := createAnswers(t, dir, append([]string{"--lang", "go"}, tt.args...)...)
+			commitConfig(t, dir, created)
+
+			cfg, err := qsdevconfig.ParseQsdevConfig(filepath.Join(dir, branding.Get().ConfigFile))
+			if err != nil {
+				t.Fatalf("parsing committed config: %v", err)
+			}
+			if cfg.InfraProfile != tt.wantInfra || cfg.Profile != tt.wantProject {
+				t.Errorf("persisted infra_profile=%q profile=%q, want %q %q", cfg.InfraProfile, cfg.Profile, tt.wantInfra, tt.wantProject)
+			}
+			// `qsdev check` validates `profile` against the project-type registry.
+			opts := qsdevconfig.ValidateOptions{ProfileNames: ensureProfileRegistry().Names()}
+			if errs := qsdevconfig.ValidateQsdevConfig(cfg, opts); len(errs) > 0 {
+				t.Errorf("committed config fails validation: %v", errs)
+			}
+
+			cmd, _ := newJoinTestCmd()
+			joined, err := buildJoinAnswers(cmd, InitOptions{Quiet: true}, dir)
+			if err != nil {
+				t.Fatalf("buildJoinAnswers: %v", err)
+			}
+			if joined.ProfileName != tt.wantInfra || joined.ProjectTypeProfile != tt.wantProject {
+				t.Errorf("join ProfileName=%q ProjectTypeProfile=%q, want %q %q", joined.ProfileName, joined.ProjectTypeProfile, tt.wantInfra, tt.wantProject)
+			}
+
+			joinFiles, createFiles := generatedContent(t, joined), generatedContent(t, created)
+			if _, ok := createFiles["docs/security-overview.md"]; !ok {
+				t.Fatal("create generated no infra-profile files; the comparison below would be vacuous")
+			}
+			for _, path := range []string{".github/workflows/security-scan.yml", "renovate.json", ".github/dependabot.yml", "docs/security-overview.md"} {
+				if joinFiles[path] != createFiles[path] {
+					t.Errorf("%s differs between join and create:\njoin:\n%s\ncreate:\n%s", path, joinFiles[path], createFiles[path])
+				}
+			}
+		})
+	}
+}
+
+// TestBuildJoinAnswers_InfraProfileFromConfig checks join restores the
+// committed infra profile, including from a version 1 file that held it under
+// `profile` (projects generated before the key split), and that an explicit
+// --infra-profile on join replaces the committed value.
+func TestBuildJoinAnswers_InfraProfileFromConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      string
+		args        []string
+		wantInfra   string
+		wantProject string
+	}{
+		{"committed value kept", "version: 2\ninfra_profile: enterprise\n", nil, "enterprise", ""},
+		{"flag overrides", "version: 2\ninfra_profile: enterprise\n", []string{"--infra-profile", "startup-github"}, "startup-github", ""},
+		{"v1 infra profile under profile", "version: 1\nprofile: enterprise\n", nil, "enterprise", ""},
+		{"v1 project-type profile under profile", "version: 1\nprofile: go-web\n", nil, "", "go-web"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := newGoProject(t)
+			config := tt.config + "languages:\n  - name: go\n"
+			if err := os.WriteFile(filepath.Join(dir, branding.Get().ConfigFile), []byte(config), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cmd, opts, _ := newInitTestCmd(t, tt.args...)
+			answers, err := buildJoinAnswers(cmd, opts, dir)
+			if err != nil {
+				t.Fatalf("buildJoinAnswers: %v", err)
+			}
+			if answers.ProfileName != tt.wantInfra || answers.ProjectTypeProfile != tt.wantProject {
+				t.Errorf("ProfileName=%q ProjectTypeProfile=%q, want %q %q", answers.ProfileName, answers.ProjectTypeProfile, tt.wantInfra, tt.wantProject)
+			}
+		})
+	}
+}
+
 // TestRunJoin_DryRunLeavesWorkingTreeUntouched is the regression test for a
 // join --dry-run writing .gitignore.
 func TestRunJoin_DryRunLeavesWorkingTreeUntouched(t *testing.T) {

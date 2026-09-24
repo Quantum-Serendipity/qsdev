@@ -107,6 +107,11 @@ validated against its own registry by `qsdev check`:
   configuration and security documentation; when absent,
   `consulting-default` applies.
 
+`qsdev init` records both keys, and `qsdev init --mode join` restores both
+from the committed file, so a joining teammate generates the same CI,
+Renovate/Dependabot and security files as the project's creator (an explicit
+`--infra-profile` on the join command overrides the committed value).
+
 Schema version 1 used a single `profile` key, which `qsdev init` filled with
 the infrastructure profile. Version 1 files still load: an infrastructure
 profile name under `profile` is read as `infra_profile`, and any other value

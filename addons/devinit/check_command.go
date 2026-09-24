@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
@@ -34,7 +35,8 @@ func checkCmd() *cobra.Command {
 		Use:   "check",
 		Short: "Run CI enforcement checks on the project configuration",
 		Long: `Verify binary compatibility, config integrity, required tools,
-generated file state, and security hardening.
+generated file state, security hardening, and the credential isolation of
+each configured cloud provider (checked statically; no cloud CLI runs).
 
 Exit code is non-zero when checks fail at or above the audit level.
 Use --format to select output format (human, json, sarif, junit).
@@ -144,6 +146,10 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	}
 
 	ctx.CustomConformance = evaluateCustomConformance(projectRoot, scan)
+
+	// Environment separation for cloud providers is judged from what the
+	// devenv modules declare; no cloud CLI runs.
+	ctx.DeclaredEnv, ctx.DeclaredEnvErr = devenv.ProjectDeclaredEnv(projectRoot)
 
 	// Run all checks.
 	report := check.RunAllChecks(ctx)

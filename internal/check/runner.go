@@ -15,6 +15,7 @@ func RunAllChecks(ctx CheckContext) *CheckReport {
 	results = append(results, CheckFileState(ctx)...)
 	results = append(results, CheckSecurityHardening(ctx)...)
 	results = append(results, CheckClaudeSettingsPosture(ctx)...)
+	results = append(results, CheckCloudIsolation(ctx)...)
 	results = append(results, CheckDenyRuleConflicts(ctx)...)
 	results = append(results, CheckCustomConformance(ctx)...)
 

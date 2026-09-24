@@ -51,7 +51,8 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 
 	osInfo := sysinfo.DetectOS()
 
-	// An unknown working directory only disables the project-scoped NFS check.
+	// An unknown working directory only disables the project-scoped checks
+	// (NFS, cloud credential isolation).
 	projectRoot, _ := cmdutil.ProjectRoot()
 
 	var containerSection *doctor.ContainerSection
@@ -70,6 +71,7 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 	report := doctor.BuildReport(osInfo, checks, version.Info().Version)
 	report.SetContainerSection(containerSection)
 	report.SetSandboxSection(sandboxSection)
+	report.SetCloudSection(cloudIsolationSection(projectRoot))
 	slog.Info("doctor check complete",
 		"required_tools", len(report.RequiredTools),
 		"optional_tools", len(report.OptionalTools),

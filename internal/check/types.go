@@ -182,6 +182,12 @@ type CheckContext struct {
 	// (.qsdev-policy.yaml) as evaluated against a posture assessment by the
 	// command layer; nil when the project has no custom policy.
 	CustomConformance *CustomConformance
+	// DeclaredEnv holds the environment variables the project's devenv
+	// modules (devenv.nix, devenv.local.nix) declare, read by the command
+	// layer; the cloud isolation check judges environment separation from
+	// it. DeclaredEnvErr records a module that could not be read or parsed.
+	DeclaredEnv    map[string]string
+	DeclaredEnvErr error
 }
 
 // CustomConformance carries the evaluated requirements of a project's custom

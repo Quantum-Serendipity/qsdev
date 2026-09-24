@@ -61,22 +61,34 @@ func (r *Report) SetMCPSection(ms *MCPSection) {
 	r.MCPServers = ms
 }
 
-// CloudSection holds cloud provider CLI check results for the doctor report.
+// CloudSection holds the cloud credential isolation results for the doctor
+// report: one entry per cloud provider the project configures.
 type CloudSection struct {
 	Detected  bool                `json:"detected"`
 	Providers []CloudProviderInfo `json:"providers"`
 	Warnings  []string            `json:"warnings,omitempty"`
 }
 
-// CloudProviderInfo summarises a single cloud provider CLI's status.
+// CloudProviderInfo summarises one cloud provider's credential isolation.
+// Status is "isolated", "degraded" (only the advisory environment layer is
+// missing) or "misconfigured" (a generated layer is missing).
 type CloudProviderInfo struct {
-	Name        string `json:"name"`
-	DisplayName string `json:"display_name"`
-	Status      string `json:"status"`
-	Detail      string `json:"detail,omitempty"`
+	Name        string           `json:"name"`
+	DisplayName string           `json:"display_name"`
+	Status      string           `json:"status"`
+	Detail      string           `json:"detail,omitempty"`
+	Layers      []CloudLayerInfo `json:"layers,omitempty"`
 }
 
-// SetCloudSection attaches cloud provider CLI check results to the report.
+// CloudLayerInfo is the state of one credential isolation layer.
+type CloudLayerInfo struct {
+	Name     string `json:"name"`
+	Active   bool   `json:"active"`
+	Enforced bool   `json:"enforced"`
+	Detail   string `json:"detail,omitempty"`
+}
+
+// SetCloudSection attaches cloud credential isolation results to the report.
 func (r *Report) SetCloudSection(cs *CloudSection) {
 	r.CloudProviders = cs
 }
@@ -432,7 +444,7 @@ func formatSandboxSection(w io.Writer, ss *SandboxSection, okSym, warnSym, _ str
 }
 
 func formatCloudSection(w io.Writer, cs *CloudSection, okSym, warnSym, failSym string) {
-	fmt.Fprintln(w, "Cloud Providers")
+	fmt.Fprintln(w, "Cloud Credential Isolation")
 	for _, p := range cs.Providers {
 		sym := okSym
 		switch p.Status {
@@ -444,6 +456,16 @@ func formatCloudSection(w io.Writer, cs *CloudSection, okSym, warnSym, failSym s
 		fmt.Fprintf(w, "  %-20s %s %s\n", p.DisplayName, sym, p.Status)
 		if p.Detail != "" {
 			fmt.Fprintf(w, "    %s\n", p.Detail)
+		}
+		for _, l := range p.Layers {
+			lsym := okSym
+			if !l.Active {
+				lsym = warnSym
+				if l.Enforced {
+					lsym = failSym
+				}
+			}
+			fmt.Fprintf(w, "    %s %s: %s\n", lsym, l.Name, l.Detail)
 		}
 	}
 	for _, warn := range cs.Warnings {

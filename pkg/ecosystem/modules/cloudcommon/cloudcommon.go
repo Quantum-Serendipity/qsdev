@@ -15,6 +15,37 @@ const (
 	Azure CloudProvider = "azure"
 )
 
+// Providers returns every supported cloud provider. Each is also the name of
+// the ecosystem module that configures it.
+func Providers() []CloudProvider {
+	return []CloudProvider{AWS, GCP, Azure}
+}
+
+// ProviderForModule returns the cloud provider an ecosystem module name
+// configures; ok is false for a module that is not a cloud provider.
+func ProviderForModule(name string) (CloudProvider, bool) {
+	for _, p := range Providers() {
+		if string(p) == name {
+			return p, true
+		}
+	}
+	return "", false
+}
+
+// DisplayName returns the provider's human-readable name.
+func DisplayName(provider CloudProvider) string {
+	switch provider {
+	case AWS:
+		return "AWS"
+	case GCP:
+		return "Google Cloud"
+	case Azure:
+		return "Azure"
+	default:
+		return string(provider)
+	}
+}
+
 // EnvVarForProvider returns the per-project isolation env var name for a provider.
 func EnvVarForProvider(provider CloudProvider) string {
 	switch provider {

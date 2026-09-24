@@ -403,17 +403,24 @@ func settingsUnavailableResult(ctx CheckContext, err error) CheckResult {
 }
 
 // claudeCodeConfigured reports whether the project is expected to carry a
-// qsdev-managed .claude/settings.json. An explicit claude_code.enabled value in
-// the config is authoritative; when the config is silent, the state file
-// recording settings.json as a generated file means Claude Code was set up.
+// qsdev-managed .claude/settings.json (see ClaudeCodeConfigured).
 func claudeCodeConfigured(ctx CheckContext) bool {
-	if ctx.QsdevConfig != nil && ctx.QsdevConfig.ClaudeCode.Enabled != nil {
-		return *ctx.QsdevConfig.ClaudeCode.Enabled
+	return ClaudeCodeConfigured(ctx.QsdevConfig, ctx.StateFile)
+}
+
+// ClaudeCodeConfigured reports whether a project with config cfg and init
+// state file stateFile is expected to carry a qsdev-managed
+// .claude/settings.json. An explicit claude_code.enabled value in the config
+// is authoritative; when the config is silent, the state file recording
+// settings.json as a generated file means Claude Code was set up.
+func ClaudeCodeConfigured(cfg *types.QsdevConfig, stateFile string) bool {
+	if cfg != nil && cfg.ClaudeCode.Enabled != nil {
+		return *cfg.ClaudeCode.Enabled
 	}
-	if ctx.StateFile == "" {
+	if stateFile == "" {
 		return false
 	}
-	genState, err := state.LoadStateFromFile(ctx.StateFile)
+	genState, err := state.LoadStateFromFile(stateFile)
 	if err != nil {
 		return false
 	}

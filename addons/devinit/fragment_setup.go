@@ -123,7 +123,7 @@ func warnEcosystemSetup(w io.Writer, projectRoot string, answers types.WizardAns
 	if scope.ClaudeOnly {
 		return
 	}
-	for _, msg := range ecosystem.DefaultRegistry().SetupWarnings(projectRoot, answers.Languages) {
+	for _, msg := range ecosystem.DefaultRegistry().SetupWarnings(projectRoot, answers) {
 		_, _ = fmt.Fprintln(w, "Warning: "+msg)
 	}
 }

@@ -50,6 +50,8 @@ func ValidateAnswers(answers types.WizardAnswers) error {
 		errs = append(errs, err.Error())
 	}
 
+	errs = append(errs, validateJavaConfig(answers.Java)...)
+
 	// Validate environment variable names; keys are emitted unquoted.
 	for _, k := range slices.Sorted(maps.Keys(answers.EnvVars)) {
 		switch {
@@ -95,6 +97,19 @@ func validateLanguageChoices(langs []types.LanguageChoice) []string {
 			errs = append(errs, fmt.Sprintf("unknown python package manager %q; valid values: %v", lang.PackageManager, validation.PythonPackageManagers()))
 		case !validation.IsValidToken(lang.PackageManager):
 			errs = append(errs, fmt.Sprintf("invalid %s package manager %q: must be a single word of letters, digits, '.', '_' or '-'", lang.Name, lang.PackageManager))
+		}
+	}
+	return errs
+}
+
+// validateJavaConfig checks the java block. Allowlisted repository ids are
+// joined into the settings.xml mirrorOf list, where ',' separates entries and
+// '!' and '*' are operators, so each must be a plain token.
+func validateJavaConfig(java types.JavaConfig) []string {
+	var errs []string
+	for _, id := range java.RepositoryAllowlist {
+		if !validation.IsValidToken(id) {
+			errs = append(errs, fmt.Sprintf("invalid java.repository_allowlist id %q: must be a single word of letters, digits, '.', '_' or '-'", id))
 		}
 	}
 	return errs

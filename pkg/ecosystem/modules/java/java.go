@@ -27,6 +27,7 @@ var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
+var _ ecosystem.SetupWarner = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -245,24 +246,15 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 }
 
 // SecurityConfigs returns generated security configuration files for Maven
-// and/or Gradle based on the detected build tool.
+// and/or Gradle based on the detected build tool. The Maven settings.xml
+// mirror sends every repository except those in java.repository_allowlist
+// (config.RepositoryAllowlist) to the registry proxy or Maven Central.
 func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {
 	bt := buildTool(config)
 	var files []types.GeneratedFile
 
 	if usesMaven(bt) {
-		settings := buildSecuritySettings()
-		if config.RegistryProxy != "" {
-			// Replace the default central-only mirror with the corporate proxy.
-			settings.Mirrors.Mirror = []Mirror{
-				{
-					ID:       "corporate-proxy",
-					Name:     "Corporate registry proxy",
-					URL:      config.RegistryProxy,
-					MirrorOf: "*",
-				},
-			}
-		}
+		settings := buildSecuritySettings(buildMirror(config.RegistryProxy, config.RepositoryAllowlist))
 		// A render failure drops only the Maven file: the Gradle hardening
 		// below is independent and must still be generated for "both".
 		// SecurityConfigs has no error return, so the failure is logged.
@@ -270,7 +262,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 			slog.Warn("java: skipping .mvn/settings.xml: rendering failed", "error", err)
 		} else {
 			files = append(files, types.GeneratedFile{
-				Path:     ".mvn/settings.xml",
+				Path:     settingsXMLPath,
 				Content:  content,
 				Mode:     fileutil.ModeReadWrite,
 				Strategy: types.Skip,

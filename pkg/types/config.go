@@ -39,6 +39,7 @@ type QsdevConfig struct {
 	Client         *ClientConfig    `yaml:"client,omitempty"`
 	Git            GitConfig        `yaml:"git,omitempty"`
 	MCP            MCPConfig        `yaml:"mcp,omitempty"`
+	Java           JavaConfig       `yaml:"java,omitempty"`
 }
 
 // LanguageConfig specifies a language/platform ecosystem in .qsdev.yaml.
@@ -248,6 +249,15 @@ type GitConfig struct {
 	// branch-naming pre-push hook checks the current branch against. Empty
 	// selects the built-in default (gitworkflow.DefaultBranchPattern).
 	BranchPattern string `yaml:"branch_pattern,omitempty"`
+}
+
+// JavaConfig holds JVM ecosystem settings in .qsdev.yaml.
+type JavaConfig struct {
+	// RepositoryAllowlist lists the ids of Maven repositories (declared in
+	// pom.xml <repositories> or <pluginRepositories>) that Maven resolves
+	// from their own URL. The generated .mvn/settings.xml mirror redirects
+	// every other repository to Maven Central or the registry proxy.
+	RepositoryAllowlist []string `yaml:"repository_allowlist,omitempty" json:"repository_allowlist,omitempty"`
 }
 
 // ClientConfig holds client-specific constraints in .qsdev.yaml.

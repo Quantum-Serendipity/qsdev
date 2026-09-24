@@ -2,6 +2,7 @@ package ecosystem_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -9,8 +10,8 @@ import (
 )
 
 // mockSetupWarner implements both EcosystemModule and SetupWarner. It warns
-// with the project root and package manager it was given, so tests can see
-// both were passed through.
+// with the project root, package manager and repository allowlist it was
+// given, so tests can see all were passed through.
 type mockSetupWarner struct {
 	ecosystem.MockModule
 }
@@ -19,7 +20,11 @@ func (m *mockSetupWarner) SetupWarnings(projectRoot string, config ecosystem.Mod
 	if config.PackageManager == "" {
 		return nil
 	}
-	return []string{projectRoot + " lacks " + config.PackageManager + " files"}
+	msg := projectRoot + " lacks " + config.PackageManager + " files"
+	if len(config.RepositoryAllowlist) > 0 {
+		msg += " allowing " + strings.Join(config.RepositoryAllowlist, ",")
+	}
+	return []string{msg}
 }
 
 func TestRegistry_SetupWarnings(t *testing.T) {
@@ -39,6 +44,7 @@ func TestRegistry_SetupWarnings(t *testing.T) {
 	tests := []struct {
 		name  string
 		langs []types.LanguageChoice
+		java  types.JavaConfig
 		want  []string
 	}{
 		{name: "no languages", langs: nil, want: nil},
@@ -66,11 +72,19 @@ func TestRegistry_SetupWarnings(t *testing.T) {
 			},
 			want: []string{"Other: /proj lacks b files", "Warner: /proj lacks a files"},
 		},
+		{
+			// Modules see the configuration generation uses, so a warning
+			// about the generated files matches what is written.
+			name:  "generation config reaches the module",
+			langs: []types.LanguageChoice{{Name: "warner", PackageManager: "a"}},
+			java:  types.JavaConfig{RepositoryAllowlist: []string{"confluent", "nexus"}},
+			want:  []string{"Warner: /proj lacks a files allowing confluent,nexus"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := r.SetupWarnings("/proj", tt.langs); !reflect.DeepEqual(got, tt.want) {
+			if got := r.SetupWarnings("/proj", types.WizardAnswers{Languages: tt.langs, Java: tt.java}); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("SetupWarnings() = %q, want %q", got, tt.want)
 			}
 		})

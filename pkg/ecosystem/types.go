@@ -58,6 +58,10 @@ type ModuleConfig struct {
 	PackageManager string            `yaml:"package_manager" json:"package_manager"`
 	Extras         map[string]string `yaml:"extras"          json:"extras"`
 	RegistryProxy  string            `yaml:"registry_proxy"  json:"registry_proxy"`
+	// RepositoryAllowlist is .qsdev.yaml java.repository_allowlist: the ids
+	// of project-declared Maven repositories that a module's generated
+	// registry mirror must leave alone (resolved from their own URL).
+	RepositoryAllowlist []string `yaml:"repository_allowlist,omitempty" json:"repository_allowlist,omitempty"`
 }
 
 // PM returns the configured PackageManager, falling back to defaultPM if empty.

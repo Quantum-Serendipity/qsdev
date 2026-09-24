@@ -438,6 +438,17 @@ func validateSplicedValues(cfg *types.QsdevConfig) []ValidationError {
 			})
 		}
 	}
+	// Allowlisted ids are joined into the settings.xml mirrorOf list, where
+	// ',' separates and '!' and '*' are operators.
+	for i, id := range cfg.Java.RepositoryAllowlist {
+		if !validation.IsValidToken(id) {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("java.repository_allowlist[%d]", i),
+				Value:   id,
+				Message: "invalid repository id; must be a single word of letters, digits, '.', '_' or '-'",
+			})
+		}
+	}
 	for i, svc := range cfg.Services {
 		if svc.Version != "" && !validation.IsValidToken(svc.Version) {
 			errs = append(errs, ValidationError{

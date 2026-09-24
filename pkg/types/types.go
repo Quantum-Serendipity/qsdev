@@ -53,6 +53,9 @@ type WizardAnswers struct {
 	// the generated hooks. Like MCPPolicy it is refreshed from .qsdev.yaml by
 	// init, join and update, never chosen interactively.
 	HookPolicy HooksConfig `yaml:"hook_policy,omitempty" json:"hook_policy,omitempty"`
+	// Java is the committed .qsdev.yaml java block. Like MCPPolicy it is
+	// refreshed from .qsdev.yaml by init, join and update.
+	Java JavaConfig `yaml:"java,omitempty" json:"java,omitempty"`
 }
 
 // AgentToolsAnswers holds AI agent tool selections from the wizard.

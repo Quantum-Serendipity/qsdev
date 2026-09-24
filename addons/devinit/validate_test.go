@@ -394,3 +394,31 @@ func TestValidateAnswers_HookPolicy(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateAnswers_JavaRepositoryAllowlist checks the answers boundary
+// rejects allowlist ids that would change the settings.xml mirrorOf list.
+func TestValidateAnswers_JavaRepositoryAllowlist(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		id      string
+		wantErr bool
+	}{
+		{"confluent", false},
+		{"company.nexus_releases-1", false},
+		{"a,*", true},
+		{"!central", true},
+		{"", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			t.Parallel()
+			err := devinit.ValidateAnswers(types.WizardAnswers{Java: types.JavaConfig{RepositoryAllowlist: []string{tt.id}}})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ValidateAnswers() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr && !strings.Contains(err.Error(), "java.repository_allowlist") {
+				t.Errorf("error %q does not name java.repository_allowlist", err)
+			}
+		})
+	}
+}

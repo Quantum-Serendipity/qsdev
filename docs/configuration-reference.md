@@ -111,6 +111,8 @@ git:
   branch_pattern: '^(feat|fix|chore|docs|refactor|test|ci)/[a-z0-9._-]+$'   # optional; see Git settings
 mcp:
   disabled_tools: [qsdev_nix_run]   # MCP tools the qsdev MCP server refuses to run
+java:
+  repository_allowlist: [confluent]   # pom.xml repository ids Maven resolves directly
 ```
 
 `version` is the schema version (currently `2`). Each profile key is
@@ -483,9 +485,56 @@ block is generated with the settings it was created with, not raised to
 qsdev's built-in defaults. An unreadable `.qsdev.yaml` or `.qsdev.local.yaml`
 stops init and update with an error rather than generating without its policy.
 Re-creating a project (`qsdev init --force`) keeps the committed `client`
-block, `security` switches, `hooks` block, `git` settings and `tools.config`,
-and never
-records a lower `security.level` than the committed one.
+block, `security` switches, `hooks` block, `git` settings, `java` block and
+`tools.config`, and never records a lower `security.level` than the committed
+one.
+
+### Java repository allowlist
+
+For Maven projects qsdev generates `.mvn/settings.xml` with a single mirror
+that sends every repository to Maven Central (mirror id `central-only`), or
+to the registry proxy when `infrastructure.registry_proxy` is set (mirror id
+`corporate-proxy`). Maven uses the file when run with
+`mvn -s .mvn/settings.xml`. A repository a `pom.xml` declares, such as a
+company Nexus, Spring milestones, JitPack or Confluent, is then never
+contacted: artifacts only it hosts fail to resolve with an error that names
+the mirror, not the repository.
+
+List the ids of the repositories Maven should resolve from their own URL
+under `java.repository_allowlist`:
+
+```yaml
+java:
+  repository_allowlist: [confluent, company-nexus]
+```
+
+The mirror then matches `*,!confluent,!company-nexus`: those repositories
+are resolved from the URL the POM declares, every other one still goes
+through the mirror. Ids are the `<id>` of a `<repository>` or
+`<pluginRepository>`, and must be a single word of letters, digits, `.`, `_`
+or `-` (`qsdev check` reports anything else, since `,`, `!` and `*` are
+`mirrorOf` syntax; init, join and update stop on an invalid id). Checksums of
+artifacts from an allowlisted repository are still verified strictly by the
+`--strict-checksums` in `.mvn/maven.config`, and Maven 3.8.1 and later still
+refuse a plain-`http://` repository through the HTTP-blocking mirror in their
+global settings. A POM that redeclares the `central` id with another URL (a
+company Nexus, say) overrides Central, so it is reported like any other
+repository and needs `central` in the allowlist to keep its own URL.
+
+`qsdev init`, `--mode join` and `--update` warn about each repository the
+project's POMs declare (the root `pom.xml`, its profiles and the module POMs
+it aggregates) that is neither Maven Central nor allowlisted, for example:
+
+```text
+Warning: Java/Kotlin (JVM): the project's POMs declare repositories that the .mvn/settings.xml mirror redirects to Maven Central whenever Maven uses that file (mvn -s .mvn/settings.xml): jitpack (https://jitpack.io). Artifacts only they host will fail to resolve; to resolve them from their own URL, add their ids to java.repository_allowlist in .qsdev.yaml
+```
+
+`.mvn/settings.xml` is only created when absent (strategy `skip`), so a
+change to the allowlist does not rewrite an existing file. Init and update
+then warn that the file's `central-only` or `corporate-proxy` mirror has a
+stale `mirrorOf` and print the value to set by hand. The allowlist is
+team-wide policy: only `.qsdev.yaml` sets it (a `java` key in
+`.qsdev.local.yaml` is an error).
 
 ---
 
@@ -1283,7 +1332,9 @@ The `qsdev:python:poetry-check-lock` task checks both conditions each time the s
 
 | File | Merge Strategy | Purpose |
 |------|---------------|---------|
-| Maven `settings.xml` or Gradle config | `skip` | Repository pinning (only created if absent) |
+| Maven `.mvn/settings.xml` | `skip` | Checksum enforcement and a mirror sending every repository not in `java.repository_allowlist` to Maven Central or the registry proxy (see [Java repository allowlist](#java-repository-allowlist)) |
+| Maven `.mvn/maven.config` | `skip` | `--strict-checksums` for every repository |
+| Gradle `gradle.properties` (and `init.gradle` with a registry proxy) | `skip` | Dependency verification; proxy routing (only created if absent) |
 
 ### C#/.NET
 

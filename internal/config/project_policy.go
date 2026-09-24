@@ -67,9 +67,9 @@ func ResolveProjectPolicy(project *types.QsdevConfig, local *LocalConfig) (*Proj
 // to the effective security floor, enables the tools the client compliance
 // level requires unless the answers record a decision about them, fills an
 // unset permission level from the client compliance level, and installs the
-// client MCP policy, the git branch naming pattern and the hook settings (the
-// `hooks` block), which replace any earlier ones because .qsdev.yaml is
-// authoritative for them.
+// client MCP policy, the git branch naming pattern, the hook settings (the
+// `hooks` block) and the java block, which replace any earlier ones because
+// .qsdev.yaml is authoritative for them.
 func (p *ProjectPolicy) Apply(a *types.WizardAnswers) {
 	level := effectiveSecurityLevel(p.Effective.Config)
 	if CompareComplianceLevels(level, a.ComplianceLevel) > 0 {
@@ -102,6 +102,9 @@ func (p *ProjectPolicy) Apply(a *types.WizardAnswers) {
 	a.MCPServers = a.MCPPolicy.Filter(a.MCPServers)
 	a.BranchPattern = p.Committed.Git.BranchPattern
 	a.HookPolicy = p.Committed.Hooks.Clone()
+	// The java block has no wizard or flag equivalent: the committed file is
+	// its only source, so a hand edit reaches the next update.
+	a.Java = cloneJava(p.Committed.Java)
 }
 
 // ApplyLocal adds the developer's .qsdev.local.yaml, as ResolveConfig applied

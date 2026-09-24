@@ -80,8 +80,14 @@ func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, pro
 	answers.Infrastructure = cloneInfra(cfg.Infrastructure)
 	answers.BranchPattern = cfg.Git.BranchPattern
 	answers.HookPolicy = cfg.Hooks.Clone()
+	answers.Java = cloneJava(cfg.Java)
 
 	return answers
+}
+
+// cloneJava returns a deep copy of a JavaConfig.
+func cloneJava(in types.JavaConfig) types.JavaConfig {
+	return types.JavaConfig{RepositoryAllowlist: slices.Clone(in.RepositoryAllowlist)}
 }
 
 // mapClaudeCode maps the claude_code block and the hook choices it implies.

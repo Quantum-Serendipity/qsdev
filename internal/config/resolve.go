@@ -188,6 +188,9 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 		result.Git.BranchPattern = overlay.Git.BranchPattern
 	}
 
+	// Java.RepositoryAllowlist: union.
+	result.Java.RepositoryAllowlist = mergeUnionStrings(base.Java.RepositoryAllowlist, overlay.Java.RepositoryAllowlist)
+
 	// Client: NOT merged, only from project config.
 	// The overlay's Client replaces the base's if present (as a deep copy,
 	// so later edits to the resolved config never reach the caller's input).
@@ -363,6 +366,7 @@ func cloneQsdevConfig(cfg *types.QsdevConfig) *types.QsdevConfig {
 		},
 		Hooks:    cfg.Hooks.Clone(),
 		Git:      cfg.Git,
+		Java:     cloneJava(cfg.Java),
 		Packages: slices.Clone(cfg.Packages),
 		Overlays: slices.Clone(cfg.Overlays),
 	}

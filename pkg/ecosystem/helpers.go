@@ -2,6 +2,7 @@ package ecosystem
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -65,6 +66,16 @@ func ToModuleConfigWithInfra(lang types.LanguageChoice, infra types.InfraConfig)
 	if proxyKey != "" {
 		cfg.RegistryProxy = ResolveProxyURL(infra.RegistryProxyBase(), infra.RegistryProxyOverrides, proxyKey, infra.RegistryProxyPaths)
 	}
+	return cfg
+}
+
+// ToGenerationConfig converts a LanguageChoice into the ModuleConfig
+// generation passes to a module: ToModuleConfigWithInfra plus the
+// project-level module settings the answers carry from .qsdev.yaml
+// (java.repository_allowlist).
+func ToGenerationConfig(lang types.LanguageChoice, answers types.WizardAnswers) ModuleConfig {
+	cfg := ToModuleConfigWithInfra(lang, answers.Infrastructure)
+	cfg.RepositoryAllowlist = slices.Clone(answers.Java.RepositoryAllowlist)
 	return cfg
 }
 

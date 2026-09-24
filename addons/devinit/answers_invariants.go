@@ -45,5 +45,6 @@ func cloneAnswers(a types.WizardAnswers) types.WizardAnswers {
 	c.EnabledTools = maps.Clone(a.EnabledTools)
 	c.Overlays = slices.Clone(a.Overlays)
 	c.HookPolicy = a.HookPolicy.Clone()
+	c.Java.RepositoryAllowlist = slices.Clone(a.Java.RepositoryAllowlist)
 	return c
 }

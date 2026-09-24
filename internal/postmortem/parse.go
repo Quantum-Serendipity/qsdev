@@ -255,7 +255,8 @@ type SessionFileScan struct {
 }
 
 // FindSessionFiles collects the .jsonl session transcripts under root, stopping
-// after limit files (limit <= 0 means no limit). Unreadable sub-directories are
+// after limit files (limit <= 0 means no limit). Symlinks are not followed,
+// so every returned path lies under root. Unreadable sub-directories are
 // skipped and counted; an unreadable root is an error.
 func FindSessionFiles(root string, limit int) (SessionFileScan, error) {
 	var scan SessionFileScan
@@ -270,7 +271,9 @@ func FindSessionFiles(root string, limit int) (SessionFileScan, error) {
 			}
 			return nil
 		}
-		if d.IsDir() || filepath.Ext(path) != ".jsonl" {
+		// A symlinked transcript is skipped: following it would read a file
+		// outside root, which callers use to confine what may be read.
+		if d.IsDir() || d.Type()&fs.ModeSymlink != 0 || filepath.Ext(path) != ".jsonl" {
 			return nil
 		}
 		if limit > 0 && len(scan.Paths) >= limit {

@@ -29,7 +29,7 @@ func generateVersionSentinelFiles(answers types.WizardAnswers, registry *ecosyst
 	})
 
 	// Ignore file for unsupported ecosystems.
-	report := collectManifestCoverage(answers, registry)
+	report := ecosystem.LanguageManifestCoverage(answers.Languages, registry)
 	if report.HasUncovered() {
 		var lines []string
 		lines = append(lines, "# Ecosystems not covered by Version-Sentinel — verify versions manually")
@@ -53,8 +53,4 @@ func generateVersionSentinelFiles(answers types.WizardAnswers, registry *ecosyst
 	// recorded history with the empty seed.
 
 	return files, nil
-}
-
-func collectManifestCoverage(answers types.WizardAnswers, registry *ecosystem.Registry) ecosystem.ManifestCoverageReport {
-	return ecosystem.LanguageManifestCoverage(answers.Languages, registry)
 }

@@ -145,6 +145,13 @@ func LoadPrimary(projectRoot string) (types.WizardAnswers, error) {
 	return a, err
 }
 
+// RequirePrimary reads the primary (devinit) answers file. Unlike LoadPrimary,
+// a missing file is an error telling the user to run init, for callers whose
+// result would be meaningless (vacuously empty) without recorded answers.
+func RequirePrimary(projectRoot string) (types.WizardAnswers, error) {
+	return LoadFromDir(projectRoot, PrimaryDir(), PrimaryFilename(), "init")
+}
+
 // loadPrimary reads the primary answers file and reports whether it exists.
 func loadPrimary(projectRoot string) (types.WizardAnswers, bool, error) {
 	path := PrimaryPath(projectRoot)

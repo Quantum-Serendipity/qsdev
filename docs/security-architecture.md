@@ -236,6 +236,19 @@ separate namespace, and never becomes an MCP deny. `qsdev check` fails on an
 misspelling cannot silently leave a tool enabled in a CI-gated project. See
 [MCP tool deny list](configuration-reference.md#mcp-tool-deny-list).
 
+**One MCP server stack.** Every MCP server qsdev generates that runs qsdev
+itself is `qsdev mcp serve`. The `agent-postmortem` and `version-sentinel`
+entries in `.mcp.json` run it with `--module <name>`, which mounts only that
+tool module and leaves out the project context surface and the framework
+adapters. Their tool calls pass through the same guardrail, rate-limit,
+content-safety and audit middleware as the full server, and
+`mcp.disabled_tools` covers them. The transcript tools (`analyze_session`,
+`list_failure_patterns`) read only `.jsonl` transcripts inside the Claude Code
+projects directory (`$CLAUDE_CONFIG_DIR/projects`, or `~/.claude/projects`).
+A relative path is taken relative to that directory, symlinks are resolved
+before the check, and the directory walk does not follow symlinks. The
+version-sentinel tools read only inside the project root.
+
 **Credential vending is opt-in and allow-listed.** `qsdev_credential_vend`
 is the only MCP tool whose output skips secret redaction, because its whole
 purpose is to return short-lived cloud credentials. The server mounts it only

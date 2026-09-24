@@ -1,6 +1,9 @@
 package ecosystem
 
-import "github.com/Quantum-Serendipity/qsdev/pkg/types"
+import (
+	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
+)
 
 // ResolveLanguageModules returns the registered modules for the given language
 // choices (unknown names are skipped), plus a configFor function suitable for
@@ -33,4 +36,12 @@ func ResolveLanguageModules(
 // the modules of the given language choices.
 func LanguageManifestCoverage(languages []types.LanguageChoice, registry *Registry) ManifestCoverageReport {
 	return AggregateManifestCoverage(ResolveLanguageModules(languages, registry))
+}
+
+// LanguageVerificationCommands returns the de-duplicated build, test and lint
+// commands of the modules for the given language choices. It backs both the
+// generated agent-postmortem skill and the MCP verification checklist, so the
+// two always list the same commands.
+func LanguageVerificationCommands(languages []types.LanguageChoice, registry *Registry) []string {
+	return sliceutil.Dedup(AggregateVerificationCommands(ResolveLanguageModules(languages, registry)).All())
 }

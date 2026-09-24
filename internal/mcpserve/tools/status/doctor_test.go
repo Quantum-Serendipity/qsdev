@@ -25,7 +25,7 @@ func TestCheckMCPProbesOnlySafeConfiguredServers(t *testing.T) {
   "context7": {"command": "npx", "args": ["-y", "@upstash/context7-mcp"]},
   "semble":   {"command": "/usr/bin/uvx", "args": ["--from", "semble[mcp]", "semble"]},
   "qsdev":    {"command": "qsdev", "args": ["mcp", "serve"]},
-  "postmortem": {"command": "qsdev", "args": ["mcp", "agent-postmortem"]},
+  "postmortem": {"command": "qsdev", "args": ["mcp", "serve", "--module", "agent-postmortem"]},
   "local":    {"command": "/opt/local/bin/local-mcp"},
   "remote":   {"type": "http", "url": "https://mcp.example.test/mcp"}
 }}`

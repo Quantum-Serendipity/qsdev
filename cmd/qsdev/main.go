@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -20,7 +21,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/logcmd"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
-	"github.com/Quantum-Serendipity/qsdev/internal/mcpserver"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools"
 	"github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -206,16 +207,14 @@ func initLogging() {
 	}
 }
 
-// classifyInvocation extends logging.ClassifyInvocation with the embedded MCP
-// servers ("mcp <provider>"), which are launched by the agent for every session
-// and are therefore automated. They are derived from the provider registry so
-// a newly registered server is classified without further wiring.
+// classifyInvocation extends logging.ClassifyInvocation with the legacy
+// `mcp <module>` aliases of `mcp serve --module <module>`, which, like
+// `mcp serve`, open their own automated logging session.
 func classifyInvocation(args []string) logging.CommandClass {
 	class := logging.ClassifyInvocation(args)
-	if class == logging.ClassProject && len(args) >= 2 && args[0] == "mcp" {
-		if _, ok := mcpserver.DefaultRegistry().Get(args[1]); ok {
-			return logging.ClassAutomated
-		}
+	if class == logging.ClassProject && len(args) >= 2 && args[0] == "mcp" &&
+		slices.Contains(tools.LegacyServerModules(), args[1]) {
+		return logging.ClassUnlogged
 	}
 	return class
 }

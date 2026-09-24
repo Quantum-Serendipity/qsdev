@@ -3,6 +3,8 @@
     "agent-postmortem": {
       "args": [
         "mcp",
+        "serve",
+        "--module",
         "agent-postmortem"
       ],
       "command": "qsdev"
@@ -47,6 +49,8 @@
     "version-sentinel": {
       "args": [
         "mcp",
+        "serve",
+        "--module",
         "version-sentinel"
       ],
       "command": "qsdev"

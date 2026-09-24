@@ -34,8 +34,7 @@ func CurrentConfig() Config {
 }
 
 func initialize() error {
-	// Register the embedded MCP providers before mcpCmd enumerates them.
-	registerMCPProviders()
+	wireAttestation()
 
 	instance.AddCommands(cmdutil.RejectUnknownSubcommands(claudeCmd(), mcpCmd(), docsCmd(), contentCmd())...)
 	return nil

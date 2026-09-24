@@ -97,8 +97,8 @@ func matchesClient(a FrameworkAdapter, client ClientInfo) bool {
 
 // AdapterRegistry is a thread-safe collection of FrameworkAdapter
 // implementations, keyed by FrameworkID. It mirrors the pattern used by
-// pkg/ecosystem and internal/mcpserver: embed the generic registry and add a
-// domain-typed Register/All.
+// pkg/ecosystem: embed the generic registry and add a domain-typed
+// Register/All.
 type AdapterRegistry struct {
 	*registry.Registry[FrameworkAdapter]
 }

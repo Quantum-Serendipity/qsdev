@@ -165,7 +165,7 @@ func TestConfiguredGradeDef_CommandlessEntryIsNotStdio(t *testing.T) {
 	}{
 		{name: "remote entry parsed as stdio", def: mcpregistry.McpServerDefinition{Name: "socket", Transport: mcpregistry.TransportStdio}},
 		{name: "http entry", def: mcpregistry.McpServerDefinition{Name: "socket", URL: "https://mcp.example/", Transport: mcpregistry.TransportHTTP}},
-		{name: "local stdio entry", def: mcpregistry.McpServerDefinition{Name: "vs", Command: "qsdev", Args: []string{"mcp", "version-sentinel"}, Transport: mcpregistry.TransportStdio}, wantStdio: true},
+		{name: "local stdio entry", def: mcpregistry.McpServerDefinition{Name: "vs", Command: "qsdev", Args: []string{"mcp", "serve", "--module", "version-sentinel"}, Transport: mcpregistry.TransportStdio}, wantStdio: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

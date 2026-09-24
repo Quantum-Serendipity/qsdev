@@ -192,9 +192,14 @@ refuses to render one.
 
 `mcp.disabled_tools` lists tools of qsdev's own MCP server
 (`qsdev mcp serve`) that its guardrail refuses to run, for every caller. It
-names MCP tools such as `qsdev_nix_run`, `qsdev_security_scan` or
-`qsdev_credential_vend`, which are not the same thing as qsdev catalog
-tools. `tools.disabled` lists catalog tools (`gitleaks`, `semgrep`, ...);
+names MCP tools such as `qsdev_nix_run`, `qsdev_security_scan`,
+`qsdev_credential_vend` or `analyze_session`, which are not the same thing as
+qsdev catalog tools. The `agent-postmortem` and `version-sentinel` servers in
+`.mcp.json` are the same server restricted to one tool module
+(`qsdev mcp serve --module <name>`), so the list governs their tools
+(`analyze_session`, `list_failure_patterns`,
+`generate_verification_checklist`, `check_versions`, `detect_drift`,
+`manifest_coverage`, `version_history`) too. `tools.disabled` lists catalog tools (`gitleaks`, `semgrep`, ...);
 it controls what `qsdev init` generates and never blocks an MCP tool.
 
 ```yaml
@@ -205,8 +210,9 @@ mcp:
 ```
 
 - `qsdev check` fails (`config_validation`, high severity) on a name the
-  server cannot mount: its generic tools, its security, devenv and status
-  tools, and every framework adapter's tools. The same check fails on an MCP
+  server cannot mount: its generic tools, the tools of every tool module
+  (security, devenv, status, agent-postmortem, version-sentinel), and every
+  framework adapter's tools. The same check fails on an MCP
   tool name placed in `tools.disabled`.
 - The server reads the list once at startup, so restart it after a change.
   It still starts when an entry names no tool it provides, but logs a warning
@@ -672,8 +678,8 @@ Three servers are configured by default in `.mcp.json` (context7, github, socket
 | `github` | `github-mcp-server stdio` (Nix package) | GitHub API access | Default |
 | `socket` | HTTP `https://mcp.socket.dev/` | Behavioral dependency analysis | Default |
 | `semble` | `uvx --from semble[mcp]==0.6.0 semble` | Semantic code search | Opt-in (`--agent-semble` or `qsdev enable semble`) |
-| `agent-postmortem` | `qsdev mcp agent-postmortem` | Session analysis and failure patterns | Enabled when tool active |
-| `version-sentinel` | `qsdev mcp version-sentinel` | Dependency version monitoring | Enabled when tool active |
+| `agent-postmortem` | `qsdev mcp serve --module agent-postmortem` | Session analysis and failure patterns | Enabled when tool active |
+| `version-sentinel` | `qsdev mcp serve --module version-sentinel` | Dependency version monitoring | Enabled when tool active |
 | `local-docs-devdocs` | `npx @madhan-g-p/devdocs-mcp-server@1.0.1` | Local DevDocs API references | On when detected |
 | `local-docs-zim` | `openzim-mcp` (installed by `qsdev mcp install`) | Offline Stack Exchange via ZIM | Opt-in |
 | `mcp-nixos` | `uvx --from mcp-nixos==3.1.0 mcp-nixos` | NixOS packages and options | Opt-in |

@@ -50,9 +50,20 @@ func networkLauncherIn(command string, args []string) string {
 	return ""
 }
 
-// isSelfServer reports whether cfg launches qsdev's own MCP server
-// (`qsdev mcp serve ...`).
+// isSelfServer reports whether cfg launches qsdev's own universal MCP server
+// (`qsdev mcp serve ...`). A server restricted with --module to a tool module
+// (as the catalog's agent-postmortem and version-sentinel servers are) is a
+// separate, narrow process rather than another copy of the server that may be
+// answering the probing call, so it is probed like any other local server.
 func isSelfServer(cfg mcphealth.ServerConfig) bool {
-	return commandName(cfg.Command) == branding.Get().AppName &&
-		len(cfg.Args) >= 2 && cfg.Args[0] == "mcp" && cfg.Args[1] == "serve"
+	if commandName(cfg.Command) != branding.Get().AppName ||
+		len(cfg.Args) < 2 || cfg.Args[0] != "mcp" || cfg.Args[1] != "serve" {
+		return false
+	}
+	for _, arg := range cfg.Args[2:] {
+		if arg == "--module" || strings.HasPrefix(arg, "--module=") {
+			return false
+		}
+	}
+	return true
 }

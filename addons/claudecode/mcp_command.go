@@ -8,32 +8,27 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/contentsign"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve"
-	"github.com/Quantum-Serendipity/qsdev/internal/mcpserver"
-	"github.com/Quantum-Serendipity/qsdev/internal/version"
 )
 
 func mcpCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mcp",
-		Short: "Run embedded MCP servers",
-		Long:  "Start embedded MCP servers that communicate via stdio transport.",
-	}
-
-	for _, provider := range mcpserver.DefaultRegistry().All() {
-		cmd.AddCommand(mcpServerCmd(provider))
+		Short: "Run and manage MCP servers",
+		Long: "Run qsdev's universal MCP server (`mcp serve`, whose --module flag " +
+			"serves a single tool module such as agent-postmortem) and inspect, " +
+			"grade, install and remove the project's MCP servers.",
 	}
 
 	// The universal MCP server (internal/mcpserve) is the single allowed
 	// dependency edge from addons/claudecode into mcpserve. mcpserve must never
 	// import back into addons/claudecode (see internal/mcpserve/doc.go).
 	cmd.AddCommand(mcpserve.Command())
+	cmd.AddCommand(mcpserve.LegacyModuleCommands()...)
 
 	cmd.AddCommand(mcpStatusCmd())
 	cmd.AddCommand(mcpListCmd())
@@ -45,82 +40,18 @@ func mcpCmd() *cobra.Command {
 	return cmd
 }
 
-func mcpServerCmd(provider mcpserver.Provider) *cobra.Command {
-	return &cobra.Command{
-		Use:   provider.Name(),
-		Short: provider.Description(),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			srv := server.NewMCPServer(
-				"qsdev-"+provider.Name(),
-				version.Info().Version,
-			)
+// wireAttestationOnce makes wireAttestation idempotent and safe to call from
+// concurrent tests.
+var wireAttestationOnce sync.Once
 
-			for _, tool := range provider.Tools() {
-				srv.AddTool(buildMCPTool(tool), buildMCPHandler(tool))
-			}
-
-			return server.ServeStdio(srv)
-		},
-	}
-}
-
-func buildMCPTool(def mcpserver.ToolDef) mcp.Tool {
-	opts := []mcp.ToolOption{
-		mcp.WithDescription(def.Description),
-	}
-	for _, param := range def.Params {
-		paramOpts := []mcp.PropertyOption{
-			mcp.Description(param.Description),
-		}
-		if param.Required {
-			paramOpts = append(paramOpts, mcp.Required())
-		}
-		opts = append(opts, mcp.WithString(param.Name, paramOpts...))
-	}
-	return mcp.NewTool(def.Name, opts...)
-}
-
-func buildMCPHandler(def mcpserver.ToolDef) server.ToolHandlerFunc {
-	handler := def.Handler
-	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		args := request.GetArguments()
-		if args == nil {
-			args = make(map[string]any)
-		}
-
-		result, err := handler(ctx, args)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		return mcp.NewToolResultText(result), nil
-	}
-}
-
-// registerMCPProvidersOnce makes registerMCPProviders idempotent and safe to
-// call from concurrent tests.
-var registerMCPProvidersOnce sync.Once
-
-// RegisterMCPProviders registers the embedded MCP server providers (see
-// registerMCPProviders). The addon's initialize already calls it; it is
-// exported for callers that need the provider registry before addons are
-// initialized, such as tests of the entry point. It is idempotent.
-func RegisterMCPProviders() { registerMCPProviders() }
-
-// registerMCPProviders registers the embedded MCP server providers and wires
-// attestation into the compliance grader. It is called explicitly from the
-// addon's initialize (not from a package init), so importing this package has
-// no side effects on the shared registries.
-func registerMCPProviders() {
-	registerMCPProvidersOnce.Do(func() {
-		reg := mcpserver.DefaultRegistry()
-
-		reg.Register(newPostmortemProvider())
-		reg.Register(newVersionSentinelProvider())
-
-		// Wire external-attestation verification into the compliance grader. This is
-		// the only place mcpregistry and contentsign are connected (mcpregistry must
-		// not import contentsign, to avoid an import cycle).
+// wireAttestation wires external-attestation verification into the MCP
+// compliance grader. It is called explicitly from the addon's initialize (not
+// from a package init), so importing this package has no side effects on the
+// shared registries. This is the only place mcpregistry and contentsign are
+// connected (mcpregistry must not import contentsign, to avoid an import
+// cycle).
+func wireAttestation() {
+	wireAttestationOnce.Do(func() {
 		mcpregistry.AttestationChecker = attestationChecker
 	})
 }

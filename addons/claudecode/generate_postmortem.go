@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
-	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -20,7 +19,7 @@ func generatePostmortemSkill(answers types.WizardAnswers, registry *ecosystem.Re
 		return nil, nil
 	}
 
-	cmds := collectVerificationCommands(answers, registry)
+	cmds := ecosystem.LanguageVerificationCommands(answers.Languages, registry)
 
 	renderer, err := tmpl.NewMarkdownRenderer(templateFS, "templates")
 	if err != nil {
@@ -67,10 +66,4 @@ func postmortemSkillDescription() string {
 		return def.Description
 	}
 	return fallback
-}
-
-func collectVerificationCommands(answers types.WizardAnswers, registry *ecosystem.Registry) []string {
-	modules, configFor := ecosystem.ResolveLanguageModules(answers.Languages, registry)
-	agg := ecosystem.AggregateVerificationCommands(modules, configFor)
-	return sliceutil.Dedup(agg.All())
 }

@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/instance"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
@@ -94,23 +93,21 @@ func TestRegisterFrameworkAdapters_DuplicatePanics(t *testing.T) {
 	instance.RegisterFrameworkAdaptersInto(reg)
 }
 
-// TestClassifyInvocation_MCPServers proves the embedded MCP servers, derived
-// from the provider registry, are logged as automated while the user-facing
-// mcp subcommands keep project logging.
+// TestClassifyInvocation_MCPServers proves every agent-launched MCP server,
+// including the legacy `mcp <module>` aliases, leaves logging to the server's
+// own automated session, while the user-facing mcp subcommands keep project
+// logging.
 func TestClassifyInvocation_MCPServers(t *testing.T) {
 	t.Parallel()
-	// In the binary, the claudecode addon's initialize registers the providers
-	// before any command (and so initLogging) runs.
-	claudecode.RegisterMCPProviders()
-
 	tests := []struct {
 		args []string
 		want logging.CommandClass
 	}{
-		{[]string{"mcp", "agent-postmortem"}, logging.ClassAutomated},
-		{[]string{"mcp", "version-sentinel"}, logging.ClassAutomated},
+		{[]string{"mcp", "agent-postmortem"}, logging.ClassUnlogged},
+		{[]string{"mcp", "version-sentinel"}, logging.ClassUnlogged},
+		{[]string{"mcp", "serve", "--module", "agent-postmortem"}, logging.ClassUnlogged},
 		{[]string{"mcp", "install", "github"}, logging.ClassProject},
-		{[]string{"mcp", "serve"}, logging.ClassUnlogged},
+		{[]string{"mcp", "status"}, logging.ClassProject},
 		{[]string{"init"}, logging.ClassProject},
 	}
 	for _, tt := range tests {

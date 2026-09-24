@@ -137,6 +137,11 @@ func TestClassifyInvocation(t *testing.T) {
 		{"enforce hook", []string{"enforce", "--hook", "pre-tool-use"}, ClassAutomated},
 		{"sandbox exec", []string{"sandbox", "exec", "--", "ls"}, ClassAutomated},
 		{"sandbox status", []string{"sandbox", "status"}, ClassProject},
+		// The MCP servers the agent launches are all the universal server, which
+		// opens its own automated session.
+		{"universal mcp server", []string{"mcp", "serve"}, ClassUnlogged},
+		{"single-module mcp server", []string{"mcp", "serve", "--module", "agent-postmortem"}, ClassUnlogged},
+		{"mcp management command", []string{"mcp", "install", "github"}, ClassProject},
 		{"help after terminator is an argument", []string{"sandbox", "exec", "--", "tool", "--help"}, ClassAutomated},
 		{"init", []string{"init", "--mode", "join"}, ClassProject},
 		{"unknown command", []string{"doctor"}, ClassProject},

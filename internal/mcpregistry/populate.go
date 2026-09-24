@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
-	"github.com/Quantum-Serendipity/qsdev/internal/mcpserver"
 )
 
 // buildDefault creates and populates the default MCP server registry from
@@ -32,7 +31,6 @@ func buildRegistry(loadCatalog func() (*catalog.Catalog, error)) *McpServerRegis
 	}
 
 	registerUniversalServer(r)
-	populateFromEmbeddedProviders(r)
 
 	return r
 }
@@ -122,29 +120,5 @@ func enrichFromCatalog(r *McpServerRegistry, cat *catalog.Catalog) {
 			}
 			return def
 		})
-	}
-}
-
-// populateFromEmbeddedProviders adds any embedded MCP server providers that
-// are not already present in the registry. This ensures servers registered
-// via mcpserver.DefaultRegistry().Register() at init time are included.
-func populateFromEmbeddedProviders(r *McpServerRegistry) {
-	for _, p := range mcpserver.DefaultRegistry().All() {
-		if _, exists := r.ByName(p.Name()); exists {
-			continue
-		}
-
-		def := McpServerDefinition{
-			Name:        p.Name(),
-			DisplayName: p.Description(),
-			Description: p.Description(),
-			Command:     "qsdev",
-			Args:        []string{"mcp", p.Name()},
-			Transport:   TransportStdio,
-			Source:      SourceBuiltin,
-		}
-
-		// Best-effort; skip if a race somehow registered it.
-		_ = r.Register(def)
 	}
 }

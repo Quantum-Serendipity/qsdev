@@ -4,9 +4,10 @@ package mcpregistry
 const universalServerName = "qsdev-universal"
 
 // registerUniversalServer adds qsdev's universal MCP server (Phase 32) to the
-// registry as a first-class built-in definition. Unlike the embedded providers
-// populated by populateFromEmbeddedProviders, the universal server is launched
-// with the explicit `qsdev mcp serve` subcommand. GradeServer grades it
+// registry as a first-class built-in definition, launched with the explicit
+// `qsdev mcp serve` subcommand and serving every tool module (the catalog's
+// agent-postmortem and version-sentinel servers run the same subcommand
+// restricted to one module with --module). GradeServer grades it
 // verified because it is qsdev's own binary, runs entirely locally over stdio,
 // and ships no plaintext secrets. Registering it here means `qsdev mcp list`
 // surfaces it like any other known server, since the registry is that command's

@@ -26,10 +26,10 @@ func TestGradeServer(t *testing.T) {
 		expected ComplianceLevel
 	}{
 		{
-			name: "qsdev embedded server grades Verified",
+			name: "qsdev single-module server grades Verified",
 			def: McpServerDefinition{
 				Command:   "qsdev",
-				Args:      []string{"mcp", "agent-postmortem"},
+				Args:      []string{"mcp", "serve", "--module", "agent-postmortem"},
 				Transport: TransportStdio,
 			},
 			// no secrets, stdio, local-only, no auto-install, and "qsdev"
@@ -169,7 +169,7 @@ func TestGradeServerAttestationLiftsVerifiedToAttested(t *testing.T) {
 	// provenance, and no runtime auto-install.
 	def := &McpServerDefinition{
 		Command:   "qsdev",
-		Args:      []string{"mcp", "agent-postmortem"},
+		Args:      []string{"mcp", "serve", "--module", "agent-postmortem"},
 		Transport: TransportStdio,
 	}
 	prov := fakeProvenance(t, "/opt/qsdev/bin/qsdev")

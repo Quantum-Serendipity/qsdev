@@ -3,6 +3,7 @@ package postmortem_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -289,6 +290,58 @@ func TestAggregateFailures(t *testing.T) {
 				}
 				if got.Recovered != tc.wantFirst.Recovered {
 					t.Errorf("first pattern Recovered = %d, want %d", got.Recovered, tc.wantFirst.Recovered)
+				}
+			}
+		})
+	}
+}
+
+// TestFindSessionFiles proves the walk collects only regular .jsonl files under
+// the root, never follows a symlink out of it, and reports a truncated scan.
+func TestFindSessionFiles(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeFixture(t, root, "a.jsonl", []string{`{}`})
+	writeFixture(t, root, "notes.md", []string{`# not a transcript`})
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, filepath.Join(root, "sub"), "b.jsonl", []string{`{}`})
+	out := writeFixture(t, outside, "o.jsonl", []string{`{}`})
+	canSymlink := runtime.GOOS != "windows"
+	if canSymlink {
+		if err := os.Symlink(out, filepath.Join(root, "link.jsonl")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(root, "linkdir")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := []struct {
+		name          string
+		limit         int
+		wantPaths     int
+		wantTruncated bool
+	}{
+		{"no limit", 0, 2, false},
+		{"limit above the count", 5, 2, false},
+		{"limit below the count", 1, 1, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			scan, err := postmortem.FindSessionFiles(root, tt.limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(scan.Paths) != tt.wantPaths || scan.Truncated != tt.wantTruncated {
+				t.Errorf("scan = %+v, want %d paths, Truncated %v", scan, tt.wantPaths, tt.wantTruncated)
+			}
+			for _, p := range scan.Paths {
+				if rel, err := filepath.Rel(root, p); err != nil || strings.HasPrefix(rel, "..") || strings.Contains(p, "link") {
+					t.Errorf("scan returned %s, which is not a regular transcript under the root", p)
 				}
 			}
 		})

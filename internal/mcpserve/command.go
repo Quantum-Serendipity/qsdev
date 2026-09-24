@@ -67,6 +67,9 @@ type serveOptions struct {
 	// gatewayNixRun mounts qsdev_nix_run in gateway mode, where it is off by
 	// default.
 	gatewayNixRun bool
+	// modules restricts the server to the named tool modules (tools.Select);
+	// empty serves the full universal surface.
+	modules []string
 }
 
 // Command returns the `serve` subcommand for the `qsdev mcp` command group. It
@@ -86,7 +89,11 @@ func Command() *cobra.Command {
 			"  gateway     enforcing MCP proxy: adds an authentication layer and\n" +
 			"              stricter rate limits, for frameworks without native hooks;\n" +
 			"              qsdev_nix_run is off unless --gateway-allow-nix-run\n" +
-			"  standalone  requires an explicit --project-root and serves /health",
+			"  standalone  requires an explicit --project-root and serves /health\n\n" +
+			"--module restricts the server to the named tool modules (" +
+			strings.Join(tools.ModuleNames(), ", ") + "), leaving out the project " +
+			"context surface and the framework adapters. The tools still run behind " +
+			"the full middleware chain and mcp.disabled_tools.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runServe(cmd.Context(), opts)
 		},
@@ -114,11 +121,52 @@ func Command() *cobra.Command {
 		"path to the server private key (PEM) for mTLS; falls back to "+EnvTLSKey)
 	cmd.Flags().StringVar(&opts.tlsClientCA, "tls-client-ca", "",
 		"path to the client-CA bundle (PEM) verifying client certs; falls back to "+EnvTLSClientCA)
+	cmd.Flags().StringSliceVar(&opts.modules, "module", nil,
+		"serve only the named tool module(s) (repeatable or comma-separated): "+
+			strings.Join(tools.ModuleNames(), ", "))
 	cmd.Flags().BoolVar(&opts.gatewayNixRun, "gateway-allow-nix-run", false,
 		"gateway mode: mount qsdev_nix_run, which runs Nix packages on the gateway "+
 			"host and is off by default there; falls back to "+envGatewayNixRun)
 
 	return cmd
+}
+
+// LegacyModuleCommands returns hidden `qsdev mcp <module>` subcommands for the
+// modules older releases served standalone (tools.LegacyServerModules). Each is
+// an alias of `qsdev mcp serve --module <module>` with the serve defaults, so a
+// .mcp.json written before those servers moved onto the universal server keeps
+// starting them, now behind the full middleware chain, until `qsdev init
+// --update` rewrites the entries.
+func LegacyModuleCommands() []*cobra.Command {
+	modules := tools.LegacyServerModules()
+	cmds := make([]*cobra.Command, len(modules))
+	for i, module := range modules {
+		cmds[i] = legacyModuleCommand(module, runServe)
+	}
+	return cmds
+}
+
+// legacyModuleCommand builds the alias for module; run is runServe outside
+// tests.
+func legacyModuleCommand(module string, run func(context.Context, serveOptions) error) *cobra.Command {
+	app := branding.Get().AppName
+	return &cobra.Command{
+		Use:    module,
+		Short:  fmt.Sprintf("Deprecated alias of `%s mcp serve --module %s`", app, module),
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			// stdout carries the MCP protocol, so the notice goes to stderr.
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"%[1]s mcp %[2]s is deprecated; running %[1]s mcp serve --module %[2]s. Run `%[1]s init --update` to rewrite .mcp.json.\n",
+				app, module)
+			return run(cmd.Context(), serveOptions{
+				transport: string(TransportStdio),
+				port:      defaultHTTPPort,
+				modules:   []string{module},
+			})
+		},
+	}
 }
 
 // runServe resolves the deployment mode and project root, initializes stderr
@@ -184,26 +232,16 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	// run the standard six-layer chain; gateway wraps it with an outer
 	// authentication layer and tighter rate limits (see container.GatewayChain).
 	// Both branches receive the derived policy so enforcement matches reporting.
-	srv := New(
-		WithProjectRoot(root),
-		WithChain(chainForMode(mode, policy)),
-		WithMultiAdapter(opts.multiAdapter),
-	)
-
-	// Mount the generic project context surface (tools/resources/prompts). A
-	// failure here must not prevent the server from starting: log and continue so
-	// adapter-contributed tooling and the protocol itself still work.
-	if pc, perr := projectctx.NewProjectContext(root); perr != nil {
-		slog.Warn("project context engine unavailable; generic tools not mounted", "error", perr)
-	} else {
-		srv.MountProjectContext(pc)
-	}
-
-	// Mount the security and devenv tool surface (Unit 32.9). These are
-	// framework-agnostic and visible to every client, like the project context
-	// tools; the opt-in ones are mounted only when toolOptions selects them.
+	// Build the tool modules' registrations first, so an unknown --module fails
+	// startup before anything is served. The opt-in tools are included only
+	// when toolOptions selects them.
 	gatewayNixRun := opts.gatewayNixRun || envTruthy(os.Getenv(envGatewayNixRun))
-	srv.MountTools(tools.All(root, policy, toolOptions(cfg, mode, gatewayNixRun)))
+	regs, err := tools.Select(opts.modules, root, policy, toolOptions(cfg, mode, gatewayNixRun))
+	if err != nil {
+		return err
+	}
+	srv := newServeServer(root, mode, policy, opts)
+	srv.MountTools(regs)
 	warnUnknownDisabledTools(policy.DenyToolSet(), MountableToolNames(spi.DefaultRegistry().All()))
 
 	if ctx == nil {
@@ -229,6 +267,36 @@ func runServe(ctx context.Context, opts serveOptions) error {
 		return err
 	}
 	return nil
+}
+
+// newServeServer constructs the server for the serve command. The full
+// universal server mounts every applicable framework adapter (in New) and the
+// generic project context surface; a --module server mounts neither, so it
+// exposes exactly the selected tool modules. Both install the same
+// mode-appropriate middleware chain.
+func newServeServer(root string, mode container.DeployMode, policy *middleware.Policy, opts serveOptions) *Server {
+	serverOpts := []Option{
+		WithProjectRoot(root),
+		WithChain(chainForMode(mode, policy)),
+		WithMultiAdapter(opts.multiAdapter),
+	}
+	if len(opts.modules) > 0 {
+		return New(append(serverOpts,
+			WithName(branding.Get().AppName+"-"+strings.Join(opts.modules, "+")),
+			WithAdapterRegistry(spi.NewAdapterRegistry()),
+		)...)
+	}
+
+	srv := New(serverOpts...)
+	// Mount the generic project context surface (tools/resources/prompts). A
+	// failure here must not prevent the server from starting: log and continue so
+	// adapter-contributed tooling and the protocol itself still work.
+	if pc, err := projectctx.NewProjectContext(root); err != nil {
+		slog.Warn("project context engine unavailable; generic tools not mounted", "error", err)
+	} else {
+		srv.MountProjectContext(pc)
+	}
+	return srv
 }
 
 // resolveRootForMode resolves the project root with mode-specific rules.

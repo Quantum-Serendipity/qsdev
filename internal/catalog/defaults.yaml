@@ -856,14 +856,20 @@ mcp_servers:
         category: agent
         description: "Session analysis and failure pattern detection"
         command: qsdev
-        args: ["mcp", "agent-postmortem"]
+        # The universal server restricted to this tool module, so its tools
+        # run behind the server's guardrail, rate-limit, content-safety and
+        # audit middleware.
+        args: ["mcp", "serve", "--module", "agent-postmortem"]
         transport: stdio
     version-sentinel:
         display_name: "Version Sentinel"
         category: agent
         description: "Dependency version monitoring and drift detection"
         command: qsdev
-        args: ["mcp", "version-sentinel"]
+        # The universal server restricted to this tool module, so its tools
+        # run behind the server's guardrail, rate-limit, content-safety and
+        # audit middleware.
+        args: ["mcp", "serve", "--module", "version-sentinel"]
         transport: stdio
     local-docs-devdocs:
         display_name: "DevDocs Local Documentation"

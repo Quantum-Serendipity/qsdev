@@ -244,7 +244,7 @@ If your project was initialized before qsdev 0.7.0, running `qsdev update` intro
 
 **Cloud deny rules** — If AWS, GCP, or Azure CLI tools are detected in your project, new deny rules are added to `.claude/settings.json` restricting credential file access and authentication commands. The three-way merge preserves your custom rules.
 
-**New MCP servers** — `agent-postmortem` and `version-sentinel` are embedded MCP servers available via `qsdev mcp <name>`. They do not appear in `.mcp.json` but are available through the CLI.
+**Agent MCP servers** — `agent-postmortem` and `version-sentinel` are served by qsdev's universal MCP server restricted to one tool module (`qsdev mcp serve --module <name>`), so their calls pass through its guardrail, rate-limit, content-safety and audit middleware. The standalone servers behind `qsdev mcp agent-postmortem` and `qsdev mcp version-sentinel` were removed. A `.mcp.json` written by an older release still launches those subcommands, so they remain as hidden aliases of `qsdev mcp serve --module <name>` (with the same middleware) that print a deprecation notice on stderr; `qsdev init --update` rewrites the entries to the new form.
 
 **Documentation servers** — Local documentation is now available via `qsdev docs enable`. Documentation MCP servers are opt-in and do not activate automatically.
 

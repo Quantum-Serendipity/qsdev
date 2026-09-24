@@ -82,8 +82,10 @@ func TestConfigRenderer(t *testing.T, renderer aiframework.ConfigRenderer, fixtu
 		}
 		issues := renderer.Validate(context.Background(), files)
 		for _, issue := range issues {
-			if issue.Severity == aiframework.SeverityError {
-				t.Errorf("self-validation error: %s: %s", issue.Path, issue.Message)
+			// Anything but an explicit warning counts as an error, so an
+			// issue whose severity was never set (SeverityUnknown) fails.
+			if issue.Severity != aiframework.SeverityWarning {
+				t.Errorf("self-validation %s: %s: %s", issue.Severity, issue.Path, issue.Message)
 			}
 		}
 	})

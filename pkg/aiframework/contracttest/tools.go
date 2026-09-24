@@ -36,6 +36,9 @@ func TestToolAdapter(t *testing.T, adapter aiframework.ToolAdapter, fixtures Con
 		if len(artifacts.GeneratedFiles) == 0 {
 			t.Fatal("TranslatePermissions() produced no files")
 		}
+		if _, err := artifacts.ActiveTier.MarshalText(); err != nil {
+			t.Errorf("TranslatePermissions() left ActiveTier invalid: %v", err)
+		}
 		if !filesContain(artifacts.GeneratedFiles, deny) {
 			t.Errorf("TranslatePermissions() dropped deny rule %q", deny)
 		}
@@ -82,6 +85,12 @@ func TestToolAdapter(t *testing.T, adapter aiframework.ToolAdapter, fixtures Con
 			}
 			if g.Mitigation == "" {
 				t.Error("gap has empty Mitigation")
+			}
+			if _, err := g.RequiredTier.MarshalText(); err != nil {
+				t.Errorf("gap %q has invalid RequiredTier: %v", g.Description, err)
+			}
+			if _, err := g.ActualTier.MarshalText(); err != nil {
+				t.Errorf("gap %q has invalid ActualTier: %v", g.Description, err)
 			}
 		}
 	})

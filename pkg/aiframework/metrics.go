@@ -27,15 +27,20 @@ type MetricEvent struct {
 }
 
 // ContentTier controls how much detail is retained in event storage.
+//
+// The zero value is ContentUnknown, which never marshals; consumers must treat
+// it as ContentMetadataOnly, so an unset tier never retains prompts or source.
 type ContentTier int
 
 const (
-	ContentFull         ContentTier = iota // All event data including prompts and source.
+	ContentUnknown      ContentTier = iota // Unset; treat as metadata-only, never marshalled.
+	ContentFull                            // All event data including prompts and source.
 	ContentRedacted                        // Credential/secret values stripped.
 	ContentMetadataOnly                    // Only timing, counts, and hashes.
 )
 
 var contentTierNames = [...]string{
+	ContentUnknown:      "",
 	ContentFull:         "full",
 	ContentRedacted:     "redacted",
 	ContentMetadataOnly: "metadata_only",
@@ -50,15 +55,20 @@ func (c ContentTier) MarshalText() ([]byte, error) { return contentTierText.Mars
 func (c *ContentTier) UnmarshalText(text []byte) error { return contentTierText.UnmarshalText(text, c) }
 
 // HealthStatus summarises a framework's overall health.
+//
+// The zero value is StatusUnknown, which never marshals and must be treated
+// as unhealthy, so a zero HealthReport never reads as healthy.
 type HealthStatus int
 
 const (
-	StatusHealthy HealthStatus = iota
+	StatusUnknown HealthStatus = iota // Unset; treat as unhealthy, never marshalled.
+	StatusHealthy
 	StatusDegraded
 	StatusUnhealthy
 )
 
 var healthStatusNames = [...]string{
+	StatusUnknown:   "",
 	StatusHealthy:   "healthy",
 	StatusDegraded:  "degraded",
 	StatusUnhealthy: "unhealthy",
@@ -75,18 +85,23 @@ func (s *HealthStatus) UnmarshalText(text []byte) error {
 }
 
 // CheckStatus represents the result of a single health check.
+//
+// The zero value is CheckUnknown, which never marshals and must be treated as
+// a failure, so a zero HealthCheck never reads as passing.
 type CheckStatus int
 
 const (
-	CheckPass CheckStatus = iota
+	CheckUnknown CheckStatus = iota // Unset; treat as failed, never marshalled.
+	CheckPass
 	CheckFail
 	CheckSkip
 )
 
 var checkStatusNames = [...]string{
-	CheckPass: "pass",
-	CheckFail: "fail",
-	CheckSkip: "skip",
+	CheckUnknown: "",
+	CheckPass:    "pass",
+	CheckFail:    "fail",
+	CheckSkip:    "skip",
 }
 
 var checkStatusText = enumtext.New[CheckStatus]("CheckStatus", "check status", "unknown", checkStatusNames[:])

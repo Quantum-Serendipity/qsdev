@@ -33,16 +33,21 @@ func TestMetricsProvider(t *testing.T, provider aiframework.MetricsProvider, fix
 			t.Fatal("CollectHealth() returned nil")
 			return
 		}
-		status := report.OverallStatus.String()
-		if status == "unknown" {
-			t.Error("CollectHealth() returned unknown OverallStatus")
+		// MarshalText rejects the Unknown zero value, so a report or check
+		// whose status was never set fails here instead of reading as healthy.
+		if _, err := report.OverallStatus.MarshalText(); err != nil {
+			t.Errorf("CollectHealth() returned invalid OverallStatus: %v", err)
+		}
+		for _, c := range report.Checks {
+			if _, err := c.Status.MarshalText(); err != nil {
+				t.Errorf("CollectHealth() check %q has invalid Status: %v", c.Name, err)
+			}
 		}
 	})
 
 	t.Run("ContentRetentionValid", func(t *testing.T) {
-		tier := provider.ContentRetention()
-		if tier.String() == "unknown" {
-			t.Error("ContentRetention() returned unknown tier")
+		if _, err := provider.ContentRetention().MarshalText(); err != nil {
+			t.Errorf("ContentRetention() returned invalid tier: %v", err)
 		}
 	})
 }

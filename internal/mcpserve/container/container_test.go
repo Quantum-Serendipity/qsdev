@@ -29,6 +29,10 @@ func TestNeedsGatewayTier(t *testing.T) {
 		{aiframework.TierPolicy, true},   // config-only
 		{aiframework.TierAdvisory, true}, // instructions-only
 		{aiframework.TierExternal, true}, // external isolation
+		{aiframework.TierUnknown, true},  // unset tier: fail safe toward the gateway
+	}
+	if !(FrameworkProfile{}).NeedsGateway() {
+		t.Error("zero FrameworkProfile.NeedsGateway() = false, want true (unset tier must not skip the gateway)")
 	}
 	for _, c := range cases {
 		if got := NeedsGatewayTier(c.tier); got != c.want {

@@ -20,17 +20,25 @@ type ToolAdapter interface {
 }
 
 // EnforcementTier ranks how strongly a framework can enforce security policies.
+//
+// The zero value is TierUnknown, the weakest tier, so an unset tier never
+// reads as kernel isolation: it has Strength 0, String "unknown", and is
+// rejected by MarshalText and UnmarshalText.
 type EnforcementTier int
 
 const (
-	TierKernel   EnforcementTier = iota // Sandbox physically prevents the action.
+	TierUnknown  EnforcementTier = iota // Unset; weakest, never marshalled.
+	TierKernel                          // Sandbox physically prevents the action.
 	TierHook                            // Pre-execution check can deny.
 	TierPolicy                          // Agent told what is allowed via config.
 	TierAdvisory                        // Instructions say do not.
 	TierExternal                        // qsdev wraps with external isolation.
 )
 
+// enforcementTierNames leaves TierUnknown empty so enumtext treats it as a
+// non-member: it never marshals and "unknown" never parses back into it.
 var enforcementTierNames = [...]string{
+	TierUnknown:  "",
 	TierKernel:   "kernel",
 	TierHook:     "hook",
 	TierPolicy:   "policy",
@@ -48,12 +56,22 @@ func (t *EnforcementTier) UnmarshalText(text []byte) error {
 	return enforcementTierText.UnmarshalText(text, t)
 }
 
+// enforcementTierStrengths ranks the tiers; TierUnknown and out-of-range
+// values rank 0, below every declared tier.
+var enforcementTierStrengths = [...]int{
+	TierUnknown:  0,
+	TierKernel:   5,
+	TierHook:     4,
+	TierPolicy:   3,
+	TierAdvisory: 2,
+	TierExternal: 1,
+}
+
 // Strength returns a numeric value for tier comparison.
-// Higher values indicate stronger enforcement.
+// Higher values indicate stronger enforcement; TierUnknown is 0, the weakest.
 func (t EnforcementTier) Strength() int {
-	strengths := [...]int{5, 4, 3, 2, 1}
-	if int(t) >= 0 && int(t) < len(strengths) {
-		return strengths[t]
+	if int(t) >= 0 && int(t) < len(enforcementTierStrengths) {
+		return enforcementTierStrengths[t]
 	}
 	return 0
 }

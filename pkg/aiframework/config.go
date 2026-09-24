@@ -39,14 +39,20 @@ type PolicyInput struct {
 }
 
 // ValidationSeverity indicates the severity of a validation issue.
+//
+// The zero value is SeverityUnknown, which never marshals and must be treated
+// as an error, so an issue whose severity was forgotten never downgrades to a
+// warning.
 type ValidationSeverity int
 
 const (
-	SeverityWarning ValidationSeverity = iota
+	SeverityUnknown ValidationSeverity = iota // Unset; treat as error, never marshalled.
+	SeverityWarning
 	SeverityError
 )
 
 var validationSeverityNames = [...]string{
+	SeverityUnknown: "",
 	SeverityWarning: "warning",
 	SeverityError:   "error",
 }

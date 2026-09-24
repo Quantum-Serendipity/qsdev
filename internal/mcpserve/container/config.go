@@ -80,7 +80,9 @@ func (p FrameworkProfile) NeedsGateway() bool {
 
 // NeedsGatewayTier is the pure tier predicate behind FrameworkProfile.NeedsGateway.
 // A tier strictly weaker than TierHook (i.e. lower Strength) cannot enforce
-// natively and therefore needs the gateway.
+// natively and therefore needs the gateway. That includes the unset zero value
+// TierUnknown (Strength 0), so a profile that omits its tier fails safe toward
+// the gateway.
 func NeedsGatewayTier(tier aiframework.EnforcementTier) bool {
 	return tier.Strength() < aiframework.TierHook.Strength()
 }

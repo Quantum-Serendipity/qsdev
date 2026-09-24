@@ -55,3 +55,49 @@ func TestEnum_StringAndUnmarshal(t *testing.T) {
 		t.Error("UnmarshalText(blue) succeeded, want error")
 	}
 }
+
+// level has an unset zero value: an empty name marks index 0 as a
+// non-member, so the zero value is neither marshalled nor parsed.
+type level int
+
+const (
+	levelUnset level = iota
+	levelLow
+	levelHigh
+)
+
+var levelText = enumtext.New[level]("level", "level", "unknown", []string{levelLow: "low", levelHigh: "high"})
+
+func TestEnum_EmptyNameIsNotAMember(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		v         level
+		wantValid bool
+		wantStr   string
+	}{
+		{"unset zero value", levelUnset, false, "unknown"},
+		{"low", levelLow, true, "low"},
+		{"high", levelHigh, true, "high"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := levelText.Valid(tt.v); got != tt.wantValid {
+				t.Errorf("Valid(%d) = %v, want %v", int(tt.v), got, tt.wantValid)
+			}
+			if got := levelText.String(tt.v); got != tt.wantStr {
+				t.Errorf("String(%d) = %q, want %q", int(tt.v), got, tt.wantStr)
+			}
+			if _, err := levelText.MarshalText(tt.v); (err != nil) == tt.wantValid {
+				t.Errorf("MarshalText(%d) error = %v, want error %v", int(tt.v), err, !tt.wantValid)
+			}
+		})
+	}
+	for _, text := range []string{"", "unknown"} {
+		var l level
+		if err := levelText.UnmarshalText([]byte(text), &l); err == nil {
+			t.Errorf("UnmarshalText(%q) = %d, want error", text, int(l))
+		}
+	}
+}

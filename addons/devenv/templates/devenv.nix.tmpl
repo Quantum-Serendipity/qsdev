@@ -26,6 +26,12 @@
 
   # Disable .env file loading for security
   dotenv.enable = false;
+{{- if .CachixPull }}
+
+  # Project binary cache (infrastructure.nix_cache). The Nix daemon uses it
+  # only when the system trusts it: see docs/nix-conf-hardening.md.
+  cachix.pull = {{ nixStringList .CachixPull }};
+{{- end }}
 {{- range .LanguageFragments}}
 
   # {{ .DisplayName }}

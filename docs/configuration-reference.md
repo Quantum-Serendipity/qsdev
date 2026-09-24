@@ -89,9 +89,11 @@ claude_code:
   skills: [deploy, review-pr, security-review-owasp]
   mcp_servers: [context7, github, socket, semble]
 infrastructure:
-  registry_proxy: ""
-  nix_cache: ""
-  build_cache: ""
+  registry_proxy: https://repo.corp.internal/artifactory   # "none" opts out
+  nix_cache: corp                                           # URL, or a Cachix cache name; "none" opts out
+  nix_cache_public_key: "corp.cachix.org-1:<base64 key>"
+  build_cache: sccache
+  build_cache_url: ""                                       # e.g. a self-hosted Turborepo remote cache
 ```
 
 `version` is the schema version (currently `2`). Each profile key is
@@ -104,13 +106,49 @@ validated against its own registry by `qsdev check`:
 - `infra_profile` is the infrastructure profile (`qsdev init
   --infra-profile`): `consulting-default`, `startup-github` or
   `enterprise`. It selects the generated CI workflow, Renovate/Dependabot
-  configuration and security documentation; when absent,
-  `consulting-default` applies.
+  configuration and security documentation, and applies the profile's
+  registry proxy, Nix binary cache and build cache (see
+  [Infrastructure settings](#infrastructure-settings)). When absent, only
+  `consulting-default`'s CI, Renovate and security-documentation files are
+  generated and none of its components is applied: only the
+  `infrastructure:` settings you set yourself are (`registry_proxy`, and
+  `nix_cache` with `nix_cache_public_key`, checked like a profile's).
 
 `qsdev init` records both keys, and `qsdev init --mode join` restores both
 from the committed file, so a joining teammate generates the same CI,
 Renovate/Dependabot and security files as the project's creator (an explicit
 `--infra-profile` on the join command overrides the committed value).
+
+### Infrastructure settings
+
+The built-in infrastructure profiles choose technologies, never endpoints:
+your registry proxy, Nix cache and key are organization-specific, so they
+live under `infrastructure:` (or come from `qsdev init --registry-proxy`,
+`--nix-cache` and `--nix-cache-public-key`, which are recorded there). An
+explicitly selected `infra_profile` is applied in full, and generation stops
+with an error naming each missing setting instead of silently leaving
+installs on the public registries:
+
+| Profile component | Required setting | Applied as |
+|---|---|---|
+| Registry proxy (`consulting-default`: Nexus, `enterprise`: Artifactory) | `registry_proxy` (or a per-ecosystem `registry_proxy_overrides` entry), for each proxied ecosystem the project uses | Each package manager's config (`.npmrc`, `pip.conf`, `GOPROXY`, `.cargo/config.toml`, `nuget.config`, Maven/Gradle), using the vendor's group/virtual repository paths (`/repository/npm-group/`, `/api/npm/npm-virtual/`, ...); `registry_proxy_paths` entries win |
+| Nix binary cache (Cachix in all three) | `nix_cache` and `nix_cache_public_key` | `cachix.pull` in `devenv.nix` for a Cachix cache, and the `trusted-substituters`/`trusted-public-keys` of `docs/nix-conf-hardening.md` |
+| Build cache (`sccache`, or Turborepo for `startup-github`) | none; `build_cache_url` optional (Turborepo only) | `infrastructure.build_cache`: sccache as Rust's `rustc-wrapper` (with the package); `TURBO_API` from `build_cache_url` |
+
+`startup-github`'s GitHub Packages hosts your organization's own packages
+and needs a token even to read, so it is not a pull-through proxy: nothing
+is routed through it unless you set `registry_proxy_overrides`.
+
+Endpoints must be `https` URLs (plain `http` only to `localhost`) without
+embedded credentials, and documentation placeholders are rejected: hosts
+under `example.com`/`.net`/`.org` or the `.example`, `.invalid` and `.test`
+domains, the `myorg` Cachix cache, and an all-zero public key. Set
+`registry_proxy: none` or `nix_cache: none` to keep a profile's CI and
+update tooling without that component. Credentials (`NEXUS_TOKEN`,
+`ARTIFACTORY_TOKEN`, `CACHIX_AUTH_TOKEN`, the sccache S3 credentials,
+`SNYK_TOKEN`) are read from the environment and never written by qsdev;
+`docs/security-overview.md` lists the ones the profile expects and describes
+the proxy and caches actually applied.
 
 Schema version 1 used a single `profile` key, which `qsdev init` filled with
 the infrastructure profile. Version 1 files still load: an infrastructure

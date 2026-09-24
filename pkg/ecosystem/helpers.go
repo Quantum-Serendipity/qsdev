@@ -63,7 +63,7 @@ func ToModuleConfigWithInfra(lang types.LanguageChoice, infra types.InfraConfig)
 	// an explicit PackageManager still wins.
 	proxyKey := ProxyKeyForLanguage(lang.Name, cfg.PM(cfg.Extra("build_tool", "")))
 	if proxyKey != "" {
-		cfg.RegistryProxy = ResolveProxyURL(infra.RegistryProxy, infra.RegistryProxyOverrides, proxyKey, infra.RegistryProxyPaths)
+		cfg.RegistryProxy = ResolveProxyURL(infra.RegistryProxyBase(), infra.RegistryProxyOverrides, proxyKey, infra.RegistryProxyPaths)
 	}
 	return cfg
 }

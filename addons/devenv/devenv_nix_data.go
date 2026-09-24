@@ -27,6 +27,7 @@ type DevenvNixTemplateData struct {
 	PackageExprs       []string              // Raw Nix expressions that produce derivations.
 	EnvVars            map[string]string     // Non-sensitive env vars (always includes DEVENV_SECURITY_HARDENED).
 	UnsetEnvVars       []string              // Credential-bearing vars stripped from the shell.
+	CachixPull         []string              // Project Cachix caches (infrastructure.nix_cache).
 	LanguageFragments  []LanguageFragment    // Pre-rendered Nix from ecosystem modules.
 	Services           []ServiceTemplateData // Structured service configs.
 	GitHooksEnabled    bool                  // Whether the git-hooks block appears.
@@ -171,6 +172,10 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 
 	// 3. Unset env vars: credential-bearing variables.
 	data.UnsetEnvVars = defaultUnsetEnvVars()
+
+	// 3b. The project's Cachix binary cache, from the effective infrastructure
+	// (an explicit infra profile's nix cache, or infrastructure.nix_cache).
+	data.CachixPull = cachixPullCaches(answers.Infrastructure)
 
 	// 4. Language fragments and hooks from ecosystem modules.
 	hookResult, err := collectLanguageFragmentsAndHooks(answers, registry)

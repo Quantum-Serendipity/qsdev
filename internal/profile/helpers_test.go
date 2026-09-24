@@ -17,7 +17,7 @@ func mustWorkflow(t *testing.T, p *InfraProfile) types.GeneratedFile {
 
 func mustSecurityDoc(t *testing.T, p *InfraProfile) types.GeneratedFile {
 	t.Helper()
-	f, err := p.generateSecurityDoc()
+	f, err := p.generateSecurityDoc(ProjectInputs{})
 	if err != nil {
 		t.Fatalf("generateSecurityDoc(%s): %v", p.Name, err)
 	}

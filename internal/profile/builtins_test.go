@@ -19,14 +19,21 @@ func TestBuiltinProfiles_NonEmpty(t *testing.T) {
 	}
 }
 
-func TestBuiltinProfiles_EnvironmentVarsNonEmpty(t *testing.T) {
-	profiles := []*InfraProfile{ConsultingDefault, StartupGitHub, Enterprise}
-
-	for _, p := range profiles {
+// TestBuiltinProfiles_CarryNoEndpoints is the regression test for the
+// built-ins shipping example endpoints (nexus.example.com, the "myorg" Cachix
+// cache with an all-zero key) that would have been emitted verbatim: the
+// endpoints are organization-specific and come from the project.
+func TestBuiltinProfiles_CarryNoEndpoints(t *testing.T) {
+	t.Parallel()
+	for _, p := range []*InfraProfile{ConsultingDefault, StartupGitHub, Enterprise} {
 		t.Run(p.Name, func(t *testing.T) {
-			env := p.EnvironmentVars()
-			if len(env) == 0 {
-				t.Errorf("profile %q produces empty EnvironmentVars", p.Name)
+			t.Parallel()
+			if p.Registry.URL != "" || len(p.Registry.Overrides) > 0 || p.NixCache.URL != "" ||
+				p.NixCache.CacheName != "" || p.NixCache.PublicKey != "" || p.BuildCache.URL != "" {
+				t.Errorf("built-in profile carries endpoints: registry=%+v nix=%+v build=%+v", p.Registry, p.NixCache, p.BuildCache)
+			}
+			if env := p.EnvironmentVars(); len(env) != 0 {
+				t.Errorf("unresolved profile sets env %v, want none", env)
 			}
 		})
 	}

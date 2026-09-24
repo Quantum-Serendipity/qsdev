@@ -1,5 +1,11 @@
 package profile
 
+// The built-in profiles choose technologies, never endpoints: registry
+// proxy, Nix cache and build cache URLs and keys are organization-specific,
+// so InfraProfile.Resolve takes them from the project's infrastructure
+// settings and refuses to apply a profile whose endpoints are missing or
+// placeholders.
+
 // ConsultingDefault is the zero-cost consulting-friendly profile.
 // Uses Nexus for package proxying, Cachix for Nix, sccache/S3 for builds,
 // OSV + Socket for scanning, Renovate with 3-day age gating, and Syft for SBOM.
@@ -8,24 +14,17 @@ var ConsultingDefault = &InfraProfile{
 	Description: "Consulting-friendly defaults ($0/mo): Nexus proxy, Cachix, sccache, OSV + Socket scanning, Renovate with 3-day age gate",
 	Registry: RegistryConfig{
 		Type:       RegistryNexus,
-		URL:        "https://nexus.example.com",
 		Ecosystems: []string{"npm", "pypi", "maven", "go", "cargo"},
 		AuthEnvVar: "NEXUS_TOKEN",
 	},
 	NixCache: NixCacheConfig{
-		Type:          NixCacheCachix,
-		CacheName:     "myorg",
-		URL:           "https://myorg.cachix.org",
-		PublicKey:     "myorg.cachix.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-		SigningKeyRef: "${CACHIX_SIGNING_KEY}",
+		Type:            NixCacheCachix,
+		PushTokenEnvVar: "CACHIX_AUTH_TOKEN",
 	},
 	BuildCache: BuildCacheConfig{
-		Type:    BuildCacheSccache,
-		Backend: "s3",
-		AuthEnvVars: map[string]string{
-			"AWS_ACCESS_KEY_ID":     "${AWS_ACCESS_KEY_ID}",
-			"AWS_SECRET_ACCESS_KEY": "${AWS_SECRET_ACCESS_KEY}",
-		},
+		Type:        BuildCacheSccache,
+		Backend:     "s3",
+		AuthEnvVars: []string{"SCCACHE_BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"},
 	},
 	Scanning: ScanningConfig{
 		Vulnerability: VulnScannerOSV,
@@ -44,8 +43,9 @@ var ConsultingDefault = &InfraProfile{
 }
 
 // StartupGitHub is a GitHub-native profile for startups.
-// Uses GitHub Packages for registries, Cachix for Nix, Turborepo for builds,
-// OSV + Socket for scanning, Dependabot for updates, and Syft for SBOM.
+// Uses GitHub Packages for the organization's own packages, Cachix for Nix,
+// Turborepo for builds, OSV + Socket for scanning, Dependabot for updates,
+// and Syft for SBOM.
 var StartupGitHub = &InfraProfile{
 	Name:        "startup-github",
 	Description: "GitHub-native startup profile: GitHub Packages, Cachix, Turborepo, OSV + Socket scanning, Dependabot",
@@ -55,15 +55,12 @@ var StartupGitHub = &InfraProfile{
 		AuthEnvVar: "GITHUB_TOKEN",
 	},
 	NixCache: NixCacheConfig{
-		Type:          NixCacheCachix,
-		CacheName:     "myorg",
-		URL:           "https://myorg.cachix.org",
-		PublicKey:     "myorg.cachix.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-		SigningKeyRef: "${CACHIX_SIGNING_KEY}",
+		Type:            NixCacheCachix,
+		PushTokenEnvVar: "CACHIX_AUTH_TOKEN",
 	},
 	BuildCache: BuildCacheConfig{
-		Type: BuildCacheTurborepo,
-		URL:  "https://turbo.example.com",
+		Type:        BuildCacheTurborepo,
+		AuthEnvVars: []string{"TURBO_TOKEN", "TURBO_TEAM"},
 	},
 	Scanning: ScanningConfig{
 		Vulnerability: VulnScannerOSV,
@@ -90,24 +87,17 @@ var Enterprise = &InfraProfile{
 	Description: "Full enterprise profile: Artifactory, Cachix, sccache, Snyk + Socket scanning, Renovate with 7-day age gate, Cosign signing",
 	Registry: RegistryConfig{
 		Type:       RegistryArtifactory,
-		URL:        "https://artifactory.example.com",
 		Ecosystems: []string{"npm", "pypi", "maven", "go", "cargo", "nuget"},
 		AuthEnvVar: "ARTIFACTORY_TOKEN",
 	},
 	NixCache: NixCacheConfig{
-		Type:          NixCacheCachix,
-		CacheName:     "myorg",
-		URL:           "https://myorg.cachix.org",
-		PublicKey:     "myorg.cachix.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-		SigningKeyRef: "${CACHIX_SIGNING_KEY}",
+		Type:            NixCacheCachix,
+		PushTokenEnvVar: "CACHIX_AUTH_TOKEN",
 	},
 	BuildCache: BuildCacheConfig{
-		Type:    BuildCacheSccache,
-		Backend: "s3",
-		AuthEnvVars: map[string]string{
-			"AWS_ACCESS_KEY_ID":     "${AWS_ACCESS_KEY_ID}",
-			"AWS_SECRET_ACCESS_KEY": "${AWS_SECRET_ACCESS_KEY}",
-		},
+		Type:        BuildCacheSccache,
+		Backend:     "s3",
+		AuthEnvVars: []string{"SCCACHE_BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"},
 	},
 	Scanning: ScanningConfig{
 		Vulnerability: VulnScannerSnyk,

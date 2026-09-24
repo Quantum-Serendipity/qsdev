@@ -429,6 +429,18 @@ Infrastructure profiles generate `.github/workflows/security-scan.yml` with:
 - **Renovate** (`consulting-default`, `enterprise`) — `renovate.json` with `minimumReleaseAge`, `automergeType: "pr"` for patches (enterprise), and lockfile maintenance.
 - **Dependabot** (`startup-github`) — `.github/dependabot.yml` with configured update schedules.
 
+### Registry Proxy and Binary Caches
+
+An explicitly selected infrastructure profile routes package installs through
+the organization's pull-through registry proxy and adds its Nix binary cache.
+The built-in profiles carry no endpoints: qsdev refuses to generate until the
+real ones are configured, and rejects documentation placeholders
+(`example.com` hosts, the `myorg` Cachix cache, an all-zero public key), so
+selecting a profile never silently leaves installs on the public registries.
+Registry and cache credentials stay in the environment and are never written
+into generated files. See
+[Infrastructure settings](configuration-reference.md#infrastructure-settings).
+
 ### SBOM Generation
 
 - **Syft** (all profiles) — Generates software bill of materials.

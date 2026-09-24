@@ -219,6 +219,11 @@ func TestGenerate_KnownInfraProfileSucceeds(t *testing.T) {
 		Languages:   []types.LanguageChoice{{Name: "go", Version: "1.24"}},
 		Tier:        "standard",
 		ProfileName: "consulting-default",
+		Infrastructure: types.InfraConfig{
+			RegistryProxy:     "https://nexus.corp.internal",
+			NixCache:          "corp",
+			NixCachePublicKey: testNixCacheKey,
+		},
 	}
 
 	gen := devenv.NewDevenvGenerator(reg, devenv.WithProfileRegistry(profile.DefaultProfileRegistry()))

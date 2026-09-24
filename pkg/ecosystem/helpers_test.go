@@ -43,6 +43,31 @@ func TestToModuleConfigWithInfra_JavaBuildTool(t *testing.T) {
 // TestToModuleConfigWithInfra_BuildCache verifies infrastructure.build_cache
 // reaches modules as the build_cache extra (it was persisted but never
 // applied), without overriding a language's own setting.
+// TestToModuleConfigWithInfra_RegistryProxyNone checks registry_proxy "none"
+// (the opt-out from an infra profile's proxy) is never used as a base URL.
+func TestToModuleConfigWithInfra_RegistryProxyNone(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		infra types.InfraConfig
+		want  string
+	}{
+		{"none disables the proxy", types.InfraConfig{RegistryProxy: types.InfraDisabled}, ""},
+		{"none keeps explicit overrides", types.InfraConfig{RegistryProxy: types.InfraDisabled,
+			RegistryProxyOverrides: map[string]string{"npm": "https://npm.corp.internal/"}}, "https://npm.corp.internal/"},
+		{"base URL", types.InfraConfig{RegistryProxy: "https://nexus.corp.internal"}, "https://nexus.corp.internal/repository/npm-proxy/"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := ToModuleConfigWithInfra(types.LanguageChoice{Name: NameJavaScript}, tt.infra).RegistryProxy
+			if got != tt.want {
+				t.Errorf("RegistryProxy = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestToModuleConfigWithInfra_BuildCache(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

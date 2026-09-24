@@ -2,6 +2,7 @@ package devenv
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/tmpl"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -49,8 +50,12 @@ func GenerateNixHardeningGuide(answers types.WizardAnswers) (*types.GeneratedFil
 		return nil, nil
 	}
 
+	caches := slices.Clone(defaultDevenvCaches)
+	if c, ok := projectNixCache(answers.Infrastructure); ok {
+		caches = append(caches, c)
+	}
 	data := &NixHardeningTemplateData{
-		DefaultCaches: defaultDevenvCaches,
+		DefaultCaches: caches,
 	}
 
 	// Use the Nix renderer because all templates share a single embedded FS directory.

@@ -174,8 +174,14 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 	if overlay.Infrastructure.NixCache != "" {
 		result.Infrastructure.NixCache = overlay.Infrastructure.NixCache
 	}
+	if overlay.Infrastructure.NixCachePublicKey != "" {
+		result.Infrastructure.NixCachePublicKey = overlay.Infrastructure.NixCachePublicKey
+	}
 	if overlay.Infrastructure.BuildCache != "" {
 		result.Infrastructure.BuildCache = overlay.Infrastructure.BuildCache
+	}
+	if overlay.Infrastructure.BuildCacheURL != "" {
+		result.Infrastructure.BuildCacheURL = overlay.Infrastructure.BuildCacheURL
 	}
 
 	// Git: last-wins scalar.
@@ -349,9 +355,11 @@ func cloneQsdevConfig(cfg *types.QsdevConfig) *types.QsdevConfig {
 			PermissionLevel: cfg.ClaudeCode.PermissionLevel,
 		},
 		Infrastructure: types.InfraConfig{
-			RegistryProxy: cfg.Infrastructure.RegistryProxy,
-			NixCache:      cfg.Infrastructure.NixCache,
-			BuildCache:    cfg.Infrastructure.BuildCache,
+			RegistryProxy:     cfg.Infrastructure.RegistryProxy,
+			NixCache:          cfg.Infrastructure.NixCache,
+			NixCachePublicKey: cfg.Infrastructure.NixCachePublicKey,
+			BuildCache:        cfg.Infrastructure.BuildCache,
+			BuildCacheURL:     cfg.Infrastructure.BuildCacheURL,
 		},
 		Git:      cfg.Git,
 		Packages: slices.Clone(cfg.Packages),

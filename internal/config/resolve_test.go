@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -79,6 +80,43 @@ func TestResolveConfig_RegistryProxyPathsMerge(t *testing.T) {
 	}
 	if got["cargo"] != "/project/cargo" {
 		t.Errorf("RegistryProxyPaths[cargo] = %q, want %q (project layer lost)", got["cargo"], "/project/cargo")
+	}
+}
+
+// TestInfraEndpoints_RoundTrip checks the infra profile endpoint fields
+// survive answers -> .qsdev.yaml -> layered resolution -> answers, so a
+// joining teammate generates against the same registry proxy and caches.
+func TestInfraEndpoints_RoundTrip(t *testing.T) {
+	t.Parallel()
+	want := types.InfraConfig{
+		RegistryProxy:     "https://nexus.corp.internal",
+		NixCache:          "https://corp.cachix.org",
+		NixCachePublicKey: "corp.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=",
+		BuildCache:        "turborepo",
+		BuildCacheURL:     "https://turbo.corp.internal",
+	}
+	cfg := AnswersToConfig(types.WizardAnswers{ProfileName: "startup-github", Infrastructure: want}, "")
+	data, err := MarshalProjectConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"nix_cache_public_key:", "build_cache_url:"} {
+		if !strings.Contains(string(data), key) {
+			t.Errorf("written config lacks %s:\n%s", key, data)
+		}
+	}
+	parsed, err := ParseQsdevConfigBytes(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := ResolveConfig(DefaultQsdevConfig(), nil, parsed, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ConfigToAnswers(result.Config, types.DetectedProject{}, t.TempDir()).Infrastructure
+	if got.RegistryProxy != want.RegistryProxy || got.NixCache != want.NixCache || got.NixCachePublicKey != want.NixCachePublicKey ||
+		got.BuildCache != want.BuildCache || got.BuildCacheURL != want.BuildCacheURL {
+		t.Errorf("round-tripped Infrastructure = %+v, want %+v", got, want)
 	}
 }
 

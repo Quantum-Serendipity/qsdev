@@ -84,7 +84,9 @@ func AnswersToConfig(answers types.WizardAnswers, binaryVersion string) types.Qs
 		RegistryProxyOverrides: maps.Clone(answers.Infrastructure.RegistryProxyOverrides),
 		RegistryProxyPaths:     maps.Clone(answers.Infrastructure.RegistryProxyPaths),
 		NixCache:               answers.Infrastructure.NixCache,
+		NixCachePublicKey:      answers.Infrastructure.NixCachePublicKey,
 		BuildCache:             answers.Infrastructure.BuildCache,
+		BuildCacheURL:          answers.Infrastructure.BuildCacheURL,
 	}
 
 	return cfg

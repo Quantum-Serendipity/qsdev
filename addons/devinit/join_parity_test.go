@@ -283,10 +283,10 @@ func TestJoin_InfraProfileRoundTrips(t *testing.T) {
 		wantInfra   string
 		wantProject string
 	}{
-		{"infra profile only", []string{"--infra-profile", "enterprise"}, "enterprise", ""},
-		{"infra profile without an infrastructure block", []string{"--infra-profile", "startup-github"}, "startup-github", ""},
-		{"default infra profile", []string{"--infra-profile", "consulting-default"}, "consulting-default", ""},
-		{"both profiles", []string{"--infra-profile", "startup-github", "--profile", "go-web"}, "startup-github", "go-web"},
+		{"infra profile only", append([]string{"--infra-profile", "enterprise"}, infraEndpointFlags...), "enterprise", ""},
+		{"infra profile opting out of its components", []string{"--infra-profile", "startup-github", "--registry-proxy", "none", "--nix-cache", "none"}, "startup-github", ""},
+		{"default infra profile", append([]string{"--infra-profile", "consulting-default"}, infraEndpointFlags...), "consulting-default", ""},
+		{"both profiles", append([]string{"--infra-profile", "startup-github", "--profile", "go-web"}, infraEndpointFlags...), "startup-github", "go-web"},
 		{"project-type profile only", []string{"--profile", "go-web"}, "", "go-web"},
 	}
 	for _, tt := range tests {
@@ -302,6 +302,9 @@ func TestJoin_InfraProfileRoundTrips(t *testing.T) {
 			}
 			if cfg.InfraProfile != tt.wantInfra || cfg.Profile != tt.wantProject {
 				t.Errorf("persisted infra_profile=%q profile=%q, want %q %q", cfg.InfraProfile, cfg.Profile, tt.wantInfra, tt.wantProject)
+			}
+			if cfg.Infrastructure.NixCache != created.Infrastructure.NixCache || cfg.Infrastructure.RegistryProxy != created.Infrastructure.RegistryProxy {
+				t.Errorf("persisted infrastructure %+v, want %+v", cfg.Infrastructure, created.Infrastructure)
 			}
 			// `qsdev check` validates `profile` against the project-type registry.
 			opts := qsdevconfig.ValidateOptions{ProfileNames: ensureProfileRegistry().Names()}
@@ -328,6 +331,46 @@ func TestJoin_InfraProfileRoundTrips(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// infraEndpointFlags supply the real endpoints an explicit infra profile
+// requires (the built-in profiles carry none).
+var infraEndpointFlags = []string{
+	"--registry-proxy", "https://nexus.corp.internal",
+	"--nix-cache", "corp",
+	"--nix-cache-public-key", "corp.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=",
+}
+
+// TestInitFlags_InfraEndpoints checks the endpoint flags reach the answers,
+// persist in .qsdev.yaml and come back on join, and that an explicit
+// profile without them fails generation with a message naming them.
+func TestInitFlags_InfraEndpoints(t *testing.T) {
+	t.Setenv("QSDEV_SKIP_SETUP", "1")
+	dir := newGoProject(t)
+	created := createAnswers(t, dir, append([]string{"--lang", "go", "--infra-profile", "enterprise"}, infraEndpointFlags...)...)
+	want := types.InfraConfig{
+		RegistryProxy:     "https://nexus.corp.internal",
+		NixCache:          "corp",
+		NixCachePublicKey: "corp.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=",
+	}
+	if created.Infrastructure.RegistryProxy != want.RegistryProxy || created.Infrastructure.NixCache != want.NixCache ||
+		created.Infrastructure.NixCachePublicKey != want.NixCachePublicKey {
+		t.Fatalf("flag answers Infrastructure = %+v, want %+v", created.Infrastructure, want)
+	}
+	commitConfig(t, dir, created)
+	cmd, _ := newJoinTestCmd()
+	joined, err := buildJoinAnswers(cmd, InitOptions{Quiet: true}, dir)
+	if err != nil {
+		t.Fatalf("buildJoinAnswers: %v", err)
+	}
+	if joined.Infrastructure.NixCachePublicKey != want.NixCachePublicKey || joined.Infrastructure.RegistryProxy != want.RegistryProxy {
+		t.Errorf("join Infrastructure = %+v, want %+v", joined.Infrastructure, want)
+	}
+
+	bare := createAnswers(t, newGoProject(t), "--lang", "go", "--infra-profile", "enterprise")
+	if _, err := runAccumulator(bare, generationScope{}); err == nil || !strings.Contains(err.Error(), "--registry-proxy") {
+		t.Errorf("explicit profile without endpoints: err = %v, want one naming --registry-proxy", err)
 	}
 }
 

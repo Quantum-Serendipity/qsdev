@@ -75,13 +75,45 @@ type ClaudeCodeConfig struct {
 	MCPServers      []string `yaml:"mcp_servers,omitempty"`
 }
 
-// InfraConfig holds infrastructure settings (registry proxy, caches) in .qsdev.yaml.
+// InfraDisabled is the InfraConfig value that switches off a component an
+// infrastructure profile would otherwise require (registry_proxy, nix_cache).
+const InfraDisabled = "none"
+
+// InfraConfig holds infrastructure settings (registry proxy, caches) in
+// .qsdev.yaml. These are the organization's real endpoints; an explicit
+// infra_profile selects the technology and requires the endpoints it needs
+// (internal/profile InfraProfile.Resolve).
 type InfraConfig struct {
 	RegistryProxy          string            `yaml:"registry_proxy,omitempty"`
 	RegistryProxyOverrides map[string]string `yaml:"registry_proxy_overrides,omitempty"`
 	RegistryProxyPaths     map[string]string `yaml:"registry_proxy_paths,omitempty"`
-	NixCache               string            `yaml:"nix_cache,omitempty"`
-	BuildCache             string            `yaml:"build_cache,omitempty"`
+	// NixCache is the binary cache substituter URL (a bare Cachix cache name
+	// is also accepted when the infra profile uses Cachix).
+	NixCache string `yaml:"nix_cache,omitempty"`
+	// NixCachePublicKey is the cache's signing public key ("name-1:base64").
+	NixCachePublicKey string `yaml:"nix_cache_public_key,omitempty"`
+	// BuildCache names the shared build cache technology (e.g. "sccache").
+	BuildCache string `yaml:"build_cache,omitempty"`
+	// BuildCacheURL is the remote build cache endpoint (e.g. a self-hosted
+	// Turborepo remote cache, exported as TURBO_API).
+	BuildCacheURL string `yaml:"build_cache_url,omitempty"`
+}
+
+// RegistryProxyBase returns RegistryProxy, or "" when it is unset or
+// InfraDisabled.
+func (c InfraConfig) RegistryProxyBase() string {
+	if c.RegistryProxy == InfraDisabled {
+		return ""
+	}
+	return c.RegistryProxy
+}
+
+// NixCacheURL returns NixCache, or "" when it is unset or InfraDisabled.
+func (c InfraConfig) NixCacheURL() string {
+	if c.NixCache == InfraDisabled {
+		return ""
+	}
+	return c.NixCache
 }
 
 // GitConfig holds git workflow settings in .qsdev.yaml.

@@ -16,6 +16,10 @@ type ProjectInputs struct {
 	// same keys as RegistryConfig.Ecosystems ("npm", "pypi", "go", "cargo",
 	// "maven", "gradle", "nuget", "composer", "container", "terraform").
 	Ecosystems []string
+	// Infrastructure is the project's effective infrastructure settings
+	// (after an explicit infra profile was resolved), which the security
+	// overview describes.
+	Infrastructure types.InfraConfig
 }
 
 // ProjectInputsFromAnswers derives ProjectInputs from the wizard answers: the
@@ -49,7 +53,7 @@ func ProjectInputsFromAnswers(answers types.WizardAnswers) ProjectInputs {
 	}
 
 	slices.Sort(ecos)
-	return ProjectInputs{Ecosystems: slices.Compact(ecos)}
+	return ProjectInputs{Ecosystems: slices.Compact(ecos), Infrastructure: answers.Infrastructure}
 }
 
 // languageEcosystem maps a language selection to its package ecosystem key.

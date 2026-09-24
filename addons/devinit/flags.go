@@ -70,6 +70,11 @@ type InitOptions struct {
 	InfraProfile      string
 	Tier              string
 
+	// Infrastructure endpoints (.qsdev.yaml infrastructure:).
+	RegistryProxy     string
+	NixCache          string
+	NixCachePublicKey string
+
 	// Claude Code
 	ClaudeCode        bool
 	ClaudePermissions string
@@ -132,6 +137,9 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.Flags().StringSliceVar(&opts.Env, "env", nil, "Environment variables as KEY=VALUE pairs")
 	cmd.Flags().BoolVar(&opts.NixHardeningGuide, "nix-hardening-guide", false, "Generate Nix security hardening guide")
 	cmd.Flags().StringVar(&opts.InfraProfile, "infra-profile", "", "Infrastructure profile name (e.g. consulting-default)")
+	cmd.Flags().StringVar(&opts.RegistryProxy, "registry-proxy", "", `Package registry proxy base URL (infrastructure.registry_proxy; "none" opts out)`)
+	cmd.Flags().StringVar(&opts.NixCache, "nix-cache", "", `Nix binary cache URL or Cachix cache name (infrastructure.nix_cache; "none" opts out)`)
+	cmd.Flags().StringVar(&opts.NixCachePublicKey, "nix-cache-public-key", "", "Nix binary cache public key, name:base64 (infrastructure.nix_cache_public_key)")
 	cmd.Flags().StringVar(&opts.Tier, "tier", "", tierFlagUsage())
 
 	// Claude Code flags.
@@ -196,13 +204,18 @@ func AnswersFromFlags(opts InitOptions, projectRoot string) (types.WizardAnswers
 		Direnv:            opts.Direnv,
 		NixHardeningGuide: opts.NixHardeningGuide,
 		ProfileName:       opts.InfraProfile,
-		ClaudeCode:        opts.ClaudeCode,
-		PermissionLevel:   opts.ClaudePermissions,
-		Skills:            opts.ClaudeSkills,
-		MCPServers:        opts.MCPServers,
-		GitHooks:          opts.GitHooks,
-		ExtraPackages:     opts.Packages,
-		Confirmed:         opts.Yes,
+		Infrastructure: types.InfraConfig{
+			RegistryProxy:     opts.RegistryProxy,
+			NixCache:          opts.NixCache,
+			NixCachePublicKey: opts.NixCachePublicKey,
+		},
+		ClaudeCode:      opts.ClaudeCode,
+		PermissionLevel: opts.ClaudePermissions,
+		Skills:          opts.ClaudeSkills,
+		MCPServers:      opts.MCPServers,
+		GitHooks:        opts.GitHooks,
+		ExtraPackages:   opts.Packages,
+		Confirmed:       opts.Yes,
 		AgentTools: types.AgentToolsAnswers{
 			PostmortemEnabled:    opts.AgentPostmortem,
 			VersionSentinel:      opts.AgentVersionSentinel,

@@ -41,8 +41,14 @@ Flags explicitly set on the command line always take precedence over profile def
 | `startup-github` | GitHub-native; GitHub Packages, OSV + Socket scanning, Dependabot |
 | `enterprise` | Regulated environments; Artifactory, Snyk + Socket scanning, Renovate with 7-day age gate, Cosign signing |
 
+An infrastructure profile needs your organization's real endpoints; qsdev
+refuses to apply one without them (see
+[Infrastructure settings](configuration-reference.md#infrastructure-settings)):
+
 ```bash
-qsdev init --profile go-web --infra-profile enterprise --yes
+qsdev init --profile go-web --infra-profile enterprise \
+  --registry-proxy https://repo.corp.internal/artifactory \
+  --nix-cache corp --nix-cache-public-key "corp.cachix.org-1:<base64 key>" --yes
 ```
 
 ### Compliance Levels
@@ -290,7 +296,9 @@ Pick a project-type profile and infrastructure profile. Run on a sample project:
 
 ```bash
 cd sample-project
-qsdev init --profile go-web --infra-profile consulting-default --dry-run
+qsdev init --profile go-web --infra-profile consulting-default \
+  --registry-proxy https://nexus.corp.internal \
+  --nix-cache corp --nix-cache-public-key "corp.cachix.org-1:<base64 key>" --dry-run
 ```
 
 Review the `--dry-run` output to verify the generated files match expectations.
@@ -300,7 +308,9 @@ Review the `--dry-run` output to verify the generated files match expectations.
 Run the init without `--dry-run` and commit all generated files:
 
 ```bash
-qsdev init --profile go-web --infra-profile consulting-default --yes
+qsdev init --profile go-web --infra-profile consulting-default \
+  --registry-proxy https://nexus.corp.internal \
+  --nix-cache corp --nix-cache-public-key "corp.cachix.org-1:<base64 key>" --yes
 git add -A
 git commit -m "chore: add qsdev security-hardened devenv configuration"
 ```
@@ -358,6 +368,10 @@ For organizations with many repositories, define your standard configuration in 
 ```yaml
 profile: go-web
 infra_profile: consulting-default
+infrastructure:
+  registry_proxy: https://nexus.corp.internal
+  nix_cache: corp
+  nix_cache_public_key: "corp.cachix.org-1:<base64 key>"
 claude:
   permissions: standard
   skills:

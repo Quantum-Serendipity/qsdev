@@ -150,6 +150,15 @@ func MergeProfileWithFlags(base types.WizardAnswers, overrides types.WizardAnswe
 	if changed["nix_hardening_guide"] {
 		result.NixHardeningGuide = overrides.NixHardeningGuide
 	}
+	if changed["registry_proxy"] {
+		result.Infrastructure.RegistryProxy = overrides.Infrastructure.RegistryProxy
+	}
+	if changed["nix_cache"] {
+		result.Infrastructure.NixCache = overrides.Infrastructure.NixCache
+	}
+	if changed["nix_cache_public_key"] {
+		result.Infrastructure.NixCachePublicKey = overrides.Infrastructure.NixCachePublicKey
+	}
 	if changed["project_type_profile"] {
 		result.ProjectTypeProfile = overrides.ProjectTypeProfile
 	}

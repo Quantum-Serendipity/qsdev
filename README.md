@@ -322,6 +322,11 @@ Infrastructure profiles control organization-wide policy:
 | `startup-github` | GitHub Packages, OSV + Socket scanning, Dependabot, Turborepo |
 | `enterprise` | Artifactory, Snyk + Socket scanning, Renovate with 7-day age gate, Cosign SBOM signing |
 
+A profile's registry proxy and Nix cache point at your organization's own
+endpoints (`--registry-proxy`, `--nix-cache`, `--nix-cache-public-key`, or
+`infrastructure:` in `.qsdev.yaml`); qsdev refuses to apply a profile until
+they are set.
+
 ## What qsdev is NOT
 
 qsdev generates configuration files. It doesn't:

@@ -27,6 +27,12 @@ This environment implements a defense-in-depth strategy with six infrastructure 
 - **Update Tool**: {{ .UpdateTool }}
 - **Dependency update PR delay**: {{ if gt .AgeGatingDays 0 }}{{ .UpdateTool }} waits {{ .AgeGatingDays }} day(s) after a release before proposing it{{ else }}none ({{ .UpdateTool }} proposes releases immediately){{ end }}. This delays update PRs only; it is separate from the install-time age gate above.
 - **SBOM Generator**: {{ .SBOMGenerator }}
+- **Registry proxy**: {{ .RegistryProxy }}
+- **Nix binary cache**: {{ .NixCache }}
+- **Build cache**: {{ .BuildCache }}
+{{- if .Credentials }}
+- **Credentials read from the environment** (never written by qsdev): {{ range $i, $c := .Credentials }}{{ if $i }}, {{ end }}`{{ $c }}`{{ end }}
+{{- end }}
 
 ## Supply Chain Case Study: Trivy Compromise (March 2026)
 

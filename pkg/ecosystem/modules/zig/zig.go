@@ -9,18 +9,25 @@
 // Mutable references are impossible by design — if a dependency's content
 // changes, the hash will not match and the build will fail. This is the
 // strongest integrity model of any language ecosystem after Nix itself.
-// No deny rules are needed because the content-addressed model inherently
-// prevents supply chain attacks.
+// Hashing guarantees integrity, not trust: `zig fetch --save <url>` records
+// whatever the URL serves on first fetch (trust on first use), so the agent
+// is denied `zig fetch` and new dependencies must be added deliberately.
 package zig
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -30,7 +37,7 @@ func init() {
 type Module struct{}
 
 // Name returns the canonical ecosystem identifier.
-func (m *Module) Name() string { return "zig" }
+func (m *Module) Name() string { return ecosystem.NameZig }
 
 // DisplayName returns the human-readable label.
 func (m *Module) DisplayName() string { return "Zig" }
@@ -60,23 +67,64 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	if !detected {
-		return ecosystem.DetectionResult{
-			Detected:   false,
-			Confidence: ecosystem.ConfidenceAbsent,
-		}
+		return ecosystem.DetectionAbsent()
+	}
+
+	version := parseMinimumZigVersion(projectRoot)
+	if version != "" {
+		evidence = append(evidence, fmt.Sprintf("Zig version %s (from build.zig.zon minimum_zig_version)", version))
 	}
 
 	return ecosystem.DetectionResult{
-		Detected:   true,
-		Confidence: confidence,
-		Evidence:   evidence,
+		Detected:        true,
+		Confidence:      confidence,
+		Evidence:        evidence,
+		SuggestedConfig: ecosystem.ModuleConfig{Version: version},
 	}
 }
 
+// minimumZigVersionRe extracts `.minimum_zig_version = "0.14.0"` from
+// build.zig.zon.
+var minimumZigVersionRe = regexp.MustCompile(`\.minimum_zig_version\s*=\s*"([^"]*)"`)
+
+// zigVersionRe matches a Zig release or dev version (0.14.0,
+// 0.15.0-dev.1+abc) and captures its major and minor numbers.
+var zigVersionRe = regexp.MustCompile(`^([0-9]+)\.([0-9]+)\.[0-9]+(-[0-9A-Za-z.+]+)?$`)
+
+// parseMinimumZigVersion returns build.zig.zon's minimum_zig_version, or ""
+// when absent or not a Zig version (repository content never reaches
+// devenv.nix unvalidated).
+func parseMinimumZigVersion(projectRoot string) string {
+	data, err := os.ReadFile(filepath.Join(projectRoot, "build.zig.zon"))
+	if err != nil {
+		return ""
+	}
+	m := minimumZigVersionRe.FindSubmatch(data)
+	if m == nil || !zigVersionRe.Match(m[1]) {
+		return ""
+	}
+	return string(m[1])
+}
+
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for Zig language support.
-func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
-	return "  languages.zig.enable = true;\n", nil
+// for Zig language support. Zig breaks the build.zig API on every minor
+// release, so a configured version selects the matching nixpkgs zig_<major>_<minor>
+// series; a series nixpkgs no longer ships falls back to pkgs.zig with an
+// evaluation warning rather than failing the whole shell.
+func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
+	const enable = "  languages.zig.enable = true;\n"
+	if config.Version == "" {
+		return enable, nil
+	}
+	parts := zigVersionRe.FindStringSubmatch(config.Version)
+	if parts == nil {
+		return "", fmt.Errorf("invalid Zig version %q: want a version such as 0.14.0", config.Version)
+	}
+	// config.Version is validated by zigVersionRe, so it is safe inside the
+	// Nix warning string.
+	pkg := ecosystem.NixPkgsAttrOr(fmt.Sprintf("zig_%s_%s", parts[1], parts[2]), "pkgs.zig",
+		"Zig "+config.Version+" is not in nixpkgs; using Zig ${pkgs.zig.version}")
+	return enable + "  languages.zig.package = " + pkg + ";\n", nil
 }
 
 // SecurityConfigs returns generated security configuration files.
@@ -98,10 +146,19 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Language:      "system",
 			Types:         []string{"zig"},
 			Stages:        []string{"pre-commit"},
-			PassFilenames: false,
+			PassFilenames: true, // the formatter needs file operands
 			BuiltIn:       false,
 			NixPackage:    "zig",
 		},
+	}
+}
+
+// DenyRules returns Claude Code deny-rule patterns for the Zig ecosystem.
+// `zig fetch` (with or without --save) pulls an arbitrary URL and, with
+// --save, pins whatever it served into build.zig.zon.
+func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
+	return []string{
+		"Bash(zig fetch*)",
 	}
 }
 
@@ -123,9 +180,8 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:             "zig-build",
-			LockFile:         "build.zig.zon",
-			AgeGatingSupport: false,
+			Name:     "zig-build",
+			LockFile: "build.zig.zon",
 		},
 	}
 }
@@ -134,4 +190,18 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 // verification commands at the module level.
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
+}
+
+// Compile-time check that the Zig module declares its manifest.
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
+
+// ManifestFiles declares build.zig.zon so Version-Sentinel coverage reports
+// list it as uncovered instead of omitting it. The manifest pins each
+// dependency by content hash itself, so there is no separate lock file.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{
+		Path:           "build.zig.zon",
+		Ecosystem:      "zig",
+		LockFilePolicy: ecosystem.LockFilePolicyNone,
+	}}
 }

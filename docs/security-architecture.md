@@ -50,6 +50,8 @@ New package versions are blocked for a configurable period after publication. Th
 
 For pnpm workspaces, age-gating is additionally enforced at install time via `minimumReleaseAge: 4320` in `pnpm-workspace.yaml`.
 
+For npm projects, the generated `.npmrc` sets `min-release-age=3` (days). npm only honours that setting from 11.10.0 on; older npm, such as the npm 10 bundled with Node.js 22, reads it as an unknown key and ignores it. The generated `devenv.nix` therefore sets `languages.javascript.npm.package` to an npm that is at least 11.10 (the npm output of `nodejs-slim_24`, or of the project's Node.js when that is newer), whatever Node.js major the project uses, and takes Node.js itself from the matching `nodejs-slim` package so its bundled npm is not also on `PATH`. The `npm` output of `nodejs-slim` needs nixpkgs 26.05 or later, and the npm it carries only reaches 11.10 from Node.js 24.14.1 on, so an existing project whose `devenv.lock` pins an older nixpkgs should run `qsdev init --update`, which regenerates `devenv.nix` and refreshes the lock. `qsdev check` probes the `npm` on `PATH` and fails (high severity) when it is older than 11.10.0; run it inside the devenv shell. When `npm` is not on `PATH` the probe is skipped.
+
 ### Layer 2: Install Script Blocking
 
 Per-ecosystem configuration files disable install-time script execution — the single most exploited attack vector in package supply chains.
@@ -57,21 +59,26 @@ Per-ecosystem configuration files disable install-time script execution — the 
 | Ecosystem | Config File | Key Setting |
 |-----------|------------|-------------|
 | JavaScript (npm) | `.npmrc` | `ignore-scripts=true` |
-| JavaScript (yarn) | `.yarnrc.yml` | `enableScripts: false` |
+| JavaScript (yarn Berry) | `.yarnrc.yml` | `enableScripts: false` |
+| JavaScript (yarn Classic) | `.yarnrc` | `ignore-scripts true` |
 | JavaScript (pnpm) | `.npmrc` + `pnpm-workspace.yaml` | `ignore-scripts=true`, `strictDepBuilds` |
-| Python | `pip.conf` | `--no-deps` enforcement |
+| Python (pip) | `pip.conf` via `PIP_CONFIG_FILE` | `only-binary = :all:` (index packages only; the local project still builds) |
 | Rust | `.cargo/config.toml` | Registry pinning |
-| Ruby | `.bundle/config` | `BUNDLE_DISABLE_EXEC_LOAD: true` |
-| PHP | `composer.json` config | Script restrictions |
+| Ruby | `devenv.nix` env | `BUNDLE_DISABLE_EXEC_LOAD=true` |
+| PHP | `.qsdev/composer/config.json` via `COMPOSER_HOME` | `allow-plugins: {}` (only plugins the project allows run); install scripts are not blocked locally, so CI installs with `--no-scripts` |
 | .NET | `nuget.config` | Source pinning |
 
 pnpm workspaces additionally enforce `blockExoticSubdeps` to prevent subdependencies from pulling in unexpected transitive packages.
+
+**qsdev's own installs.** Packages qsdev installs globally itself (Claude Code in the bootstrap and `qsdev devenv setup`, MCP servers via `qsdev mcp install`) run outside the project `.npmrc` and the package guard, so each command carries the same controls: an exact pinned release from the catalog, an age gate (`npm --before`, `uv --exclude-newer`) and, for npm, `--ignore-scripts`. The one exception is the Claude Code bootstrap, whose pinned package needs its `postinstall` to place its native binary; that script runs, but only for the exact, age-gated release the catalog pins. devenv and direnv come from `nix profile install` of nixpkgs pinned to one commit (never the mutable `nixpkgs` registry entry) with `accept-flake-config` forced off, so the install cannot pick up a flake's extra substituters or trusted keys. Every bootstrap install re-detects the binary afterwards and fails if it is still not on `PATH`. See [Machine Bootstrap](configuration-reference.md#machine-bootstrap).
 
 ### Layer 3: Lockfile Enforcement
 
 - **Pre-commit hooks** — The `lock-file-audit` custom hook flags changes to `devenv.lock`, `flake.lock`, `package-lock.json`, and `pnpm-lock.yaml` with a warning to verify the diff during code review.
 - **CI** — Security scan workflows verify lockfile integrity as part of the build.
 - **pnpm workspace** — `trustPolicy: no-downgrade` prevents lockfile changes that regress dependency versions.
+- **pip hash checking** — The CI install step for pip projects runs `pip install --require-hashes --only-binary :all: -r requirements.txt`, so every locked dependency must match a pinned hash. `pip.conf` does not set `require-hashes` for the whole shell. Hash-checking mode rejects the unpinned pip upgrade that devenv runs when it creates the virtualenv, and it rejects editable installs such as `pip install -e .`.
+- **Poetry shell install** — The devenv shell runs `poetry install` on entry only from a `poetry.lock` that `poetry check --lock` accepts. A task checks this each time the shell loads. Without a lockfile, or with a stale one, the shell skips the install and never resolves dependencies itself.
 - **CLAUDE.md rules** — Generated project documentation instructs Claude Code to never modify lockfiles without explicit approval.
 
 ### Layer 4: Vulnerability Scanning
@@ -79,8 +86,10 @@ pnpm workspaces additionally enforce `blockExoticSubdeps` to prevent subdependen
 | Scanner | Profiles | Integration |
 |---------|----------|-------------|
 | OSV-Scanner | `consulting-default`, `startup-github` | CI workflow + PreToolUse hook |
-| Snyk | `enterprise` | CI workflow step |
+| Snyk | `enterprise` | CI workflow step (Snyk CLI image pinned by digest) |
 | Socket.dev | All profiles | MCP server for behavioral analysis |
+
+Generated CI steps are pinned to immutable references: actions to full commit SHAs and container images to `sha256` digests. The Snyk step runs the `snyk/snyk` image directly, pinned by digest, rather than through `snyk/actions`. That action runs the image by its mutable `node` tag, so pinning the action's SHA would not pin the code that runs with `SNYK_TOKEN`. qsdev's own CI checks that every pinned SHA and digest still resolves upstream, and fails once an image pin is more than 90 days behind its tag.
 
 The package-guard hook (Layer 5) queries OSV.dev in real time when the AI agent requests a package install — blocking packages with known vulnerabilities before they enter the dependency tree.
 
@@ -90,10 +99,12 @@ The `package-guard` hook runs as a Claude Code PreToolUse interceptor on every `
 
 1. **Pattern matching** — Detects install commands across all supported package managers.
 2. **OSV.dev vulnerability check** — Queries the OSV API for known vulnerabilities in the requested package.
-3. **Age-gate enforcement** — Rejects packages published less than the configured minimum release age.
+3. **Age-gate enforcement** — Rejects packages published less than the configured minimum release age. The age is that of the exact version the manager would install: for NuGet it comes from nuget.org's registration API, which also tells the guard which versions are unlisted (never picked for a latest or floating version; a pinned unlisted version is aged by its catalog `created` time, since nuget.org stamps unlisted versions as published in 1900). `--prerelease` is checked as the newest pre-release it selects.
 4. **Allow or block** — Permits the install (with approval) if the package passes both checks; blocks it otherwise with an explanation.
 
-Package install commands live in the `ask` list (not `deny`), meaning the hook gets a chance to validate them before the user sees a prompt. Only bypass vectors that cannot be safely validated remain in `deny`.
+Package install commands live in the `ask` list (not `deny`), meaning the hook gets a chance to validate them before the user sees a prompt. Only bypass vectors that cannot be safely validated remain in `deny`. For .NET that means adding a package reference is ask-gated and guard-checked, while commands that download and run a NuGet package or install outside the project's references (`dotnet tool install/update/exec/run`, `dnx`, `dotnet dnx`, `dotnet new install`/`-i`, `dotnet package update`, the `nuget` CLI) are denied by the .NET ecosystem module.
+
+Deno is covered the same way. `deno add`, `deno install` (`i`), `deno update` and `deno outdated --update` are ask-gated and guard-checked, with unprefixed names treated as npm packages as Deno does. `deno x` and running an `npm:` or `jsr:` module (`deno run`, `serve`, `watch`, or an implicit `deno npm:pkg` / `deno -A npm:pkg`) are denied like `npx`. The guard also checks those forms, along with `deno compile` and the template that `deno create` / `deno init --npm|--jsr` runs (for npm, the `create-*` package, as with `npm create`). It finds the subcommand after Deno's global flags, so `deno -q add npm:pkg` is still checked. `jsr:` packages, whether from Deno, pnpm or Yarn, are resolved against jsr.io's package metadata and age-gated. OSV.dev has no JSR feed, so a JSR package that passes the age gate still needs your confirmation. List it in `PACKAGE_GUARD_ALLOWLIST` as `jsr:@scope/name` to pre-approve it.
 
 ### Layer 6: Nix Hardening
 
@@ -108,18 +119,20 @@ The generated `devenv.nix` additionally:
 
 - **Unsets 38 credential-bearing variables** — AWS, GCP, Azure, GitHub, GitLab, Docker, database, secrets management, and generic API keys.
 - **Sets `DEVENV_SECURITY_HARDENED=true`** — A sentinel flag verified by `devenv test`.
-- **Installs security pre-commit hooks** — ripsecrets, check-added-large-files, no-commit-to-branch, check-merge-conflict, shellcheck, statix.
-- **Installs custom hooks** — lock-file-audit and nix-secrets-check (detects hardcoded credentials in `.nix` files).
+- **Installs security pre-commit hooks** — ripsecrets, shellcheck and the language security scanners (govulncheck, bandit, tfsec) at every security level, plus repository hygiene hooks (check-added-large-files, no-commit-to-branch, check-merge-conflicts).
+- **Installs custom hooks** — lock-file-audit and nix-secrets-check (detects hardcoded credentials in `.nix` files), at every security level.
+- **Tiers only non-security hooks** — language formatters and linters (and statix) run from the `enhanced` security level up; a `baseline` project skips them. The tiers are the catalog's `hook_tiers` (see the configuration reference's "Pre-commit hook tiers").
 
 ### Layer 7: SAST (Semgrep)
 
-Semgrep runs as an AlwaysOn tool in the Claude Code environment, providing static analysis during development:
+Semgrep runs as an AlwaysOn tool, providing static analysis during development. Its `.semgrepignore` is generated at the `standard` and `full` tiers whether or not Claude Code is configured:
 
 - Detects dangerous code patterns (command injection, path traversal, unsafe deserialization).
-- Custom rule sets per ecosystem are included in the generated configuration.
-- Also runs in CI via the generated security-scan workflow.
+- The generated `qsdev-security-scan` devenv task runs `semgrep` with the registry rule packs of the detected ecosystems (`p/golang`, `p/python`, `p/owasp-top-ten` and so on), plus the project's own rules in `.semgrep/` when that directory exists. It runs with `--metrics=off --error`, so a finding fails the task.
+- The generated `.semgrepignore` excludes build output, caches, fixtures, vendored dependencies and virtual environments from the scan.
+- The posture SAST layer counts as enabled only when semgrep is enabled and the `qsdev-security-scan` task in `devenv.nix` runs it. If the task does not run semgrep, the layer is partial.
 
-**OpenGrep** (opt-in via `qsdev enable opengrep`) adds 96 taint-focused rules targeting injection flaws, deserialization, and authentication bypasses across 7 frameworks: Next.js, FastAPI, Gin, NestJS, SvelteKit, Prisma, and Drizzle.
+**OpenGrep** (opt-in via `qsdev enable opengrep`) adds 96 taint-focused rules targeting injection flaws, deserialization, and authentication bypasses across 7 frameworks: Next.js, FastAPI, Gin, NestJS, SvelteKit, Prisma, and Drizzle. OpenGrep is not in nixpkgs, so enabling it writes a pinned derivation to `.opengrep/nix/default.nix`, which the devenv.nix package list imports. The derivation fetches the prebuilt release binary for the host platform (x86_64/aarch64 Linux and macOS) and checks it against the release asset's SHA-256 digest. The rule library goes to `.opengrep/rules/core/`, and the generated `security-scan` devenv task runs `opengrep scan --config .opengrep/rules/core --error`, so a finding fails the task. OpenGrep has no project config file, so none is generated. `qsdev disable opengrep` removes the derivation, the rule library and the task step.
 
 ### Layer 8: Secrets Scanning (ripsecrets + gitleaks)
 
@@ -136,28 +149,54 @@ Both are configured automatically during `qsdev init`. No manual setup required.
 
 When a Dockerfile or Containerfile is detected, qsdev generates runtime-aware security configs for both Docker and Podman:
 
-- **Hadolint configuration** — Linting rules for Dockerfile best practices (no `latest` tags, no root user, etc.).
+- **Hadolint configuration** — Linting rules for Dockerfile best practices (no `latest` tags, no root user, etc.) and a DL3026 trusted-registry allowlist. The default allowlist is `docker.io`, `gcr.io` and `ghcr.io`. Hadolint matches registries only, not namespaces, so trusting `docker.io` admits every Docker Hub account, including typosquats. Narrow the list to the registries your organization actually uses in the `qsdev init` wizard's "Trusted container registries" field (comma-separated, stored as the `trusted_registries` extra).
 - **Syft SBOM generation + Grype vulnerability scanning** — CI workflow steps that produce a software bill of materials and scan built images for OS and library vulnerabilities. (Trivy was removed after the March 2026 supply chain compromise.)
-- **Base image pinning** — Generated Dockerfiles pin base images to digest, not tag.
+- **Image signing policy** — `.cosign/policy.yaml` is a Sigstore [policy-controller](https://docs.sigstore.dev/policy-controller/overview/) `ClusterImagePolicy` derived from the project's git origin remote. For a `github.com/<owner>/<repo>` remote it applies only to images under `ghcr.io/<owner>/<repo>` (and paths below it) and admits them only when they are keyless-signed by a GitHub Actions workflow in that repository (exact issuer `https://token.actions.githubusercontent.com`, anchored case-insensitive subject regexp). It does not cover third-party base images or other registries; the policy-controller's `no-match-policy` decides those, so add a policy for each source you trust. If you publish elsewhere, edit `spec.images`. When there is no origin remote, or the remote is not on `github.com` (GitLab, GitHub Enterprise Server, self-hosted), qsdev cannot know the registry path or signing identity, so it writes a template in which every line is commented out and every value is a `TODO` placeholder: applying it as-is creates nothing. The file uses the `manual-merge` strategy, so once you edit it, an update writes the regenerated version beside it (`.cosign/policy.yaml.new`) instead of overwriting it; `qsdev disable container-security` removes that sidecar along with the policy.
+- **Base image pinning (not enforced)** — qsdev does not generate Dockerfiles and does not check that base images are pinned. Hadolint rejects `latest` and untagged images (DL3006/DL3007) but accepts any mutable tag such as `node:20`. Pin each `FROM` to a digest (`image:tag@sha256:...`) yourself, and let Dependabot or Renovate update the digests.
 - **Runtime-aware deny rules** — In Podman mode, Docker socket mount commands are blocked to prevent accidental privilege escalation.
 
 ### Layer 10: License Compliance
 
-Generated CI configuration includes license scanning that:
+License compliance is opt-in (`qsdev enable license-compliance`). It uses [ScanCode Toolkit](https://github.com/aboutcode-org/scancode-toolkit), installed from nixpkgs (`python3Packages.scancode-toolkit`):
 
-- Detects non-permissive licenses (GPL, AGPL, SSPL) in transitive dependencies.
-- Generates a license report as part of SBOM output.
-- Blocks merges when policy-violating licenses are introduced (configurable per infrastructure profile).
+- `.scancode.yml` is a ScanCode license policy (the `license_policies` format that `scancode --license-policy` reads). Each entry names a ScanCode license key, its SPDX identifier, a label and a `compliance_alert`:
+  - **Approved** (no alert): MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, Unlicense, CC0-1.0.
+  - **Restricted** (`warning`): LGPL-2.0/2.1/3.0, MPL-1.1, MPL-2.0, EPL-1.0, EPL-2.0, CDDL-1.0, CDDL-1.1 and Artistic-2.0. The LGPL versions are listed in both their `-only` and `-or-later` forms.
+  - **Prohibited** (`error`): GPL-1.0/2.0/3.0 and AGPL-1.0/3.0 in both their `-only` and `-or-later` forms, plus SSPL-1.0 and BUSL-1.1. ScanCode maps the deprecated SPDX identifiers (`GPL-2.0`, `GPL-2.0+`, `AGPL-3.0` and so on) onto the same license keys, so they are covered too.
+- The generated `qsdev-security-scan` devenv task runs `scancode --license --license-policy .scancode.yml` over the project and pipes the JSON result through a `jq` check. The task fails when any scanned file has a license whose `compliance_alert` is `error`, and lists restricted licenses for manual review without failing. ScanCode itself only annotates files with the matching policy entries and never fails a scan, which is why the task needs the `jq` check. The check also fails when ScanCode reports an error in its scan headers, such as a policy file it rejects for a duplicate `license_key`; ScanCode then applies no policy but still exits 0.
+- The scan covers the dependency directories (`node_modules/`, `vendor/`, `third_party/`, virtual environments), because the licenses of your dependencies are stored there. It skips build output, caches, framework output, `.devenv/`, test fixtures and the policy files themselves. Scanning a large `node_modules/` tree takes a while. Dependencies stored outside the project, such as the Go module cache or the Cargo registry, are not scanned unless they are vendored.
+- ScanCode matches every license key in a detected expression, so a dual-licensed file such as `MIT OR GPL-2.0-or-later` is reported as prohibited even though the MIT option is allowed.
+- `.license-exceptions.yml` is a record of approved exceptions for reviewers. The scan does not read it.
+- The posture license-compliance layer counts as enabled only when the tool is enabled and the `qsdev-security-scan` task in `devenv.nix` runs the policy scan. If the task does not run it, the layer is partial.
 
 ### Layer 11: Cloud Credential Isolation
 
-When AWS, GCP, or Azure project files are detected, qsdev generates a 3-layer credential isolation configuration:
+When AWS, GCP, or Azure project files are detected, qsdev generates a 3-layer credential protection configuration:
 
 | Layer | Mechanism | Effect |
 |-------|-----------|--------|
-| Environment separation | Per-project credential variables in devenv.nix | Prevents ambient credential access across projects |
-| Credential file masking | Read-deny rules for credential file paths | Blocks agent access to stored credentials |
+| Environment separation | Per-project account variables documented in devenv.nix (`AWS_PROFILE`, `CLOUDSDK_ACTIVE_CONFIG_NAME`, `ARM_SUBSCRIPTION_ID`); with `cloud.isolate_cli_config`, per-project CLI configuration directories (`AZURE_CONFIG_DIR`, `CLOUDSDK_CONFIG`) | The variables only select a default account. The CLIs still share the logins and tokens under the home directory. Credentials are separated per project only for Azure and GCP, and only with `cloud.isolate_cli_config` |
+| Credential file masking | Read-deny rules for credential file paths, including the per-project CLI configuration directories | Blocks agent access to stored credentials |
 | Agent deny rules | Claude Code deny rules for auth CLI commands | Prevents credential refresh or modification |
+
+The environment-separation variables do not isolate credentials. `AWS_PROFILE`
+selects a profile from the shared `~/.aws` files, and
+`CLOUDSDK_ACTIVE_CONFIG_NAME` selects a named gcloud configuration whose
+credentials stay in the shared `~/.config/gcloud`. `ARM_SUBSCRIPTION_ID` is
+read only by Terraform's azurerm provider: `az` ignores it and acts on the
+subscription last chosen with `az account set`. Without isolation, every
+project uses the same cloud logins. An `az` or `gcloud` command in one project
+can act on an account selected in another.
+
+`cloud.isolate_cli_config: true` in `.qsdev.yaml` sets `AZURE_CONFIG_DIR` and
+`CLOUDSDK_CONFIG` in devenv.nix to `.qsdev/cloud/azure` and
+`.qsdev/cloud/gcp`, under the gitignored `.qsdev/` directory. Each project
+then has its own `az login` / `gcloud auth login`, token caches and active
+subscription or configuration (see
+[Cloud CLI configuration isolation](configuration-reference.md#cloud-cli-configuration-isolation)).
+AWS has no equivalent: `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE`
+move only the two INI files, and the SSO and CLI credential caches stay in
+`~/.aws`.
 
 Detection triggers:
 
@@ -167,7 +206,24 @@ Detection triggers:
 | GCP | `cloudbuild.yaml`, `firebase.json`, `app.yaml`, Terraform `google`/`google-beta` provider |
 | Azure | `azure-pipelines.yml`, `.bicep` files, `azure.yaml`, Terraform `azurerm` provider |
 
-Cloud CLIs remain available for read-only operations. Authentication and credential modification commands are denied. `qsdev devenv doctor` includes a CloudProviders section verifying CLI availability and isolation status for each detected provider.
+Cloud CLIs remain available for read-only operations. Authentication and credential modification commands are denied.
+
+`qsdev devenv doctor` (under **Cloud Credential Isolation**) and `qsdev check` verify all three layers for each cloud provider in `.qsdev.yaml`'s `languages`. The check is static and runs no cloud CLI:
+
+| Layer | Verified from | `qsdev check` when missing |
+|-------|---------------|----------------------------|
+| Environment separation | `AWS_PROFILE`, `CLOUDSDK_ACTIVE_CONFIG_NAME` or `ARM_SUBSCRIPTION_ID` declared in `devenv.nix` or `devenv.local.nix` (as `env.NAME` or inside `env = { ... }`) | warning, low severity |
+| Credential file masking | `Read(...)` rules in `permissions.deny`, or `sandbox.filesystem.denyRead`, in `.claude/settings.json` | failure, high severity |
+| Agent deny rules | The provider's credential-command `Bash(...)` rules in `permissions.deny` | failure, high severity |
+
+An empty value, a `<description>` template left from the generated guidance, or a value containing a placeholder marker such as `PLACEHOLDER`, `CHANGEME` or `YOUR_` counts as unset. A variable is only a warning because its value is account-specific and often lives in the untracked `devenv.local.nix`, which a CI checkout does not have. The masking and deny layers are generated by qsdev, so a missing path or rule means `.claude/settings.json` was edited or predates the current rule set: run `qsdev init --update` to restore it. Doctor reports a provider as `isolated`, `degraded` (only the environment layer is missing) or `misconfigured` (a generated layer is missing). The masking and deny layers guard the Claude Code agent, so a project set up without Claude Code (`qsdev init --devenv-only`) that has no `.claude/settings.json` is judged on environment separation only.
+
+Doctor also runs the health checks each configured ecosystem module contributes, under **Ecosystem Checks**. For the cloud modules these are an environment-variable check (`AWS_PROFILE`, `CLOUDSDK_ACTIVE_CONFIG_NAME`, `ARM_SUBSCRIPTION_ID`) and a login check (`aws sts get-caller-identity`, `gcloud auth print-access-token`, `az account show`). They are static too:
+
+- An environment check passes (`[OK]`) when `devenv.nix`/`devenv.local.nix` declare a real value for the variable, so it also passes when doctor runs outside the devenv shell. When neither file declares it, doctor's own environment is checked instead. A declaration is judged first because the devenv shell exports it over the surrounding shell's value. The same placeholder rules apply: an empty, `<description>` or `PLACEHOLDER` value is reported as a warning, never as healthy.
+- A login check never runs the cloud CLI. Running it would contact the provider, and `gcloud auth print-access-token` prints a live token to stdout. Doctor only looks up the CLI on `PATH`. It shows `-` with the command for you to run yourself, or a warning when the CLI is not on `PATH` (the devenv shell provides it).
+
+These checks are advisory. They appear in `--json` output under `module_checks` and do not change the `--check` exit code.
 
 ### Layer 12: Policy Engine
 
@@ -179,8 +235,10 @@ YAML-based security policies define fine-grained rules evaluated at tool invocat
 
 **Bypass tiers** (3):
 - `enforce_always` — Cannot be bypassed. Used for self-protection rules.
-- `session` — Can be bypassed with `qsdev session allow <rule-id>` for the current session.
-- `command` — Can be bypassed per-invocation.
+- `session` — Can be lifted with `qsdev session allow <rule-id> --session <claude-session-id>` for one Claude Code session in one project, until the grant expires (default 8h, at most 24h).
+- `command` — `qsdev session allow` issues a one-shot token for one Claude Code session in one project: the next tool call the rule matches runs and spends the token (an unused token expires after 1h by default). Parallel calls redeem the token under a file lock, so only one of them runs; the others are blocked. The wait for that lock is bounded (2s, inside the hook timeout), and a call that cannot take it is blocked with the token left unspent.
+
+Grants are stored in `~/.qsdev/session-state.json`, keyed by the canonical project root and the Claude Code `session_id` from the hook payload. A grant never applies to another project or session, and an unscoped override left by a release before this scheme lifts nothing. Granting requires a human at an interactive terminal outside any agent session, who confirms the exact scope and expiry. A block by a session- or command-tier rule names the command that would lift it.
 
 Policy evaluation runs in under 50 microseconds per rule. Output is available in human-readable, JSON, and SARIF 2.1.0 formats.
 
@@ -190,6 +248,53 @@ qsdev policy check --sarif      # SARIF 2.1.0 output for CI integration
 qsdev policy list               # List all active rules
 qsdev policy show <rule-id>     # Inspect a specific rule
 ```
+
+**MCP tool deny list.** qsdev's own MCP server (`qsdev mcp serve`) runs
+every tool call through a guardrail middleware. The tools named in
+`.qsdev.yaml` `mcp.disabled_tools` are refused for every caller. That list
+holds MCP tool names only: `tools.disabled` names qsdev catalog tools, a
+separate namespace, and never becomes an MCP deny. `qsdev check` fails on an
+`mcp.disabled_tools` entry that names no tool the server can mount, so a
+misspelling cannot silently leave a tool enabled in a CI-gated project. See
+[MCP tool deny list](configuration-reference.md#mcp-tool-deny-list).
+
+**One MCP server stack.** Every MCP server qsdev generates that runs qsdev
+itself is `qsdev mcp serve`. The `agent-postmortem` and `version-sentinel`
+entries in `.mcp.json` run it with `--module <name>`, which mounts only that
+tool module and leaves out the project context surface and the framework
+adapters. Their tool calls pass through the same guardrail, rate-limit,
+content-safety and audit middleware as the full server, and
+`mcp.disabled_tools` covers them. The transcript tools (`analyze_session`,
+`list_failure_patterns`) read only `.jsonl` transcripts inside the Claude Code
+projects directory (`$CLAUDE_CONFIG_DIR/projects`, or `~/.claude/projects`).
+A relative path is taken relative to that directory, symlinks are resolved
+before the check, and the directory walk does not follow symlinks. The
+version-sentinel tools read only inside the project root.
+
+**Credential vending is opt-in and allow-listed.** `qsdev_credential_vend`
+is the only MCP tool whose output skips secret redaction, because its whole
+purpose is to return short-lived cloud credentials. The server mounts it only
+when the committed `.qsdev.yaml` enables `security.credential_vend`, and then
+vends only the AWS roles, GCP service accounts, Azure scopes and managed
+identities its allow-lists name. AWS `GetSessionToken`, which returns
+credentials carrying the ambient IAM user's full permissions, needs its own
+`aws.allow_session_token`. `.qsdev.local.yaml` cannot set the block, and
+self-protection (GD-001) blocks an agent edit that widens it. `qsdev_nix_run`
+starts its children with the server's credential-bearing variables removed,
+so `env` inside a Nix package cannot print them, and is not mounted in gateway
+mode unless the operator passes `--gateway-allow-nix-run`. See
+[MCP credential vending](configuration-reference.md#mcp-credential-vending).
+
+**No guardrail writes through MCP.** `qsdev_cc_config_render` only previews
+the `.claude/settings.json` and `.mcp.json` that qsdev would generate. It
+takes no `write` argument and refuses a call that asks to write. A write made
+through an MCP call names no target path, so self-protection's path rules
+would never see it, and an agent could edit `.qsdev.yaml` and then widen its
+own allow list. The files are applied only by a person running
+`qsdev init --update`. As a second check, the confused-deputy map treats a
+`qsdev_cc_config_render` call with `write` set as an `Edit` of both files,
+under whatever name the qsdev server is registered, so a path deny rule on
+them also blocks an older qsdev server that still writes.
 
 ### Layer 13: Package and MCP Risk Scoring
 
@@ -214,7 +319,38 @@ Probes produce a weighted score mapped to a letter grade (A through F). Grade ce
 | Installation and update | 0.30 | Update mechanism safety, pinned version, offline capability |
 | Vulnerability and attestation | 0.25 | Known vulnerability databases, user attestation |
 
-Trust scores feed a 3-tier model (high / medium / low trust) and drive confused deputy mitigation via cross-tool deny rule projection.
+Trust scores feed a 3-tier model (high / medium / low trust) and drive confused deputy mitigation in two places:
+
+- **Deny rule projection.** `qsdev init` projects the path deny rules of `.claude/settings.json` (`Read(...)`, `Edit(...)`, `Write(...)`) onto the MCP tools that stand in for those first-party tools. A Claude Code permission rule cannot scope an MCP tool by its path argument, so for a server in tier 3 (fallback) each such tool is denied as a whole: `mcp__filesystem__read_file`, `mcp__filesystem__write_file` and the rest of the reference filesystem server, and `mcp__github__create_or_update_file`. Servers are scored from their generated `.mcp.json` definition; a server qsdev does not configure scores into tier 3, so the denies also cover a same-named server added in a user-scope MCP config.
+- **PreToolUse path check.** For tier 1 and 2 servers the tools stay available, and the enforce hook checks the local paths each call names against the policy's path deny rules, blocking a call that reaches a denied path.
+
+**MCP configuration in doctor.** `qsdev devenv doctor` lists each server in the project's `.mcp.json` under **MCP Servers** and validates its entry statically. It never starts a server, because `.mcp.json` is repository content and may name any command (a server launched through `npx` or `uvx` would also download a package). Doctor checks that each stdio command is on `PATH`, that each remote URL is an absolute `https://` URL (plain `http://` only for localhost), and that the environment variables a server needs are set: those its catalog definition requires and those its command, arguments, URL, `env` or `headers` reference as `${VAR}` without a `:-default`. A server is `ok`, `degraded` (only an unset variable) or `misconfigured` (a missing command or a bad URL). The section appears in `--json` output under `mcp_servers` and does not change the `--check` exit code. To check that a server actually answers, run `qsdev mcp status`, which starts only servers that match a trusted definition.
+
+**Pinned MCP launches.** Claude Code starts `.mcp.json` servers itself, outside the package guard, the Bash deny rules and lockfile pinning. qsdev therefore pins every catalog server that a package launcher (`npx`, `uvx`, ...) fetches at session start to an exact release, and generation refuses any launcher spec, catalog or configured, that does not name one. `qsdev mcp install` installs exactly the pinned release under the release-age cutoff, and while the project records that install, `.mcp.json` runs the installed executable, so nothing is fetched at session start. See [`.mcp.json`](configuration-reference.md#mcpjson).
+
+**MCP output hardening.** The `qsdev enforce --hook PostToolUse` hook
+rewrites every MCP tool result before the agent reads it, scaled to the
+server's trust tier:
+
+| Tier | Treatment |
+|------|-----------|
+| 1 (local, trusted) | Wrapped in a provenance frame |
+| 2 (enterprise) | Datamarked, then framed |
+| 3 (fallback, untrusted) | Scanned for injection patterns (hits become an inline warning), datamarked, then framed |
+
+Datamarking replaces the whitespace in prose with a Private Use Area rune
+(U+E000–U+E0FF) chosen at random for each result, so injected text no longer
+reads as instructions. Fenced and inline code keep their whitespace. The marked
+text sits between `---BEGIN DOC---` / `---END DOC---` delimiters under a header
+that says what the marker means, and a body line that would forge a delimiter
+is neutralized. A tool result that is a JSON object or array is marked token by
+token: only the whitespace inside its strings is replaced, so the agent still
+gets the same, parseable JSON document. Each text block of an MCP result is
+hardened on its own, and image, audio and resource blocks, other block fields
+and `structuredContent` are kept as the tool returned them. The provenance frame
+tag carries a random nonce per result, and a qsdev tag inside the output is
+escaped, so tool output can neither close the frame nor open a forged trusted
+one.
 
 ### Layer 14: Agent Self-Protection
 
@@ -224,13 +360,19 @@ Self-protection runs as the first PreToolUse hook, before all other hooks. It bl
 
 | Category | Rule IDs | What it protects |
 |----------|----------|------------------|
-| Config protection | SP-001–SP-008 | Config file writes/reads/deletes, symlinks, path traversal, /proc reads, copy/redirect, env var manipulation |
+| Config protection | SP-001–SP-008 | Config file writes/reads/deletes, symlinks, path traversal, /proc reads, copy/redirect, Claude Code settings overrides |
 | MCP integrity | MCP-001, MCP-002, MCP-005 | Tool description injection, cross-tool protected path access, server config tampering |
 | Binary integrity | INT-001 | Modification of security binaries in `.qsdev/bin/` |
-| Bypass prevention | SP-011–SP-014 | Bypass variable exports, bypass commands, audit trail writes, CLI security control commands |
+| Bypass prevention | SP-011–SP-014 | Hook command hijacking, bypass commands, audit trail writes, CLI security control commands |
 | Process protection | SP-009–SP-010 | Process management targeting qsdev/claude, hook script modification |
 
 All 18 rules use deny-override combining: if any rule denies, the tool call is blocked. All rules are evaluated on every call; multiple denials are collected and reported.
+
+**Hook-affecting surfaces.** Hooks are spawned by Claude Code with its own environment, so exporting or unsetting a variable in a Bash call cannot disable them, and the rules do not treat it as a bypass. The protected surfaces are the ones that do decide which hooks run:
+
+- *Settings files.* The project and user `settings.json` / `settings.local.json`, the hook scripts, agents, commands and skills are protected under `.claude/` wherever it lives, under a configuration directory relocated with `CLAUDE_CONFIG_DIR`, and in the platform's managed-settings directory (`/etc/claude-code`, `/Library/Application Support/ClaudeCode`, `%ProgramFiles%\ClaudeCode`). Their `disableAllHooks`, `hooks` and `env` keys can therefore only be changed by a person (SP-001, SP-003–SP-007).
+- *Nested sessions (SP-008).* A shell command may not start Claude Code (directly, by its native-installer release path or npm entry script, through a wrapper such as `env`, `sudo`, `xargs` or `npx @anthropic-ai/claude-code`, or inside `sh -c`/`eval`) with `--bare`, `--safe-mode` or `--restricted`; with `--setting-sources` that omits `user`, `project` or `local`; with `--settings` naming a file, or inline JSON that sets `disableAllHooks`, `hooks` or `env`; or with `CLAUDE_CONFIG_DIR`, `HOME`, `CLAUDE_CODE_SIMPLE` or `CLAUDE_CODE_SAFE_MODE` set. `claude import` (which writes settings) is denied unless it is a `--dry-run`, and so is a write whose target is built from `$CLAUDE_CONFIG_DIR`. Plain `claude -p` sessions, and inline `--settings` with other keys, stay allowed. A session started from a directory other than the project loads that directory's project settings instead; SP-008 does not judge the working directory, so such a session runs only the user and managed hooks.
+- *Hook command paths (SP-011).* SP-011 reads the hooks registered in the project, user and managed settings and resolves each hook's programs the way the hook shell will: a program named by path, a hook script's shebang interpreter (`#!/usr/bin/env python3` resolves `python3`), and every bare program name through `PATH`. A Write/Edit or shell command may not create a file of that name in a `PATH` directory ahead of the one it resolves to (which would shadow it), or rewrite, move, link or chmod the file it resolves to. Writes whose file names are not on the command line (archive extraction, a recursive directory copy, `go install`) and hooks registered by plugins are not resolved.
 
 **Evasion detection** runs alongside the rule set and catches:
 - Base64-to-shell pipelines (`base64 -d | bash`)
@@ -240,7 +382,75 @@ All 18 rules use deny-override combining: if any rule denies, the tool call is b
 - `/dev/fd/` and `/proc/self/fd/` file descriptor tricks
 - `/proc/self/root/` and `/proc/PID/root/` traversal
 
+**Git code-execution check (GIT-001)** parses every git invocation, including one inside `sh -c` or `eval`, and blocks the forms that run a program no permission rule or hook sees, or that skip the repository's hooks: per-invocation config (`-c`, `--config-env`, `GIT_CONFIG_*` variables), `--exec-path=`, `GIT_EXTERNAL_DIFF`, `git config`, `--no-verify` and its abbreviations, a clustered `-n` on commit or am, and `--output`. The permission deny rules cover the plain spellings; this check covers what a prefix glob cannot express, and leaves commit messages that mention these options alone.
+
 **Path canonicalization** resolves all file paths through `canon.Canonicalize` before rule evaluation, preventing relative-path and symlink-based evasion.
+
+## Project Security Floor
+
+The committed `.qsdev.yaml` declares a security floor (`security.level`,
+raised by `client.security_level`) and an optional client MCP policy
+(`client.blocked_mcp_servers` / `allowed_mcp_servers`). `qsdev init` resolves
+it, together with the developer's `.qsdev.local.yaml`, through a single
+resolver in create, join and update, and generation never goes below it:
+
+- the compliance level and the hooks it requires are raised to the floor,
+  and a security switch it mandates cannot be disabled locally;
+- `.qsdev.local.yaml` may only add to or tighten the committed
+  configuration: a looser permission level (catalog `strictness` ranks
+  `minimal` > `standard` > `permissive`; unranked presets are not
+  comparable and fail closed), a `tools.disabled` entry, `tools.config`, a
+  changed `claude_code.enabled`, package manager or service option, and any
+  floor violation are ignored and reported. Its additions reach generation
+  only, never the committed `.qsdev.yaml`;
+- a forbidden MCP server is dropped from `.mcp.json` whatever requested it,
+  including entries already present in a committed or hand-edited file.
+
+The resolver has no organization-defaults layer, so a project without a
+`security` block is not silently raised to built-in defaults. See the
+[configuration reference](configuration-reference.md#security-floor-client-policy-and-local-overrides).
+
+### Project catalog defaults
+
+A committed `.qsdev/defaults.yaml` overlays qsdev's built-in catalog (deny
+rule sets, permission presets, hooks, compliance mappings) for that project.
+A cloned repository controls this file, so it is held to a tighten-only trust
+model: it may add deny rules and deny sets (including to an existing
+preset's `deny_sets`), add hooks and custom hooks, and raise a tier's
+compliance level. It can never remove a built-in deny rule or set, redefine
+an existing hook (a custom hook id cannot reuse a built-in hook or tool
+name), change an MCP server's command, touch tools, tiers,
+compliance definitions, allow or ask rules, or lower compliance. A file that
+tries is rejected with an error naming each violation, and the command
+stops. The project layer is applied beneath the developer's own user
+defaults file, so a repository cannot override the user's policy. See the
+[configuration reference](configuration-reference.md#qsdevdefaultsyaml).
+
+## Project File Write Containment
+
+A cloned repository is untrusted input, and it can commit symbolic links. If
+`.claude`, `.devinit`, `.qsdev`, `.qsdev.yaml` or `devenv.nix` were a symlink
+to `~/.claude` or another file outside the project, a naive write would
+overwrite the developer's global configuration. To prevent this, every write
+qsdev makes to a project file is confined to the project root:
+generation, `init`, `update`, `join`, `enable`/`disable`, `repair`,
+`check --auto-fix`, the `claude` and `devenv` subcommands, state and answers
+files, `.qsdev.yaml` (including `config migrate`), compose fixes, teardown
+cleanup and archives, and `.gitignore` edits.
+
+Each write resolves symlinks in the destination and its parent directories.
+It is refused, and nothing is written, when:
+
+- the path is absolute or climbs out with `..`;
+- the destination, or any parent directory, resolves outside the project root;
+- a symlink redirects the write into a `.git` directory.
+
+A symlink that stays inside the project, such as `CLAUDE.md -> AGENTS.md`, is
+followed: its target is rewritten and the link is kept. Repair backups under
+`.qsdev/backups/` and the teardown archive apply the same rule, and they
+never replace an existing file or follow a symlink at their own path. Paths
+you pass explicitly (`--output`, `--output-dir`, `--history-file`) and files
+in your home or cache directories are not confined to the project.
 
 ## Hook Execution Isolation
 
@@ -257,6 +467,8 @@ Hooks run inside a sandboxed environment that restricts filesystem access, netwo
 | Unsandboxed | No isolation (macOS, minimal Linux) | — |
 
 Run `qsdev sandbox status` to see the active tier on your system. Five hook category profiles (linter, formatter, network-linter, generator, test-runner) control which resources each hook type can access.
+
+The project's sandbox policy (`.qsdev/policy.nix`) comes from the same repository whose hooks the sandbox contains, so it is privileged configuration. `qsdev sandbox exec` evaluates it only when a human has approved its exact content with `qsdev sandbox approve` (the approval, kept in `~/.qsdev/`, covers the policy file and the `*.nix` files beside it, and any change voids it; an unapproved policy blocks the hook). It is evaluated with Nix's restricted evaluation from a private copy of the approved files, so it cannot read other files, the environment or the network, and the mounts it declares are allowlisted to the project directory and `/nix/store`, never `/run`, `/var/run` or a socket. See the [configuration reference](configuration-reference.md#qsdevpolicynix).
 
 ## Security Spectrum Positioning
 
@@ -334,6 +546,7 @@ Ask rules cover:
 | Go | `go get`, `go install` |
 | Ruby | `gem install`, `bundle add` |
 | PHP | `composer require` |
+| .NET | `dotnet add package`, `dotnet add <PROJECT> package`, `dotnet package add` |
 | System | `nix profile install`, `apt install`, `brew install` |
 
 ### Deny Rules (~90 rules)
@@ -348,7 +561,7 @@ Commands that represent bypass vectors — ways to circumvent the hook-gating �
 | eval/xargs | `eval *npm install*`, `xargs cargo install` | ~7 |
 | env/command Prefix | `env npm install`, `command pip install` | ~10 |
 | sudo Prefix | `sudo npm install`, `sudo apt install` | ~8 |
-| npx/bunx Execution | `npx <package>`, `bunx <package>` | ~6 |
+| Remote Package Execution | `npx <package>`, `pnpm dlx`, `yarn dlx`, `bunx`, `npm exec`, `deno x`, `deno run npm:`/`jsr:` | ~20 |
 | Destructive Ops | `git push --force`, `rm -rf /`, `Read(./.env)` | ~6 |
 | Nix Bypass | `nix-env -i`, `cachix use` | ~8 |
 | Uncategorized | Per-ecosystem edge cases | ~14 |
@@ -390,22 +603,148 @@ The following tools are installed and available to Claude Code without per-invoc
 
 ### Generated Workflows
 
-Infrastructure profiles generate `.github/workflows/security-scan.yml` with:
+Infrastructure profiles (tier `standard` and above) generate
+`.github/workflows/security-scan.yml` when the profile configures a
+vulnerability scanner or CI runner protection. It has two jobs:
 
-- **harden-runner** (all profiles) — Restricts network egress from CI runners, preventing exfiltration of secrets.
-- **OSV-Scanner / Snyk / Grype** — Scans dependencies for known vulnerabilities.
-- **Semgrep** — SAST rules for the detected ecosystems.
-- **gitleaks** — Full-repo secrets scan.
+- **`security-scan`**
+  - **harden-runner** (profiles with `ci_protection: harden-runner`) — audits
+    network egress from the runner.
+  - **Validate lock files** — fails when a tracked manifest has no committed
+    lock file, for every manifest/lock-file pair in the ecosystem catalog.
+  - **OSV-Scanner / Snyk / Grype** (profile-dependent) — scans dependencies
+    for known vulnerabilities.
+- **`ecosystem-ci`** (when the project's languages contribute CI commands) —
+  runs every selected ecosystem module's `CICommands` in the project's devenv
+  shell (`cachix/install-nix-action`, then `devenv shell`), so CI uses the
+  toolchains `devenv.nix` pins. Steps are grouped by phase: all **install**
+  steps first (lock-file enforcing installs such as `npm ci --ignore-scripts`,
+  `pnpm install --frozen-lockfile`, `cargo build --locked`,
+  `dotnet restore --locked-mode`, `uv sync --locked`,
+  `terraform init -lockfile=readonly`), then **test** steps, then **scan**
+  steps (audits such as `cargo audit`, `govulncheck`, `pip-audit`,
+  `npm audit --audit-level=moderate`, Grype on the built container image).
+  The `.npmrc` `audit-level` setting only sets `npm audit`'s exit code — `npm ci`
+  and `npm install` never fail on audit results — so the `npm audit` step is
+  what makes moderate-or-higher advisories fail CI for npm projects.
+  The modules add these audit tools (`cargo-audit`, `pip-audit`,
+  `bundler-audit`, `syft`, `grype`, `govulncheck`) to the
+  `devenv.nix` packages, so they are on the shell's PATH locally and in CI.
+  A drifted or missing lock entry therefore fails CI before anything builds.
+  Other lock-enforcing installs include `stack build --lock-file=error-on-write`,
+  `swift package resolve --force-resolved-versions`, `helm dependency build`
+  (refused when a chart declares dependencies without a `Chart.lock`), sbt's
+  `dependencyLockCheck` against `build.sbt.lock`, and `renv::restore()` followed
+  by a check that fails unless `renv::status()` reports the project in sync.
+  Every command fails on its own, whatever shell options run it: pipelines set
+  `pipefail` (`helm template | kubeconform`), loops fail when any item fails
+  (`bash -n` on each `*.sh` file, `luarocks install --only-deps` on each
+  rockspec), and scanners that only report are made to fail (PSScriptAnalyzer
+  error findings and parse errors; sbt-dependency-check at CVSS 7 and above).
+  Tools that are not nixpkgs packages are provisioned by the job itself: the sbt security
+  plugins through `sbt --addPluginSbtFile`, and a pinned PSScriptAnalyzer from
+  PSGallery. Commands that only apply to one package manager or project shape
+  are emitted only for it: the sbt tasks for sbt builds (not Mill), the renv
+  steps for renv projects (`renv.lock`), the LuaRocks install for rockspec
+  projects, and the flake checks for flake projects (`flake.nix`, recorded by
+  detection as the Nix module's `flake=true` extra).
+  Commands come from each module configured with the
+  language's package manager and extras from `.qsdev.yaml`; a command
+  containing a GitHub Actions expression (`${{`) is refused at generation
+  time, since GitHub would evaluate it before the shell ran the step.
+
+### Generated-File Drift in CI
+
+`qsdev check` fails a CI run when a machine-owned generated file, such as
+`.claude/hooks/package-guard.py`, a rule, a skill or a generated workflow, was
+edited or deleted. The local generation state (`.devinit/`) is gitignored, so
+CI verifies the files against the committed `.qsdev-generated.sha256` manifest
+of their SHA-256 digests, which every command that regenerates files rewrites.
+A project with `.qsdev.yaml` but no usable manifest also fails, rather than
+skipping the check. The manifest is only as trustworthy as review of the
+changes to it: a pull request that edits a hook and updates its digest passes
+this check, and shows both changes in the diff. See
+[`.qsdev-generated.sha256`](configuration-reference.md#qsdev-generatedsha256).
+
+### Branch Name Hygiene
+
+The always-on `branch-naming` tool installs a pre-push hook that checks the
+current branch against `git.branch_pattern` in `.qsdev.yaml`. Its default
+accepts any portable ASCII branch name but rejects shell metacharacters, a
+leading `-` and non-ASCII characters, the branch names that turn into command
+injection where CI interpolates `${{ github.head_ref }}` unquoted into a
+script. It is a local hook, so `git push --no-verify` (or a branch created on
+the forge) skips it: workflows must still pass branch names through
+environment variables rather than inline expressions. See
+[Git settings](configuration-reference.md#git-settings).
+
+### Custom Conformance Policy
+
+A committed `.qsdev-policy.yaml` adds project-specific requirements to the
+built-in baseline and enhanced conformance levels. `qsdev status` gates its
+exit code on them at `--audit-level high` and stricter, and `qsdev check`
+reports each as a high-severity check. The policy fails closed: a requirement
+on dependency vulnerability counts passes only after a conclusive fresh scan
+(`--scan`), so zero counts from a skipped or failed scan never read as clean,
+and a malformed policy file fails instead of being ignored. See
+[`.qsdev-policy.yaml`](configuration-reference.md#qsdev-policyyaml).
 
 ### Generated Update Configuration
 
 - **Renovate** (`consulting-default`, `enterprise`) — `renovate.json` with `minimumReleaseAge`, `automergeType: "pr"` for patches (enterprise), and lockfile maintenance.
 - **Dependabot** (`startup-github`) — `.github/dependabot.yml` with configured update schedules.
 
+### Registry Proxy and Binary Caches
+
+An explicitly selected infrastructure profile routes package installs through
+the organization's pull-through registry proxy and adds its Nix binary cache.
+The built-in profiles carry no endpoints: qsdev refuses to generate until the
+real ones are configured, and rejects documentation placeholders
+(`example.com` hosts, the `myorg` Cachix cache, an all-zero public key), so
+selecting a profile never silently leaves installs on the public registries.
+Registry and cache credentials stay in the environment and are never written
+into generated files. See
+[Infrastructure settings](configuration-reference.md#infrastructure-settings).
+
 ### SBOM Generation
 
 - **Syft** (all profiles) — Generates software bill of materials.
 - **Cosign** (`enterprise` only) — Signs the SBOM for supply chain attestation.
+
+## Self-Update Verification
+
+`qsdev update` (and the hidden `self-update` alias) installs a new binary only
+after authenticating the release:
+
+1. `checksums.txt` must carry a Sigstore bundle (`checksums.txt.sigstore.json`)
+   produced by the release workflow. qsdev verifies it **in-process** with
+   [sigstore-go](https://github.com/sigstore/sigstore-go); no external `cosign`
+   is run, so nothing on `PATH` (a devenv profile, a direnv-added directory, a
+   user shim) can vouch for a release.
+2. The only trust anchor is the Sigstore public-good trusted root (Fulcio CA,
+   Rekor and CT log keys, timestamp authority) embedded in the binary at
+   build time. It is not refreshed from the network or read from
+   `~/.sigstore` at update time. Maintainers refresh it with
+   `go generate ./internal/selfupdate`, which fetches it through an
+   authenticated TUF update.
+3. The signing certificate must match the **exact** identity of this
+   release's workflow run:
+   `https://github.com/<owner>/<repo>/.github/workflows/release.yml@refs/tags/<tag>`,
+   issued by `https://token.actions.githubusercontent.com`. A signature from
+   another workflow, another tag or another repository is rejected.
+4. The bundle must include a Rekor inclusion proof, an embedded SCT and a
+   trusted timestamp. The archive's SHA-256 is then checked against the
+   authenticated `checksums.txt`.
+
+Any verification failure aborts the update and leaves the current binary in
+place. A release that publishes **no** bundle is refused by default; `--no-strict`
+(on both `qsdev update` and `qsdev self-update`) installs such an unsigned
+release for dev or self-built releases. `--no-strict` never overrides a bundle
+that is present but fails verification.
+
+If Sigstore rotates its keys after a qsdev release was built, that binary may
+be unable to verify newer releases; install the newer release with the
+[install script](../README.md#quick-start) or a package manager instead.
 
 ## Security Validation
 
@@ -432,6 +771,25 @@ qsdev status
 
 This outputs a score (0–100), letter grade, and per-layer breakdown showing which controls are active, degraded, or missing.
 
+The score weighs defense coverage (40%), configuration health (30%) and
+dependency health (30%). Dependency health is measured only by a vulnerability
+scan (`qsdev status --scan`). Without one it is unknown, not clean, so:
+
+- the dependency sub-score is reported as `unscanned` (`null` in JSON, with
+  `dependencies.status: "unscanned"`) and the score is computed from defense
+  and configuration alone, instead of counting the dependencies as a clean 100;
+- the `no-critical-vulns` baseline check and the `no-high-vulns` enhanced check
+  report `unknown`, so baseline and enhanced conformance (and the conformance
+  badge) read `UNKNOWN` instead of `PASS`. An unknown result is never a pass,
+  but it is not a failure either: the exit code without `--scan` is unchanged,
+  and `qsdev status` warns that the vulnerability part of the audit level
+  cannot fire.
+
+A scan that fails is different: the dependency score is deducted for each
+failed ecosystem and the vulnerability checks fail, so the exit gate fails
+closed. A project with no detected dependency ecosystem has nothing to scan
+and passes these checks.
+
 ## Known Limitations
 
 ### Hook Bypass Vectors
@@ -454,6 +812,7 @@ This outputs a score (0–100), letter grade, and per-layer breakdown showing wh
 ### Scope
 
 - **Runtime dependencies** — The system hardens the development environment and CI pipeline. It does not scan or constrain runtime container images or deployed artifacts beyond build-time scanning.
+- **Claude Code updates** — The bootstrap installs a pinned Claude Code release, but Claude Code's own auto-updater can later move that install to newer releases outside the pin and the age gate. Set `DISABLE_AUTOUPDATER=1` in the environment where the pin must hold.
 - **Secret management** — Credential stripping prevents accidental exposure in the dev shell but does not replace a proper secret management system (Vault, AWS Secrets Manager, etc.).
 
 ### Policy Engine Limitations

@@ -25,9 +25,8 @@ type docSource struct {
 var docSourceDefs = []docSource{
 	{Name: "DevDocs", Tag: "[DevDocs]", Priority: 1, ServerName: "local-docs-devdocs", UseCase: "API/library reference documentation"},
 	{Name: "Stack Exchange", Tag: "[Stack Exchange]", Priority: 2, ServerName: "local-docs-zim", UseCase: "Q&A, troubleshooting, community solutions"},
-	{Name: "man pages", Tag: "[man page]", Priority: 3, ServerName: "man-pages", UseCase: "System tools, CLI flags, POSIX utilities"},
-	{Name: "NixOS options", Tag: "[NixOS]", Priority: 4, ServerName: "mcp-nixos", UseCase: "Nix/NixOS configuration options and packages"},
-	{Name: "Web (Context7)", Tag: "[Web]", Priority: 5, ServerName: "context7", UseCase: "Library docs when local sources are insufficient"},
+	{Name: "NixOS options", Tag: "[NixOS]", Priority: 3, ServerName: "mcp-nixos", UseCase: "Nix/NixOS configuration options and packages"},
+	{Name: "Web (Context7)", Tag: "[Web]", Priority: 4, ServerName: "context7", UseCase: "Library docs when local sources are insufficient"},
 }
 
 func generateLookupDocsSkill(answers types.WizardAnswers) (*types.GeneratedFile, error) {

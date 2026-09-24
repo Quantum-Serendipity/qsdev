@@ -16,7 +16,7 @@ func ValidateMountPath(path string) error {
 	}
 
 	candidates := denylist.CandidatePaths(path)
-	denyPaths := denylist.AllDenyPaths()
+	denyPaths := denylist.ExpandedDenyPaths()
 
 	if deny, ok := matchedDenyPath(candidates, denyPaths); ok {
 		return fmt.Errorf("mount path %q is denied: overlaps sensitive path %q", path, deny)
@@ -36,7 +36,7 @@ func ValidateMountPath(path string) error {
 // IsDenyPath reports whether path (or its symlink-resolved form) overlaps a
 // sensitive deny-list entry that must never be bind-mounted into a sandbox.
 func IsDenyPath(path string) bool {
-	_, ok := matchedDenyPath(denylist.CandidatePaths(path), denylist.AllDenyPaths())
+	_, ok := matchedDenyPath(denylist.CandidatePaths(path), denylist.ExpandedDenyPaths())
 	return ok
 }
 

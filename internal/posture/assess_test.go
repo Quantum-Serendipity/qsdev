@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 	"gopkg.in/yaml.v3"
 )
@@ -212,8 +214,17 @@ func TestAssess_TierInfoFromConfig(t *testing.T) {
 			wantNext:     "standard",
 		},
 		{
-			name:         "inferred from MCP servers present",
-			yaml:         "version: 1\nclaude_code:\n  mcp_servers:\n    - github\n",
+			// Every default init writes the catalog's default MCP servers,
+			// so they never imply the full tier.
+			name:         "default MCP servers keep the default tier",
+			yaml:         "version: 1\nclaude_code:\n  mcp_servers:\n    - context7\n    - github\n    - socket\n",
+			wantCurrent:  "standard",
+			wantPosition: 2,
+			wantNext:     "full",
+		},
+		{
+			name:         "inferred from a non-default MCP server",
+			yaml:         "version: 1\nclaude_code:\n  mcp_servers:\n    - github\n    - custom-db\n",
 			wantCurrent:  "full",
 			wantPosition: 3,
 			wantNext:     "",
@@ -285,5 +296,190 @@ func TestAssess_CorruptStateRecordedAsDrift(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected state-files drift category to be present")
+	}
+}
+
+// TestAssess_MalformedConfigRecordedAsDrift guards against a config with a
+// syntax error silently grading the project against the default tier.
+func TestAssess_MalformedConfigRecordedAsDrift(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		yaml        string
+		wantFinding bool
+	}{
+		{name: "valid config", yaml: "version: 1\ntier: full\n", wantFinding: false},
+		{name: "yaml syntax error", yaml: "version: 1\ntier: [full\n", wantFinding: true},
+		{name: "missing version", yaml: "tier: full\n", wantFinding: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, ".qsdev.yaml"), []byte(tt.yaml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			report, err := Assess(root, AssessOptions{})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			var got *drift.Finding
+			for _, cat := range report.Drift.Categories {
+				for i, f := range cat.Findings {
+					if cat.Name == StateFilesCategory && f.Subject == ".qsdev.yaml" {
+						got = &cat.Findings[i]
+					}
+				}
+			}
+			if (got != nil) != tt.wantFinding {
+				t.Fatalf("config drift finding = %+v, want present=%v", got, tt.wantFinding)
+			}
+			if got != nil && got.Severity != drift.Error {
+				t.Errorf("config drift severity = %q, want %q", got.Severity, drift.Error)
+			}
+		})
+	}
+}
+
+// TestBuildConfigFileInfos_DeletedFileIsMissing guards the wrapped-error bug:
+// ComputeFileHash wraps the not-exist error, so a deleted file must still be
+// classified missing, not corrupt.
+func TestBuildConfigFileInfos_DeletedFileIsMissing(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "present.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "dir.txt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	infos := buildConfigFileInfos(root, map[string]types.FileState{
+		"gone.txt":    {Hash: "abc"},
+		"present.txt": {Hash: "stale"},
+		"dir.txt":     {Hash: "abc"}, // unreadable as a file: corrupt
+	})
+
+	want := map[string]string{"gone.txt": "missing", "present.txt": "modified", "dir.txt": "corrupt"}
+	for _, info := range infos {
+		if info.State != want[info.Path] {
+			t.Errorf("%s: State = %q, want %q", info.Path, info.State, want[info.Path])
+		}
+	}
+}
+
+// TestAssess_ConfigCountersSumToTotal guards the config health counters: a
+// deleted file counts as missing and every state has a counter.
+func TestAssess_ConfigCountersSumToTotal(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeState(t, root, ".claude/.qsdev-claude-state.yaml", types.GeneratedState{
+		QsdevVersion: "1.0.0",
+		LastRun:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		Files: map[string]types.FileState{
+			".claude/settings.json": {Hash: "abc"}, // deleted
+		},
+		EnabledTools: map[string]bool{"attach-guard": true},
+	})
+
+	report, err := Assess(root, AssessOptions{})
+	if err != nil {
+		t.Fatalf("Assess: %v", err)
+	}
+
+	cfg := report.Config
+	if cfg.Missing != 1 {
+		t.Errorf("Missing = %d, want 1", cfg.Missing)
+	}
+	if sum := cfg.Current + cfg.Modified + cfg.Outdated + cfg.Missing + cfg.Corrupt; sum != cfg.Total {
+		t.Errorf("counters sum to %d, want Total %d: %+v", sum, cfg.Total, cfg)
+	}
+}
+
+// TestBuildEcosystemStatuses_PrefersDedicatedLockfile guards lockfile choice:
+// a real lockfile must win over a manifest that doubles as a pin source, so a
+// uv project with a loose requirements.txt is scanned through uv.lock.
+func TestBuildEcosystemStatuses_PrefersDedicatedLockfile(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		files []string
+		want  string
+	}{
+		{name: "uv.lock over requirements.txt", files: []string{"requirements.txt", "uv.lock"}, want: "uv.lock"},
+		{name: "poetry.lock over requirements.txt", files: []string{"requirements.txt", "poetry.lock"}, want: "poetry.lock"},
+		{name: "requirements.txt alone", files: []string{"requirements.txt"}, want: "requirements.txt"},
+		{name: "nothing", files: nil, want: "missing"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			for _, name := range tt.files {
+				if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			detected := types.DetectedProject{Ecosystems: map[string]bool{ecosystem.NamePython: true}}
+
+			statuses := buildEcosystemStatuses(detected, root, nil)
+
+			if len(statuses) != 1 || statuses[0].LockFile != tt.want {
+				t.Errorf("statuses = %+v, want python lock file %q", statuses, tt.want)
+			}
+		})
+	}
+}
+
+// TestBuildEcosystemStatuses_Subproject verifies that an ecosystem detected in
+// a subproject directory (a JavaScript UI in frontend/) has its lock file
+// looked up there rather than reported missing from the root.
+func TestBuildEcosystemStatuses_Subproject(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		files  []string
+		extras []string
+		want   string
+	}{
+		{name: "lock file in the subproject", files: []string{"frontend/package-lock.json"}, extras: []string{"directory=frontend"}, want: "frontend/package-lock.json"},
+		{name: "root lock file does not count", files: []string{"package-lock.json"}, extras: []string{"directory=frontend"}, want: "missing"},
+		{name: "unsafe directory falls back to root", files: []string{"package-lock.json"}, extras: []string{"directory=../elsewhere"}, want: "package-lock.json"},
+		{name: "no directory", files: []string{"package-lock.json"}, want: "package-lock.json"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			for _, name := range tt.files {
+				p := filepath.Join(root, filepath.FromSlash(name))
+				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, []byte("{}"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			detected := types.DetectedProject{
+				Ecosystems: map[string]bool{ecosystem.NameJavaScript: true},
+				Suggested: map[string]types.LanguageChoice{
+					ecosystem.NameJavaScript: {Name: ecosystem.NameJavaScript, Extras: tt.extras},
+				},
+			}
+
+			statuses := buildEcosystemStatuses(detected, root, nil)
+
+			if len(statuses) != 1 || statuses[0].LockFile != tt.want {
+				t.Errorf("statuses = %+v, want javascript lock file %q", statuses, tt.want)
+			}
+		})
 	}
 }

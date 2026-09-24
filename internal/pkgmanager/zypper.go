@@ -23,7 +23,12 @@ func (z *Zypper) Available() bool {
 
 func (z *Zypper) NeedsElevation() bool { return true }
 
+// InstallArgs returns the command Install runs, without sudo.
+func (z *Zypper) InstallArgs(packages ...string) (string, []string) {
+	return "zypper", append([]string{"install", "-y"}, packages...)
+}
+
 func (z *Zypper) Install(ctx context.Context, packages ...string) error {
-	args := append([]string{"install", "-y"}, packages...)
-	return z.runner.Run(ctx, "zypper", args...)
+	bin, args := z.InstallArgs(packages...)
+	return z.runner.Run(ctx, bin, args...)
 }

@@ -3,8 +3,10 @@ package postmortem_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/postmortem"
 )
@@ -19,6 +21,29 @@ func writeFixture(t *testing.T, dir, name string, lines []string) string {
 	return path
 }
 
+// The fixtures below follow the Claude Code transcript schema: every record
+// carries sessionId and timestamp; tool calls are tool_use blocks in
+// "assistant" records, and their results are tool_result blocks in "user"
+// records whose content is a string or an array of text blocks. Summary lines
+// carry no sessionId.
+
+func toolUse(id, name string) string {
+	return `{"type":"assistant","sessionId":"sess-1","timestamp":"2026-01-02T03:04:06.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"` + id + `","name":"` + name + `","input":{}}]}}`
+}
+
+func toolResult(id string, isError bool, content string) string {
+	errField := ""
+	if isError {
+		errField = `,"is_error":true`
+	}
+	return `{"type":"user","sessionId":"sess-1","timestamp":"2026-01-02T03:04:07.000Z","message":{"role":"user","content":[{"tool_use_id":"` + id + `","type":"tool_result","content":` + content + errField + `}]}}`
+}
+
+const (
+	summaryLine = `{"type":"summary","summary":"Fix the build","leafUuid":"0b1c2d3e"}`
+	promptLine  = `{"type":"user","sessionId":"sess-1","timestamp":"2026-01-02T03:04:05.000Z","message":{"role":"user","content":"please fix the build"}}`
+)
+
 func TestParseSessionJSONL(t *testing.T) {
 	t.Parallel()
 
@@ -28,78 +53,88 @@ func TestParseSessionJSONL(t *testing.T) {
 		wantToolUseCount int
 		wantFailures     int
 		wantRecovered    []bool
+		wantErrors       []string
 		wantSessionID    string
 	}{
 		{
-			name:             "empty file",
-			lines:            []string{},
-			wantToolUseCount: 0,
-			wantFailures:     0,
-			wantSessionID:    "",
+			name:  "empty file",
+			lines: []string{},
 		},
 		{
 			name: "successful session",
 			lines: []string{
-				`{"type":"summary","sessionId":"sess-ok"}`,
-				`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"ls"}}]}}`,
-				`{"type":"result","result":{"type":"tool_result","tool_use_id":"tu_1","content":"file1.txt"}}`,
+				summaryLine, promptLine,
+				toolUse("tu_1", "Bash"),
+				toolResult("tu_1", false, `"file1.txt"`),
 			},
 			wantToolUseCount: 1,
-			wantFailures:     0,
-			wantSessionID:    "sess-ok",
+			wantSessionID:    "sess-1",
 		},
 		{
 			name: "single failure no retry",
 			lines: []string{
-				`{"type":"summary","sessionId":"sess-fail"}`,
-				`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"bad-cmd"}}]}}`,
-				`{"type":"result","result":{"type":"tool_result","tool_use_id":"tu_1","is_error":true,"content":"command not found"}}`,
+				promptLine,
+				toolUse("tu_1", "Bash"),
+				toolResult("tu_1", true, `"command not found"`),
 			},
 			wantToolUseCount: 1,
 			wantFailures:     1,
 			wantRecovered:    []bool{false},
-			wantSessionID:    "sess-fail",
+			wantErrors:       []string{"command not found"},
+			wantSessionID:    "sess-1",
+		},
+		{
+			name: "array result content",
+			lines: []string{
+				promptLine,
+				toolUse("tu_1", "Bash"),
+				toolResult("tu_1", true, `[{"type":"text","text":"exit status 2"},{"type":"text","text":"no such file"}]`),
+			},
+			wantToolUseCount: 1,
+			wantFailures:     1,
+			wantRecovered:    []bool{false},
+			wantErrors:       []string{"exit status 2\nno such file"},
+			wantSessionID:    "sess-1",
 		},
 		{
 			name: "failure and recovery",
 			lines: []string{
-				`{"type":"summary","sessionId":"sess-recover"}`,
-				`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"bad-cmd"}}]}}`,
-				`{"type":"result","result":{"type":"tool_result","tool_use_id":"tu_1","is_error":true,"content":"command not found"}}`,
-				`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu_2","name":"Bash","input":{"command":"good-cmd"}}]}}`,
-				`{"type":"result","result":{"type":"tool_result","tool_use_id":"tu_2","content":"success"}}`,
+				promptLine,
+				toolUse("tu_1", "Bash"),
+				toolResult("tu_1", true, `"command not found"`),
+				toolUse("tu_2", "Bash"),
+				toolResult("tu_2", false, `"success"`),
 			},
 			wantToolUseCount: 2,
 			wantFailures:     1,
 			wantRecovered:    []bool{true},
-			wantSessionID:    "sess-recover",
+			wantSessionID:    "sess-1",
 		},
 		{
 			name: "multiple failures",
 			lines: []string{
-				`{"type":"summary","sessionId":"sess-multi"}`,
-				`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"bad1"}}]}}`,
-				`{"type":"result","result":{"type":"tool_result","tool_use_id":"tu_1","is_error":true,"content":"error one"}}`,
-				`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu_2","name":"Read","input":{"path":"/missing"}}]}}`,
-				`{"type":"result","result":{"type":"tool_result","tool_use_id":"tu_2","is_error":true,"content":"file not found"}}`,
+				promptLine,
+				toolUse("tu_1", "Bash"),
+				toolResult("tu_1", true, `"error one"`),
+				toolUse("tu_2", "Read"),
+				toolResult("tu_2", true, `"file not found"`),
 			},
 			wantToolUseCount: 2,
 			wantFailures:     2,
 			wantRecovered:    []bool{false, false},
-			wantSessionID:    "sess-multi",
+			wantSessionID:    "sess-1",
 		},
 		{
 			name: "malformed lines skipped",
 			lines: []string{
 				`not json at all`,
-				`{"type":"summary","sessionId":"sess-malformed"}`,
+				promptLine,
 				`{"broken json`,
-				`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{}}]}}`,
-				`{"type":"result","result":{"type":"tool_result","tool_use_id":"tu_1","content":"ok"}}`,
+				toolUse("tu_1", "Bash"),
+				toolResult("tu_1", false, `"ok"`),
 			},
 			wantToolUseCount: 1,
-			wantFailures:     0,
-			wantSessionID:    "sess-malformed",
+			wantSessionID:    "sess-1",
 		},
 	}
 
@@ -131,7 +166,28 @@ func TestParseSessionJSONL(t *testing.T) {
 					t.Errorf("FailureSequences[%d].Recovered = %v, want %v", i, analysis.FailureSequences[i].Recovered, wantRecov)
 				}
 			}
+			for i, wantErr := range tc.wantErrors {
+				if got := analysis.FailureSequences[i].ErrorMessage; got != wantErr {
+					t.Errorf("FailureSequences[%d].ErrorMessage = %q, want %q", i, got, wantErr)
+				}
+			}
 		})
+	}
+}
+
+// TestParseSessionJSONL_StartTime proves StartTime is the session's first
+// record timestamp, not the time of analysis.
+func TestParseSessionJSONL_StartTime(t *testing.T) {
+	t.Parallel()
+
+	path := writeFixture(t, t.TempDir(), "session.jsonl", []string{summaryLine, promptLine, toolUse("tu_1", "Bash")})
+	analysis, err := postmortem.ParseSessionJSONL(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if !analysis.StartTime.Equal(want) {
+		t.Errorf("StartTime = %v, want %v", analysis.StartTime, want)
 	}
 }
 
@@ -234,6 +290,58 @@ func TestAggregateFailures(t *testing.T) {
 				}
 				if got.Recovered != tc.wantFirst.Recovered {
 					t.Errorf("first pattern Recovered = %d, want %d", got.Recovered, tc.wantFirst.Recovered)
+				}
+			}
+		})
+	}
+}
+
+// TestFindSessionFiles proves the walk collects only regular .jsonl files under
+// the root, never follows a symlink out of it, and reports a truncated scan.
+func TestFindSessionFiles(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeFixture(t, root, "a.jsonl", []string{`{}`})
+	writeFixture(t, root, "notes.md", []string{`# not a transcript`})
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, filepath.Join(root, "sub"), "b.jsonl", []string{`{}`})
+	out := writeFixture(t, outside, "o.jsonl", []string{`{}`})
+	canSymlink := runtime.GOOS != "windows"
+	if canSymlink {
+		if err := os.Symlink(out, filepath.Join(root, "link.jsonl")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(root, "linkdir")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := []struct {
+		name          string
+		limit         int
+		wantPaths     int
+		wantTruncated bool
+	}{
+		{"no limit", 0, 2, false},
+		{"limit above the count", 5, 2, false},
+		{"limit below the count", 1, 1, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			scan, err := postmortem.FindSessionFiles(root, tt.limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(scan.Paths) != tt.wantPaths || scan.Truncated != tt.wantTruncated {
+				t.Errorf("scan = %+v, want %d paths, Truncated %v", scan, tt.wantPaths, tt.wantTruncated)
+			}
+			for _, p := range scan.Paths {
+				if rel, err := filepath.Rel(root, p); err != nil || strings.HasPrefix(rel, "..") || strings.Contains(p, "link") {
+					t.Errorf("scan returned %s, which is not a regular transcript under the root", p)
 				}
 			}
 		})

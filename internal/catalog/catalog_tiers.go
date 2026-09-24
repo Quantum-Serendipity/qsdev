@@ -8,7 +8,8 @@ import (
 
 // --- Tier accessors ---
 
-// TierOrder returns the tier names sorted by ascending order.
+// TierOrder returns the tier names sorted by ascending order. Ties (which
+// Validate rejects) are broken by name so the result is deterministic.
 func (c *Catalog) TierOrder() []string {
 	type kv struct {
 		name  string
@@ -19,7 +20,7 @@ func (c *Catalog) TierOrder() []string {
 		items = append(items, kv{name, def.Order})
 	}
 	slices.SortFunc(items, func(a, b kv) int {
-		return cmp.Compare(a.order, b.order)
+		return cmp.Or(cmp.Compare(a.order, b.order), cmp.Compare(a.name, b.name))
 	})
 	result := make([]string, len(items))
 	for i, item := range items {
@@ -54,24 +55,4 @@ func (c *Catalog) ComplianceLevels() map[string]ComplianceLevelDef {
 func (c *Catalog) ComplianceLevel(name string) (ComplianceLevelDef, bool) {
 	d, ok := c.compliance.Levels[name]
 	return d, ok
-}
-
-// --- Derivation accessors (tier/compliance mappings) ---
-
-// TierToCompliance returns the tier->compliance level mapping.
-func (c *Catalog) TierToCompliance() map[string]string {
-	out := make(map[string]string, len(c.derivations.TierToCompliance))
-	maps.Copy(out, c.derivations.TierToCompliance)
-	return out
-}
-
-// TierToEnabledTools returns the tier->enabled tools mapping.
-func (c *Catalog) TierToEnabledTools() map[string][]string {
-	out := make(map[string][]string, len(c.derivations.TierToEnabledTools))
-	for k, v := range c.derivations.TierToEnabledTools {
-		cp := make([]string, len(v))
-		copy(cp, v)
-		out[k] = cp
-	}
-	return out
 }

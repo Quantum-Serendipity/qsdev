@@ -2,8 +2,11 @@ package doctor
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
@@ -90,6 +93,7 @@ func TestRunSandboxCheck_FullSupport(t *testing.T) {
 	// TierFull additionally requires the tools that ENFORCE the LSM layers, not
 	// just a capable kernel: the ll-restrict helper and the seccomp BPF filter.
 	mock.landlockHelper = "/usr/bin/ll-restrict"
+	mock.outputResults["/usr/bin/ll-restrict"] = []byte("landlock-abi:4\n")
 	mock.seccompFilter = "/nix/store/seccomp.bpf"
 	mock.files["/proc/sys/kernel/unprivileged_userns_clone"] = []byte("1\n")
 	mock.files["/proc/sys/kernel/seccomp/actions_avail"] = []byte("kill errno\n")
@@ -116,6 +120,29 @@ func TestRunSandboxCheck_FullSupport(t *testing.T) {
 	}
 }
 
+// TestRunSandboxCheck_ReportsUnenforcedFilteredNetwork verifies doctor states
+// that "filtered" network mode is not enforced, even at the full tier, rather
+// than implying an egress allowlist is applied.
+func TestRunSandboxCheck_ReportsUnenforcedFilteredNetwork(t *testing.T) {
+	t.Parallel()
+	mock := newMockSandboxProber()
+	mock.lookPathResults["bwrap"] = stubBinary(t, "bwrap")
+	mock.landlockHelper = "/usr/bin/ll-restrict"
+	mock.seccompFilter = "/nix/store/seccomp.bpf"
+	mock.files["/proc/sys/kernel/unprivileged_userns_clone"] = []byte("1\n")
+	mock.files["/proc/sys/kernel/seccomp/actions_avail"] = []byte("kill errno\n")
+	mock.files["/proc/version"] = []byte("Linux version 6.8.0-generic\n")
+
+	section := RunSandboxCheck(context.Background(), mock)
+	if section == nil {
+		t.Fatal("expected non-nil section")
+		return
+	}
+	if !slices.Contains(section.Warnings, sandbox.FilteredNetworkNotice) {
+		t.Errorf("expected the filtered-network notice in warnings, got %v", section.Warnings)
+	}
+}
+
 func TestRunSandboxCheck_NoBwrap(t *testing.T) {
 	t.Parallel()
 	mock := newMockSandboxProber()
@@ -135,7 +162,9 @@ func TestRunSandboxCheck_NoBwrap(t *testing.T) {
 }
 
 func TestRunSandboxCheck_SystemdRunOnly(t *testing.T) {
-	t.Parallel()
+	// The systemd-run backend is selectable only with a reachable user bus; pin
+	// one so the result does not depend on the host running the test.
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/qsdev-test-bus")
 	mock := newMockSandboxProber()
 	// Real systemd-run binary, no bwrap: the effective tier is systemd-run.
 	mock.lookPathResults["systemd-run"] = stubBinary(t, "systemd-run")
@@ -199,6 +228,11 @@ func TestRunSandboxCheck_NotFullWithoutEnforcementTools(t *testing.T) {
 	if section.SecurityLevel == "strong" {
 		t.Errorf("SecurityLevel = %q; must not be strong without enforcement tools", section.SecurityLevel)
 	}
+	// bwrap still runs with namespace isolation, so it must not be reported as
+	// the weaker systemd-run or unsandboxed tier either.
+	if section.Tier != "bwrap-only" {
+		t.Errorf("Tier = %q, want %q (bwrap namespaces without LSM layers)", section.Tier, "bwrap-only")
+	}
 }
 
 func TestRunSandboxCheck_ItemCount(t *testing.T) {
@@ -209,5 +243,61 @@ func TestRunSandboxCheck_ItemCount(t *testing.T) {
 
 	if len(section.Items) != 7 {
 		t.Errorf("expected 7 items, got %d", len(section.Items))
+	}
+}
+
+// TestRunSandboxCheck_LandlockRemediation pins that the doctor's advice for a
+// missing Landlock layer names the actual prerequisites (the ll-restrict helper
+// and Landlock in the boot lsm= list), not only a kernel upgrade, which does
+// nothing on a modern kernel.
+func TestRunSandboxCheck_LandlockRemediation(t *testing.T) {
+	t.Parallel()
+	mock := newMockSandboxProber()
+	mock.lookPathResults["bwrap"] = stubBinary(t, "bwrap")
+	mock.seccompFilter = "/nix/store/seccomp.bpf"
+	mock.files["/proc/sys/kernel/unprivileged_userns_clone"] = []byte("1\n")
+	mock.files["/proc/sys/kernel/seccomp/actions_avail"] = []byte("kill errno\n")
+	mock.files["/proc/version"] = []byte("Linux version 6.8.0-generic\n")
+
+	section := RunSandboxCheck(context.Background(), mock)
+
+	if section.Tier != sandbox.TierBwrapWithoutLandlock.String() {
+		t.Fatalf("Tier = %q, want %q", section.Tier, sandbox.TierBwrapWithoutLandlock.String())
+	}
+	joined := strings.Join(section.Recommendations, "\n")
+	for _, want := range []string{"ll-restrict", "lsm="} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("recommendations %q do not mention %q", section.Recommendations, want)
+		}
+	}
+}
+
+// TestLandlockItem pins that a Landlock ABI without IPC scoping (< 6) is a
+// warning, not full isolation: ll-restrict cannot keep a network-allowed hook
+// away from host abstract UNIX sockets there.
+func TestLandlockItem(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		abi        int
+		wantStatus string
+		wantText   string
+	}{
+		{0, "warn", "not enforceable"},
+		{4, "warn", "not scoped"},
+		{5, "warn", "not scoped"},
+		{6, "ok", "ABI v6"},
+		{9, "ok", "ABI v9"},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("abi%d", tt.abi), func(t *testing.T) {
+			t.Parallel()
+			got := landlockItem(tt.abi)
+			if got.Status != tt.wantStatus {
+				t.Errorf("Status = %q, want %q", got.Status, tt.wantStatus)
+			}
+			if !strings.Contains(got.Summary, tt.wantText) {
+				t.Errorf("Summary = %q, want it to contain %q", got.Summary, tt.wantText)
+			}
+		})
 	}
 }

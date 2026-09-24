@@ -1,7 +1,6 @@
 package npm
 
 import (
-	"bufio"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/extlog"
+	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 )
 
 func init() {
@@ -75,7 +75,7 @@ var npmLineRe = regexp.MustCompile(`^(\d+)\s+(silly|verbose|info|http|timing|war
 
 func (p *Provider) Parse(r io.Reader, sourceFile string) ([]extlog.LogEntry, error) {
 	fileMtime := extlog.FileModTime(sourceFile)
-	scanner := bufio.NewScanner(r)
+	scanner := logging.NewLineScanner(r)
 	var entries []extlog.LogEntry
 	lineNo := 0
 

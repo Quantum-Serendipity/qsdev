@@ -19,7 +19,9 @@ func GenerateLocalConfigTemplate(answers types.WizardAnswers, detected types.Det
 	br := branding.Get()
 	fmt.Fprintf(&b, "# %s — Local developer overrides (gitignored)\n", br.LocalConfig)
 	b.WriteString("# Uncomment and modify lines below to customize your local environment.\n")
-	fmt.Fprintf(&b, "# These settings override %s but cannot lower security settings.\n", br.ConfigFile)
+	fmt.Fprintf(&b, "# These settings add to %s for your checkout only. They can add\n", br.ConfigFile)
+	b.WriteString("# packages, languages, services, tools and MCP servers or tighten security,\n")
+	b.WriteString("# never loosen it: weaker settings are ignored with a warning.\n")
 	b.WriteString("#\n")
 
 	// Extra packages section.
@@ -45,7 +47,7 @@ func GenerateLocalConfigTemplate(answers types.WizardAnswers, detected types.Det
 	if answers.ClaudeCode {
 		b.WriteString("#\n")
 		b.WriteString("# claude_code:\n")
-		b.WriteString("#   permission_level: permissive\n")
+		b.WriteString("#   permission_level: minimal   # only a stricter level than the committed one\n")
 	}
 
 	// Tools section.

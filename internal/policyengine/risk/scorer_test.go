@@ -1,8 +1,7 @@
 package risk
 
 import (
-	"os"
-	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -276,85 +275,6 @@ func TestScoreAllEmpty(t *testing.T) {
 	}
 }
 
-func TestCacheManager(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	cache := NewCacheManager(dir, 1*time.Hour)
-
-	got, err := cache.Get("npm", "test-pkg", "1.0.0")
-	if err != nil {
-		t.Fatalf("unexpected error on cache miss: %v", err)
-	}
-	if got != nil {
-		t.Fatal("expected nil for cache miss")
-	}
-
-	score := &PackageScore{
-		PackageName:    "test-pkg",
-		PackageVersion: "1.0.0",
-		Ecosystem:      EcosystemNpm,
-		Score:          85,
-		Grade:          GradeB,
-	}
-
-	if err := cache.Put(score); err != nil {
-		t.Fatalf("unexpected error on cache put: %v", err)
-	}
-
-	got, err = cache.Get("npm", "test-pkg", "1.0.0")
-	if err != nil {
-		t.Fatalf("unexpected error on cache hit: %v", err)
-	}
-	if got == nil {
-		t.Fatal("expected cached score, got nil")
-		return
-	}
-	if got.Score != 85 {
-		t.Errorf("cached score = %d, want 85", got.Score)
-	}
-	if got.Grade != GradeB {
-		t.Errorf("cached grade = %s, want B", got.Grade)
-	}
-}
-
-func TestCacheManagerExpiry(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	cache := NewCacheManager(dir, 1*time.Millisecond)
-
-	score := &PackageScore{
-		PackageName:    "expire-pkg",
-		PackageVersion: "1.0.0",
-		Ecosystem:      EcosystemNpm,
-		Score:          50,
-		Grade:          GradeD,
-	}
-
-	if err := cache.Put(score); err != nil {
-		t.Fatalf("unexpected error on cache put: %v", err)
-	}
-
-	// Set mtime to the past to simulate expiry without sleeping.
-	path := filepath.Join(dir, cache.cachePath("npm", "expire-pkg", "1.0.0"))
-	// cachePath returns the full path already, so re-derive it.
-	key := cache.cachePath("npm", "expire-pkg", "1.0.0")
-	pastTime := time.Now().Add(-1 * time.Hour)
-	if err := os.Chtimes(key, pastTime, pastTime); err != nil {
-		t.Fatalf("setting mtime: %v", err)
-	}
-	_ = path
-
-	got, err := cache.Get("npm", "expire-pkg", "1.0.0")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != nil {
-		t.Error("expected nil for expired cache entry")
-	}
-}
-
 func TestApplyCeilings(t *testing.T) {
 	t.Parallel()
 
@@ -527,5 +447,44 @@ func TestGradeFromScore(t *testing.T) {
 				t.Errorf("gradeFromScore(%d) = %s, want %s", tt.score, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestScorePackageDeterministicCategories guards F197: Categories used to be
+// built by ranging over a map, so identical input produced a different order
+// (and serialized score) from run to run.
+func TestScorePackageDeterministicCategories(t *testing.T) {
+	t.Parallel()
+
+	published := time.Now().Add(-2 * 365 * 24 * time.Hour)
+	info := PackageInfo{
+		Name:                    "stable-pkg",
+		Version:                 "1.0.0",
+		Ecosystem:               EcosystemNpm,
+		FirstPublishedAt:        &published,
+		PublishedAt:             &published,
+		VulnDataAvailable:       true,
+		HasChecksumVerification: true,
+	}
+
+	names := func(s PackageScore) []string {
+		out := make([]string, len(s.Categories))
+		for i, c := range s.Categories {
+			out[i] = c.Name
+		}
+		return out
+	}
+
+	want := names(ScorePackage(&info))
+	if len(want) < 2 {
+		t.Fatalf("expected several scored categories, got %v", want)
+	}
+	if !slices.IsSorted(want) {
+		t.Errorf("categories %v are not in a fixed (sorted) order", want)
+	}
+	for range 50 {
+		if got := names(ScorePackage(&info)); !slices.Equal(got, want) {
+			t.Fatalf("category order changed between runs: %v vs %v", got, want)
+		}
 	}
 }

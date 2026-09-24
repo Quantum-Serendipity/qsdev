@@ -3,6 +3,8 @@ package devenv
 import (
 	"fastcat.org/go/gdev/addons"
 	"fastcat.org/go/gdev/instance"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 )
 
 var addon = addons.Addon[config]{
@@ -26,6 +28,8 @@ func Configure(opts ...option) {
 }
 
 func initialize() error {
-	instance.AddCommands(devenvCmd(), completionCmd())
+	// instance.Main walks the finished tree; wrapping here as well keeps typo
+	// rejection for tools still launched through gdev's cmd.Main.
+	instance.AddCommands(cmdutil.RejectUnknownSubcommands(devenvCmd(), completionCmd())...)
 	return nil
 }

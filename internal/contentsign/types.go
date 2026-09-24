@@ -66,7 +66,7 @@ type SignOptions struct {
 
 // VerifyOptions configures verification.
 type VerifyOptions struct {
-	TrustedKeys []PublicKey // when empty, keys are loaded from DefaultTrustedKeysDir
+	TrustedKeys []PublicKey // when nil, LoadTrustedKeys("") is used; a non-nil empty set trusts no key
 	// RequireTrusted turns any outcome short of a valid signature from a trusted
 	// key into a failure: signed-but-untrusted, unsigned, and hash-only content
 	// (a recorded SHA-256 with no signature) are all reported as not Verified.
@@ -108,9 +108,13 @@ type DatamarkOptions struct {
 	PreserveCodeBlocks bool // leave fenced code blocks unmarked (default true)
 	PreserveInlineCode bool // leave inline `code` unmarked (default true)
 	IncludeFraming     bool // wrap output in self-describing framing (default true)
-	Source             string
-	VerificationStatus string
-	ContentHashPrefix  string
+	// PreserveJSONStructure datamarks content that is a whole JSON object or
+	// array token-wise: only the whitespace inside its strings is marked, so
+	// the result is still the same, parseable JSON document (default true).
+	PreserveJSONStructure bool
+	Source                string
+	VerificationStatus    string
+	ContentHashPrefix     string
 }
 
 // DatamarkMetadata describes how content was datamarked, for round-tripping and framing.
@@ -118,6 +122,7 @@ type DatamarkMetadata struct {
 	MarkerRune rune      `json:"-"`
 	MarkerHex  string    `json:"marker_hex"` // e.g. "U+E042"
 	Framed     bool      `json:"framed"`
+	JSON       bool      `json:"json"` // content was a JSON document, marked token-wise
 	Timestamp  time.Time `json:"timestamp"`
 }
 

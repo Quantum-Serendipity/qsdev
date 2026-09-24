@@ -1,6 +1,10 @@
 package repair
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
+)
 
 func TestExitCode_AllFixed(t *testing.T) {
 	r := &RepairResult{
@@ -30,6 +34,32 @@ func TestExitCode_Skipped(t *testing.T) {
 	}
 }
 
+// TestExitCode_InfoSkipsDoNotFail verifies that skipped informational findings
+// (an intentionally edited user-owned file, version notes) leave the exit code
+// at 0, while any skipped actionable finding still yields 1.
+func TestExitCode_InfoSkipsDoNotFail(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		skipped []RepairAction
+		want    int
+	}{
+		{name: "only info", skipped: []RepairAction{{File: "CLAUDE.md", Severity: drift.Info}, {File: "version", Severity: drift.Info}}, want: 0},
+		{name: "warning", skipped: []RepairAction{{File: "CLAUDE.md", Severity: drift.Info}, {File: "pre-commit", Severity: drift.Warning}}, want: 1},
+		{name: "error", skipped: []RepairAction{{File: "x", Severity: drift.Error}}, want: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := &RepairResult{Skipped: tt.skipped}
+			if got := r.ExitCode(); got != tt.want {
+				t.Errorf("ExitCode() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExitCode_Failed(t *testing.T) {
 	r := &RepairResult{
 		Fixed:  []RepairAction{{File: "a.txt"}},
@@ -54,10 +84,9 @@ func TestRepairActionType_Constants(t *testing.T) {
 	// Verify constants have distinct values.
 	vals := map[RepairActionType]string{
 		ActionRegenerate: "ActionRegenerate",
-		ActionReinstall:  "ActionReinstall",
 		ActionSkip:       "ActionSkip",
 	}
-	if len(vals) != 3 {
+	if len(vals) != 2 {
 		t.Error("RepairActionType constants are not all distinct")
 	}
 }

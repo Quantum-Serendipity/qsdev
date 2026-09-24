@@ -1,7 +1,7 @@
 # shellcheck shell=bash disable=SC2034,SC2154
 # Maintainer: Quantum Serendipity Software <colin.rushton@quantumserendipitysoftware.com>
 pkgname=qsdev-bin
-pkgver=0.7.3
+pkgver=0.7.9
 pkgrel=1
 pkgdesc='Secure developer environment bootstrapping tool'
 arch=('x86_64' 'aarch64')
@@ -14,9 +14,10 @@ conflicts=('qsdev')
 source_x86_64=("${url}/releases/download/v${pkgver}/qsdev_${pkgver}_Linux_x86_64.tar.gz")
 source_aarch64=("${url}/releases/download/v${pkgver}/qsdev_${pkgver}_Linux_arm64.tar.gz")
 
-# Updated by update-pkgbuild.sh during releases.
-sha256sums_x86_64=('SKIP')
-sha256sums_aarch64=('SKIP')
+# Set by `update-pkgbuild.sh <version>` from the release's checksums.txt.
+# Never SKIP: TestAURPackageIntegrity fails the build on it.
+sha256sums_x86_64=('305e59863d65be9a72a10bde95e996a3cd8edd70e029b7ef9e49f51d7e80d071')
+sha256sums_aarch64=('67c65b34970f50ffc2d0f8bfbfb312645925fe24b0deef9e38715b58b1b4a599')
 
 package() {
     install -Dm755 qsdev "${pkgdir}/usr/bin/qsdev"

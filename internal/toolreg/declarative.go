@@ -47,15 +47,17 @@ func toggleDisableFunc(field string) func(*types.WizardAnswers) {
 	}
 }
 
+// toggleFields maps each catalog toggle_field value to the WizardAnswers
+// boolean it controls. The catalog bridge rejects any other value.
+var toggleFields = map[string]func(*types.WizardAnswers) *bool{
+	"hooks.safety_block":             func(a *types.WizardAnswers) *bool { return &a.Hooks.SafetyBlock },
+	"agent_tools.postmortem_enabled": func(a *types.WizardAnswers) *bool { return &a.AgentTools.PostmortemEnabled },
+	"agent_tools.version_sentinel":   func(a *types.WizardAnswers) *bool { return &a.AgentTools.VersionSentinel },
+	"agent_tools.semble_enabled":     func(a *types.WizardAnswers) *bool { return &a.AgentTools.SembleEnabled },
+}
+
 func setToggle(a *types.WizardAnswers, field string, val bool) {
-	switch field {
-	case "hooks.safety_block":
-		a.Hooks.SafetyBlock = val
-	case "agent_tools.postmortem_enabled":
-		a.AgentTools.PostmortemEnabled = val
-	case "agent_tools.version_sentinel":
-		a.AgentTools.VersionSentinel = val
-	case "agent_tools.semble_enabled":
-		a.AgentTools.SembleEnabled = val
+	if ptr, ok := toggleFields[field]; ok {
+		*ptr(a) = val
 	}
 }

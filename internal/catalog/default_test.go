@@ -1,12 +1,16 @@
 package catalog
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // These tests exercise the global Default/SetProjectRoot/ResetDefault
@@ -62,9 +66,8 @@ func TestDefault_ErrorReturn(t *testing.T) {
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("creating config dir: %v", err)
 	}
-	// Write YAML that is syntactically valid but produces a catalog with a
-	// tier missing its required description and having order=0. The merged
-	// catalog will fail validation.
+	// Write YAML that is syntactically valid but defines a tier, which a
+	// project defaults file may not do.
 	badYAML := []byte("tiers:\n  bad-tier:\n    order: 0\n")
 	if err := os.WriteFile(filepath.Join(configDir, "defaults.yaml"), badYAML, 0o644); err != nil {
 		t.Fatalf("writing bad config: %v", err)
@@ -78,8 +81,8 @@ func TestDefault_ErrorReturn(t *testing.T) {
 	if cat != nil {
 		t.Error("Default() should return nil catalog on error")
 	}
-	if !strings.Contains(err.Error(), "catalog validation") {
-		t.Errorf("error = %q, want it to contain %q", err.Error(), "catalog validation")
+	if !errors.Is(err, ErrProjectOverlayRejected) {
+		t.Errorf("error = %q, want it to wrap ErrProjectOverlayRejected", err.Error())
 	}
 }
 
@@ -87,7 +90,7 @@ func TestMustDefault_Panics(t *testing.T) {
 	ResetDefault()
 	t.Cleanup(func() { ResetDefault() })
 
-	// Set up a project root with malformed config to force Load to fail.
+	// Set up a project root with a rejected config to force Load to fail.
 	tmpDir := t.TempDir()
 	configDir := filepath.Join(tmpDir, ".qsdev")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
@@ -115,6 +118,106 @@ func TestMustDefault_Panics(t *testing.T) {
 	}()
 
 	MustDefault()
+}
+
+// Regression: an invalid user-level org overlay used to make Default fail,
+// and MustDefault (called during package init) then panicked every qsdev
+// command, including `defaults validate/reset` that exist to repair it.
+func TestDefault_InvalidOrgOverlayFallsBack(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		// A partial entry that only restates a built-in field is a valid
+		// overlay since entries are deep-merged; these stay invalid.
+		{"partially uncommented tier renumbering a built-in", "tiers:\n  standard:\n    order: 9\n"},
+		{"partially uncommented tier with misspelled key", "tiers:\n  standard:\n    ordr: 2\n"},
+		{"yaml syntax error", "tiers: [unclosed\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ResetDefault()
+			t.Cleanup(ResetDefault)
+
+			orgFile := filepath.Join(t.TempDir(), "defaults.yaml")
+			if err := os.WriteFile(orgFile, []byte(tt.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", orgFile)
+
+			cat, err := Default()
+			if err != nil {
+				t.Fatalf("Default() error = %v, want fallback to built-in defaults", err)
+			}
+			if cat == nil {
+				t.Fatal("Default() returned nil catalog")
+			}
+			if _, ok := cat.TierDef("standard"); !ok {
+				t.Error("fallback catalog is missing the built-in standard tier")
+			}
+			overlayErr := OrgOverlayError()
+			if overlayErr == nil {
+				t.Fatal("OrgOverlayError() = nil, want the overlay's load error")
+			}
+			if !strings.Contains(overlayErr.Error(), orgFile) {
+				t.Errorf("OrgOverlayError() = %q, want it to name %s", overlayErr, orgFile)
+			}
+
+			// The init-time accessor must not panic either.
+			_ = MustDefault()
+		})
+	}
+}
+
+func TestDefault_ValidOrgOverlayHasNoOverlayError(t *testing.T) {
+	ResetDefault()
+	t.Cleanup(ResetDefault)
+
+	orgFile := filepath.Join(t.TempDir(), "defaults.yaml")
+	if err := os.WriteFile(orgFile, []byte("# all commented out\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", orgFile)
+
+	if _, err := Default(); err != nil {
+		t.Fatalf("Default() error: %v", err)
+	}
+	if err := OrgOverlayError(); err != nil {
+		t.Errorf("OrgOverlayError() = %v, want nil", err)
+	}
+}
+
+// Regression: tests loaded the developer's ~/.config/qsdev/defaults.yaml, so
+// local results depended on the host's org overlay.
+func TestOrgConfigPath_IgnoresHomeOverlayInTests(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads USERPROFILE on Windows
+	t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", "")
+
+	overlay := filepath.Join(home, ".config", branding.Get().AppName, "defaults.yaml")
+	if err := os.MkdirAll(filepath.Dir(overlay), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(overlay, []byte("tiers: [unclosed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := OrgConfigPath(); got != "" {
+		t.Errorf("OrgConfigPath() = %q in a test binary, want \"\"", got)
+	}
+	if got := OrgConfigFile(); got != "" {
+		t.Errorf("OrgConfigFile() = %q in a test binary, want \"\"", got)
+	}
+	if got := homeOrgConfigPath(); got != overlay {
+		t.Errorf("homeOrgConfigPath() = %q, want %q", got, overlay)
+	}
+
+	// An explicit env override is still honoured.
+	t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", overlay)
+	if got := OrgConfigPath(); got != overlay {
+		t.Errorf("OrgConfigPath() with env override = %q, want %q", got, overlay)
+	}
 }
 
 func TestResetDefault(t *testing.T) {
@@ -152,5 +255,35 @@ func TestResetDefault(t *testing.T) {
 	}
 	if cat3 == cat1 {
 		t.Error("Default() after ResetDefault() should return a new catalog instance")
+	}
+}
+
+// TestDefault_AppliesProjectDefaults proves the project layer set through
+// SetProjectRoot reaches Default: a deny rule the project adds is part of
+// the catalog every generator reads.
+func TestDefault_AppliesProjectDefaults(t *testing.T) {
+	ResetDefault()
+	t.Cleanup(func() { ResetDefault() })
+
+	root := t.TempDir()
+	configDir := filepath.Join(root, "."+branding.Get().AppName)
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	overlay := []byte("permission_deny_rules:\n  npx:\n    - Bash(project-only-deny *)\n")
+	if err := os.WriteFile(filepath.Join(configDir, "defaults.yaml"), overlay, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	SetProjectRoot(root)
+	if got := ProjectRoot(); got != root {
+		t.Errorf("ProjectRoot() = %q, want %q", got, root)
+	}
+	cat, err := Default()
+	if err != nil {
+		t.Fatalf("Default() error: %v", err)
+	}
+	if !slices.Contains(cat.AllPermissionDenyRules(), "Bash(project-only-deny *)") {
+		t.Error("project deny rule missing from AllPermissionDenyRules()")
 	}
 }

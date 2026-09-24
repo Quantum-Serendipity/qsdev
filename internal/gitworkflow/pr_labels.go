@@ -11,7 +11,8 @@ import (
 
 // GenerateLabelerConfig produces the GitHub Actions labeler configuration
 // (labeler.yml) and the workflow file that runs it. Labels are tailored
-// to the project's detected ecosystems.
+// to the project's detected ecosystems. Both files use the Skip strategy:
+// a repository that already has its own labeler setup keeps it.
 func GenerateLabelerConfig(answers types.WizardAnswers) ([]types.GeneratedFile, error) {
 	// Build labeler.yml
 	var lb strings.Builder
@@ -29,7 +30,7 @@ func GenerateLabelerConfig(answers types.WizardAnswers) ([]types.GeneratedFile, 
 
 	lb.WriteString("security:\n")
 	lb.WriteString("  - changed-files:\n")
-	lb.WriteString("      - any-glob-to-any-file: ['.semgrep.yml', '.gitleaks.toml', '.scancode.yml']\n")
+	lb.WriteString("      - any-glob-to-any-file: ['.semgrepignore', '.semgrep/**', '.gitleaks.toml', '.scancode.yml']\n")
 	lb.WriteString("\n")
 
 	lb.WriteString("dependencies:\n")
@@ -86,13 +87,13 @@ func GenerateLabelerConfig(answers types.WizardAnswers) ([]types.GeneratedFile, 
 			Path:     ".github/labeler.yml",
 			Content:  []byte(lb.String()),
 			Mode:     fileutil.ModeReadWrite,
-			Strategy: types.Overwrite,
+			Strategy: types.Skip,
 		},
 		{
 			Path:     ".github/workflows/labeler.yml",
 			Content:  []byte(wf.String()),
 			Mode:     fileutil.ModeReadWrite,
-			Strategy: types.Overwrite,
+			Strategy: types.Skip,
 		},
 	}, nil
 }

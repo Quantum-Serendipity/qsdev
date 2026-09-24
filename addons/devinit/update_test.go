@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
@@ -22,7 +24,7 @@ func TestBuildUpdatePlan_UnmodifiedRegenerate(t *testing.T) {
 			"devenv.yaml": {Hash: "sha256:abc", Strategy: types.Overwrite},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -50,7 +52,7 @@ func TestBuildUpdatePlan_ModifiedNoForce_ThreeWayMerge(t *testing.T) {
 			},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -74,7 +76,7 @@ func TestBuildUpdatePlan_ModifiedNoForce_SectionMarker(t *testing.T) {
 			"CLAUDE.md": {Hash: "sha256:abc", Strategy: types.SectionMarker},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -98,7 +100,7 @@ func TestBuildUpdatePlan_ModifiedNoForce_ManualMerge(t *testing.T) {
 			"devenv.nix": {Hash: "sha256:abc", Strategy: types.ManualMerge},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -119,7 +121,7 @@ func TestBuildUpdatePlan_ModifiedNoForce_LibraryManaged(t *testing.T) {
 			".claude/skills/deploy.md": {Hash: "sha256:abc", Strategy: types.LibraryManaged},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -143,7 +145,7 @@ func TestBuildUpdatePlan_ModifiedNoForce_Overwrite(t *testing.T) {
 			"devenv.yaml": {Hash: "sha256:abc", Strategy: types.Overwrite},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -167,7 +169,7 @@ func TestBuildUpdatePlan_ModifiedWithForce(t *testing.T) {
 			"devenv.yaml": {Hash: "sha256:abc", Strategy: types.Overwrite},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{Force: true})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{Force: true})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -191,7 +193,7 @@ func TestBuildUpdatePlan_Deleted(t *testing.T) {
 			"devenv.yaml": {Hash: "sha256:abc", Strategy: types.Overwrite},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -212,7 +214,7 @@ func TestBuildUpdatePlan_DeletedForce(t *testing.T) {
 			"devenv.yaml": {Hash: "sha256:abc", Strategy: types.Overwrite},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{Force: true})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{Force: true})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -233,7 +235,7 @@ func TestBuildUpdatePlan_NewFile(t *testing.T) {
 			// new-file.txt is NOT in stored state
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -257,7 +259,7 @@ func TestBuildUpdatePlan_Unknown(t *testing.T) {
 			"devenv.yaml": {Hash: "sha256:abc", Strategy: types.Overwrite},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -316,7 +318,7 @@ func TestBuildUpdatePlan_UnmodifiedSectionMarker(t *testing.T) {
 			"CLAUDE.md": {Hash: "sha256:abc", Strategy: types.SectionMarker},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -344,7 +346,7 @@ func TestBuildUpdatePlan_UnmodifiedThreeWayMerge(t *testing.T) {
 			},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(plan.Files))
 	}
@@ -375,7 +377,7 @@ func TestBuildUpdatePlan_UnmodifiedOverwrite_StillRegenerates(t *testing.T) {
 			"changelog.md": {Hash: "sha256:def", Strategy: types.LibraryManaged},
 		},
 	}
-	plan := buildUpdatePlan(files, modStatus, stored, UpdateOptions{})
+	plan := buildUpdatePlan(files, modStatus, stored, t.TempDir(), UpdateOptions{})
 	if len(plan.Files) != 2 {
 		t.Fatalf("expected 2 files, got %d", len(plan.Files))
 	}
@@ -404,6 +406,58 @@ func TestUpdateActionString(t *testing.T) {
 			got := updateActionString(tt.action)
 			if got != tt.expected {
 				t.Errorf("updateActionString(%d) = %q, want %q", int(tt.action), got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestBuildUpdatePlan_SkipKeepsUserFile is the F503 regression for update: a
+// skip-if-exists file (e.g. the PR template) the user wrote or edited is never
+// replaced, not even with --force, while qsdev's own unmodified output and a
+// missing file are still (re)generated.
+func TestBuildUpdatePlan_SkipKeepsUserFile(t *testing.T) {
+	t.Parallel()
+	const path = ".github/pull_request_template.md"
+	tests := []struct {
+		name       string
+		status     types.ModificationStatus // zero with untracked=true means no state entry
+		untracked  bool
+		onDisk     string // "" means the file is absent
+		force      bool
+		wantAction UpdateAction
+	}{
+		{name: "untracked user file", untracked: true, onDisk: "mine", wantAction: UpdateActionSkip},
+		{name: "untracked user file with force", untracked: true, onDisk: "mine", force: true, wantAction: UpdateActionSkip},
+		{name: "untracked missing file", untracked: true, wantAction: UpdateActionCreate},
+		{name: "modified", status: types.Modified, onDisk: "edited", wantAction: UpdateActionSkip},
+		{name: "modified with force", status: types.Modified, onDisk: "edited", force: true, wantAction: UpdateActionSkip},
+		{name: "unmodified qsdev output", status: types.Unmodified, onDisk: "old", wantAction: UpdateActionRegenerate},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			if tt.onDisk != "" {
+				if err := os.MkdirAll(filepath.Join(root, ".github"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(root, path), []byte(tt.onDisk), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			modStatus := map[string]state.FileStatus{}
+			stored := types.GeneratedState{Files: map[string]types.FileState{}}
+			if !tt.untracked {
+				modStatus[path] = state.FileStatus{Path: path, Status: tt.status}
+				stored.Files[path] = types.FileState{Hash: "sha256:abc", Strategy: types.Skip}
+			}
+			files := []types.GeneratedFile{{Path: path, Content: []byte("new"), Mode: 0o644, Strategy: types.Skip}}
+			plan := buildUpdatePlan(files, modStatus, stored, root, UpdateOptions{Force: tt.force})
+			if len(plan.Files) != 1 {
+				t.Fatalf("expected 1 file, got %d", len(plan.Files))
+			}
+			if got := plan.Files[0].Action; got != tt.wantAction {
+				t.Errorf("action = %v (%s), want %v", got, plan.Files[0].Reason, tt.wantAction)
 			}
 		})
 	}

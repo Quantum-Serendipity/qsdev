@@ -16,11 +16,17 @@ type GradeResult struct {
 
 // GradeServer evaluates a server definition against the compliance ladder and
 // returns the highest fully-satisfied level along with per-criterion details.
-// Every criterion except external-attestation is pure; the result is
-// deterministic given the injected AttestationChecker (which the claudecode
+// Every criterion except verified-provenance (which resolves the command on the
+// filesystem) and external-attestation is pure; the result is deterministic
+// given the filesystem and the injected AttestationChecker (which the claudecode
 // addon wires to a contentsign-backed verifier at startup, and which defaults
 // to a no-op returning false).
 func GradeServer(def *McpServerDefinition) GradeResult {
+	return gradeServer(def, defaultProvenance)
+}
+
+// gradeServer is GradeServer with the provenance lookups injected.
+func gradeServer(def *McpServerDefinition, prov provenanceResolver) GradeResult {
 	var criteria []CriterionResult
 
 	// Basic — always satisfied.
@@ -31,7 +37,7 @@ func GradeServer(def *McpServerDefinition) GradeResult {
 	criteria = append(criteria, CriterionResult{
 		Name:   "no-plaintext-secrets",
 		Passed: noSecrets,
-		Detail: boolDetail(noSecrets, "env values contain no plaintext secrets", "env values may contain plaintext secrets"),
+		Detail: boolDetail(noSecrets, "env, args, headers and URL contain no plaintext secrets", "env, args, headers or URL may contain plaintext secrets"),
 	})
 
 	stdioTransport := def.Transport == TransportStdio
@@ -51,23 +57,25 @@ func GradeServer(def *McpServerDefinition) GradeResult {
 	criteria = append(criteria, CriterionResult{
 		Name:   "local-only",
 		Passed: localOnly,
-		Detail: boolDetail(localOnly, "command runs locally", "command may fetch from network"),
+		Detail: boolDetail(localOnly, "server runs locally", "server is remote, or its command may fetch from network or cannot be inspected"),
 	})
 
-	noNpxY := !hasNpxDashY(def)
+	noAutoInstall := !hasRuntimeAutoInstall(def)
 	criteria = append(criteria, CriterionResult{
-		Name:   "no-npx-dash-y",
-		Passed: noNpxY,
-		Detail: boolDetail(noNpxY, "no npx -y auto-install", "npx -y enables auto-install of unreviewed packages"),
+		Name:   "no-runtime-auto-install",
+		Passed: noAutoInstall,
+		Detail: boolDetail(noAutoInstall,
+			"no package is installed at launch",
+			"package launcher can install unreviewed packages at launch (use an offline, exact-version invocation)"),
 	})
 
-	secureMet := standardMet && localOnly && noNpxY
+	secureMet := standardMet && localOnly && noAutoInstall
 	if secureMet {
 		level = ComplianceSecure
 	}
 
 	// Verified criteria.
-	provenance := hasVerifiedProvenance(def)
+	provenance := prov.verified(def.Command)
 	criteria = append(criteria, CriterionResult{
 		Name:   "verified-provenance",
 		Passed: provenance,
@@ -80,8 +88,8 @@ func GradeServer(def *McpServerDefinition) GradeResult {
 	}
 
 	// Attested criteria. Attestation only ever lifts a server that already
-	// reached Verified, which requires hasVerifiedProvenance (a /nix/store path
-	// or the qsdev binary). External npx/uvx doc servers fail the earlier
+	// reached Verified, which requires verified provenance (a /nix/store path
+	// or the running qsdev binary). External npx/uvx doc servers fail the earlier
 	// local-only and provenance criteria, so they can never reach Attested even
 	// with a valid signature. Gate the (expensive, binary-streaming) check on
 	// verifiedMet so it is skipped for servers that cannot reach Attested — but

@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/registry"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Registry is a thread-safe collection of Tool definitions.
@@ -27,14 +28,6 @@ func NewRegistry() *Registry {
 // the same name is already registered.
 func (r *Registry) Register(t Tool) error {
 	return r.Registry.Register(t.Name, &t)
-}
-
-// MustRegister adds a tool to the registry and panics if registration fails.
-// Intended for use in init() where a registration failure is a programmer error.
-func (r *Registry) MustRegister(t Tool) {
-	if err := r.Register(t); err != nil {
-		panic(fmt.Sprintf("toolreg: %v", err))
-	}
 }
 
 // ByName returns the tool with the given name.
@@ -98,7 +91,7 @@ func categoryOrder(c ToolCategory) int {
 // YAML provides declarative metadata, Go code provides function hooks.
 // If the tool name is not in the registry, this is a no-op.
 func (r *Registry) AttachBehavior(name string, b ToolBehavior) {
-	found := r.Modify(name, func(t *Tool) {
+	found := r.Modify(name, func(t *Tool) *Tool {
 		if b.EnableFunc != nil {
 			t.EnableFunc = b.EnableFunc
 		}
@@ -113,7 +106,7 @@ func (r *Registry) AttachBehavior(name string, b ToolBehavior) {
 		}
 		if b.SharedContent != nil {
 			if t.SharedContent == nil {
-				t.SharedContent = make(map[string]SharedContentFunc)
+				t.SharedContent = make(map[SharedSection]SharedContentFunc)
 			}
 			for k, v := range b.SharedContent {
 				t.SharedContent[k] = v
@@ -122,6 +115,7 @@ func (r *Registry) AttachBehavior(name string, b ToolBehavior) {
 		if b.SectionDataFunc != nil {
 			t.SectionDataFunc = b.SectionDataFunc
 		}
+		return t
 	})
 	if !found {
 		slog.Warn("AttachBehavior called for unknown tool", "tool", name)
@@ -136,24 +130,66 @@ type ToolBehavior struct {
 	DisableFunc     DisableFunc
 	DetectFunc      DetectFunc
 	GenerateFunc    GenerateFunc
-	SharedContent   map[string]SharedContentFunc
+	SharedContent   map[SharedSection]SharedContentFunc
 	SectionDataFunc SectionDataFunc
 }
 
+// BehaviorProvider attaches behavior to, or registers additional tools in, a
+// freshly built default registry. Providers run while the default registry
+// is being constructed, so they must not call Default or DefaultRegistry.
+type BehaviorProvider func(r *Registry)
+
 var (
-	defaultRegistryOnce sync.Once
-	defaultRegistryVal  *Registry
-	defaultRegistryErr  error
+	defaultMu          sync.Mutex
+	defaultBuilt       bool
+	defaultRegistryVal *Registry
+	defaultRegistryErr error
+	behaviorProviders  []BehaviorProvider
 )
 
+// RegisterBehaviors adds a provider that is applied to the default registry
+// when it is built. Registering is side-effect free — the catalog is not
+// loaded — so a package may call it while initializing without freezing the
+// catalog before main has configured branding, and without turning a bad
+// user config into a start-up panic. If the default registry has already
+// been built, the provider is applied to it immediately.
+func RegisterBehaviors(p BehaviorProvider) {
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	behaviorProviders = append(behaviorProviders, p)
+	if defaultBuilt && defaultRegistryVal != nil {
+		p(defaultRegistryVal)
+	}
+}
+
 // Default returns the lazily-initialized singleton tool registry and any
-// error that occurred during initialization. Callers that can propagate
-// errors should prefer this over DefaultRegistry.
+// error that occurred during initialization. On first use the registry is
+// built from the catalog, then the package's built-in behaviors and every
+// provider passed to RegisterBehaviors are attached. Callers that can
+// propagate errors should prefer this over DefaultRegistry.
 func Default() (*Registry, error) {
-	defaultRegistryOnce.Do(func() {
-		defaultRegistryVal, defaultRegistryErr = BuildFromCatalogE()
-	})
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	if !defaultBuilt {
+		defaultRegistryVal, defaultRegistryErr = buildDefault()
+		defaultBuilt = true
+	}
 	return defaultRegistryVal, defaultRegistryErr
+}
+
+// buildDefault constructs the default registry. The caller holds defaultMu.
+func buildDefault() (*Registry, error) {
+	r, err := BuildFromCatalogE()
+	if err != nil {
+		return nil, err
+	}
+	for name, b := range builtinBehaviors() {
+		r.AttachBehavior(name, b)
+	}
+	for _, p := range behaviorProviders {
+		p(r)
+	}
+	return r, nil
 }
 
 // DefaultRegistry returns the lazily-initialized singleton tool registry.
@@ -167,9 +203,47 @@ func DefaultRegistry() *Registry {
 	return r
 }
 
-// ResetDefaultRegistry clears the cached registry. For testing only.
+// ResetDefaultRegistry clears the cached registry so the next Default call
+// rebuilds it, re-applying every registered behavior provider. For testing
+// only.
 func ResetDefaultRegistry() {
-	defaultRegistryOnce = sync.Once{}
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	defaultBuilt = false
 	defaultRegistryVal = nil
 	defaultRegistryErr = nil
+}
+
+// SharedSectionContent is one enabled tool's rendered section of a shared file.
+type SharedSectionContent struct {
+	Tool      *Tool
+	SectionID string
+	Content   []byte
+}
+
+// SharedSectionsFor renders the section every enabled tool contributes to the
+// shared file at path, in registry order. Tools without content for that
+// file (e.g. whose contribution a generator renders directly) are skipped.
+func (r *Registry) SharedSectionsFor(path string, answers types.WizardAnswers) ([]SharedSectionContent, error) {
+	var out []SharedSectionContent
+	for _, t := range r.All() {
+		if !answers.EnabledTools[t.Name] {
+			continue
+		}
+		for _, f := range t.SharedFiles() {
+			if f.Path != path {
+				continue
+			}
+			fn, ok := t.SharedContent[SectionOf(f)]
+			if !ok {
+				continue
+			}
+			content, err := fn(answers)
+			if err != nil {
+				return nil, fmt.Errorf("rendering %s section %q of tool %q: %w", path, f.SectionID, t.Name, err)
+			}
+			out = append(out, SharedSectionContent{Tool: t, SectionID: f.SectionID, Content: content})
+		}
+	}
+	return out, nil
 }

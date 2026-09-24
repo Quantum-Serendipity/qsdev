@@ -29,8 +29,8 @@ func TestGenerateLabelerConfig_ReturnsTwoFiles(t *testing.T) {
 		if f.Mode != 0o644 {
 			t.Errorf("files[%d].Mode = %o, want 644", i, f.Mode)
 		}
-		if f.Strategy != types.Overwrite {
-			t.Errorf("files[%d].Strategy = %v, want Overwrite", i, f.Strategy)
+		if f.Strategy != types.Skip {
+			t.Errorf("files[%d].Strategy = %v, want Skip (a curated labeler config is the user's)", i, f.Strategy)
 		}
 	}
 }
@@ -53,6 +53,36 @@ func TestGenerateLabelerConfig_StandardLabels(t *testing.T) {
 		if !strings.Contains(labelerContent, label) {
 			t.Errorf("labeler.yml missing standard label %q", label)
 		}
+	}
+}
+
+// TestGenerateLabelerConfig_SecurityGlobs is the F202 regression: the security
+// label tracks the Semgrep files qsdev actually generates or runs (the ignore
+// file and the project's local rules), not the retired .semgrep.yml.
+func TestGenerateLabelerConfig_SecurityGlobs(t *testing.T) {
+	t.Parallel()
+	files, err := GenerateLabelerConfig(types.WizardAnswers{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	content := string(files[0].Content)
+
+	tests := []struct {
+		glob    string
+		present bool
+	}{
+		{"'.semgrepignore'", true},
+		{"'.semgrep/**'", true},
+		{"'.gitleaks.toml'", true},
+		{"'.semgrep.yml'", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.glob, func(t *testing.T) {
+			t.Parallel()
+			if got := strings.Contains(content, tt.glob); got != tt.present {
+				t.Errorf("labeler.yml contains %s = %v, want %v", tt.glob, got, tt.present)
+			}
+		})
 	}
 }
 

@@ -6,23 +6,34 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// statusChecker implements 2-tier drift detection. Tier 1 is a fast-path
-// (≤5ms): it compares the state file's modification time against the cached
-// value and, when unchanged, returns the cached status without re-running
-// detection. Tier 2 re-runs ecosystem detection and diffs it against the cached
-// snapshot to surface drift (added/removed ecosystems, changed tool versions,
-// configuration changes).
+// statusChecker implements 2-tier drift detection.
+//
+// Tier 2 (thorough) runs the canonical drift detector (posture/drift.Detect)
+// against the persisted state ledger — generated files modified or deleted
+// since generation, hook/marker/lockfile drift, tool availability, version
+// drift — and additionally diffs ecosystem detection and the project config
+// against the anchor taken at the last generation run. Ledger-derived drift is
+// recomputed from the ledger on every run, so it keeps being reported until it
+// is reconciled; the detection/config anchor is only rebased when the ledger
+// itself changes (a regeneration), never merely because drift was reported.
+//
+// Tier 1 (fast path) returns the last Tier 2 result while nothing it depends on
+// has changed: the state file, the project config, and every tracked generated
+// file (a cheap stat loop). Any change falls back to Tier 2. There is no Tier 1
+// result before the first Tier 2 run.
 type statusChecker struct {
 	projectRoot string
 	statePath   string
@@ -31,149 +42,221 @@ type statusChecker struct {
 	// detectFn runs ecosystem detection. Injectable so tests can drive the
 	// concurrency behavior; defaults to detect.Detect. It is invoked WITHOUT
 	// holding mu so concurrent callers are not serialized behind the walk.
-	detectFn func(projectRoot string) types.DetectedProject
+	detectFn func(ctx context.Context, projectRoot string) types.DetectedProject
 
-	mu               sync.Mutex
-	baseDetection    types.DetectedProject
-	cachedMtime      time.Time
-	cachedPresent    bool
-	cachedConfigHash string
-	cachedStatus     map[string]any
+	mu sync.Mutex
+	// anchor is the reference point for detection/config drift: the project as
+	// observed when the state ledger was last seen to change (server start
+	// counts as the first observation).
+	anchor snapshot
+	// cachedFP fingerprints the inputs of cachedStatus; Tier 1 is served only
+	// while the current fingerprint still matches it. cachedStatus is nil until
+	// the first Tier 2 run.
+	cachedFP     fingerprint
+	cachedStatus map[string]any
 }
 
-// newStatusChecker captures the baseline detection snapshot and state-file
-// fingerprint at construction so the first Tier 1 call has a cache to return.
+// snapshot is the drift anchor: detection, config hash, and state-file identity.
+type snapshot struct {
+	detection  types.DetectedProject
+	configHash string
+	stateMtime time.Time
+	statePres  bool
+}
+
+// fingerprint captures everything a Tier 2 result depends on that can change
+// on disk: the state file, the config content, and each tracked file's mtime.
+type fingerprint struct {
+	stateMtime time.Time
+	statePres  bool
+	configHash string
+	files      map[string]time.Time
+}
+
+// newStatusChecker captures the drift anchor (detection, config hash and state
+// identity) at construction.
 func newStatusChecker(projectRoot string) *statusChecker {
 	s := &statusChecker{
 		projectRoot: projectRoot,
 		statePath:   filepath.Join(projectRoot, state.StateFilePaths()[0]),
 		configPath:  filepath.Join(projectRoot, branding.Get().ConfigFile),
-		detectFn:    detect.Detect,
+		detectFn:    func(ctx context.Context, root string) types.DetectedProject { return detect.Detect(ctx, root) },
 	}
-	s.baseDetection = s.detectFn(projectRoot)
-	s.cachedMtime, s.cachedPresent = s.stateMtime()
-	s.cachedConfigHash = s.configHash()
-	s.cachedStatus = map[string]any{
-		"tier":          1,
-		"cached":        true,
-		"state_present": s.cachedPresent,
-		"drift":         []driftItem{},
-		"drift_count":   0,
-		"note":          "baseline snapshot captured at server start",
+	mtime, present := s.stateMtime()
+	s.anchor = snapshot{
+		detection:  s.detectFn(context.Background(), projectRoot),
+		configHash: s.configHash(),
+		stateMtime: mtime,
+		statePres:  present,
 	}
 	return s
 }
 
-// driftItem is one detected difference between the cached and current project.
+// driftItem is one detected difference between the expected and current project.
 type driftItem struct {
 	Type     string `json:"type"`
 	Detail   string `json:"detail"`
-	Severity string `json:"severity"` // info | warning
+	Severity string `json:"severity"` // info | warning | error | critical
 }
 
 // handle resolves the requested tier (or auto-selects) and returns the status.
-// The lock is held only briefly to snapshot cache state; the expensive Tier 2
-// detection runs unlocked so concurrent fast-path callers are not blocked.
-func (s *statusChecker) handle(_ context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
+// The lock is held only briefly to snapshot cache state; fingerprinting and the
+// expensive Tier 2 detection run unlocked so concurrent callers are not blocked.
+func (s *statusChecker) handle(ctx context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
 	tier := toolutil.StringArgOr(req.Arguments, "tier", "auto")
 
 	s.mu.Lock()
-	unchanged := s.stateUnchangedLocked()
-	useTier1 := tier == "1" || (tier == "auto" && unchanged)
-	// Copy the cache under the lock (only when we will actually return it) so the
-	// caller cannot mutate it and a concurrent Tier 2 swap cannot race the read.
-	var cached map[string]any
-	if useTier1 {
-		cached = copyStatus(s.cachedStatus)
-	}
+	// Copy the cache under the lock so the caller cannot mutate it and a
+	// concurrent Tier 2 swap cannot race the read.
+	cached := copyStatus(s.cachedStatus)
+	cachedFP := s.cachedFP
 	s.mu.Unlock()
 
+	useTier1 := cached != nil && (tier == "1" || (tier == "auto" && s.unchangedSince(cachedFP)))
 	if useTier1 {
 		text := fmt.Sprintf("status (tier 1, cached): %d drift item(s)", driftCount(cached))
 		return toolutil.Result(text, cached), nil
 	}
-	return s.runTier2()
+	return s.runTier2(ctx)
 }
 
-// runTier2 re-runs detection, diffs against the cached snapshot, refreshes the
-// cache, and returns the thorough status. Detection runs WITHOUT s.mu held; the
-// lock is taken only to snapshot the baseline and, at the end, to swap in the
-// refreshed cache (last write wins under concurrent detection).
-func (s *statusChecker) runTier2() (*spi.ToolResult, error) {
+// runTier2 re-runs detection and the ledger-anchored drift detector, refreshes
+// the Tier 1 cache, and returns the thorough status. Detection runs WITHOUT s.mu
+// held; the lock is taken only to read and, at the end, update the anchor and
+// cache (last write wins under concurrent runs).
+func (s *statusChecker) runTier2(ctx context.Context) (*spi.ToolResult, error) {
 	s.mu.Lock()
-	base := s.baseDetection
-	cachedConfigHash := s.cachedConfigHash
-	cachedMtime := s.cachedMtime
-	cachedPresent := s.cachedPresent
+	anchor := s.anchor
 	s.mu.Unlock()
 
 	// Unlocked: detection may walk the filesystem and shell out to a container
 	// runtime, so holding the lock here would serialize the fast path.
-	current := s.detectFn(s.projectRoot)
-	drift := compareDetection(base, current)
-
+	current := s.detectFn(ctx, s.projectRoot)
 	curHash := s.configHash()
-	if curHash != cachedConfigHash {
-		drift = append(drift, driftItem{
-			Type:     "config_changed",
-			Detail:   branding.Get().ConfigFile + " changed since the cached snapshot",
-			Severity: "warning",
-		})
-	}
-
 	curMtime, curPresent := s.stateMtime()
-	if curPresent != cachedPresent || !curMtime.Equal(cachedMtime) {
-		drift = append(drift, driftItem{
+
+	var items []driftItem
+	if curPresent != anchor.statePres || !curMtime.Equal(anchor.stateMtime) {
+		// The ledger changed: a generation run reconciled the project, so rebase
+		// the detection/config anchor onto the project as it is now.
+		items = append(items, driftItem{
 			Type:     "state_changed",
-			Detail:   "generated-file state changed since the cached snapshot",
+			Detail:   "generated-file state changed (regenerated); drift baseline rebased",
 			Severity: "info",
+		})
+		anchor = snapshot{detection: current, configHash: curHash, stateMtime: curMtime, statePres: curPresent}
+	}
+	items = append(items, compareDetection(anchor.detection, current)...)
+	if curHash != anchor.configHash {
+		items = append(items, driftItem{
+			Type:     "config_changed",
+			Detail:   branding.Get().ConfigFile + " changed since the drift baseline (server start or the last regeneration)",
+			Severity: "warning",
 		})
 	}
 
 	st, stErr := state.LoadStateFromFile(s.statePath)
 	stateInfo := map[string]any{"present": curPresent}
-	if stErr == nil && curPresent {
+	switch {
+	case stErr != nil:
+		stateInfo["error"] = stErr.Error()
+		items = append(items, driftItem{
+			Type:     "state_unreadable",
+			Detail:   "generated-file state could not be read; generated files were not verified: " + stErr.Error(),
+			Severity: "error",
+		})
+	case curPresent:
 		stateInfo["enabled_tools"] = len(st.EnabledTools)
 		stateInfo["files"] = len(st.Files)
 		stateInfo["last_run"] = st.LastRun
+		items = append(items, ledgerDrift(s.projectRoot, st)...)
 	}
 
 	status := map[string]any{
 		"tier":          2,
 		"cached":        false,
 		"state_present": curPresent,
-		"drift":         drift,
-		"drift_count":   len(drift),
+		"drift":         items,
+		"drift_count":   len(items),
 		"state":         stateInfo,
 	}
+	fp := fingerprint{
+		stateMtime: curMtime,
+		statePres:  curPresent,
+		configHash: curHash,
+		files:      s.fileMtimes(st),
+	}
 
-	// Re-acquire the lock only to refresh the cache so the next Tier 1 call
-	// reflects this thorough run.
+	// Re-acquire the lock only to refresh the anchor and cache so the next
+	// Tier 1 call reflects this thorough run.
 	s.mu.Lock()
-	s.baseDetection = current
-	s.cachedMtime = curMtime
-	s.cachedPresent = curPresent
-	s.cachedConfigHash = curHash
+	s.anchor = anchor
+	s.cachedFP = fp
 	s.cachedStatus = copyStatus(status)
 	s.cachedStatus["tier"] = 1
 	s.cachedStatus["cached"] = true
 	s.mu.Unlock()
 
-	text := fmt.Sprintf("status (tier 2): %d drift item(s)", len(drift))
+	text := fmt.Sprintf("status (tier 2): %d drift item(s)", len(items))
 	return toolutil.Result(text, status), nil
 }
 
-// stateUnchangedLocked reports whether the state file is in the same
-// present/mtime condition as the cache. The caller holds s.mu.
-func (s *statusChecker) stateUnchangedLocked() bool {
+// ledgerDrift runs the canonical drift detector against the state ledger and
+// converts its findings into drift items (e.g. a machine-owned generated file
+// such as .claude/settings.json modified since generation).
+func ledgerDrift(projectRoot string, st types.GeneratedState) []driftItem {
+	report := drift.Detect(projectRoot, st, st.EnabledTools)
+	var items []driftItem
+	for _, cat := range report.Categories {
+		kind := strings.ReplaceAll(strings.ToLower(cat.Name), " ", "_")
+		for _, f := range cat.Findings {
+			items = append(items, driftItem{Type: kind, Detail: f.Description, Severity: string(f.Severity)})
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Type != items[j].Type {
+			return items[i].Type < items[j].Type
+		}
+		return items[i].Detail < items[j].Detail
+	})
+	return items
+}
+
+// unchangedSince reports whether the current on-disk inputs still match fp.
+func (s *statusChecker) unchangedSince(fp fingerprint) bool {
 	mtime, present := s.stateMtime()
-	if present != s.cachedPresent {
+	if present != fp.statePres || (present && !mtime.Equal(fp.stateMtime)) {
 		return false
 	}
-	if !present {
-		return true // both absent
+	if s.configHash() != fp.configHash {
+		return false
 	}
-	return mtime.Equal(s.cachedMtime)
+	for rel, want := range fp.files {
+		if got := fileMtime(filepath.Join(s.projectRoot, rel)); !got.Equal(want) {
+			return false
+		}
+	}
+	return true
+}
+
+// fileMtimes records the modification time of every file tracked by the ledger
+// (the zero time for a missing file).
+func (s *statusChecker) fileMtimes(st types.GeneratedState) map[string]time.Time {
+	out := make(map[string]time.Time, len(st.Files))
+	for rel := range st.Files {
+		out[rel] = fileMtime(filepath.Join(s.projectRoot, rel))
+	}
+	return out
+}
+
+// fileMtime returns path's modification time, or the zero time when it cannot
+// be stat'ed.
+func fileMtime(path string) time.Time {
+	info, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}
+	}
+	return info.ModTime()
 }
 
 // stateMtime returns the state file's modification time and whether it exists.
@@ -198,36 +281,36 @@ func (s *statusChecker) configHash() string {
 // compareDetection diffs two detection snapshots into drift items: ecosystems
 // added or removed and changed language tool versions.
 func compareDetection(base, cur types.DetectedProject) []driftItem {
-	var drift []driftItem
+	var items []driftItem
 
 	for eco, present := range cur.Ecosystems {
 		if present && !base.Ecosystems[eco] {
-			drift = append(drift, driftItem{Type: "ecosystem_added", Detail: eco, Severity: "info"})
+			items = append(items, driftItem{Type: "ecosystem_added", Detail: eco, Severity: "info"})
 		}
 	}
 	for eco, present := range base.Ecosystems {
 		if present && !cur.Ecosystems[eco] {
-			drift = append(drift, driftItem{Type: "ecosystem_removed", Detail: eco, Severity: "warning"})
+			items = append(items, driftItem{Type: "ecosystem_removed", Detail: eco, Severity: "warning"})
 		}
 	}
 
-	versionDrift(&drift, "go", base.GoVersion, cur.GoVersion)
-	versionDrift(&drift, "node", base.NodeVersion, cur.NodeVersion)
-	versionDrift(&drift, "python", base.PythonVersion, cur.PythonVersion)
+	versionDrift(&items, "go", base.GoVersion, cur.GoVersion)
+	versionDrift(&items, "node", base.NodeVersion, cur.NodeVersion)
+	versionDrift(&items, "python", base.PythonVersion, cur.PythonVersion)
 
-	sort.Slice(drift, func(i, j int) bool {
-		if drift[i].Type != drift[j].Type {
-			return drift[i].Type < drift[j].Type
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Type != items[j].Type {
+			return items[i].Type < items[j].Type
 		}
-		return drift[i].Detail < drift[j].Detail
+		return items[i].Detail < items[j].Detail
 	})
-	return drift
+	return items
 }
 
 // versionDrift appends a tool_version_changed item when a language version moved.
-func versionDrift(drift *[]driftItem, lang, base, cur string) {
+func versionDrift(items *[]driftItem, lang, base, cur string) {
 	if base != cur {
-		*drift = append(*drift, driftItem{
+		*items = append(*items, driftItem{
 			Type:     "tool_version_changed",
 			Detail:   fmt.Sprintf("%s: %q -> %q", lang, base, cur),
 			Severity: "warning",
@@ -235,9 +318,12 @@ func versionDrift(drift *[]driftItem, lang, base, cur string) {
 	}
 }
 
-// copyStatus returns a shallow copy of a status map so cached state is not
-// mutated by a returned result.
+// copyStatus returns a shallow copy of a status map (nil for nil) so cached
+// state is not mutated by a returned result.
 func copyStatus(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
 	out := make(map[string]any, len(m))
 	for k, v := range m {
 		out[k] = v

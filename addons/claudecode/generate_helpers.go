@@ -7,7 +7,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -87,32 +86,4 @@ func generateHookFile(spec hookFileSpec) (*types.GeneratedFile, error) {
 		Strategy: spec.strategy,
 		Owner:    spec.owner,
 	}, nil
-}
-
-// resolveLanguageModules returns the ecosystem modules that correspond to the
-// user's language choices, plus a configFor function suitable for passing to
-// aggregate helpers like AggregateVerificationCommands and
-// AggregateManifestCoverage. This eliminates the duplicated module-gathering
-// boilerplate in generate_postmortem.go and generate_version_sentinel.go.
-func resolveLanguageModules(
-	answers types.WizardAnswers,
-	registry *ecosystem.Registry,
-) ([]ecosystem.EcosystemModule, func(ecosystem.EcosystemModule) ecosystem.ModuleConfig) {
-	configFor := func(mod ecosystem.EcosystemModule) ecosystem.ModuleConfig {
-		for _, lang := range answers.Languages {
-			if lang.Name == mod.Name() {
-				return ecosystem.ToModuleConfig(lang)
-			}
-		}
-		return ecosystem.ModuleConfig{}
-	}
-
-	var modules []ecosystem.EcosystemModule
-	for _, lang := range answers.Languages {
-		if mod, ok := registry.ByName(lang.Name); ok {
-			modules = append(modules, mod)
-		}
-	}
-
-	return modules, configFor
 }

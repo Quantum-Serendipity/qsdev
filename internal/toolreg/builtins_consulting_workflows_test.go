@@ -8,6 +8,19 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// consultingWorkflowNames lists the consulting workflow skills the catalog
+// is expected to define.
+var consultingWorkflowNames = []string{
+	"review-pr",
+	"add-tests",
+	"upgrade-dep",
+	"onboard-me",
+	"write-adr",
+	"incident-debug",
+	"migration-plan",
+	"handoff-doc",
+}
+
 func TestConsultingWorkflowToolsRegistered(t *testing.T) {
 	reg := DefaultRegistry()
 
@@ -80,10 +93,6 @@ func TestConsultingWorkflowReviewPrSupersedesBasic(t *testing.T) {
 		t.Error("EnableFunc removed 'security-review' from Skills unexpectedly")
 	}
 
-	// EnabledTools should have the consulting key set.
-	if !answers.EnabledTools["consulting-workflow-review-pr"] {
-		t.Error("EnableFunc should set EnabledTools['consulting-workflow-review-pr'] = true")
-	}
 }
 
 func TestConsultingWorkflowToolsHaveOwnedFiles(t *testing.T) {
@@ -118,41 +127,24 @@ func TestConsultingWorkflowToolsHaveOwnedFiles(t *testing.T) {
 	}
 }
 
-func TestConsultingWorkflowEnableDisable(t *testing.T) {
+func TestConsultingWorkflowToolsLifecycleOnly(t *testing.T) {
 	reg := DefaultRegistry()
-
+	var names []string
 	for _, name := range consultingWorkflowNames {
-		toolKey := "consulting-workflow-" + name
-		tool, ok := reg.ByName(toolKey)
-		if !ok {
-			t.Errorf("tool %q not found", toolKey)
-			continue
+		if toolKey := "consulting-workflow-" + name; toolKey != consultingWorkflowReviewPR {
+			names = append(names, toolKey)
 		}
+	}
+	assertLifecycleOnly(t, reg, names...)
 
-		t.Run(toolKey, func(t *testing.T) {
-			answers := &types.WizardAnswers{}
-
-			if tool.EnableFunc == nil {
-				t.Fatal("EnableFunc is nil")
-			}
-			tool.EnableFunc(answers)
-
-			if answers.EnabledTools == nil {
-				t.Fatal("EnableFunc did not initialize EnabledTools")
-			}
-			if !answers.EnabledTools[toolKey] {
-				t.Errorf("EnableFunc did not set EnabledTools[%q] = true", toolKey)
-			}
-
-			if tool.DisableFunc == nil {
-				t.Fatal("DisableFunc is nil")
-			}
-			tool.DisableFunc(answers)
-
-			if answers.EnabledTools[toolKey] {
-				t.Errorf("DisableFunc did not remove EnabledTools[%q]", toolKey)
-			}
-		})
+	// review-pr has a real EnableFunc (see ReviewPrSupersedesBasic) but no
+	// disable-time effect.
+	tool, ok := reg.ByName(consultingWorkflowReviewPR)
+	if !ok {
+		t.Fatalf("%s not found", consultingWorkflowReviewPR)
+	}
+	if tool.DisableFunc != nil {
+		t.Errorf("%s has a DisableFunc; it only needs lifecycle bookkeeping", consultingWorkflowReviewPR)
 	}
 }
 

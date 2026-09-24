@@ -58,6 +58,13 @@ type ModuleConfig struct {
 	PackageManager string            `yaml:"package_manager" json:"package_manager"`
 	Extras         map[string]string `yaml:"extras"          json:"extras"`
 	RegistryProxy  string            `yaml:"registry_proxy"  json:"registry_proxy"`
+	// RepositoryAllowlist is .qsdev.yaml java.repository_allowlist: the ids
+	// of project-declared Maven repositories that a module's generated
+	// registry mirror must leave alone (resolved from their own URL).
+	RepositoryAllowlist []string `yaml:"repository_allowlist,omitempty" json:"repository_allowlist,omitempty"`
+	// IsolateCLIConfig is .qsdev.yaml cloud.isolate_cli_config: a cloud CLI
+	// module points its CLI's configuration directory into the project.
+	IsolateCLIConfig bool `yaml:"isolate_cli_config,omitempty" json:"isolate_cli_config,omitempty"`
 }
 
 // PM returns the configured PackageManager, falling back to defaultPM if empty.
@@ -87,6 +94,12 @@ type DevenvInput struct {
 }
 
 // HookConfig represents a pre-commit hook configuration entry.
+//
+// Types is an AND filter (a file must carry every listed identify tag), so a
+// custom hook lists at most one tag there; alternatives go in TypesOr (files
+// matching ANY listed tag). For BuiltIn hooks only TypesOr, ExcludeTypes and
+// Settings are rendered, replacing the git-hooks.nix defaults (its other
+// fields come from upstream).
 type HookConfig struct {
 	ID                     string   `yaml:"id"                        json:"id"`
 	Name                   string   `yaml:"name"                      json:"name"`
@@ -94,12 +107,23 @@ type HookConfig struct {
 	Entry                  string   `yaml:"entry"                     json:"entry"`
 	Language               string   `yaml:"language"                  json:"language"`
 	Types                  []string `yaml:"types"                     json:"types"`
+	TypesOr                []string `yaml:"types_or,omitempty"        json:"types_or,omitempty"`
+	ExcludeTypes           []string `yaml:"exclude_types,omitempty"   json:"exclude_types,omitempty"`
 	Stages                 []string `yaml:"stages"                    json:"stages"`
 	PassFilenames          bool     `yaml:"pass_filenames"            json:"pass_filenames"`
 	Files                  string   `yaml:"files"                     json:"files"`
 	AdditionalDependencies []string `yaml:"additional_dependencies"   json:"additional_dependencies"`
 	BuiltIn                bool     `yaml:"built_in"                  json:"built_in"`
 	NixPackage             string   `yaml:"nix_package,omitempty"     json:"nix_package,omitempty"`
+	Excludes               []string `yaml:"excludes,omitempty"        json:"excludes,omitempty"` // Path regexes the hook skips (git-hooks.nix excludes); honored for built-in hooks too.
+	// Settings sets git-hooks.nix `settings.<key>` string options of a
+	// BuiltIn hook (e.g. binPath).
+	Settings map[string]string `yaml:"settings,omitempty" json:"settings,omitempty"`
+	// Script, when set, is a bash script run as the hook instead of Entry,
+	// for checks that need logic around the tool (preconditions, clear
+	// failure messages). Staged files arrive as "$@" when PassFilenames is
+	// set, and NixPackage's bin directory is first on PATH.
+	Script string `yaml:"script,omitempty" json:"script,omitempty"`
 }
 
 // CIPhase categorizes a CI command into a build pipeline phase.
@@ -150,15 +174,14 @@ type CICommand struct {
 	Phase       CIPhase `yaml:"phase"       json:"phase"`
 }
 
-// PackageManagerInfo describes a package manager's capabilities and commands,
-// used for security policy generation and CI integration.
+// PackageManagerInfo describes one of an ecosystem's package managers. CI
+// lock-file enforcement and audit commands are not package manager metadata:
+// they come from EcosystemModule.CICommands, which the generated CI workflow
+// runs.
 type PackageManagerInfo struct {
-	Name                 string `yaml:"name"                   json:"name"`
-	LockFile             string `yaml:"lock_file"              json:"lock_file"`
-	InstallCommand       string `yaml:"install_command"        json:"install_command"`
-	FrozenInstallCommand string `yaml:"frozen_install_command" json:"frozen_install_command"`
-	AuditCommand         string `yaml:"audit_command"          json:"audit_command"`
-	AgeGatingSupport     bool   `yaml:"age_gating_support"     json:"age_gating_support"`
+	Name           string `yaml:"name"            json:"name"`
+	LockFile       string `yaml:"lock_file"       json:"lock_file"`
+	InstallCommand string `yaml:"install_command" json:"install_command"`
 }
 
 // WizardFieldType categorizes the kind of TUI form widget to render.
@@ -204,7 +227,18 @@ func (f *WizardFieldType) UnmarshalText(text []byte) error {
 }
 
 // WizardField describes a single form field that an ecosystem module
-// contributes to the init wizard.
+// contributes to the init wizard. The wizard renders a module's fields on
+// their own screen when the module's language is selected, seeds each field
+// from the language's current configuration (else Default) and records the
+// answer back into it.
+//
+// Key names the ModuleConfig setting the answer is stored in and must be the
+// key the module itself reads: types.SettingVersion ("version") for
+// ModuleConfig.Version, types.SettingPackageManager ("package_manager") for
+// ModuleConfig.PackageManager, and any other key for ModuleConfig.Extras[Key].
+// Confirm answers are stored as "true" or "false", multi-select answers as a
+// comma-separated list. Placeholder is the example shown in an empty
+// FieldTypeInput.
 type WizardField struct {
 	Key         string          `yaml:"key"         json:"key"`
 	Label       string          `yaml:"label"       json:"label"`
@@ -212,8 +246,8 @@ type WizardField struct {
 	Type        WizardFieldType `yaml:"type"        json:"type"`
 	Options     []WizardOption  `yaml:"options"     json:"options"`
 	Default     string          `yaml:"default"     json:"default"`
+	Placeholder string          `yaml:"placeholder" json:"placeholder"`
 	Required    bool            `yaml:"required"    json:"required"`
-	Condition   string          `yaml:"condition"   json:"condition"`
 }
 
 // WizardOption is a single selectable option within a WizardField.
@@ -298,7 +332,11 @@ func (p *LockFilePolicy) UnmarshalText(text []byte) error {
 	return fmt.Errorf("unknown lock file policy: %q", string(text))
 }
 
-// DoctorCheck describes a single health check contributed by an ecosystem module.
+// DoctorCheck describes a single health check contributed by an ecosystem
+// module. EnvCheck names an environment variable that must hold a real value;
+// an empty or placeholder value counts as unset. Command is a live
+// verification the user can run (for example a cloud CLI auth probe); the
+// doctor never executes it, so Timeout only bounds a caller that opts to.
 type DoctorCheck struct {
 	Name        string `yaml:"name"        json:"name"`
 	Description string `yaml:"description" json:"description"`
@@ -306,4 +344,18 @@ type DoctorCheck struct {
 	EnvCheck    string `yaml:"env_check"   json:"env_check"`
 	Timeout     int    `yaml:"timeout"     json:"timeout"`
 	Provider    string `yaml:"provider"    json:"provider"`
+}
+
+// ToolchainRequirement is a minimum tool version that a module's generated
+// security setting depends on (see ToolchainRequirementProvider).
+type ToolchainRequirement struct {
+	// Binary is the executable looked up on PATH, e.g. "npm".
+	Binary string
+	// VersionArg is the argument that makes Binary print its version.
+	VersionArg string
+	// MinVersion is the oldest version that honours Setting, e.g. "11.10.0".
+	MinVersion string
+	// Setting names the generated setting that needs MinVersion, e.g.
+	// ".npmrc min-release-age".
+	Setting string
 }

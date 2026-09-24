@@ -94,7 +94,7 @@ func TestDetectOnboardingMode_VersionMismatch_ModeUpdate(t *testing.T) {
 	// Create state with a different version.
 	genState := types.GeneratedState{
 		QsdevVersion: "0.1.0",
-		Files:       make(map[string]types.FileState),
+		Files:        make(map[string]types.FileState),
 	}
 
 	stateDir := filepath.Join(dir, ".devinit")
@@ -160,11 +160,8 @@ func TestDetectOnboardingMode_DriftedFiles_ModeRepair(t *testing.T) {
 	if result.Mode != ModeRepair {
 		t.Errorf("Mode = %s, want repair", result.Mode)
 	}
-	if result.DriftReport == nil {
-		t.Fatal("DriftReport should not be nil")
-	}
-	if len(result.DriftReport.Modified) != 1 {
-		t.Errorf("Modified count = %d, want 1", len(result.DriftReport.Modified))
+	if want := "Drift detected: 1 modified."; result.Explanation != want {
+		t.Errorf("Explanation = %q, want %q", result.Explanation, want)
 	}
 }
 
@@ -202,11 +199,8 @@ func TestDetectOnboardingMode_DeletedFile_ModeRepair(t *testing.T) {
 	if result.Mode != ModeRepair {
 		t.Errorf("Mode = %s, want repair", result.Mode)
 	}
-	if result.DriftReport == nil {
-		t.Fatal("DriftReport should not be nil")
-	}
-	if len(result.DriftReport.Deleted) != 1 {
-		t.Errorf("Deleted count = %d, want 1", len(result.DriftReport.Deleted))
+	if want := "Drift detected: 1 deleted."; result.Explanation != want {
+		t.Errorf("Explanation = %q, want %q", result.Explanation, want)
 	}
 }
 
@@ -237,8 +231,6 @@ func TestDetectOnboardingMode_CorruptState_ModeRepair(t *testing.T) {
 }
 
 func TestOverrideMode_ValidValues(t *testing.T) {
-	dir := t.TempDir()
-
 	tests := []struct {
 		input    string
 		expected OnboardingMode
@@ -251,7 +243,7 @@ func TestOverrideMode_ValidValues(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result, err := overrideMode(tt.input, dir)
+		result, err := overrideMode(tt.input)
 		if err != nil {
 			t.Errorf("overrideMode(%q): unexpected error: %v", tt.input, err)
 			continue
@@ -263,8 +255,7 @@ func TestOverrideMode_ValidValues(t *testing.T) {
 }
 
 func TestOverrideMode_InvalidValue(t *testing.T) {
-	dir := t.TempDir()
-	_, err := overrideMode("invalid", dir)
+	_, err := overrideMode("invalid")
 	if err == nil {
 		t.Error("expected error for invalid mode")
 	}
@@ -300,7 +291,7 @@ func TestDetectOnboardingMode_GdevYamlAndState_NoFiles_AlreadySetUp(t *testing.T
 	// Create state with no files (empty).
 	genState := types.GeneratedState{
 		QsdevVersion: "dev",
-		Files:       make(map[string]types.FileState),
+		Files:        make(map[string]types.FileState),
 	}
 
 	stateDir := filepath.Join(dir, ".devinit")

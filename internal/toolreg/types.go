@@ -1,6 +1,9 @@
 package toolreg
 
 import (
+	"path/filepath"
+	"strings"
+
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -101,6 +104,23 @@ type SectionDataFunc func(answers types.WizardAnswers, ecoReg *ecosystem.Registr
 // SharedContentFunc produces the content to insert into a shared file section.
 type SharedContentFunc func(answers types.WizardAnswers) ([]byte, error)
 
+// DevenvNixFile is the project-relative path of the generated devenv.nix,
+// the shared file whose tool sections come from SharedContent.
+const DevenvNixFile = "devenv.nix"
+
+// SharedSection identifies one tool section in one shared file. A tool often
+// uses the same SectionID in several files (e.g. devenv.nix and CLAUDE.md),
+// and each file needs content in its own format, so content is keyed by both.
+type SharedSection struct {
+	Path      string
+	SectionID string
+}
+
+// SectionOf returns the SharedSection a shared FileOwnership entry declares.
+func SectionOf(f FileOwnership) SharedSection {
+	return SharedSection{Path: f.Path, SectionID: f.SectionID}
+}
+
 // Tool defines a toggleable tool in the lifecycle system.
 type Tool struct {
 	Name          string
@@ -116,13 +136,22 @@ type Tool struct {
 	DisableFunc   DisableFunc
 	GenerateFunc  GenerateFunc // Produces exclusive files.
 
-	// SharedContent maps SectionID to a function that produces the content
-	// to insert into the shared file. Used during enable operations.
-	SharedContent map[string]SharedContentFunc
+	// SharedContent maps a shared-file section (path + SectionID) to a
+	// function that produces that section's content in the file's format.
+	// The devenv generator renders the devenv.nix entries for enabled tools.
+	SharedContent map[SharedSection]SharedContentFunc
 
 	// SectionDataFunc provides template data for rendering section_content
 	// templates in CLAUDE.md. Only needed for tools with dynamic content.
 	SectionDataFunc SectionDataFunc
+}
+
+// IsAgentTool reports whether the tool configures the AI coding agent itself
+// (catalog category ai-agent: skills, sub-agents, MCP servers). The claudecode
+// addon generates these tools' files; every other tool's files belong to the
+// project and are generated whether or not Claude Code is configured.
+func (t *Tool) IsAgentTool() bool {
+	return t.Category == CategoryAIAgent
 }
 
 // ExclusiveFiles returns all files this tool exclusively owns.
@@ -145,4 +174,18 @@ func (t *Tool) SharedFiles() []FileOwnership {
 		}
 	}
 	return result
+}
+
+// OwnsExclusively reports whether relPath is one of the tool's exclusive
+// files, or lies beneath an exclusive entry that names a directory (e.g.
+// ".opengrep/rules/core" owns every rule file generated under it).
+func (t *Tool) OwnsExclusively(relPath string) bool {
+	relPath = filepath.ToSlash(relPath)
+	for _, f := range t.ExclusiveFiles() {
+		p := strings.TrimSuffix(filepath.ToSlash(f.Path), "/")
+		if relPath == p || strings.HasPrefix(relPath, p+"/") {
+			return true
+		}
+	}
+	return false
 }

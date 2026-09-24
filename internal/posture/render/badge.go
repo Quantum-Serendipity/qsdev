@@ -34,16 +34,10 @@ func RenderBadge(report *posture.PostureReport, variant string) ([]byte, error) 
 			Color:         scoreColor(report.Score.Total),
 		}
 	case "conformance":
-		msg := "baseline PASS"
-		if !report.Conformance.Baseline.Pass {
-			msg = "baseline FAIL"
-		} else if report.Conformance.Enhanced.Pass {
-			msg = "enhanced PASS"
-		}
 		badge = BadgeJSON{
 			SchemaVersion: 1,
 			Label:         "conformance",
-			Message:       msg,
+			Message:       conformanceMessage(report),
 			Color:         conformanceColor(report),
 		}
 	case "defense":
@@ -128,13 +122,27 @@ func tierColor(tier string) string {
 	}
 }
 
+// conformanceMessage returns the conformance badge message: the enhanced
+// level when it passes, otherwise the baseline verdict, which reads UNKNOWN
+// (never PASS) when the dependencies were not scanned.
+func conformanceMessage(report *posture.PostureReport) string {
+	if report.Conformance.Enhanced.Verdict() == posture.CheckPass {
+		return "enhanced PASS"
+	}
+	return "baseline " + report.Conformance.Baseline.Verdict().Label()
+}
+
 // conformanceColor returns a badge color based on conformance results.
 func conformanceColor(report *posture.PostureReport) string {
-	if report.Conformance.Enhanced.Pass {
+	if report.Conformance.Enhanced.Verdict() == posture.CheckPass {
 		return "brightgreen"
 	}
-	if report.Conformance.Baseline.Pass {
+	switch report.Conformance.Baseline.Verdict() {
+	case posture.CheckPass:
 		return "green"
+	case posture.CheckUnknown:
+		return "lightgrey"
+	default:
+		return "red"
 	}
-	return "red"
 }

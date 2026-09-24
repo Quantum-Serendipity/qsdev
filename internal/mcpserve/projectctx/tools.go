@@ -44,6 +44,18 @@ func optionalBoolSchema(name, desc string) map[string]any {
 	}
 }
 
+// ToolNames returns the names of the generic project context tools. It reads
+// them from Tools (building the registrations touches no ProjectContext
+// state), so the list cannot drift from what MountProjectContext mounts.
+func ToolNames() []string {
+	regs := new(ProjectContext).Tools()
+	names := make([]string, len(regs))
+	for i, r := range regs {
+		names[i] = r.Name
+	}
+	return names
+}
+
 // Tools returns the six generic project context tool registrations. Each is a
 // fully-implemented handler that delegates to an existing qsdev package; none is
 // a stub.
@@ -55,6 +67,7 @@ func (pc *ProjectContext) Tools() []spi.ToolRegistration {
 			InputSchema: toolutil.EmptyObjectSchema(),
 			Category:    middleware.CategoryStatus,
 			Tier:        int(TierCritical),
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     pc.handleProjectInfo,
 		},
 		{
@@ -63,6 +76,7 @@ func (pc *ProjectContext) Tools() []spi.ToolRegistration {
 			InputSchema: optionalBoolSchema("verbose", "Include the full per-tool detail for every checked tool, not just failures."),
 			Category:    middleware.CategoryDiagnostics,
 			Tier:        int(TierStandard),
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     pc.handleDoctor,
 		},
 		{
@@ -71,6 +85,7 @@ func (pc *ProjectContext) Tools() []spi.ToolRegistration {
 			InputSchema: optionalBoolSchema("include_local", "Merge .qsdev.local.yaml developer overrides into the returned configuration."),
 			Category:    middleware.CategoryStatus,
 			Tier:        int(TierStandard),
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     pc.handleConfigShow,
 		},
 		{
@@ -87,6 +102,7 @@ func (pc *ProjectContext) Tools() []spi.ToolRegistration {
 			InputSchema: toolutil.EmptyObjectSchema(),
 			Category:    middleware.CategoryStatus,
 			Tier:        int(TierStandard),
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     pc.handleToolList,
 		},
 		{
@@ -95,6 +111,7 @@ func (pc *ProjectContext) Tools() []spi.ToolRegistration {
 			InputSchema: optionalBoolSchema("force", "Bypass any cached detection result and re-scan from scratch (detection always re-scans)."),
 			Category:    middleware.CategoryStatus,
 			Tier:        int(TierCritical),
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     pc.handleDetect,
 		},
 	}
@@ -109,8 +126,8 @@ func (pc *ProjectContext) handleProjectInfo(_ context.Context, _ *spi.ToolCallCo
 // handleDetect re-runs detection so the result reflects the current on-disk
 // project. The force flag is accepted for forward compatibility; detection is
 // uncached and always re-scans.
-func (pc *ProjectContext) handleDetect(_ context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
-	fresh := detect.Detect(pc.projectRoot)
+func (pc *ProjectContext) handleDetect(ctx context.Context, _ *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
+	fresh := detect.Detect(ctx, pc.projectRoot)
 	text, structured := detectionSummary(pc.projectRoot, fresh)
 	structured["forced"] = boolArg(req.Arguments, "force")
 	return &spi.ToolResult{Text: text, Structured: structured}, nil
@@ -187,7 +204,7 @@ func (pc *ProjectContext) handleConfigShow(_ context.Context, _ *spi.ToolCallCon
 	// Merge project over an empty base (no org defaults injected) then merge the
 	// optional local overlay, reusing the canonical resolver. The project config
 	// itself is passed as the security floor so local cannot weaken it.
-	resolved, err := config.ResolveConfig(&types.QsdevConfig{}, nil, project, local, false)
+	resolved, err := config.ResolveConfig(&types.QsdevConfig{}, project, local)
 	if err != nil {
 		return nil, fmt.Errorf("resolving config for display: %w", err)
 	}
@@ -209,7 +226,7 @@ func (pc *ProjectContext) handleMCPList(ctx context.Context, _ *spi.ToolCallCont
 		entry := map[string]any{
 			"name": d.Name, "display_name": d.DisplayName,
 			"category": string(d.Category), "transport": string(d.Transport),
-			"grade": d.ComplianceGrade.String(), "source": string(d.Source),
+			"grade": mcpregistry.GradeServer(d).Level.String(), "source": string(d.Source),
 		}
 		if withHealth {
 			entry["health"] = pc.probeHealth(ctx, d)
@@ -223,22 +240,34 @@ func (pc *ProjectContext) handleMCPList(ctx context.Context, _ *spi.ToolCallCont
 }
 
 // probeHealth runs a bounded live health check for a single server. It is only
-// reached behind the health flag because it starts the server process.
+// reached behind the health flag because it starts the server process. Servers
+// that are unsafe to start from a tool call (package launchers that would
+// download and run a package, or qsdev's own server) are reported as not probed.
 func (pc *ProjectContext) probeHealth(ctx context.Context, d *mcpregistry.McpServerDefinition) map[string]any {
-	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	h := mcphealth.CheckServer(cctx, mcphealth.ServerConfig{
+	cfg := mcphealth.ServerConfig{
 		Name: d.Name, Command: d.Command, Args: d.Args, URL: d.URL,
 		Env: d.Env, RequiredEnv: d.RequiredEnv,
-	})
+	}
+	if reason := mcpregistry.ProbeSkipReason(cfg); reason != "" {
+		return map[string]any{"status": healthNotProbed, "tool_count": 0, "error": "not probed: " + reason}
+	}
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	h := mcphealth.CheckServer(cctx, cfg)
 	return map[string]any{"status": h.Status, "tool_count": h.ToolCount, "error": h.Error}
 }
 
+// healthNotProbed is the mcp.list health status for a server probeHealth
+// declined to start.
+const healthNotProbed = "not_probed"
+
 // handleToolList delegates to the tool lifecycle registry, layering on the
-// enabled/disabled state recorded in the project's state ledger.
+// enabled/disabled state recorded in the project's state ledger as it is now
+// (reloaded when the state file changes, not the snapshot from server start).
 func (pc *ProjectContext) handleToolList(_ context.Context, _ *spi.ToolCallContext, _ *spi.ToolRequest) (*spi.ToolResult, error) {
 	all := pc.toolReg.All()
-	enabledMap := pc.state.EnabledTools
+	st, warn := pc.ledger.current()
+	enabledMap := st.EnabledTools
 
 	tools := make([]map[string]any, 0, len(all))
 	enabledCount := 0
@@ -255,6 +284,9 @@ func (pc *ProjectContext) handleToolList(_ context.Context, _ *spi.ToolCallConte
 	}
 
 	structured := map[string]any{"count": len(tools), "enabled": enabledCount, "tools": tools}
+	if warn != "" {
+		structured["warnings"] = []string{warn}
+	}
 	text := fmt.Sprintf("%d managed tools (%d enabled)", len(tools), enabledCount)
 	return &spi.ToolResult{Text: text, Structured: structured}, nil
 }

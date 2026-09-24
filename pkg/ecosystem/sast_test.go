@@ -54,7 +54,7 @@ func TestSASTModuleRuleSetsContent(t *testing.T) {
 		{"java", []string{"p/java", "p/kotlin", "p/spring", "p/owasp-top-ten"}},
 		{"dotnet", []string{"p/csharp", "p/owasp-top-ten"}},
 		{"container", []string{"p/dockerfile"}},
-		{"terraform", []string{"p/terraform", "p/terraform-aws"}},
+		{"terraform", []string{"p/terraform"}},
 	}
 
 	reg := ecosystem.DefaultRegistry()

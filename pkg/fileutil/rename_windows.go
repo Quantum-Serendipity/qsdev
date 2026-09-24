@@ -21,3 +21,7 @@ func renameWithRetry(oldpath, newpath string) error {
 
 	return root.Rename(filepath.Base(oldpath), filepath.Base(newpath))
 }
+
+// syncDir is a no-op on Windows, where directory handles cannot be fsynced
+// and NTFS journals the rename metadata itself.
+func syncDir(string) {}

@@ -3,6 +3,7 @@ package devinit
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -36,10 +37,21 @@ func runOutdated(cmd *cobra.Command, opts outdated.OutdatedOptions) error {
 	}
 
 	// Determine detected ecosystems from answers.
-	answers, _ := loadAnswersOrEmpty(projectRoot)
+	// A missing answers file is fine (falls back below); a corrupt or
+	// unreadable one must be reported rather than silently treated as empty.
+	answers, err := loadAnswersOrEmpty(projectRoot)
+	if err != nil {
+		return fmt.Errorf("loading saved answers: %w", err)
+	}
 	var ecosystems []string
 	for _, lang := range answers.Languages {
 		ecosystems = append(ecosystems, lang.Name)
+		if lang.PackageManager != "" {
+			if opts.PackageManagers == nil {
+				opts.PackageManagers = make(map[string]string)
+			}
+			opts.PackageManagers[lang.Name] = lang.PackageManager
+		}
 	}
 
 	// If no answers, fall back to checking which ecosystem binaries exist.
@@ -54,6 +66,17 @@ func runOutdated(cmd *cobra.Command, opts outdated.OutdatedOptions) error {
 	result, err := outdated.RunOutdated(ctx, cmd.OutOrStdout(), projectRoot, ecosystems, opts)
 	if err != nil {
 		return err
+	}
+
+	// A failed check leaves that ecosystem's status unknown, which must not read
+	// as "up to date": report it distinctly from outdated packages.
+	if failed := result.FailedEcosystems(); len(failed) > 0 {
+		for _, check := range result.Ecosystems {
+			if check.Error != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", check.Name, check.Error)
+			}
+		}
+		return fmt.Errorf("outdated check failed for: %s", strings.Join(failed, ", "))
 	}
 
 	if result.HasAnyOutdated() {

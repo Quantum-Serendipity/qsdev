@@ -2,7 +2,7 @@
 // for the universal qsdev MCP server (Phase 32, Unit 32.5). All behavior lives in
 // the shared frameworkstub adapter; this package contributes only the Cline
 // descriptor. It is registered into the adapter registry explicitly from
-// cmd/qsdev/main.go.
+// instance/runtime.go.
 //
 // Identity note: Cline belongs to the Continue.dev family, so its FrameworkID is
 // aiframework.ContinueDev ("continue"). Because the default client-match token

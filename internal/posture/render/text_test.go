@@ -70,7 +70,7 @@ func TestRenderText_DefaultContainsSections(t *testing.T) {
 			Files:   []posture.ConfigFileInfo{},
 		},
 		Dependencies: posture.DependencyHealth{
-			Score:      90,
+			Score:      new(90.0),
 			Ecosystems: []posture.EcosystemStatus{},
 			Totals:     posture.VulnSeverityCounts{High: 2},
 		},
@@ -139,7 +139,7 @@ func TestRenderText_DepHealthNotScanned(t *testing.T) {
 
 	report := baseReport()
 	report.Dependencies = posture.DependencyHealth{
-		Score:   100,
+		Status:  posture.DepUnscanned,
 		Totals:  posture.VulnSeverityCounts{}, // all zero
 		Scanned: false,
 	}
@@ -150,6 +150,10 @@ func TestRenderText_DepHealthNotScanned(t *testing.T) {
 	}
 	output := buf.String()
 
+	// F328: unknown health is not rendered as a percentage (let alone 100%).
+	if !strings.Contains(output, "Dependency Health: unscanned\n") {
+		t.Errorf("expected 'Dependency Health: unscanned':\n%s", output)
+	}
 	if strings.Contains(output, "No vulnerabilities detected") {
 		t.Errorf("must not claim 'No vulnerabilities detected' when unscanned:\n%s", output)
 	}
@@ -165,7 +169,7 @@ func TestRenderText_DepHealthScannedClean(t *testing.T) {
 
 	report := baseReport()
 	report.Dependencies = posture.DependencyHealth{
-		Score:   100,
+		Score:   new(100.0),
 		Totals:  posture.VulnSeverityCounts{}, // all zero
 		Scanned: true,
 	}
@@ -190,7 +194,7 @@ func TestRenderText_DepHealthCoverageGap(t *testing.T) {
 
 	report := baseReport()
 	report.Dependencies = posture.DependencyHealth{
-		Score:   100,
+		Score:   new(100.0),
 		Scanned: true, // aggregate: at least one ecosystem was scanned OK
 		Totals:  posture.VulnSeverityCounts{},
 		Ecosystems: []posture.EcosystemStatus{
@@ -220,7 +224,7 @@ func TestRenderText_DepHealthFullyCoveredNoGapNote(t *testing.T) {
 
 	report := baseReport()
 	report.Dependencies = posture.DependencyHealth{
-		Score:   100,
+		Score:   new(100.0),
 		Scanned: true,
 		Totals:  posture.VulnSeverityCounts{},
 		Ecosystems: []posture.EcosystemStatus{
@@ -252,7 +256,7 @@ func TestRenderText_DepHealthYarnOnlyNotScanned(t *testing.T) {
 
 	report := baseReport()
 	report.Dependencies = posture.DependencyHealth{
-		Score:      100,
+		Score:      new(100.0),
 		Scanned:    false, // derived: no ecosystem was scanned OK
 		ScanFailed: false,
 		Totals:     posture.VulnSeverityCounts{},
@@ -284,7 +288,7 @@ func TestRenderText_VerboseShowsUnknownAndInfo(t *testing.T) {
 	report := baseReport()
 	report.SchemaVersion = posture.SchemaVersion
 	report.Dependencies = posture.DependencyHealth{
-		Score:   60,
+		Score:   new(60.0),
 		Scanned: true,
 		Totals:  posture.VulnSeverityCounts{Unknown: 2, Info: 1},
 		Ecosystems: []posture.EcosystemStatus{
@@ -412,11 +416,11 @@ func TestRenderText_DefaultTierLineShown(t *testing.T) {
 	if !strings.Contains(output, "Tier: standard (2/3)") {
 		t.Errorf("missing tier line in default output:\n%s", output)
 	}
-	if !strings.Contains(output, "Next: qsdev init --tier full --dry-run") {
+	if !strings.Contains(output, "Next: qsdev init --yes --force --tier full --dry-run") {
 		t.Errorf("missing next-tier hint in default output:\n%s", output)
 	}
 	// Footer should also have the upgrade hint.
-	if !strings.Contains(output, "Upgrade tier: qsdev init --tier full --dry-run") {
+	if !strings.Contains(output, "Upgrade tier: qsdev init --yes --force --tier full --dry-run") {
 		t.Errorf("missing upgrade tier footer hint:\n%s", output)
 	}
 }
@@ -539,7 +543,7 @@ func TestRenderText_VerboseTierExpanded(t *testing.T) {
 	if !strings.Contains(output, "Full tooling: MCP servers, agent tools, consulting workflows, AlwaysOn tools") {
 		t.Errorf("missing tier description in verbose output:\n%s", output)
 	}
-	if !strings.Contains(output, "Upgrade: qsdev init --tier full --dry-run") {
+	if !strings.Contains(output, "Upgrade: qsdev init --yes --force --tier full --dry-run") {
 		t.Errorf("missing upgrade command in verbose output:\n%s", output)
 	}
 }
@@ -607,7 +611,7 @@ func TestRenderText_DefaultWithNoColor(t *testing.T) {
 			Files: []posture.ConfigFileInfo{},
 		},
 		Dependencies: posture.DependencyHealth{
-			Score: 100,
+			Score: new(100.0),
 		},
 		Drift: drift.Report{
 			Categories: []drift.Category{},
@@ -626,5 +630,161 @@ func TestRenderText_DefaultWithNoColor(t *testing.T) {
 	// No color should use [OK] style indicators, not ANSI sequences.
 	if strings.Contains(output, "\033[") {
 		t.Error("no-color output should not contain ANSI escape sequences")
+	}
+}
+
+// TestRenderText_DriftSeverityOrder guards against ranging over the
+// BySeverity map: the summary lines must come out in a fixed order.
+func TestRenderText_DriftSeverityOrder(t *testing.T) {
+	t.Parallel()
+	report := baseReport()
+	report.Drift.TotalFindings = 10
+	report.Drift.BySeverity = map[drift.Severity]int{
+		drift.Info: 1, drift.Warning: 2, drift.Error: 3, drift.Critical: 4,
+	}
+
+	want := "  critical: 4\n  error: 3\n  warning: 2\n  info: 1\n"
+	for range 20 {
+		var buf bytes.Buffer
+		if err := RenderText(report, &buf, Options{}); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), want) {
+			t.Fatalf("drift summary not in severity order; got:\n%s", buf.String())
+		}
+	}
+}
+
+// TestRenderText_ConfigCorruptCount guards the config health breakdown: an
+// unreadable file gets its own line so the counts account for every file.
+func TestRenderText_ConfigCorruptCount(t *testing.T) {
+	t.Parallel()
+	report := baseReport()
+	report.Config.Total = 1
+	report.Config.Corrupt = 1
+
+	var buf bytes.Buffer
+	if err := RenderText(report, &buf, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "Corrupt:  1") {
+		t.Errorf("expected a Corrupt line; got:\n%s", buf.String())
+	}
+}
+
+// TestRenderText_FixCriticalVulnsUsesStatusScan guards the remediation for
+// no-critical-vulns: --scan is a status flag, and check has no such flag.
+func TestRenderText_FixCriticalVulnsUsesStatusScan(t *testing.T) {
+	t.Parallel()
+	report := baseReport()
+	report.Conformance.Baseline = posture.ConformanceLevel{
+		Pass:   false,
+		Checks: []posture.ConformanceCheck{{Name: posture.CheckNoCriticalVulns, Pass: false}},
+	}
+
+	var buf bytes.Buffer
+	if err := RenderText(report, &buf, Options{Fix: true}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "qsdev status --scan") || strings.Contains(out, "check --scan") {
+		t.Errorf("remediation should suggest 'qsdev status --scan'; got:\n%s", out)
+	}
+}
+
+// TestRenderText_DefaultConformanceLineCustom: the one-line conformance
+// summary shows the project's custom policy verdict only when it has one.
+func TestRenderText_DefaultConformanceLineCustom(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		custom *posture.ConformanceLevel
+		want   string
+	}{
+		{"no policy", nil, "Conformance: [OK] Baseline  [OK] Enhanced\n"},
+		{"passing policy", &posture.ConformanceLevel{Pass: true},
+			"Conformance: [OK] Baseline  [OK] Enhanced  [OK] Custom\n"},
+		{"failing policy", &posture.ConformanceLevel{Pass: false},
+			"Conformance: [OK] Baseline  [OK] Enhanced  " + noColorFail + " Custom\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			report := &posture.PostureReport{
+				Conformance: posture.ConformanceResult{
+					Baseline: posture.ConformanceLevel{Pass: true},
+					Enhanced: posture.ConformanceLevel{Pass: true},
+					Custom:   tt.custom,
+				},
+				Drift: drift.Report{BySeverity: make(map[drift.Severity]int)},
+			}
+			var buf bytes.Buffer
+			if err := RenderText(report, &buf, Options{}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(buf.String(), tt.want) {
+				t.Errorf("output lacks %q:\n%s", tt.want, buf.String())
+			}
+		})
+	}
+}
+
+// TestRenderText_UnknownConformance pins F328: a baseline that is unknown
+// because the dependencies were not scanned renders as unknown, never as
+// passed, in both the summary line and the verbose breakdown, and the unknown
+// dependency sub-score renders as "unscanned".
+func TestRenderText_UnknownConformance(t *testing.T) {
+	t.Parallel()
+	unknownCheck := posture.NewCheck(posture.CheckNoCriticalVulns, posture.CheckUnknown, "dependencies not scanned")
+	report := &posture.PostureReport{
+		Score: posture.AggregateScore{Total: 80, Grade: "B-"},
+		Conformance: posture.ConformanceResult{
+			Baseline: posture.NewLevel(posture.CheckPass, []posture.ConformanceCheck{unknownCheck}),
+			Enhanced: posture.NewLevel(posture.CheckUnknown, nil),
+		},
+		Dependencies: posture.DependencyHealth{Status: posture.DepUnscanned},
+		Drift:        drift.Report{BySeverity: make(map[drift.Severity]int)},
+	}
+	tests := []struct {
+		name    string
+		opts    Options
+		want    []string
+		notWant []string
+	}{
+		{
+			name:    "summary",
+			want:    []string{"Conformance: " + noColorPartial + " Baseline  " + noColorPartial + " Enhanced  (unknown:"},
+			notWant: []string{noColorPass + " Baseline"},
+		},
+		{
+			name: "verbose",
+			opts: Options{Verbose: true},
+			want: []string{
+				noColorPartial + " Baseline: UNKNOWN",
+				noColorPartial + " no-critical-vulns -- dependencies not scanned",
+				"Deps: unscanned",
+			},
+			notWant: []string{"Baseline: PASS"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			if err := RenderText(report, &buf, tt.opts); err != nil {
+				t.Fatal(err)
+			}
+			out := buf.String()
+			for _, w := range tt.want {
+				if !strings.Contains(out, w) {
+					t.Errorf("output lacks %q:\n%s", w, out)
+				}
+			}
+			for _, w := range tt.notWant {
+				if strings.Contains(out, w) {
+					t.Errorf("output contains %q:\n%s", w, out)
+				}
+			}
+		})
 	}
 }

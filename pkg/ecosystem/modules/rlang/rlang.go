@@ -12,15 +12,19 @@
 package rlang
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// Compile-time interface compliance check.
+// Compile-time interface compliance checks.
 var _ ecosystem.EcosystemModule = (*Module)(nil)
+var _ ecosystem.ManifestFileProvider = (*Module)(nil)
+var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -62,10 +66,11 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		pm = "renv"
 	}
 
-	// DESCRIPTION alone is only probable — many non-R projects (Debian, Perl)
-	// use DESCRIPTION files. Upgrade to certain when combined with other R
-	// indicators.
-	hasDescription := fileutil.FileExists(projectRoot, "DESCRIPTION")
+	// DESCRIPTION alone is only probable — many non-R projects (Debian, Perl,
+	// plain prose) use DESCRIPTION files, so it counts only when it is an R
+	// package DESCRIPTION (DCF with a Package: field). Upgrade to certain
+	// when combined with other R indicators.
+	hasDescription := isRPackageDescription(filepath.Join(projectRoot, "DESCRIPTION"))
 	if hasDescription {
 		evidence = append(evidence, "DESCRIPTION found")
 		if hasNamespace || hasRproj || hasRenvLock {
@@ -149,19 +154,46 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 	return nil
 }
 
-// CICommands returns CI pipeline commands for the R ecosystem.
-func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
+// DenyRules returns Claude Code deny-rule patterns for the R ecosystem.
+// Packages are installed by R code, so any R/Rscript invocation whose
+// expression installs (install.packages, remotes::install_github,
+// renv::install, pak::pkg_install, BiocManager::install, pak::pak,
+// update.packages) is denied; the lockfile restore (renv::restore) stays open.
+func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
+	var rules []string
+	for _, exe := range []string{"Rscript", "R"} {
+		rules = append(rules,
+			"Bash("+exe+" *install*)",
+			"Bash("+exe+" *update.packages*)",
+			"Bash("+exe+" *pak::*)",
+		)
+	}
+	return rules
+}
+
+// CICommands returns CI pipeline commands for the R ecosystem, for an renv
+// project (renv.lock, which detection records as the renv package manager);
+// a project without renv has no lock file to restore from or check. The
+// status check fails when the library, renv.lock and the packages the code
+// uses are out of sync: renv::status() itself exits 0 either way, so the
+// expression inspects its `synchronized` result (isTRUE fails closed on an
+// renv too old to report it). The expression is single-quoted so the shell
+// leaves `$synchronized` and `!` alone.
+func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
+	if config.PM("") != "renv" {
+		return nil
+	}
 	return []ecosystem.CICommand{
 		{
 			Name:        "renv-restore",
-			Command:     `Rscript -e "renv::restore()"`,
+			Command:     `Rscript -e 'renv::restore()'`,
 			Description: "Restore R package dependencies from renv.lock",
 			Phase:       ecosystem.CIPhaseInstall,
 		},
 		{
 			Name:        "renv-status",
-			Command:     `Rscript -e "renv::status()"`,
-			Description: "Check renv lock file consistency",
+			Command:     `Rscript -e 'if (!isTRUE(renv::status()$synchronized)) quit(status = 1)'`,
+			Description: "Fail when renv.lock, the project library and the code's package usage are out of sync",
 			Phase:       ecosystem.CIPhaseTest,
 		},
 	}
@@ -171,11 +203,9 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "renv",
-			LockFile:             "renv.lock",
-			InstallCommand:       `Rscript -e "renv::restore()"`,
-			FrozenInstallCommand: `Rscript -e "renv::restore()"`,
-			AgeGatingSupport:     false,
+			Name:           "renv",
+			LockFile:       "renv.lock",
+			InstallCommand: `Rscript -e "renv::restore()"`,
 		},
 	}
 }
@@ -184,4 +214,32 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 // verification commands at the module level.
 func (m *Module) VerificationCommands(_ ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	return ecosystem.VerificationCommands{}
+}
+
+// ManifestFiles declares the R package manifest and its renv lockfile so
+// Version-Sentinel coverage reports list R dependencies as uncovered instead
+// of omitting them.
+func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
+	return []ecosystem.ManifestFileInfo{{
+		Path:           "DESCRIPTION",
+		Ecosystem:      "renv",
+		VSSupported:    false,
+		LockFile:       "renv.lock",
+		LockFilePolicy: ecosystem.LockFilePolicyRecommended,
+	}}
+}
+
+// isRPackageDescription reports whether path is an R package DESCRIPTION
+// file: Debian Control Format with a top-level "Package:" field.
+func isRPackageDescription(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for line := range strings.Lines(string(data)) {
+		if strings.HasPrefix(line, "Package:") {
+			return true
+		}
+	}
+	return false
 }

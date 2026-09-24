@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"html"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -27,21 +30,23 @@ var (
 	// htmlTagRe matches a single HTML start or end tag. Capture groups:
 	//   1: "/" for an end tag (empty for a start tag)
 	//   2: the tag name
-	//   3: "/" for a self-closing start tag (empty otherwise)
+	//   3: the raw attribute text (quoted values may contain '>')
 	// Go's RE2 has no backreferences, so balanced/nested elements cannot be
 	// matched by one expression; stripHiddenElements walks this tag stream and
-	// tracks depth instead. As with the block regexps above, '>' inside a
-	// quoted attribute value is not handled — documentation markup does not
-	// rely on it.
-	htmlTagRe = regexp.MustCompile(`(?is)<(/?)([a-z][a-z0-9]*)\b[^>]*?(/?)>`)
-	// styleAttrRe extracts the first style="..." (or '...') attribute value from
-	// an element's opening tag, so hiding rules are tested against the style
-	// declaration only, not the element's visible text content.
-	styleAttrRe = regexp.MustCompile(`(?is)\bstyle\s*=\s*("([^"]*)"|'([^']*)')`)
-	// hiddenStyleRe detects the dangerous hiding declarations inside a style
-	// attribute value (whitespace-insensitive around the colon).
-	hiddenStyleRe = regexp.MustCompile(
-		`(?is)(display\s*:\s*none|font-size\s*:\s*0|visibility\s*:\s*hidden|color\s*:\s*transparent)`)
+	// tracks the open-element stack instead.
+	htmlTagRe = regexp.MustCompile(`<(/?)([a-zA-Z][a-zA-Z0-9:-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>`)
+	// htmlAttrRe matches one attribute in a tag's attribute text. Capture
+	// groups: 1 the name, then the value when present — 2 double-quoted,
+	// 3 single-quoted, 4 unquoted (all valid HTML).
+	htmlAttrRe = regexp.MustCompile(`([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?`)
+	// cssCommentRe matches CSS comments, which can split a declaration
+	// (display:/**/none) without changing its meaning.
+	cssCommentRe = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	// cssImportantRe matches a trailing !important priority on a CSS value.
+	cssImportantRe = regexp.MustCompile(`\s*!\s*important\s*$`)
+	// cssZeroRe matches a CSS number or length that is exactly zero (0, 0.0,
+	// .0, 0px, 0em, 0%), but not a small non-zero one such as 0.875rem.
+	cssZeroRe = regexp.MustCompile(`^[+-]?(?:0+(?:\.0*)?|\.0+)(?:[a-z]+|%)?$`)
 )
 
 // Sanitize category names recorded in SanitizeReport.Categories.
@@ -142,74 +147,227 @@ func stripHTML(s string) string {
 	return stripHiddenElements(s)
 }
 
-// stripHiddenElements removes every element whose opening tag carries a hiding
-// inline style, together with ALL of its content up to the matching closing
-// tag. It scans the tag stream once, tracking nesting depth, so a nested child
-// element does not prematurely terminate the hidden span — a single bounded
-// regex stops at the first inner </tag> and leaks the trailing (hidden)
-// content. Non-hidden tags, and the text between them, are emitted verbatim, so
-// legitimate visible markup is preserved.
+// voidElements are the HTML elements that never have content or an end tag
+// (per the HTML standard), so they must not be counted as open elements.
+var voidElements = map[string]bool{
+	"area": true, "base": true, "br": true, "col": true, "embed": true,
+	"hr": true, "img": true, "input": true, "link": true, "meta": true,
+	"param": true, "source": true, "track": true, "wbr": true,
+}
+
+// htmlTag is one tag located by htmlTagRe in the input.
+type htmlTag struct {
+	start, end int    // byte offsets of the whole tag
+	isEnd      bool   // </name>
+	name       string // lower-cased element name
+	attrs      string // raw attribute text of a start tag
+}
+
+// nextTag returns the first tag at or after offset i, or false if none.
+func nextTag(s string, i int) (htmlTag, bool) {
+	loc := htmlTagRe.FindStringSubmatchIndex(s[i:])
+	if loc == nil {
+		return htmlTag{}, false
+	}
+	return htmlTag{
+		start: i + loc[0],
+		end:   i + loc[1],
+		isEnd: loc[3] > loc[2],
+		name:  strings.ToLower(s[i+loc[4] : i+loc[5]]),
+		attrs: s[i+loc[6] : i+loc[7]],
+	}, true
+}
+
+// stripHiddenElements removes every element that is hidden from a human
+// reader (see isHiddenTag), together with ALL of its content. It follows the
+// browser's view of where that element ends: at its own matching end tag
+// (nested same-name elements and void elements such as <br> are accounted
+// for), at the end tag of an enclosing element (which implicitly closes it),
+// or — when never closed — at the end of the input, so an unterminated hidden
+// element fails closed instead of leaking its content. Non-hidden tags, and
+// the text between them, are emitted verbatim, so legitimate visible markup is
+// preserved.
 func stripHiddenElements(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
+	var open []string // stack of open (visible) element names
 	for i := 0; i < len(s); {
-		loc := htmlTagRe.FindStringSubmatchIndex(s[i:])
-		if loc == nil {
+		tag, ok := nextTag(s, i)
+		if !ok {
 			b.WriteString(s[i:])
 			break
 		}
-		start, end := i+loc[0], i+loc[1]
-		b.WriteString(s[i:start]) // text before this tag, verbatim
+		b.WriteString(s[i:tag.start]) // text before this tag, verbatim
 
-		tag := s[start:end]
-		isEndTag := loc[3] > loc[2]    // capture group 1 ("/") matched a leading slash
-		isSelfClose := loc[7] > loc[6] // capture group 3 ("/") matched a trailing slash
-		if isEndTag || isSelfClose || !isHiddenTag(tag) {
-			b.WriteString(tag)
-			i = end
+		switch {
+		case tag.isEnd:
+			if idx := lastIndex(open, tag.name); idx >= 0 {
+				open = open[:idx]
+			}
+		case isHiddenTag(tag.attrs):
+			if voidElements[tag.name] {
+				i = tag.end // a hidden void element has no content: drop just the tag
+			} else {
+				i = skipHiddenElement(s, tag.end, tag.name, open)
+			}
 			continue
+		case !voidElements[tag.name]:
+			open = append(open, tag.name)
 		}
-		// Hidden opening tag: drop it and everything through its matching close.
-		i = skipHiddenElement(s, end)
+		b.WriteString(s[tag.start:tag.end])
+		i = tag.end
 	}
 	return b.String()
 }
 
-// isHiddenTag reports whether an opening tag's style attribute declares one of
-// the hiding rules (display:none, font-size:0, visibility:hidden, transparent).
-func isHiddenTag(tag string) bool {
-	m := styleAttrRe.FindStringSubmatch(tag)
-	if m == nil {
-		return false
+// skipHiddenElement returns the offset where the hidden element name, whose
+// opening tag ended at pos, ends. Inside it, it tracks its own open-element
+// stack: an end tag closes the innermost open element of that name (and any
+// left open inside it); the hidden element's own end tag is consumed. An end
+// tag for an element in ancestors (the enclosing open elements) implicitly
+// closes the hidden element and is kept. A stray end tag matching nothing is
+// ignored, as browsers do. An element that is never closed extends to the end
+// of the input.
+func skipHiddenElement(s string, pos int, name string, ancestors []string) int {
+	stack := []string{name}
+	for i := pos; i < len(s); {
+		tag, ok := nextTag(s, i)
+		if !ok {
+			break
+		}
+		i = tag.end
+		if !tag.isEnd {
+			if !voidElements[tag.name] {
+				stack = append(stack, tag.name)
+			}
+			continue
+		}
+		switch idx := lastIndex(stack, tag.name); {
+		case idx == 0:
+			return tag.end // the hidden element's own end tag
+		case idx > 0:
+			stack = stack[:idx]
+		case lastIndex(ancestors, tag.name) >= 0:
+			return tag.start // an enclosing element closes, ending this one too
+		}
 	}
-	// Group 2 (double-quoted) or 3 (single-quoted) holds the value.
-	return hiddenStyleRe.MatchString(m[2] + m[3])
+	return len(s) // never closed: hidden through the end of the input
 }
 
-// skipHiddenElement returns the offset just past the closing tag that matches a
-// hidden element whose opening tag ended at pos, tracking nesting depth across
-// intervening start/end tags. If the element is never closed it drops only the
-// opening tag (returns pos) so that legitimate trailing content is not lost.
-func skipHiddenElement(s string, pos int) int {
-	depth := 1
-	for i := pos; i < len(s); {
-		loc := htmlTagRe.FindStringSubmatchIndex(s[i:])
-		if loc == nil {
-			return pos // unterminated element: drop only the opening tag
+// lastIndex returns the index of the last occurrence of name in stack, or -1.
+func lastIndex(stack []string, name string) int {
+	for i := len(stack) - 1; i >= 0; i-- {
+		if stack[i] == name {
+			return i
 		}
-		tagEnd := i + loc[1]
-		switch {
-		case loc[3] > loc[2]: // end tag
-			depth--
-			if depth == 0 {
-				return tagEnd // matching close found
-			}
-		case loc[7] <= loc[6]: // start tag that is not self-closing
-			depth++
-		}
-		i = tagEnd
 	}
-	return pos // unterminated element: drop only the opening tag
+	return -1
+}
+
+// isHiddenTag reports whether an opening tag's attributes hide the element
+// from a human reader: the boolean hidden attribute, or a style attribute
+// (quoted or not) that declares a hiding rule (see isHidingStyle). Only the
+// first style attribute counts, as in browsers. Attribute values are
+// entity-decoded first, since browsers decode them (display&colon;none).
+func isHiddenTag(attrs string) bool {
+	sawStyle := false
+	for _, m := range htmlAttrRe.FindAllStringSubmatch(attrs, -1) {
+		switch strings.ToLower(m[1]) {
+		case "hidden":
+			return true
+		case "style":
+			if sawStyle {
+				continue
+			}
+			sawStyle = true
+			if isHidingStyle(html.UnescapeString(m[2] + m[3] + m[4])) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isHidingStyle reports whether a CSS declaration list hides its element:
+// display:none, visibility:hidden|collapse, opacity:0, font-size:0, or
+// color:transparent. Values are matched exactly per declaration, so a small
+// but visible font-size such as 0.875rem is not treated as hidden. Comments
+// and CSS escapes (display:n\6f ne) are resolved first, as browsers do.
+func isHidingStyle(style string) bool {
+	style = strings.ToLower(cssUnescape(cssCommentRe.ReplaceAllString(style, "")))
+	for decl := range strings.SplitSeq(style, ";") {
+		prop, val, ok := strings.Cut(decl, ":")
+		if !ok {
+			continue
+		}
+		val = strings.TrimSpace(cssImportantRe.ReplaceAllString(val, ""))
+		switch strings.TrimSpace(prop) {
+		case "display":
+			if val == "none" {
+				return true
+			}
+		case "visibility":
+			if val == "hidden" || val == "collapse" {
+				return true
+			}
+		case "opacity", "font-size":
+			if cssZeroRe.MatchString(val) {
+				return true
+			}
+		case "color":
+			if val == "transparent" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// cssUnescape resolves CSS backslash escapes: a backslash followed by 1-6 hex
+// digits (and one optional whitespace) is that code point, and a backslash
+// followed by any other character is that character, so an escaped keyword
+// such as n\6f ne or n\one reads as "none". Invalid code points become
+// U+FFFD, per the CSS Syntax spec.
+func cssUnescape(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] != '\\' || i+1 == len(s) {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(s) && j-i <= 6 && isHexDigit(s[j]) {
+			j++
+		}
+		if j == i+1 { // not a hex escape: the next character stands for itself
+			b.WriteByte(s[j])
+			i = j + 1
+			continue
+		}
+		// At most six hex digits fit in 32 bits, so ParseUint cannot fail;
+		// the range check comes before the conversion to rune.
+		cp, _ := strconv.ParseUint(s[i+1:j], 16, 32)
+		r := unicode.ReplacementChar
+		if cp != 0 && cp <= unicode.MaxRune && (cp < 0xD800 || cp > 0xDFFF) {
+			r = rune(cp)
+		}
+		b.WriteRune(r)
+		if j < len(s) && strings.IndexByte(" \t\n\r\f", s[j]) >= 0 {
+			j++ // a single whitespace terminates a hex escape and is consumed
+		}
+		i = j
+	}
+	return b.String()
+}
+
+// isHexDigit reports whether c is an ASCII hex digit.
+func isHexDigit(c byte) bool {
+	return ('0' <= c && c <= '9') || ('a' <= c && c <= 'f') || ('A' <= c && c <= 'F')
 }
 
 // stripRunes performs the single-pass rune filter for invisible and control
@@ -313,7 +471,10 @@ func SanitizeJSONStrings(ctx context.Context, raw []byte, opts SanitizeOptions) 
 	}
 
 	report := SanitizeReport{}
-	sanitized := sanitizeJSONValue(root, opts, &report, 0)
+	sanitized, err := sanitizeJSONValue(root, opts, &report, 0)
+	if err != nil {
+		return nil, SanitizeReport{}, err
+	}
 
 	// Encode with HTML escaping disabled so that <, >, and & in legitimate
 	// documentation HTML are preserved verbatim. Re-encoding the decoded tree may
@@ -332,40 +493,51 @@ func SanitizeJSONStrings(ctx context.Context, raw []byte, opts SanitizeOptions) 
 	return out, report, nil
 }
 
+// ErrJSONTooDeep is returned by SanitizeJSONStrings for a document nested more
+// than maxJSONDepth levels deep.
+var ErrJSONTooDeep = errors.New("contentsign: JSON nesting exceeds sanitization depth limit")
+
 // maxJSONDepth bounds the recursion in sanitizeJSONValue so a pathologically
 // nested db.json (deeply nested arrays/objects, well within the byte-size bound)
-// cannot exhaust the goroutine stack — encoding/json imposes no nesting limit of
-// its own. Legitimate documentation JSON nests only a handful of levels; 1000 is
-// far beyond any real structure while staying clear of the stack limit.
+// cannot exhaust the goroutine stack. Legitimate documentation JSON nests only a
+// handful of levels; 1000 is far beyond any real structure while staying clear
+// of the stack limit.
 const maxJSONDepth = 1000
 
 // sanitizeJSONValue recursively sanitizes string values within a decoded JSON
 // tree, merging each string's report into agg. Object keys and non-string
-// scalars (numbers, booleans, null) are returned unchanged. Recursion is bounded
-// by maxJSONDepth: beyond it the subtree is returned untouched rather than
-// recursed into, trading deep-leaf sanitization (only reachable through absurd
-// nesting) for crash safety on hostile input.
-func sanitizeJSONValue(v any, opts SanitizeOptions, agg *SanitizeReport, depth int) any {
+// scalars (numbers, booleans, null) are returned unchanged. A subtree deeper
+// than maxJSONDepth fails with ErrJSONTooDeep: it is rejected rather than
+// passed through unsanitized.
+func sanitizeJSONValue(v any, opts SanitizeOptions, agg *SanitizeReport, depth int) (any, error) {
 	if depth >= maxJSONDepth {
-		return v
+		return nil, fmt.Errorf("sanitizing JSON: %w (%d levels)", ErrJSONTooDeep, maxJSONDepth)
 	}
 	switch val := v.(type) {
 	case string:
 		clean, r := SanitizeText(val, opts)
 		mergeReport(agg, r)
-		return clean
+		return clean, nil
 	case map[string]any:
 		for k, child := range val {
-			val[k] = sanitizeJSONValue(child, opts, agg, depth+1)
+			clean, err := sanitizeJSONValue(child, opts, agg, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			val[k] = clean
 		}
-		return val
+		return val, nil
 	case []any:
 		for i, child := range val {
-			val[i] = sanitizeJSONValue(child, opts, agg, depth+1)
+			clean, err := sanitizeJSONValue(child, opts, agg, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			val[i] = clean
 		}
-		return val
+		return val, nil
 	default:
-		return v
+		return v, nil
 	}
 }
 

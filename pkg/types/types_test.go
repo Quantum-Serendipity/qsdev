@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -361,12 +362,12 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 		}
 	})
 
-	t.Run("fills default permission level for claude code", func(t *testing.T) {
+	t.Run("default tier leaves the permission level to the tier preset", func(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: true}
 		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
-		if a.PermissionLevel != "standard" {
-			t.Errorf("expected permission level 'standard', got %q", a.PermissionLevel)
+		if a.Tier == "" || a.PermissionLevel != "" {
+			t.Errorf("expected the default tier and no permission level, got tier %q level %q", a.Tier, a.PermissionLevel)
 		}
 	})
 
@@ -600,10 +601,11 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 	})
 
 	t.Run("catalog-backed tier-to-compliance derivation", func(t *testing.T) {
-		tierMap := catalog.MustDefault().TierToCompliance()
-		for tier, wantLevel := range tierMap {
-			if tier == "supply-chain-only" {
-				continue // early return path, tested separately
+		cat := catalog.MustDefault()
+		for _, tier := range cat.TierOrder() {
+			wantLevel := cat.TierCompliance(tier)
+			if wantLevel == "" {
+				continue
 			}
 			a := types.WizardAnswers{ClaudeCode: true, Tier: tier}
 			a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
@@ -614,11 +616,9 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 	})
 
 	t.Run("catalog-backed tier-to-enabled-tools derivation", func(t *testing.T) {
-		tierTools := catalog.MustDefault().TierToEnabledTools()
-		for tier, wantTools := range tierTools {
-			if tier == "supply-chain-only" {
-				continue // early return path, tested separately
-			}
+		cat := catalog.MustDefault()
+		for _, tier := range cat.TierOrder() {
+			wantTools := cat.TierEnabledTools(tier)
 			a := types.WizardAnswers{ClaudeCode: true, Tier: tier}
 			a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 			for _, tool := range wantTools {
@@ -642,8 +642,8 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 		if a.AgentTools.PostmortemEnabled {
 			t.Error("supply-chain-only should skip agent tool defaults")
 		}
-		if a.ComplianceLevel != "" {
-			t.Errorf("supply-chain-only early return should leave ComplianceLevel empty, got %q", a.ComplianceLevel)
+		if a.ComplianceLevel != "baseline" {
+			t.Errorf("supply-chain-only should derive ComplianceLevel baseline, got %q", a.ComplianceLevel)
 		}
 		if a.EnabledTools != nil {
 			t.Errorf("supply-chain-only should leave EnabledTools nil, got %v", a.EnabledTools)
@@ -793,5 +793,144 @@ func TestEnvVarsMapWithSpecialCharacters(t *testing.T) {
 	}
 	if !reflect.DeepEqual(original.EnvVars, got.EnvVars) {
 		t.Errorf("EnvVars mismatch.\nOriginal: %+v\nGot:      %+v", original.EnvVars, got.EnvVars)
+	}
+}
+
+// TestFillDefaults_AgentToolOptOutsSurvive verifies an explicit opt-out of
+// every agent tool is kept, while answers that never configured agent tools
+// still get the catalog defaults (semble among them only if the catalog opts
+// it in, which it does not).
+func TestFillDefaults_AgentToolOptOutsSurvive(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   types.AgentToolsAnswers
+		want types.AgentToolsAnswers
+	}{
+		{
+			name: "explicit all-false opt-out is kept",
+			in:   types.AgentToolsAnswers{VersionSentinelHours: 24, SembleMode: "mcp"},
+			want: types.AgentToolsAnswers{VersionSentinelHours: 24, SembleMode: "mcp"},
+		},
+		{
+			name: "unconfigured gets catalog defaults",
+			in:   types.AgentToolsAnswers{},
+			want: types.AgentToolsAnswers{PostmortemEnabled: true, VersionSentinel: true, VersionSentinelHours: 24, SembleMode: "both"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			a := types.WizardAnswers{ClaudeCode: true, Tier: "standard", AgentTools: tt.in}
+			a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
+			if a.AgentTools != tt.want {
+				t.Errorf("AgentTools = %+v, want %+v", a.AgentTools, tt.want)
+			}
+			if slices.Contains(a.ConfiguredMCPServers(), types.SembleMCPServer) {
+				t.Errorf("semble configured although not opted in: %v", a.ConfiguredMCPServers())
+			}
+		})
+	}
+}
+
+// TestConfiguredMCPServers verifies the semble server follows the semble agent
+// tool toggle, whatever MCPServers says.
+func TestConfiguredMCPServers(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		servers []string
+		tools   types.AgentToolsAnswers
+		want    []string
+	}{
+		{"stale semble entry dropped when disabled", []string{"context7", "semble"}, types.AgentToolsAnswers{}, []string{"context7"}},
+		{"enabled semble added", []string{"context7"}, types.AgentToolsAnswers{SembleEnabled: true, SembleMode: "mcp"}, []string{"context7", "semble"}},
+		{"enabled semble not duplicated", []string{"semble", "github"}, types.AgentToolsAnswers{SembleEnabled: true, SembleMode: "both"}, []string{"github", "semble"}},
+		{"subagent-only mode has no server", []string{"semble"}, types.AgentToolsAnswers{SembleEnabled: true, SembleMode: "subagent"}, []string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			a := types.WizardAnswers{MCPServers: tt.servers, AgentTools: tt.tools}
+			if got := a.ConfiguredMCPServers(); !slices.Equal(got, tt.want) {
+				t.Errorf("ConfiguredMCPServers() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestFillDefaults_ResolvesTier verifies FillDefaults always leaves an
+// explicit tier: the selected one, the supply-chain-only tier for a
+// supply-chain-only permission level, else the catalog default. Readers then
+// never infer the tier from the (always non-empty) default MCP servers.
+func TestFillDefaults_ResolvesTier(t *testing.T) {
+	t.Parallel()
+	cat := catalog.MustDefault()
+	tests := []struct {
+		name       string
+		answers    types.WizardAnswers
+		wantTier   string
+		wantLevel  string
+		wantCompl  string
+		wantMCPSet bool
+	}{
+		{
+			// Exactly like --tier <default>: the tier's preset applies, so no
+			// permission level is recorded that the tier did not imply.
+			name:       "default is the catalog default tier",
+			answers:    types.WizardAnswers{ClaudeCode: true},
+			wantTier:   cat.DefaultTier(),
+			wantLevel:  "",
+			wantCompl:  cat.TierCompliance(cat.DefaultTier()),
+			wantMCPSet: true,
+		},
+		{
+			name:      "claude code disabled still gets the default tier",
+			answers:   types.WizardAnswers{},
+			wantTier:  cat.DefaultTier(),
+			wantCompl: cat.TierCompliance(cat.DefaultTier()),
+		},
+		{
+			name:      "supply-chain-only permission level selects its tier",
+			answers:   types.WizardAnswers{ClaudeCode: true, PermissionLevel: "supply-chain-only"},
+			wantTier:  "supply-chain-only",
+			wantLevel: "supply-chain-only",
+			wantCompl: cat.TierCompliance("supply-chain-only"),
+		},
+		{
+			name:       "explicit tier is kept and leaves the permission level to the tier",
+			answers:    types.WizardAnswers{ClaudeCode: true, Tier: "full"},
+			wantTier:   "full",
+			wantCompl:  cat.TierCompliance("full"),
+			wantMCPSet: true,
+		},
+		{
+			name:       "explicit permission level keeps the default tier",
+			answers:    types.WizardAnswers{ClaudeCode: true, PermissionLevel: "minimal"},
+			wantTier:   cat.DefaultTier(),
+			wantLevel:  "minimal",
+			wantCompl:  cat.TierCompliance(cat.DefaultTier()),
+			wantMCPSet: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			a := tt.answers
+			a.FillDefaults(types.DetectedProject{}, cat)
+
+			if a.Tier != tt.wantTier {
+				t.Errorf("Tier = %q, want %q", a.Tier, tt.wantTier)
+			}
+			if a.PermissionLevel != tt.wantLevel {
+				t.Errorf("PermissionLevel = %q, want %q", a.PermissionLevel, tt.wantLevel)
+			}
+			if a.ComplianceLevel != tt.wantCompl {
+				t.Errorf("ComplianceLevel = %q, want %q", a.ComplianceLevel, tt.wantCompl)
+			}
+			if got := len(a.MCPServers) > 0; got != tt.wantMCPSet {
+				t.Errorf("MCPServers = %v, want non-empty %v", a.MCPServers, tt.wantMCPSet)
+			}
+		})
 	}
 }

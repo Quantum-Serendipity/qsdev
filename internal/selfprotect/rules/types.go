@@ -1,6 +1,10 @@
 package rules
 
-import "github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+import (
+	"encoding/json"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
+)
 
 // Verdict represents the outcome of a rule evaluation.
 type Verdict int
@@ -30,12 +34,38 @@ type EvalContext struct {
 	CanonicalPath string // resolved via canon.Canonicalize
 	Command       string // for Bash tool
 	Content       string // for Write/Edit tool
-	CWD           string
+	// CWD is the session working directory the tool call runs in (the hook
+	// envelope's cwd). Relative Bash paths are resolved against it.
+	CWD string
+	// Edits holds the old->new replacements of an Edit/MultiEdit call, so a
+	// rule can reconstruct the resulting file (see FileChange) instead of
+	// seeing only the new fragments in Content.
+	Edits []TextEdit
+	// ToolInput is the raw tool_input object, for rules that inspect fields
+	// beyond file_path (the path/paths/source/destination arguments of MCP
+	// filesystem tools).
+	ToolInput json.RawMessage
 
 	// Parsed Bash command, memoized by ParsedCommands. Do not read directly.
 	commands       []cmdscan.Command
 	parseErr       error
 	commandsParsed bool
+
+	// Parsed commands annotated with their effective working directory,
+	// memoized by scannedCommands. Do not read directly.
+	scanned     []scannedCommand
+	scannedDone bool
+
+	// Shared Bash verdicts, memoized by lineMentionsProtected and
+	// bashMutatesProtected since several rules consult them.
+	mentions, mutates         bool
+	mentionsDone, mutatesDone bool
+
+	// hookEnv overrides the session description SP-011 resolves hook
+	// commands from (tests only; nil describes the running session), and
+	// hookTargets memoizes the result. Read through hookTargetsFor.
+	hookEnv     *hookEnv
+	hookTargets *hookTargets
 }
 
 // ParsedCommands returns Command shell-parsed into its simple commands, parsing

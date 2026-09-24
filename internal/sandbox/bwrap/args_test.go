@@ -3,6 +3,8 @@
 package bwrap
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -183,38 +185,36 @@ func TestBuildArgs(t *testing.T) {
 	}
 }
 
-// TestBuildArgs_DefaultPolicyDenyMountsDoNotBreakExec is the primary regression
-// for the exec-is-non-functional defect: DefaultPolicy injects every deny-list
-// path (including /etc/shadow) as a self-referential read-only mount, and
-// BuildArgs used to reject those, breaking every `sandbox exec`. BuildArgs must
-// now succeed and must MASK each deny path (never bind/expose it).
-func TestBuildArgs_DefaultPolicyDenyMountsDoNotBreakExec(t *testing.T) {
+// TestBuildArgs_DefaultPolicyDenyDoesNotBreakExec is the primary regression
+// for the exec-is-non-functional defect: DefaultPolicy denies every deny-list
+// path (including /etc/shadow), and BuildArgs must succeed and MASK each one
+// that exists on the host (never bind/expose it).
+func TestBuildArgs_DefaultPolicyDenyDoesNotBreakExec(t *testing.T) {
 	t.Parallel()
 
 	cfg := sandbox.SandboxConfig{
 		HookCategory: sandbox.CategoryLinter,
 		Network:      sandbox.NetworkPolicy{Mode: "deny"},
-	}
-	// Mirror policy.DefaultPolicy/ToSandboxConfig: deny paths become ro mounts
-	// with Source == Target.
-	for _, p := range denylist.AllDenyPaths() {
-		cfg.Mounts = append(cfg.Mounts, sandbox.MountSpec{Source: p, Target: p, ReadOnly: true})
+		Deny:         denylist.AllDenyPaths(),
 	}
 
 	args, err := BuildArgs(&cfg, sandbox.TierFull)
 	if err != nil {
-		t.Fatalf("BuildArgs must not error on default deny-list mounts, got: %v", err)
+		t.Fatalf("BuildArgs must not error on the default deny list, got: %v", err)
 	}
 
-	// Every deny path must be MASKED (empty tmpfs or ro /dev/null), never bound
-	// with its real contents (no `--bind <p> <p>` / `--ro-bind <p> <p>`).
+	// Every existing deny path must be MASKED (empty tmpfs or ro /dev/null),
+	// never bound with its real contents.
 	for _, p := range denylist.AllDenyPaths() {
-		if !containsMask(args, p) {
-			t.Errorf("deny path %q must be masked, got args: %v", p, args)
-		}
 		if containsSequence(args, []string{"--bind", p, p}) ||
 			containsSequence(args, []string{"--ro-bind", p, p}) {
 			t.Errorf("deny path %q must not be self-bound/exposed, got args: %v", p, args)
+		}
+		if _, statErr := os.Lstat(p); statErr != nil {
+			continue // absent on this host: nothing to expose, nothing to mask
+		}
+		if !containsMask(args, p) {
+			t.Errorf("deny path %q must be masked, got args: %v", p, args)
 		}
 	}
 	// Sanity: the safe system files are still mounted.
@@ -223,22 +223,25 @@ func TestBuildArgs_DefaultPolicyDenyMountsDoNotBreakExec(t *testing.T) {
 	}
 }
 
-// TestBuildArgs_MasksDenyPaths verifies the defense-in-depth mask: a config that
-// carries the deny-list self-mounts (the "these paths must be blocked"
-// directives) must emit an explicit mask for each deny path -- an empty tmpfs
-// for directories or a read-only /dev/null bind for files -- so the credential
-// store stays empty even if a broader bind ever exposed one of its ancestors
-// (e.g. $HOME). The masks are emitted AFTER every bind so they win.
+// TestBuildArgs_MasksDenyPaths verifies the defense-in-depth mask is emitted
+// AFTER every bind, so the denied path stays hidden even if a broader bind
+// exposed one of its ancestors.
 func TestBuildArgs_MasksDenyPaths(t *testing.T) {
 	t.Parallel()
+
+	// denyMasks skips deny entries absent on the host (nothing to expose), so
+	// the fixture must be a file that exists everywhere: /etc/shadow does not
+	// exist on macOS, where it would be skipped and nothing asserted.
+	secret := filepath.Join(t.TempDir(), "shadow")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("creating deny fixture: %v", err)
+	}
 
 	cfg := sandbox.SandboxConfig{
 		ProjectDir:   "/home/user/project",
 		HookCategory: sandbox.CategoryFormatter,
 		Network:      sandbox.NetworkPolicy{Mode: "deny"},
-	}
-	for _, p := range denylist.AllDenyPaths() {
-		cfg.Mounts = append(cfg.Mounts, sandbox.MountSpec{Source: p, Target: p, ReadOnly: true})
+		Deny:         []string{secret},
 	}
 
 	args, err := BuildArgs(&cfg, sandbox.TierFull)
@@ -246,21 +249,185 @@ func TestBuildArgs_MasksDenyPaths(t *testing.T) {
 		t.Fatalf("BuildArgs returned unexpected error: %v", err)
 	}
 
-	for _, p := range denylist.AllDenyPaths() {
-		if !containsMask(args, p) {
-			t.Errorf("expected a mask (--tmpfs or --ro-bind /dev/null) for deny path %q, got args: %v", p, args)
-		}
+	if !containsSequence(args, []string{"--ro-bind", "/dev/null", secret}) {
+		t.Errorf("expected %s (a file) masked with /dev/null, got args: %v", secret, args)
 	}
-
-	// The mask must be emitted AFTER the project bind so it wins over any earlier
-	// (possibly broader) bind.
 	projectIdx := indexOfSequence(args, []string{"--bind", "/home/user/project", "/home/user/project"})
 	if projectIdx < 0 {
 		t.Fatalf("expected project dir bind, got args: %v", args)
 	}
-	maskIdx := indexOfMask(args, denylist.AllDenyPaths()[0])
-	if maskIdx <= projectIdx {
+	if maskIdx := indexOfMask(args, secret); maskIdx <= projectIdx {
 		t.Errorf("deny mask (idx %d) must be emitted after the project bind (idx %d), got args: %v", maskIdx, projectIdx, args)
+	}
+}
+
+// policyDenyFixture creates a directory holding a secret directory and a
+// secret file that a policy denies, plus a public file that stays visible.
+func policyDenyFixture(t *testing.T) (root, secretDir, secretFile string) {
+	t.Helper()
+	root = t.TempDir()
+	secretDir = filepath.Join(root, "secrets")
+	secretFile = filepath.Join(root, "token.txt")
+	if err := os.Mkdir(secretDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, body := range map[string]string{
+		filepath.Join(secretDir, "secret.txt"): "TOPSECRET",
+		secretFile:                             "TOKEN",
+		filepath.Join(root, "public.txt"):      "PUBLIC",
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root, secretDir, secretFile
+}
+
+// TestBuildArgs_MasksCustomPolicyDenyPaths is the regression for the inverted
+// deny: a filesystem.deny entry that is NOT on the built-in credential list
+// used to fall through to the mount branch and be emitted as
+// `--ro-bind <path> <path>`, exposing exactly what the policy denied.
+func TestBuildArgs_MasksCustomPolicyDenyPaths(t *testing.T) {
+	t.Parallel()
+
+	_, secretDir, secretFile := policyDenyFixture(t)
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+
+	cfg := sandbox.SandboxConfig{
+		HookCategory: sandbox.CategoryLinter,
+		Network:      sandbox.NetworkPolicy{Mode: "deny"},
+		Deny:         []string{secretDir, secretFile, missing},
+	}
+
+	args, err := BuildArgs(&cfg, sandbox.TierFull)
+	if err != nil {
+		t.Fatalf("BuildArgs returned unexpected error: %v", err)
+	}
+
+	for _, p := range []string{secretDir, secretFile} {
+		if containsSequence(args, []string{"--ro-bind", p, p}) || containsSequence(args, []string{"--bind", p, p}) {
+			t.Errorf("policy deny path %q must never be bound, got args: %v", p, args)
+		}
+	}
+	if !containsSequence(args, []string{"--tmpfs", secretDir}) {
+		t.Errorf("expected denied directory masked with tmpfs, got args: %v", args)
+	}
+	if !containsSequence(args, []string{"--ro-bind", "/dev/null", secretFile}) {
+		t.Errorf("expected denied file masked with /dev/null, got args: %v", args)
+	}
+	if slices.Contains(args, missing) {
+		t.Errorf("a deny path absent on the host must not become a mount point, got args: %v", args)
+	}
+}
+
+// TestBuildArgs_MasksDenyPathUnderAncestorMount verifies that a deny entry
+// re-exposed through an extra mount of one of its ancestors is masked at the
+// location where that mount places it inside the sandbox.
+func TestBuildArgs_MasksDenyPathUnderAncestorMount(t *testing.T) {
+	t.Parallel()
+
+	root, secretDir, secretFile := policyDenyFixture(t)
+
+	cfg := sandbox.SandboxConfig{
+		HookCategory: sandbox.CategoryLinter,
+		Network:      sandbox.NetworkPolicy{Mode: "deny"},
+		Mounts:       []sandbox.MountSpec{{Source: root, Target: "/mnt/data", ReadOnly: true}},
+		Deny:         []string{secretDir, secretFile},
+	}
+
+	args, err := BuildArgs(&cfg, sandbox.TierFull)
+	if err != nil {
+		t.Fatalf("BuildArgs returned unexpected error: %v", err)
+	}
+
+	bindIdx := indexOfSequence(args, []string{"--ro-bind", root, "/mnt/data"})
+	if bindIdx < 0 {
+		t.Fatalf("expected ancestor mount, got args: %v", args)
+	}
+	if i := indexOfSequence(args, []string{"--tmpfs", "/mnt/data/secrets"}); i <= bindIdx {
+		t.Errorf("denied directory must be masked at its mounted location after the bind, got args: %v", args)
+	}
+	if i := indexOfSequence(args, []string{"--ro-bind", "/dev/null", "/mnt/data/token.txt"}); i <= bindIdx {
+		t.Errorf("denied file must be masked at its mounted location after the bind, got args: %v", args)
+	}
+}
+
+func TestBuildArgs_RejectsMountExposingPolicyDenyPath(t *testing.T) {
+	t.Parallel()
+
+	_, secretDir, _ := policyDenyFixture(t)
+
+	tests := []struct {
+		name  string
+		mount sandbox.MountSpec
+	}{
+		{"deny path itself elsewhere", sandbox.MountSpec{Source: secretDir, Target: "/mnt/s", ReadOnly: true}},
+		{"deny path itself in place", sandbox.MountSpec{Source: secretDir, Target: secretDir, ReadOnly: true}},
+		{"descendant of deny path", sandbox.MountSpec{Source: filepath.Join(secretDir, "secret.txt"), Target: "/mnt/s", ReadOnly: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := sandbox.SandboxConfig{
+				HookCategory: sandbox.CategoryLinter,
+				Mounts:       []sandbox.MountSpec{tt.mount},
+				Deny:         []string{secretDir},
+			}
+			if _, err := BuildArgs(&cfg, sandbox.TierFull); err == nil {
+				t.Errorf("expected an error for a mount exposing policy deny path %q", secretDir)
+			}
+		})
+	}
+}
+
+func TestBuildArgs_RejectsRelativeDenyPath(t *testing.T) {
+	t.Parallel()
+
+	cfg := sandbox.SandboxConfig{HookCategory: sandbox.CategoryLinter, Deny: []string{"secrets"}}
+	if _, err := BuildArgs(&cfg, sandbox.TierFull); err == nil {
+		t.Error("expected an error for a relative deny path, got nil")
+	}
+}
+
+// TestBuildArgs_NetworkModeIsAuthoritative is the regression for the network
+// OR: an explicit "deny" used to be ignored for categories whose default
+// allows the network, and "allow" was ignored nowhere but Landlock.
+func TestBuildArgs_NetworkModeIsAuthoritative(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		category     sandbox.HookCategory
+		mode         string
+		wantIsolated bool
+	}{
+		{"deny overrides test-runner default", sandbox.CategoryTestRunner, "deny", true},
+		{"deny overrides network-linter default", sandbox.CategoryNetworkLinter, "deny", true},
+		{"allow opens a linter", sandbox.CategoryLinter, "allow", false},
+		{"filtered shares the network", sandbox.CategoryTestRunner, "filtered", false},
+		{"empty mode uses category default (isolated)", sandbox.CategoryGenerator, "", true},
+		{"empty mode uses category default (network)", sandbox.CategoryTestRunner, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := sandbox.SandboxConfig{HookCategory: tt.category, Network: sandbox.NetworkPolicy{Mode: tt.mode}}
+			args, err := BuildArgs(&cfg, sandbox.TierFull)
+			if err != nil {
+				t.Fatalf("BuildArgs: %v", err)
+			}
+			if got := slices.Contains(args, "--unshare-net"); got != tt.wantIsolated {
+				t.Errorf("--unshare-net present = %v, want %v; args: %v", got, tt.wantIsolated, args)
+			}
+			resolv := containsSequence(args, []string{"--ro-bind", "/etc/resolv.conf", "/etc/resolv.conf"})
+			if resolv == tt.wantIsolated {
+				t.Errorf("resolv.conf mounted = %v, want %v", resolv, !tt.wantIsolated)
+			}
+			// Landlock's --deny-net must agree with bwrap's decision.
+			if got := slices.Contains(landlockFlags(&cfg), "--deny-net"); got != tt.wantIsolated {
+				t.Errorf("landlock --deny-net = %v, want %v", got, tt.wantIsolated)
+			}
+		})
 	}
 }
 

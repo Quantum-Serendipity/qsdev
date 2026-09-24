@@ -38,12 +38,12 @@ var allProbes = []ProbeRegistration{
 	// vulnerability (0.35)
 	{ID: "cve-critical", Category: "vulnerability", Weight: 0.35, Fn: probeCVECritical},
 	{ID: "cve-high", Category: "vulnerability", Weight: 0.35, Fn: probeCVEHigh},
-	{ID: "cve-medium", Category: "vulnerability", Weight: 0.35, Fn: stubProbe("cve-medium", "vulnerability", 0.35)},
-	{ID: "cve-low", Category: "vulnerability", Weight: 0.35, Fn: stubProbe("cve-low", "vulnerability", 0.35)},
-	{ID: "epss-max", Category: "vulnerability", Weight: 0.35, Fn: stubProbe("epss-max", "vulnerability", 0.35)},
+	{ID: "cve-medium", Category: "vulnerability", Weight: 0.35, Fn: probeCVEMedium},
+	{ID: "cve-low", Category: "vulnerability", Weight: 0.35, Fn: probeCVELow},
+	{ID: "epss-max", Category: "vulnerability", Weight: 0.35, Fn: probeEPSSMax},
 	{ID: "kev-listed", Category: "vulnerability", Weight: 0.35, Fn: probeKEVListed},
-	{ID: "reachable", Category: "vulnerability", Weight: 0.35, Ecosystems: []Ecosystem{EcosystemGo}, Fn: stubProbe("reachable", "vulnerability", 0.35)},
-	{ID: "fix-available", Category: "vulnerability", Weight: 0.35, Fn: stubProbe("fix-available", "vulnerability", 0.35)},
+	{ID: "reachable", Category: "vulnerability", Weight: 0.35, Ecosystems: []Ecosystem{EcosystemGo}, Fn: probeReachable},
+	{ID: "fix-available", Category: "vulnerability", Weight: 0.35, Fn: probeFixAvailable},
 
 	// popularity (0.08)
 	{ID: "download-count", Category: "popularity", Weight: 0.08, Fn: stubProbe("download-count", "popularity", 0.08)},
@@ -250,6 +250,111 @@ func probeCVEHigh(info *PackageInfo) ProbeResult {
 		Category: "vulnerability",
 		Status:   statusFromScore(score),
 		RawValue: float64(info.CVEHigh),
+		Weight:   0.35,
+		Score:    score,
+	}
+}
+
+// cveCountProbe scores a CVE count with a linear penalty per vulnerability,
+// floored at 0. Lower-severity CVEs carry a smaller per-CVE penalty than the
+// high-severity probe, but enough of them still fail the probe.
+func cveCountProbe(id string, info *PackageInfo, count, penaltyPerCVE int) ProbeResult {
+	if !info.VulnDataAvailable {
+		return vulnUnavailable(id)
+	}
+	score := float64(100 - min(count*penaltyPerCVE, 100))
+	return ProbeResult{
+		ProbeID:  id,
+		Category: "vulnerability",
+		Status:   statusFromScore(score),
+		RawValue: float64(count),
+		Weight:   0.35,
+		Score:    score,
+	}
+}
+
+func probeCVEMedium(info *PackageInfo) ProbeResult {
+	return cveCountProbe("cve-medium", info, info.CVEMedium, 15)
+}
+
+func probeCVELow(info *PackageInfo) ProbeResult {
+	return cveCountProbe("cve-low", info, info.CVELow, 5)
+}
+
+// probeEPSSMax scores the highest EPSS (probability of exploitation in the next
+// 30 days) among the package's known vulnerabilities.
+func probeEPSSMax(info *PackageInfo) ProbeResult {
+	if !info.VulnDataAvailable {
+		return vulnUnavailable("epss-max")
+	}
+	var score float64
+	switch {
+	case info.EPSSMax >= 0.5:
+		score = 0
+	case info.EPSSMax >= 0.1:
+		score = 30
+	case info.EPSSMax >= 0.01:
+		score = 70
+	default:
+		score = 100
+	}
+	return ProbeResult{
+		ProbeID:  "epss-max",
+		Category: "vulnerability",
+		Status:   statusFromScore(score),
+		RawValue: info.EPSSMax,
+		Weight:   0.35,
+		Score:    score,
+	}
+}
+
+// hasKnownVulns reports whether enrichment found any vulnerability.
+func hasKnownVulns(info *PackageInfo) bool {
+	return info.KEVListed || info.CVECritical+info.CVEHigh+info.CVEMedium+info.CVELow > 0
+}
+
+// probeFixAvailable scores remediability: a package with no known
+// vulnerabilities has nothing to fix, one whose vulnerabilities have a fixed
+// release can be upgraded, and one without a fix cannot be remediated.
+func probeFixAvailable(info *PackageInfo) ProbeResult {
+	if !info.VulnDataAvailable {
+		return vulnUnavailable("fix-available")
+	}
+	var score float64
+	switch {
+	case !hasKnownVulns(info):
+		score = 100
+	case info.FixAvailable:
+		score = 60
+	default:
+		score = 20
+	}
+	return ProbeResult{
+		ProbeID:  "fix-available",
+		Category: "vulnerability",
+		Status:   statusFromScore(score),
+		RawValue: boolToFloat(info.FixAvailable),
+		Weight:   0.35,
+		Score:    score,
+	}
+}
+
+// probeReachable scores whether a known vulnerability is reachable from the
+// project's code. Reachability is only known when an analysis (e.g.
+// govulncheck) populated PackageInfo.Reachable.
+func probeReachable(info *PackageInfo) ProbeResult {
+	if !info.VulnDataAvailable || info.Reachable == nil {
+		return vulnUnavailable("reachable")
+	}
+	score := 100.0
+	if *info.Reachable && hasKnownVulns(info) {
+		score = 0
+	}
+	return ProbeResult{
+		ProbeID:  "reachable",
+		Category: "vulnerability",
+		Status:   statusFromScore(score),
+		RawValue: boolToFloat(*info.Reachable),
 		Weight:   0.35,
 		Score:    score,
 	}

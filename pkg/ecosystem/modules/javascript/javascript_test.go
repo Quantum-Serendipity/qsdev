@@ -3,9 +3,13 @@ package javascript_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/javascript"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -192,7 +196,7 @@ func TestDevenvNixFragment_NPM(t *testing.T) {
 	m := &javascript.Module{}
 	config := ecosystem.ModuleConfig{
 		PackageManager: "npm",
-		Version:        "20.11.0",
+		Version:        "24.11.0",
 	}
 	fragment, err := m.DevenvNixFragment(config)
 	if err != nil {
@@ -202,8 +206,9 @@ func TestDevenvNixFragment_NPM(t *testing.T) {
 	requiredStrings := []string{
 		"languages.javascript",
 		"enable = true",
-		"pkgs.nodejs_20",
+		"package = pkgs.nodejs-slim_24;",
 		"npm.enable = true",
+		"npm.package = pkgs.nodejs-slim_24.npm;",
 	}
 	for _, s := range requiredStrings {
 		if !strings.Contains(fragment, s) {
@@ -211,7 +216,7 @@ func TestDevenvNixFragment_NPM(t *testing.T) {
 		}
 	}
 	// npm should NOT have pnpm/yarn/bun enables
-	for _, s := range []string{"pnpm.enable", "yarn.enable", "languages.bun"} {
+	for _, s := range []string{"pnpm.enable", "yarn.enable", "bun.enable", "WARNING"} {
 		if strings.Contains(fragment, s) {
 			t.Errorf("DevenvNixFragment() should not contain %q for npm\ngot:\n%s", s, fragment)
 		}
@@ -248,18 +253,45 @@ func TestDevenvNixFragment_Yarn(t *testing.T) {
 	m := &javascript.Module{}
 	config := ecosystem.ModuleConfig{
 		PackageManager: "yarn",
-		Version:        "v18.17.0",
+		Version:        "v22.17.0",
 	}
 	fragment, err := m.DevenvNixFragment(config)
 	if err != nil {
 		t.Fatalf("DevenvNixFragment() error: %v", err)
 	}
 
-	if !strings.Contains(fragment, "pkgs.nodejs_18") {
-		t.Errorf("expected pkgs.nodejs_18, got:\n%s", fragment)
+	if !strings.Contains(fragment, "pkgs.nodejs_22") {
+		t.Errorf("expected pkgs.nodejs_22, got:\n%s", fragment)
 	}
 	if !strings.Contains(fragment, "yarn.enable = true") {
 		t.Errorf("expected yarn.enable, got:\n%s", fragment)
+	}
+}
+
+// TestDevenvNixFragment_YarnFlavorPackage verifies W053: devenv's default
+// yarn package is Yarn Classic, which refuses to run in a Berry project and
+// never reads .yarnrc.yml, so Berry projects must get pkgs.yarn-berry.
+func TestDevenvNixFragment_YarnFlavorPackage(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		extras    map[string]string
+		wantBerry bool
+	}{
+		{"berry (default)", nil, true},
+		{"classic", map[string]string{javascript.ExtraYarnClassic: "true"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fragment, err := (&javascript.Module{}).DevenvNixFragment(ecosystem.ModuleConfig{PackageManager: "yarn", Extras: tt.extras})
+			if err != nil {
+				t.Fatalf("DevenvNixFragment() error: %v", err)
+			}
+			if got := strings.Contains(fragment, "yarn.package = pkgs.yarn-berry;"); got != tt.wantBerry {
+				t.Errorf("yarn-berry package = %v, want %v\ngot:\n%s", got, tt.wantBerry, fragment)
+			}
+		})
 	}
 }
 
@@ -273,12 +305,17 @@ func TestDevenvNixFragment_Bun(t *testing.T) {
 		t.Fatalf("DevenvNixFragment() error: %v", err)
 	}
 
-	if !strings.Contains(fragment, "languages.bun.enable = true") {
-		t.Errorf("expected languages.bun.enable, got:\n%s", fragment)
+	// W052: devenv has no languages.bun module; Bun lives under
+	// languages.javascript.bun.
+	if !strings.Contains(fragment, "    bun.enable = true;") {
+		t.Errorf("expected bun.enable inside languages.javascript, got:\n%s", fragment)
+	}
+	if strings.Contains(fragment, "languages.bun") {
+		t.Errorf("fragment must not use the nonexistent languages.bun option, got:\n%s", fragment)
 	}
 	// Default version package
-	if !strings.Contains(fragment, "pkgs.nodejs_22") {
-		t.Errorf("expected default pkgs.nodejs_22 for bun, got:\n%s", fragment)
+	if !strings.Contains(fragment, "pkgs.nodejs_24") {
+		t.Errorf("expected default pkgs.nodejs_24 for bun, got:\n%s", fragment)
 	}
 }
 
@@ -301,30 +338,159 @@ func TestDevenvNixFragment_TypeScript(t *testing.T) {
 func TestDevenvNixFragment_VersionMapping(t *testing.T) {
 	m := &javascript.Module{}
 
+	// W055/W142: only majors packaged in nixpkgs (22, 24, 26) may be
+	// emitted; ranges resolve to the newest LTS (24) when accepted, else the
+	// newest accepted major, and any substitution is noted in the fragment
+	// rather than made silently.
 	tests := []struct {
 		version  string
 		expected string
+		wantNote bool
 	}{
-		{"18.17.0", "pkgs.nodejs_18"},
-		{">=20", "pkgs.nodejs_20"},
-		{"v22.1.0", "pkgs.nodejs_22"},
-		{"^24.0.0", "pkgs.nodejs_24"},
-		{"", "pkgs.nodejs_22"},       // default
-		{"16.0.0", "pkgs.nodejs_22"}, // unmapped -> default
+		{"", "pkgs.nodejs_24", false}, // default: newest LTS
+		// Open ranges prefer the newest LTS over a newer "Current" major.
+		{">=18", "pkgs.nodejs_24", false},
+		{">= 18", "pkgs.nodejs_24", false},
+		{"^18.18.0 || >=20", "pkgs.nodejs_24", false},
+		{"*", "pkgs.nodejs_24", false},
+		{">=25", "pkgs.nodejs_26", false},
+		{"^22 || ^26", "pkgs.nodejs_26", false},
+		{">=20 <25", "pkgs.nodejs_24", false},
+		{">18 <24", "pkgs.nodejs_22", false},
+		{"<24.0.0", "pkgs.nodejs_22", false},
+		{"22.x", "pkgs.nodejs_22", false},
+		{"20 - 22", "pkgs.nodejs_22", false},
+		{"v22.1.0", "pkgs.nodejs_22", false},
+		{"^24.0.0", "pkgs.nodejs_24", false},
+		{"26", "pkgs.nodejs_26", false},
+		{"lts/*", "pkgs.nodejs_24", false},
+		{"lts/krypton", "pkgs.nodejs_24", false},
+		{"node", "pkgs.nodejs_26", false},
+		{"18.17.0", "pkgs.nodejs_22", true}, // removed from nixpkgs
+		{"20", "pkgs.nodejs_22", true},      // throws in nixpkgs
+		{"lts/iron", "pkgs.nodejs_22", true},
+		{"25", "pkgs.nodejs_26", true},
+		{"27", "pkgs.nodejs_26", true},
+		{"banana", "pkgs.nodejs_24", true},
 	}
 
 	for _, tt := range tests {
 		t.Run("version_"+tt.version, func(t *testing.T) {
 			config := ecosystem.ModuleConfig{
-				PackageManager: "npm",
+				PackageManager: "pnpm",
 				Version:        tt.version,
 			}
 			fragment, err := m.DevenvNixFragment(config)
 			if err != nil {
 				t.Fatalf("DevenvNixFragment() error: %v", err)
 			}
-			if !strings.Contains(fragment, tt.expected) {
+			if !strings.Contains(fragment, "package = "+tt.expected+";") {
 				t.Errorf("version %q: expected %q in fragment\ngot:\n%s", tt.version, tt.expected, fragment)
+			}
+			for _, removed := range []string{"nodejs_18", "nodejs_20", "nodejs_25"} {
+				if strings.Contains(fragment, "pkgs."+removed) {
+					t.Errorf("version %q: fragment references removed pkgs.%s\ngot:\n%s", tt.version, removed, fragment)
+				}
+			}
+			if gotNote := strings.HasPrefix(fragment, "  # "); gotNote != tt.wantNote {
+				t.Errorf("version %q: substitution note = %v, want %v\ngot:\n%s", tt.version, gotNote, tt.wantNote, fragment)
+			}
+		})
+	}
+}
+
+// TestDevenvNixFragment_NPMPackage verifies W054: npm 10 (bundled with
+// Node.js 22) ignores min-release-age, so an npm project gets an npm >= 11.10
+// whatever its Node.js major, and the slim Node.js so the bundled npm is not
+// also on PATH. Other package managers keep the full Node.js package.
+func TestDevenvNixFragment_NPMPackage(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		version  string
+		pm       string
+		wantNode string
+		wantNpm  string // empty: no npm.package line
+	}{
+		{"default node", "", "npm", "pkgs.nodejs-slim_24", "pkgs.nodejs-slim_24.npm"},
+		{"node 22 takes node 24 npm", "22", "npm", "pkgs.nodejs-slim_22", "pkgs.nodejs-slim_24.npm"},
+		{"EOL node 20 maps to 22", "20", "npm", "pkgs.nodejs-slim_22", "pkgs.nodejs-slim_24.npm"},
+		{"node 24", "24", "npm", "pkgs.nodejs-slim_24", "pkgs.nodejs-slim_24.npm"},
+		{"node 26 keeps its newer npm", "26", "npm", "pkgs.nodejs-slim_26", "pkgs.nodejs-slim_26.npm"},
+		{"unset package manager is npm", "22", "", "pkgs.nodejs-slim_22", "pkgs.nodejs-slim_24.npm"},
+		{"pnpm has its own age gate", "22", "pnpm", "pkgs.nodejs_22", ""},
+		{"yarn", "22", "yarn", "pkgs.nodejs_22", ""},
+		{"bun", "", "bun", "pkgs.nodejs_24", ""},
+	}
+	m := &javascript.Module{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fragment, err := m.DevenvNixFragment(ecosystem.ModuleConfig{PackageManager: tt.pm, Version: tt.version})
+			if err != nil {
+				t.Fatalf("DevenvNixFragment() error: %v", err)
+			}
+			if want := "    package = " + tt.wantNode + ";\n"; !strings.Contains(fragment, want) {
+				t.Errorf("missing %q\ngot:\n%s", want, fragment)
+			}
+			gotNpm := strings.Contains(fragment, "npm.package = ")
+			if tt.wantNpm == "" {
+				if gotNpm {
+					t.Errorf("unexpected npm.package for %s\ngot:\n%s", tt.pm, fragment)
+				}
+				return
+			}
+			if want := "    npm.package = " + tt.wantNpm + ";\n"; !strings.Contains(fragment, want) {
+				t.Errorf("missing %q\ngot:\n%s", want, fragment)
+			}
+			if strings.Contains(fragment, "WARNING") {
+				t.Errorf("npm project must not be warned about an inert age gate\ngot:\n%s", fragment)
+			}
+		})
+	}
+}
+
+// TestNPMSecurityConfig_AgeGateRequirement verifies the generated .npmrc
+// states the npm version min-release-age needs, for every Node.js major.
+func TestNPMSecurityConfig_AgeGateRequirement(t *testing.T) {
+	t.Parallel()
+	m := &javascript.Module{}
+	for _, version := range []string{"", "22", "24"} {
+		t.Run("node_"+version, func(t *testing.T) {
+			t.Parallel()
+			npmrc := string(m.SecurityConfigs(ecosystem.ModuleConfig{PackageManager: "npm", Version: version})[0].Content)
+			for _, want := range []string{"# Requires: npm >= 11.10.0 for min-release-age", "min-release-age=3\n"} {
+				if !strings.Contains(npmrc, want) {
+					t.Errorf(".npmrc missing %q\ngot:\n%s", want, npmrc)
+				}
+			}
+			if strings.Contains(npmrc, "NOT enforced") {
+				t.Errorf(".npmrc still claims the age gate is inert\ngot:\n%s", npmrc)
+			}
+		})
+	}
+}
+
+// TestToolchainRequirements verifies W054's probe: npm projects require an
+// npm that knows min-release-age; other package managers need no probe.
+func TestToolchainRequirements(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		pm   string
+		want []ecosystem.ToolchainRequirement
+	}{
+		{"npm", []ecosystem.ToolchainRequirement{{Binary: "npm", VersionArg: "--version", MinVersion: "11.10.0", Setting: ".npmrc min-release-age"}}},
+		{"", []ecosystem.ToolchainRequirement{{Binary: "npm", VersionArg: "--version", MinVersion: "11.10.0", Setting: ".npmrc min-release-age"}}},
+		{"pnpm", nil},
+		{"yarn", nil},
+		{"bun", nil},
+	}
+	for _, tt := range tests {
+		t.Run("pm_"+tt.pm, func(t *testing.T) {
+			t.Parallel()
+			got := (&javascript.Module{}).ToolchainRequirements(ecosystem.ModuleConfig{PackageManager: tt.pm})
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ToolchainRequirements(%q) = %+v, want %+v", tt.pm, got, tt.want)
 			}
 		})
 	}
@@ -344,8 +510,8 @@ func TestSecurityConfigs_NPM(t *testing.T) {
 	if cfg.Path != ".npmrc" {
 		t.Errorf("Path = %q, want %q", cfg.Path, ".npmrc")
 	}
-	if cfg.Strategy != types.Overwrite {
-		t.Errorf("Strategy = %v, want Overwrite", cfg.Strategy)
+	if cfg.Strategy != types.Skip {
+		t.Errorf("Strategy = %v, want Skip (user-owned config must not be replaced)", cfg.Strategy)
 	}
 
 	content := string(cfg.Content)
@@ -382,8 +548,8 @@ func TestSecurityConfigs_PNPM(t *testing.T) {
 	if cfg.Path != "pnpm-workspace.yaml" {
 		t.Errorf("Path = %q, want %q", cfg.Path, "pnpm-workspace.yaml")
 	}
-	if cfg.Strategy != types.Overwrite {
-		t.Errorf("Strategy = %v, want Overwrite", cfg.Strategy)
+	if cfg.Strategy != types.Skip {
+		t.Errorf("Strategy = %v, want Skip (user-owned config must not be replaced)", cfg.Strategy)
 	}
 
 	content := string(cfg.Content)
@@ -422,13 +588,12 @@ func TestSecurityConfigs_Yarn(t *testing.T) {
 	if cfg.Path != ".yarnrc.yml" {
 		t.Errorf("Path = %q, want %q", cfg.Path, ".yarnrc.yml")
 	}
-	if cfg.Strategy != types.Overwrite {
-		t.Errorf("Strategy = %v, want Overwrite", cfg.Strategy)
+	if cfg.Strategy != types.Skip {
+		t.Errorf("Strategy = %v, want Skip (user-owned config must not be replaced)", cfg.Strategy)
 	}
 
 	content := string(cfg.Content)
 	requiredStrings := []string{
-		"enableImmutableInstalls",
 		"enableHardenedMode",
 		"enableScripts",
 		"false",
@@ -443,7 +608,12 @@ func TestSecurityConfigs_Yarn(t *testing.T) {
 	if !strings.Contains(content, "Security-hardened") {
 		t.Errorf(".yarnrc.yml missing header comment\ncontent:\n%s", content)
 	}
-	if !strings.Contains(content, "Yarn >= 4.10.0") {
+	// W066: npmMinimalAgeGate arrived in Yarn 4.12, and a committed
+	// enableImmutableInstalls breaks every local install after a manifest edit.
+	if strings.Contains(content, "enableImmutableInstalls") {
+		t.Errorf(".yarnrc.yml must not force immutable installs locally\ncontent:\n%s", content)
+	}
+	if !strings.Contains(content, "Yarn >= 4.12") {
 		t.Errorf(".yarnrc.yml missing version requirement comment\ncontent:\n%s", content)
 	}
 }
@@ -460,14 +630,14 @@ func TestSecurityConfigs_Bun(t *testing.T) {
 	if cfg.Path != "bunfig.toml" {
 		t.Errorf("Path = %q, want %q", cfg.Path, "bunfig.toml")
 	}
-	if cfg.Strategy != types.Overwrite {
-		t.Errorf("Strategy = %v, want Overwrite", cfg.Strategy)
+	if cfg.Strategy != types.Skip {
+		t.Errorf("Strategy = %v, want Skip (user-owned config must not be replaced)", cfg.Strategy)
 	}
 
 	content := string(cfg.Content)
 	requiredStrings := []string{
 		"[install]",
-		`minimumReleaseAge = "7d"`,
+		"minimumReleaseAge = 604800\n",
 	}
 	for _, s := range requiredStrings {
 		if !strings.Contains(content, s) {
@@ -544,8 +714,12 @@ func TestSecurityConfigs_PNPM_RegistryProxy(t *testing.T) {
 	}
 
 	content := string(configs[0].Content)
-	if !strings.Contains(content, "npmRegistryServer") {
-		t.Errorf("pnpm-workspace.yaml missing npmRegistryServer when proxy is set\ncontent:\n%s", content)
+	// W056: npmRegistryServer is a Yarn key; pnpm reads `registry`.
+	if !strings.Contains(content, "\nregistry: "+proxy) {
+		t.Errorf("pnpm-workspace.yaml missing registry when proxy is set\ncontent:\n%s", content)
+	}
+	if strings.Contains(content, "npmRegistryServer") {
+		t.Errorf("pnpm-workspace.yaml uses the Yarn-only npmRegistryServer key\ncontent:\n%s", content)
 	}
 	if !strings.Contains(content, proxy) {
 		t.Errorf("pnpm-workspace.yaml missing proxy URL\ncontent:\n%s", content)
@@ -588,7 +762,7 @@ func TestSecurityConfigs_Yarn_RegistryProxy(t *testing.T) {
 		t.Errorf(".yarnrc.yml missing proxy URL\ncontent:\n%s", content)
 	}
 	// Existing security settings must be preserved.
-	for _, s := range []string{"enableImmutableInstalls", "enableHardenedMode", "enableScripts", "npmMinimalAgeGate"} {
+	for _, s := range []string{"enableHardenedMode", "enableScripts", "npmMinimalAgeGate"} {
 		if !strings.Contains(content, s) {
 			t.Errorf(".yarnrc.yml missing %q when proxy is set\ncontent:\n%s", s, content)
 		}
@@ -609,7 +783,10 @@ func TestSecurityConfigs_Yarn_NoRegistryProxy(t *testing.T) {
 
 func TestPreCommitHooks(t *testing.T) {
 	m := &javascript.Module{}
-	hooks := m.PreCommitHooks(ecosystem.ModuleConfig{})
+	hooks := m.PreCommitHooks(ecosystem.ModuleConfig{Extras: map[string]string{
+		javascript.ExtraPrettier: "node_modules",
+		javascript.ExtraESLint:   "nix",
+	}})
 
 	if len(hooks) != 2 {
 		t.Fatalf("PreCommitHooks() returned %d hooks, want 2", len(hooks))
@@ -638,9 +815,10 @@ func TestDenyRules(t *testing.T) {
 	m := &javascript.Module{}
 	rules := m.DenyRules(ecosystem.ModuleConfig{})
 
-	// Only npx + pipe-to-shell patterns remain (package installs moved to ask).
-	if len(rules) != 5 {
-		t.Fatalf("DenyRules() returned %d rules, want 5 (npx + 4 pipe-to-shell)", len(rules))
+	// Remote package executors + pipe-to-shell patterns (package installs
+	// moved to ask).
+	if len(rules) != 24 {
+		t.Fatalf("DenyRules() returned %d rules, want 24 (20 remote-exec + 4 pipe-to-shell)", len(rules))
 	}
 
 	expectedPatterns := []string{
@@ -664,68 +842,132 @@ func TestDenyRules(t *testing.T) {
 	}
 }
 
+// TestDenyRules_RemotePackageExecutors checks that every package manager's
+// equivalent of npx is hard-denied. Denying npx alone is trivially bypassed.
+func TestDenyRules_RemotePackageExecutors(t *testing.T) {
+	t.Parallel()
+	rules := (&javascript.Module{}).DenyRules(ecosystem.ModuleConfig{})
+	for _, cmd := range []string{
+		"npx evil-pkg",
+		"pnpm dlx some-typosquat@latest",
+		"pnpx evil-pkg",
+		"yarn dlx evil-pkg",
+		"bunx evil-pkg",
+		"bun x evil-pkg",
+		"npm exec evil-pkg",
+		"npm x evil-pkg",
+		// W065: deno fetches and runs npm/JSR packages just like npx.
+		"deno x evil-pkg",
+		"deno x npm:evil-pkg",
+		"deno run npm:evil-cli@latest",
+		"deno run -A npm:evil-cli@latest",
+		"deno run --allow-all jsr:@evil/cli",
+		"deno serve -A jsr:@evil/server",
+		"deno npm:evil-cli",
+		"deno jsr:@evil/cli",
+		"deno -A npm:evil-cli",
+		"deno --allow-all jsr:@evil/cli",
+		"deno -q run -A npm:evil-cli",
+		"deno -L debug x npm:evil-pkg",
+		"deno -q x evil-pkg",
+		"deno --log-level=debug x @evil/cli",
+		"deno watch -A npm:evil-cli",
+		"deno watch jsr:@evil/cli",
+	} {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			if !slices.ContainsFunc(rules, func(r string) bool { return bashRuleMatches(r, cmd) }) {
+				t.Errorf("no deny rule matches %q; rules: %v", cmd, rules)
+			}
+		})
+	}
+	// Running a local script stays allowed.
+	for _, cmd := range []string{"deno run main.ts", "deno run -A scripts/build.ts", "deno serve main.ts", "deno main.ts", "deno -A main.ts", "deno -q run main.ts", "deno watch main.ts", "npm run build"} {
+		if slices.ContainsFunc(rules, func(r string) bool { return bashRuleMatches(r, cmd) }) {
+			t.Errorf("a deny rule matches the local command %q; rules: %v", cmd, rules)
+		}
+	}
+}
+
+// TestDenyRules_MatchCatalog keeps the module's hard-deny list in sync with
+// the catalog deny sets every permission preset applies.
+func TestDenyRules_MatchCatalog(t *testing.T) {
+	t.Parallel()
+	cat, err := catalog.LoadEmbeddedOnly()
+	if err != nil {
+		t.Fatalf("LoadEmbeddedOnly() error: %v", err)
+	}
+	rules := (&javascript.Module{}).DenyRules(ecosystem.ModuleConfig{})
+	for _, set := range []string{"npx", "remote_package_exec"} {
+		catRules := cat.PermissionDenyRules(set)
+		if len(catRules) == 0 {
+			t.Fatalf("catalog deny set %q is empty", set)
+		}
+		for _, r := range catRules {
+			if !slices.Contains(rules, r) {
+				t.Errorf("catalog %s rule %q missing from DenyRules()", set, r)
+			}
+		}
+	}
+}
+
+// bashRuleMatches reports whether a "Bash(<pattern>)" rule matches cmd, with
+// each "*" in the pattern matching any run of characters.
+func bashRuleMatches(rule, cmd string) bool {
+	inner, ok := strings.CutPrefix(rule, "Bash(")
+	if !ok {
+		return false
+	}
+	inner = strings.TrimSuffix(inner, ")")
+	re := "^" + strings.ReplaceAll(regexp.QuoteMeta(inner), `\*`, ".*") + "$"
+	return regexp.MustCompile(re).MatchString(cmd)
+}
+
 // --- CICommands tests ---
 
-func TestCICommands_NPM(t *testing.T) {
-	m := &javascript.Module{}
-	cmds := m.CICommands(ecosystem.ModuleConfig{PackageManager: "npm"})
+// TestCICommands verifies the per-package-manager CI steps: a frozen,
+// lock-enforcing install, and for npm an `npm audit` scan step. The .npmrc
+// audit-level only sets `npm audit`'s exit code (installs never fail on
+// audit results), so CI must run `npm audit` for it to gate anything (W067).
+func TestCICommands(t *testing.T) {
+	t.Parallel()
+	install := func(cmd string) ecosystem.CICommand {
+		return ecosystem.CICommand{Command: cmd, Phase: ecosystem.CIPhaseInstall}
+	}
+	npmAudit := ecosystem.CICommand{Command: "npm audit --audit-level=moderate", Phase: ecosystem.CIPhaseScan}
 
-	if len(cmds) != 1 {
-		t.Fatalf("CICommands() returned %d commands, want 1", len(cmds))
+	tests := []struct {
+		name   string
+		config ecosystem.ModuleConfig
+		want   []ecosystem.CICommand
+	}{
+		{"npm", ecosystem.ModuleConfig{PackageManager: "npm"}, []ecosystem.CICommand{install("npm ci --ignore-scripts"), npmAudit}},
+		{"default is npm", ecosystem.ModuleConfig{}, []ecosystem.CICommand{install("npm ci --ignore-scripts"), npmAudit}},
+		{"pnpm", ecosystem.ModuleConfig{PackageManager: "pnpm"}, []ecosystem.CICommand{install("pnpm install --frozen-lockfile")}},
+		{"yarn berry", ecosystem.ModuleConfig{PackageManager: "yarn"}, []ecosystem.CICommand{install("yarn install --immutable")}},
+		{
+			"yarn classic",
+			ecosystem.ModuleConfig{PackageManager: "yarn", Extras: map[string]string{javascript.ExtraYarnClassic: "true"}},
+			[]ecosystem.CICommand{install("yarn install --frozen-lockfile --ignore-scripts")},
+		},
+		{"bun", ecosystem.ModuleConfig{PackageManager: "bun"}, []ecosystem.CICommand{install("bun install --frozen-lockfile")}},
 	}
-	if cmds[0].Command != "npm ci --ignore-scripts" {
-		t.Errorf("Command = %q, want %q", cmds[0].Command, "npm ci --ignore-scripts")
-	}
-	if cmds[0].Phase != ecosystem.CIPhaseInstall {
-		t.Errorf("Phase = %v, want CIPhaseInstall", cmds[0].Phase)
-	}
-}
-
-func TestCICommands_PNPM(t *testing.T) {
-	m := &javascript.Module{}
-	cmds := m.CICommands(ecosystem.ModuleConfig{PackageManager: "pnpm"})
-
-	if len(cmds) != 1 {
-		t.Fatalf("CICommands() returned %d commands, want 1", len(cmds))
-	}
-	if cmds[0].Command != "pnpm install --frozen-lockfile" {
-		t.Errorf("Command = %q, want %q", cmds[0].Command, "pnpm install --frozen-lockfile")
-	}
-}
-
-func TestCICommands_Yarn(t *testing.T) {
-	m := &javascript.Module{}
-	cmds := m.CICommands(ecosystem.ModuleConfig{PackageManager: "yarn"})
-
-	if len(cmds) != 1 {
-		t.Fatalf("CICommands() returned %d commands, want 1", len(cmds))
-	}
-	if cmds[0].Command != "yarn install --immutable" {
-		t.Errorf("Command = %q, want %q", cmds[0].Command, "yarn install --immutable")
-	}
-}
-
-func TestCICommands_Bun(t *testing.T) {
-	m := &javascript.Module{}
-	cmds := m.CICommands(ecosystem.ModuleConfig{PackageManager: "bun"})
-
-	if len(cmds) != 1 {
-		t.Fatalf("CICommands() returned %d commands, want 1", len(cmds))
-	}
-	if cmds[0].Command != "bun install --frozen-lockfile" {
-		t.Errorf("Command = %q, want %q", cmds[0].Command, "bun install --frozen-lockfile")
-	}
-}
-
-func TestCICommands_DefaultPM(t *testing.T) {
-	m := &javascript.Module{}
-	cmds := m.CICommands(ecosystem.ModuleConfig{})
-
-	if len(cmds) != 1 {
-		t.Fatalf("CICommands() returned %d commands, want 1", len(cmds))
-	}
-	if cmds[0].Command != "npm ci --ignore-scripts" {
-		t.Errorf("default CICommands should use npm ci --ignore-scripts, got %q", cmds[0].Command)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := (&javascript.Module{}).CICommands(tt.config)
+			if len(got) != len(tt.want) {
+				t.Fatalf("CICommands() = %+v, want %d commands", got, len(tt.want))
+			}
+			for i, want := range tt.want {
+				if got[i].Command != want.Command || got[i].Phase != want.Phase {
+					t.Errorf("command %d = %q (%v), want %q (%v)", i, got[i].Command, got[i].Phase, want.Command, want.Phase)
+				}
+				if got[i].Name == "" || got[i].Description == "" {
+					t.Errorf("command %d %q lacks a name or description", i, got[i].Command)
+				}
+			}
+		})
 	}
 }
 
@@ -742,13 +984,11 @@ func TestPackageManagers(t *testing.T) {
 	expectedPMs := []struct {
 		name     string
 		lockFile string
-		frozen   string
-		ageGate  bool
 	}{
-		{"npm", "package-lock.json", "npm ci", true},
-		{"pnpm", "pnpm-lock.yaml", "pnpm install --frozen-lockfile", true},
-		{"yarn", "yarn.lock", "yarn install --immutable", true},
-		{"bun", "bun.lock", "bun install --frozen-lockfile", true},
+		{"npm", "package-lock.json"},
+		{"pnpm", "pnpm-lock.yaml"},
+		{"yarn", "yarn.lock"},
+		{"bun", "bun.lock"},
 	}
 
 	for i, expected := range expectedPMs {
@@ -758,12 +998,6 @@ func TestPackageManagers(t *testing.T) {
 		}
 		if pm.LockFile != expected.lockFile {
 			t.Errorf("pms[%d].LockFile = %q, want %q", i, pm.LockFile, expected.lockFile)
-		}
-		if pm.FrozenInstallCommand != expected.frozen {
-			t.Errorf("pms[%d].FrozenInstallCommand = %q, want %q", i, pm.FrozenInstallCommand, expected.frozen)
-		}
-		if pm.AgeGatingSupport != expected.ageGate {
-			t.Errorf("pms[%d].AgeGatingSupport = %v, want %v", i, pm.AgeGatingSupport, expected.ageGate)
 		}
 		if pm.InstallCommand == "" {
 			t.Errorf("pms[%d].InstallCommand should not be empty", i)
@@ -777,12 +1011,17 @@ func TestWizardFields(t *testing.T) {
 	m := &javascript.Module{}
 	fields := m.WizardFields()
 
-	if len(fields) != 2 {
-		t.Fatalf("WizardFields() returned %d fields, want 2", len(fields))
+	if len(fields) != 3 {
+		t.Fatalf("WizardFields() returned %d fields, want 3", len(fields))
+	}
+
+	// Node.js version field
+	if fields[0].Key != types.SettingVersion || fields[0].Type != ecosystem.FieldTypeInput {
+		t.Errorf("fields[0] = %q (%v), want the %q input", fields[0].Key, fields[0].Type, types.SettingVersion)
 	}
 
 	// package_manager field
-	pmField := fields[0]
+	pmField := fields[1]
 	if pmField.Key != "package_manager" {
 		t.Errorf("fields[0].Key = %q, want %q", pmField.Key, "package_manager")
 	}
@@ -805,12 +1044,12 @@ func TestWizardFields(t *testing.T) {
 	}
 
 	// typescript field
-	tsField := fields[1]
+	tsField := fields[2]
 	if tsField.Key != "typescript" {
-		t.Errorf("fields[1].Key = %q, want %q", tsField.Key, "typescript")
+		t.Errorf("fields[2].Key = %q, want %q", tsField.Key, "typescript")
 	}
 	if tsField.Type != ecosystem.FieldTypeConfirm {
-		t.Errorf("fields[1].Type = %v, want FieldTypeConfirm", tsField.Type)
+		t.Errorf("fields[2].Type = %v, want FieldTypeConfirm", tsField.Type)
 	}
 }
 
@@ -831,7 +1070,11 @@ func TestRegistration(t *testing.T) {
 
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+	path := filepath.Join(dir, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

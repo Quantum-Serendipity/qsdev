@@ -8,7 +8,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/projectctx"
 	// The framework adapters are registered into spi.DefaultRegistry() once by this
-	// package's TestMain (adapters_register_test.go), mirroring cmd/qsdev/main.go's
+	// package's TestMain (adapters_register_test.go), mirroring instance/runtime.go's
 	// explicit wiring; the server under test reads that registry.
 )
 

@@ -10,19 +10,17 @@ argument-hint: "[--profile <name>] [--yes]"
 
 ## Current Environment
 
-!`qsdev devenv doctor --json 2>/dev/null || echo '{"installed": false}'`
+!`qsdev devenv doctor --json 2>/dev/null || echo "ERROR: 'qsdev devenv doctor --json' exited with status $?. Any output above may be partial; do not treat missing data as empty."`
 
 !`ls -la`
 
-!`qsdev detect --json 2>/dev/null || echo '{"ecosystems": []}'`
-
 ## Instructions
 
-1. **Check prerequisites**: Verify qsdev is installed from the doctor output above. If `installed` is false, tell the user to install qsdev first and stop.
+1. **Check prerequisites**: Verify qsdev is installed from the doctor output above. If the doctor command failed because qsdev is not installed, tell the user to install qsdev first and stop.
 
-2. **Review detected ecosystems**: Present the ecosystems detected above to the user. Confirm that the detection looks correct and ask if any adjustments are needed.
+2. **Review detected ecosystems**: Identify the project's ecosystems from the manifest and lock files in the listing above (use Glob for nested manifests) and present them to the user. Confirm that the detection looks correct and ask if any adjustments are needed.
 
-3. **Dry run first**: Run `qsdev init --dry-run --json` to preview what will be generated. If the user provided `--profile`, pass it through. Present the planned changes to the user:
+3. **Dry run first**: Run `qsdev init --dry-run` to preview what will be generated. If the user provided `--profile`, pass it through. Present the planned changes to the user:
    - Files that will be created or modified
    - Ecosystems that will be configured
    - Security tools that will be enabled

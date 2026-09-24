@@ -121,7 +121,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Language:      "system",
 			Types:         []string{"dart"},
 			Stages:        []string{"pre-commit"},
-			PassFilenames: false,
+			PassFilenames: true, // the formatter needs file operands
 			BuiltIn:       false,
 			NixPackage:    "dart",
 		},
@@ -131,10 +131,19 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // DenyRules returns Claude Code deny-rule patterns for the Dart ecosystem.
 // These prevent direct dependency additions outside of controlled workflows.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	return []string{
-		"Bash(dart pub add *)",
-		"Bash(flutter pub add *)",
+	var rules []string
+	for _, tool := range []string{"dart", "flutter"} {
+		rules = append(rules,
+			"Bash("+tool+" pub add *)",
+			// upgrade/downgrade re-resolve and rewrite pubspec.lock.
+			"Bash("+tool+" pub upgrade*)",
+			"Bash("+tool+" pub downgrade*)",
+			// global activate installs and runs arbitrary executables,
+			// including from --source git URLs.
+			"Bash("+tool+" pub global activate *)",
+		)
 	}
+	return rules
 }
 
 // CICommands returns CI pipeline commands for the Dart ecosystem.
@@ -159,10 +168,8 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "pub",
-			LockFile:             "pubspec.lock",
-			FrozenInstallCommand: "dart pub get --enforce-lockfile",
-			AgeGatingSupport:     false,
+			Name:     "pub",
+			LockFile: "pubspec.lock",
 		},
 	}
 }
@@ -171,7 +178,7 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return []ecosystem.WizardField{
 		{
-			Key:         "dart_flutter",
+			Key:         "flutter",
 			Label:       "Flutter support",
 			Description: "Enable Flutter SDK alongside Dart",
 			Type:        ecosystem.FieldTypeConfirm,

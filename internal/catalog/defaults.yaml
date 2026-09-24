@@ -77,63 +77,10 @@ compliance:
             - semgrep
             - license-compliance
         mcp_server_policy: explicit-only
-        claude_permission_level: restricted
+        claude_permission_level: minimal
         claude_audit_log: true
         sbom_policy: every-build
         license_scanning: true
-profiles:
-    full:
-        tier: full
-        description: 'Full tooling: MCP servers, agent tools, consulting workflows, AlwaysOn tools'
-        security:
-            level: enhanced
-            age_gating: true
-            script_blocking: true
-            lock_enforcement: true
-            vuln_scanning: true
-        tools:
-            enabled:
-                - semgrep
-                - gitleaks
-                - secretspec
-        claude_code:
-            enabled: true
-            permission_level: standard
-            mcp_servers:
-                - context7
-                - github
-    standard:
-        tier: standard
-        description: Supply chain deny rules + Claude Code governance + CLAUDE.md + gitleaks
-        security:
-            level: baseline
-            age_gating: true
-            script_blocking: true
-            lock_enforcement: true
-            vuln_scanning: true
-        tools:
-            enabled:
-                - gitleaks
-        claude_code:
-            enabled: true
-            permission_level: standard
-    supply-chain-only:
-        tier: supply-chain-only
-        description: Package supply chain security + devenv sandbox; no Claude Code restrictions
-        security:
-            level: baseline
-            age_gating: true
-            script_blocking: true
-            lock_enforcement: true
-            vuln_scanning: true
-        tools:
-            enabled: []
-        claude_code:
-            enabled: true
-            permission_level: supply-chain-only
-profile_aliases:
-    consulting-default: full
-    startup-fast: standard
 project_profiles:
     dotnet-web:
         description: '.NET web service: .NET, PostgreSQL, Redis, direnv, Claude Code (standard)'
@@ -346,7 +293,7 @@ tools:
     branch-naming:
         display_name: Branch Naming Convention
         category: devex
-        description: Pre-push hook enforcing branch naming conventions (feat|fix|chore|docs|refactor|test|ci/<description>)
+        description: Pre-push hook enforcing the git.branch_pattern branch naming pattern from .qsdev.yaml (default accepts any portable ASCII branch name)
         default_policy: always-on
         owned_files:
             - path: devenv.nix
@@ -457,6 +404,9 @@ tools:
         category: ai-agent
         description: Client handoff documentation synthesis
         default_policy: opt-in
+        # The skill runs in the handoff-doc-generator subagent (SKILL.md "agent:").
+        prerequisites:
+            - consulting-agent-handoff-doc-generator
         owned_files:
             - path: .claude/skills/handoff-doc/SKILL.md
               ownership: exclusive
@@ -481,6 +431,9 @@ tools:
         category: ai-agent
         description: Systematic codebase onboarding via exploration agent
         default_policy: opt-in
+        # The skill runs in the codebase-explorer subagent (SKILL.md "agent:").
+        prerequisites:
+            - consulting-agent-codebase-explorer
         owned_files:
             - path: .claude/skills/onboard-me/SKILL.md
               ownership: exclusive
@@ -572,25 +525,37 @@ tools:
     license-compliance:
         display_name: License Compliance (ScanCode)
         category: security
-        description: License compliance checking via ScanCode with SPDX allowlist/blocklist policies
+        description: License compliance scanning via ScanCode with an approved/restricted/prohibited license policy
         default_policy: opt-in
+        nix_package: python3Packages.scancode-toolkit
+        # .scancode.yml is a ScanCode --license-policy file; ScanCode reads no
+        # project config, so the security-scan task passes it on the command
+        # line and fails on any file with a prohibited license.
         owned_files:
             - path: .scancode.yml
               ownership: exclusive
             - path: .license-exceptions.yml
               ownership: exclusive
+            - path: devenv.nix
+              ownership: shared
+              section_id: license-compliance
             - path: CLAUDE.md
               ownership: shared
               section_id: license-compliance
-              section_content: "- **License Compliance** checks dependencies against SPDX allowlist/blocklist policies."
+              section_content: "- **License Compliance** scans the project and its dependencies with ScanCode; `qsdev-security-scan` fails on prohibited licenses (GPL, AGPL, SSPL, BUSL)."
     opengrep:
         display_name: OpenGrep SAST
         category: security
         description: Taint-focused static analysis via OpenGrep with custom security rules
         default_policy: opt-in
-        nix_expr: '(pkgs.callPackage ./nix/opengrep {})'
+        # The derivation is generated into the project at
+        # .opengrep/nix/default.nix (from qsdev's nix/opengrep/default.nix), so
+        # this relative import resolves in every project that enables opengrep.
+        nix_expr: '(pkgs.callPackage ./.opengrep/nix {})'
+        # No config file: OpenGrep has no project config format, so the
+        # security-scan task passes the rule library via `opengrep scan --config`.
         owned_files:
-            - path: .opengrep/config.yaml
+            - path: .opengrep/nix/default.nix
               ownership: exclusive
             # The embedded core taint-rule library is delivered here (one
             # GeneratedFile per rule, tracked individually in generated state so
@@ -654,9 +619,6 @@ tools:
         owned_files:
             - path: secretspec.toml
               ownership: exclusive
-            - path: devenv.nix
-              ownership: shared
-              section_id: secretspec
             - path: CLAUDE.md
               ownership: shared
               section_id: secretspec
@@ -665,7 +627,8 @@ tools:
         display_name: Semble Semantic Code Search
         category: ai-agent
         description: Semantic code search via MCP server or sub-agent for codebase navigation
-        default_policy: always-on
+        default_policy: opt-in
+        toggle_field: agent_tools.semble_enabled
         owned_files:
             - path: .mcp.json
               ownership: shared
@@ -682,8 +645,12 @@ tools:
         description: Static analysis via Semgrep with ecosystem-aware rule sets
         default_policy: always-on
         nix_expr: '(pkgs.writeShellScriptBin "semgrep" "exec -a osemgrep ''''${pkgs.semgrep-core}/bin/semgrep-core --experimental \"$@\"")'
+        # Semgrep config files may only hold rule objects, so the ecosystem
+        # rule packs and the project's .semgrep/ rules are passed by the
+        # security-scan task (`semgrep --config ...`); the tool owns only the
+        # scan exclusions. The .semgrep/ rules directory is the project's own.
         owned_files:
-            - path: .semgrep.yml
+            - path: .semgrepignore
               ownership: exclusive
             - path: devenv.nix
               ownership: shared
@@ -733,7 +700,7 @@ tools:
     version-sentinel:
         display_name: Version Sentinel
         category: ai-agent
-        description: Guards dependency version changes in manifest files, requiring agents to justify bumps
+        description: Advisory dependency version checks via MCP tools (current versions, lockfile drift, coverage)
         default_policy: always-on
         mcp_server_name: version-sentinel
         owned_files:
@@ -750,10 +717,10 @@ tools:
               ownership: shared
               section_id: version-sentinel
               section_content: |-
-                - **Version-Sentinel** guards dependency changes in: {{ join ", " .Covered }}.
-                {{- if .Uncovered }}
-                - Version-Sentinel does NOT cover: {{ join ", " .Uncovered }}. Review these manually.
-                {{- end }}
+                {{ if .Covered }}- **Version-Sentinel** MCP tools give advisory (non-blocking) dependency version checks for: {{ join ", " .Covered }}. Use them when changing dependencies.{{ end }}
+                {{- if and .Covered .Uncovered }}
+                {{ end }}
+                {{- if .Uncovered }}- Version-Sentinel does NOT cover: {{ join ", " .Uncovered }}. Review these manually.{{ end }}
     local-docs-devdocs:
         display_name: DevDocs Local Documentation
         category: ai-agent
@@ -782,20 +749,6 @@ tools:
               ownership: shared
               section_id: local-docs-zim
               section_content: "- **Stack Exchange ZIM** offline Q&A available (community content, medium trust)."
-    man-pages:
-        display_name: Man Pages MCP
-        category: ai-agent
-        description: Local man page documentation server for system command reference
-        default_policy: opt-in
-        mcp_server_name: man-pages
-        owned_files:
-            - path: .mcp.json
-              ownership: shared
-              section_id: man-pages
-            - path: CLAUDE.md
-              ownership: shared
-              section_id: man-pages
-              section_content: "- **Man Pages** local system documentation available (high trust)."
     mcp-nixos:
         display_name: MCP-NixOS Documentation
         category: ai-agent
@@ -838,23 +791,34 @@ mcp_servers:
         category: integration
         description: "Local filesystem access"
         command: npx
-        args: ["@anthropic-ai/mcp-filesystem"]
+        # Exact pin; "." limits access to the project root the server runs in.
+        # No -y: npx assumes --yes when stdin is not a TTY (as for stdio MCP
+        # servers), and -y fails the registry's no-npx-dash-y criterion.
+        args: ["@modelcontextprotocol/server-filesystem@2026.8.31", "."]
         transport: stdio
     postgres:
         display_name: "PostgreSQL MCP"
         category: integration
         description: "PostgreSQL database access"
-        command: npx
-        args: ["@anthropic-ai/mcp-postgres"]
+        # Postgres MCP Pro (github.com/crystaldba/postgres-mcp), exact pin.
+        # Restricted mode runs only read-only transactions.
+        command: uvx
+        args: ["--from", "postgres-mcp==0.3.0", "postgres-mcp", "--access-mode=restricted"]
         env:
-            DATABASE_URL: "${DATABASE_URL}"
+            DATABASE_URI: "${DATABASE_URL}"
         transport: stdio
+        install_method: uv-tool
+        package_name: "postgres-mcp"
+        version: "0.3.0"
+        bin: postgres-mcp
+        bin_args: ["--access-mode=restricted"]
     fetch:
         display_name: "Fetch MCP"
         category: integration
         description: "HTTP fetch for web content retrieval"
-        command: npx
-        args: ["@anthropic-ai/mcp-fetch"]
+        # The reference fetch server is published to PyPI, not npm.
+        command: uvx
+        args: ["--from", "mcp-server-fetch==2026.8.18", "mcp-server-fetch"]
         transport: stdio
     socket:
         display_name: "Socket.dev Security"
@@ -866,46 +830,61 @@ mcp_servers:
         display_name: "Semble Semantic Search"
         category: agent
         description: "Local semantic code search — CPU-only, no API keys"
+        # Exact pin (version below); `qsdev mcp install semble` installs the
+        # same release and .mcp.json then runs the installed bin.
         command: uvx
-        args: ["--from", "semble[mcp]", "semble"]
+        args: ["--from", "semble[mcp]==0.6.0", "semble"]
         transport: stdio
         install_method: uv-tool
         package_name: "semble[mcp]"
+        version: "0.6.0"
+        bin: semble
     context7:
         display_name: "Context7"
         category: agent
         description: "Library documentation lookups via web"
+        # Exact pin, no -y (see filesystem above).
         command: npx
-        args: ["-y", "@upstash/context7-mcp"]
+        args: ["@upstash/context7-mcp@4.1.1"]
         transport: stdio
         install_method: npm-global
         package_name: "@upstash/context7-mcp"
+        version: "4.1.1"
+        bin: context7-mcp
     agent-postmortem:
         display_name: "Agent Postmortem"
         category: agent
         description: "Session analysis and failure pattern detection"
         command: qsdev
-        args: ["mcp", "agent-postmortem"]
+        # The universal server restricted to this tool module, so its tools
+        # run behind the server's guardrail, rate-limit, content-safety and
+        # audit middleware.
+        args: ["mcp", "serve", "--module", "agent-postmortem"]
         transport: stdio
     version-sentinel:
         display_name: "Version Sentinel"
         category: agent
         description: "Dependency version monitoring and drift detection"
         command: qsdev
-        args: ["mcp", "version-sentinel"]
+        # The universal server restricted to this tool module, so its tools
+        # run behind the server's guardrail, rate-limit, content-safety and
+        # audit middleware.
+        args: ["mcp", "serve", "--module", "version-sentinel"]
         transport: stdio
     local-docs-devdocs:
         display_name: "DevDocs Local Documentation"
         category: documentation
         description: "Version-aware DevDocs documentation with local caching"
         command: npx
-        args: ["-y", "@madhan-g-p/devdocs-mcp-server"]
+        args: ["@madhan-g-p/devdocs-mcp-server@1.0.1"]
         env:
             DEVDOCS_DATA_PATH: "${HOME}/.qsdev/docs/devdocs"
             MCP_DB_PATH: "${HOME}/.qsdev/docs/mcp.db"
         transport: stdio
         install_method: npm-global
         package_name: "@madhan-g-p/devdocs-mcp-server"
+        version: "1.0.1"
+        bin: devdocs-mcp
     local-docs-zim:
         display_name: "Stack Exchange ZIM Documentation"
         category: documentation
@@ -919,24 +898,49 @@ mcp_servers:
         transport: stdio
         install_method: uv-tool
         package_name: "openzim-mcp"
-    man-pages:
-        display_name: "Man Pages MCP"
-        category: documentation
-        description: "Local man page documentation for system commands"
-        command: uvx
-        args: ["man-mcp-server"]
-        transport: stdio
-        install_method: uv-tool
-        package_name: "man-mcp-server"
+        version: "3.3.3"
+        bin: openzim-mcp
     mcp-nixos:
         display_name: "MCP-NixOS Documentation"
         category: documentation
         description: "NixOS packages, options, and Home Manager documentation"
         command: uvx
-        args: ["mcp-nixos"]
+        args: ["--from", "mcp-nixos==3.1.0", "mcp-nixos"]
         transport: stdio
         install_method: uv-tool
         package_name: "mcp-nixos"
+        version: "3.1.0"
+        bin: mcp-nixos
+bootstrap_tools:
+    # Tools the qsdev bootstrap installs onto the developer's machine. Each is
+    # an exact release: npm packages are installed under the release-age
+    # cutoff (npm --before), so a pinned release younger than the minimum age
+    # fails until it ages; Nix packages come from a flake pinned to a commit.
+    # Bump a pin by editing version (npm) or flake (nix) here, or in
+    # ~/.config/qsdev/defaults.yaml, to a release older than that minimum.
+    claude-code:
+        install_method: npm-global
+        package_name: "@anthropic-ai/claude-code"
+        version: "2.1.273"
+        # The package's postinstall (install.cjs) hard-links the native binary
+        # from the exact-pinned, script-free platform package
+        # (@anthropic-ai/claude-code-<os>-<arch>@<same version>) over the
+        # bin/claude.exe placeholder; with --ignore-scripts `claude` is a stub
+        # that only prints an error. It is the only script in the install.
+        allow_install_scripts: true
+    # devenv and direnv are installed with `nix profile install` from nixpkgs
+    # pinned to one commit (the nixpkgs-unstable revision of 2026-05-15, which
+    # provides devenv 2.1.2 and direnv 2.37.1; generated devenv.yaml files
+    # require devenv >=2.1), never through the mutable `nixpkgs` registry
+    # entry, and without accepting the flake's nixConfig.
+    devenv:
+        install_method: nix-profile
+        flake: "github:NixOS/nixpkgs/d233902339c02a9c334e7e593de68855ad26c4cb"
+        package_name: devenv
+    direnv:
+        install_method: nix-profile
+        flake: "github:NixOS/nixpkgs/d233902339c02a9c334e7e593de68855ad26c4cb"
+        package_name: direnv
 docs_corpus:
     devdocs_base_url: "https://documents.devdocs.io"
     devdocs_slugs:
@@ -1019,14 +1023,20 @@ custom_hooks:
     - id: lock-file-audit
       name: Lock file change audit
       description: Flag lock file changes for review — lock files redirect package sources
+      # files lists the Nix lock files; devenv adds the lock files of the
+      # project's ecosystems (package-lock.json, Cargo.lock, ...).
       entry: |
         for f in "$@"; do
+          echo "WARNING: $f has been modified."
+          echo "  Lock file changes redirect package sources."
+          echo "  Verify the diff carefully during code review."
           case "$f" in
-            devenv.lock|flake.lock)
-              echo "WARNING: $f has been modified."
-              echo "  Lock file changes redirect package sources."
-              echo "  Verify the diff carefully during code review."
+            devenv.lock|flake.lock|*/devenv.lock|*/flake.lock)
               echo "  Run 'nix flake metadata' to inspect resolved inputs."
+              ;;
+            *)
+              echo "  Check that every resolved/source URL points at your registry over https"
+              echo "  and that each package still carries an integrity hash."
               ;;
           esac
         done
@@ -1051,25 +1061,79 @@ custom_hooks:
       pass_filenames: true
       stages:
         - pre-commit
+# Pre-commit hook tiers, one per security level and in security_levels order.
+# A project gets the hooks of its security level's tier and of every tier
+# below it; devenv.nix leaves out only the hooks listed in a higher tier. The
+# baseline tier applies at every level, so every security hook belongs there:
+# only non-security hooks are tiered above it. A hook no tier lists (such as a
+# tool's commit-ticket hook) runs at every level. Entries are real hook IDs.
 hook_tier_order:
     - baseline
     - enhanced
-    - specialized
+    - strict
 hook_tiers:
     baseline:
+        # Security: secrets, SAST, supply chain and vulnerability scanning.
         - ripsecrets
         - gitleaks
+        - semgrep
+        - opengrep
+        - nix-secrets-check
+        - lock-file-audit
+        - shellcheck
+        - govulncheck
+        - bandit
+        - tfsec
+        # Repository hygiene.
         - check-added-large-files
         - no-commit-to-branch
         - check-merge-conflicts
     enhanced:
-        - semgrep
-        - shellcheck
-        - formatters
-    specialized:
-        - lock-file-audit
-        - nix-secrets-check
+        # Language-aware formatters and linters from the ecosystem modules.
+        - ansible-lint
+        - buildifier
+        - clang-format
+        - clippy
+        - cljfmt
+        - cppcheck
+        - dart-format
+        - deadnix
+        - dotnet-format
+        - eslint
+        - gofmt
+        - google-java-format
+        - govet
+        - hadolint
+        - helmlint
+        - ktlint
+        - luacheck
+        - mix-format
+        - mypy
+        - nixfmt
+        - ormolu
+        - perltidy
+        - phpcs
+        - phpstan
+        - pmd
+        - prettier
+        - rubocop
+        - ruff
+        - rustfmt
+        - scalafmt
+        - shfmt
+        - staticcheck
         - statix
+        - stylua
+        - swiftformat
+        - terraform-format
+        - terraform-validate
+        - tflint
+        - zig-fmt
+    # strict adds audit logging and auto-format hooks, not pre-commit hooks.
+    strict: []
+# The tier a project gets when nothing selects one. init persists it to
+# .qsdev.yaml so readers never have to guess the tier.
+default_tier: standard
 tier_to_compliance:
     full: strict
     standard: enhanced
@@ -1082,16 +1146,20 @@ tier_to_enabled_tools:
     standard:
         - gitleaks
     supply-chain-only: []
+# semble is not listed: it is provisioned only when the semble agent tool is
+# enabled (agent_tools.semble_enabled), its single source of truth.
 default_mcp_servers:
     - context7
     - github
     - socket
-    - semble
 default_agent_tools:
     postmortem_enabled: true
     version_sentinel: true
     version_sentinel_hours: 24
-    semble_enabled: true
+    # Opt-in (matches --agent-semble's default): unless installed with
+    # `qsdev mcp install semble`, the server fetches its pinned PyPI release
+    # through uvx at session start.
+    semble_enabled: false
     semble_mode: both
 languages:
     all:
@@ -1193,6 +1261,31 @@ tool_categories:
 permission_deny_rules:
     npx:
         - "Bash(npx *)"
+    # Remote package executors equivalent to npx: each downloads a package
+    # from the registry and runs it immediately, bypassing lockfiles and the
+    # package-guard age gate.
+    remote_package_exec:
+        - "Bash(pnpm dlx *)"
+        - "Bash(pnpx *)"
+        - "Bash(yarn dlx *)"
+        - "Bash(bunx *)"
+        - "Bash(bun x *)"
+        - "Bash(npm exec *)"
+        - "Bash(npm x *)"
+        - "Bash(deno x *)"
+        - "Bash(deno run *npm:*)"
+        - "Bash(deno run *jsr:*)"
+        - "Bash(deno serve *npm:*)"
+        - "Bash(deno serve *jsr:*)"
+        - "Bash(deno npm:*)"
+        - "Bash(deno jsr:*)"
+        - "Bash(deno watch *npm:*)"
+        - "Bash(deno watch *jsr:*)"
+        # Flags before the module (`deno -A npm:x`, an implicit `deno run`) or
+        # deno global flags before the subcommand (`deno -q run npm:x`).
+        - "Bash(deno -* npm:*)"
+        - "Bash(deno -* jsr:*)"
+        - "Bash(deno -* x *)"
     nix:
         - "Bash(nix-env -i *)"
         - "Bash(nix-env --install *)"
@@ -1200,7 +1293,14 @@ permission_deny_rules:
         - "Bash(nix-env --erase *)"
         - "Bash(nix-env --uninstall *)"
         - "Bash(nix profile install *)"
+        - "Bash(nix profile add *)"
+        - "Bash(nix profile upgrade *)"
         - "Bash(nix profile remove *)"
+        # Global options may precede the subcommand
+        # (`nix --extra-experimental-features 'nix-command flakes' profile add`).
+        - "Bash(nix * profile install *)"
+        - "Bash(nix * profile add *)"
+        - "Bash(nix * profile upgrade *)"
         - "Bash(cachix use *)"
     system:
         - "Bash(apt install *)"
@@ -1224,6 +1324,22 @@ permission_deny_rules:
         - "Bash(wget * | bash)"
         - "Bash(wget * | sh *)"
         - "Bash(wget * | sh)"
+        - "Bash(curl * | zsh*)"
+        - "Bash(wget * | zsh*)"
+        - "Bash(curl * | dash*)"
+        - "Bash(wget * | dash*)"
+        - "Bash(curl * | /bin/*sh*)"
+        - "Bash(wget * | /bin/*sh*)"
+        - "Bash(curl * | /usr/bin/*sh*)"
+        - "Bash(wget * | /usr/bin/*sh*)"
+        - "Bash(curl * | env *sh*)"
+        - "Bash(wget * | env *sh*)"
+        - "Bash(curl * | sudo *)"
+        - "Bash(wget * | sudo *)"
+        - "Bash(*sh -c *$(curl *)"
+        - "Bash(*sh -c *$(wget *)"
+        - "Bash(*sh <(curl *)"
+        - "Bash(*sh <(wget *)"
     shell_wrapping:
         - "Bash(bash -c *npm install*)"
         - "Bash(bash -c *pip install*)"
@@ -1287,11 +1403,97 @@ permission_deny_rules:
         - "Bash(xargs npm install *)"
         - "Bash(xargs pip install *)"
         - "Bash(xargs cargo install *)"
+    # git runs arbitrary programs through per-invocation config (`-c
+    # alias.x='!cmd'`, core.pager, core.sshCommand, core.hooksPath) and skips
+    # the pre-commit secret scan with --no-verify / -n. Persistent config
+    # (git config, .git/config, .git/hooks) is the same vector, and --output
+    # lets an allowed diff/log/show write .git/config. Globs cannot express a
+    # global -c after another global option, clustered flags (-qn) or option
+    # text inside a commit message; the selfprotect hook (GIT-001) parses
+    # those. A `git * -c *` rule is left to it too: it would deny every commit
+    # message that mentions `sh -c`.
+    # --no-veri* covers the abbreviations git accepts (--no-veri, --no-verif).
+    git_code_execution:
+        - "Bash(git -c *)"
+        - "Bash(git --config-env*)"
+        - "Bash(git * --config-env*)"
+        - "Bash(git --exec-path*)"
+        - "Bash(git * --exec-path*)"
+        - "Bash(git config *)"
+        - "Bash(git * --no-veri*)"
+        - "Bash(git commit -n*)"
+        - "Bash(git commit * -n)"
+        - "Bash(git commit * -n *)"
+        - "Bash(git diff --output*)"
+        - "Bash(git diff * --output*)"
+        - "Bash(git log --output*)"
+        - "Bash(git log * --output*)"
+        - "Bash(git show --output*)"
+        - "Bash(git show * --output*)"
+        - "Edit(.git/**)"
+        - "Write(.git/**)"
+    # Access to the Docker/Podman daemon is root-equivalent: these rules close
+    # the direct host escapes (privileged containers, host namespaces, the
+    # daemon socket, the host root mounted in). They do not stop a container
+    # from reading files it is given, so container commands are never
+    # auto-approved wholesale (see permissive_extra).
+    container_escape:
+        - "Bash(docker * --privileged*)"
+        - "Bash(docker * --pid=host*)"
+        - "Bash(docker * --pid host*)"
+        - "Bash(docker * --network=host*)"
+        - "Bash(docker * --net=host*)"
+        - "Bash(docker * --userns=host*)"
+        - "Bash(docker * --cap-add*)"
+        - "Bash(docker * --security-opt*)"
+        - "Bash(docker *docker.sock*)"
+        - "Bash(docker * -v /:*)"
+        - "Bash(docker * --volume /:*)"
+        - "Bash(docker * --volume=/:*)"
+        - "Bash(docker * --mount *source=/,*)"
+        - "Bash(podman * --privileged*)"
+        - "Bash(podman * --pid=host*)"
+        - "Bash(podman * --pid host*)"
+        - "Bash(podman * --network=host*)"
+        - "Bash(podman * --net=host*)"
+        - "Bash(podman * --userns=host*)"
+        - "Bash(podman * --cap-add*)"
+        - "Bash(podman * --security-opt*)"
+        - "Bash(podman *podman.sock*)"
+        - "Bash(podman *docker.sock*)"
+        - "Bash(podman * -v /:*)"
+        - "Bash(podman * --volume /:*)"
+        - "Bash(podman * --volume=/:*)"
+        - "Bash(podman * --mount *source=/,*)"
+    # Prefix globs cannot enumerate every spelling of a destructive command,
+    # so this set lists the common flag orders and short/long forms, plus the
+    # bare form of each "cmd *" rule (Claude Code's " *" needs trailing args).
     destructive_ops:
         - "Bash(git push --force *)"
+        - "Bash(git push --force)"
         - "Bash(git push * --force)"
+        - "Bash(git push * --force *)"
+        - "Bash(git push --force-with-lease*)"
+        - "Bash(git push * --force-with-lease*)"
+        - "Bash(git push --force-if-includes*)"
+        - "Bash(git push * --force-if-includes*)"
+        - "Bash(git push -f *)"
+        - "Bash(git push -f)"
+        - "Bash(git push * -f)"
+        - "Bash(git push * -f *)"
+        - "Bash(git push * +*)"
         - "Bash(git reset --hard *)"
+        - "Bash(git reset --hard)"
         - "Bash(rm -rf *)"
+        - "Bash(rm -fr *)"
+        - "Bash(rm -Rf *)"
+        - "Bash(rm -fR *)"
+        - "Bash(rm -r -f *)"
+        - "Bash(rm -f -r *)"
+        - "Bash(rm -R -f *)"
+        - "Bash(rm -f -R *)"
+        - "Bash(rm --recursive --force *)"
+        - "Bash(rm --force --recursive *)"
         - "Read(./.env)"
         - "Read(./.env.*)"
         - "Read(./secrets/**)"
@@ -1300,6 +1502,12 @@ permission_deny_rules:
         - "Write(devenv.nix)"
         - "Edit(devenv.yaml)"
         - "Write(devenv.yaml)"
+        # devenv loads the .local variants natively and they can override any
+        # hardened setting (e.g. lib.mkForce-disable a security hook).
+        - "Edit(devenv.local.nix)"
+        - "Write(devenv.local.nix)"
+        - "Edit(devenv.local.yaml)"
+        - "Write(devenv.local.yaml)"
         - "Edit(flake.nix)"
         - "Write(flake.nix)"
         - "Edit(flake.lock)"
@@ -1308,6 +1516,7 @@ permission_deny_rules:
 # Supply chain deny sets are all sets except destructive_ops and sandbox_config_edits.
 permission_supply_chain_deny_sets:
     - npx
+    - remote_package_exec
     - nix
     - system
     - pipe_to_shell
@@ -1316,10 +1525,12 @@ permission_supply_chain_deny_sets:
     - sudo_prefix
     - subprocess_escape
     - eval_xargs
+    - git_code_execution
 
 # All base deny sets include supply chain + destructive_ops + sandbox_config_edits.
 permission_all_deny_sets:
     - npx
+    - remote_package_exec
     - nix
     - system
     - pipe_to_shell
@@ -1328,6 +1539,8 @@ permission_all_deny_sets:
     - sudo_prefix
     - subprocess_escape
     - eval_xargs
+    - git_code_execution
+    - container_escape
     - destructive_ops
     - sandbox_config_edits
 
@@ -1346,11 +1559,26 @@ permission_allow_rules:
         - "Bash(npm test *)"
         - "Bash(npm test)"
         - "Bash(npm run build *)"
+    # git is allowed per subcommand, never as `git *`: a blanket rule would
+    # auto-approve `git -c alias.x='!cmd' x` (arbitrary code) and hook skips.
     standard_base:
         - "Read(*)"
         - "Edit(*)"
         - "Write(*)"
-        - "Bash(git *)"
+        - "Bash(git status)"
+        - "Bash(git status *)"
+        - "Bash(git diff)"
+        - "Bash(git diff *)"
+        - "Bash(git log)"
+        - "Bash(git log *)"
+        - "Bash(git show)"
+        - "Bash(git show *)"
+        - "Bash(git branch)"
+        - "Bash(git branch *)"
+        - "Bash(git add *)"
+        - "Bash(git commit -m *)"
+        - "Bash(git switch *)"
+        - "Bash(git checkout *)"
     standard_build_test_lint:
         - "Bash(npm test *)"
         - "Bash(npm test)"
@@ -1363,11 +1591,11 @@ permission_allow_rules:
         - "Bash(cargo build)"
         - "Bash(cargo test *)"
         - "Bash(cargo test)"
-        - "Bash(nix develop *)"
+        # Only the bare shells: `nix develop -c <cmd>` / `devenv shell <cmd>`
+        # run an arbitrary command and are not auto-approved.
         - "Bash(nix develop)"
         - "Bash(nix flake check *)"
         - "Bash(nix flake show *)"
-        - "Bash(devenv shell *)"
         - "Bash(devenv shell)"
         - "Bash(npm list *)"
         - "Bash(npm ls *)"
@@ -1383,18 +1611,25 @@ permission_allow_rules:
         - "Bash(vulnix *)"
         - "Bash(nix flake info *)"
         - "Bash(nix flake metadata *)"
+    # Exact forms only: a trailing wildcard would auto-approve flags that undo
+    # the generated hardening (`npm ci --ignore-scripts=false`). pnpm, yarn and
+    # bun installs of any form match the js_package_managers ask rules, which
+    # Claude Code applies before allow rules, so they are not listed here.
     frozen_lockfile_installs:
         - "Bash(npm ci)"
-        - "Bash(npm ci *)"
-        - "Bash(pnpm install --frozen-lockfile)"
-        - "Bash(pnpm install --frozen-lockfile *)"
-        - "Bash(yarn install --immutable)"
-        - "Bash(yarn install --immutable *)"
-        - "Bash(bun install --frozen-lockfile)"
-        - "Bash(bun install --frozen-lockfile *)"
+        - "Bash(npm ci --ignore-scripts)"
+    # Container commands are allowed per read-only or build subcommand, never
+    # as `docker *`: daemon access is root-equivalent (see container_escape).
+    # `make *` still runs arbitrary recipes; the preset is not a sandbox.
     permissive_extra:
         - "Bash(make *)"
-        - "Bash(docker *)"
+        - "Bash(docker build *)"
+        - "Bash(docker images)"
+        - "Bash(docker images *)"
+        - "Bash(docker ps)"
+        - "Bash(docker ps *)"
+        - "Bash(docker compose build)"
+        - "Bash(docker compose build *)"
 
 permission_ask_rules:
     js_package_managers:
@@ -1425,6 +1660,26 @@ permission_ask_rules:
         - "Bash(bun install *)"
         - "Bash(bun install)"
         - "Bash(bun remove *)"
+        - "Bash(deno add *)"
+        - "Bash(deno install *)"
+        - "Bash(deno install)"
+        - "Bash(deno i *)"
+        - "Bash(deno i)"
+        - "Bash(deno update *)"
+        - "Bash(deno update)"
+        - "Bash(deno outdated *-u*)"
+        - "Bash(deno remove *)"
+        # Global options before the verb (`npm -g install`, `pnpm --filter web add`).
+        - "Bash(npm -* install *)"
+        - "Bash(npm -* i *)"
+        - "Bash(pnpm -* add *)"
+        - "Bash(pnpm -* install *)"
+        - "Bash(deno -* add *)"
+        - "Bash(deno -* install *)"
+        - "Bash(deno -* i *)"
+        - "Bash(deno -* update *)"
+        - "Bash(yarn workspace * add *)"
+        - "Bash(yarn --cwd * add *)"
     python:
         - "Bash(pip install *)"
         - "Bash(pip install)"
@@ -1444,10 +1699,28 @@ permission_ask_rules:
         - "Bash(uv sync *)"
         - "Bash(uv sync)"
         - "Bash(uv remove *)"
+        - "Bash(pip -* install *)"
+        - "Bash(pip3 -* install *)"
+        - "Bash(uv -* add *)"
+        - "Bash(uv -* pip install *)"
+        # Every other Python installer the package guard models (poetry is a
+        # catalog package manager; uvx / pipx run / uv run --with fetch and run).
+        - "Bash(poetry add *)"
+        - "Bash(pdm add *)"
+        - "Bash(pipenv install *)"
+        - "Bash(pipenv install)"
+        - "Bash(pipx run *)"
+        - "Bash(pipx inject *)"
+        - "Bash(uvx *)"
+        - "Bash(uv tool install *)"
+        - "Bash(uv tool run *)"
+        - "Bash(uv run --with *)"
     rust:
         - "Bash(cargo add *)"
         - "Bash(cargo install *)"
         - "Bash(cargo install)"
+        - "Bash(cargo +* install *)"
+        - "Bash(cargo -* install *)"
     go:
         - "Bash(go get *)"
         - "Bash(go install *)"
@@ -1464,6 +1737,13 @@ permission_ask_rules:
         - "Bash(composer install)"
         - "Bash(composer update *)"
         - "Bash(composer update)"
+    # Adding a NuGet package reference; package-guard age- and OSV-checks the
+    # version. Tool, template and nuget CLI installs are denied by the .NET
+    # ecosystem module instead.
+    dotnet:
+        - "Bash(dotnet add package *)"
+        - "Bash(dotnet add * package *)"
+        - "Bash(dotnet package add *)"
     code_execution:
         - "Bash(npm run *)"
         - "Bash(npm start *)"
@@ -1478,6 +1758,8 @@ permission_ask_rules:
         - "Bash(composer run-script *)"
         - "Bash(nix run *)"
         - "Bash(nix shell *)"
+        - "Bash(nix-shell -p *)"
+        - "Bash(nix-shell --packages *)"
         - "Bash(nix build *)"
         - "Bash(nix build)"
     standard_base:
@@ -1495,10 +1777,15 @@ permission_package_ask_sets:
     - go
     - ruby
     - php
+    - dotnet
 
 # Permission presets define which allow/deny/ask sets compose each preset.
+# strictness ranks the presets a .qsdev.local.yaml may tighten between
+# (higher is stricter); a preset without one is not comparable, so a local
+# override can neither switch to it nor away from it.
 permission_preset_defs:
     minimal:
+        strictness: 3
         default_mode: plan
         disable_bypass_mode: disable
         allow_sets:
@@ -1507,6 +1794,7 @@ permission_preset_defs:
             - frozen_lockfile_installs
         deny_sets:
             - npx
+            - remote_package_exec
             - nix
             - system
             - pipe_to_shell
@@ -1515,6 +1803,8 @@ permission_preset_defs:
             - sudo_prefix
             - subprocess_escape
             - eval_xargs
+            - git_code_execution
+            - container_escape
             - destructive_ops
             - sandbox_config_edits
         ask_sets:
@@ -1526,7 +1816,9 @@ permission_preset_defs:
             - go
             - ruby
             - php
+            - dotnet
     standard:
+        strictness: 2
         default_mode: default
         disable_bypass_mode: disable
         allow_sets:
@@ -1535,6 +1827,7 @@ permission_preset_defs:
             - frozen_lockfile_installs
         deny_sets:
             - npx
+            - remote_package_exec
             - nix
             - system
             - pipe_to_shell
@@ -1543,6 +1836,8 @@ permission_preset_defs:
             - sudo_prefix
             - subprocess_escape
             - eval_xargs
+            - git_code_execution
+            - container_escape
             - destructive_ops
             - sandbox_config_edits
         ask_sets:
@@ -1554,7 +1849,9 @@ permission_preset_defs:
             - go
             - ruby
             - php
+            - dotnet
     permissive:
+        strictness: 1
         default_mode: default
         disable_bypass_mode: disable
         allow_sets:
@@ -1564,6 +1861,7 @@ permission_preset_defs:
             - permissive_extra
         deny_sets:
             - npx
+            - remote_package_exec
             - nix
             - system
             - pipe_to_shell
@@ -1572,6 +1870,8 @@ permission_preset_defs:
             - sudo_prefix
             - subprocess_escape
             - eval_xargs
+            - git_code_execution
+            - container_escape
             - destructive_ops
             - sandbox_config_edits
         ask_sets:
@@ -1583,10 +1883,12 @@ permission_preset_defs:
             - go
             - ruby
             - php
+            - dotnet
     supply-chain-only:
         allow_sets: []
         deny_sets:
             - npx
+            - remote_package_exec
             - nix
             - system
             - pipe_to_shell
@@ -1595,6 +1897,7 @@ permission_preset_defs:
             - sudo_prefix
             - subprocess_escape
             - eval_xargs
+            - git_code_execution
         ask_sets:
             - js_package_managers
             - python
@@ -1602,9 +1905,11 @@ permission_preset_defs:
             - go
             - ruby
             - php
+            - dotnet
     custom:
         deny_sets:
             - npx
+            - remote_package_exec
             - nix
             - system
             - pipe_to_shell
@@ -1613,6 +1918,8 @@ permission_preset_defs:
             - sudo_prefix
             - subprocess_escape
             - eval_xargs
+            - git_code_execution
+            - container_escape
             - destructive_ops
             - sandbox_config_edits
         ask_sets:
@@ -1622,3 +1929,4 @@ permission_preset_defs:
             - go
             - ruby
             - php
+            - dotnet

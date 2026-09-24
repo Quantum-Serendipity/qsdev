@@ -41,7 +41,7 @@ func TestEnvInfoWithholdsAuthorizationValues(t *testing.T) {
 		t.Setenv(name, val)
 	}
 
-	env := newEnvInfo(t.TempDir())
+	env := newEnvInfo()
 	res := call(t, env.handle, map[string]any{"probe": "env"})
 
 	blob, err := json.Marshal(res.Structured)

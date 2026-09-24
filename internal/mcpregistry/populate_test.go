@@ -2,9 +2,12 @@ package mcpregistry
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 )
 
 func TestBuildDefault_RegistersKnownServers(t *testing.T) {
@@ -13,6 +16,30 @@ func TestBuildDefault_RegistersKnownServers(t *testing.T) {
 	r := buildDefault()
 	if r.Count() < 13 {
 		t.Errorf("buildDefault() registry count = %d, want >= 13", r.Count())
+	}
+}
+
+// TestBuildRegistry_CatalogLoadFailure is the F279 regression: a catalog that
+// fails to load used to be swallowed, leaving a silently smaller registry. The
+// built-in servers must still register and the failure must be reported.
+func TestBuildRegistry_CatalogLoadFailure(t *testing.T) {
+	t.Parallel()
+
+	loadErr := errors.New("parsing override: bad yaml")
+	r := buildRegistry(func() (*catalog.Catalog, error) { return nil, loadErr })
+
+	if err := r.CatalogErr(); !errors.Is(err, loadErr) {
+		t.Errorf("CatalogErr() = %v, want it to wrap %v", err, loadErr)
+	}
+	if _, ok := r.ByName(universalServerName); !ok {
+		t.Errorf("built-in %s missing after a catalog failure", universalServerName)
+	}
+	if _, ok := r.ByName("context7"); ok {
+		t.Error("catalog server registered despite the catalog failing to load")
+	}
+
+	if err := buildDefault().CatalogErr(); err != nil {
+		t.Errorf("default catalog: CatalogErr() = %v, want nil", err)
 	}
 }
 
@@ -40,8 +67,8 @@ func TestBuildDefault_KnownServerProperties(t *testing.T) {
 			wantCmd:     "npx",
 		},
 		{
-			name:        "man-pages",
-			wantDisplay: "Man Pages MCP",
+			name:        "mcp-nixos",
+			wantDisplay: "MCP-NixOS Documentation",
 			wantCat:     CategoryDocumentation,
 			wantCmd:     "uvx",
 		},
@@ -163,6 +190,27 @@ func TestScanMcpJSON_FileNotFound(t *testing.T) {
 	}
 	if len(result) != 0 {
 		t.Errorf("ScanMcpJSON() returned %d entries, want 0", len(result))
+	}
+}
+
+// TestScanMcpJSON_RemoteServer verifies URL-based (HTTP) entries keep their URL
+// and are classified as HTTP rather than as a stdio server with no command.
+func TestScanMcpJSON_RemoteServer(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	data := []byte(`{"mcpServers": {"remote": {"type": "http", "url": "https://mcp.example.test/mcp"}}}`)
+	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), data, 0o644); err != nil {
+		t.Fatalf("writing .mcp.json: %v", err)
+	}
+
+	result, err := ScanMcpJSON(dir)
+	if err != nil {
+		t.Fatalf("ScanMcpJSON() returned unexpected error: %v", err)
+	}
+	got := result["remote"]
+	if got.URL != "https://mcp.example.test/mcp" || got.Transport != TransportHTTP {
+		t.Errorf("remote = {URL: %q, Transport: %q}, want the URL with HTTP transport", got.URL, got.Transport)
 	}
 }
 

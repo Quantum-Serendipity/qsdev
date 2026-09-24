@@ -2,11 +2,12 @@ package info
 
 import (
 	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
-	"gopkg.in/yaml.v3"
-
+	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
@@ -14,6 +15,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
+
+// SecurityProfileUnknown is reported when the project configuration cannot be
+// parsed, so a broken config is never displayed as a healthy default profile.
+const SecurityProfileUnknown = "unknown"
 
 // ErrNotQsdevProject is returned when the project root does not contain a
 // .qsdev.yaml configuration file.
@@ -35,16 +40,27 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 	// 2. Parse .qsdev.yaml.
 	cfg, cfgErr := qsdevconfig.ParseQsdevConfig(configPath)
 
-	// 3. Load state (graceful if missing).
+	// 3. Load state (graceful if missing; LoadStateFromFile returns an empty
+	// state for a missing file, so any error here means it is unreadable).
 	statePath := filepath.Join(projectRoot, branding.Get().StateDir, "."+branding.Get().AppName+"-init-state.yaml")
-	genState, _ := state.LoadStateFromFile(statePath)
+	genState, stateErr := state.LoadStateFromFile(statePath)
 
 	// 4. Load answers (graceful if missing).
-	answers := loadAnswersQuietly(projectRoot)
+	wizardAnswers := loadAnswersBestEffort(projectRoot)
 
 	// 5. Build ProjectInfo.
 	info := &ProjectInfo{
 		ToolsByCategory: make(map[string]int),
+	}
+
+	// Surface unreadable project files instead of silently reporting defaults
+	// that make a broken project look healthy.
+	if cfgErr != nil {
+		info.Warnings = append(info.Warnings, fmt.Sprintf("config could not be parsed: %v", cfgErr))
+		info.SecurityProfile = SecurityProfileUnknown
+	}
+	if stateErr != nil {
+		info.Warnings = append(info.Warnings, fmt.Sprintf("state could not be loaded: %v", stateErr))
 	}
 
 	// From config.
@@ -83,15 +99,15 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 	}
 
 	// From answers.
-	info.ClaudeCodeEnabled = answers.ClaudeCode
-	info.ProjectName = answers.ProjectName
-	if info.SecurityProfile == "" && answers.ComplianceLevel != "" {
-		info.SecurityProfile = answers.ComplianceLevel
+	info.ClaudeCodeEnabled = wizardAnswers.ClaudeCode
+	info.ProjectName = wizardAnswers.ProjectName
+	if info.SecurityProfile == "" && wizardAnswers.ComplianceLevel != "" {
+		info.SecurityProfile = wizardAnswers.ComplianceLevel
 	}
 
 	// Ecosystems from answers if config didn't have them.
 	if len(info.Ecosystems) == 0 {
-		for _, lang := range answers.Languages {
+		for _, lang := range wizardAnswers.Languages {
 			info.Ecosystems = append(info.Ecosystems, lang.Name)
 		}
 	}
@@ -107,16 +123,15 @@ func CollectInfo(projectRoot string) (*ProjectInfo, error) {
 	return info, nil
 }
 
-// loadAnswersQuietly reads .devinit/.qsdev-init-answers.yaml without errors.
-func loadAnswersQuietly(projectRoot string) types.WizardAnswers {
-	path := filepath.Join(projectRoot, branding.Get().StateDir, "."+branding.Get().AppName+"-init-answers.yaml")
-	data, err := os.ReadFile(path)
+// loadAnswersBestEffort reads the primary answers file. A missing file yields
+// zero-value answers; an unreadable or corrupt file is logged and also yields
+// zero-value answers, so `info` still reports what it can without hiding the
+// corruption.
+func loadAnswersBestEffort(projectRoot string) types.WizardAnswers {
+	a, err := answers.LoadPrimary(projectRoot)
 	if err != nil {
+		slog.Warn("ignoring unreadable answers file", "path", answers.PrimaryPath(projectRoot), "error", err)
 		return types.WizardAnswers{}
 	}
-	var answers types.WizardAnswers
-	if err := yaml.Unmarshal(data, &answers); err != nil {
-		return types.WizardAnswers{}
-	}
-	return answers
+	return a
 }

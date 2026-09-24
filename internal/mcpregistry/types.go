@@ -120,7 +120,8 @@ type McpCapabilities struct {
 }
 
 // McpServerDefinition is the complete metadata for a single MCP server
-// known to the registry.
+// known to the registry. Its compliance grade is not stored: GradeServer
+// computes it from the definition, so every consumer sees the same grade.
 type McpServerDefinition struct {
 	Name            string
 	DisplayName     string
@@ -129,16 +130,21 @@ type McpServerDefinition struct {
 	Command         string
 	Args            []string
 	URL             string
+	Headers         map[string]string
 	Env             map[string]string
 	RequiredEnv     []string
 	Transport       McpTransport
 	ProtocolVersion string
 	Capabilities    McpCapabilities
-	ComplianceGrade ComplianceLevel
 	Source          DefinitionSource
 	ToolRegName     string
 	InstallMethod   McpInstallMethod
 	PackageName     string
+	// Version is the exact release of PackageName that the lifecycle
+	// installs; an unversioned package is never installed.
+	Version string
+	// Bin is the executable InstallMethod provides.
+	Bin string
 }
 
 // HealthResult wraps a health check outcome with caching metadata.

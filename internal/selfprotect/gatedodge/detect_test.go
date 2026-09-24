@@ -1,111 +1,153 @@
 package gatedodge
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+)
 
-func TestDetect_QsdevYaml(t *testing.T) {
-	t.Parallel()
+// changeCase is one before/after file change checked by DetectChange.
+type changeCase struct {
+	name          string
+	before, after string
+	blocked       bool
+}
 
-	tests := []struct {
-		name    string
-		content string
-		blocked bool
-		ruleID  string
-	}{
-		{
-			name:    "deny compliance_level none",
-			content: "version: 1\ncompliance_level: none\n",
-			blocked: true,
-			ruleID:  "GD-001",
-		},
-		{
-			name:    "deny compliance_level minimal",
-			content: "version: 1\ncompliance_level: minimal\n",
-			blocked: true,
-			ruleID:  "GD-001",
-		},
-		{
-			name:    "deny self_protection false",
-			content: "version: 1\nself_protection: false\n",
-			blocked: true,
-			ruleID:  "GD-001",
-		},
-		{
-			name:    "deny security_enforcement false",
-			content: "version: 1\nsecurity_enforcement: false\n",
-			blocked: true,
-			ruleID:  "GD-001",
-		},
-		{
-			name:    "deny hooks disabled",
-			content: "version: 1\nhooks: enabled: false\n",
-			blocked: true,
-			ruleID:  "GD-001",
-		},
-		{
-			name:    "allow compliance_level high",
-			content: "version: 1\ncompliance_level: high\n",
-			blocked: false,
-		},
-		{
-			name:    "allow normal config",
-			content: "version: 1\ncompliance_level: strict\nself_protection: true\nsecurity_enforcement: true\n",
-			blocked: false,
-		},
-	}
-
-	for _, tt := range tests {
+func runChangeCases(t *testing.T, file, ruleID string, cases []changeCase) {
+	t.Helper()
+	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			blocked, ruleID, reason := Detect("/project/.qsdev.yaml", tt.content)
+			change := func() (string, string, error) { return tt.before, tt.after, nil }
+			blocked, gotID, reason := DetectChange(file, change)
 			if blocked != tt.blocked {
 				t.Errorf("blocked = %v, want %v (reason: %s)", blocked, tt.blocked, reason)
 			}
-			if tt.blocked && ruleID != tt.ruleID {
-				t.Errorf("ruleID = %q, want %q", ruleID, tt.ruleID)
+			if tt.blocked && gotID != ruleID {
+				t.Errorf("ruleID = %q, want %q", gotID, ruleID)
 			}
 		})
 	}
 }
 
-func TestDetect_DevenvNix(t *testing.T) {
+// TestDetectChange_QsdevYaml covers F144: GD-001 compares the real
+// .qsdev.yaml security knobs before and after the change.
+func TestDetectChange_QsdevYaml(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name    string
-		content string
-		blocked bool
-		ruleID  string
-	}{
-		{
-			name:    "deny QSDEV_DISABLE_HOOKS",
-			content: "{ pkgs, ... }: {\n  env.QSDEV_DISABLE_HOOKS = \"1\";\n}\n",
-			blocked: true,
-			ruleID:  "GD-002",
-		},
-		{
-			name:    "deny GDEV_DISABLE_HOOKS",
-			content: "{ pkgs, ... }: {\n  env.GDEV_DISABLE_HOOKS = \"1\";\n}\n",
-			blocked: true,
-			ruleID:  "GD-002",
-		},
-		{
-			name:    "allow normal devenv.nix",
-			content: "{ pkgs, ... }: {\n  packages = [ pkgs.go ];\n}\n",
-			blocked: false,
-		},
-	}
+	const enhanced = "version: 1\nsecurity:\n  level: enhanced\n"
+	const strict = "version: 1\nsecurity:\n  level: strict\n  script_blocking: true\n"
+	runChangeCases(t, "/project/.qsdev.yaml", "GD-001", []changeCase{
+		{name: "deny level lowered to baseline", before: enhanced,
+			after: "version: 1\nsecurity:\n  level: baseline\n", blocked: true},
+		{name: "deny downgrade with controls off", before: enhanced,
+			after: "security:\n  level: baseline\n  script_blocking: false\n  age_gating: false\n", blocked: true},
+		{name: "deny strict to default level", before: strict, after: "version: 1\n", blocked: true},
+		{name: "deny unknown level", before: enhanced,
+			after: "version: 1\nsecurity:\n  level: none\n", blocked: true},
+		{name: "deny script blocking turned off", before: enhanced,
+			after: enhanced + "  script_blocking: false\n", blocked: true},
+		{name: "deny explicit control turned off", before: strict,
+			after: "version: 1\nsecurity:\n  level: strict\n  script_blocking: false\n", blocked: true},
+		{name: "deny vuln scanning off in a new file", before: "",
+			after: "version: 1\nsecurity:\n  vuln_scanning: false\n", blocked: true},
+		{name: "deny security tool disabled", before: enhanced,
+			after: enhanced + "tools:\n  disabled: [gitleaks]\n", blocked: true},
+		{name: "deny unparseable config", before: enhanced, after: "security: [", blocked: true},
+		{name: "allow raising the level", before: enhanced,
+			after: "version: 1\nsecurity:\n  level: strict\n", blocked: false},
+		{name: "allow unrelated edit", before: enhanced,
+			after: enhanced + "languages:\n  - name: go\n", blocked: false},
+		{name: "allow disabling a non-security tool", before: enhanced,
+			after: enhanced + "tools:\n  disabled: [changelog]\n", blocked: false},
+		{name: "allow keeping an already disabled security tool", before: enhanced + "tools:\n  disabled: [gitleaks]\n",
+			after: enhanced + "tools:\n  disabled: [gitleaks, changelog]\n", blocked: false},
+		{name: "allow keeping a baseline project at baseline", before: "security:\n  level: baseline\n",
+			after: "security:\n  level: baseline\nprofile: web\n", blocked: false},
+	})
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			blocked, ruleID, reason := Detect("/project/devenv.nix", tt.content)
-			if blocked != tt.blocked {
-				t.Errorf("blocked = %v, want %v (reason: %s)", blocked, tt.blocked, reason)
-			}
-			if tt.blocked && ruleID != tt.ruleID {
-				t.Errorf("ruleID = %q, want %q", ruleID, tt.ruleID)
-			}
-		})
+// TestDetectChange_CredentialVend covers F247: an edit that opts the project
+// into MCP credential vending or widens what it may vend is blocked, since it
+// would hand the agent cloud credentials once the MCP server restarts.
+func TestDetectChange_CredentialVend(t *testing.T) {
+	t.Parallel()
+
+	const base = "version: 2\nsecurity:\n  level: enhanced\n"
+	const vend = base + "  credential_vend:\n    enabled: true\n" +
+		"    aws:\n      role_arns: [\"arn:aws:iam::123456789012:role/dev\"]\n"
+	runChangeCases(t, "/project/.qsdev.yaml", "GD-001", []changeCase{
+		{name: "deny opting in", before: base,
+			after: base + "  credential_vend:\n    enabled: true\n", blocked: true},
+		{name: "deny opting in with a new file", before: "",
+			after: "version: 2\nsecurity:\n  credential_vend:\n    enabled: true\n", blocked: true},
+		{name: "deny allowing GetSessionToken", before: vend,
+			after: vend + "      allow_session_token: true\n", blocked: true},
+		{name: "deny adding a role", before: vend,
+			after: base + "  credential_vend:\n    enabled: true\n" +
+				"    aws:\n      role_arns: [\"arn:aws:iam::123456789012:role/dev\", \"arn:aws:iam::123456789012:role/admin\"]\n",
+			blocked: true},
+		{name: "deny adding a service account", before: vend,
+			after: vend + "    gcp:\n      service_accounts: [owner@p.iam.gserviceaccount.com]\n", blocked: true},
+		{name: "deny adding an azure scope", before: vend,
+			after: vend + "    azure:\n      scopes: [\"https://management.azure.com/.default\"]\n", blocked: true},
+		{name: "allow opting out", before: vend, after: base, blocked: false},
+		{name: "allow removing a role", before: vend,
+			after: base + "  credential_vend:\n    enabled: true\n", blocked: false},
+		{name: "allow unrelated edit", before: vend,
+			after: vend + "languages:\n  - name: go\n", blocked: false},
+	})
+}
+
+// TestDetectChange_DevenvNix covers F144: GD-002 blocks switching off a
+// module or git hook that devenv.nix enables, and re-enabling dotenv.
+func TestDetectChange_DevenvNix(t *testing.T) {
+	t.Parallel()
+
+	const current = "{ pkgs, ... }:\n{\n  dotenv.enable = false;\n" +
+		"  languages.go = {\n    enable = true;\n  };\n" +
+		"  git-hooks.hooks = {\n    ripsecrets.enable = true;\n    govulncheck = {\n      enable = true;\n      name = \"govulncheck\";\n    };\n  };\n}\n"
+	runChangeCases(t, "/project/devenv.nix", "GD-002", []changeCase{
+		{name: "deny hook switched off", before: current,
+			after: replaceOnce(current, "ripsecrets.enable = true;", "ripsecrets.enable = false;"), blocked: true},
+		{name: "deny hook removed", before: current,
+			after: replaceOnce(current, "    ripsecrets.enable = true;\n", ""), blocked: true},
+		{name: "deny block hook removed", before: current,
+			after: replaceOnce(current, "      enable = true;\n      name", "      name"), blocked: true},
+		{name: "deny mkForce override", before: current,
+			after: replaceOnce(current, "}\n", "  git-hooks.hooks.ripsecrets.enable = lib.mkForce false;\n}\n"), blocked: true},
+		{name: "deny dotenv re-enabled", before: current,
+			after: replaceOnce(current, "dotenv.enable = false;", "dotenv.enable = true;"), blocked: true},
+		{name: "allow adding a package", before: current,
+			after: replaceOnce(current, "{\n  dotenv", "{\n  packages = [ pkgs.jq ];\n  dotenv"), blocked: false},
+		{name: "allow enabling another hook", before: current,
+			after: replaceOnce(current, "ripsecrets.enable = true;", "ripsecrets.enable = true;\n    shellcheck.enable = true;"), blocked: false},
+		{name: "allow a new file", before: "", after: current, blocked: false},
+	})
+}
+
+// replaceOnce replaces the first occurrence of old, panicking when it is
+// absent so a stale fixture cannot silently turn a case into a no-op.
+func replaceOnce(s, old, replacement string) string {
+	if !strings.Contains(s, old) {
+		panic("replaceOnce: " + old + " not found")
+	}
+	return strings.Replace(s, old, replacement, 1)
+}
+
+func TestDetectChange_FailsClosedAndSkipsOtherFiles(t *testing.T) {
+	t.Parallel()
+
+	failing := func() (string, string, error) { return "", "", errors.New("unreadable") }
+	for _, file := range []string{"/project/.qsdev.yaml", "/project/devenv.nix"} {
+		if blocked, _, _ := DetectChange(file, failing); !blocked {
+			t.Errorf("DetectChange(%s) with an unverifiable change = allow, want blocked", file)
+		}
+	}
+	called := false
+	change := func() (string, string, error) { called = true; return "", "", nil }
+	if blocked, _, _ := DetectChange("/project/main.go", change); blocked || called {
+		t.Errorf("DetectChange(main.go) blocked=%v called=%v; want no check", blocked, called)
 	}
 }
 

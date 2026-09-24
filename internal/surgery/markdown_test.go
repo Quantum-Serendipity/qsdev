@@ -88,6 +88,21 @@ Some content with no end marker.
 	}
 }
 
+func TestMarkdownInsertSection_StrayEarlierCloseMarker(t *testing.T) {
+	t.Parallel()
+	existing := []byte("<!-- /qsdev:t -->\n<!-- qsdev:t -->\nold\n<!-- /qsdev:t -->\n<!-- END GENERATED SECTION -->\n")
+	got, err := MarkdownInsertSection(existing, "t", []byte("new"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n := strings.Count(string(got), "<!-- qsdev:t -->"); n != 1 {
+		t.Errorf("open marker count = %d, want 1 (section duplicated):\n%s", n, got)
+	}
+	if strings.Contains(string(got), "old") || !strings.Contains(string(got), "new") {
+		t.Errorf("section not replaced in place:\n%s", got)
+	}
+}
+
 func TestMarkdownInsertSection_ContentTrimmed(t *testing.T) {
 	existing := []byte("<!-- END GENERATED SECTION -->\n")
 	content := []byte("\n  padded content  \n\n")

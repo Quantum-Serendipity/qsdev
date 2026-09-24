@@ -7,10 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/drift"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -19,7 +22,8 @@ import (
 // updated copy of the generation state.
 //
 // freshFiles is a map from relative path to the freshly generated file content
-// that should replace the drifted file on disk.
+// that should replace the drifted file on disk. With opts.Reset every fresh
+// file is regenerated, not only those with drift findings.
 func Repair(
 	projectRoot string,
 	opts RepairOptions,
@@ -27,21 +31,25 @@ func Repair(
 	freshFiles map[string]types.GeneratedFile,
 	driftReport *drift.Report,
 ) (*RepairResult, *types.GeneratedState, error) {
-	if driftReport == nil {
+	if driftReport == nil && !opts.Reset {
 		return &RepairResult{}, &genState, nil
 	}
 
 	actions := classifyFindings(driftReport, genState, opts)
+	if opts.Reset {
+		actions = append(actions, resetActions(actions, freshFiles)...)
+	}
 
 	// Filter to a single file when --file is specified.
 	if opts.TargetFile != "" {
-		var filtered []RepairAction
-		for _, a := range actions {
-			if a.File == opts.TargetFile {
-				filtered = append(filtered, a)
-			}
+		target, err := normalizeTargetFile(projectRoot, opts.TargetFile)
+		if err != nil {
+			return nil, nil, err
 		}
-		actions = filtered
+		actions = filterActions(actions, target)
+		if len(actions) == 0 && !isManagedFile(target, genState, freshFiles) {
+			return nil, nil, fmt.Errorf("%s is not a file managed by %s", opts.TargetFile, branding.Get().AppName)
+		}
 	}
 
 	result := &RepairResult{}
@@ -67,7 +75,91 @@ func Repair(
 		}
 	}
 
+	result.Skipped = dropResolved(result.Skipped, result.Fixed)
+
 	return result, &updatedState, nil
+}
+
+// resetActions synthesizes a regenerate action for every fresh file that no
+// drift finding already covers, so --reset rewrites all generated files and
+// not only drifted ones. Files on the never-auto-repair list are left alone.
+func resetActions(existing []RepairAction, freshFiles map[string]types.GeneratedFile) []RepairAction {
+	covered := make(map[string]bool, len(existing))
+	for _, a := range existing {
+		covered[a.File] = true
+	}
+
+	var actions []RepairAction
+	for _, path := range slices.Sorted(maps.Keys(freshFiles)) {
+		if covered[path] || neverAutoRepairFiles[path] {
+			continue
+		}
+		actions = append(actions, RepairAction{
+			File:        path,
+			Category:    CategoryFileDrift,
+			Description: fmt.Sprintf("Regenerate %s (--reset)", path),
+			ActionType:  ActionRegenerate,
+			AutoFixable: true,
+		})
+	}
+	return actions
+}
+
+// normalizeTargetFile converts a --file argument into the project-relative,
+// slash-separated form used for drift subjects and generated-file keys. It
+// accepts "./x", backslash separators and absolute paths inside projectRoot.
+func normalizeTargetFile(projectRoot, target string) (string, error) {
+	p := filepath.FromSlash(strings.ReplaceAll(target, "\\", "/"))
+	if filepath.IsAbs(p) {
+		rel, err := filepath.Rel(projectRoot, p)
+		if err != nil {
+			return "", fmt.Errorf("resolving %s against project root: %w", target, err)
+		}
+		p = rel
+	}
+	p = filepath.Clean(p)
+	if !filepath.IsLocal(p) {
+		return "", fmt.Errorf("%s is not inside the project", target)
+	}
+	return filepath.ToSlash(p), nil
+}
+
+// filterActions keeps the actions for target.
+func filterActions(actions []RepairAction, target string) []RepairAction {
+	var filtered []RepairAction
+	for _, a := range actions {
+		if a.File == target {
+			filtered = append(filtered, a)
+		}
+	}
+	return filtered
+}
+
+// isManagedFile reports whether path is a file qsdev generates or tracks.
+func isManagedFile(path string, genState types.GeneratedState, freshFiles map[string]types.GeneratedFile) bool {
+	if _, ok := genState.Files[path]; ok {
+		return true
+	}
+	_, ok := freshFiles[path]
+	return ok
+}
+
+// dropResolved removes skipped actions that a fixed action resolved in the
+// same run (e.g. section-marker findings once CLAUDE.md is regenerated).
+func dropResolved(skipped, fixed []RepairAction) []RepairAction {
+	fixedFiles := make(map[string]bool, len(fixed))
+	for _, a := range fixed {
+		fixedFiles[a.File] = true
+	}
+
+	kept := skipped[:0:0]
+	for _, a := range skipped {
+		if a.ResolvedBy != "" && fixedFiles[a.ResolvedBy] {
+			continue
+		}
+		kept = append(kept, a)
+	}
+	return kept
 }
 
 // executeRepair performs a single repair action: backup, write fresh content,
@@ -107,9 +199,12 @@ func executeRepair(
 		mode = fileutil.ModeReadWrite
 	}
 
-	// Write the fresh content atomically.
-	if err := fileutil.WriteFileAtomic(absPath, fresh.Content, mode); err != nil {
-		action.Error = fmt.Errorf("writing %s: %w", action.File, err)
+	// Write the fresh content atomically, refusing content that fails the
+	// same syntax validation as init.
+	fresh.Path = action.File
+	fresh.Mode = mode
+	if err := generate.WriteGeneratedFile(projectRoot, fresh); err != nil {
+		action.Error = err
 		return action
 	}
 
@@ -117,12 +212,11 @@ func executeRepair(
 	if updatedState.Files == nil {
 		updatedState.Files = make(map[string]types.FileState)
 	}
-	updatedState.Files[action.File] = types.FileState{
-		Hash:     state.ComputeHash(fresh.Content),
-		Strategy: fresh.Strategy,
-		Mode:     mode,
-		Owner:    fresh.Owner,
-	}
+	// Record the entry the same way generation does (including the
+	// three-way-merge base), keyed by the repaired path.
+	fresh.Path = action.File
+	fresh.Mode = mode
+	updatedState.Files[action.File] = state.RecordFiles([]types.GeneratedFile{fresh}).Files[action.File]
 
 	return action
 }

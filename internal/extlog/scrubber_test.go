@@ -274,7 +274,5 @@ func TestNewScrubberInitialization(t *testing.T) {
 	if len(s.extraPats) == 0 {
 		t.Error("extraPats is empty, expected compiled patterns")
 	}
-	if len(s.publicHosts) == 0 {
-		t.Error("publicHosts is empty, expected public hosts")
-	}
+	// publicHosts behavior is covered by TestScrubberHostRedaction.
 }

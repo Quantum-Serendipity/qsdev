@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -28,6 +29,7 @@ func newJoinTestCmd() (*cobra.Command, *bytes.Buffer) {
 // join flow: every field the create path reads from WizardAnswers must be
 // populated from the parsed .qsdev.yaml. Regression test for BL-P1-17.
 func TestConfigToAnswers_MapsConfigFields(t *testing.T) {
+	t.Parallel()
 	enabled := true
 	cfg := &types.QsdevConfig{
 		Version: types.ConfigVersionCurrent,
@@ -53,7 +55,7 @@ func TestConfigToAnswers_MapsConfigFields(t *testing.T) {
 		},
 	}
 
-	answers := configToAnswers(cfg, types.DetectedProject{}, "/tmp/proj")
+	answers := qsdevconfig.ConfigToAnswers(cfg, types.DetectedProject{}, "/tmp/proj")
 
 	if len(answers.Languages) != 1 || answers.Languages[0].Name != "go" || answers.Languages[0].Version != "1.24" {
 		t.Errorf("languages not mapped: %+v", answers.Languages)
@@ -121,10 +123,7 @@ func TestRunJoin_WritesGeneratedFilesFromConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildJoinAnswers: %v", err)
 	}
-	acc, err := runAccumulator(answers, struct {
-		ClaudeOnly bool
-		DevenvOnly bool
-	}{})
+	acc, err := runAccumulator(answers, generationScope{})
 	if err != nil {
 		t.Fatalf("runAccumulator: %v", err)
 	}

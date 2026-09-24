@@ -2,8 +2,10 @@ package selfupdate
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 )
@@ -97,23 +99,62 @@ func TestBackgroundCheck_NoUpdate(t *testing.T) {
 	}
 }
 
-func TestPrintNotice_NilChannel(t *testing.T) {
-	// Should not panic.
-	PrintNotice(nil)
+// capturePrintNotice runs PrintNotice(ch) with os.Stderr redirected to a
+// pipe and returns what it wrote.
+func capturePrintNotice(t *testing.T, ch <-chan string) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = orig }()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		PrintNotice(ch)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PrintNotice blocked")
+	}
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("closing pipe writer: %v", err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading captured stderr: %v", err)
+	}
+	return string(out)
 }
 
-func TestPrintNotice_EmptyChannel(t *testing.T) {
-	ch := make(chan string, 1)
-	// Don't send anything — PrintNotice should return immediately.
-	PrintNotice(ch)
-}
+func TestPrintNotice(t *testing.T) {
+	withNotice := make(chan string, 1)
+	withNotice <- "Update available!"
+	closed := make(chan string)
+	close(closed)
 
-func TestPrintNotice_WithNotice(t *testing.T) {
-	ch := make(chan string, 1)
-	ch <- "Update available!"
-
-	// Should not panic or block.
-	PrintNotice(ch)
+	tests := []struct {
+		name string
+		ch   <-chan string
+		want string
+	}{
+		{"nil channel", nil, ""},
+		{"empty channel", make(chan string, 1), ""},
+		{"closed channel", closed, ""},
+		{"with notice", withNotice, "\nUpdate available!\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := capturePrintNotice(t, tt.ch); got != tt.want {
+				t.Errorf("PrintNotice wrote %q, want %q", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestBackgroundCheck_DevVersion(t *testing.T) {

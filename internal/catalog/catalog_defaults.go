@@ -32,6 +32,11 @@ func (c *Catalog) DefaultAgentToolConfig() DefaultAgentTools {
 	return c.derivations.DefaultAgentTools
 }
 
+// DefaultTier returns the tier a project gets when nothing selects one.
+func (c *Catalog) DefaultTier() string {
+	return c.derivations.DefaultTier
+}
+
 // TierCompliance returns the compliance level for a given tier, or empty string.
 func (c *Catalog) TierCompliance(tier string) string {
 	return c.derivations.TierToCompliance[tier]

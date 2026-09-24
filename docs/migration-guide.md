@@ -142,7 +142,7 @@ The generated `.claude/settings.json` uses the `three-way-merge` strategy. To ad
 
 ### Preserving Custom MCP Servers
 
-`.mcp.json` also uses `three-way-merge`. Custom MCP server entries you add will be preserved during updates, as long as they do not conflict with built-in server names (`context7`, `github`, `semble`, `socket`). Documentation servers (`local-docs-devdocs`, `local-docs-zim`, `man-pages`, `mcp-nixos`) may also be present if enabled via `qsdev docs enable` — avoid conflicting with these names as well.
+`.mcp.json` also uses `three-way-merge`. Custom MCP server entries you add will be preserved during updates, as long as they do not conflict with built-in server names (`context7`, `github`, `semble`, `socket`). Documentation servers (`local-docs-devdocs`, `local-docs-zim`, `mcp-nixos`) may also be present if enabled via `qsdev docs enable` — avoid conflicting with these names as well.
 
 To add a custom server after initial setup:
 
@@ -217,7 +217,7 @@ git add .claude/skills/ .claude/rules/
 git add .mcp.json CLAUDE.md
 git add .npmrc              # or pip.conf, etc. (per-ecosystem configs)
 git add .gitignore
-git add .devinit/           # state files for update workflow
+git add .qsdev.yaml .qsdev-generated.sha256   # config + generated-file manifest for qsdev check in CI
 git commit -m "chore: add qsdev security-hardened dev environment"
 ```
 
@@ -244,9 +244,21 @@ If your project was initialized before qsdev 0.7.0, running `qsdev update` intro
 
 **Cloud deny rules** — If AWS, GCP, or Azure CLI tools are detected in your project, new deny rules are added to `.claude/settings.json` restricting credential file access and authentication commands. The three-way merge preserves your custom rules.
 
-**New MCP servers** — `agent-postmortem` and `version-sentinel` are embedded MCP servers available via `qsdev mcp <name>`. They do not appear in `.mcp.json` but are available through the CLI.
+**Agent MCP servers** — `agent-postmortem` and `version-sentinel` are served by qsdev's universal MCP server restricted to one tool module (`qsdev mcp serve --module <name>`), so their calls pass through its guardrail, rate-limit, content-safety and audit middleware. The standalone servers behind `qsdev mcp agent-postmortem` and `qsdev mcp version-sentinel` were removed. A `.mcp.json` written by an older release still launches those subcommands, so they remain as hidden aliases of `qsdev mcp serve --module <name>` (with the same middleware) that print a deprecation notice on stderr; `qsdev init --update` rewrites the entries to the new form.
 
 **Documentation servers** — Local documentation is now available via `qsdev docs enable`. Documentation MCP servers are opt-in and do not activate automatically.
+
+**Generated-file manifest** — `qsdev check` now verifies machine-owned generated files in CI against a committed `.qsdev-generated.sha256` manifest, and a project with `.qsdev.yaml` but no manifest fails the `generated_manifest` check at high severity. A project set up by an earlier version has none: run `qsdev init --update` (or `qsdev repair`, or `qsdev check --auto-fix`) once locally and commit `.qsdev-generated.sha256`.
+
+**Pinned MCP servers** — Every catalog MCP server that `npx` or `uvx` fetches at session start now names an exact release, and generation refuses an unpinned launcher (`npx -y pkg`, `uvx pkg`) from any source, including servers under the claudecode addon's `mcp_servers` configuration; pin those (`pkg@1.2.3`, `pkg==1.2.3`) before running `qsdev init --update`. The `postgres` server now runs Postgres MCP Pro (`uvx --from postgres-mcp==0.3.0 postgres-mcp --access-mode=restricted`, read-only) with `DATABASE_URI` taken from `DATABASE_URL`, because the npm package it named was never published. The `man-pages` tool and server were removed for the same reason (their PyPI package does not exist): drop `man-pages` from `tools.enabled` and `mcp_servers` in `.qsdev.yaml`, and `qsdev init --update` removes its `.mcp.json` entry. See [`.mcp.json`](configuration-reference.md#mcpjson).
+
+**Removed defaults sections** — The `profiles` and `profile_aliases` sections of the defaults file (`~/.config/qsdev/defaults.yaml`, see `qsdev defaults edit`) and of an organization catalog were never read by any command, so they have been removed. A file that still sets either section keeps loading: the section is ignored with a warning naming it and its line, and the rest of the file still applies. Delete the section to silence the warning. What a tier turns on is set by `tiers`, `tier_to_compliance` and `tier_to_enabled_tools`.
+
+**OpenGrep config file removed** — Projects that enabled `opengrep` got an `.opengrep/config.yaml` that OpenGrep cannot parse and that nothing ran. `qsdev update` now deletes that file if you have not edited it, or stops tracking it if you have; delete an edited copy yourself. Update only retires it when it regenerates opengrep's files, so in a project where it does not (for example one initialized with `--devenv-only`), delete the file by hand. The `security-scan` devenv task now runs `opengrep scan --config .opengrep/rules/core --error` instead.
+
+**Semgrep config file removed** — qsdev used to generate a `.semgrep.yml` that Semgrep rejects (it listed registry rule packs under `rules:` and had a `paths:` key), and the `security-scan` task never read it. `qsdev update` now deletes that file if you have not edited it, or stops tracking it if you have. It writes a `.semgrepignore` with the scan exclusions in its place. The `security-scan` task now passes the ecosystem rule packs as `--config` flags, and runs your own rules too if you move them into a `.semgrep/` directory. As with the OpenGrep file, update only retires `.semgrep.yml` when it regenerates semgrep's files. In a project where it does not (for example one initialized with `--devenv-only`), delete the file by hand. `qsdev status` now reports the SAST layer as enabled only when the `security-scan` task in `devenv.nix` runs semgrep, so run `qsdev update` if it reports the layer as partial.
+
+**License policy rewritten** — The `.scancode.yml` generated for `license-compliance` used to list `allowed`, `blocked` and `review` licenses in a format ScanCode does not read, and nothing ran ScanCode. `qsdev update` rewrites it as a real ScanCode `license_policies` policy that also prohibits the `-or-later` GPL and AGPL variants. Update also adds ScanCode to the `devenv.nix` packages and a license scan to the `security-scan` task, which fails on prohibited licenses. `qsdev status` now reports the license-compliance layer as enabled only when that task runs the scan, so run `qsdev update` if it reports the layer as partial.
 
 ## Common Issues
 
@@ -293,7 +305,7 @@ If `devenv test` reports credential variables are set:
 
 ### MCP server "unknown" error
 
-qsdev configures 4 default MCP servers in `.mcp.json`: `context7`, `github`, `socket`, `semble`. Additional servers (`agent-postmortem`, `version-sentinel`, `local-docs-devdocs`, `local-docs-zim`, `man-pages`, `mcp-nixos`) activate based on tool enablement and project detection. Custom servers can be added by editing `.mcp.json` directly after generation — the three-way merge preserves custom entries on update.
+qsdev configures 3 default MCP servers in `.mcp.json`: `context7`, `github`, `socket`. Additional servers (`semble` when opted in with `--agent-semble`, `agent-postmortem`, `version-sentinel`, `local-docs-devdocs`, `local-docs-zim`, `mcp-nixos`) activate based on tool enablement and project detection. Custom servers can be added by editing `.mcp.json` directly after generation — the three-way merge preserves custom entries on update.
 
 ### Corrupted or drifted configuration files
 
@@ -313,7 +325,7 @@ Exit code 2 from a PreToolUse hook indicates a self-protection denial. Review th
 
 ### Cloud deny rules appeared after update
 
-When `qsdev update` detects AWS, GCP, or Azure project files, it adds deny rules blocking credential file access and authentication commands. Cloud CLIs remain available for read-only operations. To use cloud authentication within the agent, configure per-project credential isolation through the cloud ecosystem module's environment variables.
+When `qsdev update` detects AWS, GCP, or Azure project files, it adds deny rules blocking credential file access and authentication commands. Cloud CLIs remain available for read-only operations. To keep each project's Azure and Google Cloud logins separate, set `cloud.isolate_cli_config: true` in `.qsdev.yaml` (see [Cloud CLI configuration isolation](configuration-reference.md#cloud-cli-configuration-isolation)).
 
 ### Policy warnings on existing dependencies
 

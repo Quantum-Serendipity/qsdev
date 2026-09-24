@@ -30,7 +30,7 @@ func init() {
 type Module struct{}
 
 // Name returns the canonical module identifier.
-func (m *Module) Name() string { return "azure" }
+func (m *Module) Name() string { return ecosystem.NameAzure }
 
 // DisplayName returns the human-readable label.
 func (m *Module) DisplayName() string { return "Azure CLI" }
@@ -88,10 +88,7 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 
 	if !detected {
-		return ecosystem.DetectionResult{
-			Detected:   false,
-			Confidence: ecosystem.ConfidenceAbsent,
-		}
+		return ecosystem.DetectionAbsent()
 	}
 
 	return ecosystem.DetectionResult{
@@ -101,13 +98,25 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	}
 }
 
+// envHints are the per-project variables Terraform's azurerm provider reads
+// to select a subscription and tenant. The Azure CLI ignores them: `az` uses
+// the subscription last chosen with `az account set` in its configuration
+// directory (see cloudcommon.IsolatedCLIConfigFragment).
+var envHints = []cloudcommon.EnvVarHint{
+	{Name: "ARM_SUBSCRIPTION_ID", Description: "Azure subscription ID"},
+	{Name: "ARM_TENANT_ID", Description: "Azure tenant ID"},
+}
+
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
-// for Azure CLI support. It sets placeholder environment variables for
-// ARM_SUBSCRIPTION_ID and ARM_TENANT_ID.
-func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
-	return `  env.ARM_SUBSCRIPTION_ID = "PLACEHOLDER -- set to your Azure subscription ID";
-  env.ARM_TENANT_ID = "PLACEHOLDER -- set to your Azure tenant ID";
-`, nil
+// for Azure CLI support. It documents ARM_SUBSCRIPTION_ID and ARM_TENANT_ID
+// without setting them (see cloudcommon.EnvGuidanceFragment) and, with
+// cloud.isolate_cli_config, sets AZURE_CONFIG_DIR to a per-project directory.
+func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
+	fragment := cloudcommon.EnvGuidanceFragment("Azure", envHints)
+	if config.IsolateCLIConfig {
+		fragment += "\n" + cloudcommon.IsolatedCLIConfigFragment(cloudcommon.Azure)
+	}
+	return fragment, nil
 }
 
 // DevenvPackages returns the Nix packages required for the Azure ecosystem.

@@ -1,7 +1,10 @@
 package devinit
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -53,7 +56,7 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 	if err != nil {
 		return err
 	}
-	answers.Detected = detect.Detect(projectRoot)
+	answers.Detected = detect.Detect(cmd.Context(), projectRoot)
 	answers.ProjectRoot = projectRoot
 
 	// Load state.
@@ -96,8 +99,12 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 		if len(freshFragments) > 0 {
 			updatedState.Fragments = state.RecordFragments(freshFragments)
 		}
-		if err := state.SaveStateToFile(stateFile, *updatedState); err != nil {
+		if err := state.SaveInitState(projectRoot, *updatedState); err != nil {
 			return fmt.Errorf("saving state: %w", err)
+		}
+	} else if !opts.DryRun {
+		if err := ensureManifest(projectRoot, existingState); err != nil {
+			return err
 		}
 	}
 
@@ -129,7 +136,7 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 			fmt.Fprintf(w, "  [fail] %s — %s%s\n", a.File, a.Description, errMsg)
 		}
 	}
-	if driftReport.TotalFindings == 0 {
+	if len(result.Fixed)+len(result.Skipped)+len(result.Failed) == 0 {
 		fmt.Fprintln(w, "No issues found. Project is healthy.")
 	}
 
@@ -155,12 +162,7 @@ func (e *repairExitErr) ExitCode() int { return e.code }
 // regenerateFreshFiles runs both generators via fragment accumulation to produce
 // a map of path to fresh GeneratedFile. Returns an error only if generation fails entirely.
 func regenerateFreshFiles(answers types.WizardAnswers) (map[string]types.GeneratedFile, []types.FragmentEntry, error) {
-	accResult, err := runAccumulator(answers, struct {
-		ClaudeOnly bool
-		DevenvOnly bool
-	}{
-		ClaudeOnly: answers.MergeMode == "claude-only",
-	})
+	accResult, err := runAccumulator(answers, scopeFromAnswers(answers))
 	if err != nil {
 		return nil, nil, fmt.Errorf("generating files for repair: %w", err)
 	}
@@ -175,4 +177,25 @@ func regenerateFreshFiles(answers types.WizardAnswers) (map[string]types.Generat
 	}
 
 	return freshFiles, accResult.fragments, nil
+}
+
+// ensureManifest writes the committed generated-file manifest from st when the
+// project has none (a project initialized before qsdev wrote it). An existing
+// manifest is left alone: it is the committed record, and a local state that
+// predates the last pull must not overwrite it.
+func ensureManifest(projectRoot string, st types.GeneratedState) error {
+	if len(st.Files) == 0 {
+		return nil
+	}
+	_, err := os.Stat(filepath.Join(projectRoot, state.ManifestFile()))
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("checking %s: %w", state.ManifestFile(), err)
+	}
+	if err := state.WriteManifest(projectRoot, state.BuildManifest(st)); err != nil {
+		return fmt.Errorf("writing the generated-file manifest: %w", err)
+	}
+	return nil
 }

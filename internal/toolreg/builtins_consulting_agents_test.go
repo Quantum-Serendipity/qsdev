@@ -3,8 +3,6 @@ package toolreg
 import (
 	"strings"
 	"testing"
-
-	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestConsultingAgentToolsRegistered(t *testing.T) {
@@ -63,49 +61,16 @@ func TestConsultingAgentToolsOptIn(t *testing.T) {
 	}
 }
 
-func TestConsultingAgentToolEnableDisable(t *testing.T) {
+func TestConsultingAgentToolsLifecycleOnly(t *testing.T) {
 	reg := DefaultRegistry()
-
-	agentNames := []string{
-		"consulting-agent-security-reviewer",
-		"consulting-agent-codebase-explorer",
-		"consulting-agent-test-gap-analyzer",
-		"consulting-agent-onboarding-guide",
-		"consulting-agent-migration-planner",
-		"consulting-agent-handoff-doc-generator",
-		"consulting-agent-incident-debugger",
-	}
-
-	for _, name := range agentNames {
-		tool, ok := reg.ByName(name)
-		if !ok {
-			t.Errorf("tool %q not found", name)
-			continue
+	var names []string
+	for _, tool := range reg.All() {
+		if strings.HasPrefix(tool.Name, "consulting-agent-") {
+			names = append(names, tool.Name)
 		}
-
-		t.Run(name, func(t *testing.T) {
-			answers := types.WizardAnswers{}
-
-			if tool.EnableFunc == nil {
-				t.Fatal("EnableFunc is nil")
-			}
-			tool.EnableFunc(&answers)
-
-			if answers.EnabledTools == nil {
-				t.Fatal("EnabledTools should be initialized after Enable")
-			}
-			if !answers.EnabledTools[name] {
-				t.Errorf("after Enable, EnabledTools[%q] should be true", name)
-			}
-
-			if tool.DisableFunc == nil {
-				t.Fatal("DisableFunc is nil")
-			}
-			tool.DisableFunc(&answers)
-
-			if answers.EnabledTools[name] {
-				t.Errorf("after Disable, EnabledTools[%q] should be false", name)
-			}
-		})
 	}
+	if len(names) == 0 {
+		t.Fatal("no consulting-agent tools in registry")
+	}
+	assertLifecycleOnly(t, reg, names...)
 }

@@ -2,7 +2,7 @@
 // the universal qsdev MCP server (Phase 32, Unit 32.5). All behavior lives in the
 // shared frameworkstub adapter; this package contributes only the Windsurf
 // descriptor. It is registered into the adapter registry explicitly from
-// cmd/qsdev/main.go.
+// instance/runtime.go.
 //
 // RESEARCH-GATED: full Windsurf config rendering is pending the
 // gdev-universal-mcp-server-design spike and a Windsurf P19 reference adapter;

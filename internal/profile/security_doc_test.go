@@ -6,7 +6,7 @@ import (
 )
 
 func TestGenerateSecurityDoc_ConsultingDefault(t *testing.T) {
-	f := ConsultingDefault.generateSecurityDoc()
+	f := mustSecurityDoc(t, ConsultingDefault)
 
 	if f.Path != "docs/security-overview.md" {
 		t.Errorf("Path = %q, want docs/security-overview.md", f.Path)
@@ -28,7 +28,7 @@ func TestGenerateSecurityDoc_TrivyCompromiseWarning(t *testing.T) {
 
 	for _, p := range profiles {
 		t.Run(p.Name, func(t *testing.T) {
-			f := p.generateSecurityDoc()
+			f := mustSecurityDoc(t, p)
 			content := string(f.Content)
 
 			if !strings.Contains(content, "Trivy") {
@@ -46,7 +46,7 @@ func TestGenerateSecurityDoc_SocketNotPhylum(t *testing.T) {
 
 	for _, p := range profiles {
 		t.Run(p.Name, func(t *testing.T) {
-			f := p.generateSecurityDoc()
+			f := mustSecurityDoc(t, p)
 			content := string(f.Content)
 
 			if !strings.Contains(content, "Socket") {
@@ -60,7 +60,7 @@ func TestGenerateSecurityDoc_SocketNotPhylum(t *testing.T) {
 }
 
 func TestGenerateSecurityDoc_ProfileSpecificContent(t *testing.T) {
-	f := Enterprise.generateSecurityDoc()
+	f := mustSecurityDoc(t, Enterprise)
 	content := string(f.Content)
 
 	if !strings.Contains(content, "enterprise") {
@@ -71,8 +71,81 @@ func TestGenerateSecurityDoc_ProfileSpecificContent(t *testing.T) {
 	}
 }
 
+// Regression: the doc labelled the Renovate/Dependabot PR delay as the
+// install-time age gate (so startup-github, with no PR delay, was documented
+// as having age gating disabled) and asserted project-level controls as
+// Enabled regardless of the project's security settings.
+func TestGenerateSecurityDoc_DoesNotConflateProfileAndProjectControls(t *testing.T) {
+	t.Parallel()
+	for _, p := range []*InfraProfile{ConsultingDefault, StartupGitHub, Enterprise} {
+		t.Run(p.Name, func(t *testing.T) {
+			t.Parallel()
+			content := string(mustSecurityDoc(t, p).Content)
+			for _, stale := range []string{
+				"Block packages newer than",
+				"| Enabled (per-ecosystem config) |",
+				"integrity | Enabled |",
+			} {
+				if strings.Contains(content, stale) {
+					t.Errorf("doc still contains %q", stale)
+				}
+			}
+			for _, setting := range []string{"security.age_gating", "security.script_blocking", "security.lock_enforcement"} {
+				if !strings.Contains(content, setting) {
+					t.Errorf("doc should attribute a layer to the project setting %s", setting)
+				}
+			}
+			if !strings.Contains(content, "Dependency update PR delay") {
+				t.Error("doc should report the update-tool delay as a dependency update PR delay")
+			}
+		})
+	}
+}
+
+func TestGenerateSecurityDoc_PRDelayReflectsProfile(t *testing.T) {
+	t.Parallel()
+	enterprise := string(mustSecurityDoc(t, Enterprise).Content)
+	if !strings.Contains(enterprise, "waits 7 day(s)") {
+		t.Error("enterprise doc should report its 7-day update PR delay")
+	}
+	startup := string(mustSecurityDoc(t, StartupGitHub).Content)
+	if !strings.Contains(startup, "none (dependabot proposes releases immediately)") {
+		t.Error("startup-github doc should report no update PR delay")
+	}
+}
+
+// Regression: template failures used to become comment-only files written
+// with the Overwrite strategy. Every built-in profile must render real files.
+func TestConfigFiles_BuiltinsRenderWithoutErrorStubs(t *testing.T) {
+	t.Parallel()
+	for _, p := range []*InfraProfile{ConsultingDefault, StartupGitHub, Enterprise} {
+		t.Run(p.Name, func(t *testing.T) {
+			t.Parallel()
+			for _, f := range mustConfigFiles(t, p, ProjectInputs{Ecosystems: []string{"go"}}) {
+				if strings.HasPrefix(string(f.Content), "# Error") {
+					t.Errorf("%s rendered as an error stub: %q", f.Path, f.Content)
+				}
+			}
+		})
+	}
+}
+
+func TestSecurityTemplates_ExecuteErrorsAreReturned(t *testing.T) {
+	t.Parallel()
+	// Executing against data without the expected fields must fail loudly;
+	// the generators propagate this as an error rather than writing a stub.
+	var buf strings.Builder
+	if err := securityDocTmpl.Execute(&buf, struct{}{}); err == nil {
+		t.Error("security overview template executed against empty data without error")
+	}
+	buf.Reset()
+	if err := securityScanWorkflowTmpl.Execute(&buf, struct{}{}); err == nil {
+		t.Error("security-scan workflow template executed against empty data without error")
+	}
+}
+
 func TestGenerateSecurityDoc_DefenseLayersTable(t *testing.T) {
-	f := ConsultingDefault.generateSecurityDoc()
+	f := mustSecurityDoc(t, ConsultingDefault)
 	content := string(f.Content)
 
 	requiredLayers := []string{

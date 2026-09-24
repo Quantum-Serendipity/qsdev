@@ -1,8 +1,7 @@
 package aiframework
 
 import (
-	"fmt"
-
+	"github.com/Quantum-Serendipity/qsdev/internal/enumtext"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
@@ -37,30 +36,13 @@ var markerTypeNames = [...]string{
 	MarkerBinary:    "binary",
 }
 
-func (m MarkerType) String() string {
-	if int(m) >= 0 && int(m) < len(markerTypeNames) {
-		return markerTypeNames[m]
-	}
-	return "unknown"
-}
+var markerTypeText = enumtext.New[MarkerType]("MarkerType", "marker type", "unknown", markerTypeNames[:])
 
-func (m MarkerType) MarshalText() ([]byte, error) {
-	s := m.String()
-	if s == "unknown" {
-		return nil, fmt.Errorf("cannot marshal unknown MarkerType value %d", int(m))
-	}
-	return []byte(s), nil
-}
+func (m MarkerType) String() string { return markerTypeText.String(m) }
 
-func (m *MarkerType) UnmarshalText(text []byte) error {
-	for i, name := range markerTypeNames {
-		if name == string(text) {
-			*m = MarkerType(i)
-			return nil
-		}
-	}
-	return fmt.Errorf("unknown marker type: %q", string(text))
-}
+func (m MarkerType) MarshalText() ([]byte, error) { return markerTypeText.MarshalText(m) }
+
+func (m *MarkerType) UnmarshalText(text []byte) error { return markerTypeText.UnmarshalText(text, m) }
 
 // DetectionMarker describes a filesystem artifact that indicates framework presence.
 type DetectionMarker struct {

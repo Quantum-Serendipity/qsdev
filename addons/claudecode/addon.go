@@ -4,6 +4,7 @@ import (
 	"fastcat.org/go/gdev/addons"
 	"fastcat.org/go/gdev/instance"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules"
 )
 
@@ -33,9 +34,10 @@ func CurrentConfig() Config {
 }
 
 func initialize() error {
-	instance.AddCommands(claudeCmd())
-	instance.AddCommands(mcpCmd())
-	instance.AddCommands(docsCmd())
-	instance.AddCommands(contentCmd())
+	wireAttestation()
+
+	// instance.Main walks the finished tree; wrapping here as well keeps typo
+	// rejection for tools still launched through gdev's cmd.Main.
+	instance.AddCommands(cmdutil.RejectUnknownSubcommands(claudeCmd(), mcpCmd(), docsCmd(), contentCmd())...)
 	return nil
 }

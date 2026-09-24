@@ -90,6 +90,66 @@ packages = [ pkgs.git ];
 	}
 }
 
+func TestNixInsertSection_IgnoresBracesOutsideCode(t *testing.T) {
+	t.Parallel()
+	section := "  # --- t ---\n  x = 1;\n  # --- end t ---\n"
+	tests := []struct {
+		name     string
+		existing string
+		want     string
+	}{
+		{
+			name:     "trailing_line_comment",
+			existing: "{\n  a = 1;\n}  # see {docs}\n",
+			want:     "{\n  a = 1;\n\n" + section + "}  # see {docs}\n",
+		},
+		{
+			name:     "trailing_block_comment",
+			existing: "{\n  a = 1;\n}\n/* old: { b = 2; } */\n",
+			want:     "{\n  a = 1;\n\n" + section + "}\n/* old: { b = 2; } */\n",
+		},
+		{
+			name:     "brace_in_strings",
+			existing: "{\n  a = \"}\";\n  b = ''\n    ${x} }\n  '';\n}\n",
+			want:     "{\n  a = \"}\";\n  b = ''\n    ${x} }\n  '';\n\n" + section + "}\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NixInsertSection([]byte(tt.existing), "t", []byte("  x = 1;"))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("got:\n%q\nwant:\n%q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNixInsertSection_StrayEarlierCloseMarker(t *testing.T) {
+	t.Parallel()
+	existing := []byte("{\n  # --- end t ---\n  # --- t ---\n  old = 1;\n  # --- end t ---\n}\n")
+	got, err := NixInsertSection(existing, "t", []byte("  new = 1;"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n := strings.Count(string(got), "# --- t ---"); n != 1 {
+		t.Errorf("open marker count = %d, want 1 (section duplicated):\n%s", n, got)
+	}
+	if strings.Contains(string(got), "old = 1;") || !strings.Contains(string(got), "new = 1;") {
+		t.Errorf("section not replaced in place:\n%s", got)
+	}
+}
+
+func TestNixInsertSection_OpenWithoutClose(t *testing.T) {
+	t.Parallel()
+	existing := []byte("{\n  # --- t ---\n  old = 1;\n}\n")
+	if got, err := NixInsertSection(existing, "t", []byte("x")); err == nil {
+		t.Fatalf("expected error for unterminated section, got:\n%s", got)
+	}
+}
+
 func TestNixInsertSection_ContentTrailingNewlinesTrimmed(t *testing.T) {
 	existing := []byte("{\n}\n")
 	content := []byte("  foo = true;\n\n\n")

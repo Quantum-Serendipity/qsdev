@@ -31,15 +31,28 @@ type ContainerCheckItem struct {
 }
 
 // RunContainerCheck probes the system for container runtimes, detects
-// capabilities, and returns a ContainerSection for the doctor report.
-// Returns nil when no container runtime is detected.
-func RunContainerCheck(ctx context.Context, prober container.Prober, osInfo *sysinfo.OSInfo) *ContainerSection {
+// capabilities relevant to the project at projectRoot, and returns a
+// ContainerSection for the doctor report. Returns nil when no container
+// runtime is installed; an installed but unusable runtime is reported through
+// the section's warnings.
+func RunContainerCheck(ctx context.Context, prober container.Prober, osInfo *sysinfo.OSInfo, projectRoot string) *ContainerSection {
 	info, err := container.Detect(ctx, prober)
-	if err != nil || info.Active == container.RuntimeNone {
+	if err != nil {
 		return nil
 	}
+	if info.Active == container.RuntimeNone {
+		if len(info.Warnings) == 0 {
+			return nil
+		}
+		return &ContainerSection{
+			Detected:    true,
+			Runtime:     "none usable",
+			RuntimeName: string(container.RuntimeNone),
+			Warnings:    info.Warnings,
+		}
+	}
 
-	caps, err := container.DetectCapabilities(ctx, prober, info)
+	caps, err := container.DetectCapabilities(ctx, prober, info, projectRoot)
 	if err != nil {
 		return nil
 	}
@@ -68,6 +81,7 @@ func RunContainerCheck(ctx context.Context, prober container.Prober, osInfo *sys
 	if rootless {
 		cs.Warnings = caps.NeedsRootfulFallback()
 	}
+	cs.Warnings = append(cs.Warnings, info.Warnings...)
 
 	// Recommendations.
 	if info.Active == container.RuntimeDocker {
@@ -155,14 +169,14 @@ func buildGPUItem(caps *container.Capabilities, rootless bool) ContainerCheckIte
 		return ContainerCheckItem{
 			Label:   "GPU",
 			Status:  "warn",
-			Summary: "NVIDIA GPU detected -- rootless cannot pass through GPU devices",
+			Summary: "GPU devices detected -- rootless cannot pass through GPU devices",
 		}
 	}
 	if caps.GPUPassthrough {
 		return ContainerCheckItem{
 			Label:   "GPU",
 			Status:  "ok",
-			Summary: "NVIDIA GPU detected",
+			Summary: "GPU devices detected",
 		}
 	}
 	return ContainerCheckItem{
@@ -177,14 +191,14 @@ func buildNFSItem(caps *container.Capabilities, rootless bool) ContainerCheckIte
 		return ContainerCheckItem{
 			Label:   "NFS",
 			Status:  "warn",
-			Summary: "NFS mounts detected -- rootless cannot bind-mount NFS paths",
+			Summary: "NFS mount overlaps the project -- rootless cannot bind-mount NFS paths",
 		}
 	}
 	if caps.NFSMounts {
 		return ContainerCheckItem{
 			Label:   "NFS",
 			Status:  "ok",
-			Summary: "NFS mounts detected",
+			Summary: "NFS mount overlaps the project",
 		}
 	}
 	return ContainerCheckItem{

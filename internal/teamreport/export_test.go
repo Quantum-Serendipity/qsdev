@@ -15,8 +15,9 @@ func projectSummaryHelper(name string, score float64, baselinePass, enhancedPass
 		Conformance:  makeConformance(baselinePass, enhancedPass),
 		VulnTotals:   makeVulns(critVulns, highVulns),
 		Certifiable:  true, // helper models a completed, conclusive scan
+		Scanned:      true,
 		QsdevVersion: qsdevVersion,
-		LastScan:     lastScan,
+		LastScan:     &lastScan,
 	}
 }
 
@@ -26,7 +27,7 @@ func makeScore(total float64) posture.AggregateScore {
 		Grade:     posture.ScoreToGrade(total),
 		Defense:   total,
 		Config:    total,
-		DepHealth: total,
+		DepHealth: new(total),
 	}
 }
 

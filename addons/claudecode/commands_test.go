@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -124,7 +125,7 @@ func TestInitCmd_WritesFiles(t *testing.T) {
 	}
 
 	// Verify answers were saved.
-	answersFile := filepath.Join(tmpDir, ".claude", ".qsdev-claude-answers.yaml")
+	answersFile := claudecode.ExportAnswersPath(tmpDir)
 	if _, err := os.Stat(answersFile); err != nil {
 		t.Errorf("answers file not saved: %v", err)
 	}
@@ -300,8 +301,8 @@ func TestAddSkill_TierSuppressedDoesNotPersist(t *testing.T) {
 }
 
 // TestAddSkill_RemovesLegacyFlatSkillFile guards the layout-migration cleanup:
-// a pre-migration flat .claude/skills/<name>.md is removed when the new
-// <name>/SKILL.md is (re)generated.
+// a qsdev-generated pre-migration flat .claude/skills/<name>.md is removed
+// when the new <name>/SKILL.md is (re)generated.
 func TestAddSkill_RemovesLegacyFlatSkillFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	chdir(t, tmpDir)
@@ -328,15 +329,19 @@ func TestAddSkill_RemovesLegacyFlatSkillFile(t *testing.T) {
 		t.Fatalf("saving answers: %v", err)
 	}
 
-	// Seed a stale flat skill file from the old layout.
+	// Seed a stale flat skill file from the old layout, recorded in the
+	// top-level init state as qsdev-generated (a project initialized by an
+	// older top-level `qsdev init`).
 	skillsDir := filepath.Join(tmpDir, ".claude", "skills")
 	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	legacy := filepath.Join(skillsDir, "deploy.md")
-	if err := os.WriteFile(legacy, []byte("stale flat skill"), 0o644); err != nil {
+	legacyContent := []byte("stale flat skill")
+	if err := os.WriteFile(legacy, legacyContent, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	recordState(t, filepath.Join(tmpDir, state.StateFilePaths()[0]), ".claude/skills/deploy.md", legacyContent)
 
 	runClaude("add-skill", "deploy")
 
@@ -886,7 +891,7 @@ func TestInitCmd_SavesStateAndAnswers(t *testing.T) {
 	}
 
 	// Verify answers file.
-	answersFile := filepath.Join(tmpDir, ".claude", ".qsdev-claude-answers.yaml")
+	answersFile := claudecode.ExportAnswersPath(tmpDir)
 	if _, err := os.Stat(answersFile); err != nil {
 		t.Errorf("answers file not saved: %v", err)
 	}
@@ -924,6 +929,9 @@ func TestInitCmd_DryRunNoFiles(t *testing.T) {
 		if _, err := os.Stat(absPath); err == nil {
 			t.Errorf("dry-run should not write %s", relPath)
 		}
+	}
+	if _, err := os.Stat(claudecode.ExportAnswersPath(tmpDir)); err == nil {
+		t.Error("dry-run should not write the primary answers file")
 	}
 }
 

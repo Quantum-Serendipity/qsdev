@@ -114,3 +114,25 @@ func TestBuildLogEmptyFindingsStillValid(t *testing.T) {
 		t.Errorf("results serialized as %v, want []", run["results"])
 	}
 }
+
+// TestBuildLogDescribesCustomPolicyRules guards F192: a result for a custom
+// policy rule (not in the branded catalog) must still reference a rule the
+// driver describes, exactly once however many results it has.
+func TestBuildLogDescribesCustomPolicyRules(t *testing.T) {
+	t.Parallel()
+
+	findings := []SarifResult{
+		{RuleID: "qsdev/policy/ORG-042", Level: "error", Message: "a", SecuritySeverity: 9.0},
+		{RuleID: "qsdev/policy/ORG-042", Level: "error", Message: "b", SecuritySeverity: 9.0},
+		{RuleID: "qsdev/policy/SP-001", Level: "error", Message: "c", SecuritySeverity: 10.0},
+	}
+
+	rules := BuildLog("qsdev", "", "", findings).Runs[0].Tool.Driver.Rules
+	if len(rules) != len(AllRules)+1 {
+		t.Fatalf("driver.rules count = %d, want catalog + 1 custom rule (%d)", len(rules), len(AllRules)+1)
+	}
+	custom := rules[len(rules)-1]
+	if custom.ID != "qsdev/policy/ORG-042" || custom.DefaultConfiguration.Level != "error" {
+		t.Errorf("custom descriptor = %+v, want ID qsdev/policy/ORG-042 at level error", custom)
+	}
+}

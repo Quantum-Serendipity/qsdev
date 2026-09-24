@@ -240,10 +240,7 @@ func TestDetectWorkspacesMultiEcosystem(t *testing.T) {
 	writeWS(t, root, "go.work", "go 1.21\n\nuse ./services/api\n")
 	writeWS(t, root, "services/api/go.mod", "module example.com/api\n\ngo 1.21\n\nrequire example.com/lib v1.2.3\n")
 
-	graph, err := DetectWorkspaces(root)
-	if err != nil {
-		t.Fatalf("DetectWorkspaces: %v", err)
-	}
+	graph := DetectWorkspaces(root)
 	if graph.Len() != 2 {
 		t.Fatalf("graph has %d packages, want 2: %v", graph.Len(), graph.Packages())
 	}
@@ -294,10 +291,7 @@ func TestDetectWorkspacesPnpmConfigSpelling(t *testing.T) {
 			writeWS(t, root, tc.configFile, "packages:\n  - 'packages/*'\n")
 			writeWS(t, root, "packages/web/package.json", `{"name":"@org/web","dependencies":{"react":"18"}}`)
 
-			graph, err := DetectWorkspaces(root)
-			if err != nil {
-				t.Fatalf("DetectWorkspaces: %v", err)
-			}
+			graph := DetectWorkspaces(root)
 			web := graph.ByRelDir("packages/web")
 			if web == nil {
 				t.Fatalf("packages/web not detected for %s-only workspace: %v", tc.configFile, graph.Packages())
@@ -323,10 +317,7 @@ func TestDetectWorkspacesFailureIsolation(t *testing.T) {
 	writeWS(t, root, "go.work", "go 1.21\n\nuse ./svc\n")
 	writeWS(t, root, "svc/go.mod", "module example.com/svc\n\ngo 1.21\n")
 
-	graph, err := DetectWorkspaces(root)
-	if err != nil {
-		t.Fatalf("DetectWorkspaces: %v", err)
-	}
+	graph := DetectWorkspaces(root)
 	if graph.ByRelDir("svc") == nil {
 		t.Errorf("valid go workspace dropped because npm parser failed: %v", graph.Packages())
 	}
@@ -343,10 +334,7 @@ func TestQualifiedNameCollision(t *testing.T) {
 	writeWS(t, root, "go.work", "go 1.21\n\nuse ./go/utils\n")
 	writeWS(t, root, "go/utils/go.mod", "module utils\n\ngo 1.21\n")
 
-	graph, err := DetectWorkspaces(root)
-	if err != nil {
-		t.Fatalf("DetectWorkspaces: %v", err)
-	}
+	graph := DetectWorkspaces(root)
 
 	npmUtils := graph.ByQualifiedName("npm:utils")
 	if npmUtils == nil || npmUtils.RelDir != "js/utils" {
@@ -391,10 +379,7 @@ func TestRenderPackageContext(t *testing.T) {
 	writeWS(t, root, "package.json", `{"name":"root","workspaces":["packages/*"]}`)
 	writeWS(t, root, "packages/web/package.json", `{"name":"@org/web","dependencies":{"react":"18"}}`)
 
-	graph, err := DetectWorkspaces(root)
-	if err != nil {
-		t.Fatalf("DetectWorkspaces: %v", err)
-	}
+	graph := DetectWorkspaces(root)
 
 	res, ok := graph.RenderPackageContext("qsdev://project/packages/web/context")
 	if !ok {
@@ -439,11 +424,8 @@ func TestDetectWorkspacesPerformance(t *testing.T) {
 	}
 
 	start := time.Now()
-	graph, err := DetectWorkspaces(root)
+	graph := DetectWorkspaces(root)
 	elapsed := time.Since(start)
-	if err != nil {
-		t.Fatalf("DetectWorkspaces: %v", err)
-	}
 	if graph.Len() != n {
 		t.Fatalf("graph has %d packages, want %d", graph.Len(), n)
 	}

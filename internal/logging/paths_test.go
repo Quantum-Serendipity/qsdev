@@ -108,3 +108,50 @@ func TestWalkUpMarkerSetsStayDistinct(t *testing.T) {
 		}
 	})
 }
+
+// TestClassifyInvocation covers the log-scope classification: shell completion,
+// help and log browsing must not create sessions (each TAB press used to create
+// one and evict real command logs), hooks are automated, and classification is
+// by command-path prefix so subcommands inherit their parent's class.
+func TestClassifyInvocation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args []string
+		want CommandClass
+	}{
+		{"shell completion request", []string{"__complete", "lo"}, ClassUnlogged},
+		{"shell completion without descriptions", []string{"__completeNoDesc", "in"}, ClassUnlogged},
+		{"completion script", []string{"completion", "bash"}, ClassUnlogged},
+		{"help command", []string{"help", "init"}, ClassUnlogged},
+		{"help flag", []string{"init", "--help"}, ClassUnlogged},
+		{"short help flag", []string{"enable", "-h"}, ClassUnlogged},
+		{"bare root", nil, ClassUnlogged},
+		{"root version flag", []string{"--version"}, ClassUnlogged},
+		{"logs subcommand", []string{"logs", "list"}, ClassUnlogged},
+		{"report subcommand", []string{"report", "bug"}, ClassGlobal},
+		{"self-update with version flag", []string{"self-update", "--version", "v1.2.3"}, ClassGlobal},
+		{"version", []string{"version"}, ClassGlobal},
+		{"selfprotect hook", []string{"selfprotect", "--hook"}, ClassAutomated},
+		{"enforce hook", []string{"enforce", "--hook", "pre-tool-use"}, ClassAutomated},
+		{"sandbox exec", []string{"sandbox", "exec", "--", "ls"}, ClassAutomated},
+		{"sandbox status", []string{"sandbox", "status"}, ClassProject},
+		// The MCP servers the agent launches are all the universal server, which
+		// opens its own automated session.
+		{"universal mcp server", []string{"mcp", "serve"}, ClassUnlogged},
+		{"single-module mcp server", []string{"mcp", "serve", "--module", "agent-postmortem"}, ClassUnlogged},
+		{"mcp management command", []string{"mcp", "install", "github"}, ClassProject},
+		{"help after terminator is an argument", []string{"sandbox", "exec", "--", "tool", "--help"}, ClassAutomated},
+		{"init", []string{"init", "--mode", "join"}, ClassProject},
+		{"unknown command", []string{"doctor"}, ClassProject},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ClassifyInvocation(tt.args); got != tt.want {
+				t.Errorf("ClassifyInvocation(%q) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}

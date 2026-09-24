@@ -4,22 +4,38 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 )
 
 // BubblewrapBackend implements SandboxBackend using bubblewrap for namespace
-// isolation. It supports three tiers depending on available kernel features:
-// Full (bwrap + Landlock + seccomp), BwrapWithoutLandlock, BwrapWithoutSeccomp.
+// isolation. It supports four tiers depending on the available LSM layers:
+// Full (bwrap + Landlock + seccomp), BwrapWithoutLandlock, BwrapWithoutSeccomp
+// and BwrapOnly (namespaces alone).
+// With WithSystemdRun it also applies the configured cgroup resource limits.
 type BubblewrapBackend struct {
-	tier      sandbox.DegradationTier
-	bwrapBin  string
-	hasUserNS bool
+	tier           sandbox.DegradationTier
+	bwrapBin       string
+	hasUserNS      bool
+	systemdRunPath string
+}
+
+// Option configures optional BubblewrapBackend behaviour.
+type Option func(*BubblewrapBackend)
+
+// WithSystemdRun enables cgroup resource limits: each sandbox runs inside a
+// transient `systemd-run --user --scope` carrying SandboxConfig.Resources,
+// whenever a systemd user session is reachable. Without it (or without a user
+// session) the limits cannot be applied and RunHook warns instead.
+func WithSystemdRun(path string) Option {
+	return func(b *BubblewrapBackend) { b.systemdRunPath = path }
 }
 
 // NewBubblewrapBackend creates a BubblewrapBackend with the given tier, bwrap
@@ -27,8 +43,12 @@ type BubblewrapBackend struct {
 // whether the host permits unprivileged user namespaces; every bwrap invocation
 // emits --unshare-user, so a backend built without them fails every exec and
 // must report itself unavailable (see Available).
-func NewBubblewrapBackend(tier sandbox.DegradationTier, bwrapBin string, hasUserNS bool) *BubblewrapBackend {
-	return &BubblewrapBackend{tier: tier, bwrapBin: bwrapBin, hasUserNS: hasUserNS}
+func NewBubblewrapBackend(tier sandbox.DegradationTier, bwrapBin string, hasUserNS bool, opts ...Option) *BubblewrapBackend {
+	b := &BubblewrapBackend{tier: tier, bwrapBin: bwrapBin, hasUserNS: hasUserNS}
+	for _, opt := range opts {
+		opt(b)
+	}
+	return b
 }
 
 func (b *BubblewrapBackend) Name() string                  { return "bubblewrap" }
@@ -53,7 +73,10 @@ func (b *BubblewrapBackend) Available() error {
 	return nil
 }
 
-// RunHook creates a bubblewrap sandbox, executes the hook, and returns the result.
+// RunHook creates a bubblewrap sandbox, executes the hook, and returns the
+// result. A failure to establish the sandbox (bwrap cannot start, or the
+// ll-restrict helper fails before exec'ing the hook) is returned as an error
+// wrapping sandbox.ErrSetupFailed, never as the hook's exit code.
 func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxConfig) (*sandbox.SandboxResult, error) {
 	if len(cfg.HookCommand) == 0 {
 		return &sandbox.SandboxResult{ExitCode: 0, Tier: b.tier}, nil
@@ -66,80 +89,131 @@ func (b *BubblewrapBackend) RunHook(ctx context.Context, cfg *sandbox.SandboxCon
 		return nil, fmt.Errorf("building sandbox args: %w", err)
 	}
 
+	// Forbid nested user namespaces at the kernel level when this bwrap can
+	// (>= 0.8): seccomp cannot filter clone3's flags, so this is the only
+	// complete block on user-namespace-gated kernel attack surface.
+	if supportsDisableUserNS(ctx, b.bwrapBin) {
+		args = append(args, "--disable-userns")
+	}
+
+	// Honesty: "filtered" network has no egress filter yet, so say so rather
+	// than let the policy imply an allowlist that is not applied.
+	if unenforced := cfg.UnenforcedNetworkControls(); len(unenforced) > 0 {
+		slog.Warn("sandbox network controls NOT enforced",
+			"category", cfg.HookCategory.String(), "detail", strings.Join(unenforced, "; "))
+	}
+
 	// Seccomp layer: pass the compiled BPF filter to bwrap through an inherited
 	// file descriptor when one is available (the Nix build injects the path via
 	// ldflags). This is a no-op in builds without a filter, so exec still runs.
-	var extraFiles []*os.File
+	extraFiles, seccompArgs := openSeccompFilter()
 	defer func() {
 		for _, f := range extraFiles {
 			_ = f.Close()
 		}
 	}()
-	seccompApplied := false
-	if fp := sandbox.SeccompFilterFile(); fp != "" {
-		if f, openErr := os.Open(fp); openErr == nil { //nolint:gosec // path is a trusted build-time constant
-			// cmd.ExtraFiles entries are handed to the child starting at fd 3.
-			childFD := 3 + len(extraFiles)
-			args = append(args, "--seccomp", strconv.Itoa(childFD))
-			extraFiles = append(extraFiles, f)
-			seccompApplied = true
-		} else {
-			slog.Warn("seccomp filter present but unreadable; syscall filtering NOT applied",
-				"path", fp, "error", openErr)
-		}
-	}
+	args = append(args, seccompArgs...)
 
-	// Landlock layer: wrap the hook command with ll-restrict when it is
-	// available. InjectLandlock returns the command unchanged when ll-restrict
-	// is absent, so this is also a safe no-op in unprovisioned environments.
-	hookCmd := InjectLandlock(cfg.HookCommand, cfg)
+	// Landlock layer: wrap the hook command with ll-restrict, but only when the
+	// tier claims Landlock. Probing sets that claim only when the helper reports
+	// a usable ABI; running the helper anyway on a host where Landlock is off
+	// (e.g. missing from the boot lsm= list) fails every hook.
+	hookCmd := cfg.HookCommand
+	if sandbox.TierClaimsLandlock(b.tier) {
+		hookCmd = InjectLandlock(cfg.HookCommand, cfg)
+	}
 	landlockApplied := len(hookCmd) > len(cfg.HookCommand)
 
 	// Honesty: if the selected tier advertises an LSM layer we could not apply
 	// (missing ll-restrict binary or BPF filter), say so loudly instead of
 	// silently overclaiming protection.
-	b.warnUnappliedLayers(landlockApplied, seccompApplied)
+	b.warnUnappliedLayers(landlockApplied, len(seccompArgs) > 0)
 
-	// Append the hook command after the bwrap args.
-	args = append(args, "--")
-	args = append(args, hookCmd...)
+	env := FilterEnvironment(sandbox.SourceEnvironment(cfg), cfg.HookCategory)
+	name, argv, env := b.limitResources(cfg, args, env)
+	argv = append(argv, "--")
+	argv = append(argv, hookCmd...)
 
 	sandboxOverhead := time.Since(setupStart)
-	execStart := time.Now()
 
-	cmd := exec.CommandContext(ctx, b.bwrapBin, args...)
+	cmd := exec.CommandContext(ctx, name, argv...)
 	cmd.ExtraFiles = extraFiles
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	// Set filtered environment.
-	filteredEnv := FilterEnvironment(currentEnv(cfg), cfg.HookCategory)
-	for k, v := range filteredEnv {
-		cmd.Env = append(cmd.Env, k+"="+v)
+	cmd.Env = sandbox.EnvList(env)
+	cfg.Attach(cmd)
+	var taps []io.Writer
+	stderrHead := &headWriter{limit: stderrHeadLimit}
+	if landlockApplied {
+		taps = append(taps, stderrHead)
 	}
 
-	err = cmd.Run()
-	duration := time.Since(execStart)
-
-	exitCode := 0
+	result, err := sandbox.RunCommand(ctx, cmd, b.tier, taps...)
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			return nil, fmt.Errorf("executing bwrap: %w", err)
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("executing %s: %w", name, err)
 		}
+		return nil, fmt.Errorf("%w: executing %s: %w", sandbox.ErrSetupFailed, name, err)
+	}
+	if landlockApplied && isLandlockSetupFailure(result.ExitCode, stderrHead.buf) {
+		return nil, fmt.Errorf("%w: ll-restrict exited %d: %s",
+			sandbox.ErrSetupFailed, result.ExitCode, firstLine(stderrHead.buf))
+	}
+	result.SandboxOverhead = sandboxOverhead
+	return result, nil
+}
+
+// openSeccompFilter opens the compiled BPF filter, when the build provides one
+// (the Nix build injects the path via ldflags), for bwrap to load through an
+// inherited file descriptor. It returns the files to hand to the child and the
+// bwrap arguments referencing them; both are empty when no filter is usable, so
+// exec still runs in builds without one.
+func openSeccompFilter() ([]*os.File, []string) {
+	fp := sandbox.SeccompFilterFile()
+	if fp == "" {
+		return nil, nil
+	}
+	f, err := os.Open(fp) //nolint:gosec // path is a trusted build-time constant
+	if err != nil {
+		slog.Warn("seccomp filter present but unreadable; syscall filtering NOT applied",
+			"path", fp, "error", err)
+		return nil, nil
+	}
+	// cmd.ExtraFiles entries are handed to the child starting at fd 3.
+	return []*os.File{f}, []string{"--seccomp", strconv.Itoa(3)}
+}
+
+// limitResources returns the program, its leading arguments and the process
+// environment that run bwrap (with bwrapArgs, not yet terminated by "--")
+// under cfg.Resources. When limits are requested and a systemd user session is
+// usable, bwrap runs inside a transient `systemd-run --user --scope`: the scope
+// execs bwrap in place, so stdio, the environment and the seccomp descriptor
+// pass straight through. systemd-run needs the user-bus variables, which the
+// hook allowlist strips, so they are added for systemd-run and removed again
+// by bwrap (--unsetenv) before the hook starts. Otherwise bwrap runs directly
+// and the unapplied limits are reported.
+func (b *BubblewrapBackend) limitResources(cfg *sandbox.SandboxConfig, bwrapArgs []string, env map[string]string) (string, []string, map[string]string) {
+	if !cfg.Resources.Any() {
+		return b.bwrapBin, bwrapArgs, env
+	}
+	if b.systemdRunPath == "" {
+		slog.Warn("systemd-run unavailable; sandbox resource limits NOT applied", "tier", b.tier.String())
+		return b.bwrapBin, bwrapArgs, env
+	}
+	if err := sandbox.UserScopeUsable(b.systemdRunPath); err != nil {
+		slog.Warn("systemd user scope unusable; sandbox resource limits NOT applied",
+			"tier", b.tier.String(), "error", err)
+		return b.bwrapBin, bwrapArgs, env
 	}
 
-	return &sandbox.SandboxResult{
-		ExitCode:        exitCode,
-		Stdout:          stdout.Bytes(),
-		Stderr:          stderr.Bytes(),
-		Duration:        duration,
-		SandboxOverhead: sandboxOverhead,
-		Tier:            b.tier,
-	}, nil
+	argv := append(sandbox.SystemdScopeArgs(cfg.Resources), b.bwrapBin)
+	argv = append(argv, bwrapArgs...)
+	for k, v := range sandbox.UserBusEnv() {
+		if _, hookHasIt := env[k]; hookHasIt {
+			continue
+		}
+		env[k] = v
+		argv = append(argv, "--unsetenv", k)
+	}
+	return b.systemdRunPath, argv, env
 }
 
 // warnUnappliedLayers emits a warning for each LSM layer the backend's tier
@@ -156,29 +230,10 @@ func (b *BubblewrapBackend) warnUnappliedLayers(landlockApplied, seccompApplied 
 	}
 }
 
-// currentEnv builds the environment map from the config or from the current
-// process environment.
-func currentEnv(cfg *sandbox.SandboxConfig) map[string]string {
-	if cfg.Environment != nil {
-		return cfg.Environment
-	}
-	env := make(map[string]string)
-	for _, e := range os.Environ() {
-		if k, v, ok := splitEnvVar(e); ok {
-			env[k] = v
-		}
-	}
-	return env
-}
-
-// splitEnvVar splits "KEY=VALUE" into key and value.
-func splitEnvVar(s string) (string, string, bool) {
-	for i := range s {
-		if s[i] == '=' {
-			return s[:i], s[i+1:], true
-		}
-	}
-	return "", "", false
+// firstLine returns the first line of b, for error messages.
+func firstLine(b []byte) string {
+	line, _, _ := bytes.Cut(b, []byte("\n"))
+	return string(line)
 }
 
 var _ sandbox.SandboxBackend = (*BubblewrapBackend)(nil)

@@ -124,9 +124,14 @@ func TestCollectAll_ErrorAggregation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// One producer succeeds, so CollectAll should not return an error.
-	if err := a.CollectAll(types.WizardAnswers{}); err != nil {
-		t.Fatalf("expected nil error when at least one producer succeeds, got: %v", err)
+	// A partial failure must be surfaced, not swallowed because another
+	// producer succeeded.
+	err := a.CollectAll(types.WizardAnswers{})
+	if err == nil {
+		t.Fatal("expected error when a producer fails, got nil")
+	}
+	if !strings.Contains(err.Error(), `producer "failing"`) {
+		t.Errorf("error should name the failing producer, got: %v", err)
 	}
 
 	if got := len(a.FragmentSet()); got != 1 {
@@ -163,9 +168,11 @@ func (e errorString) Error() string { return string(e) }
 func TestResolve_ComposeReplace(t *testing.T) {
 	t.Parallel()
 
+	// Source names are chosen so alphabetical order disagrees with priority:
+	// the higher-priority "zeta" fragment must still win.
 	a := NewFragmentAccumulator()
 	a.Add(types.FragmentEntry{
-		Source:      "low",
+		Source:      "alpha",
 		Target:      "config.json",
 		Content:     []byte("low priority"),
 		Priority:    100,
@@ -173,12 +180,12 @@ func TestResolve_ComposeReplace(t *testing.T) {
 		Mode:        0o644,
 	})
 	a.Add(types.FragmentEntry{
-		Source:      "high",
+		Source:      "zeta",
 		Target:      "config.json",
 		Content:     []byte("high priority"),
 		Priority:    500,
 		ComposeMode: types.ComposeReplace,
-		Mode:        0o644,
+		Mode:        0o600,
 	})
 
 	files, err := a.Resolve()
@@ -191,6 +198,9 @@ func TestResolve_ComposeReplace(t *testing.T) {
 	}
 	if got := string(files[0].Content); got != "high priority" {
 		t.Fatalf("expected high priority content, got %q", got)
+	}
+	if files[0].Mode != 0o600 {
+		t.Errorf("expected mode from the highest-priority fragment (0600), got %o", files[0].Mode)
 	}
 }
 
@@ -220,10 +230,8 @@ func TestResolve_ComposeAppend(t *testing.T) {
 		t.Fatalf("expected all three fragments in output, got %q", got)
 	}
 
-	// The SortKey sorts by source then inverted priority.
-	// "a" with priority 300 sorts first (99999-300=99699),
-	// "b" with priority 200 sorts second (99999-200=99799),
-	// "c" with priority 100 sorts third (99999-100=99899).
+	// Fragments for a target are ordered by descending priority:
+	// "a" (300) first, then "b" (200), then "c" (100).
 	parts := strings.Split(got, "\n")
 	if parts[0] != "first" {
 		t.Fatalf("expected 'first' as first part, got %q", parts[0])
@@ -322,9 +330,11 @@ func TestResolve_ComposeMergeJSON(t *testing.T) {
 	low := `{"a": 1, "b": {"nested": "low"}, "c": 3}`
 	high := `{"a": 99, "b": {"nested": "high", "extra": true}}`
 
+	// Source names are chosen so alphabetical order disagrees with priority:
+	// the higher-priority "zeta" fragment must still win.
 	a := NewFragmentAccumulator()
 	a.Add(types.FragmentEntry{
-		Source:      "low",
+		Source:      "alpha",
 		Target:      "config.json",
 		Content:     []byte(low),
 		Priority:    100,

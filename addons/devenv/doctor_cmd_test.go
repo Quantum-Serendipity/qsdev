@@ -2,11 +2,17 @@ package devenv
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 func TestDoctorCmd_Flags(t *testing.T) {
@@ -120,14 +126,111 @@ func TestDoctorCmd_JSONContainsTools(t *testing.T) {
 		t.Error("expected at least one required tool in JSON output")
 	}
 
-	// Verify required tool names include expected ones.
+	// Required tools are the devenv environment prerequisites; language
+	// toolchains come from devenv per project and are optional.
 	names := make(map[string]bool)
 	for _, t := range report.RequiredTools {
 		names[t.Name] = true
 	}
-	for _, expected := range []string{"git", "go", "node", "npm"} {
+	for _, expected := range []string{"nix", "devenv", "direnv", "git"} {
 		if !names[expected] {
 			t.Errorf("expected required tool %q in JSON output", expected)
 		}
+	}
+	for _, optional := range []string{"go", "node", "npm"} {
+		if names[optional] {
+			t.Errorf("language toolchain %q must not be a required tool", optional)
+		}
+	}
+}
+
+func TestDoctorCmd_JSONReportsBuildVersion(t *testing.T) {
+	cmd := doctorCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--json"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("doctor --json failed: %v", err)
+	}
+	var report doctor.Report
+	if err := json.Unmarshal(buf.Bytes(), &report); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if want := version.Info().Version; report.QsdevVersion != want {
+		t.Errorf("qsdev_version = %q, want build version %q", report.QsdevVersion, want)
+	}
+}
+
+func TestRenderDoctorReport(t *testing.T) {
+	t.Parallel()
+	missingReport := &doctor.Report{RequiredTools: []doctor.ToolEntry{
+		{Name: "git", Found: true, VersionOK: true},
+		{Name: "go", Found: false},
+	}}
+	completeReport := &doctor.Report{RequiredTools: []doctor.ToolEntry{
+		{Name: "git", Found: true, VersionOK: true},
+	}}
+
+	tests := []struct {
+		name     string
+		report   *doctor.Report
+		json     bool
+		check    bool
+		wantErr  bool
+		wantJSON bool
+	}{
+		{"json and check with missing tool fails", missingReport, true, true, true, true},
+		{"json and check with all tools passes", completeReport, true, true, false, true},
+		{"json without check never fails", missingReport, true, false, false, true},
+		{"check with missing tool fails", missingReport, false, true, true, false},
+		{"check with all tools passes", completeReport, false, true, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			err := renderDoctorReport(&buf, tt.report, tt.json, tt.check)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("renderDoctorReport() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantJSON {
+				var got doctor.Report
+				if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+					t.Errorf("output is not valid JSON: %v\n%s", err, buf.String())
+				}
+			}
+		})
+	}
+}
+
+func TestWriterUsesColor_NonTerminalWriter(t *testing.T) {
+	t.Parallel()
+	if writerUsesColor(&bytes.Buffer{}) {
+		t.Error("a buffer must never receive colored output")
+	}
+}
+
+// TestProjectToolchainWarnings covers the doctor's project toolchain check
+// end to end: a Stack snapshot pinning GHC 9.6.7 against a ghc 9.10.3 on
+// PATH is reported under the Haskell module.
+func TestProjectToolchainWarnings(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake ghc is a shell script")
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "ghc"), []byte("#!/bin/sh\necho 9.10.3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "stack.yaml"), []byte("snapshot: lts-22.44\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := projectToolchainWarnings(context.Background(), ecosystem.DefaultRegistry(), root)
+	if len(got) != 1 || !strings.HasPrefix(got[0], "Haskell: ") || !strings.Contains(got[0], "needs GHC 9.6.7") {
+		t.Errorf("projectToolchainWarnings() = %q, want one Haskell GHC 9.6.7 warning", got)
 	}
 }

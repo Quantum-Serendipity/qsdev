@@ -1,13 +1,17 @@
 package posture
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -28,6 +32,11 @@ type MergedState struct {
 	// Errors records any issues encountered during loading (e.g., corrupt YAML).
 	// Loading continues past errors to provide the best available view.
 	Errors []StateLoadError
+
+	// ToolStateUnknown is set when state loaded but neither it nor the primary
+	// answers file records which tools are enabled. EnabledTools is then left
+	// empty rather than filled with inferred defaults.
+	ToolStateUnknown bool
 }
 
 // StateLoadError records a failure to load a specific state file.
@@ -92,19 +101,37 @@ func LoadAllStates(projectRoot string) *MergedState {
 		}
 	}
 
-	// Fallback: if state files were loaded but none contributed EnabledTools,
-	// try the primary answers file and run the standard inference logic.
-	// This handles projects initialized before EnabledTools was persisted to state.
 	if len(merged.EnabledTools) == 0 && len(merged.Sources) > 0 {
-		a, err := answers.LoadPrimary(projectRoot)
-		if err == nil {
-			toolreg.MergeInferredTools(&a, toolreg.DefaultRegistry())
-			for k, v := range a.EnabledTools {
-				merged.EnabledTools[k] = v
-			}
-			slog.Debug("enabled tools loaded from answers fallback", "count", len(merged.EnabledTools))
-		}
+		loadAnswersFallback(projectRoot, merged)
 	}
 
 	return merged
+}
+
+// loadAnswersFallback fills EnabledTools for projects initialized before
+// EnabledTools was persisted to state, by running the standard inference over
+// the primary answers file. Inference turns every always-on tool on, so it
+// runs only when that file actually exists: with no answers there is nothing
+// to infer from, and crediting the always-on tools would report protection the
+// project was never configured with. A missing or unreadable answers file
+// leaves EnabledTools empty and marks tool state unknown; an unreadable one is
+// also recorded as a load error.
+func loadAnswersFallback(projectRoot string, merged *MergedState) {
+	b := branding.Get()
+	relPath := filepath.Join(b.StateDir, "."+b.AppName+"-init-answers.yaml")
+	if _, err := os.Stat(filepath.Join(projectRoot, relPath)); errors.Is(err, fs.ErrNotExist) {
+		merged.ToolStateUnknown = true
+		return
+	}
+	a, err := answers.LoadPrimary(projectRoot)
+	if err != nil {
+		merged.Errors = append(merged.Errors, StateLoadError{Path: relPath, Err: err})
+		merged.ToolStateUnknown = true
+		return
+	}
+	toolreg.MergeInferredTools(&a, toolreg.DefaultRegistry())
+	for k, v := range a.EnabledTools {
+		merged.EnabledTools[k] = v
+	}
+	slog.Debug("enabled tools loaded from answers fallback", "count", len(merged.EnabledTools))
 }

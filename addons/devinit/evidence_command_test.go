@@ -84,7 +84,7 @@ func parseEvidenceJSON(t *testing.T, out string) *evidence.EvidenceReport {
 //
 // A project that merely CONTAINS an empty `{}` .claude/settings.json and a
 // one-line devenv.nix (no tools enabled, no enforcement) must NOT have SOC2
-// CC6.6 (System Boundary Protection) or CC8.2 (Configuration Management)
+// CC6.6 (System Boundary Protection) or CC8.1 (Change Management)
 // reported as "Addressed". The old presence-based assessment marked both
 // Addressed from file existence alone; the posture-driven assessment does not.
 func TestEvidenceCmd_PresentButUnenforcedNotAddressed(t *testing.T) {
@@ -99,7 +99,7 @@ func TestEvidenceCmd_PresentButUnenforcedNotAddressed(t *testing.T) {
 
 	report := parseEvidenceJSON(t, out)
 
-	for _, id := range []string{"CC6.6", "CC8.2"} {
+	for _, id := range []string{"CC6.6", "CC8.1"} {
 		if got := controlStatus(t, report, id); got == evidence.StatusAddressed {
 			t.Errorf("control %s reported %q for a present-but-unenforced config; want anything other than %q",
 				id, got, evidence.StatusAddressed)
@@ -110,8 +110,8 @@ func TestEvidenceCmd_PresentButUnenforcedNotAddressed(t *testing.T) {
 	if got := controlStatus(t, report, "CC6.6"); got != evidence.StatusNotAddressed {
 		t.Errorf("CC6.6 = %q, want %q", got, evidence.StatusNotAddressed)
 	}
-	if got := controlStatus(t, report, "CC8.2"); got != evidence.StatusNotAddressed {
-		t.Errorf("CC8.2 = %q, want %q", got, evidence.StatusNotAddressed)
+	if got := controlStatus(t, report, "CC8.1"); got != evidence.StatusNotAddressed {
+		t.Errorf("CC8.1 = %q, want %q", got, evidence.StatusNotAddressed)
 	}
 }
 
@@ -178,7 +178,7 @@ func TestEvidenceCmd_ParityWithPostureAssess(t *testing.T) {
 
 	// Each control's mapped-layer statuses must also equal posture.Assess.
 	for _, cm := range report.Controls {
-		for _, le := range cm.GdevLayers {
+		for _, le := range cm.Layers {
 			expected, ok := want[le.LayerName]
 			if !ok {
 				t.Errorf("control %s references unknown layer %q", cm.ControlID, le.LayerName)

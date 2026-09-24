@@ -81,6 +81,17 @@ assert "quoted string"        ALLOW block "$(grep_payload '"some string"')"
 assert "off => allow"         ALLOW off  "$(grep_payload getUserById)"
 assert "warn => additional"   WARN  warn "$(grep_payload getUserById)"
 
+# The tier qsdev bakes into settings.json is passed as the first argument and
+# takes precedence over the environment (e.g. outside the devenv shell).
+arg_out="$(grep_payload getUserById | env QSDEV_LSP_ENFORCEMENT=block bash "$HOOK" warn)"
+if [ "$(classify "$arg_out")" = "WARN" ]; then
+	pass_count=$((pass_count + 1))
+	printf 'PASS  %-26s [arg  ] => WARN\n' "argument overrides env"
+else
+	fail_count=$((fail_count + 1))
+	printf 'FAIL  %-26s [arg  ] => got %s, want WARN\n' "argument overrides env" "$(classify "$arg_out")" >&2
+fi
+
 # --- Extra robustness cases (fail-open + non-Grep + exemptions). ------------
 assert "non-Grep tool"        ALLOW block '{"tool_name":"Read","tool_input":{"pattern":"getUserById"}}'
 assert "empty stdin"          ALLOW block ''

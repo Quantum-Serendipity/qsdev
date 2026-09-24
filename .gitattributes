@@ -9,3 +9,6 @@
 *.ps1 text eol=lf
 *.py text eol=lf
 *.tmpl text eol=lf
+# Signed release fixtures: verification is over the exact published bytes,
+# so line endings must never be converted on checkout (e.g. CRLF on Windows).
+internal/selfupdate/testdata/** -text

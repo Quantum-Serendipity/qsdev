@@ -2,8 +2,12 @@ package tier
 
 import (
 	"fmt"
+	"log/slog"
+	"slices"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Tier represents an ordered security onboarding level. Each tier is a strict
@@ -30,10 +34,9 @@ func ParseTier(s string) (Tier, error) {
 	if err != nil {
 		return 0, fmt.Errorf("loading catalog: %w", err)
 	}
-	defs := cat.TierDefs()
-	def, ok := defs[s]
+	def, ok := cat.TierDef(s)
 	if !ok {
-		return 0, fmt.Errorf("unknown tier %q; valid tiers: supply-chain-only, standard, full", s)
+		return 0, fmt.Errorf("unknown tier %q; valid tiers: %s", s, strings.Join(cat.TierOrder(), ", "))
 	}
 	return Tier(def.Order), nil
 }
@@ -44,22 +47,30 @@ func (t Tier) String() string {
 	if err != nil {
 		return fmt.Sprintf("tier(%d)", int(t))
 	}
-	for name, def := range cat.TierDefs() {
-		if Tier(def.Order) == t {
-			return name
-		}
+	if name, _, ok := lookup(cat, t); ok {
+		return name
 	}
 	return fmt.Sprintf("tier(%d)", int(t))
+}
+
+// lookup returns the catalog tier whose order equals t. It walks the
+// deterministic TierOrder (catalog validation guarantees orders are unique)
+// rather than ranging over the tier map.
+func lookup(cat *catalog.Catalog, t Tier) (string, catalog.TierDef, bool) {
+	for _, name := range cat.TierOrder() {
+		if def, _ := cat.TierDef(name); Tier(def.Order) == t {
+			return name, def, true
+		}
+	}
+	return "", catalog.TierDef{}, false
 }
 
 // DefaultPermissionPreset returns the permission preset implied by this tier.
 func (t Tier) DefaultPermissionPreset() string {
 	cat, err := catalog.Default()
 	if err == nil {
-		for _, def := range cat.TierDefs() {
-			if Tier(def.Order) == t && def.DefaultPermissionPreset != "" {
-				return def.DefaultPermissionPreset
-			}
+		if _, def, ok := lookup(cat, t); ok && def.DefaultPermissionPreset != "" {
+			return def.DefaultPermissionPreset
 		}
 	}
 	if t <= SupplyChainOnly {
@@ -105,6 +116,14 @@ func NextTier(current string) (string, bool) {
 	return "", false
 }
 
+// PreviewCommand returns the command that previews regenerating an
+// initialized project at tier name. --yes and --force are required: without
+// them init leaves a set-up project untouched ("Nothing to do") and a
+// non-terminal run cannot start the wizard, so nothing would be previewed.
+func PreviewCommand(appName, name string) string {
+	return fmt.Sprintf("%s init --yes --force --tier %s --dry-run", appName, name)
+}
+
 // Position returns the 1-based position of the named tier in the ordering,
 // or 0 if the tier is not recognized.
 func Position(name string) int {
@@ -131,25 +150,59 @@ func Total() int {
 
 // Resolve determines the effective tier from an explicit tier string,
 // falling back to inference from legacy fields when the explicit tier
-// is not set or is invalid.
+// is not set or is invalid. An invalid explicit tier is logged rather than
+// silently replaced; callers validate tiers at their input boundary
+// (answers and .qsdev.yaml validation).
 func Resolve(tierStr string, permissionLevel string, mcpServers []string) Tier {
 	if tierStr != "" {
-		if t, err := ParseTier(tierStr); err == nil {
+		t, err := ParseTier(tierStr)
+		if err == nil {
 			return t
 		}
+		inferred := Infer(permissionLevel, mcpServers)
+		slog.Warn("ignoring invalid tier; falling back to inferred tier",
+			"tier", tierStr, "inferred", int(inferred), "error", err)
+		return inferred
 	}
 	return Infer(permissionLevel, mcpServers)
 }
 
-// Infer determines the most likely tier from legacy config fields that predate
-// the explicit tier field. Used for backward compatibility with existing
-// .qsdev.yaml files.
+// Infer determines the most likely tier of a legacy .qsdev.yaml that predates
+// the always-persisted tier field. A supply-chain-only permission level means
+// that tier. The catalog's default MCP servers (and semble, provisioned by its
+// agent tool) are written by every default init, so they never imply Full;
+// only a server outside that set does. Anything else is the catalog's default
+// tier.
 func Infer(permissionLevel string, mcpServers []string) Tier {
 	if permissionLevel == "supply-chain-only" {
 		return SupplyChainOnly
 	}
-	if len(mcpServers) > 0 {
-		return Full
+	cat, err := catalog.Default()
+	if err != nil {
+		return Standard
+	}
+	defaults := cat.DefaultMCPServers()
+	for _, s := range mcpServers {
+		if s != types.SembleMCPServer && !slices.Contains(defaults, s) {
+			return Full
+		}
+	}
+	return defaultTier(cat)
+}
+
+// Default returns the catalog's default tier: the tier a project gets when
+// nothing selects one. It is Standard if the catalog cannot be loaded.
+func Default() Tier {
+	cat, err := catalog.Default()
+	if err != nil {
+		return Standard
+	}
+	return defaultTier(cat)
+}
+
+func defaultTier(cat *catalog.Catalog) Tier {
+	if def, ok := cat.TierDef(cat.DefaultTier()); ok {
+		return Tier(def.Order)
 	}
 	return Standard
 }

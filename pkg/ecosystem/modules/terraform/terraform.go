@@ -1,17 +1,22 @@
 // Package terraform implements the Terraform/OpenTofu ecosystem module for
 // qsdev. It detects Terraform and OpenTofu projects by
-// scanning for .tf files, .tf.json files, and lock/config directories, then
+// scanning for .tf/.tofu configuration files and lock files, then
 // generates devenv.nix fragments, security configs (.terraformrc), pre-commit
 // hooks, deny rules, and CI commands for a hardened IaC development environment.
 package terraform
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/cloudcommon"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -20,9 +25,11 @@ import (
 var _ ecosystem.EcosystemModule = (*Module)(nil)
 var _ ecosystem.SecretDeclarer = (*Module)(nil)
 var _ ecosystem.DenyRuleProvider = (*Module)(nil)
+var _ ecosystem.ReadDenyRuleProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
+var _ ecosystem.DevenvYamlInputProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -40,41 +47,61 @@ func (m *Module) DisplayName() string { return "Terraform/OpenTofu" }
 // Tier returns the implementation priority tier (1 = core).
 func (m *Module) Tier() int { return 1 }
 
-// Detect scans projectRoot for Terraform/OpenTofu ecosystem indicators.
-// It checks for .tf files, .tf.json files, .terraform.lock.hcl, and the
-// .opentofu/ directory to distinguish between Terraform and OpenTofu variants.
+// Detect scans projectRoot and its subdirectories (up to
+// ecosystem.ProjectScanDepth levels, the same walk cloudcommon uses for
+// provider detection) for Terraform/OpenTofu configuration: .tf/.tf.json and
+// .tofu/.tofu.json files are definitive, a .terraform.lock.hcl alone is
+// probable. OpenTofu-only .tofu files select the opentofu variant; OpenTofu
+// has no marker directory of its own. The directories holding configuration
+// are recorded in Extras[ExtraConfigDirs] so hooks can target them.
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	result := ecosystem.DetectionResult{
 		SuggestedConfig: ecosystem.ModuleConfig{
-			Extras: make(map[string]string),
+			Extras: map[string]string{"variant": "terraform"},
 		},
 	}
 
-	// Determine variant: check for .opentofu/ directory first.
-	if fileutil.DirExists(projectRoot, ".opentofu") {
+	var tfFound, tfJSONFound, tofuFound, lockFound bool
+	var dirs []string
+	ecosystem.WalkProjectFiles(projectRoot, ecosystem.ProjectScanDepth, func(path string) bool {
+		name := filepath.Base(path)
+		switch {
+		case name == ".terraform.lock.hcl":
+			lockFound = true
+			return true
+		case strings.HasSuffix(name, ".tofu"), strings.HasSuffix(name, ".tofu.json"):
+			tofuFound = true
+		case strings.HasSuffix(name, ".tf"):
+			tfFound = true
+		case strings.HasSuffix(name, ".tf.json"):
+			tfJSONFound = true
+		default:
+			return true
+		}
+		if rel, err := filepath.Rel(projectRoot, filepath.Dir(path)); err == nil {
+			dirs = append(dirs, filepath.ToSlash(rel))
+		}
+		return true
+	})
+
+	for _, ev := range []struct {
+		found bool
+		text  string
+	}{
+		{tfFound, "*.tf files found"},
+		{tfJSONFound, "*.tf.json files found"},
+		{tofuFound, "*.tofu files found"},
+	} {
+		if ev.found {
+			result.Detected = true
+			result.Confidence = ecosystem.ConfidenceCertain
+			result.Evidence = append(result.Evidence, ev.text)
+		}
+	}
+	if tofuFound {
 		result.SuggestedConfig.Extras["variant"] = "opentofu"
-	} else {
-		result.SuggestedConfig.Extras["variant"] = "terraform"
 	}
-
-	// Check for .tf files (definitive Terraform/OpenTofu indicator).
-	tfFiles, _ := filepath.Glob(filepath.Join(projectRoot, "*.tf"))
-	if len(tfFiles) > 0 {
-		result.Detected = true
-		result.Confidence = ecosystem.ConfidenceCertain
-		result.Evidence = append(result.Evidence, "*.tf files found")
-	}
-
-	// Check for .tf.json files (definitive indicator).
-	tfJSONFiles, _ := filepath.Glob(filepath.Join(projectRoot, "*.tf.json"))
-	if len(tfJSONFiles) > 0 {
-		result.Detected = true
-		result.Confidence = ecosystem.ConfidenceCertain
-		result.Evidence = append(result.Evidence, "*.tf.json files found")
-	}
-
-	// Check for .terraform.lock.hcl (probable if no .tf files found).
-	if fileutil.FileExists(projectRoot, ".terraform.lock.hcl") {
+	if lockFound {
 		result.Evidence = append(result.Evidence, ".terraform.lock.hcl found")
 		if !result.Detected {
 			result.Detected = true
@@ -82,24 +109,116 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		}
 	}
 
+	if !result.Detected {
+		return result
+	}
+	if configDirs := rootModuleDirs(ecosystem.ShellSafeDirs(dirs)); len(configDirs) > 0 && !slices.Equal(configDirs, []string{"."}) {
+		result.SuggestedConfig.Extras[ExtraConfigDirs] = strings.Join(configDirs, ",")
+		result.Evidence = append(result.Evidence, "configuration in: "+strings.Join(configDirs, ", "))
+	}
+	if providers := cloudcommon.DetectTerraformProviders(projectRoot); len(providers) > 0 {
+		names := slices.Sorted(maps.Keys(providers))
+		result.SuggestedConfig.Extras[ExtraCloudProviders] = strings.Join(names, ",")
+		result.Evidence = append(result.Evidence, "cloud providers: "+strings.Join(names, ", "))
+	}
+
 	return result
 }
 
+// ExtraConfigDirs is the ModuleConfig.Extras key holding the comma-separated
+// root-module directories (relative to the project root, "." for the root)
+// that contain Terraform/OpenTofu configuration; child modules are left out
+// (see rootModuleDirs). It is unset when the configuration lives only in the
+// root.
+const ExtraConfigDirs = "config_dirs"
+
+// rootModuleDirs drops child-module directories (any path with a "modules"
+// segment, the standard module structure) from dirs: they are validated
+// through the root modules that call them, and running `init` in them would
+// leave stray .terraform/ directories and lock files behind. A repository
+// that holds only modules keeps all its directories.
+func rootModuleDirs(dirs []string) []string {
+	roots := slices.DeleteFunc(slices.Clone(dirs), func(d string) bool {
+		return slices.Contains(strings.Split(d, "/"), "modules")
+	})
+	if len(roots) == 0 {
+		return dirs
+	}
+	return roots
+}
+
+// configDirs returns the recorded configuration directories, or nil when the
+// configuration lives only in the project root.
+func configDirs(config ecosystem.ModuleConfig) []string {
+	raw := config.Extra(ExtraConfigDirs, "")
+	if raw == "" {
+		return nil
+	}
+	return ecosystem.ShellSafeDirs(strings.Split(raw, ","))
+}
+
+// ExtraCloudProviders is the ModuleConfig.Extras key holding the
+// comma-separated Terraform cloud providers in use (aws, azurerm, google).
+const ExtraCloudProviders = "cloud_providers"
+
+// nixpkgsTerraformInput is the flake input devenv resolves
+// languages.terraform.version against (config.lib.getInput for
+// "nixpkgs-terraform"). It must be present in devenv.yaml whenever the
+// fragment pins a Terraform version.
+const nixpkgsTerraformInput = "github:stackbuilders/nixpkgs-terraform"
+
+// terraformVersionRe matches the release versions nixpkgs-terraform
+// publishes (1.8, 1.8.5).
+var terraformVersionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+(\.[0-9]+)?$`)
+
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for Terraform or OpenTofu language support.
+//
+// Only devenv's Terraform module has a version option (backed by the
+// nixpkgs-terraform input, see DevenvYamlInputs); languages.opentofu has none,
+// so an OpenTofu project always uses the nixpkgs opentofu package.
 func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
 	variant := config.Extra("variant", "terraform")
+	version, err := pinnedVersion(config)
+	if err != nil {
+		return "", err
+	}
 
 	var b strings.Builder
 	b.WriteString("  languages.")
 	b.WriteString(variant)
 	b.WriteString(" = {\n")
 	b.WriteString("    enable = true;\n")
-	if config.Version != "" {
-		fmt.Fprintf(&b, "    version = %q;\n", config.Version)
+	if version != "" {
+		fmt.Fprintf(&b, "    version = %s;\n", ecosystem.NixString(version))
 	}
 	b.WriteString("  };\n")
 	return b.String(), nil
+}
+
+// DevenvYamlInputs contributes the nixpkgs-terraform flake input when the
+// fragment pins languages.terraform.version; devenv refuses to evaluate the
+// version option without it. The input and the version line are an
+// invariant pair.
+func (m *Module) DevenvYamlInputs(config ecosystem.ModuleConfig) []ecosystem.DevenvInput {
+	if version, err := pinnedVersion(config); err != nil || version == "" {
+		return nil
+	}
+	return []ecosystem.DevenvInput{{URL: nixpkgsTerraformInput, Follows: "nixpkgs"}}
+}
+
+// pinnedVersion returns the version the fragment pins: "" for OpenTofu (no
+// devenv version option) or when unset, and an error for a Terraform version
+// nixpkgs-terraform cannot provide.
+func pinnedVersion(config ecosystem.ModuleConfig) (string, error) {
+	version := strings.TrimPrefix(strings.TrimSpace(config.Version), "v")
+	if version == "" || config.Extra("variant", "terraform") == "opentofu" {
+		return "", nil
+	}
+	if !terraformVersionRe.MatchString(version) {
+		return "", fmt.Errorf("invalid Terraform version %q: want a release such as 1.8 or 1.8.5", config.Version)
+	}
+	return version, nil
 }
 
 // SecurityConfigs returns a .terraformrc file with security-hardened settings.
@@ -128,12 +247,14 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 		content.WriteString("}\n")
 	}
 
+	// Skip: an existing .terraformrc (credentials blocks, dev_overrides,
+	// plugin cache settings) is user-owned and must never be replaced.
 	return []types.GeneratedFile{
 		{
 			Path:     ".terraformrc",
 			Content:  []byte(content.String()),
 			Mode:     fileutil.ModeReadWrite,
-			Strategy: types.Overwrite,
+			Strategy: types.Skip,
 		},
 	}
 }
@@ -144,6 +265,13 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 	variant := config.Extra("variant", "terraform")
 	binary := binaryName(variant)
 	nixPkg := nixPackageName(variant)
+	dirs := configDirs(config)
+	tflintEntry := "tflint"
+	if len(dirs) > 0 {
+		// Configuration below the root: plain tflint inspects only the
+		// working directory.
+		tflintEntry = "tflint --recursive"
+	}
 
 	// These are custom hooks (BuiltIn:false), not git-hooks.nix built-ins: the
 	// built-in `terraform-format` runs plain `terraform fmt`, which would discard
@@ -157,31 +285,20 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 			Description:   fmt.Sprintf("Check %s configuration formatting", variant),
 			Entry:         binary + " fmt -check -recursive",
 			Language:      "system",
-			Types:         []string{"terraform"},
+			Files:         configFilesPattern,
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
 			BuiltIn:       false,
 			NixPackage:    nixPkg,
 		},
-		{
-			ID:            "terraform-validate",
-			Name:          "terraform-validate",
-			Description:   fmt.Sprintf("Validate %s configuration syntax", variant),
-			Entry:         binary + " validate",
-			Language:      "system",
-			Types:         []string{"terraform"},
-			Stages:        []string{"pre-commit"},
-			PassFilenames: false,
-			BuiltIn:       false,
-			NixPackage:    nixPkg,
-		},
+		validateHook(variant, dirs),
 		{
 			ID:            "tflint",
 			Name:          "tflint",
 			Description:   "Lint Terraform configurations with tflint",
-			Entry:         "tflint",
+			Entry:         tflintEntry,
 			Language:      "system",
-			Types:         []string{"terraform"},
+			Files:         configFilesPattern,
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
 			BuiltIn:       false,
@@ -193,12 +310,57 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 			Description:   "Security scan Terraform configurations with tfsec",
 			Entry:         "tfsec .",
 			Language:      "system",
-			Types:         []string{"terraform"},
+			Files:         configFilesPattern,
 			Stages:        []string{"pre-commit"},
 			PassFilenames: false,
 			BuiltIn:       false,
 			NixPackage:    "tfsec",
 		},
+	}
+}
+
+// configFilesPattern selects the files the Terraform hooks run on. The
+// identify "terraform" type tag covers only .tf/.tfvars, so .tofu files and
+// the JSON syntax would never trigger the hooks; an explicit pattern does.
+const configFilesPattern = `\.(tf|tofu|tfvars)(\.json)?$`
+
+// validateHook returns the terraform-validate pre-commit hook.
+//
+// `validate` needs an initialized working directory (providers and modules
+// installed), which a fresh clone does not have, and the agent is denied
+// `<bin> init`. The hook therefore initializes first with
+// `init -backend=false`: no backend or state is touched, but providers and
+// modules are downloaded (through the provider mirror when one is
+// configured). The two steps need a shell, so the entry runs through `sh -c`
+// with NixPackage "bash" (entry rewriting turns `sh` into
+// ${pkgs.bash}/bin/sh); the Terraform binary itself resolves from the devenv
+// environment, where languages.<variant>.enable and the sibling hooks'
+// NixPackage install it.
+//
+// When the configuration lives below the root (dirs, see ExtraConfigDirs)
+// each directory is initialized and validated through -chdir; validating the
+// root would check an empty configuration.
+func validateHook(variant string, dirs []string) ecosystem.HookConfig {
+	binary := binaryName(variant)
+	entry := fmt.Sprintf("sh -c '%[1]s init -backend=false -input=false >/dev/null && %[1]s validate'", binary)
+	if len(dirs) > 0 {
+		// $d is unquoted: the entry is embedded verbatim in a Nix string, so
+		// it must not contain double quotes, and ShellSafeDirs guarantees the
+		// names need no quoting.
+		entry = fmt.Sprintf(`sh -c 'for d in %[2]s; do %[1]s -chdir=$d init -backend=false -input=false >/dev/null && %[1]s -chdir=$d validate || exit 1; done'`,
+			binary, strings.Join(dirs, " "))
+	}
+	return ecosystem.HookConfig{
+		ID:            "terraform-validate",
+		Name:          "terraform-validate",
+		Description:   fmt.Sprintf("Initialize (without backend) and validate %s configuration", variant),
+		Entry:         entry,
+		Language:      "system",
+		Files:         configFilesPattern,
+		Stages:        []string{"pre-commit"},
+		PassFilenames: false,
+		BuiltIn:       false,
+		NixPackage:    "bash",
 	}
 }
 
@@ -211,27 +373,54 @@ func nixPackageName(variant string) string {
 	return "terraform"
 }
 
+// deniedSubcommands are the Terraform/OpenTofu subcommands the agent must not
+// run: ones that change real infrastructure or state (apply, destroy, import,
+// state push/rm/mv, force-unlock), fetch providers or modules past the lock
+// file (init, get, providers), and ones that print state secrets in plain
+// text (state pull, output, show -json).
+var deniedSubcommands = []string{
+	"init",
+	"apply",
+	"destroy",
+	"get",
+	"import",
+	"force-unlock",
+	"providers",
+	"state pull",
+	"state push",
+	"state rm",
+	"state mv",
+	"output",
+	"show *-json*",
+}
+
+// iacBinaries are the CLIs the deny rules cover. Both are always covered,
+// whatever the variant: either binary may be installed and both accept the
+// same subcommands.
+var iacBinaries = []string{"terraform", "tofu"}
+
 // DenyRules returns Claude Code deny-rule patterns for Terraform/OpenTofu.
-// For Terraform, rules deny direct terraform init and apply without plan.
-// For OpenTofu, rules cover both the tofu and terraform binaries.
-func (m *Module) DenyRules(config ecosystem.ModuleConfig) []string {
-	variant := config.Extra("variant", "terraform")
-
-	rules := []string{
-		"Bash(terraform init *)",
-		"Bash(terraform apply *)",
-		"Bash(terraform providers *)",
+// Each subcommand in deniedSubcommands is denied for both binaries, plain and
+// after global options such as -chdir=DIR (denyutil.SubcommandRules).
+func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
+	var rules []string
+	for _, bin := range iacBinaries {
+		rules = append(rules, denyutil.SubcommandRules(bin, deniedSubcommands...)...)
 	}
-
-	if variant == "opentofu" {
-		rules = append(rules,
-			"Bash(tofu init *)",
-			"Bash(tofu apply *)",
-			"Bash(tofu providers *)",
-		)
-	}
-
 	return rules
+}
+
+// ReadDenyRules returns the credential stores the agent's Read tool must not
+// open: state files (plaintext resource secrets and backend credentials,
+// including .terraform/terraform.tfstate), variable files, and the
+// HCP Terraform / registry token `terraform login` writes.
+func (m *Module) ReadDenyRules(_ ecosystem.ModuleConfig) []string {
+	return []string{
+		"**/*.tfstate*",
+		"**/*.tfvars",
+		"**/*.tfvars.json",
+		"~/.terraform.d/credentials.tfrc.json",
+	}
 }
 
 // CICommands returns CI pipeline commands for Terraform/OpenTofu,
@@ -242,21 +431,19 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 
 	return []ecosystem.CICommand{
 		{
+			// -lockfile=readonly fails when .terraform.lock.hcl is missing
+			// a provider or its checksums instead of rewriting it. No plan
+			// step follows: a plan needs the backend this init skips, and
+			// the cloud credentials CI does not hold.
 			Name:        binary + "-init",
-			Command:     binary + " init -backend=false",
-			Description: fmt.Sprintf("Initialize %s providers without backend", variant),
+			Command:     binary + " init -backend=false -input=false -lockfile=readonly",
+			Description: fmt.Sprintf("Install %s providers pinned by .terraform.lock.hcl, without a backend", variant),
 			Phase:       ecosystem.CIPhaseInstall,
 		},
 		{
 			Name:        binary + "-validate",
 			Command:     binary + " validate",
 			Description: fmt.Sprintf("Validate %s configuration syntax", variant),
-			Phase:       ecosystem.CIPhaseTest,
-		},
-		{
-			Name:        binary + "-plan",
-			Command:     binary + " plan",
-			Description: fmt.Sprintf("Generate %s execution plan", variant),
 			Phase:       ecosystem.CIPhaseTest,
 		},
 		{
@@ -278,10 +465,8 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "terraform-registry",
-			LockFile:             ".terraform.lock.hcl",
-			FrozenInstallCommand: "terraform init -lockfile=readonly",
-			AgeGatingSupport:     false,
+			Name:     "terraform-registry",
+			LockFile: ".terraform.lock.hcl",
 		},
 	}
 }
@@ -290,7 +475,7 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return []ecosystem.WizardField{
 		{
-			Key:         "terraform_variant",
+			Key:         "variant",
 			Label:       "IaC tool",
 			Description: "Select the infrastructure-as-code tool to use",
 			Type:        ecosystem.FieldTypeSelect,
@@ -301,11 +486,11 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 			Default: "terraform",
 		},
 		{
-			Key:         "terraform_version",
-			Label:       "Version",
-			Description: "Specify the Terraform/OpenTofu version (e.g. 1.8.0)",
+			Key:         types.SettingVersion,
+			Label:       "Terraform version",
+			Description: "The Terraform version to pin (OpenTofu uses the nixpkgs release); leave empty for the nixpkgs default",
 			Type:        ecosystem.FieldTypeInput,
-			Default:     "",
+			Placeholder: "1.8.0",
 		},
 	}
 }
@@ -334,19 +519,29 @@ func (m *Module) ManifestFiles(_ ecosystem.ModuleConfig) []ecosystem.ManifestFil
 	}
 }
 
-// SecretDeclarations returns the secrets required by a Terraform/OpenTofu project.
-func (m *Module) SecretDeclarations(_ ecosystem.ModuleConfig) []ecosystem.SecretDecl {
+// SecretDeclarations returns the secrets a Terraform/OpenTofu project may use.
+//
+// Declarations follow the cloud providers the configuration actually uses
+// (ExtraCloudProviders, recorded by Detect); a GCP- or Azure-only project
+// declares no AWS keys. Static AWS keys are optional: the AWS module isolates
+// credentials per project through AWS_PROFILE (SSO/profile auth), which is
+// the preferred model, so requiring long-lived keys would push users away
+// from it.
+func (m *Module) SecretDeclarations(config ecosystem.ModuleConfig) []ecosystem.SecretDecl {
+	if !slices.Contains(strings.Split(config.Extra(ExtraCloudProviders, ""), ","), "aws") {
+		return nil
+	}
 	return []ecosystem.SecretDecl{
 		{
 			Name:        "AWS_ACCESS_KEY_ID",
-			Description: "AWS access key for Terraform provider authentication",
-			Required:    true,
+			Description: "Optional static AWS access key for the Terraform AWS provider (prefer AWS_PROFILE / SSO)",
+			Required:    false,
 			Source:      "terraform",
 		},
 		{
 			Name:        "AWS_SECRET_ACCESS_KEY",
-			Description: "AWS secret key for Terraform provider authentication",
-			Required:    true,
+			Description: "Optional static AWS secret key for the Terraform AWS provider (prefer AWS_PROFILE / SSO)",
+			Required:    false,
 			Source:      "terraform",
 		},
 	}
@@ -362,7 +557,9 @@ func binaryName(variant string) string {
 	return "terraform"
 }
 
-// SemgrepRuleSets returns Semgrep rule set identifiers relevant to Terraform projects.
+// SemgrepRuleSets returns Semgrep rule set identifiers relevant to Terraform
+// projects. p/terraform already includes the AWS rules; there is no
+// p/terraform-aws registry ruleset.
 func (m *Module) SemgrepRuleSets() []string {
-	return []string{"p/terraform", "p/terraform-aws"}
+	return []string{"p/terraform"}
 }

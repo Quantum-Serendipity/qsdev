@@ -12,8 +12,10 @@
 #     CA-issued client certificate; set it to restrict to named cert CNs.
 #
 # Usage:
-#   1. Build the image (from the repo root):
-#        docker build -f build/docker/Dockerfile -t qsdev-mcp-gateway .
+#   1. Build the image (from the repo root), or let `docker compose up --build`
+#      build it from the build: section below:
+#        docker build -f build/docker/Dockerfile -t qsdev-mcp-gateway:local \
+#          --build-arg VERSION="$(cat VERSION)" .
 #   2. Provide the mTLS material. By default the service mounts
 #        ./tls/server.crt, ./tls/server.key, ./tls/client-ca.crt
 #      (override the host paths via QSDEV_TLS_CERT/KEY/CLIENT_CA). A missing file
@@ -32,10 +34,14 @@
 
 services:
   qsdev-mcp-gateway:
-    # Default to a pinned release tag (tracks VERSION), not a floating :latest, so
-    # `docker compose up` resolves a deterministic image. Override with
-    # QSDEV_GATEWAY_IMAGE (e.g. a digest-pinned ref) for stricter supply-chain control.
-    image: ${QSDEV_GATEWAY_IMAGE:-ghcr.io/quantum-serendipity/qsdev:0.8.0}
+    # No gateway image is published to a registry, so the default is the locally
+    # built tag; compose builds it from this checkout when it is missing. Set
+    # QSDEV_GATEWAY_IMAGE to use an image from your own registry (ideally a
+    # digest-pinned ref).
+    image: ${QSDEV_GATEWAY_IMAGE:-qsdev-mcp-gateway:local}
+    build:
+      context: ../..
+      dockerfile: build/docker/Dockerfile
     # The image ENTRYPOINT already supplies "/qsdev mcp serve" and docker APPENDS
     # command to it (it does NOT replace it), so command carries ONLY flags — a
     # leading "mcp"/"serve" here would double the subcommand. Bind 0.0.0.0 so the

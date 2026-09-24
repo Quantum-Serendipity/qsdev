@@ -41,13 +41,12 @@ Every piece of information retrieved MUST be tagged with its source:
 
 - **[DevDocs]** — Official API/library reference from DevDocs
 - **[Stack Exchange]** — Community Q&A from Stack Exchange via ZIM
-- **[man page]** — System manual pages for CLI tools and POSIX utilities
 - **[NixOS]** — NixOS/Nix configuration options and package metadata
 - **[Web]** — Web-fetched documentation via Context7
 
 ## Degradation Rules
 
-1. Try sources in priority order (1 through 5)
+1. Try sources in priority order (1 through 4)
 2. If a source is unavailable or returns no results, move to the next
 3. If a source returns partial results, note this and supplement from the next source
 4. Always prefer local/offline sources over web when both have the answer

@@ -6,9 +6,13 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
+// init only records the provider; the catalog and tool registry are built on
+// first use (see toolreg.Default), after main has configured the process.
 func init() {
-	r := toolreg.DefaultRegistry()
+	toolreg.RegisterBehaviors(registerToolBehaviors)
+}
 
+func registerToolBehaviors(r *toolreg.Registry) {
 	r.AttachBehavior("changelog", toolreg.ToolBehavior{
 		GenerateFunc: func(a types.WizardAnswers) ([]types.GeneratedFile, error) {
 			f, err := GenerateCliffToml(a)

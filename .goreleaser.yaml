@@ -97,11 +97,11 @@ nfpms:
       - rpm
       - apk
       - archlinux
-    bindir: /usr/local/bin
+    # Distribution packages own /usr, never /usr/local (FHS; Arch packaging
+    # guidelines), so they cannot clash with a manual or install.sh install.
+    bindir: /usr/bin
     contents:
       - dst: /usr/share/bash-completion/completions
-        type: dir
-      - dst: /usr/share/zsh/vendor-completions
         type: dir
       - dst: /usr/share/fish/vendor_completions.d
         type: dir
@@ -109,8 +109,26 @@ nfpms:
         dst: /usr/share/bash-completion/completions/qsdev
         file_info:
           mode: 0644
+      # zsh only searches vendor-completions on Debian/Ubuntu; Fedora/RHEL,
+      # Alpine and Arch put site-functions on fpath (as the AUR PKGBUILD does).
       - src: dist_share/completions/qsdev.zsh
         dst: /usr/share/zsh/vendor-completions/_qsdev
+        packager: deb
+        file_info:
+          mode: 0644
+      - src: dist_share/completions/qsdev.zsh
+        dst: /usr/share/zsh/site-functions/_qsdev
+        packager: rpm
+        file_info:
+          mode: 0644
+      - src: dist_share/completions/qsdev.zsh
+        dst: /usr/share/zsh/site-functions/_qsdev
+        packager: apk
+        file_info:
+          mode: 0644
+      - src: dist_share/completions/qsdev.zsh
+        dst: /usr/share/zsh/site-functions/_qsdev
+        packager: archlinux
         file_info:
           mode: 0644
       - src: dist_share/completions/qsdev.fish

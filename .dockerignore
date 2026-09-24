@@ -1,54 +1,45 @@
-# Build-context excludes for `docker build -f build/docker/Dockerfile .`
+# Build-context allowlist for `docker build -f build/docker/Dockerfile .`
 # (Phase 32, Unit 32.10). Docker reads the .dockerignore at the build-context
 # root; the gateway image is built with the repository root as context, so this
-# file lives here. It keeps the context small and, critically, keeps the
-# workspace files out of the build (gdev is consumed from the vendor tree with
-# GOWORK=off + -mod=vendor; ../gdev does not exist in the container).
+# file lives here.
+#
+# Everything is excluded by default and only what `go build ./cmd/qsdev` needs
+# is re-included. A denylist missed local, gitignored material that sits in
+# the checkout: the ~1 GB .go/ module cache, bin/, the root qsdev binary,
+# mcp.db, and .qsdev/ (which holds mcp-secrets.env). The Dockerfile does
+# `COPY . .`, so anything in the context lands in a builder layer that
+# --cache-to can export.
+#
+# The Go workspace (go.work, which `use`s ../gdev) stays out: the build uses
+# GOWORK=off + -mod=vendor.
+*
 
-# Version control and CI metadata.
-.git/
-.github/
+!go.mod
+!go.sum
+!vendor/
+!addons/
+!cmd/
+!instance/
+!internal/
+# nix/ holds the derivations the binary embeds (nix/embed.go).
+!nix/
+!pkg/
+!rules/
 
-# The Go workspace MUST NOT enter the build: it `use`s ../gdev, which is absent
-# in the container. The build ignores the workspace and uses vendor/ instead.
-go.work
-go.work.sum
+# Secret material must never enter the context, even inside the re-included
+# trees above (operators place ./tls/server.key etc. next to the sources).
+# vendor/ holds Go packages that happen to be named tls (sigstore-go pulls in
+# certificate-transparency-go/tls), so the tls/ exclusion spares vendor/; the
+# file-level secret patterns below still apply there.
+**/tls/
+!vendor/**/tls/
+**/.qsdev/
+**/.env
+**/.env.*
+**/*.env
+**/*.key
+**/*.pem
+**/*.crt
 
-# Local-only docs and planning material.
-internal-docs/
-
-# devenv / direnv / nix build artifacts — large and never needed in the image.
-.devenv/
-.devenv.flake.nix
-.direnv/
-result
-result-*
-
-# Claude Code / agent scratch and local config.
-.claude/
-
-# Test scratch, temp dirs, and ad-hoc runners.
-tmp*/
-tmp-*
-*.tmp
-run-e2e.sh
-gotest.sh
-docs/e2e-runbook-comprehensive.md
-
-# mTLS / secret material MUST NOT enter the build context. The gateway workflow
-# has operators place ./tls/server.key etc. at the repo root (the build context),
-# and `docker build` honors only this file (not .gitignore), so without these the
-# private key would be sent to the daemon and baked into an intermediate layer
-# (leakable via --cache-to). The final image copies only /qsdev, but the build
-# context and builder layers must never carry the key.
-tls/
-*.key
-*.pem
-*.crt
-.env
-.env.*
-
-# Editor/OS noise.
-.idea/
-.vscode/
-.DS_Store
+# Test scratch that may appear inside the re-included trees.
+**/*.tmp

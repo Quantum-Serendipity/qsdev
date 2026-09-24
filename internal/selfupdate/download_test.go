@@ -370,16 +370,9 @@ func TestDownloadAndVerify_StrictFailsWhenUnsigned(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Force the signature verification to report Skipped (mirrors "no bundle in
-	// release" or "cosign not installed"), the fail-open condition we now close.
-	oldFn := verifySigstoreBundle
-	t.Cleanup(func() { verifySigstoreBundle = oldFn })
-	verifySigstoreBundle = func(ctx context.Context, release *Release, checksumsPath, tmpDir string) (*VerificationResult, error) {
-		return &VerificationResult{Skipped: true, Message: "cosign not found on PATH"}, nil
-	}
-
 	release := &Release{
 		Version: "3.0.0",
+		TagName: "v3.0.0",
 		Assets: []Asset{
 			{Name: "qsdev_3.0.0_Linux_x86_64.tar.gz", URL: srv.URL + "/archive"},
 			{Name: "checksums.txt", URL: srv.URL + "/checksums"},
@@ -392,8 +385,11 @@ func TestDownloadAndVerify_StrictFailsWhenUnsigned(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when strict mode requires a signature but verification was skipped")
 	}
-	if !strings.Contains(err.Error(), "signature verification required") {
-		t.Errorf("error = %q, want it to mention the missing signature requirement", err.Error())
+	// The error must be actionable: say what is wrong and how to proceed.
+	for _, want := range []string{"signature verification required", sigstoreBundleName, "--no-strict"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to mention %q", err.Error(), want)
+		}
 	}
 }
 

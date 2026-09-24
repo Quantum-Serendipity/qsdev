@@ -63,14 +63,6 @@ type CategoryScore struct {
 	Probes []ProbeResult
 }
 
-type McpTrustPosture struct {
-	Tier1Count             int
-	Tier2Count             int
-	Tier3Count             int
-	ConfusedDeputyActive   bool
-	ProjectedDenyRuleCount int
-}
-
 type TrustConfig struct {
 	Servers map[string]TrustServerEntry `yaml:"servers"`
 }

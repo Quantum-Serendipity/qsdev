@@ -1,14 +1,15 @@
 package policy
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
-	"github.com/gobwas/glob"
+	"github.com/Quantum-Serendipity/qsdev/internal/selfprotect/cmdscan"
 )
 
 type CompiledCondition interface {
@@ -24,15 +25,11 @@ func (c *toolMatchCondition) Evaluate(ctx *EvalContext) (bool, error) {
 }
 
 type globCondition struct {
-	glob glob.Glob
+	matcher *PathMatcher
 }
 
 func (c *globCondition) Evaluate(ctx *EvalContext) (bool, error) {
-	path := ctx.FilePath
-	if path == "" {
-		path = extractPathFromInput(ctx.ToolInput)
-	}
-	return c.glob.Match(path), nil
+	return matchContextPaths(c.matcher, ctx), nil
 }
 
 type regexCondition struct {
@@ -47,12 +44,126 @@ func (c *regexCondition) Evaluate(ctx *EvalContext) (bool, error) {
 	return c.re.MatchString(target), nil
 }
 
+// commandCondition matches a command word, or a whitespace-separated word
+// sequence such as "npm install", inside a shell command line. The line is
+// parsed so the pattern is found in every simple command — after `;`, `&&`,
+// `|`, inside `$(...)`, backticks and subshells — and a command word invoked by
+// path (`/usr/bin/curl`) or with a backslash escape (`\curl`) still matches.
+// The whitespace-bounded regex is kept as an additional matcher so quoted
+// mentions continue to match, and a line that cannot be parsed falls back to a
+// regex that also treats shell metacharacters and a leading path as word
+// boundaries (fail closed).
 type commandCondition struct {
-	re *regexp.Regexp
+	words    []string
+	re       *regexp.Regexp
+	fallback *regexp.Regexp
 }
 
+// shellWordBoundary is the regex character class body of the characters that
+// delimit a command word in shell syntax: whitespace, command separators and
+// grouping, redirections, substitution and escape characters, and quotes.
+const shellWordBoundary = `\s;&|()<>` + "`" + `$\\'"`
+
+func newCommandCondition(pattern string) (*commandCondition, error) {
+	quoted := regexp.QuoteMeta(pattern)
+	re, err := regexp.Compile(`(?:^|\s)` + quoted + `(?:\s|$)`)
+	if err != nil {
+		return nil, fmt.Errorf("compiling command pattern %q: %w", pattern, err)
+	}
+	fallback, err := regexp.Compile(`(?:^|[` + shellWordBoundary + `/])` + quoted + `(?:[` + shellWordBoundary + `]|$)`)
+	if err != nil {
+		return nil, fmt.Errorf("compiling command pattern %q: %w", pattern, err)
+	}
+	return &commandCondition{words: strings.Fields(pattern), re: re, fallback: fallback}, nil
+}
+
+// maxNestedScriptDepth bounds how deeply commandCondition re-parses argument
+// words as nested shell scripts (`sh -c '...'`, `eval "..."`).
+const maxNestedScriptDepth = 3
+
 func (c *commandCondition) Evaluate(ctx *EvalContext) (bool, error) {
-	return c.re.MatchString(ctx.Command), nil
+	if ctx.Command == "" {
+		return false, nil
+	}
+	return c.matchLine(ctx.Command, 0), nil
+}
+
+// matchLine reports whether the pattern occurs in the shell line. An argument,
+// here-string or here-document word that itself contains shell syntax is
+// re-parsed as a nested script, so a command smuggled through `sh -c`,
+// `bash -c`, `eval`, `xargs sh -c` or `sh <<EOF` is found without a list of
+// wrapper commands.
+func (c *commandCondition) matchLine(line string, depth int) bool {
+	if c.re.MatchString(line) {
+		return true
+	}
+	cmds, err := cmdscan.Parse(line)
+	if err != nil {
+		return c.fallback.MatchString(line)
+	}
+	for _, cmd := range cmds {
+		if cmd.Name == "" {
+			continue
+		}
+		argv := append([]string{cmd.Name}, cmd.Args...)
+		if containsWordSequence(argv, c.words) {
+			return true
+		}
+		if depth >= maxNestedScriptDepth {
+			continue
+		}
+		// Arguments (`sh -c '...'`), here-strings (`sh <<< '...'`) and
+		// here-document bodies (`sh <<EOF`) can all carry a nested script.
+		for _, word := range slices.Concat(cmd.Args, cmd.ReadRedirects, cmd.Heredocs) {
+			if strings.ContainsAny(word, shellScriptChars) && c.matchLine(word, depth+1) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// shellScriptChars are the characters whose presence in an argument word means
+// it may be a nested shell script rather than a plain operand.
+const shellScriptChars = " \t\n;&|()<>`$"
+
+// containsWordSequence reports whether want appears as a contiguous run of
+// words in argv.
+func containsWordSequence(argv, want []string) bool {
+	if len(want) == 0 {
+		return false
+	}
+	for i := 0; i+len(want) <= len(argv); i++ {
+		match := true
+		for j, w := range want {
+			if !commandWordMatches(argv[i+j], w) {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+// commandWordMatches compares a parsed shell word to a pattern word after
+// removing backslash escapes. A path-like word (`/usr/bin/curl`, `./curl`,
+// `bin/curl`) also matches by its basename; URLs are not treated as paths. On a
+// case-insensitive filesystem (`CURL` runs curl) the comparison folds case.
+func commandWordMatches(word, want string) bool {
+	word = strings.ReplaceAll(word, `\`, "")
+	equal := func(a, b string) bool {
+		if caseInsensitiveFS() {
+			return strings.EqualFold(a, b)
+		}
+		return a == b
+	}
+	if equal(word, want) {
+		return true
+	}
+	return strings.Contains(word, "/") && !strings.Contains(word, "://") && equal(path.Base(word), want)
 }
 
 type fileExistenceCondition struct {
@@ -97,15 +208,11 @@ func (c *fileTypeCondition) Evaluate(ctx *EvalContext) (bool, error) {
 }
 
 type deniedPathCheckCondition struct {
-	glob glob.Glob
+	matcher *PathMatcher
 }
 
 func (c *deniedPathCheckCondition) Evaluate(ctx *EvalContext) (bool, error) {
-	path := ctx.FilePath
-	if path == "" {
-		path = extractPathFromInput(ctx.ToolInput)
-	}
-	return c.glob.Match(path), nil
+	return matchContextPaths(c.matcher, ctx), nil
 }
 
 // semanticIndicators are built-in, high-signal phrases that indicate prompt
@@ -250,17 +357,25 @@ func (c *notCondition) Evaluate(ctx *EvalContext) (bool, error) {
 	return !result, nil
 }
 
+// CompileCondition validates cond's parameters and compiles it. Parameter
+// errors (a missing required field, an unknown file_type) are reported here, at
+// policy load time, rather than surfacing on every evaluation as a fail-closed
+// Block that would stop every tool call the rule is indexed under.
 func CompileCondition(cond Condition) (CompiledCondition, error) {
+	if err := validateConditionParams(cond); err != nil {
+		return nil, fmt.Errorf("compiling %s condition: %w", cond.Type, err)
+	}
+
 	switch cond.Type {
 	case ToolMatch:
 		return &toolMatchCondition{toolName: cond.ToolName}, nil
 
 	case PathGlob:
-		g, err := glob.Compile(cond.Pattern)
+		m, err := CompilePathMatcher(cond.Pattern)
 		if err != nil {
 			return nil, fmt.Errorf("compiling %s condition: %w", cond.Type, err)
 		}
-		return &globCondition{glob: g}, nil
+		return &globCondition{matcher: m}, nil
 
 	case RegexMatch:
 		re, err := regexp.Compile(cond.Pattern)
@@ -270,12 +385,11 @@ func CompileCondition(cond Condition) (CompiledCondition, error) {
 		return &regexCondition{re: re}, nil
 
 	case CommandMatch:
-		pattern := `(?:^|\s)` + regexp.QuoteMeta(cond.Pattern) + `(?:\s|$)`
-		re, err := regexp.Compile(pattern)
+		c, err := newCommandCondition(cond.Pattern)
 		if err != nil {
 			return nil, fmt.Errorf("compiling %s condition: %w", cond.Type, err)
 		}
-		return &commandCondition{re: re}, nil
+		return c, nil
 
 	case FileExistence:
 		return &fileExistenceCondition{path: cond.Path}, nil
@@ -284,11 +398,11 @@ func CompileCondition(cond Condition) (CompiledCondition, error) {
 		return &fileTypeCondition{path: cond.Path, fileType: cond.FileType}, nil
 
 	case DeniedPathCheck:
-		g, err := glob.Compile(cond.Pattern)
+		m, err := CompilePathMatcher(cond.Pattern)
 		if err != nil {
 			return nil, fmt.Errorf("compiling %s condition: %w", cond.Type, err)
 		}
-		return &deniedPathCheckCondition{glob: g}, nil
+		return &deniedPathCheckCondition{matcher: m}, nil
 
 	case Semantic:
 		return newSemanticCondition(cond.Prompt), nil
@@ -334,20 +448,37 @@ func compileChildren(conditions []Condition) ([]CompiledCondition, error) {
 	return children, nil
 }
 
-func extractPathFromInput(input json.RawMessage) string {
-	if len(input) == 0 {
-		return ""
-	}
-	var m map[string]any
-	if err := json.Unmarshal(input, &m); err != nil {
-		return ""
-	}
-	for _, key := range []string{"file_path", "path", "file"} {
-		if v, ok := m[key]; ok {
-			if s, ok := v.(string); ok {
-				return s
-			}
+// fileTypes are the values accepted by a file_type condition.
+var fileTypes = []string{"file", "directory", "symlink"}
+
+// validateConditionParams checks that cond carries the parameters its type
+// requires. Composite children are validated when they are compiled.
+func validateConditionParams(cond Condition) error {
+	switch cond.Type {
+	case ToolMatch:
+		if cond.ToolName == "" {
+			return fmt.Errorf("tool_name is required")
+		}
+	case PathGlob, RegexMatch, CommandMatch, DeniedPathCheck:
+		if strings.TrimSpace(cond.Pattern) == "" {
+			return fmt.Errorf("pattern is required")
+		}
+	case FileExistence:
+		if cond.Path == "" {
+			return fmt.Errorf("path is required")
+		}
+	case FileType:
+		if cond.Path == "" {
+			return fmt.Errorf("path is required")
+		}
+		if !slices.Contains(fileTypes, cond.FileType) {
+			return fmt.Errorf("unknown file_type %q (expected one of %s)", cond.FileType, strings.Join(fileTypes, ", "))
+		}
+	case All, Any:
+		// An empty `all` is vacuously true and would match every tool call.
+		if len(cond.Conditions) == 0 {
+			return fmt.Errorf("at least one child condition is required")
 		}
 	}
-	return ""
+	return nil
 }

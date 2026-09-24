@@ -3,6 +3,7 @@ package policy
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"gopkg.in/yaml.v3"
 )
@@ -137,11 +138,11 @@ type PolicyMetadata struct {
 	Labels      map[string]string `yaml:"labels,omitempty"`
 }
 
+// PolicySettings holds policy-wide settings. Only fields the engine acts on
+// belong here: the loader decodes strictly, so a key without a field is
+// rejected instead of being accepted and silently ignored.
 type PolicySettings struct {
-	FailMode            FailMode `yaml:"fail_mode,omitempty"`
-	EvaluationTimeoutMS int      `yaml:"evaluation_timeout_ms,omitempty"`
-	LogFormat           string   `yaml:"log_format,omitempty"`
-	InheritFrom         []string `yaml:"inherit_from,omitempty"`
+	FailMode FailMode `yaml:"fail_mode,omitempty"`
 }
 
 type PolicyRule struct {
@@ -174,12 +175,11 @@ type Condition struct {
 	Condition  *Condition  `yaml:"condition,omitempty"`
 }
 
+// Action is what a matching rule does. As with PolicySettings, only fields the
+// evaluator reads are declared, so the strict loader rejects any other key.
 type Action struct {
 	Type             ActionType `yaml:"type"`
-	ExitCode         int        `yaml:"exit_code,omitempty"`
 	Message          string     `yaml:"message,omitempty"`
-	Stderr           string     `yaml:"stderr,omitempty"`
-	TimeoutSeconds   int        `yaml:"timeout_seconds,omitempty"`
 	DefaultOnTimeout string     `yaml:"default_on_timeout,omitempty"`
 }
 
@@ -192,13 +192,24 @@ const (
 )
 
 type EvalContext struct {
-	ToolName         string
-	ToolInput        json.RawMessage
-	FilePath         string
-	Command          string
-	CWD              string
-	SessionOverrides []string
-	TierFilter       TierFilter
+	ToolName  string
+	ToolInput json.RawMessage
+	FilePath  string
+	Command   string
+	CWD       string
+	// ProjectRoot and SessionID scope bypass grants: only grants issued for
+	// this project and this Claude Code session apply.
+	ProjectRoot string
+	SessionID   string
+	// Overrides are the bypasses in force for the call. The policy engine
+	// resolves them from its session state for the context's scope.
+	Overrides  ActiveOverrides
+	TierFilter TierFilter
+}
+
+// BypassScope returns the scope bypass grants must match for this call.
+func (c *EvalContext) BypassScope() BypassScope {
+	return BypassScope{ProjectRoot: c.ProjectRoot, SessionID: c.SessionID}
 }
 
 type PolicyDecision struct {
@@ -208,6 +219,13 @@ type PolicyDecision struct {
 	Message  string
 	Err      error
 	Findings []Finding
+	// BypassTier is the tier of the rule that produced a Block, so the caller
+	// can tell whether a human may lift it.
+	BypassTier BypassTier
+	// ConsumedTokens lists the command-tier rules whose one-shot bypass token
+	// this non-blocking decision relied on. The caller must consume them
+	// before letting the call run, and block it when that fails.
+	ConsumedTokens []string
 }
 
 type Finding struct {
@@ -218,7 +236,24 @@ type Finding struct {
 	Monitor  bool
 }
 
+// DenyRule is a path pattern projected from a blocking policy rule for the
+// MCP confused-deputy check. RuleID and BypassTier identify the originating
+// rule so session overrides apply to the projection as they do to the rule.
 type DenyRule struct {
-	Pattern string
-	Type    string
+	Pattern    string
+	Type       string
+	RuleID     string
+	BypassTier BypassTier
+}
+
+// SessionBypassed reports whether an active session-tier grant lifts this
+// deny rule, as it lifts the rule in Evaluate.
+func (d DenyRule) SessionBypassed(o ActiveOverrides) bool {
+	return d.BypassTier == Session && slices.Contains(o.Session, d.RuleID)
+}
+
+// CommandTokenHeld reports whether an unconsumed command-tier token lifts this
+// deny rule for one call; a call that relies on it must consume the token.
+func (d DenyRule) CommandTokenHeld(o ActiveOverrides) bool {
+	return d.BypassTier == Command && slices.Contains(o.Command, d.RuleID)
 }

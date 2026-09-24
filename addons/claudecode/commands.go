@@ -1,7 +1,6 @@
 package claudecode
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
+	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
 	"github.com/Quantum-Serendipity/qsdev/internal/detect"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
@@ -17,7 +17,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	_ "github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules" // register all modules
-	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -28,11 +27,8 @@ const AddonDir = ".claude"
 
 // statePath returns the path to the claude state file, using the branding app name.
 func statePath() string {
-	return ".claude/." + branding.Get().AppName + "-claude-state.yaml"
+	return state.ClaudeStateFile()
 }
-
-var validPermissionPresets = validation.PermissionPresets()
-var validHookPresets = validation.HookPresets()
 
 func claudeCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -71,7 +67,7 @@ func initCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Validate permission preset before any work.
 			if !validation.IsValidPermissionPreset(preset) {
-				return fmt.Errorf("unknown permission preset %q; valid presets: %v", preset, validPermissionPresets)
+				return fmt.Errorf("unknown permission preset %q; valid presets: %v", preset, validation.PermissionPresets())
 			}
 
 			projectRoot, err := cmdutil.ProjectRoot()
@@ -88,10 +84,15 @@ func initCmd() *cobra.Command {
 			}
 
 			// Detect project characteristics.
-			detected := detect.Detect(projectRoot)
+			detected := detect.Detect(cmd.Context(), projectRoot)
 
-			// Build answers from flags.
-			answers := buildClaudeAnswersFromFlags(projectRoot, preset, skills, mcpServers, yes, noSafetyBlock)
+			// Build answers from flags, overlaid onto any saved answers so the
+			// rest of the project's configuration survives a re-init.
+			answers, err := overlayInitAnswers(projectRoot,
+				buildClaudeAnswersFromFlags(projectRoot, preset, skills, mcpServers, yes, noSafetyBlock))
+			if err != nil {
+				return err
+			}
 			answers.Detected = detected
 
 			// Generate files.
@@ -114,22 +115,26 @@ func initCmd() *cobra.Command {
 			// an existing file.
 			result, err := generate.WriteFiles(files, generate.PipelineOptions{
 				ProjectRoot:       projectRoot,
-				SectionMergeFunc:  merge.SectionMarkers,
+				SectionMergeFunc:  merge.SectionMarkersOrAppend,
 				ThreeWayMergeFunc: merge.MergeOnCreate,
 			})
 			if err != nil {
 				return fmt.Errorf("writing files: %w", err)
 			}
 
-			// Save state and answers.
-			successfulFiles := result.SuccessfulFiles(files)
-			genState := state.RecordFiles(successfulFiles)
+			// Save state and answers via the shared tail, version-stamped. A
+			// re-init (--force) keeps state this command does not own, such as
+			// MCP server lifecycle records from `mcp install`.
 			stateFile := filepath.Join(projectRoot, statePath())
-			if err := state.SaveStateToFile(stateFile, genState); err != nil {
-				return fmt.Errorf("saving state: %w", err)
+			existingState, err := state.LoadStateFromFile(stateFile)
+			if err != nil {
+				// init is the recovery path for a broken project, so an
+				// unreadable state file is replaced rather than fatal.
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %v; starting a fresh state file\n", err)
+				existingState = types.GeneratedState{}
 			}
-			if err := saveAnswers(projectRoot, answers); err != nil {
-				return fmt.Errorf("saving answers: %w", err)
+			if err := persistRegenState(projectRoot, answers, result.SuccessfulFiles(files), nil, existingState, true); err != nil {
+				return err
 			}
 
 			// Warn when configured skills/MCP servers were suppressed by tier.
@@ -179,7 +184,7 @@ func updateCmd() *cobra.Command {
 			}
 
 			// Refresh detection.
-			answers.Detected = detect.Detect(projectRoot)
+			answers.Detected = detect.Detect(cmd.Context(), projectRoot)
 
 			// Load stored state.
 			stateFile := filepath.Join(projectRoot, statePath())
@@ -187,9 +192,6 @@ func updateCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("loading state: %w", err)
 			}
-
-			// Check modification status of all stored files.
-			modStatus := state.CheckModified(existingState, projectRoot)
 
 			// Generate new files.
 			registry := ecosystem.DefaultRegistry()
@@ -206,99 +208,20 @@ func updateCmd() *cobra.Command {
 				return nil
 			}
 
-			// Write files respecting merge strategies.
-			var writtenFiles []types.GeneratedFile
-			mergedOriginals := make(map[string][]byte)
-			created, updated, skipped := 0, 0, 0
-
-			for _, f := range files {
-				absPath := filepath.Join(projectRoot, f.Path)
-				mode := f.Mode
-				if mode == 0 {
-					mode = fileutil.ModeReadWrite
-				}
-
-				fs, inState := modStatus[f.Path]
-				if !inState {
-					// New file — create it.
-					if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
-						return fmt.Errorf("writing %s: %w", f.Path, err)
-					}
-					writtenFiles = append(writtenFiles, f)
-					created++
-					continue
-				}
-
-				switch fs.Status {
-				case types.Unmodified:
-					switch f.Strategy {
-					case types.SectionMarker, types.ThreeWayMerge:
-						content, mergeErr := mergeFile(f, existingState, projectRoot)
-						if mergeErr != nil {
-							if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
-								return fmt.Errorf("writing %s: %w", f.Path, err)
-							}
-							writtenFiles = append(writtenFiles, f)
-						} else {
-							if err := fileutil.WriteFileAtomic(absPath, content, mode); err != nil {
-								return fmt.Errorf("writing merged %s: %w", f.Path, err)
-							}
-							writtenFiles = append(writtenFiles, types.GeneratedFile{
-								Path: f.Path, Content: content, Mode: mode, Strategy: f.Strategy,
-							})
-							mergedOriginals[f.Path] = f.Content
-						}
-					default:
-						if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
-							return fmt.Errorf("writing %s: %w", f.Path, err)
-						}
-						writtenFiles = append(writtenFiles, f)
-					}
-					updated++
-
-				case types.Modified:
-					if force {
-						if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
-							return fmt.Errorf("writing %s: %w", f.Path, err)
-						}
-						writtenFiles = append(writtenFiles, f)
-						updated++
-					} else {
-						content, err := mergeFile(f, existingState, projectRoot)
-						if err != nil {
-							_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: merge failed for %s: %v (skipping)\n", f.Path, err)
-							skipped++
-							continue
-						}
-						if err := fileutil.WriteFileAtomic(absPath, content, mode); err != nil {
-							return fmt.Errorf("writing merged %s: %w", f.Path, err)
-						}
-						writtenFiles = append(writtenFiles, types.GeneratedFile{
-							Path: f.Path, Content: content, Mode: mode, Strategy: f.Strategy,
-						})
-						mergedOriginals[f.Path] = f.Content
-						updated++
-					}
-
-				case types.Deleted:
-					if force {
-						if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
-							return fmt.Errorf("writing %s: %w", f.Path, err)
-						}
-						writtenFiles = append(writtenFiles, f)
-						created++
-					} else {
-						skipped++
-					}
-
-				default:
-					skipped++
-				}
+			// Write files through the same merge-aware writer as add-skill and
+			// add-hook, keeping user edits to non-mergeable files unless --force.
+			opts := regenWriteOptions{force: force, keepUserChanges: true}
+			plan, err := planRegenWrites(files, existingState, projectRoot, opts, cmd.ErrOrStderr())
+			if err != nil {
+				return err
+			}
+			if err := applyRegenPlan(plan, projectRoot, cmd.ErrOrStderr()); err != nil {
+				return err
 			}
 
 			// Save updated state and answers via the shared tail, stamping the
 			// template/skill versions (the update path always version-stamps).
-			if err := persistRegenState(stateFile, projectRoot, answers, writtenFiles, mergedOriginals, existingState, true); err != nil {
+			if err := persistRegenState(projectRoot, answers, plan.recorded, plan.mergedOriginals, existingState, true); err != nil {
 				return err
 			}
 
@@ -309,7 +232,8 @@ func updateCmd() *cobra.Command {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), summary.String())
 			}
 
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Update complete: %d created, %d updated, %d skipped.\n", created, updated, skipped)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Update complete: %d created, %d updated, %d unchanged, %d skipped.\n",
+				plan.created, plan.updated, plan.unchanged, plan.skipped)
 			return nil
 		},
 	}
@@ -320,22 +244,6 @@ func updateCmd() *cobra.Command {
 	return cmd
 }
 
-// mergeFile applies the appropriate merge strategy for a modified file. It
-// reads the current on-disk content ("theirs") and the recorded base from
-// stored state, then delegates to the shared merge.Dispatch table.
-func mergeFile(f types.GeneratedFile, storedState types.GeneratedState, projectRoot string) ([]byte, error) {
-	absPath := filepath.Join(projectRoot, f.Path)
-	theirs, err := os.ReadFile(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", f.Path, err)
-	}
-	var base []byte
-	if fs, ok := storedState.Files[f.Path]; ok {
-		base = fs.BaseContent
-	}
-	return merge.Dispatch(f.Path, f.Strategy, base, theirs, f.Content)
-}
-
 // addItemSpec parameterizes the differences between add-skill and add-hook
 // commands. The factory function makeAddItemCmd uses it to build a
 // cobra.Command with identical control flow but type-specific behavior.
@@ -343,27 +251,27 @@ type addItemSpec struct {
 	use       string
 	short     string
 	long      string
-	validArgs []string
+	validArgs func() []string
 
 	validate   func(name string) error
 	mutate     func(a *types.WizardAnswers, name string) error
 	successMsg func(name string, filesWritten int) string
-	// verify, when set, runs after regeneration with the set of written paths.
-	// It lets a command fail loudly (instead of reporting false success) when
-	// the item it was asked to add was not actually written — e.g. a skill
-	// suppressed by the resolved tier.
-	verify func(name string, written map[string]bool) error
+	// verify, when set, runs after planning with the set of paths that will
+	// hold generated content. It lets a command fail loudly (instead of
+	// reporting false success) when the item it was asked to add is not
+	// generated — e.g. a skill suppressed by the resolved tier.
+	verify func(name string, present map[string]bool) error
 }
 
 // makeAddItemCmd builds a cobra.Command that adds an item to the Claude Code
 // configuration using the behavior described by spec.
 func makeAddItemCmd(spec addItemSpec) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:       spec.use,
-		Short:     spec.short,
-		Long:      spec.long,
-		Args:      cobra.ExactArgs(1),
-		ValidArgs: spec.validArgs,
+		Use:               spec.use,
+		Short:             spec.short,
+		Long:              spec.long,
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: cmdutil.CompleteFrom(spec.validArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
@@ -388,21 +296,21 @@ func makeAddItemCmd(spec addItemSpec) *cobra.Command {
 				return err
 			}
 
-			// verify runs inside regenerateAndPersist, after files are written but
-			// before state/answers are persisted, so a failed check rolls back
-			// cleanly (nothing saved) instead of wedging a retry.
-			verify := func(written map[string]bool) error {
+			// verify runs inside regenerateAndPersist before anything is written
+			// or persisted, so a failed check leaves the project untouched
+			// instead of wedging a retry.
+			verify := func(present map[string]bool) error {
 				if spec.verify != nil {
-					return spec.verify(name, written)
+					return spec.verify(name, present)
 				}
 				return nil
 			}
-			written, err := regenerateAndPersist(cmd, answers, projectRoot, verify)
+			_, written, err := regenerateAndPersist(cmd, answers, projectRoot, verify)
 			if err != nil {
 				return err
 			}
 
-			_, _ = fmt.Fprint(cmd.OutOrStdout(), spec.successMsg(name, len(written)))
+			_, _ = fmt.Fprint(cmd.OutOrStdout(), spec.successMsg(name, written))
 			return nil
 		},
 	}
@@ -411,152 +319,98 @@ func makeAddItemCmd(spec addItemSpec) *cobra.Command {
 }
 
 // regenerateAndPersist generates files from answers, performs a merge-aware
-// incremental write, and persists both state and answers. It returns the set of
-// relative paths actually written.
+// incremental write (see planRegenWrites), and persists both state and
+// answers. It returns the set of relative paths holding generated content and
+// the number of files actually written.
 //
-// Any file present on disk with a mergeable strategy (ThreeWayMerge/
-// SectionMarker) is ALWAYS merged — not only when it shows as Modified or is
-// already recorded in state. This preserves user-owned top-level keys such as
-// settings.json "env" across every regeneration, including the first add-skill
-// after a top-level `qsdev init` (which records state under .devinit/, so the
-// claude addon has no record of settings.json) and repeated add-skills where
-// the file stays byte-identical on disk.
-func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, projectRoot string, verify func(written map[string]bool) error) (map[string]bool, error) {
+// verify runs after planning but before anything is written or persisted, so a
+// failed check (e.g. a skill suppressed by the current tier) leaves the project
+// untouched and does not record the mutated answers, which would wedge a retry
+// with "already configured".
+func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, projectRoot string, verify func(present map[string]bool) error) (map[string]bool, int, error) {
 	registry := ecosystem.DefaultRegistry()
 	gen := NewClaudeCodeGenerator(registry, addon.Config)
 	files, err := gen.Generate(answers)
 	if err != nil {
-		return nil, fmt.Errorf("generating files: %w", err)
+		return nil, 0, fmt.Errorf("generating files: %w", err)
 	}
 
 	stFile := filepath.Join(projectRoot, statePath())
 	existingState, err := state.LoadStateFromFile(stFile)
 	if err != nil {
-		return nil, fmt.Errorf("loading state: %w", err)
+		return nil, 0, fmt.Errorf("loading state: %w", err)
 	}
 
-	// Skills moved from the flat .claude/skills/<name>.md layout to
-	// .claude/skills/<name>/SKILL.md. Remove any stale flat file (and drop its
-	// recorded state) so an upgraded project doesn't keep a dead duplicate.
-	for _, f := range files {
-		legacy, ok := legacyFlatSkillPath(f.Path)
-		if !ok {
-			continue
-		}
-		abs := filepath.Join(projectRoot, legacy)
-		if _, statErr := os.Stat(abs); statErr == nil {
-			if rmErr := os.Remove(abs); rmErr != nil {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not remove stale skill file %s: %v\n", legacy, rmErr)
-			}
-		}
-		delete(existingState.Files, legacy)
+	plan, err := planRegenWrites(files, existingState, projectRoot, regenWriteOptions{}, cmd.ErrOrStderr())
+	if err != nil {
+		return nil, 0, err
 	}
-
-	var writtenFiles []types.GeneratedFile
-	writtenPaths := make(map[string]bool)
-	mergedOriginals := make(map[string][]byte)
-
-	for _, f := range files {
-		absPath := filepath.Join(projectRoot, f.Path)
-		mode := f.Mode
-		if mode == 0 {
-			mode = fileutil.ModeReadWrite
-		}
-
-		onDisk, statErr := os.ReadFile(absPath)
-		exists := statErr == nil
-
-		switch {
-		case exists && (f.Strategy == types.ThreeWayMerge || f.Strategy == types.SectionMarker):
-			merged, mergeErr := mergeFile(f, existingState, projectRoot)
-			if mergeErr != nil {
-				// e.g. an empty on-disk file: nothing to preserve, fall through
-				// to a full write of the generated content.
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: merge failed for %s: %v (overwriting)\n", f.Path, mergeErr)
-			} else {
-				mergedOriginals[f.Path] = f.Content // remember "ours" for BaseContent
-				f.Content = merged
-				if bytes.Equal(onDisk, f.Content) {
-					// Merge is a no-op on disk, but still record the file so its
-					// BaseContent tracks "ours"; without this a later three-way
-					// merge can never prune managed keys the generator removed.
-					writtenFiles = append(writtenFiles, f)
-					writtenPaths[f.Path] = true
-					continue
-				}
-			}
-		default:
-			if fs, ok := existingState.Files[f.Path]; ok && state.ComputeHash(f.Content) == fs.Hash {
-				// Unchanged and already on disk: not rewritten, but it IS present.
-				// Record it so verify (which checks presence, not just fresh
-				// writes) doesn't falsely report an already-deployed item missing.
-				writtenPaths[f.Path] = true
-				continue
-			}
-		}
-
-		if err := fileutil.WriteFileAtomic(absPath, f.Content, mode); err != nil {
-			return nil, fmt.Errorf("writing %s: %w", f.Path, err)
-		}
-		writtenFiles = append(writtenFiles, f)
-		writtenPaths[f.Path] = true
-	}
-
-	// Verify the outcome BEFORE persisting state/answers: a failed check (e.g. a
-	// skill suppressed by the current tier, so its SKILL.md was never written)
-	// must not leave the mutated answers recorded on disk, which would wedge a
-	// retry with "already configured".
 	if verify != nil {
-		if err := verify(writtenPaths); err != nil {
-			return nil, err
+		if err := verify(plan.present); err != nil {
+			return nil, 0, err
 		}
+	}
+	if err := applyRegenPlan(plan, projectRoot, cmd.ErrOrStderr()); err != nil {
+		return nil, 0, err
 	}
 
 	// Save state and answers via the shared tail (no version stamping here).
-	if err := persistRegenState(stFile, projectRoot, answers, writtenFiles, mergedOriginals, existingState, false); err != nil {
-		return nil, err
+	if err := persistRegenState(projectRoot, answers, plan.recorded, plan.mergedOriginals, existingState, false); err != nil {
+		return nil, 0, err
 	}
 
-	return writtenPaths, nil
+	return plan.present, plan.written(), nil
 }
 
-// persistRegenState records the freshly written files into a new state, corrects
-// the ThreeWayMerge base content (storing the un-merged generated "ours" content
-// so future merges diff against it, not the merged result), carries forward
-// state entries for untouched files, optionally stamps the template/skill
-// versions, and saves both the state file and answers. It is the shared tail of
-// regenerateAndPersist and updateCmd.
+// persistRegenState records the given files into the claude state, corrects the
+// ThreeWayMerge base content (storing the un-merged generated "ours" content so
+// future merges diff against it, not the merged result), carries forward state
+// entries for untouched files, optionally stamps the template/skill versions,
+// and saves the state file, the answers and the answer-derived keys of
+// .qsdev.yaml. It is the shared tail of init,
+// update, add-skill and add-hook.
+//
+// The new state starts from a copy of existingState, so everything this
+// function does not own — MCP server lifecycle records written by
+// `mcp install`, enabled tools, the fragment ledger, and the version stamps
+// when stampVersions is false — is preserved.
 func persistRegenState(
-	stateFile, projectRoot string,
+	projectRoot string,
 	answers types.WizardAnswers,
-	writtenFiles []types.GeneratedFile,
+	recordedFiles []types.GeneratedFile,
 	mergedOriginals map[string][]byte,
 	existingState types.GeneratedState,
 	stampVersions bool,
 ) error {
-	newState := state.RecordFiles(writtenFiles)
+	fresh := state.RecordFiles(recordedFiles)
 	for path, orig := range mergedOriginals {
-		if fs, ok := newState.Files[path]; ok && fs.Strategy == types.ThreeWayMerge {
+		if fs, ok := fresh.Files[path]; ok && fs.Strategy == types.ThreeWayMerge {
 			fs.BaseContent = orig
-			newState.Files[path] = fs
+			fresh.Files[path] = fs
 		}
 	}
 	for path, fs := range existingState.Files {
-		if _, ok := newState.Files[path]; !ok {
-			newState.Files[path] = fs
+		if _, ok := fresh.Files[path]; !ok {
+			fresh.Files[path] = fs
 		}
 	}
+
+	newState := existingState
+	newState.LastRun = fresh.LastRun
+	newState.Files = fresh.Files
 	if stampVersions {
 		newState.TemplateVersion = ComputeTemplateVersion()
 		newState.SkillLibraryVersion = ComputeSkillLibraryVersion()
 	}
-	if err := state.SaveStateToFile(stateFile, newState); err != nil {
+	if err := state.SaveProjectState(projectRoot, statePath(), newState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
 	}
 	if err := saveAnswers(projectRoot, answers); err != nil {
 		return fmt.Errorf("saving answers: %w", err)
 	}
-	return nil
+	// Keep the committed .qsdev.yaml in step so a teammate's join rebuilds
+	// the same Claude Code configuration.
+	return qsdevconfig.SyncProjectConfig(projectRoot, answers)
 }
 
 func addSkillCmd() *cobra.Command {
@@ -585,9 +439,9 @@ func addSkillCmd() *cobra.Command {
 			a.Skills = append(a.Skills, name)
 			return nil
 		},
-		verify: func(name string, written map[string]bool) error {
+		verify: func(name string, present map[string]bool) error {
 			path := ".claude/skills/" + name + "/SKILL.md"
-			if !written[path] {
+			if !present[path] {
 				return fmt.Errorf("skill %q was not written (expected %s); it is suppressed by the current tier — raise the tier to standard or higher", name, path)
 			}
 			return nil
@@ -603,10 +457,10 @@ func addHookCmd() *cobra.Command {
 		use:       "add-hook <name>",
 		short:     "Enable a hook preset in the Claude Code configuration",
 		long:      "Enable a hook preset (auto-format, safety-block, pre-commit, audit-log) in the existing configuration.",
-		validArgs: validHookPresets,
+		validArgs: validation.HookPresets,
 		validate: func(name string) error {
 			if !validation.IsValidHookPreset(name) {
-				return fmt.Errorf("unknown hook preset %q; valid presets: %v", name, validHookPresets)
+				return fmt.Errorf("unknown hook preset %q; valid presets: %v", name, validation.HookPresets())
 			}
 			switch name {
 			case "auto-format":
@@ -617,7 +471,9 @@ func addHookCmd() *cobra.Command {
 			return nil
 		},
 		mutate: func(a *types.WizardAnswers, name string) error {
-			hookPresetToChoices(name, &a.Hooks)
+			if err := a.Hooks.EnableHook(name); err != nil {
+				return fmt.Errorf("enabling hook preset: %w", err)
+			}
 			return nil
 		},
 		successMsg: func(name string, filesWritten int) string {
@@ -685,29 +541,4 @@ func buildClaudeAnswersFromFlags(projectRoot, preset string, skills, mcpServers 
 	}
 
 	return answers
-}
-
-// hookPresetToChoices maps a hook preset name to the corresponding field in
-// HookChoices, setting it to true.
-func hookPresetToChoices(name string, hooks *types.HookChoices) {
-	switch name {
-	case "auto-format":
-		hooks.AutoFormat = true
-	case "safety-block":
-		hooks.SafetyBlock = true
-	case "pre-commit":
-		hooks.PreCommit = true
-	case "audit-log":
-		hooks.AuditLog = true
-	case "credential-scan":
-		hooks.CredentialScan = true
-	case "destructive-prevention":
-		hooks.DestructivePrevention = true
-	case "soc2-audit":
-		hooks.SOC2Audit = true
-	case "file-boundary":
-		hooks.FileBoundary = true
-	case "tool-gates":
-		hooks.ToolGates = true
-	}
 }

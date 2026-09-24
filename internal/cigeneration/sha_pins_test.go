@@ -61,7 +61,7 @@ func workflowPins(t *testing.T) map[string]workflowPin {
 // and the emitted team workflow would have paired mismatched artifact majors.
 //
 // Only actions this repository actually uses are compared. Entries emitted
-// solely into generated projects (Grype, Snyk, download-artifact) have no local
+// solely into generated projects (Grype, download-artifact) have no local
 // counterpart to check against.
 func TestActionPinsMatchWorkflows(t *testing.T) {
 	t.Parallel()
@@ -74,7 +74,6 @@ func TestActionPinsMatchWorkflows(t *testing.T) {
 		"ActionUploadArtifact": ActionUploadArtifact,
 		"ActionOSVScanner":     ActionOSVScanner,
 		"ActionGrype":          ActionGrype,
-		"ActionSnyk":           ActionSnyk,
 		"ActionLabeler":        ActionLabeler,
 		// ActionDownloadArtifact is emitted only into generated team
 		// workflows, so it has no counterpart here.
@@ -127,7 +126,7 @@ func TestActionRefsAreWellFormed(t *testing.T) {
 		"ActionDownloadArtifact": ActionDownloadArtifact,
 		"ActionOSVScanner":       ActionOSVScanner,
 		"ActionGrype":            ActionGrype,
-		"ActionSnyk":             ActionSnyk,
+		"ActionInstallNix":       ActionInstallNix,
 		"ActionLabeler":          ActionLabeler,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -142,5 +141,51 @@ func TestActionRefsAreWellFormed(t *testing.T) {
 				t.Errorf("%s has no Tag, so the emitted comment would not say which version runs", name)
 			}
 		})
+	}
+}
+
+// goreleaserVersionRe captures the `version:` input of each goreleaser-action
+// step (the input sits in the step's `with:` block a few lines below `uses:`).
+var goreleaserVersionRe = regexp.MustCompile(`(?s)uses:\s+goreleaser/goreleaser-action@\S+[^\n]*\n(?:[^\n]*\n){0,8}?\s+version:\s*"?([^"\s]+)"?`)
+
+// exactVersionRe matches an exact release tag such as v2.17.1.
+var exactVersionRe = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
+
+// TestGoreleaserVersionPinned is the W191 regression test. The action is SHA
+// pinned, but its `version` input chooses the goreleaser binary it downloads,
+// and the release job runs that binary with the signing identity and tap
+// tokens. A range such as "~> v2" runs whatever was published last, and CI
+// would not even validate the version the release uses.
+func TestGoreleaserVersionPinned(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join("..", "..", ".github", "workflows")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dir, err)
+	}
+	versions := map[string]string{} // version -> first file using it
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".yml" {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatalf("reading %s: %v", e.Name(), err)
+		}
+		for _, m := range goreleaserVersionRe.FindAllStringSubmatch(string(b), -1) {
+			if !exactVersionRe.MatchString(m[1]) {
+				t.Errorf("%s: goreleaser-action version %q is not an exact release (want vX.Y.Z)", e.Name(), m[1])
+			}
+			if _, ok := versions[m[1]]; !ok {
+				versions[m[1]] = e.Name()
+			}
+		}
+	}
+	if len(versions) == 0 {
+		t.Fatal("found no goreleaser-action version inputs; the parser or the layout changed")
+	}
+	if len(versions) > 1 {
+		t.Errorf("workflows use different goreleaser versions %v; CI must validate the version the release runs", versions)
 	}
 }

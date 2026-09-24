@@ -102,6 +102,44 @@ func TestParseVersionConstraint_PessimisticThreeSegment(t *testing.T) {
 	}
 }
 
+// Regression: the pessimistic operator must keep its upper bound inside OR
+// groups, compound constraints and the single-number form.
+func TestParseVersionConstraint_PessimisticBounded(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		constraint string
+		version    string
+		want       bool
+	}{
+		{"~> 1", "1.9.0", true},
+		{"~> 1", "3.1.0", false},
+		{"~> 1.2 || ~> 2.0", "1.2.5", true},
+		{"~> 1.2 || ~> 2.0", "2.0.1", true},
+		{"~> 1.2 || ~> 2.0", "1.3.0", false},
+		{"~> 1.2 || ~> 2.0", "3.1.0", false},
+		{">= 1.0, ~> 1.2 || ^3.0", "2.0.1", false},
+		{">= 1.0, ~> 1.2 || ^3.0", "3.4.0", true},
+		{"~>0.15", "0.15.4", true},
+		{"~>0.15", "0.16.0", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.constraint+"/"+tt.version, func(t *testing.T) {
+			t.Parallel()
+			vc, err := ParseVersionConstraint(tt.constraint)
+			if err != nil {
+				t.Fatalf("ParseVersionConstraint(%q): %v", tt.constraint, err)
+			}
+			got, err := vc.Check(tt.version)
+			if err != nil {
+				t.Fatalf("Check(%q): %v", tt.version, err)
+			}
+			if got != tt.want {
+				t.Errorf("%q.Check(%q) = %v, want %v", tt.constraint, tt.version, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseVersionConstraint_CaretZeroMajor(t *testing.T) {
 	vc, err := ParseVersionConstraint("^0.15.0")
 	if err != nil {
@@ -332,6 +370,56 @@ func TestVersionConstraint_String(t *testing.T) {
 	}
 	if vc.String() != "~> 0.15" {
 		t.Errorf("String() = %q, want %q", vc.String(), "~> 0.15")
+	}
+}
+
+// Regression: the constraint written by init must be a lower bound, so a
+// newer patch release (with or without build metadata) still satisfies it,
+// and dev builds must not write an invalid constraint.
+func TestMinimumVersionConstraint(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		binaryVersion string
+		want          string
+	}{
+		{"release", "0.8.0", ">= 0.8.0"},
+		{"nix build metadata", "0.8.0+abc1234", ">= 0.8.0"},
+		{"v prefix", "v1.2.3", ">= 1.2.3"},
+		{"prerelease kept", "1.3.0-rc.1+abc", ">= 1.3.0-rc.1"},
+		{"dev build", "dev", ""},
+		{"devel build", "(devel)", ""},
+		{"empty", "", ""},
+		{"unparseable", "not-a-version", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := MinimumVersionConstraint(tt.binaryVersion)
+			if got != tt.want {
+				t.Fatalf("MinimumVersionConstraint(%q) = %q, want %q", tt.binaryVersion, got, tt.want)
+			}
+			if got == "" {
+				return
+			}
+			// The binary that wrote the constraint must satisfy it.
+			if err := CheckBinaryVersion(got, tt.binaryVersion); err != nil {
+				t.Fatalf("CheckBinaryVersion(%q, %q) = %v, want nil", got, tt.binaryVersion, err)
+			}
+		})
+	}
+}
+
+func TestMinimumVersionConstraint_AcceptsNewerReleases(t *testing.T) {
+	t.Parallel()
+	constraint := MinimumVersionConstraint("0.8.0+abc1234")
+	for _, newer := range []string{"0.8.0+abc1234", "0.8.0", "0.8.1+aaa", "0.9.0", "1.0.0"} {
+		if err := CheckBinaryVersion(constraint, newer); err != nil {
+			t.Errorf("CheckBinaryVersion(%q, %q) = %v, want nil", constraint, newer, err)
+		}
+	}
+	if err := CheckBinaryVersion(constraint, "0.7.9"); err == nil {
+		t.Errorf("CheckBinaryVersion(%q, 0.7.9) = nil, want mismatch", constraint)
 	}
 }
 

@@ -39,6 +39,8 @@ qsdev init --yes
 
 The installer verifies downloads with SHA-256 checksums and Sigstore cosign (when cosign is available). On Apple Silicon under Rosetta 2, it detects translation and downloads the native arm64 binary. Flags: `--verify-only` (check an existing install), `--no-verify` (skip verification), `--force-arch` (override architecture detection).
 
+Without `--yes`, `qsdev init` runs an interactive wizard. Set `ACCESSIBLE=1` (or run under `TERM=dumb`) to get plain line-by-line prompts that work with screen readers. `NO_COLOR` only removes color, following [no-color.org](https://no-color.org/); the wizard stays interactive.
+
 ## Try It Out
 
 ### On an existing project (non-destructive)
@@ -67,7 +69,6 @@ devenv.yaml                 # Environment inputs
 .claude/hooks/package-guard.py  # Package install interception
 .claude/skills/             # Operation skills for AI-assisted workflows
 .claude/rules/              # Language-specific convention rules
-.qsdev/policy.nix           # Hook sandbox policies
 .mcp.json                   # MCP server configuration
 .qsdev/policy/              # YAML security policies (policy engine)
 CLAUDE.md                   # Project context for AI agents
@@ -154,7 +155,7 @@ The installer handles all dependencies automatically — no manual setup require
 | [pre-commit](https://pre-commit.com) | Lockfile checks, formatting, linting hooks |
 | [Socket.dev](https://socket.dev) | Behavioral supply chain analysis via MCP |
 | [Podman](https://podman.io) | Rootless container runtime (auto-detected alongside Docker) |
-| [Sigstore](https://sigstore.dev) | Binary and SBOM verification via cosign |
+| [Sigstore](https://sigstore.dev) | Release verification (in-process sigstore-go for `qsdev update`, cosign in the install script) and SBOM signing |
 
 ## Available Services
 
@@ -203,7 +204,7 @@ qsdev trial                   # Evaluate in an isolated git worktree
 | `check` | CI enforcement checks (JSON, SARIF, JUnit output). `--auto-fix` repairs issues |
 | `info` | Project status at a glance (cached, instant) |
 | `repair` | Fix corrupted or drifted config files |
-| `update` | Update binary + configs + devenv inputs. Flags: `--check`, `--changelog`, `--dry-run`, `--force`, `--self-only`, `--configs-only`, `--deps-only` |
+| `update` | Update binary + configs + devenv inputs. Flags: `--check`, `--changelog`, `--dry-run`, `--force` (reinstall the binary only), `--overwrite-modified` (replace config files you edited), `--allow-downgrade`, `--no-strict` (install a release that has no signature bundle), `--self-only`, `--configs-only`, `--deps-only` |
 | `outdated` | Check for outdated dependencies across ecosystems |
 | `teardown` | Remove all qsdev configuration from project |
 | `enable <tool>` | Enable a tool |
@@ -237,13 +238,14 @@ qsdev trial                   # Evaluate in an isolated git worktree
 | `claude add-skill <name>` | Add a skill |
 | `claude add-hook <name>` | Enable a hook preset |
 | `claude list-skills` | List available skills |
-| `claude hooks list` | List registered hooks with deployment tier and status |
+| `claude hooks list` | List registered hooks with configured and deployed status |
 
 ### sandbox subcommands
 
 | Command | Description |
 |---------|-------------|
 | `sandbox exec -- CMD` | Run a command inside the hook sandbox |
+| `sandbox approve` | Review and approve the project's hook sandbox policy (`.qsdev/policy.nix`) |
 | `sandbox status` | Display sandbox capabilities and degradation tier |
 
 ### container subcommands
@@ -261,7 +263,7 @@ qsdev trial                   # Evaluate in an isolated git worktree
 | `mcp list` | List configured MCP servers |
 | `mcp grade [name]` | Compliance grade (basic/standard/secure/verified/attested) |
 | `mcp install <name>` | Install an MCP server from the registry |
-| `mcp update [name]` | Update an installed MCP server (`--all` for all) |
+| `mcp update [name]` | Move an installed MCP server to its pinned release (`--all` for all) |
 | `mcp remove <name>` | Remove an MCP server |
 | `mcp health` | Run health probes on all configured servers |
 
@@ -289,7 +291,7 @@ qsdev trial                   # Evaluate in an isolated git worktree
 
 | Command | Description |
 |---------|-------------|
-| `session allow <rule-ids>` | Enable session bypass for specific policy rules |
+| `session allow <rule-ids> --session <id>` | Bypass policy rules for one Claude Code session in this project |
 | `session clear` | Remove all session bypass overrides |
 | `session list` | List active session bypass overrides |
 
@@ -321,6 +323,11 @@ Infrastructure profiles control organization-wide policy:
 | `consulting-default` | Nexus proxy, OSV + Socket scanning, Renovate with 3-day age gate, Syft SBOM |
 | `startup-github` | GitHub Packages, OSV + Socket scanning, Dependabot, Turborepo |
 | `enterprise` | Artifactory, Snyk + Socket scanning, Renovate with 7-day age gate, Cosign SBOM signing |
+
+A profile's registry proxy and Nix cache point at your organization's own
+endpoints (`--registry-proxy`, `--nix-cache`, `--nix-cache-public-key`, or
+`infrastructure:` in `.qsdev.yaml`); qsdev refuses to apply a profile until
+they are set.
 
 ## What qsdev is NOT
 

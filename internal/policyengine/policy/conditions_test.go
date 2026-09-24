@@ -2,6 +2,7 @@ package policy
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -148,5 +149,52 @@ func TestEvaluate_SemanticConditionBlocks(t *testing.T) {
 	allowed := Evaluate(set, allowCtx)
 	if allowed.Action == Block {
 		t.Errorf("semantic rule should not fire on benign content, got Block (rule %q)", allowed.RuleID)
+	}
+}
+
+// TestCompileCondition_ValidatesParams is the regression guard for condition
+// parameters being checked only at evaluation time: an unknown file_type or a
+// missing required field must fail when the policy is compiled, not surface as
+// a fail-closed Block on every tool call the rule is indexed under.
+func TestCompileCondition_ValidatesParams(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cond    Condition
+		wantErr string
+	}{
+		{"unknown file_type", Condition{Type: FileType, Path: "go.sum", FileType: "dir"}, `unknown file_type "dir"`},
+		{"missing file_type", Condition{Type: FileType, Path: "go.sum"}, `unknown file_type ""`},
+		{"file_type without path", Condition{Type: FileType, FileType: "file"}, "path is required"},
+		{"file_existence without path", Condition{Type: FileExistence}, "path is required"},
+		{"tool_match without tool_name", Condition{Type: ToolMatch}, "tool_name is required"},
+		{"path_glob without pattern", Condition{Type: PathGlob}, "pattern is required"},
+		{"denied_path_check blank pattern", Condition{Type: DeniedPathCheck, Pattern: "  "}, "pattern is required"},
+		{"regex_match without pattern", Condition{Type: RegexMatch}, "pattern is required"},
+		{"command_match without pattern", Condition{Type: CommandMatch}, "pattern is required"},
+		{"empty all", Condition{Type: All}, "at least one child condition is required"},
+		{"empty any", Condition{Type: Any}, "at least one child condition is required"},
+		{"invalid nested child", Condition{Type: All, Conditions: []Condition{
+			{Type: ToolMatch, ToolName: "Read"},
+			{Type: FileType, Path: "x", FileType: "folder"},
+		}}, `unknown file_type "folder"`},
+		{"valid file_type", Condition{Type: FileType, Path: "go.sum", FileType: "directory"}, ""},
+		{"valid all", Condition{Type: All, Conditions: []Condition{{Type: ToolMatch, ToolName: "Read"}}}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := CompileCondition(tt.cond)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CompileCondition() unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("CompileCondition() error = %v, want it to contain %q", err, tt.wantErr)
+			}
+		})
 	}
 }

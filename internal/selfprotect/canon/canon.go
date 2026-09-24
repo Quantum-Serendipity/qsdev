@@ -3,10 +3,15 @@ package canon
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 var (
@@ -19,6 +24,9 @@ var (
 	// variable (defaulting to os.UserHomeDir) so tests can simulate a
 	// home-resolution failure and verify the fail-closed behavior of IsProtected.
 	userHomeDir = os.UserHomeDir
+
+	// executablePath resolves the running qsdev binary (a variable for tests).
+	executablePath = os.Executable
 )
 
 type protectedEntry struct {
@@ -34,26 +42,178 @@ func ensureInit() error {
 			return
 		}
 
-		protectedPrefixes = []protectedEntry{
-			{filepath.Join(home, ".qsdev", "audit") + string(filepath.Separator), "audit"},
-			{filepath.Join(home, ".qsdev", "bin") + string(filepath.Separator), "binary"},
-			{filepath.Join(home, ".qsdev") + string(filepath.Separator), "config"},
-			{filepath.Join(home, ".gdev") + string(filepath.Separator), "config"},
-			{filepath.Join(home, ".claude", "settings.json"), "claude-settings"},
-			{filepath.Join(home, ".claude", "settings.local.json"), "claude-settings"},
+		// Home- and system-anchored locations. A directory entry ends in a
+		// separator and protects everything below it; a file entry matches
+		// exactly. Locations protected wherever they live (home config or
+		// project checkout) are in protectedSegments instead.
+		protectedPrefixes = installedBinaryEntries(runtime.GOOS, home, os.Getenv("LOCALAPPDATA"), runningExecutable())
+		protectedPrefixes = append(protectedPrefixes, []protectedEntry{
 			{filepath.Join(home, ".claude", "managed-settings.json"), "claude-settings"},
-			// ~/.claude/hooks/ and ~/.claude/agents/ need no entries here: the
-			// protectedClaudeSubdirs segment check in IsProtected covers those
-			// subdirectories wherever the .claude directory lives, home included.
+			// ~/.claude.json holds the user-scoped MCP servers, per-project
+			// permission grants and trust decisions.
+			{filepath.Join(home, ".claude.json"), "claude-settings"},
 			{"/etc/gdev/", "system-config"},
-			{"/etc/claude-code/", "system-config"},
+		}...)
+		for _, dir := range managedSettingsDirs(runtime.GOOS, os.Getenv) {
+			protectedPrefixes = append(protectedPrefixes, protectedEntry{dir + string(filepath.Separator), "system-config"})
 		}
+		protectedPrefixes = append(protectedPrefixes, claudeConfigDirEntries(os.Getenv(ClaudeConfigDirEnv))...)
 
 		protectedSuffixes = []protectedEntry{
 			{string(filepath.Separator) + ".mcp.json", "mcp-config"},
 		}
 	})
 	return initErr
+}
+
+// ClaudeConfigDirEnv names the environment variable that relocates Claude
+// Code's user configuration directory (default ~/.claude). Claude Code passes
+// its environment to every hook, so the value a hook sees is the directory the
+// running session loads its user settings from.
+const ClaudeConfigDirEnv = "CLAUDE_CONFIG_DIR"
+
+// claudeConfigFiles are the entries of a Claude Code configuration directory
+// that register or steer enforcement, mirroring the .claude entries of
+// protectedSegments (a directory entry ends in "/"), plus .claude.json, which
+// Claude Code keeps inside a relocated configuration directory.
+var claudeConfigFiles = []string{
+	"settings.json", "settings.local.json", ".claude.json",
+	"hooks/", "agents/", "commands/", "skills/",
+}
+
+// claudeConfigDirEntries returns the protected entries for a Claude Code
+// configuration directory named by CLAUDE_CONFIG_DIR (dir, "" when unset). The
+// .claude segment entries only cover a directory named .claude, so a relocated
+// one (~/.config/claude) would otherwise leave the user settings, which can
+// disable or replace every hook, writable. The directory is protected under
+// its absolute spelling and, when it exists, its symlink-resolved one, since
+// rules compare canonical paths.
+func claudeConfigDirEntries(dir string) []protectedEntry {
+	if dir == "" {
+		return nil
+	}
+	abs, err := filepath.Abs(expandTildeOrSelf(dir))
+	if err != nil {
+		return nil
+	}
+	roots := []string{abs}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil && resolved != abs {
+		roots = append(roots, resolved)
+	}
+	sep := string(filepath.Separator)
+	var entries []protectedEntry
+	for _, root := range roots {
+		for _, f := range claudeConfigFiles {
+			p := filepath.Join(root, strings.TrimSuffix(f, "/"))
+			if strings.HasSuffix(f, "/") {
+				p += sep
+			}
+			entries = append(entries, protectedEntry{p, "claude-settings"})
+		}
+	}
+	return entries
+}
+
+// managedSettingsDirs returns the directories Claude Code reads its managed
+// (policy) settings from on goos: /etc/claude-code on Linux (also protected
+// elsewhere, where it is harmless), /Library/Application Support/ClaudeCode on
+// macOS, and ClaudeCode under Program Files (current) and ProgramData (older
+// releases) on Windows. getenv resolves the Windows folder variables.
+func managedSettingsDirs(goos string, getenv func(string) string) []string {
+	dirs := []string{"/etc/claude-code"}
+	switch goos {
+	case "darwin":
+		dirs = append(dirs, "/Library/Application Support/ClaudeCode")
+	case "windows":
+		for _, v := range []struct{ env, fallback string }{
+			{"ProgramFiles", `C:\Program Files`},
+			{"ProgramData", `C:\ProgramData`},
+		} {
+			root := getenv(v.env)
+			if root == "" {
+				root = v.fallback
+			}
+			dirs = append(dirs, filepath.Join(root, "ClaudeCode"))
+		}
+	}
+	return dirs
+}
+
+// ClaudeConfigDir returns the Claude Code user configuration directory the
+// running session uses: CLAUDE_CONFIG_DIR when set, else ~/.claude.
+func ClaudeConfigDir() (string, error) {
+	if dir := os.Getenv(ClaudeConfigDirEnv); dir != "" {
+		return expandTildeOrSelf(dir), nil
+	}
+	home, err := userHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolving home directory: %w", err)
+	}
+	return filepath.Join(home, ".claude"), nil
+}
+
+// ManagedSettingsFiles returns the managed-settings.json paths Claude Code
+// reads on this platform.
+func ManagedSettingsFiles() []string {
+	dirs := managedSettingsDirs(runtime.GOOS, os.Getenv)
+	files := make([]string, len(dirs))
+	for i, d := range dirs {
+		files[i] = filepath.Join(d, "managed-settings.json")
+	}
+	return files
+}
+
+// expandTildeOrSelf is ExpandTilde that returns path unchanged when the home
+// directory cannot be resolved.
+func expandTildeOrSelf(path string) string {
+	if expanded, err := ExpandTilde(path); err == nil {
+		return expanded
+	}
+	return path
+}
+
+// PathKey returns p in the form protected-path comparisons use on this
+// platform: slash-separated, case-folded on case-insensitive filesystems, and
+// with Windows name aliases removed. Two spellings of one file have equal keys.
+func PathKey(p string) string {
+	return platformMatch.key(p)
+}
+
+// installedBinaryEntries returns the protected entries for the qsdev binary,
+// which runs every guard hook: each installer's default install directory,
+// and the running executable itself (exe, "" when unknown) wherever it was
+// installed (--install-dir, QSDEV_INSTALL_DIR, a package manager). The
+// executable is protected as a file, not by directory, since it may sit in a
+// shared directory such as /usr/local/bin or a project checkout.
+func installedBinaryEntries(goos, home, localAppData, exe string) []protectedEntry {
+	sep := string(filepath.Separator)
+	entries := []protectedEntry{{filepath.Join(home, ".qsdev", "bin") + sep, "binary"}}
+	// install.ps1 installs to %LOCALAPPDATA%\qsdev\bin by default.
+	if goos == "windows" && localAppData != "" {
+		entries = append(entries, protectedEntry{filepath.Join(localAppData, "qsdev", "bin") + sep, "binary"})
+	}
+	if exe != "" {
+		entries = append(entries, protectedEntry{exe, "binary"})
+	}
+	return entries
+}
+
+// runningExecutable returns the canonical path of the running binary, or ""
+// when it cannot be resolved (protection then rests on the default install
+// directories).
+func runningExecutable() string {
+	exe, err := executablePath()
+	if err != nil {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	abs, err := filepath.Abs(exe)
+	if err != nil {
+		return ""
+	}
+	return abs
 }
 
 // ExpandTilde replaces a leading ~ with the user's home directory.
@@ -73,7 +233,10 @@ func ExpandTilde(path string) (string, error) {
 
 // Canonicalize resolves a path to its canonical form.
 // Tier 1: filepath.EvalSymlinks + filepath.Abs for paths that exist.
-// Tier 2: parent-walk with lexical normalization for paths that don't exist yet.
+// Tier 2: for a path that does not exist (yet), resolveMissing walks it
+// component by component the way the kernel does, following every existing
+// symlink — including a dangling final one, which a write follows to create
+// its target.
 func Canonicalize(path string) (string, error) {
 	expanded, err := ExpandTilde(path)
 	if err != nil {
@@ -90,53 +253,151 @@ func Canonicalize(path string) (string, error) {
 		return abs, nil
 	}
 
-	// Detect symlink loops or permission errors — don't attempt parent walk.
+	// Detect symlink loops or permission errors — don't attempt the walk.
 	if os.IsPermission(err) || isSymlinkLoop(err) {
 		return "", fmt.Errorf("canonicalizing path %q: %w", path, err)
 	}
 
-	// Tier 2: walk up to the nearest existing ancestor.
-	return parentWalk(expanded)
+	// Tier 2: resolve the existing part and append the missing tail.
+	return resolveMissing(expanded)
 }
 
-func parentWalk(path string) (string, error) {
-	abs, err := filepath.Abs(path)
+// maxSymlinkHops bounds symlink expansion in resolveMissing (Linux's
+// MAXSYMLINKS), so a symlink cycle fails instead of looping forever.
+const maxSymlinkHops = 40
+
+// errTooManySymlinks reports a symlink chain longer than maxSymlinkHops.
+var errTooManySymlinks = errors.New("too many levels of symbolic links")
+
+// resolveMissing canonicalizes a path whose final target does not exist. It
+// resolves components left to right: each existing component is Lstat-ed and,
+// if it is a symlink, replaced by its target (relative targets resolve against
+// the symlink's directory), and ".." is applied only after the component
+// before it has been resolved. Unlike a lexical Clean, this sees that
+// <dir>/lnk/../x is <lnk target's parent>/x and that a dangling symlink names
+// its target, exactly as a write through the path would. Once a component is
+// missing nothing below it exists, so the rest of the path is appended as-is.
+func resolveMissing(p string) (string, error) {
+	start, err := absWithoutClean(p)
 	if err != nil {
 		return "", fmt.Errorf("resolving absolute path: %w", err)
 	}
 
-	// Split into components and find the deepest existing ancestor.
-	dir := filepath.Dir(abs)
-	remaining := []string{filepath.Base(abs)}
+	vol := filepath.VolumeName(start)
+	resolved := vol + string(filepath.Separator)
+	pending := splitPath(start[len(vol):])
+	missing := false
+	hops := 0
 
-	for {
-		resolved, evalErr := filepath.EvalSymlinks(dir)
-		if evalErr == nil {
-			absResolved, absErr := filepath.Abs(resolved)
-			if absErr != nil {
-				return "", fmt.Errorf("resolving absolute path: %w", absErr)
+	for len(pending) > 0 {
+		comp := pending[0]
+		pending = pending[1:]
+		switch comp {
+		case ".":
+			continue
+		case "..":
+			resolved = filepath.Dir(resolved)
+			// A kernel walk fails at the missing component, so the path only
+			// reaches a file when the consumer cleans it lexically first
+			// (<dir>/missing/../lnk/x -> <dir>/lnk/x); resume resolving so a
+			// symlink after the ".." is still followed.
+			missing = false
+			continue
+		}
+
+		next := filepath.Join(resolved, comp)
+		if missing {
+			resolved = next
+			continue
+		}
+		info, err := os.Lstat(next)
+		switch {
+		case errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR):
+			missing = true
+			resolved = filepath.Join(normalizeExisting(resolved), comp)
+			continue
+		case err != nil:
+			return "", fmt.Errorf("canonicalizing path %q: %w", p, err)
+		case info.Mode()&fs.ModeSymlink == 0:
+			resolved = next
+			continue
+		}
+
+		hops++
+		if hops > maxSymlinkHops {
+			return "", fmt.Errorf("canonicalizing path %q: %w", p, errTooManySymlinks)
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			return "", fmt.Errorf("canonicalizing path %q: %w", p, err)
+		}
+		if isRooted(target) {
+			// An absolute target restarts resolution at its root (the current
+			// volume when a Windows target is rooted without a drive).
+			targetVol := filepath.VolumeName(target)
+			target = target[len(targetVol):]
+			if targetVol == "" {
+				targetVol = vol
 			}
-			// Rejoin the unresolved tail onto the resolved ancestor.
-			parts := append([]string{absResolved}, remaining...)
-			return filepath.Clean(filepath.Join(parts...)), nil
+			resolved = targetVol + string(filepath.Separator)
 		}
-
-		if os.IsPermission(evalErr) || isSymlinkLoop(evalErr) {
-			return "", fmt.Errorf("canonicalizing path %q: %w", path, evalErr)
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			// Reached filesystem root without finding an existing ancestor.
-			// Fall back to lexical cleaning.
-			return filepath.Clean(abs), nil
-		}
-		remaining = append([]string{filepath.Base(dir)}, remaining...)
-		dir = parent
+		pending = append(splitPath(target), pending...)
 	}
+	return filepath.Clean(resolved), nil
+}
+
+// normalizeExisting returns the platform's canonical spelling of dir, an
+// existing directory whose symlinks resolveMissing has already followed. On
+// Windows filepath.EvalSymlinks also expands 8.3 short names (CLAUDE~1 ->
+// .claude) and fixes the case of each component, which a component-wise
+// Lstat walk does not; elsewhere it returns dir unchanged. On error dir is
+// kept as-is.
+func normalizeExisting(dir string) string {
+	if norm, err := filepath.EvalSymlinks(dir); err == nil {
+		return norm
+	}
+	return dir
+}
+
+// absWithoutClean makes p absolute WITHOUT lexically cleaning it, so ".."
+// components survive for resolveMissing to apply after symlink resolution
+// (filepath.Abs would collapse lnk/.. before lnk is resolved).
+func absWithoutClean(p string) (string, error) {
+	if filepath.IsAbs(p) {
+		return p, nil
+	}
+	if filepath.VolumeName(p) != "" {
+		// Windows drive-relative path ("C:foo"): only Abs knows that drive's
+		// working directory.
+		return filepath.Abs(p)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("getting working directory: %w", err)
+	}
+	if isRooted(p) {
+		return filepath.VolumeName(cwd) + p, nil
+	}
+	return cwd + string(filepath.Separator) + p, nil
+}
+
+// isRooted reports whether p is absolute or starts at a root separator.
+func isRooted(p string) bool {
+	return filepath.IsAbs(p) || (p != "" && os.IsPathSeparator(p[0]))
+}
+
+// splitPath splits p into its non-empty components, accepting every separator
+// the platform does.
+func splitPath(p string) []string {
+	return strings.FieldsFunc(p, func(r rune) bool {
+		return r < 0x80 && os.IsPathSeparator(uint8(r))
+	})
 }
 
 func isSymlinkLoop(err error) bool {
+	if errors.Is(err, errTooManySymlinks) {
+		return true
+	}
 	if pathErr, ok := errors.AsType[*os.PathError](err); ok {
 		return errors.Is(pathErr.Err, errors.ErrUnsupported) ||
 			strings.Contains(pathErr.Err.Error(), "too many levels of symbolic links")
@@ -146,7 +407,17 @@ func isSymlinkLoop(err error) bool {
 
 // IsProtected checks whether a canonical path falls under any protected prefix.
 // Returns (true, category) if protected, (false, "") otherwise.
+//
+// On case-insensitive filesystems (the macOS and Windows defaults) the match
+// ignores case, so ~/.CLAUDE/settings.json cannot slip past a rule that names
+// ~/.claude/settings.json while opening the same file. On Windows it also
+// ignores the name aliases the filesystem strips (trailing dots and spaces, and
+// an alternate-data-stream suffix such as "::$DATA").
 func IsProtected(canonicalPath string) (bool, string) {
+	return isProtected(canonicalPath, platformMatch)
+}
+
+func isProtected(canonicalPath string, opts matchOptions) (bool, string) {
 	if err := ensureInit(); err != nil {
 		// Fail closed. If the home directory cannot be resolved we cannot build
 		// the home-anchored protected-prefix table, so we cannot prove that a
@@ -160,45 +431,143 @@ func IsProtected(canonicalPath string) (bool, string) {
 		return true, "config"
 	}
 
-	// Check prefix-based protected paths.
-	// More specific prefixes (audit, binary) are listed before their parents
-	// (config) so the first match wins with the most precise category.
+	key := opts.key(canonicalPath)
+
+	// Check home- and system-anchored paths.
 	for _, entry := range protectedPrefixes {
-		// Exact match handles files like settings.json.
-		if canonicalPath == entry.path {
-			return true, entry.category
-		}
-		if strings.HasPrefix(canonicalPath, entry.path) {
+		entryKey := opts.key(entry.path)
+		if strings.HasSuffix(entryKey, "/") {
+			if strings.HasPrefix(key, entryKey) {
+				return true, entry.category
+			}
+		} else if key == entryKey {
 			return true, entry.category
 		}
 	}
 
-	// Hook scripts (.claude/hooks/) and agent definitions (.claude/agents/) are
-	// protected wherever the .claude directory lives. A project-relative .claude/
-	// canonicalizes OUTSIDE $HOME, so the home-anchored prefixes above cannot catch
-	// a project hook/agent path; this segment check does, so SP-001 blocks
-	// Write/Edit to a hook or agent file in both the home config and a project
-	// checkout.
-	normalized := filepath.ToSlash(canonicalPath)
-	for _, frag := range protectedClaudeSubdirs {
-		if strings.Contains(normalized, frag) {
-			return true, "claude-settings"
+	// Check locations protected wherever they live. A project-relative .claude/
+	// or .qsdev/ canonicalizes OUTSIDE $HOME, so an anchored prefix cannot catch
+	// it; the segment match does, so SP-001/SP-013 guard Write/Edit to them in
+	// both the home config and a project checkout.
+	for _, seg := range protectedSegments {
+		if hasPathSegment(key, seg.segment) {
+			return true, seg.category
 		}
 	}
 
 	// Check suffix-based protected paths.
 	for _, entry := range protectedSuffixes {
-		if strings.HasSuffix(canonicalPath, entry.path) {
+		entryKey := opts.key(entry.path)
+		if strings.HasSuffix(key, entryKey) {
 			return true, entry.category
 		}
 		// Also match when the path is exactly ".mcp.json" (no directory prefix).
-		base := entry.path[len(string(filepath.Separator)):]
-		if canonicalPath == base || filepath.Base(canonicalPath) == base {
+		base := strings.TrimPrefix(entryKey, "/")
+		if key == base || path.Base(key) == base {
 			return true, entry.category
 		}
 	}
 
 	return false, ""
+}
+
+// segmentEntry is a protected location matched wherever it appears in a path.
+// A segment ending in "/" is a directory (it and everything below it are
+// protected); otherwise it names a single file.
+type segmentEntry struct {
+	segment  string
+	category string
+}
+
+// protectedSegments are the qsdev and Claude Code control files protected in
+// any location — home config or project checkout. More specific entries come
+// first so the first match yields the most precise category.
+//
+// The .claude entries are the files that register or steer enforcement: the
+// settings that register the PreToolUse hooks and deny rules, the hook scripts,
+// and the agent, command and skill definitions that can drive tools. Prose
+// instruction files (CLAUDE.md, .claude/rules/) are legitimate edit targets and
+// stay with gatedodge's content checks rather than being blocked outright.
+// Other .claude content (e.g. Claude Code's own .claude/worktrees/ checkouts)
+// stays writable.
+//
+// Every segment starts with one of protectedSubstringPatterns, so the
+// raw-command check (ContainsProtectedPath) covers every location this table
+// protects; TestProtectedSegmentsCoveredByCommandScan enforces that.
+var protectedSegments = []segmentEntry{
+	{".qsdev/audit/", "audit"},
+	// Hook audit logs and the SOC 2 session trail (~/.claude/audit).
+	{".claude/logs/", "audit"},
+	{".claude/audit/", "audit"},
+	{".claude/hook-audit.log", "audit"},
+	{".claude/hook-audit.log.1", "audit"},
+	{".qsdev/", "config"},
+	{".gdev/", "config"},
+	{".claude/settings.json", "claude-settings"},
+	{".claude/settings.local.json", "claude-settings"},
+	{".claude/hooks/", "claude-settings"},
+	{".claude/agents/", "claude-settings"},
+	{".claude/commands/", "claude-settings"},
+	{".claude/skills/", "claude-settings"},
+}
+
+// hasPathSegment reports whether the slash-separated path key contains seg as
+// whole path components: a directory segment ("x/y/") matches the directory
+// itself or anything below it, a file segment ("x/y") matches only at the end.
+// Component boundaries are required, so "foo.claude/hooks/x" does not match
+// ".claude/hooks/".
+func hasPathSegment(key, seg string) bool {
+	bounded := "/" + key
+	if strings.HasSuffix(seg, "/") {
+		return strings.Contains(bounded+"/", "/"+seg)
+	}
+	return strings.HasSuffix(bounded, "/"+seg)
+}
+
+// matchOptions describe how the host filesystem compares names.
+type matchOptions struct {
+	// foldCase compares names case-insensitively (macOS and Windows defaults).
+	foldCase bool
+	// windowsAliases strips the name aliases Windows ignores when it opens a
+	// file: trailing dots and spaces, and an alternate-data-stream suffix.
+	windowsAliases bool
+}
+
+var platformMatch = matchOptions{
+	foldCase:       runtime.GOOS == "darwin" || runtime.GOOS == "windows",
+	windowsAliases: runtime.GOOS == "windows",
+}
+
+// key returns p in the form protected-path comparisons use: slash-separated,
+// with the platform's filesystem name aliases normalized away.
+func (o matchOptions) key(p string) string {
+	s := filepath.ToSlash(p)
+	if o.windowsAliases {
+		s = stripWindowsAliases(s)
+	}
+	if o.foldCase {
+		s = strings.ToLower(s)
+	}
+	return s
+}
+
+// stripWindowsAliases removes, from each component of a slash-separated path,
+// an alternate-data-stream suffix ("settings.json::$DATA" -> "settings.json")
+// and trailing dots and spaces (".claude." -> ".claude"), which Windows
+// discards when it opens the file. A drive component ("C:") and "."/".." are
+// left alone.
+func stripWindowsAliases(s string) string {
+	parts := strings.Split(s, "/")
+	for i, part := range parts {
+		if part == "." || part == ".." || (len(part) == 2 && part[1] == ':') {
+			continue
+		}
+		if j := strings.IndexByte(part, ':'); j >= 0 {
+			part = part[:j]
+		}
+		parts[i] = strings.TrimRight(part, ". ")
+	}
+	return strings.Join(parts, "/")
 }
 
 // protectedSubstringPatterns are path fragments used by ContainsProtectedPath
@@ -229,13 +598,13 @@ var protectedDirTokens = func() []string {
 	return tokens
 }()
 
-// protectedClaudeSubdirs are .claude subdirectories whose contents are protected
-// wherever the .claude directory lives (home config or project checkout): the
-// hook scripts that implement enforcement and the agent definitions that steer
-// it. IsProtected matches these as substrings so SP-001 guards Write/Edit to them.
-var protectedClaudeSubdirs = []string{
-	".claude/hooks/",
-	".claude/agents/",
+// protectedFileTokens are protected file names that sit directly in a
+// directory other code may legitimately touch (the home directory), so no
+// directory fragment above covers them. ContainsProtectedPath matches them as
+// complete path segments, like protectedDirTokens, so `~/.claude.json.bak` and
+// `my.claude.json` do not match.
+var protectedFileTokens = []string{
+	".claude.json",
 }
 
 // ContainsProtectedPath reports whether s contains any protected path
@@ -243,15 +612,23 @@ var protectedClaudeSubdirs = []string{
 // prefixes/suffixes), this performs a substring search on raw text such as
 // shell commands where the path may appear anywhere in the string. It matches
 // both a protected path with trailing path (`.claude/settings.json`) and a bare
-// protected directory name at a path-token boundary (`rm -rf .claude`).
+// protected directory name at a path-token boundary (`rm -rf .claude`). Like
+// IsProtected, it ignores case on case-insensitive filesystems.
 func ContainsProtectedPath(s string) bool {
+	return containsProtectedPath(s, platformMatch.foldCase)
+}
+
+func containsProtectedPath(s string, foldCase bool) bool {
 	normalized := filepath.ToSlash(s)
+	if foldCase {
+		normalized = strings.ToLower(normalized)
+	}
 	for _, p := range protectedSubstringPatterns {
 		if strings.Contains(normalized, p) {
 			return true
 		}
 	}
-	for _, tok := range protectedDirTokens {
+	for _, tok := range slices.Concat(protectedDirTokens, protectedFileTokens) {
 		if containsSegment(normalized, tok) {
 			return true
 		}

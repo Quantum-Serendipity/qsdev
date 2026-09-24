@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 )
 
@@ -246,6 +248,55 @@ func TestToolListReflectsState(t *testing.T) {
 	}
 }
 
+// TestToolListReflectsMidSessionStateChange is the regression test for a ledger
+// snapshotted at server start: after the state file changes (as `qsdev enable`
+// does while the server runs), the SAME ProjectContext must report the new
+// enabled flag, and an unreadable ledger must keep serving the last good one
+// with a warning.
+func TestToolListReflectsMidSessionStateChange(t *testing.T) {
+	t.Parallel()
+	dir, pc := newGoProject(t)
+	all := pc.toolReg.All()
+	if len(all) == 0 {
+		t.Skip("tool registry empty; nothing to assert")
+	}
+	target := all[0].Name
+
+	enabledOf := func(res *spi.ToolResult) any {
+		t.Helper()
+		for _, tm := range res.Structured.(map[string]any)["tools"].([]map[string]any) {
+			if tm["name"] == target {
+				return tm["enabled"]
+			}
+		}
+		t.Fatalf("target tool %q not present in tool_list", target)
+		return nil
+	}
+
+	if got := enabledOf(callTool(t, pc, toolToolList, nil)); got != false {
+		t.Fatalf("before enable: enabled = %v, want false", got)
+	}
+
+	statePath := ".devinit/.qsdev-init-state.yaml"
+	writeFile(t, dir, statePath, "files: {}\nenabled_tools:\n  "+target+": true\n")
+	if got := enabledOf(callTool(t, pc, toolToolList, nil)); got != true {
+		t.Errorf("after enable mid-session: enabled = %v, want true", got)
+	}
+
+	writeFile(t, dir, statePath, "files: [not, a, map\n")
+	later := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(filepath.Join(dir, statePath), later, later); err != nil {
+		t.Fatal(err)
+	}
+	res := callTool(t, pc, toolToolList, nil)
+	if got := enabledOf(res); got != true {
+		t.Errorf("with a corrupt ledger: enabled = %v, want the last good value true", got)
+	}
+	if w, _ := res.Structured.(map[string]any)["warnings"].([]string); len(w) == 0 {
+		t.Error("expected a warning for the unreadable ledger")
+	}
+}
+
 func TestMCPList(t *testing.T) {
 	t.Parallel()
 	_, pc := newGoProject(t)
@@ -254,11 +305,49 @@ func TestMCPList(t *testing.T) {
 		t.Fatalf("mcp_list error: %q", res.Text)
 	}
 	structured := res.Structured.(map[string]any)
-	if _, ok := structured["servers"].([]map[string]any); !ok {
+	servers, ok := structured["servers"].([]map[string]any)
+	if !ok {
 		t.Errorf("mcp_list structured missing servers list: %v", structured)
 	}
 	if structured["health_probed"] != false {
 		t.Errorf("expected health_probed=false without the flag")
+	}
+
+	// F274: the reported grade must be the computed one `qsdev mcp grade`
+	// shows, not a stale stored field.
+	for _, s := range servers {
+		def, found := pc.mcpReg.ByName(s["name"].(string))
+		if !found {
+			t.Fatalf("mcp_list server %v not in registry", s["name"])
+		}
+		if want := mcpregistry.GradeServer(def).Level.String(); s["grade"] != want {
+			t.Errorf("server %v grade = %v, want computed %q", s["name"], s["grade"], want)
+		}
+	}
+}
+
+// TestMCPListHealthSkipsPackageLaunchers is the regression test for mcp.list
+// health=true downloading and running unpinned packages: servers launched via a
+// package launcher (or qsdev's own server) must be reported as not probed
+// rather than started.
+func TestMCPListHealthSkipsPackageLaunchers(t *testing.T) {
+	t.Parallel()
+	_, pc := newGoProject(t)
+	tests := []struct {
+		name string
+		def  mcpregistry.McpServerDefinition
+	}{
+		{"npx -y", mcpregistry.McpServerDefinition{Name: "context7", Command: "npx", Args: []string{"-y", "@upstash/context7-mcp"}}},
+		{"uvx", mcpregistry.McpServerDefinition{Name: "semble", Command: "uvx", Args: []string{"--from", "semble[mcp]", "semble"}}},
+		{"self", mcpregistry.McpServerDefinition{Name: "qsdev", Command: "qsdev", Args: []string{"mcp", "serve"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := pc.probeHealth(context.Background(), &tt.def); got["status"] != healthNotProbed {
+				t.Errorf("probeHealth(%s) = %v, want status %q", tt.def.Name, got, healthNotProbed)
+			}
+		})
 	}
 }
 

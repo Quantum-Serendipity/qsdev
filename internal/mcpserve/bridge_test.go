@@ -51,6 +51,67 @@ func TestBuildMCPTool(t *testing.T) {
 			t.Errorf("default input schema type = %q, want object", tool.InputSchema.Type)
 		}
 	})
+
+	t.Run("unmarshalable schema falls back to permissive", func(t *testing.T) {
+		t.Parallel()
+		tool := buildMCPTool(spi.ToolRegistration{Name: "bad", InputSchema: map[string]any{"x": make(chan int)}})
+		if len(tool.RawInputSchema) != 0 || tool.InputSchema.Type != "object" {
+			t.Errorf("want permissive fallback schema, got raw=%s schema=%+v", tool.RawInputSchema, tool.InputSchema)
+		}
+	})
+}
+
+// TestBuildMCPToolAnnotations is the regression test for annotations that
+// depended on whether a schema was supplied (mcp.NewTool injects destructive
+// defaults, NewToolWithRawSchema none): the advertised hints must come solely
+// from the registration, identically with and without a schema.
+func TestBuildMCPToolAnnotations(t *testing.T) {
+	t.Parallel()
+	schema := map[string]any{"type": "object"}
+	tests := []struct {
+		name         string
+		annotations  spi.ToolAnnotations
+		wantReadOnly *bool
+		wantOpen     *bool
+	}{
+		{"unset advertises nothing", spi.ToolAnnotations{}, nil, nil},
+		{"read-only local", spi.ReadOnlyAnnotations(false), mcp.ToBoolPtr(true), mcp.ToBoolPtr(false)},
+		{"read-only open world", spi.ReadOnlyAnnotations(true), mcp.ToBoolPtr(true), mcp.ToBoolPtr(true)},
+	}
+	for _, tt := range tests {
+		for _, withSchema := range []bool{false, true} {
+			reg := spi.ToolRegistration{Name: "t", Annotations: tt.annotations}
+			if withSchema {
+				reg.InputSchema = schema
+			}
+			got := buildMCPTool(reg).Annotations
+			if !equalBoolPtr(got.ReadOnlyHint, tt.wantReadOnly) || !equalBoolPtr(got.OpenWorldHint, tt.wantOpen) {
+				t.Errorf("%s (schema=%v): readOnly=%v openWorld=%v, want %v/%v", tt.name, withSchema,
+					boolPtrString(got.ReadOnlyHint), boolPtrString(got.OpenWorldHint),
+					boolPtrString(tt.wantReadOnly), boolPtrString(tt.wantOpen))
+			}
+			if tt.annotations == (spi.ToolAnnotations{}) && got.DestructiveHint != nil {
+				t.Errorf("%s (schema=%v): destructiveHint advertised without being declared", tt.name, withSchema)
+			}
+		}
+	}
+}
+
+func equalBoolPtr(a, b *bool) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func boolPtrString(p *bool) string {
+	if p == nil {
+		return "<unset>"
+	}
+	if *p {
+		return "true"
+	}
+	return "false"
 }
 
 func TestSpiResultToMCP(t *testing.T) {

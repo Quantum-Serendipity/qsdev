@@ -14,6 +14,7 @@ package powershell
 
 import (
 	"path/filepath"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -117,19 +118,71 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // DenyRules returns Claude Code deny-rule patterns for the PowerShell ecosystem.
 // These prevent direct PSGallery module installation outside of controlled workflows.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
-	return []string{
-		"Bash(Install-Module *)",
-		"Bash(pwsh -Command *Install-Module*)",
+	// Cover both installer cmdlets (PowerShellGet's Install-Module and
+	// PSResourceGet's Install-PSResource), bare or inside any pwsh/powershell
+	// invocation (-c, -Command, -NoProfile -Command, pwsh.exe, ...). Cmdlet
+	// names are case-insensitive, so the all-lowercase spelling is covered too.
+	// The PowerShell(...) rules cover Claude Code's PowerShell tool (the
+	// default shell on Windows), which Bash(...) rules never match.
+	var rules []string
+	for _, cmdlet := range psInstallCmdlets {
+		for _, spelling := range []string{cmdlet, strings.ToLower(cmdlet)} {
+			rules = append(rules,
+				"PowerShell("+spelling+" *)",
+				"Bash("+spelling+"*)",
+				"Bash(pwsh*"+spelling+"*)",
+				"Bash(powershell*"+spelling+"*)",
+			)
+		}
 	}
+	return rules
 }
 
-// CICommands returns CI pipeline commands for the PowerShell ecosystem.
+// psInstallCmdlets install or update modules or scripts from PSGallery or
+// NuGet: PowerShellGet's Install-/Save-/Update-Module and Install-/
+// Update-Script, PSResourceGet's Install-/Save-/Update-PSResource (bundled
+// since PowerShell 7.4) and PackageManagement's Install-Package.
+var psInstallCmdlets = []string{
+	"Install-Module", "Save-Module", "Update-Module",
+	"Install-Script", "Update-Script",
+	"Install-PSResource", "Save-PSResource", "Update-PSResource",
+	"Install-Package",
+}
+
+// psScriptAnalyzerVersion is the PSScriptAnalyzer release the CI job installs
+// from PSGallery. PSScriptAnalyzer is a PowerShell module, not a nixpkgs
+// package, so devenv cannot provide it; the version is pinned so CI does not
+// pick up whatever PSGallery serves on the day.
+const psScriptAnalyzerVersion = "1.25.0"
+
+// CICommands returns CI pipeline commands for the PowerShell ecosystem. The
+// install step provisions the pinned PSScriptAnalyzer with PSResourceGet
+// (bundled with PowerShell 7.4+; "[x.y.z]" is the NuGet exact-version
+// range), and the scan fails when the analyzer
+// reports any error-severity finding or a script it cannot parse:
+// Invoke-ScriptAnalyzer only returns its findings, and pwsh exits 0
+// regardless. Parse errors have their own ParseError severity, which
+// `-Severity Error` alone filters out, so a script with a syntax error would
+// otherwise pass. Both run with
+// $ErrorActionPreference = 'Stop' so a failed install or import fails the
+// step. The scripts are single-quoted so the shell leaves `$` alone.
 func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 	return []ecosystem.CICommand{
 		{
-			Name:        "psscriptanalyzer",
-			Command:     `pwsh -Command "Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error"`,
-			Description: "Scan PowerShell scripts for issues with PSScriptAnalyzer",
+			Name: "psscriptanalyzer-install",
+			Command: `pwsh -NoProfile -NonInteractive -Command '$ErrorActionPreference = "Stop"; ` +
+				`Install-PSResource -Name PSScriptAnalyzer -Version "[` + psScriptAnalyzerVersion + `]"` +
+				` -Repository PSGallery -TrustRepository -Scope CurrentUser -Quiet'`,
+			Description: "Install the pinned PSScriptAnalyzer module from PSGallery",
+			Phase:       ecosystem.CIPhaseInstall,
+		},
+		{
+			Name: "psscriptanalyzer",
+			Command: `pwsh -NoProfile -NonInteractive -Command '$ErrorActionPreference = "Stop"; ` +
+				`Import-Module PSScriptAnalyzer -RequiredVersion ` + psScriptAnalyzerVersion + `; ` +
+				`$findings = @(Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error, ParseError); ` +
+				`if ($findings.Count -gt 0) { $findings | Format-Table -AutoSize | Out-String -Width 4096 | Write-Host; exit 1 }'`,
+			Description: "Scan PowerShell scripts with PSScriptAnalyzer, failing on error-severity findings and parse errors",
 			Phase:       ecosystem.CIPhaseScan,
 		},
 	}
@@ -139,9 +192,8 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:             "psgallery",
-			LockFile:         "",
-			AgeGatingSupport: false,
+			Name:     "psgallery",
+			LockFile: "",
 		},
 	}
 }

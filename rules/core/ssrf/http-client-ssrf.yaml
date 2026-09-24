@@ -83,15 +83,24 @@ rules:
       - pattern: $R.URL.Query().Get(...)
       - pattern: $R.FormValue(...)
       - pattern: $R.PostFormValue(...)
-      - pattern: $C.Query(...)
-      - pattern: $C.Param(...)
+      - pattern: "($C : *gin.Context).Query(...)"
+      - pattern: "($C : *gin.Context).Param(...)"
+    # The untyped $CLIENT.Get also matches the sources themselves
+    # (r.URL.Query().Get, a url.Values lookup, gin's c.Query); exclude them so
+    # reading a parameter is not reported as a request.
     pattern-sinks:
-      - pattern: http.Get($URL)
-      - pattern: http.Post($URL, ...)
-      - pattern: http.NewRequest($METHOD, $URL, ...)
-      - pattern: http.NewRequestWithContext($CTX, $METHOD, $URL, ...)
-      - pattern: $CLIENT.Get($URL)
-      - pattern: $CLIENT.Post($URL, ...)
+      - patterns:
+          - pattern-either:
+              - pattern: http.Get($URL)
+              - pattern: http.Post($URL, ...)
+              - pattern: http.NewRequest($METHOD, $URL, ...)
+              - pattern: http.NewRequestWithContext($CTX, $METHOD, $URL, ...)
+              - pattern: $CLIENT.Get($URL)
+              - pattern: $CLIENT.Post($URL, ...)
+          - pattern-not: $X.Query().Get(...)
+          - pattern-not: "($V : url.Values).Get(...)"
+          - pattern-not: "($GC : *gin.Context).$METHOD(...)"
+          - focus-metavariable: $URL
     pattern-sanitizers:
       - pattern: url.Parse(...)
     metadata:

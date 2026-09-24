@@ -2,6 +2,7 @@ package merge
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -9,6 +10,42 @@ func TestUnionStrings_BothEmpty(t *testing.T) {
 	got := unionStrings(nil, nil)
 	if len(got) != 0 {
 		t.Errorf("expected empty slice, got %v", got)
+	}
+}
+
+func TestUnionAndDiffStrings_NeverNil(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		got  []string
+	}{
+		{"union_nil_nil", unionStrings(nil, nil)},
+		{"union_empty_empty", unionStrings([]string{}, []string{})},
+		{"diff_nil_nil", diffStrings(nil, nil)},
+		{"diff_all_removed", diffStrings([]string{"a"}, []string{"a"})},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got == nil {
+				t.Error("got nil slice; want non-nil empty slice (marshals as [] not null)")
+			}
+		})
+	}
+}
+
+func TestMergeSettings_EmptyAllowStaysArray(t *testing.T) {
+	t.Parallel()
+	ours := []byte(`{"permissions":{"allow":[],"deny":["Bash(rm -rf:*)"]}}`)
+	theirs := []byte(`{"permissions":{"allow":[],"deny":["Bash(rm -rf:*)"]}}`)
+	got, err := MergeSettings(ours, theirs, ours)
+	if err != nil {
+		t.Fatalf("MergeSettings: %v", err)
+	}
+	if strings.Contains(string(got), "null") {
+		t.Errorf("merged settings contain null:\n%s", got)
+	}
+	if !strings.Contains(string(got), `"allow": []`) {
+		t.Errorf("merged settings missing empty allow array:\n%s", got)
 	}
 }
 

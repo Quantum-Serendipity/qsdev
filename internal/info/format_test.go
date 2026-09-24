@@ -14,7 +14,7 @@ func makeTestInfo() *ProjectInfo {
 		Ecosystems:        []string{"go", "python"},
 		ActiveToolCount:   5,
 		SecurityProfile:   "enhanced",
-		QsdevVersion:       "1.2.3",
+		QsdevVersion:      "1.2.3",
 		ConfigVersion:     1,
 		LastUpdated:       time.Time{}, // zero = "never"
 		ToolsByCategory:   map[string]int{"Security": 2, "AI Agent": 3},

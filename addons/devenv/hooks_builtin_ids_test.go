@@ -293,3 +293,24 @@ func packageProvidesBinary(pkgs []string, binary string) bool {
 	}
 	return false
 }
+
+// TestCustomHooksSharingBuiltInIDPinPackage guards W170: a custom hook whose
+// ID is also a git-hooks.nix built-in merges with that definition, so unless
+// it sets `package` (rendered from NixPackage) upstream's default package is
+// evaluated and installed. When that default is a removed nixpkgs attribute
+// (phpPackages.phpstan) the whole devenv fails to evaluate.
+func TestCustomHooksSharingBuiltInIDPinPackage(t *testing.T) {
+	t.Parallel()
+	builtIn := make(map[string]bool, len(gitHooksBuiltInIDs))
+	for _, id := range gitHooksBuiltInIDs {
+		builtIn[id] = true
+	}
+	for _, mod := range ecosystem.DefaultRegistry().All() {
+		for _, hook := range mod.PreCommitHooks(ecosystem.ModuleConfig{}) {
+			if !hook.BuiltIn && builtIn[hook.ID] && hook.NixPackage == "" {
+				t.Errorf("module %q custom hook %q shares a git-hooks.nix built-in ID but sets no NixPackage; "+
+					"upstream's default package would be evaluated", mod.Name(), hook.ID)
+			}
+		}
+	}
+}

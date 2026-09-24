@@ -6,153 +6,58 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-var qsdevOpsSkillNames = []string{
-	"qsdev-init",
-	"qsdev-onboard",
-	"qsdev-setup",
-	"qsdev-enable",
-	"qsdev-disable",
-	"qsdev-update",
-	"qsdev-doctor",
-	"qsdev-status",
-	"qsdev-tools",
-	"qsdev-detect",
-}
-
-func TestQsdevOpsToolsRegistered(t *testing.T) {
-	reg := DefaultRegistry()
-
-	for _, name := range qsdevOpsSkillNames {
-		tool, ok := reg.ByName(name)
-		if !ok {
-			t.Errorf("qsdev-ops tool %q not found in DefaultRegistry", name)
-			continue
-		}
-		if tool.DisplayName == "" {
-			t.Errorf("qsdev-ops tool %q has empty DisplayName", name)
-		}
-		if tool.Description == "" {
-			t.Errorf("qsdev-ops tool %q has empty Description", name)
-		}
-		if tool.Category != CategoryAIAgent {
-			t.Errorf("qsdev-ops tool %q has category %q, want %q", name, tool.Category, CategoryAIAgent)
-		}
-		if len(tool.OwnedFiles) == 0 {
-			t.Errorf("qsdev-ops tool %q has no OwnedFiles", name)
-		}
+func TestNewOperationSkillTool(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name            string
+		description     string
+		wantDisplayName string
+	}{
+		{"qsdev-init", "Initialize qsdev project configuration", "qsdev init"},
+		{"qsdev-add-dep", "Add a dependency or package safely", "qsdev add-dep"},
 	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tool := NewOperationSkillTool(tt.name, tt.description)
 
-func TestQsdevOpsToolsAlwaysOn(t *testing.T) {
-	reg := DefaultRegistry()
-
-	for _, name := range qsdevOpsSkillNames {
-		tool, ok := reg.ByName(name)
-		if !ok {
-			t.Errorf("qsdev-ops tool %q not found in DefaultRegistry", name)
-			continue
-		}
-		if tool.Default != AlwaysOn {
-			t.Errorf("qsdev-ops tool %q has Default %v, want AlwaysOn", name, tool.Default)
-		}
-	}
-}
-
-func TestQsdevOpsToolEnableDisable(t *testing.T) {
-	reg := DefaultRegistry()
-
-	for _, name := range qsdevOpsSkillNames {
-		t.Run(name, func(t *testing.T) {
-			tool, ok := reg.ByName(name)
-			if !ok {
-				t.Fatalf("qsdev-ops tool %q not found in DefaultRegistry", name)
+			if tool.Name != tt.name {
+				t.Errorf("Name = %q, want %q", tool.Name, tt.name)
+			}
+			if tool.DisplayName != tt.wantDisplayName {
+				t.Errorf("DisplayName = %q, want %q", tool.DisplayName, tt.wantDisplayName)
+			}
+			if tool.Description != tt.description {
+				t.Errorf("Description = %q, want %q", tool.Description, tt.description)
+			}
+			if tool.Category != CategoryAIAgent {
+				t.Errorf("Category = %q, want %q", tool.Category, CategoryAIAgent)
+			}
+			if tool.Default != AlwaysOn {
+				t.Errorf("Default = %v, want AlwaysOn", tool.Default)
+			}
+			if tool.EnableFunc != nil || tool.DisableFunc != nil {
+				t.Error("operation skill tools need only lifecycle bookkeeping; want nil Enable/DisableFunc")
 			}
 
-			if tool.EnableFunc == nil {
-				t.Fatalf("qsdev-ops tool %q has nil EnableFunc", name)
-			}
-			if tool.DisableFunc == nil {
-				t.Fatalf("qsdev-ops tool %q has nil DisableFunc", name)
-			}
-
-			// Test enable.
-			answers := &types.WizardAnswers{
-				EnabledTools: make(map[string]bool),
-			}
-			tool.EnableFunc(answers)
-			if !answers.EnabledTools[name] {
-				t.Errorf("after EnableFunc, EnabledTools[%q] should be true", name)
-			}
-
-			// Test disable.
-			tool.DisableFunc(answers)
-			if answers.EnabledTools[name] {
-				t.Errorf("after DisableFunc, EnabledTools[%q] should be false", name)
+			wantPath := ".claude/skills/" + tt.name + "/SKILL.md"
+			if len(tool.OwnedFiles) != 1 || tool.OwnedFiles[0].Path != wantPath || tool.OwnedFiles[0].Ownership != Exclusive {
+				t.Errorf("OwnedFiles = %+v, want one exclusive %q", tool.OwnedFiles, wantPath)
 			}
 		})
 	}
 }
 
-func TestQsdevOpsToolEnableFunc_NilMap(t *testing.T) {
-	reg := DefaultRegistry()
+// TestOperationSkillToolIsEnabledByDefault proves an operation skill tool is
+// switched on by MergeInferredTools, which gates whether its SKILL.md is
+// deployed.
+func TestOperationSkillToolIsEnabledByDefault(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(NewOperationSkillTool("qsdev-add-dep", "Add a dependency or package safely"))
 
-	// Verify EnableFunc initializes the map when nil.
-	tool, ok := reg.ByName("qsdev-init")
-	if !ok {
-		t.Fatal("qsdev-init not found in DefaultRegistry")
-	}
-
-	answers := &types.WizardAnswers{}
-	tool.EnableFunc(answers)
-	if answers.EnabledTools == nil {
-		t.Fatal("EnableFunc should initialize EnabledTools map when nil")
-	}
-	if !answers.EnabledTools["qsdev-init"] {
-		t.Error("EnableFunc should set qsdev-init to true")
-	}
-}
-
-func TestQsdevOpsToolDisableFunc_NilMap(t *testing.T) {
-	reg := DefaultRegistry()
-
-	// Verify DisableFunc initializes the map when nil.
-	tool, ok := reg.ByName("qsdev-init")
-	if !ok {
-		t.Fatal("qsdev-init not found in DefaultRegistry")
-	}
-
-	answers := &types.WizardAnswers{}
-	tool.DisableFunc(answers)
-	if answers.EnabledTools == nil {
-		t.Fatal("DisableFunc should initialize EnabledTools map when nil")
-	}
-	if answers.EnabledTools["qsdev-init"] {
-		t.Error("DisableFunc should set qsdev-init to false")
-	}
-}
-
-func TestQsdevOpsToolOwnedFiles(t *testing.T) {
-	reg := DefaultRegistry()
-
-	for _, name := range qsdevOpsSkillNames {
-		tool, ok := reg.ByName(name)
-		if !ok {
-			t.Errorf("qsdev-ops tool %q not found", name)
-			continue
-		}
-
-		expectedPath := ".claude/skills/" + name + "/SKILL.md"
-		found := false
-		for _, f := range tool.OwnedFiles {
-			if f.Path == expectedPath {
-				found = true
-				if f.Ownership != Exclusive {
-					t.Errorf("tool %q SKILL.md should be Exclusive, got %v", name, f.Ownership)
-				}
-			}
-		}
-		if !found {
-			t.Errorf("tool %q does not own %q", name, expectedPath)
-		}
+	answers := types.WizardAnswers{EnabledTools: map[string]bool{"qsdev-init": true}}
+	MergeInferredTools(&answers, reg)
+	if !answers.EnabledTools["qsdev-add-dep"] {
+		t.Errorf("EnabledTools[qsdev-add-dep] = false, want true (always-on)")
 	}
 }

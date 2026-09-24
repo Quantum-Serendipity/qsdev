@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
@@ -56,8 +58,8 @@ func TestID(t *testing.T) {
 
 // TestRegisters proves the adapter registers cleanly and exposes the Claude Code
 // FrameworkID. Production wiring into spi.DefaultRegistry() now happens explicitly
-// from cmd/qsdev/main.go (no longer via package init()); that wiring is covered by
-// TestRegisterFrameworkAdapters in package main.
+// from instance/runtime.go (no longer via package init()); that wiring is covered by
+// TestRegisterFrameworkAdapters in package instance.
 func TestRegisters(t *testing.T) {
 	t.Parallel()
 	reg := spi.NewAdapterRegistry()
@@ -210,13 +212,20 @@ func TestEnforcementGapsTool(t *testing.T) {
 	}
 }
 
-// TestConfigRenderTool checks the dry-run render produces valid JSON files
-// without writing, and that write=true materializes them.
+// TestConfigRenderTool checks the render produces valid JSON files as a dry-run
+// preview without writing anything, and advertises itself as read-only.
 func TestConfigRenderTool(t *testing.T) {
 	t.Parallel()
 	a := New()
 	reg := toolByName(t, a, toolConfigRender)
 	root := presentRoot(t)
+
+	if reg.Annotations.ReadOnly == nil || !*reg.Annotations.ReadOnly {
+		t.Error("config render must be annotated read-only")
+	}
+	if props, _ := reg.InputSchema["properties"].(map[string]any); len(props) != 0 {
+		t.Errorf("config render input schema = %v, want no arguments", props)
+	}
 
 	res, err := reg.Handler(context.Background(), callCtx(root), &spi.ToolRequest{Name: toolConfigRender, Arguments: map[string]any{}})
 	if err != nil {
@@ -226,8 +235,11 @@ func TestConfigRenderTool(t *testing.T) {
 		t.Fatalf("unexpected not_configured result: %s", res.Text)
 	}
 	structured := res.Structured.(map[string]any)
-	if structured["write"].(bool) {
-		t.Error("dry-run result reports write=true")
+	if dry, _ := structured["dry_run"].(bool); !dry {
+		t.Error("render result does not report dry_run=true")
+	}
+	if structured["apply_with"] != configApplyCommand {
+		t.Errorf("apply_with = %v, want %q", structured["apply_with"], configApplyCommand)
 	}
 	files := structured["files"].([]map[string]any)
 	if len(files) == 0 {
@@ -246,63 +258,66 @@ func TestConfigRenderTool(t *testing.T) {
 	if !sawSettings {
 		t.Error("render did not produce settings.json")
 	}
-	// Dry-run must not have written anything.
-	if _, statErr := os.Stat(filepath.Join(root, ".claude", "settings.json")); !os.IsNotExist(statErr) {
-		t.Error("dry-run wrote settings.json to disk")
-	}
-
-	// write=true materializes the files.
-	wres, err := reg.Handler(context.Background(), callCtx(root),
-		&spi.ToolRequest{Name: toolConfigRender, Arguments: map[string]any{"write": true}})
-	if err != nil {
-		t.Fatalf("write handler error: %v", err)
-	}
-	if wres.IsError {
-		t.Fatalf("write reported failures: %s", wres.Text)
-	}
-	if _, statErr := os.Stat(filepath.Join(root, ".claude", "settings.json")); statErr != nil {
-		t.Errorf("write=true did not create settings.json: %v", statErr)
+	for _, rel := range []string{".claude/settings.json", ".mcp.json"} {
+		if _, statErr := os.Stat(filepath.Join(root, rel)); !os.IsNotExist(statErr) {
+			t.Errorf("dry-run wrote %s to disk", rel)
+		}
 	}
 }
 
-// TestConfigRenderTool_PreservesUserEnv guards DEFECT-6 on the MCP render write
-// path: rendering with write=true over an existing settings.json that carries a
-// user-owned "env" block must preserve it (the ThreeWayMerge func is wired in).
-func TestConfigRenderTool_PreservesUserEnv(t *testing.T) {
+// TestConfigRenderTool_RefusesWrite is the regression test for F224: an agent
+// that switched .qsdev.yaml to the permissive preset could call the render tool
+// with write=true to rewrite its own .claude/settings.json allow list outside
+// selfprotect. Every write request is refused and leaves the guardrail files
+// byte-for-byte untouched; write=false is an ordinary dry-run.
+func TestConfigRenderTool_RefusesWrite(t *testing.T) {
 	t.Parallel()
-	a := New()
-	reg := toolByName(t, a, toolConfigRender)
-	root := presentRoot(t)
+	tests := []struct {
+		name      string
+		args      map[string]any
+		wantError bool
+	}{
+		{"write=true refused", map[string]any{"write": true}, true},
+		{"write=false is a dry-run", map[string]any{"write": false}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := presentRoot(t)
+			permissive := "version: 1\nclaude_code:\n  permission_level: permissive\n"
+			if err := os.WriteFile(filepath.Join(root, ".qsdev.yaml"), []byte(permissive), 0o644); err != nil {
+				t.Fatalf("writing .qsdev.yaml: %v", err)
+			}
+			settingsPath := filepath.Join(root, ".claude", "settings.json")
+			existing := []byte(`{"permissions":{"allow":[],"deny":[]}}`)
+			if err := os.WriteFile(settingsPath, existing, 0o644); err != nil {
+				t.Fatalf("seeding settings.json: %v", err)
+			}
 
-	// Seed an existing settings.json with a user env block.
-	settingsPath := filepath.Join(root, ".claude", "settings.json")
-	existing := []byte(`{"env":{"CLAUDE_CODE_USE_BEDROCK":"1"},"permissions":{"allow":["Read(*)"],"deny":[]}}`)
-	if err := os.WriteFile(settingsPath, existing, 0o644); err != nil {
-		t.Fatalf("seeding settings.json: %v", err)
-	}
+			reg := toolByName(t, New(), toolConfigRender)
+			res, err := reg.Handler(context.Background(), callCtx(root),
+				&spi.ToolRequest{Name: toolConfigRender, Arguments: tt.args})
+			if err != nil {
+				t.Fatalf("handler error: %v", err)
+			}
+			if res.IsError != tt.wantError {
+				t.Fatalf("IsError = %v, want %v: %s", res.IsError, tt.wantError, res.Text)
+			}
+			if tt.wantError && !strings.Contains(res.Text, configApplyCommand) {
+				t.Errorf("refusal %q does not point at %q", res.Text, configApplyCommand)
+			}
 
-	wres, err := reg.Handler(context.Background(), callCtx(root),
-		&spi.ToolRequest{Name: toolConfigRender, Arguments: map[string]any{"write": true}})
-	if err != nil {
-		t.Fatalf("write handler error: %v", err)
-	}
-	if wres.IsError {
-		t.Fatalf("write reported failures: %s", wres.Text)
-	}
-
-	got, err := os.ReadFile(settingsPath)
-	if err != nil {
-		t.Fatalf("reading merged settings.json: %v", err)
-	}
-	var parsed map[string]json.RawMessage
-	if err := json.Unmarshal(got, &parsed); err != nil {
-		t.Fatalf("merged settings.json is not valid JSON: %v\n%s", err, got)
-	}
-	if _, ok := parsed["env"]; !ok {
-		t.Errorf("user env block dropped by render write path: %s", got)
-	}
-	if _, ok := parsed["permissions"]; !ok {
-		t.Errorf("generated permissions missing after merge: %s", got)
+			got, err := os.ReadFile(settingsPath)
+			if err != nil {
+				t.Fatalf("reading settings.json: %v", err)
+			}
+			if string(got) != string(existing) {
+				t.Errorf("settings.json changed:\n%s", got)
+			}
+			if _, statErr := os.Stat(filepath.Join(root, ".mcp.json")); !os.IsNotExist(statErr) {
+				t.Error(".mcp.json was written")
+			}
+		})
 	}
 }
 
@@ -448,5 +463,89 @@ func TestHookScriptName(t *testing.T) {
 		if got := hookScriptName(tt.command); got != tt.want {
 			t.Errorf("hookScriptName(%q) = %q, want %q", tt.command, got, tt.want)
 		}
+	}
+}
+
+// renderedSettings runs the config-render tool (dry-run) against root and
+// returns its structured payload and the rendered settings.json content.
+func renderedSettings(t *testing.T, root string) (map[string]any, string) {
+	t.Helper()
+	reg := toolByName(t, New(), toolConfigRender)
+	res, err := reg.Handler(context.Background(), callCtx(root), &spi.ToolRequest{Name: toolConfigRender, Arguments: map[string]any{}})
+	if err != nil || res.IsError {
+		t.Fatalf("render: err=%v result=%+v", err, res)
+	}
+	structured := res.Structured.(map[string]any)
+	for _, f := range structured["files"].([]map[string]any) {
+		if filepath.Base(f["path"].(string)) == "settings.json" {
+			return structured, f["content"].(string)
+		}
+	}
+	t.Fatal("no settings.json rendered")
+	return nil, ""
+}
+
+// TestConfigRenderIncludesSecurityHooks is the regression test for a render
+// whose PolicyInput carried no Hooks: the preview (and a fresh write) must carry
+// the always-on security hooks `qsdev init` generates — the package guard
+// (safety block) and self-protection — and must name any enabled hook choice the
+// framework-agnostic render cannot express instead of silently dropping it.
+func TestConfigRenderIncludesSecurityHooks(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name           string
+		qsdevYAML      string
+		wantUnrendered []string
+	}{
+		{"standard preset", "version: 1\nclaude_code:\n  permission_level: standard\n", nil},
+		{"strict security level", "version: 1\nsecurity:\n  level: strict\n", []string{"auto_format", "pre_commit", "audit_log"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := presentRoot(t)
+			if err := os.WriteFile(filepath.Join(root, ".qsdev.yaml"), []byte(tt.qsdevYAML), 0o644); err != nil {
+				t.Fatalf("writing .qsdev.yaml: %v", err)
+			}
+			structured, content := renderedSettings(t, root)
+			for _, want := range []string{"package-guard.py", "selfprotect"} {
+				if !strings.Contains(content, want) {
+					t.Errorf("rendered settings.json lacks the %q hook:\n%s", want, content)
+				}
+			}
+			got, _ := structured["unrendered_hooks"].([]string)
+			if !slices.Equal(got, tt.wantUnrendered) {
+				t.Errorf("unrendered_hooks = %v, want %v", got, tt.wantUnrendered)
+			}
+		})
+	}
+}
+
+// TestUnparseableConfigIsNotConfigured is the regression test for silently
+// reporting the default preset when .qsdev.yaml is present but broken: every
+// policy-derived tool must degrade to not_configured carrying the parse error.
+func TestUnparseableConfigIsNotConfigured(t *testing.T) {
+	t.Parallel()
+	root := presentRoot(t)
+	if err := os.WriteFile(filepath.Join(root, ".qsdev.yaml"), []byte("version: 1\nclaude_codee:\n  permission_level: standard\n"), 0o644); err != nil {
+		t.Fatalf("writing .qsdev.yaml: %v", err)
+	}
+	a := New()
+	for _, name := range []string{toolPermissions, toolEnforcementGaps, toolConfigRender} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			reg := toolByName(t, a, name)
+			res, err := reg.Handler(context.Background(), callCtx(root), &spi.ToolRequest{Name: name, Arguments: map[string]any{}})
+			if err != nil {
+				t.Fatalf("handler Go error: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("expected IsError for a broken config, got %+v", res.Structured)
+			}
+			m := res.Structured.(map[string]any)
+			if m["status"] != "not_configured" || m["error"] == nil {
+				t.Errorf("structured = %v, want not_configured with the parse error", m)
+			}
+		})
 	}
 }

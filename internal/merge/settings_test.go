@@ -398,8 +398,10 @@ func TestMergeSettings_SandboxUnion(t *testing.T) {
     "deny": []
   },
   "sandbox": {
-    "writeDeny": ["/etc"],
-    "netAllow": ["api.example.com"]
+    "enabled": true,
+    "excludedCommands": ["docker *"],
+    "filesystem": {"denyWrite": ["/etc"]},
+    "network": {"allowedDomains": ["api.example.com"], "allowUnixSockets": ["/var/run/x.sock"]}
   }
 }`)
 	ours := []byte(`{
@@ -408,9 +410,9 @@ func TestMergeSettings_SandboxUnion(t *testing.T) {
     "deny": []
   },
   "sandbox": {
-    "writeDeny": ["/usr"],
-    "readDeny": ["/secrets"],
-    "netAllow": ["registry.npmjs.org"]
+    "enabled": true,
+    "filesystem": {"denyWrite": ["/usr"], "denyRead": ["/secrets"]},
+    "network": {"allowedDomains": ["registry.npmjs.org"]}
   }
 }`)
 
@@ -427,9 +429,27 @@ func TestMergeSettings_SandboxUnion(t *testing.T) {
 	if parsed.Sandbox == nil {
 		t.Fatal("expected sandbox to be non-nil")
 	}
-	assertStringSlice(t, "writeDeny", parsed.Sandbox.WriteDeny, []string{"/usr", "/etc"})
-	assertStringSlice(t, "readDeny", parsed.Sandbox.ReadDeny, []string{"/secrets"})
-	assertStringSlice(t, "netAllow", parsed.Sandbox.NetAllow, []string{"registry.npmjs.org", "api.example.com"})
+	if !parsed.Sandbox.Enabled || parsed.Sandbox.Filesystem == nil || parsed.Sandbox.Network == nil {
+		t.Fatalf("expected enabled sandbox with filesystem and network, got %+v", parsed.Sandbox)
+	}
+	assertStringSlice(t, "denyWrite", parsed.Sandbox.Filesystem.DenyWrite, []string{"/usr", "/etc"})
+	assertStringSlice(t, "denyRead", parsed.Sandbox.Filesystem.DenyRead, []string{"/secrets"})
+	assertStringSlice(t, "allowedDomains", parsed.Sandbox.Network.AllowedDomains, []string{"registry.npmjs.org", "api.example.com"})
+
+	// Unmodeled sandbox children the user set must survive the merge.
+	var raw struct {
+		Sandbox struct {
+			ExcludedCommands []string `json:"excludedCommands"`
+			Network          struct {
+				AllowUnixSockets []string `json:"allowUnixSockets"`
+			} `json:"network"`
+		} `json:"sandbox"`
+	}
+	if err := json.Unmarshal(got, &raw); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	assertStringSlice(t, "excludedCommands", raw.Sandbox.ExcludedCommands, []string{"docker *"})
+	assertStringSlice(t, "allowUnixSockets", raw.Sandbox.Network.AllowUnixSockets, []string{"/var/run/x.sock"})
 }
 
 func TestMergeSettings_SandboxOursOnly(t *testing.T) {
@@ -451,7 +471,8 @@ func TestMergeSettings_SandboxOursOnly(t *testing.T) {
     "deny": []
   },
   "sandbox": {
-    "writeDeny": ["/etc"]
+    "enabled": true,
+    "filesystem": {"denyWrite": ["/etc"]}
   }
 }`)
 
@@ -465,10 +486,13 @@ func TestMergeSettings_SandboxOursOnly(t *testing.T) {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
 
-	if parsed.Sandbox == nil {
+	if parsed.Sandbox == nil || parsed.Sandbox.Filesystem == nil {
 		t.Fatal("expected sandbox from ours")
 	}
-	assertStringSlice(t, "writeDeny", parsed.Sandbox.WriteDeny, []string{"/etc"})
+	if !parsed.Sandbox.Enabled {
+		t.Error("expected sandbox.enabled from ours")
+	}
+	assertStringSlice(t, "denyWrite", parsed.Sandbox.Filesystem.DenyWrite, []string{"/etc"})
 }
 
 func TestMergeSettings_SandboxTheirsOnly(t *testing.T) {
@@ -484,7 +508,7 @@ func TestMergeSettings_SandboxTheirsOnly(t *testing.T) {
     "deny": []
   },
   "sandbox": {
-    "netAllow": ["internal.corp.com"]
+    "network": {"allowedDomains": ["internal.corp.com"]}
   }
 }`)
 	ours := []byte(`{
@@ -504,10 +528,10 @@ func TestMergeSettings_SandboxTheirsOnly(t *testing.T) {
 		t.Fatalf("result is not valid JSON: %v", err)
 	}
 
-	if parsed.Sandbox == nil {
+	if parsed.Sandbox == nil || parsed.Sandbox.Network == nil {
 		t.Fatal("expected sandbox from theirs")
 	}
-	assertStringSlice(t, "netAllow", parsed.Sandbox.NetAllow, []string{"internal.corp.com"})
+	assertStringSlice(t, "allowedDomains", parsed.Sandbox.Network.AllowedDomains, []string{"internal.corp.com"})
 }
 
 func TestMergeSettings_EmptyBase(t *testing.T) {
@@ -570,7 +594,7 @@ func TestMergeSettings_OutputIsValidJSON(t *testing.T) {
     ]
   },
   "sandbox": {
-    "writeDeny": ["/etc"]
+    "filesystem": {"denyWrite": ["/etc"]}
   }
 }`)
 	theirs := []byte(`{
@@ -586,8 +610,8 @@ func TestMergeSettings_OutputIsValidJSON(t *testing.T) {
     ]
   },
   "sandbox": {
-    "writeDeny": ["/etc"],
-    "netAllow": ["example.com"]
+    "filesystem": {"denyWrite": ["/etc"]},
+    "network": {"allowedDomains": ["example.com"]}
   }
 }`)
 	ours := []byte(`{
@@ -602,7 +626,7 @@ func TestMergeSettings_OutputIsValidJSON(t *testing.T) {
     ]
   },
   "sandbox": {
-    "writeDeny": ["/etc", "/usr"]
+    "filesystem": {"denyWrite": ["/etc", "/usr"]}
   }
 }`)
 

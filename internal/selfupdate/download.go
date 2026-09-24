@@ -73,11 +73,11 @@ func DownloadAndVerify(ctx context.Context, release *Release, cfg Config, target
 	if err != nil {
 		return "", err
 	}
-	// Fail closed: in strict mode a skipped signature check (no bundle in the
-	// release, or cosign not installed) is treated as a verification failure so
-	// an unsigned/unverifiable update is never installed silently.
+	// Fail closed: in strict mode a skipped signature check (the release has
+	// no signature bundle) is a verification failure, so an unsigned update is
+	// never installed silently. The error names the one way forward.
 	if cfg.Strict && sigResult.Skipped {
-		return "", fmt.Errorf("signature verification required but %s", sigResult.Message)
+		return "", fmt.Errorf("signature verification required: %s; refusing to install an unsigned update (re-run with --no-strict to install it without signature verification)", sigResult.Message)
 	}
 	logVerificationResult(sigResult)
 

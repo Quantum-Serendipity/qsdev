@@ -4,10 +4,16 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
+	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/profile"
 	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -31,8 +37,16 @@ func (e ValidationError) Error() string {
 
 // ValidateOptions provides additional context for config validation.
 type ValidateOptions struct {
+	// ProfileNames are the project-type profiles `profile` must name (the
+	// devinit project-profile registry, which embedders can extend).
 	ProfileNames []string
-	ToolNames    []string
+	// ToolNames are the qsdev catalog tools tools.enabled and tools.disabled
+	// must name.
+	ToolNames []string
+	// MCPToolNames are the tools qsdev's MCP server can mount
+	// (mcpserve.MountableToolNames); mcp.disabled_tools must name one of them.
+	// Validation of that list is skipped when none are given.
+	MCPToolNames []string
 }
 
 // ParseQsdevConfig reads and parses a .qsdev.yaml file at path.
@@ -42,6 +56,8 @@ type ValidateOptions struct {
 // (known-field) struct unmarshal into QsdevConfig. Unknown/misspelled YAML
 // keys are rejected with an error rather than silently dropped, so a typo in
 // a security key (e.g. "script_blockng:") cannot silently discard its setting.
+// A config at an older supported schema version is migrated to the current
+// schema through the migration chain before it is returned.
 func ParseQsdevConfig(path string) (*types.QsdevConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -99,7 +115,79 @@ func ParseQsdevConfigBytes(data []byte) (*types.QsdevConfig, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
+	// Reject any YAML document after the first: both passes above read only
+	// the first document, so a second one (e.g. a pasted snippet after
+	// "---") would otherwise be silently ignored, security settings included.
+	more, err := hasMoreDocuments(dec)
+	if err != nil {
+		return nil, fmt.Errorf("parsing config: %w", err)
+	}
+	if more {
+		return nil, fmt.Errorf("parsing config: multiple YAML documents are not supported; "+
+			"merge everything after the first \"---\" into a single document in %s", branding.Get().ConfigFile)
+	}
+
+	if versionInt < types.ConfigVersionCurrent {
+		return migrateParsed(data, versionInt)
+	}
 	return &cfg, nil
+}
+
+// migrateParsed brings an older-schema config to the current schema in
+// memory, so callers only ever see the current layout (cfg.Version is the
+// current version). The file itself is rewritten by the next config write
+// (`qsdev init --update` or `qsdev config migrate --write`). The document was
+// already strictly decoded, so any error here is a migration failure rather
+// than a user typo.
+//
+// The migration steps see each top-level value as the document's own node,
+// so re-encoding reproduces every scalar exactly as written; a round trip
+// through plain Go values would turn an unquoted `version: 3.10` into 3.1.
+func migrateParsed(data []byte, fromVersion int) (*types.QsdevConfig, error) {
+	fail := func(err error) (*types.QsdevConfig, error) {
+		return nil, fmt.Errorf("migrating %s: %w", branding.Get().ConfigFile, err)
+	}
+	var nodes map[string]yaml.Node
+	if err := yaml.Unmarshal(data, &nodes); err != nil {
+		return fail(err)
+	}
+	raw := make(map[string]any, len(nodes))
+	for k, n := range nodes {
+		raw[k] = &n
+	}
+	migrated, err := MigrateConfig(raw, fromVersion)
+	if err != nil {
+		return fail(err)
+	}
+	out, err := yaml.Marshal(migrated)
+	if err != nil {
+		return fail(err)
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(out))
+	dec.KnownFields(true)
+	var cfg types.QsdevConfig
+	if err := dec.Decode(&cfg); err != nil {
+		return fail(err)
+	}
+	return &cfg, nil
+}
+
+// hasMoreDocuments reports whether dec holds another YAML document with
+// content. Empty trailing documents (a closing "---", optionally followed by
+// comments) carry nothing that could be ignored, so they are skipped.
+func hasMoreDocuments(dec *yaml.Decoder) (bool, error) {
+	for {
+		var doc yaml.Node
+		if err := dec.Decode(&doc); err != nil {
+			if errors.Is(err, io.EOF) {
+				return false, nil
+			}
+			return false, err
+		}
+		if len(doc.Content) > 0 && doc.Content[0].Tag != "!!null" {
+			return true, nil
+		}
+	}
 }
 
 // ValidateQsdevConfig validates a parsed config and returns all validation
@@ -139,12 +227,24 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 		}
 	}
 
+	errs = append(errs, validateSplicedValues(cfg)...)
+
 	// Validate security level.
 	if cfg.Security.Level != "" && !validation.IsValidSecurityLevel(cfg.Security.Level) {
 		errs = append(errs, ValidationError{
 			Field:   "security.level",
 			Value:   cfg.Security.Level,
-			Message: "invalid security level; valid values: baseline, enhanced, strict",
+			Message: "invalid security level; " + validValues(validation.SecurityLevels()),
+		})
+	}
+
+	// Validate tier: an unknown explicit tier must fail validation rather
+	// than be silently replaced by an inferred one during generation.
+	if cfg.Tier != "" && !validation.IsValidTier(cfg.Tier) {
+		errs = append(errs, ValidationError{
+			Field:   "tier",
+			Value:   cfg.Tier,
+			Message: "unknown tier; " + validValues(validation.Tiers()),
 		})
 	}
 
@@ -153,7 +253,7 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 		errs = append(errs, ValidationError{
 			Field:   "claude_code.permission_level",
 			Value:   cfg.ClaudeCode.PermissionLevel,
-			Message: "invalid permission level; valid values: minimal, standard, permissive, custom",
+			Message: "invalid permission level; " + validValues(validation.PermissionPresets()),
 		})
 	}
 
@@ -169,27 +269,34 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 				})
 			}
 		}
+		mcpTools := toSet(opts.MCPToolNames)
 		for _, t := range cfg.Tools.Disabled {
 			if !knownTools[t] {
+				msg := "unknown tool name"
+				if mcpTools[t] {
+					msg = "is an MCP tool name, not a catalog tool; list it under mcp.disabled_tools to deny it"
+				}
 				errs = append(errs, ValidationError{
 					Field:   "tools.disabled",
 					Value:   t,
-					Message: "unknown tool name",
+					Message: msg,
 				})
 			}
 		}
 	}
 
-	// Validate profile against known profile names.
-	if cfg.Profile != "" && len(opts.ProfileNames) > 0 {
-		knownProfiles := toSet(opts.ProfileNames)
-		if !knownProfiles[cfg.Profile] {
-			errs = append(errs, ValidationError{
-				Field:   "profile",
-				Value:   cfg.Profile,
-				Message: "unknown profile name",
-			})
-		}
+	errs = append(errs, validateMCPDisabledTools(cfg, opts)...)
+	errs = append(errs, validateCredentialVend(cfg.Security.CredentialVend)...)
+	errs = append(errs, validateProfiles(cfg, opts)...)
+	errs = append(errs, validateHooks(cfg.Hooks)...)
+
+	// git.branch_pattern is spliced into the branch-naming pre-push hook.
+	if err := validation.CheckBranchPattern(cfg.Git.BranchPattern); err != nil {
+		errs = append(errs, ValidationError{
+			Field:   "git.branch_pattern",
+			Value:   cfg.Git.BranchPattern,
+			Message: err.Error(),
+		})
 	}
 
 	// Validate qsdev_version syntax (if present).
@@ -215,18 +322,151 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 			errs = append(errs, ValidationError{
 				Field:   "client.security_level",
 				Value:   cfg.Client.SecurityLevel,
-				Message: "invalid security level; valid values: baseline, enhanced, strict",
+				Message: "invalid security level; " + validValues(validation.SecurityLevels()),
 			})
 		}
 		if cfg.Client.DataClassification != "" && !validation.IsValidDataClassification(cfg.Client.DataClassification) {
 			errs = append(errs, ValidationError{
 				Field:   "client.data_classification",
 				Value:   cfg.Client.DataClassification,
-				Message: "invalid data classification; valid values: public, internal, confidential",
+				Message: "invalid data classification; " + validValues(validation.DataClassifications()),
 			})
 		}
 	}
 
+	return errs
+}
+
+// validateMCPDisabledTools checks mcp.disabled_tools against the MCP tool
+// namespace (opts.MCPToolNames). An unknown name is an error rather than a
+// harmless no-op: the deny it was meant to install (typically a misspelled
+// tool) would otherwise leave the intended tool runnable. Catalog tool names
+// belong in tools.disabled and are rejected here the same way.
+func validateMCPDisabledTools(cfg *types.QsdevConfig, opts ValidateOptions) []ValidationError {
+	if len(opts.MCPToolNames) == 0 {
+		return nil
+	}
+	known := toSet(opts.MCPToolNames)
+	var errs []ValidationError
+	for _, t := range cfg.MCP.DisabledTools {
+		if !known[t] {
+			errs = append(errs, ValidationError{
+				Field:   "mcp.disabled_tools",
+				Value:   t,
+				Message: "unknown MCP tool name; " + validValues(opts.MCPToolNames),
+			})
+		}
+	}
+	return errs
+}
+
+// validateProfiles checks each profile key against its own registry: the
+// project-type `profile` against opts.ProfileNames (skipped when none are
+// given) and `infra_profile` against the built-in infrastructure profiles.
+func validateProfiles(cfg *types.QsdevConfig, opts ValidateOptions) []ValidationError {
+	var errs []ValidationError
+	if cfg.Profile != "" && len(opts.ProfileNames) > 0 && !slices.Contains(opts.ProfileNames, cfg.Profile) {
+		errs = append(errs, ValidationError{
+			Field:   "profile",
+			Value:   cfg.Profile,
+			Message: "unknown project-type profile; " + validValues(opts.ProfileNames),
+		})
+	}
+	if cfg.InfraProfile != "" {
+		infra := profile.DefaultProfileRegistry()
+		if _, ok := infra.Get(cfg.InfraProfile); !ok {
+			errs = append(errs, ValidationError{
+				Field:   "infra_profile",
+				Value:   cfg.InfraProfile,
+				Message: "unknown infrastructure profile; " + validValues(infra.Names()),
+			})
+		}
+	}
+	return errs
+}
+
+// validateHooks checks the hooks block: each file-boundary extra read path
+// must be one the hook can resolve and must not lift the read boundary, and
+// each tool-gates entry must be a tool name pattern.
+func validateHooks(h types.HooksConfig) []ValidationError {
+	var errs []ValidationError
+	for _, e := range validation.CheckHookPolicy(h) {
+		errs = append(errs, ValidationError{
+			Field:   fmt.Sprintf("%s[%d]", e.Field, e.Index),
+			Value:   e.Value,
+			Message: e.Err.Error(),
+		})
+	}
+	return errs
+}
+
+// validValues renders the accepted values of an enumerated field, in the
+// order its source (catalog or registry) lists them, for a validation message.
+func validValues(values []string) string {
+	return "valid values: " + strings.Join(values, ", ")
+}
+
+// validateSplicedValues checks the syntax of the free-form language and
+// service values that generation splices into devenv.nix, some of them
+// unquoted (e.g. pkgs.postgresql_<version>). The committed .qsdev.yaml is
+// team-shared input, so a value that could end a Nix expression is rejected
+// here as well as at the answers boundary (devinit.ValidateAnswers).
+func validateSplicedValues(cfg *types.QsdevConfig) []ValidationError {
+	var errs []ValidationError
+	for i, lang := range cfg.Languages {
+		if lang.Version != "" && !validation.IsValidVersionConstraint(lang.Version) {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("languages[%d].version", i),
+				Value:   lang.Version,
+				Message: "invalid version; only letters, digits, spaces and . _ - + * ^ ~ < > = ! | , / are allowed",
+			})
+		}
+		if lang.PackageManager != "" && !validation.IsValidToken(lang.PackageManager) {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("languages[%d].package_manager", i),
+				Value:   lang.PackageManager,
+				Message: "invalid package manager; must be a single word of letters, digits, '.', '_' or '-'",
+			})
+		}
+	}
+	for i, pkg := range cfg.Packages {
+		if !validation.IsValidNixAttrPath(pkg) {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("packages[%d]", i),
+				Value:   pkg,
+				Message: "invalid package; must be a Nix attribute path such as jq or python3Packages.black",
+			})
+		}
+	}
+	// Allowlisted ids are joined into the settings.xml mirrorOf list, where
+	// ',' separates and '!' and '*' are operators.
+	for i, id := range cfg.Java.RepositoryAllowlist {
+		if !validation.IsValidToken(id) {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("java.repository_allowlist[%d]", i),
+				Value:   id,
+				Message: "invalid repository id; must be a single word of letters, digits, '.', '_' or '-'",
+			})
+		}
+	}
+	for i, svc := range cfg.Services {
+		if svc.Version != "" && !validation.IsValidToken(svc.Version) {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("services[%d].version", i),
+				Value:   svc.Version,
+				Message: "invalid version; must be a single word of letters, digits, '.', '_' or '-'",
+			})
+		}
+		for _, k := range slices.Sorted(maps.Keys(svc.Options)) {
+			if !validation.IsValidEnvKey(k) || !validation.IsValidToken(svc.Options[k]) {
+				errs = append(errs, ValidationError{
+					Field:   fmt.Sprintf("services[%d].options.%s", i, k),
+					Value:   svc.Options[k],
+					Message: "invalid option; keys must be identifiers and values a single word of letters, digits, '.', '_' or '-'",
+				})
+			}
+		}
+	}
 	return errs
 }
 

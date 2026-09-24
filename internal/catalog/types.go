@@ -16,7 +16,7 @@ type TierDef struct {
 	ClaudeCode              *ClaudeCodeConfig `yaml:"claude_code,omitempty"`
 }
 
-// SecurityConfig holds security settings shared by tiers and profiles.
+// SecurityConfig holds security settings of a tier.
 type SecurityConfig struct {
 	Level           string `yaml:"level,omitempty"`
 	AgeGating       *bool  `yaml:"age_gating,omitempty"`
@@ -25,12 +25,12 @@ type SecurityConfig struct {
 	VulnScanning    *bool  `yaml:"vuln_scanning,omitempty"`
 }
 
-// ToolsConfig holds tool configuration shared by tiers and profiles.
+// ToolsConfig holds tool configuration of a tier.
 type ToolsConfig struct {
 	Enabled []string `yaml:"enabled"`
 }
 
-// ClaudeCodeConfig holds Claude Code settings shared by tiers and profiles.
+// ClaudeCodeConfig holds Claude Code settings of a tier.
 type ClaudeCodeConfig struct {
 	Enabled         *bool    `yaml:"enabled,omitempty"`
 	PermissionLevel string   `yaml:"permission_level,omitempty"`
@@ -53,21 +53,6 @@ type ComplianceLevelDef struct {
 	ClaudeAuditLog          bool     `yaml:"claude_audit_log"`
 	SBOMPolicy              string   `yaml:"sbom_policy"`
 	LicenseScanning         bool     `yaml:"license_scanning"`
-}
-
-// ProfilesFile represents the profiles.yaml schema.
-type ProfilesFile struct {
-	Profiles map[string]ProfileDef `yaml:"profiles"`
-	Aliases  map[string]string     `yaml:"aliases,omitempty"`
-}
-
-// ProfileDef defines a tier-based infrastructure profile.
-type ProfileDef struct {
-	Tier        string            `yaml:"tier"`
-	Description string            `yaml:"description"`
-	Security    *SecurityConfig   `yaml:"security,omitempty"`
-	Tools       *ToolsConfig      `yaml:"tools,omitempty"`
-	ClaudeCode  *ClaudeCodeConfig `yaml:"claude_code,omitempty"`
 }
 
 // ProjectProfilesFile represents the project_profiles.yaml schema.
@@ -165,6 +150,10 @@ type HookTiersFile struct {
 
 // DerivationsFile represents the derivations.yaml schema.
 type DerivationsFile struct {
+	// DefaultTier is the tier a project gets when neither --tier, a profile
+	// nor the answers select one (a supply-chain-only permission level still
+	// selects the supply-chain-only tier).
+	DefaultTier        string              `yaml:"default_tier"`
 	TierToCompliance   map[string]string   `yaml:"tier_to_compliance"`
 	TierToEnabledTools map[string][]string `yaml:"tier_to_enabled_tools"`
 	DefaultMCPServers  []string            `yaml:"default_mcp_servers"`
@@ -217,7 +206,41 @@ type MCPServerDef struct {
 	Transport     string            `yaml:"transport,omitempty"`
 	InstallMethod string            `yaml:"install_method,omitempty"`
 	PackageName   string            `yaml:"package_name,omitempty"`
-	NixPackage    string            `yaml:"nix_package,omitempty"`
+	// Version is the exact release of PackageName that both the fetch-on-run
+	// launcher in Args and `qsdev mcp install` use; never a range or tag.
+	Version string `yaml:"version,omitempty"`
+	// Bin is the executable InstallMethod puts on PATH. Once `qsdev mcp
+	// install` has installed Version, .mcp.json runs Bin, with BinArgs,
+	// instead of the fetch-on-run launcher.
+	Bin        string   `yaml:"bin,omitempty"`
+	BinArgs    []string `yaml:"bin_args,omitempty"`
+	NixPackage string   `yaml:"nix_package,omitempty"`
+}
+
+// BootstrapToolDef pins a tool that the qsdev bootstrap installs onto the
+// developer's machine, outside any project and so outside the package guard,
+// the project's age gate and its lockfile.
+type BootstrapToolDef struct {
+	// InstallMethod names the package manager: npm-global or nix-profile.
+	InstallMethod string `yaml:"install_method"`
+	// PackageName is the npm package (npm-global) or the attribute path
+	// within Flake (nix-profile).
+	PackageName string `yaml:"package_name"`
+	// Version is the exact release installed; never a range or dist-tag.
+	// The install is age-gated, so a release younger than the minimum
+	// release age fails to install until it has aged. Required for
+	// npm-global; nix-profile takes its version from the Flake revision.
+	Version string `yaml:"version,omitempty"`
+	// Flake is the flake reference PackageName is installed from
+	// (nix-profile), pinned to an exact commit, e.g.
+	// github:NixOS/nixpkgs/<40-hex rev>. A branch, tag or registry name
+	// such as "nixpkgs" is refused.
+	Flake string `yaml:"flake,omitempty"`
+	// AllowInstallScripts lets the package manager run the package's
+	// lifecycle scripts. Off by default (npm --ignore-scripts); set it only
+	// for a package that verifiably cannot work without them, and record why
+	// next to the pin.
+	AllowInstallScripts bool `yaml:"allow_install_scripts,omitempty"`
 }
 
 // PermissionRulesFile represents the permission_rules section of defaults.yaml.
@@ -245,10 +268,16 @@ type ZIMArchiveDef struct {
 	URL         string   `yaml:"url"`
 	SizeBytes   int64    `yaml:"size_bytes"`
 	Ecosystems  []string `yaml:"ecosystems"`
+	// SHA256 optionally pins the archive's hex SHA-256 digest. When empty,
+	// the digest published beside the archive (URL + ".sha256") is used.
+	SHA256 string `yaml:"sha256,omitempty"`
 }
 
 // PermissionPresetDef defines a permission preset's composition.
 type PermissionPresetDef struct {
+	// Strictness ranks the preset for local-override tightening: higher is
+	// stricter, and 0 (unset) means the preset is not comparable to others.
+	Strictness        int      `yaml:"strictness,omitempty"`
 	DefaultMode       string   `yaml:"default_mode,omitempty"`
 	DisableBypassMode string   `yaml:"disable_bypass_mode,omitempty"`
 	AllowSets         []string `yaml:"allow_sets"`

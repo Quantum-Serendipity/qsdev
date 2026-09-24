@@ -6,71 +6,27 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sectools"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
+	"github.com/Quantum-Serendipity/qsdev/rules"
 )
 
-func TestGenerateOpengrepConfigYaml_Structure(t *testing.T) {
+// TestGenerateOpengrepFiles_NoConfigFile is the F217 regression: OpenGrep has
+// no project config file, and the invented .opengrep/config.yaml (top-level
+// exclude/severity/timeout, a directory under rules:) fails its parser. The
+// rule library is passed straight to `opengrep scan --config`, so nothing but
+// the rules and the package derivation may be delivered.
+func TestGenerateOpengrepFiles_NoConfigFile(t *testing.T) {
 	t.Parallel()
 
-	f, err := sectools.GenerateOpengrepConfigYaml(types.WizardAnswers{})
+	files, err := sectools.GenerateOpengrepFiles(types.WizardAnswers{})
 	if err != nil {
-		t.Fatalf("GenerateOpengrepConfigYaml() error: %v", err)
+		t.Fatalf("GenerateOpengrepFiles() error: %v", err)
 	}
-	if f.Path != ".opengrep/config.yaml" {
-		t.Errorf("Path = %q, want %q", f.Path, ".opengrep/config.yaml")
-	}
-	if f.Mode != 0o644 {
-		t.Errorf("Mode = %#o, want %#o", f.Mode, 0o644)
-	}
-	if f.Strategy != types.Overwrite {
-		t.Errorf("Strategy = %v, want Overwrite", f.Strategy)
-	}
-	if f.Owner != "opengrep" {
-		t.Errorf("Owner = %q, want %q", f.Owner, "opengrep")
-	}
-}
-
-func TestGenerateOpengrepConfigYaml_YAMLContent(t *testing.T) {
-	t.Parallel()
-
-	f, err := sectools.GenerateOpengrepConfigYaml(types.WizardAnswers{})
-	if err != nil {
-		t.Fatalf("GenerateOpengrepConfigYaml() error: %v", err)
-	}
-	content := string(f.Content)
-
-	for _, key := range []string{"rules:", "exclude:", "severity:", "timeout:"} {
-		if !strings.Contains(content, key) {
-			t.Errorf("content should contain %q key", key)
-		}
-	}
-}
-
-func TestGenerateOpengrepConfigYaml_RulePaths(t *testing.T) {
-	t.Parallel()
-
-	f, err := sectools.GenerateOpengrepConfigYaml(types.WizardAnswers{})
-	if err != nil {
-		t.Fatalf("GenerateOpengrepConfigYaml() error: %v", err)
-	}
-	content := string(f.Content)
-
-	if !strings.Contains(content, "rules/core") {
-		t.Error("content should reference rules/core path")
-	}
-}
-
-func TestGenerateOpengrepConfigYaml_PathExclusions(t *testing.T) {
-	t.Parallel()
-
-	f, err := sectools.GenerateOpengrepConfigYaml(types.WizardAnswers{})
-	if err != nil {
-		t.Fatalf("GenerateOpengrepConfigYaml() error: %v", err)
-	}
-	content := string(f.Content)
-
-	for _, path := range []string{"vendor/", "node_modules/", "dist/", ".devenv/", "__pycache__/"} {
-		if !strings.Contains(content, path) {
-			t.Errorf("content should exclude path %q", path)
+	for _, f := range files {
+		switch {
+		case f.Path == ".opengrep/nix/default.nix":
+		case strings.HasPrefix(f.Path, rules.ProjectCoreDir+"/"):
+		default:
+			t.Errorf("unexpected generated file %s (only the rule library and the nix derivation are delivered)", f.Path)
 		}
 	}
 }
@@ -83,32 +39,14 @@ func TestGenerateOpengrepFiles_DeliversRules(t *testing.T) {
 		t.Fatalf("GenerateOpengrepFiles() error: %v", err)
 	}
 
-	var config *types.GeneratedFile
 	var ruleFiles []types.GeneratedFile
 	for i := range files {
-		switch {
-		case files[i].Path == ".opengrep/config.yaml":
-			config = &files[i]
-		case strings.HasPrefix(files[i].Path, ".opengrep/rules/core/"):
+		if strings.HasPrefix(files[i].Path, ".opengrep/rules/core/") {
 			ruleFiles = append(ruleFiles, files[i])
 		}
 	}
-
-	if config == nil {
-		t.Fatal("expected a .opengrep/config.yaml among generated files")
-	}
 	if len(ruleFiles) == 0 {
 		t.Fatal("expected embedded rule files to be delivered, got none (rules never reach the user's project)")
-	}
-
-	// The path the config references must be the delivered location, not the
-	// source-only rules/core path that never exists in a user project.
-	cfg := string(config.Content)
-	if !strings.Contains(cfg, ".opengrep/rules/core") {
-		t.Errorf("config should point rules at the delivered .opengrep/rules/core; got:\n%s", cfg)
-	}
-	if strings.Contains(cfg, "  - rules/core\n") {
-		t.Error("config must not point at the source-only rules/core path")
 	}
 
 	for _, rf := range ruleFiles {
@@ -139,19 +77,53 @@ func TestGenerateOpengrepFiles_DeliversRules(t *testing.T) {
 	}
 }
 
-func TestGenerateOpengrepConfigYaml_Defaults(t *testing.T) {
+// TestGenerateOpengrepFiles_DeliversNixDerivation checks that the OpenGrep
+// package derivation the devenv.nix package list imports
+// (./.opengrep/nix) is written into the project, pinned to real release
+// asset hashes rather than placeholders.
+func TestGenerateOpengrepFiles_DeliversNixDerivation(t *testing.T) {
 	t.Parallel()
 
-	f, err := sectools.GenerateOpengrepConfigYaml(types.WizardAnswers{})
+	files, err := sectools.GenerateOpengrepFiles(types.WizardAnswers{})
 	if err != nil {
-		t.Fatalf("GenerateOpengrepConfigYaml() error: %v", err)
+		t.Fatalf("GenerateOpengrepFiles() error: %v", err)
 	}
-	content := string(f.Content)
+	var drv *types.GeneratedFile
+	for i := range files {
+		if files[i].Path == ".opengrep/nix/default.nix" {
+			drv = &files[i]
+		}
+	}
+	if drv == nil {
+		t.Fatal("expected .opengrep/nix/default.nix among generated files")
+	}
+	if drv.Owner != "opengrep" || drv.Mode != 0o644 || drv.Strategy != types.Overwrite {
+		t.Errorf("derivation file = owner %q mode %#o strategy %v, want opengrep 0644 Overwrite",
+			drv.Owner, drv.Mode, drv.Strategy)
+	}
 
-	if !strings.Contains(content, "severity: warning") {
-		t.Error("default severity should be warning")
+	content := string(drv.Content)
+	tests := []struct {
+		name, want string
+	}{
+		{"fetches a release asset", "https://github.com/opengrep/opengrep/releases/download/v${version}/${src.asset}"},
+		{"x86_64-linux asset", `asset = "opengrep_manylinux_x86";`},
+		{"aarch64-linux asset", `asset = "opengrep_manylinux_aarch64";`},
+		{"aarch64-darwin asset", `asset = "opengrep_osx_arm64";`},
+		{"x86_64-darwin asset", `asset = "opengrep_osx_x86";`},
 	}
-	if !strings.Contains(content, "timeout: 300") {
-		t.Error("default timeout should be 300")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if !strings.Contains(content, tt.want) {
+				t.Errorf("derivation should contain %q", tt.want)
+			}
+		})
+	}
+	if strings.Contains(content, "fakeHash") || strings.Contains(content, "lib.fakeSha256") {
+		t.Error("derivation must pin real hashes, not placeholders")
+	}
+	if got, want := strings.Count(content, `hash = "sha256-`), 4; got != want {
+		t.Errorf("derivation has %d SRI sha256 hashes, want %d (one per platform)", got, want)
 	}
 }

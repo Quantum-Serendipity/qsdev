@@ -2,7 +2,7 @@
 name: review-pr
 description: Comprehensive PR review across security, performance, and code quality with structured findings.
 disable-model-invocation: true
-allowed-tools: Bash(git *) Bash(gh *) Read Grep Glob
+allowed-tools: Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git status *) Bash(gh *) Read Grep Glob
 arguments: [pr-number]
 argument-hint: "123"
 ---

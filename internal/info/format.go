@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,9 +23,14 @@ func FormatDefault(info *ProjectInfo, w io.Writer) error {
 	fmt.Fprintf(w, "Config:        v%d\n", info.ConfigVersion)
 	fmt.Fprintf(w, "Managed Files: %d\n", info.ManagedFileCount)
 	fmt.Fprintf(w, "Active Tools:  %d\n", info.ActiveToolCount)
-	// Show category breakdown if any.
-	for cat, count := range info.ToolsByCategory {
-		fmt.Fprintf(w, "  %s: %d\n", cat, count)
+	// Show category breakdown if any, in a stable order.
+	cats := make([]string, 0, len(info.ToolsByCategory))
+	for cat := range info.ToolsByCategory {
+		cats = append(cats, cat)
+	}
+	sort.Strings(cats)
+	for _, cat := range cats {
+		fmt.Fprintf(w, "  %s: %d\n", cat, info.ToolsByCategory[cat])
 	}
 	if info.ClaudeCodeEnabled {
 		fmt.Fprintf(w, "Claude Code:   enabled\n")
@@ -33,6 +39,9 @@ func FormatDefault(info *ProjectInfo, w io.Writer) error {
 		fmt.Fprintf(w, "Last Updated:  %s\n", RelativeTime(info.LastUpdated))
 	} else {
 		fmt.Fprintf(w, "Last Updated:  never\n")
+	}
+	for _, warning := range info.Warnings {
+		fmt.Fprintf(w, "Warning:       %s\n", warning)
 	}
 	return nil
 }

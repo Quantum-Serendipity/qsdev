@@ -3,8 +3,13 @@ package devinit
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 func TestEnsureGitignoreEntry_CreatesMissing(t *testing.T) {
@@ -23,7 +28,7 @@ func TestEnsureGitignoreEntry_CreatesMissing(t *testing.T) {
 	if !strings.Contains(string(content), ".qsdev.local.yaml") {
 		t.Errorf(".gitignore does not contain entry, got:\n%s", content)
 	}
-	if !strings.Contains(string(content), gitignoreSectionComment) {
+	if !strings.Contains(string(content), fileutil.GitignoreSectionComment()) {
 		t.Error(".gitignore should contain section comment")
 	}
 }
@@ -126,8 +131,37 @@ func TestEnsureGitignoreEntry_SectionCommentAddedOnce(t *testing.T) {
 		t.Fatalf("reading .gitignore: %v", err)
 	}
 
-	count := strings.Count(string(content), gitignoreSectionComment)
+	count := strings.Count(string(content), fileutil.GitignoreSectionComment())
 	if count != 1 {
 		t.Errorf("section comment appears %d times, want 1; content:\n%s", count, content)
+	}
+}
+
+// TestEnsureProjectGitignore_IgnoresLocalConfig is the W166 regression test:
+// join adds the machine-local overrides file to .gitignore, so init must as
+// well, or every teammate's first join dirties the committed .gitignore.
+func TestEnsureProjectGitignore_IgnoresLocalConfig(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	ensureProjectGitignore(dir, types.WizardAnswers{})
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("reading .gitignore: %v", err)
+	}
+	local := branding.Get().LocalConfig
+	if !slices.Contains(strings.Split(string(data), "\n"), local) {
+		t.Errorf(".gitignore does not list %s:\n%s", local, data)
+	}
+	// Join's own EnsureGitignoreEntry call must then be a no-op.
+	if err := EnsureGitignoreEntry(dir, local); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(data) {
+		t.Errorf("join changed .gitignore after init:\n--- init\n%s\n--- join\n%s", data, after)
 	}
 }

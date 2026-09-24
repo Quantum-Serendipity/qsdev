@@ -21,10 +21,21 @@ type ClientInfo struct {
 // *ToolCallContext but must not mutate it. Build a derived copy if a layer
 // needs to refine a field.
 type ToolCallContext struct {
-	// AgentID is the resolved agent identity. It is the per-request _meta
-	// override when present, otherwise the client's reported Name, otherwise
-	// "unknown".
+	// AgentID is the resolved agent identity, in precedence order: the verified
+	// transport identity (an mTLS client-certificate CN/SAN), else the
+	// per-request _meta override, else the client's reported Name, else
+	// "unknown". Only the first is cryptographically trustworthy; the others are
+	// self-asserted labels.
 	AgentID string
+	// Principal is the transport-stable caller identity: the verified mTLS
+	// identity when present, otherwise the MCP session plus the client's
+	// handshake Name (callers with no handshake Name share one principal).
+	// Unlike AgentID it never reflects the per-request _meta override, so a
+	// client cannot mint a fresh identity per call; it keys per-caller state
+	// such as rate-limit buckets. Empty when unresolved (e.g. a
+	// context built directly in tests), in which case consumers fall back to
+	// AgentID.
+	Principal string
 	// Client is the identity reported during the initialize handshake.
 	Client ClientInfo
 	// ProjectRoot is the resolved absolute project root for this session.

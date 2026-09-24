@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,9 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Validator checks the syntactic validity of file content.
@@ -41,14 +45,10 @@ func NewValidatorRegistry() *ValidatorRegistry {
 
 // Validate checks the content of the file at the given path using the
 // appropriate validator for the file extension. Unknown extensions are skipped.
+// Dotfiles such as .envrc need no special case: filepath.Ext(".envrc") is
+// ".envrc".
 func (r *ValidatorRegistry) Validate(path string, content []byte) ValidationResult {
-	ext := filepath.Ext(path)
-	// .envrc has no normal extension; match on base name.
-	if ext == "" && filepath.Base(path) == ".envrc" {
-		ext = ".envrc"
-	}
-
-	v, ok := r.validators[ext]
+	v, ok := r.validators[filepath.Ext(path)]
 	if !ok {
 		return ValidationResult{Path: path, Valid: true, Skipped: true}
 	}
@@ -56,6 +56,49 @@ func (r *ValidatorRegistry) Validate(path string, content []byte) ValidationResu
 	result := v.Validate(content)
 	result.Path = path
 	return result
+}
+
+// ErrInvalidContent marks generated content rejected by its syntax validator.
+var ErrInvalidContent = errors.New("invalid generated content")
+
+// defaultValidators is the registry shared by ValidateContent; validators
+// cache their tool lookups, so it is built once.
+var defaultValidators = sync.OnceValue(NewValidatorRegistry)
+
+// ValidateContent checks content destined for path with the syntax validator
+// for its file type (Nix, JSON, YAML, shell). It returns an error when the
+// content is invalid; a file type without a validator, or whose validator tool
+// is unavailable, passes.
+func ValidateContent(path string, content []byte) error {
+	vr := defaultValidators().Validate(path, content)
+	if !vr.Valid && !vr.Skipped {
+		return fmt.Errorf("%w: validation failed for %s: %w", ErrInvalidContent, path, vr.Error)
+	}
+	return nil
+}
+
+// WriteGeneratedFile validates f's content as WriteFiles does (unless
+// f.SkipValidation) and writes it atomically to projectRoot/f.Path with
+// f.Mode (default fileutil.ModeReadWrite). It is the write path for generated
+// content outside WriteFiles (update, enable/disable, repair, auto-fix, the
+// claude subcommands), so content WriteFiles rejects is never written by
+// another command. Like WriteFiles it never writes outside projectRoot: a
+// path, symlinked parent directory or symlinked file that resolves outside
+// the root is refused with an error wrapping fileutil.ErrOutsideRoot.
+func WriteGeneratedFile(projectRoot string, f types.GeneratedFile) error {
+	if !f.SkipValidation {
+		if err := ValidateContent(f.Path, f.Content); err != nil {
+			return err
+		}
+	}
+	mode := f.Mode
+	if mode == 0 {
+		mode = fileutil.ModeReadWrite
+	}
+	if err := fileutil.WriteFileAtomicInRoot(projectRoot, filepath.FromSlash(f.Path), f.Content, mode); err != nil {
+		return fmt.Errorf("writing %s: %w", f.Path, err)
+	}
+	return nil
 }
 
 // NewNixValidator returns a new NixValidator.

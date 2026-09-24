@@ -3,9 +3,11 @@ package helm_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/denyutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/helm"
 )
@@ -49,27 +51,62 @@ func TestDetect_ChartYamlPresent(t *testing.T) {
 }
 
 func TestDetect_ChartYamlVersionExtracted(t *testing.T) {
-	dir := t.TempDir()
-	chartYaml := "apiVersion: v2\nname: my-chart\nversion: 1.2.3\n"
-	if err := os.WriteFile(filepath.Join(dir, "Chart.yaml"), []byte(chartYaml), 0o644); err != nil {
-		t.Fatal(err)
+	t.Parallel()
+	tests := []struct {
+		name      string
+		chartYaml string
+		want      string
+	}{
+		{
+			name:      "plain",
+			chartYaml: "apiVersion: v2\nname: my-chart\nversion: 1.2.3\n",
+			want:      "1.2.3",
+		},
+		{
+			// A dependency's indented version must not be mistaken for the
+			// chart's own version, even when it appears first.
+			name: "dependencies before version",
+			chartYaml: "apiVersion: v2\nname: my-chart\ndependencies:\n" +
+				"  - name: redis\n    version: 17.0.0\n" +
+				"version: \"1.2.3\" # chart\n",
+			want: "1.2.3",
+		},
+		{
+			name:      "single quoted",
+			chartYaml: "apiVersion: v2\nversion: '0.4.0'\n",
+			want:      "0.4.0",
+		},
+		{
+			name:      "no version",
+			chartYaml: "apiVersion: v2\nname: my-chart\n",
+			want:      "",
+		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "Chart.yaml"), []byte(tt.chartYaml), 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-	m := &helm.Module{}
-	result := m.Detect(dir)
+			result := (&helm.Module{}).Detect(dir)
 
-	if result.SuggestedConfig.Version != "1.2.3" {
-		t.Errorf("Version = %q, want %q", result.SuggestedConfig.Version, "1.2.3")
-	}
-
-	foundVersion := false
-	for _, e := range result.Evidence {
-		if strings.Contains(e, "1.2.3") {
-			foundVersion = true
-		}
-	}
-	if !foundVersion {
-		t.Error("evidence should mention the detected version")
+			if got := result.SuggestedConfig.Extras["chart_version"]; got != tt.want {
+				t.Errorf("Extras[chart_version] = %q, want %q", got, tt.want)
+			}
+			// The chart version is not the Helm tool version.
+			if result.SuggestedConfig.Version != "" {
+				t.Errorf("Version = %q, want empty", result.SuggestedConfig.Version)
+			}
+			if tt.want == "" {
+				return
+			}
+			wantEvidence := "chart version " + tt.want
+			if !slices.Contains(result.Evidence, wantEvidence) {
+				t.Errorf("evidence %v should contain %q", result.Evidence, wantEvidence)
+			}
+		})
 	}
 }
 
@@ -131,22 +168,141 @@ func TestDevenvNixFragment(t *testing.T) {
 	}
 }
 
+// TestDenyRules covers W126 with Claude Code's own matching semantics:
+// cluster-changing, code-running, lock-bypassing and secret-printing helm
+// subcommands are denied, including after global flags, while read-only
+// commands stay allowed.
 func TestDenyRules(t *testing.T) {
-	m := &helm.Module{}
-	rules := m.DenyRules(ecosystem.ModuleConfig{})
-
-	if len(rules) != 2 {
-		t.Fatalf("DenyRules() returned %d rules, want 2", len(rules))
+	t.Parallel()
+	rules := (&helm.Module{}).DenyRules(ecosystem.ModuleConfig{})
+	matches := func(cmd string) bool {
+		return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesBashRule(r, cmd) })
 	}
-
-	expected := []string{
-		"Bash(helm install *)",
-		"Bash(helm upgrade *)",
+	denied := []string{
+		"helm install api ./charts/api",
+		"helm --kube-context prod install api ./charts/api",
+		"helm -n prod upgrade api ./charts/api",
+		"helm upgrade --install api .",
+		"helm --kube-context prod uninstall api",
+		"helm delete api",
+		"helm rollback api 1",
+		"helm plugin install https://github.com/example/helm-x",
+		"helm dependency update",
+		"helm dep update charts/api",
+		"helm repo add example https://charts.example.com",
+		"helm get values api --all",
+		"helm -n prod get manifest api",
+		"helm un api",
+		"helm del api",
+		"helm dep up charts/api",
+		"helm dependencies update",
+		"helm dependency up",
+		"helm plugin add https://github.com/example/helm-x",
+		"helm plugin up x",
+		"env HELM_DEBUG=1 helm install api .",
+		"env helm --kube-context prod upgrade api .",
+		"kubectl config view --raw",
+		"kubectl config view --minify --raw",
+		"cat ~/.kube/config",
 	}
-	for i, rule := range rules {
-		if rule != expected[i] {
-			t.Errorf("rules[%d] = %q, want %q", i, rule, expected[i])
+	allowed := []string{
+		"helm lint charts/api",
+		"helm template . --set install=true",
+		"helm dependency build",
+		"helm list -n prod",
+		"helm plugin list",
+		"helm get notes api",
+		"helm repo list",
+		"helm dep build",
+		"helm lint charts/uninstaller",
+		"kubectl config view",
+		"kubectl get pods",
+	}
+	for _, cmd := range denied {
+		if !matches(cmd) {
+			t.Errorf("no deny rule blocks %q", cmd)
 		}
+	}
+	for _, cmd := range allowed {
+		if matches(cmd) {
+			t.Errorf("deny rules over-block %q", cmd)
+		}
+	}
+}
+
+// TestReadDenyRules covers W132: kubeconfig and helm registry/repository
+// credentials are read-denied.
+func TestReadDenyRules(t *testing.T) {
+	t.Parallel()
+	rules := (&helm.Module{}).ReadDenyRules(ecosystem.ModuleConfig{})
+	for _, want := range []string{"~/.kube/*", "~/.config/helm/registry/*", "~/.config/helm/repositories.yaml"} {
+		if !slices.Contains(rules, want) {
+			t.Errorf("ReadDenyRules missing %q: %v", want, rules)
+		}
+	}
+}
+
+// TestDetect_ChartSubdirectories covers W129: charts under charts/<name>/
+// are detected and linted where they are.
+func TestDetect_ChartSubdirectories(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		files     []string
+		wantFound bool
+		wantConf  ecosystem.Confidence
+		wantDirs  string
+		wantLint  string
+	}{
+		{
+			name:      "charts layout",
+			files:     []string{"charts/api/Chart.yaml", "charts/worker/Chart.yaml"},
+			wantFound: true,
+			wantConf:  ecosystem.ConfidenceCertain,
+			wantDirs:  "charts/api,charts/worker",
+			wantLint:  "helm lint charts/api charts/worker",
+		},
+		{
+			name:      "root chart only",
+			files:     []string{"Chart.yaml"},
+			wantFound: true,
+			wantConf:  ecosystem.ConfidenceCertain,
+			wantLint:  "helm lint",
+		},
+		{
+			name:      "lock file in subdirectory",
+			files:     []string{"deploy/app/Chart.lock"},
+			wantFound: true,
+			wantConf:  ecosystem.ConfidenceProbable,
+			wantLint:  "helm lint",
+		},
+		{name: "vendored chart ignored", files: []string{"vendor/x/Chart.yaml"}, wantConf: ecosystem.ConfidenceAbsent, wantLint: "helm lint"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for _, f := range tt.files {
+				full := filepath.Join(dir, filepath.FromSlash(f))
+				if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(full, []byte("apiVersion: v2\nname: x\nversion: 0.1.0\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result := (&helm.Module{}).Detect(dir)
+			if result.Detected != tt.wantFound || result.Confidence != tt.wantConf {
+				t.Fatalf("Detect = (%v, %v), want (%v, %v)", result.Detected, result.Confidence, tt.wantFound, tt.wantConf)
+			}
+			if got := result.SuggestedConfig.Extra(helm.ExtraChartDirs, ""); got != tt.wantDirs {
+				t.Errorf("%s = %q, want %q", helm.ExtraChartDirs, got, tt.wantDirs)
+			}
+			hooks := (&helm.Module{}).PreCommitHooks(result.SuggestedConfig)
+			if hooks[0].Entry != tt.wantLint {
+				t.Errorf("helmlint entry = %q, want %q", hooks[0].Entry, tt.wantLint)
+			}
+		})
 	}
 }
 

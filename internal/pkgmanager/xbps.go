@@ -23,7 +23,12 @@ func (x *Xbps) Available() bool {
 
 func (x *Xbps) NeedsElevation() bool { return true }
 
+// InstallArgs returns the command Install runs, without sudo.
+func (x *Xbps) InstallArgs(packages ...string) (string, []string) {
+	return "xbps-install", append([]string{"-y"}, packages...)
+}
+
 func (x *Xbps) Install(ctx context.Context, packages ...string) error {
-	args := append([]string{"-y"}, packages...)
-	return x.runner.Run(ctx, "xbps-install", args...)
+	bin, args := x.InstallArgs(packages...)
+	return x.runner.Run(ctx, bin, args...)
 }

@@ -1,7 +1,9 @@
 package generate
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -32,11 +34,26 @@ func (a FileAction) String() string {
 
 // FileResult records the outcome of writing a single file.
 type FileResult struct {
-	Path      string
-	Action    FileAction
-	Error     error
+	Path   string
+	Action FileAction
+	Error  error
+	// PrevHash is the content hash of the file that was on disk before this
+	// write (empty when the file was new or could not be read).
 	PrevHash  string
 	BytesSize int
+	// DiskContent is the exact content on disk after a created, updated or
+	// skipped (already identical) file was processed. It differs from the
+	// generated content when a merge preserved user content. Nil for dry
+	// runs and failures.
+	DiskContent []byte
+	// Mode is the permission mode written (or, for a dry run, that would be
+	// written). It can be narrower than the generated mode when the existing
+	// file was more restrictive.
+	Mode os.FileMode
+	// SidecarPath is set (relative to the project root) when a ManualMerge
+	// file with local changes was left untouched and the generated content
+	// was written beside it for manual merging.
+	SidecarPath string
 }
 
 // WriteResult aggregates the outcomes of writing a batch of files.
@@ -50,8 +67,14 @@ type WriteResult struct {
 
 // Summary returns a human-readable summary of the write operation.
 func (r WriteResult) Summary() string {
-	return fmt.Sprintf("Created %d, updated %d, skipped %d, failed %d",
+	s := fmt.Sprintf("Created %d, updated %d, skipped %d, failed %d",
 		r.Created, r.Updated, r.Skipped, r.Failed)
+	for _, fr := range r.Files {
+		if fr.SidecarPath != "" {
+			s += fmt.Sprintf("\n  %s has local changes; merge %s into it manually", fr.Path, fr.SidecarPath)
+		}
+	}
+	return s
 }
 
 // HasFailures returns true if any files failed to write.
@@ -70,20 +93,41 @@ func (r WriteResult) FailedFiles() []FileResult {
 	return failed
 }
 
-// SuccessfulFiles filters the original generated files list down to only those
-// that were actually written to disk (ActionCreated or ActionUpdated).
+// SuccessfulFiles filters the generated files list down to those now present
+// on disk with their intended content, ready for state.RecordFiles: files
+// created or updated, and files skipped because they were already identical.
+// A file kept as the user's (Skip strategy) or left for a manual merge (a
+// sidecar was written) is not included: its disk content is not qsdev output.
+//
+// When a merge wrote bytes that differ from the generated content, the
+// returned entry's Content is the bytes actually on disk (so the recorded
+// hash matches the file) and BaseContent keeps the generated content as the
+// three-way merge base for the next update. Each returned file carries the
+// mode actually written, so recorded state agrees with the disk.
 func (r WriteResult) SuccessfulFiles(allFiles []types.GeneratedFile) []types.GeneratedFile {
-	written := make(map[string]bool, r.Created+r.Updated)
+	done := make(map[string]FileResult, r.Created+r.Updated+r.Skipped)
 	for _, fr := range r.Files {
-		if fr.Action == ActionCreated || fr.Action == ActionUpdated {
-			written[fr.Path] = true
+		switch {
+		case fr.Action == ActionCreated, fr.Action == ActionUpdated:
+			done[fr.Path] = fr
+		case fr.Action == ActionSkipped && fr.DiskContent != nil:
+			done[fr.Path] = fr
 		}
 	}
-	result := make([]types.GeneratedFile, 0, len(written))
+	result := make([]types.GeneratedFile, 0, len(done))
 	for _, f := range allFiles {
-		if written[f.Path] {
-			result = append(result, f)
+		fr, ok := done[f.Path]
+		if !ok {
+			continue
 		}
+		if fr.DiskContent != nil && !bytes.Equal(fr.DiskContent, f.Content) {
+			f.BaseContent = f.Content
+			f.Content = fr.DiskContent
+		}
+		if fr.Mode != 0 {
+			f.Mode = fr.Mode
+		}
+		result = append(result, f)
 	}
 	return result
 }
@@ -102,17 +146,21 @@ type PipelineOptions struct {
 	DryRun       bool
 	SkipValidate bool
 	ProjectRoot  string
-	// SectionMergeFunc, when non-nil, is called for files with Strategy
-	// SectionMarker that already exist on disk. It receives the existing
-	// and new content and returns the merged result. On error the pipeline
-	// falls through to a full overwrite.
+	// Force records that the user explicitly asked to overwrite existing
+	// configuration (e.g. --force). It lets a ManualMerge file with local
+	// changes be replaced instead of getting a sidecar. It never overrides
+	// Skip, whose files are only created when absent.
+	Force bool
+	// SectionMergeFunc overrides the merge for existing files with Strategy
+	// SectionMarker. It receives the existing and new content and returns the
+	// merged result. When nil, merge.SectionMarkers is used. On error the
+	// file is reported as failed and left untouched.
 	SectionMergeFunc func(existing, newGenerated []byte) ([]byte, error)
-	// ThreeWayMergeFunc, when non-nil, is called for files with Strategy
-	// ThreeWayMerge that already exist on disk. It receives the relative path,
-	// the on-disk content (theirs), and the newly generated content (ours),
-	// with no recorded base (this is the create path). It returns the merged
-	// result; on error the pipeline falls through to a full overwrite. This is
-	// what preserves user-owned top-level keys (e.g. settings.json "env") when
-	// init overwrites an existing, unrecorded file.
+	// ThreeWayMergeFunc overrides the merge for existing files with Strategy
+	// ThreeWayMerge. It receives the relative path, the on-disk content
+	// (theirs), and the newly generated content (ours), with no recorded base
+	// (this is the create path). When nil, merge.MergeOnCreate is used, which
+	// preserves user-owned keys (e.g. settings.json "env"). On error the file
+	// is reported as failed and left untouched.
 	ThreeWayMergeFunc func(relPath string, theirs, ours []byte) ([]byte, error)
 }

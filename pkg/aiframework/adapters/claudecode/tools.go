@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	ccaddon "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
@@ -13,12 +14,16 @@ import (
 
 // EnforcementTier reports that Claude Code enforces security policy via
 // PreToolUse hooks rather than a kernel-level sandbox.
-func (a *Adapter) EnforcementTier() aiframework.EnforcementTier { return aiframework.TierHook }
+func (a *Adapter) EnforcementTier() aiframework.EnforcementTier {
+	return aiframework.TierHook
+}
 
-// TranslatePermissions renders the agnostic permission policy into a real
-// Claude Code .claude/settings.json by delegating to GenerateSettings (which
-// applies the preset, ecosystem, and base deny rules) and then merging the
-// policy's explicit allow/deny/ask rules onto the rendered permissions block.
+// TranslatePermissions renders the framework-agnostic permission policy into a
+// real Claude Code .claude/settings.json via GenerateSettings (which applies
+// the preset, ecosystem, and base deny rules and the always-on hooks), then
+// merges the policy's explicit allow/deny/ask rules onto the rendered
+// permissions block so a translated deny policy is actually enforced. A nil
+// policy renders the configured defaults.
 func (a *Adapter) TranslatePermissions(ctx context.Context, policy *aiframework.PermissionPolicy) (*aiframework.PermissionArtifacts, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -28,7 +33,7 @@ func (a *Adapter) TranslatePermissions(ctx context.Context, policy *aiframework.
 	}
 
 	cfg := a.cfg
-	answers := types.WizardAnswers{ClaudeCode: true}
+	answers := baseAnswers()
 	if policy.Preset != "" {
 		cfg.DefaultPermissions = ccaddon.PermissionPreset(policy.Preset)
 		answers.PermissionLevel = policy.Preset
@@ -40,7 +45,9 @@ func (a *Adapter) TranslatePermissions(ctx context.Context, policy *aiframework.
 	}
 
 	merged, err := mergeRulesIntoSettings(base,
-		rulePatterns(policy.AllowRules), rulePatterns(policy.DenyRules), rulePatterns(policy.AskRules))
+		aiframework.RulePatterns(policy.AllowRules),
+		aiframework.RulePatterns(policy.DenyRules),
+		aiframework.RulePatterns(policy.AskRules))
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +67,7 @@ func (a *Adapter) TranslateIgnorePatterns(ctx context.Context, patterns []aifram
 		return nil, err
 	}
 
-	base, err := ccaddon.GenerateSettings(types.WizardAnswers{ClaudeCode: true}, a.registry, a.cfg)
+	base, err := ccaddon.GenerateSettings(baseAnswers(), a.registry, a.cfg)
 	if err != nil {
 		return nil, fmt.Errorf("rendering claude code settings for ignore patterns: %w", err)
 	}
@@ -99,12 +106,31 @@ func (a *Adapter) InjectCredentials(ctx context.Context, scope *aiframework.Cred
 
 // ReportGaps enumerates, for each requested deny rule, the gap between the
 // kernel-level isolation the rule ideally wants and the hook-level enforcement
-// Claude Code actually provides, delegating to the addon's gap analysis.
+// Claude Code actually provides. A nil policy has no gaps.
 func (a *Adapter) ReportGaps(ctx context.Context, policy *aiframework.PermissionPolicy) []aiframework.EnforcementGap {
-	if err := ctx.Err(); err != nil {
+	if ctx.Err() != nil || policy == nil {
 		return nil
 	}
-	return a.addon.ReportGaps(ctx, policy)
+	var gaps []aiframework.EnforcementGap
+	for _, rule := range policy.DenyRules {
+		gaps = append(gaps, aiframework.EnforcementGap{
+			Rule:         rule,
+			RequiredTier: aiframework.TierKernel,
+			ActualTier:   aiframework.TierHook,
+			Description:  "Claude Code enforces via PreToolUse hooks, not kernel-level sandboxing",
+			Mitigation:   "enable external bubblewrap wrapping via qsdev sandbox exec",
+		})
+	}
+	return gaps
+}
+
+// baseAnswers returns the answers for a standalone settings.json render, with
+// the always-on Claude Code hooks applied so the rendered file never lacks
+// self-protection.
+func baseAnswers() types.WizardAnswers {
+	answers := types.WizardAnswers{ClaudeCode: true}
+	answers.ApplyClaudeHookDefaults()
+	return answers
 }
 
 // mergeRulesIntoSettings parses a rendered settings.json, unions the supplied
@@ -112,19 +138,59 @@ func (a *Adapter) ReportGaps(ctx context.Context, policy *aiframework.Permission
 // preserved), and re-encodes it while preserving the file's path, mode, and
 // merge strategy.
 func mergeRulesIntoSettings(base *types.GeneratedFile, allow, deny, ask []string) (*types.GeneratedFile, error) {
+	return editSettings(base, func(settings *ccaddon.SettingsJSON) {
+		if len(allow) > 0 {
+			settings.Permissions.Allow = sliceutil.Dedup(append(settings.Permissions.Allow, allow...))
+		}
+		if len(deny) > 0 {
+			settings.Permissions.Deny = sliceutil.Dedup(append(settings.Permissions.Deny, deny...))
+		}
+		if len(ask) > 0 {
+			settings.Permissions.Ask = sliceutil.Dedup(append(settings.Permissions.Ask, ask...))
+		}
+	})
+}
+
+// applySandboxPolicy merges a framework-agnostic sandbox policy into the
+// rendered settings.json sandbox block (Claude Code's schema): writable paths
+// become filesystem.allowWrite, read-only paths filesystem.denyWrite, denied
+// paths both filesystem.denyRead and denyWrite, and allowed network
+// destinations network.allowedDomains. Claude Code's sandbox expresses
+// network access only as an allow list, so a policy with a network deny list
+// is rejected rather than silently rendered without it.
+func applySandboxPolicy(base *types.GeneratedFile, policy *aiframework.SandboxPolicy) (*types.GeneratedFile, error) {
+	if len(policy.NetworkDenied) > 0 {
+		return nil, fmt.Errorf("claude code sandbox cannot express network deny rules %v: declare allowed destinations instead", policy.NetworkDenied)
+	}
+	return editSettings(base, func(settings *ccaddon.SettingsJSON) {
+		if settings.Sandbox == nil {
+			settings.Sandbox = &ccaddon.SandboxConfig{}
+		}
+		sb := settings.Sandbox
+		if sb.Filesystem == nil {
+			sb.Filesystem = &ccaddon.SandboxFilesystem{}
+		}
+		fs := sb.Filesystem
+		fs.AllowWrite = sliceutil.Dedup(append(fs.AllowWrite, policy.WritablePaths...))
+		fs.DenyWrite = sliceutil.Dedup(slices.Concat(fs.DenyWrite, policy.ReadOnlyPaths, policy.DeniedPaths))
+		fs.DenyRead = sliceutil.Dedup(append(fs.DenyRead, policy.DeniedPaths...))
+		if len(policy.NetworkAllowed) > 0 {
+			if sb.Network == nil {
+				sb.Network = &ccaddon.SandboxNetwork{}
+			}
+			sb.Network.AllowedDomains = sliceutil.Dedup(append(sb.Network.AllowedDomains, policy.NetworkAllowed...))
+		}
+	})
+}
+
+// editSettings parses a rendered settings.json, applies edit, and re-encodes
+// it while preserving the file's path, mode, and merge strategy.
+func editSettings(base *types.GeneratedFile, edit func(*ccaddon.SettingsJSON)) (*types.GeneratedFile, error) {
 	var settings ccaddon.SettingsJSON
 	if err := json.Unmarshal(base.Content, &settings); err != nil {
 		return nil, fmt.Errorf("parsing rendered settings.json: %w", err)
 	}
-	if len(allow) > 0 {
-		settings.Permissions.Allow = sliceutil.Dedup(append(settings.Permissions.Allow, allow...))
-	}
-	if len(deny) > 0 {
-		settings.Permissions.Deny = sliceutil.Dedup(append(settings.Permissions.Deny, deny...))
-	}
-	if len(ask) > 0 {
-		settings.Permissions.Ask = sliceutil.Dedup(append(settings.Permissions.Ask, ask...))
-	}
+	edit(&settings)
 
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {

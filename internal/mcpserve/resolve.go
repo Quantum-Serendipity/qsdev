@@ -6,12 +6,13 @@ import (
 	"path/filepath"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/container"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
 // Project-root resolution environment variables, consulted in this order.
 const (
-	envProjectRoot     = "QSDEV_PROJECT_ROOT"
+	envProjectRoot     = container.EnvProjectRoot
 	envGdevProjectRoot = "GDEV_PROJECT_ROOT"
 )
 
@@ -26,26 +27,25 @@ var fallbackMarkers = []string{".git", "go.mod", "package.json"}
 type ResolveOptions struct {
 	// FlagRoot is the value of an explicit --project-root flag (empty if unset).
 	FlagRoot string
-	// RootsDirs are directories reported by the MCP roots protocol. This list is
-	// often empty: many clients do not implement roots, or return an
-	// "unsupported method" (-32601) error, which the caller should treat as an
-	// empty list rather than a failure.
-	RootsDirs []string
 	// Getenv reads environment variables; defaults to os.Getenv when nil.
 	Getenv func(string) string
 	// Getwd reports the current working directory; defaults to os.Getwd when nil.
 	Getwd func() (string, error)
 }
 
-// ResolveProjectRoot determines the project root for an MCP session.
+// ResolveProjectRoot determines the project root the server operates within. It
+// runs once at process start, before any client connects, so the root is fixed
+// for the server's lifetime and shared by every session (the Guardrail policy
+// and project context are derived from it). The MCP roots protocol is therefore
+// not consulted; a client that needs a different workspace launches the server
+// with --project-root or QSDEV_PROJECT_ROOT.
 //
 // Precedence for choosing the START directory:
 //
 //  1. --project-root flag, when set. An explicitly-passed flag is a deliberate
 //     operator override and therefore wins over every auto-detection source.
-//  2. The first MCP roots-protocol directory, when any were reported.
-//  3. The QSDEV_PROJECT_ROOT environment variable, then GDEV_PROJECT_ROOT.
-//  4. The current working directory (os.Getwd).
+//  2. The QSDEV_PROJECT_ROOT environment variable, then GDEV_PROJECT_ROOT.
+//  3. The current working directory (os.Getwd).
 //
 // From the chosen start directory the resolver walks UP the tree to the nearest
 // directory containing .qsdev.yaml (the definitive qsdev project marker). If no
@@ -67,7 +67,7 @@ func ResolveProjectRoot(o ResolveOptions) (string, error) {
 		getwd = os.Getwd
 	}
 
-	start, err := pickStartDir(o.FlagRoot, o.RootsDirs, getenv, getwd)
+	start, err := pickStartDir(o.FlagRoot, getenv, getwd)
 	if err != nil {
 		return "", err
 	}
@@ -87,14 +87,9 @@ func ResolveProjectRoot(o ResolveOptions) (string, error) {
 }
 
 // pickStartDir applies the start-directory precedence chain.
-func pickStartDir(flagRoot string, rootsDirs []string, getenv func(string) string, getwd func() (string, error)) (string, error) {
+func pickStartDir(flagRoot string, getenv func(string) string, getwd func() (string, error)) (string, error) {
 	if flagRoot != "" {
 		return flagRoot, nil
-	}
-	for _, d := range rootsDirs {
-		if d != "" {
-			return d, nil
-		}
 	}
 	if v := getenv(envProjectRoot); v != "" {
 		return v, nil

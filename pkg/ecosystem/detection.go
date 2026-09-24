@@ -2,9 +2,11 @@ package ecosystem
 
 import (
 	"bufio"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -158,7 +160,9 @@ func parseOriginURL(configPath string) string {
 		if inOrigin && strings.HasPrefix(line, "url") {
 			parts := strings.SplitN(line, "=", 2)
 			if len(parts) == 2 {
-				return strings.TrimSpace(parts[1])
+				// Never carry embedded credentials (CI token URLs) into
+				// detection results, which are persisted to answer files.
+				return types.RedactURLCredentials(strings.TrimSpace(parts[1]))
 			}
 		}
 	}
@@ -183,17 +187,17 @@ func applyEnvironment(p *types.DetectedProject, env EnvironmentState) {
 // well-known fields of types.DetectedProject. Modules whose names do not
 // correspond to a dedicated field are recorded in the Ecosystems map.
 func aggregateDetections(results map[string]DetectionResult) types.DetectedProject {
-	p := types.DetectedProject{
-		Ecosystems: make(map[string]bool),
-	}
+	p := types.NewDetectedProject()
 
 	for name, dr := range results {
 		if !dr.Detected {
 			continue
 		}
 
-		// Record every detected ecosystem in the extensible map.
+		// Record every detected ecosystem in the extensible map, along with
+		// the module's suggested configuration so defaults keep it.
 		p.Ecosystems[name] = true
+		recordSuggestion(&p, name, dr)
 
 		// Populate well-known fields for modules that have dedicated struct fields.
 		switch name {
@@ -249,4 +253,35 @@ func aggregateDetections(results map[string]DetectionResult) types.DetectedProje
 	}
 
 	return p
+}
+
+// recordSuggestion carries a detected module's confidence and its full
+// SuggestedConfig (version, package manager and extras) into p, so the
+// LanguageChoice built for the module sees everything its own Detect
+// learned rather than only the few fields DetectedProject names explicitly.
+func recordSuggestion(p *types.DetectedProject, name string, dr DetectionResult) {
+	if dr.Confidence == ConfidenceProbable {
+		if p.ProbableEcosystems == nil {
+			p.ProbableEcosystems = make(map[string]bool)
+		}
+		p.ProbableEcosystems[name] = true
+	}
+
+	sc := dr.SuggestedConfig
+	if sc.Version == "" && sc.PackageManager == "" && len(sc.Extras) == 0 {
+		return
+	}
+	extras := make([]string, 0, len(sc.Extras))
+	for _, k := range slices.Sorted(maps.Keys(sc.Extras)) {
+		extras = append(extras, k+"="+sc.Extras[k])
+	}
+	if p.Suggested == nil {
+		p.Suggested = make(map[string]types.LanguageChoice)
+	}
+	p.Suggested[name] = types.LanguageChoice{
+		Name:           name,
+		Version:        sc.Version,
+		PackageManager: sc.PackageManager,
+		Extras:         extras,
+	}
 }

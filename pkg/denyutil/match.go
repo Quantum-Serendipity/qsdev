@@ -73,10 +73,16 @@ func GlobMatchArgs(denyArgs, opArgs string) bool {
 		denyArgs = strings.TrimRight(denyArgs[:len(denyArgs)-1], " \t") + "*"
 	}
 
+	// The first segment is anchored at the start and the last at the end; the
+	// ones between match leftmost, which is optimal because a later '*' can
+	// absorb whatever they leave. The last segment is "" when denyArgs ends in
+	// '*', and it must be matched against the end rather than at its first
+	// occurrence, or "* --force" would miss "git push --force origin --force".
 	segments := strings.Split(denyArgs, "*")
+	last := len(segments) - 1
 
 	pos := 0
-	for i, seg := range segments {
+	for i, seg := range segments[:last] {
 		if seg == "" {
 			continue
 		}
@@ -89,8 +95,5 @@ func GlobMatchArgs(denyArgs, opArgs string) bool {
 		}
 		pos += idx + len(seg)
 	}
-	if !strings.HasSuffix(denyArgs, "*") {
-		return pos == len(opArgs)
-	}
-	return true
+	return strings.HasSuffix(opArgs[pos:], segments[last])
 }

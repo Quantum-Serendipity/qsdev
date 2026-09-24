@@ -100,6 +100,7 @@ func TestCatalogLockFileRecognized(t *testing.T) {
 		{"Cargo.lock", true, "crates.io", "preserved"},
 		{"poetry.lock", true, "PyPI", "preserved"},
 		{"uv.lock", true, "PyPI", "preserved"},
+		{"pdm.lock", true, "PyPI", "newly covered"},
 		{"package-lock.json", true, "npm", "preserved"},
 		{"go.sum", true, "Go", "preserved"},
 		{"requirements.txt", true, "PyPI", "preserved"},
@@ -139,6 +140,40 @@ func TestDetectLockFilePrefersDedicatedLock(t *testing.T) {
 	}
 	if lf.Name() != "poetry.lock" {
 		t.Errorf("detected %q, want poetry.lock (dedicated lock files take priority)", lf.Name())
+	}
+}
+
+// TestDetectLockFilesCoversEveryEcosystem verifies polyglot detection returns
+// one lock file per ecosystem, preferring dedicated lock files within one.
+func TestDetectLockFilesCoversEveryEcosystem(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, name := range []string{"go.sum", "package-lock.json", "requirements.txt", "poetry.lock"} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	got := make(map[string]string)
+	for _, d := range DetectLockFiles(dir) {
+		if prev, dup := got[d.Ecosystem()]; dup {
+			t.Errorf("ecosystem %s detected twice (%s and %s)", d.Ecosystem(), prev, d.Name())
+		}
+		got[d.Ecosystem()] = d.Name()
+		if d.Path != filepath.Join(dir, d.Name()) {
+			t.Errorf("path = %q, want it under %q", d.Path, dir)
+		}
+	}
+	want := map[string]string{"Go": "go.sum", "npm": "package-lock.json", "PyPI": "poetry.lock"}
+	if len(got) != len(want) {
+		t.Errorf("detected %v, want %v", got, want)
+	}
+	for eco, name := range want {
+		if got[eco] != name {
+			t.Errorf("ecosystem %s: detected %q, want %q", eco, got[eco], name)
+		}
+	}
+	if files := DetectLockFiles(t.TempDir()); len(files) != 0 {
+		t.Errorf("empty dir detected %v, want none", files)
 	}
 }
 
@@ -222,6 +257,39 @@ version = "2024.2.2"
 	}
 }
 
+// TestParseTOMLPackagesPDM confirms pdm.lock (PyPI) parses with the shared
+// [[package]] TOML parser, ignoring its [metadata] table and per-package files.
+func TestParseTOMLPackagesPDM(t *testing.T) {
+	t.Parallel()
+	const body = `[metadata]
+groups = ["default"]
+strategy = ["inherit_metadata"]
+lock_version = "4.5.0"
+
+[[package]]
+name = "requests"
+version = "2.31.0"
+requires_python = ">=3.7"
+dependencies = ["certifi>=2017.4.17"]
+files = [
+    {file = "requests-2.31.0-py3-none-any.whl", hash = "sha256:00"},
+]
+
+[[package]]
+name = "certifi"
+version = "2024.2.2"
+`
+	_, path := writeFile(t, "pdm.lock", body)
+	pkgs, err := parseTOMLPackages(path, "PyPI")
+	if err != nil {
+		t.Fatalf("parseTOMLPackages: %v", err)
+	}
+	want := []string{"certifi@2024.2.2 (PyPI)", "requests@2.31.0 (PyPI)"}
+	if got := pkgKeys(pkgs); !equalKeys(got, want) {
+		t.Errorf("packages = %v, want %v", got, want)
+	}
+}
+
 // TestParseTOMLPackagesInvalid proves malformed TOML surfaces a wrapped decode
 // error rather than silently yielding partial results.
 func TestParseTOMLPackagesInvalid(t *testing.T) {
@@ -278,9 +346,10 @@ golang.org/x/sys v0.1.0/go.mod h1:ghi=
 		if err != nil {
 			t.Fatalf("parseGoSum: %v", err)
 		}
+		// golang.org/x/sys v0.1.0 has only a /go.mod line: it is module graph
+		// metadata, never built, so it must not be queried.
 		want := []string{
 			"github.com/pkg/errors@0.9.1 (Go)",
-			"golang.org/x/sys@0.1.0 (Go)",
 		}
 		if got := pkgKeys(pkgs); !equalKeys(got, want) {
 			t.Errorf("packages = %v, want %v", got, want)

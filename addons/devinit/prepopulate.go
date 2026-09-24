@@ -3,8 +3,10 @@ package devinit
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -18,86 +20,11 @@ func MapDetectionToDefaults(detected types.DetectedProject, projectRoot string) 
 		Detected:    detected,
 	}
 
-	// --- Language mappings ---
-
-	if detected.HasGoMod {
-		answers.Languages = append(answers.Languages, types.LanguageChoice{
-			Name:    "go",
-			Version: detected.GoVersion,
-		})
-	}
-
-	// CRITICAL: detection sets Ecosystems["node"] but the canonical name is "javascript"
-	if detected.HasPackageJSON {
-		answers.Languages = append(answers.Languages, types.LanguageChoice{
-			Name:           "javascript",
-			Version:        detected.NodeVersion,
-			PackageManager: detected.PackageManager,
-		})
-	}
-
-	if detected.HasPyProject {
-		answers.Languages = append(answers.Languages, types.LanguageChoice{
-			Name:    "python",
-			Version: detected.PythonVersion,
-		})
-	}
-
-	if detected.HasCargoToml {
-		answers.Languages = append(answers.Languages, types.LanguageChoice{
-			Name: "rust",
-		})
-	}
-
-	if detected.HasPomXML || detected.HasBuildGradle {
-		jc := types.LanguageChoice{Name: "java"}
-		switch {
-		case detected.HasPomXML && detected.HasBuildGradle:
-			jc.Extras = []string{"build_tool=both"}
-		case detected.HasPomXML:
-			jc.Extras = []string{"build_tool=maven"}
-		case detected.HasBuildGradle:
-			jc.Extras = []string{"build_tool=gradle"}
-		}
-		answers.Languages = append(answers.Languages, jc)
-	}
-
-	if detected.HasCsproj {
-		answers.Languages = append(answers.Languages, types.LanguageChoice{
-			Name: "dotnet",
-		})
-	}
-
-	if detected.HasDockerfile {
-		dc := types.LanguageChoice{Name: "container"}
-		if detected.ContainerRuntime != "" {
-			dc.Extras = append(dc.Extras, "container_runtime="+detected.ContainerRuntime)
-		}
-		if detected.OSFamily != "" {
-			dc.Extras = append(dc.Extras, "os_family="+detected.OSFamily)
-		}
-		answers.Languages = append(answers.Languages, dc)
-	}
-
-	if detected.HasTerraform {
-		answers.Languages = append(answers.Languages, types.LanguageChoice{
-			Name: "terraform",
-		})
-	}
-
-	// Tier 2-4 ecosystems use the forward-compatible Ecosystems map.
-	ecosystemLanguages := []string{
-		"php", "ruby", "scala", "cpp", "helm", "ansible", "shell",
-		"elixir", "dart", "swift", "haskell", "clojure", "bazel", "nix",
-		"perl", "r", "lua", "zig", "powershell",
-	}
-	for _, name := range ecosystemLanguages {
-		if detected.Ecosystems[name] {
-			answers.Languages = append(answers.Languages, types.LanguageChoice{
-				Name: name,
-			})
-		}
-	}
+	// Languages come from the same detection mapping FillDefaults uses, so
+	// the wizard's defaults match what the quick/--yes path generates. Only
+	// registered ecosystem modules are offered (detection-only aliases are
+	// not modules).
+	answers.Languages = registeredLanguages(detected.LanguageChoices())
 
 	// --- Scalar field mappings ---
 
@@ -110,6 +37,17 @@ func MapDetectionToDefaults(detected types.DetectedProject, projectRoot string) 
 	}
 
 	return answers
+}
+
+// registeredLanguages keeps the language choices that name a registered
+// ecosystem module, in order. Deriving the check from the registry means a new
+// module needs no change here.
+func registeredLanguages(langs []types.LanguageChoice) []types.LanguageChoice {
+	registry := ecosystem.DefaultRegistry()
+	return slices.DeleteFunc(langs, func(l types.LanguageChoice) bool {
+		_, ok := registry.ByName(l.Name)
+		return !ok
+	})
 }
 
 // projectNameFromDetection derives a project name from the detection results.
@@ -128,10 +66,9 @@ func projectNameFromDetection(detected types.DetectedProject, projectRoot string
 // It handles HTTPS URLs (https://github.com/org/repo.git), SSH URLs
 // (git@github.com:org/repo.git), and plain paths.
 func extractRepoName(url string) string {
-	// Remove trailing .git suffix
-	url = strings.TrimSuffix(url, ".git")
-	// Remove trailing slash
+	// Remove trailing slashes first so "repo.git/" still loses its .git suffix.
 	url = strings.TrimRight(url, "/")
+	url = strings.TrimSuffix(url, ".git")
 
 	if url == "" {
 		return ""

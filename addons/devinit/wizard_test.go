@@ -1,7 +1,6 @@
 package devinit_test
 
 import (
-	"os"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -55,8 +54,8 @@ func TestMapFormToAnswers_CustomizePath(t *testing.T) {
 		devinit.WithQuickChoice("customize"),
 		devinit.WithConfirmed(true),
 		devinit.WithSelectedLanguages([]string{"go", "python"}),
-		devinit.WithGoVersion("1.24"),
-		devinit.WithPythonVersion("3.12"),
+		devinit.WithModuleFieldAnswer("go", types.SettingVersion, "1.24"),
+		devinit.WithModuleFieldAnswer("python", types.SettingVersion, "3.12"),
 		devinit.WithSelectedServices([]string{"postgres", "redis"}),
 		devinit.WithDirenv(true),
 		devinit.WithClaudeCode(true),
@@ -195,59 +194,33 @@ func TestMapFormToAnswers_ClaudeDisabled(t *testing.T) {
 	}
 }
 
-func TestIsAccessible_NoEnv(t *testing.T) {
-	origAccessible := os.Getenv("ACCESSIBLE")
-	origNoColor := os.Getenv("NO_COLOR")
-	os.Unsetenv("ACCESSIBLE")
-	os.Unsetenv("NO_COLOR")
-	t.Cleanup(func() {
-		if origAccessible != "" {
-			os.Setenv("ACCESSIBLE", origAccessible)
-		}
-		if origNoColor != "" {
-			os.Setenv("NO_COLOR", origNoColor)
-		}
-	})
-
-	if devinit.ExportIsAccessible() {
-		t.Error("isAccessible() = true, want false when no env vars set")
+func TestIsAccessible(t *testing.T) {
+	tests := []struct {
+		name                     string
+		accessible, noColor, trm string
+		want                     bool
+	}{
+		{name: "no accessibility variables", trm: "xterm-256color", want: false},
+		{name: "ACCESSIBLE set", accessible: "1", trm: "xterm-256color", want: true},
+		// NO_COLOR only disables color (https://no-color.org/); it must not
+		// downgrade the wizard to huh's line-by-line accessible mode.
+		{name: "NO_COLOR set keeps TUI", noColor: "1", trm: "xterm-256color", want: false},
+		{name: "ACCESSIBLE and NO_COLOR set", accessible: "1", noColor: "1", trm: "xterm-256color", want: true},
+		{name: "TERM=dumb", trm: "dumb", want: true},
 	}
-}
 
-func TestIsAccessible_AccessibleEnv(t *testing.T) {
-	origAccessible := os.Getenv("ACCESSIBLE")
-	os.Setenv("ACCESSIBLE", "1")
-	t.Cleanup(func() {
-		if origAccessible != "" {
-			os.Setenv("ACCESSIBLE", origAccessible)
-		} else {
-			os.Unsetenv("ACCESSIBLE")
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// t.Setenv restores each variable's original set-or-unset state
+			// exactly; IsAccessible treats an empty value as unset.
+			t.Setenv("ACCESSIBLE", tt.accessible)
+			t.Setenv("NO_COLOR", tt.noColor)
+			t.Setenv("TERM", tt.trm)
 
-	if !devinit.ExportIsAccessible() {
-		t.Error("isAccessible() = false, want true when ACCESSIBLE is set")
-	}
-}
-
-func TestIsAccessible_NoColorEnv(t *testing.T) {
-	origAccessible := os.Getenv("ACCESSIBLE")
-	origNoColor := os.Getenv("NO_COLOR")
-	os.Unsetenv("ACCESSIBLE")
-	os.Setenv("NO_COLOR", "1")
-	t.Cleanup(func() {
-		if origAccessible != "" {
-			os.Setenv("ACCESSIBLE", origAccessible)
-		}
-		if origNoColor != "" {
-			os.Setenv("NO_COLOR", origNoColor)
-		} else {
-			os.Unsetenv("NO_COLOR")
-		}
-	})
-
-	if !devinit.ExportIsAccessible() {
-		t.Error("isAccessible() = false, want true when NO_COLOR is set")
+			if got := devinit.ExportIsAccessible(); got != tt.want {
+				t.Errorf("isAccessible() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -325,31 +298,5 @@ func TestMapFormToAnswers_NixHardeningGuide(t *testing.T) {
 
 	if !answers.NixHardeningGuide {
 		t.Error("expected NixHardeningGuide=true")
-	}
-}
-
-func TestIsAccessible_TermDumb(t *testing.T) {
-	origTerm := os.Getenv("TERM")
-	origAccessible := os.Getenv("ACCESSIBLE")
-	origNoColor := os.Getenv("NO_COLOR")
-	os.Unsetenv("ACCESSIBLE")
-	os.Unsetenv("NO_COLOR")
-	os.Setenv("TERM", "dumb")
-	t.Cleanup(func() {
-		if origTerm != "" {
-			os.Setenv("TERM", origTerm)
-		} else {
-			os.Unsetenv("TERM")
-		}
-		if origAccessible != "" {
-			os.Setenv("ACCESSIBLE", origAccessible)
-		}
-		if origNoColor != "" {
-			os.Setenv("NO_COLOR", origNoColor)
-		}
-	})
-
-	if !devinit.ExportIsAccessible() {
-		t.Error("isAccessible() = false, want true when TERM=dumb")
 	}
 }

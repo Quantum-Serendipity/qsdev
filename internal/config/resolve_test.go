@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -8,7 +9,7 @@ import (
 
 func TestResolveConfig_OrgDefaultsOnly(t *testing.T) {
 	org := DefaultQsdevConfig()
-	result, err := ResolveConfig(org, nil, nil, nil, false)
+	result, err := ResolveConfig(org, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +31,7 @@ func TestResolveConfig_RegistryProxyPathsSurvives(t *testing.T) {
 		},
 	}
 
-	result, err := ResolveConfig(nil, nil, project, nil, false)
+	result, err := ResolveConfig(nil, project, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +69,7 @@ func TestResolveConfig_RegistryProxyPathsMerge(t *testing.T) {
 		},
 	}
 
-	result, err := ResolveConfig(org, nil, project, nil, false)
+	result, err := ResolveConfig(org, project, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,36 +83,55 @@ func TestResolveConfig_RegistryProxyPathsMerge(t *testing.T) {
 	}
 }
 
-func TestResolveConfig_ProfileOverridesOrg(t *testing.T) {
-	org := DefaultQsdevConfig()
-	profile := &types.QsdevConfig{
-		Security: types.SecurityConfig{Level: "strict"},
+// TestInfraEndpoints_RoundTrip checks the infra profile endpoint fields
+// survive answers -> .qsdev.yaml -> layered resolution -> answers, so a
+// joining teammate generates against the same registry proxy and caches.
+func TestInfraEndpoints_RoundTrip(t *testing.T) {
+	t.Parallel()
+	want := types.InfraConfig{
+		RegistryProxy:     "https://nexus.corp.internal",
+		NixCache:          "https://corp.cachix.org",
+		NixCachePublicKey: "corp.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=",
+		BuildCache:        "turborepo",
+		BuildCacheURL:     "https://turbo.corp.internal",
 	}
-	result, err := ResolveConfig(org, profile, nil, nil, false)
+	cfg := AnswersToConfig(types.WizardAnswers{ProfileName: "startup-github", Infrastructure: want}, "")
+	data, err := MarshalProjectConfig(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Config.Security.Level != "strict" {
-		t.Errorf("expected strict from profile, got %q", result.Config.Security.Level)
+	for _, key := range []string{"nix_cache_public_key:", "build_cache_url:"} {
+		if !strings.Contains(string(data), key) {
+			t.Errorf("written config lacks %s:\n%s", key, data)
+		}
+	}
+	parsed, err := ParseQsdevConfigBytes(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := ResolveConfig(DefaultQsdevConfig(), parsed, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ConfigToAnswers(result.Config, types.DetectedProject{}, t.TempDir()).Infrastructure
+	if got.RegistryProxy != want.RegistryProxy || got.NixCache != want.NixCache || got.NixCachePublicKey != want.NixCachePublicKey ||
+		got.BuildCache != want.BuildCache || got.BuildCacheURL != want.BuildCacheURL {
+		t.Errorf("round-tripped Infrastructure = %+v, want %+v", got, want)
 	}
 }
 
-func TestResolveConfig_ProjectOverridesProfile(t *testing.T) {
+func TestResolveConfig_ProjectOverridesOrg(t *testing.T) {
 	org := DefaultQsdevConfig()
-	profile := &types.QsdevConfig{
-		Security: types.SecurityConfig{Level: "strict"},
-	}
+	org.Security.Level = "strict"
 	project := &types.QsdevConfig{
 		Security: types.SecurityConfig{Level: "enhanced"},
 	}
-	result, err := ResolveConfig(org, profile, project, nil, false)
+	result, err := ResolveConfig(org, project, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Note: project sets "enhanced" but profile set "strict"; however,
-	// security floor enforcement may raise it. Without a Client floor
-	// or project floor enforcement from the project's own level, the
-	// raw merge gives "enhanced" since project overrides profile.
+	// The organization layer is a default, not a floor: without a client
+	// floor the project's own level wins.
 	if result.Config.Security.Level != "enhanced" {
 		t.Errorf("expected enhanced from project override, got %q", result.Config.Security.Level)
 	}
@@ -124,25 +144,25 @@ func TestResolveConfig_LocalOverridesProject(t *testing.T) {
 			PermissionLevel: "standard",
 		},
 	}
+	// A local override may tighten the permission level (loosening is
+	// covered by TestResolveConfig_LocalPermissionLevel).
 	local := &LocalConfig{
 		ClaudeCode: types.ClaudeCodeConfig{
-			PermissionLevel: "permissive",
+			PermissionLevel: "minimal",
 		},
 	}
-	result, err := ResolveConfig(org, nil, project, local, false)
+	result, err := ResolveConfig(org, project, local)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Config.ClaudeCode.PermissionLevel != "permissive" {
-		t.Errorf("expected permissive from local, got %q", result.Config.ClaudeCode.PermissionLevel)
+	if result.Config.ClaudeCode.PermissionLevel != "minimal" {
+		t.Errorf("expected minimal from local, got %q", result.Config.ClaudeCode.PermissionLevel)
 	}
 }
 
-func TestResolveConfig_AllFiveLayers(t *testing.T) {
+func TestResolveConfig_AllLayers(t *testing.T) {
 	org := DefaultQsdevConfig()
-	profile := &types.QsdevConfig{
-		Tools: types.ToolsConfig{Enabled: []string{"gitleaks"}},
-	}
+	org.Tools.Enabled = []string{"gitleaks"}
 	project := &types.QsdevConfig{
 		Languages: []types.LanguageConfig{{Name: "go", Version: "1.22"}},
 		Tools:     types.ToolsConfig{Enabled: []string{"semgrep"}},
@@ -151,7 +171,7 @@ func TestResolveConfig_AllFiveLayers(t *testing.T) {
 		Tools: types.ToolsConfig{Enabled: []string{"changelog"}},
 	}
 
-	result, err := ResolveConfig(org, profile, project, local, true)
+	result, err := ResolveConfig(org, project, local)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,15 +192,10 @@ func TestResolveConfig_AllFiveLayers(t *testing.T) {
 	if len(result.Config.Languages) != 1 || result.Config.Languages[0].Name != "go" {
 		t.Errorf("expected go language from project, got %v", result.Config.Languages)
 	}
-
-	// Traces should be recorded (verbose=true).
-	if len(result.Traces) == 0 {
-		t.Error("expected traces to be recorded in verbose mode")
-	}
 }
 
 func TestResolveConfig_NilLayers(t *testing.T) {
-	result, err := ResolveConfig(nil, nil, nil, nil, false)
+	result, err := ResolveConfig(nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +211,7 @@ func TestResolveConfig_LanguagesReplacement(t *testing.T) {
 	project := &types.QsdevConfig{
 		Languages: []types.LanguageConfig{{Name: "python"}},
 	}
-	result, err := ResolveConfig(org, nil, project, nil, false)
+	result, err := ResolveConfig(org, project, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +227,7 @@ func TestResolveConfig_ServicesReplacement(t *testing.T) {
 	project := &types.QsdevConfig{
 		Services: []types.ServiceConfig{{Name: "redis"}},
 	}
-	result, err := ResolveConfig(org, nil, project, nil, false)
+	result, err := ResolveConfig(org, project, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +243,7 @@ func TestResolveConfig_ToolsEnabledUnion(t *testing.T) {
 	project := &types.QsdevConfig{
 		Tools: types.ToolsConfig{Enabled: []string{"b", "c"}},
 	}
-	result, err := ResolveConfig(org, nil, project, nil, false)
+	result, err := ResolveConfig(org, project, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +266,7 @@ func TestResolveConfig_ToolsDisabledUnion(t *testing.T) {
 	project := &types.QsdevConfig{
 		Tools: types.ToolsConfig{Disabled: []string{"y"}},
 	}
-	result, err := ResolveConfig(org, nil, project, nil, false)
+	result, err := ResolveConfig(org, project, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +292,7 @@ func TestResolveConfig_ToolsConfigDeepMerge(t *testing.T) {
 			},
 		},
 	}
-	result, err := ResolveConfig(org, nil, project, nil, false)
+	result, err := ResolveConfig(org, project, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +319,7 @@ func TestResolveConfig_MCPServersUnion(t *testing.T) {
 			MCPServers: []string{"github"},
 		},
 	}
-	result, err := ResolveConfig(org, nil, project, nil, false)
+	result, err := ResolveConfig(org, project, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +344,7 @@ func TestResolveConfig_SkillsUnion(t *testing.T) {
 			Skills: []string{"security-review"},
 		},
 	}
-	result, err := ResolveConfig(org, nil, project, nil, false)
+	result, err := ResolveConfig(org, project, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +362,7 @@ func TestResolveConfig_SecurityFloorCannotLowerLevel(t *testing.T) {
 	local := &LocalConfig{
 		Security: types.SecurityConfig{Level: "baseline"},
 	}
-	result, err := ResolveConfig(org, nil, project, local, false)
+	result, err := ResolveConfig(org, project, local)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +383,7 @@ func TestResolveConfig_SecurityFloorCanRaiseLevel(t *testing.T) {
 	local := &LocalConfig{
 		Security: types.SecurityConfig{Level: "strict"},
 	}
-	result, err := ResolveConfig(org, nil, project, local, false)
+	result, err := ResolveConfig(org, project, local)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +401,7 @@ func TestResolveConfig_SecurityFloorCannotDisableAgeGating(t *testing.T) {
 	local := &LocalConfig{
 		Security: types.SecurityConfig{AgeGating: boolP(false)},
 	}
-	result, err := ResolveConfig(org, nil, project, local, false)
+	result, err := ResolveConfig(org, project, local)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +428,7 @@ func TestResolveConfig_SecurityFloorCanEnableAgeGating(t *testing.T) {
 	local := &LocalConfig{
 		Security: types.SecurityConfig{AgeGating: boolP(true)},
 	}
-	result, err := ResolveConfig(org, nil, project, local, false)
+	result, err := ResolveConfig(org, project, local)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +451,7 @@ func TestResolveConfig_ClientSecurityLevelOverridesProjectFloor(t *testing.T) {
 	local := &LocalConfig{
 		Security: types.SecurityConfig{Level: "enhanced"},
 	}
-	result, err := ResolveConfig(org, nil, project, local, false)
+	result, err := ResolveConfig(org, project, local)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +473,7 @@ func TestResolveConfig_ClientBlockedMCPPersists(t *testing.T) {
 			BlockedMCP: []string{"evil-server"},
 		},
 	}
-	result, err := ResolveConfig(org, nil, project, nil, false)
+	result, err := ResolveConfig(org, project, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +497,7 @@ func TestResolveConfig_ClientBlockedMCPWildcard(t *testing.T) {
 			AllowedMCP: []string{"github"},
 		},
 	}
-	result, err := ResolveConfig(org, nil, project, nil, false)
+	result, err := ResolveConfig(org, project, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,7 +521,7 @@ func TestResolveConfig_ViolationsRecorded(t *testing.T) {
 			AgeGating: boolP(false),
 		},
 	}
-	result, err := ResolveConfig(org, nil, project, local, false)
+	result, err := ResolveConfig(org, project, local)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -576,7 +591,7 @@ func TestResolveConfig_ComplianceBoolFloor(t *testing.T) {
 			local := &LocalConfig{}
 			tt.localOff(&local.Security)
 
-			result, err := ResolveConfig(org, nil, project, local, false)
+			result, err := ResolveConfig(org, project, local)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -611,7 +626,7 @@ func TestResolveConfig_ProjectBoolFloorStillEnforced(t *testing.T) {
 	local := &LocalConfig{
 		Security: types.SecurityConfig{ScriptBlocking: boolP(false)},
 	}
-	result, err := ResolveConfig(org, nil, project, local, false)
+	result, err := ResolveConfig(org, project, local)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -637,7 +652,7 @@ func TestResolveConfig_NonComplianceBoolUnaffected(t *testing.T) {
 	local := &LocalConfig{
 		Security: types.SecurityConfig{ScriptBlocking: boolP(false)},
 	}
-	result, err := ResolveConfig(org, nil, project, local, false)
+	result, err := ResolveConfig(org, project, local)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -659,7 +674,7 @@ func TestResolveConfig_PointerBoolNilVsFalse(t *testing.T) {
 	// Project does not set age_gating (nil = inherit from org).
 	project := &types.QsdevConfig{}
 
-	result, err := ResolveConfig(org, nil, project, nil, false)
+	result, err := ResolveConfig(org, project, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -671,7 +686,7 @@ func TestResolveConfig_PointerBoolNilVsFalse(t *testing.T) {
 	project2 := &types.QsdevConfig{
 		Security: types.SecurityConfig{AgeGating: boolP(false)},
 	}
-	result2, err := ResolveConfig(org, nil, project2, nil, false)
+	result2, err := ResolveConfig(org, project2, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

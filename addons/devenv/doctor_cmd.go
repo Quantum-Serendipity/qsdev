@@ -4,17 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/container"
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 func doctorCmd() *cobra.Command {
@@ -25,7 +31,10 @@ func doctorCmd() *cobra.Command {
 		Short: "Check system prerequisites for development environment",
 		Long: `Check that required and recommended tools are installed and meet
 minimum version requirements. Outputs a formatted report of system info,
-detected tools, and actionable recommendations.
+detected tools, and actionable recommendations. Inside a project it also
+validates the MCP servers in .mcp.json and runs the health checks of the
+configured ecosystem modules, both statically: no MCP server, cloud CLI or
+other check command is executed.
 
 Use --json for machine-readable output, or --check for a simple pass/fail
 exit code (suitable for CI).`,
@@ -48,22 +57,39 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 
 	osInfo := sysinfo.DetectOS()
 
+	// An unknown working directory only disables the project-scoped checks
+	// (NFS, MCP servers, cloud credential isolation, ecosystem module checks).
+	projectRoot, _ := cmdutil.ProjectRoot()
+
 	var containerSection *doctor.ContainerSection
 	var sandboxSection *doctor.SandboxSection
+	var toolchainWarnings []string
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		containerSection = doctor.RunContainerCheck(ctx, &container.ExecProber{}, osInfo)
+		containerSection = doctor.RunContainerCheck(ctx, &container.ExecProber{}, osInfo, projectRoot)
 	})
 	wg.Go(func() {
 		sandboxSection = doctor.RunSandboxCheck(ctx, &sandbox.ExecSandboxProber{})
 	})
+	if projectRoot != "" {
+		wg.Go(func() {
+			toolchainWarnings = projectToolchainWarnings(ctx, ecosystem.DefaultRegistry(), projectRoot)
+		})
+	}
 
 	checks := doctor.RunAllChecks(ctx, osInfo)
 	wg.Wait()
 
-	report := doctor.BuildReport(osInfo, checks, "0.1.0")
+	report := doctor.BuildReport(osInfo, checks, version.Info().Version)
 	report.SetContainerSection(containerSection)
 	report.SetSandboxSection(sandboxSection)
+	report.SetMCPSection(mcpConfigSection(projectRoot, mcpregistry.DefaultRegistry()))
+	report.SetCloudSection(cloudIsolationSection(projectRoot))
+	report.SetModuleCheckSection(moduleCheckSection(projectRoot, ecosystem.DefaultRegistry(), doctor.ModuleCheckEnv{
+		LookupEnv: os.LookupEnv,
+		LookPath:  exec.LookPath,
+	}))
+	report.SetProjectToolchains(toolchainWarnings)
 	slog.Info("doctor check complete",
 		"required_tools", len(report.RequiredTools),
 		"optional_tools", len(report.OptionalTools),
@@ -71,20 +97,34 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 		"arch", report.System.Arch)
 
 	w := cmd.OutOrStdout()
+	return renderDoctorReport(w, report, jsonOutput, checkMode)
+}
+
+// projectToolchainWarnings reports where the toolchains on PATH do not match
+// what the ecosystems detected in projectRoot require.
+func projectToolchainWarnings(ctx context.Context, reg *ecosystem.Registry, projectRoot string) []string {
+	return reg.ToolchainWarnings(ctx, projectRoot, reg.DetectAll(projectRoot).Results)
+}
+
+// renderDoctorReport writes report to w as JSON, a pass/fail check summary,
+// or the formatted human report. In check mode it returns an error when any
+// required tool is missing, including when the report is emitted as JSON.
+func renderDoctorReport(w io.Writer, report *doctor.Report, jsonOutput, checkMode bool) error {
+	missing := missingRequiredTools(report)
 
 	if jsonOutput {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(report)
+		if err := enc.Encode(report); err != nil {
+			return fmt.Errorf("encoding doctor report: %w", err)
+		}
+		if checkMode && len(missing) > 0 {
+			return fmt.Errorf("missing %d required tool(s): %s", len(missing), strings.Join(missing, ", "))
+		}
+		return nil
 	}
 
 	if checkMode {
-		var missing []string
-		for _, t := range report.RequiredTools {
-			if !t.Found || !t.VersionOK {
-				missing = append(missing, t.Name)
-			}
-		}
 		if len(missing) > 0 {
 			_, _ = fmt.Fprintf(w, "Missing required tools: %s\n", strings.Join(missing, ", "))
 			return fmt.Errorf("missing %d required tool(s)", len(missing))
@@ -93,6 +133,25 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 		return nil
 	}
 
-	doctor.FormatReport(w, report, doctor.UseColor(os.Stdout.Fd()))
+	doctor.FormatReport(w, report, writerUsesColor(w))
 	return nil
+}
+
+// missingRequiredTools returns the names of required tools that are absent
+// or below their minimum version.
+func missingRequiredTools(report *doctor.Report) []string {
+	var missing []string
+	for _, t := range report.RequiredTools {
+		if !t.Found || !t.VersionOK {
+			missing = append(missing, t.Name)
+		}
+	}
+	return missing
+}
+
+// writerUsesColor reports whether colored output suits w: only a terminal
+// file gets color, never a buffer or pipe that the command was redirected to.
+func writerUsesColor(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	return ok && doctor.UseColor(f.Fd())
 }

@@ -13,22 +13,25 @@ import (
 // Policy.DenyToolSet), so a tool reported "denied" and a tool actually blocked on
 // an MCP call can never diverge.
 //
-// Every entry in cfg.Tools.Disabled becomes a global tool-name deny. The deny is
-// installed on the ByUser cascade level under the empty-user key: Guardrail.Handle
-// evaluates every call with an EMPTY user (V1 has no user identity distinct from
-// the agent), so a ByUser[""] rule is consulted for every caller regardless of
-// agent id. Tools not named remain allowed — deny rules subtract from the
-// permissive-by-default baseline.
+// Every entry in cfg.MCP.DisabledTools (mcp.disabled_tools) becomes a global
+// tool-name deny. That list names MCP tools (qsdev_nix_run, ...); the qsdev
+// catalog's tools.disabled is a different namespace (gitleaks, semgrep, ...) and
+// is deliberately NOT read, so disabling a catalog tool never becomes a phantom
+// MCP deny. The deny is installed on the ByUser cascade level under the
+// empty-user key: Guardrail.Handle evaluates every call with an EMPTY user (V1
+// has no user identity distinct from the agent), so a ByUser[""] rule is
+// consulted for every caller regardless of agent id. Tools not named remain
+// allowed — deny rules subtract from the permissive-by-default baseline.
 //
-// A nil cfg or an empty disabled list yields a nil Policy. Both WithPolicy and
-// GatewayOptions.Policy treat nil as "keep the permissive default", which is
+// A nil cfg or an empty mcp.disabled_tools yields a nil Policy. Both WithPolicy
+// and GatewayOptions.Policy treat nil as "keep the permissive default", which is
 // exactly correct when the project disables nothing.
 func PolicyFromConfig(cfg *types.QsdevConfig) *Policy {
-	if cfg == nil || len(cfg.Tools.Disabled) == 0 {
+	if cfg == nil || len(cfg.MCP.DisabledTools) == 0 {
 		return nil
 	}
-	deny := make([]string, len(cfg.Tools.Disabled))
-	copy(deny, cfg.Tools.Disabled)
+	deny := make([]string, len(cfg.MCP.DisabledTools))
+	copy(deny, cfg.MCP.DisabledTools)
 	return &Policy{
 		ByUser:  map[string]Rule{"": {DenyTools: deny}},
 		Default: VerdictAllow,

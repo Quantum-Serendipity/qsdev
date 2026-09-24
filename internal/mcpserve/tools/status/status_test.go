@@ -43,23 +43,128 @@ func writeState(t *testing.T, dir string) {
 	}
 }
 
-// TestStatusTier1ReturnsCachedWhenUnchanged verifies that, when the state file is
-// unchanged since construction, an auto-tier call resolves to the cached Tier 1
-// result without re-running detection.
+// TestStatusTier1ReturnsCachedWhenUnchanged verifies that the first auto call
+// runs the thorough tier (there is no verified result to serve before it), and
+// that a later auto call with nothing changed returns the cached Tier 1 result.
 func TestStatusTier1ReturnsCachedWhenUnchanged(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	writeState(t, dir)
 
-	checker := newStatusChecker(dir)                 // captures the state mtime
-	res := call(t, checker.handle, map[string]any{}) // tier auto
+	checker := newStatusChecker(dir)
+	first := call(t, checker.handle, map[string]any{}).Structured.(map[string]any)
+	if first["tier"] != 2 {
+		t.Errorf("first auto call tier = %v, want 2 (no cached result yet)", first["tier"])
+	}
 
-	m := res.Structured.(map[string]any)
+	m := call(t, checker.handle, map[string]any{}).Structured.(map[string]any)
 	if m["tier"] != 1 {
 		t.Errorf("tier = %v, want 1 (cached)", m["tier"])
 	}
 	if m["cached"] != true {
 		t.Errorf("cached = %v, want true", m["cached"])
+	}
+}
+
+// writeLedger writes a state ledger tracking rel (with its current content hash
+// and mode, under the overwrite strategy) so drift detection can verify it.
+func writeLedger(t *testing.T, dir, rel string) {
+	t.Helper()
+	full := filepath.Join(dir, rel)
+	hash, err := state.ComputeFileHash(full)
+	if err != nil {
+		t.Fatalf("hash %s: %v", rel, err)
+	}
+	info, err := os.Stat(full)
+	if err != nil {
+		t.Fatalf("stat %s: %v", rel, err)
+	}
+	st := types.GeneratedState{Files: map[string]types.FileState{
+		rel: {Hash: hash, Strategy: types.Overwrite, Mode: info.Mode()},
+	}}
+	statePath := filepath.Join(dir, state.StateFilePaths()[0])
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
+	}
+	if err := state.SaveStateToFile(statePath, st); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+}
+
+// hasDrift reports whether a status payload lists a drift item of the type.
+func hasDrift(m map[string]any, typ string) bool {
+	items, _ := m["drift"].([]driftItem)
+	for _, d := range items {
+		if d.Type == typ {
+			return true
+		}
+	}
+	return false
+}
+
+// TestStatusReportsTamperedGeneratedFile is the regression test for status
+// reporting zero drift after a machine-owned generated file was tampered with:
+// the auto tier must notice the change and report file-modification drift from
+// the state ledger, and keep reporting it on later calls (drift is not consumed
+// by being reported once).
+func TestStatusReportsTamperedGeneratedFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	rel := filepath.Join(".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, rel), []byte(`{"permissions":{"deny":["Bash(curl:*)"]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeLedger(t, dir, rel)
+
+	checker := newStatusChecker(dir)
+	clean := call(t, checker.handle, map[string]any{}).Structured.(map[string]any)
+	if hasDrift(clean, "file_modification") {
+		t.Fatalf("untampered project reported file drift: %v", clean["drift"])
+	}
+
+	// Tamper: strip the deny rules, and move the mtime so the fast path notices.
+	path := filepath.Join(dir, rel)
+	if err := os.WriteFile(path, []byte(`{"permissions":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(path, later, later); err != nil {
+		t.Fatal(err)
+	}
+
+	for i, tier := range []string{"auto", "auto", "2"} {
+		m := call(t, checker.handle, map[string]any{"tier": tier}).Structured.(map[string]any)
+		if !hasDrift(m, "file_modification") {
+			t.Errorf("call %d (tier %s): tampered generated file not reported; drift=%v", i, tier, m["drift"])
+		}
+	}
+}
+
+// TestStatusAutoFallsBackOnConfigChange is the regression test for auto mode
+// serving the cached result after the project config changed: an edited config
+// must force Tier 2 and be reported as config drift until regeneration.
+func TestStatusAutoFallsBackOnConfigChange(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeState(t, dir)
+	cfg := filepath.Join(dir, ".qsdev.yaml")
+	if err := os.WriteFile(cfg, []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checker := newStatusChecker(dir)
+	call(t, checker.handle, map[string]any{"tier": "2"})
+
+	if err := os.WriteFile(cfg, []byte("version: 1\ntools:\n  disabled: [x]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		m := call(t, checker.handle, map[string]any{}).Structured.(map[string]any)
+		if !hasDrift(m, "config_changed") {
+			t.Errorf("call %d: config change not reported; tier=%v drift=%v", i, m["tier"], m["drift"])
+		}
 	}
 }
 
@@ -146,7 +251,7 @@ func TestCheckMCPProbesConcurrently(t *testing.T) {
 	const n = 5 // below mcpProbeConcurrency so all probes may start at once
 	servers := make([]mcphealth.ServerConfig, n)
 	for i := range servers {
-		servers[i] = mcphealth.ServerConfig{Name: fmt.Sprintf("srv-%02d", i)}
+		servers[i] = mcphealth.ServerConfig{Name: fmt.Sprintf("srv-%02d", i), Command: "/opt/srv/bin/server"}
 	}
 
 	var entered sync.WaitGroup
@@ -154,7 +259,7 @@ func TestCheckMCPProbesConcurrently(t *testing.T) {
 	proceed := make(chan struct{})
 
 	doc := newDoctorChecker(t.TempDir())
-	doc.mcpServers = func() []mcphealth.ServerConfig { return servers }
+	doc.mcpServers = func() ([]mcphealth.ServerConfig, error) { return servers, nil }
 	doc.probeMCP = func(ctx context.Context, _ mcphealth.ServerConfig) *mcphealth.ServerHealth {
 		entered.Done()
 		select {
@@ -173,7 +278,7 @@ func TestCheckMCPProbesConcurrently(t *testing.T) {
 	if res.Status != checkPass {
 		t.Errorf("status = %q, want %q (all healthy)", res.Status, checkPass)
 	}
-	if !strings.Contains(res.Detail, fmt.Sprintf("%d healthy, 0 unhealthy of %d", n, n)) {
+	if !strings.Contains(res.Detail, fmt.Sprintf("%d healthy, 0 unhealthy of %d probed", n, n)) {
 		t.Errorf("detail = %q, want %d healthy/0 unhealthy", res.Detail, n)
 	}
 }
@@ -184,12 +289,13 @@ func TestCheckMCPProbesConcurrently(t *testing.T) {
 func TestCheckMCPCountsHealth(t *testing.T) {
 	t.Parallel()
 	servers := []mcphealth.ServerConfig{
-		{Name: "charlie"}, {Name: "alpha"}, {Name: "delta"}, {Name: "bravo"},
+		{Name: "charlie", Command: "charlie-mcp"}, {Name: "alpha", Command: "alpha-mcp"},
+		{Name: "delta", Command: "delta-mcp"}, {Name: "bravo", Command: "bravo-mcp"},
 	}
 	unhealthy := map[string]bool{"bravo": true, "delta": true}
 
 	doc := newDoctorChecker(t.TempDir())
-	doc.mcpServers = func() []mcphealth.ServerConfig { return servers }
+	doc.mcpServers = func() ([]mcphealth.ServerConfig, error) { return servers, nil }
 	doc.probeMCP = func(_ context.Context, cfg mcphealth.ServerConfig) *mcphealth.ServerHealth {
 		st := mcphealth.StatusHealthy
 		if unhealthy[cfg.Name] {
@@ -202,7 +308,7 @@ func TestCheckMCPCountsHealth(t *testing.T) {
 	if res.Status != checkWarn {
 		t.Errorf("status = %q, want %q", res.Status, checkWarn)
 	}
-	if !strings.Contains(res.Detail, "2 healthy, 2 unhealthy of 4") {
+	if !strings.Contains(res.Detail, "2 healthy, 2 unhealthy of 4 probed") {
 		t.Errorf("detail = %q, want 2 healthy/2 unhealthy/4", res.Detail)
 	}
 }
@@ -211,10 +317,45 @@ func TestCheckMCPCountsHealth(t *testing.T) {
 func TestCheckMCPNoServers(t *testing.T) {
 	t.Parallel()
 	doc := newDoctorChecker(t.TempDir())
-	doc.mcpServers = func() []mcphealth.ServerConfig { return nil }
+	doc.mcpServers = func() ([]mcphealth.ServerConfig, error) { return nil, nil }
 	res := doc.checkMCP(context.Background())
 	if res.Status != checkPass {
 		t.Errorf("status = %q, want %q for no servers", res.Status, checkPass)
+	}
+}
+
+// TestCheckMCPCatalogLoadFailureWarns is the F279 regression: when the MCP
+// catalog fails to load, its servers silently vanish from the registry. The
+// doctor must warn about that instead of passing over the smaller set.
+func TestCheckMCPCatalogLoadFailureWarns(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		servers []mcphealth.ServerConfig
+	}{
+		{name: "no servers left"},
+		{name: "only built-in servers left", servers: []mcphealth.ServerConfig{{Name: "builtin"}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			doc := newDoctorChecker(t.TempDir())
+			doc.mcpServers = func() ([]mcphealth.ServerConfig, error) { return tt.servers, nil }
+			doc.probeMCP = func(context.Context, mcphealth.ServerConfig) *mcphealth.ServerHealth {
+				return &mcphealth.ServerHealth{Status: mcphealth.StatusHealthy}
+			}
+			doc.mcpCatalogErr = func() error { return fmt.Errorf("loading MCP server catalog: bad yaml") }
+
+			res := doc.checkMCP(context.Background())
+			if res.Status != checkWarn {
+				t.Errorf("status = %q, want %q", res.Status, checkWarn)
+			}
+			if !strings.Contains(res.Detail, "bad yaml") {
+				t.Errorf("detail = %q, want it to carry the catalog error", res.Detail)
+			}
+		})
 	}
 }
 
@@ -228,13 +369,13 @@ func TestStatusTier2DoesNotHoldLockDuringDetect(t *testing.T) {
 	checker := newStatusChecker(dir)
 
 	lockFree := make(chan bool, 1)
-	checker.detectFn = func(root string) types.DetectedProject {
+	checker.detectFn = func(ctx context.Context, root string) types.DetectedProject {
 		ok := checker.mu.TryLock()
 		if ok {
 			checker.mu.Unlock()
 		}
 		lockFree <- ok
-		return detect.Detect(root)
+		return detect.Detect(ctx, root)
 	}
 
 	call(t, checker.handle, map[string]any{"tier": "2"})
@@ -257,10 +398,10 @@ func TestStatusTier2DetectRunsConcurrently(t *testing.T) {
 	const n = 2
 	entered := make(chan struct{}, n)
 	release := make(chan struct{})
-	checker.detectFn = func(root string) types.DetectedProject {
+	checker.detectFn = func(ctx context.Context, root string) types.DetectedProject {
 		entered <- struct{}{}
 		<-release
-		return detect.Detect(root)
+		return detect.Detect(ctx, root)
 	}
 
 	done := make(chan struct{}, n)

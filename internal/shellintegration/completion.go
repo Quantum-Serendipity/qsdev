@@ -13,6 +13,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
+// zshCompinitLine (re)initializes zsh completion so functions newly added to
+// fpath are picked up.
+const zshCompinitLine = `autoload -Uz compinit && compinit`
+
 func completionMarkerStart() string { return "# " + branding.Get().AppName + ": shell completions" }
 func completionMarkerEnd() string   { return "# " + branding.Get().AppName + " end shell completions" }
 
@@ -81,10 +85,12 @@ func (c *CompletionInstaller) installZsh(rootCmd *cobra.Command, home string, rc
 		return err
 	}
 
-	// Add fpath and compinit to RC file.
+	// Add fpath and compinit to RC file. compinit must NOT use -C: this block
+	// is appended after the user's own compinit, which has already written a
+	// ~/.zcompdump without _<binary>, and -C reuses that dump without checking
+	// fpath for new functions, so the completion would never register.
 	fpathLine := fmt.Sprintf(`fpath=("%s" $fpath)`, completionDir)
-	compinitLine := `autoload -Uz compinit && compinit -C`
-	return spliceRCFileMulti(rcFile, fpathLine, compinitLine)
+	return spliceRCFileMulti(rcFile, fpathLine, zshCompinitLine)
 }
 
 func (c *CompletionInstaller) installFish(rootCmd *cobra.Command, home string) error {
@@ -121,12 +127,9 @@ func writeCompletionFile(path string, genFn func(*bytes.Buffer) error) error {
 		return fmt.Errorf("generating completion script: %w", err)
 	}
 
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, fileutil.ModeDirDefault); err != nil {
-		return fmt.Errorf("creating completion directory %s: %w", dir, err)
-	}
-
-	if err := os.WriteFile(path, buf.Bytes(), fileutil.ModeReadWrite); err != nil {
+	// Written atomically (creating parent directories) so an interrupted
+	// install never leaves a truncated script for new shells to load.
+	if err := fileutil.WriteFileAtomic(path, buf.Bytes(), fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing completion file %s: %w", path, err)
 	}
 	return nil

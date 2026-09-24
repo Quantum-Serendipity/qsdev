@@ -19,7 +19,8 @@ const EndMarker = "<!-- END GENERATED SECTION -->"
 // marker and after the end marker in existing is preserved.
 //
 // Both existing and newGenerated must contain a matching begin/end marker pair.
-// If existing lacks markers, ErrMarkersNotFound is returned.
+// If existing lacks markers, ErrMarkersNotFound is returned; write paths use
+// SectionMarkersOrAppend, which defines that case as an append.
 // If markers are malformed (begin without end, or end before begin), ErrMalformedMarkers is returned.
 func SectionMarkers(existing, newGenerated []byte) ([]byte, error) {
 	// Find markers in existing.
@@ -49,30 +50,101 @@ func SectionMarkers(existing, newGenerated []byte) ([]byte, error) {
 		existEndLineEnd++
 	}
 
-	// Find markers in newGenerated.
-	newBegin := indexLinePrefix(newGenerated, []byte(BeginMarkerPrefix))
-	newEnd := indexLinePrefix(newGenerated, []byte(EndMarker))
-
-	if newBegin < 0 || newEnd < 0 {
-		return nil, fmt.Errorf("section markers not found in new generated content")
-	}
-	if newEnd <= newBegin {
-		return nil, fmt.Errorf("malformed section markers in new generated content")
-	}
-
-	// Find end of end-marker line in newGenerated (include trailing newline if present).
-	newEndLineEnd := newEnd + len(EndMarker)
-	if newEndLineEnd < len(newGenerated) && newGenerated[newEndLineEnd] == '\n' {
-		newEndLineEnd++
+	block, err := markedSection(newGenerated)
+	if err != nil {
+		return nil, err
 	}
 
 	// Splice: existing before begin + new section + existing after end.
 	var buf bytes.Buffer
 	buf.Write(existing[:existBegin])
-	buf.Write(newGenerated[newBegin:newEndLineEnd])
+	buf.Write(block)
 	buf.Write(existing[existEndLineEnd:])
 
 	return buf.Bytes(), nil
+}
+
+// SectionMarkersOrAppend is SectionMarkers with a defined policy for an
+// existing file that has no generated-section markers at all (e.g. a
+// hand-written CLAUDE.md): the existing content is kept verbatim and the
+// marked section from newGenerated is appended after it, separated by a blank
+// line. Later runs then find the markers and replace only that section.
+// Malformed markers in existing are still an error, since there is no safe
+// way to tell generated text from user text.
+func SectionMarkersOrAppend(existing, newGenerated []byte) ([]byte, error) {
+	merged, err := SectionMarkers(existing, newGenerated)
+	if !errors.Is(err, ErrMarkersNotFound) {
+		return merged, err
+	}
+
+	block, err := markedSection(newGenerated)
+	if err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	buf.Write(existing)
+	if len(existing) > 0 {
+		// Separate user text from the block by a blank line.
+		if !bytes.HasSuffix(existing, []byte("\n")) {
+			buf.WriteByte('\n')
+		}
+		if !bytes.HasSuffix(buf.Bytes(), []byte("\n\n")) {
+			buf.WriteByte('\n')
+		}
+	}
+	buf.Write(block)
+	return buf.Bytes(), nil
+}
+
+// RemoveSection removes the generated-section block (the begin marker line
+// through the end marker line) from existing and keeps everything around it;
+// the blank line SectionMarkersOrAppend put between user text and the block
+// goes with it. existing is returned unchanged when it has no markers, and
+// ErrMalformedMarkers when they are malformed.
+func RemoveSection(existing []byte) ([]byte, error) {
+	begin := indexLinePrefix(existing, []byte(BeginMarkerPrefix))
+	end := indexLinePrefix(existing, []byte(EndMarker))
+	switch {
+	case begin < 0 && end < 0:
+		return existing, nil
+	case begin < 0 || end <= begin:
+		return nil, ErrMalformedMarkers
+	}
+	endLineEnd := end + len(EndMarker)
+	if endLineEnd < len(existing) && existing[endLineEnd] == '\n' {
+		endLineEnd++
+	}
+	before, after := existing[:begin], existing[endLineEnd:]
+	var buf bytes.Buffer
+	if len(after) == 0 {
+		if trimmed := bytes.TrimRight(before, "\n"); len(trimmed) > 0 {
+			buf.Write(trimmed)
+			buf.WriteByte('\n')
+		}
+	} else {
+		buf.Write(before)
+		buf.Write(after)
+	}
+	return buf.Bytes(), nil
+}
+
+// markedSection returns the begin..end marker block (including the end
+// marker's trailing newline, if any) from generated content.
+func markedSection(generated []byte) ([]byte, error) {
+	begin := indexLinePrefix(generated, []byte(BeginMarkerPrefix))
+	end := indexLinePrefix(generated, []byte(EndMarker))
+	if begin < 0 || end < 0 {
+		return nil, fmt.Errorf("section markers not found in new generated content")
+	}
+	if end <= begin {
+		return nil, fmt.Errorf("malformed section markers in new generated content")
+	}
+	endLineEnd := end + len(EndMarker)
+	if endLineEnd < len(generated) && generated[endLineEnd] == '\n' {
+		endLineEnd++
+	}
+	return generated[begin:endLineEnd], nil
 }
 
 // indexLinePrefix returns the byte offset of the first line that starts with prefix, or -1.

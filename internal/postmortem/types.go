@@ -21,6 +21,11 @@ type FailureSequence struct {
 type FailureReport struct {
 	TotalSessions int
 	Patterns      []PatternEntry
+	// SkippedFiles counts session files and directories that could not be
+	// read or parsed, so an incomplete report is not mistaken for a clean one.
+	SkippedFiles int
+	// Truncated reports that the file limit stopped the scan early.
+	Truncated bool
 }
 
 type PatternEntry struct {

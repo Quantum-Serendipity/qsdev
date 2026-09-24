@@ -25,11 +25,23 @@ func detectFileModification(projectDir string, genState types.GeneratedState) Ca
 
 		switch fs.Status {
 		case types.Modified:
-			switch storedFile.Strategy {
-			case types.Overwrite, types.LibraryManaged:
+			switch {
+			case storedFile.Strategy.IsHumanEdited():
+				// Human-edited files are expected to diverge.
+				cat.Findings = append(cat.Findings, Finding{
+					Category:    categoryFileModification,
+					FileStatus:  fs.Status,
+					Severity:    Info,
+					Subject:     path,
+					Description: fmt.Sprintf("Human-edited file %q has been modified (strategy: %s)", path, storedFile.Strategy),
+					Expected:    fs.StoredHash,
+					Actual:      fs.CurrentHash,
+				})
+			case storedFile.Strategy == types.Overwrite || storedFile.Strategy == types.LibraryManaged:
 				// Machine-owned files should not be edited manually.
 				cat.Findings = append(cat.Findings, Finding{
 					Category:    categoryFileModification,
+					FileStatus:  fs.Status,
 					Severity:    Warning,
 					Subject:     path,
 					Description: fmt.Sprintf("Machine-owned file %q has been modified (strategy: %s)", path, storedFile.Strategy),
@@ -38,19 +50,10 @@ func detectFileModification(projectDir string, genState types.GeneratedState) Ca
 					Remediation: "Run qsdev update to regenerate this file",
 					AutoFixable: true,
 				})
-			case types.SectionMarker, types.ThreeWayMerge:
-				// Human-edited files are expected to diverge.
-				cat.Findings = append(cat.Findings, Finding{
-					Category:    categoryFileModification,
-					Severity:    Info,
-					Subject:     path,
-					Description: fmt.Sprintf("Human-edited file %q has been modified (strategy: %s)", path, storedFile.Strategy),
-					Expected:    fs.StoredHash,
-					Actual:      fs.CurrentHash,
-				})
 			default:
 				cat.Findings = append(cat.Findings, Finding{
 					Category:    categoryFileModification,
+					FileStatus:  fs.Status,
 					Severity:    Warning,
 					Subject:     path,
 					Description: fmt.Sprintf("File %q has been modified (strategy: %s)", path, storedFile.Strategy),
@@ -63,6 +66,7 @@ func detectFileModification(projectDir string, genState types.GeneratedState) Ca
 		case types.Deleted:
 			cat.Findings = append(cat.Findings, Finding{
 				Category:    categoryFileModification,
+				FileStatus:  fs.Status,
 				Severity:    Error,
 				Subject:     path,
 				Description: fmt.Sprintf("Generated file %q has been deleted", path),
@@ -73,6 +77,7 @@ func detectFileModification(projectDir string, genState types.GeneratedState) Ca
 		case types.Unknown:
 			cat.Findings = append(cat.Findings, Finding{
 				Category:    categoryFileModification,
+				FileStatus:  fs.Status,
 				Severity:    Info,
 				Subject:     path,
 				Description: fmt.Sprintf("Unable to determine status of %q: %v", path, fs.Error),

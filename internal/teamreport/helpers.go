@@ -1,6 +1,7 @@
 package teamreport
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -27,6 +28,33 @@ func medianFloat64(sorted []float64) float64 {
 // duration string such as "1h ago", "3d ago", "1mo ago".
 func relativeTime(t time.Time) string {
 	return timeutil.RelativeTimeShort(t)
+}
+
+// lastScanText renders when a project's dependencies were last scanned,
+// or "never" when they have not been scanned.
+func lastScanText(p ProjectSummary) string {
+	if p.LastScan == nil {
+		return "never"
+	}
+	return relativeTime(*p.LastScan)
+}
+
+// depHealthText renders a dependency health sub-score, or "n/a (not scanned)"
+// when it is nil because the project's dependencies were never scanned.
+func depHealthText(score *float64) string {
+	if score == nil {
+		return "n/a (not scanned)"
+	}
+	return fmt.Sprintf("%.1f", *score)
+}
+
+// vulnCountsText renders a project's critical/high counts, or "n/a" when
+// its dependencies were not scanned and the counts are unknown.
+func vulnCountsText(p ProjectSummary) string {
+	if !p.Scanned {
+		return "n/a"
+	}
+	return fmt.Sprintf("%d/%d", p.VulnTotals.Critical, p.VulnTotals.High)
 }
 
 // scoreToGrade delegates to posture.ScoreToGrade for consistent grading.

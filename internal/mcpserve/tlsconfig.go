@@ -7,20 +7,22 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/container"
 )
 
 // Environment variable names for the mTLS material the HTTP transports consume.
 // They form the stable public contract the container/compose generator wires
-// into a gateway service (it redefines its own copies to avoid an import cycle,
-// the same way it does for QSDEV_DEPLOY_MODE). Keep the names stable.
+// into a gateway service, so they are defined from that package's constants:
+// the generated compose and the server always agree. Keep the names stable.
 const (
 	// EnvTLSCert names the server certificate (PEM) the server presents.
-	EnvTLSCert = "QSDEV_TLS_CERT"
+	EnvTLSCert = container.EnvTLSCert
 	// EnvTLSKey names the server private key (PEM) matching EnvTLSCert.
-	EnvTLSKey = "QSDEV_TLS_KEY"
+	EnvTLSKey = container.EnvTLSKey
 	// EnvTLSClientCA names the client-CA bundle (PEM) used to verify the
 	// presented client certificate in mTLS (ClientCAs).
-	EnvTLSClientCA = "QSDEV_TLS_CLIENT_CA"
+	EnvTLSClientCA = container.EnvTLSClientCA
 )
 
 // TLSMaterial is the resolved set of file paths for serving mutual TLS: the
@@ -111,7 +113,8 @@ func (m TLSMaterial) ServerTLSConfig() (*tls.Config, error) {
 
 // trustedAgentFromCert extracts the verified client identity from a completed
 // mTLS handshake. It reads the leaf certificate of the first verified chain and
-// returns its Subject CommonName, falling back to the first DNS SAN. The
+// returns its Subject CommonName, falling back to the first DNS SAN and then the
+// first URI SAN (e.g. a SPIFFE ID such as spiffe://example.org/ci-bot). The
 // identity is cryptographically trustworthy precisely because it is taken from
 // VerifiedChains (chains the TLS stack already validated against ClientCAs), not
 // from the raw PeerCertificates the client merely presented. It reports false
@@ -127,6 +130,14 @@ func trustedAgentFromCert(cs *tls.ConnectionState) (string, bool) {
 	for _, dns := range leaf.DNSNames {
 		if d := strings.TrimSpace(dns); d != "" {
 			return d, true
+		}
+	}
+	for _, u := range leaf.URIs {
+		if u == nil {
+			continue
+		}
+		if s := strings.TrimSpace(u.String()); s != "" {
+			return s, true
 		}
 	}
 	return "", false

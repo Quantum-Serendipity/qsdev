@@ -72,7 +72,7 @@ func TestDetectFileModification_MachineOwnedModified(t *testing.T) {
 }
 
 func TestDetectFileModification_HumanEditedModified(t *testing.T) {
-	strategies := []types.MergeStrategy{types.SectionMarker, types.ThreeWayMerge}
+	strategies := []types.MergeStrategy{types.SectionMarker, types.ThreeWayMerge, types.ManualMerge, types.Merge}
 
 	for _, strategy := range strategies {
 		t.Run(strategy.String(), func(t *testing.T) {

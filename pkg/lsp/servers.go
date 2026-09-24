@@ -230,15 +230,22 @@ func defaultServers() []*LSPServerConfig {
 			SandboxCategory: "A",
 		},
 		{
-			EcosystemName:   "helm",
-			DisplayName:     "Helm (helm-ls)",
-			Command:         "helm_ls",
-			Args:            []string{"serve"},
-			LanguageID:      "helm",
-			Extensions:      []string{".yaml", ".tpl"},
-			RulePatterns:    []string{"**/Chart.yaml", "**/templates/**"},
-			NixPackage:      "helm-ls",
-			DevenvLSPAttr:   "", // no devenv lsp option; add to packages list.
+			EcosystemName: "helm",
+			DisplayName:   "Helm (helm-ls)",
+			Command:       "helm_ls",
+			Args:          []string{"serve"},
+			LanguageID:    "helm",
+			// Only .tpl: extensionToLanguage cannot scope by path, so claiming
+			// .yaml would route every YAML file in the repository (CI
+			// workflows, compose files, .qsdev.yaml) to helm_ls. Chart YAML is
+			// covered for rules by the path-scoped RulePatterns.
+			Extensions:   []string{".tpl"},
+			RulePatterns: []string{"**/Chart.yaml", "**/templates/**"},
+			NixPackage:   "helm-ls",
+			// devenv's languages.helm.lsp option only takes effect when
+			// languages.helm is enabled, which the helm module does not do
+			// (it adds packages directly), so helm-ls goes in the packages list.
+			DevenvLSPAttr:   "",
 			Devenv:          DevenvPackageList,
 			DefaultOn:       true,
 			SandboxCategory: "A",
@@ -362,14 +369,17 @@ func defaultServers() []*LSPServerConfig {
 			SandboxCategory: "C",
 		},
 		{
-			EcosystemName:   "ansible",
-			DisplayName:     "Ansible (ansible-language-server)",
-			Command:         "ansible-language-server",
-			Args:            []string{"--stdio"},
-			LanguageID:      "ansible",
-			Extensions:      []string{".yml", ".yaml"},
-			NixPackage:      "ansible-language-server",
-			DevenvLSPAttr:   "", // no devenv lsp option; add to packages list when opted in.
+			EcosystemName: "ansible",
+			DisplayName:   "Ansible (ansible-language-server)",
+			Command:       "ansible-language-server",
+			Args:          []string{"--stdio"},
+			LanguageID:    "ansible",
+			Extensions:    []string{".yml", ".yaml"},
+			NixPackage:    "ansible-language-server",
+			// devenv's languages.ansible.lsp option only takes effect when
+			// languages.ansible is enabled, which the ansible module does not
+			// do, so the server goes in the packages list when opted in.
+			DevenvLSPAttr:   "",
 			Devenv:          DevenvPackageList,
 			DefaultOn:       false,
 			Caveats:         "opt-in",

@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 )
 
 // Package is a single workspace member: one ecosystem sub-package rooted at a
@@ -49,10 +48,9 @@ func (p *Package) QualifiedName() string {
 }
 
 // WorkspaceGraph is the flat set of workspace packages keyed by relative
-// directory. It is safe for concurrent use: reads take a read lock and the
-// watcher's mutations take the write lock.
+// directory. It is never modified after construction, so it is safe for
+// concurrent use without locking.
 type WorkspaceGraph struct {
-	mu       sync.RWMutex
 	root     string
 	packages map[string]*Package // keyed by RelDir
 }
@@ -64,23 +62,17 @@ func NewWorkspaceGraph(root string) *WorkspaceGraph {
 
 // Root returns the absolute workspace root the graph describes.
 func (g *WorkspaceGraph) Root() string {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
 	return g.root
 }
 
 // Len returns the number of packages in the graph.
 func (g *WorkspaceGraph) Len() int {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
 	return len(g.packages)
 }
 
 // Packages returns every package, sorted by RelDir for determinism. Each
 // returned pointer is the live entry; callers must treat them as read-only.
 func (g *WorkspaceGraph) Packages() []*Package {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
 	out := make([]*Package, 0, len(g.packages))
 	for _, p := range g.packages {
 		out = append(out, p)
@@ -94,8 +86,6 @@ func (g *WorkspaceGraph) Packages() []*Package {
 // may pass either "packages/a" or "./packages/a".
 func (g *WorkspaceGraph) ByRelDir(dir string) *Package {
 	key := normalizeRelDir(dir)
-	g.mu.RLock()
-	defer g.mu.RUnlock()
 	return g.packages[key]
 }
 
@@ -104,9 +94,6 @@ func (g *WorkspaceGraph) ByRelDir(dir string) *Package {
 // which resolves only when exactly one package carries that name. It returns nil
 // when nothing matches or a bare name is ambiguous.
 func (g *WorkspaceGraph) ByQualifiedName(name string) *Package {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
 	if eco, bare, ok := splitQualified(name); ok {
 		for _, p := range g.packages {
 			if p.Ecosystem == eco && p.Name == bare {

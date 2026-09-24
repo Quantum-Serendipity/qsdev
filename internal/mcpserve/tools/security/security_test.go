@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan"
 	"github.com/Quantum-Serendipity/qsdev/internal/vulnscan/vulnscantest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // writeConfig writes a .qsdev.yaml fixture into dir and returns its path.
@@ -54,19 +56,22 @@ func call(t *testing.T, h spi.ToolHandler, args map[string]any) *spi.ToolResult 
 
 const policyFixture = `version: 1
 claude_code:
-  permission_level: strict
+  permission_level: minimal
 tools:
   enabled:
     - semgrep
   disabled:
     - dangerous_tool
+mcp:
+  disabled_tools:
+    - qsdev_nix_run
 `
 
 func TestPolicyCheckEvaluatesDenyRule(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	writeConfig(t, dir, policyFixture)
-	pc := newPolicyChecker(dir)
+	pc := newPolicyChecker(dir, nil)
 
 	t.Run("denied tool", func(t *testing.T) {
 		// A denied verdict is a normal evaluation, not a tool error: IsError stays
@@ -84,6 +89,22 @@ func TestPolicyCheckEvaluatesDenyRule(t *testing.T) {
 		}
 	})
 
+	t.Run("mcp disabled tool", func(t *testing.T) {
+		eval := structuredMap(t, call(t, pc.handle, map[string]any{"tool_name": "qsdev_nix_run"}))["evaluation"].(policyDecision)
+		want := policyDecision{Tool: "qsdev_nix_run", Decision: decisionDenied, Source: sourceProject, Rule: "mcp.disabled_tools"}
+		if eval != want {
+			t.Errorf("got %+v, want %+v", eval, want)
+		}
+	})
+
+	t.Run("inventory lists the mcp deny", func(t *testing.T) {
+		rules, _ := structuredMap(t, call(t, pc.handle, nil))["rules"].([]policyDecision)
+		want := policyDecision{Tool: "qsdev_nix_run", Decision: decisionDenied, Source: sourceProject, Rule: "mcp.disabled_tools"}
+		if !slices.Contains(rules, want) {
+			t.Errorf("rules = %+v, want one equal to %+v", rules, want)
+		}
+	})
+
 	t.Run("allowed tool", func(t *testing.T) {
 		eval := structuredMap(t, call(t, pc.handle, map[string]any{"tool_name": "semgrep"}))["evaluation"].(policyDecision)
 		if eval.Decision != decisionAllowed || eval.Source != sourceProject {
@@ -93,7 +114,7 @@ func TestPolicyCheckEvaluatesDenyRule(t *testing.T) {
 
 	t.Run("unknown tool falls through to default", func(t *testing.T) {
 		eval := structuredMap(t, call(t, pc.handle, map[string]any{"tool_name": "mystery"}))["evaluation"].(policyDecision)
-		// permission_level: strict escalates the default to "ask".
+		// permission_level: minimal (a plan-mode preset) escalates the default to "ask".
 		if eval.Decision != decisionAsk || eval.Source != sourceDefault {
 			t.Errorf("got %+v, want ask/default", eval)
 		}
@@ -101,41 +122,190 @@ func TestPolicyCheckEvaluatesDenyRule(t *testing.T) {
 }
 
 // TestPolicyCheckReportsEnforcedDenySet proves qsdev_policy_check reports the MCP
-// Guardrail's enforced deny set from the SAME middleware.PolicyFromConfig
-// derivation the running server installs (via projectPolicy/chainForMode), so a
-// tool "reported denied" and a tool "actually blocked on an MCP call" cannot
-// diverge (BL-P1-3, S7).
+// Guardrail's enforced deny set from the Policy object the running server
+// installed (via projectPolicy/chainForMode), so a tool "reported denied" and a
+// tool "actually blocked on an MCP call" cannot diverge (BL-P1-3, S7).
 func TestPolicyCheckReportsEnforcedDenySet(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeConfig(t, dir, "version: 1\ntools:\n  disabled:\n    - qsdev_security_scan\n    - qsdev_nix_run\n")
-	pc := newPolicyChecker(dir)
-
-	// Inventory mode (no tool_name) surfaces the enforced deny set.
-	reported, ok := structuredMap(t, call(t, pc.handle, nil))["mcp_enforced_deny"].([]string)
-	if !ok {
-		t.Fatalf("mcp_enforced_deny missing or wrong type")
-	}
-
-	// Independently derive what the server enforces from the same config + function.
+	// tools.disabled is the catalog namespace: gitleaks must not become a
+	// phantom MCP deny next to the two mcp.disabled_tools entries.
+	writeConfig(t, dir, "version: 1\ntools:\n  disabled:\n    - gitleaks\n"+
+		"mcp:\n  disabled_tools:\n    - qsdev_security_scan\n    - qsdev_nix_run\n")
 	cfg, err := config.ParseQsdevConfig(filepath.Join(dir, ".qsdev.yaml"))
 	if err != nil {
 		t.Fatalf("parse config: %v", err)
 	}
-	want := middleware.PolicyFromConfig(cfg).DenyToolSet()
+	installed := middleware.PolicyFromConfig(cfg)
+	pc := newPolicyChecker(dir, installed)
 
-	if !reflect.DeepEqual(reported, want) {
+	// Inventory mode (no tool_name) surfaces the enforced deny set.
+	m := structuredMap(t, call(t, pc.handle, nil))
+	reported, ok := m["mcp_enforced_deny"].([]string)
+	if !ok {
+		t.Fatalf("mcp_enforced_deny missing or wrong type")
+	}
+	if want := installed.DenyToolSet(); !reflect.DeepEqual(reported, want) {
 		t.Errorf("reported enforced deny = %v, want %v (reported must equal enforced)", reported, want)
 	}
 	// Guard against a vacuous pass where both sides are empty.
-	if len(reported) != 2 {
-		t.Fatalf("enforced deny set = %v, want the 2 disabled tools", reported)
+	if want := []string{"qsdev_nix_run", "qsdev_security_scan"}; !reflect.DeepEqual(reported, want) {
+		t.Fatalf("enforced deny set = %v, want %v (mcp.disabled_tools only)", reported, want)
+	}
+	if w := m["warnings"]; w != nil {
+		t.Errorf("file and enforced policy agree; want no warnings, got %v", w)
+	}
+}
+
+// TestPolicyCheckEnforcedDenyIgnoresFileDrift is the regression test for
+// reporting a deny set the server does not enforce: after .qsdev.yaml is edited
+// mid-session (the Guardrail keeps its startup snapshot until restart), or when
+// policy_path points at another file, mcp_enforced_deny must still be the
+// installed policy's set, and the gap must be surfaced as a warning.
+func TestPolicyCheckEnforcedDenyIgnoresFileDrift(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Server started with nothing disabled: the installed Guardrail policy is nil.
+	pc := newPolicyChecker(dir, nil)
+	// The config now disables a tool (edited after startup).
+	writeConfig(t, dir, "version: 1\nmcp:\n  disabled_tools:\n    - qsdev_credential_vend\n")
+	other := filepath.Join(dir, "other.yaml")
+	if err := os.WriteFile(other, []byte("version: 1\nmcp:\n  disabled_tools:\n    - qsdev_nix_run\n"), 0o644); err != nil {
+		t.Fatalf("write other policy: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		args     map[string]any
+		wantWarn string
+	}{
+		{"edited default config", map[string]any{}, "restart"},
+		{"non-default policy_path", map[string]any{"policy_path": "other.yaml"}, "hypothetical"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := structuredMap(t, call(t, pc.handle, tt.args))
+			if got, _ := m["mcp_enforced_deny"].([]string); len(got) != 0 {
+				t.Errorf("mcp_enforced_deny = %v, want empty (nothing is enforced until restart)", got)
+			}
+			warnings, _ := m["warnings"].([]string)
+			if len(warnings) == 0 || !strings.Contains(warnings[0], tt.wantWarn) {
+				t.Errorf("warnings = %v, want one mentioning %q", warnings, tt.wantWarn)
+			}
+		})
+	}
+}
+
+// TestPolicyCheckOverlayMatchesCanonicalResolver is the regression test for
+// policy_check's private overlay cascade: a project deny must win over a local
+// enable (union semantics, as the Guardrail enforces), and a local security.level
+// must not lower the project floor when deriving the default decision.
+func TestPolicyCheckOverlayMatchesCanonicalResolver(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name           string
+		project        string
+		local          string
+		tool           string
+		wantDecision   string
+		wantSource     string
+		wantViolations bool
+	}{
+		{
+			name:         "project deny beats local enable",
+			project:      "version: 1\ntools:\n  disabled:\n    - semgrep\n",
+			local:        "tools:\n  enabled:\n    - semgrep\n",
+			tool:         "semgrep",
+			wantDecision: decisionDenied,
+			wantSource:   sourceProject,
+		},
+		{
+			name:         "local deny beats project enable",
+			project:      "version: 1\ntools:\n  enabled:\n    - semgrep\n",
+			local:        "tools:\n  disabled:\n    - semgrep\n",
+			tool:         "semgrep",
+			wantDecision: decisionDenied,
+			wantSource:   sourceLocal,
+		},
+		{
+			name:           "local security level cannot lower the floor",
+			project:        "version: 1\nsecurity:\n  level: strict\n",
+			local:          "security:\n  level: baseline\n",
+			tool:           "unlisted",
+			wantDecision:   decisionAsk,
+			wantSource:     sourceDefault,
+			wantViolations: true,
+		},
+		{
+			name:         "local security level may raise it",
+			project:      "version: 1\nsecurity:\n  level: baseline\n",
+			local:        "security:\n  level: strict\n",
+			tool:         "unlisted",
+			wantDecision: decisionAsk,
+			wantSource:   sourceDefault,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeConfig(t, dir, tt.project)
+			if err := os.WriteFile(filepath.Join(dir, branding.Get().LocalConfig), []byte(tt.local), 0o644); err != nil {
+				t.Fatalf("write local overlay: %v", err)
+			}
+			m := structuredMap(t, call(t, newPolicyChecker(dir, nil).handle, map[string]any{"tool_name": tt.tool}))
+			eval := m["evaluation"].(policyDecision)
+			if eval.Decision != tt.wantDecision || eval.Source != tt.wantSource {
+				t.Errorf("evaluation = %+v, want %s/%s", eval, tt.wantDecision, tt.wantSource)
+			}
+			violations, _ := m["floor_violations"].([]floorViolation)
+			levelViolation := slices.ContainsFunc(violations, func(v floorViolation) bool { return v.Field == "security.level" })
+			if levelViolation != tt.wantViolations {
+				t.Errorf("security.level floor violation = %v, want %v (%v)", levelViolation, tt.wantViolations, violations)
+			}
+		})
+	}
+}
+
+// TestDefaultDecisionForRealVocabulary is the regression test for a switch on
+// permission/security levels that do not exist: every valid preset and security
+// level must map to the intended default, in particular the restrictive
+// plan-mode "minimal" preset and the "strict" security level escalate to ask.
+func TestDefaultDecisionForRealVocabulary(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		permission string
+		security   string
+		want       string
+	}{
+		{"", "", decisionAllowed},
+		{"minimal", "", decisionAsk},
+		{"standard", "", decisionAllowed},
+		{"permissive", "", decisionAllowed},
+		{"custom", "", decisionAllowed},
+		{"supply-chain-only", "", decisionAllowed},
+		{"", "baseline", decisionAllowed},
+		{"", "enhanced", decisionAllowed},
+		{"", "strict", decisionAsk},
+		{"standard", "strict", decisionAsk},
+		{"minimal", "baseline", decisionAsk},
+	}
+	for _, tt := range tests {
+		t.Run(tt.permission+"/"+tt.security, func(t *testing.T) {
+			t.Parallel()
+			cfg := &types.QsdevConfig{}
+			cfg.ClaudeCode.PermissionLevel = tt.permission
+			cfg.Security.Level = tt.security
+			if got := defaultDecisionFor(cfg); got != tt.want {
+				t.Errorf("defaultDecisionFor(%q, %q) = %q, want %q", tt.permission, tt.security, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestPolicyCheckNotConfigured(t *testing.T) {
 	t.Parallel()
-	pc := newPolicyChecker(t.TempDir()) // no .qsdev.yaml present
+	pc := newPolicyChecker(t.TempDir(), nil) // no .qsdev.yaml present
 	res := call(t, pc.handle, map[string]any{"tool_name": "anything"})
 	if !res.IsError {
 		t.Fatal("expected IsError for missing policy")
@@ -158,7 +328,7 @@ func TestPolicyCheckWarnsOnMalformedLocalOverlay(t *testing.T) {
 	if err := os.WriteFile(localPath, []byte("tools:\n  enabled: [a, b\n"), 0o644); err != nil {
 		t.Fatalf("write local overlay: %v", err)
 	}
-	pc := newPolicyChecker(dir)
+	pc := newPolicyChecker(dir, nil)
 
 	res := call(t, pc.handle, map[string]any{"tool_name": "semgrep"})
 	if res.IsError {
@@ -246,7 +416,7 @@ func TestPolicyCheckRejectsPathTraversal(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	writeConfig(t, dir, policyFixture)
-	pc := newPolicyChecker(dir)
+	pc := newPolicyChecker(dir, nil)
 
 	cases := []struct {
 		name       string
@@ -297,7 +467,7 @@ func TestPolicyCheckFastPath(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := writeConfig(t, dir, policyFixture)
-	pc := newPolicyChecker(dir)
+	pc := newPolicyChecker(dir, nil)
 
 	// Warm the cache: semgrep is enabled in the fixture, so the verdict is allowed.
 	warm := structuredMap(t, call(t, pc.handle, map[string]any{"tool_name": "semgrep"}))["evaluation"].(policyDecision)
@@ -454,7 +624,7 @@ func TestAWSCredsResultNilCredentials(t *testing.T) {
 
 func TestCredentialVendNotConfigured(t *testing.T) {
 	t.Parallel()
-	cv := newCredentialVendor()
+	cv := newCredentialVendor(types.CredentialVendConfig{Enabled: true})
 
 	t.Run("missing provider", func(t *testing.T) {
 		res := call(t, cv.handle, map[string]any{})
@@ -485,12 +655,255 @@ func TestCredentialVendAWSNoCredentials(t *testing.T) {
 	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", missing)
 	t.Setenv("AWS_CONFIG_FILE", missing)
 
-	cv := newCredentialVendor()
+	cv := newCredentialVendor(types.CredentialVendConfig{
+		Enabled: true,
+		AWS:     types.AWSCredentialVendConfig{AllowSessionToken: true},
+	})
 	res := call(t, cv.handle, map[string]any{"provider": "aws"})
 	if !res.IsError {
 		t.Fatal("expected IsError when AWS has no credentials")
 	}
 	if structuredMap(t, res)["status"] != "not_configured" {
 		t.Errorf("status = %v, want not_configured", structuredMap(t, res)["status"])
+	}
+}
+
+// writePolyglotProject writes a go.sum and a package-lock.json, one pinned
+// dependency each, into a fresh directory.
+func writePolyglotProject(t *testing.T, npmLock string) string {
+	t.Helper()
+	dir := t.TempDir()
+	goSum := "example.com/mod v1.0.0 h1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.sum"), []byte(goSum), 0o644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte(npmLock), 0o644); err != nil {
+		t.Fatalf("write package-lock.json: %v", err)
+	}
+	return dir
+}
+
+// TestSecurityScanCoversEveryEcosystem is the regression test for polyglot
+// repos: with both go.sum and package-lock.json present, the auto-detected scan
+// must query both ecosystems and report a vulnerability in either, rather than
+// scanning only the first lock file and returning a clean-looking result.
+func TestSecurityScanCoversEveryEcosystem(t *testing.T) {
+	t.Parallel()
+	dir := writePolyglotProject(t,
+		`{"lockfileVersion":3,"packages":{"":{"name":"app"},"node_modules/left-pad":{"version":"1.3.0"}}}`)
+
+	srv := vulnscantest.NewServer(t,
+		map[int][]string{0: {"GHSA-VULN-0"}, 1: {"GHSA-VULN-1"}},
+		map[string]string{"GHSA-VULN-0": "HIGH", "GHSA-VULN-1": "HIGH"},
+	)
+	scanner := &securityScanner{
+		projectRoot: dir,
+		scanner:     &vulnscan.Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()},
+	}
+
+	res := call(t, scanner.handle, map[string]any{})
+	if res.IsError {
+		t.Fatalf("scan returned error: %+v", res.Structured)
+	}
+	m := structuredMap(t, res)
+	if got := m["ecosystems"]; !reflect.DeepEqual(got, []string{"Go", "npm"}) {
+		t.Errorf("ecosystems = %v, want [Go npm]", got)
+	}
+	if lockFiles, _ := m["lock_files"].([]string); len(lockFiles) != 2 {
+		t.Errorf("lock_files = %v, want both lock files", m["lock_files"])
+	}
+	if m["coverage"] != "complete" {
+		t.Errorf("coverage = %v, want complete", m["coverage"])
+	}
+	vulns, _ := m["vulnerabilities"].([]vulnReport)
+	ecos := map[string]bool{}
+	for _, v := range vulns {
+		ecos[v.Ecosystem] = true
+	}
+	if !ecos["Go"] || !ecos["npm"] {
+		t.Errorf("vulnerabilities = %+v, want findings from both Go and npm", vulns)
+	}
+}
+
+// TestSecurityScanReportsPartialCoverage verifies that when one of several lock
+// files cannot be parsed, the others are still scanned and the result says the
+// coverage is partial instead of implying a complete scan.
+func TestSecurityScanReportsPartialCoverage(t *testing.T) {
+	t.Parallel()
+	dir := writePolyglotProject(t, "{ not valid json")
+
+	srv := vulnscantest.NewServer(t, nil, nil)
+	scanner := &securityScanner{
+		projectRoot: dir,
+		scanner:     &vulnscan.Scanner{BaseURL: srv.URL, HTTPClient: srv.Client()},
+	}
+
+	res := call(t, scanner.handle, map[string]any{})
+	if res.IsError {
+		t.Fatalf("scan returned error: %+v", res.Structured)
+	}
+	m := structuredMap(t, res)
+	if m["coverage"] != "partial" {
+		t.Errorf("coverage = %v, want partial", m["coverage"])
+	}
+	unscanned, _ := m["unscanned_lock_files"].([]unscannedLockFile)
+	if len(unscanned) != 1 || filepath.Base(unscanned[0].Path) != "package-lock.json" {
+		t.Errorf("unscanned_lock_files = %+v, want the broken package-lock.json", m["unscanned_lock_files"])
+	}
+	if !strings.Contains(res.Text, "PARTIAL coverage") {
+		t.Errorf("text = %q, want it to flag partial coverage", res.Text)
+	}
+}
+
+// TestCredentialVendGCPRejectsInvalidServiceAccount is the regression test for
+// the unvalidated IAM Credentials URL path: a service_account carrying URL
+// syntax must be rejected before any credential lookup or request, so it cannot
+// retarget the ADC-authorized call to a different IAM method. Valid emails and
+// numeric unique IDs are accepted.
+func TestCredentialVendGCPRejectsInvalidServiceAccount(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		sa    string
+		valid bool
+	}{
+		{"user-managed email", "deployer@my-project.iam.gserviceaccount.com", true},
+		{"compute default email", "123456789012-compute@developer.gserviceaccount.com", true},
+		{"appspot email", "my-project@appspot.gserviceaccount.com", true},
+		{"numeric unique id", "112233445566778899001", true},
+		{"method suffix and fragment", "x@y.iam.gserviceaccount.com:signJwt#", false},
+		{"query string", "x@y.iam.gserviceaccount.com:signJwt?alt=json", false},
+		{"path traversal", "../../projects/p/serviceAccounts/x@y.iam.gserviceaccount.com", false},
+		{"slash in local part", "a/b@y.iam.gserviceaccount.com", false},
+		{"not an email", "deployer", false},
+		{"whitespace", "x@y.iam.gserviceaccount.com ", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := config.ValidGCPServiceAccount(tt.sa); got != tt.valid {
+				t.Errorf("config.ValidGCPServiceAccount(%q) = %v, want %v", tt.sa, got, tt.valid)
+			}
+		})
+	}
+
+	cv := newCredentialVendor(types.CredentialVendConfig{Enabled: true})
+	res := call(t, cv.handle, map[string]any{"provider": "gcp", "service_account": "x@y.iam.gserviceaccount.com:signJwt#"})
+	m := structuredMap(t, res)
+	if !res.IsError || m["status"] != "not_configured" {
+		t.Fatalf("got IsError=%t status=%v, want not_configured", res.IsError, m["status"])
+	}
+	if reason, _ := m["reason"].(string); !strings.Contains(reason, "invalid service_account") {
+		t.Errorf("reason = %q, want the invalid service_account rejection", reason)
+	}
+}
+
+// TestCredentialVendPolicy is the F247 regression: credential vending is
+// opt-in and allow-listed. Each request the project's security.credential_vend
+// does not allow is denied before any ambient credential is loaded, naming the
+// setting that would allow it — in particular AWS GetSessionToken, which hands
+// out the ambient IAM user's full permissions, is denied by default.
+func TestCredentialVendPolicy(t *testing.T) {
+	t.Parallel()
+	const (
+		role  = "arn:aws:iam::123456789012:role/dev"
+		sa    = "ci@proj.iam.gserviceaccount.com"
+		scope = "https://storage.azure.com/.default"
+		mi    = "00000000-0000-0000-0000-000000000001"
+	)
+	allowLists := types.CredentialVendConfig{
+		Enabled: true,
+		AWS:     types.AWSCredentialVendConfig{RoleARNs: []string{role}},
+		GCP:     types.GCPCredentialVendConfig{ServiceAccounts: []string{sa}},
+		Azure:   types.AzureCredentialVendConfig{Scopes: []string{scope}, Identities: []string{mi}},
+	}
+	disabled := allowLists
+	disabled.Enabled = false
+
+	tests := []struct {
+		name        string
+		policy      types.CredentialVendConfig
+		args        map[string]any
+		wantSetting string
+	}{
+		{"disabled", disabled, map[string]any{"provider": "aws", "role_arn": role}, "security.credential_vend.enabled"},
+		{"zero policy", types.CredentialVendConfig{}, map[string]any{"provider": "gcp", "service_account": sa}, "security.credential_vend.enabled"},
+		{"aws session token by default", allowLists, map[string]any{"provider": "aws"}, "security.credential_vend.aws.allow_session_token"},
+		{"aws unlisted role", allowLists, map[string]any{"provider": "aws", "role_arn": "arn:aws:iam::123456789012:role/admin"}, "security.credential_vend.aws.role_arns"},
+		{"gcp unlisted service account", allowLists, map[string]any{"provider": "gcp", "service_account": "owner@proj.iam.gserviceaccount.com"}, "security.credential_vend.gcp.service_accounts"},
+		{"azure default scope unlisted", allowLists, map[string]any{"provider": "azure"}, "security.credential_vend.azure.scopes"},
+		{"azure unlisted scope", allowLists, map[string]any{"provider": "azure", "scope": "https://management.azure.com/.default"}, "security.credential_vend.azure.scopes"},
+		{"azure unlisted identity", allowLists, map[string]any{"provider": "azure", "scope": scope, "identity": "00000000-0000-0000-0000-000000000002"}, "security.credential_vend.azure.identities"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			res := call(t, newCredentialVendor(tt.policy).handle, tt.args)
+			m := structuredMap(t, res)
+			if !res.IsError || m["status"] != "denied" {
+				t.Fatalf("got IsError=%t status=%v, want denied", res.IsError, m["status"])
+			}
+			if m["setting"] != tt.wantSetting {
+				t.Errorf("setting = %v, want %s", m["setting"], tt.wantSetting)
+			}
+			if r, _ := m["remediation"].(string); !strings.Contains(r, tt.wantSetting) {
+				t.Errorf("remediation = %q, want it to name %s", r, tt.wantSetting)
+			}
+		})
+	}
+}
+
+// TestCredentialVendAllowListedRolePassesPolicy proves an allow-listed role gets
+// past the policy to the credential lookup (not_configured offline), so the
+// allow-list admits what it names.
+func TestCredentialVendAllowListedRolePassesPolicy(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "absent")
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("AWS_SESSION_TOKEN", "")
+	t.Setenv("AWS_PROFILE", "")
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", missing)
+	t.Setenv("AWS_CONFIG_FILE", missing)
+
+	const role = "arn:aws:iam::123456789012:role/dev"
+	cv := newCredentialVendor(types.CredentialVendConfig{
+		Enabled: true,
+		AWS:     types.AWSCredentialVendConfig{RoleARNs: []string{role}},
+	})
+	res := call(t, cv.handle, map[string]any{"provider": "aws", "role_arn": role})
+	if status := structuredMap(t, res)["status"]; status != "not_configured" {
+		t.Errorf("status = %v, want not_configured (past the policy, no credentials)", status)
+	}
+}
+
+// TestToolsRegistersCredentialVendOnlyWhenEnabled checks the opt-in at
+// registration: without an enabled security.credential_vend the tool is not
+// offered at all.
+func TestToolsRegistersCredentialVendOnlyWhenEnabled(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		policy types.CredentialVendConfig
+		want   bool
+	}{
+		{"zero", types.CredentialVendConfig{}, false},
+		{"allow-lists only", types.CredentialVendConfig{AWS: types.AWSCredentialVendConfig{AllowSessionToken: true}}, false},
+		{"enabled", types.CredentialVendConfig{Enabled: true}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var names []string
+			for _, r := range Tools(t.TempDir(), nil, tt.policy) {
+				names = append(names, r.Name)
+			}
+			if got := slices.Contains(names, middleware.CredentialVendToolName); got != tt.want {
+				t.Errorf("credential_vend registered = %t, want %t (tools %v)", got, tt.want, names)
+			}
+			if !slices.Contains(names, "qsdev_policy_check") || !slices.Contains(names, "qsdev_security_scan") {
+				t.Errorf("tools = %v, want the other security tools regardless", names)
+			}
+		})
 	}
 }

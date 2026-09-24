@@ -13,9 +13,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
-	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
-	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 )
 
 // Tools returns the five Claude Code tool registrations. Each handler delegates
@@ -30,6 +28,7 @@ func (a *Adapter) Tools() []spi.ToolRegistration {
 			InputSchema: optionalStringSchema("category", "Restrict the returned rules to those targeting this Claude Code tool (e.g. \"Bash\", \"Read\", \"WebFetch\"). Case-insensitive; omit for all rules."),
 			Category:    middleware.CategoryPolicy,
 			Tier:        tierStandard,
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     a.handlePermissions,
 		},
 		{
@@ -38,6 +37,7 @@ func (a *Adapter) Tools() []spi.ToolRegistration {
 			InputSchema: toolutil.EmptyObjectSchema(),
 			Category:    middleware.CategoryStatus,
 			Tier:        tierStandard,
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     a.handleHooks,
 		},
 		{
@@ -46,14 +46,16 @@ func (a *Adapter) Tools() []spi.ToolRegistration {
 			InputSchema: optionalStringSchema("model", "Model whose context window to budget against: \"sonnet\" (200k) or \"opus\" (1M). Unknown values fall back to sonnet."),
 			Category:    middleware.CategoryStatus,
 			Tier:        tierExtended,
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     a.handleContextBudget,
 		},
 		{
 			Name:        toolConfigRender,
-			Description: "Render the Claude Code configuration files (.claude/settings.json and .mcp.json) from the project's qsdev policy. Dry-run by default: it returns the generated file contents without writing. Set write=true to materialize the files to disk.",
-			InputSchema: optionalBoolSchema("write", "Write the rendered files to disk instead of returning them as a dry-run preview."),
+			Description: "Preview the Claude Code configuration files (.claude/settings.json and .mcp.json) rendered from the project's qsdev policy. Dry-run only: it returns the generated file contents and never writes them; run `qsdev init --update` to apply them.",
+			InputSchema: toolutil.EmptyObjectSchema(),
 			Category:    middleware.CategoryGeneral,
 			Tier:        tierExtended,
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     a.handleConfigRender,
 		},
 		{
@@ -62,6 +64,7 @@ func (a *Adapter) Tools() []spi.ToolRegistration {
 			InputSchema: toolutil.EmptyObjectSchema(),
 			Category:    middleware.CategoryPolicy,
 			Tier:        tierExtended,
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     a.handleEnforcementGaps,
 		},
 	}
@@ -71,7 +74,10 @@ func (a *Adapter) Tools() []spi.ToolRegistration {
 // the reference adapter's TranslatePermissions, then explains every allow/deny/
 // ask rule. An optional category argument filters to one targeted tool.
 func (a *Adapter) handlePermissions(ctx context.Context, cc *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
-	preset := presetFor(cc.ProjectRoot)
+	preset, err := presetFor(cc.ProjectRoot)
+	if err != nil {
+		return configError(err), nil
+	}
 	arts, err := a.ref.TranslatePermissions(ctx, &aiframework.PermissionPolicy{Preset: preset})
 	if err != nil {
 		return toolutil.NotConfigured("could not render claude code permissions",
@@ -166,11 +172,22 @@ func (a *Adapter) handleContextBudget(_ context.Context, cc *spi.ToolCallContext
 	return &spi.ToolResult{Text: text, Structured: structured}, nil
 }
 
-// handleConfigRender renders the Claude Code config via the reference adapter.
-// It is dry-run by default (returns contents without writing); write=true
-// materializes the files through the generation pipeline.
+// handleConfigRender renders the Claude Code config via the reference adapter
+// and returns it as a dry-run preview. It never writes: .claude/settings.json
+// and .mcp.json are the agent's own guardrail configuration, and a write through
+// an MCP call names no target path, so no PreToolUse path check (selfprotect or
+// the confused-deputy map) would ever see it. Materializing them is left to the
+// human-run `qsdev init --update`. A call that still asks to write is refused.
 func (a *Adapter) handleConfigRender(ctx context.Context, cc *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
-	input := a.policyInputFor(cc.ProjectRoot)
+	if boolArg(req.Arguments, "write") {
+		return toolutil.ErrorResult(configRenderWriteRefused,
+			map[string]any{"apply_with": configApplyCommand}), nil
+	}
+
+	input, unrendered, err := a.policyInputFor(cc.ProjectRoot)
+	if err != nil {
+		return configError(err), nil
+	}
 	files, err := a.ref.Render(ctx, input)
 	if err != nil {
 		return toolutil.NotConfigured("could not render claude code configuration",
@@ -188,35 +205,23 @@ func (a *Adapter) handleConfigRender(ctx context.Context, cc *spi.ToolCallContex
 		})
 	}
 
-	write := boolArg(req.Arguments, "write")
 	structured := map[string]any{
 		"project_root":      cc.ProjectRoot,
 		"preset":            input.Permissions.Preset,
-		"write":             write,
+		"dry_run":           true,
+		"apply_with":        configApplyCommand,
 		"file_count":        len(files),
 		"files":             rendered,
 		"validation_issues": validationIssues(a.ref.Validate(ctx, files)),
 	}
-
-	if write {
-		res, werr := generate.WriteFiles(files, generate.PipelineOptions{
-			ProjectRoot:       cc.ProjectRoot,
-			SectionMergeFunc:  merge.SectionMarkers,
-			ThreeWayMergeFunc: merge.MergeOnCreate,
-		})
-		if werr != nil {
-			return nil, fmt.Errorf("writing rendered claude code files: %w", werr)
-		}
-		structured["write_result"] = map[string]any{
-			"created": res.Created, "updated": res.Updated,
-			"skipped": res.Skipped, "failed": res.Failed,
-			"summary": res.Summary(),
-		}
-		text := fmt.Sprintf("rendered and wrote %d claude code file(s): %s", len(files), res.Summary())
-		return &spi.ToolResult{Text: text, Structured: structured, IsError: res.HasFailures()}, nil
+	if len(unrendered) > 0 {
+		structured["unrendered_hooks"] = unrendered
+		structured["warnings"] = []string{fmt.Sprintf(
+			"hook choice(s) %v are enabled for this project but cannot be expressed through the framework-agnostic render; "+
+				"run `%s` to generate them", unrendered, configApplyCommand)}
 	}
 
-	text := fmt.Sprintf("rendered %d claude code file(s) (dry-run, not written)", len(files))
+	text := fmt.Sprintf("rendered %d claude code file(s) (dry-run, not written; run `%s` to apply)", len(files), configApplyCommand)
 	return &spi.ToolResult{Text: text, Structured: structured}, nil
 }
 
@@ -224,7 +229,10 @@ func (a *Adapter) handleConfigRender(ctx context.Context, cc *spi.ToolCallContex
 // the reference adapter, the gap between the kernel-level isolation each rule
 // ideally requires and the hook-level enforcement Claude Code provides.
 func (a *Adapter) handleEnforcementGaps(ctx context.Context, cc *spi.ToolCallContext, _ *spi.ToolRequest) (*spi.ToolResult, error) {
-	preset := presetFor(cc.ProjectRoot)
+	preset, err := presetFor(cc.ProjectRoot)
+	if err != nil {
+		return configError(err), nil
+	}
 	arts, err := a.ref.TranslatePermissions(ctx, &aiframework.PermissionPolicy{Preset: preset})
 	if err != nil {
 		return toolutil.NotConfigured("could not render claude code permissions for gap analysis",

@@ -12,11 +12,16 @@ rules:
       - pattern: req.query
       - pattern: req.params
       - pattern: req.body
+    # Match any arity (options and callbacks follow the command) and focus on
+    # the command string itself.
     pattern-sinks:
-      - pattern: exec($CMD)
-      - pattern: execSync($CMD)
-      - pattern: child_process.exec($CMD)
-      - pattern: child_process.execSync($CMD)
+      - patterns:
+          - pattern-either:
+              - pattern: exec($CMD, ...)
+              - pattern: execSync($CMD, ...)
+              - pattern: child_process.exec($CMD, ...)
+              - pattern: child_process.execSync($CMD, ...)
+          - focus-metavariable: $CMD
     pattern-sanitizers:
       - pattern: execFile(...)
       - pattern: spawn(...)
@@ -84,11 +89,17 @@ rules:
       - pattern: $C.Query(...)
       - pattern: $C.Param(...)
       - pattern: $C.PostForm(...)
+    # Any POSIX shell invoked with -c, via exec.Command or exec.CommandContext,
+    # with or without trailing arguments; the finding is the command string.
     pattern-sinks:
-      - pattern: exec.Command("sh", "-c", $CMD)
-      - pattern: exec.Command("bash", "-c", $CMD)
-      - pattern: exec.Command("/bin/sh", "-c", $CMD)
-      - pattern: exec.Command("/bin/bash", "-c", $CMD)
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command($SHELL, "-c", $CMD, ...)
+              - pattern: exec.CommandContext($CTX, $SHELL, "-c", $CMD, ...)
+          - metavariable-regex:
+              metavariable: $SHELL
+              regex: ^"((/usr)?/bin/)?(sh|bash|zsh|dash|ksh)"$
+          - focus-metavariable: $CMD
     pattern-sanitizers:
       - pattern: strconv.Atoi(...)
       - pattern: strconv.ParseInt(...)

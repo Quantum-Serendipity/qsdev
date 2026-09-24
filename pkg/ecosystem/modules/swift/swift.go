@@ -7,7 +7,11 @@
 package swift
 
 import (
+	"bufio"
+	"fmt"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -71,19 +75,69 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		evidence = append(evidence, "*.xcodeproj found")
 	}
 
-	return ecosystem.DetectionResult{
-		Detected:   true,
-		Confidence: confidence,
-		Evidence:   evidence,
+	toolsVersion := parseToolsVersion(filepath.Join(projectRoot, "Package.swift"))
+	if toolsVersion != "" {
+		evidence = append(evidence, fmt.Sprintf("swift-tools-version %s (from Package.swift)", toolsVersion))
 	}
+
+	return ecosystem.DetectionResult{
+		Detected:        true,
+		Confidence:      confidence,
+		Evidence:        evidence,
+		SuggestedConfig: ecosystem.ModuleConfig{Version: toolsVersion},
+	}
+}
+
+// toolsVersionRe matches SwiftPM's mandatory first-line tools-version
+// comment: "// swift-tools-version:5.9", "// swift-tools-version: 6.0".
+var toolsVersionRe = regexp.MustCompile(`^//\s*swift-tools-version:\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?)`)
+
+// swiftVersionRe validates a configured Swift version before it is written
+// into devenv.nix.
+var swiftVersionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+(\.[0-9]+)?$`)
+
+// parseToolsVersion returns the swift-tools-version Package.swift declares on
+// its first line, or "" when the file or the declaration is missing.
+func parseToolsVersion(packageSwift string) string {
+	f, err := os.Open(packageSwift)
+	if err != nil {
+		return ""
+	}
+	defer f.Close() //nolint:errcheck // read-only
+	sc := bufio.NewScanner(f)
+	if !sc.Scan() {
+		return ""
+	}
+	m := toolsVersionRe.FindStringSubmatch(strings.TrimSpace(sc.Text()))
+	if m == nil {
+		return ""
+	}
+	return m[1]
 }
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
 // for Swift language support. Includes a comment about SE-0391 TOFU
 // (Trust On First Use) for package integrity.
-func (m *Module) DevenvNixFragment(_ ecosystem.ModuleConfig) (string, error) {
+//
+// config.Version is the swift-tools-version the package requires. nixpkgs'
+// Swift can lag it (SwiftPM refuses to load a tools-version newer than the
+// toolchain), so the fragment compares versions at evaluation time and warns
+// with the remedy instead of leaving `swift build` to fail with a
+// tools-version error.
+func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error) {
 	var b strings.Builder
 	b.WriteString("  languages.swift.enable = true;\n")
+	if v := config.Version; v != "" {
+		if !swiftVersionRe.MatchString(v) {
+			return "", fmt.Errorf("invalid Swift tools version %q: want a version such as 5.9 or 6.0", v)
+		}
+		fmt.Fprintf(&b, `  languages.swift.package =
+    if lib.versionOlder pkgs.swift.version "%[1]s" then
+      lib.warn "Package.swift requires swift-tools-version %[1]s but nixpkgs provides Swift ${pkgs.swift.version}; build with the host Xcode or a swiftly-managed toolchain" pkgs.swift
+    else
+      pkgs.swift;
+`, v)
+	}
 	b.WriteString("  # SE-0391: Package.resolved provides TOFU (Trust On First Use) integrity.\n")
 	b.WriteString("  # Always commit Package.resolved to version control.\n")
 	return b.String(), nil
@@ -106,7 +160,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 			Language:      "system",
 			Types:         []string{"swift"},
 			Stages:        []string{"pre-commit"},
-			PassFilenames: false,
+			PassFilenames: true, // the formatter needs file operands
 			// Custom hook (BuiltIn:false): NixPackage provisions the binary so
 			// the emitted `entry` resolves at commit time.
 			BuiltIn:    false,
@@ -119,22 +173,27 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // These prevent direct dependency updates outside of controlled workflows.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	return []string{
-		"Bash(swift package update *)",
+		// No space before the glob: bare `swift package update` bumps every
+		// dependency past Package.resolved, so the rule must match it too.
+		"Bash(swift package update*)",
 	}
 }
 
-// CICommands returns CI pipeline commands for the Swift ecosystem.
+// CICommands returns CI pipeline commands for the Swift ecosystem. Plain
+// `swift package resolve` re-resolves and rewrites Package.resolved when it
+// is missing or stale; --force-resolved-versions resolves exactly the pinned
+// versions and fails instead, and the build keeps the same pins.
 func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 	return []ecosystem.CICommand{
 		{
 			Name:        "swift-package-resolve",
-			Command:     "swift package resolve",
-			Description: "Resolve Swift package dependencies",
+			Command:     "swift package resolve --force-resolved-versions",
+			Description: "Resolve Swift package dependencies exactly as pinned in Package.resolved",
 			Phase:       ecosystem.CIPhaseInstall,
 		},
 		{
 			Name:        "swift-build",
-			Command:     "swift build",
+			Command:     "swift build --force-resolved-versions",
 			Description: "Build the Swift project",
 			Phase:       ecosystem.CIPhaseTest,
 		},
@@ -145,9 +204,8 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:             "spm",
-			LockFile:         "Package.resolved",
-			AgeGatingSupport: false,
+			Name:     "spm",
+			LockFile: "Package.resolved",
 		},
 	}
 }

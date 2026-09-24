@@ -25,7 +25,7 @@ func mergeUnionStrings(base, overlay []string) []string {
 		return nil
 	}
 
-	seen := make(map[string]bool, len(base)+len(overlay))
+	seen := make(map[string]bool, max(len(base), len(overlay)))
 	var result []string
 
 	for _, s := range base {
@@ -83,7 +83,7 @@ func mergeMapStringAny(base, overlay map[string]map[string]any) map[string]map[s
 		return nil
 	}
 
-	result := make(map[string]map[string]any, len(base)+len(overlay))
+	result := make(map[string]map[string]any, max(len(base), len(overlay)))
 
 	// Copy base entries.
 	for k, v := range base {

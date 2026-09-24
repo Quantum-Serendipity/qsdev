@@ -61,7 +61,7 @@ func SaveHistory(path string, store *HistoryStore) error {
 	}
 
 	data = append(data, '\n')
-	if err := os.WriteFile(path, data, fileutil.ModeReadWrite); err != nil {
+	if err := fileutil.WriteFileAtomic(path, data, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing history file: %w", err)
 	}
 	return nil

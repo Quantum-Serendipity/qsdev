@@ -1,12 +1,37 @@
 package catalog
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// Top-level unified defaults sections whose entries are deep-merged by
+// MergeCatalogs (see Catalog.entryNodes). The names match the yaml tags on
+// UnifiedDefaults.
+const (
+	sectionTiers                = "tiers"
+	sectionCompliance           = "compliance"
+	sectionProjectProfiles      = "project_profiles"
+	sectionTools                = "tools"
+	sectionMCPServers           = "mcp_servers"
+	sectionBootstrapTools       = "bootstrap_tools"
+	sectionPermissionPresetDefs = "permission_preset_defs"
+)
+
+// removedSections are top-level keys that earlier versions accepted but
+// nothing ever read (the tier profiles and their aliases). A defaults file
+// written from an older template may still set them, so they are dropped
+// with a warning instead of failing strict parsing, which would make Default
+// skip the whole file and every real override in it.
+var removedSections = []string{"profiles", "profile_aliases"}
 
 // UnifiedDefaults is the user-facing schema for ~/.config/qsdev/defaults.yaml.
 // It flattens the 9 internal catalog files into a single file with intuitive
@@ -16,9 +41,7 @@ type UnifiedDefaults struct {
 	Tiers      map[string]TierDef            `yaml:"tiers,omitempty"`
 	Compliance map[string]ComplianceLevelDef `yaml:"compliance,omitempty"`
 
-	// Profiles
-	Profiles        map[string]ProfileDef        `yaml:"profiles,omitempty"`
-	ProfileAliases  map[string]string            `yaml:"profile_aliases,omitempty"`
+	// Project-type profiles
 	ProjectProfiles map[string]ProjectProfileDef `yaml:"project_profiles,omitempty"`
 
 	// Tools
@@ -26,6 +49,9 @@ type UnifiedDefaults struct {
 
 	// MCP Servers
 	MCPServers map[string]MCPServerDef `yaml:"mcp_servers,omitempty"`
+
+	// Bootstrap tools
+	BootstrapTools map[string]BootstrapToolDef `yaml:"bootstrap_tools,omitempty"`
 
 	// Security
 	SecurityHooks []string        `yaml:"security_hooks,omitempty"`
@@ -39,6 +65,7 @@ type UnifiedDefaults struct {
 	HookTiers     map[string][]string `yaml:"hook_tiers,omitempty"`
 
 	// Derivations
+	DefaultTier        string              `yaml:"default_tier,omitempty"`
 	TierToCompliance   map[string]string   `yaml:"tier_to_compliance,omitempty"`
 	TierToEnabledTools map[string][]string `yaml:"tier_to_enabled_tools,omitempty"`
 	DefaultMCPServers  []string            `yaml:"default_mcp_servers,omitempty"`
@@ -76,9 +103,7 @@ func (u *UnifiedDefaults) ToCatalog() *Catalog {
 	cat.tiers.Tiers = u.Tiers
 	cat.compliance.Levels = u.Compliance
 
-	// Profiles
-	cat.profiles.Profiles = u.Profiles
-	cat.profiles.Aliases = u.ProfileAliases
+	// Project-type profiles
 	cat.projectProfiles.Profiles = u.ProjectProfiles
 
 	// Tools
@@ -86,6 +111,9 @@ func (u *UnifiedDefaults) ToCatalog() *Catalog {
 
 	// MCP Servers
 	cat.mcpServers = u.MCPServers
+
+	// Bootstrap tools
+	cat.bootstrapTools = u.BootstrapTools
 
 	// Security
 	cat.security.Hooks.Default = u.SecurityHooks
@@ -99,6 +127,7 @@ func (u *UnifiedDefaults) ToCatalog() *Catalog {
 	cat.hookTiers.Tiers = u.HookTiers
 
 	// Derivations
+	cat.derivations.DefaultTier = u.DefaultTier
 	cat.derivations.TierToCompliance = u.TierToCompliance
 	cat.derivations.TierToEnabledTools = u.TierToEnabledTools
 	cat.derivations.DefaultMCPServers = u.DefaultMCPServers
@@ -144,9 +173,7 @@ func (c *Catalog) ToUnified() *UnifiedDefaults {
 	u.Tiers = c.tiers.Tiers
 	u.Compliance = c.compliance.Levels
 
-	// Profiles
-	u.Profiles = c.profiles.Profiles
-	u.ProfileAliases = c.profiles.Aliases
+	// Project-type profiles
 	u.ProjectProfiles = c.projectProfiles.Profiles
 
 	// Tools
@@ -154,6 +181,9 @@ func (c *Catalog) ToUnified() *UnifiedDefaults {
 
 	// MCP Servers
 	u.MCPServers = c.mcpServers
+
+	// Bootstrap tools
+	u.BootstrapTools = c.bootstrapTools
 
 	// Security
 	u.SecurityHooks = c.security.Hooks.Default
@@ -167,6 +197,7 @@ func (c *Catalog) ToUnified() *UnifiedDefaults {
 	u.HookTiers = c.hookTiers.Tiers
 
 	// Derivations
+	u.DefaultTier = c.derivations.DefaultTier
 	u.TierToCompliance = c.derivations.TierToCompliance
 	u.TierToEnabledTools = c.derivations.TierToEnabledTools
 	u.DefaultMCPServers = c.derivations.DefaultMCPServers
@@ -203,9 +234,9 @@ func (c *Catalog) ToUnified() *UnifiedDefaults {
 // SectionNames returns the valid section names for the unified defaults file.
 func SectionNames() []string {
 	return []string{
-		"tiers", "compliance", "profiles", "profile_aliases", "project_profiles",
-		"tools", "mcp_servers", "security_hooks", "base_packages", "unset_vars", "keep_vars",
-		"custom_hooks", "hook_tier_order", "hook_tiers", "tier_to_compliance",
+		"tiers", "compliance", "project_profiles",
+		"tools", "mcp_servers", "bootstrap_tools", "security_hooks", "base_packages", "unset_vars", "keep_vars",
+		"custom_hooks", "hook_tier_order", "hook_tiers", "default_tier", "tier_to_compliance",
 		"tier_to_enabled_tools", "default_mcp_servers", "default_agent_tools",
 		"languages", "services", "permission_presets", "hook_presets",
 		"security_levels", "data_classifications", "package_managers", "tool_categories",
@@ -223,12 +254,169 @@ func loadUnifiedFile(path string) (*Catalog, error) {
 		return nil, err
 	}
 
-	var ud UnifiedDefaults
-	if err := yaml.Unmarshal(data, &ud); err != nil {
+	cat, err := parseUnifiedBytes(data)
+	if err != nil {
 		return nil, fmt.Errorf("parsing unified defaults %s: %w", path, err)
 	}
+	return cat, nil
+}
 
-	return ud.ToCatalog(), nil
+// parseUnifiedBytes strictly parses unified defaults YAML. Unknown or
+// misspelled keys are rejected (a typo such as "permision_deny_rules" must
+// not silently drop the user's intended security rules), as is any YAML
+// document after the first, which would otherwise be ignored. Sections
+// that were removed from the schema are dropped with a warning (see
+// prepareUnifiedDocument). An empty or comment-only file yields an empty
+// catalog.
+func parseUnifiedBytes(data []byte) (*Catalog, error) {
+	data, err := prepareUnifiedDocument(data)
+	if err != nil {
+		return nil, err
+	}
+
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+
+	var ud UnifiedDefaults
+	if err := dec.Decode(&ud); err != nil {
+		if errors.Is(err, io.EOF) {
+			return &Catalog{}, nil
+		}
+		return nil, err
+	}
+
+	// Keep the raw document so MergeCatalogs can tell which fields of an
+	// entry the file actually sets.
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+
+	cat := ud.ToCatalog()
+	cat.entryNodes = sectionEntryNodes(&doc)
+	return cat, nil
+}
+
+// prepareUnifiedDocument rejects a file with more than one YAML document and
+// returns data without the top-level removedSections keys, warning about
+// each one it drops. The lines of a dropped section are blanked rather than
+// the document re-encoded, so strict parse errors for the rest of the file
+// keep their original line numbers.
+func prepareUnifiedDocument(data []byte) ([]byte, error) {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	var doc yaml.Node
+	if err := dec.Decode(&doc); err != nil {
+		if errors.Is(err, io.EOF) {
+			return data, nil
+		}
+		return nil, err
+	}
+	more, err := hasMoreDocuments(dec)
+	if err != nil {
+		return nil, err
+	}
+	if more {
+		return nil, errors.New("multiple YAML documents are not supported; remove everything after the first \"---\"")
+	}
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return data, nil
+	}
+
+	root := doc.Content[0]
+	var removed []int
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if key := root.Content[i]; slices.Contains(removedSections, key.Value) {
+			slog.Warn("ignoring removed section in defaults file; delete it",
+				"section", key.Value, "line", key.Line)
+			removed = append(removed, i)
+		}
+	}
+	if len(removed) == 0 {
+		return data, nil
+	}
+	if root.Style&yaml.FlowStyle == 0 {
+		return blankTopLevelEntries(data, root, removed), nil
+	}
+
+	// A flow-style root mapping ({a: 1, b: 2}) can share lines between
+	// entries, so re-encode it without the removed entries instead.
+	kept := make([]*yaml.Node, 0, len(root.Content))
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if !slices.Contains(removed, i) {
+			kept = append(kept, root.Content[i], root.Content[i+1])
+		}
+	}
+	root.Content = kept
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		return nil, fmt.Errorf("re-encoding defaults without removed sections: %w", err)
+	}
+	return out, nil
+}
+
+// blankTopLevelEntries empties the lines of the given entries (indexes of
+// their keys in root.Content) of a block-style root mapping. An entry runs
+// from its key's line to the line before the next key, or to the end of the
+// data. Every other line keeps its position.
+func blankTopLevelEntries(data []byte, root *yaml.Node, keyIdx []int) []byte {
+	lines := bytes.SplitAfter(data, []byte("\n"))
+	for _, i := range keyIdx {
+		end := len(lines)
+		if i+2 < len(root.Content) {
+			end = min(root.Content[i+2].Line-1, end)
+		}
+		for l := root.Content[i].Line - 1; l < end; l++ {
+			if bytes.HasSuffix(lines[l], []byte("\n")) {
+				lines[l] = []byte("\n")
+			} else {
+				lines[l] = nil
+			}
+		}
+	}
+	return bytes.Join(lines, nil)
+}
+
+// hasMoreDocuments reports whether dec holds another YAML document with
+// content. Empty trailing documents (a closing "---", optionally followed by
+// comments) carry nothing that could be ignored, so they are skipped.
+func hasMoreDocuments(dec *yaml.Decoder) (bool, error) {
+	for {
+		var doc yaml.Node
+		if err := dec.Decode(&doc); err != nil {
+			if errors.Is(err, io.EOF) {
+				return false, nil
+			}
+			return false, err
+		}
+		if len(doc.Content) > 0 && doc.Content[0].Tag != "!!null" {
+			return true, nil
+		}
+	}
+}
+
+// sectionEntryNodes indexes the entries of every top-level mapping section
+// of a unified defaults document by section and entry name.
+func sectionEntryNodes(doc *yaml.Node) map[string]map[string]*yaml.Node {
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return nil
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return nil
+	}
+	out := make(map[string]map[string]*yaml.Node)
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		section := root.Content[i+1]
+		if section.Kind != yaml.MappingNode {
+			continue
+		}
+		entries := make(map[string]*yaml.Node, len(section.Content)/2)
+		for j := 0; j+1 < len(section.Content); j += 2 {
+			entries[section.Content[j].Value] = section.Content[j+1]
+		}
+		out[root.Content[i].Value] = entries
+	}
+	return out
 }
 
 // LoadEmbeddedOnly loads only the embedded catalog defaults with no overlays.

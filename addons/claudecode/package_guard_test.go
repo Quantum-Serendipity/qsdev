@@ -263,8 +263,7 @@ func TestPackageGuard_AgeCheckedEcosystemsMatchPosture(t *testing.T) {
 	}
 	var checked []string
 	for _, m := range regexp.MustCompile(`"([^"]+)":\s*(_resolve_\w+)`).FindAllStringSubmatch(block[1], -1) {
-		// A resolver age-checks when it reports a publication age (the flat
-		// NuGet index carries no dates, so its resolver returns None).
+		// A resolver age-checks when it reports a publication age.
 		body := regexp.MustCompile(`(?s)\ndef ` + m[2] + `\(.*?\n\S`).FindString(src)
 		if body == "" {
 			t.Fatalf("resolver %s not found in package-guard.py", m[2])

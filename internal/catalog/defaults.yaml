@@ -1664,6 +1664,13 @@ permission_ask_rules:
         - "Bash(composer install)"
         - "Bash(composer update *)"
         - "Bash(composer update)"
+    # Adding a NuGet package reference; package-guard age- and OSV-checks the
+    # version. Tool, template and nuget CLI installs are denied by the .NET
+    # ecosystem module instead.
+    dotnet:
+        - "Bash(dotnet add package *)"
+        - "Bash(dotnet add * package *)"
+        - "Bash(dotnet package add *)"
     code_execution:
         - "Bash(npm run *)"
         - "Bash(npm start *)"
@@ -1697,6 +1704,7 @@ permission_package_ask_sets:
     - go
     - ruby
     - php
+    - dotnet
 
 # Permission presets define which allow/deny/ask sets compose each preset.
 # strictness ranks the presets a .qsdev.local.yaml may tighten between
@@ -1735,6 +1743,7 @@ permission_preset_defs:
             - go
             - ruby
             - php
+            - dotnet
     standard:
         strictness: 2
         default_mode: default
@@ -1767,6 +1776,7 @@ permission_preset_defs:
             - go
             - ruby
             - php
+            - dotnet
     permissive:
         strictness: 1
         default_mode: default
@@ -1800,6 +1810,7 @@ permission_preset_defs:
             - go
             - ruby
             - php
+            - dotnet
     supply-chain-only:
         allow_sets: []
         deny_sets:
@@ -1821,6 +1832,7 @@ permission_preset_defs:
             - go
             - ruby
             - php
+            - dotnet
     custom:
         deny_sets:
             - npx
@@ -1844,3 +1856,4 @@ permission_preset_defs:
             - go
             - ruby
             - php
+            - dotnet

@@ -211,18 +211,17 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 
 // DenyRules returns Claude Code deny-rule patterns for .NET.
 //
-// package-guard has no NuGet support, so every command that adds a package
-// reference or downloads and runs a NuGet package is denied outright,
-// including each documented spelling: the project argument before `package`,
-// the .NET 10 noun-first `dotnet package add`, tool installs and one-shot
-// tool execution (`dotnet tool exec`, `dnx` and the `dotnet dnx` it forwards
-// to), template packages (including the pre-.NET 7 `dotnet new -i` form), and
-// the standalone nuget CLI.
+// Adding a package reference (`dotnet add package`, `dotnet add <PROJECT>
+// package` and the .NET 10 noun-first `dotnet package add`) is not denied: the
+// catalog's dotnet ask set prompts for it and package-guard checks the NuGet
+// version it would pick for advisories and publication age first. What stays
+// denied is every command that downloads and runs a NuGet package or
+// re-resolves references without naming what it installs: tool installs and
+// one-shot tool execution (`dotnet tool exec`, `dnx` and the `dotnet dnx` it
+// forwards to), `dotnet package update`, template packages (including the
+// pre-.NET 7 `dotnet new -i` form) and the standalone nuget CLI.
 func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 	return []string{
-		"Bash(dotnet add package *)",
-		"Bash(dotnet add * package *)",
-		"Bash(dotnet package add *)",
 		"Bash(dotnet package update *)",
 		"Bash(dotnet tool install *)",
 		"Bash(dotnet tool update *)",

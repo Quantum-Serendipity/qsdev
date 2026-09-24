@@ -449,7 +449,7 @@ Top-level structure:
 The permission model uses approximately **90 deny rules** and **60 ask rules**:
 
 - **Deny rules** block dangerous operations outright: npx, nix-env imperative installs, system package managers, pipe-to-shell, shell wrapping, env/command prefix bypass, sudo-prefixed installs, subprocess escapes, eval/xargs, and destructive operations.
-- **Ask rules** gate package install operations (npm, pip, cargo, go, gem, composer) through the PreToolUse hook, which performs age-gating and vulnerability checks before allowing the install.
+- **Ask rules** gate package install operations (npm, pip, cargo, go, gem, composer, dotnet) through the PreToolUse hook, which performs age-gating and vulnerability checks before allowing the install.
 
 The three-way merge during updates preserves any custom allow/deny rules you have added while incorporating new rules from template upgrades.
 

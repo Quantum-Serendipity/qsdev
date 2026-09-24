@@ -95,10 +95,10 @@ The `package-guard` hook runs as a Claude Code PreToolUse interceptor on every `
 
 1. **Pattern matching** — Detects install commands across all supported package managers.
 2. **OSV.dev vulnerability check** — Queries the OSV API for known vulnerabilities in the requested package.
-3. **Age-gate enforcement** — Rejects packages published less than the configured minimum release age.
+3. **Age-gate enforcement** — Rejects packages published less than the configured minimum release age. The age is that of the exact version the manager would install: for NuGet it comes from nuget.org's registration API, which also tells the guard which versions are unlisted (never picked for a latest or floating version; a pinned unlisted version is aged by its catalog `created` time, since nuget.org stamps unlisted versions as published in 1900). `--prerelease` is checked as the newest pre-release it selects.
 4. **Allow or block** — Permits the install (with approval) if the package passes both checks; blocks it otherwise with an explanation.
 
-Package install commands live in the `ask` list (not `deny`), meaning the hook gets a chance to validate them before the user sees a prompt. Only bypass vectors that cannot be safely validated remain in `deny`.
+Package install commands live in the `ask` list (not `deny`), meaning the hook gets a chance to validate them before the user sees a prompt. Only bypass vectors that cannot be safely validated remain in `deny`. For .NET that means adding a package reference is ask-gated and guard-checked, while commands that download and run a NuGet package or install outside the project's references (`dotnet tool install/update/exec/run`, `dnx`, `dotnet dnx`, `dotnet new install`/`-i`, `dotnet package update`, the `nuget` CLI) are denied by the .NET ecosystem module.
 
 ### Layer 6: Nix Hardening
 
@@ -394,6 +394,7 @@ Ask rules cover:
 | Go | `go get`, `go install` |
 | Ruby | `gem install`, `bundle add` |
 | PHP | `composer require` |
+| .NET | `dotnet add package`, `dotnet add <PROJECT> package`, `dotnet package add` |
 | System | `nix profile install`, `apt install`, `brew install` |
 
 ### Deny Rules (~90 rules)

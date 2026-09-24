@@ -831,19 +831,15 @@ func TestPreCommitHooks(t *testing.T) {
 
 // --- DenyRules tests ---
 
-// TestDenyRules checks every documented way to add a NuGet package or to
-// download and run one is denied, since package-guard has no NuGet support:
-// the old rules only matched `dotnet add package` and `nuget install`.
+// TestDenyRules checks every documented way to download and run a NuGet
+// package, or to install one past package-guard, is denied, while adding a
+// package reference is left to the catalog's ask rules and package-guard,
+// which age- and OSV-check the NuGet version it would pick (W095).
 func TestDenyRules(t *testing.T) {
 	t.Parallel()
 	rules := newModule().DenyRules(ecosystem.ModuleConfig{})
 
 	denied := []string{
-		"dotnet add package Newtonsoft.Json",
-		"dotnet add src/App/App.csproj package Newtonsoft.Json",
-		"dotnet add App.csproj package Evil --version 1.0.0",
-		"dotnet package add Evil",
-		"dotnet package add Evil --project src/App/App.csproj",
 		"dotnet package update Evil",
 		"dotnet tool install -g evil-tool",
 		"dotnet tool install evil-tool --local",
@@ -876,6 +872,12 @@ func TestDenyRules(t *testing.T) {
 		"dotnet add reference ../Lib/Lib.csproj",
 		"dotnet new console -o App",
 		"dotnet tool restore",
+		// Guarded by the ask rules and package-guard instead.
+		"dotnet add package Newtonsoft.Json",
+		"dotnet add src/App/App.csproj package Newtonsoft.Json",
+		"dotnet add App.csproj package Evil --version 1.0.0",
+		"dotnet package add Evil",
+		"dotnet package add Evil --project src/App/App.csproj",
 	}
 	for _, cmd := range allowed {
 		op := "Bash(" + cmd + ")"

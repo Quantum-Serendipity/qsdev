@@ -159,13 +159,12 @@ func nixIndentedStringBody(s string) (body string, ok bool) {
 
 // GuardAgeCheckedLanguages are the ecosystems whose registry publication age
 // package-guard.py checks (npm, PyPI, crates.io, the Go module proxy,
-// RubyGems, Packagist and pub.dev; dart/flutter installs are currently denied
-// outright, which is stricter still). NuGet publishes no dates in the index
-// the guard reads, so .NET is not age-gated. The claudecode addon's tests keep
-// this list in sync with the hook template.
+// RubyGems, Packagist, NuGet's registration hive and pub.dev; dart/flutter
+// installs are currently denied outright, which is stricter still). The
+// claudecode addon's tests keep this list in sync with the hook template.
 var GuardAgeCheckedLanguages = []string{
 	ecosystem.NameJavaScript, ecosystem.NamePython, ecosystem.NameRust, ecosystem.NameGo,
-	ecosystem.NameRuby, ecosystem.NamePHP, ecosystem.NameDart,
+	ecosystem.NameRuby, ecosystem.NamePHP, ecosystem.NameDart, ecosystem.NameDotnet,
 }
 
 // ageUngatedLanguages lists the detected ecosystems that install packages (their

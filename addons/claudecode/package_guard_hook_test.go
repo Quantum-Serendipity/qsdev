@@ -19,13 +19,14 @@ import (
 // pgHookDriver runs the package-guard hook's main() on PG_CMD with every
 // network call served from PG_FIXTURES: registry GETs by exact URL, OSV
 // queries by "<ecosystem>/<name>@<version>" (a versionless query returns every
-// advisory of the package, like the real API). Unknown URLs are 404s. A
-// fixture "raise" entry (URL or OSV key -> http.client exception name) injects
+// advisory of the package, like the real API). Unknown URLs are 404s; URLs
+// listed under "gzip" are served gzip-compressed, as nuget.org serves its
+// registration hive. A fixture "raise" entry (URL or OSV key -> http.client exception name) injects
 // a transport failure, and "slow" (URL -> seconds) delays a response;
 // PG_BUDGET overrides the validation time budget. OSV entries are advisory IDs
 // or full advisory objects. It prints the hook's decision as JSON.
 const pgHookDriver = `
-import importlib.util, io, json, os, sys, contextlib, time, http.client, urllib.error
+import importlib.util, io, gzip, json, os, sys, contextlib, time, http.client, urllib.error
 spec = importlib.util.spec_from_file_location('pg', os.environ['PG_PATH'])
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
@@ -65,7 +66,8 @@ def urlopen(req, timeout=None):
     fault(url)
     if url not in fx['get']:
         raise urllib.error.HTTPError(url, 404, 'Not Found', {}, None)
-    return Resp(json.dumps(fx['get'][url]).encode())
+    body = json.dumps(fx['get'][url]).encode()
+    return Resp(gzip.compress(body) if url in fx.get('gzip', []) else body)
 
 m.urllib.request.urlopen = urlopen
 m.audit_log = lambda e: None
@@ -97,6 +99,9 @@ type guardResult struct {
 // published two hours ago (inside the 3-day quarantine); everything else is
 // old. Advisories: express@4.19.2, requests@2.32.3, NuGet Evil@1.0.0, a
 // malicious-package advisory on evil-mal and a withdrawn one on withdrawn.
+// NuGet packages come from the registration hive: Safe.Lib has an old
+// latest stable, an unlisted 2.5.0 first pushed two hours ago and a fresh
+// pre-release; Paged.Lib's index is paged and served gzip-compressed.
 // truncated / osv-broken fail in transport, slow answers after 5s, bad-shape
 // returns JSON of the wrong type.
 func guardFixtures(t *testing.T) string {
@@ -113,6 +118,20 @@ func guardFixtures(t *testing.T) string {
 	pypiFile := func(ts string) []map[string]any {
 		return []map[string]any{{"upload_time_iso_8601": ts}}
 	}
+	const nugetReg = "https://api.nuget.org/v3/registration5-gz-semver2/"
+	nugetLeaf := func(id, version, published string, listed bool) map[string]any {
+		return map[string]any{"catalogEntry": map[string]any{
+			"@id": "https://api.nuget.org/v3/catalog0/data/" + strings.ToLower(id) + "." + version + ".json",
+			"id":  id, "version": version, "published": published, "listed": listed,
+		}}
+	}
+	nugetIndex := func(leaves ...map[string]any) map[string]any {
+		return map[string]any{"items": []map[string]any{{"items": leaves}}}
+	}
+	nugetPage := func(id, version string) string {
+		return nugetReg + strings.ToLower(id) + "/page/" + version + "/" + version + ".json"
+	}
+	const unlistedStamp = "1900-01-01T00:00:00+00:00"
 	fixtures := map[string]any{
 		"get": map[string]any{
 			"https://registry.npmjs.org/left-pad": npmDoc("1.3.0", map[string]string{"1.2.0": oldTime, "1.3.0": oldTime}),
@@ -162,8 +181,22 @@ func guardFixtures(t *testing.T) string {
 			"https://rubygems.org/api/v1/versions/evil-new.json": []map[string]any{
 				{"number": "1.0.0", "created_at": fresh, "prerelease": false},
 			},
-			"https://api.nuget.org/v3-flatcontainer/evil/index.json": map[string]any{"versions": []string{"1.0.0"}},
+			nugetReg + "evil/index.json":     nugetIndex(nugetLeaf("Evil", "1.0.0", oldTime, true)),
+			nugetReg + "evil.new/index.json": nugetIndex(nugetLeaf("Evil.New", "1.0.0", fresh, true)),
+			nugetReg + "safe.lib/index.json": nugetIndex(
+				nugetLeaf("Safe.Lib", "1.0.0", oldTime, true), nugetLeaf("Safe.Lib", "2.0.0", oldTime, true),
+				nugetLeaf("Safe.Lib", "2.5.0", unlistedStamp, false),
+				nugetLeaf("Safe.Lib", "3.0.0-beta.1", fresh, true)),
+			"https://api.nuget.org/v3/catalog0/data/safe.lib.2.5.0.json": map[string]any{
+				"created": fresh, "published": unlistedStamp, "listed": false},
+			nugetReg + "paged.lib/index.json": map[string]any{"items": []map[string]any{
+				{"@id": nugetPage("Paged.Lib", "1.0.0"), "lower": "1.0.0", "upper": "1.0.0"},
+				{"@id": nugetPage("Paged.Lib", "1.1.0"), "lower": "1.1.0", "upper": "1.1.0"},
+			}},
+			nugetPage("Paged.Lib", "1.0.0"): map[string]any{"items": []map[string]any{nugetLeaf("Paged.Lib", "1.0.0", oldTime, true)}},
+			nugetPage("Paged.Lib", "1.1.0"): map[string]any{"items": []map[string]any{nugetLeaf("Paged.Lib", "1.1.0", fresh, true)}},
 		},
+		"gzip": []string{nugetReg + "paged.lib/index.json", nugetPage("Paged.Lib", "1.0.0"), nugetPage("Paged.Lib", "1.1.0")},
 		"osv": map[string][]any{
 			"npm/express@4.19.2":   {"GHSA-express"},
 			"PyPI/requests@2.32.3": {"GHSA-requests"},
@@ -652,6 +685,45 @@ func TestPackageGuard_HookDecisions(t *testing.T) {
 		{name: "escaped alternation", command: `grep "foo\|bar" file.txt`, decision: "silent"},
 		{name: "pipe in a format string", command: `git log --format="%h|%s"`, decision: "silent"},
 		{name: "quoted semicolon", command: `echo 'x; y'`, decision: "silent"},
+
+		// W095: NuGet installs are age-gated through the registration hive,
+		// with the version dotnet would pick, and every documented spelling
+		// is parsed.
+		{name: "nuget fresh latest", command: "dotnet add package Evil.New", decision: "deny",
+			reason: "Evil.New@1.0.0' was published"},
+		{name: "nuget old latest stable passes", command: "dotnet add package Safe.Lib", decision: "silent",
+			lookupsHave: "osv:NuGet/Safe.Lib@2.0.0"},
+		{name: "nuget id is canonicalised for OSV", command: "dotnet add package evil", decision: "deny",
+			reason: "GHSA-nuget"},
+		{name: "nuget --prerelease checks the newest pre-release", command: "dotnet add package Safe.Lib --prerelease",
+			decision: "deny", reason: "Safe.Lib@3.0.0-beta.1' was published"},
+		{name: "nuget unlisted pin uses the catalog created time",
+			command: "dotnet add package Safe.Lib --version 2.5.0", decision: "deny", reason: "Safe.Lib@2.5.0' was published"},
+		{name: "nuget short version pin is normalised", command: "dotnet add package Safe.Lib -v 1.0", decision: "silent",
+			lookupsHave: "osv:NuGet/Safe.Lib@1.0.0"},
+		{name: "nuget floating version", command: "dotnet add package Safe.Lib --version '2.*'", decision: "silent",
+			lookupsHave: "osv:NuGet/Safe.Lib@2.0.0"},
+		{name: "nuget five-part version is not a version", command: "dotnet add package Safe.Lib --version 1.0.0.0.0",
+			decision: "ask", reason: "Pin an exact version"},
+		{name: "nuget interval range asks", command: "dotnet add package Safe.Lib --version '[1.0,2.0)'",
+			decision: "ask", reason: "Pin an exact version"},
+		{name: "nuget paged gzip index", command: "dotnet package add Paged.Lib", decision: "deny",
+			reason: "Paged.Lib@1.1.0' was published"},
+		{name: "nuget exact pin fetches only its page", command: "dotnet package add Paged.Lib --version 1.0.0",
+			decision: "silent", lookupsHave: "osv:NuGet/Paged.Lib@1.0.0", lookupsLack: "page/1.1.0"},
+		{name: "dotnet add project package fresh", command: "dotnet add src/App/App.csproj package Evil.New",
+			decision: "deny", reason: "Evil.New"},
+		{name: "dotnet dnx", command: "dotnet dnx Evil.New", decision: "deny", reason: "Evil.New"},
+		{name: "dotnet tool install", command: "dotnet tool install -g Evil.New", decision: "deny", reason: "Evil.New@1.0.0' was published"},
+		{name: "dotnet tool exec", command: "dotnet tool exec Evil.New", decision: "deny", reason: "Evil.New@1.0.0' was published"},
+		{name: "dotnet new -i", command: "dotnet new -i Evil.New", decision: "deny", reason: "Evil.New@1.0.0' was published"},
+		{name: "dotnet new install pkg::version", command: "dotnet new install Evil::1.0.0", decision: "deny",
+			reason: "GHSA-nuget"},
+		{name: "mono nuget.exe install", command: "mono nuget.exe install Evil.New", decision: "deny", reason: "Evil.New@1.0.0' was published"},
+		{name: "nuget -Prerelease", command: "nuget install Safe.Lib -Prerelease", decision: "deny",
+			reason: "3.0.0-beta.1"},
+		{name: "dotnet add reference is not an install", command: "dotnet add reference ../Lib/Lib.csproj",
+			decision: "silent"},
 
 		// Controls.
 		{name: "go build", command: "go build ./...", decision: "silent"},

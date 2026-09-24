@@ -343,6 +343,46 @@ func TestGenerateSettings_EcosystemDenyRules(t *testing.T) {
 	}
 }
 
+// TestGenerateSettings_DotnetPackageAddsAreAskGated keeps NuGet package
+// additions reachable for package-guard (W095): in every preset the documented
+// spellings are ask rules and no deny rule, including the .NET module's,
+// blocks them, while download-and-run forms stay denied.
+func TestGenerateSettings_DotnetPackageAddsAreAskGated(t *testing.T) {
+	t.Parallel()
+	guarded := []string{
+		"dotnet add package Newtonsoft.Json",
+		"dotnet add src/App/App.csproj package Newtonsoft.Json",
+		"dotnet package add Newtonsoft.Json --project src/App/App.csproj",
+	}
+	denied := []string{"dnx evil-tool", "dotnet tool exec evil-tool", "dotnet new install Evil.Templates"}
+	matches := func(rules []string, cmd string) bool {
+		return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesDenyRule(r, "Bash("+cmd+")") })
+	}
+	for _, preset := range []string{"minimal", "standard", "permissive", "supply-chain-only"} {
+		t.Run(preset, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{
+				PermissionLevel: preset,
+				Languages:       []types.LanguageChoice{{Name: ecosystem.NameDotnet, PackageManager: "nuget"}},
+			}
+			s := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, ecosystem.DefaultRegistry()))
+			for _, cmd := range guarded {
+				if !matches(s.Permissions.Ask, cmd) {
+					t.Errorf("%q is not ask-gated", cmd)
+				}
+				if matches(s.Permissions.Deny, cmd) {
+					t.Errorf("%q is denied, so package-guard can never allow it", cmd)
+				}
+			}
+			for _, cmd := range denied {
+				if !matches(s.Permissions.Deny, cmd) {
+					t.Errorf("%q is not denied", cmd)
+				}
+			}
+		})
+	}
+}
+
 func TestGenerateSettings_DenyRuleDeduplication(t *testing.T) {
 	reg := ecosystem.NewRegistry()
 	// Two modules both returning an overlapping rule.

@@ -51,6 +51,7 @@ Security invariants (not configurable):
 
 import base64
 import binascii
+import gzip
 import json
 import os
 import queue
@@ -517,7 +518,10 @@ def query_osv(package_name: str, ecosystem: str, version: Optional[str] = None) 
 
 
 def _get_json(url: str):
-    """GET a registry JSON document. Raises on HTTP/network/decode failure."""
+    """GET a registry JSON document. Raises on HTTP/network/decode failure.
+    A gzip body is decompressed: NuGet's registration hive is stored
+    gzip-encoded and served that way whatever Accept-Encoding says, and
+    urllib does not decode Content-Encoding itself."""
     req = urllib.request.Request(
         url,
         headers={
@@ -527,7 +531,10 @@ def _get_json(url: str):
         },
     )
     with urllib.request.urlopen(req, timeout=_call_timeout()) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+        body = resp.read()
+    if body[:2] == b"\x1f\x8b":  # gzip magic; a JSON document never starts with it
+        body = gzip.decompress(body)
+    return json.loads(body.decode("utf-8"))
 
 
 def _parse_time(value: str) -> datetime:
@@ -847,20 +854,109 @@ def _resolve_packagist(name: str, kind: str, value: str) -> tuple:
     return name, version, _age_days(published.get(version))
 
 
-def _resolve_nuget(name: str, kind: str, value: str) -> tuple:
-    if kind in ("range", "tag"):
-        raise UnresolvableSpec(f"NuGet version range '{value}'")
-    data = _get_json(f"https://api.nuget.org/v3-flatcontainer/{name.lower()}/index.json")
-    versions = data.get("versions") or []
+# nuget.org's registration hive with SemVer 2.0.0 packages included (the
+# hive NuGet clients use). Unlike the flat container it carries each version's
+# publication time and listed state.
+_NUGET_REGISTRATION = "https://api.nuget.org/v3/registration5-gz-semver2"
+# NuGet floating versions the guard evaluates: `*`, `1.*` (newest stable under
+# the prefix) and `*-*`, `1.*-*` (newest including pre-releases). NuGet
+# resolves an interval such as `[1.0,2.0)` to its LOWEST match instead, which
+# the guard leaves to the user.
+_NUGET_FLOAT_RE = re.compile(r"^((?:\d+\.)*)\*(-\*)?$")
+# The floating version `--prerelease` selects: dotnet adds the newest release,
+# pre-releases included.
+NUGET_PRERELEASE_FLOAT = "*-*"
+
+
+def _nuget_key(version: str) -> Optional[tuple]:
+    """SemVer 2.0.0 precedence key for a NuGet version (build metadata
+    ignored, pre-release labels compared case-insensitively and numerically
+    where numeric, so 1.0.0-beta.10 > 1.0.0-beta.9). None when not a version."""
+    base = version.strip().split("+", 1)[0]
+    release, dash, pre = base.partition("-")
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){0,3}", release):  # NuGet versions have at most 4 parts
+        return None
+    padded = (tuple(int(x) for x in release.split(".")) + (0,) * 4)[:4]
+    if not dash:
+        return padded, 1, ()
+    labels = tuple((0, int(p), "") if p.isdigit() else (1, 0, p.lower()) for p in pre.split("."))
+    return padded, 0, labels
+
+
+def _nuget_page_holds(page: dict, key: tuple) -> bool:
+    lower, upper = _nuget_key(page.get("lower") or ""), _nuget_key(page.get("upper") or "")
+    return lower is None or upper is None or lower <= key <= upper
+
+
+def _nuget_pages(name: str, want: Optional[tuple] = None):
+    """Yield the leaves of each page of a package's registration index,
+    newest page first. Pages of large packages are not inlined and are
+    fetched on demand, skipping those whose version bounds exclude `want`. A
+    malformed index raises (fail closed)."""
+    index = _get_json(f"{_NUGET_REGISTRATION}/{urllib.request.quote(name.lower(), safe='')}/index.json")
+    for page in reversed(index.get("items") or []):
+        leaves = page.get("items")
+        if leaves is None:
+            if want is not None and not _nuget_page_holds(page, want):
+                continue
+            leaves = _get_json(page["@id"]).get("items") or []
+        yield leaves
+
+
+def _nuget_find(name: str, kind: str, value: str) -> dict:
+    """The catalog entry of the version the install would pick."""
+    if kind == "exact":
+        want = _nuget_key(value)
+        if want is None:
+            raise UnresolvableSpec(f"NuGet version '{value}'")
+        for leaves in _nuget_pages(name, want):
+            for leaf in leaves:
+                entry = leaf.get("catalogEntry") or {}
+                if _nuget_key(entry.get("version") or "") == want:
+                    return entry
+        raise ValueError(f"version '{value}' is not published")
     if kind == "none":
-        stable = [v for v in versions if "-" not in v]
-        if not stable:
-            raise ValueError("NuGet lists no stable release")
-        version = stable[-1]
+        prefix, prerelease = (), False
     else:
-        version = _match_exact(versions, value)
-    # The flat container carries no publish dates; NuGet is not age-gated.
-    return name, version, None
+        m = _NUGET_FLOAT_RE.match(value.strip()) if kind == "range" else None
+        if not m:
+            raise UnresolvableSpec(f"NuGet version range '{value}'")
+        prefix = tuple(int(x) for x in m.group(1).split(".") if x)
+        prerelease = bool(m.group(2))
+    # Pages are ordered and disjoint, so the first page (newest first) with a
+    # match holds the newest match. Unlisted versions are never picked for a
+    # latest or floating version.
+    for leaves in _nuget_pages(name):
+        best = None
+        for leaf in leaves:
+            entry = leaf.get("catalogEntry") or {}
+            key = _nuget_key(entry.get("version") or "")
+            if key is None or entry.get("listed") is False or (key[1] == 0 and not prerelease):
+                continue
+            if key[0][:len(prefix)] == prefix and (best is None or key > best[0]):
+                best = (key, entry)
+        if best is not None:
+            return best[1]
+    raise ValueError("NuGet lists no " + ("release" if prerelease else "stable release")
+                     + (f" matching '{value}'" if value else ""))
+
+
+def _nuget_published(entry: dict) -> Optional[str]:
+    """Publication time of a registration catalog entry. nuget.org stamps an
+    unlisted version's `published` with 1900-01-01, which would pass any age
+    gate, so its catalog leaf's `created` time is used instead."""
+    published = entry.get("published")
+    if entry.get("listed") is False or (published and _parse_time(published).year <= 1900):
+        return _get_json(entry["@id"]).get("created")
+    return published
+
+
+def _resolve_nuget(name: str, kind: str, value: str) -> tuple:
+    entry = _nuget_find(name, kind, value)
+    version = entry.get("version")
+    if not version:
+        raise ValueError("NuGet registration entry has no version")
+    return entry.get("id") or name, version, _age_days(_nuget_published(entry))
 
 
 def _resolve_pub(name: str, kind: str, value: str) -> tuple:
@@ -960,6 +1056,8 @@ def parse_spec(ecosystem: str, manager: str, spec: str) -> tuple:
         if ver[:1] in "<>":
             return name, "range", ver, alias
         return name, "tag", ver, alias
+    if ecosystem == "NuGet":
+        spec = spec.replace("::", "@", 1)  # `dotnet new install Pkg::1.0.0`
     sep = {"RubyGems": ":", "Packagist": ":", "Pub": ":"}.get(ecosystem, "@")
     name, _, ver = spec.partition(sep)
     if ecosystem == "Packagist" and not ver:
@@ -1509,12 +1607,14 @@ class OptSpec(NamedTuple):
     extra: frozenset     # value options naming additional packages
     reqfile: frozenset   # value options naming a requirements/constraints file
     script: frozenset    # value options whose value is a shell script
+    prerelease: frozenset  # boolean options making an unpinned NuGet install pick the newest pre-release
 
 
 def _opts(value: str = "", boolean: str = "", source: str = "", local: str = "",
           version: str = "", pkg: str = "", extra: str = "", reqfile: str = "",
-          script: str = "", base: Optional[OptSpec] = None) -> OptSpec:
-    fields = [frozenset(x.split()) for x in (value, boolean, source, local, version, pkg, extra, reqfile, script)]
+          script: str = "", prerelease: str = "", base: Optional[OptSpec] = None) -> OptSpec:
+    fields = [frozenset(x.split()) for x in (value, boolean + " " + prerelease, source, local, version, pkg, extra,
+                                             reqfile, script, prerelease)]
     if base is not None:
         fields = [f | b for f, b in zip(fields, base)]
     return OptSpec(*fields)
@@ -1747,16 +1847,17 @@ _COMPOSER_REQUIRE = _opts(
     base=_COMPOSER_GLOBAL,
 )
 _DOTNET_ADD_PACKAGE = _opts(value="-f --framework --package-directory",
-                            boolean="-n --no-restore --prerelease --interactive",
+                            boolean="-n --no-restore --interactive", prerelease="--prerelease",
                             source="-s --source", version="-v --version")
 _DOTNET_PACKAGE_ADD = _opts(value="--project", base=_DOTNET_ADD_PACKAGE)
 _DOTNET_TOOL_INSTALL = _opts(value="--tool-path --framework -a --arch --verbosity",
                              boolean="-y --yes --allow-roll-forward -g --global --local --create-manifest-if-needed "
                                      "--allow-downgrade --disable-parallel --ignore-failed-sources "
-                                     "--no-cache --interactive --prerelease",
+                                     "--no-cache --interactive", prerelease="--prerelease",
                              source="--add-source --configfile", version="--version")
 _NUGET_INSTALL = _opts(value="-OutputDirectory -Framework -Verbosity -DependencyVersion",
-                       boolean="-Prerelease -NoCache -NonInteractive -ExcludeVersion -DirectDownload",
+                       boolean="-NoCache -NonInteractive -ExcludeVersion -DirectDownload",
+                       prerelease="-Prerelease -prerelease",
                        source="-Source -ConfigFile -FallbackSource", version="-Version")
 _PUB_ADD = _opts(value="--directory -C",
                  boolean="--dev -d --dry-run -n --offline --precompile --example",
@@ -1856,8 +1957,9 @@ MANAGERS: dict = {
     "dotnet": Manager(_NO_OPTS, {}, tuple(
         _verbs("add+package", "NuGet", "dotnet", _DOTNET_ADD_PACKAGE)
         + _verbs("package+add", "NuGet", "dotnet", _DOTNET_PACKAGE_ADD)
-        + _verbs("tool+install tool+update tool+exec tool+run new+install", "NuGet", "dotnet",
-                 _DOTNET_TOOL_INSTALL))),
+        + _verbs("tool+install tool+update tool+exec tool+run new+install new+-i new+--install", "NuGet",
+                 "dotnet", _DOTNET_TOOL_INSTALL)
+        + _verbs("dnx", "NuGet", "dotnet", _DOTNET_TOOL_INSTALL, "runner"))),
     "dnx": Manager(_NO_OPTS, {}, (Verb((), "NuGet", "dotnet", _DOTNET_TOOL_INSTALL, "runner"),)),
     "nuget": Manager(_NO_OPTS, {}, tuple(_verbs("install", "NuGet", "nuget", _NUGET_INSTALL))),
     "dart": Manager(_NO_OPTS, {}, tuple(
@@ -1989,6 +2091,8 @@ WRAPPERS: dict = {
     "systemd-run": _wrapper("-p --property -u --unit --description --slice -E --setenv --uid --gid "
                             "--working-directory -M --machine -H --host"),
     "busybox": _wrapper(),
+    # `mono nuget.exe install ...`: Mono's options are `--opt` or `--opt=value`, except --config.
+    "mono": _wrapper("--config"),
     "watch": _wrapper("-n --interval -q --equexit", joins=True),
     "script": _wrapper("-E --echo -I --log-in -O --log-out -B --log-io -T --log-timing -m "
                        "--logging-format", script="-c --command"),
@@ -2377,6 +2481,7 @@ def _scan_operands(args: list, dyn: list, verb: Verb, runtime: bool) -> Optional
     pkg_values: list = []
     extra_values: list = []
     positionals: list = []
+    prerelease = False
     i, n = 0, len(args)
     end_of_opts = False
     while i < n:
@@ -2396,6 +2501,7 @@ def _scan_operands(args: list, dyn: list, verb: Verb, runtime: bool) -> Optional
             continue
         base, eq, value = tok.partition("=")
         i += 1
+        prerelease = prerelease or base in spec.prerelease
         if not eq and base not in value_opts and not base.startswith("--") and len(base) > 2 \
                 and base[:2] in value_opts:
             base, value, eq = base[:2], base[2:], "="  # -rreq.txt / -Fderive
@@ -2476,6 +2582,8 @@ def _scan_operands(args: list, dyn: list, verb: Verb, runtime: bool) -> Optional
             if versions:
                 sep = {"RubyGems": ":", "Packagist": ":", "Pub": ":"}.get(verb.ecosystem, "@")
                 tok = f"{tok}{sep}{versions[-1]}"
+            elif prerelease and "@" not in tok and "::" not in tok:
+                tok = f"{tok}@{NUGET_PRERELEASE_FLOAT}"  # checks the pre-release it would pick
             packages.append(tok)
     if runtime:
         issues.append("package arguments are appended at run time (xargs/parallel), so the guard "

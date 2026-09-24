@@ -455,7 +455,7 @@ func finalizeProject(cmd *cobra.Command, opts InitOptions, answers types.WizardA
 	case !errors.Is(err, fs.ErrNotExist):
 		return fmt.Errorf("reading the committed %s: %w", branding.Get().ConfigFile, err)
 	}
-	if err := qsdevconfig.WriteProjectConfig(qsdevCfgPath, qsdevCfg); err != nil {
+	if err := qsdevconfig.WriteProjectConfig(projectRoot, qsdevCfg); err != nil {
 		return err
 	}
 

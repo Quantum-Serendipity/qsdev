@@ -350,3 +350,35 @@ func writeTestFile(t *testing.T, path, content string, mode os.FileMode) {
 		t.Fatal(err)
 	}
 }
+
+// TestWriteFiles_SidecarSymlinkEscape verifies the ManualMerge sidecar is
+// confined to the project root like the file it sits beside: a committed
+// symlink at the sidecar path that points outside the root fails the write
+// and leaves the outside file untouched.
+func TestWriteFiles_SidecarSymlinkEscape(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "profile")
+	writeTestFile(t, outside, "user profile\n", 0o644)
+	writeTestFile(t, filepath.Join(root, "devenv.nix"), "{ user edits }\n", 0o644)
+	if err := os.Symlink(outside, filepath.Join(root, "devenv.nix"+generate.SidecarSuffix)); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := generate.WriteFiles([]types.GeneratedFile{{
+		Path: "devenv.nix", Content: []byte("{ generated }\n"), Strategy: types.ManualMerge, SkipValidation: true,
+	}}, generate.PipelineOptions{ProjectRoot: root})
+	if err != nil {
+		t.Fatalf("WriteFiles: %v", err)
+	}
+	if result.Failed != 1 {
+		t.Errorf("Failed = %d, want 1", result.Failed)
+	}
+	if data, err := os.ReadFile(outside); err != nil || string(data) != "user profile\n" {
+		t.Errorf("outside file = %q (err %v), want it untouched", data, err)
+	}
+}

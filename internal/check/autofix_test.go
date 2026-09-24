@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -425,5 +426,55 @@ func TestApplyAutoFixes_RecordsRestoredFilesInState(t *testing.T) {
 	}
 	if got.Files["kept.txt"].Hash != old.Files["kept.txt"].Hash {
 		t.Errorf("unrelated state entry changed")
+	}
+}
+
+// TestApplyAutoFixes_RefusesSymlinkEscape verifies auto-fix never writes
+// through a committed symlink that leaves the project: a .claude directory
+// linked to the user's global Claude config keeps its settings.json, and a
+// deleted file restored into a symlinked directory is not written outside.
+func TestApplyAutoFixes_RefusesSymlinkEscape(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+
+	const globalSettings = `{"permissions": {"deny": []}}`
+	dir := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "settings.json"), []byte(globalSettings), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+
+	results := []CheckResult{
+		{
+			Name: "deny_rule_missing", Status: StatusFail, AutoFixable: true,
+			Metadata: map[string]string{"rule": `Bash(git push --force *)`},
+		},
+		{
+			Name: "file_exists_hook", Status: StatusFail, AutoFixable: true,
+			Metadata: map[string]string{"file": ".claude/hooks/guard.sh"},
+		},
+	}
+	regen := func(_ string) (map[string]types.GeneratedFile, error) {
+		return map[string]types.GeneratedFile{
+			".claude/hooks/guard.sh": {Path: ".claude/hooks/guard.sh", Content: []byte("#!/bin/sh\n"), SkipValidation: true},
+		}, nil
+	}
+
+	updated := ApplyAutoFixes(results, dir, "", regen)
+	for _, r := range updated {
+		if r.Status == StatusPass {
+			t.Errorf("%s: fix through a symlink leaving the project reported success", r.Name)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(outside, "settings.json")); err != nil || string(data) != globalSettings {
+		t.Errorf("global settings.json = %q (err %v), want it untouched", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "hooks")); !os.IsNotExist(err) {
+		t.Errorf("restored hook was written outside the project (stat err %v)", err)
 	}
 }

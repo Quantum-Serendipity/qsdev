@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 // CreateArchive creates a tar.gz archive of the given files relative to
@@ -18,9 +19,17 @@ import (
 func CreateArchive(projectRoot string, files []string) (string, error) {
 	timestamp := time.Now().Format("20060102-150405")
 	archiveName := fmt.Sprintf(".%s-archive-%s.tar.gz", branding.Get().AppName, timestamp)
+	return createArchive(projectRoot, archiveName, files)
+}
+
+// createArchive writes the archive to projectRoot/archiveName. The archive is
+// always a new file: O_EXCL refuses an existing file and, because it never
+// follows a symbolic link, a committed symlink at the archive path cannot
+// redirect the write outside the project.
+func createArchive(projectRoot, archiveName string, files []string) (string, error) {
 	archivePath := filepath.Join(projectRoot, archiveName)
 
-	outFile, err := os.Create(archivePath)
+	outFile, err := os.OpenFile(archivePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, fileutil.ModeReadWrite)
 	if err != nil {
 		return "", fmt.Errorf("creating archive file: %w", err)
 	}

@@ -19,15 +19,17 @@ import (
 
 // SaveToDir persists wizard answers to a YAML file atomically.
 // dir is the subdirectory relative to projectRoot (e.g., ".devenv", ".claude").
-// filename is the base name (e.g., ".qsdev-answers.yaml").
+// filename is the base name (e.g., ".qsdev-answers.yaml"). The write is
+// confined to projectRoot: a symlinked directory or file that resolves outside
+// it is refused with an error wrapping fileutil.ErrOutsideRoot.
 func SaveToDir(projectRoot, dir, filename string, answers types.WizardAnswers) error {
 	data, err := yaml.Marshal(&answers)
 	if err != nil {
 		return fmt.Errorf("marshaling answers: %w", err)
 	}
 
-	path := filepath.Join(projectRoot, dir, filename)
-	if err := fileutil.WriteFileAtomic(path, data, fileutil.ModeReadWrite); err != nil {
+	rel := filepath.Join(filepath.FromSlash(dir), filename)
+	if err := fileutil.WriteFileAtomicInRoot(projectRoot, rel, data, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing answers file: %w", err)
 	}
 

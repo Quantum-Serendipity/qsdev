@@ -90,8 +90,9 @@ func Teardown(
 			if err != nil {
 				fmt.Fprintf(w, "Warning: could not marshal posture report: %v\n", err)
 			} else {
-				reportPath = filepath.Join(opts.ProjectRoot, "."+branding.Get().AppName+"-posture-final.json")
-				if err := fileutil.WriteFileAtomic(reportPath, reportJSON, fileutil.ModeReadWrite); err != nil {
+				reportName := "." + branding.Get().AppName + "-posture-final.json"
+				reportPath = filepath.Join(opts.ProjectRoot, reportName)
+				if err := fileutil.WriteFileAtomicInRoot(opts.ProjectRoot, reportName, reportJSON, fileutil.ModeReadWrite); err != nil {
 					fmt.Fprintf(w, "Warning: could not write posture report: %v\n", err)
 					reportPath = ""
 				}

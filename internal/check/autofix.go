@@ -162,7 +162,7 @@ func fixDeletedFiles(results []CheckResult, projectRoot, stateFile string, regen
 		markFixResult(&results[idx], nil)
 	}
 
-	if err := recordRestoredFiles(stateFile, restored); err != nil {
+	if err := recordRestoredFiles(projectRoot, stateFile, restored); err != nil {
 		slog.Warn("auto-fix: recording restored files in state failed", "error", err)
 	}
 	if err := recordRestoredInManifest(projectRoot, restored); err != nil {
@@ -191,8 +191,9 @@ func recordRestoredInManifest(projectRoot string, restored []types.GeneratedFile
 
 // recordRestoredFiles updates the generation state entries of restored files
 // (hash, strategy, mode, owner and three-way-merge base) so the state matches
-// what is now on disk.
-func recordRestoredFiles(stateFile string, restored []types.GeneratedFile) error {
+// what is now on disk. stateFile must lie under projectRoot: the state write is
+// confined to the project like every other project-file write.
+func recordRestoredFiles(projectRoot, stateFile string, restored []types.GeneratedFile) error {
 	if stateFile == "" || len(restored) == 0 {
 		return nil
 	}
@@ -201,7 +202,11 @@ func recordRestoredFiles(stateFile string, restored []types.GeneratedFile) error
 		return fmt.Errorf("loading state: %w", err)
 	}
 	maps.Copy(genState.Files, state.RecordFiles(restored).Files)
-	if err := state.SaveStateToFile(stateFile, genState); err != nil {
+	rel, err := filepath.Rel(projectRoot, stateFile)
+	if err != nil {
+		return fmt.Errorf("locating state file %s in %s: %w", stateFile, projectRoot, err)
+	}
+	if err := state.SaveProjectState(projectRoot, rel, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
 	}
 	return nil
@@ -209,7 +214,8 @@ func recordRestoredFiles(stateFile string, restored []types.GeneratedFile) error
 
 // fixDenyRules reads .claude/settings.json, adds missing deny rules, and
 // writes it back. Only permissions.deny is changed: every other key keeps its
-// position and its original encoding.
+// position and its original encoding. A settings.json (or .claude directory)
+// that is a symlink resolving outside projectRoot is not written.
 func fixDenyRules(projectRoot string, missingRules []string) error {
 	settingsPath := filepath.Join(projectRoot, filepath.FromSlash(ClaudeSettingsRelPath))
 
@@ -223,7 +229,7 @@ func fixDenyRules(projectRoot string, missingRules []string) error {
 		return fmt.Errorf("updating settings.json: %w", err)
 	}
 
-	if err := fileutil.WriteFileAtomic(settingsPath, out, fileutil.ModeReadWrite); err != nil {
+	if err := fileutil.WriteFileAtomicInRoot(projectRoot, filepath.FromSlash(ClaudeSettingsRelPath), out, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing settings.json: %w", err)
 	}
 

@@ -133,7 +133,7 @@ func initCmd() *cobra.Command {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %v; starting a fresh state file\n", err)
 				existingState = types.GeneratedState{}
 			}
-			if err := persistRegenState(stateFile, projectRoot, answers, result.SuccessfulFiles(files), nil, existingState, true); err != nil {
+			if err := persistRegenState(projectRoot, answers, result.SuccessfulFiles(files), nil, existingState, true); err != nil {
 				return err
 			}
 
@@ -221,7 +221,7 @@ func updateCmd() *cobra.Command {
 
 			// Save updated state and answers via the shared tail, stamping the
 			// template/skill versions (the update path always version-stamps).
-			if err := persistRegenState(stateFile, projectRoot, answers, plan.recorded, plan.mergedOriginals, existingState, true); err != nil {
+			if err := persistRegenState(projectRoot, answers, plan.recorded, plan.mergedOriginals, existingState, true); err != nil {
 				return err
 			}
 
@@ -355,7 +355,7 @@ func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, proje
 	}
 
 	// Save state and answers via the shared tail (no version stamping here).
-	if err := persistRegenState(stFile, projectRoot, answers, plan.recorded, plan.mergedOriginals, existingState, false); err != nil {
+	if err := persistRegenState(projectRoot, answers, plan.recorded, plan.mergedOriginals, existingState, false); err != nil {
 		return nil, 0, err
 	}
 
@@ -375,7 +375,7 @@ func regenerateAndPersist(cmd *cobra.Command, answers types.WizardAnswers, proje
 // `mcp install`, enabled tools, the fragment ledger, and the version stamps
 // when stampVersions is false — is preserved.
 func persistRegenState(
-	stateFile, projectRoot string,
+	projectRoot string,
 	answers types.WizardAnswers,
 	recordedFiles []types.GeneratedFile,
 	mergedOriginals map[string][]byte,
@@ -402,7 +402,7 @@ func persistRegenState(
 		newState.TemplateVersion = ComputeTemplateVersion()
 		newState.SkillLibraryVersion = ComputeSkillLibraryVersion()
 	}
-	if err := state.SaveStateToFile(stateFile, newState); err != nil {
+	if err := state.SaveProjectState(projectRoot, statePath(), newState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
 	}
 	if err := saveAnswers(projectRoot, answers); err != nil {

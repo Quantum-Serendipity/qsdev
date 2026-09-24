@@ -147,14 +147,17 @@ func MarshalProjectConfig(cfg types.QsdevConfig) ([]byte, error) {
 	return append([]byte(projectConfigHeader), data...), nil
 }
 
-// WriteProjectConfig atomically writes cfg to path as .qsdev.yaml content.
-func WriteProjectConfig(path string, cfg types.QsdevConfig) error {
+// WriteProjectConfig atomically writes cfg as the .qsdev.yaml of projectRoot.
+// A .qsdev.yaml that is a symlink resolving outside projectRoot is refused
+// with an error wrapping fileutil.ErrOutsideRoot.
+func WriteProjectConfig(projectRoot string, cfg types.QsdevConfig) error {
 	content, err := MarshalProjectConfig(cfg)
 	if err != nil {
 		return err
 	}
-	if err := fileutil.WriteFileAtomic(path, content, fileutil.ModeReadWrite); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
+	cfgFile := branding.Get().ConfigFile
+	if err := fileutil.WriteFileAtomicInRoot(projectRoot, cfgFile, content, fileutil.ModeReadWrite); err != nil {
+		return fmt.Errorf("writing %s: %w", cfgFile, err)
 	}
 	return nil
 }
@@ -211,7 +214,7 @@ func SyncProjectConfig(projectRoot string, answers types.WizardAnswers) error {
 	if bytes.Equal(before, after) && !olderSchema(data) {
 		return nil
 	}
-	if err := WriteProjectConfig(path, synced); err != nil {
+	if err := WriteProjectConfig(projectRoot, synced); err != nil {
 		return fmt.Errorf("updating %s: %w", cfgFile, err)
 	}
 	return nil

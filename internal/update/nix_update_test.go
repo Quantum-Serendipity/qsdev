@@ -1,11 +1,14 @@
 package update
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -335,6 +338,38 @@ func TestUpdateDevenvNix_DryRunNeverMutates(t *testing.T) {
 			}
 			if got := readTestFile(t, nixPath+".new"); got != "pending user merge\n" {
 				t.Errorf("dry run touched the existing sidecar: %q", got)
+			}
+		})
+	}
+}
+
+// TestUpdateDevenvNix_RefusesSymlinkEscape verifies a devenv.nix committed
+// as a symlink to a file outside the project is never regenerated in place.
+func TestUpdateDevenvNix_RefusesSymlinkEscape(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	for _, status := range []types.ModificationStatus{types.Unmodified, types.New} {
+		t.Run(status.String(), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			outside := filepath.Join(t.TempDir(), "system.nix")
+			if err := os.WriteFile(outside, []byte("{ system }"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(dir, "devenv.nix")); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := UpdateDevenvNix(NixUpdateOptions{
+				ProjectRoot: dir, FilePath: "devenv.nix", NewContent: []byte("{ generated }"), Status: status,
+			})
+			if !errors.Is(err, fileutil.ErrOutsideRoot) {
+				t.Fatalf("err = %v, want ErrOutsideRoot", err)
+			}
+			if data, _ := os.ReadFile(outside); string(data) != "{ system }" {
+				t.Errorf("file outside the project was rewritten: %q", data)
 			}
 		})
 	}

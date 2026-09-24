@@ -410,6 +410,32 @@ The resolver has no organization-defaults layer, so a project without a
 `security` block is not silently raised to built-in defaults. See the
 [configuration reference](configuration-reference.md#security-floor-client-policy-and-local-overrides).
 
+## Project File Write Containment
+
+A cloned repository is untrusted input, and it can commit symbolic links. If
+`.claude`, `.devinit`, `.qsdev`, `.qsdev.yaml` or `devenv.nix` were a symlink
+to `~/.claude` or another file outside the project, a naive write would
+overwrite the developer's global configuration. To prevent this, every write
+qsdev makes to a project file is confined to the project root:
+generation, `init`, `update`, `join`, `enable`/`disable`, `repair`,
+`check --auto-fix`, the `claude` and `devenv` subcommands, state and answers
+files, `.qsdev.yaml` (including `config migrate`), compose fixes, teardown
+cleanup and archives, and `.gitignore` edits.
+
+Each write resolves symlinks in the destination and its parent directories.
+It is refused, and nothing is written, when:
+
+- the path is absolute or climbs out with `..`;
+- the destination, or any parent directory, resolves outside the project root;
+- a symlink redirects the write into a `.git` directory.
+
+A symlink that stays inside the project, such as `CLAUDE.md -> AGENTS.md`, is
+followed: its target is rewritten and the link is kept. Repair backups under
+`.qsdev/backups/` and the teardown archive apply the same rule, and they
+never replace an existing file or follow a symlink at their own path. Paths
+you pass explicitly (`--output`, `--output-dir`, `--history-file`) and files
+in your home or cache directories are not confined to the project.
+
 ## Hook Execution Isolation
 
 The self-protection layer (Layer 14) runs as the first PreToolUse hook. It evaluates before package-guard, credential-scan, and all other hooks. Guardrail-tampering attempts are blocked before any other hook logic executes.

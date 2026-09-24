@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -227,6 +228,38 @@ func TestUpdate_GatewayComposeLifecycle(t *testing.T) {
 	assertNoCompose(t, dir)
 	if _, ok := loadProjectState(t, dir).Files[container.ComposeFileName]; ok {
 		t.Error("removed fragment is still tracked")
+	}
+}
+
+// TestUpdate_GatewayComposeRefusesSymlinkEscape verifies the gateway compose
+// fragment is not written through a committed symlink that resolves outside
+// the project (F455): the fragment goes through the update pipeline's
+// root-confined writer.
+func TestUpdate_GatewayComposeRefusesSymlinkEscape(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	registerCursor(t)
+	dir := initLifecycleProject(t)
+	writeCursorMarker(t, dir)
+	outside := filepath.Join(t.TempDir(), "compose.yaml")
+	if err := os.WriteFile(outside, []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, container.ComposeFileName)); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("QSDEV_SKIP_SETUP", "1")
+	t.Chdir(dir)
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	_ = runUpdate(cmd, UpdateOptions{Force: true}) // the refused write may fail the update
+
+	if data, _ := os.ReadFile(outside); string(data) != "services: {}\n" {
+		t.Errorf("file outside the project was rewritten: %q\n%s", data, buf.String())
 	}
 }
 

@@ -37,7 +37,7 @@ func addClientPolicy(t *testing.T, dir string, client *types.ClientConfig) {
 		t.Fatal(err)
 	}
 	cfg.Client = client
-	if err := qsdevconfig.WriteProjectConfig(path, *cfg); err != nil {
+	if err := qsdevconfig.WriteProjectConfig(dir, *cfg); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -114,7 +114,7 @@ func TestJoin_NoOrgDefaultsLayer(t *testing.T) {
 	created := createAnswers(t, dir, "--lang", "go", "--tier", "supply-chain-only")
 	cfg := qsdevconfig.AnswersToConfig(created, "test")
 	cfg.Security = types.SecurityConfig{}
-	if err := qsdevconfig.WriteProjectConfig(filepath.Join(dir, branding.Get().ConfigFile), cfg); err != nil {
+	if err := qsdevconfig.WriteProjectConfig(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	cmd, _ := newJoinTestCmd()

@@ -36,18 +36,18 @@ func stateFilePath(projectRoot string) string {
 // newLifecycle creates an McpLifecycle wired to the real command runner and
 // file-backed state persistence.
 func newLifecycle(projectRoot string) *mcpregistry.McpLifecycle {
-	statePath := stateFilePath(projectRoot)
+	stateFile := stateFilePath(projectRoot)
 	return &mcpregistry.McpLifecycle{
 		CmdRunner: &execRunner{},
 		StateLoader: func() (*types.GeneratedState, error) {
-			s, err := state.LoadStateFromFile(statePath)
+			s, err := state.LoadStateFromFile(stateFile)
 			if err != nil {
 				return nil, err
 			}
 			return &s, nil
 		},
 		StateSaver: func(s *types.GeneratedState) error {
-			return state.SaveStateToFile(statePath, *s)
+			return state.SaveProjectState(projectRoot, statePath(), *s)
 		},
 	}
 }

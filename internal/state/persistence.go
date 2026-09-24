@@ -62,17 +62,41 @@ func LoadProjectStates(projectRoot string) ([]types.GeneratedState, error) {
 }
 
 // SaveStateToFile marshals state to YAML and writes it atomically to path.
-// It creates parent directories as needed.
+// It creates parent directories as needed. Project state files must be
+// written with SaveProjectState, which confines the write to the project.
 func SaveStateToFile(path string, state types.GeneratedState) error {
-	data, err := yaml.Marshal(&state)
+	data, err := marshalState(state)
 	if err != nil {
-		return fmt.Errorf("marshaling state: %w", err)
+		return err
 	}
-
 	// WriteFileAtomic creates parent directories, fsyncs the temp file before
 	// renaming, and retries transient Windows rename failures.
 	if err := fileutil.WriteFileAtomic(path, data, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing state file %s: %w", path, err)
 	}
 	return nil
+}
+
+// SaveProjectState marshals state to YAML and writes it atomically to rel, a
+// path relative to projectRoot (such as InitStateFile()). A symlinked state
+// directory or file that resolves outside projectRoot is refused with an
+// error wrapping fileutil.ErrOutsideRoot, so a repository cannot redirect the
+// state write to a file elsewhere on the machine.
+func SaveProjectState(projectRoot, rel string, state types.GeneratedState) error {
+	data, err := marshalState(state)
+	if err != nil {
+		return err
+	}
+	if err := fileutil.WriteFileAtomicInRoot(projectRoot, filepath.FromSlash(rel), data, fileutil.ModeReadWrite); err != nil {
+		return fmt.Errorf("writing state file %s: %w", rel, err)
+	}
+	return nil
+}
+
+func marshalState(state types.GeneratedState) ([]byte, error) {
+	data, err := yaml.Marshal(&state)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling state: %w", err)
+	}
+	return data, nil
 }

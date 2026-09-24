@@ -82,7 +82,9 @@ func ValidateContent(path string, content []byte) error {
 // f.Mode (default fileutil.ModeReadWrite). It is the write path for generated
 // content outside WriteFiles (update, enable/disable, repair, auto-fix, the
 // claude subcommands), so content WriteFiles rejects is never written by
-// another command.
+// another command. Like WriteFiles it never writes outside projectRoot: a
+// path, symlinked parent directory or symlinked file that resolves outside
+// the root is refused with an error wrapping fileutil.ErrOutsideRoot.
 func WriteGeneratedFile(projectRoot string, f types.GeneratedFile) error {
 	if !f.SkipValidation {
 		if err := ValidateContent(f.Path, f.Content); err != nil {
@@ -93,7 +95,7 @@ func WriteGeneratedFile(projectRoot string, f types.GeneratedFile) error {
 	if mode == 0 {
 		mode = fileutil.ModeReadWrite
 	}
-	if err := fileutil.WriteFileAtomic(filepath.Join(projectRoot, filepath.FromSlash(f.Path)), f.Content, mode); err != nil {
+	if err := fileutil.WriteFileAtomicInRoot(projectRoot, filepath.FromSlash(f.Path), f.Content, mode); err != nil {
 		return fmt.Errorf("writing %s: %w", f.Path, err)
 	}
 	return nil

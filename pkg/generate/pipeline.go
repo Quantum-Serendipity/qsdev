@@ -132,7 +132,7 @@ func (w *fileWriter) write(file types.GeneratedFile) {
 		}
 		switch {
 		case decision.sidecar:
-			if err := w.writeSidecar(file, fullPath, mode, &fr); err != nil {
+			if err := w.writeSidecar(file, mode, &fr); err != nil {
 				w.fail(fr, err)
 				return
 			}
@@ -169,8 +169,10 @@ func (w *fileWriter) write(file types.GeneratedFile) {
 		}
 	}
 
-	// Write atomically.
-	if err := fileutil.WriteFileAtomic(fullPath, contentToWrite, mode); err != nil {
+	// Write atomically, confined to the project root: the write re-resolves
+	// symlinks itself, so a link swapped in after checkWithinRoot still cannot
+	// redirect it outside the project.
+	if err := fileutil.WriteFileAtomicInRoot(w.opts.ProjectRoot, filepath.FromSlash(file.Path), contentToWrite, mode); err != nil {
 		slog.Warn("file write failed", "path", file.Path, "error", err)
 		w.fail(fr, fmt.Errorf("write %s: %w", file.Path, err))
 		return
@@ -292,14 +294,14 @@ func (w *fileWriter) isRecordedOutput(relPath string, existing []byte) bool {
 
 // writeSidecar writes the generated content next to a ManualMerge file that
 // has user modifications, leaving the original untouched.
-func (w *fileWriter) writeSidecar(file types.GeneratedFile, fullPath string, mode os.FileMode, fr *FileResult) error {
+func (w *fileWriter) writeSidecar(file types.GeneratedFile, mode os.FileMode, fr *FileResult) error {
 	fr.SidecarPath = file.Path + SidecarSuffix
 	slog.Warn("existing file has local changes; wrote generated version beside it for manual merge",
 		"path", file.Path, "sidecar", fr.SidecarPath)
 	if w.opts.DryRun {
 		return nil
 	}
-	if err := fileutil.WriteFileAtomic(fullPath+SidecarSuffix, file.Content, mode); err != nil {
+	if err := fileutil.WriteFileAtomicInRoot(w.opts.ProjectRoot, filepath.FromSlash(file.Path+SidecarSuffix), file.Content, mode); err != nil {
 		return fmt.Errorf("write sidecar %s: %w", fr.SidecarPath, err)
 	}
 	return nil

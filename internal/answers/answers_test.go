@@ -1,6 +1,7 @@
 package answers_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -360,4 +362,46 @@ func stringContains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestSaveToDir_RefusesSymlinkEscape verifies answers are never written
+// through a committed symlink (the answers directory or the file itself)
+// that resolves outside the project root.
+func TestSaveToDir_RefusesSymlinkEscape(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	tests := []struct {
+		name string
+		link string // project-relative path linked to outside
+	}{
+		{"symlinked directory", ".devinit"},
+		{"symlinked file", ".devinit/answers.yaml"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			outside := t.TempDir()
+			target := outside
+			if tt.link != ".devinit" {
+				if err := os.MkdirAll(filepath.Join(root, ".devinit"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				target = filepath.Join(outside, "answers.yaml")
+			}
+			if err := os.Symlink(target, filepath.Join(root, filepath.FromSlash(tt.link))); err != nil {
+				t.Fatal(err)
+			}
+
+			err := answers.SaveToDir(root, ".devinit", "answers.yaml", types.WizardAnswers{ProjectName: "x"})
+			if !errors.Is(err, fileutil.ErrOutsideRoot) {
+				t.Fatalf("err = %v, want ErrOutsideRoot", err)
+			}
+			if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+				t.Errorf("answers written outside the project root: %v", entries)
+			}
+		})
+	}
 }

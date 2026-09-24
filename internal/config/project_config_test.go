@@ -1,13 +1,16 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -186,5 +189,30 @@ func TestValidateQsdevConfig_RejectsInjectedPackage(t *testing.T) {
 				t.Errorf("errors = %v, wantErr %v", errs, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestWriteProjectConfig_RefusesSymlinkEscape verifies .qsdev.yaml is never
+// written through a committed symlink that resolves outside the project.
+func TestWriteProjectConfig_RefusesSymlinkEscape(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "other.yaml")
+	if err := os.WriteFile(outside, []byte("keep: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, branding.Get().ConfigFile)); err != nil {
+		t.Fatal(err)
+	}
+
+	err := WriteProjectConfig(dir, types.QsdevConfig{Version: types.ConfigVersionCurrent})
+	if !errors.Is(err, fileutil.ErrOutsideRoot) {
+		t.Fatalf("err = %v, want ErrOutsideRoot", err)
+	}
+	if data, _ := os.ReadFile(outside); string(data) != "keep: true\n" {
+		t.Errorf("file outside the project was rewritten: %q", data)
 	}
 }

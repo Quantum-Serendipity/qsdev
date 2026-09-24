@@ -46,15 +46,18 @@ func UpdateDevenvNix(opts NixUpdateOptions) (*NixUpdateResult, error) {
 		opts.NewMode = fileutil.ModeReadWrite
 	}
 
-	absPath := filepath.Join(opts.ProjectRoot, opts.FilePath)
+	relPath := filepath.FromSlash(opts.FilePath)
+	absPath := filepath.Join(opts.ProjectRoot, relPath)
 	sidecarPath := absPath + ".new"
 
 	// write performs every file write below, so DryRun is honored uniformly.
-	write := func(path string) error {
+	// rel is relative to the project root, and the write is confined to it: a
+	// symlinked file or parent directory resolving outside is refused.
+	write := func(rel string) error {
 		if opts.DryRun {
 			return nil
 		}
-		return fileutil.WriteFileAtomic(path, opts.NewContent, opts.NewMode)
+		return fileutil.WriteFileAtomicInRoot(opts.ProjectRoot, rel, opts.NewContent, opts.NewMode)
 	}
 
 	// Clean up any stale sidecar.
@@ -72,7 +75,7 @@ func UpdateDevenvNix(opts NixUpdateOptions) (*NixUpdateResult, error) {
 				Message: fmt.Sprintf("%s was deleted by user; skipping", opts.FilePath),
 			}, nil
 		}
-		if err := write(absPath); err != nil {
+		if err := write(relPath); err != nil {
 			return nil, fmt.Errorf("force write deleted %s: %w", opts.FilePath, err)
 		}
 		return &NixUpdateResult{
@@ -81,7 +84,7 @@ func UpdateDevenvNix(opts NixUpdateOptions) (*NixUpdateResult, error) {
 		}, nil
 
 	case types.Unmodified, types.New:
-		if err := write(absPath); err != nil {
+		if err := write(relPath); err != nil {
 			return nil, fmt.Errorf("regenerate %s: %w", opts.FilePath, err)
 		}
 		return &NixUpdateResult{
@@ -91,7 +94,7 @@ func UpdateDevenvNix(opts NixUpdateOptions) (*NixUpdateResult, error) {
 
 	case types.Modified:
 		if opts.Force {
-			if err := write(absPath); err != nil {
+			if err := write(relPath); err != nil {
 				return nil, fmt.Errorf("force overwrite %s: %w", opts.FilePath, err)
 			}
 			return &NixUpdateResult{
@@ -110,7 +113,7 @@ func UpdateDevenvNix(opts NixUpdateOptions) (*NixUpdateResult, error) {
 			return nil, fmt.Errorf("compute diff: %w", err)
 		}
 
-		if err := write(sidecarPath); err != nil {
+		if err := write(relPath + ".new"); err != nil {
 			return nil, fmt.Errorf("write sidecar %s: %w", sidecarPath, err)
 		}
 

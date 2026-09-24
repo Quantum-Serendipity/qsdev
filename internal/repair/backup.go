@@ -15,6 +15,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/fileutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	pkgfileutil "github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 )
 
 // backupTimestampLayout is fixed-width, so lexicographic order of backup names
@@ -52,6 +53,9 @@ func backupLocation(projectRoot, relPath string) (dir, prefix string, err error)
 // createBackup copies the file at projectRoot/relPath to
 // .qsdev/backups/<relPath>.<timestamp>.bak, creating directories as needed.
 // An existing backup is never overwritten. Returns the full backup path.
+// Backups stay inside the project: a symlinked backup directory (for example
+// a committed .qsdev symlink) that resolves outside projectRoot is refused
+// before anything is created.
 func createBackup(projectRoot, relPath string) (string, error) {
 	srcPath := filepath.Join(projectRoot, relPath)
 
@@ -63,6 +67,9 @@ func createBackup(projectRoot, relPath string) (string, error) {
 
 	dir, prefix, err := backupLocation(projectRoot, relPath)
 	if err != nil {
+		return "", err
+	}
+	if err := checkBackupDir(projectRoot, dir); err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(dir, pkgfileutil.ModeDirDefault); err != nil {
@@ -86,6 +93,21 @@ func createBackup(projectRoot, relPath string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("backing up %s: no unused backup name after %d attempts", relPath, maxBackupAttempts)
+}
+
+// checkBackupDir refuses a backup directory that resolves, through symlinks,
+// outside projectRoot. Backups are created exclusively (never replacing an
+// existing file), so they cannot go through fileutil.WriteFileAtomicInRoot;
+// this applies the same containment rule before the directory is created.
+func checkBackupDir(projectRoot, dir string) error {
+	rel, err := filepath.Rel(projectRoot, dir)
+	if err != nil {
+		return fmt.Errorf("locating backup directory %s: %w", dir, err)
+	}
+	if err := generate.ValidateDestination(projectRoot, rel); err != nil {
+		return fmt.Errorf("backup directory %s: %w: %w", rel, pkgfileutil.ErrOutsideRoot, err)
+	}
+	return nil
 }
 
 // pruneBackups keeps only the most recent `keep` backups of relPath and

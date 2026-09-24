@@ -48,8 +48,7 @@ func createAnswers(t *testing.T, dir string, args ...string) types.WizardAnswers
 // commitConfig writes the .qsdev.yaml the create path would commit.
 func commitConfig(t *testing.T, dir string, answers types.WizardAnswers) {
 	t.Helper()
-	path := filepath.Join(dir, branding.Get().ConfigFile)
-	if err := qsdevconfig.WriteProjectConfig(path, qsdevconfig.AnswersToConfig(answers, "test")); err != nil {
+	if err := qsdevconfig.WriteProjectConfig(dir, qsdevconfig.AnswersToConfig(answers, "test")); err != nil {
 		t.Fatalf("writing config: %v", err)
 	}
 }

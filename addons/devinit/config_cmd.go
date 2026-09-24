@@ -129,7 +129,7 @@ func runMigrate(cmd *cobra.Command, write bool) error {
 		return nil
 	}
 
-	if err := fileutil.WriteFileAtomic(configPath, newData, fileutil.ModeReadWrite); err != nil {
+	if err := fileutil.WriteFileAtomicInRoot(projectRoot, cfgFile, newData, fileutil.ModeReadWrite); err != nil {
 		return fmt.Errorf("writing migrated %s: %w", cfgFile, err)
 	}
 

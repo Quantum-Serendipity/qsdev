@@ -124,7 +124,7 @@ func WriteManifest(projectRoot string, m Manifest) error {
 // committed manifest from it, so the two never disagree about what qsdev
 // generated.
 func SaveInitState(projectRoot string, st types.GeneratedState) error {
-	if err := SaveStateToFile(filepath.Join(projectRoot, InitStateFile()), st); err != nil {
+	if err := SaveProjectState(projectRoot, InitStateFile(), st); err != nil {
 		return err
 	}
 	return WriteManifest(projectRoot, BuildManifest(st))

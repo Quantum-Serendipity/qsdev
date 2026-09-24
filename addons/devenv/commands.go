@@ -712,7 +712,7 @@ func writeAndPersist(cmd *cobra.Command, projectRoot string, answers types.Wizar
 
 	genState := state.RecordFiles(result.SuccessfulFiles(toWrite))
 	carryForwardState(&genState, oldState, released)
-	if err := state.SaveStateToFile(filepath.Join(projectRoot, statePath()), genState); err != nil {
+	if err := state.SaveProjectState(projectRoot, statePath(), genState); err != nil {
 		return nil, fmt.Errorf("saving state: %w", err)
 	}
 

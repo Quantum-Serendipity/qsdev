@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -104,7 +105,7 @@ func runContainerMigrate(ctx context.Context, cmd *cobra.Command, apply, preview
 
 	switch {
 	case apply:
-		if err := applyComposeFixes(report); err != nil {
+		if err := applyComposeFixes(projectRoot, report); err != nil {
 			return err
 		}
 		// Re-analyze after fixes to show updated report.
@@ -143,8 +144,10 @@ func composeFixes(file string, report *container.MigrationReport) (fixed []byte,
 }
 
 // applyComposeFixes rewrites each compose file the fixes change, keeping its
-// original permissions. Files the fixes leave unchanged are not touched.
-func applyComposeFixes(report *container.MigrationReport) error {
+// original permissions. Files the fixes leave unchanged are not touched. The
+// compose files lie in projectRoot, and a rewrite through a symlink that
+// resolves outside it is refused.
+func applyComposeFixes(projectRoot string, report *container.MigrationReport) error {
 	for _, file := range report.ComposeFiles {
 		fixed, changed, err := composeFixes(file, report)
 		if err != nil {
@@ -157,7 +160,11 @@ func applyComposeFixes(report *container.MigrationReport) error {
 		if err != nil {
 			return fmt.Errorf("reading permissions of %s: %w", file, err)
 		}
-		if err := fileutil.WriteFileAtomic(file, fixed, info.Mode().Perm()); err != nil {
+		rel, err := filepath.Rel(projectRoot, file)
+		if err != nil {
+			return fmt.Errorf("locating %s in %s: %w", file, projectRoot, err)
+		}
+		if err := fileutil.WriteFileAtomicInRoot(projectRoot, rel, fixed, info.Mode().Perm()); err != nil {
 			return fmt.Errorf("writing fixed file %s: %w", file, err)
 		}
 	}

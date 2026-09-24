@@ -155,7 +155,9 @@ func cleanSharedFile(projectRoot string, fa FileAction, registry *toolreg.Regist
 		}
 		return cleanRemoved, nil
 	}
-	if err := fileutil.WriteFileAtomic(target, updated, info.Mode().Perm()); err != nil {
+	// The write re-resolves the link itself and is confined to the project,
+	// so a symlink swapped in since the check above cannot redirect it.
+	if err := fileutil.WriteFileAtomicInRoot(projectRoot, filepath.FromSlash(fa.Path), updated, info.Mode().Perm()); err != nil {
 		return cleanUnchanged, fmt.Errorf("writing %s: %w", fa.Path, err)
 	}
 	return cleanRewritten, nil

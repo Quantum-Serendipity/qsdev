@@ -75,9 +75,9 @@ func setupSessionTest(t *testing.T, interactive, inAgent bool) (statePath, proje
 	}
 	t.Chdir(project)
 
-	orig := sessionAllowInteractive
-	t.Cleanup(func() { sessionAllowInteractive = orig })
-	sessionAllowInteractive = func(io.Reader) bool { return interactive }
+	orig := humanAtTerminal
+	t.Cleanup(func() { humanAtTerminal = orig })
+	humanAtTerminal = func(io.Reader) bool { return interactive }
 
 	return filepath.Join(home, ".qsdev", "session-state.json"), project
 }

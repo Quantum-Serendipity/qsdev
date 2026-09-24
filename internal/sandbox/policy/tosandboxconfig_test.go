@@ -16,7 +16,7 @@ func TestToSandboxConfig_DenyIsNotAMount(t *testing.T) {
 	spec := DefaultPolicy()
 	spec.Filesystem.Deny = append(spec.Filesystem.Deny, "/opt/company-secrets")
 
-	cfg := ToSandboxConfig(spec, sandbox.CategoryLinter, "")
+	cfg := ToSandboxConfig(spec, sandbox.CategoryLinter, "", testProjectDir)
 
 	if !slices.Contains(cfg.Deny, "/opt/company-secrets") {
 		t.Errorf("custom deny entry missing from cfg.Deny: %v", cfg.Deny)
@@ -96,7 +96,7 @@ func TestToSandboxConfig_NetworkMode(t *testing.T) {
 				spec.HookOverrides = map[string]HookOverride{"h": {NetworkOverride: tt.override}}
 			}
 
-			cfg := ToSandboxConfig(spec, tt.category, "h")
+			cfg := ToSandboxConfig(spec, tt.category, "h", testProjectDir)
 
 			if got := cfg.EffectiveNetworkMode(); got != tt.wantMode {
 				t.Errorf("EffectiveNetworkMode() = %q, want %q", got, tt.wantMode)

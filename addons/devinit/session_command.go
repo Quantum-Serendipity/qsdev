@@ -134,9 +134,9 @@ func writeSessionGrants(w io.Writer, store *policy.FileSessionStateStore, now ti
 	return nil
 }
 
-// sessionAllowInteractive reports whether the command's input is an
-// interactive terminal. A variable so tests can simulate a human at a TTY.
-var sessionAllowInteractive = func(in io.Reader) bool {
+// humanAtTerminal reports whether the command's input is an interactive
+// terminal. A variable so tests can simulate a human at a TTY.
+var humanAtTerminal = func(in io.Reader) bool {
 	f, ok := in.(*os.File)
 	return ok && term.IsTerminal(f.Fd())
 }
@@ -156,19 +156,40 @@ func agentSessionMarker() string {
 	return ""
 }
 
-func runSessionAllow(cmd *cobra.Command, opts sessionAllowOptions) error {
-	// A bypass disables a security control, so it must come from a human: an
-	// agent's tool calls run inside its session (and usually without a
-	// terminal) and cannot answer the confirmation below. A pseudo-terminal
-	// wrapper such as script(1) defeats the TTY check alone, hence the
-	// agent-environment check too.
+// requireHuman refuses a security-sensitive command (named by subcommand, e.g.
+// "session allow") unless a human runs it: an agent's tool calls run inside
+// its session (and usually without a terminal) and cannot answer a
+// confirmation prompt. A pseudo-terminal wrapper such as script(1) defeats the
+// TTY check alone, hence the agent-environment check too. reason completes
+// "requires an interactive terminal: ...".
+func requireHuman(cmd *cobra.Command, subcommand, reason string) error {
+	app := branding.Get().AppName
 	if marker := agentSessionMarker(); marker != "" {
-		return fmt.Errorf("'%s session allow' refused inside an AI agent session (%s is set): run it from your own terminal",
-			branding.Get().AppName, marker)
+		return fmt.Errorf("'%s %s' refused inside an AI agent session (%s is set): run it from your own terminal",
+			app, subcommand, marker)
 	}
-	if !sessionAllowInteractive(cmd.InOrStdin()) {
-		return fmt.Errorf("'%s session allow' requires an interactive terminal: a policy bypass must be confirmed by a human",
-			branding.Get().AppName)
+	if !humanAtTerminal(cmd.InOrStdin()) {
+		return fmt.Errorf("'%s %s' requires an interactive terminal: %s", app, subcommand, reason)
+	}
+	return nil
+}
+
+// confirmYes prints prompt and reads one line of the answer. Only an explicit
+// "y"/"yes" confirms.
+func confirmYes(cmd *cobra.Command, prompt string) (bool, error) {
+	fmt.Fprint(cmd.OutOrStdout(), prompt)
+	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+	if err != nil && err != io.EOF {
+		return false, fmt.Errorf("reading confirmation: %w", err)
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes", nil
+}
+
+func runSessionAllow(cmd *cobra.Command, opts sessionAllowOptions) error {
+	// A bypass disables a security control, so it must come from a human.
+	if err := requireHuman(cmd, "session allow", "a policy bypass must be confirmed by a human"); err != nil {
+		return err
 	}
 	if err := validateClaudeSessionID(opts.sessionID); err != nil {
 		return err
@@ -308,11 +329,5 @@ func confirmSessionBypass(cmd *cobra.Command, grants []policy.BypassGrant) (bool
 			fmt.Fprintf(out, "  %s: every call until %s\n", g.RuleID, expires)
 		}
 	}
-	fmt.Fprint(out, "Continue? [y/N]: ")
-	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-	if err != nil && err != io.EOF {
-		return false, fmt.Errorf("reading confirmation: %w", err)
-	}
-	answer := strings.ToLower(strings.TrimSpace(line))
-	return answer == "y" || answer == "yes", nil
+	return confirmYes(cmd, "Continue? [y/N]: ")
 }

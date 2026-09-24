@@ -21,6 +21,9 @@ func (f *fakeEval) eval(context.Context, string) ([]byte, error) {
 	return []byte(f.out), f.err
 }
 
+// approveAll stands in for the approval store, approving every snapshot.
+func approveAll(*Snapshot) error { return nil }
+
 func writePolicyFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -35,7 +38,7 @@ func TestCompiler_CachesEvaluation(t *testing.T) {
 	policyPath := filepath.Join(dir, "policy.nix")
 	writePolicyFile(t, policyPath, "{ backend = \"bubblewrap\"; }")
 	ev := &fakeEval{out: `{"backend":"bubblewrap"}`}
-	c := compiler{cacheDir: t.TempDir(), eval: ev.eval}
+	c := compiler{cacheDir: t.TempDir(), eval: ev.eval, approved: approveAll}
 
 	for i := range 3 {
 		spec, err := c.compile(context.Background(), policyPath)
@@ -88,7 +91,7 @@ func TestCompiler_CacheInvalidation(t *testing.T) {
 			writePolicyFile(t, policyPath, "import ./shared.nix")
 			writePolicyFile(t, filepath.Join(dir, "shared.nix"), "{ extra = 1; }")
 			ev := &fakeEval{out: `{"backend":"auto"}`}
-			c := compiler{cacheDir: t.TempDir(), eval: ev.eval}
+			c := compiler{cacheDir: t.TempDir(), eval: ev.eval, approved: approveAll}
 
 			if _, err := c.compile(context.Background(), policyPath); err != nil {
 				t.Fatalf("first compile: %v", err)
@@ -126,7 +129,7 @@ func TestCompiler_EvalFailureIsAnError(t *testing.T) {
 			writePolicyFile(t, policyPath, "{ }")
 			cacheDir := t.TempDir()
 			ev := tt.ev
-			c := compiler{cacheDir: cacheDir, eval: ev.eval}
+			c := compiler{cacheDir: cacheDir, eval: ev.eval, approved: approveAll}
 
 			spec, err := c.compile(context.Background(), policyPath)
 			if err == nil {
@@ -150,9 +153,13 @@ func TestCompiler_CorruptCacheEntryReevaluates(t *testing.T) {
 	policyPath := filepath.Join(dir, "policy.nix")
 	writePolicyFile(t, policyPath, "{ }")
 	ev := &fakeEval{out: `{"backend":"bubblewrap"}`}
-	c := compiler{cacheDir: t.TempDir(), eval: ev.eval}
+	c := compiler{cacheDir: t.TempDir(), eval: ev.eval, approved: approveAll}
 
-	cachePath := c.cachePath(policyPath)
+	snap, err := ReadSnapshot(policyPath)
+	if err != nil {
+		t.Fatalf("ReadSnapshot: %v", err)
+	}
+	cachePath := c.cachePath(snap)
 	if cachePath == "" {
 		t.Fatal("cachePath is empty")
 	}
@@ -174,7 +181,7 @@ func TestCompiler_MissingPolicyUsesDefaults(t *testing.T) {
 	t.Parallel()
 
 	ev := &fakeEval{}
-	c := compiler{cacheDir: t.TempDir(), eval: ev.eval}
+	c := compiler{cacheDir: t.TempDir(), eval: ev.eval, approved: approveAll}
 
 	spec, err := c.compile(context.Background(), filepath.Join(t.TempDir(), "policy.nix"))
 	if err != nil {

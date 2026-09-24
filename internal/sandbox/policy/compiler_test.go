@@ -93,7 +93,7 @@ func TestToSandboxConfig_LinterCategory(t *testing.T) {
 	t.Parallel()
 
 	spec := DefaultPolicy()
-	cfg := ToSandboxConfig(spec, sandbox.CategoryLinter, "golangci-lint")
+	cfg := ToSandboxConfig(spec, sandbox.CategoryLinter, "golangci-lint", testProjectDir)
 
 	if cfg.HookCategory != sandbox.CategoryLinter {
 		t.Errorf("expected category %v, got %v", sandbox.CategoryLinter, cfg.HookCategory)
@@ -113,7 +113,7 @@ func TestToSandboxConfig_FormatterCategory(t *testing.T) {
 	t.Parallel()
 
 	spec := DefaultPolicy()
-	cfg := ToSandboxConfig(spec, sandbox.CategoryFormatter, "gofmt")
+	cfg := ToSandboxConfig(spec, sandbox.CategoryFormatter, "gofmt", testProjectDir)
 
 	if cfg.HookCategory != sandbox.CategoryFormatter {
 		t.Errorf("expected category %v, got %v", sandbox.CategoryFormatter, cfg.HookCategory)
@@ -163,8 +163,8 @@ func TestToSandboxConfig_HookOverride(t *testing.T) {
 			name: "extra mounts",
 			override: HookOverride{
 				ExtraMounts: []MountDecl{
-					{Source: "/opt/tools", Target: "/opt/tools", ReadOnly: true},
-					{Source: "/tmp/cache", Target: "/tmp/cache", ReadOnly: false},
+					{Source: testProjectDir + "/tools", Target: testProjectDir + "/tools", ReadOnly: true},
+					{Source: "/nix/store", Target: "/nix/store", ReadOnly: true},
 				},
 			},
 			baseCategory:    sandbox.CategoryLinter,
@@ -178,7 +178,7 @@ func TestToSandboxConfig_HookOverride(t *testing.T) {
 				Category:        "test-runner",
 				NetworkOverride: "allow",
 				ExtraMounts: []MountDecl{
-					{Source: "/data", Target: "/data", ReadOnly: true},
+					{Source: testProjectDir + "/data", Target: testProjectDir + "/data", ReadOnly: true},
 				},
 			},
 			baseCategory:    sandbox.CategoryLinter,
@@ -197,7 +197,7 @@ func TestToSandboxConfig_HookOverride(t *testing.T) {
 				"custom-hook": tt.override,
 			}
 
-			cfg := ToSandboxConfig(spec, tt.baseCategory, "custom-hook")
+			cfg := ToSandboxConfig(spec, tt.baseCategory, "custom-hook", testProjectDir)
 
 			if cfg.HookCategory != tt.wantCategory {
 				t.Errorf("expected category %v, got %v", tt.wantCategory, cfg.HookCategory)

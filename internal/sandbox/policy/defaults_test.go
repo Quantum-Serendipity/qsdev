@@ -34,7 +34,7 @@ func TestToSandboxConfig_WorktreeAccess(t *testing.T) {
 			spec := DefaultPolicy()
 			spec.HookCategories[tt.category.String()] = CategoryPolicy{WorktreeAccess: tt.access, Network: "deny"}
 
-			cfg := ToSandboxConfig(spec, tt.category, "hook")
+			cfg := ToSandboxConfig(spec, tt.category, "hook", testProjectDir)
 
 			if got := cfg.WorktreeReadOnly(); got != tt.wantReadOnly {
 				t.Errorf("WorktreeReadOnly() = %v, want %v (WorktreeAccess=%q)", got, tt.wantReadOnly, cfg.WorktreeAccess)
@@ -51,7 +51,7 @@ func TestToSandboxConfig_WorktreeAccessFollowsCategoryOverride(t *testing.T) {
 	spec := DefaultPolicy()
 	spec.HookOverrides = map[string]HookOverride{"fmt": {Category: "linter"}}
 
-	cfg := ToSandboxConfig(spec, sandbox.CategoryFormatter, "fmt")
+	cfg := ToSandboxConfig(spec, sandbox.CategoryFormatter, "fmt", testProjectDir)
 
 	if !cfg.WorktreeReadOnly() {
 		t.Errorf("hook reassigned to linter must get a read-only worktree (WorktreeAccess=%q)", cfg.WorktreeAccess)
@@ -62,14 +62,19 @@ func TestToSandboxConfig_AllowReadWrite(t *testing.T) {
 	t.Parallel()
 
 	spec := DefaultPolicy()
-	spec.Filesystem.AllowRead = []string{"/opt/toolchain", "relative/ignored"}
-	spec.Filesystem.AllowWrite = []string{"/var/cache/hook", "/etc/shadow"}
+	toolchain := testProjectDir + "/toolchain"
+	hookCache := testProjectDir + "/.cache/hook"
+	spec.Filesystem.AllowRead = []string{toolchain, "relative/ignored", "/opt/outside"}
+	spec.Filesystem.AllowWrite = []string{hookCache, "/etc/shadow"}
 
-	cfg := ToSandboxConfig(spec, sandbox.CategoryLinter, "hook")
+	cfg := ToSandboxConfig(spec, sandbox.CategoryLinter, "hook", testProjectDir)
 
 	want := []sandbox.MountSpec{
-		{Source: "/opt/toolchain", Target: "/opt/toolchain", ReadOnly: true},
-		{Source: "/var/cache/hook", Target: "/var/cache/hook", ReadOnly: false},
+		{Source: toolchain, Target: toolchain, ReadOnly: true},
+		{Source: hookCache, Target: hookCache, ReadOnly: false},
+	}
+	if len(cfg.Mounts) != len(want) {
+		t.Errorf("Mounts = %+v, want only %+v", cfg.Mounts, want)
 	}
 	for _, m := range want {
 		if !slices.Contains(cfg.Mounts, m) {
@@ -92,7 +97,7 @@ func TestToSandboxConfig_Backend(t *testing.T) {
 	spec := DefaultPolicy()
 	spec.Backend = "bubblewrap"
 
-	if got := ToSandboxConfig(spec, sandbox.CategoryLinter, "hook").Backend; got != "bubblewrap" {
+	if got := ToSandboxConfig(spec, sandbox.CategoryLinter, "hook", testProjectDir).Backend; got != "bubblewrap" {
 		t.Errorf("Backend = %q, want %q", got, "bubblewrap")
 	}
 }

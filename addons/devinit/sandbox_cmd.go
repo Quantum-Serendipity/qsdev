@@ -37,11 +37,13 @@ func sandboxCmd() *cobra.Command {
 		Short: "Manage hook execution sandboxing",
 		Long: `Tools for managing the hook execution sandbox.
 
-Use "sandbox exec" to run a command inside the sandbox, and
+Use "sandbox exec" to run a command inside the sandbox,
+"sandbox approve" to approve the project's sandbox policy, and
 "sandbox status" to display sandbox capabilities and tier.`,
 	}
 	cmd.AddCommand(
 		newSandboxExecCmd(sandbox.ProbeCapabilitiesDefault),
+		newSandboxApproveCmd(policy.DefaultApprovalStore),
 		newSandboxStatusCmd(sandbox.ProbeCapabilitiesDefault),
 	)
 	return cmd
@@ -79,15 +81,12 @@ wrapped Claude Code hook fails closed.`,
 				return sandboxSetupFailure(err)
 			}
 
-			// The default policy path is project-relative; resolve it against the
-			// project so a hook invoked from a subdirectory still finds it.
-			if !cmd.Flags().Changed("policy") && !filepath.IsAbs(policyPath) {
-				policyPath = filepath.Join(projectDir, policyPath)
-			}
+			policyPath = resolvePolicyPath(cmd, policyPath, projectDir)
 
 			// CompilePolicy returns the defaults when no policy file exists. A file
-			// that exists but cannot be compiled must not silently fall back to the
-			// defaults, which would discard the user's stricter rules.
+			// that exists but is not approved, or cannot be compiled, must not
+			// silently fall back to the defaults, which would discard the user's
+			// stricter rules.
 			spec, err := policy.CompilePolicy(ctx, policyPath)
 			if err != nil {
 				return sandboxSetupFailure(fmt.Errorf("sandbox policy: %w", err))
@@ -97,8 +96,7 @@ wrapped Claude Code hook fails closed.`,
 				hookName = defaultHookName(args[0])
 			}
 
-			cfg := policy.ToSandboxConfig(spec, sandbox.ParseHookCategory(category), hookName)
-			cfg.ProjectDir = projectDir
+			cfg := policy.ToSandboxConfig(spec, sandbox.ParseHookCategory(category), hookName, projectDir)
 			cfg.HookCommand = args
 			cfg.ExecOpts = hookStdio(cmd)
 
@@ -126,12 +124,30 @@ wrapped Claude Code hook fails closed.`,
 
 	cmd.Flags().StringVar(&category, "category", "linter",
 		"Hook category (linter, formatter, network-linter, generator, test-runner)")
-	cmd.Flags().StringVar(&policyPath, "policy", ".qsdev/policy.nix",
-		"Path to sandbox policy file (the default is relative to the project directory)")
+	addPolicyFlag(cmd, &policyPath)
 	cmd.Flags().StringVar(&hookName, "hook-name", "",
 		"Name used to look up the policy's hookOverrides (default: the command's base name without extension)")
 
 	return cmd
+}
+
+// defaultPolicyPath is the project-relative location of the sandbox policy.
+const defaultPolicyPath = ".qsdev/policy.nix"
+
+// addPolicyFlag registers the --policy flag shared by exec and approve.
+func addPolicyFlag(cmd *cobra.Command, policyPath *string) {
+	cmd.Flags().StringVar(policyPath, "policy", defaultPolicyPath,
+		"Path to sandbox policy file (the default is relative to the project directory)")
+}
+
+// resolvePolicyPath resolves the default, project-relative policy path against
+// the project, so a hook invoked from a subdirectory still finds it. A path
+// given with --policy is used as given.
+func resolvePolicyPath(cmd *cobra.Command, policyPath, projectDir string) string {
+	if !cmd.Flags().Changed("policy") && !filepath.IsAbs(policyPath) {
+		return filepath.Join(projectDir, policyPath)
+	}
+	return policyPath
 }
 
 // sandboxSetupFailure converts a failure to prepare or start the sandbox into

@@ -16,7 +16,7 @@ var (
 	reProcessTarget = regexp.MustCompile(`\b(qsdev|claude|gdev)\b`)
 	reMcpInjection  = regexp.MustCompile(`(?i)(system\s*prompt|ignore\s*previous|you\s+are\s+now|<\s*system\s*>|<\s*/?\s*instructions?\s*>)`)
 	reBypassCmd     = regexp.MustCompile(`\bqsdev\s+hook\s+bypass`)
-	reCliControl    = regexp.MustCompile(`\bqsdev\s+(disable\s+hooks|enable\s+hooks\s+--force|session\s+allow\b)`)
+	reCliControl    = regexp.MustCompile(`\bqsdev\s+(disable\s+hooks|enable\s+hooks\s+--force|session\s+allow\b|sandbox\s+approve\b)`)
 	reSystemctl     = regexp.MustCompile(`\bsystemctl\s+(stop|disable)\b.*\b(qsdev|gdev)\b`)
 	// reProcInfo matches the per-process /proc entries that expose a process's
 	// environment, command line, open files, or root: under any pid spelling

@@ -1659,6 +1659,22 @@ func TestSP014_CLISecurityControlBlock(t *testing.T) {
 			verdict: Deny,
 		},
 		{
+			name: "deny qsdev sandbox approve (agent self-approved sandbox policy)",
+			ctx: EvalContext{
+				ToolName: "Bash",
+				Command:  "qsdev sandbox approve --policy .qsdev/policy.nix",
+			},
+			verdict: Deny,
+		},
+		{
+			name: "allow qsdev sandbox status",
+			ctx: EvalContext{
+				ToolName: "Bash",
+				Command:  "qsdev sandbox status",
+			},
+			verdict: Allow,
+		},
+		{
 			name: "allow qsdev session list",
 			ctx: EvalContext{
 				ToolName: "Bash",

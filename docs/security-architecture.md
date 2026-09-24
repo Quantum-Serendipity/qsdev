@@ -404,6 +404,8 @@ Hooks run inside a sandboxed environment that restricts filesystem access, netwo
 
 Run `qsdev sandbox status` to see the active tier on your system. Five hook category profiles (linter, formatter, network-linter, generator, test-runner) control which resources each hook type can access.
 
+The project's sandbox policy (`.qsdev/policy.nix`) comes from the same repository whose hooks the sandbox contains, so it is privileged configuration. `qsdev sandbox exec` evaluates it only when a human has approved its exact content with `qsdev sandbox approve` (the approval, kept in `~/.qsdev/`, covers the policy file and the `*.nix` files beside it, and any change voids it; an unapproved policy blocks the hook). It is evaluated with Nix's restricted evaluation from a private copy of the approved files, so it cannot read other files, the environment or the network, and the mounts it declares are allowlisted to the project directory and `/nix/store`, never `/run`, `/var/run` or a socket. See the [configuration reference](configuration-reference.md#qsdevpolicynix).
+
 ## Security Spectrum Positioning
 
 Development security exists on a spectrum from zero configuration to full lockdown. Each increment of security adds corresponding friction. qsdev is deliberately positioned at the optimal inflection point — the highest protection achievable before productivity costs become structural.

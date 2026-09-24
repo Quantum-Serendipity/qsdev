@@ -99,9 +99,13 @@ func TestSandboxExec_ExitCodes(t *testing.T) {
 				if err := os.MkdirAll(policyDir, 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(policyDir, "policy.nix"), []byte("{ this is not nix"), 0o644); err != nil {
+				policyPath := filepath.Join(policyDir, "policy.nix")
+				if err := os.WriteFile(policyPath, []byte("{ this is not nix"), 0o644); err != nil {
 					t.Fatal(err)
 				}
+				// Approve it, so the failure under test is the evaluation.
+				isolateApprovals(t)
+				recordApproval(t, policyPath)
 				return dir
 			},
 			args:     []string{"--", "sh", "-c", "exit 0"},
@@ -412,14 +416,17 @@ func TestHookStdio(t *testing.T) {
 // TestSandboxExec_BrokenPolicyFailsClosed pins that a policy file which exists
 // but cannot be compiled stops `sandbox exec` instead of silently running the
 // hook under the default policy.
+//
+// It uses t.Setenv (a private approval store), so it is not parallel.
 func TestSandboxExec_BrokenPolicyFailsClosed(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 	policyPath := filepath.Join(dir, "policy.nix")
 	if err := os.WriteFile(policyPath, []byte("{ this is not nix"), 0o600); err != nil {
 		t.Fatalf("writing policy: %v", err)
 	}
+	// Approve it, so the failure under test is the evaluation.
+	isolateApprovals(t)
+	recordApproval(t, policyPath)
 	marker := filepath.Join(dir, "hook-ran")
 
 	cmd := newSandboxExecCmd(noSandboxProbe)
@@ -431,8 +438,8 @@ func TestSandboxExec_BrokenPolicyFailsClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("sandbox exec with an uncompilable policy succeeded, want an error")
 	}
-	if !strings.Contains(err.Error(), "sandbox policy") {
-		t.Errorf("error = %v, want a sandbox policy error", err)
+	if !strings.Contains(err.Error(), "evaluating policy") {
+		t.Errorf("error = %v, want a policy evaluation error", err)
 	}
 	// Exit 1 is a non-blocking hook error in Claude Code, which would let the
 	// tool call through with the guard hook never having run.

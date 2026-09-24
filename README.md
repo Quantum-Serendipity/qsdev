@@ -67,7 +67,6 @@ devenv.yaml                 # Environment inputs
 .claude/hooks/package-guard.py  # Package install interception
 .claude/skills/             # Operation skills for AI-assisted workflows
 .claude/rules/              # Language-specific convention rules
-.qsdev/policy.nix           # Hook sandbox policies
 .mcp.json                   # MCP server configuration
 .qsdev/policy/              # YAML security policies (policy engine)
 CLAUDE.md                   # Project context for AI agents
@@ -244,6 +243,7 @@ qsdev trial                   # Evaluate in an isolated git worktree
 | Command | Description |
 |---------|-------------|
 | `sandbox exec -- CMD` | Run a command inside the hook sandbox |
+| `sandbox approve` | Review and approve the project's hook sandbox policy (`.qsdev/policy.nix`) |
 | `sandbox status` | Display sandbox capabilities and degradation tier |
 
 ### container subcommands

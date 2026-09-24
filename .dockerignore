@@ -28,6 +28,11 @@
 
 # Secret material must never enter the context, even inside the re-included
 # trees above (operators place ./tls/server.key etc. next to the sources).
+# vendor/ holds Go packages that happen to be named tls (sigstore-go pulls in
+# certificate-transparency-go/tls), so the tls/ exclusion spares vendor/; the
+# file-level secret patterns below still apply there.
+**/tls/
+!vendor/**/tls/
 **/.qsdev/
 **/.env
 **/.env.*
@@ -35,7 +40,6 @@
 **/*.key
 **/*.pem
 **/*.crt
-**/tls/
 
 # Test scratch that may appear inside the re-included trees.
 **/*.tmp

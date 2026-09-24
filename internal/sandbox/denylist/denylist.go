@@ -117,15 +117,16 @@ func resolveExistingPrefix(path string) string {
 
 // CandidatePaths returns the deny-comparison candidates for path: the cleaned
 // literal path plus its symlink-resolved form when that differs, so a symlink
-// to (or toward) a sensitive location is caught. Both mount validators build
-// their candidates here, so they can never disagree on which paths were
-// examined.
+// to (or toward) a sensitive location is caught. Resolution goes through the
+// deepest existing ancestor, exactly as ExpandedDenyPaths does for deny
+// entries: a mount path that does not exist yet (e.g. ~/.aws) under a
+// symlinked directory (macOS /var -> /private/var) must still resolve to the
+// same form as the deny entry. Both mount validators build their candidates
+// here, so they can never disagree on which paths were examined.
 func CandidatePaths(path string) []string {
 	candidates := []string{filepath.Clean(path)}
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		if r := filepath.Clean(resolved); r != candidates[0] {
-			candidates = append(candidates, r)
-		}
+	if r := resolveExistingPrefix(path); r != candidates[0] {
+		candidates = append(candidates, r)
 	}
 	return candidates
 }

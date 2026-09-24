@@ -58,6 +58,35 @@ func TestValidateMountPath_AllowsSymlinkToSafePath(t *testing.T) {
 	}
 }
 
+// TestValidateMountPath_RejectsAbsentEntryUnderSymlinkedParent reproduces the
+// macOS layout that TestValidateMountPath_RejectsResolvedHomeUnderSymlinkedHome
+// only hits on a real Mac: the home directory itself sits below a symlinked
+// directory (/var -> /private/var), HOME is a further symlink to it, and the
+// mount path names an absent deny entry through the unresolved parent. Both
+// sides must resolve through their deepest existing ancestor to meet.
+func TestValidateMountPath_RejectsAbsentEntryUnderSymlinkedParent(t *testing.T) {
+	root := t.TempDir()
+	privateVar := filepath.Join(root, "private", "var")
+	if err := os.MkdirAll(filepath.Join(privateVar, "folders", "home"), 0o700); err != nil {
+		t.Fatalf("creating fake /private/var: %v", err)
+	}
+	varLink := filepath.Join(root, "var")
+	if err := os.Symlink(privateVar, varLink); err != nil {
+		t.Fatalf("creating /var symlink: %v", err)
+	}
+	homeViaVar := filepath.Join(varLink, "folders", "home") // literal, like /var/folders/...
+	homeLink := filepath.Join(root, "homelink")
+	if err := os.Symlink(homeViaVar, homeLink); err != nil {
+		t.Fatalf("creating home symlink: %v", err)
+	}
+	t.Setenv("HOME", homeLink)
+
+	absent := filepath.Join(homeViaVar, ".aws") // does not exist
+	if err := ValidateMountPath(absent); err == nil {
+		t.Errorf("ValidateMountPath(%q) with HOME=%q = nil, want a deny error", absent, homeLink)
+	}
+}
+
 // TestValidateMountPath_RejectsResolvedHomeUnderSymlinkedHome reproduces the
 // macOS layout on any host: HOME is reached through a symlink (as /var is a
 // symlink to /private/var on macOS), so the deny entries built from HOME are

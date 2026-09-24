@@ -113,21 +113,22 @@ func joinPrerequisites(cmd *cobra.Command, opts InitOptions) bool {
 }
 
 // buildJoinAnswers rebuilds the answers the project was created with from the
-// committed .qsdev.yaml. Precedence, lowest first: the committed config, an
-// --answers-file overlay (top-level keys it sets replace the config's), then
-// explicitly-set flags. Settings the config has no key for get the same
-// defaults and invariants the create path applies.
+// committed .qsdev.yaml, resolved through config.ResolveConfig so the client
+// compliance overlay and MCP policy apply. Precedence, lowest first: the
+// committed config, an --answers-file overlay (top-level keys it sets replace
+// the config's), then explicitly-set flags. Settings the config has no key for
+// get the same defaults and invariants the create path applies. Last, the
+// security floor (including .qsdev.local.yaml raises) and client policy are
+// applied, so neither an overlay nor a flag can loosen them.
 func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) (types.WizardAnswers, error) {
-	// Parse project config.
-	cfgFile := branding.Get().ConfigFile
-	cfgPath := filepath.Join(projectRoot, cfgFile)
-	cfg, err := qsdevconfig.ParseQsdevConfig(cfgPath)
+	policy, err := qsdevconfig.LoadProjectPolicy(projectRoot)
 	if err != nil {
-		return types.WizardAnswers{}, fmt.Errorf("parsing %s: %w", cfgFile, err)
+		return types.WizardAnswers{}, err
 	}
+	warnPolicyViolations(cmd.ErrOrStderr(), policy)
 
 	detected := detect.Detect(cmdContext(cmd), projectRoot)
-	answers := qsdevconfig.ConfigToAnswers(cfg, detected, projectRoot)
+	answers := qsdevconfig.ConfigToAnswers(policy.Committed, detected, projectRoot)
 
 	if opts.AnswersFile != "" {
 		answers, err = OverlayAnswersFile(answers, opts.AnswersFile)
@@ -161,6 +162,7 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 	}
 	registry := toolreg.DefaultRegistry()
 	applyJoinDefaults(&answers, cat, registry)
+	policy.Apply(&answers)
 
 	// Validate answers.
 	if err := ValidateAnswers(answers); err != nil {
@@ -271,7 +273,7 @@ func writeJoinResults(
 	result, err := generate.WriteFiles(allFiles, generate.PipelineOptions{
 		ProjectRoot:       projectRoot,
 		SectionMergeFunc:  merge.SectionMarkersOrAppend,
-		ThreeWayMergeFunc: merge.MergeOnCreate,
+		ThreeWayMergeFunc: merge.MergeOnCreateWithMCPPolicy(answers.MCPPolicy),
 	})
 	if err != nil {
 		return fmt.Errorf("writing files: %w", err)

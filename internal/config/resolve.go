@@ -100,6 +100,10 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 	// Services: replacement semantics.
 	result.Services = mergeReplaceServices(base.Services, overlay.Services)
 
+	// Packages and overlays: union.
+	result.Packages = mergeUnionStrings(base.Packages, overlay.Packages)
+	result.Overlays = mergeUnionStrings(base.Overlays, overlay.Overlays)
+
 	// Security.Level: last-wins scalar.
 	if overlay.Security.Level != "" {
 		result.Security.Level = overlay.Security.Level
@@ -255,13 +259,9 @@ func enforceSecurityFloor(resolved, project *types.QsdevConfig) []FloorViolation
 	violations = append(violations, enforceBoolFloor(&resolved.Security.VulnScanning,
 		strongerBoolFloor(project.Security.VulnScanning, complianceFloor.VulnScanning), "security.vuln_scanning")...)
 
-	// Client blocked MCP: union-only, never removed.
-	if project.Client != nil {
-		// Enforce blocked MCP servers.
-		if len(project.Client.BlockedMCP) > 0 {
-			filterBlockedMCP(resolved, project.Client.BlockedMCP, project.Client.AllowedMCP)
-		}
-	}
+	// Client MCP policy: only the project's client block sets it, and no
+	// layer can re-add a server it blocks.
+	filterBlockedMCP(resolved, ClientMCPPolicy(project))
 
 	return violations
 }
@@ -277,81 +277,39 @@ func strongerBoolFloor(a, b *bool) bool {
 }
 
 // enforceBoolFloor ensures a resolved *bool cannot be weaker than the floor.
-// When the floor requires the setting to be true, any resolved value that is
-// below that floor (explicitly false, or unset/nil which downstream treats as
-// disabled) is both recorded as a FloorViolation and enforced back up to true —
-// a compliance- or project-mandated control must never be locally disabled.
+// When the floor requires the setting to be true, any resolved value below it
+// is enforced back up to true — a compliance- or project-mandated control must
+// never be locally disabled. Only an explicit false is recorded as a
+// FloorViolation: an unset value (which downstream treats as disabled) is
+// raised silently, because nothing tried to weaken it. Without that
+// distinction every project that declares a security level but leaves the
+// individual bools unset (the file init writes) would report violations.
 func enforceBoolFloor(resolved **bool, floor bool, field string) []FloorViolation {
 	if !floor {
 		return nil
 	}
-
-	// Floor is true. If resolved is below the floor (false or unset), enforce.
-	if *resolved == nil || !**resolved {
-		var attempted any
-		if *resolved != nil {
-			attempted = **resolved
-		}
-		t := true
-		*resolved = &t
-		return []FloorViolation{{
-			Field:     field,
-			Attempted: attempted,
-			Enforced:  true,
-			Reason:    "cannot disable security setting that project or compliance level requires",
-		}}
+	if *resolved != nil && **resolved {
+		return nil
 	}
 
-	return nil
+	attempted := *resolved
+	t := true
+	*resolved = &t
+	if attempted == nil {
+		return nil
+	}
+	return []FloorViolation{{
+		Field:     field,
+		Attempted: false,
+		Enforced:  true,
+		Reason:    "cannot disable security setting that project or compliance level requires",
+	}}
 }
 
-// filterBlockedMCP removes blocked MCP servers from the resolved config.
-// If BlockedMCP contains ["*"], all servers except those in AllowedMCP are removed.
-func filterBlockedMCP(resolved *types.QsdevConfig, blocked, allowed []string) *types.QsdevConfig {
-	if len(blocked) == 0 {
-		return resolved
-	}
-
-	// Check for wildcard block.
-	wildcard := false
-	for _, b := range blocked {
-		if b == "*" {
-			wildcard = true
-			break
-		}
-	}
-
-	allowedSet := make(map[string]bool, len(allowed))
-	for _, a := range allowed {
-		allowedSet[a] = true
-	}
-
-	if wildcard {
-		// Block all except allowed.
-		var filtered []string
-		for _, s := range resolved.ClaudeCode.MCPServers {
-			if allowedSet[s] {
-				filtered = append(filtered, s)
-			}
-		}
-		resolved.ClaudeCode.MCPServers = filtered
-	} else {
-		// Block specific servers.
-		blockedSet := make(map[string]bool, len(blocked))
-		for _, b := range blocked {
-			blockedSet[b] = true
-		}
-
-		var filtered []string
-		for _, s := range resolved.ClaudeCode.MCPServers {
-			if !blockedSet[s] {
-				filtered = append(filtered, s)
-			}
-		}
-		resolved.ClaudeCode.MCPServers = filtered
-	}
-
-	return resolved
+// filterBlockedMCP removes the servers the client MCP policy does not permit
+// from the resolved claude_code.mcp_servers.
+func filterBlockedMCP(resolved *types.QsdevConfig, policy types.MCPPolicy) {
+	resolved.ClaudeCode.MCPServers = policy.Filter(resolved.ClaudeCode.MCPServers)
 }
 
 // cloneQsdevConfig creates a deep copy of a QsdevConfig.
@@ -382,7 +340,9 @@ func cloneQsdevConfig(cfg *types.QsdevConfig) *types.QsdevConfig {
 			NixCache:      cfg.Infrastructure.NixCache,
 			BuildCache:    cfg.Infrastructure.BuildCache,
 		},
-		Git: cfg.Git,
+		Git:      cfg.Git,
+		Packages: slices.Clone(cfg.Packages),
+		Overlays: slices.Clone(cfg.Overlays),
 	}
 
 	if len(cfg.Infrastructure.RegistryProxyOverrides) > 0 {

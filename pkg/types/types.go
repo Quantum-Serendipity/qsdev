@@ -41,6 +41,10 @@ type WizardAnswers struct {
 	Infrastructure     InfraConfig       `yaml:"infrastructure"              json:"infrastructure"`
 	Overlays           []string          `yaml:"overlays,omitempty"          json:"overlays,omitempty"`
 	LSP                LSPSettings       `yaml:"lsp"                         json:"lsp"`
+	// MCPPolicy is the committed client MCP policy; the Claude Code generator
+	// drops every server it does not permit. It is refreshed from .qsdev.yaml
+	// by init, join and update, never chosen interactively.
+	MCPPolicy MCPPolicy `yaml:"mcp_policy,omitempty" json:"mcp_policy,omitempty"`
 }
 
 // AgentToolsAnswers holds AI agent tool selections from the wizard.

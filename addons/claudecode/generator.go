@@ -143,7 +143,10 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 	// superset of the previous Full-only behavior, so Full-tier output is
 	// unchanged, while a standard-tier project that configured mcp_servers now
 	// gets its .mcp.json instead of silently nothing.
-	// Enabling semble provisions its server or sub-agent at any tier.
+	// Enabling semble provisions its server or sub-agent at any tier. A client
+	// MCP policy alone yields a server-less .mcp.json (below), so writers can
+	// strip forbidden servers already on disk without the policy itself
+	// provisioning any server.
 	if t >= tier.Full || len(answers.MCPServers) > 0 || answers.AgentTools.SembleEnabled {
 		answers.MCPServers = answers.ConfiguredMCPServers()
 
@@ -181,6 +184,10 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 			}
 		}
 
+		// The client MCP policy (.qsdev.yaml client block) overrides every
+		// source above: a blocked server is never configured.
+		answers.MCPServers = answers.MCPPolicy.Filter(answers.MCPServers)
+
 		// 7. MCP config
 		mcpCfg := g.cfg
 		if sembleOverride != nil {
@@ -193,6 +200,12 @@ func (g *ClaudeCodeGenerator) Generate(answers types.WizardAnswers) ([]types.Gen
 		if mcpFile != nil {
 			files = append(files, *mcpFile)
 		}
+	} else if !answers.MCPPolicy.IsZero() {
+		mcpFile, err := GenerateMcpJson(types.WizardAnswers{MCPPolicy: answers.MCPPolicy}, Config{})
+		if err != nil {
+			return nil, fmt.Errorf("generating MCP config: %w", err)
+		}
+		files = append(files, *mcpFile)
 	}
 
 	// Gate 2: tier >= Full for consulting agents/workflows, operation skills,

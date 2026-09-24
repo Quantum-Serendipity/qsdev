@@ -90,6 +90,27 @@ func AnswersToConfig(answers types.WizardAnswers, binaryVersion string) types.Qs
 	return cfg
 }
 
+// PreserveCommittedPolicy carries into fresh, the .qsdev.yaml about to be
+// written for a re-created project (`qsdev init --force` or `--mode create`
+// over an existing file), the committed keys answers cannot express: the
+// client block, the security bools, git settings and tools.config.
+// security.level keeps the stricter of the two, so re-creating a project never
+// silently drops its declared security floor or client policy.
+func PreserveCommittedPolicy(fresh, committed *types.QsdevConfig) {
+	if committed == nil {
+		return
+	}
+	level := fresh.Security.Level
+	if CompareComplianceLevels(committed.Security.Level, level) > 0 {
+		level = committed.Security.Level
+	}
+	fresh.Security = cloneQsdevConfig(committed).Security
+	fresh.Security.Level = level
+	fresh.Client = cloneClient(committed.Client)
+	fresh.Git = committed.Git
+	fresh.Tools.Config = mergeMapStringAny(nil, committed.Tools.Config)
+}
+
 // olderSchema reports whether the .qsdev.yaml content data declares a schema
 // version older than the current one. data has already parsed, so its
 // version is present and valid.

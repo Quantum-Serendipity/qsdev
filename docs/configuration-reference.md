@@ -144,6 +144,59 @@ It is now read as `standard`, and `qsdev init --update` removes those files
 if they are unmodified. To keep them, add `tier: full` to `.qsdev.yaml`
 before updating.
 
+#### Security floor, client policy and local overrides
+
+`qsdev init` (create over an existing `.qsdev.yaml`, `--mode join`, and
+`--update`) resolves `.qsdev.yaml` and the developer's gitignored
+`.qsdev.local.yaml` through one resolver, so what the committed file declares
+reaches the generated files:
+
+```yaml
+security:
+  level: strict               # the project's security floor
+client:
+  name: acme
+  security_level: strict      # a client can raise, never lower, the floor
+  blocked_mcp_servers: ["*"]  # "*" blocks every server not allowed below
+  allowed_mcp_servers: [context7]
+```
+
+- **Security floor.** The stricter of `security.level` and
+  `client.security_level` is the floor. Generation uses at least that
+  compliance level, and the hooks it requires are enabled (`enhanced`:
+  pre-commit; `strict`: pre-commit, audit-log and auto-format). A
+  `security.*` switch the floor mandates (`age_gating`, `script_blocking`,
+  `lock_enforcement`, `vuln_scanning`) cannot be turned off locally.
+- **Client compliance level.** `client.security_level` also enables the
+  catalog tools its required pre-commit hooks come from (for example
+  `gitleaks` and `semgrep`) unless the project records its own decision
+  about them in `tools.enabled`/`tools.disabled`, and supplies
+  `claude_code.permission_level` when none is set (`minimal` for `strict`,
+  `standard` otherwise).
+- **Client MCP policy.** A server named in `blocked_mcp_servers` is never
+  written to `.mcp.json`, whichever source asked for it
+  (`claude_code.mcp_servers`, the default servers, an enabled tool, or the
+  semble agent tool). With `"*"`, only the servers in `allowed_mcp_servers`
+  are written. Under a policy, a Claude Code project at the `standard` tier
+  or above always gets a `.mcp.json` (possibly with no servers), and init,
+  join and update also remove forbidden servers already in an existing
+  `.mcp.json`.
+- **Local overrides.** `.qsdev.local.yaml` can raise the security level for
+  your own checkout but never lower it below the floor: `security.level`
+  or `security.*` switches below the floor are ignored, and each is reported
+  as a warning (for example `security.level: baseline raised to strict`).
+  Join never writes local overrides back into `.qsdev.yaml`; re-creating a
+  project (`qsdev init --force`) records the level it generated with, so a
+  local raise in effect at that moment becomes the committed level.
+
+There is no organization-defaults layer: a project without a `security`
+block is generated with the settings it was created with, not raised to
+qsdev's built-in defaults. An unreadable `.qsdev.yaml` or `.qsdev.local.yaml`
+stops init and update with an error rather than generating without its policy.
+Re-creating a project (`qsdev init --force`) keeps the committed `client`
+block, `security` switches, `git` settings and `tools.config`, and never
+records a lower `security.level` than the committed one.
+
 ---
 
 ## Devenv Files
@@ -442,7 +495,7 @@ Structure:
 }
 ```
 
-Three-way merge preserves custom server entries you add while updating built-in server configurations.
+Three-way merge preserves custom server entries you add while updating built-in server configurations, except servers the committed `client.blocked_mcp_servers` policy forbids, which are removed (see [Security floor, client policy and local overrides](#security-floor-client-policy-and-local-overrides)).
 
 ---
 

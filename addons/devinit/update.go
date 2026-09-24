@@ -88,6 +88,8 @@ type FileUpdatePlan struct {
 type UpdatePlan struct {
 	Files   []FileUpdatePlan
 	NixPlan *FileUpdatePlan // separate tracking for devenv.nix
+	// MCPPolicy is the client MCP policy merged files must honour.
+	MCPPolicy types.MCPPolicy
 }
 
 // fileFailure records a file that could not be updated. Execution continues
@@ -113,7 +115,7 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	}
 
 	// 1. Load answers, refresh detection, infer tools.
-	answers, err := loadAndRefreshForUpdate(cmd.Context(), projectRoot)
+	answers, err := loadAndRefreshForUpdate(cmd.Context(), cmd.ErrOrStderr(), projectRoot)
 	if err != nil {
 		return err
 	}
@@ -145,6 +147,7 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 
 	// 5. Build update plan, including cleanup of files no longer generated.
 	plan := buildUpdatePlan(allFiles, modStatus, existingState, projectRoot, opts)
+	plan.MCPPolicy = answers.MCPPolicy
 	plan.Files = append(plan.Files, planOrphans(existingState, allFiles, modStatus, answers)...)
 
 	// 6. Preview.
@@ -245,8 +248,10 @@ func printUpdateSummary(w io.Writer, plan UpdatePlan, out updateOutcome) {
 }
 
 // loadAndRefreshForUpdate loads saved answers, refreshes ecosystem detection,
-// and augments enabled tools with inferred entries.
-func loadAndRefreshForUpdate(ctx context.Context, projectRoot string) (types.WizardAnswers, error) {
+// applies the committed security floor and client policy (warning on w about
+// any setting the floor raised), and augments enabled tools with inferred
+// entries.
+func loadAndRefreshForUpdate(ctx context.Context, w io.Writer, projectRoot string) (types.WizardAnswers, error) {
 	answers, err := loadAnswers(projectRoot)
 	if err != nil {
 		return types.WizardAnswers{}, err
@@ -255,6 +260,10 @@ func loadAndRefreshForUpdate(ctx context.Context, projectRoot string) (types.Wiz
 	// Refresh detection.
 	answers.Detected = detect.Detect(ctx, projectRoot)
 	answers.ProjectRoot = projectRoot
+
+	if err := applyCommittedPolicy(w, projectRoot, &answers); err != nil {
+		return types.WizardAnswers{}, err
+	}
 
 	// Augment EnabledTools with inferred tools (AlwaysOn, hooks-implied).
 	toolreg.MergeInferredTools(&answers, toolreg.DefaultRegistry())
@@ -604,7 +613,7 @@ func executeUpdatePlan(
 			}
 
 		case UpdateActionMerge:
-			merged, err := dispatchMerge(fp, projectRoot)
+			merged, err := dispatchMerge(fp, projectRoot, plan.MCPPolicy)
 			if err != nil {
 				out.failures = append(out.failures, fileFailure{Path: fp.Path, Err: fmt.Errorf("merge failed: %w", err)})
 				continue
@@ -701,7 +710,10 @@ func skipExistingUserFile(fp FileUpdatePlan, absPath string) bool {
 	return err == nil
 }
 
-func dispatchMerge(fp FileUpdatePlan, projectRoot string) ([]byte, error) {
+// dispatchMerge merges generated content into a user-modified file and then
+// drops the MCP servers policy forbids, which the merge would otherwise keep
+// as user-added.
+func dispatchMerge(fp FileUpdatePlan, projectRoot string, policy types.MCPPolicy) ([]byte, error) {
 	absPath := filepath.Join(projectRoot, fp.Path)
 
 	// Read current on-disk content ("theirs").
@@ -718,5 +730,9 @@ func dispatchMerge(fp FileUpdatePlan, projectRoot string) ([]byte, error) {
 
 	// fp.OldContent is the recorded base for this file. Delegate to the shared
 	// merge.Dispatch table so all write paths route identically.
-	return merge.Dispatch(fp.Path, fp.Strategy, fp.OldContent, theirs, fp.NewContent)
+	merged, err := merge.Dispatch(fp.Path, fp.Strategy, fp.OldContent, theirs, fp.NewContent)
+	if err != nil {
+		return nil, err
+	}
+	return merge.EnforceMCPPolicy(fp.Path, merged, policy)
 }

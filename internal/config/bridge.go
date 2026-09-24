@@ -114,17 +114,21 @@ func effectiveSecurityLevel(cfg *types.QsdevConfig) string {
 	return level
 }
 
-// securityToHookChoices maps a QsdevConfig's security settings to HookChoices.
-// The mapping is based on compliance level:
-//   - baseline: safety-block
-//   - enhanced: safety-block + pre-commit
-//   - strict: safety-block + pre-commit + audit-log + auto-format
+// securityToHookChoices maps a QsdevConfig's security settings to HookChoices:
+// the always-on safety block plus the hooks its effective level implies.
 func securityToHookChoices(cfg *types.QsdevConfig) types.HookChoices {
-	hc := types.HookChoices{
-		SafetyBlock: true, // Always on.
-	}
+	hc := levelHookChoices(effectiveSecurityLevel(cfg))
+	hc.SafetyBlock = true // Always on.
+	return hc
+}
 
-	switch effectiveSecurityLevel(cfg) {
+// levelHookChoices returns the hooks a compliance level requires:
+//   - baseline: none beyond the safety block
+//   - enhanced: pre-commit
+//   - strict: pre-commit + audit-log + auto-format
+func levelHookChoices(level string) types.HookChoices {
+	var hc types.HookChoices
+	switch level {
 	case "enhanced":
 		hc.PreCommit = true
 	case "strict":
@@ -132,7 +136,6 @@ func securityToHookChoices(cfg *types.QsdevConfig) types.HookChoices {
 		hc.AuditLog = true
 		hc.AutoFormat = true
 	}
-
 	return hc
 }
 

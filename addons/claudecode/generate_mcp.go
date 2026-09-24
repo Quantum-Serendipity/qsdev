@@ -30,9 +30,22 @@ type MCPServerEntry struct {
 }
 
 // GenerateMcpJson produces a .mcp.json file from the wizard answers and addon
-// configuration. It returns nil, nil when no MCP servers are requested.
+// configuration. Servers the client MCP policy (answers.MCPPolicy) does not
+// permit are left out, whichever source requested them. It returns nil, nil
+// when no permitted MCP servers are requested and there is no policy; under a
+// policy it always returns a file (possibly with no servers), so the writers
+// that merge it over an existing .mcp.json remove the servers the policy
+// forbids (merge.EnforceMCPPolicy).
 func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedFile, error) {
-	if len(answers.MCPServers) == 0 && len(cfg.MCPServers) == 0 {
+	policy := answers.MCPPolicy
+	names := policy.Filter(answers.MCPServers)
+	var configured []MCPServerConfig
+	for _, srv := range cfg.MCPServers {
+		if policy.Permits(srv.Name) {
+			configured = append(configured, srv)
+		}
+	}
+	if len(names) == 0 && len(configured) == 0 && policy.IsZero() {
 		return nil, nil
 	}
 
@@ -46,7 +59,7 @@ func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedF
 	}
 
 	// Populate from wizard-selected known servers.
-	for _, name := range answers.MCPServers {
+	for _, name := range names {
 		def, ok := cat.MCPServer(name)
 		if !ok {
 			return nil, fmt.Errorf("unknown MCP server %q: must be one of %s", name, mcpServerNameList(cat))
@@ -55,7 +68,7 @@ func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedF
 	}
 
 	// Populate from config-provided servers (overrides wizard on collision).
-	for _, srv := range cfg.MCPServers {
+	for _, srv := range configured {
 		entry := MCPServerEntry{
 			Command: srv.Command,
 			Args:    srv.Args,

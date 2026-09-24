@@ -245,6 +245,24 @@ All 18 rules use deny-override combining: if any rule denies, the tool call is b
 
 **Path canonicalization** resolves all file paths through `canon.Canonicalize` before rule evaluation, preventing relative-path and symlink-based evasion.
 
+## Project Security Floor
+
+The committed `.qsdev.yaml` declares a security floor (`security.level`,
+raised by `client.security_level`) and an optional client MCP policy
+(`client.blocked_mcp_servers` / `allowed_mcp_servers`). `qsdev init` resolves
+it, together with the developer's `.qsdev.local.yaml`, through a single
+resolver in create, join and update, and generation never goes below it:
+
+- the compliance level and the hooks it requires are raised to the floor,
+  and a security switch it mandates cannot be disabled locally;
+- a floor violation in `.qsdev.local.yaml` is ignored and reported;
+- a forbidden MCP server is dropped from `.mcp.json` whatever requested it,
+  including entries already present in a committed or hand-edited file.
+
+The resolver has no organization-defaults layer, so a project without a
+`security` block is not silently raised to built-in defaults. See the
+[configuration reference](configuration-reference.md#security-floor-client-policy-and-local-overrides).
+
 ## Hook Execution Isolation
 
 The self-protection layer (Layer 14) runs as the first PreToolUse hook. It evaluates before package-guard, credential-scan, and all other hooks. Guardrail-tampering attempts are blocked before any other hook logic executes.

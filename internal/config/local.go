@@ -57,8 +57,9 @@ func ParseLocalConfig(path string) (*LocalConfig, error) {
 }
 
 // localToQsdevConfig converts a LocalConfig to a QsdevConfig for use in the
-// merge chain. Fields that exist only in QsdevConfig (Version, QsdevVersion,
-// Profile, InfraProfile, Client, Infrastructure) are left at zero values.
+// merge chain. extra_packages is the local counterpart of packages. Fields
+// that exist only in QsdevConfig (Version, QsdevVersion, Profile,
+// InfraProfile, Client, Infrastructure) are left at zero values.
 func localToQsdevConfig(local *LocalConfig) *types.QsdevConfig {
 	if local == nil {
 		return nil
@@ -70,6 +71,7 @@ func localToQsdevConfig(local *LocalConfig) *types.QsdevConfig {
 		Security:   local.Security,
 		Tools:      local.Tools,
 		ClaudeCode: local.ClaudeCode,
+		Packages:   local.ExtraPackages,
 	}
 }
 

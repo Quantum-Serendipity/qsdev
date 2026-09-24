@@ -1,7 +1,9 @@
 package devinit
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -283,6 +285,12 @@ func buildAnswersFromInputs(cmd *cobra.Command, opts InitOptions, projectRoot st
 		}
 	}
 
+	// Re-creating a project over a committed .qsdev.yaml keeps its security
+	// floor and client policy.
+	if err := applyCommittedPolicy(cmd.ErrOrStderr(), projectRoot, &answers); err != nil {
+		return types.WizardAnswers{}, err
+	}
+
 	// Infer tools only from the final answers: tools inferred from the
 	// pre-wizard flags would outlive a wizard choice that turned them off.
 	treg, err := toolreg.Default()
@@ -319,7 +327,7 @@ func writeAndRecordResults(cmd *cobra.Command, opts InitOptions, projectRoot str
 		ProjectRoot:       projectRoot,
 		Force:             opts.Force,
 		SectionMergeFunc:  merge.SectionMarkersOrAppend,
-		ThreeWayMergeFunc: merge.MergeOnCreate,
+		ThreeWayMergeFunc: merge.MergeOnCreateWithMCPPolicy(answers.MCPPolicy),
 	})
 	if err != nil {
 		return fmt.Errorf("writing files: %w", err)
@@ -434,6 +442,13 @@ func projectGitignoreEntries() []string {
 func finalizeProject(cmd *cobra.Command, opts InitOptions, answers types.WizardAnswers, projectRoot string, accResult accumulatorResult) error {
 	qsdevCfg := qsdevconfig.AnswersToConfig(answers, version.Info().Version)
 	qsdevCfgPath := filepath.Join(projectRoot, branding.Get().ConfigFile)
+	committed, err := qsdevconfig.ParseQsdevConfig(qsdevCfgPath)
+	switch {
+	case err == nil:
+		qsdevconfig.PreserveCommittedPolicy(&qsdevCfg, committed)
+	case !errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("reading the committed %s: %w", branding.Get().ConfigFile, err)
+	}
 	if err := qsdevconfig.WriteProjectConfig(qsdevCfgPath, qsdevCfg); err != nil {
 		return err
 	}

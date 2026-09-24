@@ -29,7 +29,9 @@ func isWindowsAdmin() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer windows.FreeSid(sid)
+	// FreeSid only fails for an invalid SID, which AllocateAndInitializeSid
+	// just returned successfully; nothing could act on the error.
+	defer func() { _ = windows.FreeSid(sid) }()
 	token := windows.Token(0)
 	member, err := token.IsMember(sid)
 	if err != nil {

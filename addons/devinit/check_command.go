@@ -121,6 +121,13 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not derive answers from %s: %v\n", cfgFile, err)
 		}
 	}
+	// The committed hooks block is authoritative for the hook policy (init,
+	// join and update refresh it from .qsdev.yaml), so a policy committed
+	// after the answers were saved is what settings.json must enforce, and
+	// a checkout that has not run 'qsdev init --update' since fails.
+	if ctx.QsdevConfig != nil {
+		answers.HookPolicy = ctx.QsdevConfig.Hooks.Clone()
+	}
 
 	// Required deny rules: every base rule the project's permission preset
 	// generates, so deleting any of them from settings.json is caught.
@@ -153,6 +160,11 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	}
 	if settings, ok := freshFiles[check.ClaudeSettingsRelPath]; ok {
 		ctx.ExpectedClaudeSettings = settings.Content
+	}
+	if answers.ClaudeCode {
+		for _, h := range claudecode.HooksWithoutPolicy(answers) {
+			ctx.HooksWithoutPolicy = append(ctx.HooksWithoutPolicy, check.HookWithoutPolicy{Name: h.Name, PolicyKey: h.PolicyKey})
+		}
 	}
 
 	ctx.CustomConformance = evaluateCustomConformance(projectRoot, scan)

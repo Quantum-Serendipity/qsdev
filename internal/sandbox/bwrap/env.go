@@ -29,11 +29,14 @@ var allowedExact = map[string]bool{
 }
 
 // allowedPrefixes lists name prefixes that are always permitted.
-// FILE_BOUNDARY_ carries the file-boundary hook's policy (settings.json "env"),
-// which a sandboxed hook must still receive; with GOMODCACHE and GOROOT above
-// it tells the hook which dependency sources it may let the agent read.
+// FILE_BOUNDARY_ and TOOL_GATES_ carry the file-boundary and tool-gates
+// hooks' policy (settings.json "env"), which a sandboxed hook must still
+// receive: stripped, the tool gates would allow every tool. With GOMODCACHE
+// and GOROOT above, FILE_BOUNDARY_ tells the hook which dependency sources it
+// may let the agent read.
 var allowedPrefixes = []string{
 	"FILE_BOUNDARY_",
+	"TOOL_GATES_",
 	"LC_",
 	"GIT_DIR",
 	"GIT_WORK_TREE",

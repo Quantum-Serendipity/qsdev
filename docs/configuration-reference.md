@@ -95,6 +95,8 @@ claude_code:
 hooks:
   file_boundary:
     extra_read_paths: [/opt/android-sdk]   # read-only; see Hook settings
+  tool_gates:
+    denied: [WebFetch, "mcp__github__*"]   # see Hook settings
 infrastructure:
   registry_proxy: https://repo.corp.internal/artifactory   # "none" opts out
   nix_cache: corp                                           # URL, or a Cachix cache name; "none" opts out
@@ -353,6 +355,9 @@ hooks:
     extra_read_paths:
       - /opt/android-sdk
       - ~/.local/share/my-sdk
+  tool_gates:
+    allowed: [Read, Grep, Glob, Edit, Write, Bash, "mcp__context7__*"]
+    denied: [WebFetch, WebSearch, "mcp__github__delete_*"]
 ```
 
 - **`file_boundary.extra_read_paths`** widens what the `file-boundary` hook
@@ -376,6 +381,30 @@ hooks:
   `FILE_BOUNDARY_EXTRA_READ_PATHS` variable in the `env` block of
   `.claude/settings.json`. `FILE_BOUNDARY_STRICT_MODE=true` revokes every
   out-of-project allowance, including these paths.
+- **`tool_gates.allowed`** and **`tool_gates.denied`** are the policy the
+  `tool-gates` hook enforces on every tool call. Entries are Claude Code
+  tool names (`Bash`, `WebFetch`, `mcp__github__delete_repo`), matched
+  case-sensitively, where `*` matches any run of characters
+  (`mcp__github__*` is every tool of the `github` MCP server). A tool
+  matching `denied` is always blocked. When `allowed` is non-empty, a tool
+  matching none of its entries is blocked too; an empty `allowed` allows
+  every tool not denied. Entries may contain only letters, digits, `_`, `-`
+  and `*`; anything else (commas, spaces, control or invisible characters)
+  is rejected by `qsdev check` and stops init with an error. The lists
+  reach the hook through the `TOOL_GATES_ALLOWED` and `TOOL_GATES_DENIED`
+  variables in the `env` block of `.claude/settings.json`, and are
+  generated only while the `tool-gates` hook is enabled. With neither list
+  set the hook has **no policy**: it runs on every call but allows every
+  tool. `qsdev claude hooks list` then shows it as `yes (no policy)`, the
+  init preview as `tool-gates (no policy)`, and `qsdev check` reports a
+  `claude_hook_no_policy` warning.
+
+`qsdev check` also fails (`claude_hook_env_changed`, high severity) when a
+variable qsdev generates from this block is missing from, or holds another
+value in, the `env` block of `.claude/settings.json`, since the hooks read
+their policy only from there. It compares against the committed
+`.qsdev.yaml`, so a policy change that has been committed but not yet
+generated fails the same way. `qsdev init --update` writes it.
 
 #### Security floor, client policy and local overrides
 
@@ -588,7 +617,8 @@ The permission model uses approximately **90 deny rules** and **60 ask rules**:
 The three-way merge during updates preserves any custom allow/deny rules you have added while incorporating new rules from template upgrades.
 
 `env` holds variables qsdev generates to configure its hooks
-(`FILE_BOUNDARY_EXTRA_READ_PATHS`, from `hooks.file_boundary.extra_read_paths`)
+(`FILE_BOUNDARY_EXTRA_READ_PATHS`, from `hooks.file_boundary.extra_read_paths`;
+`TOOL_GATES_ALLOWED` and `TOOL_GATES_DENIED`, from `hooks.tool_gates`)
 alongside any you add. A regeneration sets the generated variables to the
 committed policy's values, removes one the policy no longer produces unless
 you changed it, and keeps your own variables.

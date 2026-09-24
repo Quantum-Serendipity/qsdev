@@ -3,6 +3,7 @@ package claudecode_test
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -596,6 +597,47 @@ func TestLSPGuard_TierAndEnforcement(t *testing.T) {
 			}
 			if script != tc.wantScript {
 				t.Errorf("lsp-first-guard.sh generated = %v, want %v", script, tc.wantScript)
+			}
+		})
+	}
+}
+
+// TestHooksWithoutPolicy covers reporting a hook that is enabled but has no
+// policy to enforce (W046): tool-gates without allow or deny lists allows
+// every tool, so it must not read as an active control.
+func TestHooksWithoutPolicy(t *testing.T) {
+	t.Parallel()
+	gates := types.HookChoices{ToolGates: true}
+	tests := []struct {
+		name    string
+		answers types.WizardAnswers
+		want    []claudecode.HookWithoutPolicy
+	}{
+		{
+			name:    "tool-gates without policy",
+			answers: types.WizardAnswers{Hooks: gates},
+			want:    []claudecode.HookWithoutPolicy{{Name: "tool-gates", PolicyKey: "hooks.tool_gates"}},
+		},
+		{
+			name: "tool-gates with deny list",
+			answers: types.WizardAnswers{Hooks: gates, HookPolicy: types.HooksConfig{
+				ToolGates: types.ToolGatesConfig{Denied: []string{"Bash"}},
+			}},
+		},
+		{
+			name: "tool-gates with allow list",
+			answers: types.WizardAnswers{Hooks: gates, HookPolicy: types.HooksConfig{
+				ToolGates: types.ToolGatesConfig{Allowed: []string{"Read"}},
+			}},
+		},
+		{name: "tool-gates disabled", answers: types.WizardAnswers{}},
+		{name: "hooks without a policy key", answers: types.WizardAnswers{Hooks: types.HookChoices{SafetyBlock: true, FileBoundary: true}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := claudecode.HooksWithoutPolicy(tt.answers); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("HooksWithoutPolicy = %#v, want %#v", got, tt.want)
 			}
 		})
 	}

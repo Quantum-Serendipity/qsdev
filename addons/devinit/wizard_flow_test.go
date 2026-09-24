@@ -508,3 +508,31 @@ func TestIsDevBuildVersion(t *testing.T) {
 		})
 	}
 }
+
+// TestHookNames_MarksHooksWithoutPolicy guards W046: the init preview must
+// not present tool-gates without a policy as an active control.
+func TestHookNames_MarksHooksWithoutPolicy(t *testing.T) {
+	t.Parallel()
+	gates := types.HookChoices{SafetyBlock: true, ToolGates: true}
+	tests := []struct {
+		name   string
+		policy types.HooksConfig
+		want   []string
+	}{
+		{name: "no policy", want: []string{"safety-block", "tool-gates (no policy)"}},
+		{
+			name:   "deny list",
+			policy: types.HooksConfig{ToolGates: types.ToolGatesConfig{Denied: []string{"WebFetch"}}},
+			want:   []string{"safety-block", "tool-gates"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := hookNames(types.WizardAnswers{Hooks: gates, HookPolicy: tt.policy})
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("hookNames = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

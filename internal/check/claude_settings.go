@@ -30,6 +30,9 @@ type claudeSettingsPosture struct {
 	DisableBypassPermissionsMode string
 	DisableAllHooks              bool
 	Hooks                        map[string][]hookMatcher
+	// Env is the "env" object; a value that is not a string is kept as
+	// absent, since it cannot be the policy qsdev generated.
+	Env map[string]string
 }
 
 // hookMatcher is one matcher entry of a hook event.
@@ -65,6 +68,14 @@ func parseSettingsPosture(data []byte) (claudeSettingsPosture, error) {
 	for _, rule := range deny {
 		if r, ok := rule.(string); ok {
 			s.Deny = append(s.Deny, r)
+		}
+	}
+
+	env, _ := root["env"].(map[string]any)
+	s.Env = make(map[string]string, len(env))
+	for k, v := range env {
+		if str, ok := v.(string); ok {
+			s.Env[k] = str
 		}
 	}
 
@@ -109,9 +120,10 @@ func (s claudeSettingsPosture) registered(event, matcher string, want hookEntry)
 // enforces what qsdev generated for the project: every generated hook
 // registration (self-protection, package guard, ...) is present unchanged,
 // hooks are not disabled wholesale, every project hook script a registration
-// runs exists, bypassPermissions is not
-// the default mode, and bypass mode stays disabled where the tier disables
-// it. The generated-file check accepts local edits to settings.json (it is
+// runs exists, the env variables that hand the hooks their policy are
+// unchanged, bypassPermissions is not the default mode, and bypass mode stays
+// disabled where the tier disables it. An enabled hook that has no policy to
+// enforce is reported as a warning. The generated-file check accepts local edits to settings.json (it is
 // merged, not overwritten), so without this check deleting the guard hooks or
 // switching to bypassPermissions passed `qsdev check`.
 //
@@ -151,8 +163,10 @@ func CheckClaudeSettingsPosture(ctx CheckContext) []CheckResult {
 	if expected != nil {
 		results = append(results, checkDisableBypass(actual, *expected)...)
 		results = append(results, checkHookRegistrations(actual, *expected)...)
+		results = append(results, checkHookEnv(actual, *expected)...)
 	}
 	results = append(results, checkHookScripts(ctx.ProjectRoot, actual)...)
+	results = append(results, checkHooksWithoutPolicy(ctx.HooksWithoutPolicy)...)
 
 	if len(results) == 0 {
 		return []CheckResult{postureResult("claude_settings_posture", StatusPass, SeverityInfo,
@@ -190,6 +204,44 @@ func checkHookRegistrations(actual, expected claudeSettingsPosture) []CheckResul
 				results = append(results, r)
 			}
 		}
+	}
+	return results
+}
+
+// checkHookEnv reports every "env" variable the generator sets from the
+// committed hook policy (e.g. the tool-gates allow and deny lists) that is
+// missing or holds another value on disk: the hook reads its policy only from
+// there, so an edited variable silently changes what it enforces.
+func checkHookEnv(actual, expected claudeSettingsPosture) []CheckResult {
+	var results []CheckResult
+	for _, key := range slices.Sorted(maps.Keys(expected.Env)) {
+		want := expected.Env[key]
+		got, ok := actual.Env[key]
+		if ok && got == want {
+			continue
+		}
+		msg := fmt.Sprintf("%s env %s is missing; the committed hook policy sets it to %q", ClaudeSettingsRelPath, key, want)
+		if ok {
+			msg = fmt.Sprintf("%s env %s is %q; the committed hook policy sets it to %q", ClaudeSettingsRelPath, key, got, want)
+		}
+		r := postureResult("claude_hook_env_changed", StatusFail, SeverityHigh, msg,
+			"Run 'qsdev init --update' to restore the generated hook policy, or change it in .qsdev.yaml")
+		r.Metadata = map[string]string{"variable": key}
+		results = append(results, r)
+	}
+	return results
+}
+
+// checkHooksWithoutPolicy warns about each enabled hook that has no policy
+// to enforce, so it runs on every call yet restricts nothing.
+func checkHooksWithoutPolicy(hooks []HookWithoutPolicy) []CheckResult {
+	results := make([]CheckResult, 0, len(hooks))
+	for _, h := range hooks {
+		r := postureResult("claude_hook_no_policy", StatusWarn, SeverityMedium,
+			fmt.Sprintf("Claude Code hook %q is enabled (no policy): it runs on every matching tool call but restricts nothing", h.Name),
+			fmt.Sprintf("Set %s in .qsdev.yaml and run 'qsdev init --update', or disable the hook", h.PolicyKey))
+		r.Metadata = map[string]string{"hook": h.Name, "policy_key": h.PolicyKey}
+		results = append(results, r)
 	}
 	return results
 }

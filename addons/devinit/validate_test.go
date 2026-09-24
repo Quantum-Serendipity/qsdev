@@ -357,3 +357,40 @@ func TestValidateAnswers_AcceptsRealWorldValues(t *testing.T) {
 		t.Errorf("ValidateAnswers rejected legitimate values: %v", err)
 	}
 }
+
+// TestValidateAnswers_HookPolicy covers rejecting hook policy entries that
+// cannot reach the hooks intact through settings.json env (W043, W046).
+func TestValidateAnswers_HookPolicy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		policy  types.HooksConfig
+		wantErr string
+	}{
+		{name: "valid tool gates", policy: types.HooksConfig{ToolGates: types.ToolGatesConfig{
+			Allowed: []string{"Read", "mcp__context7__*"}, Denied: []string{"WebFetch"},
+		}}},
+		{
+			name:    "tool gate entry with comma",
+			policy:  types.HooksConfig{ToolGates: types.ToolGatesConfig{Denied: []string{"Bash,Read"}}},
+			wantErr: `hooks.tool_gates.denied entry "Bash,Read"`,
+		},
+		{
+			name:    "extra read path at root",
+			policy:  types.HooksConfig{FileBoundary: types.FileBoundaryConfig{ExtraReadPaths: []string{"/"}}},
+			wantErr: `hooks.file_boundary.extra_read_paths entry "/"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := devinit.ExportValidateAnswers(types.WizardAnswers{HookPolicy: tt.policy})
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Errorf("unexpected error: %v", err)
+			case tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)):
+				t.Errorf("error = %v, want one containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}

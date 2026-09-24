@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -36,7 +37,7 @@ func renderPlanPreview(a types.WizardAnswers) string {
 		if len(a.Skills) > 0 {
 			fmt.Fprintf(&b, "  .claude/skills/       %s\n", strings.Join(a.Skills, ", "))
 		}
-		if hooks := hookNames(a.Hooks); len(hooks) > 0 {
+		if hooks := hookNames(a); len(hooks) > 0 {
 			fmt.Fprintf(&b, "  .claude/hooks/        %s\n", strings.Join(hooks, ", "))
 		}
 		if len(a.MCPServers) > 0 {
@@ -93,7 +94,7 @@ func buildDetailedDefaults(defaults types.WizardAnswers) string {
 		return b.String()
 	}
 	fmt.Fprintf(&b, "  Claude Code: enabled (%s)\n", permissionSummary(defaults))
-	fmt.Fprintf(&b, "  Hooks: %s\n", joinOrNone(hookNames(defaults.Hooks)))
+	fmt.Fprintf(&b, "  Hooks: %s\n", joinOrNone(hookNames(defaults)))
 	fmt.Fprintf(&b, "  MCP servers: %s\n", joinOrNone(defaults.MCPServers))
 	fmt.Fprintf(&b, "  Agent tools: %s\n", joinOrNone(agentToolNames(defaults.AgentTools)))
 
@@ -122,8 +123,10 @@ func permissionSummary(a types.WizardAnswers) string {
 	return effectivePermissionPreset(a, nil) + " permissions"
 }
 
-// hookNames lists the enabled Claude Code hooks by their preset names.
-func hookNames(h types.HookChoices) []string {
+// hookNames lists the enabled Claude Code hooks by their preset names, marking
+// each one that has no policy to enforce.
+func hookNames(a types.WizardAnswers) []string {
+	h := a.Hooks
 	candidates := []struct {
 		name    string
 		enabled bool
@@ -139,9 +142,17 @@ func hookNames(h types.HookChoices) []string {
 		{"file-boundary", h.FileBoundary},
 		{"tool-gates", h.ToolGates},
 	}
+	unenforced := make(map[string]bool)
+	for _, u := range claudecode.HooksWithoutPolicy(a) {
+		unenforced[u.Name] = true
+	}
 	var names []string
 	for _, c := range candidates {
-		if c.enabled {
+		switch {
+		case !c.enabled:
+		case unenforced[c.name]:
+			names = append(names, c.name+" (no policy)")
+		default:
 			names = append(names, c.name)
 		}
 	}

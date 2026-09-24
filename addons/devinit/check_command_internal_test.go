@@ -314,3 +314,69 @@ func TestManifestFollowsLifecycleCommands(t *testing.T) {
 	}
 	assertInStep("repair")
 }
+
+// TestCheckCmd_ToolGatesPolicy guards W046 end to end: tool-gates enabled
+// without .qsdev.yaml hooks.tool_gates is reported as "enabled (no policy)";
+// once the policy is committed, update hands it to the hook through
+// settings.json env, and dropping that env fails the check.
+func TestCheckCmd_ToolGatesPolicy(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(rel)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("go.mod", "module example.com/tg\n\ngo 1.24\n")
+	if out, err := executeInitCmd(t, dir, "--yes", "--lang", "go", "--tier", "full", "--claude-hooks", "safety-block,tool-gates"); err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+
+	report := func() check.CheckReport {
+		t.Helper()
+		out, _ := runLifecycleCmd(t, dir, checkCmd(), "--format", "json", "--audit-level", "low")
+		var r check.CheckReport
+		if err := json.NewDecoder(strings.NewReader(out[strings.Index(out, "{"):])).Decode(&r); err != nil {
+			t.Fatalf("parsing report: %v\n%s", err, out)
+		}
+		return r
+	}
+	has := func(r check.CheckReport, name string, status check.CheckStatus) bool {
+		return slices.ContainsFunc(r.Checks, func(c check.CheckResult) bool { return c.Name == name && c.Status == status })
+	}
+
+	if r := report(); !has(r, "claude_hook_no_policy", check.StatusWarn) {
+		t.Fatalf("tool-gates without policy not reported: %+v", r.Checks)
+	}
+
+	write(".qsdev.yaml", readProjectFile(t, dir, ".qsdev.yaml")+"hooks:\n  tool_gates:\n    denied: [WebFetch, \"mcp__github__*\"]\n")
+	// A committed policy that settings.json does not carry yet is not in
+	// force: the check fails until 'qsdev init --update' writes it.
+	if r := report(); !has(r, "claude_hook_env_changed", check.StatusFail) || has(r, "claude_hook_no_policy", check.StatusWarn) {
+		t.Fatalf("committed but ungenerated tool-gates policy not reported: %+v", r.Checks)
+	}
+	if out, err := executeInitCmd(t, dir, "--update"); err != nil {
+		t.Fatalf("update: %v\n%s", err, out)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal([]byte(readProjectFile(t, dir, ".claude/settings.json")), &settings); err != nil {
+		t.Fatal(err)
+	}
+	env, _ := settings["env"].(map[string]any)
+	if got := env[claudecode.ToolGatesDeniedEnv]; got != "WebFetch,mcp__github__*" {
+		t.Fatalf("settings.json env %s = %v, want the committed deny list", claudecode.ToolGatesDeniedEnv, got)
+	}
+	if r := report(); has(r, "claude_hook_no_policy", check.StatusWarn) || has(r, "claude_hook_env_changed", check.StatusFail) {
+		t.Fatalf("configured tool-gates still reported: %+v", r.Checks)
+	}
+
+	delete(settings, "env")
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(".claude/settings.json", string(data))
+	if r := report(); !has(r, "claude_hook_env_changed", check.StatusFail) {
+		t.Errorf("dropped tool-gates policy env not reported: %+v", r.Checks)
+	}
+}

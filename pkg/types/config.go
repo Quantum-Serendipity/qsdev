@@ -164,6 +164,23 @@ type ClaudeCodeConfig struct {
 // .qsdev.local.yaml.
 type HooksConfig struct {
 	FileBoundary FileBoundaryConfig `yaml:"file_boundary,omitempty"`
+	ToolGates    ToolGatesConfig    `yaml:"tool_gates,omitempty"`
+}
+
+// ToolGatesConfig is the policy the tool-gates hook enforces on every tool
+// call. Entries are Claude Code tool names ("Bash", "WebFetch",
+// "mcp__github__delete_repo"), where "*" matches any run of characters
+// ("mcp__github__*"). A tool matching Denied is always blocked; when Allowed
+// is non-empty, a tool matching none of its entries is blocked too. With both
+// empty the hook has no policy and allows every tool.
+type ToolGatesConfig struct {
+	Allowed []string `yaml:"allowed,omitempty"`
+	Denied  []string `yaml:"denied,omitempty"`
+}
+
+// HasPolicy reports whether c restricts any tool.
+func (c ToolGatesConfig) HasPolicy() bool {
+	return len(c.Allowed) > 0 || len(c.Denied) > 0
 }
 
 // FileBoundaryConfig configures the file-boundary hook.
@@ -179,6 +196,8 @@ type FileBoundaryConfig struct {
 func (c HooksConfig) Clone() HooksConfig {
 	out := c
 	out.FileBoundary.ExtraReadPaths = slices.Clone(c.FileBoundary.ExtraReadPaths)
+	out.ToolGates.Allowed = slices.Clone(c.ToolGates.Allowed)
+	out.ToolGates.Denied = slices.Clone(c.ToolGates.Denied)
 	return out
 }
 

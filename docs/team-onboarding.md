@@ -168,7 +168,7 @@ Hook presets control Claude Code runtime behavior:
 | `credential-scan` | Scans Write/Edit operations for credentials before they reach disk |
 | `destructive-prevention` | Blocks destructive shell commands sent through Bash, PowerShell or Monitor (rm -rf, git push --force, etc.) |
 | `file-boundary` | Prevents Write/Edit/Read/Grep/Glob operations outside the project tree (reads of dependency caches such as the Go module cache and /nix/store, and of `.qsdev.yaml` `hooks.file_boundary.extra_read_paths`, are allowed). Shell commands are out of its scope; use the sandbox to confine them |
-| `tool-gates` | Enforces per-tool approval policies on all tool invocations |
+| `tool-gates` | Blocks the tools listed in `.qsdev.yaml` `hooks.tool_gates.denied`, and every tool outside `hooks.tool_gates.allowed` when that list is set, on all tool invocations. With neither list set it has no policy and allows every tool; `qsdev claude hooks list` and `qsdev check` report it as "no policy" |
 | `soc2-audit` | Logs session start/end (with the end reason), tool invocations, failed and denied tool calls, and checkpoints for SOC 2 compliance (metadata-only audit trail with monthly rotation) |
 | `auto-format` | Runs formatters after file writes |
 | `pre-commit` | Runs pre-commit checks before git operations |

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
@@ -96,5 +97,26 @@ func TestHooksList_NoAnswersIsNotAnError(t *testing.T) {
 		if s.Deployment != "not deployed" {
 			t.Errorf("%s: deployment = %q before init, want not deployed", name, s.Deployment)
 		}
+	}
+}
+
+// TestHooksList_ToolGatesWithoutPolicy guards W046: tool-gates enabled with
+// no .qsdev.yaml hooks.tool_gates lists allows every tool, so the listing
+// marks it "no policy" rather than as a plain configured control.
+func TestHooksList_ToolGatesWithoutPolicy(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	mustRunClaude(t, "init", "--yes", "--permission-preset", "standard")
+	mustRunClaude(t, "add-hook", "tool-gates")
+
+	gates := listHookStatuses(t)["tool-gates"]
+	if !gates.Configured || gates.Policy != "none" {
+		t.Errorf("tool-gates configured=%v policy=%q, want configured with policy \"none\"", gates.Configured, gates.Policy)
+	}
+	if guard := listHookStatuses(t)["package-guard"]; guard.Policy != "" {
+		t.Errorf("package-guard policy = %q, want empty (it needs no policy)", guard.Policy)
+	}
+	if out := mustRunClaude(t, "hooks", "list"); !strings.Contains(out, "yes (no policy)") {
+		t.Errorf("table output does not mark tool-gates as having no policy:\n%s", out)
 	}
 }

@@ -50,6 +50,19 @@ type HookDefinition struct {
 	// (e.g. to bake a configured setting into it). Command stays the base
 	// command used for display and template lookup.
 	CommandFunc func(types.WizardAnswers) string
+	// HasPolicy, when set, reports whether the answers carry the policy the
+	// hook enforces. Such a hook, enabled without one, runs but restricts
+	// nothing, and status reports show it as "enabled (no policy)".
+	// PolicyKey names the .qsdev.yaml key that sets the policy.
+	HasPolicy func(types.WizardAnswers) bool
+	PolicyKey string
+}
+
+// lacksPolicy reports whether the hook is enabled by answers but has no
+// policy to enforce.
+func (h HookDefinition) lacksPolicy(answers types.WizardAnswers) bool {
+	enabled := h.EnabledFunc == nil || h.EnabledFunc(answers)
+	return enabled && h.HasPolicy != nil && !h.HasPolicy(answers)
 }
 
 // commandFor returns the command emitted into settings.json for answers.
@@ -108,6 +121,29 @@ func (r *HookRegistry) hooksForEventFiltered(event string, answers types.WizardA
 		})
 	}
 	return matchers
+}
+
+// HookWithoutPolicy names a hook the answers enable without the policy it
+// enforces, and the .qsdev.yaml key that sets that policy.
+type HookWithoutPolicy struct {
+	Name      string
+	PolicyKey string
+}
+
+// HooksWithoutPolicy returns, in registration order, each hook the answers
+// enable without the policy it enforces (e.g. tool-gates with neither an
+// allow nor a deny list), which therefore restricts nothing.
+func HooksWithoutPolicy(answers types.WizardAnswers) []HookWithoutPolicy {
+	var out []HookWithoutPolicy
+	seen := make(map[string]bool)
+	for _, h := range defaultHookRegistry().Definitions() {
+		if seen[h.Owner] || !h.lacksPolicy(answers) {
+			continue
+		}
+		seen[h.Owner] = true
+		out = append(out, HookWithoutPolicy{Name: h.Owner, PolicyKey: h.PolicyKey})
+	}
+	return out
 }
 
 // BuildHooksMap evaluates all registered hooks against the provided answers and
@@ -223,6 +259,8 @@ func defaultHookRegistry() *HookRegistry {
 		StatusMessage:   "Checking tool policy...",
 		SandboxCategory: "linter",
 		EnabledFunc:     func(a types.WizardAnswers) bool { return a.Hooks.ToolGates },
+		HasPolicy:       func(a types.WizardAnswers) bool { return a.HookPolicy.ToolGates.HasPolicy() },
+		PolicyKey:       "hooks.tool_gates",
 	})
 
 	soc2Cmd := `"${CLAUDE_PROJECT_DIR}"/.claude/hooks/soc2-audit-log.py`

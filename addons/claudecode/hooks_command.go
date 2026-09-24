@@ -38,10 +38,16 @@ type HookStatus struct {
 	Matcher string `json:"matcher"`
 	// Configured reports whether the saved answers enable the hook.
 	Configured bool `json:"configured"`
+	// Policy is "none" when the hook is configured but has no policy to
+	// enforce (it restricts nothing), and empty otherwise.
+	Policy string `json:"policy,omitempty"`
 	// Deployment reports what is actually on disk: whether .claude/settings.json
 	// wires the hook and, for script hooks, whether the script is intact.
 	Deployment string `json:"deployment"`
 }
+
+// policyNone is the HookStatus.Policy of a configured hook without a policy.
+const policyNone = "none"
 
 func hooksCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -61,7 +67,10 @@ func listHooksCmd() *cobra.Command {
 		Short: "List all registered hooks with configured and deployed status",
 		Long: `List every registered hook with its deployment tier, whether the saved
 answers configure it, and whether it is actually deployed: wired into
-.claude/settings.json with its hook script present and unmodified.`,
+.claude/settings.json with its hook script present and unmodified. A hook
+configured without the policy it enforces (tool-gates with no
+.qsdev.yaml hooks.tool_gates lists) is shown as "yes (no policy)": it runs
+but restricts nothing.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
@@ -140,12 +149,17 @@ func buildHookStatuses(registry *HookRegistry, answers types.WizardAnswers) []Ho
 	var statuses []HookStatus
 	for _, h := range registry.Definitions() {
 		configured := h.EnabledFunc == nil || h.EnabledFunc(answers)
+		var policy string
+		if h.lacksPolicy(answers) {
+			policy = policyNone
+		}
 		statuses = append(statuses, HookStatus{
 			Name:       h.Owner,
 			Tier:       h.Tier.String(),
 			Event:      h.Event,
 			Matcher:    h.Matcher,
 			Configured: configured,
+			Policy:     policy,
 			Deployment: deployStatusNotDeployed,
 		})
 	}
@@ -224,6 +238,9 @@ func writeHookStatusesTable(cmd *cobra.Command, statuses []HookStatus) {
 		configured := "no"
 		if s.Configured {
 			configured = "yes"
+		}
+		if s.Policy == policyNone {
+			configured += " (no policy)"
 		}
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", s.Name, s.Tier, s.Event, s.Matcher, configured, s.Deployment)
 	}

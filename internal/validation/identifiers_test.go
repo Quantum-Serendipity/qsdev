@@ -30,6 +30,7 @@ func TestIdentifierValidators(t *testing.T) {
 		{"IsValidNixAttrPath", IsValidNixAttrPath, []string{"jq", "python3Packages.black", "gnu-sed", "_1password", "foo'"}},
 		{"IsValidToken", IsValidToken, []string{"16", "16.2", "pnpm", "mariadb", "my-db_1"}},
 		{"IsValidVersionConstraint", IsValidVersionConstraint, []string{"1.24", "3.12.1", ">=18 <21", "^20.0.0", "18.x || 20.x", "nightly-2024-01-01", "stable", "lts/iron", "lts/*"}},
+		{"IsValidToolNamePattern", IsValidToolNamePattern, []string{"Bash", "WebFetch", "mcp__github__delete_repo", "mcp__github__*", "mcp__my-server__*", "*"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -66,6 +67,17 @@ func TestIdentifierValidators_RejectStructuralChars(t *testing.T) {
 		}
 		if c != "'" && IsValidNixAttrPath(v) {
 			t.Errorf("attr path %q with %q accepted", v, c)
+		}
+	}
+}
+
+func TestIsValidToolNamePattern_RejectsSeparators(t *testing.T) {
+	t.Parallel()
+	// A comma or whitespace would split one entry into several once the list
+	// is handed to the hook; an invisible character would never match a tool.
+	for _, v := range []string{"Bash,WebFetch", "Web Fetch", " Bash", "Bash\u200b", "Bash.", "mcp__x/y", "Bash?"} {
+		if IsValidToolNamePattern(v) {
+			t.Errorf("IsValidToolNamePattern(%q) = true, want false", v)
 		}
 	}
 }

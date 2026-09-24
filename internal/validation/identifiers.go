@@ -1,6 +1,9 @@
 package validation
 
-import "regexp"
+import (
+	"errors"
+	"regexp"
+)
 
 // Syntax validators for free-form answer values that generators splice into
 // devenv.nix and other generated files. These values reach generation from
@@ -21,6 +24,11 @@ var (
 	// version inside a Nix string (or map it to a fixed attribute), where none
 	// of these characters is special; quotes, '\' and '$' stay excluded.
 	versionConstraintRe = regexp.MustCompile(`^[A-Za-z0-9._+*^~<>=!|,/ -]+$`)
+	// Claude Code tool names are letters, digits, '_' and '-' (MCP tools are
+	// mcp__<server>__<tool> with both parts normalized to that set); a
+	// tool-gates entry may add '*' wildcards. Commas, which separate the
+	// entries handed to the hook, and every other character are excluded.
+	toolNamePatternRe = regexp.MustCompile(`^[A-Za-z0-9_*-]+$`)
 )
 
 // Length caps keep a pathological value from being written into generated
@@ -30,6 +38,7 @@ const (
 	maxNixAttrPathLen       = 256
 	maxTokenLen             = 64
 	maxVersionConstraintLen = 128
+	maxToolNamePatternLen   = 256
 )
 
 // IsValidEnvKey reports whether key is a portable environment variable name
@@ -55,4 +64,24 @@ func IsValidToken(s string) bool {
 // constraint ("1.24", "3.12.1", ">=18 <21", "^20.0.0", "nightly-2024-01-01").
 func IsValidVersionConstraint(v string) bool {
 	return len(v) <= maxVersionConstraintLen && versionConstraintRe.MatchString(v)
+}
+
+// IsValidToolNamePattern reports whether s is a Claude Code tool name, or a
+// tool name pattern with '*' wildcards, as a tool-gates policy entry
+// ("Bash", "mcp__github__delete_repo", "mcp__github__*").
+func IsValidToolNamePattern(s string) bool {
+	return len(s) <= maxToolNamePatternLen && toolNamePatternRe.MatchString(s)
+}
+
+// ErrToolNamePattern reports a tool-gates entry that is not a tool name
+// pattern.
+var ErrToolNamePattern = errors.New("not a Claude Code tool name: use letters, digits, '_' and '-', with '*' as a wildcard")
+
+// CheckToolNamePattern returns ErrToolNamePattern when s is not a valid
+// tool-gates entry (see IsValidToolNamePattern), or nil when it is.
+func CheckToolNamePattern(s string) error {
+	if !IsValidToolNamePattern(s) {
+		return ErrToolNamePattern
+	}
+	return nil
 }

@@ -31,6 +31,14 @@ type SettingsJSON struct {
 // comma-separated.
 const FileBoundaryExtraReadPathsEnv = "FILE_BOUNDARY_EXTRA_READ_PATHS"
 
+// ToolGatesAllowedEnv and ToolGatesDeniedEnv are the variables through which
+// the tool-gates hook receives .qsdev.yaml hooks.tool_gates.allowed and
+// hooks.tool_gates.denied, comma-separated.
+const (
+	ToolGatesAllowedEnv = "TOOL_GATES_ALLOWED"
+	ToolGatesDeniedEnv  = "TOOL_GATES_DENIED"
+)
+
 // Permissions defines the permission rules for Claude Code.
 type Permissions struct {
 	DefaultMode                  string   `json:"defaultMode,omitempty"`
@@ -300,21 +308,32 @@ func buildSandbox(cfg Config, answers types.WizardAnswers, registry *ecosystem.R
 
 // buildHookEnv returns the settings.json env entries that configure the
 // enabled hooks from the committed hook policy, or nil when there are none.
-// A path that fails validation is an error rather than being dropped, so a
+// An entry that fails validation is an error rather than being dropped, so a
 // bad policy is reported instead of silently narrowing or widening access.
 func buildHookEnv(answers types.WizardAnswers) (map[string]string, error) {
-	paths := answers.HookPolicy.FileBoundary.ExtraReadPaths
-	if !answers.Hooks.FileBoundary || len(paths) == 0 {
+	if errs := validation.CheckHookPolicy(answers.HookPolicy); len(errs) > 0 {
+		return nil, errs[0]
+	}
+	env := make(map[string]string)
+	if answers.Hooks.FileBoundary {
+		setListEnv(env, FileBoundaryExtraReadPathsEnv, answers.HookPolicy.FileBoundary.ExtraReadPaths)
+	}
+	if answers.Hooks.ToolGates {
+		setListEnv(env, ToolGatesAllowedEnv, answers.HookPolicy.ToolGates.Allowed)
+		setListEnv(env, ToolGatesDeniedEnv, answers.HookPolicy.ToolGates.Denied)
+	}
+	if len(env) == 0 {
 		return nil, nil
 	}
-	for _, p := range paths {
-		if err := validation.CheckBoundaryReadPath(p); err != nil {
-			return nil, fmt.Errorf("hooks.file_boundary.extra_read_paths entry %q: %w", p, err)
-		}
+	return env, nil
+}
+
+// setListEnv sets env[key] to values, deduplicated and comma-separated, when
+// there are any. The entries were validated to contain no comma.
+func setListEnv(env map[string]string, key string, values []string) {
+	if len(values) > 0 {
+		env[key] = strings.Join(sliceutil.Dedup(values), ",")
 	}
-	return map[string]string{
-		FileBoundaryExtraReadPathsEnv: strings.Join(sliceutil.Dedup(paths), ","),
-	}, nil
 }
 
 // buildHooks returns the hooks map based on enabled hook presets.

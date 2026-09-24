@@ -2,6 +2,7 @@ package claudecode_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,12 +11,13 @@ import (
 	"testing"
 
 	claudecode "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // runHookScript executes a shipped Python hook template with the given
 // PreToolUse payload on stdin and returns its permissionDecision ("allow" when
-// the hook printed nothing). A non-zero exit fails the test: every scenario
-// here expects a clean decision, never a hook error.
+// the hook printed nothing), or "error" when the hook failed closed (exit 2,
+// which Claude Code treats as a block). Any other non-zero exit fails the test.
 func runHookScript(t *testing.T, script string, payload map[string]any, env ...string) string {
 	t.Helper()
 	python, err := exec.LookPath("python3")
@@ -35,6 +37,9 @@ func runHookScript(t *testing.T, script string, payload map[string]any, env ...s
 	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
 	cmd.Env = append(cmd.Env, env...)
 	out, err := cmd.Output()
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 2 {
+		return "error"
+	}
 	if err != nil {
 		t.Fatalf("%s failed: %v (stdout %q)", script, err, out)
 	}
@@ -506,6 +511,15 @@ func TestToolGatesHook(t *testing.T) {
 		{"allowlisted", "Read", []string{"TOOL_GATES_ALLOWED=Read,Grep"}, "allow"},
 		{"outside allowlist", "Bash", []string{"TOOL_GATES_ALLOWED=Read,Grep"}, "deny"},
 		{"deny beats allow", "Read", []string{"TOOL_GATES_ALLOWED=Read", "TOOL_GATES_DENIED=Read"}, "deny"},
+		{"mcp tool denied exactly", "mcp__github__delete_repo", []string{"TOOL_GATES_DENIED=mcp__github__delete_repo"}, "deny"},
+		{"wildcard denies server tools", "mcp__github__delete_repo", []string{"TOOL_GATES_DENIED=mcp__github__*"}, "deny"},
+		{"wildcard leaves other servers", "mcp__context7__query-docs", []string{"TOOL_GATES_DENIED=mcp__github__*"}, "allow"},
+		{"wildcard allowlist", "mcp__context7__query-docs", []string{"TOOL_GATES_ALLOWED=Read,mcp__context7__*"}, "allow"},
+		{"wildcard allowlist excludes", "Bash", []string{"TOOL_GATES_ALLOWED=Read,mcp__context7__*"}, "deny"},
+		{"case-sensitive", "bash", []string{"TOOL_GATES_DENIED=Bash"}, "allow"},
+		{"spaces around entries", "WebFetch", []string{"TOOL_GATES_DENIED= Bash , WebFetch "}, "deny"},
+		{"no tool name with policy fails closed", "", []string{"TOOL_GATES_DENIED=Bash"}, "error"},
+		{"no tool name without policy", "", nil, "allow"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -697,6 +711,50 @@ print(json.dumps(` + tc.expr + `))`
 			slices.Sort(matched)
 			if !slices.Equal(matched, handled) {
 				t.Errorf("%s matcher %q covers %v, but %s handles %v", tc.owner, matcher, matched, tc.script, handled)
+			}
+		})
+	}
+}
+
+// TestToolGatesHook_PolicyFromGeneratedSettings runs the tool-gates hook with
+// the env block qsdev generates from .qsdev.yaml hooks.tool_gates, so the
+// policy qsdev writes is the one the hook enforces.
+func TestToolGatesHook_PolicyFromGeneratedSettings(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		Hooks: types.HookChoices{ToolGates: true},
+		HookPolicy: types.HooksConfig{ToolGates: types.ToolGatesConfig{
+			Denied: []string{"WebFetch", "mcp__github__delete_*"},
+		}},
+	}
+	gf, err := claudecode.GenerateSettings(answers, nil, claudecode.NewConfig())
+	if err != nil {
+		t.Fatalf("GenerateSettings: %v", err)
+	}
+	var settings claudecode.SettingsJSON
+	if err := json.Unmarshal(gf.Content, &settings); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"CLAUDE_PROJECT_DIR=" + t.TempDir()}
+	for k, v := range settings.Env {
+		env = append(env, k+"="+v)
+	}
+
+	cases := []struct {
+		tool string
+		want string
+	}{
+		{"WebFetch", "deny"},
+		{"mcp__github__delete_repo", "deny"},
+		{"mcp__github__get_issue", "allow"},
+		{"Bash", "allow"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.tool, func(t *testing.T) {
+			t.Parallel()
+			payload := map[string]any{"tool_name": tc.tool, "tool_input": map[string]any{}}
+			if got := runHookScript(t, "tool-gates.py", payload, env...); got != tc.want {
+				t.Errorf("decision = %q, want %q", got, tc.want)
 			}
 		})
 	}

@@ -605,3 +605,46 @@ func TestQsdevConfig_HooksFileBoundary(t *testing.T) {
 		})
 	}
 }
+
+// TestQsdevConfig_HooksToolGates covers parsing and validating
+// hooks.tool_gates, the policy the tool-gates hook enforces (W046).
+func TestQsdevConfig_HooksToolGates(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		yaml       string
+		wantFields []string
+	}{
+		{name: "valid entries", yaml: `{allowed: [Read, "mcp__context7__*"], denied: [WebFetch, mcp__github__delete_repo]}`},
+		{
+			name:       "comma, space and slash rejected",
+			yaml:       `{allowed: [Read, "Bash,WebFetch"], denied: ["Web Fetch", ok, "a/b"]}`,
+			wantFields: []string{"hooks.tool_gates.allowed[1]", "hooks.tool_gates.denied[0]", "hooks.tool_gates.denied[2]"},
+		},
+		{
+			name:       "invisible character rejected",
+			yaml:       "{denied: [\"Bash\\u200b\"]}",
+			wantFields: []string{"hooks.tool_gates.denied[0]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := "version: 2\nhooks:\n  tool_gates: " + tt.yaml + "\n"
+			cfg, err := ParseQsdevConfigBytes([]byte(data))
+			if err != nil {
+				t.Fatalf("ParseQsdevConfigBytes: %v", err)
+			}
+			if !cfg.Hooks.ToolGates.HasPolicy() {
+				t.Fatal("tool_gates not parsed")
+			}
+			var fields []string
+			for _, e := range ValidateQsdevConfig(cfg, ValidateOptions{}) {
+				fields = append(fields, e.Field)
+			}
+			if strings.Join(fields, " ") != strings.Join(tt.wantFields, " ") {
+				t.Errorf("validation error fields = %v, want %v", fields, tt.wantFields)
+			}
+		})
+	}
+}

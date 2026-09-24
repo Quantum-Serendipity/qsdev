@@ -386,17 +386,16 @@ func validateProfiles(cfg *types.QsdevConfig, opts ValidateOptions) []Validation
 }
 
 // validateHooks checks the hooks block: each file-boundary extra read path
-// must be one the hook can resolve and must not lift the read boundary.
+// must be one the hook can resolve and must not lift the read boundary, and
+// each tool-gates entry must be a tool name pattern.
 func validateHooks(h types.HooksConfig) []ValidationError {
 	var errs []ValidationError
-	for i, p := range h.FileBoundary.ExtraReadPaths {
-		if err := validation.CheckBoundaryReadPath(p); err != nil {
-			errs = append(errs, ValidationError{
-				Field:   fmt.Sprintf("hooks.file_boundary.extra_read_paths[%d]", i),
-				Value:   p,
-				Message: err.Error(),
-			})
-		}
+	for _, e := range validation.CheckHookPolicy(h) {
+		errs = append(errs, ValidationError{
+			Field:   fmt.Sprintf("%s[%d]", e.Field, e.Index),
+			Value:   e.Value,
+			Message: e.Err.Error(),
+		})
 	}
 	return errs
 }

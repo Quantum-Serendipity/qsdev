@@ -192,6 +192,9 @@ type CheckContext struct {
 	// ProbeTool runs a tool's version probe for the toolchain requirement
 	// checks; nil skips them.
 	ProbeTool ToolProber
+	// HooksWithoutPolicy lists the hooks the saved answers enable without
+	// the policy they enforce (e.g. tool-gates with no allow or deny list).
+	HooksWithoutPolicy []HookWithoutPolicy
 }
 
 // CustomConformance carries the evaluated requirements of a project's custom
@@ -208,6 +211,13 @@ type PolicyRequirement struct {
 	Name   string
 	Pass   bool
 	Reason string
+}
+
+// HookWithoutPolicy names an enabled Claude Code hook that has no policy to
+// enforce, and the .qsdev.yaml key that would give it one.
+type HookWithoutPolicy struct {
+	Name      string
+	PolicyKey string
 }
 
 // CheckFailedError signals that checks failed at the given audit level.

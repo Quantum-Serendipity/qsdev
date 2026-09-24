@@ -1345,3 +1345,56 @@ func TestGenerateSettings_FileBoundaryExtraReadPaths(t *testing.T) {
 		})
 	}
 }
+
+// TestGenerateSettings_ToolGatesPolicy covers handing .qsdev.yaml
+// hooks.tool_gates to the tool-gates hook through settings.json "env".
+func TestGenerateSettings_ToolGatesPolicy(t *testing.T) {
+	t.Parallel()
+	policy := func(allowed, denied []string) types.HooksConfig {
+		return types.HooksConfig{ToolGates: types.ToolGatesConfig{Allowed: allowed, Denied: denied}}
+	}
+	tests := []struct {
+		name    string
+		gates   bool
+		policy  types.HooksConfig
+		wantEnv map[string]string
+		wantErr string
+	}{
+		{
+			name: "allow and deny lists", gates: true,
+			policy: policy([]string{"Read", "Grep", "Read"}, []string{"WebFetch", "mcp__github__*"}),
+			wantEnv: map[string]string{
+				claudecode.ToolGatesAllowedEnv: "Read,Grep",
+				claudecode.ToolGatesDeniedEnv:  "WebFetch,mcp__github__*",
+			},
+		},
+		{
+			name: "deny list only", gates: true, policy: policy(nil, []string{"Bash"}),
+			wantEnv: map[string]string{claudecode.ToolGatesDeniedEnv: "Bash"},
+		},
+		{name: "no policy", gates: true},
+		{name: "hook disabled", gates: false, policy: policy(nil, []string{"Bash"})},
+		{name: "comma rejected", gates: true, policy: policy(nil, []string{"Bash,Read"}), wantErr: "hooks.tool_gates.denied"},
+		{name: "space rejected", gates: true, policy: policy([]string{"Web Fetch"}, nil), wantErr: "hooks.tool_gates.allowed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{
+				Hooks:      types.HookChoices{ToolGates: tt.gates},
+				HookPolicy: tt.policy,
+			}
+			if tt.wantErr != "" {
+				_, err := claudecode.GenerateSettings(answers, nil, claudecode.NewConfig())
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("GenerateSettings error = %v, want one containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			settings := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, nil))
+			if !reflect.DeepEqual(settings.Env, tt.wantEnv) {
+				t.Errorf("env = %#v, want %#v", settings.Env, tt.wantEnv)
+			}
+		})
+	}
+}

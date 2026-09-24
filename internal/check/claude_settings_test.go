@@ -84,6 +84,29 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			wantFail: []string{"claude_bypass_permissions_mode", "claude_disable_bypass_missing", "claude_hook_missing", "claude_hook_missing"},
 		},
 		{
+			name:     "hook policy env intact, user variable added",
+			actual:   withEnv(`{"TOOL_GATES_DENIED": "WebFetch", "MY_VAR": "x"}`),
+			expected: withEnv(`{"TOOL_GATES_DENIED": "WebFetch"}`),
+		},
+		{
+			name:     "hook policy env removed",
+			actual:   generatedSettings,
+			expected: withEnv(`{"TOOL_GATES_DENIED": "WebFetch"}`),
+			wantFail: []string{"claude_hook_env_changed"},
+		},
+		{
+			name:     "hook policy env emptied",
+			actual:   withEnv(`{"TOOL_GATES_DENIED": ""}`),
+			expected: withEnv(`{"TOOL_GATES_DENIED": "WebFetch"}`),
+			wantFail: []string{"claude_hook_env_changed"},
+		},
+		{
+			name:     "hook policy env not a string",
+			actual:   withEnv(`{"TOOL_GATES_DENIED": ["WebFetch"]}`),
+			expected: withEnv(`{"TOOL_GATES_DENIED": "WebFetch"}`),
+			wantFail: []string{"claude_hook_env_changed"},
+		},
+		{
 			name:     "unparseable settings",
 			actual:   `{"permissions": `,
 			expected: generatedSettings,
@@ -115,6 +138,59 @@ func TestCheckClaudeSettingsPosture(t *testing.T) {
 			}
 			if len(tt.wantFail) > 0 && !ShouldFail(results, AuditLevelLow) {
 				t.Error("results do not fail the check at --audit-level low")
+			}
+		})
+	}
+}
+
+// withEnv returns generatedSettings with the given "env" object.
+func withEnv(env string) string {
+	return strings.Replace(generatedSettings, "{\n", "{\n  \"env\": "+env+",\n", 1)
+}
+
+// TestCheckClaudeSettingsPosture_HooksWithoutPolicy guards W046: an enabled
+// hook without the policy it enforces (tool-gates with no allow or deny list)
+// is reported as "enabled (no policy)" instead of passing as a control.
+func TestCheckClaudeSettingsPosture_HooksWithoutPolicy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		hooks    []HookWithoutPolicy
+		wantWarn []string
+	}{
+		{name: "every hook has its policy"},
+		{
+			name:     "tool-gates without policy",
+			hooks:    []HookWithoutPolicy{{Name: "tool-gates", PolicyKey: "hooks.tool_gates"}},
+			wantWarn: []string{"claude_hook_no_policy"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeTestFile(t, dir, ClaudeSettingsRelPath, generatedSettings)
+			writeTestFile(t, dir, ".claude/hooks/package-guard.py", "#!/usr/bin/env python3\n")
+
+			results := CheckClaudeSettingsPosture(CheckContext{
+				ProjectRoot:            dir,
+				ExpectedClaudeSettings: []byte(generatedSettings),
+				HooksWithoutPolicy:     tt.hooks,
+			})
+			var warned []string
+			for _, r := range results {
+				switch r.Status {
+				case StatusWarn:
+					warned = append(warned, r.Name)
+					if !strings.Contains(r.Message, "enabled (no policy)") || !strings.Contains(r.Remediation, "hooks.tool_gates") {
+						t.Errorf("warning %q / %q does not name the missing policy", r.Message, r.Remediation)
+					}
+				case StatusFail:
+					t.Errorf("unexpected failure %s: %s", r.Name, r.Message)
+				}
+			}
+			if !slices.Equal(warned, tt.wantWarn) {
+				t.Errorf("warnings = %v, want %v", warned, tt.wantWarn)
 			}
 		})
 	}

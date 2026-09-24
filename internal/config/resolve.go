@@ -146,6 +146,10 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 	// Hooks.FileBoundary.ExtraReadPaths: union.
 	result.Hooks.FileBoundary.ExtraReadPaths = mergeUnionStrings(base.Hooks.FileBoundary.ExtraReadPaths, overlay.Hooks.FileBoundary.ExtraReadPaths)
 
+	// Hooks.ToolGates lists: union.
+	result.Hooks.ToolGates.Allowed = mergeUnionStrings(base.Hooks.ToolGates.Allowed, overlay.Hooks.ToolGates.Allowed)
+	result.Hooks.ToolGates.Denied = mergeUnionStrings(base.Hooks.ToolGates.Denied, overlay.Hooks.ToolGates.Denied)
+
 	// Infrastructure: last-wins scalars, map merge for overrides.
 	if overlay.Infrastructure.RegistryProxy != "" {
 		result.Infrastructure.RegistryProxy = overlay.Infrastructure.RegistryProxy

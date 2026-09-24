@@ -1,6 +1,7 @@
 package config
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 
@@ -243,17 +244,22 @@ func TestConfigToAnswers_HookPolicyRoundTrip(t *testing.T) {
 	t.Parallel()
 	cfg := &types.QsdevConfig{Hooks: types.HooksConfig{
 		FileBoundary: types.FileBoundaryConfig{ExtraReadPaths: []string{"/opt/sdk", "~/.m2/repository"}},
+		ToolGates:    types.ToolGatesConfig{Allowed: []string{"Read"}, Denied: []string{"WebFetch"}},
 	}}
 	answers := ConfigToAnswers(cfg, types.DetectedProject{}, "/tmp/myproject")
 	if !slices.Equal(answers.HookPolicy.FileBoundary.ExtraReadPaths, cfg.Hooks.FileBoundary.ExtraReadPaths) {
 		t.Fatalf("HookPolicy = %+v, want %+v", answers.HookPolicy, cfg.Hooks)
 	}
+	if !reflect.DeepEqual(answers.HookPolicy.ToolGates, cfg.Hooks.ToolGates) {
+		t.Fatalf("HookPolicy.ToolGates = %+v, want %+v", answers.HookPolicy.ToolGates, cfg.Hooks.ToolGates)
+	}
 	answers.HookPolicy.FileBoundary.ExtraReadPaths[0] = "/changed"
-	if cfg.Hooks.FileBoundary.ExtraReadPaths[0] != "/opt/sdk" {
-		t.Error("ConfigToAnswers aliased the config's extra_read_paths")
+	answers.HookPolicy.ToolGates.Denied[0] = "Bash"
+	if cfg.Hooks.FileBoundary.ExtraReadPaths[0] != "/opt/sdk" || cfg.Hooks.ToolGates.Denied[0] != "WebFetch" {
+		t.Error("ConfigToAnswers aliased the config's hook policy lists")
 	}
 	back := AnswersToConfig(ConfigToAnswers(cfg, types.DetectedProject{}, "/tmp/myproject"), "")
-	if !slices.Equal(back.Hooks.FileBoundary.ExtraReadPaths, cfg.Hooks.FileBoundary.ExtraReadPaths) {
+	if !reflect.DeepEqual(back.Hooks, cfg.Hooks) {
 		t.Errorf("AnswersToConfig hooks = %+v, want %+v", back.Hooks, cfg.Hooks)
 	}
 }

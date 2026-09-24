@@ -69,11 +69,13 @@ func TestFilterEnvironment(t *testing.T) {
 			env: map[string]string{
 				"FILE_BOUNDARY_EXTRA_READ_PATHS": "/opt/sdk",
 				"FILE_BOUNDARY_STRICT_MODE":      "true",
+				"TOOL_GATES_ALLOWED":             "Read,Grep",
+				"TOOL_GATES_DENIED":              "WebFetch",
 				"GOMODCACHE":                     "/home/user/go/pkg/mod",
 				"GOROOT":                         "/nix/store/x-go/share/go",
 			},
 			category: sandbox.CategoryLinter,
-			wantKeys: []string{"FILE_BOUNDARY_EXTRA_READ_PATHS", "FILE_BOUNDARY_STRICT_MODE", "GOMODCACHE", "GOROOT"},
+			wantKeys: []string{"FILE_BOUNDARY_EXTRA_READ_PATHS", "FILE_BOUNDARY_STRICT_MODE", "GOMODCACHE", "GOROOT", "TOOL_GATES_ALLOWED", "TOOL_GATES_DENIED"},
 		},
 		{
 			name:     "empty env returns empty map",

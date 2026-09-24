@@ -20,19 +20,28 @@ const (
 	DeductScanError = DeductUnknown
 )
 
-// ComputeDepScore calculates dependency health score (0-100).
-// Starts at 100, deducts per vulnerability, per missing lock file and per
-// ecosystem whose scan errored. Floor at 0.
+// ComputeDepScore calculates dependency health from the per-ecosystem scan
+// outcomes: the scan status (see depScanStatus), the vulnerability totals and
+// the score (0-100). The score starts at 100 and deducts per vulnerability,
+// per missing lock file and per ecosystem whose scan errored, floored at 0.
+// Unscanned dependencies have unknown health, so their score is nil rather
+// than a clean 100; a project with no detected ecosystem has nothing to be
+// vulnerable and scores 100.
 func ComputeDepScore(ecosystems []EcosystemStatus) DependencyHealth {
+	status := depScanStatus(ecosystems)
+	health := DependencyHealth{
+		Ecosystems: ecosystems,
+		Status:     status,
+		Scanned:    status == DepScanned,
+		ScanFailed: status == DepScanFailed,
+	}
+
 	var totals VulnSeverityCounts
 	score := 100.0
-
-	detectedCount := 0
 	for _, eco := range ecosystems {
 		if !eco.Detected {
 			continue
 		}
-		detectedCount++
 
 		totals.Critical += eco.VulnCounts.Critical
 		totals.High += eco.VulnCounts.High
@@ -55,15 +64,38 @@ func ComputeDepScore(ecosystems []EcosystemStatus) DependencyHealth {
 	score -= float64(totals.Low) * DeductLow
 	score -= float64(totals.Unknown) * DeductUnknown
 
-	score = math.Max(0, score)
-
-	if detectedCount == 0 {
-		score = 100.0
+	health.Totals = totals
+	if status != DepUnscanned {
+		score = math.Max(0, score)
+		health.Score = &score
 	}
+	return health
+}
 
-	return DependencyHealth{
-		Ecosystems: ecosystems,
-		Totals:     totals,
-		Score:      score,
+// depScanStatus derives the aggregate scan status from the detected
+// ecosystems. Any ecosystem whose scan errored makes it DepScanFailed. It is
+// DepScanned only when at least one ecosystem was in fact scanned: a project
+// whose lock files have no OSV coverage is unscanned, not scanned clean.
+// Ecosystems are only marked Scanned or ScanError when a scan was requested,
+// so without one the status is DepUnscanned.
+func depScanStatus(ecosystems []EcosystemStatus) DepScanStatus {
+	detected, scanned := false, false
+	for _, eco := range ecosystems {
+		if !eco.Detected {
+			continue
+		}
+		if eco.ScanError {
+			return DepScanFailed
+		}
+		detected = true
+		scanned = scanned || eco.Scanned
+	}
+	switch {
+	case !detected:
+		return DepNotApplicable
+	case scanned:
+		return DepScanned
+	default:
+		return DepUnscanned
 	}
 }

@@ -197,7 +197,7 @@ func TestComputeDefenseScore_PartialZeroScore(t *testing.T) {
 
 func TestComputeAggregateScore_40_30_30(t *testing.T) {
 	// 100 * 0.40 + 80 * 0.30 + 60 * 0.30 = 40 + 24 + 18 = 82
-	agg := ComputeAggregateScore(100, 80, 60)
+	agg := ComputeAggregateScore(100, 80, new(60.0))
 	if agg.Total != 82.0 {
 		t.Errorf("total: got %f, want 82.0", agg.Total)
 	}
@@ -210,13 +210,13 @@ func TestComputeAggregateScore_40_30_30(t *testing.T) {
 	if agg.Config != 80.0 {
 		t.Errorf("config: got %f, want 80.0", agg.Config)
 	}
-	if agg.DepHealth != 60.0 {
-		t.Errorf("deps: got %f, want 60.0", agg.DepHealth)
+	if agg.DepHealth == nil || *agg.DepHealth != 60.0 {
+		t.Errorf("deps: got %v, want 60.0", agg.DepHealth)
 	}
 }
 
 func TestComputeAggregateScore_AllZeros(t *testing.T) {
-	agg := ComputeAggregateScore(0, 0, 0)
+	agg := ComputeAggregateScore(0, 0, new(0.0))
 	if agg.Total != 0.0 {
 		t.Errorf("total: got %f, want 0.0", agg.Total)
 	}
@@ -226,7 +226,7 @@ func TestComputeAggregateScore_AllZeros(t *testing.T) {
 }
 
 func TestComputeAggregateScore_AllHundred(t *testing.T) {
-	agg := ComputeAggregateScore(100, 100, 100)
+	agg := ComputeAggregateScore(100, 100, new(100.0))
 	if agg.Total != 100.0 {
 		t.Errorf("total: got %f, want 100.0", agg.Total)
 	}
@@ -237,7 +237,7 @@ func TestComputeAggregateScore_AllHundred(t *testing.T) {
 
 func TestComputeAggregateScore_Rounding(t *testing.T) {
 	// 89.5 * 0.40 + 89.5 * 0.30 + 89.5 * 0.30 = 89.5
-	agg := ComputeAggregateScore(89.5, 89.5, 89.5)
+	agg := ComputeAggregateScore(89.5, 89.5, new(89.5))
 	if agg.Total != 89.5 {
 		t.Errorf("total: got %f, want 89.5", agg.Total)
 	}
@@ -248,7 +248,7 @@ func TestComputeAggregateScore_Rounding(t *testing.T) {
 
 func TestComputeAggregateScore_DefenseHeavy(t *testing.T) {
 	// defense=50, config=100, deps=100 => 50*0.4 + 100*0.3 + 100*0.3 = 20 + 30 + 30 = 80
-	agg := ComputeAggregateScore(50, 100, 100)
+	agg := ComputeAggregateScore(50, 100, new(100.0))
 	if agg.Total != 80.0 {
 		t.Errorf("total: got %f, want 80.0", agg.Total)
 	}
@@ -289,7 +289,7 @@ func TestComputeAggregateScore_RoundingEdge(t *testing.T) {
 	// 89.33*0.40 + 91.67*0.30 + 85.11*0.30
 	// = 35.732 + 27.501 + 25.533 = 88.766
 	// Round to 1 decimal = 88.8
-	agg := ComputeAggregateScore(89.33, 91.67, 85.11)
+	agg := ComputeAggregateScore(89.33, 91.67, new(85.11))
 	if agg.Total != 88.8 {
 		t.Errorf("total: got %f, want 88.8", agg.Total)
 	}
@@ -470,5 +470,39 @@ func TestComputeTierRelativeDefenseScore_PartialScoring(t *testing.T) {
 	got := ComputeTierRelativeDefenseScore(layers, 1)
 	if got != 50.0 {
 		t.Errorf("partial scoring: got %f, want 50.0", got)
+	}
+}
+
+// TestComputeAggregateScore_UnscannedDeps pins F328: unknown dependency health
+// (nil) is left out of the aggregate rather than counted as a clean 100.
+func TestComputeAggregateScore_UnscannedDeps(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name            string
+		defense, config float64
+		wantTotal       float64
+		wantGrade       string
+	}{
+		// (60*0.4 + 80*0.3) / 0.7 = 48 / 0.7 = 68.57
+		{"reweighted", 60, 80, 68.6, "D+"},
+		{"all hundred", 100, 100, 100, "A+"},
+		{"all zero", 0, 0, 0, "F"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			agg := ComputeAggregateScore(tt.defense, tt.config, nil)
+			if agg.Total != tt.wantTotal || agg.Grade != tt.wantGrade {
+				t.Errorf("total/grade = %.1f %s, want %.1f %s", agg.Total, agg.Grade, tt.wantTotal, tt.wantGrade)
+			}
+			if agg.DepHealth != nil {
+				t.Errorf("DepHealth = %.1f, want nil", *agg.DepHealth)
+			}
+		})
+	}
+	// With a clean 100 the same inputs would have graded higher: unknown
+	// dependency health must not inflate the grade.
+	if clean := ComputeAggregateScore(60, 80, new(100.0)); clean.Total <= 68.6 {
+		t.Errorf("clean-deps total %.1f unexpectedly not above the unscanned total", clean.Total)
 	}
 }

@@ -54,21 +54,12 @@ func renderProjectTable(b *strings.Builder, report *TeamReport) {
 	sortProjectsByScoreDesc(sorted)
 
 	for _, p := range sorted {
-		baselineStatus := "PASS"
-		if !p.Conformance.Baseline.Pass {
-			baselineStatus = "FAIL"
-		}
-		enhancedStatus := "PASS"
-		if !p.Conformance.Enhanced.Pass {
-			enhancedStatus = "FAIL"
-		}
-
 		fmt.Fprintf(b, "| %s | %.1f | %s | %s | %s | %s | %s | %s |\n",
 			p.Name,
 			p.Score.Total,
 			p.Score.Grade,
-			baselineStatus,
-			enhancedStatus,
+			p.Conformance.Baseline.Verdict().Label(),
+			p.Conformance.Enhanced.Verdict().Label(),
 			vulnCountsText(p),
 			p.QsdevVersion,
 			lastScanText(p),

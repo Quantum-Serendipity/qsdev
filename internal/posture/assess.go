@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -233,28 +232,13 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 	if ecoStatuses == nil {
 		ecoStatuses = []EcosystemStatus{}
 	}
-	depHealth := ComputeDepScore(ecoStatuses)
-	report.Dependencies = depHealth
-	if report.Dependencies.Ecosystems == nil {
-		report.Dependencies.Ecosystems = []EcosystemStatus{}
-	}
-	// Record whether a scan actually ran to completion. A requested scan whose
-	// per-ecosystem checks errored (e.g. OSV unreachable) leaves zero Totals that
-	// mean "unknown", not "clean"; likewise an ecosystem whose lock format has no
-	// OSV coverage is never scanned at all. Derive the aggregate flags from the
-	// actual per-ecosystem outcomes rather than the request flag, so conformance,
-	// rendering, and the exit gate never present an unscanned or failed check as a
-	// clean bill of health. Scanned requires that at least one ecosystem was in
-	// fact scanned OK — a project with no OSV-covered ecosystem is "not scanned",
-	// not "scanned clean".
-	scanFailed := slices.ContainsFunc(ecoStatuses, func(e EcosystemStatus) bool {
-		return e.ScanError
-	})
-	scannedAny := slices.ContainsFunc(ecoStatuses, func(e EcosystemStatus) bool {
-		return e.Scanned
-	})
-	report.Dependencies.Scanned = opts.FreshScan && scannedAny && !scanFailed
-	report.Dependencies.ScanFailed = opts.FreshScan && scanFailed
+	// ComputeDepScore derives the scan status (and Scanned/ScanFailed) from the
+	// actual per-ecosystem outcomes rather than the request flag: a requested
+	// scan that errored (e.g. OSV unreachable), or one that found no lock file
+	// with OSV coverage, leaves zero Totals that mean "unknown", not "clean", so
+	// conformance, rendering, scoring and the exit gate never present an
+	// unscanned or failed check as a clean bill of health.
+	report.Dependencies = ComputeDepScore(ecoStatuses)
 	if opts.FreshScan {
 		now := time.Now().UTC()
 		report.Dependencies.LastScan = &now

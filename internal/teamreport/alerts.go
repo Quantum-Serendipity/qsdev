@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -88,8 +89,9 @@ func alertsForProject(p ProjectSummary, opts AggregateOptions, history *HistoryS
 		})
 	}
 
-	// HIGH: baseline conformance FAIL.
-	if !p.Conformance.Baseline.Pass {
+	// HIGH: baseline conformance FAIL. An unknown baseline (dependencies not
+	// scanned) is covered by the not-scanned alert above.
+	if p.Conformance.Baseline.Verdict() == posture.CheckFail {
 		alerts = append(alerts, PostureAlert{
 			Project:  p.Name,
 			Severity: SeverityHigh,

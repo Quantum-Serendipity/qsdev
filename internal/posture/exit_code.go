@@ -127,9 +127,13 @@ func hasAnyFindings(report *PostureReport) bool {
 // failed. A project without a custom policy has no custom level to fail. It
 // gates "high" and, because each level includes every check of the more
 // permissive levels, "moderate", "low" and "info" too.
+//
+// An unknown baseline (dependencies not scanned) is not a failure: it is
+// reported as unknown, never as a pass, and the vulnerability gate it cannot
+// evaluate is flagged by the caller (status warns that --scan is needed).
 func conformanceFails(report *PostureReport) bool {
-	if !report.Conformance.Baseline.Pass {
+	if report.Conformance.Baseline.Verdict() == CheckFail {
 		return true
 	}
-	return report.Conformance.Custom != nil && !report.Conformance.Custom.Pass
+	return report.Conformance.Custom != nil && report.Conformance.Custom.Verdict() == CheckFail
 }

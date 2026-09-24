@@ -176,6 +176,18 @@ func TestAssess_FreshScanSetsScannedFlag(t *testing.T) {
 	if scanned.Dependencies.LastScan == nil {
 		t.Error("Dependencies.LastScan should be stamped when FreshScan is set")
 	}
+	if scanned.Dependencies.Status != DepScanned {
+		t.Errorf("scanned Dependencies.Status = %q, want %q", scanned.Dependencies.Status, DepScanned)
+	}
+	if s := scanned.Dependencies.Score; s == nil || *s != 100 {
+		t.Errorf("scanned clean Dependencies.Score = %v, want 100", s)
+	}
+	if scanned.Score.DepHealth == nil {
+		t.Error("scanned Score.DepHealth = nil, want the dependency score")
+	}
+	if c := checkFor(t, scanned.Conformance.Baseline.Checks, CheckNoCriticalVulns); c.Status != CheckPass || !c.Pass {
+		t.Errorf("scanned clean no-critical-vulns = %+v, want pass", c)
+	}
 
 	unscanned, err := Assess(dir, AssessOptions{FreshScan: false})
 	if err != nil {
@@ -187,6 +199,56 @@ func TestAssess_FreshScanSetsScannedFlag(t *testing.T) {
 	reason := reasonFor(t, unscanned.Conformance.Baseline.Checks, CheckNoCriticalVulns)
 	if !strings.Contains(reason, "not scanned") {
 		t.Errorf("unscanned conformance reason = %q, want a 'not scanned' statement", reason)
+	}
+}
+
+// TestAssess_UnscannedDependenciesAreUnknown is the F328 regression: a plain
+// assessment (no --scan) must not score the dependencies a clean 100 or pass
+// baseline no-critical-vulns. The dependency status and score read unknown,
+// the check and the baseline level read unknown (never pass), and the grade
+// weighs defense and config alone.
+func TestAssess_UnscannedDependenciesAreUnknown(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeGoSum(t, dir)
+	for name, content := range map[string]string{
+		"go.mod":      "module example.com/x\n\ngo 1.21\n",
+		".qsdev.yaml": "version: 1\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	report, err := Assess(dir, AssessOptions{})
+	if err != nil {
+		t.Fatalf("Assess: %v", err)
+	}
+	deps := report.Dependencies
+	if deps.Status != DepUnscanned {
+		t.Errorf("Dependencies.Status = %q, want %q", deps.Status, DepUnscanned)
+	}
+	if deps.Score != nil {
+		t.Errorf("Dependencies.Score = %.1f, want nil (unknown, not a clean 100)", *deps.Score)
+	}
+	if report.Score.DepHealth != nil {
+		t.Errorf("Score.DepHealth = %.1f, want nil", *report.Score.DepHealth)
+	}
+	want := ComputeAggregateScore(report.Defense.Score, report.Config.Score, nil)
+	if report.Score.Total != want.Total {
+		t.Errorf("Score.Total = %.1f, want %.1f (defense and config only)", report.Score.Total, want.Total)
+	}
+
+	c := checkFor(t, report.Conformance.Baseline.Checks, CheckNoCriticalVulns)
+	if c.Status != CheckUnknown || c.Pass {
+		t.Errorf("no-critical-vulns = %+v, want status unknown and not passed", c)
+	}
+	if report.Conformance.Baseline.Pass || report.Conformance.Baseline.Status == CheckPass {
+		t.Errorf("baseline = pass %v status %q, want not passed", report.Conformance.Baseline.Pass,
+			report.Conformance.Baseline.Status)
+	}
+	if report.Conformance.Enhanced.Pass {
+		t.Error("enhanced passed although the baseline it builds on is not passed")
 	}
 }
 
@@ -360,8 +422,8 @@ func TestBuildEcosystemStatuses_UnknownSeverityFailsGate(t *testing.T) {
 	if dep.Totals.Info != 0 {
 		t.Errorf("Totals.Info = %d, want 0 (unknown severity must not fold to Info)", dep.Totals.Info)
 	}
-	if dep.Score >= 100 {
-		t.Errorf("Score = %.0f, want < 100 for an unknown-severity vuln", dep.Score)
+	if dep.Score == nil || *dep.Score >= 100 {
+		t.Errorf("Score = %v, want < 100 for an unknown-severity vuln", dep.Score)
 	}
 
 	report := &PostureReport{
@@ -378,11 +440,17 @@ func TestBuildEcosystemStatuses_UnknownSeverityFailsGate(t *testing.T) {
 // reasonFor returns the reason of the named conformance check.
 func reasonFor(t *testing.T, checks []ConformanceCheck, name CheckName) string {
 	t.Helper()
+	return checkFor(t, checks, name).Reason
+}
+
+// checkFor returns the named conformance check.
+func checkFor(t *testing.T, checks []ConformanceCheck, name CheckName) ConformanceCheck {
+	t.Helper()
 	for _, c := range checks {
 		if c.Name == name {
-			return c.Reason
+			return c
 		}
 	}
 	t.Fatalf("conformance check %q not found", name)
-	return ""
+	return ConformanceCheck{}
 }

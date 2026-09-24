@@ -18,34 +18,26 @@ const PolicyFileCheck posture.CheckName = "policy-file"
 // dependency totals no conclusive scan produced, fails with the reason, so a
 // typo or a skipped scan can never pass.
 func Evaluate(custom *Custom, report *posture.PostureReport) *posture.ConformanceLevel {
-	level := &posture.ConformanceLevel{
-		Pass:   true,
-		Checks: make([]posture.ConformanceCheck, 0, len(custom.Requirements)),
-	}
+	checks := make([]posture.ConformanceCheck, 0, len(custom.Requirements))
 	for _, req := range custom.Requirements {
-		check := evaluateRequirement(req, report)
-		if !check.Pass {
-			level.Pass = false
-		}
-		level.Checks = append(level.Checks, check)
+		checks = append(checks, evaluateRequirement(req, report))
 	}
-	return level
+	level := posture.NewLevel(posture.CheckPass, checks)
+	return &level
 }
 
 func evaluateRequirement(req Requirement, report *posture.PostureReport) posture.ConformanceCheck {
 	expr := strings.TrimSpace(req.Check)
-	check := posture.ConformanceCheck{Name: posture.CheckName(strings.TrimSpace(req.Name))}
+	name := posture.CheckName(strings.TrimSpace(req.Name))
 	pass, actual, err := evalExpression(expr, report)
 	switch {
 	case err != nil:
-		check.Reason = fmt.Sprintf("%s: %v", expr, err)
+		return posture.NewCheck(name, posture.CheckFail, fmt.Sprintf("%s: %v", expr, err))
 	case pass:
-		check.Pass = true
-		check.Reason = expr
+		return posture.NewCheck(name, posture.CheckPass, expr)
 	default:
-		check.Reason = fmt.Sprintf("%s: actual %s", expr, actual)
+		return posture.NewCheck(name, posture.CheckFail, fmt.Sprintf("%s: actual %s", expr, actual))
 	}
-	return check
 }
 
 // LoadPolicy loads the custom section of the project's policy file
@@ -64,12 +56,10 @@ func LoadPolicy(projectRoot string) (*Custom, error) {
 // that could not be evaluated at all: its single PolicyFileCheck carries the
 // cause, so a broken policy fails the gate instead of being skipped.
 func PolicyError(err error) *posture.ConformanceLevel {
-	return &posture.ConformanceLevel{
-		Checks: []posture.ConformanceCheck{{
-			Name:   PolicyFileCheck,
-			Reason: err.Error(),
-		}},
-	}
+	level := posture.NewLevel(posture.CheckPass, []posture.ConformanceCheck{
+		posture.NewCheck(PolicyFileCheck, posture.CheckFail, err.Error()),
+	})
+	return &level
 }
 
 // Apply loads the project's policy file (see LoadPolicy) and, when it declares

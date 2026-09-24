@@ -495,6 +495,25 @@ qsdev status
 
 This outputs a score (0–100), letter grade, and per-layer breakdown showing which controls are active, degraded, or missing.
 
+The score weighs defense coverage (40%), configuration health (30%) and
+dependency health (30%). Dependency health is measured only by a vulnerability
+scan (`qsdev status --scan`). Without one it is unknown, not clean, so:
+
+- the dependency sub-score is reported as `unscanned` (`null` in JSON, with
+  `dependencies.status: "unscanned"`) and the score is computed from defense
+  and configuration alone, instead of counting the dependencies as a clean 100;
+- the `no-critical-vulns` baseline check and the `no-high-vulns` enhanced check
+  report `unknown`, so baseline and enhanced conformance (and the conformance
+  badge) read `UNKNOWN` instead of `PASS`. An unknown result is never a pass,
+  but it is not a failure either: the exit code without `--scan` is unchanged,
+  and `qsdev status` warns that the vulnerability part of the audit level
+  cannot fire.
+
+A scan that fails is different: the dependency score is deducted for each
+failed ecosystem and the vulnerability checks fail, so the exit gate fails
+closed. A project with no detected dependency ecosystem has nothing to scan
+and passes these checks.
+
 ## Known Limitations
 
 ### Hook Bypass Vectors

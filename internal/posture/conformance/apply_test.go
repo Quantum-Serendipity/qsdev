@@ -25,8 +25,8 @@ func TestEvaluate(t *testing.T) {
 			},
 			wantPass: true,
 			wantChecks: []posture.ConformanceCheck{
-				{Name: "sast", Pass: true, Reason: "tools.semgrep.enabled == true"},
-				{Name: "score", Pass: true, Reason: "score.total >= 80"},
+				{Name: "sast", Pass: true, Status: posture.CheckPass, Reason: "tools.semgrep.enabled == true"},
+				{Name: "score", Pass: true, Status: posture.CheckPass, Reason: "score.total >= 80"},
 			},
 		},
 		{
@@ -37,8 +37,8 @@ func TestEvaluate(t *testing.T) {
 			},
 			wantPass: false,
 			wantChecks: []posture.ConformanceCheck{
-				{Name: "sast", Pass: true, Reason: "tools.semgrep.enabled == true"},
-				{Name: "no high", Reason: "dependencies.totals.high == 0: actual 2"},
+				{Name: "sast", Pass: true, Status: posture.CheckPass, Reason: "tools.semgrep.enabled == true"},
+				{Name: "no high", Status: posture.CheckFail, Reason: "dependencies.totals.high == 0: actual 2"},
 			},
 		},
 		{
@@ -47,6 +47,7 @@ func TestEvaluate(t *testing.T) {
 			wantPass: false,
 			wantChecks: []posture.ConformanceCheck{{
 				Name:   "typo",
+				Status: posture.CheckFail,
 				Reason: `defense.sast.status = enabled: no supported operator found in expression: "defense.sast.status = enabled"`,
 			}},
 		},

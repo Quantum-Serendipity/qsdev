@@ -632,6 +632,10 @@ Each `check` is one comparison (`==`, `<=` or `>=`) against the posture report:
 | `score.total` | `==`, `<=`, `>=` | number |
 | `tools.<name>.enabled` | `==` | `true`, `false` |
 
+`score.total` weighs dependency health only after a scan: without `--scan`
+the dependency sub-score is unknown (`null` in the JSON report) and the total is
+computed from defense and configuration alone.
+
 `qsdev status` shows the result as the **Custom** conformance level (`--verbose`
 lists each requirement with its actual value), and a failing requirement fails
 the exit gate at `--audit-level high` (the default) and every stricter level.

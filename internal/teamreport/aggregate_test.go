@@ -22,7 +22,7 @@ func makeReport(name string, score float64, baselinePass, enhancedPass bool, cri
 			Grade:     posture.ScoreToGrade(score),
 			Defense:   score,
 			Config:    score,
-			DepHealth: score,
+			DepHealth: new(score),
 		},
 		Conformance: posture.ConformanceResult{
 			Baseline: posture.ConformanceLevel{

@@ -54,9 +54,9 @@ func renderHeader(w io.Writer, report *posture.PostureReport, v verbosity) {
 	fmt.Fprintf(w, "Security Posture: %s (%s)\n", report.ProjectName, report.ProjectPath)
 
 	if v == verbVerbose {
-		fmt.Fprintf(w, "Score: %d/100 (%s)  Defense: %.0f%%  Config: %.0f%%  Deps: %.0f%%\n",
+		fmt.Fprintf(w, "Score: %d/100 (%s)  Defense: %.0f%%  Config: %.0f%%  Deps: %s\n",
 			int(math.Round(report.Score.Total)), report.Score.Grade,
-			report.Score.Defense, report.Score.Config, report.Score.DepHealth)
+			report.Score.Defense, report.Score.Config, depScoreText(report.Score.DepHealth))
 		fmt.Fprintf(w, "Schema: %s  Generated: %s  qsdev: %s\n",
 			report.SchemaVersion, report.GeneratedAt.Format("2006-01-02 15:04:05 UTC"), report.QsdevVersion)
 	} else {
@@ -90,36 +90,49 @@ func renderHeader(w io.Writer, report *posture.PostureReport, v verbosity) {
 // renderConformance writes the conformance section. Default mode outputs a
 // single summary line; verbose mode outputs per-check detail.
 func renderConformance(w io.Writer, report *posture.PostureReport, ind [4]string, v verbosity) {
-	pass, fail := ind[0], ind[3]
-
 	if v == verbVerbose {
 		fmt.Fprintln(w, "Conformance:")
-		renderConformanceLevel(w, "Baseline", report.Conformance.Baseline, pass, fail)
-		renderConformanceLevel(w, "Enhanced", report.Conformance.Enhanced, pass, fail)
+		renderConformanceLevel(w, "Baseline", report.Conformance.Baseline, ind)
+		renderConformanceLevel(w, "Enhanced", report.Conformance.Enhanced, ind)
 		if report.Conformance.Custom != nil {
-			renderConformanceLevel(w, "Custom", *report.Conformance.Custom, pass, fail)
+			renderConformanceLevel(w, "Custom", *report.Conformance.Custom, ind)
 		}
 	} else {
-		baselineStatus := pass
-		if !report.Conformance.Baseline.Pass {
-			baselineStatus = fail
-		}
-		enhancedStatus := pass
-		if !report.Conformance.Enhanced.Pass {
-			enhancedStatus = fail
-		}
-		line := fmt.Sprintf("Conformance: %s Baseline  %s Enhanced", baselineStatus, enhancedStatus)
+		line := fmt.Sprintf("Conformance: %s Baseline  %s Enhanced",
+			statusIndicator(report.Conformance.Baseline.Verdict(), ind),
+			statusIndicator(report.Conformance.Enhanced.Verdict(), ind))
 		if custom := report.Conformance.Custom; custom != nil {
-			customStatus := pass
-			if !custom.Pass {
-				customStatus = fail
-			}
-			line += fmt.Sprintf("  %s Custom", customStatus)
+			line += fmt.Sprintf("  %s Custom", statusIndicator(custom.Verdict(), ind))
+		}
+		if report.Conformance.Baseline.Verdict() == posture.CheckUnknown {
+			line += "  (unknown: dependencies not scanned; run with --scan)"
 		}
 		fmt.Fprintln(w, line)
 	}
 
 	fmt.Fprintln(w)
+}
+
+// statusIndicator returns the indicator for a conformance status: pass, fail,
+// or the partial indicator for a check that could not be evaluated.
+func statusIndicator(status posture.CheckStatus, ind [4]string) string {
+	switch status {
+	case posture.CheckPass:
+		return ind[0]
+	case posture.CheckUnknown:
+		return ind[1]
+	default:
+		return ind[3]
+	}
+}
+
+// depScoreText renders a dependency health score, or "unscanned" when it is
+// nil because the dependencies were never scanned.
+func depScoreText(score *float64) string {
+	if score == nil {
+		return "unscanned"
+	}
+	return fmt.Sprintf("%.0f%%", *score)
 }
 
 // renderDefenseLayers writes the defense coverage section. Verbose mode adds
@@ -188,7 +201,7 @@ func renderConfigHealth(w io.Writer, report *posture.PostureReport, ind [4]strin
 func renderDepHealth(w io.Writer, report *posture.PostureReport, ind [4]string, v verbosity) {
 	fail := ind[3]
 
-	fmt.Fprintf(w, "Dependency Health: %.0f%%\n", report.Dependencies.Score)
+	fmt.Fprintf(w, "Dependency Health: %s\n", depScoreText(report.Dependencies.Score))
 
 	if v == verbVerbose {
 		for _, eco := range report.Dependencies.Ecosystems {
@@ -412,10 +425,10 @@ func renderFix(report *posture.PostureReport, w io.Writer) error {
 		}
 	}
 
-	// If conformance baseline fails, suggest qsdev init.
-	if !report.Conformance.Baseline.Pass {
+	// If conformance baseline fails or is unknown, suggest how to resolve it.
+	if report.Conformance.Baseline.Verdict() != posture.CheckPass {
 		for _, c := range report.Conformance.Baseline.Checks {
-			if c.Pass {
+			if c.Verdict() == posture.CheckPass {
 				continue
 			}
 			remediation := conformanceRemediation(c.Name)
@@ -453,19 +466,11 @@ func conformanceRemediation(checkName posture.CheckName) string {
 }
 
 // renderConformanceLevel outputs a conformance level's checks.
-func renderConformanceLevel(w io.Writer, name string, level posture.ConformanceLevel, pass, fail string) {
-	ind := pass
-	verdict := "PASS"
-	if !level.Pass {
-		ind = fail
-		verdict = "FAIL"
-	}
-	fmt.Fprintf(w, "  %s %s: %s\n", ind, name, verdict)
+func renderConformanceLevel(w io.Writer, name string, level posture.ConformanceLevel, ind [4]string) {
+	verdict := level.Verdict()
+	fmt.Fprintf(w, "  %s %s: %s\n", statusIndicator(verdict, ind), name, verdict.Label())
 	for _, c := range level.Checks {
-		checkInd := pass
-		if !c.Pass {
-			checkInd = fail
-		}
+		checkInd := statusIndicator(c.Verdict(), ind)
 		reason := ""
 		if c.Reason != "" {
 			reason = " -- " + c.Reason

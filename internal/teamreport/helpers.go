@@ -39,6 +39,15 @@ func lastScanText(p ProjectSummary) string {
 	return relativeTime(*p.LastScan)
 }
 
+// depHealthText renders a dependency health sub-score, or "n/a (not scanned)"
+// when it is nil because the project's dependencies were never scanned.
+func depHealthText(score *float64) string {
+	if score == nil {
+		return "n/a (not scanned)"
+	}
+	return fmt.Sprintf("%.1f", *score)
+}
+
 // vulnCountsText renders a project's critical/high counts, or "n/a" when
 // its dependencies were not scanned and the counts are unknown.
 func vulnCountsText(p ProjectSummary) string {

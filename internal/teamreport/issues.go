@@ -84,13 +84,8 @@ func buildIssueBody(p ProjectSummary, alerts []PostureAlert, history *HistorySto
 	fmt.Fprintf(&b, "| Score | %.1f/100 (%s) |\n", p.Score.Total, p.Score.Grade)
 	fmt.Fprintf(&b, "| Defense Score | %.1f |\n", p.Score.Defense)
 	fmt.Fprintf(&b, "| Config Score | %.1f |\n", p.Score.Config)
-	fmt.Fprintf(&b, "| Dependency Health | %.1f |\n", p.Score.DepHealth)
-
-	baselineStatus := "PASS"
-	if !p.Conformance.Baseline.Pass {
-		baselineStatus = "FAIL"
-	}
-	fmt.Fprintf(&b, "| Baseline Conformance | %s |\n", baselineStatus)
+	fmt.Fprintf(&b, "| Dependency Health | %s |\n", depHealthText(p.Score.DepHealth))
+	fmt.Fprintf(&b, "| Baseline Conformance | %s |\n", p.Conformance.Baseline.Verdict().Label())
 
 	if p.Scanned {
 		fmt.Fprintf(&b, "| Critical Vulnerabilities | %d |\n", p.VulnTotals.Critical)

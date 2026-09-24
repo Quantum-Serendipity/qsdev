@@ -363,6 +363,11 @@ Use `qsdev status` to see each project's security score and grade:
 qsdev status
 ```
 
+Add `--scan` to check the dependencies against OSV. Without it their health is
+unknown: the dependency sub-score reads `unscanned`, the grade is computed from
+defense and configuration alone, and baseline conformance reads `UNKNOWN`
+rather than `PASS`, because `no-critical-vulns` cannot be evaluated.
+
 For multi-project visibility, `qsdev team-report` aggregates posture across repositories.
 
 ## Standardizing Across Repositories

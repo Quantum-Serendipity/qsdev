@@ -358,3 +358,35 @@ func TestShouldExitNonZero_CustomConformance(t *testing.T) {
 		})
 	}
 }
+
+// TestShouldExitNonZero_UnknownBaseline pins that a baseline reported unknown
+// because the dependencies were not scanned is not treated as a failure (exit
+// codes without --scan are unchanged), while a failed baseline still fails.
+func TestShouldExitNonZero_UnknownBaseline(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		baseline ConformanceLevel
+		custom   *ConformanceLevel
+		want     bool
+	}{
+		{"unknown baseline", ConformanceLevel{Status: CheckUnknown}, nil, false},
+		{"failed baseline", ConformanceLevel{Status: CheckFail}, nil, true},
+		{"unknown baseline, failed custom", ConformanceLevel{Status: CheckUnknown}, &ConformanceLevel{Status: CheckFail}, true},
+		{"legacy failed baseline", ConformanceLevel{}, nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			report := &PostureReport{
+				Dependencies: DependencyHealth{Status: DepUnscanned},
+				Conformance:  ConformanceResult{Baseline: tt.baseline, Custom: tt.custom},
+			}
+			for _, lvl := range []string{"high", "moderate", "low"} {
+				if got := ShouldExitNonZero(report, lvl); got != tt.want {
+					t.Errorf("ShouldExitNonZero(%q) = %v, want %v", lvl, got, tt.want)
+				}
+			}
+		})
+	}
+}

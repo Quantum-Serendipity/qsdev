@@ -17,7 +17,7 @@ func makeReport() *posture.PostureReport {
 			Grade:     "B",
 			Defense:   90.0,
 			Config:    80.0,
-			DepHealth: 82.0,
+			DepHealth: new(82.0),
 		},
 		Defense: posture.DefenseCoverage{
 			Layers: []posture.DefenseLayer{
@@ -43,7 +43,7 @@ func makeReport() *posture.PostureReport {
 				Low:      10,
 				Info:     3,
 			},
-			Score:   82.0,
+			Score:   new(82.0),
 			Scanned: true,
 		},
 		Tools: []posture.ToolStatus{

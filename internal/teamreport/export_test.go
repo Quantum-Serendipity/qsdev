@@ -27,7 +27,7 @@ func makeScore(total float64) posture.AggregateScore {
 		Grade:     posture.ScoreToGrade(total),
 		Defense:   total,
 		Config:    total,
-		DepHealth: total,
+		DepHealth: new(total),
 	}
 }
 

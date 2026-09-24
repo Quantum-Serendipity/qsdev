@@ -853,3 +853,77 @@ func TestConfiguredMCPServers(t *testing.T) {
 		})
 	}
 }
+
+// TestFillDefaults_ResolvesTier verifies FillDefaults always leaves an
+// explicit tier: the selected one, the supply-chain-only tier for a
+// supply-chain-only permission level, else the catalog default. Readers then
+// never infer the tier from the (always non-empty) default MCP servers.
+func TestFillDefaults_ResolvesTier(t *testing.T) {
+	t.Parallel()
+	cat := catalog.MustDefault()
+	tests := []struct {
+		name       string
+		answers    types.WizardAnswers
+		wantTier   string
+		wantLevel  string
+		wantCompl  string
+		wantMCPSet bool
+	}{
+		{
+			name:       "default is the catalog default tier",
+			answers:    types.WizardAnswers{ClaudeCode: true},
+			wantTier:   cat.DefaultTier(),
+			wantLevel:  "standard",
+			wantCompl:  cat.TierCompliance(cat.DefaultTier()),
+			wantMCPSet: true,
+		},
+		{
+			name:      "claude code disabled still gets the default tier",
+			answers:   types.WizardAnswers{},
+			wantTier:  cat.DefaultTier(),
+			wantCompl: cat.TierCompliance(cat.DefaultTier()),
+		},
+		{
+			name:      "supply-chain-only permission level selects its tier",
+			answers:   types.WizardAnswers{ClaudeCode: true, PermissionLevel: "supply-chain-only"},
+			wantTier:  "supply-chain-only",
+			wantLevel: "supply-chain-only",
+			wantCompl: cat.TierCompliance("supply-chain-only"),
+		},
+		{
+			name:       "explicit tier is kept and leaves the permission level to the tier",
+			answers:    types.WizardAnswers{ClaudeCode: true, Tier: "full"},
+			wantTier:   "full",
+			wantCompl:  cat.TierCompliance("full"),
+			wantMCPSet: true,
+		},
+		{
+			name:       "explicit permission level keeps the default tier",
+			answers:    types.WizardAnswers{ClaudeCode: true, PermissionLevel: "minimal"},
+			wantTier:   cat.DefaultTier(),
+			wantLevel:  "minimal",
+			wantCompl:  cat.TierCompliance(cat.DefaultTier()),
+			wantMCPSet: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			a := tt.answers
+			a.FillDefaults(types.DetectedProject{}, cat)
+
+			if a.Tier != tt.wantTier {
+				t.Errorf("Tier = %q, want %q", a.Tier, tt.wantTier)
+			}
+			if a.PermissionLevel != tt.wantLevel {
+				t.Errorf("PermissionLevel = %q, want %q", a.PermissionLevel, tt.wantLevel)
+			}
+			if a.ComplianceLevel != tt.wantCompl {
+				t.Errorf("ComplianceLevel = %q, want %q", a.ComplianceLevel, tt.wantCompl)
+			}
+			if got := len(a.MCPServers) > 0; got != tt.wantMCPSet {
+				t.Errorf("MCPServers = %v, want non-empty %v", a.MCPServers, tt.wantMCPSet)
+			}
+		})
+	}
+}

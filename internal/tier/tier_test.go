@@ -127,7 +127,8 @@ func TestResolve(t *testing.T) {
 		{"full", "standard", nil, Full},
 		{"", "standard", nil, Standard},
 		{"", "supply-chain-only", nil, SupplyChainOnly},
-		{"", "standard", []string{"github"}, Full},
+		{"", "standard", []string{"github"}, Standard},
+		{"", "standard", []string{"github", "custom-db"}, Full},
 		{"bogus", "standard", nil, Standard},
 		{"", "", nil, Standard},
 	}
@@ -149,8 +150,14 @@ func TestInfer(t *testing.T) {
 	}{
 		{"supply-chain-only", nil, SupplyChainOnly},
 		{"standard", nil, Standard},
-		{"standard", []string{"github"}, Full},
-		{"permissive", []string{"context7", "github"}, Full},
+		// The catalog's default MCP servers (and semble, provisioned by its
+		// agent tool) are written by every default init, so they never imply
+		// the full tier; only servers outside that set do.
+		{"standard", []string{"github"}, Standard},
+		{"permissive", []string{"context7", "github"}, Standard},
+		{"standard", []string{"context7", "github", "socket", "semble"}, Standard},
+		{"standard", []string{"context7", "custom-db"}, Full},
+		{"supply-chain-only", []string{"custom-db"}, SupplyChainOnly},
 		{"minimal", nil, Standard},
 		{"", nil, Standard},
 	}

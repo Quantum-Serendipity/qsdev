@@ -165,6 +165,10 @@ type HookTiersFile struct {
 
 // DerivationsFile represents the derivations.yaml schema.
 type DerivationsFile struct {
+	// DefaultTier is the tier a project gets when neither --tier, a profile
+	// nor the answers select one (a supply-chain-only permission level still
+	// selects the supply-chain-only tier).
+	DefaultTier        string              `yaml:"default_tier"`
 	TierToCompliance   map[string]string   `yaml:"tier_to_compliance"`
 	TierToEnabledTools map[string][]string `yaml:"tier_to_enabled_tools"`
 	DefaultMCPServers  []string            `yaml:"default_mcp_servers"`

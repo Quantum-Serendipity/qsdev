@@ -214,8 +214,17 @@ func TestAssess_TierInfoFromConfig(t *testing.T) {
 			wantNext:     "standard",
 		},
 		{
-			name:         "inferred from MCP servers present",
-			yaml:         "version: 1\nclaude_code:\n  mcp_servers:\n    - github\n",
+			// Every default init writes the catalog's default MCP servers,
+			// so they never imply the full tier.
+			name:         "default MCP servers keep the default tier",
+			yaml:         "version: 1\nclaude_code:\n  mcp_servers:\n    - context7\n    - github\n    - socket\n",
+			wantCurrent:  "standard",
+			wantPosition: 2,
+			wantNext:     "full",
+		},
+		{
+			name:         "inferred from a non-default MCP server",
+			yaml:         "version: 1\nclaude_code:\n  mcp_servers:\n    - github\n    - custom-db\n",
 			wantCurrent:  "full",
 			wantPosition: 3,
 			wantNext:     "",

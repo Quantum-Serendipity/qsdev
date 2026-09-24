@@ -665,7 +665,13 @@ func quickPathAnswers(partial types.WizardAnswers, detected types.DetectedProjec
 // tier-derived compliance and tools) are kept and completed the same way on
 // both paths; the customize path then overlays the form's choices.
 func mapFormToAnswers(fs *formState, projectRoot, projectName string, detected types.DetectedProject) types.WizardAnswers {
-	answers := quickPathAnswers(fs.partial, detected)
+	partial := fs.partial
+	if fs.quickChoice != "yes" && partial.Tier == "" {
+		// Without --tier the tier follows the permission level the form
+		// chose, so FillDefaults must resolve it from that choice.
+		partial.PermissionLevel = fs.permissionLevel
+	}
+	answers := quickPathAnswers(partial, detected)
 	if fs.quickChoice != "yes" {
 		applyFormChoices(&answers, fs, detected)
 		enforceAnswerInvariants(&answers)

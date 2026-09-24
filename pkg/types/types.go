@@ -244,6 +244,7 @@ type DefaultsProvider interface {
 	DefaultSembleEnabled() bool
 	DefaultSembleMode() string
 	DefaultMCPServers() []string
+	DefaultTier() string
 	TierCompliance(tier string) string
 	TierEnabledTools(tier string) []string
 }
@@ -290,11 +291,13 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 
 	a.ApplyClaudeHookDefaults()
 
+	a.resolveTier(defaults)
+
 	// Tier-derived posture applies to every tier, including supply-chain-only,
 	// so the recorded compliance level always matches the selected tier.
 	a.deriveFromTier(defaults)
 
-	if a.Tier == "supply-chain-only" || (a.Tier == "" && a.PermissionLevel == "supply-chain-only") {
+	if a.Tier == supplyChainOnly {
 		return
 	}
 
@@ -360,6 +363,23 @@ func (a *WizardAnswers) ApplyClaudeHookDefaults() {
 	if !a.Hooks.SafetyBlock && !a.Hooks.AutoFormat && !a.Hooks.PreCommit && !a.Hooks.AuditLog {
 		a.Hooks.SafetyBlock = true
 	}
+}
+
+// supplyChainOnly names both the lowest tier and its permission preset.
+const supplyChainOnly = "supply-chain-only"
+
+// resolveTier settles the tier once, so it is always persisted and no reader
+// has to infer it: an unset tier becomes the supply-chain-only tier when that
+// permission level was chosen, else the catalog's default tier.
+func (a *WizardAnswers) resolveTier(defaults DefaultsProvider) {
+	if a.Tier != "" {
+		return
+	}
+	if a.PermissionLevel == supplyChainOnly {
+		a.Tier = supplyChainOnly
+		return
+	}
+	a.Tier = defaults.DefaultTier()
 }
 
 // deriveFromTier fills ComplianceLevel and EnabledTools from the selected

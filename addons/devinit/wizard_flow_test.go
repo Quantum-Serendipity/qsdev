@@ -102,6 +102,46 @@ func TestMapFormToAnswers_CustomizeEnablesSelfProtection(t *testing.T) {
 	}
 }
 
+// TestMapFormToAnswers_TierFollowsFormPermissionLevel verifies that without
+// --tier the customize path records the tier implied by the permission level
+// the form chose, and that an explicit --tier is kept.
+func TestMapFormToAnswers_TierFollowsFormPermissionLevel(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name            string
+		partialTier     string
+		permissionLevel string
+		wantTier        string
+		wantCompliance  string
+	}{
+		{"standard level gets the default tier", "", "standard", "standard", "enhanced"},
+		{"supply-chain-only level gets its tier", "", "supply-chain-only", "supply-chain-only", "baseline"},
+		{"explicit tier is kept", "full", "supply-chain-only", "full", "strict"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fs := &formState{
+				quickChoice:       "customize",
+				selectedLanguages: []string{"go"},
+				claudeCode:        true,
+				permissionLevel:   tt.permissionLevel,
+				partial:           types.WizardAnswers{Tier: tt.partialTier},
+			}
+			got := mapFormToAnswers(fs, "/tmp/project", "project", types.DetectedProject{})
+			if got.Tier != tt.wantTier {
+				t.Errorf("Tier = %q, want %q", got.Tier, tt.wantTier)
+			}
+			if got.ComplianceLevel != tt.wantCompliance {
+				t.Errorf("ComplianceLevel = %q, want %q", got.ComplianceLevel, tt.wantCompliance)
+			}
+			if got.PermissionLevel != tt.permissionLevel {
+				t.Errorf("PermissionLevel = %q, want %q", got.PermissionLevel, tt.permissionLevel)
+			}
+		})
+	}
+}
+
 func TestWizard_ExplicitFlagsSurvive(t *testing.T) {
 	t.Parallel()
 	detected := types.DetectedProject{HasGoMod: true, GoVersion: "1.24"}

@@ -3,9 +3,11 @@ package tier
 import (
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Tier represents an ordered security onboarding level. Each tier is a strict
@@ -165,15 +167,42 @@ func Resolve(tierStr string, permissionLevel string, mcpServers []string) Tier {
 	return Infer(permissionLevel, mcpServers)
 }
 
-// Infer determines the most likely tier from legacy config fields that predate
-// the explicit tier field. Used for backward compatibility with existing
-// .qsdev.yaml files.
+// Infer determines the most likely tier of a legacy .qsdev.yaml that predates
+// the always-persisted tier field. A supply-chain-only permission level means
+// that tier. The catalog's default MCP servers (and semble, provisioned by its
+// agent tool) are written by every default init, so they never imply Full;
+// only a server outside that set does. Anything else is the catalog's default
+// tier.
 func Infer(permissionLevel string, mcpServers []string) Tier {
 	if permissionLevel == "supply-chain-only" {
 		return SupplyChainOnly
 	}
-	if len(mcpServers) > 0 {
-		return Full
+	cat, err := catalog.Default()
+	if err != nil {
+		return Standard
+	}
+	defaults := cat.DefaultMCPServers()
+	for _, s := range mcpServers {
+		if s != types.SembleMCPServer && !slices.Contains(defaults, s) {
+			return Full
+		}
+	}
+	return defaultTier(cat)
+}
+
+// Default returns the catalog's default tier: the tier a project gets when
+// nothing selects one. It is Standard if the catalog cannot be loaded.
+func Default() Tier {
+	cat, err := catalog.Default()
+	if err != nil {
+		return Standard
+	}
+	return defaultTier(cat)
+}
+
+func defaultTier(cat *catalog.Catalog) Tier {
+	if def, ok := cat.TierDef(cat.DefaultTier()); ok {
+		return Tier(def.Order)
 	}
 	return Standard
 }

@@ -20,6 +20,7 @@ func (stubDefaults) DefaultVersionSentinelHours() int { return 0 }
 func (stubDefaults) DefaultSembleEnabled() bool       { return false }
 func (stubDefaults) DefaultSembleMode() string        { return "" }
 func (stubDefaults) DefaultMCPServers() []string      { return nil }
+func (stubDefaults) DefaultTier() string              { return "" }
 func (stubDefaults) TierCompliance(string) string     { return "" }
 func (stubDefaults) TierEnabledTools(string) []string { return nil }
 

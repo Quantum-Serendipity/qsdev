@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"cmp"
 	"maps"
 
 	"gopkg.in/yaml.v3"
@@ -58,6 +59,7 @@ func MergeCatalogs(base, overlay *Catalog) *Catalog {
 	result.hookTiers.TierOrder = mergeStringSlice(base.hookTiers.TierOrder, overlay.hookTiers.TierOrder)
 
 	// Derivations: merge maps, overlay scalars win.
+	result.derivations.DefaultTier = cmp.Or(overlay.derivations.DefaultTier, base.derivations.DefaultTier)
 	result.derivations.TierToCompliance = mergeStringMap(base.derivations.TierToCompliance, overlay.derivations.TierToCompliance)
 	result.derivations.TierToEnabledTools = mergeStringSliceMap(base.derivations.TierToEnabledTools, overlay.derivations.TierToEnabledTools)
 	result.derivations.DefaultMCPServers = mergeStringSlice(base.derivations.DefaultMCPServers, overlay.derivations.DefaultMCPServers)

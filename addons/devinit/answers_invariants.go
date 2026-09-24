@@ -4,6 +4,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -15,6 +16,12 @@ func enforceAnswerInvariants(a *types.WizardAnswers) {
 	// it is always on whenever Claude Code is configured.
 	if a.ClaudeCode {
 		a.Hooks.SelfProtection = true
+	}
+	// The tier is always recorded. Create paths resolve it in FillDefaults;
+	// answers saved before that are legacy, so their tier is inferred once
+	// here and then persisted (answers file and .qsdev.yaml) on save.
+	if a.Tier == "" {
+		a.Tier = tier.Infer(a.PermissionLevel, a.MCPServers).String()
 	}
 }
 

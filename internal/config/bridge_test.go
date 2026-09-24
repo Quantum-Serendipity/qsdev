@@ -168,6 +168,13 @@ func TestConfigToAnswers_JoinSemantics(t *testing.T) {
 				t.Errorf("PermissionLevel=%q Tier=%q, want empty/supply-chain-only", a.PermissionLevel, a.Tier)
 			}
 		}},
+		{"legacy config with default MCP servers infers the default tier", types.QsdevConfig{
+			ClaudeCode: types.ClaudeCodeConfig{MCPServers: []string{"context7", "github", "socket", "semble"}},
+		}, func(t *testing.T, a types.WizardAnswers) {
+			if a.Tier != "standard" {
+				t.Errorf("Tier = %q, want standard (default MCP servers never imply full)", a.Tier)
+			}
+		}},
 		{"explicit false is honoured", types.QsdevConfig{ClaudeCode: types.ClaudeCodeConfig{Enabled: &disabled}}, func(t *testing.T, a types.WizardAnswers) {
 			if a.ClaudeCode || a.PermissionLevel != "" || a.Hooks.SelfProtection {
 				t.Errorf("ClaudeCode=%v PermissionLevel=%q SelfProtection=%v, want all off", a.ClaudeCode, a.PermissionLevel, a.Hooks.SelfProtection)

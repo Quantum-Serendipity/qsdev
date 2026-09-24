@@ -57,6 +57,20 @@ func TestWithSuggested(t *testing.T) {
 	}
 }
 
+// zeroDefaults is a DefaultsProvider returning zero values, for tests that
+// only exercise language selection.
+type zeroDefaults struct{}
+
+func (zeroDefaults) DefaultPostmortem() bool          { return false }
+func (zeroDefaults) DefaultVersionSentinel() bool     { return false }
+func (zeroDefaults) DefaultVersionSentinelHours() int { return 0 }
+func (zeroDefaults) DefaultSembleEnabled() bool       { return false }
+func (zeroDefaults) DefaultSembleMode() string        { return "" }
+func (zeroDefaults) DefaultMCPServers() []string      { return nil }
+func (zeroDefaults) DefaultTier() string              { return "" }
+func (zeroDefaults) TierCompliance(string) string     { return "" }
+func (zeroDefaults) TierEnabledTools(string) []string { return nil }
+
 // TestFillDefaults_SkipsProbableTier2 verifies probable-only tier 2+
 // ecosystems are not auto-enabled and the order is deterministic.
 func TestFillDefaults_SkipsProbableTier2(t *testing.T) {
@@ -66,7 +80,7 @@ func TestFillDefaults_SkipsProbableTier2(t *testing.T) {
 		ProbableEcosystems: map[string]bool{"shell": true, "cpp": true},
 	}
 	var a WizardAnswers
-	a.FillDefaults(detected, nil)
+	a.FillDefaults(detected, zeroDefaults{})
 	var names []string
 	for _, l := range a.Languages {
 		names = append(names, l.Name)

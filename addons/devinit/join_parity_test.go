@@ -2,6 +2,7 @@ package devinit
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"maps"
 	"os"
@@ -114,10 +115,24 @@ func TestJoin_ParityWithCreate(t *testing.T) {
 			created := createAnswers(t, dir, args...)
 			commitConfig(t, dir, created)
 
+			// The tier is always persisted (the catalog default without
+			// --tier), so neither create nor join has to infer it.
+			wantTier := cmp.Or(tierArg, "standard")
+			cfg, err := qsdevconfig.ParseQsdevConfig(filepath.Join(dir, branding.Get().ConfigFile))
+			if err != nil {
+				t.Fatalf("parsing committed config: %v", err)
+			}
+			if created.Tier != wantTier || cfg.Tier != wantTier {
+				t.Errorf("tier: create %q, persisted %q, want %q", created.Tier, cfg.Tier, wantTier)
+			}
+
 			cmd, _ := newJoinTestCmd()
 			joined, err := buildJoinAnswers(cmd, InitOptions{Quiet: true}, dir)
 			if err != nil {
 				t.Fatalf("buildJoinAnswers: %v", err)
+			}
+			if joined.Tier != created.Tier {
+				t.Errorf("tier: join %q, create %q", joined.Tier, created.Tier)
 			}
 
 			// The persisted security level may imply extra hooks on join

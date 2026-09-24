@@ -280,9 +280,6 @@ func Assess(projectPath string, opts AssessOptions) (*PostureReport, error) {
 	return report, nil
 }
 
-// defaultTierName is the tier assumed when the project config sets none.
-const defaultTierName = "standard"
-
 // resolveTierName returns the project's progressive tier from its config file:
 // the explicit tier, else one inferred from the Claude Code settings. An absent
 // config yields the default tier. A config that exists but cannot be read or
@@ -292,9 +289,9 @@ func resolveTierName(configPath string) (string, error) {
 	cfg, err := config.ParseQsdevConfig(configPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return defaultTierName, nil
+			return tier.Default().String(), nil
 		}
-		return defaultTierName, err
+		return tier.Default().String(), err
 	}
 	if cfg.Tier != "" {
 		return cfg.Tier, nil

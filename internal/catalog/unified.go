@@ -55,6 +55,7 @@ type UnifiedDefaults struct {
 	HookTiers     map[string][]string `yaml:"hook_tiers,omitempty"`
 
 	// Derivations
+	DefaultTier        string              `yaml:"default_tier,omitempty"`
 	TierToCompliance   map[string]string   `yaml:"tier_to_compliance,omitempty"`
 	TierToEnabledTools map[string][]string `yaml:"tier_to_enabled_tools,omitempty"`
 	DefaultMCPServers  []string            `yaml:"default_mcp_servers,omitempty"`
@@ -115,6 +116,7 @@ func (u *UnifiedDefaults) ToCatalog() *Catalog {
 	cat.hookTiers.Tiers = u.HookTiers
 
 	// Derivations
+	cat.derivations.DefaultTier = u.DefaultTier
 	cat.derivations.TierToCompliance = u.TierToCompliance
 	cat.derivations.TierToEnabledTools = u.TierToEnabledTools
 	cat.derivations.DefaultMCPServers = u.DefaultMCPServers
@@ -183,6 +185,7 @@ func (c *Catalog) ToUnified() *UnifiedDefaults {
 	u.HookTiers = c.hookTiers.Tiers
 
 	// Derivations
+	u.DefaultTier = c.derivations.DefaultTier
 	u.TierToCompliance = c.derivations.TierToCompliance
 	u.TierToEnabledTools = c.derivations.TierToEnabledTools
 	u.DefaultMCPServers = c.derivations.DefaultMCPServers
@@ -221,7 +224,7 @@ func SectionNames() []string {
 	return []string{
 		"tiers", "compliance", "profiles", "profile_aliases", "project_profiles",
 		"tools", "mcp_servers", "security_hooks", "base_packages", "unset_vars", "keep_vars",
-		"custom_hooks", "hook_tier_order", "hook_tiers", "tier_to_compliance",
+		"custom_hooks", "hook_tier_order", "hook_tiers", "default_tier", "tier_to_compliance",
 		"tier_to_enabled_tools", "default_mcp_servers", "default_agent_tools",
 		"languages", "services", "permission_presets", "hook_presets",
 		"security_levels", "data_classifications", "package_managers", "tool_categories",

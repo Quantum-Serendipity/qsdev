@@ -119,6 +119,13 @@ func (c *Catalog) validateProfiles() []CatalogError {
 func (c *Catalog) validateDerivations() []CatalogError {
 	var errs []CatalogError
 
+	if _, ok := c.tiers.Tiers[c.derivations.DefaultTier]; !ok {
+		errs = append(errs, CatalogError{
+			"derivations.yaml", "default_tier",
+			fmt.Sprintf("references unknown tier %q", c.derivations.DefaultTier),
+		})
+	}
+
 	for tierName, complianceName := range c.derivations.TierToCompliance {
 		if _, ok := c.tiers.Tiers[tierName]; !ok {
 			errs = append(errs, CatalogError{

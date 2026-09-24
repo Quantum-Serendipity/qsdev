@@ -521,6 +521,14 @@ func TestTierToEnabledTools(t *testing.T) {
 	}
 }
 
+func TestDefaultTier(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+	if got := cat.DefaultTier(); got != "standard" {
+		t.Errorf("DefaultTier() = %q, want standard", got)
+	}
+}
+
 func TestDefaultMCPServers(t *testing.T) {
 	t.Parallel()
 	cat := loadTestCatalog(t)
@@ -849,6 +857,53 @@ func TestValidate_DerivationUnknownTier(t *testing.T) {
 	errs := cat.Validate()
 	if !hasValidationError(errs, `references unknown tier "ghost-tier"`) {
 		t.Errorf("expected unknown derivation tier error, got: %v", errs)
+	}
+}
+
+func TestValidate_DefaultTier(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		defaultTier string
+	}{
+		{"unknown tier", "ghost-tier"},
+		{"unset", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cat := loadTestCatalog(t)
+			cat.derivations.DefaultTier = tt.defaultTier
+
+			errs := cat.Validate()
+			if !hasValidationError(errs, "default_tier") {
+				t.Errorf("expected default_tier error, got: %v", errs)
+			}
+		})
+	}
+}
+
+func TestMergeCatalogs_DefaultTier(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		overlay string
+		want    string
+	}{
+		{"overlay unset keeps base", "", "standard"},
+		{"overlay wins", "full", "full"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			base := loadTestCatalog(t)
+			overlay := &Catalog{}
+			overlay.derivations.DefaultTier = tt.overlay
+
+			if got := MergeCatalogs(base, overlay).DefaultTier(); got != tt.want {
+				t.Errorf("merged DefaultTier() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

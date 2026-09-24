@@ -1084,6 +1084,9 @@ hook_tiers:
         - lock-file-audit
         - nix-secrets-check
         - statix
+# The tier a project gets when nothing selects one. init persists it to
+# .qsdev.yaml so readers never have to guess the tier.
+default_tier: standard
 tier_to_compliance:
     full: strict
     standard: enhanced

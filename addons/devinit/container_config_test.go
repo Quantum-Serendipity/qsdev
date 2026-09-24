@@ -2,8 +2,10 @@ package devinit
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -41,16 +43,6 @@ func writeCursorMarker(t *testing.T, dir string) {
 	}
 }
 
-// captureCmd returns a cobra.Command whose stdout and stderr are captured in one
-// buffer (combined is sufficient for substring assertions).
-func captureCmd() (*cobra.Command, *bytes.Buffer) {
-	var buf bytes.Buffer
-	cmd := &cobra.Command{}
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	return cmd, &buf
-}
-
 func assertNoCompose(t *testing.T, dir string) {
 	t.Helper()
 	if _, err := os.Stat(filepath.Join(dir, container.ComposeFileName)); !os.IsNotExist(err) {
@@ -58,61 +50,200 @@ func assertNoCompose(t *testing.T, dir string) {
 	}
 }
 
-func TestMaybeGenerateContainerConfig_SkipContainer(t *testing.T) {
-	dir := t.TempDir()
-	cmd, buf := captureCmd()
-	maybeGenerateContainerConfig(cmd, dir, types.WizardAnswers{}, UpdateOptions{SkipContainer: true})
-	if buf.Len() != 0 {
-		t.Errorf("--skip-container should produce no output, got: %q", buf.String())
+func TestPlanGatewayCompose(t *testing.T) {
+	registerCursor(t)
+	tests := []struct {
+		name     string
+		cursor   bool
+		answers  types.WizardAnswers
+		opts     UpdateOptions
+		wantFile bool
+		wantHold bool
+	}{
+		{name: "skip-container holds any existing fragment", cursor: true, opts: UpdateOptions{SkipContainer: true}, wantHold: true},
+		{name: "all-native project generates nothing", answers: types.WizardAnswers{ClaudeCode: true}},
+		{name: "hookless framework generates the fragment", cursor: true, wantFile: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tt.cursor {
+				writeCursorMarker(t, dir)
+			}
+			var buf bytes.Buffer
+			g := planGatewayCompose(&buf, dir, tt.answers, tt.opts)
+			if g.hold != tt.wantHold {
+				t.Errorf("hold = %v, want %v", g.hold, tt.wantHold)
+			}
+			if (g.file != nil) != tt.wantFile {
+				t.Fatalf("file = %v, want present=%v", g.file, tt.wantFile)
+			}
+			if buf.Len() != 0 {
+				t.Errorf("unexpected warning output: %q", buf.String())
+			}
+			assertNoCompose(t, dir) // planning never writes
+
+			var hints bytes.Buffer
+			g.printHints(&hints)
+			if !tt.wantFile {
+				if hints.Len() != 0 {
+					t.Errorf("no gateway needed, but hints printed: %q", hints.String())
+				}
+				return
+			}
+			f := g.file
+			if f.Path != container.ComposeFileName || f.Strategy != types.ThreeWayMerge || f.Owner != "" {
+				t.Errorf("file = {Path:%q Strategy:%v Owner:%q}, want {%q ThreeWayMerge \"\"}",
+					f.Path, f.Strategy, f.Owner, container.ComposeFileName)
+			}
+			if strings.Contains(string(f.Content), dir) {
+				t.Errorf("committed fragment embeds this checkout's path %q:\n%s", dir, f.Content)
+			}
+			if !strings.Contains(string(f.Content), ".:"+container.ContainerWorkspace+":ro") {
+				t.Errorf("fragment does not mount the project relative to itself:\n%s", f.Content)
+			}
+			if !strings.Contains(hints.String(), container.DefaultMCPServerName) {
+				t.Errorf("hints lack the .mcp.json entry: %q", hints.String())
+			}
+		})
+	}
+}
+
+func TestGatewayComposeKeepHeld(t *testing.T) {
+	t.Parallel()
+	orphans := []FileUpdatePlan{
+		{Path: container.ComposeFileName, Action: UpdateActionRemove},
+		{Path: "other.txt", Action: UpdateActionRemove},
+	}
+	tests := []struct {
+		name string
+		hold bool
+		want []string
+	}{
+		{"held fragment is not an orphan", true, []string{"other.txt"}},
+		{"unheld fragment follows orphan cleanup", false, []string{container.ComposeFileName, "other.txt"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := gatewayCompose{hold: tt.hold}.keepHeld(slices.Clone(orphans))
+			var paths []string
+			for _, fp := range got {
+				paths = append(paths, fp.Path)
+			}
+			if !slices.Equal(paths, tt.want) {
+				t.Errorf("paths = %v, want %v", paths, tt.want)
+			}
+		})
+	}
+}
+
+// runGatewayUpdate runs `qsdev update` with opts in dir.
+func runGatewayUpdate(t *testing.T, dir string, opts UpdateOptions) string {
+	t.Helper()
+	t.Setenv("QSDEV_SKIP_SETUP", "1")
+	origDir, _ := os.Getwd()
+	defer func() { _ = os.Chdir(origDir) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	if err := runUpdate(cmd, opts); err != nil {
+		t.Fatalf("update: %v\n%s", err, buf.String())
+	}
+	return buf.String()
+}
+
+// TestUpdate_GatewayComposeLifecycle is the F064 regression: the gateway
+// fragment goes through update's plan and state pipeline, so it is tracked,
+// user edits survive later updates, --skip-container leaves it alone, it is
+// removed once no framework needs it, and teardown removes it.
+func TestUpdate_GatewayComposeLifecycle(t *testing.T) {
+	registerCursor(t)
+	dir := initLifecycleProject(t)
+	writeCursorMarker(t, dir)
+	composePath := filepath.Join(dir, container.ComposeFileName)
+
+	// Dry run plans the file without writing it.
+	out := runGatewayUpdate(t, dir, UpdateOptions{DryRun: true})
+	if !strings.Contains(out, container.ComposeFileName) || !strings.Contains(out, container.DefaultMCPServerName) {
+		t.Errorf("dry run does not preview the fragment and hint:\n%s", out)
 	}
 	assertNoCompose(t, dir)
+
+	// First update creates and tracks it.
+	runGatewayUpdate(t, dir, UpdateOptions{})
+	fs, ok := loadProjectState(t, dir).Files[container.ComposeFileName]
+	if !ok {
+		t.Fatalf("%s not recorded in state", container.ComposeFileName)
+	}
+	if fs.Strategy != types.ThreeWayMerge {
+		t.Errorf("recorded strategy = %v, want ThreeWayMerge", fs.Strategy)
+	}
+
+	// A user edit survives the next update.
+	edited := strings.Replace(readProjectFile(t, dir, container.ComposeFileName),
+		fmt.Sprintf("%d:%d", container.DefaultGatewayPort, container.DefaultGatewayPort),
+		fmt.Sprintf("9000:%d", container.DefaultGatewayPort), 1)
+	edited = "# local port override\n" + edited
+	if err := os.WriteFile(composePath, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGatewayUpdate(t, dir, UpdateOptions{})
+	got := readProjectFile(t, dir, container.ComposeFileName)
+	for _, want := range []string{"9000:", "# local port override"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("update lost the user's %q:\n%s", want, got)
+		}
+	}
+
+	// --skip-container leaves the file and its state entry alone, also once
+	// no framework needs the gateway.
+	if err := os.RemoveAll(filepath.Join(dir, ".cursor")); err != nil {
+		t.Fatal(err)
+	}
+	runGatewayUpdate(t, dir, UpdateOptions{SkipContainer: true})
+	if readProjectFile(t, dir, container.ComposeFileName) != got {
+		t.Error("--skip-container changed the fragment")
+	}
+	if _, ok := loadProjectState(t, dir).Files[container.ComposeFileName]; !ok {
+		t.Error("--skip-container untracked the fragment")
+	}
+
+	// Once the fragment is back to generated content, it is removed as an
+	// orphan when no framework needs the gateway any more.
+	writeCursorMarker(t, dir)
+	if err := os.Remove(composePath); err != nil {
+		t.Fatal(err)
+	}
+	runGatewayUpdate(t, dir, UpdateOptions{Force: true}) // recreate the deleted file
+	if err := os.RemoveAll(filepath.Join(dir, ".cursor")); err != nil {
+		t.Fatal(err)
+	}
+	runGatewayUpdate(t, dir, UpdateOptions{})
+	assertNoCompose(t, dir)
+	if _, ok := loadProjectState(t, dir).Files[container.ComposeFileName]; ok {
+		t.Error("removed fragment is still tracked")
+	}
 }
 
-func TestMaybeGenerateContainerConfig_NoGatewayNeeded(t *testing.T) {
-	// Claude Code is a native-hook (TierHook) framework, so no gateway is needed:
-	// the integration must stay silent and write nothing.
-	dir := t.TempDir()
-	cmd, buf := captureCmd()
-	maybeGenerateContainerConfig(cmd, dir, types.WizardAnswers{ClaudeCode: true}, UpdateOptions{})
-	if buf.Len() != 0 {
-		t.Errorf("an all-native project should stay silent, got: %q", buf.String())
+// TestTeardown_RemovesGatewayCompose checks teardown removes the tracked,
+// unmodified gateway fragment.
+func TestTeardown_RemovesGatewayCompose(t *testing.T) {
+	registerCursor(t)
+	dir := initLifecycleProject(t)
+	writeCursorMarker(t, dir)
+	runGatewayUpdate(t, dir, UpdateOptions{})
+	if _, err := os.Stat(filepath.Join(dir, container.ComposeFileName)); err != nil {
+		t.Fatalf("fragment not generated: %v", err)
+	}
+	if out, err := runLifecycleCmd(t, dir, teardownCmd(), "--force"); err != nil {
+		t.Fatalf("teardown: %v\n%s", err, out)
 	}
 	assertNoCompose(t, dir)
-}
-
-func TestMaybeGenerateContainerConfig_DryRun(t *testing.T) {
-	registerCursor(t)
-	dir := t.TempDir()
-	writeCursorMarker(t, dir)
-
-	cmd, buf := captureCmd()
-	maybeGenerateContainerConfig(cmd, dir, types.WizardAnswers{}, UpdateOptions{DryRun: true})
-
-	out := buf.String()
-	if !strings.Contains(out, "[dry-run] would write "+container.ComposeFileName) {
-		t.Errorf("dry-run should announce the intended write, got: %q", out)
-	}
-	assertNoCompose(t, dir) // dry-run must not actually write
-}
-
-func TestMaybeGenerateContainerConfig_WritesCompose(t *testing.T) {
-	registerCursor(t)
-	dir := t.TempDir()
-	writeCursorMarker(t, dir)
-
-	cmd, buf := captureCmd()
-	maybeGenerateContainerConfig(cmd, dir, types.WizardAnswers{}, UpdateOptions{})
-
-	if out := buf.String(); !strings.Contains(out, "wrote "+container.ComposeFileName) {
-		t.Errorf("expected a 'wrote' message, got: %q", out)
-	}
-	data, err := os.ReadFile(filepath.Join(dir, container.ComposeFileName))
-	if err != nil {
-		t.Fatalf("compose file not written: %v", err)
-	}
-	if len(data) == 0 {
-		t.Error("compose file is empty")
-	}
 }
 
 func TestDetectGatewayProfiles(t *testing.T) {

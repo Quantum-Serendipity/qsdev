@@ -34,6 +34,7 @@ Ecosystem-specific files only appear when that language is selected.
 | `.cosign/policy.yaml` | Sigstore policy-controller image signing policy (when container-security enabled). Enforcing only for a `github.com` origin remote; otherwise a commented-out template. See [Layer 9](security-architecture.md#layer-9-container-security) | `manual-merge` |
 | `.scancode.yml` | ScanCode license policy (when license-compliance enabled) | `overwrite` |
 | `.license-exceptions.yml` | Record of approved license exceptions (when license-compliance enabled; only created if absent) | `skip` |
+| `docker-compose.gateway.yaml` | MCP Gateway container for detected AI frameworks without native hook enforcement (written by `qsdev update`; skipped with `--skip-container`, which also leaves an existing file untouched; removed once no framework needs it) | `three-way-merge` |
 
 ## Merge Strategies
 
@@ -42,7 +43,7 @@ Each generated file has an assigned merge strategy that controls how it is handl
 | Strategy | Behavior |
 |----------|----------|
 | `overwrite` | File is always regenerated. User modifications are lost on update. |
-| `three-way-merge` | Three-way merge using stored base, current on-disk content, and new generated content. User changes are preserved when they do not conflict with template changes. |
+| `three-way-merge` | Three-way merge using stored base, current on-disk content, and new generated content. User changes are preserved when they do not conflict with template changes. YAML files merge key by key: a value you changed keeps your version (also when the template changed it too), keys you added or deleted stay that way, and lists are merged as a whole value. A YAML file that holds several documents, or whose merge would leave an alias without its anchor, is reported as an update failure and left unchanged. |
 | `section-marker` | Tool-managed sections (delimited by markers) are replaced; user content outside markers is preserved. |
 | `manual-merge` | A `.new` sidecar file is written alongside the existing file. The user is shown a diff and must merge manually. |
 | `library-managed` | File is always updated to the latest version. Intended for files from a versioned skill/rule library where the tool owns the content. |

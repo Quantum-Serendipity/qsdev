@@ -3,9 +3,8 @@ package devinit
 import (
 	"context"
 	"fmt"
-	"path/filepath"
-
-	"github.com/spf13/cobra"
+	"io"
+	"slices"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/container"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
@@ -14,57 +13,80 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// maybeGenerateContainerConfig is the best-effort `qsdev update` integration for
-// Unit 32.10. After the framework configs are regenerated it checks whether any
-// framework present in the project lacks native hook enforcement and, if so,
-// writes the Gateway docker-compose fragment and prints the .mcp.json entry to
-// add. It is deliberately:
-//
-//   - opt-out via --skip-container,
-//   - a silent no-op when no framework needs the gateway (so an all-native
-//     project — e.g. Claude Code only — produces no output and the existing
-//     update behavior is unchanged),
-//   - non-fatal: any error is reported as a warning and never fails the update.
-//
-// It is the single live wiring point; the heavy lifting is the pure
-// container.ContainerConfigGenerator, which is independently tested.
-func maybeGenerateContainerConfig(cmd *cobra.Command, projectRoot string, answers types.WizardAnswers, opts UpdateOptions) {
+// gatewayCompose is the Gateway container config (Unit 32.10) for one
+// `qsdev update`: the docker-compose fragment for frameworks that lack native
+// hook enforcement, planned and recorded like every other generated file.
+type gatewayCompose struct {
+	// file is the compose fragment to generate; nil when no framework in the
+	// project needs the gateway.
+	file *types.GeneratedFile
+	// art holds the generator's output for the user-facing hints; nil when
+	// generation was skipped or failed.
+	art *container.Artifacts
+	// hold is true when generation was skipped (--skip-container) or failed:
+	// a previously generated fragment is then neither regenerated nor treated
+	// as an orphan, so it stays on disk and tracked as it is.
+	hold bool
+}
+
+// planGatewayCompose generates the Gateway docker-compose fragment when a
+// framework present in the project lacks native hook enforcement. The
+// fragment is returned as a types.GeneratedFile so update plans, merges and
+// records it like any other generated file: user edits are kept by a
+// three-way merge, drift checks and teardown see it in state, and it is
+// removed as an orphan once no framework needs it. Generation is opt-out via
+// --skip-container and never fails the update: an error is reported on w as
+// a warning.
+func planGatewayCompose(w io.Writer, projectRoot string, answers types.WizardAnswers, opts UpdateOptions) gatewayCompose {
 	if opts.SkipContainer {
-		return
+		return gatewayCompose{hold: true}
 	}
 
-	profiles := detectGatewayProfiles(projectRoot, answers)
 	art, err := container.ContainerConfigGenerator{}.Generate(container.GenerateOptions{
-		ProjectRoot: projectRoot,
-		Frameworks:  profiles,
+		// No ProjectRoot: the fragment is committed with the project, so it
+		// mounts "." (compose resolves it relative to the file) rather than
+		// this checkout's absolute path.
+		Frameworks: detectGatewayProfiles(projectRoot, answers),
 	})
 	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: container config generation skipped: %v\n", err)
-		return
+		fmt.Fprintf(w, "Warning: container config generation skipped: %v\n", err)
+		return gatewayCompose{hold: true}
 	}
 	if !art.NeedsGateway {
-		return // nothing to do; stay silent so all-native projects are unaffected
+		return gatewayCompose{art: art}
 	}
+	return gatewayCompose{
+		art: art,
+		file: &types.GeneratedFile{
+			Path:     art.ComposeFileName,
+			Content:  []byte(art.ComposeYAML),
+			Mode:     fileutil.ModeReadWrite,
+			Strategy: types.ThreeWayMerge,
+		},
+	}
+}
 
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "\nGateway container config (frameworks without native hooks: %s):\n",
-		joinFrameworkIDs(art.GatewayFrameworks))
+// keepHeld drops the orphan plan for a held compose fragment, so a skipped or
+// failed generation never removes or untracks the file generated earlier.
+func (g gatewayCompose) keepHeld(orphans []FileUpdatePlan) []FileUpdatePlan {
+	if !g.hold {
+		return orphans
+	}
+	return slices.DeleteFunc(orphans, func(fp FileUpdatePlan) bool {
+		return fp.Path == container.ComposeFileName
+	})
+}
 
-	// The generator owns the fragment's filename (relative to the project root).
-	composeFile := art.ComposeFileName
-	if opts.DryRun {
-		fmt.Fprintf(out, "  [dry-run] would write %s\n", composeFile)
-		fmt.Fprintf(out, "  [dry-run] add the gateway to your framework .mcp.json:\n%s\n", art.MCPJSON)
+// printHints tells the user which frameworks need the gateway and the
+// .mcp.json entry to add for it. It prints nothing when no framework needs
+// the gateway, so all-native projects see no gateway output.
+func (g gatewayCompose) printHints(w io.Writer) {
+	if g.file == nil {
 		return
 	}
-
-	absPath := filepath.Join(projectRoot, composeFile)
-	if err := fileutil.WriteFileAtomic(absPath, []byte(art.ComposeYAML), fileutil.ModeReadWrite); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: writing %s: %v\n", composeFile, err)
-		return
-	}
-	fmt.Fprintf(out, "  wrote %s\n", composeFile)
-	fmt.Fprintf(out, "  add the gateway to your framework .mcp.json:\n%s\n", art.MCPJSON)
+	fmt.Fprintf(w, "\nGateway container config: %s (frameworks without native hooks: %s)\n",
+		g.file.Path, joinFrameworkIDs(g.art.GatewayFrameworks))
+	fmt.Fprintf(w, "  add the gateway to your framework .mcp.json:\n%s\n", g.art.MCPJSON)
 }
 
 // detectGatewayProfiles derives the framework profiles present in the project.

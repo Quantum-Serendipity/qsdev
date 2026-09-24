@@ -150,14 +150,22 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	}
 	allFiles := accResult.allFiles
 
+	// 4b. Gateway container config for hookless frameworks (Unit 32.10),
+	// planned and recorded like the other generated files.
+	gateway := planGatewayCompose(cmd.ErrOrStderr(), projectRoot, genAnswers, opts)
+	if gateway.file != nil {
+		allFiles = append(allFiles, *gateway.file)
+	}
+
 	// 5. Build update plan, including cleanup of files no longer generated.
 	plan := buildUpdatePlan(allFiles, modStatus, existingState, projectRoot, opts)
 	plan.MCPPolicy = genAnswers.MCPPolicy
-	plan.Files = append(plan.Files, planOrphans(existingState, allFiles, modStatus, genAnswers)...)
+	plan.Files = append(plan.Files, gateway.keepHeld(planOrphans(existingState, allFiles, modStatus, genAnswers))...)
 
 	// 6. Preview.
 	previewUpdatePlan(plan, cmd.OutOrStdout())
 	if opts.DryRun {
+		gateway.printHints(cmd.OutOrStdout())
 		return nil
 	}
 
@@ -193,12 +201,7 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 
 	// 11. Print result summary.
 	printUpdateSummary(cmd.OutOrStdout(), plan, outcome)
-
-	// 12. Best-effort Gateway container config for hookless frameworks (Unit
-	// 32.10). This is intentionally additive and non-fatal: a failure or a
-	// project with no gateway-needing framework leaves the rest of the update
-	// untouched and produces no output.
-	maybeGenerateContainerConfig(cmd, projectRoot, answers, opts)
+	gateway.printHints(cmd.OutOrStdout())
 
 	if n := len(outcome.failures); n > 0 {
 		return fmt.Errorf("%d file(s) could not be updated; they keep their previous state and will be retried on the next update", n)

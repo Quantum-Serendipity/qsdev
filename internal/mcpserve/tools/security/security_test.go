@@ -624,7 +624,7 @@ func TestAWSCredsResultNilCredentials(t *testing.T) {
 
 func TestCredentialVendNotConfigured(t *testing.T) {
 	t.Parallel()
-	cv := newCredentialVendor()
+	cv := newCredentialVendor(types.CredentialVendConfig{Enabled: true})
 
 	t.Run("missing provider", func(t *testing.T) {
 		res := call(t, cv.handle, map[string]any{})
@@ -655,7 +655,10 @@ func TestCredentialVendAWSNoCredentials(t *testing.T) {
 	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", missing)
 	t.Setenv("AWS_CONFIG_FILE", missing)
 
-	cv := newCredentialVendor()
+	cv := newCredentialVendor(types.CredentialVendConfig{
+		Enabled: true,
+		AWS:     types.AWSCredentialVendConfig{AllowSessionToken: true},
+	})
 	res := call(t, cv.handle, map[string]any{"provider": "aws"})
 	if !res.IsError {
 		t.Fatal("expected IsError when AWS has no credentials")
@@ -778,13 +781,13 @@ func TestCredentialVendGCPRejectsInvalidServiceAccount(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := gcpServiceAccountPattern.MatchString(tt.sa); got != tt.valid {
-				t.Errorf("gcpServiceAccountPattern.MatchString(%q) = %v, want %v", tt.sa, got, tt.valid)
+			if got := config.ValidGCPServiceAccount(tt.sa); got != tt.valid {
+				t.Errorf("config.ValidGCPServiceAccount(%q) = %v, want %v", tt.sa, got, tt.valid)
 			}
 		})
 	}
 
-	cv := newCredentialVendor()
+	cv := newCredentialVendor(types.CredentialVendConfig{Enabled: true})
 	res := call(t, cv.handle, map[string]any{"provider": "gcp", "service_account": "x@y.iam.gserviceaccount.com:signJwt#"})
 	m := structuredMap(t, res)
 	if !res.IsError || m["status"] != "not_configured" {
@@ -792,5 +795,115 @@ func TestCredentialVendGCPRejectsInvalidServiceAccount(t *testing.T) {
 	}
 	if reason, _ := m["reason"].(string); !strings.Contains(reason, "invalid service_account") {
 		t.Errorf("reason = %q, want the invalid service_account rejection", reason)
+	}
+}
+
+// TestCredentialVendPolicy is the F247 regression: credential vending is
+// opt-in and allow-listed. Each request the project's security.credential_vend
+// does not allow is denied before any ambient credential is loaded, naming the
+// setting that would allow it — in particular AWS GetSessionToken, which hands
+// out the ambient IAM user's full permissions, is denied by default.
+func TestCredentialVendPolicy(t *testing.T) {
+	t.Parallel()
+	const (
+		role  = "arn:aws:iam::123456789012:role/dev"
+		sa    = "ci@proj.iam.gserviceaccount.com"
+		scope = "https://storage.azure.com/.default"
+		mi    = "00000000-0000-0000-0000-000000000001"
+	)
+	allowLists := types.CredentialVendConfig{
+		Enabled: true,
+		AWS:     types.AWSCredentialVendConfig{RoleARNs: []string{role}},
+		GCP:     types.GCPCredentialVendConfig{ServiceAccounts: []string{sa}},
+		Azure:   types.AzureCredentialVendConfig{Scopes: []string{scope}, Identities: []string{mi}},
+	}
+	disabled := allowLists
+	disabled.Enabled = false
+
+	tests := []struct {
+		name        string
+		policy      types.CredentialVendConfig
+		args        map[string]any
+		wantSetting string
+	}{
+		{"disabled", disabled, map[string]any{"provider": "aws", "role_arn": role}, "security.credential_vend.enabled"},
+		{"zero policy", types.CredentialVendConfig{}, map[string]any{"provider": "gcp", "service_account": sa}, "security.credential_vend.enabled"},
+		{"aws session token by default", allowLists, map[string]any{"provider": "aws"}, "security.credential_vend.aws.allow_session_token"},
+		{"aws unlisted role", allowLists, map[string]any{"provider": "aws", "role_arn": "arn:aws:iam::123456789012:role/admin"}, "security.credential_vend.aws.role_arns"},
+		{"gcp unlisted service account", allowLists, map[string]any{"provider": "gcp", "service_account": "owner@proj.iam.gserviceaccount.com"}, "security.credential_vend.gcp.service_accounts"},
+		{"azure default scope unlisted", allowLists, map[string]any{"provider": "azure"}, "security.credential_vend.azure.scopes"},
+		{"azure unlisted scope", allowLists, map[string]any{"provider": "azure", "scope": "https://management.azure.com/.default"}, "security.credential_vend.azure.scopes"},
+		{"azure unlisted identity", allowLists, map[string]any{"provider": "azure", "scope": scope, "identity": "00000000-0000-0000-0000-000000000002"}, "security.credential_vend.azure.identities"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			res := call(t, newCredentialVendor(tt.policy).handle, tt.args)
+			m := structuredMap(t, res)
+			if !res.IsError || m["status"] != "denied" {
+				t.Fatalf("got IsError=%t status=%v, want denied", res.IsError, m["status"])
+			}
+			if m["setting"] != tt.wantSetting {
+				t.Errorf("setting = %v, want %s", m["setting"], tt.wantSetting)
+			}
+			if r, _ := m["remediation"].(string); !strings.Contains(r, tt.wantSetting) {
+				t.Errorf("remediation = %q, want it to name %s", r, tt.wantSetting)
+			}
+		})
+	}
+}
+
+// TestCredentialVendAllowListedRolePassesPolicy proves an allow-listed role gets
+// past the policy to the credential lookup (not_configured offline), so the
+// allow-list admits what it names.
+func TestCredentialVendAllowListedRolePassesPolicy(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "absent")
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("AWS_SESSION_TOKEN", "")
+	t.Setenv("AWS_PROFILE", "")
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", missing)
+	t.Setenv("AWS_CONFIG_FILE", missing)
+
+	const role = "arn:aws:iam::123456789012:role/dev"
+	cv := newCredentialVendor(types.CredentialVendConfig{
+		Enabled: true,
+		AWS:     types.AWSCredentialVendConfig{RoleARNs: []string{role}},
+	})
+	res := call(t, cv.handle, map[string]any{"provider": "aws", "role_arn": role})
+	if status := structuredMap(t, res)["status"]; status != "not_configured" {
+		t.Errorf("status = %v, want not_configured (past the policy, no credentials)", status)
+	}
+}
+
+// TestToolsRegistersCredentialVendOnlyWhenEnabled checks the opt-in at
+// registration: without an enabled security.credential_vend the tool is not
+// offered at all.
+func TestToolsRegistersCredentialVendOnlyWhenEnabled(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		policy types.CredentialVendConfig
+		want   bool
+	}{
+		{"zero", types.CredentialVendConfig{}, false},
+		{"allow-lists only", types.CredentialVendConfig{AWS: types.AWSCredentialVendConfig{AllowSessionToken: true}}, false},
+		{"enabled", types.CredentialVendConfig{Enabled: true}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var names []string
+			for _, r := range Tools(t.TempDir(), nil, tt.policy) {
+				names = append(names, r.Name)
+			}
+			if got := slices.Contains(names, middleware.CredentialVendToolName); got != tt.want {
+				t.Errorf("credential_vend registered = %t, want %t (tools %v)", got, tt.want, names)
+			}
+			if !slices.Contains(names, "qsdev_policy_check") || !slices.Contains(names, "qsdev_security_scan") {
+				t.Errorf("tools = %v, want the other security tools regardless", names)
+			}
+		})
 	}
 }

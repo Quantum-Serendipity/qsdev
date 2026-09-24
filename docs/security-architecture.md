@@ -234,6 +234,20 @@ separate namespace, and never becomes an MCP deny. `qsdev check` fails on an
 misspelling cannot silently leave a tool enabled in a CI-gated project. See
 [MCP tool deny list](configuration-reference.md#mcp-tool-deny-list).
 
+**Credential vending is opt-in and allow-listed.** `qsdev_credential_vend`
+is the only MCP tool whose output skips secret redaction, because its whole
+purpose is to return short-lived cloud credentials. The server mounts it only
+when the committed `.qsdev.yaml` enables `security.credential_vend`, and then
+vends only the AWS roles, GCP service accounts, Azure scopes and managed
+identities its allow-lists name. AWS `GetSessionToken`, which returns
+credentials carrying the ambient IAM user's full permissions, needs its own
+`aws.allow_session_token`. `.qsdev.local.yaml` cannot set the block, and
+self-protection (GD-001) blocks an agent edit that widens it. `qsdev_nix_run`
+starts its children with the server's credential-bearing variables removed,
+so `env` inside a Nix package cannot print them, and is not mounted in gateway
+mode unless the operator passes `--gateway-allow-nix-run`. See
+[MCP credential vending](configuration-reference.md#mcp-credential-vending).
+
 **No guardrail writes through MCP.** `qsdev_cc_config_render` only previews
 the `.claude/settings.json` and `.mcp.json` that qsdev would generate. It
 takes no `write` argument and refuses a call that asks to write. A write made

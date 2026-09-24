@@ -112,6 +112,12 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 	result.Security.LockEnforcement = mergePointerBool(base.Security.LockEnforcement, overlay.Security.LockEnforcement)
 	result.Security.VulnScanning = mergePointerBool(base.Security.VulnScanning, overlay.Security.VulnScanning)
 
+	// Security.CredentialVend: the overlay's block replaces the base's whole,
+	// so an allow-list is never widened by entries from another layer.
+	if !overlay.Security.CredentialVend.IsZero() {
+		result.Security.CredentialVend = overlay.Security.CredentialVend.Clone()
+	}
+
 	// Tools.Enabled: union.
 	result.Tools.Enabled = mergeUnionStrings(base.Tools.Enabled, overlay.Tools.Enabled)
 
@@ -336,6 +342,7 @@ func cloneQsdevConfig(cfg *types.QsdevConfig) *types.QsdevConfig {
 			ScriptBlocking:  cloneBoolPtr(cfg.Security.ScriptBlocking),
 			LockEnforcement: cloneBoolPtr(cfg.Security.LockEnforcement),
 			VulnScanning:    cloneBoolPtr(cfg.Security.VulnScanning),
+			CredentialVend:  cfg.Security.CredentialVend.Clone(),
 		},
 		ClaudeCode: types.ClaudeCodeConfig{
 			Enabled:         cloneBoolPtr(cfg.ClaudeCode.Enabled),

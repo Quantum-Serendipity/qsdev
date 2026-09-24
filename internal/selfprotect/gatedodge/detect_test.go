@@ -67,6 +67,38 @@ func TestDetectChange_QsdevYaml(t *testing.T) {
 	})
 }
 
+// TestDetectChange_CredentialVend covers F247: an edit that opts the project
+// into MCP credential vending or widens what it may vend is blocked, since it
+// would hand the agent cloud credentials once the MCP server restarts.
+func TestDetectChange_CredentialVend(t *testing.T) {
+	t.Parallel()
+
+	const base = "version: 2\nsecurity:\n  level: enhanced\n"
+	const vend = base + "  credential_vend:\n    enabled: true\n" +
+		"    aws:\n      role_arns: [\"arn:aws:iam::123456789012:role/dev\"]\n"
+	runChangeCases(t, "/project/.qsdev.yaml", "GD-001", []changeCase{
+		{name: "deny opting in", before: base,
+			after: base + "  credential_vend:\n    enabled: true\n", blocked: true},
+		{name: "deny opting in with a new file", before: "",
+			after: "version: 2\nsecurity:\n  credential_vend:\n    enabled: true\n", blocked: true},
+		{name: "deny allowing GetSessionToken", before: vend,
+			after: vend + "      allow_session_token: true\n", blocked: true},
+		{name: "deny adding a role", before: vend,
+			after: base + "  credential_vend:\n    enabled: true\n" +
+				"    aws:\n      role_arns: [\"arn:aws:iam::123456789012:role/dev\", \"arn:aws:iam::123456789012:role/admin\"]\n",
+			blocked: true},
+		{name: "deny adding a service account", before: vend,
+			after: vend + "    gcp:\n      service_accounts: [owner@p.iam.gserviceaccount.com]\n", blocked: true},
+		{name: "deny adding an azure scope", before: vend,
+			after: vend + "    azure:\n      scopes: [\"https://management.azure.com/.default\"]\n", blocked: true},
+		{name: "allow opting out", before: vend, after: base, blocked: false},
+		{name: "allow removing a role", before: vend,
+			after: base + "  credential_vend:\n    enabled: true\n", blocked: false},
+		{name: "allow unrelated edit", before: vend,
+			after: vend + "languages:\n  - name: go\n", blocked: false},
+	})
+}
+
 // TestDetectChange_DevenvNix covers F144: GD-002 blocks switching off a
 // module or git hook that devenv.nix enables, and re-enabling dotenv.
 func TestDetectChange_DevenvNix(t *testing.T) {

@@ -286,6 +286,7 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 	}
 
 	errs = append(errs, validateMCPDisabledTools(cfg, opts)...)
+	errs = append(errs, validateCredentialVend(cfg.Security.CredentialVend)...)
 	errs = append(errs, validateProfiles(cfg, opts)...)
 
 	// git.branch_pattern is spliced into the branch-naming pre-push hook.

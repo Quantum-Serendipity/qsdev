@@ -69,10 +69,11 @@ type FileChange func() (before, after string, err error)
 // DetectChange checks whether a Write/Edit/MultiEdit weakens a security
 // configuration file by comparing the file before and after the change:
 // .qsdev.yaml (GD-001: a lower security level, a disabled security control,
-// or a disabled security tool) and devenv.nix (GD-002: a module or git hook
-// switched off, or a hardening switch turned back on). change is called only
-// for these files; when it fails the change cannot be verified and is
-// blocked (fail closed). Returns (blocked, ruleID, reason).
+// a widened credential_vend opt-in, or a disabled security tool) and
+// devenv.nix (GD-002: a module or git hook switched off, or a hardening switch
+// turned back on). change is called only for these files; when it fails the
+// change cannot be verified and is blocked (fail closed). Returns (blocked,
+// ruleID, reason).
 func DetectChange(filePath string, change FileChange) (bool, string, string) {
 	var ruleID string
 	var detect func(before, after string) (string, error)
@@ -102,8 +103,9 @@ func DetectChange(filePath string, change FileChange) (bool, string, string) {
 // qsdevConfigDowngrade describes how an updated .qsdev.yaml weakens the
 // project's security posture ("" when it does not): security.level drops,
 // a security.* control that is on (explicitly, or by default when unset)
-// turns off, or a security-category tool is newly disabled. A missing or
-// unparseable current file is compared as the organization defaults.
+// turns off, security.credential_vend is widened, or a security-category
+// tool is newly disabled. A missing or unparseable current file is compared
+// as the organization defaults.
 func qsdevConfigDowngrade(before, after string) (string, error) {
 	var next types.QsdevConfig
 	if err := yaml.Unmarshal([]byte(after), &next); err != nil {
@@ -140,7 +142,42 @@ func qsdevConfigDowngrade(before, after string) (string, error) {
 		}
 	}
 
+	if reason := credentialVendWidened(current.Security.CredentialVend, next.Security.CredentialVend); reason != "" {
+		return reason, nil
+	}
+
 	return disabledSecurityTool(current.Tools.Disabled, next.Tools.Disabled)
+}
+
+// credentialVendWidened describes how next widens security.credential_vend,
+// the opt-in that lets the MCP server hand cloud credentials to an agent (""
+// when it does not): vending switched on, GetSessionToken allowed, or an
+// identity or scope added to an allow-list.
+func credentialVendWidened(cur, next types.CredentialVendConfig) string {
+	const field = "security.credential_vend."
+	if next.Enabled && !cur.Enabled {
+		return field + "enabled turned on"
+	}
+	if next.AWS.AllowSessionToken && !cur.AWS.AllowSessionToken {
+		return field + "aws.allow_session_token turned on"
+	}
+	lists := []struct {
+		name      string
+		cur, next []string
+	}{
+		{"aws.role_arns", cur.AWS.RoleARNs, next.AWS.RoleARNs},
+		{"gcp.service_accounts", cur.GCP.ServiceAccounts, next.GCP.ServiceAccounts},
+		{"azure.scopes", cur.Azure.Scopes, next.Azure.Scopes},
+		{"azure.identities", cur.Azure.Identities, next.Azure.Identities},
+	}
+	for _, l := range lists {
+		for _, v := range l.next {
+			if !slices.Contains(l.cur, v) {
+				return fmt.Sprintf("%q added to %s%s", v, field, l.name)
+			}
+		}
+	}
+	return ""
 }
 
 // disabledSecurityTool reports the first security-category tool (per the

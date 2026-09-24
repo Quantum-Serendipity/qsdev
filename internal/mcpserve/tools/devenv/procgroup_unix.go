@@ -4,6 +4,7 @@ package devenv
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -14,7 +15,8 @@ import (
 // launcher and every child it spawns share one group id. On timeout or context
 // cancellation it signals the whole group via a negative PID, killing orphaned
 // children (e.g. a nix build) rather than leaking them, then reaps the launcher.
-// stdout and stderr are captured separately. The process runs in dir (the
+// stdout and stderr are captured separately. The process gets the server's
+// environment minus its credentials (childEnv). The process runs in dir (the
 // server's working directory when dir is empty).
 func runProcessGroup(ctx context.Context, dir, name string, argv []string, stdin string, timeout time.Duration) procResult {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -22,6 +24,7 @@ func runProcessGroup(ctx context.Context, dir, name string, argv []string, stdin
 
 	cmd := exec.Command(name, argv...) //nolint:gosec // argv is an explicit array; no shell interpolation
 	cmd.Dir = dir
+	cmd.Env = childEnv(os.Environ())
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	outBuf, errBuf := newCappedBuffer(maxProcOutputBytes), newCappedBuffer(maxProcOutputBytes)

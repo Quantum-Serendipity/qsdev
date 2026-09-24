@@ -6,7 +6,9 @@
 // env_info never emits the values of sensitive environment variables, filtering
 // them at the source in addition to the ContentSafety middleware. nix_run runs
 // its target in a dedicated process group so a timeout kills the whole group,
-// and is concurrency-limited (max 3) by the CategoryProcess rate limiter.
+// with an environment that withholds every variable env_info withholds (see
+// childEnv), and is concurrency-limited (max 3) by the CategoryProcess rate
+// limiter.
 package devenv
 
 import (
@@ -17,12 +19,12 @@ import (
 // tierStandard mirrors projectctx's standard tool tier.
 const tierStandard = 1
 
-// Tools returns the two devenv tool registrations bound to projectRoot.
-func Tools(projectRoot string) []spi.ToolRegistration {
+// Tools returns the devenv tool registrations bound to projectRoot. nixRun
+// registers qsdev_nix_run; the serve command leaves it out in gateway mode
+// unless the operator opts in.
+func Tools(projectRoot string, nixRun bool) []spi.ToolRegistration {
 	env := newEnvInfo()
-	nix := newNixRunner(projectRoot)
-
-	return []spi.ToolRegistration{
+	regs := []spi.ToolRegistration{
 		{
 			Name:        "qsdev_env_info",
 			Description: "Probe the development environment: PATH composition (system/user/nix/tool-managed), listening TCP ports, the qsdev-managed tool catalog, and a filtered process-environment snapshot. Sensitive variable values are never emitted.",
@@ -32,15 +34,19 @@ func Tools(projectRoot string) []spi.ToolRegistration {
 			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     env.handle,
 		},
-		{
-			Name:        "qsdev_nix_run",
-			Description: "Execute a Nix package via `nix run <command> -- <args>` from the project root, in a dedicated process group with a timeout (default 30s, max 10m). Remote flake references (URLs, github: and other schemes) and paths outside the project are rejected. Captures stdout, stderr (each capped at 1 MiB; excess is discarded and flagged *_truncated), exit code, and duration; on timeout the entire process group is killed. Limited to 3 concurrent executions.",
-			InputSchema: nixRunSchema(),
-			Category:    middleware.CategoryProcess,
-			Tier:        tierStandard,
-			Handler:     nix.handle,
-		},
 	}
+	if !nixRun {
+		return regs
+	}
+	nix := newNixRunner(projectRoot)
+	return append(regs, spi.ToolRegistration{
+		Name:        "qsdev_nix_run",
+		Description: "Execute a Nix package via `nix run <command> -- <args>` from the project root, in a dedicated process group with a timeout (default 30s, max 10m) and an environment stripped of credential-bearing variables. Remote flake references (URLs, github: and other schemes) and paths outside the project are rejected. Captures stdout, stderr (each capped at 1 MiB; excess is discarded and flagged *_truncated), exit code, and duration; on timeout the entire process group is killed. Limited to 3 concurrent executions.",
+		InputSchema: nixRunSchema(),
+		Category:    middleware.CategoryProcess,
+		Tier:        tierStandard,
+		Handler:     nix.handle,
+	})
 }
 
 func envInfoSchema() map[string]any {

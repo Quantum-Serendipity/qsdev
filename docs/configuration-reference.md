@@ -218,6 +218,57 @@ mcp:
 - The key is set only in `.qsdev.yaml`: `.qsdev.local.yaml` cannot add to
   or remove from it. Re-creating a project (`qsdev init --force`) keeps it.
 
+### MCP credential vending
+
+`qsdev_credential_vend` exchanges the host's ambient cloud identity for
+short-lived credentials (AWS STS, GCP IAM Credentials, Azure Managed
+Identity). Its output is exempt from the MCP server's secret redaction, so
+it is opt-in. The server does not mount it unless `security.credential_vend`
+is enabled, and it vends only the identities the allow-lists name:
+
+```yaml
+security:
+  credential_vend:
+    enabled: true
+    aws:
+      role_arns:                     # AssumeRole targets, matched exactly
+        - arn:aws:iam::123456789012:role/ci/deploy
+      allow_session_token: false     # the default; see below
+    gcp:
+      service_accounts:              # email or numeric unique ID
+        - ci@my-project.iam.gserviceaccount.com
+    azure:
+      scopes:                        # the default management scope must be listed to be used
+        - https://storage.azure.com/.default
+      identities:                    # user-assigned managed-identity client IDs
+        - 00000000-0000-0000-0000-000000000001
+```
+
+- Without the block, or with `enabled: false`, the tool is not offered to
+  any client. A call to it on a server that does mount it is still checked
+  against the block and refused (`status: denied`, naming the setting that
+  would allow it) before any ambient credential is loaded.
+- An AWS request without `role_arn` calls `GetSessionToken`. Those
+  credentials carry every permission of the ambient IAM user, so it is
+  refused unless `aws.allow_session_token: true`.
+- A GCP `service_account`, an Azure `scope` and an Azure `identity` must
+  each be in their list. A request naming no Azure identity uses the
+  system-assigned one.
+- `qsdev check` fails on an entry that cannot match a request (a role ARN
+  with a wildcard, a malformed service account, scope or client ID).
+- The block is set only in `.qsdev.yaml`: `.qsdev.local.yaml` cannot set it.
+  The self-protection hook (GD-001) blocks an agent edit that enables it,
+  allows `GetSessionToken`, or adds an allow-list entry. The server reads it
+  at startup, so restart it after a change.
+
+`qsdev_nix_run` runs its target with the server's environment minus every
+variable `qsdev_env_info` withholds (tokens, keys, passwords, and the
+`AWS_*`, `GCP_*`, `GOOGLE_*`, `AZURE_*`, `GH_*` and `GITHUB_*` namespaces), so the child cannot
+print the server's credentials. In gateway mode (`--deploy-mode=gateway`)
+the tool is not mounted, because it would run Nix packages on the gateway
+host for every framework the gateway serves. Pass `--gateway-allow-nix-run`
+or set `QSDEV_GATEWAY_ALLOW_NIX_RUN=true` to mount it.
+
 ### Infrastructure settings
 
 The built-in infrastructure profiles choose technologies, never endpoints:

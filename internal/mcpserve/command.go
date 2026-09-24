@@ -26,6 +26,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // defaultHTTPPort is the port used by the http transport when --port is unset.
@@ -39,13 +40,15 @@ const defaultBindHost = "127.0.0.1"
 // Deployment env keys honored as fallbacks for the corresponding flags. The
 // compose template (build/docker) sets QSDEV_DEPLOY_MODE; the gateway allow-list
 // is supplied via QSDEV_GATEWAY_AGENTS (comma-separated). QSDEV_GATEWAY_REQUIRE_AUTH
-// forces fail-closed authentication even with an empty allow-list. QSDEV_BIND
+// forces fail-closed authentication even with an empty allow-list.
+// QSDEV_GATEWAY_ALLOW_NIX_RUN mounts qsdev_nix_run in gateway mode. QSDEV_BIND
 // overrides the bind host (default loopback). The mTLS material falls back to
 // the EnvTLS* keys defined in tlsconfig.go.
 const (
 	envDeployMode         = container.EnvDeployMode
 	envGatewayAgents      = container.EnvGatewayAgents
 	envGatewayRequireAuth = "QSDEV_GATEWAY_REQUIRE_AUTH"
+	envGatewayNixRun      = "QSDEV_GATEWAY_ALLOW_NIX_RUN"
 	envBind               = "QSDEV_BIND"
 )
 
@@ -61,6 +64,9 @@ type serveOptions struct {
 	tlsCert      string
 	tlsKey       string
 	tlsClientCA  string
+	// gatewayNixRun mounts qsdev_nix_run in gateway mode, where it is off by
+	// default.
+	gatewayNixRun bool
 }
 
 // Command returns the `serve` subcommand for the `qsdev mcp` command group. It
@@ -78,7 +84,8 @@ func Command() *cobra.Command {
 			"Deployment modes (--deploy-mode, or QSDEV_DEPLOY_MODE):\n" +
 			"  native      local stdio process with the standard chain (default)\n" +
 			"  gateway     enforcing MCP proxy: adds an authentication layer and\n" +
-			"              stricter rate limits, for frameworks without native hooks\n" +
+			"              stricter rate limits, for frameworks without native hooks;\n" +
+			"              qsdev_nix_run is off unless --gateway-allow-nix-run\n" +
 			"  standalone  requires an explicit --project-root and serves /health",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runServe(cmd.Context(), opts)
@@ -107,6 +114,9 @@ func Command() *cobra.Command {
 		"path to the server private key (PEM) for mTLS; falls back to "+EnvTLSKey)
 	cmd.Flags().StringVar(&opts.tlsClientCA, "tls-client-ca", "",
 		"path to the client-CA bundle (PEM) verifying client certs; falls back to "+EnvTLSClientCA)
+	cmd.Flags().BoolVar(&opts.gatewayNixRun, "gateway-allow-nix-run", false,
+		"gateway mode: mount qsdev_nix_run, which runs Nix packages on the gateway "+
+			"host and is off by default there; falls back to "+envGatewayNixRun)
 
 	return cmd
 }
@@ -164,10 +174,11 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	// enforced on MCP calls — not merely reported denied by qsdev_policy_check. A
 	// present-but-unparseable config fails startup rather than silently running
 	// un-narrowed (fail closed).
-	policy, err := projectPolicy(root)
+	cfg, err := loadProjectConfig(root)
 	if err != nil {
 		return err
 	}
+	policy := middleware.PolicyFromConfig(cfg)
 
 	// Select the middleware chain for the deployment mode. Native and standalone
 	// run the standard six-layer chain; gateway wraps it with an outer
@@ -189,8 +200,10 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	}
 
 	// Mount the security and devenv tool surface (Unit 32.9). These are
-	// framework-agnostic and always visible, like the project context tools.
-	srv.MountTools(tools.All(root, policy))
+	// framework-agnostic and visible to every client, like the project context
+	// tools; the opt-in ones are mounted only when toolOptions selects them.
+	gatewayNixRun := opts.gatewayNixRun || envTruthy(os.Getenv(envGatewayNixRun))
+	srv.MountTools(tools.All(root, policy, toolOptions(cfg, mode, gatewayNixRun)))
 	warnUnknownDisabledTools(policy.DenyToolSet(), MountableToolNames(spi.DefaultRegistry().All()))
 
 	if ctx == nil {
@@ -256,19 +269,19 @@ func chainForMode(mode container.DeployMode, policy *middleware.Policy) *spi.Cha
 	return middleware.DefaultChain(middleware.WithPolicy(policy))
 }
 
-// projectPolicy loads the project's .qsdev.yaml (when present) and derives the
-// Guardrail permission policy from its mcp.disabled_tools list via the single shared
-// middleware.PolicyFromConfig derivation (the same one qsdev_policy_check reports
-// from).
+// loadProjectConfig loads the project's .qsdev.yaml, from which the server
+// derives its Guardrail permission policy (mcp.disabled_tools, via the single
+// shared middleware.PolicyFromConfig derivation qsdev_policy_check also reports
+// from) and its opt-in tools (toolOptions).
 //
-// It fails closed on a PRESENT-but-unparseable config: returning a nil
-// (permissive) policy there would silently drop every mcp.disabled_tools deny the
-// operator intended — the exact fail-open the strict decoder can now trigger
-// from a single unknown/typo'd key. An ABSENT config is benign (nothing to
-// narrow) and yields a nil policy with no error. errors.Is unwraps the
-// fmt-wrapped read error so a missing file is detected reliably (os.IsNotExist
-// would not, and would misreport a missing config as a parse failure).
-func projectPolicy(root string) (*middleware.Policy, error) {
+// It fails closed on a PRESENT-but-unparseable config: a nil config there would
+// silently drop every mcp.disabled_tools deny the operator intended — the exact
+// fail-open the strict decoder can trigger from a single unknown/typo'd key. An
+// ABSENT config is benign (nothing to narrow, nothing opted in) and yields a nil
+// config with no error. errors.Is unwraps the fmt-wrapped read error so a
+// missing file is detected reliably (os.IsNotExist would not, and would
+// misreport a missing config as a parse failure).
+func loadProjectConfig(root string) (*types.QsdevConfig, error) {
 	if root == "" {
 		return nil, nil
 	}
@@ -281,7 +294,23 @@ func projectPolicy(root string) (*middleware.Policy, error) {
 		return nil, fmt.Errorf("parsing project config %s for MCP guardrail policy "+
 			"(refusing to serve un-narrowed): %w", path, err)
 	}
-	return middleware.PolicyFromConfig(cfg), nil
+	return cfg, nil
+}
+
+// toolOptions selects the opt-in tools to mount. qsdev_credential_vend follows
+// the project's security.credential_vend (off unless enabled; a nil cfg leaves
+// it off). qsdev_nix_run is on, except in gateway mode, where it would run Nix
+// packages on the gateway host for every framework the gateway fronts, so it
+// needs the operator's gatewayNixRun opt-in.
+func toolOptions(cfg *types.QsdevConfig, mode container.DeployMode, gatewayNixRun bool) tools.Options {
+	opts := tools.Options{NixRun: mode != container.DeployGateway || gatewayNixRun}
+	if cfg != nil {
+		opts.CredentialVend = cfg.Security.CredentialVend
+	}
+	if !opts.NixRun {
+		slog.Info("qsdev_nix_run is not mounted in gateway mode; opt in with --gateway-allow-nix-run or " + envGatewayNixRun)
+	}
+	return opts
 }
 
 // warnUnknownDisabledTools logs every denied tool name the server cannot mount.

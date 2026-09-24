@@ -15,6 +15,7 @@ const (
 	reasonLocalPackageMgr    = "a local override cannot change a language's committed package manager"
 	reasonLocalServiceOption = "a local override can add service options but not change committed ones"
 	reasonLocalPermission    = "a local override can only tighten the permission level"
+	reasonLocalCredVend      = "credential vending can only be configured in the committed config"
 )
 
 // sanitizeLocal returns the part of the developer's local layer that only
@@ -31,7 +32,9 @@ const (
 //   - tools.disabled, tools.config and a claude_code.enabled that differs from
 //     base are dropped;
 //   - security settings are kept: enforceSecurityFloor floors them after the
-//     merge, so they can only raise the project's floor.
+//     merge, so they can only raise the project's floor. The exception is
+//     security.credential_vend, an opt-in to hand out cloud credentials,
+//     which is dropped.
 func sanitizeLocal(base *types.QsdevConfig, local *LocalConfig) (*types.QsdevConfig, []FloorViolation) {
 	applied := &types.QsdevConfig{
 		Security: types.SecurityConfig{
@@ -59,6 +62,14 @@ func sanitizeLocal(base *types.QsdevConfig, local *LocalConfig) (*types.QsdevCon
 	}
 	for _, name := range slices.Sorted(maps.Keys(local.Tools.Config)) {
 		violations = append(violations, FloorViolation{Field: "tools.config", Attempted: name, Reason: reasonLocalToolConfig})
+	}
+
+	if !local.Security.CredentialVend.IsZero() {
+		violations = append(violations, FloorViolation{
+			Field:     "security.credential_vend",
+			Attempted: local.Security.CredentialVend,
+			Reason:    reasonLocalCredVend,
+		})
 	}
 
 	if local.ClaudeCode.Enabled != nil && *local.ClaudeCode.Enabled != claudeCodeEnabled(base) {

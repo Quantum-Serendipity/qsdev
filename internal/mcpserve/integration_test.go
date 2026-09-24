@@ -463,7 +463,7 @@ func TestFullProtocolFlow(t *testing.T) {
 
 	srv := mcpserve.New(mcpserve.WithProjectRoot(dir))
 	srv.MountProjectContext(pc)
-	srv.MountTools(tools.All(dir, nil))
+	srv.MountTools(tools.All(dir, nil, tools.Options{NixRun: true}))
 
 	c := newTestClient(t, srv)
 
@@ -534,7 +534,7 @@ func TestMultiFrameworkMilestone(t *testing.T) {
 
 	srv := mcpserve.New(mcpserve.WithProjectRoot(dir), mcpserve.WithMultiAdapter(true))
 	srv.MountProjectContext(pc)
-	srv.MountTools(tools.All(dir, nil))
+	srv.MountTools(tools.All(dir, nil, tools.Options{NixRun: true}))
 
 	c := newTestClient(t, srv)
 	c.initialize("integration-milestone-client")

@@ -98,6 +98,22 @@ func NotConfigured(reason string, extra map[string]any) *spi.ToolResult {
 	}
 }
 
+// Denied builds the result of a request the project's policy refuses: a
+// structured "denied" payload (status + reason + any extra fields) with IsError
+// set. Unlike NotConfigured, the prerequisite is present but the request is not
+// permitted, so retrying without changing the policy cannot succeed.
+func Denied(reason string, extra map[string]any) *spi.ToolResult {
+	payload := map[string]any{"status": "denied", "reason": reason}
+	for k, v := range extra {
+		payload[k] = v
+	}
+	return &spi.ToolResult{
+		Text:       "denied: " + reason,
+		Structured: payload,
+		IsError:    true,
+	}
+}
+
 // ErrorResult builds a tool-level error result carrying a structured payload and
 // IsError. It is used for runtime failures (an external API rejected the call, a
 // subprocess failed to start) that are not missing-prerequisite conditions.

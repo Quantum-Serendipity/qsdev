@@ -1,5 +1,7 @@
 package types
 
+import "slices"
+
 // Schema version constants for .qsdev.yaml configuration files.
 //
 // Version 2 split the v1 `profile` key, which held the infrastructure profile
@@ -59,6 +61,76 @@ type SecurityConfig struct {
 	ScriptBlocking  *bool  `yaml:"script_blocking,omitempty"`
 	LockEnforcement *bool  `yaml:"lock_enforcement,omitempty"`
 	VulnScanning    *bool  `yaml:"vuln_scanning,omitempty"`
+	// CredentialVend opts the MCP server's qsdev_credential_vend tool in and
+	// allow-lists what it may vend. The zero value (the default) leaves the
+	// tool unmounted.
+	CredentialVend CredentialVendConfig `yaml:"credential_vend,omitempty"`
+}
+
+// CredentialVendConfig is security.credential_vend in .qsdev.yaml: the opt-in
+// and allow-lists for qsdev_credential_vend, which exchanges the host's
+// ambient cloud identity for short-lived credentials. Nothing is vended unless
+// Enabled is true, and then only for an identity a provider section lists.
+type CredentialVendConfig struct {
+	Enabled bool                      `yaml:"enabled,omitempty"`
+	AWS     AWSCredentialVendConfig   `yaml:"aws,omitempty"`
+	GCP     GCPCredentialVendConfig   `yaml:"gcp,omitempty"`
+	Azure   AzureCredentialVendConfig `yaml:"azure,omitempty"`
+}
+
+// IsZero reports whether no credential_vend key is set.
+func (c CredentialVendConfig) IsZero() bool {
+	return !c.Enabled && c.AWS.IsZero() && c.GCP.IsZero() && c.Azure.IsZero()
+}
+
+// Clone returns a deep copy of c.
+func (c CredentialVendConfig) Clone() CredentialVendConfig {
+	out := c
+	out.AWS.RoleARNs = slices.Clone(c.AWS.RoleARNs)
+	out.GCP.ServiceAccounts = slices.Clone(c.GCP.ServiceAccounts)
+	out.Azure.Scopes = slices.Clone(c.Azure.Scopes)
+	out.Azure.Identities = slices.Clone(c.Azure.Identities)
+	return out
+}
+
+// AWSCredentialVendConfig allow-lists AWS STS vending.
+type AWSCredentialVendConfig struct {
+	// RoleARNs are the roles an AssumeRole request may name (exact match).
+	RoleARNs []string `yaml:"role_arns,omitempty"`
+	// AllowSessionToken permits a request without role_arn, which calls
+	// GetSessionToken and returns credentials carrying the full permissions
+	// of the ambient IAM user. Denied by default.
+	AllowSessionToken bool `yaml:"allow_session_token,omitempty"`
+}
+
+// IsZero reports whether no aws key is set.
+func (c AWSCredentialVendConfig) IsZero() bool {
+	return len(c.RoleARNs) == 0 && !c.AllowSessionToken
+}
+
+// GCPCredentialVendConfig allow-lists GCP service-account impersonation.
+type GCPCredentialVendConfig struct {
+	// ServiceAccounts are the service accounts (email or numeric unique ID) a
+	// request may impersonate.
+	ServiceAccounts []string `yaml:"service_accounts,omitempty"`
+}
+
+// IsZero reports whether no gcp key is set.
+func (c GCPCredentialVendConfig) IsZero() bool { return len(c.ServiceAccounts) == 0 }
+
+// AzureCredentialVendConfig allow-lists Azure Managed Identity tokens.
+type AzureCredentialVendConfig struct {
+	// Scopes are the token scopes (audiences) a request may ask for; the
+	// tool's default scope must be listed to be used.
+	Scopes []string `yaml:"scopes,omitempty"`
+	// Identities are the user-assigned managed-identity client IDs a request
+	// may select. A request naming no identity uses the system-assigned one.
+	Identities []string `yaml:"identities,omitempty"`
+}
+
+// IsZero reports whether no azure key is set.
+func (c AzureCredentialVendConfig) IsZero() bool {
+	return len(c.Scopes) == 0 && len(c.Identities) == 0
 }
 
 // ToolsConfig controls which optional tools are enabled/disabled in .qsdev.yaml.

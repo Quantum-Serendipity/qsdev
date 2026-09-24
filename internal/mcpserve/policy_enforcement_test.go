@@ -26,6 +26,16 @@ func writeDisablingConfig(t *testing.T, dir, toolName string) {
 	}
 }
 
+// policyFromDir derives the Guardrail policy the serve command installs for the
+// project in dir: loadProjectConfig, then middleware.PolicyFromConfig.
+func policyFromDir(dir string) (*middleware.Policy, error) {
+	cfg, err := loadProjectConfig(dir)
+	if err != nil {
+		return nil, err
+	}
+	return middleware.PolicyFromConfig(cfg), nil
+}
+
 // callThroughChain drives a single tool call through chain and reports whether
 // the final handler ran and the result it produced. A Guardrail deny short-
 // circuits before the final handler, so ran stays false and res.IsError is true.
@@ -61,7 +71,7 @@ func TestChainForModeEnforcesDisabledTool(t *testing.T) {
 	dir := t.TempDir()
 	writeDisablingConfig(t, dir, disabledTool)
 
-	policy, err := projectPolicy(dir)
+	policy, err := policyFromDir(dir)
 	if err != nil {
 		t.Fatalf("projectPolicy returned error for a valid config: %v", err)
 	}
@@ -109,7 +119,7 @@ func TestChainForModeEnforcesDisabledTool(t *testing.T) {
 func TestProjectPolicyFailsClosedOnUnparseableConfig(t *testing.T) {
 	// Absent config: benign — no error, permissive (nil) policy.
 	empty := t.TempDir()
-	if policy, err := projectPolicy(empty); err != nil || policy != nil {
+	if policy, err := policyFromDir(empty); err != nil || policy != nil {
 		t.Fatalf("absent config: got (policy=%v, err=%v), want (nil, nil)", policy, err)
 	}
 
@@ -120,7 +130,7 @@ func TestProjectPolicyFailsClosedOnUnparseableConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bad, ".qsdev.yaml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	policy, err := projectPolicy(bad)
+	policy, err := policyFromDir(bad)
 	if err == nil {
 		t.Fatal("unparseable config: projectPolicy returned nil error — the server would run " +
 			"permissively, silently dropping every mcp.disabled_tools deny (fail open)")
@@ -158,7 +168,7 @@ func TestProjectPolicyIgnoresCatalogDisables(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte(tt.body), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			policy, err := projectPolicy(dir)
+			policy, err := policyFromDir(dir)
 			if err != nil {
 				t.Fatalf("projectPolicy: %v", err)
 			}

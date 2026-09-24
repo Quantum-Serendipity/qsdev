@@ -6,16 +6,19 @@
 //
 // Every handler degrades gracefully: a missing provider, lock file, or policy
 // file yields a structured not_configured result rather than an error or a
-// crash. credential_vend is tagged CategoryCredential (for rate limiting) and,
-// as the sole tool registered under middleware.CredentialVendToolName, is the
-// only surface exempt from ContentSafety redaction so its short-lived token
-// output survives — the exemption is keyed on that trusted tool identity, not on
-// the self-declared category, so no other tool can borrow the exemption.
+// crash. credential_vend is opt-in: it is registered only when the project's
+// security.credential_vend is enabled and vends only allow-listed identities.
+// It is tagged CategoryCredential (for rate limiting) and, as the sole tool
+// registered under middleware.CredentialVendToolName, is the only surface
+// exempt from ContentSafety redaction so its short-lived token output survives
+// — the exemption is keyed on that trusted tool identity, not on the
+// self-declared category, so no other tool can borrow the exemption.
 package security
 
 import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Tier values mirror projectctx's tool tiers: lower is more core. policy_check
@@ -25,23 +28,30 @@ const (
 	tierStandard = 1
 )
 
-// Tools returns the three security tool registrations bound to projectRoot.
+// Tools returns the security tool registrations bound to projectRoot.
 // enforced is the Guardrail policy the running server installed (nil when it
 // narrows nothing); qsdev_policy_check reports its deny set as MCP-enforced.
-func Tools(projectRoot string, enforced *middleware.Policy) []spi.ToolRegistration {
-	cv := newCredentialVendor()
+// credentialVend is the project's security.credential_vend: the credential
+// vending tool is registered only when it is enabled, and then vends only what
+// its allow-lists name.
+func Tools(projectRoot string, enforced *middleware.Policy, credentialVend types.CredentialVendConfig) []spi.ToolRegistration {
 	scanner := newSecurityScanner(projectRoot)
 	checker := newPolicyChecker(projectRoot, enforced)
 
-	return []spi.ToolRegistration{
-		{
+	var regs []spi.ToolRegistration
+	if credentialVend.Enabled {
+		cv := newCredentialVendor(credentialVend)
+		regs = append(regs, spi.ToolRegistration{
 			Name:        middleware.CredentialVendToolName,
-			Description: "Vend short-lived cloud credentials by exchanging the host's ambient identity: AWS STS (AssumeRole/GetSessionToken), GCP IAM Credentials (service-account access token), or Azure Managed Identity. Returns only time-boxed credential material, never long-lived secrets.",
+			Description: "Vend short-lived cloud credentials by exchanging the host's ambient identity: AWS STS (AssumeRole, or GetSessionToken when allowed), GCP IAM Credentials (service-account access token), or Azure Managed Identity. Only the roles, service accounts, scopes and identities the project's security.credential_vend allow-lists name can be vended. Returns only time-boxed credential material, never long-lived secrets.",
 			InputSchema: credentialVendSchema(),
 			Category:    middleware.CategoryCredential,
 			Tier:        tierStandard,
 			Handler:     cv.handle,
-		},
+		})
+	}
+
+	return append(regs, []spi.ToolRegistration{
 		{
 			Name:        "qsdev_security_scan",
 			Description: "Scan the project's pinned dependencies (from the lock file of every detected ecosystem: go.sum, package-lock.json, Cargo.lock, poetry.lock, uv.lock, Pipfile.lock, or requirements.txt) against the OSV.dev vulnerability database and report findings at or above a severity threshold.",
@@ -60,7 +70,7 @@ func Tools(projectRoot string, enforced *middleware.Policy) []spi.ToolRegistrati
 			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     checker.handle,
 		},
-	}
+	}...)
 }
 
 func credentialVendSchema() map[string]any {
@@ -72,7 +82,7 @@ func credentialVendSchema() map[string]any {
 				"enum":        []any{"aws", "gcp", "azure"},
 				"description": "Cloud provider to vend credentials from.",
 			},
-			"role_arn":        map[string]any{"type": "string", "description": "AWS only: role ARN to AssumeRole into. Omit to use GetSessionToken."},
+			"role_arn":        map[string]any{"type": "string", "description": "AWS only: role ARN to AssumeRole into; must be in security.credential_vend.aws.role_arns. Omit to use GetSessionToken, which requires security.credential_vend.aws.allow_session_token."},
 			"service_account": map[string]any{"type": "string", "description": "GCP only: service-account email to impersonate."},
 			"identity":        map[string]any{"type": "string", "description": "Azure only: user-assigned managed-identity client id. Omit for the system-assigned identity."},
 			"scope":           map[string]any{"type": "string", "description": "Azure only: token scope/audience (default https://management.azure.com/.default)."},

@@ -19,11 +19,7 @@ import (
 // callers pass adapters.All(), the list the qsdev entry point registers.
 func MountableToolNames(adapters []spi.FrameworkAdapter) []string {
 	names := projectctx.ToolNames()
-	// The registrations are only inspected for their names, so they are built
-	// unbound: no project root and no enforced policy.
-	for _, r := range tools.All("", nil) {
-		names = append(names, r.Name)
-	}
+	names = append(names, tools.Names()...)
 	for _, a := range adapters {
 		for _, r := range a.Tools() {
 			names = append(names, r.Name)

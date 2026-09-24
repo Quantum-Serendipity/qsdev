@@ -9,6 +9,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/projectctx"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // TestMountableToolNames checks that the mcp.disabled_tools namespace covers
@@ -25,9 +26,7 @@ func TestMountableToolNames(t *testing.T) {
 
 	var want []string
 	want = append(want, projectctx.ToolNames()...)
-	for _, r := range tools.All("", nil) {
-		want = append(want, r.Name)
-	}
+	want = append(want, tools.Names()...)
 	for _, a := range all {
 		for _, r := range a.Tools() {
 			want = append(want, r.Name)
@@ -70,7 +69,10 @@ func TestMountableToolNamesMatchesMountedServer(t *testing.T) {
 		t.Fatalf("NewProjectContext: %v", err)
 	}
 	srv.MountProjectContext(pc)
-	srv.MountTools(tools.All(dir, nil))
+	srv.MountTools(tools.All(dir, nil, tools.Options{
+		CredentialVend: types.CredentialVendConfig{Enabled: true},
+		NixRun:         true,
+	}))
 
 	mountable := mcpserve.MountableToolNames(spi.DefaultRegistry().All())
 	for name := range srv.MCPServer().ListTools() {

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/rules"
 )
 
 // TaskDefinition represents a standard development task composed of commands
@@ -46,6 +47,9 @@ func AggregateTaskDefinitions(
 	if enabledTools["semgrep"] {
 		secScan.Commands = append(secScan.Commands, semgrepScanCommand(modules))
 	}
+	if enabledTools["opengrep"] {
+		secScan.Commands = append(secScan.Commands, opengrepScanCommand)
+	}
 	if enabledTools["gitleaks"] {
 		secScan.Commands = append(secScan.Commands, "gitleaks detect --no-banner")
 	}
@@ -68,6 +72,11 @@ func AggregateTaskDefinitions(
 
 	return result
 }
+
+// opengrepScanCommand runs OpenGrep against the core taint-rule library the
+// opengrep tool delivers into the project, failing the task on any finding.
+// OpenGrep has no project config file, so the rules are passed directly.
+const opengrepScanCommand = "opengrep scan --config " + rules.ProjectCoreDir + " --error"
 
 // defaultSemgrepRuleSet is scanned when no selected module declares rule sets.
 const defaultSemgrepRuleSet = "p/owasp-top-ten"

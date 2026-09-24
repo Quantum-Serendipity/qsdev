@@ -81,7 +81,7 @@ func TestSharedSectionsFor_DevenvNix(t *testing.T) {
 func TestTool_OwnsExclusively(t *testing.T) {
 	t.Parallel()
 	tool := &Tool{OwnedFiles: []FileOwnership{
-		{Path: ".opengrep/config.yaml", Ownership: Exclusive},
+		{Path: ".opengrep/nix/default.nix", Ownership: Exclusive},
 		{Path: ".opengrep/rules/core", Ownership: Exclusive},
 		{Path: "CLAUDE.md", Ownership: Shared, SectionID: "x"},
 	}}
@@ -89,7 +89,7 @@ func TestTool_OwnsExclusively(t *testing.T) {
 		path string
 		want bool
 	}{
-		{".opengrep/config.yaml", true},
+		{".opengrep/nix/default.nix", true},
 		{".opengrep/rules/core", true},
 		{".opengrep/rules/core/auth/jwt.yaml", true},
 		{".opengrep/rules/corex/a.yaml", false},

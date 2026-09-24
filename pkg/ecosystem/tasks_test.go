@@ -1,6 +1,7 @@
 package ecosystem
 
 import (
+	"slices"
 	"testing"
 )
 
@@ -239,6 +240,41 @@ func TestAggregateTaskDefinitions_SecurityScanBothTools(t *testing.T) {
 
 	if len(secTask.Commands) != 2 {
 		t.Errorf("expected 2 security-scan commands, got %d: %v", len(secTask.Commands), secTask.Commands)
+	}
+}
+
+// TestAggregateTaskDefinitions_SecurityScanOpengrep is the F217 regression:
+// enabling opengrep must actually run it, against the rule library delivered
+// into the project, failing the task on findings.
+func TestAggregateTaskDefinitions_SecurityScanOpengrep(t *testing.T) {
+	t.Parallel()
+
+	const opengrepCmd = "opengrep scan --config .opengrep/rules/core --error"
+	tests := []struct {
+		name    string
+		enabled map[string]bool
+		want    []string
+	}{
+		{name: "opengrep only", enabled: map[string]bool{"opengrep": true}, want: []string{opengrepCmd}},
+		{
+			name:    "opengrep with gitleaks",
+			enabled: map[string]bool{"opengrep": true, "gitleaks": true},
+			want:    []string{opengrepCmd, "gitleaks detect --no-banner"},
+		},
+		{name: "opengrep disabled", enabled: map[string]bool{"opengrep": false}, want: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			secTask := findTask(AggregateTaskDefinitions(nil, staticConfig, tt.enabled), "security-scan")
+			var got []string
+			if secTask != nil {
+				got = secTask.Commands
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("security-scan commands = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

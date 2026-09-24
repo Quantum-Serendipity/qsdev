@@ -254,6 +254,8 @@ If your project was initialized before qsdev 0.7.0, running `qsdev update` intro
 
 **Removed defaults sections** — The `profiles` and `profile_aliases` sections of the defaults file (`~/.config/qsdev/defaults.yaml`, see `qsdev defaults edit`) and of an organization catalog were never read by any command, so they have been removed. A file that still sets either section keeps loading: the section is ignored with a warning naming it and its line, and the rest of the file still applies. Delete the section to silence the warning. What a tier turns on is set by `tiers`, `tier_to_compliance` and `tier_to_enabled_tools`.
 
+**OpenGrep config file removed** — Projects that enabled `opengrep` got an `.opengrep/config.yaml` that OpenGrep cannot parse and that nothing ran. `qsdev update` now deletes that file if you have not edited it, or stops tracking it if you have; delete an edited copy yourself. Update only retires it when it regenerates opengrep's files, so in a project where it does not (for example one initialized with `--devenv-only`), delete the file by hand. The `security-scan` devenv task now runs `opengrep scan --config .opengrep/rules/core --error` instead.
+
 ## Common Issues
 
 ### `devenv.nix already exists; use --force to overwrite`

@@ -66,7 +66,7 @@ and unauthorized network access during CI builds.
 
 ### OpenGrep (opt-in)
 
-OpenGrep provides taint-focused static analysis with 96 custom rules targeting injection flaws, deserialization, and authentication bypasses across 7 frameworks. Enable with `qsdev enable opengrep`.
+OpenGrep provides taint-focused static analysis with 96 custom rules targeting injection flaws, deserialization, and authentication bypasses across 7 frameworks. Enable with `qsdev enable opengrep`. The rules are delivered to `.opengrep/rules/core/`, and the `security-scan` devenv task runs them with `opengrep scan --config .opengrep/rules/core --error`, failing on any finding.
 
 ## References
 

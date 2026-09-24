@@ -490,10 +490,17 @@ func planOrphans(
 	modStatus map[string]state.FileStatus,
 	answers types.WizardAnswers,
 ) []FileUpdatePlan {
+	generatedOwners := make(map[string]bool)
+	for _, f := range newFiles {
+		if f.Owner != "" {
+			generatedOwners[f.Owner] = true
+		}
+	}
+
 	var plans []FileUpdatePlan
 	for _, path := range state.OrphanedFiles(storedState, newFiles) {
 		stored := storedState.Files[path]
-		if !updateOwnsOrphan(path, stored, answers) {
+		if !updateOwnsOrphan(path, stored, answers, generatedOwners) {
 			continue
 		}
 
@@ -533,10 +540,14 @@ func planOrphans(
 
 // updateOwnsOrphan reports whether update is responsible for cleaning up a
 // tracked file it no longer generates. Files owned by a still-enabled tool
-// belong to the enable/disable lifecycle, and the per-developer local config
-// is created once by join and never regenerated.
-func updateOwnsOrphan(path string, stored types.FileState, answers types.WizardAnswers) bool {
-	if stored.Owner != "" && answers.EnabledTools[stored.Owner] {
+// belong to the enable/disable lifecycle, unless that tool's generator ran in
+// this update (generatedOwners): its output is then authoritative, so a file it
+// used to produce and no longer does was retired and is cleaned up here. When
+// the tool generated nothing (its addon is out of the generation scope, or it
+// yields no files at this tier) its tracked files are left alone. The
+// per-developer local config is created once by join and never regenerated.
+func updateOwnsOrphan(path string, stored types.FileState, answers types.WizardAnswers, generatedOwners map[string]bool) bool {
+	if stored.Owner != "" && answers.EnabledTools[stored.Owner] && !generatedOwners[stored.Owner] {
 		return false
 	}
 	return path != branding.Get().LocalConfig

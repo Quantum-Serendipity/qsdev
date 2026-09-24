@@ -292,6 +292,7 @@ func TestPlanOrphans(t *testing.T) {
 		"edited.md":                {},
 		"gone.md":                  {},
 		"tool.yml":                 {Owner: "semgrep"},
+		"retired-tool.yml":         {Owner: "opengrep"},
 		"disabled-tool.yml":        {Owner: "old-tool"},
 		"../outside.md":            {},
 		branding.Get().LocalConfig: {},
@@ -302,12 +303,17 @@ func TestPlanOrphans(t *testing.T) {
 		"edited.md":                {Status: types.Modified},
 		"gone.md":                  {Status: types.Deleted},
 		"tool.yml":                 {Status: types.Unmodified},
+		"retired-tool.yml":         {Status: types.Unmodified},
 		"disabled-tool.yml":        {Status: types.Unmodified},
 		"../outside.md":            {Status: types.Unmodified},
 		branding.Get().LocalConfig: {Status: types.Unmodified},
 	}
-	answers := types.WizardAnswers{EnabledTools: map[string]bool{"semgrep": true}}
-	newFiles := []types.GeneratedFile{{Path: "kept.md"}}
+	// semgrep is enabled but its generator did not run (no semgrep-owned file
+	// in this generation), so its tracked files stay with the enable/disable
+	// lifecycle. opengrep's generator did run, so its output is authoritative
+	// and a file it no longer produces is retired.
+	answers := types.WizardAnswers{EnabledTools: map[string]bool{"semgrep": true, "opengrep": true}}
+	newFiles := []types.GeneratedFile{{Path: "kept.md"}, {Path: "still-generated.yml", Owner: "opengrep"}}
 
 	got := map[string]UpdateAction{}
 	for _, fp := range planOrphans(stored, newFiles, modStatus, answers) {
@@ -318,6 +324,7 @@ func TestPlanOrphans(t *testing.T) {
 		"edited.md":         UpdateActionUntrack,
 		"gone.md":           UpdateActionUntrack,
 		"disabled-tool.yml": UpdateActionRemove,
+		"retired-tool.yml":  UpdateActionRemove,
 		"../outside.md":     UpdateActionUntrack,
 	}
 	if len(got) != len(want) {

@@ -81,8 +81,8 @@ func coreBehaviors() map[string]ToolBehavior {
 		},
 		"opengrep": {
 			GenerateFunc: func(a types.WizardAnswers) ([]types.GeneratedFile, error) {
-				// Delivers the config plus the embedded core rule library so the
-				// rules the config references exist in the user's project.
+				// Delivers the package derivation plus the embedded core rule
+				// library the security-scan task runs `opengrep scan` against.
 				return sectools.GenerateOpengrepFiles(a)
 			},
 		},

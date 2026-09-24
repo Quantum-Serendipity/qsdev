@@ -49,6 +49,8 @@ Each generated file has an assigned merge strategy that controls how it is handl
 
 When a file has been **deleted** by the user, it is not recreated unless `--force` is used. When a file is **unmodified** (matching stored hash), it is always safe to regenerate regardless of strategy.
 
+A tracked file that the generators no longer produce is cleaned up by `qsdev update`: removed when unmodified, left in place and untracked when you edited or deleted it. This includes a file retired from a still-enabled tool, as long as that tool's files were regenerated in the same update. Files of an enabled tool that the update did not regenerate (for example, because the project uses `--devenv-only`) are left to `qsdev disable`.
+
 ---
 
 ## Project Configuration

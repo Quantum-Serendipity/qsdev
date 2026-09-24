@@ -299,8 +299,16 @@ func TestLifecycle_OpengrepEnableDisable(t *testing.T) {
 	if len(opengrepRuleFiles(t, dir)) == 0 {
 		t.Fatal("enable wrote no opengrep rule files")
 	}
+	// F217: enabling opengrep must wire a scan, not just deliver rules.
+	const scanCmd = "opengrep scan --config .opengrep/rules/core --error"
+	if !strings.Contains(readProjectFile(t, dir, "devenv.nix"), scanCmd) {
+		t.Errorf("devenv.nix security-scan task does not run %q after enable", scanCmd)
+	}
 
 	mustDisable(t, dir, "opengrep")
+	if strings.Contains(readProjectFile(t, dir, "devenv.nix"), scanCmd) {
+		t.Error("devenv.nix still runs opengrep after disable")
+	}
 	if _, err := os.Stat(filepath.Join(dir, ".opengrep")); !os.IsNotExist(err) {
 		t.Errorf(".opengrep must be removed after disable (stat err=%v)", err)
 	}
@@ -328,8 +336,59 @@ func TestLifecycle_OpengrepEnableDisable(t *testing.T) {
 	if _, err := disableTool(t, dir, "opengrep"); err == nil || !strings.Contains(err.Error(), "modified") {
 		t.Fatalf("disable with a modified rule: want modification error, got %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".opengrep", "config.yaml")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".opengrep", "nix", "default.nix")); err != nil {
 		t.Errorf("refused disable must not delete anything: %v", err)
+	}
+}
+
+// TestLifecycle_OpengrepUpdateRetiresConfig is the F217 migration: projects
+// that enabled opengrep before the invented .opengrep/config.yaml was dropped
+// still track it as opengrep-owned. Update regenerates opengrep's files, so a
+// tracked file it no longer produces is retired: removed when unmodified, left
+// in place and untracked when the user edited it.
+func TestLifecycle_OpengrepUpdateRetiresConfig(t *testing.T) {
+	tests := []struct {
+		name     string
+		edit     bool
+		wantFile bool
+	}{
+		{name: "unmodified legacy config is removed", edit: false, wantFile: false},
+		{name: "edited legacy config is kept and untracked", edit: true, wantFile: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := initLifecycleProject(t)
+			mustEnable(t, dir, "opengrep")
+
+			const legacy = ".opengrep/config.yaml"
+			st := loadProjectState(t, dir)
+			writeTrackedFile(t, &st, dir, legacy, "rules:\n  - .opengrep/rules/core\nseverity: warning\n", "opengrep")
+			saveProjectState(t, dir, st)
+			if tt.edit {
+				if err := os.WriteFile(filepath.Join(dir, legacy), []byte("# user edit\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if out, err := executeInitCmd(t, dir, "--update"); err != nil {
+				t.Fatalf("update failed: %v\n%s", err, out)
+			}
+
+			_, statErr := os.Stat(filepath.Join(dir, legacy))
+			if exists := statErr == nil; exists != tt.wantFile {
+				t.Errorf("%s exists = %v after update, want %v", legacy, exists, tt.wantFile)
+			}
+			after := loadProjectState(t, dir)
+			if _, tracked := after.Files[legacy]; tracked {
+				t.Errorf("%s is still tracked after update", legacy)
+			}
+			if len(opengrepRuleFiles(t, dir)) == 0 {
+				t.Error("update must keep the opengrep rule library of the still-enabled tool")
+			}
+			if _, tracked := after.Files[".opengrep/nix/default.nix"]; !tracked {
+				t.Error("update untracked the still-generated opengrep derivation")
+			}
+		})
 	}
 }
 

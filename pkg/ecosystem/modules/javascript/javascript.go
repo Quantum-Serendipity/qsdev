@@ -278,7 +278,10 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 }
 
 // CICommands returns CI pipeline commands for the JavaScript/TypeScript ecosystem.
-// The frozen install command depends on the detected package manager.
+// The frozen install command depends on the detected package manager. npm
+// projects also get an `npm audit` scan step: the generated .npmrc's
+// audit-level only sets `npm audit`'s exit code (`npm ci` and `npm install`
+// never fail on audit results), so without this step nothing gates on it.
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
 	pm := config.PM("npm")
 
@@ -298,10 +301,11 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 	case "bun":
 		installCmd = "bun install --frozen-lockfile"
 	default:
+		pm = "npm"
 		installCmd = "npm ci --ignore-scripts"
 	}
 
-	return []ecosystem.CICommand{
+	cmds := []ecosystem.CICommand{
 		{
 			Name:        fmt.Sprintf("%s-install", pm),
 			Command:     installCmd,
@@ -309,6 +313,15 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 			Phase:       ecosystem.CIPhaseInstall,
 		},
 	}
+	if pm == "npm" {
+		cmds = append(cmds, ecosystem.CICommand{
+			Name:        "npm-audit",
+			Command:     "npm audit --audit-level=" + npmAuditLevel,
+			Description: fmt.Sprintf("Fail on known %s-or-higher severity vulnerabilities in dependencies", npmAuditLevel),
+			Phase:       ecosystem.CIPhaseScan,
+		})
+	}
+	return cmds
 }
 
 // PackageManagers returns metadata about all JavaScript package managers.

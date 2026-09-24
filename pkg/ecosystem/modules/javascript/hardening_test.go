@@ -285,7 +285,9 @@ func TestSecurityConfigs_NPMAuditLevelComment(t *testing.T) {
 	if strings.Contains(npmrc, "# Fail on moderate") {
 		t.Errorf(".npmrc claims audit-level fails installs:\n%s", npmrc)
 	}
-	if !strings.Contains(npmrc, "installs are not blocked") {
-		t.Errorf(".npmrc does not explain audit-level scope:\n%s", npmrc)
+	for _, want := range []string{"Installs are not blocked", "Run `npm audit` in CI", "audit-level=moderate\n"} {
+		if !strings.Contains(npmrc, want) {
+			t.Errorf(".npmrc lacks %q explaining audit-level scope:\n%s", want, npmrc)
+		}
 	}
 }

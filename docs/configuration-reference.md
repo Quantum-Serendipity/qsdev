@@ -833,7 +833,7 @@ Files with the `skip` strategy are conventional package-manager or tool configs 
 
 | File | Merge Strategy | Purpose |
 |------|---------------|---------|
-| `.npmrc` | `skip` | `ignore-scripts=true`, registry configuration, audit settings (only created if absent) |
+| `.npmrc` | `skip` | `ignore-scripts=true`, registry configuration, audit settings (only created if absent). `audit-level=moderate` sets only `npm audit`'s exit code; installs never fail on audit results, so the `ecosystem-ci` job runs `npm audit` to enforce it |
 | `.yarnrc.yml` | `skip` | `enableScripts: false`, registry configuration (Yarn Berry; only created if absent) |
 | `.yarnrc` | `skip` | `ignore-scripts true`, registry configuration (Yarn Classic v1; only created if absent) |
 | `pnpm-workspace.yaml` | `skip` | pnpm security config with age-gating (when pnpm is detected; only created if absent) |
@@ -983,7 +983,9 @@ when the project's `languages` contribute CI commands, installs Nix and devenv
 and runs each language module's CI commands in the devenv shell, install phase
 first (frozen/locked installs), then test, then scan (audits). Which commands
 run follows each language's `package_manager` and `extras`, for example
-`javascript` with `package_manager: pnpm` runs `pnpm install --frozen-lockfile`,
+`javascript` with `package_manager: pnpm` runs `pnpm install --frozen-lockfile`
+(with `npm`, `npm ci --ignore-scripts` then the scan step
+`npm audit --audit-level=moderate`),
 `haskell` with `build_tool=stack` runs `stack build --lock-file=error-on-write`,
 and `scala` with `build_tool=mill` gets no sbt steps. Some commands need a
 setting detection records: `r` runs its renv steps only with

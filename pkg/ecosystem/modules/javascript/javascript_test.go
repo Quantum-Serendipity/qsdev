@@ -858,66 +858,49 @@ func bashRuleMatches(rule, cmd string) bool {
 
 // --- CICommands tests ---
 
-func TestCICommands_NPM(t *testing.T) {
-	m := &javascript.Module{}
-	cmds := m.CICommands(ecosystem.ModuleConfig{PackageManager: "npm"})
+// TestCICommands verifies the per-package-manager CI steps: a frozen,
+// lock-enforcing install, and for npm an `npm audit` scan step. The .npmrc
+// audit-level only sets `npm audit`'s exit code (installs never fail on
+// audit results), so CI must run `npm audit` for it to gate anything (W067).
+func TestCICommands(t *testing.T) {
+	t.Parallel()
+	install := func(cmd string) ecosystem.CICommand {
+		return ecosystem.CICommand{Command: cmd, Phase: ecosystem.CIPhaseInstall}
+	}
+	npmAudit := ecosystem.CICommand{Command: "npm audit --audit-level=moderate", Phase: ecosystem.CIPhaseScan}
 
-	if len(cmds) != 1 {
-		t.Fatalf("CICommands() returned %d commands, want 1", len(cmds))
+	tests := []struct {
+		name   string
+		config ecosystem.ModuleConfig
+		want   []ecosystem.CICommand
+	}{
+		{"npm", ecosystem.ModuleConfig{PackageManager: "npm"}, []ecosystem.CICommand{install("npm ci --ignore-scripts"), npmAudit}},
+		{"default is npm", ecosystem.ModuleConfig{}, []ecosystem.CICommand{install("npm ci --ignore-scripts"), npmAudit}},
+		{"pnpm", ecosystem.ModuleConfig{PackageManager: "pnpm"}, []ecosystem.CICommand{install("pnpm install --frozen-lockfile")}},
+		{"yarn berry", ecosystem.ModuleConfig{PackageManager: "yarn"}, []ecosystem.CICommand{install("yarn install --immutable")}},
+		{
+			"yarn classic",
+			ecosystem.ModuleConfig{PackageManager: "yarn", Extras: map[string]string{javascript.ExtraYarnClassic: "true"}},
+			[]ecosystem.CICommand{install("yarn install --frozen-lockfile --ignore-scripts")},
+		},
+		{"bun", ecosystem.ModuleConfig{PackageManager: "bun"}, []ecosystem.CICommand{install("bun install --frozen-lockfile")}},
 	}
-	if cmds[0].Command != "npm ci --ignore-scripts" {
-		t.Errorf("Command = %q, want %q", cmds[0].Command, "npm ci --ignore-scripts")
-	}
-	if cmds[0].Phase != ecosystem.CIPhaseInstall {
-		t.Errorf("Phase = %v, want CIPhaseInstall", cmds[0].Phase)
-	}
-}
-
-func TestCICommands_PNPM(t *testing.T) {
-	m := &javascript.Module{}
-	cmds := m.CICommands(ecosystem.ModuleConfig{PackageManager: "pnpm"})
-
-	if len(cmds) != 1 {
-		t.Fatalf("CICommands() returned %d commands, want 1", len(cmds))
-	}
-	if cmds[0].Command != "pnpm install --frozen-lockfile" {
-		t.Errorf("Command = %q, want %q", cmds[0].Command, "pnpm install --frozen-lockfile")
-	}
-}
-
-func TestCICommands_Yarn(t *testing.T) {
-	m := &javascript.Module{}
-	cmds := m.CICommands(ecosystem.ModuleConfig{PackageManager: "yarn"})
-
-	if len(cmds) != 1 {
-		t.Fatalf("CICommands() returned %d commands, want 1", len(cmds))
-	}
-	if cmds[0].Command != "yarn install --immutable" {
-		t.Errorf("Command = %q, want %q", cmds[0].Command, "yarn install --immutable")
-	}
-}
-
-func TestCICommands_Bun(t *testing.T) {
-	m := &javascript.Module{}
-	cmds := m.CICommands(ecosystem.ModuleConfig{PackageManager: "bun"})
-
-	if len(cmds) != 1 {
-		t.Fatalf("CICommands() returned %d commands, want 1", len(cmds))
-	}
-	if cmds[0].Command != "bun install --frozen-lockfile" {
-		t.Errorf("Command = %q, want %q", cmds[0].Command, "bun install --frozen-lockfile")
-	}
-}
-
-func TestCICommands_DefaultPM(t *testing.T) {
-	m := &javascript.Module{}
-	cmds := m.CICommands(ecosystem.ModuleConfig{})
-
-	if len(cmds) != 1 {
-		t.Fatalf("CICommands() returned %d commands, want 1", len(cmds))
-	}
-	if cmds[0].Command != "npm ci --ignore-scripts" {
-		t.Errorf("default CICommands should use npm ci --ignore-scripts, got %q", cmds[0].Command)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := (&javascript.Module{}).CICommands(tt.config)
+			if len(got) != len(tt.want) {
+				t.Fatalf("CICommands() = %+v, want %d commands", got, len(tt.want))
+			}
+			for i, want := range tt.want {
+				if got[i].Command != want.Command || got[i].Phase != want.Phase {
+					t.Errorf("command %d = %q (%v), want %q (%v)", i, got[i].Command, got[i].Phase, want.Command, want.Phase)
+				}
+				if got[i].Name == "" || got[i].Description == "" {
+					t.Errorf("command %d %q lacks a name or description", i, got[i].Command)
+				}
+			}
+		})
 	}
 }
 

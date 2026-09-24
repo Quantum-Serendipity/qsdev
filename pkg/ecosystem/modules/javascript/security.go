@@ -46,6 +46,11 @@ func pnpmSupportsHardening(pin string) bool {
 	return major > 10 || (major == 10 && minor >= 16)
 }
 
+// npmAuditLevel is the minimum severity that makes `npm audit` exit non-zero.
+// The generated .npmrc sets it as audit-level and the generated CI passes it
+// to the `npm audit` step (CICommands), which is what actually gates on it.
+const npmAuditLevel = "moderate"
+
 // bunMinimumReleaseAgeSeconds is the Bun install age gate. bunfig.toml's
 // install.minimumReleaseAge is an integer number of SECONDS; a string such
 // as "7d" makes `bun install` fail with "Invalid Bunfig".
@@ -104,9 +109,10 @@ func npmSecurityConfig(registryProxy, nodeVersion string) types.GeneratedFile {
 	b.WriteString("min-release-age=3\n")
 	b.WriteString("# Enable automatic security auditing on install\n")
 	b.WriteString("audit=true\n")
-	b.WriteString("# Make `npm audit` exit non-zero on moderate and above vulnerabilities\n")
-	b.WriteString("# (installs are not blocked; run `npm audit` in CI to gate on it)\n")
-	b.WriteString("audit-level=moderate\n")
+	fmt.Fprintf(&b, "# Make `npm audit` exit non-zero on %s and above vulnerabilities.\n", npmAuditLevel)
+	b.WriteString("# Installs are not blocked by it: `npm ci`/`npm install` never fail on audit\n")
+	b.WriteString("# results. Run `npm audit` in CI to gate on it (the qsdev ecosystem-ci job does).\n")
+	fmt.Fprintf(&b, "audit-level=%s\n", npmAuditLevel)
 
 	return types.GeneratedFile{
 		Path:     ".npmrc",

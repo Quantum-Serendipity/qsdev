@@ -436,9 +436,13 @@ vulnerability scanner or CI runner protection. It has two jobs:
   `pnpm install --frozen-lockfile`, `cargo build --locked`,
   `dotnet restore --locked-mode`, `uv sync --locked`,
   `terraform init -lockfile=readonly`), then **test** steps, then **scan**
-  steps (audits such as `cargo audit`, `govulncheck`, `pip-audit`, Grype on the
-  built container image). The modules add these audit tools (`cargo-audit`,
-  `pip-audit`, `bundler-audit`, `syft`, `grype`, `govulncheck`) to the
+  steps (audits such as `cargo audit`, `govulncheck`, `pip-audit`,
+  `npm audit --audit-level=moderate`, Grype on the built container image).
+  The `.npmrc` `audit-level` setting only sets `npm audit`'s exit code — `npm ci`
+  and `npm install` never fail on audit results — so the `npm audit` step is
+  what makes moderate-or-higher advisories fail CI for npm projects.
+  The modules add these audit tools (`cargo-audit`, `pip-audit`,
+  `bundler-audit`, `syft`, `grype`, `govulncheck`) to the
   `devenv.nix` packages, so they are on the shell's PATH locally and in CI.
   A drifted or missing lock entry therefore fails CI before anything builds.
   Other lock-enforcing installs include `stack build --lock-file=error-on-write`,

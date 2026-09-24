@@ -9,33 +9,10 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
-// HookDeploymentTier controls which settings file a hook is generated into.
-type HookDeploymentTier int
-
-const (
-	// TierProject deploys to .claude/settings.json (project-level).
-	TierProject HookDeploymentTier = iota
-	// TierTeam deploys to ~/.claude/settings.json (user-level).
-	TierTeam
-	// TierOrg deploys to /etc/claude-code/managed-settings.json (org-level, non-overridable).
-	TierOrg
-)
-
-func (t HookDeploymentTier) String() string {
-	switch t {
-	case TierProject:
-		return "project"
-	case TierTeam:
-		return "team"
-	case TierOrg:
-		return "org"
-	default:
-		return "unknown"
-	}
-}
-
 // HookDefinition describes a hook that can be registered with the HookRegistry.
-// Each definition maps to one HookMatcher entry in the generated settings.json.
+// Each definition maps to one HookMatcher entry in the project's generated
+// .claude/settings.json; qsdev does not generate user-level or managed
+// (organisation) settings.
 type HookDefinition struct {
 	Owner           string
 	Event           string
@@ -43,7 +20,6 @@ type HookDefinition struct {
 	Command         string
 	Timeout         int
 	StatusMessage   string
-	Tier            HookDeploymentTier
 	SandboxCategory string // sandbox permission profile (e.g., "linter", "generator")
 	EnabledFunc     func(types.WizardAnswers) bool
 	// CommandFunc, when set, derives the emitted command from the answers
@@ -93,18 +69,9 @@ func (r *HookRegistry) Register(h HookDefinition) {
 // to only those whose EnabledFunc returns true for the provided answers. If
 // EnabledFunc is nil the hook is always enabled.
 func (r *HookRegistry) HooksForEvent(event string, answers types.WizardAnswers) []HookMatcher {
-	return r.hooksForEventFiltered(event, answers, nil)
-}
-
-// hooksForEventFiltered returns matchers for an event, optionally restricted to
-// a specific deployment tier. When tier is nil all tiers are included.
-func (r *HookRegistry) hooksForEventFiltered(event string, answers types.WizardAnswers, tier *HookDeploymentTier) []HookMatcher {
 	var matchers []HookMatcher
 	for _, h := range r.hooks {
 		if h.Event != event {
-			continue
-		}
-		if tier != nil && h.Tier != *tier {
 			continue
 		}
 		if h.EnabledFunc != nil && !h.EnabledFunc(answers) {
@@ -150,12 +117,6 @@ func HooksWithoutPolicy(answers types.WizardAnswers) []HookWithoutPolicy {
 // returns the complete hooks map keyed by event name, ready for SettingsJSON.
 // Returns nil when no hooks are enabled.
 func (r *HookRegistry) BuildHooksMap(answers types.WizardAnswers) map[string][]HookMatcher {
-	return r.BuildHooksMapForTier(answers, nil)
-}
-
-// BuildHooksMapForTier evaluates hooks filtered to a specific deployment tier.
-// Pass nil to include all tiers.
-func (r *HookRegistry) BuildHooksMapForTier(answers types.WizardAnswers, tier *HookDeploymentTier) map[string][]HookMatcher {
 	hooks := make(map[string][]HookMatcher)
 	seen := make(map[string]bool)
 	for _, h := range r.hooks {
@@ -164,7 +125,7 @@ func (r *HookRegistry) BuildHooksMapForTier(answers types.WizardAnswers, tier *H
 		}
 	}
 	for event := range seen {
-		if matchers := r.hooksForEventFiltered(event, answers, tier); len(matchers) > 0 {
+		if matchers := r.HooksForEvent(event, answers); len(matchers) > 0 {
 			hooks[event] = matchers
 		}
 	}

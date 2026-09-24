@@ -93,12 +93,6 @@ var ExportConfigSecretPatterns = ConfigSecretPatterns
 // ExportPlaceholderIndicators exposes PlaceholderIndicators for external tests.
 var ExportPlaceholderIndicators = PlaceholderIndicators
 
-const (
-	ExportTierProject = TierProject
-	ExportTierTeam    = TierTeam
-	ExportTierOrg     = TierOrg
-)
-
 var (
 	ExportNewHookRegistry     = NewHookRegistry
 	ExportDefaultHookRegistry = defaultHookRegistry

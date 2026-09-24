@@ -238,7 +238,7 @@ qsdev trial                   # Evaluate in an isolated git worktree
 | `claude add-skill <name>` | Add a skill |
 | `claude add-hook <name>` | Enable a hook preset |
 | `claude list-skills` | List available skills |
-| `claude hooks list` | List registered hooks with deployment tier and status |
+| `claude hooks list` | List registered hooks with configured and deployed status |
 
 ### sandbox subcommands
 

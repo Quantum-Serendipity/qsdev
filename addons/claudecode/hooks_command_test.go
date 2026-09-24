@@ -120,3 +120,26 @@ func TestHooksList_ToolGatesWithoutPolicy(t *testing.T) {
 		t.Errorf("table output does not mark tool-gates as having no policy:\n%s", out)
 	}
 }
+
+// TestHooksList_NoDeploymentTier guards F088: every hook is written to the
+// project's .claude/settings.json, so the listing must not claim a deployment
+// tier (team/org managed settings are not generated).
+func TestHooksList_NoDeploymentTier(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	tests := []struct {
+		name string
+		args []string
+		bad  string
+	}{
+		{"json", []string{"hooks", "list", "--json"}, `"tier"`},
+		{"table", []string{"hooks", "list"}, "Tier"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if out := mustRunClaude(t, tc.args...); strings.Contains(out, tc.bad) {
+				t.Errorf("hooks list output contains %s:\n%s", tc.bad, out)
+			}
+		})
+	}
+}

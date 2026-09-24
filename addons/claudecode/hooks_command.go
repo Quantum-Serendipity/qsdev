@@ -33,7 +33,6 @@ const (
 // display.
 type HookStatus struct {
 	Name    string `json:"name"`
-	Tier    string `json:"tier"`
 	Event   string `json:"event"`
 	Matcher string `json:"matcher"`
 	// Configured reports whether the saved answers enable the hook.
@@ -65,12 +64,11 @@ func listHooksCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all registered hooks with configured and deployed status",
-		Long: `List every registered hook with its deployment tier, whether the saved
-answers configure it, and whether it is actually deployed: wired into
-.claude/settings.json with its hook script present and unmodified. A hook
-configured without the policy it enforces (tool-gates with no
-.qsdev.yaml hooks.tool_gates lists) is shown as "yes (no policy)": it runs
-but restricts nothing.`,
+		Long: `List every registered hook, whether the saved answers configure it, and
+whether it is actually deployed: wired into .claude/settings.json with its
+hook script present and unmodified. A hook configured without the policy it
+enforces (tool-gates with no .qsdev.yaml hooks.tool_gates lists) is shown as
+"yes (no policy)": it runs but restricts nothing.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectRoot, err := cmdutil.ProjectRoot()
 			if err != nil {
@@ -155,7 +153,6 @@ func buildHookStatuses(registry *HookRegistry, answers types.WizardAnswers) []Ho
 		}
 		statuses = append(statuses, HookStatus{
 			Name:       h.Owner,
-			Tier:       h.Tier.String(),
 			Event:      h.Event,
 			Matcher:    h.Matcher,
 			Configured: configured,
@@ -232,8 +229,8 @@ func writeHookStatusesJSON(cmd *cobra.Command, statuses []HookStatus) error {
 
 func writeHookStatusesTable(cmd *cobra.Command, statuses []HookStatus) {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "Hook\tTier\tEvent\tMatcher\tConfigured\tDeployment")
-	_, _ = fmt.Fprintln(w, "----\t----\t-----\t-------\t----------\t----------")
+	_, _ = fmt.Fprintln(w, "Hook\tEvent\tMatcher\tConfigured\tDeployment")
+	_, _ = fmt.Fprintln(w, "----\t-----\t-------\t----------\t----------")
 	for _, s := range statuses {
 		configured := "no"
 		if s.Configured {
@@ -242,7 +239,7 @@ func writeHookStatusesTable(cmd *cobra.Command, statuses []HookStatus) {
 		if s.Policy == policyNone {
 			configured += " (no policy)"
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", s.Name, s.Tier, s.Event, s.Matcher, configured, s.Deployment)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", s.Name, s.Event, s.Matcher, configured, s.Deployment)
 	}
 	_ = w.Flush()
 }

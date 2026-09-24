@@ -9,9 +9,7 @@ import (
 
 // StateBackend persists chronicle entries and task state for multi-agent coordination.
 //
-// Experimental: no production backend exists yet (the Claude Code adapter's
-// chronicle methods are no-ops and its task methods return "not yet
-// implemented") and the task lifecycle is
+// Experimental: no backend implements it yet and the task lifecycle is
 // incomplete; see the package documentation. The interface may change without
 // notice when multi-agent coordination is implemented.
 type StateBackend interface {

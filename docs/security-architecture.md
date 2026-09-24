@@ -62,7 +62,7 @@ Per-ecosystem configuration files disable install-time script execution — the 
 | JavaScript (yarn Berry) | `.yarnrc.yml` | `enableScripts: false` |
 | JavaScript (yarn Classic) | `.yarnrc` | `ignore-scripts true` |
 | JavaScript (pnpm) | `.npmrc` + `pnpm-workspace.yaml` | `ignore-scripts=true`, `strictDepBuilds` |
-| Python | `pip.conf` | `--no-deps` enforcement |
+| Python (pip) | `pip.conf` via `PIP_CONFIG_FILE` | `only-binary = :all:` (index packages only; the local project still builds) |
 | Rust | `.cargo/config.toml` | Registry pinning |
 | Ruby | `devenv.nix` env | `BUNDLE_DISABLE_EXEC_LOAD=true` |
 | PHP | `composer.json` config | Script restrictions |
@@ -77,6 +77,7 @@ pnpm workspaces additionally enforce `blockExoticSubdeps` to prevent subdependen
 - **Pre-commit hooks** — The `lock-file-audit` custom hook flags changes to `devenv.lock`, `flake.lock`, `package-lock.json`, and `pnpm-lock.yaml` with a warning to verify the diff during code review.
 - **CI** — Security scan workflows verify lockfile integrity as part of the build.
 - **pnpm workspace** — `trustPolicy: no-downgrade` prevents lockfile changes that regress dependency versions.
+- **pip hash checking** — The CI install step for pip projects runs `pip install --require-hashes --only-binary :all: -r requirements.txt`, so every locked dependency must match a pinned hash. `pip.conf` does not set `require-hashes` for the whole shell. Hash-checking mode rejects the unpinned pip upgrade that devenv runs when it creates the virtualenv, and it rejects editable installs such as `pip install -e .`.
 - **Poetry shell install** — The devenv shell runs `poetry install` on entry only from a `poetry.lock` that `poetry check --lock` accepts. A task checks this each time the shell loads. Without a lockfile, or with a stale one, the shell skips the install and never resolves dependencies itself.
 - **CLAUDE.md rules** — Generated project documentation instructs Claude Code to never modify lockfiles without explicit approval.
 

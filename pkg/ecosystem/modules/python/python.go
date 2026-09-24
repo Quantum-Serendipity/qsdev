@@ -336,7 +336,7 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 			envVars = append(envVars, ecosystem.NixEnvVar{
 				Key:     "PIP_CONFIG_FILE",
 				Value:   `"${config.devenv.root}/` + pipConfigPath + `"`,
-				Comment: "Apply the qsdev-managed pip.conf (hash checking, binary-only installs)",
+				Comment: "Apply the qsdev-managed pip.conf (binary-only installs from the index)",
 			})
 		}
 	}
@@ -423,6 +423,11 @@ func poetrySetupWarnings(projectRoot string) []string {
 // pipConfigPath is the project-relative path of the generated pip.conf.
 const pipConfigPath = "pip.conf"
 
+// pipLockedInstallCommand installs a pip project's pinned, hashed
+// requirements. It is the only place hash checking is required: pip.conf
+// cannot set require-hashes globally (see SecurityConfigs).
+const pipLockedInstallCommand = "pip install --require-hashes --only-binary :all: -r requirements.txt"
+
 // uvCooldown is the uv exclude-newer duration (ISO 8601, 7 days) applied to
 // uv projects that do not set their own. The same value must be used
 // everywhere: uv records it in uv.lock and treats a different setting as a
@@ -448,6 +453,16 @@ func (m *Module) DevenvYamlInputs(_ ecosystem.ModuleConfig) []ecosystem.DevenvIn
 // hardened through environment variables in the devenv.nix fragment
 // (UV_EXCLUDE_NEWER, POETRY_INSTALLER_ONLY_BINARY): uv.toml would shadow a
 // project's [tool.uv] table, and poetry.toml is user-owned.
+//
+// The pip.conf applies to every pip run in the devenv shell (it is wired in
+// through PIP_CONFIG_FILE), so it holds only settings that are safe for all
+// of them. only-binary = :all: is: pip applies it to packages it resolves
+// from an index, never to a local project directory, so `pip install -e .`
+// still builds the project itself. require-hashes is not: hash-checking mode
+// rejects the unpinned `pip install --upgrade pip` that devenv's virtualenv
+// task runs (venv --upgrade-deps) and every local-directory or editable
+// install. Hash checking is instead applied to the locked install, where the
+// requirements are pinned and hashed: see CICommands.
 func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {
 	pm := config.PM("pip")
 
@@ -460,14 +475,16 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 	b.WriteString("# " + branding.GeneratedBy() + "\n")
 	b.WriteString("# Note: age-gating via uploaded-prior-to requires pip >= 26.0 (Jan 2026)\n")
 	b.WriteString("#\n")
-	b.WriteString("# require-hashes: Enforces hash verification for all installed packages.\n")
-	b.WriteString("# only-binary: Blocks source distributions that execute setup.py during install.\n")
+	b.WriteString("# only-binary: Blocks source distributions from the index, whose builds run\n")
+	b.WriteString("#   arbitrary code. The local project itself (pip install -e .) still builds.\n")
+	b.WriteString("# Hash checking is not set here: it would break the virtualenv's pip upgrade\n")
+	b.WriteString("#   and editable installs. Install locked dependencies with:\n")
+	b.WriteString("#   " + pipLockedInstallCommand + "\n")
 	b.WriteString("\n")
 	b.WriteString("[global]\n")
 	if config.RegistryProxy != "" {
 		fmt.Fprintf(&b, "index-url = %s\n", ecosystem.INIEscapeValue(config.RegistryProxy))
 	}
-	b.WriteString("require-hashes = true\n")
 	b.WriteString("only-binary = :all:\n")
 	content := b.String()
 
@@ -550,7 +567,7 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 	case "pip":
 		cmds = append(cmds, ecosystem.CICommand{
 			Name:        "pip-install",
-			Command:     "pip install --require-hashes --only-binary :all: -r requirements.txt",
+			Command:     pipLockedInstallCommand,
 			Description: "Install Python dependencies with hash verification and binary-only constraint",
 			Phase:       ecosystem.CIPhaseInstall,
 		})

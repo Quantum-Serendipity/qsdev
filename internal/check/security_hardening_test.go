@@ -133,7 +133,7 @@ func TestCheckSecurityHardening_SecurityConfigSettings(t *testing.T) {
 		{
 			name:       "pip.conf with hardening",
 			lang:       types.LanguageConfig{Name: "python"},
-			files:      map[string]string{"pip.conf": "[global]\nrequire-hashes = true\nonly-binary = :all:\n"},
+			files:      map[string]string{"pip.conf": "[global]\nonly-binary = :all:\n"},
 			wantStatus: StatusPass,
 		},
 		{

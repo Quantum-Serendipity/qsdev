@@ -1249,7 +1249,7 @@ devenv supports only one JavaScript project directory. If several subprojects ex
 
 | File | Merge Strategy | Purpose |
 |------|---------------|---------|
-| `pip.conf` | `skip` | Registry configuration, hash-checking mode (only created if absent) |
+| `pip.conf` | `skip` | Registry configuration and binary-only installs (only created if absent) |
 
 **Detection.** qsdev detects a Python project from `pyproject.toml`, `setup.py`, `setup.cfg`, `Pipfile`, `requirements*.txt`, `requirements*.in`, or a conda `environment.yml`/`environment.yaml`. `uv.lock` selects uv and `poetry.lock` selects Poetry. Otherwise the package manager is pip, unless the project is managed by a tool qsdev cannot configure:
 
@@ -1261,6 +1261,8 @@ devenv supports only one JavaScript project directory. If several subprojects ex
 | conda | `environment.yml` or `environment.yaml` | `environment.yml` |
 
 Build-backend tables such as `[tool.pdm.build]` or `[tool.hatch.version]` do not count, because pip and uv projects use those backends too. For these tools, qsdev records the tool as the `project_manager` extra. Version-Sentinel and lockfile checks then track that tool's manifest and lockfile instead of a `requirements.txt` that does not exist. The tool is not presented as pip: `qsdev init` (including `--update` and `--mode join`) prints a warning that names the tool and the file that identified it. The warning also says that qsdev only generates pip hardening and does not configure the tool itself. The warning does not block generation. Choosing uv or Poetry with `--python-pkg-mgr` removes it.
+
+**pip.** For pip projects, devenv.nix exports `PIP_CONFIG_FILE` pointing at the generated `pip.conf`, so every `pip` run in the devenv shell reads it. The file sets `only-binary = :all:`, which refuses source distributions from the index. pip applies this setting only to packages it downloads, so `pip install -e .` still builds the project itself. The file does not set `require-hashes`. Hash-checking mode rejects unpinned requirements and local or editable installs. It would therefore break the `pip install --upgrade pip` that devenv runs when it creates the virtualenv, and every `pip install -e .`. Hash checking applies only to the locked install, which the CI install step runs: `pip install --require-hashes --only-binary :all: -r requirements.txt`. Run the same command to install pinned, hashed requirements in the shell. Earlier qsdev versions wrote `require-hashes = true` into `pip.conf`. `qsdev init --update` replaces an unmodified `pip.conf`. If you edited the file, qsdev keeps it, so remove the `require-hashes` line yourself.
 
 **Poetry.** With `--python-pkg-mgr poetry`, the devenv shell uses Poetry's own `.venv` in the project root. devenv.nix does not enable `languages.python.venv`, which would activate a second, empty virtualenv on top of Poetry's. On shell entry, devenv runs `poetry install --no-interaction` and activates `.venv`, but only when both of these hold:
 

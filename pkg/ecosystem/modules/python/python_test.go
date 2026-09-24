@@ -837,7 +837,6 @@ func TestSecurityConfigs_Pip(t *testing.T) {
 
 	content := string(cfg.Content)
 	assertContains(t, content, "[global]")
-	assertContains(t, content, "require-hashes = true")
 	assertContains(t, content, "only-binary = :all:")
 	assertContains(t, content, "Security-hardened pip configuration")
 	assertContains(t, content, branding.GeneratedBy())
@@ -892,7 +891,6 @@ func TestSecurityConfigs_Pip_RegistryProxy(t *testing.T) {
 	content := string(configs[0].Content)
 	assertContains(t, content, "index-url = "+proxy)
 	// Existing security settings must be preserved.
-	assertContains(t, content, "require-hashes = true")
 	assertContains(t, content, "only-binary = :all:")
 	assertContains(t, content, "[global]")
 }
@@ -916,8 +914,73 @@ func TestSecurityConfigs_Pip_RegistryProxyPreservesExisting(t *testing.T) {
 	content := string(configs[0].Content)
 	assertContains(t, content, "Security-hardened pip configuration")
 	assertContains(t, content, branding.GeneratedBy())
-	assertContains(t, content, "require-hashes = true")
 	assertContains(t, content, "only-binary = :all:")
+}
+
+// TestSecurityConfigs_PipHashCheckingScopedToLockedInstall asserts that hash
+// checking is required only by the locked install, never by the pip.conf the
+// devenv shell exports through PIP_CONFIG_FILE: a global require-hashes makes
+// devenv's `venv --upgrade-deps` (an unpinned `pip install --upgrade pip`) and
+// every `pip install -e .` fail. only-binary stays global because pip applies
+// it only to index packages, not to the local project directory.
+func TestSecurityConfigs_PipHashCheckingScopedToLockedInstall(t *testing.T) {
+	t.Parallel()
+	const locked = "pip install --require-hashes --only-binary :all: -r requirements.txt"
+	tests := []struct {
+		name string
+		cfg  ecosystem.ModuleConfig
+	}{
+		{name: "default", cfg: ecosystem.ModuleConfig{}},
+		{name: "pip", cfg: ecosystem.ModuleConfig{PackageManager: "pip"}},
+		{name: "pip with registry proxy", cfg: ecosystem.ModuleConfig{
+			PackageManager: "pip", RegistryProxy: "https://pypi.corp.example.com/simple/",
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := &python.Module{}
+			files := m.SecurityConfigs(tt.cfg)
+			if len(files) != 1 {
+				t.Fatalf("SecurityConfigs() returned %d files, want 1", len(files))
+			}
+			settings := pipConfSettings(string(files[0].Content))
+			if v, ok := settings["require-hashes"]; ok {
+				t.Errorf("pip.conf sets require-hashes = %q; hash checking must be scoped to the locked install", v)
+			}
+			if got := settings["only-binary"]; got != ":all:" {
+				t.Errorf("pip.conf only-binary = %q, want %q", got, ":all:")
+			}
+			// The file tells developers how to get the hash-checked install.
+			assertContains(t, string(files[0].Content), "#   "+locked+"\n")
+
+			var ciInstall string
+			for _, c := range m.CICommands(tt.cfg) {
+				if c.Phase == ecosystem.CIPhaseInstall {
+					ciInstall = c.Command
+				}
+			}
+			if ciInstall != locked {
+				t.Errorf("CI install command = %q, want %q", ciInstall, locked)
+			}
+		})
+	}
+}
+
+// pipConfSettings returns the key = value settings of an INI-style pip.conf,
+// ignoring comments and section headers.
+func pipConfSettings(content string) map[string]string {
+	settings := map[string]string{}
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "[") {
+			continue
+		}
+		if k, v, ok := strings.Cut(line, "="); ok {
+			settings[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
+	return settings
 }
 
 // --- PreCommitHooks tests ---

@@ -96,6 +96,11 @@ infrastructure:
 `tier` records the security tier the project was generated at. `qsdev init`
 always writes it: the `--tier` value, else `supply-chain-only` when that
 permission level was chosen, else the catalog's `default_tier` (`standard`).
+`qsdev init --yes` without `--tier` is therefore identical to
+`qsdev init --yes --tier standard`: the same `.qsdev.yaml` and the same
+generated files. `claude_code.permission_level` is written only when a
+permission preset was chosen explicitly (`--claude-permissions` or the
+wizard); otherwise the tier's `default_permission_preset` applies.
 `qsdev status`, `qsdev init --mode join`, `qsdev init --update` and posture
 scoring read it directly. Only a legacy file without a `tier` key has its tier
 inferred: a `supply-chain-only` permission level means that tier; the default

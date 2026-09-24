@@ -362,12 +362,12 @@ func TestWizardAnswers_FillDefaults(t *testing.T) {
 		}
 	})
 
-	t.Run("fills default permission level for claude code", func(t *testing.T) {
+	t.Run("default tier leaves the permission level to the tier preset", func(t *testing.T) {
 		a := types.WizardAnswers{ClaudeCode: true}
 		a.FillDefaults(types.DetectedProject{}, catalog.MustDefault())
 
-		if a.PermissionLevel != "standard" {
-			t.Errorf("expected permission level 'standard', got %q", a.PermissionLevel)
+		if a.Tier == "" || a.PermissionLevel != "" {
+			t.Errorf("expected the default tier and no permission level, got tier %q level %q", a.Tier, a.PermissionLevel)
 		}
 	})
 
@@ -870,10 +870,12 @@ func TestFillDefaults_ResolvesTier(t *testing.T) {
 		wantMCPSet bool
 	}{
 		{
+			// Exactly like --tier <default>: the tier's preset applies, so no
+			// permission level is recorded that the tier did not imply.
 			name:       "default is the catalog default tier",
 			answers:    types.WizardAnswers{ClaudeCode: true},
 			wantTier:   cat.DefaultTier(),
-			wantLevel:  "standard",
+			wantLevel:  "",
 			wantCompl:  cat.TierCompliance(cat.DefaultTier()),
 			wantMCPSet: true,
 		},

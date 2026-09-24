@@ -282,16 +282,19 @@ func (a *WizardAnswers) FillDefaults(detected DetectedProject, defaults Defaults
 		a.Languages[i] = detected.WithSuggested(a.Languages[i])
 	}
 
-	// Default permission level — only when Tier is not explicitly set.
-	// When Tier is set, the tier determines the permission preset; filling
-	// in "standard" here would mask the tier's intent.
+	// The tier is resolved before any permission default, so a create without
+	// --tier is exactly a create with --tier <default>: the tier's preset
+	// applies and no permission level is recorded that the tier did not imply.
+	a.resolveTier(defaults)
+
+	// Only a provider without a default tier leaves the tier unset; the
+	// standard preset then applies. Filling it whenever a tier is set would
+	// mask the tier's own preset.
 	if a.ClaudeCode && a.PermissionLevel == "" && a.Tier == "" {
 		a.PermissionLevel = "standard"
 	}
 
 	a.ApplyClaudeHookDefaults()
-
-	a.resolveTier(defaults)
 
 	// Tier-derived posture applies to every tier, including supply-chain-only,
 	// so the recorded compliance level always matches the selected tier.

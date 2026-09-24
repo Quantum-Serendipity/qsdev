@@ -116,17 +116,10 @@ func devenvSummary(a types.WizardAnswers) string {
 	return strings.Join(parts, ", ")
 }
 
-// permissionSummary describes the permission preset settings.json will use:
-// the explicit level, else the tier's preset.
+// permissionSummary describes the permission preset settings.json will use,
+// resolved exactly as settings generation resolves it.
 func permissionSummary(a types.WizardAnswers) string {
-	switch {
-	case a.PermissionLevel != "":
-		return a.PermissionLevel + " permissions"
-	case a.Tier != "":
-		return a.Tier + " tier permissions"
-	default:
-		return "default permissions"
-	}
+	return effectivePermissionPreset(a, nil) + " permissions"
 }
 
 // hookNames lists the enabled Claude Code hooks by their preset names.

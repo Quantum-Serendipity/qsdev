@@ -132,7 +132,7 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.Flags().StringSliceVar(&opts.Env, "env", nil, "Environment variables as KEY=VALUE pairs")
 	cmd.Flags().BoolVar(&opts.NixHardeningGuide, "nix-hardening-guide", false, "Generate Nix security hardening guide")
 	cmd.Flags().StringVar(&opts.InfraProfile, "infra-profile", "", "Infrastructure profile name (e.g. consulting-default)")
-	cmd.Flags().StringVar(&opts.Tier, "tier", "", "Security tier: supply-chain-only, standard, full (default: standard)")
+	cmd.Flags().StringVar(&opts.Tier, "tier", "", tierFlagUsage())
 
 	// Claude Code flags.
 	cmd.Flags().BoolVar(&opts.ClaudeCode, "claude-code", true, "Enable Claude Code configuration")
@@ -169,6 +169,16 @@ func RegisterInitFlags(cmd *cobra.Command, opts *InitOptions) {
 	cmd.MarkFlagsMutuallyExclusive("update", "profile")
 	cmd.MarkFlagsMutuallyExclusive("mode", "update")
 	cmd.MarkFlagsMutuallyExclusive("tier", "infra-profile")
+}
+
+// tierFlagUsage describes --tier from the catalog: its tiers and the default
+// tier an unset flag resolves to (FillDefaults records it in .qsdev.yaml).
+func tierFlagUsage() string {
+	cat, err := catalog.Default()
+	if err != nil {
+		return "Security tier (default: the catalog's default tier)"
+	}
+	return fmt.Sprintf("Security tier: %s (default: %s)", strings.Join(cat.TierOrder(), ", "), cat.DefaultTier())
 }
 
 // AnswersFromFlags converts flag values into WizardAnswers.

@@ -227,11 +227,10 @@ type ToolStatus struct {
 	Description string `json:"description"`
 }
 
-// AssessOptions configures the behavior of the Assess function.
+// AssessOptions configures the behavior of the Assess function. Gating on an
+// audit level and evaluating a custom conformance policy happen after
+// assessment (ShouldExitNonZero, conformance.Apply), so they are not options.
 type AssessOptions struct {
-	FreshScan  bool
-	AuditLevel string
-	PolicyFile string
-	CacheDir   string
-	CacheTTL   time.Duration
+	// FreshScan runs an OSV vulnerability scan of each detected lock file.
+	FreshScan bool
 }

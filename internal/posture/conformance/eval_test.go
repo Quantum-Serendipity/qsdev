@@ -1,8 +1,10 @@
 package conformance
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
@@ -39,8 +41,10 @@ func makeReport() *posture.PostureReport {
 				High:     2,
 				Moderate: 5,
 				Low:      10,
+				Info:     3,
 			},
-			Score: 82.0,
+			Score:   82.0,
+			Scanned: true,
 		},
 		Tools: []posture.ToolStatus{
 			{Name: "attach-guard", Enabled: true},
@@ -91,6 +95,10 @@ func TestEvalCheckExpression_DependenciesTotals(t *testing.T) {
 		{"dependencies.totals.high <= 1", false},
 		{"dependencies.totals.moderate == 5", true},
 		{"dependencies.totals.low == 10", true},
+		{"dependencies.totals.info == 3", true},
+		{"dependencies.totals.info <= 2", false},
+		{"dependencies.totals.unknown == 0", true},
+		{"dependencies.totals.low >= 10", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
@@ -193,7 +201,7 @@ func TestEvalCheckExpression_Errors(t *testing.T) {
 		{"unknown domain", "unknown.field == 1"},
 		{"bad defense path", "defense.pretooluse-hooks == enabled"},
 		{"unknown layer", "defense.nonexistent-layer.status == enabled"},
-		{"bad dep severity", "dependencies.totals.unknown == 0"},
+		{"bad dep severity", "dependencies.totals.bogus == 0"},
 		{"bad dep value", "dependencies.totals.critical == abc"},
 		{"bad config path", "config.unknown >= 80"},
 		{"bad config value", "config.score >= abc"},
@@ -328,5 +336,113 @@ func TestEvalCheckExpression_IntegerComparisons(t *testing.T) {
 	}
 	if got {
 		t.Error("expected high >= 3 to be false")
+	}
+}
+
+// TestEvalCheckExpression_DependenciesInconclusive is the regression test for
+// "dependencies.totals.critical == 0" passing on a report whose totals are
+// zero only because no conclusive scan ran.
+func TestEvalCheckExpression_DependenciesInconclusive(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		deps posture.DependencyHealth
+	}{
+		{"not scanned", posture.DependencyHealth{}},
+		{"scan failed", posture.DependencyHealth{ScanFailed: true}},
+		{"unresolved severity", posture.DependencyHealth{
+			Scanned: true,
+			Totals:  posture.VulnSeverityCounts{Unknown: 1},
+		}},
+	}
+	exprs := []string{
+		"dependencies.totals.critical == 0",
+		"dependencies.totals.high <= 5",
+		"dependencies.totals.unknown <= 5",
+	}
+	for _, tt := range tests {
+		for _, expr := range exprs {
+			t.Run(tt.name+"/"+expr, func(t *testing.T) {
+				t.Parallel()
+				report := makeReport()
+				report.Dependencies = tt.deps
+				got, err := EvalCheckExpression(expr, report)
+				if got {
+					t.Error("inconclusive dependency results passed")
+				}
+				if !errors.Is(err, ErrDependenciesInconclusive) {
+					t.Errorf("err = %v, want ErrDependenciesInconclusive", err)
+				}
+			})
+		}
+	}
+}
+
+// TestEvalCheckExpression_InvalidBeforeInconclusive: a malformed dependencies
+// expression reports the syntax error, not the scan state, so a typo is
+// visible even on an unscanned report.
+func TestEvalCheckExpression_InvalidBeforeInconclusive(t *testing.T) {
+	t.Parallel()
+	report := makeReport()
+	report.Dependencies = posture.DependencyHealth{}
+	for _, expr := range []string{
+		"dependencies.totals.bogus == 0",
+		"dependencies.totals.critical == abc",
+	} {
+		_, err := EvalCheckExpression(expr, report)
+		if err == nil || errors.Is(err, ErrDependenciesInconclusive) {
+			t.Errorf("%s: err = %v, want a syntax error", expr, err)
+		}
+	}
+}
+
+func TestLoadFile_Invalid(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		content string
+		wantErr string
+	}{
+		{
+			name: "misspelt key",
+			content: "conformance:\n  custom:\n    name: x\n    requirement:\n" +
+				"      - name: a\n        check: score.total >= 1\n",
+			wantErr: "requirement",
+		},
+		{
+			name:    "no requirements",
+			content: "conformance:\n  custom:\n    name: x\n",
+			wantErr: "no requirements",
+		},
+		{
+			name:    "requirement without name",
+			content: "conformance:\n  custom:\n    requirements:\n      - check: score.total >= 1\n",
+			wantErr: "has no name",
+		},
+		{
+			name:    "requirement without check",
+			content: "conformance:\n  custom:\n    requirements:\n      - name: a\n",
+			wantErr: "no check expression",
+		},
+		{
+			name: "duplicate names",
+			content: "conformance:\n  custom:\n    requirements:\n" +
+				"      - name: a\n        check: score.total >= 1\n" +
+				"      - name: a\n        check: config.score >= 1\n",
+			wantErr: "duplicate requirement name",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), ".qsdev-policy.yaml")
+			if err := os.WriteFile(path, []byte(tt.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadFile(path)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("LoadFile error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
 	}
 }

@@ -351,6 +351,8 @@ qsdev check
 
 `qsdev check` validates that security controls are present, deny rules are intact, and no configuration has drifted. It exits non-zero on violations and supports JSON, SARIF, and JUnit output formats for integration with CI dashboards.
 
+To enforce team-specific requirements (a score floor, a tool that must be enabled, no critical vulnerabilities), commit a [`.qsdev-policy.yaml`](configuration-reference.md#qsdev-policyyaml). Both `qsdev check` and `qsdev status` evaluate it; add `--scan` when a requirement reads `dependencies.totals`, since those fail without a fresh scan.
+
 The generation state under `.devinit/` is gitignored, so on a CI checkout `qsdev check` verifies the machine-owned generated files (hooks, rules, skills, `package-guard.py`, workflows) against the committed `.qsdev-generated.sha256` manifest instead. An edited or deleted file fails the run, and so does a missing or empty manifest when `.qsdev.yaml` is present. `qsdev init`, `init --update`, `enable`, `disable` and `repair` rewrite the manifest; commit it with the files it describes.
 
 ### Step 6: Monitor Security Posture

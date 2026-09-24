@@ -43,9 +43,9 @@ func ParseAuditLevel(level string) (string, error) {
 //
 // Audit levels (from strictest to most permissive):
 //   - "info" / "any": any findings of any kind
-//   - "low": any vulnerabilities (Critical+High+Moderate+Low > 0)
-//   - "moderate": Critical+High+Moderate > 0
-//   - "high": Critical+High > 0 OR baseline conformance FAIL
+//   - "low": any vulnerabilities (Critical+High+Moderate+Low > 0) OR "high"
+//   - "moderate": Critical+High+Moderate > 0 OR "high"
+//   - "high": Critical+High > 0 OR baseline or custom conformance FAIL
 //   - "critical": Critical > 0
 //   - "none": always false (never exit non-zero)
 //
@@ -81,15 +81,17 @@ func ShouldExitNonZero(report *PostureReport, auditLevel string) bool {
 		if report.Dependencies.Totals.Critical > 0 || report.Dependencies.Totals.High > 0 {
 			return true
 		}
-		return !report.Conformance.Baseline.Pass
+		return conformanceFails(report)
 	case "moderate":
 		return report.Dependencies.Totals.Critical > 0 ||
 			report.Dependencies.Totals.High > 0 ||
-			report.Dependencies.Totals.Moderate > 0
+			report.Dependencies.Totals.Moderate > 0 ||
+			conformanceFails(report)
 	case "low":
 		totals := report.Dependencies.Totals
 		return totals.Critical > 0 || totals.High > 0 ||
-			totals.Moderate > 0 || totals.Low > 0
+			totals.Moderate > 0 || totals.Low > 0 ||
+			conformanceFails(report)
 	default: // "info"
 		return hasAnyFindings(report)
 	}
@@ -104,7 +106,7 @@ func hasAnyFindings(report *PostureReport) bool {
 	if report.Drift.TotalFindings > 0 {
 		return true
 	}
-	if !report.Conformance.Baseline.Pass {
+	if conformanceFails(report) {
 		return true
 	}
 	for _, l := range report.Defense.Layers {
@@ -118,4 +120,16 @@ func hasAnyFindings(report *PostureReport) bool {
 		}
 	}
 	return false
+}
+
+// conformanceFails reports whether baseline conformance or the project's own
+// conformance policy (.qsdev-policy.yaml, evaluated into Conformance.Custom)
+// failed. A project without a custom policy has no custom level to fail. It
+// gates "high" and, because each level includes every check of the more
+// permissive levels, "moderate", "low" and "info" too.
+func conformanceFails(report *PostureReport) bool {
+	if !report.Conformance.Baseline.Pass {
+		return true
+	}
+	return report.Conformance.Custom != nil && !report.Conformance.Custom.Pass
 }

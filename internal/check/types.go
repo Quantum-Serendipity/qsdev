@@ -13,12 +13,13 @@ import (
 type CheckCategory string
 
 const (
-	CategoryBinaryCompat    CheckCategory = "binary_compatibility"
-	CategoryConfigIntegrity CheckCategory = "config_integrity"
-	CategoryRequiredTools   CheckCategory = "required_tools"
-	CategoryFileState       CheckCategory = "generated_file_state"
-	CategorySecurityHarden  CheckCategory = "security_hardening"
-	CategoryDenyConflicts   CheckCategory = "deny_rule_conflicts"
+	CategoryBinaryCompat      CheckCategory = "binary_compatibility"
+	CategoryConfigIntegrity   CheckCategory = "config_integrity"
+	CategoryRequiredTools     CheckCategory = "required_tools"
+	CategoryFileState         CheckCategory = "generated_file_state"
+	CategorySecurityHarden    CheckCategory = "security_hardening"
+	CategoryDenyConflicts     CheckCategory = "deny_rule_conflicts"
+	CategoryCustomConformance CheckCategory = "custom_conformance"
 )
 
 // categoryDisplayName returns a human-friendly label.
@@ -36,6 +37,8 @@ func categoryDisplayName(c CheckCategory) string {
 		return "Security Hardening"
 	case CategoryDenyConflicts:
 		return "Deny Rule Conflicts"
+	case CategoryCustomConformance:
+		return "Custom Conformance"
 	default:
 		return string(c)
 	}
@@ -175,6 +178,26 @@ type CheckContext struct {
 	// on a clean CI checkout, so it is what CI verifies generated files
 	// against. Empty disables the manifest check.
 	ManifestFile string
+	// CustomConformance is the project's own conformance policy
+	// (.qsdev-policy.yaml) as evaluated against a posture assessment by the
+	// command layer; nil when the project has no custom policy.
+	CustomConformance *CustomConformance
+}
+
+// CustomConformance carries the evaluated requirements of a project's custom
+// conformance policy. It mirrors posture's custom conformance level so this
+// package does not depend on the posture assessment.
+type CustomConformance struct {
+	// PolicyFile is the policy file's path relative to the project root.
+	PolicyFile   string
+	Requirements []PolicyRequirement
+}
+
+// PolicyRequirement is the outcome of one custom conformance requirement.
+type PolicyRequirement struct {
+	Name   string
+	Pass   bool
+	Reason string
 }
 
 // CheckFailedError signals that checks failed at the given audit level.

@@ -81,16 +81,19 @@ func TestShouldExitNonZero_High(t *testing.T) {
 
 func TestShouldExitNonZero_Moderate(t *testing.T) {
 	tests := []struct {
-		name     string
-		critical int
-		high     int
-		moderate int
-		want     bool
+		name         string
+		critical     int
+		high         int
+		moderate     int
+		baselinePass bool
+		want         bool
 	}{
-		{"no vulns", 0, 0, 0, false},
-		{"moderate present", 0, 0, 1, true},
-		{"high present", 0, 1, 0, true},
-		{"critical present", 1, 0, 0, true},
+		{"no vulns", 0, 0, 0, true, false},
+		{"moderate present", 0, 0, 1, true, true},
+		{"high present", 0, 1, 0, true, true},
+		{"critical present", 1, 0, 0, true, true},
+		// moderate is stricter than high, so it keeps high's conformance gate.
+		{"baseline fail", 0, 0, 0, false, true},
 	}
 
 	for _, tt := range tests {
@@ -103,6 +106,9 @@ func TestShouldExitNonZero_Moderate(t *testing.T) {
 						Moderate: tt.moderate,
 					},
 				},
+				Conformance: ConformanceResult{
+					Baseline: ConformanceLevel{Pass: tt.baselinePass},
+				},
 			}
 			got := ShouldExitNonZero(report, "moderate")
 			if got != tt.want {
@@ -114,12 +120,15 @@ func TestShouldExitNonZero_Moderate(t *testing.T) {
 
 func TestShouldExitNonZero_Low(t *testing.T) {
 	tests := []struct {
-		name string
-		low  int
-		want bool
+		name         string
+		low          int
+		baselinePass bool
+		want         bool
 	}{
-		{"no vulns", 0, false},
-		{"low present", 1, true},
+		{"no vulns", 0, true, false},
+		{"low present", 1, true, true},
+		// low is stricter than high, so it keeps high's conformance gate.
+		{"baseline fail", 0, false, true},
 	}
 
 	for _, tt := range tests {
@@ -127,6 +136,9 @@ func TestShouldExitNonZero_Low(t *testing.T) {
 			report := &PostureReport{
 				Dependencies: DependencyHealth{
 					Totals: VulnSeverityCounts{Low: tt.low},
+				},
+				Conformance: ConformanceResult{
+					Baseline: ConformanceLevel{Pass: tt.baselinePass},
 				},
 			}
 			got := ShouldExitNonZero(report, "low")
@@ -305,6 +317,43 @@ func TestParseAuditLevel(t *testing.T) {
 			}
 			if err != nil || got != tt.want {
 				t.Errorf("ParseAuditLevel(%q) = %q, %v; want %q", tt.in, got, err, tt.want)
+			}
+		})
+	}
+}
+
+// TestShouldExitNonZero_CustomConformance: a failing project policy
+// (.qsdev-policy.yaml) gates the exit code at the same levels as baseline
+// conformance; a project without one, or whose policy passes, is unaffected.
+func TestShouldExitNonZero_CustomConformance(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		custom *ConformanceLevel
+		level  string
+		want   bool
+	}{
+		{"no policy high", nil, "high", false},
+		{"passing policy high", &ConformanceLevel{Pass: true}, "high", false},
+		{"failing policy high", &ConformanceLevel{Pass: false}, "high", true},
+		{"failing policy moderate", &ConformanceLevel{Pass: false}, "moderate", true},
+		{"failing policy low", &ConformanceLevel{Pass: false}, "low", true},
+		{"failing policy info", &ConformanceLevel{Pass: false}, "info", true},
+		{"passing policy low", &ConformanceLevel{Pass: true}, "low", false},
+		{"failing policy critical", &ConformanceLevel{Pass: false}, "critical", false},
+		{"failing policy none", &ConformanceLevel{Pass: false}, "none", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			report := &PostureReport{
+				Conformance: ConformanceResult{
+					Baseline: ConformanceLevel{Pass: true},
+					Custom:   tt.custom,
+				},
+			}
+			if got := ShouldExitNonZero(report, tt.level); got != tt.want {
+				t.Errorf("ShouldExitNonZero(%q) = %v, want %v", tt.level, got, tt.want)
 			}
 		})
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/conformance"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/render"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
@@ -52,6 +53,11 @@ Optional positional argument to show a specific section:
   config    Show configuration health
   deps      Show dependency health
   tools     Show tool availability
+
+When the project has a .qsdev-policy.yaml, its custom conformance
+requirements are evaluated and reported under Conformance. A failing
+requirement fails the audit gate at "high" and every stricter level.
+Requirements on dependencies.totals need --scan; without it they fail.
 
 Exit codes:
   0  All checks pass (or audit-level is "none")
@@ -153,16 +159,7 @@ func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptio
 	}
 
 	// Perform assessment.
-	report, err := posture.Assess(projectDir, posture.AssessOptions{
-		FreshScan:  opts.scan,
-		AuditLevel: opts.auditLevel,
-	})
-	if err == nil {
-		slog.Info("posture assessed",
-			"score", report.Score.Total,
-			"grade", report.Score.Grade,
-			"tools", len(report.Tools))
-	}
+	report, err := posture.Assess(projectDir, posture.AssessOptions{FreshScan: opts.scan})
 	if err != nil {
 		if errors.Is(err, posture.ErrNotInitialized) {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Project not initialized. Run '%s init' first.\n", branding.Get().AppName)
@@ -170,6 +167,13 @@ func runPostureStatus(cmd *cobra.Command, args []string, opts postureStatusOptio
 		}
 		return fmt.Errorf("assessing project posture: %w", err)
 	}
+	// The project's own requirements (.qsdev-policy.yaml) are judged against
+	// the finished report and gate the exit code alongside baseline conformance.
+	conformance.Apply(projectDir, report)
+	slog.Info("posture assessed",
+		"score", report.Score.Total,
+		"grade", report.Score.Grade,
+		"tools", len(report.Tools))
 
 	// Honest reporting: a vulnerability-gated audit level is meaningless without a
 	// scan. Warn (on stderr, so machine-readable stdout stays clean) that the gate

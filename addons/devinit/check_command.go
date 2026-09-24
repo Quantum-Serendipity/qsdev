@@ -13,6 +13,8 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture"
+	"github.com/Quantum-Serendipity/qsdev/internal/posture/conformance"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
@@ -25,6 +27,7 @@ func checkCmd() *cobra.Command {
 		formatStr string
 		auditStr  string
 		autoFix   bool
+		scan      bool
 	)
 
 	cmd := &cobra.Command{
@@ -36,23 +39,30 @@ generated file state, and security hardening.
 Exit code is non-zero when checks fail at or above the audit level.
 Use --format to select output format (human, json, sarif, junit).
 Use --audit-level to control failure threshold (none, low, medium, high, critical).
-Use --auto-fix to automatically fix issues where possible.`,
+Use --auto-fix to automatically fix issues where possible.
+
+When the project has a .qsdev-policy.yaml, each of its custom conformance
+requirements is also checked; a failing requirement is high severity. Use
+--scan to run a fresh dependency vulnerability scan so requirements on
+dependencies.totals can pass (without one they fail as inconclusive).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			format := check.OutputFormat(formatStr)
 			auditLevel := check.AuditLevel(auditStr)
-			return runCheck(cmd, format, auditLevel, autoFix)
+			return runCheck(cmd, format, auditLevel, autoFix, scan)
 		},
 	}
 
 	cmd.Flags().StringVar(&formatStr, "format", "human", "Output format: human, json, sarif, junit")
 	cmd.Flags().StringVar(&auditStr, "audit-level", "medium", "Minimum severity to fail: none, low, medium, high, critical")
 	cmd.Flags().BoolVar(&autoFix, "auto-fix", false, "Automatically fix issues where possible")
+	cmd.Flags().BoolVar(&scan, "scan", false,
+		"Run a fresh dependency vulnerability scan for custom conformance requirements")
 
 	return cmd
 }
 
-func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.AuditLevel, autoFix bool) error {
+func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.AuditLevel, autoFix, scan bool) error {
 	projectRoot, err := cmdutil.ProjectRoot()
 	if err != nil {
 		return err
@@ -133,6 +143,8 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		ctx.ExpectedClaudeSettings = settings.Content
 	}
 
+	ctx.CustomConformance = evaluateCustomConformance(projectRoot, scan)
+
 	// Run all checks.
 	report := check.RunAllChecks(ctx)
 
@@ -177,6 +189,42 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 	}
 
 	return nil
+}
+
+// evaluateCustomConformance evaluates the project's custom conformance policy
+// (conformance.PolicyFileName) against a posture assessment, running a fresh
+// dependency scan when scan is set. It returns nil when the project has no
+// policy file or the file has no custom section, and only assesses the
+// project when there are requirements to judge. A policy that cannot be
+// loaded, or an assessment that fails, leaves every requirement unverifiable,
+// which is reported as a single failing requirement.
+func evaluateCustomConformance(projectRoot string, scan bool) *check.CustomConformance {
+	policyFile := conformance.PolicyFileName()
+	policy, err := conformance.LoadPolicy(projectRoot)
+	var level *posture.ConformanceLevel
+	switch {
+	case err != nil:
+		level = conformance.PolicyError(err)
+	case policy == nil:
+		return nil
+	default:
+		report, assessErr := posture.Assess(projectRoot, posture.AssessOptions{FreshScan: scan})
+		if assessErr != nil {
+			level = conformance.PolicyError(fmt.Errorf(
+				"cannot evaluate %s: assessing project posture: %w", policyFile, assessErr))
+		} else {
+			level = conformance.Evaluate(policy, report)
+		}
+	}
+	custom := &check.CustomConformance{PolicyFile: policyFile}
+	for _, c := range level.Checks {
+		custom.Requirements = append(custom.Requirements, check.PolicyRequirement{
+			Name:   string(c.Name),
+			Pass:   c.Pass,
+			Reason: c.Reason,
+		})
+	}
+	return custom
 }
 
 func isMachineReadableFormat(f check.OutputFormat) bool {

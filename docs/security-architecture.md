@@ -437,6 +437,17 @@ changes to it: a pull request that edits a hook and updates its digest passes
 this check, and shows both changes in the diff. See
 [`.qsdev-generated.sha256`](configuration-reference.md#qsdev-generatedsha256).
 
+### Custom Conformance Policy
+
+A committed `.qsdev-policy.yaml` adds project-specific requirements to the
+built-in baseline and enhanced conformance levels. `qsdev status` gates its
+exit code on them at `--audit-level high` and stricter, and `qsdev check`
+reports each as a high-severity check. The policy fails closed: a requirement
+on dependency vulnerability counts passes only after a conclusive fresh scan
+(`--scan`), so zero counts from a skipped or failed scan never read as clean,
+and a malformed policy file fails instead of being ignored. See
+[`.qsdev-policy.yaml`](configuration-reference.md#qsdev-policyyaml).
+
 ### Generated Update Configuration
 
 - **Renovate** (`consulting-default`, `enterprise`) — `renovate.json` with `minimumReleaseAge`, `automergeType: "pr"` for patches (enterprise), and lockfile maintenance.

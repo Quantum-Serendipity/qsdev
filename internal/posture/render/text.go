@@ -108,7 +108,15 @@ func renderConformance(w io.Writer, report *posture.PostureReport, ind [4]string
 		if !report.Conformance.Enhanced.Pass {
 			enhancedStatus = fail
 		}
-		fmt.Fprintf(w, "Conformance: %s Baseline  %s Enhanced\n", baselineStatus, enhancedStatus)
+		line := fmt.Sprintf("Conformance: %s Baseline  %s Enhanced", baselineStatus, enhancedStatus)
+		if custom := report.Conformance.Custom; custom != nil {
+			customStatus := pass
+			if !custom.Pass {
+				customStatus = fail
+			}
+			line += fmt.Sprintf("  %s Custom", customStatus)
+		}
+		fmt.Fprintln(w, line)
 	}
 
 	fmt.Fprintln(w)
@@ -428,7 +436,8 @@ func conformanceRemediation(checkName posture.CheckName) string {
 	case posture.CheckLockFilesPresent:
 		return "Run your package manager's install/lock command to generate lock files"
 	case posture.CheckNoCriticalVulns:
-		// --scan belongs to status; check has no such flag.
+		// status --scan reports the vulnerabilities; check --scan only feeds
+		// custom conformance requirements.
 		return "Run " + branding.Get().AppName + " status --scan to identify and remediate critical vulnerabilities"
 	case posture.CheckClaudeMDPresent:
 		return "Run qsdev init to generate CLAUDE.md"

@@ -687,3 +687,40 @@ func TestRenderText_FixCriticalVulnsUsesStatusScan(t *testing.T) {
 		t.Errorf("remediation should suggest 'qsdev status --scan'; got:\n%s", out)
 	}
 }
+
+// TestRenderText_DefaultConformanceLineCustom: the one-line conformance
+// summary shows the project's custom policy verdict only when it has one.
+func TestRenderText_DefaultConformanceLineCustom(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		custom *posture.ConformanceLevel
+		want   string
+	}{
+		{"no policy", nil, "Conformance: [OK] Baseline  [OK] Enhanced\n"},
+		{"passing policy", &posture.ConformanceLevel{Pass: true},
+			"Conformance: [OK] Baseline  [OK] Enhanced  [OK] Custom\n"},
+		{"failing policy", &posture.ConformanceLevel{Pass: false},
+			"Conformance: [OK] Baseline  [OK] Enhanced  " + noColorFail + " Custom\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			report := &posture.PostureReport{
+				Conformance: posture.ConformanceResult{
+					Baseline: posture.ConformanceLevel{Pass: true},
+					Enhanced: posture.ConformanceLevel{Pass: true},
+					Custom:   tt.custom,
+				},
+				Drift: drift.Report{BySeverity: make(map[drift.Severity]int)},
+			}
+			var buf bytes.Buffer
+			if err := RenderText(report, &buf, Options{}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(buf.String(), tt.want) {
+				t.Errorf("output lacks %q:\n%s", tt.want, buf.String())
+			}
+		})
+	}
+}

@@ -13,6 +13,7 @@ var categoryOrder = []CheckCategory{
 	CategoryFileState,
 	CategorySecurityHarden,
 	CategoryDenyConflicts,
+	CategoryCustomConformance,
 }
 
 // orderedCategories returns the categories present in results: those listed in

@@ -32,6 +32,11 @@ func TestStateFilesForTeardown_CoversStateFilePaths(t *testing.T) {
 	if legacy := answers.LegacyClaudeCopyFile(); !slices.Contains(got, legacy) {
 		t.Errorf("stateFilesForTeardown() missing legacy Claude answers %q; got %v", legacy, got)
 	}
+	// F349: the committed generated-file manifest describes files teardown
+	// removes, so it must go with them.
+	if manifest := state.ManifestFile(); !slices.Contains(got, manifest) {
+		t.Errorf("stateFilesForTeardown() missing generated-file manifest %q; got %v", manifest, got)
+	}
 }
 
 // TestClassifyFiles_ModeChangeIsModified verifies teardown agrees with

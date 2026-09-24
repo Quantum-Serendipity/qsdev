@@ -424,6 +424,19 @@ Infrastructure profiles generate `.github/workflows/security-scan.yml` with:
 - **Semgrep** — SAST rules for the detected ecosystems.
 - **gitleaks** — Full-repo secrets scan.
 
+### Generated-File Drift in CI
+
+`qsdev check` fails a CI run when a machine-owned generated file, such as
+`.claude/hooks/package-guard.py`, a rule, a skill or a generated workflow, was
+edited or deleted. The local generation state (`.devinit/`) is gitignored, so
+CI verifies the files against the committed `.qsdev-generated.sha256` manifest
+of their SHA-256 digests, which every command that regenerates files rewrites.
+A project with `.qsdev.yaml` but no usable manifest also fails, rather than
+skipping the check. The manifest is only as trustworthy as review of the
+changes to it: a pull request that edits a hook and updates its digest passes
+this check, and shows both changes in the diff. See
+[`.qsdev-generated.sha256`](configuration-reference.md#qsdev-generatedsha256).
+
 ### Generated Update Configuration
 
 - **Renovate** (`consulting-default`, `enterprise`) — `renovate.json` with `minimumReleaseAge`, `automergeType: "pr"` for patches (enterprise), and lockfile maintenance.

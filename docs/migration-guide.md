@@ -217,7 +217,7 @@ git add .claude/skills/ .claude/rules/
 git add .mcp.json CLAUDE.md
 git add .npmrc              # or pip.conf, etc. (per-ecosystem configs)
 git add .gitignore
-git add .devinit/           # state files for update workflow
+git add .qsdev.yaml .qsdev-generated.sha256   # config + generated-file manifest for qsdev check in CI
 git commit -m "chore: add qsdev security-hardened dev environment"
 ```
 
@@ -247,6 +247,8 @@ If your project was initialized before qsdev 0.7.0, running `qsdev update` intro
 **New MCP servers** — `agent-postmortem` and `version-sentinel` are embedded MCP servers available via `qsdev mcp <name>`. They do not appear in `.mcp.json` but are available through the CLI.
 
 **Documentation servers** — Local documentation is now available via `qsdev docs enable`. Documentation MCP servers are opt-in and do not activate automatically.
+
+**Generated-file manifest** — `qsdev check` now verifies machine-owned generated files in CI against a committed `.qsdev-generated.sha256` manifest, and a project with `.qsdev.yaml` but no manifest fails the `generated_manifest` check at high severity. A project set up by an earlier version has none: run `qsdev init --update` (or `qsdev repair`, or `qsdev check --auto-fix`) once locally and commit `.qsdev-generated.sha256`.
 
 **Removed defaults sections** — The `profiles` and `profile_aliases` sections of the defaults file (`~/.config/qsdev/defaults.yaml`, see `qsdev defaults edit`) and of an organization catalog were never read by any command, so they have been removed. A file that still sets either section keeps loading: the section is ignored with a warning naming it and its line, and the rest of the file still applies. Delete the section to silence the warning. What a tier turns on is set by `tiers`, `tier_to_compliance` and `tier_to_enabled_tools`.
 

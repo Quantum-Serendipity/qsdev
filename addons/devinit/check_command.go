@@ -13,6 +13,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -62,6 +63,7 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		ProjectRoot:   projectRoot,
 		BinaryVersion: version.Info().Version,
 		StateFile:     filepath.Join(projectRoot, stateFilePath()),
+		ManifestFile:  filepath.Join(projectRoot, state.ManifestFile()),
 	}
 
 	// Parse config if present. The error travels in the context so the report

@@ -348,8 +348,7 @@ func writeAndRecordResults(cmd *cobra.Command, opts InitOptions, projectRoot str
 	genState.EnabledTools = answers.EnabledTools
 	genState.Fragments = state.RecordFragments(accResult.fragments)
 	stampTemplateVersions(&genState, accResult.claudeGenerated)
-	stateFile := filepath.Join(projectRoot, stateFilePath())
-	if err := state.SaveStateToFile(stateFile, genState); err != nil {
+	if err := state.SaveInitState(projectRoot, genState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
 	}
 

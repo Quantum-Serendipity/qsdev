@@ -170,6 +170,11 @@ type CheckContext struct {
 	// produces for the project's saved answers (nil when unknown); its hook
 	// registrations and bypass setting must still be in force on disk.
 	ExpectedClaudeSettings []byte
+	// ManifestFile is the committed manifest of machine-owned generated files
+	// (state.ManifestFile under the project root). Unlike StateFile it exists
+	// on a clean CI checkout, so it is what CI verifies generated files
+	// against. Empty disables the manifest check.
+	ManifestFile string
 }
 
 // CheckFailedError signals that checks failed at the given audit level.

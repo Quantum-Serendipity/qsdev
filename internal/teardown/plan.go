@@ -14,17 +14,18 @@ import (
 // stateFilesForTeardown returns the state file paths that are removed as part
 // of the default teardown: every addon state file (from state.StateFilePaths,
 // the single source of truth) plus the saved answers, the per-addon answers
-// copies and the project config.
+// copies, the project config and the committed generated-file manifest.
 func stateFilesForTeardown() []string {
 	b := branding.Get()
 	statePaths := state.StateFilePaths()
-	files := make([]string, 0, len(statePaths)+4)
+	files := make([]string, 0, len(statePaths)+5)
 	files = append(files, statePaths[:]...)
 	return append(files,
 		path.Join(answers.PrimaryDir(), answers.PrimaryFilename()),
 		answers.DevenvCopyFile(),
 		answers.LegacyClaudeCopyFile(),
 		b.ConfigFile,
+		state.ManifestFile(),
 	)
 }
 

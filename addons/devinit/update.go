@@ -175,7 +175,7 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	// 9. Save state and answers. This runs even when execution stopped
 	// partway: files already rewritten must be recorded, or the next update
 	// would mistake qsdev's own output for user modifications.
-	if err := saveUpdateResults(plan, outcome, existingState, answers, accResult, stateFile, projectRoot); err != nil {
+	if err := saveUpdateResults(plan, outcome, existingState, answers, accResult, projectRoot); err != nil {
 		return errors.Join(execErr, err)
 	}
 	if execErr != nil {
@@ -305,7 +305,7 @@ func saveUpdateResults(
 	existingState types.GeneratedState,
 	answers types.WizardAnswers,
 	accResult accumulatorResult,
-	stateFile, projectRoot string,
+	projectRoot string,
 ) error {
 	// Merge: new state for written files + old state for skipped files.
 	newState := state.RecordFiles(outcome.written)
@@ -331,7 +331,7 @@ func saveUpdateResults(
 		newState.Files[path] = fs
 	}
 	stampTemplateVersions(&newState, accResult.claudeGenerated)
-	if err := state.SaveStateToFile(stateFile, newState); err != nil {
+	if err := state.SaveInitState(projectRoot, newState); err != nil {
 		return fmt.Errorf("saving state: %w", err)
 	}
 

@@ -2,6 +2,7 @@ package devinit
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,8 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/answers"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
+	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
@@ -196,4 +199,118 @@ func TestCheckCmd_FailsWhenGuardHooksStripped(t *testing.T) {
 	if err == nil || !slices.Contains(postureFailures(out), "claude_hook_missing") {
 		t.Errorf("without saved answers the stripped hooks went unreported (err=%v):\n%s", err, out)
 	}
+}
+
+// fileStateFailures runs `qsdev check --format json` in dir and returns the
+// names of the failing generated-file-state results.
+func fileStateFailures(t *testing.T, dir string) ([]string, error) {
+	t.Helper()
+	out, err := runLifecycleCmd(t, dir, checkCmd(), "--format", "json", "--audit-level", "medium")
+	var report check.CheckReport
+	// The JSON report may be followed by cobra's error output.
+	if jerr := json.NewDecoder(strings.NewReader(out[strings.Index(out, "{"):])).Decode(&report); jerr != nil {
+		t.Fatalf("parsing report: %v\n%s", jerr, out)
+	}
+	var names []string
+	for _, c := range report.Checks {
+		if c.Category == check.CategoryFileState && c.Status == check.StatusFail {
+			names = append(names, c.Name)
+		}
+	}
+	return names, err
+}
+
+// TestCheckCmd_CICheckoutDetectsGeneratedFileDrift is the F349 regression: a
+// CI checkout lacks the gitignored generation state, so `qsdev check` must
+// verify machine-owned generated files against the committed manifest that
+// init writes, and fail when one is edited, deleted, or the manifest is gone.
+func TestCheckCmd_CICheckoutDetectsGeneratedFileDrift(t *testing.T) {
+	dir := initLifecycleProject(t)
+
+	manifest, err := state.LoadManifest(filepath.Join(dir, state.ManifestFile()))
+	if err != nil {
+		t.Fatalf("init did not write the manifest: %v", err)
+	}
+	if want := state.BuildManifest(loadProjectState(t, dir)); !maps.Equal(manifest, want) {
+		t.Fatalf("manifest disagrees with the init state:\n got %v\nwant %v", manifest, want)
+	}
+	const hook = ".claude/hooks/package-guard.py"
+	if _, ok := manifest[hook]; !ok {
+		t.Fatalf("manifest does not list %s: %v", hook, manifest)
+	}
+
+	// A clean CI checkout: the gitignored state directory does not exist.
+	if err := os.RemoveAll(filepath.Join(dir, branding.Get().StateDir)); err != nil {
+		t.Fatal(err)
+	}
+	if failed, _ := fileStateFailures(t, dir); len(failed) != 0 {
+		t.Fatalf("clean checkout fails generated-file checks: %v", failed)
+	}
+
+	hookPath := filepath.Join(dir, filepath.FromSlash(hook))
+	original, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hookPath, []byte("import sys\nsys.exit(0)\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := fileStateFailures(t, dir)
+	if err == nil || !slices.Contains(failed, "file_unmodified_"+hook) {
+		t.Errorf("edited hook went unreported on a CI checkout (err=%v, failures=%v)", err, failed)
+	}
+
+	if err := os.Remove(hookPath); err != nil {
+		t.Fatal(err)
+	}
+	failed, err = fileStateFailures(t, dir)
+	if err == nil || !slices.Contains(failed, "file_exists_"+hook) {
+		t.Errorf("deleted hook went unreported on a CI checkout (err=%v, failures=%v)", err, failed)
+	}
+
+	if err := os.WriteFile(hookPath, original, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, state.ManifestFile())); err != nil {
+		t.Fatal(err)
+	}
+	failed, err = fileStateFailures(t, dir)
+	if err == nil || !slices.Contains(failed, "generated_manifest") {
+		t.Errorf("missing manifest went unreported (err=%v, failures=%v)", err, failed)
+	}
+}
+
+// TestManifestFollowsLifecycleCommands checks that every command that rewrites
+// the generation state keeps the committed manifest in step with it, and that
+// repair writes a manifest for a project initialized before it existed.
+func TestManifestFollowsLifecycleCommands(t *testing.T) {
+	dir := initLifecycleProject(t)
+	manifestPath := filepath.Join(dir, state.ManifestFile())
+	assertInStep := func(step string) {
+		t.Helper()
+		m, err := state.LoadManifest(manifestPath)
+		if err != nil {
+			t.Fatalf("after %s: %v", step, err)
+		}
+		if want := state.BuildManifest(loadProjectState(t, dir)); !maps.Equal(m, want) {
+			t.Errorf("after %s the manifest disagrees with the state:\n got %v\nwant %v", step, m, want)
+		}
+	}
+
+	assertInStep("init")
+	mustDisable(t, dir, "gitleaks", "--force")
+	assertInStep("disable")
+	mustEnable(t, dir, "gitleaks", "--force")
+	assertInStep("enable")
+
+	if err := os.Remove(manifestPath); err != nil {
+		t.Fatal(err)
+	}
+	// Repair also reports environment findings it cannot fix in a test
+	// project (no git repository, no go.sum), which make it exit non-zero;
+	// the manifest is written regardless.
+	if out, err := runLifecycleCmd(t, dir, repairCmd()); err != nil {
+		t.Logf("repair: %v\n%s", err, out)
+	}
+	assertInStep("repair")
 }

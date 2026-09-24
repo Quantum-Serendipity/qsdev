@@ -2,6 +2,7 @@ package devinit
 
 import (
 	"bytes"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -261,8 +262,7 @@ func TestUpdate_PartialFailureRecordsWrittenFiles(t *testing.T) {
 	if execErr == nil {
 		t.Fatal("expected a write failure")
 	}
-	stateFile := filepath.Join(dir, stateFilePath())
-	if err := saveUpdateResults(plan, out, existing, types.WizardAnswers{}, accumulatorResult{}, stateFile, dir); err != nil {
+	if err := saveUpdateResults(plan, out, existing, types.WizardAnswers{}, accumulatorResult{}, dir); err != nil {
 		t.Fatal(err)
 	}
 
@@ -272,6 +272,14 @@ func TestUpdate_PartialFailureRecordsWrittenFiles(t *testing.T) {
 	}
 	if saved.Files["blocked/b.txt"].Hash != existing.Files["blocked/b.txt"].Hash {
 		t.Error("unwritten file lost its previous state entry")
+	}
+	// The committed manifest is rewritten with the state (F349).
+	manifest, err := state.LoadManifest(filepath.Join(dir, state.ManifestFile()))
+	if err != nil {
+		t.Fatalf("update did not write the manifest: %v", err)
+	}
+	if !maps.Equal(manifest, state.BuildManifest(saved)) {
+		t.Errorf("manifest %v disagrees with the saved state", manifest)
 	}
 }
 

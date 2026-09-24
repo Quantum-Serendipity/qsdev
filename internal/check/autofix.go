@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"os"
@@ -58,8 +59,44 @@ func ApplyAutoFixes(results []CheckResult, projectRoot, stateFile string, regene
 	}
 
 	updated = fixDeletedFiles(updated, projectRoot, stateFile, regenerate)
+	fixManifest(updated, projectRoot, stateFile)
 
 	return updated
+}
+
+// fixManifest rewrites a missing or unusable generated-file manifest from the
+// local generation state. The rewritten manifest still has to be committed.
+func fixManifest(results []CheckResult, projectRoot, stateFile string) {
+	for i := range results {
+		r := &results[i]
+		if !r.AutoFixable || r.Name != manifestCheckName {
+			continue
+		}
+		err := writeManifestFromState(projectRoot, stateFile)
+		if err != nil {
+			slog.Warn("auto-fix: writing the generated-file manifest failed", "error", err)
+		}
+		markFixResult(r, err)
+		if err == nil {
+			r.Message += "; commit " + state.ManifestFile()
+		}
+	}
+}
+
+// writeManifestFromState writes the manifest for the generation state at
+// stateFile.
+func writeManifestFromState(projectRoot, stateFile string) error {
+	if stateFile == "" {
+		return errors.New("no generation state to build the manifest from")
+	}
+	genState, err := state.LoadStateFromFile(stateFile)
+	if err != nil {
+		return fmt.Errorf("loading state: %w", err)
+	}
+	if len(genState.Files) == 0 {
+		return errors.New("no generation state to build the manifest from; run 'qsdev init --update'")
+	}
+	return state.WriteManifest(projectRoot, state.BuildManifest(genState))
 }
 
 // markFixResult records the outcome of an auto-fix attempt on a result.
@@ -128,7 +165,28 @@ func fixDeletedFiles(results []CheckResult, projectRoot, stateFile string, regen
 	if err := recordRestoredFiles(stateFile, restored); err != nil {
 		slog.Warn("auto-fix: recording restored files in state failed", "error", err)
 	}
+	if err := recordRestoredInManifest(projectRoot, restored); err != nil {
+		slog.Warn("auto-fix: recording restored files in the manifest failed", "error", err)
+	}
 	return results
+}
+
+// recordRestoredInManifest updates the committed manifest's entries for the
+// restored machine-owned files so it matches what is now on disk. A missing
+// manifest is left for fixManifest (or init) to write whole.
+func recordRestoredInManifest(projectRoot string, restored []types.GeneratedFile) error {
+	if len(restored) == 0 {
+		return nil
+	}
+	manifest, err := state.LoadManifest(filepath.Join(projectRoot, state.ManifestFile()))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	maps.Copy(manifest, state.BuildManifest(state.RecordFiles(restored)))
+	return state.WriteManifest(projectRoot, manifest)
 }
 
 // recordRestoredFiles updates the generation state entries of restored files

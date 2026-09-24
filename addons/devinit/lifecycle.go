@@ -103,7 +103,7 @@ func runEnable(cmd *cobra.Command, toolName string, opts enableOptions) error {
 		return err
 	}
 
-	if err := saveToolState(stateFile, existingState, toolName, true); err != nil {
+	if err := saveToolState(projectRoot, existingState, toolName, true); err != nil {
 		return err
 	}
 	if err := saveAnswers(projectRoot, answers); err != nil {
@@ -447,14 +447,15 @@ func validateToolChange(change toolChange) error {
 	return errors.Join(errs...)
 }
 
-// saveToolState records the tool's enabled flag and persists the state.
-func saveToolState(stateFile string, st types.GeneratedState, toolName string, enabled bool) error {
+// saveToolState records the tool's enabled flag and persists the state and
+// the committed manifest.
+func saveToolState(projectRoot string, st types.GeneratedState, toolName string, enabled bool) error {
 	if st.EnabledTools == nil {
 		st.EnabledTools = make(map[string]bool)
 	}
 	st.EnabledTools[toolName] = enabled
 	st.LastRun = time.Now().UTC()
-	if err := state.SaveStateToFile(stateFile, st); err != nil {
+	if err := state.SaveInitState(projectRoot, st); err != nil {
 		return fmt.Errorf("saving state: %w", err)
 	}
 	return nil
@@ -530,7 +531,7 @@ func runDisable(cmd *cobra.Command, toolName string, opts disableOptions) error 
 	result.notices = append(removal.notices, result.notices...)
 	result.notices = append(result.notices, removeStaleSections(tool, projectRoot, change, existingState)...)
 
-	if err := saveToolState(stateFile, existingState, toolName, false); err != nil {
+	if err := saveToolState(projectRoot, existingState, toolName, false); err != nil {
 		return err
 	}
 	if err := saveAnswers(projectRoot, answers); err != nil {

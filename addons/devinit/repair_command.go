@@ -1,7 +1,10 @@
 package devinit
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -96,8 +99,12 @@ func runRepairCommand(cmd *cobra.Command, opts repair.RepairOptions) error {
 		if len(freshFragments) > 0 {
 			updatedState.Fragments = state.RecordFragments(freshFragments)
 		}
-		if err := state.SaveStateToFile(stateFile, *updatedState); err != nil {
+		if err := state.SaveInitState(projectRoot, *updatedState); err != nil {
 			return fmt.Errorf("saving state: %w", err)
+		}
+	} else if !opts.DryRun {
+		if err := ensureManifest(projectRoot, existingState); err != nil {
+			return err
 		}
 	}
 
@@ -170,4 +177,25 @@ func regenerateFreshFiles(answers types.WizardAnswers) (map[string]types.Generat
 	}
 
 	return freshFiles, accResult.fragments, nil
+}
+
+// ensureManifest writes the committed generated-file manifest from st when the
+// project has none (a project initialized before qsdev wrote it). An existing
+// manifest is left alone: it is the committed record, and a local state that
+// predates the last pull must not overwrite it.
+func ensureManifest(projectRoot string, st types.GeneratedState) error {
+	if len(st.Files) == 0 {
+		return nil
+	}
+	_, err := os.Stat(filepath.Join(projectRoot, state.ManifestFile()))
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("checking %s: %w", state.ManifestFile(), err)
+	}
+	if err := state.WriteManifest(projectRoot, state.BuildManifest(st)); err != nil {
+		return fmt.Errorf("writing the generated-file manifest: %w", err)
+	}
+	return nil
 }

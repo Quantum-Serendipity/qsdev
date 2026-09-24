@@ -2,6 +2,7 @@ package policyengine
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
@@ -44,6 +45,10 @@ const ConfusedDeputyRuleID = "confused-deputy"
 // decision carries the blocking RuleID and Message so the caller can explain
 // the denial. On an allow (exit 0) it carries the non-blocking warn, audit and
 // monitor findings of both policy passes so the caller can surface them.
+//
+// An allow that relied on one-shot command-tier bypass tokens redeems them
+// before returning; when a token can no longer be redeemed (a concurrent call
+// spent it first) the call is blocked instead.
 func (o *SecurityOrchestrator) RunPreToolUse(ctx *policy.EvalContext) (policy.PolicyDecision, int) {
 	enforceCtx := *ctx
 	enforceCtx.TierFilter = policy.EnforceAlwaysOnly
@@ -52,14 +57,17 @@ func (o *SecurityOrchestrator) RunPreToolUse(ctx *policy.EvalContext) (policy.Po
 		return enforceDecision, code
 	}
 
+	var consumed []string
 	if strings.HasPrefix(ctx.ToolName, "mcp__") && o.trust != nil {
 		// The policy evaluator resolves the session's bypass overrides into the
 		// context it evaluates (enforceCtx starts as a copy of ctx), so the
 		// deputy check honors exactly the overrides the policy passes see.
-		if decision, code := o.safeConfusedDeputyCheck(ctx, enforceCtx.SessionOverrides); code != 0 {
-			decision.Findings = append(enforceDecision.Findings, decision.Findings...)
-			return decision, code
+		deputy, code := o.safeConfusedDeputyCheck(ctx, enforceCtx.Overrides)
+		if code != 0 {
+			deputy.Findings = append(enforceDecision.Findings, deputy.Findings...)
+			return deputy, code
 		}
+		consumed = deputy.ConsumedTokens
 	}
 
 	sessionCtx := *ctx
@@ -74,6 +82,23 @@ func (o *SecurityOrchestrator) RunPreToolUse(ctx *policy.EvalContext) (policy.Po
 		sessionDecision.Action = enforceDecision.Action
 		sessionDecision.RuleID = enforceDecision.RuleID
 		sessionDecision.Message = enforceDecision.Message
+	}
+
+	for _, id := range sessionDecision.ConsumedTokens {
+		if !slices.Contains(consumed, id) {
+			consumed = append(consumed, id)
+		}
+	}
+	sessionDecision.ConsumedTokens = consumed
+	if err := o.policy.ConsumeCommandTokens(ctx, consumed); err != nil {
+		return policy.PolicyDecision{
+			Action:   policy.Block,
+			ExitCode: 2,
+			RuleID:   consumed[0],
+			Message:  fmt.Sprintf("the one-shot bypass for this call could not be redeemed, so the rule applies again: %v", err),
+			Err:      err,
+			Findings: sessionDecision.Findings,
+		}, 2
 	}
 	return sessionDecision, 0
 }
@@ -143,7 +168,12 @@ func (o *SecurityOrchestrator) PostureSnapshot() (*sarif.PolicyPosture, *sarif.P
 	return posture, nil, nil
 }
 
-func (o *SecurityOrchestrator) safeConfusedDeputyCheck(ctx *policy.EvalContext, sessionOverrides []string) (decision policy.PolicyDecision, exitCode int) {
+// safeConfusedDeputyCheck blocks an MCP call that would reach a path a
+// blocking policy rule denies. Deny rules lifted by an active session grant
+// are skipped. Rules lifted by a command-tier token are skipped too, and the
+// tokens of those that would have blocked this call are reported in the
+// decision's ConsumedTokens for the caller to redeem.
+func (o *SecurityOrchestrator) safeConfusedDeputyCheck(ctx *policy.EvalContext, overrides policy.ActiveOverrides) (decision policy.PolicyDecision, exitCode int) {
 	defer func() {
 		if r := recover(); r != nil {
 			exitCode = 2
@@ -156,9 +186,13 @@ func (o *SecurityOrchestrator) safeConfusedDeputyCheck(ctx *policy.EvalContext, 
 		}
 	}()
 
-	var denyRules []policy.DenyRule
+	var denyRules, tokenLifted []policy.DenyRule
 	for _, rule := range o.policy.FilePathDenyRules() {
-		if !rule.Bypassed(sessionOverrides) {
+		switch {
+		case rule.SessionBypassed(overrides):
+		case rule.CommandTokenHeld(overrides):
+			tokenLifted = append(tokenLifted, rule)
+		default:
 			denyRules = append(denyRules, rule)
 		}
 	}
@@ -172,7 +206,15 @@ func (o *SecurityOrchestrator) safeConfusedDeputyCheck(ctx *policy.EvalContext, 
 			Message:  reason,
 		}, 2
 	}
-	return policy.PolicyDecision{}, 0
+
+	var consumed []string
+	for _, rule := range tokenLifted {
+		if hit, _ := o.trust.CheckAccess(ctx.ToolName, ctx.ToolInput, []policy.DenyRule{rule}); hit &&
+			!slices.Contains(consumed, rule.RuleID) {
+			consumed = append(consumed, rule.RuleID)
+		}
+	}
+	return policy.PolicyDecision{ConsumedTokens: consumed}, 0
 }
 
 // resolveServerTier scores a server from its configured definition, enriched

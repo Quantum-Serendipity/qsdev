@@ -11,6 +11,12 @@ import (
 // rule that blocks the same call must still block it, so the prompt decision is
 // returned only once every candidate rule has been checked. Monitor-mode rules
 // are evaluated like any other rule, but a match only records a finding.
+//
+// A session-tier rule with an active session grant in ctx.Overrides is
+// skipped. A command-tier rule holding a one-shot token is still evaluated;
+// when it matches, the rule is lifted for this call and its ID is reported in
+// the decision's ConsumedTokens, which the caller must redeem. A blocking
+// decision reports no tokens, since the call does not run.
 func Evaluate(set *CompiledPolicySet, ctx *EvalContext) (decision PolicyDecision) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -26,16 +32,19 @@ func Evaluate(set *CompiledPolicySet, ctx *EvalContext) (decision PolicyDecision
 
 	var findings []Finding
 	var prompt *PolicyDecision
+	var consumed []string
 
 	for _, rule := range candidates {
 		if !matchesTierFilter(rule.Rule.BypassTier, ctx.TierFilter) {
 			continue
 		}
 
-		if (rule.Rule.BypassTier == Session || rule.Rule.BypassTier == Command) &&
-			slices.Contains(ctx.SessionOverrides, rule.Rule.ID) {
+		if rule.Rule.BypassTier == Session && slices.Contains(ctx.Overrides.Session, rule.Rule.ID) {
 			continue
 		}
+		// A monitor-mode rule never blocks, so it must not spend a token.
+		tokenHeld := rule.Rule.BypassTier == Command && !rule.Rule.MonitorMode &&
+			slices.Contains(ctx.Overrides.Command, rule.Rule.ID)
 
 		matched, err := rule.Condition.Evaluate(ctx)
 		if err != nil {
@@ -63,6 +72,13 @@ func Evaluate(set *CompiledPolicySet, ctx *EvalContext) (decision PolicyDecision
 			continue
 		}
 
+		if tokenHeld {
+			if !slices.Contains(consumed, rule.Rule.ID) {
+				consumed = append(consumed, rule.Rule.ID)
+			}
+			continue
+		}
+
 		result := rule.Action.Execute(&rule.Rule, ctx)
 
 		if rule.Rule.MonitorMode {
@@ -72,6 +88,7 @@ func Evaluate(set *CompiledPolicySet, ctx *EvalContext) (decision PolicyDecision
 
 		switch result.Action {
 		case Block:
+			result.BypassTier = rule.Rule.BypassTier
 			return result
 		case Prompt:
 			if prompt == nil {
@@ -87,13 +104,15 @@ func Evaluate(set *CompiledPolicySet, ctx *EvalContext) (decision PolicyDecision
 		// fail-closed form returns Block above); it did not end evaluation,
 		// so a later rule could still block the call.
 		prompt.Findings = append(prompt.Findings, findings...)
+		prompt.ConsumedTokens = consumed
 		return *prompt
 	}
 
 	return PolicyDecision{
-		Action:   "",
-		ExitCode: 0,
-		Findings: findings,
+		Action:         "",
+		ExitCode:       0,
+		Findings:       findings,
+		ConsumedTokens: consumed,
 	}
 }
 

@@ -52,6 +52,9 @@ type hookInput struct {
 	// Bash `cd`, so it is a starting point for locating the project root, not
 	// the root itself.
 	CWD string `json:"cwd,omitempty"`
+	// SessionID identifies the Claude Code session. Bypass grants are bound
+	// to it, so a grant never outlives the session it was issued for.
+	SessionID string `json:"session_id,omitempty"`
 }
 
 func enforceCmd() *cobra.Command {
@@ -112,7 +115,7 @@ func runEnforce(cmd *cobra.Command, hookEvent string) error {
 		decision, code := orchestrator.RunPreToolUse(evalCtx)
 		writePolicyFindings(cmd.ErrOrStderr(), decision.Findings)
 		if code != 0 {
-			return exitcode.New(code, "%s", policyBlockMessage(decision))
+			return exitcode.New(code, "%s%s", policyBlockMessage(decision), bypassHint(decision, evalCtx))
 		}
 		return nil
 	}
@@ -136,7 +139,7 @@ func newEnforcementEngine(policyFiles []string) (*policy.PolicyEngine, error) {
 	// overrides, which is the strictest state; it must not skip enforcement.
 	var stateReader policy.SessionStateReader
 	if sessionPath, err := sessionStatePath(); err == nil {
-		stateReader = policy.NewFileSessionStateReader(sessionPath)
+		stateReader = policy.NewFileSessionStateStore(sessionPath)
 	}
 	engine, err := policy.NewPolicyEngine(policyFiles, stateReader, policy.EngineOptions{})
 	if err != nil {
@@ -213,6 +216,26 @@ func policyBlockMessage(decision policy.PolicyDecision) string {
 	return fmt.Sprintf("qsdev-policy: %s — %s", ruleID, msg)
 }
 
+// bypassHint tells the operator how to lift a blocking session- or
+// command-tier rule for this project and Claude Code session. Only a human at
+// their own terminal can run the command (session allow refuses agent
+// sessions), so naming it to the model grants nothing.
+func bypassHint(decision policy.PolicyDecision, ctx *policy.EvalContext) string {
+	if ctx.SessionID == "" || decision.RuleID == "" {
+		return ""
+	}
+	scope := "for the rest of this session"
+	switch decision.BypassTier {
+	case policy.Session:
+	case policy.Command:
+		scope = "for one call"
+	default:
+		return ""
+	}
+	return fmt.Sprintf(" (a human can lift it %s by running `%s session allow %s --session %s` in their own terminal from the project directory)",
+		scope, branding.Get().AppName, decision.RuleID, ctx.SessionID)
+}
+
 // writePolicyFindings reports the non-blocking warn, audit and monitor-mode
 // findings of an allowed tool call on stderr, one line per finding.
 func writePolicyFindings(w io.Writer, findings []policy.Finding) {
@@ -227,9 +250,11 @@ func writePolicyFindings(w io.Writer, findings []policy.Finding) {
 
 func buildEvalContext(input *hookInput, projectRoot string) *policy.EvalContext {
 	ctx := &policy.EvalContext{
-		ToolName:  input.ToolName,
-		ToolInput: input.ToolInput,
-		CWD:       projectRoot,
+		ToolName:    input.ToolName,
+		ToolInput:   input.ToolInput,
+		CWD:         projectRoot,
+		ProjectRoot: canonicalProjectRoot(projectRoot),
+		SessionID:   input.SessionID,
 	}
 
 	var fields map[string]json.RawMessage
@@ -281,6 +306,13 @@ func policyProjectRoot(payloadCWD string) string {
 		}
 		start = wd
 	}
+	return projectRootFrom(start)
+}
+
+// projectRootFrom walks up from the absolute directory start to the nearest
+// directory carrying a qsdev project marker (see policyProjectRoot), returning
+// start itself when none is found.
+func projectRootFrom(start string) string {
 	start = filepath.Clean(start)
 
 	home, err := os.UserHomeDir()
@@ -302,6 +334,24 @@ func policyProjectRoot(payloadCWD string) string {
 		return start
 	}
 	return root
+}
+
+// canonicalProjectRoot returns the form of a project root that bypass grants
+// are keyed by: absolute, cleaned and with symbolic links resolved when
+// possible, so the hook and `session allow` agree on the same directory
+// however it was reached. An empty root stays empty (it matches no grant).
+func canonicalProjectRoot(root string) string {
+	if root == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return filepath.Clean(root)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
 }
 
 // discoverPolicyFiles returns the policy files for the project containing the

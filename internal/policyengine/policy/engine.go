@@ -6,12 +6,19 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type EngineOptions struct{}
 
+// SessionStateReader resolves the bypass grants in force for a call's scope.
 type SessionStateReader interface {
-	SessionOverrides() []string
+	ActiveOverrides(scope BypassScope, now time.Time) ActiveOverrides
+}
+
+// CommandTokenConsumer redeems one-shot command-tier bypass tokens.
+type CommandTokenConsumer interface {
+	ConsumeCommandTokens(scope BypassScope, ruleIDs []string, now time.Time) error
 }
 
 type PolicyEngine struct {
@@ -50,9 +57,27 @@ func NewPolicyEngine(files []string, state SessionStateReader, _ EngineOptions) 
 
 func (e *PolicyEngine) Evaluate(ctx *EvalContext) PolicyDecision {
 	if e.state != nil {
-		ctx.SessionOverrides = e.state.SessionOverrides()
+		ctx.Overrides = e.state.ActiveOverrides(ctx.BypassScope(), time.Now())
 	}
 	return Evaluate(e.current.Load(), ctx)
+}
+
+// ConsumeCommandTokens redeems the command-tier tokens a decision for ctx
+// relied on (its ConsumedTokens). It fails, and the call must then be blocked,
+// when the engine's session state cannot redeem tokens or a token was already
+// spent by another call.
+func (e *PolicyEngine) ConsumeCommandTokens(ctx *EvalContext, ruleIDs []string) error {
+	if len(ruleIDs) == 0 {
+		return nil
+	}
+	consumer, ok := e.state.(CommandTokenConsumer)
+	if !ok {
+		return fmt.Errorf("consuming command bypass tokens %v: %w", ruleIDs, ErrBypassTokenUnavailable)
+	}
+	if err := consumer.ConsumeCommandTokens(ctx.BypassScope(), ruleIDs, time.Now()); err != nil {
+		return fmt.Errorf("consuming command bypass tokens: %w", err)
+	}
+	return nil
 }
 
 // Reload re-reads and recompiles the policy files and swaps in the result. When

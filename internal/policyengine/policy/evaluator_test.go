@@ -3,8 +3,6 @@ package policy
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -68,8 +66,8 @@ func TestEvaluate_EnforceAlwaysBlocks(t *testing.T) {
 	set := compileTestPolicy(t, sp)
 
 	ctx := &EvalContext{
-		ToolName:         "Bash",
-		SessionOverrides: []string{"EA-001"}, // override should have no effect
+		ToolName:  "Bash",
+		Overrides: ActiveOverrides{Session: []string{"EA-001"}, Command: []string{"EA-001"}}, // no effect
 	}
 
 	decision := Evaluate(set, ctx)
@@ -92,8 +90,8 @@ func TestEvaluate_SessionBypass(t *testing.T) {
 	set := compileTestPolicy(t, sp)
 
 	ctx := &EvalContext{
-		ToolName:         "Bash",
-		SessionOverrides: []string{"SESS-001"},
+		ToolName:  "Bash",
+		Overrides: ActiveOverrides{Session: []string{"SESS-001"}},
 	}
 
 	decision := Evaluate(set, ctx)
@@ -113,8 +111,8 @@ func TestEvaluate_CommandBypass(t *testing.T) {
 	set := compileTestPolicy(t, sp)
 
 	ctx := &EvalContext{
-		ToolName:         "Bash",
-		SessionOverrides: []string{"CMD-001"},
+		ToolName:  "Bash",
+		Overrides: ActiveOverrides{Command: []string{"CMD-001"}},
 	}
 
 	decision := Evaluate(set, ctx)
@@ -123,6 +121,9 @@ func TestEvaluate_CommandBypass(t *testing.T) {
 	}
 	if decision.ExitCode != 0 {
 		t.Errorf("expected exit code 0 when bypassed, got %d", decision.ExitCode)
+	}
+	if len(decision.ConsumedTokens) != 1 || decision.ConsumedTokens[0] != "CMD-001" {
+		t.Errorf("ConsumedTokens = %v, want [CMD-001]", decision.ConsumedTokens)
 	}
 }
 
@@ -469,7 +470,7 @@ func TestPolicyEngine_WithSessionBypass(t *testing.T) {
 	t.Parallel()
 
 	state := &StaticSessionStateReader{
-		Overrides: []string{"CG-001"},
+		Session: []string{"CG-001"},
 	}
 
 	engine, err := NewPolicyEngine(
@@ -490,73 +491,6 @@ func TestPolicyEngine_WithSessionBypass(t *testing.T) {
 	decision := engine.Evaluate(ctx)
 	if decision.Action == Block && decision.RuleID == "CG-001" {
 		t.Error("CG-001 should be bypassed with session override, but got Block")
-	}
-}
-
-func TestSessionState_RoundTrip(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
-
-	overrides := []string{"RULE-A", "RULE-B", "RULE-C"}
-
-	if err := SaveSessionOverrides(path, overrides); err != nil {
-		t.Fatalf("SaveSessionOverrides: %v", err)
-	}
-
-	reader := NewFileSessionStateReader(path)
-	got := reader.SessionOverrides()
-
-	if len(got) != len(overrides) {
-		t.Fatalf("round-trip length: got %d, want %d", len(got), len(overrides))
-	}
-	for i := range overrides {
-		if got[i] != overrides[i] {
-			t.Errorf("round-trip index %d: got %q, want %q", i, got[i], overrides[i])
-		}
-	}
-
-	if err := ClearSessionOverrides(path); err != nil {
-		t.Fatalf("ClearSessionOverrides: %v", err)
-	}
-
-	postClear := reader.SessionOverrides()
-	if len(postClear) != 0 {
-		t.Errorf("expected empty overrides after clear, got %v", postClear)
-	}
-}
-
-// TestSaveSessionOverrides_AtomicReplace covers F199: the state file is
-// replaced atomically (parent directory created, no temp files left behind)
-// and an overwrite fully replaces the previous overrides.
-func TestSaveSessionOverrides_AtomicReplace(t *testing.T) {
-	t.Parallel()
-
-	dir := filepath.Join(t.TempDir(), "nested", ".qsdev")
-	path := filepath.Join(dir, "session-state.json")
-
-	if err := SaveSessionOverrides(path, []string{"RULE-A", "RULE-B"}); err != nil {
-		t.Fatalf("SaveSessionOverrides: %v", err)
-	}
-	if err := SaveSessionOverrides(path, []string{"RULE-C"}); err != nil {
-		t.Fatalf("SaveSessionOverrides overwrite: %v", err)
-	}
-
-	if got := NewFileSessionStateReader(path).SessionOverrides(); len(got) != 1 || got[0] != "RULE-C" {
-		t.Errorf("overrides after overwrite = %v, want [RULE-C]", got)
-	}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("reading state dir: %v", err)
-	}
-	if len(entries) != 1 {
-		var names []string
-		for _, e := range entries {
-			names = append(names, e.Name())
-		}
-		t.Errorf("state dir holds %v, want only the state file", names)
 	}
 }
 

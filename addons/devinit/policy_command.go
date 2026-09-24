@@ -279,7 +279,7 @@ func loadPolicyEngine() (*policy.PolicyEngine, error) {
 		return nil, err
 	}
 
-	stateReader := policy.NewFileSessionStateReader(sessionPath)
+	stateReader := policy.NewFileSessionStateStore(sessionPath)
 	engine, err := policy.NewPolicyEngine(policyFiles, stateReader, policy.EngineOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("loading policy engine: %w", err)

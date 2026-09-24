@@ -289,7 +289,7 @@ qsdev trial                   # Evaluate in an isolated git worktree
 
 | Command | Description |
 |---------|-------------|
-| `session allow <rule-ids>` | Enable session bypass for specific policy rules |
+| `session allow <rule-ids> --session <id>` | Bypass policy rules for one Claude Code session in this project |
 | `session clear` | Remove all session bypass overrides |
 | `session list` | List active session bypass overrides |
 

@@ -213,8 +213,10 @@ YAML-based security policies define fine-grained rules evaluated at tool invocat
 
 **Bypass tiers** (3):
 - `enforce_always` — Cannot be bypassed. Used for self-protection rules.
-- `session` — Can be bypassed with `qsdev session allow <rule-id>` (interactive confirmation required; applies machine-wide until `qsdev session clear`).
-- `command` — Can be bypassed per-invocation.
+- `session` — Can be lifted with `qsdev session allow <rule-id> --session <claude-session-id>` for one Claude Code session in one project, until the grant expires (default 8h, at most 24h).
+- `command` — `qsdev session allow` issues a one-shot token for one Claude Code session in one project: the next tool call the rule matches runs and spends the token (an unused token expires after 1h by default). Parallel calls redeem the token under a file lock, so only one of them runs; the others are blocked. The wait for that lock is bounded (2s, inside the hook timeout), and a call that cannot take it is blocked with the token left unspent.
+
+Grants are stored in `~/.qsdev/session-state.json`, keyed by the canonical project root and the Claude Code `session_id` from the hook payload. A grant never applies to another project or session, and an unscoped override left by a release before this scheme lifts nothing. Granting requires a human at an interactive terminal outside any agent session, who confirms the exact scope and expiry. A block by a session- or command-tier rule names the command that would lift it.
 
 Policy evaluation runs in under 50 microseconds per rule. Output is available in human-readable, JSON, and SARIF 2.1.0 formats.
 

@@ -193,13 +193,24 @@ const (
 )
 
 type EvalContext struct {
-	ToolName         string
-	ToolInput        json.RawMessage
-	FilePath         string
-	Command          string
-	CWD              string
-	SessionOverrides []string
-	TierFilter       TierFilter
+	ToolName  string
+	ToolInput json.RawMessage
+	FilePath  string
+	Command   string
+	CWD       string
+	// ProjectRoot and SessionID scope bypass grants: only grants issued for
+	// this project and this Claude Code session apply.
+	ProjectRoot string
+	SessionID   string
+	// Overrides are the bypasses in force for the call. The policy engine
+	// resolves them from its session state for the context's scope.
+	Overrides  ActiveOverrides
+	TierFilter TierFilter
+}
+
+// BypassScope returns the scope bypass grants must match for this call.
+func (c *EvalContext) BypassScope() BypassScope {
+	return BypassScope{ProjectRoot: c.ProjectRoot, SessionID: c.SessionID}
 }
 
 type PolicyDecision struct {
@@ -209,6 +220,13 @@ type PolicyDecision struct {
 	Message  string
 	Err      error
 	Findings []Finding
+	// BypassTier is the tier of the rule that produced a Block, so the caller
+	// can tell whether a human may lift it.
+	BypassTier BypassTier
+	// ConsumedTokens lists the command-tier rules whose one-shot bypass token
+	// this non-blocking decision relied on. The caller must consume them
+	// before letting the call run, and block it when that fails.
+	ConsumedTokens []string
 }
 
 type Finding struct {
@@ -229,9 +247,14 @@ type DenyRule struct {
 	BypassTier BypassTier
 }
 
-// Bypassed reports whether a session override lifts this deny rule. As in
-// Evaluate, only session- and command-tier rules can be bypassed.
-func (d DenyRule) Bypassed(sessionOverrides []string) bool {
-	return (d.BypassTier == Session || d.BypassTier == Command) &&
-		slices.Contains(sessionOverrides, d.RuleID)
+// SessionBypassed reports whether an active session-tier grant lifts this
+// deny rule, as it lifts the rule in Evaluate.
+func (d DenyRule) SessionBypassed(o ActiveOverrides) bool {
+	return d.BypassTier == Session && slices.Contains(o.Session, d.RuleID)
+}
+
+// CommandTokenHeld reports whether an unconsumed command-tier token lifts this
+// deny rule for one call; a call that relies on it must consume the token.
+func (d DenyRule) CommandTokenHeld(o ActiveOverrides) bool {
+	return d.BypassTier == Command && slices.Contains(o.Command, d.RuleID)
 }

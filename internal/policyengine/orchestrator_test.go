@@ -2,6 +2,7 @@ package policyengine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,8 @@ type mockPolicyEvaluator struct {
 	evaluateFunc func(*policy.EvalContext) policy.PolicyDecision
 	denyRules    []policy.DenyRule
 	rules        []policy.CompiledRule
+	consumeErr   error
+	consumed     [][]string
 }
 
 func (m *mockPolicyEvaluator) Evaluate(ctx *policy.EvalContext) policy.PolicyDecision {
@@ -32,6 +35,13 @@ func (m *mockPolicyEvaluator) FilePathDenyRules() []policy.DenyRule {
 
 func (m *mockPolicyEvaluator) CurrentRules() []policy.CompiledRule {
 	return m.rules
+}
+
+func (m *mockPolicyEvaluator) ConsumeCommandTokens(_ *policy.EvalContext, ruleIDs []string) error {
+	if len(ruleIDs) > 0 {
+		m.consumed = append(m.consumed, ruleIDs)
+	}
+	return m.consumeErr
 }
 
 type mockRiskScorer struct {
@@ -712,7 +722,7 @@ func TestRunPreToolUse_DeputyDenyRulesFollowRuleSemantics(t *testing.T) {
 	tests := []struct {
 		name      string
 		rule      string
-		overrides []string
+		overrides policy.ActiveOverrides
 		wantCode  int
 	}{
 		{
@@ -780,7 +790,7 @@ func TestRunPreToolUse_DeputyDenyRulesFollowRuleSemantics(t *testing.T) {
     action:
       type: block
 `,
-			overrides: []string{"DEP-001"},
+			overrides: policy.ActiveOverrides{Session: []string{"DEP-001"}},
 			wantCode:  0,
 		},
 	}
@@ -807,7 +817,7 @@ func TestRunPreToolUse_DeputyDenyRulesFollowRuleSemantics(t *testing.T) {
 				t.Fatalf("writing policy: %v", err)
 			}
 
-			state := &policy.StaticSessionStateReader{Overrides: tt.overrides}
+			state := &policy.StaticSessionStateReader{Session: tt.overrides.Session, Command: tt.overrides.Command}
 			engine, err := policy.NewPolicyEngine([]string{policyFile}, state, policy.EngineOptions{})
 			if err != nil {
 				t.Fatalf("NewPolicyEngine: %v", err)
@@ -822,6 +832,131 @@ func TestRunPreToolUse_DeputyDenyRulesFollowRuleSemantics(t *testing.T) {
 			_, code := orch.RunPreToolUse(&policy.EvalContext{ToolName: "mcp__filesystem__write_file", ToolInput: input})
 			if code != tt.wantCode {
 				t.Errorf("code = %d, want %d", code, tt.wantCode)
+			}
+		})
+	}
+}
+
+// writeDeputyPolicy writes a policy whose DEP-001 rule, of the given bypass
+// tier, blocks every path under a fresh protected directory, and returns the
+// policy file and a path inside the protected directory.
+func writeDeputyPolicy(t *testing.T, tier string) (policyFile, protectedFile string) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	protected := filepath.Join(tmpDir, "protected")
+	if err := os.MkdirAll(protected, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	protected, err := filepath.EvalSymlinks(protected)
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	content := "apiVersion: qsdev/v1\nkind: SecurityPolicy\nmetadata:\n  name: deputy\nrules:\n" +
+		"  - id: DEP-001\n    category: config-guard\n    name: protected dir\n" +
+		"    severity: high\n    bypass_tier: " + tier + "\n" +
+		"    conditions:\n      type: path_glob\n      pattern: \"" + protected + "/*\"\n" +
+		"    action:\n      type: block\n"
+	policyFile = filepath.Join(tmpDir, "policy.yaml")
+	if err := os.WriteFile(policyFile, []byte(content), 0o644); err != nil {
+		t.Fatalf("writing policy: %v", err)
+	}
+	return policyFile, filepath.Join(protected, "file.txt")
+}
+
+// TestRunPreToolUse_CommandTokenIsOneShot is the F193 regression for the
+// command tier: a command-tier token lifts its rule for exactly one matching
+// call (here through the MCP confused-deputy projection and the policy pass
+// together), after which the rule blocks again. A session grant does not lift
+// a command-tier rule.
+func TestRunPreToolUse_CommandTokenIsOneShot(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		tool      string
+		state     *policy.StaticSessionStateReader
+		wantCodes []int
+	}{
+		{
+			name:      "token lifts one MCP call",
+			tool:      "mcp__filesystem__write_file",
+			state:     &policy.StaticSessionStateReader{Command: []string{"DEP-001"}},
+			wantCodes: []int{0, 2},
+		},
+		{
+			name:      "token lifts one native call",
+			tool:      "Write",
+			state:     &policy.StaticSessionStateReader{Command: []string{"DEP-001"}},
+			wantCodes: []int{0, 2},
+		},
+		{
+			name:      "session grant does not lift a command-tier rule",
+			tool:      "mcp__filesystem__write_file",
+			state:     &policy.StaticSessionStateReader{Session: []string{"DEP-001"}},
+			wantCodes: []int{2},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			policyFile, target := writeDeputyPolicy(t, "command")
+			engine, err := policy.NewPolicyEngine([]string{policyFile}, tt.state, policy.EngineOptions{})
+			if err != nil {
+				t.Fatalf("NewPolicyEngine: %v", err)
+			}
+			adapter := newTestTrustAdapter(t, filepath.Join(t.TempDir(), "trust.yaml"))
+			orch := NewSecurityOrchestrator(engine, risk.NewScorer(), adapter)
+
+			input, err := json.Marshal(map[string]string{"path": target, "file_path": target})
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			for i, want := range tt.wantCodes {
+				ctx := &policy.EvalContext{ToolName: tt.tool, ToolInput: input, FilePath: target}
+				if _, code := orch.RunPreToolUse(ctx); code != want {
+					t.Errorf("call %d: code = %d, want %d", i+1, code, want)
+				}
+			}
+		})
+	}
+}
+
+// TestRunPreToolUse_UnredeemableTokenBlocks checks that an allow that relied
+// on a command-tier token is turned into a block when the token cannot be
+// redeemed, as when a parallel call spent it first.
+func TestRunPreToolUse_UnredeemableTokenBlocks(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		consumeErr error
+		wantCode   int
+	}{
+		{name: "redeemed token allows", wantCode: 0},
+		{name: "spent token blocks", consumeErr: fmt.Errorf("rule CMD-1: %w", policy.ErrBypassTokenUnavailable), wantCode: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			pe := &mockPolicyEvaluator{
+				consumeErr: tt.consumeErr,
+				evaluateFunc: func(ctx *policy.EvalContext) policy.PolicyDecision {
+					if ctx.TierFilter == policy.SessionCommandOnly {
+						return policy.PolicyDecision{ConsumedTokens: []string{"CMD-1"}}
+					}
+					return policy.PolicyDecision{}
+				},
+			}
+			orch := NewSecurityOrchestrator(pe, &mockRiskScorer{}, &mockTrustEvaluator{})
+			decision, code := orch.RunPreToolUse(&policy.EvalContext{ToolName: "Bash"})
+			if code != tt.wantCode {
+				t.Fatalf("code = %d, want %d", code, tt.wantCode)
+			}
+			if len(pe.consumed) != 1 || pe.consumed[0][0] != "CMD-1" {
+				t.Errorf("consumed = %v, want one redemption of CMD-1", pe.consumed)
+			}
+			if tt.wantCode == 2 && (decision.RuleID != "CMD-1" || !errors.Is(decision.Err, policy.ErrBypassTokenUnavailable)) {
+				t.Errorf("decision = %+v, want a CMD-1 block wrapping ErrBypassTokenUnavailable", decision)
 			}
 		})
 	}

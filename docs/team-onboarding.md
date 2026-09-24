@@ -231,15 +231,15 @@ qsdev policy check --audit-level high  # Fail only on high+ severity
 
 ### Session Bypass
 
-Some rules support session-level bypass for temporary exceptions:
+Some rules support a bypass for temporary exceptions. A bypass is bound to one Claude Code session in one project and expires; the block message names the session ID:
 
 ```bash
-qsdev session allow RULE-001 RULE-002   # Bypass specific rules
+qsdev session allow RULE-001 RULE-002 --session <claude-session-id>   # Bypass specific rules
 qsdev session list                       # Show active bypasses
 qsdev session clear                      # Remove all bypasses
 ```
 
-Rules with `bypass_tier: enforce_always` (all 18 self-protection rules) cannot be bypassed. Rules with `bypass_tier: session` require per-session approval. Rules with `bypass_tier: command` can be bypassed per-invocation.
+Rules with `bypass_tier: enforce_always` (all 18 self-protection rules) cannot be bypassed. Rules with `bypass_tier: session` are lifted for the named session until the grant expires (default 8h). Rules with `bypass_tier: command` get a one-shot token that the next matching tool call spends.
 
 ## Cloud Ecosystem Coverage
 
@@ -427,5 +427,5 @@ This ensures consistent security policies, tooling versions, and Claude Code per
 | `qsdev docs status` | Show installed documentation |
 | `qsdev policy check` | Evaluate security policy posture |
 | `qsdev policy list` | List security policy rules |
-| `qsdev session allow <ids>` | Enable session bypass for rules |
-| `qsdev session clear` | Remove session bypass overrides |
+| `qsdev session allow <ids> --session <id>` | Bypass rules for one Claude Code session in this project |
+| `qsdev session clear` | Remove session bypass grants |

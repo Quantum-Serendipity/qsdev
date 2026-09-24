@@ -57,8 +57,9 @@ func (m *Module) Tier() int { return 1 }
 // requirements*.in and conda environment files are Probable. The package
 // manager is inferred from lockfiles (uv.lock -> uv, poetry.lock -> poetry,
 // otherwise pip); projects managed by a tool qsdev does not support (pdm,
-// pipenv, hatch, conda) are reported through Extras instead of being called
-// pip. The version comes from .python-version, else from pyproject.toml's
+// pipenv, hatch, conda) are reported through Extras and evidence instead of
+// being called pip, and SetupWarnings repeats that as an init warning. The
+// version comes from .python-version, else from pyproject.toml's
 // requires-python or Poetry python constraint.
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	confidence, evidence := detectIndicators(projectRoot)
@@ -153,7 +154,8 @@ type unsupportedManager struct {
 // deliberately not markers: pip and uv projects use those backends too.
 var unsupportedManagers = []unsupportedManager{
 	{
-		name: "pdm", files: []string{"pdm.lock"}, tool: [][]string{{"pdm", "dev-dependencies"}},
+		name: "pdm", files: []string{"pdm.lock"},
+		tool: [][]string{{"pdm", "dev-dependencies"}, {"pdm", "scripts"}, {"pdm", "resolution"}, {"pdm", "source"}},
 		manifest: ecosystem.ManifestFileInfo{Path: "pyproject.toml", Ecosystem: "pdm", VSSupported: true,
 			LockFile: "pdm.lock", LockFilePolicy: ecosystem.LockFilePolicyRequired},
 	},
@@ -163,7 +165,7 @@ var unsupportedManagers = []unsupportedManager{
 			LockFile: "Pipfile.lock", LockFilePolicy: ecosystem.LockFilePolicyRequired},
 	},
 	{
-		name: "hatch", tool: [][]string{{"hatch", "envs"}},
+		name: "hatch", tool: [][]string{{"hatch", "envs"}, {"hatch", "env"}},
 		manifest: ecosystem.ManifestFileInfo{Path: "pyproject.toml", Ecosystem: "hatch", VSSupported: true,
 			LockFilePolicy: ecosystem.LockFilePolicyNone},
 	},
@@ -184,24 +186,43 @@ func detectPackageManager(projectRoot string, pp pyproject, extras map[string]st
 	case fileutil.FileExists(projectRoot, "poetry.lock"):
 		return "poetry", []string{"poetry.lock found"}
 	}
+	if um, marker, ok := findUnsupportedManager(projectRoot, pp); ok {
+		extras[extraProjectManager] = um.name
+		return "", []string{unsupportedManagerMessage(um, marker)}
+	}
+	return "pip", nil
+}
+
+// findUnsupportedManager returns the first unsupported project manager whose
+// marker file or pyproject.toml [tool.*] table is present in projectRoot,
+// with a description of the marker that identified it.
+func findUnsupportedManager(projectRoot string, pp pyproject) (unsupportedManager, string, bool) {
 	for _, um := range unsupportedManagers {
-		marker := ""
 		for _, f := range um.files {
-			if marker == "" && fileutil.FileExists(projectRoot, f) {
-				marker = f
+			if fileutil.FileExists(projectRoot, f) {
+				return um, f + " found", true
 			}
 		}
 		for _, key := range um.tool {
-			if marker == "" && pp.hasTool(key...) {
-				marker = "[tool." + strings.Join(key, ".") + "] in pyproject.toml"
+			if pp.hasTool(key...) {
+				return um, "[tool." + strings.Join(key, ".") + "] in pyproject.toml", true
 			}
 		}
-		if marker != "" {
-			extras[extraProjectManager] = um.name
-			return "", []string{fmt.Sprintf("%s found: %s is not a supported package manager (supported: pip, uv, poetry); only pip hardening is generated", marker, um.name)}
-		}
 	}
-	return "pip", nil
+	return unsupportedManager{}, "", false
+}
+
+// unsupportedManagerMessage explains that the project is managed by um, which
+// qsdev cannot configure. The supported managers are listed from
+// PackageManagers so the message cannot drift from the catalog.
+func unsupportedManagerMessage(um unsupportedManager, marker string) string {
+	pms := (&Module{}).PackageManagers()
+	supported := make([]string, 0, len(pms))
+	for _, pm := range pms {
+		supported = append(supported, pm.Name)
+	}
+	return fmt.Sprintf("%s: %s is not a supported package manager (supported: %s); only pip hardening is generated",
+		marker, um.name, strings.Join(supported, ", "))
 }
 
 // detectVersion returns the Python version to pin: a valid .python-version
@@ -364,15 +385,30 @@ func poetryCheckLockTask() string {
 `
 }
 
-// SetupWarnings reports the Poetry files a poetry-mode project is missing.
-// The generated shell installs dependencies and activates poetry's .venv only
+// SetupWarnings reports project files that the configured package manager
+// does not match. A poetry-mode project is warned about missing Poetry files:
+// the generated shell installs dependencies and activates poetry's .venv only
 // once both pyproject.toml (absent when a requirements.txt project picks
-// poetry) and poetry.lock exist (see poetryCheckLockTask). Other package
-// managers need no check.
+// poetry) and poetry.lock exist (see poetryCheckLockTask). A pip-mode project
+// that pdm, pipenv, hatch or conda manages is warned that qsdev cannot
+// configure that tool, so the gap is visible rather than the project being
+// silently treated as a pip project. uv needs no check.
 func (m *Module) SetupWarnings(projectRoot string, config ecosystem.ModuleConfig) []string {
-	if config.PM("pip") != "poetry" {
-		return nil
+	switch config.PM("pip") {
+	case "poetry":
+		return poetrySetupWarnings(projectRoot)
+	case "pip":
+		if um, marker, ok := findUnsupportedManager(projectRoot, readPyproject(projectRoot)); ok {
+			return []string{unsupportedManagerMessage(um, marker) +
+				", and qsdev does not configure " + um.name + " itself; " +
+				"choose a supported package manager with --python-pkg-mgr if the project can use one"}
+		}
 	}
+	return nil
+}
+
+// poetrySetupWarnings reports the Poetry files a poetry-mode project lacks.
+func poetrySetupWarnings(projectRoot string) []string {
 	switch {
 	case !fileutil.FileExists(projectRoot, "pyproject.toml"):
 		return []string{"poetry is the package manager but pyproject.toml is missing, so the devenv shell cannot set up poetry's .venv; " +

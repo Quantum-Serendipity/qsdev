@@ -1251,6 +1251,17 @@ devenv supports only one JavaScript project directory. If several subprojects ex
 |------|---------------|---------|
 | `pip.conf` | `skip` | Registry configuration, hash-checking mode (only created if absent) |
 
+**Detection.** qsdev detects a Python project from `pyproject.toml`, `setup.py`, `setup.cfg`, `Pipfile`, `requirements*.txt`, `requirements*.in`, or a conda `environment.yml`/`environment.yaml`. `uv.lock` selects uv and `poetry.lock` selects Poetry. Otherwise the package manager is pip, unless the project is managed by a tool qsdev cannot configure:
+
+| Tool | Detected from | Manifest and lockfile tracked |
+|------|---------------|-------------------------------|
+| pdm | `pdm.lock`, or `[tool.pdm.dev-dependencies]`, `[tool.pdm.scripts]`, `[tool.pdm.resolution]` or `[[tool.pdm.source]]` in `pyproject.toml` | `pyproject.toml`, `pdm.lock` (required) |
+| pipenv | `Pipfile.lock` or `Pipfile` | `Pipfile`, `Pipfile.lock` (required) |
+| hatch | `[tool.hatch.envs]` or `[tool.hatch.env]` in `pyproject.toml` | `pyproject.toml` |
+| conda | `environment.yml` or `environment.yaml` | `environment.yml` |
+
+Build-backend tables such as `[tool.pdm.build]` or `[tool.hatch.version]` do not count, because pip and uv projects use those backends too. For these tools, qsdev records the tool as the `project_manager` extra. Version-Sentinel and lockfile checks then track that tool's manifest and lockfile instead of a `requirements.txt` that does not exist. The tool is not presented as pip: `qsdev init` (including `--update` and `--mode join`) prints a warning that names the tool and the file that identified it. The warning also says that qsdev only generates pip hardening and does not configure the tool itself. The warning does not block generation. Choosing uv or Poetry with `--python-pkg-mgr` removes it.
+
 **Poetry.** With `--python-pkg-mgr poetry`, the devenv shell uses Poetry's own `.venv` in the project root. devenv.nix does not enable `languages.python.venv`, which would activate a second, empty virtualenv on top of Poetry's. On shell entry, devenv runs `poetry install --no-interaction` and activates `.venv`, but only when both of these hold:
 
 - `pyproject.toml` and `poetry.lock` both exist, so the shell never resolves dependencies without a lockfile.

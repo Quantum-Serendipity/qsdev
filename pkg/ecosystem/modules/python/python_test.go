@@ -578,6 +578,56 @@ func TestSetupWarnings(t *testing.T) {
 	}
 }
 
+// TestSetupWarnings_UnsupportedManager guards W077: a pip-mode project that is
+// really managed by pdm, pipenv, hatch or conda gets a visible warning naming
+// that tool, instead of being silently configured as a pip project.
+func TestSetupWarnings_UnsupportedManager(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		pm    string
+		files map[string]string
+		want  []string // substrings of the only warning; nil for no warnings
+	}{
+		{name: "pdm lock", files: map[string]string{"pyproject.toml": "[project]\n", "pdm.lock": ""}, want: []string{"pdm", "pdm.lock found", "pip, uv, poetry"}},
+		{name: "pdm dev-dependencies", pm: "pip", files: map[string]string{"pyproject.toml": "[tool.pdm.dev-dependencies]\ntest = []\n"}, want: []string{"pdm", "[tool.pdm.dev-dependencies]"}},
+		{name: "pdm scripts", files: map[string]string{"pyproject.toml": "[tool.pdm.scripts]\ntest = \"pytest\"\n"}, want: []string{"pdm", "[tool.pdm.scripts]"}},
+		{name: "pdm source array", files: map[string]string{"pyproject.toml": "[[tool.pdm.source]]\nname = \"internal\"\nurl = \"https://pypi.example/simple\"\n"}, want: []string{"pdm", "[tool.pdm.source]"}},
+		{name: "pdm build backend only", files: map[string]string{"pyproject.toml": "[tool.pdm.build]\nincludes = []\n"}},
+		{name: "poetry chosen for pdm project", pm: "poetry", files: map[string]string{"pyproject.toml": "[project]\n", "pdm.lock": "", "poetry.lock": ""}},
+		{name: "pipenv", files: map[string]string{"Pipfile": "[packages]\n", "Pipfile.lock": "{}"}, want: []string{"pipenv", "Pipfile.lock found"}},
+		{name: "hatch envs", files: map[string]string{"pyproject.toml": "[tool.hatch.envs.default]\ndependencies = []\n"}, want: []string{"hatch", "[tool.hatch.envs]"}},
+		{name: "conda", files: map[string]string{"environment.yaml": "name: x\n"}, want: []string{"conda", "environment.yaml found"}},
+		{name: "hatch build backend only", files: map[string]string{"pyproject.toml": "[tool.hatch.version]\npath = \"x.py\"\n"}},
+		{name: "plain pip project", files: map[string]string{"requirements.txt": "requests==2.32.3\n"}},
+		{name: "uv chosen for pdm project", pm: "uv", files: map[string]string{"pyproject.toml": "[project]\n", "pdm.lock": ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for name, content := range tt.files {
+				writeFile(t, dir, name, content)
+			}
+			got := (&python.Module{}).SetupWarnings(dir, ecosystem.ModuleConfig{PackageManager: tt.pm})
+			if tt.want == nil {
+				if len(got) != 0 {
+					t.Errorf("SetupWarnings() = %q, want none", got)
+				}
+				return
+			}
+			if len(got) != 1 {
+				t.Fatalf("SetupWarnings() = %q, want exactly one warning", got)
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(got[0], w) {
+					t.Errorf("SetupWarnings()[0] = %q, want it to contain %q", got[0], w)
+				}
+			}
+		})
+	}
+}
+
 // TestDevenvNixFragment_SupplyChainEnv guards W071: uv and poetry projects
 // get their hardening from devenv env vars, and a project's own uv
 // exclude-newer is never overridden.

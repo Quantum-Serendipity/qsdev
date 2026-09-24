@@ -66,6 +66,8 @@ A tracked file that the generators no longer produce is cleaned up by `qsdev upd
 
 This is the source-of-truth file that teammates use to reproduce the same environment. When committed to version control, running `qsdev init --mode join` reads this file to produce an identical setup without re-running the wizard.
 
+**Project root.** qsdev commands (`check`, `status`, `enable`, `update`, the `devenv` and `claudecode` commands, logs and bug reports) can be run from any subdirectory: they walk up from the working directory to the nearest directory holding `.qsdev.yaml` (a regular file), the `.devinit/` state directory, or a `.qsdev/` project data directory — except in your home directory, where `~/.qsdev/` is the per-user data directory (logs, cache, docs), not a project. Outside any project the working directory is used. `qsdev init` is the exception: it always initializes the directory it is run in.
+
 Structure:
 
 ```yaml

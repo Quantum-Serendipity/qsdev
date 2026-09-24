@@ -7,10 +7,11 @@ import (
 )
 
 func TestProjectRoot(t *testing.T) {
-	// Not parallel: t.Chdir changes the process working directory.
+	// Not parallel: t.Chdir and t.Setenv change process-wide state.
 	tests := []struct {
 		name    string
 		markers []string // relative paths to create; a trailing "/" makes a directory
+		home    string   // relative to the temp root; "" = a directory outside it
 		cwd     string   // relative to the temp root
 		want    string   // relative to the temp root
 	}{
@@ -20,6 +21,8 @@ func TestProjectRoot(t *testing.T) {
 		{name: "state dir in ancestor", markers: []string{".devinit/"}, cwd: "src", want: "."},
 		{name: "nearest project wins", markers: []string{".qsdev.yaml", "sub/.qsdev.yaml"}, cwd: "sub/x", want: "sub"},
 		{name: "config name as directory is not a marker", markers: []string{"src/.qsdev.yaml/"}, cwd: "src", want: "src"},
+		{name: "project data dir in ancestor", markers: []string{".qsdev/"}, cwd: "internal/check", want: "."},
+		{name: "global data dir in home is not a project", markers: []string{".qsdev/logs/"}, home: ".", cwd: "newproj", want: "newproj"},
 	}
 
 	for _, tt := range tests {
@@ -47,6 +50,11 @@ func TestProjectRoot(t *testing.T) {
 			if err := os.MkdirAll(cwd, 0o755); err != nil {
 				t.Fatal(err)
 			}
+			home := t.TempDir()
+			if tt.home != "" {
+				home = filepath.Join(root, filepath.FromSlash(tt.home))
+			}
+			t.Setenv("HOME", home)
 			t.Chdir(cwd)
 
 			got, err := ProjectRoot()

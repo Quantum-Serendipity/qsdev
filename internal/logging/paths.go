@@ -66,25 +66,59 @@ func WalkUp(startDir string, match func(dir string) bool) (string, bool) {
 	}
 }
 
-// DetectProjectRoot walks up from the current directory looking for
-// .qsdev.yaml or .qsdev/ to identify a qsdev project root.
-// Returns "" if not inside a project.
+// DetectProjectRoot returns the root of the qsdev project enclosing the
+// current directory (see FindProjectRoot), or "" if not inside a project.
 func DetectProjectRoot() string {
 	dir, err := os.Getwd()
 	if err != nil {
 		return ""
 	}
-
-	b := branding.Get()
-	root, ok := WalkUp(dir, func(d string) bool {
-		return fileutil.FileExists(d, b.ConfigFile) ||
-			fileutil.DirExists(d, "."+b.AppName) ||
-			fileutil.DirExists(d, b.StateDir)
-	})
-	if !ok {
-		return ""
-	}
+	root, _ := FindProjectRoot(dir)
 	return root
+}
+
+// FindProjectRoot walks up from start to the nearest directory (start itself
+// included) that carries a qsdev project marker, reporting false when there is
+// none. It is the single marker set every command uses to locate the project,
+// so logs, bug reports and project commands all agree on the root. The markers
+// are:
+//
+//   - the project config file (a regular file; a directory of that name is not
+//     a marker),
+//   - the generated-state directory,
+//   - the project data directory ("."+AppName), except in the user's home
+//     directory, where the same name is the per-user global data directory
+//     (logs, cache, binaries) rather than a project.
+func FindProjectRoot(start string) (string, bool) {
+	isHome := homeDirMatcher()
+	b := branding.Get()
+	dataDir := "." + b.AppName
+	return WalkUp(filepath.Clean(start), func(dir string) bool {
+		if fileutil.FileExists(dir, b.ConfigFile) || fileutil.DirExists(dir, b.StateDir) {
+			return true
+		}
+		return fileutil.DirExists(dir, dataDir) && !isHome(dir)
+	})
+}
+
+// homeDirMatcher returns a predicate reporting whether a directory is the
+// user's home directory. It compares file identity (os.SameFile), so a $HOME
+// reached through a symlink, a bind mount or a differently-cased path on a
+// case-insensitive filesystem still matches the resolved working directory.
+// With no resolvable home directory it matches nothing.
+func homeDirMatcher() func(dir string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return func(string) bool { return false }
+	}
+	homeInfo, err := os.Stat(home)
+	if err != nil {
+		return func(string) bool { return false }
+	}
+	return func(dir string) bool {
+		info, err := os.Stat(dir)
+		return err == nil && os.SameFile(info, homeInfo)
+	}
 }
 
 // CommandClass says where, if anywhere, a CLI invocation's session log is kept.

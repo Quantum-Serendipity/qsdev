@@ -5,21 +5,21 @@ import (
 	"os"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
-	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
-	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 // ProjectRoot returns the root of the project enclosing the current working
-// directory (see FindProjectRoot), so commands run from a subdirectory act on
-// the real project instead of creating a second, nested one. Outside any
-// project it returns the working directory, which keeps commands that may run
-// before initialization (e.g. enable) working.
+// directory, located with the shared project marker set (see
+// logging.FindProjectRoot), so commands run from a subdirectory act on the
+// real project instead of creating a second, nested one, and agree with logs
+// and bug reports about where that project is. Outside any project it returns
+// the working directory, which keeps commands that may run before
+// initialization (e.g. enable) working.
 func ProjectRoot() (string, error) {
 	wd, err := WorkingDir()
 	if err != nil {
 		return "", err
 	}
-	if root, ok := FindProjectRoot(wd); ok {
+	if root, ok := logging.FindProjectRoot(wd); ok {
 		return root, nil
 	}
 	return wd, nil
@@ -35,15 +35,4 @@ func WorkingDir() (string, error) {
 		return "", fmt.Errorf("determining working directory: %w", err)
 	}
 	return wd, nil
-}
-
-// FindProjectRoot walks up from start to the nearest directory (start itself
-// included) that holds the project config file or the generated-state
-// directory, the two markers only an initialized (or tool-enabled) project
-// has. It reports false when no such directory exists.
-func FindProjectRoot(start string) (string, bool) {
-	b := branding.Get()
-	return logging.WalkUp(start, func(dir string) bool {
-		return fileutil.FileExists(dir, b.ConfigFile) || fileutil.DirExists(dir, b.StateDir)
-	})
 }

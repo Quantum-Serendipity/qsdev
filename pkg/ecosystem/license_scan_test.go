@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/shelltest"
 )
 
 // TestAggregateTaskDefinitions_SecurityScanLicense is the F218 regression:
@@ -84,10 +86,7 @@ func TestLicenseScanCommand_Args(t *testing.T) {
 // fails the task only on files whose licenses the policy prohibits.
 func TestLicenseScanCommand_PolicyGate(t *testing.T) {
 	t.Parallel()
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash not available")
-	}
+	bash := shelltest.Bash(t)
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("jq not available")
 	}
@@ -170,18 +169,18 @@ func TestLicenseScanCommand_PolicyGate(t *testing.T) {
 			}
 			argsFile := filepath.Join(work, "args")
 			bin := t.TempDir()
-			stub := "#!" + bash + "\nprintf '%s\\n' \"$@\" > \"$STUB_ARGS\"\ncat \"$STUB_SCAN\"\nexit \"$STUB_EXIT\"\n"
+			stub := bash.Shebang() + "printf '%s\\n' \"$@\" > \"$STUB_ARGS\"\ncat \"$STUB_SCAN\"\nexit \"$STUB_EXIT\"\n"
 			if err := os.WriteFile(filepath.Join(bin, "scancode"), []byte(stub), 0o755); err != nil {
 				t.Fatal(err)
 			}
 
 			cmd := licenseScanCommand()
-			run := exec.Command(bash, "-c", "set -euo pipefail\n"+cmd)
+			run := exec.Command(bash.Path, "-c", "set -euo pipefail\n"+cmd)
 			run.Dir = project
 			run.Env = append(os.Environ(),
 				"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
-				"STUB_ARGS="+argsFile,
-				"STUB_SCAN="+scanFile,
+				"STUB_ARGS="+filepath.ToSlash(argsFile),
+				"STUB_SCAN="+filepath.ToSlash(scanFile),
 				"STUB_EXIT="+strconv.Itoa(tt.scanExit),
 			)
 			out, err := run.CombinedOutput()

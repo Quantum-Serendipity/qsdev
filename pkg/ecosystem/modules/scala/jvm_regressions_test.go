@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/shelltest"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
@@ -167,10 +168,7 @@ func TestManifestFiles_Detected(t *testing.T) {
 func TestScalafmtHook_Script(t *testing.T) {
 	t.Parallel()
 
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash not available")
-	}
+	bash := shelltest.Bash(t)
 	var hook ecosystem.HookConfig
 	for _, h := range newModule().PreCommitHooks(ecosystem.ModuleConfig{}) {
 		if h.ID == "scalafmt" {
@@ -203,9 +201,9 @@ func TestScalafmtHook_Script(t *testing.T) {
 			bin := filepath.Join(dir, "bin")
 			repo := filepath.Join(dir, "repo")
 			log := filepath.Join(dir, "calls.log")
-			writeTree(t, bin, map[string]string{"scalafmt": "#!" + bash + "\n" +
+			writeTree(t, bin, map[string]string{"scalafmt": bash.Shebang() +
 				"if [ \"$1\" = --version ]; then echo 'scalafmt 3.11.4'; exit 0; fi\n" +
-				"echo \"$*\" >> " + log + "\n"})
+				"echo \"$*\" >> " + shelltest.QuotePath(log) + "\n"})
 			if err := os.Chmod(filepath.Join(bin, "scalafmt"), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -215,7 +213,7 @@ func TestScalafmtHook_Script(t *testing.T) {
 			}
 			writeTree(t, repo, files)
 
-			cmd := exec.Command(bash, "-c", hook.Script, "scalafmt-hook", "A.scala", "B.scala")
+			cmd := exec.Command(bash.Path, "-c", hook.Script, "scalafmt-hook", "A.scala", "B.scala")
 			cmd.Dir = repo
 			cmd.Env = []string{"PATH=" + bin}
 			out, err := cmd.CombinedOutput()

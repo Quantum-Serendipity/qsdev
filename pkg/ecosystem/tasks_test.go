@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/shelltest"
 )
 
 func TestAggregateTaskDefinitions_SingleEcosystem(t *testing.T) {
@@ -289,10 +291,7 @@ func TestAggregateTaskDefinitions_SecurityScanOpengrep(t *testing.T) {
 // errexit and nounset) against a stub semgrep that records its arguments.
 func TestSemgrepScanCommand_LocalRules(t *testing.T) {
 	t.Parallel()
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash not available")
-	}
+	bash := shelltest.Bash(t)
 
 	goMod := sastMock{&MockModule{NameVal: "go"}, []string{"p/golang"}}
 	cmd := semgrepScanCommand([]EcosystemModule{goMod})
@@ -315,12 +314,12 @@ func TestSemgrepScanCommand_LocalRules(t *testing.T) {
 				}
 			}
 			bin := t.TempDir()
-			stub := "#!" + bash + "\nprintf '%s\\n' \"$*\"\n"
+			stub := bash.Shebang() + "printf '%s\\n' \"$*\"\n"
 			if err := os.WriteFile(filepath.Join(bin, "semgrep"), []byte(stub), 0o755); err != nil {
 				t.Fatal(err)
 			}
 
-			run := exec.Command(bash, "-c", "set -euo pipefail\n"+cmd)
+			run := exec.Command(bash.Path, "-c", "set -euo pipefail\n"+cmd)
 			run.Dir = project
 			run.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 			out, err := run.CombinedOutput()

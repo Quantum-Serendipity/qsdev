@@ -130,6 +130,13 @@ func (m *InternalToolModule) Detect(root string) ecosystem.DetectionResult {
 // ... stub remaining interface methods
 ```
 
+To ask the user for settings in the `init` wizard, also implement
+`ecosystem.WizardFieldProvider`. Each `WizardField.Key` must be the setting
+your module reads: `types.SettingVersion` for `ModuleConfig.Version`,
+`types.SettingPackageManager` for `ModuleConfig.PackageManager`, or the
+`ModuleConfig.Extras` key otherwise. Give every input field a `Placeholder`
+example.
+
 Register via init (auto-discovery):
 
 ```go

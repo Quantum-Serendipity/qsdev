@@ -473,8 +473,9 @@ func TestWizardFields(t *testing.T) {
 	if fields[0].Type != ecosystem.FieldTypeInput {
 		t.Errorf("expected first field to be Input, got %v", fields[0].Type)
 	}
-	if fields[0].Default != "us-east-1" {
-		t.Errorf("expected default us-east-1, got %q", fields[0].Default)
+	// Unset means "inherit from the shell", so the field has no default.
+	if fields[0].Default != "" || fields[0].Placeholder != "us-east-1" {
+		t.Errorf("expected no default and placeholder us-east-1, got %q / %q", fields[0].Default, fields[0].Placeholder)
 	}
 
 	// Second field: aws-vault confirm.

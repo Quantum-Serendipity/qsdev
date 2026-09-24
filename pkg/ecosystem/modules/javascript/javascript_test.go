@@ -969,12 +969,17 @@ func TestWizardFields(t *testing.T) {
 	m := &javascript.Module{}
 	fields := m.WizardFields()
 
-	if len(fields) != 2 {
-		t.Fatalf("WizardFields() returned %d fields, want 2", len(fields))
+	if len(fields) != 3 {
+		t.Fatalf("WizardFields() returned %d fields, want 3", len(fields))
+	}
+
+	// Node.js version field
+	if fields[0].Key != types.SettingVersion || fields[0].Type != ecosystem.FieldTypeInput {
+		t.Errorf("fields[0] = %q (%v), want the %q input", fields[0].Key, fields[0].Type, types.SettingVersion)
 	}
 
 	// package_manager field
-	pmField := fields[0]
+	pmField := fields[1]
 	if pmField.Key != "package_manager" {
 		t.Errorf("fields[0].Key = %q, want %q", pmField.Key, "package_manager")
 	}
@@ -997,12 +1002,12 @@ func TestWizardFields(t *testing.T) {
 	}
 
 	// typescript field
-	tsField := fields[1]
+	tsField := fields[2]
 	if tsField.Key != "typescript" {
-		t.Errorf("fields[1].Key = %q, want %q", tsField.Key, "typescript")
+		t.Errorf("fields[2].Key = %q, want %q", tsField.Key, "typescript")
 	}
 	if tsField.Type != ecosystem.FieldTypeConfirm {
-		t.Errorf("fields[1].Type = %v, want FieldTypeConfirm", tsField.Type)
+		t.Errorf("fields[2].Type = %v, want FieldTypeConfirm", tsField.Type)
 	}
 }
 

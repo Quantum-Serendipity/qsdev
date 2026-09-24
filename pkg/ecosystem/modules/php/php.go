@@ -296,7 +296,7 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 	return []ecosystem.WizardField{
 		{
-			Key:         "php_version",
+			Key:         types.SettingVersion,
 			Label:       "PHP version",
 			Description: "Select the PHP version to use",
 			Type:        ecosystem.FieldTypeSelect,

@@ -266,10 +266,9 @@ func TestWizardFields(t *testing.T) {
 	for _, f := range fields {
 		keys[f.Key] = true
 	}
-	if !keys["scala_build_tool"] {
-		t.Error("missing wizard field scala_build_tool")
-	}
-	if !keys["scala_jdk_version"] {
-		t.Error("missing wizard field scala_jdk_version")
+	for _, key := range []string{"build_tool", "jdk_version"} {
+		if !keys[key] {
+			t.Errorf("missing wizard field %s", key)
+		}
 	}
 }

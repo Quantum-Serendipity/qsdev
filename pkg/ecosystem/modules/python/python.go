@@ -527,7 +527,14 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return []ecosystem.WizardField{
 		{
-			Key:         "python_package_manager",
+			Key:         types.SettingVersion,
+			Label:       "Python version",
+			Description: "The Python version (MAJOR.MINOR); leave empty for the detected version or " + defaultPythonVersion,
+			Type:        ecosystem.FieldTypeInput,
+			Placeholder: "3.13",
+		},
+		{
+			Key:         types.SettingPackageManager,
 			Label:       "Package manager",
 			Description: "Select the Python package manager to use",
 			Type:        ecosystem.FieldTypeSelect,
@@ -538,13 +545,6 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 			},
 			Default:  "pip",
 			Required: true,
-		},
-		{
-			Key:         "python_venv",
-			Label:       "Enable virtual environment",
-			Description: "Create and activate a Python virtual environment",
-			Type:        ecosystem.FieldTypeConfirm,
-			Default:     "true",
 		},
 	}
 }

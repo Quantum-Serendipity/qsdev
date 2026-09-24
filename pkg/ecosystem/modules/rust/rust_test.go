@@ -557,8 +557,8 @@ func TestWizardFields(t *testing.T) {
 	}
 
 	f := fields[0]
-	if f.Key != "rust_channel" {
-		t.Errorf("Key = %q, want %q", f.Key, "rust_channel")
+	if f.Key != "channel" {
+		t.Errorf("Key = %q, want %q", f.Key, "channel")
 	}
 	if f.Type != ecosystem.FieldTypeSelect {
 		t.Errorf("Type = %v, want FieldTypeSelect", f.Type)
@@ -566,8 +566,8 @@ func TestWizardFields(t *testing.T) {
 	if f.Default != "stable" {
 		t.Errorf("Default = %q, want %q", f.Default, "stable")
 	}
-	if len(f.Options) != 2 {
-		t.Fatalf("Options count = %d, want 2", len(f.Options))
+	if len(f.Options) != 3 {
+		t.Fatalf("Options count = %d, want 3", len(f.Options))
 	}
 
 	values := make(map[string]bool)
@@ -577,8 +577,10 @@ func TestWizardFields(t *testing.T) {
 	if !values["stable"] {
 		t.Error("missing option value stable")
 	}
-	if !values["nightly"] {
-		t.Error("missing option value nightly")
+	for _, v := range []string{"beta", "nightly"} {
+		if !values[v] {
+			t.Errorf("missing option value %s", v)
+		}
 	}
 }
 

@@ -362,9 +362,9 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 		{
 			Key:         "trusted_registries",
 			Label:       "Trusted container registries",
-			Description: "Comma-separated list of container registries to trust in hadolint",
+			Description: "Comma-separated list of container registries to trust in hadolint; leave empty for docker.io, gcr.io and ghcr.io",
 			Type:        ecosystem.FieldTypeInput,
-			Default:     "docker.io,gcr.io,ghcr.io",
+			Placeholder: "docker.io,ghcr.io,registry.example.com",
 		},
 	}
 }

@@ -114,13 +114,23 @@ func (d DetectedProject) javaChoice() LanguageChoice {
 	if extraValue(lc.Extras, "build_tool") != "" {
 		return lc
 	}
+	bt := ""
 	switch {
 	case d.HasPomXML && d.HasBuildGradle:
-		lc.Extras = setExtra(lc.Extras, "build_tool", "both")
+		bt = "both"
 	case d.HasPomXML:
-		lc.Extras = setExtra(lc.Extras, "build_tool", "maven")
+		bt = "maven"
 	case d.HasBuildGradle:
-		lc.Extras = setExtra(lc.Extras, "build_tool", "gradle")
+		bt = "gradle"
+	}
+	if bt == "" {
+		return lc
+	}
+	lc.Extras = setExtra(lc.Extras, "build_tool", bt)
+	if lc.PackageManager == "" {
+		// The java module (and its wizard field) read the build tool from
+		// PackageManager first; keep the two in step as detection does.
+		lc.PackageManager = bt
 	}
 	return lc
 }

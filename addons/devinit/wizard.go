@@ -13,6 +13,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -27,9 +28,9 @@ type formState struct {
 	quickChoice string // "yes", "show", "customize"
 
 	selectedLanguages []string
-	goVersion         string
-	jsVersion         string
-	pythonVersion     string
+	// moduleFields holds the fields ecosystem modules add to the wizard
+	// (versions, build tools, package managers, ...), per language.
+	moduleFields []languageFields
 
 	selectedServices []string
 
@@ -59,14 +60,20 @@ type formState struct {
 // preview; formState's fields are unexported and would be skipped by the
 // hash, so the fields themselves must be bound.
 func (fs *formState) previewBindings() []any {
-	return []any{
+	bindings := []any{
 		&fs.quickChoice,
-		&fs.selectedLanguages, &fs.goVersion, &fs.jsVersion, &fs.pythonVersion,
+		&fs.selectedLanguages,
 		&fs.selectedServices,
 		&fs.direnv, &fs.gitHooks, &fs.extraPackages, &fs.nixHardeningGuide,
 		&fs.claudeCode, &fs.permissionLevel, &fs.skills, &fs.autoFormat, &fs.safetyBlock, &fs.mcpServers,
 		&fs.agentPostmortem, &fs.agentVersionSentinel, &fs.agentSemble, &fs.agentSembleMode, &fs.agentSembleTextFiles,
 	}
+	for _, lf := range fs.moduleFields {
+		for _, f := range lf.fields {
+			bindings = append(bindings, f.binding())
+		}
+	}
+	return bindings
 }
 
 // resolveTheme maps a theme name to a huh theme.
@@ -138,27 +145,10 @@ func newFormState(detected types.DetectedProject, defaults, partial types.Wizard
 		fs.quickChoice = "customize"
 	}
 
-	seedLanguageVersions(fs, defaults.Languages)
+	fs.moduleFields = newModuleFields(ecosystem.DefaultRegistry(),
+		knownLanguageChoices(defaults.Languages, partial.Languages), detected)
 	seedFromPartial(fs, partial, flagSet)
 	return fs
-}
-
-// seedLanguageVersions copies non-empty versions of the languages that have a
-// version prompt into the form.
-func seedLanguageVersions(fs *formState, langs []types.LanguageChoice) {
-	for _, lang := range langs {
-		if lang.Version == "" {
-			continue
-		}
-		switch lang.Name {
-		case "go":
-			fs.goVersion = lang.Version
-		case "javascript":
-			fs.jsVersion = lang.Version
-		case "python":
-			fs.pythonVersion = lang.Version
-		}
-	}
 }
 
 // seedFromPartial overrides the detection seeds with the answers supplied
@@ -169,7 +159,6 @@ func seedFromPartial(fs *formState, partial types.WizardAnswers, flagSet *FlagSe
 		for i, l := range partial.Languages {
 			fs.selectedLanguages[i] = l.Name
 		}
-		seedLanguageVersions(fs, partial.Languages)
 	}
 	if len(partial.Services) > 0 {
 		fs.selectedServices = make([]string, len(partial.Services))
@@ -269,7 +258,8 @@ func buildWizardSteps(detected types.DetectedProject, fs *formState, flagSet *Fl
 		quickSelectStep(QuickPathSummary(quick), anyFlagExplicit, fs),
 		showDefaultsStep(quick, fs),
 	}
-	steps = append(steps, languageSteps(detected, fs)...)
+	steps = append(steps, languageStep(detected, fs))
+	steps = append(steps, moduleFieldSteps(fs)...)
 	steps = append(steps, servicesStep(fs), securityStep(fs))
 	steps = append(steps, claudeCodeSteps(fs)...)
 	return append(steps, confirmStep(fs))
@@ -382,10 +372,8 @@ func showDefaultsStep(quick types.WizardAnswers, fs *formState) wizardStep {
 	}
 }
 
-func languageSteps(detected types.DetectedProject, fs *formState) []wizardStep {
-	onQuickPath := func() bool { return fs.quickChoice == "yes" }
-
-	langStep := wizardStep{
+func languageStep(detected types.DetectedProject, fs *formState) wizardStep {
+	return wizardStep{
 		fields: func() []huh.Field {
 			langOptions := BuildLanguageOptions(detected)
 			langOpts := make([]huh.Option[string], len(langOptions))
@@ -400,25 +388,7 @@ func languageSteps(detected types.DetectedProject, fs *formState) []wizardStep {
 					Value(&fs.selectedLanguages),
 			}
 		},
-		hidden: onQuickPath,
-	}
-
-	versionStep := func(lang, title, placeholder string, value *string) wizardStep {
-		return wizardStep{
-			fields: func() []huh.Field {
-				return []huh.Field{huh.NewInput().Title(title).Placeholder(placeholder).Value(value)}
-			},
-			hidden: func() bool {
-				return onQuickPath() || !slices.Contains(fs.selectedLanguages, lang)
-			},
-		}
-	}
-
-	return []wizardStep{
-		langStep,
-		versionStep("go", "Go version", "e.g. 1.24", &fs.goVersion),
-		versionStep("javascript", "Node.js version", "e.g. 22", &fs.jsVersion),
-		versionStep("python", "Python version", "e.g. 3.12", &fs.pythonVersion),
+		hidden: func() bool { return fs.quickChoice == "yes" },
 	}
 }
 
@@ -718,16 +688,11 @@ func applyFormChoices(answers *types.WizardAnswers, fs *formState, detected type
 }
 
 // formLanguages builds the language list from the selected names. Each entry
-// keeps the package manager and extras from the pre-wizard answers or, failing
-// that, from detection; the versions the form asks for come from the form.
+// keeps the version, package manager and extras from the pre-wizard answers
+// or, failing that, from detection; the answers to the module fields the form
+// asked (version, build tool, ...) are recorded over them.
 func formLanguages(fs *formState, base []types.LanguageChoice, detected types.DetectedProject) []types.LanguageChoice {
-	known := make(map[string]types.LanguageChoice)
-	for _, lc := range MapDetectionToDefaults(detected, "").Languages {
-		known[lc.Name] = lc
-	}
-	for _, lc := range base {
-		known[lc.Name] = lc
-	}
+	known := knownLanguageChoices(MapDetectionToDefaults(detected, "").Languages, base)
 
 	var langs []types.LanguageChoice
 	for _, name := range fs.selectedLanguages {
@@ -735,15 +700,7 @@ func formLanguages(fs *formState, base []types.LanguageChoice, detected types.De
 		if !ok {
 			lc = types.LanguageChoice{Name: name}
 		}
-		lc.Extras = slices.Clone(lc.Extras)
-		switch name {
-		case "go":
-			lc.Version = fs.goVersion
-		case "javascript":
-			lc.Version = fs.jsVersion
-		case "python":
-			lc.Version = fs.pythonVersion
-		}
+		lc = applyModuleFields(fs, lc, detected)
 		// Complete the choice with what detection learned (build tool,
 		// package manager, variant, ...) for fields the form does not ask.
 		langs = append(langs, detected.WithSuggested(lc))
@@ -768,21 +725,7 @@ func formServices(selected []string, base []types.ServiceChoice) []types.Service
 // parseExtraPackages splits a comma-separated string into trimmed package names,
 // filtering out empty entries.
 func parseExtraPackages(input string) []string {
-	if strings.TrimSpace(input) == "" {
-		return nil
-	}
-	parts := strings.Split(input, ",")
-	var result []string
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			result = append(result, p)
-		}
-	}
-	if len(result) == 0 {
-		return nil
-	}
-	return result
+	return splitList(input)
 }
 
 // flagSetHasAny returns true when any relevant flag was explicitly set.

@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/termutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 // ExportLanguageSpec re-exports LanguageSpec for external tests.
@@ -240,19 +241,19 @@ func WithSelectedLanguages(v []string) func(*formState) {
 	return func(fs *formState) { fs.selectedLanguages = v }
 }
 
-// WithGoVersion sets goVersion on formState.
-func WithGoVersion(v string) func(*formState) {
-	return func(fs *formState) { fs.goVersion = v }
-}
-
-// WithJSVersion sets jsVersion on formState.
-func WithJSVersion(v string) func(*formState) {
-	return func(fs *formState) { fs.jsVersion = v }
-}
-
-// WithPythonVersion sets pythonVersion on formState.
-func WithPythonVersion(v string) func(*formState) {
-	return func(fs *formState) { fs.pythonVersion = v }
+// WithModuleFieldAnswer answers lang's module wizard field key (an input
+// field) with value on formState.
+func WithModuleFieldAnswer(lang, key, value string) func(*formState) {
+	return func(fs *formState) {
+		f := &moduleField{spec: ecosystem.WizardField{Key: key, Type: ecosystem.FieldTypeInput}, text: value}
+		for i := range fs.moduleFields {
+			if fs.moduleFields[i].lang == lang {
+				fs.moduleFields[i].fields = append(fs.moduleFields[i].fields, f)
+				return
+			}
+		}
+		fs.moduleFields = append(fs.moduleFields, languageFields{lang: lang, fields: []*moduleField{f}})
+	}
 }
 
 // WithSelectedServices sets selectedServices on formState.

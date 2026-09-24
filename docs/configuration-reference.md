@@ -121,6 +121,40 @@ from the committed file, so a joining teammate generates the same CI,
 Renovate/Dependabot and security files as the project's creator (an explicit
 `--infra-profile` on the join command overrides the committed value).
 
+### Language settings
+
+Each `languages:` entry carries a `version`, a `package_manager` and a list
+of `extras` (`key=value`, or a bare `key` meaning `true`) that the language's
+ecosystem module reads. Detection fills them in from the project's files;
+on the customize path of the `qsdev init` wizard, each selected language that
+has settings gets its own screen, pre-filled from those values (else the
+module's default), and every answer is stored under the key the module reads:
+
+| Language | Wizard settings (stored as) |
+|---|---|
+| Go | Go version (`version`) |
+| JavaScript/TypeScript | Node.js version (`version`), package manager (`package_manager`), TypeScript (`extras: typescript`) |
+| Python | Python version (`version`), package manager (`package_manager`: `pip`, `uv`, `poetry`) |
+| Rust | channel (`extras: channel=stable\|beta\|nightly`) |
+| Java/Kotlin | build tool (`package_manager`: `maven`, `gradle`, `both`), JDK (`version`), Kotlin (`extras: kotlin`) |
+| Scala | build tool (`extras: build_tool=sbt\|mill`), JDK (`extras: jdk_version`) |
+| C#/.NET | SDK major version (`version`) |
+| PHP, Ruby | version (`version`) |
+| C/C++ | build system (`extras: build_system=cmake\|meson\|make`), package manager (`package_manager`: `conan`, `vcpkg`, `none`) |
+| Terraform/OpenTofu | tool (`extras: variant=terraform\|opentofu`), Terraform version (`version`) |
+| Haskell | build tool (`extras: build_tool=cabal\|stack`) |
+| Clojure | build tool (`extras: build_tool=tools-deps\|leiningen`) |
+| Dart/Flutter | Flutter SDK (`extras: flutter`) |
+| Containers | trusted hadolint registries (`extras: trusted_registries`, comma-separated) |
+
+An answer is recorded only when it differs from what the entry already
+resolves to, so accepting a pre-filled value leaves the entry unchanged, and
+a version left empty falls back to the detected version. For C/C++ an
+explicit `package_manager` takes precedence over the `package_manager` extra
+that older configurations and detection record; likewise for Java, where
+`package_manager` (also set by `--java-build-tool` and project-type profiles)
+takes precedence over the `build_tool` extra.
+
 ### Git settings
 
 `git.branch_pattern` is the POSIX extended regular expression the always-on

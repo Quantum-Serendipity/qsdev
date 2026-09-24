@@ -9,6 +9,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/golang"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.
@@ -448,8 +449,8 @@ func TestWizardFields(t *testing.T) {
 	}
 
 	f := fields[0]
-	if f.Key != "go_version" {
-		t.Errorf("Key = %q, want %q", f.Key, "go_version")
+	if f.Key != types.SettingVersion {
+		t.Errorf("Key = %q, want %q", f.Key, types.SettingVersion)
 	}
 	if f.Type != ecosystem.FieldTypeInput {
 		t.Errorf("Type = %v, want FieldTypeInput", f.Type)

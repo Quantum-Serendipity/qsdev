@@ -310,12 +310,13 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return []ecosystem.WizardField{
 		{
-			Key:         "rust_channel",
+			Key:         "channel",
 			Label:       "Rust channel",
 			Description: "Select the Rust release channel",
 			Type:        ecosystem.FieldTypeSelect,
 			Options: []ecosystem.WizardOption{
 				{Label: "Stable", Value: "stable"},
+				{Label: "Beta", Value: "beta"},
 				{Label: "Nightly", Value: "nightly"},
 			},
 			Default: "stable",

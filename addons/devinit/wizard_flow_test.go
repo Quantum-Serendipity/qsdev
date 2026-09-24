@@ -16,6 +16,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -304,7 +305,10 @@ func TestAnswersFromFlags_EnvWithoutEquals(t *testing.T) {
 
 func TestPreviewBindings_CoverEveryFormField(t *testing.T) {
 	t.Parallel()
-	fs := &formState{}
+	fs := &formState{moduleFields: newModuleFields(ecosystem.DefaultRegistry(), nil, types.DetectedProject{})}
+	if len(fs.moduleFields) == 0 {
+		t.Fatal("no language contributes module wizard fields")
+	}
 	bound := make(map[uintptr]bool)
 	for _, b := range fs.previewBindings() {
 		bound[reflect.ValueOf(b).Pointer()] = true
@@ -312,11 +316,18 @@ func TestPreviewBindings_CoverEveryFormField(t *testing.T) {
 	v := reflect.ValueOf(fs).Elem()
 	for i := range v.NumField() {
 		name := v.Type().Field(i).Name
-		if name == "partial" || name == "confirmed" {
-			continue
+		if name == "partial" || name == "confirmed" || name == "moduleFields" {
+			continue // moduleFields are bound answer by answer, checked below
 		}
 		if !bound[v.Field(i).UnsafeAddr()] {
 			t.Errorf("formState.%s is missing from previewBindings; the Plan Preview would not refresh when it changes", name)
+		}
+	}
+	for _, lf := range fs.moduleFields {
+		for _, f := range lf.fields {
+			if !bound[reflect.ValueOf(f.binding()).Pointer()] {
+				t.Errorf("module field %s/%s is missing from previewBindings", lf.lang, f.spec.Key)
+			}
 		}
 	}
 }

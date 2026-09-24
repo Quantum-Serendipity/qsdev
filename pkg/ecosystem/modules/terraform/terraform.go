@@ -479,7 +479,7 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return []ecosystem.WizardField{
 		{
-			Key:         "terraform_variant",
+			Key:         "variant",
 			Label:       "IaC tool",
 			Description: "Select the infrastructure-as-code tool to use",
 			Type:        ecosystem.FieldTypeSelect,
@@ -490,11 +490,11 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 			Default: "terraform",
 		},
 		{
-			Key:         "terraform_version",
-			Label:       "Version",
-			Description: "Specify the Terraform/OpenTofu version (e.g. 1.8.0)",
+			Key:         types.SettingVersion,
+			Label:       "Terraform version",
+			Description: "The Terraform version to pin (OpenTofu uses the nixpkgs release); leave empty for the nixpkgs default",
 			Type:        ecosystem.FieldTypeInput,
-			Default:     "",
+			Placeholder: "1.8.0",
 		},
 	}
 }

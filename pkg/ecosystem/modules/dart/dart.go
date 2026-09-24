@@ -180,7 +180,7 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return []ecosystem.WizardField{
 		{
-			Key:         "dart_flutter",
+			Key:         "flutter",
 			Label:       "Flutter support",
 			Description: "Enable Flutter SDK alongside Dart",
 			Type:        ecosystem.FieldTypeConfirm,

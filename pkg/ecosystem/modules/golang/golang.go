@@ -267,11 +267,11 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return []ecosystem.WizardField{
 		{
-			Key:         "go_version",
+			Key:         types.SettingVersion,
 			Label:       "Go version",
-			Description: "Specify the Go version to use (e.g. 1.25)",
+			Description: "The Go release to pin; leave empty to use the release go.mod requires",
 			Type:        ecosystem.FieldTypeInput,
-			Default:     "",
+			Placeholder: "1.24",
 		},
 	}
 }

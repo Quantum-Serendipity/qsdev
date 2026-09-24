@@ -221,7 +221,18 @@ func (f *WizardFieldType) UnmarshalText(text []byte) error {
 }
 
 // WizardField describes a single form field that an ecosystem module
-// contributes to the init wizard.
+// contributes to the init wizard. The wizard renders a module's fields on
+// their own screen when the module's language is selected, seeds each field
+// from the language's current configuration (else Default) and records the
+// answer back into it.
+//
+// Key names the ModuleConfig setting the answer is stored in and must be the
+// key the module itself reads: types.SettingVersion ("version") for
+// ModuleConfig.Version, types.SettingPackageManager ("package_manager") for
+// ModuleConfig.PackageManager, and any other key for ModuleConfig.Extras[Key].
+// Confirm answers are stored as "true" or "false", multi-select answers as a
+// comma-separated list. Placeholder is the example shown in an empty
+// FieldTypeInput.
 type WizardField struct {
 	Key         string          `yaml:"key"         json:"key"`
 	Label       string          `yaml:"label"       json:"label"`
@@ -229,8 +240,8 @@ type WizardField struct {
 	Type        WizardFieldType `yaml:"type"        json:"type"`
 	Options     []WizardOption  `yaml:"options"     json:"options"`
 	Default     string          `yaml:"default"     json:"default"`
+	Placeholder string          `yaml:"placeholder" json:"placeholder"`
 	Required    bool            `yaml:"required"    json:"required"`
-	Condition   string          `yaml:"condition"   json:"condition"`
 }
 
 // WizardOption is a single selectable option within a WizardField.

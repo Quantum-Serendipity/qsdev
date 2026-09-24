@@ -341,7 +341,7 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return []ecosystem.WizardField{
 		{
-			Key:         "scala_build_tool",
+			Key:         "build_tool",
 			Label:       "Build tool",
 			Description: "Select the Scala build tool for this project",
 			Type:        ecosystem.FieldTypeSelect,
@@ -352,7 +352,7 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 			Default: "sbt",
 		},
 		{
-			Key:         "scala_jdk_version",
+			Key:         "jdk_version",
 			Label:       "JDK version",
 			Description: "Select the JDK version to use",
 			Type:        ecosystem.FieldTypeSelect,

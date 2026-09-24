@@ -8,6 +8,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance checks.
@@ -352,7 +353,14 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return []ecosystem.WizardField{
 		{
-			Key:         "package_manager",
+			Key:         types.SettingVersion,
+			Label:       "Node.js version",
+			Description: "The Node.js major version; leave empty for the newest LTS",
+			Type:        ecosystem.FieldTypeInput,
+			Placeholder: "22",
+		},
+		{
+			Key:         types.SettingPackageManager,
 			Label:       "Package manager",
 			Description: "Select the JavaScript package manager for this project",
 			Type:        ecosystem.FieldTypeSelect,

@@ -1041,8 +1041,8 @@ func TestWizardFields(t *testing.T) {
 	}
 
 	f := fields[0]
-	if f.Key != "dotnet_sdk_version" {
-		t.Errorf("Key = %q, want %q", f.Key, "dotnet_sdk_version")
+	if f.Key != types.SettingVersion {
+		t.Errorf("Key = %q, want %q", f.Key, types.SettingVersion)
 	}
 	if f.Type != ecosystem.FieldTypeSelect {
 		t.Errorf("Type = %v, want FieldTypeSelect", f.Type)

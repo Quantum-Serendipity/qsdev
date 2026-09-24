@@ -270,11 +270,11 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return []ecosystem.WizardField{
 		{
-			Key:         "ruby_version",
+			Key:         types.SettingVersion,
 			Label:       "Ruby version",
-			Description: "Specify the Ruby version to use (e.g. 3.3)",
+			Description: "The Ruby version to pin; leave empty to follow .ruby-version or use the nixpkgs default",
 			Type:        ecosystem.FieldTypeInput,
-			Default:     "",
+			Placeholder: "3.3",
 		},
 	}
 }

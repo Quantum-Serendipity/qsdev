@@ -205,9 +205,9 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 		{
 			Key:         "aws_default_region",
 			Label:       "AWS Default Region",
-			Description: "Default AWS region for CLI operations",
+			Description: "Default AWS region for CLI operations; leave empty to inherit AWS_DEFAULT_REGION from your shell",
 			Type:        ecosystem.FieldTypeInput,
-			Default:     "us-east-1",
+			Placeholder: "us-east-1",
 		},
 		{
 			Key:         "aws_vault",

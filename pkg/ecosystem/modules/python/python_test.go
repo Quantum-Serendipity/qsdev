@@ -12,6 +12,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/python"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.
@@ -1073,16 +1074,21 @@ func TestWizardFields(t *testing.T) {
 		t.Fatalf("WizardFields() returned %d fields, want 2", len(fields))
 	}
 
-	// First field: package manager select
-	pmField := fields[0]
-	if pmField.Key != "python_package_manager" {
-		t.Errorf("fields[0].Key = %q, want %q", pmField.Key, "python_package_manager")
+	// First field: Python version input
+	if fields[0].Key != types.SettingVersion || fields[0].Type != ecosystem.FieldTypeInput {
+		t.Errorf("fields[0] = %q (%v), want the %q input", fields[0].Key, fields[0].Type, types.SettingVersion)
+	}
+
+	// Second field: package manager select
+	pmField := fields[1]
+	if pmField.Key != types.SettingPackageManager {
+		t.Errorf("fields[1].Key = %q, want %q", pmField.Key, types.SettingPackageManager)
 	}
 	if pmField.Type != ecosystem.FieldTypeSelect {
-		t.Errorf("fields[0].Type = %v, want FieldTypeSelect", pmField.Type)
+		t.Errorf("fields[1].Type = %v, want FieldTypeSelect", pmField.Type)
 	}
 	if len(pmField.Options) != 3 {
-		t.Fatalf("fields[0].Options has %d entries, want 3", len(pmField.Options))
+		t.Fatalf("fields[1].Options has %d entries, want 3", len(pmField.Options))
 	}
 	optionValues := make([]string, len(pmField.Options))
 	for i, opt := range pmField.Options {
@@ -1091,20 +1097,8 @@ func TestWizardFields(t *testing.T) {
 	expectedOptions := []string{"pip", "uv", "poetry"}
 	for i, expected := range expectedOptions {
 		if optionValues[i] != expected {
-			t.Errorf("fields[0].Options[%d].Value = %q, want %q", i, optionValues[i], expected)
+			t.Errorf("fields[1].Options[%d].Value = %q, want %q", i, optionValues[i], expected)
 		}
-	}
-
-	// Second field: venv confirm
-	venvField := fields[1]
-	if venvField.Key != "python_venv" {
-		t.Errorf("fields[1].Key = %q, want %q", venvField.Key, "python_venv")
-	}
-	if venvField.Type != ecosystem.FieldTypeConfirm {
-		t.Errorf("fields[1].Type = %v, want FieldTypeConfirm", venvField.Type)
-	}
-	if venvField.Default != "true" {
-		t.Errorf("fields[1].Default = %q, want %q", venvField.Default, "true")
 	}
 }
 

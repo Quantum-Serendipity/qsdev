@@ -9,6 +9,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem/modules/java"
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
 // Compile-time interface compliance check.
@@ -37,6 +38,11 @@ func TestDetect_MavenOnly(t *testing.T) {
 	}
 	if result.SuggestedConfig.Extras["build_tool"] != "maven" {
 		t.Errorf("build_tool = %q, want %q", result.SuggestedConfig.Extras["build_tool"], "maven")
+	}
+	// The wizard's build tool field and resolveBuildTool read PackageManager
+	// first, so detection must suggest it too.
+	if result.SuggestedConfig.PackageManager != "maven" {
+		t.Errorf("PackageManager = %q, want %q", result.SuggestedConfig.PackageManager, "maven")
 	}
 	assertEvidenceContains(t, result.Evidence, "pom.xml")
 }
@@ -844,8 +850,8 @@ func TestWizardFields(t *testing.T) {
 
 	// Build tool select.
 	bt := fields[0]
-	if bt.Key != "java_build_tool" {
-		t.Errorf("fields[0].Key = %q, want %q", bt.Key, "java_build_tool")
+	if bt.Key != types.SettingPackageManager {
+		t.Errorf("fields[0].Key = %q, want %q", bt.Key, types.SettingPackageManager)
 	}
 	if bt.Type != ecosystem.FieldTypeSelect {
 		t.Errorf("fields[0].Type = %v, want FieldTypeSelect", bt.Type)
@@ -856,8 +862,8 @@ func TestWizardFields(t *testing.T) {
 
 	// JDK version select.
 	jdk := fields[1]
-	if jdk.Key != "java_jdk_version" {
-		t.Errorf("fields[1].Key = %q, want %q", jdk.Key, "java_jdk_version")
+	if jdk.Key != types.SettingVersion {
+		t.Errorf("fields[1].Key = %q, want %q", jdk.Key, types.SettingVersion)
 	}
 	if jdk.Type != ecosystem.FieldTypeSelect {
 		t.Errorf("fields[1].Type = %v, want FieldTypeSelect", jdk.Type)
@@ -878,8 +884,8 @@ func TestWizardFields(t *testing.T) {
 
 	// Kotlin confirm.
 	kt := fields[2]
-	if kt.Key != "java_kotlin" {
-		t.Errorf("fields[2].Key = %q, want %q", kt.Key, "java_kotlin")
+	if kt.Key != "kotlin" {
+		t.Errorf("fields[2].Key = %q, want %q", kt.Key, "kotlin")
 	}
 	if kt.Type != ecosystem.FieldTypeConfirm {
 		t.Errorf("fields[2].Type = %v, want FieldTypeConfirm", kt.Type)

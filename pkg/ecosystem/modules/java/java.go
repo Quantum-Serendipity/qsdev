@@ -85,9 +85,10 @@ func manifestPatterns() []string {
 }
 
 // resolveBuildTool returns the configured JVM build tool. It is the single
-// source of truth for every Module method: the --java-build-tool flag stores
-// the tool as the language's PackageManager, while detection and
-// prepopulation store it in Extras["build_tool"]. An explicit PackageManager
+// source of truth for every Module method: the --java-build-tool flag,
+// project-type profiles and the init wizard store the tool as the language's
+// PackageManager, detection suggests it as both, and prepopulation and older
+// configurations may carry only Extras["build_tool"]. An explicit PackageManager
 // wins; when neither is set the default applies. An unrecognized explicit
 // value is reported as an error (alongside the Extras/default fallback) so
 // callers that can fail do so rather than silently ignoring the user's choice.
@@ -199,8 +200,9 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		Confidence: ecosystem.ConfidenceCertain,
 		Evidence:   evidence,
 		SuggestedConfig: ecosystem.ModuleConfig{
-			Version: version,
-			Extras:  extras,
+			Version:        version,
+			PackageManager: extras["build_tool"],
+			Extras:         extras,
 		},
 	}
 }
@@ -456,7 +458,10 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return []ecosystem.WizardField{
 		{
-			Key:         "java_build_tool",
+			// resolveBuildTool reads PackageManager first (where
+			// --java-build-tool and profiles store it), so the answer is
+			// recorded there; detection suggests both.
+			Key:         types.SettingPackageManager,
 			Label:       "Build tool",
 			Description: "Select the primary JVM build tool for this project",
 			Type:        ecosystem.FieldTypeSelect,
@@ -469,7 +474,7 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 			Required: true,
 		},
 		{
-			Key:         "java_jdk_version",
+			Key:         types.SettingVersion,
 			Label:       "JDK version",
 			Description: "Select the JDK version to use",
 			Type:        ecosystem.FieldTypeSelect,
@@ -478,7 +483,7 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 			Required:    true,
 		},
 		{
-			Key:         "java_kotlin",
+			Key:         "kotlin",
 			Label:       "Kotlin support",
 			Description: "Enable Kotlin language support alongside Java",
 			Type:        ecosystem.FieldTypeConfirm,

@@ -440,8 +440,9 @@ func TestWizardFields(t *testing.T) {
 	if f.Type != ecosystem.FieldTypeInput {
 		t.Errorf("field Type = %v, want FieldTypeInput", f.Type)
 	}
-	if f.Default != "docker.io,gcr.io,ghcr.io" {
-		t.Errorf("field Default = %q, want docker.io,gcr.io,ghcr.io", f.Default)
+	// Unset keeps the built-in registry list, so the field has no default.
+	if f.Default != "" || f.Placeholder == "" {
+		t.Errorf("field Default = %q, Placeholder = %q, want no default and an example", f.Default, f.Placeholder)
 	}
 }
 

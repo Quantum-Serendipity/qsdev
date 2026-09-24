@@ -284,7 +284,7 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return []ecosystem.WizardField{
 		{
-			Key:         "dotnet_sdk_version",
+			Key:         types.SettingVersion,
 			Label:       ".NET SDK version",
 			Description: "Select the .NET SDK major version",
 			Type:        ecosystem.FieldTypeSelect,

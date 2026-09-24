@@ -120,6 +120,13 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 	return result
 }
 
+// packageManager returns the configured C/C++ package manager: an explicit
+// PackageManager (the wizard answer) wins over the one detection recorded in
+// Extras["package_manager"].
+func packageManager(config ecosystem.ModuleConfig) string {
+	return config.PM(config.Extra(types.SettingPackageManager, ""))
+}
+
 // cSourceDirs are the conventional locations of C/C++ sources relative to
 // the project root.
 var cSourceDirs = []string{".", "src", "include", "lib"}
@@ -237,7 +244,7 @@ func (m *Module) PreCommitHooks(_ ecosystem.ModuleConfig) []ecosystem.HookConfig
 // Rules are conditional on the detected package manager; if none is detected,
 // both conan and vcpkg rules are included.
 func (m *Module) DenyRules(config ecosystem.ModuleConfig) []string {
-	pm := config.Extra("package_manager", "")
+	pm := packageManager(config)
 
 	switch pm {
 	case "conan":
@@ -288,7 +295,7 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 	}
 
 	// Lockfile / baseline enforcement for the detected package manager.
-	switch config.Extra("package_manager", "") {
+	switch packageManager(config) {
 	case "conan":
 		// --lockfile is strict unless --lockfile-partial is given: any
 		// requirement the lockfile does not pin fails the command.
@@ -336,7 +343,7 @@ func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 func (m *Module) WizardFields() []ecosystem.WizardField {
 	return []ecosystem.WizardField{
 		{
-			Key:         "cpp_build_system",
+			Key:         "build_system",
 			Label:       "Build system",
 			Description: "Select the C/C++ build system for this project",
 			Type:        ecosystem.FieldTypeSelect,
@@ -348,7 +355,7 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 			Default: "cmake",
 		},
 		{
-			Key:         "cpp_package_manager",
+			Key:         types.SettingPackageManager,
 			Label:       "Package manager",
 			Description: "Select the C/C++ package manager for this project",
 			Type:        ecosystem.FieldTypeSelect,
@@ -358,18 +365,6 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 				{Label: "None", Value: "none"},
 			},
 			Default: "none",
-		},
-		{
-			Key:         "cpp_standard",
-			Label:       "C++ standard",
-			Description: "Select the C++ standard version",
-			Type:        ecosystem.FieldTypeSelect,
-			Options: []ecosystem.WizardOption{
-				{Label: "C++17", Value: "17"},
-				{Label: "C++20", Value: "20"},
-				{Label: "C++23", Value: "23"},
-			},
-			Default: "17",
 		},
 	}
 }

@@ -19,7 +19,6 @@ func allPins() map[string]ActionRef {
 		"ActionDownloadArtifact": ActionDownloadArtifact,
 		"ActionOSVScanner":       ActionOSVScanner,
 		"ActionGrype":            ActionGrype,
-		"ActionSnyk":             ActionSnyk,
 		"ActionInstallNix":       ActionInstallNix,
 		"ActionLabeler":          ActionLabeler,
 	}
@@ -93,8 +92,8 @@ func TestActionPinsResolveUpstream(t *testing.T) {
 					name, ref.SHA, repo, status)
 			}
 
-			// 2. Branch-tracking refs such as snyk/actions@master have no tag
-			//    to compare against; the SHA is the whole of the pin.
+			// 2. Branch-tracking refs (tagged master or main) have no tag to
+			//    compare against; the SHA is the whole of the pin.
 			if ref.Tag == "master" || ref.Tag == "main" {
 				return
 			}
@@ -144,17 +143,10 @@ func TestActionPinsResolveUpstream(t *testing.T) {
 	}
 }
 
-// TestActionPinsResolveUpstream_CoversCatalog fails when a pin is added to the
-// catalog but not to allPins, which would leave it unverified — the state that
-// let four unresolvable SHAs accumulate.
+// TestActionPinsResolveUpstream_CoversCatalog fails when a pin is declared in
+// the catalog but not added to allPins, which would leave it unverified — the
+// state that let four unresolvable SHAs accumulate.
 func TestActionPinsResolveUpstream_CoversCatalog(t *testing.T) {
 	t.Parallel()
-
-	// Mirrors the exported catalog. Update both together when adding a pin.
-	const catalogSize = 9
-
-	if got := len(allPins()); got != catalogSize {
-		t.Errorf("allPins covers %d pins, expected %d; a new catalog entry must be "+
-			"added to allPins or it is never verified against upstream", got, catalogSize)
-	}
+	assertCoversCatalog(t, "ActionRef", allPins())
 }

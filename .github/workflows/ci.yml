@@ -129,11 +129,12 @@ jobs:
           go-version-file: go.mod
 
       # Verifies every SHA in the action catalog resolves upstream and matches
-      # the tag it claims. Offline tests cannot catch a well-formed but wrong
-      # SHA, and such a pin fails only when a generated workflow runs — in
-      # somebody else's repository.
-      - name: Verify action pins against upstream
-        run: go test ./internal/cigeneration/ -run TestActionPinsResolveUpstream -v
+      # the tag it claims, and every digest in the image catalog resolves in
+      # its registry and has not fallen too far behind its tag. Offline tests
+      # cannot catch a well-formed but wrong pin, and such a pin fails only
+      # when a generated workflow runs — in somebody else's repository.
+      - name: Verify action and image pins against upstream
+        run: go test ./internal/cigeneration/ -run 'Test(Action|Image)PinsResolveUpstream$' -v
         env:
           VERIFY_ACTION_PINS: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

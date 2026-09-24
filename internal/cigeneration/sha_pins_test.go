@@ -61,7 +61,7 @@ func workflowPins(t *testing.T) map[string]workflowPin {
 // and the emitted team workflow would have paired mismatched artifact majors.
 //
 // Only actions this repository actually uses are compared. Entries emitted
-// solely into generated projects (Grype, Snyk, download-artifact) have no local
+// solely into generated projects (Grype, download-artifact) have no local
 // counterpart to check against.
 func TestActionPinsMatchWorkflows(t *testing.T) {
 	t.Parallel()
@@ -74,7 +74,6 @@ func TestActionPinsMatchWorkflows(t *testing.T) {
 		"ActionUploadArtifact": ActionUploadArtifact,
 		"ActionOSVScanner":     ActionOSVScanner,
 		"ActionGrype":          ActionGrype,
-		"ActionSnyk":           ActionSnyk,
 		"ActionLabeler":        ActionLabeler,
 		// ActionDownloadArtifact is emitted only into generated team
 		// workflows, so it has no counterpart here.
@@ -127,7 +126,6 @@ func TestActionRefsAreWellFormed(t *testing.T) {
 		"ActionDownloadArtifact": ActionDownloadArtifact,
 		"ActionOSVScanner":       ActionOSVScanner,
 		"ActionGrype":            ActionGrype,
-		"ActionSnyk":             ActionSnyk,
 		"ActionInstallNix":       ActionInstallNix,
 		"ActionLabeler":          ActionLabeler,
 	} {

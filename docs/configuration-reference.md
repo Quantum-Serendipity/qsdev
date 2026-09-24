@@ -1046,6 +1046,8 @@ does not record is taken from detection when the workflow is generated, so
 recorded it.
 See [Security Architecture](security-architecture.md#generated-workflows).
 
+Every step is pinned immutably: actions to a full commit SHA, and the Snyk step to a container image digest (`uses: docker://snyk/snyk@sha256:...`, running `snyk test --all-projects` with `SNYK_TOKEN`). The Snyk step does not use `snyk/actions`, because that action runs the `snyk/snyk:node` image by its mutable tag, so a SHA pin on the action would not pin the code that receives the token. The image comes from the `node` variant, which carries Node.js but not the other ecosystems' build tools; Snyk's `--all-projects` needs those tools to resolve some manifests (for example `go.mod`). The language-specific variants are not used because their entrypoint installs the scanned project's dependencies (for example `pip install -r requirements.txt` or `mvn install`) before scanning, which would run the repository's install hooks with `SNYK_TOKEN` in the environment. qsdev bumps these pins in new releases; `qsdev init --update` picks them up.
+
 ---
 
 ## Infrastructure Profile Files

@@ -82,8 +82,10 @@ pnpm workspaces additionally enforce `blockExoticSubdeps` to prevent subdependen
 | Scanner | Profiles | Integration |
 |---------|----------|-------------|
 | OSV-Scanner | `consulting-default`, `startup-github` | CI workflow + PreToolUse hook |
-| Snyk | `enterprise` | CI workflow step |
+| Snyk | `enterprise` | CI workflow step (Snyk CLI image pinned by digest) |
 | Socket.dev | All profiles | MCP server for behavioral analysis |
+
+Generated CI steps are pinned to immutable references: actions to full commit SHAs and container images to `sha256` digests. The Snyk step runs the `snyk/snyk` image directly, pinned by digest, rather than through `snyk/actions`. That action runs the image by its mutable `node` tag, so pinning the action's SHA would not pin the code that runs with `SNYK_TOKEN`. qsdev's own CI checks that every pinned SHA and digest still resolves upstream, and fails once an image pin is more than 90 days behind its tag.
 
 The package-guard hook (Layer 5) queries OSV.dev in real time when the AI agent requests a package install — blocking packages with known vulnerabilities before they enter the dependency tree.
 

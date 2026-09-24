@@ -27,9 +27,12 @@ type CIWorkflowData struct {
 	ActionHardenRunner cigeneration.ActionRef
 	ActionCheckout     cigeneration.ActionRef
 	ActionOSVScanner   cigeneration.ActionRef
-	ActionSnyk         cigeneration.ActionRef
 	ActionGrype        cigeneration.ActionRef
 	ActionInstallNix   cigeneration.ActionRef
+
+	// ImageSnyk is run as a digest-pinned container step rather than through
+	// snyk/actions, whose action.yml runs a mutable image tag.
+	ImageSnyk cigeneration.ImageRef
 
 	// LockChecks are the manifest/lock-file alternatives the lock file step
 	// enforces, derived from the ecosystem catalog so the CI gate and drift
@@ -116,9 +119,9 @@ func (p *InfraProfile) generateSecurityScanWorkflow(in ProjectInputs) (types.Gen
 		ActionHardenRunner: cigeneration.ActionHardenRunner,
 		ActionCheckout:     cigeneration.ActionCheckout,
 		ActionOSVScanner:   cigeneration.ActionOSVScanner,
-		ActionSnyk:         cigeneration.ActionSnyk,
 		ActionGrype:        cigeneration.ActionGrype,
 		ActionInstallNix:   cigeneration.ActionInstallNix,
+		ImageSnyk:          cigeneration.ImageSnyk,
 
 		LockChecks:  ecosystem.GroupedManifestLockfiles(),
 		EcosystemCI: in.CI,

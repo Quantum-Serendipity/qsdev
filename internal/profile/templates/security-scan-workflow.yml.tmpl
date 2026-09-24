@@ -155,11 +155,14 @@ jobs:
 {{- if .HasSnyk }}
 
       - name: Snyk Security Scan
-        uses: {{ .ActionSnyk }} {{ .ActionSnyk.Comment }}
+        # The Snyk CLI image runs directly, pinned by digest. The snyk/actions
+        # action runs this image by its mutable tag, so pinning the action's
+        # SHA would not pin the code that runs with SNYK_TOKEN.
+        uses: {{ .ImageSnyk }} {{ .ImageSnyk.Comment }}
         env:
           SNYK_TOKEN: ${{ "{{" }} secrets.SNYK_TOKEN {{ "}}" }}
         with:
-          args: --all-projects
+          args: snyk test --all-projects
 {{- end }}
 {{- if .HasGrype }}
 

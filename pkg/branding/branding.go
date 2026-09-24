@@ -59,7 +59,7 @@ func newActive() *atomic.Pointer[Config] {
 }
 
 // Set merges non-empty fields from cfg into the active branding configuration.
-// Must be called early in main(), before cmd.Main(): it panics once the gdev
+// Must be called early in main(), before instance.Main(): it panics once the gdev
 // lifecycle has locked customizations down, so addons can never observe the
 // branding change after they captured it. Concurrent calls are safe; each
 // merge is applied atomically and none is lost.

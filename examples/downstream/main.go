@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"fastcat.org/go/gdev/addons/bootstrap"
-	"fastcat.org/go/gdev/cmd"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
@@ -56,7 +55,7 @@ func main() {
 
 	instance.AddCommands(acmeHelloCmd())
 
-	cmd.Main()
+	instance.Main()
 }
 
 func acmeHelloCmd() *cobra.Command {

@@ -68,6 +68,8 @@ func initialize() error {
 		return fmt.Errorf("configuring devinit profiles: %w", err)
 	}
 	gdevcmd.AddConfigCommandBuilder(configShowCmd, migrateCmd)
+	// instance.Main walks the finished tree; wrapping here as well keeps typo
+	// rejection for tools still launched through gdev's cmd.Main.
 	instance.AddCommands(cmdutil.RejectUnknownSubcommands(
 		initCmd(),
 		trialCmd(),

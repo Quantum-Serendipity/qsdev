@@ -36,6 +36,8 @@ func CurrentConfig() Config {
 func initialize() error {
 	wireAttestation()
 
+	// instance.Main walks the finished tree; wrapping here as well keeps typo
+	// rejection for tools still launched through gdev's cmd.Main.
 	instance.AddCommands(cmdutil.RejectUnknownSubcommands(claudeCmd(), mcpCmd(), docsCmd(), contentCmd())...)
 	return nil
 }

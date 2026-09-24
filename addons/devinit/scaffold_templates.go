@@ -55,7 +55,6 @@ const scaffoldMainGoTmpl = `package main
 
 import (
 	"fastcat.org/go/gdev/addons/bootstrap"
-	"fastcat.org/go/gdev/cmd"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
@@ -100,7 +99,7 @@ func main() {
 		devinit.WithPlanPreview(true),
 	)
 
-	cmd.Main()
+	instance.Main()
 }
 `
 

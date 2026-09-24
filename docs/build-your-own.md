@@ -24,7 +24,6 @@ package main
 import (
     "github.com/spf13/cobra"
     "fastcat.org/go/gdev/addons/bootstrap"
-    "fastcat.org/go/gdev/cmd"
     "github.com/Quantum-Serendipity/qsdev/addons/claudecode"
     "github.com/Quantum-Serendipity/qsdev/addons/devenv"
     "github.com/Quantum-Serendipity/qsdev/addons/devinit"
@@ -67,8 +66,9 @@ func main() {
     // 4. Add custom commands
     instance.AddCommands(acmeHelloCmd())
 
-    // 5. Launch
-    cmd.Main()
+    // 5. Launch (in place of gdev's cmd.Main: it also makes every command
+    // group reject unknown subcommands, so a typo exits non-zero)
+    instance.Main()
 }
 
 func acmeHelloCmd() *cobra.Command {
@@ -218,3 +218,4 @@ By importing qsdev, your tool ships with:
 - **Tool behavior system** — two-phase tool registration: YAML catalog for metadata, Go functions (EnableFunc, DisableFunc, GenerateFunc, DetectFunc) for behavior
 - **Hook execution sandboxing** — bubblewrap + landlock + seccomp isolation with 5 degradation tiers
 - **Self-update** — GitHub release checking, in-place binary update
+- **Strict command dispatch** — `instance.Main()` makes the root and every command group, including ones your tool adds, reject an unknown subcommand with a non-zero exit and a "Did you mean" suggestion, so a typo in a CI step (`acmedev chek`) fails instead of printing help and exiting 0. A tool that still launches through gdev's `cmd.Main` keeps this only for the qsdev addon command groups; switch to `instance.Main()` to cover the root, `config` and your own groups

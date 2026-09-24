@@ -18,7 +18,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/devinit"
 	"github.com/Quantum-Serendipity/qsdev/instance"
 	"github.com/Quantum-Serendipity/qsdev/internal/bugreport"
-	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/logcmd"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools"
@@ -34,6 +33,28 @@ var (
 )
 
 func main() {
+	logsCmd := configure()
+
+	// Pre-parse --debug from args before cobra processes them.
+	// Sets QSDEV_LOG=debug so the OnInitialize callback picks it up.
+	// The flag is consumed here and removed from os.Args so cobra
+	// doesn't reject it as unknown.
+	os.Args = extractDebugFlag(os.Args)
+
+	cobra.OnInitialize(initLogging, func() { instrumentCommandErrors(logsCmd.Root()) })
+
+	updateCh = selfupdate.BackgroundCheck(version.Info().Version)
+	// instance.Main exits the process; finishSession runs just before, on
+	// success and failure alike.
+	instance.Main(finishSession)
+}
+
+// configure applies qsdev's branding, runtime wiring and addon configuration
+// and registers its own commands: every customization that must happen before
+// the command tree is built. It returns the `logs` command, which doubles as a
+// handle on the command tree: a statically registered command is attached to
+// the root directly, so logsCmd.Root() reaches the root once execution starts.
+func configure() *cobra.Command {
 	instance.SetBranding(branding.Default())
 	// Framework adapters, external-log providers and the release version are
 	// wired through the instance package so downstream tools (including
@@ -61,29 +82,9 @@ func main() {
 		devinit.WithPlanPreview(true),
 	)
 
-	// logsCmd doubles as a handle on the command tree: gdev builds the root
-	// command inside cmd.Main, and a statically registered command is attached
-	// to it directly, so logsCmd.Root() reaches the root once execution starts.
 	logsCmd := logcmd.Command()
-	instance.AddCommands(cmdutil.RejectUnknownSubcommands(selfupdate.Command(), logsCmd, bugreport.Command())...)
-
-	// Pre-parse --debug from args before cobra processes them.
-	// Sets QSDEV_LOG=debug so the OnInitialize callback picks it up.
-	// The flag is consumed here and removed from os.Args so cobra
-	// doesn't reject it as unknown.
-	os.Args = extractDebugFlag(os.Args)
-
-	cobra.OnInitialize(initLogging, func() { instrumentCommandErrors(logsCmd.Root()) })
-	// gdev's cmd.Main calls os.Exit when a command fails, so nothing after it
-	// runs on failure. Cobra runs finalizers for the executed command whether
-	// or not it failed, so the session is closed (and the update notice shown)
-	// from there; the call after cmd.Main covers paths that never reach a
-	// command's execution (e.g. --help).
-	cobra.OnFinalize(finishSession)
-
-	updateCh = selfupdate.BackgroundCheck(version.Info().Version)
-	cmd.Main()
-	finishSession()
+	instance.AddCommands(selfupdate.Command(), logsCmd, bugreport.Command())
+	return logsCmd
 }
 
 // finishSession writes the session's closing record and prints any pending

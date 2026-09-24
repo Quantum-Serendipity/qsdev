@@ -504,3 +504,31 @@ func TestSanitizeJSONStringsBoundsRecursionDepth(t *testing.T) {
 		t.Error("over-deep input must not return (unsanitized) output")
 	}
 }
+
+func TestCSSUnescape(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"no escapes", "display: none", "display: none"},
+		{"hex escape with terminating space", `n\6f ne`, "none"},
+		{"literal escape", `n\one`, "none"},
+		{"six hex digits", `\01F600`, "\U0001F600"},
+		{"null is invalid", `\0 x`, "�x"},
+		{"surrogate is invalid", `\D800 x`, "�x"},
+		{"beyond max rune is invalid", `\110000 x`, "�x"},
+		{"largest six-digit value", `\FFFFFF`, "�"},
+		{"max rune is valid", `\10FFFF`, "\U0010FFFF"},
+		{"trailing backslash kept", `a\`, `a\`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := cssUnescape(tt.in); got != tt.want {
+				t.Errorf("cssUnescape(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

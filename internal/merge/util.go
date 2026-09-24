@@ -25,8 +25,8 @@ func DeepMergeJSON(dst, src map[string]any) map[string]any {
 // result is never nil, so an empty union marshals as [] rather than null.
 // Elements from a appear first, followed by elements from b not already in a.
 func unionStrings(a, b []string) []string {
-	seen := make(map[string]bool, len(a)+len(b))
-	result := make([]string, 0, len(a)+len(b))
+	seen := make(map[string]bool, max(len(a), len(b)))
+	result := make([]string, 0, max(len(a), len(b)))
 	for _, s := range a {
 		if !seen[s] {
 			seen[s] = true

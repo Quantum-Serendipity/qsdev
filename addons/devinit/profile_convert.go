@@ -143,7 +143,7 @@ func MergeProfileWithFlags(base types.WizardAnswers, overrides types.WizardAnswe
 	}
 	if changed["env_vars"] {
 		// Flag values win per key; other base variables are kept.
-		result.EnvVars = make(map[string]string, len(base.EnvVars)+len(overrides.EnvVars))
+		result.EnvVars = make(map[string]string, max(len(base.EnvVars), len(overrides.EnvVars)))
 		maps.Copy(result.EnvVars, base.EnvVars)
 		maps.Copy(result.EnvVars, overrides.EnvVars)
 	}

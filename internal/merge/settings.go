@@ -234,7 +234,7 @@ func deepMergeObject(key string, theirsRaw, typedRaw json.RawMessage) (json.RawM
 // but no longer sets is removed unless the user changed it. Every other
 // variable the user has is kept. It returns nil when no variable remains.
 func mergeEnv(base, theirs, ours map[string]any) map[string]any {
-	out := make(map[string]any, len(theirs)+len(ours))
+	out := make(map[string]any, max(len(theirs), len(ours)))
 	for k, v := range theirs {
 		_, stillGenerated := ours[k]
 		if bv, generated := base[k]; generated && !stillGenerated && reflect.DeepEqual(bv, v) {

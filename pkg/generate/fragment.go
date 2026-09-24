@@ -69,7 +69,10 @@ func (a *FragmentAccumulator) CollectAll(answers types.WizardAnswers) error {
 		p := a.producers[name]
 		fragments, err := p.Produce(answers)
 		if err != nil {
-			slog.Warn("fragment producer failed", "producer", name, "error", err)
+			// The error text is returned below for the caller to report; it
+			// is kept out of the log because a producer's error can quote the
+			// content it generated, which carries service credentials.
+			slog.Warn("fragment producer failed", "producer", name)
 			errs = append(errs, fmt.Errorf("producer %q: %w", name, err))
 			continue
 		}

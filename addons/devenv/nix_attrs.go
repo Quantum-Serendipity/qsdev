@@ -63,6 +63,33 @@ func isNixIdentChar(c byte) bool {
 	return isNixIdentStart(c) || (c >= '0' && c <= '9') || c == '\'' || c == '-'
 }
 
+// describeNixPath renders an attribute path for an error message. Quoted and
+// interpolated segments can hold arbitrary text, and the module embeds
+// service credentials in string literals, so only plain identifier segments
+// are echoed; any other segment is shown as a placeholder.
+func describeNixPath(path []string) string {
+	parts := make([]string, len(path))
+	for i, seg := range path {
+		parts[i] = `"..."`
+		if isPlainNixIdent(seg) {
+			parts[i] = seg
+		}
+	}
+	return strings.Join(parts, ".")
+}
+
+func isPlainNixIdent(seg string) bool {
+	if seg == "" || !isNixIdentStart(seg[0]) {
+		return false
+	}
+	for i := 1; i < len(seg); i++ {
+		if !isNixIdentChar(seg[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *nixSource) identEnd(p int) int {
 	for p < len(s.src) && isNixIdentChar(s.src[p]) {
 		p++
@@ -293,7 +320,7 @@ func (s *nixSource) parseBinding(b *nixBinding, p int) (int, error) {
 		break
 	}
 	if p >= len(src) || src[p] != '=' || strings.HasPrefix(src[p:], "==") {
-		return 0, s.errorf(p, "expected '=' after %s", strings.Join(b.path, "."))
+		return 0, s.errorf(p, "expected '=' after %s", describeNixPath(b.path))
 	}
 	p++
 	for p < len(src) && strings.IndexByte(" \t\r\n", src[p]) >= 0 {
@@ -305,7 +332,7 @@ func (s *nixSource) parseBinding(b *nixBinding, p int) (int, error) {
 		return 0, err
 	}
 	if q >= len(src) || src[q] != ';' {
-		return 0, s.errorf(b.start, "expected ';' after the value of %s", strings.Join(b.path, "."))
+		return 0, s.errorf(b.start, "expected ';' after the value of %s", describeNixPath(b.path))
 	}
 	b.value = strings.TrimRight(src[p:q], " \t\r\n")
 	b.end = q + 1
@@ -453,7 +480,7 @@ func (s *nixSource) renderGroup(g nixEntryGroup, prefix []string, indent int, fi
 		}
 		open, closing, ok := s.attrsBody(e.b)
 		if !ok {
-			return "", fmt.Errorf("devenv.nix defines %s more than once", strings.Join(append(slices.Clone(prefix), e.path...), "."))
+			return "", fmt.Errorf("devenv.nix defines %s more than once", describeNixPath(append(slices.Clone(prefix), e.path...)))
 		}
 		inner, _, err := s.parseBindings(open, closing)
 		if err != nil {

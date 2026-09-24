@@ -356,7 +356,7 @@ const SembleMCPServer = "semble"
 // server list) cannot keep launching a server the answers record as disabled,
 // and enabling semble always provisions its server.
 func (a *WizardAnswers) ConfiguredMCPServers() []string {
-	servers := make([]string, 0, len(a.MCPServers)+1)
+	servers := make([]string, 0, len(a.MCPServers))
 	for _, s := range a.MCPServers {
 		if s != SembleMCPServer {
 			servers = append(servers, s)

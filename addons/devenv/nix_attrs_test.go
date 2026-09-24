@@ -159,6 +159,58 @@ func TestNormalizeNixModule_Errors(t *testing.T) {
 	}
 }
 
+// Error messages name attribute paths, but a quoted segment can hold any text
+// (the module embeds service credentials in string literals), so only plain
+// identifiers may be echoed.
+func TestNormalizeNixModule_ErrorsOmitQuotedSegments(t *testing.T) {
+	t.Parallel()
+	const secret = "s3cr3t-Passw0rd"
+	tests := []struct {
+		name    string
+		in      string
+		wantSub string
+	}{
+		{"duplicate quoted key", "{ ... }:\n{\n  env.\"" + secret + "\" = \"1\";\n  env.\"" + secret + "\" = \"2\";\n}\n", `defines env."..." more than once`},
+		{"missing semicolon", "{ ... }:\n{\n  env.\"" + secret + "\" = \"1\"\n}\n", `after the value of env."..."`},
+		{"missing equals", "{ ... }:\n{\n  env.\"" + secret + "\" ;\n}\n", `expected '=' after env."..."`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := normalizeNixModule(tt.in)
+			if err == nil || !strings.Contains(err.Error(), tt.wantSub) {
+				t.Fatalf("normalizeNixModule error = %v, want one containing %q", err, tt.wantSub)
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("error %q quotes the string segment %q", err, secret)
+			}
+		})
+	}
+}
+
+func TestDescribeNixPath(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		path []string
+		want string
+	}{
+		{"identifiers", []string{"services", "minio", "enable"}, "services.minio.enable"},
+		{"primes and dashes", []string{"a'", "b-c", "_d1"}, "a'.b-c._d1"},
+		{"quoted", []string{"env", `"KEY"`}, `env."..."`},
+		{"interpolated", []string{"env", "${name}"}, `env."..."`},
+		{"empty", []string{""}, `"..."`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := describeNixPath(tt.path); got != tt.want {
+				t.Errorf("describeNixPath(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDropNixBindings(t *testing.T) {
 	t.Parallel()
 	fragment := "  languages.go.enable = true;\n\n  # why\n  env.GOFLAGS = \"-mod=readonly\";\n  env.\"GOSUMDB\" = \"sum.golang.org\";\n"

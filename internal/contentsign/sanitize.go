@@ -349,10 +349,12 @@ func cssUnescape(s string) string {
 			i = j + 1
 			continue
 		}
+		// At most six hex digits fit in 32 bits, so ParseUint cannot fail;
+		// the range check comes before the conversion to rune.
 		cp, _ := strconv.ParseUint(s[i+1:j], 16, 32)
-		r := rune(cp)
-		if cp == 0 || cp > unicode.MaxRune || (r >= 0xD800 && r <= 0xDFFF) {
-			r = unicode.ReplacementChar
+		r := unicode.ReplacementChar
+		if cp != 0 && cp <= unicode.MaxRune && (cp < 0xD800 || cp > 0xDFFF) {
+			r = rune(cp)
 		}
 		b.WriteRune(r)
 		if j < len(s) && strings.IndexByte(" \t\n\r\f", s[j]) >= 0 {

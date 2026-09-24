@@ -97,7 +97,7 @@ func mergeEntries[V any](base, overlay map[string]V, nodes map[string]*yaml.Node
 	if len(base) == 0 && len(overlay) == 0 {
 		return nil
 	}
-	out := make(map[string]V, len(base)+len(overlay))
+	out := make(map[string]V, max(len(base), len(overlay)))
 	maps.Copy(out, base)
 	for key, value := range overlay {
 		baseValue, inBase := base[key]
@@ -163,7 +163,7 @@ func mergeStringMap(base, overlay map[string]string) map[string]string {
 	if len(base) == 0 && len(overlay) == 0 {
 		return nil
 	}
-	out := make(map[string]string, len(base)+len(overlay))
+	out := make(map[string]string, max(len(base), len(overlay)))
 	maps.Copy(out, base)
 	maps.Copy(out, overlay)
 	return out
@@ -174,7 +174,7 @@ func mergeStringSliceMap(base, overlay map[string][]string) map[string][]string 
 	if len(base) == 0 && len(overlay) == 0 {
 		return nil
 	}
-	out := make(map[string][]string, len(base)+len(overlay))
+	out := make(map[string][]string, max(len(base), len(overlay)))
 	for k, v := range base {
 		cp := make([]string, len(v))
 		copy(cp, v)
@@ -210,7 +210,7 @@ func mergeCustomHooks(base, overlay []CustomHookDef) []CustomHookDef {
 		copy(out, base)
 		return out
 	}
-	byID := make(map[string]CustomHookDef, len(base)+len(overlay))
+	byID := make(map[string]CustomHookDef, max(len(base), len(overlay)))
 	var order []string
 	for _, h := range base {
 		byID[h.ID] = h

@@ -214,7 +214,7 @@ func (g *DevenvGenerator) applyInfraProfile(answers types.WizardAnswers) (types.
 	}
 	answers.Infrastructure = resolved.Infrastructure()
 	if env := resolved.EnvironmentVars(); len(env) > 0 {
-		merged := make(map[string]string, len(env)+len(answers.EnvVars))
+		merged := make(map[string]string, max(len(env), len(answers.EnvVars)))
 		maps.Copy(merged, env)
 		maps.Copy(merged, answers.EnvVars)
 		answers.EnvVars = merged

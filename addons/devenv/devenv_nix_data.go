@@ -156,9 +156,7 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 		}
 	}
 	basePkgs := defaultBasePackages()
-	data.Packages = make([]string, 0, len(basePkgs)+len(answers.ExtraPackages))
-	data.Packages = append(data.Packages, basePkgs...)
-	data.Packages = append(data.Packages, answers.ExtraPackages...)
+	data.Packages = slices.Concat(basePkgs, answers.ExtraPackages)
 
 	// 2. Environment variables.
 	data.EnvVars = buildEnvVars(answers)
@@ -313,26 +311,24 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 // project name, security profile, version, ecosystems list, tool count),
 // and user-supplied env vars.
 func buildEnvVars(answers types.WizardAnswers) map[string]string {
-	envVars := make(map[string]string, len(answers.EnvVars)+6)
-	envVars["DEVENV_SECURITY_HARDENED"] = "true"
-
 	prefix := branding.Get().EnvPrefix
 	projectName := answers.ProjectName
 	if projectName == "" {
 		projectName = "unknown"
 	}
-	envVars[prefix+"PROJECT_NAME"] = projectName
-
 	securityProfile := answers.ComplianceLevel
 	if securityProfile == "" {
 		securityProfile = "standard"
 	}
-	envVars[prefix+"SECURITY_PROFILE"] = securityProfile
 
-	envVars[prefix+"VERSION"] = version.Info().Version
-	envVars[prefix+"ECOSYSTEMS"] = buildEcosystemsList(answers)
-	envVars[prefix+"TOOL_COUNT"] = strconv.Itoa(countEnabledTools(answers))
-
+	envVars := map[string]string{
+		"DEVENV_SECURITY_HARDENED":  "true",
+		prefix + "PROJECT_NAME":     projectName,
+		prefix + "SECURITY_PROFILE": securityProfile,
+		prefix + "VERSION":          version.Info().Version,
+		prefix + "ECOSYSTEMS":       buildEcosystemsList(answers),
+		prefix + "TOOL_COUNT":       strconv.Itoa(countEnabledTools(answers)),
+	}
 	maps.Copy(envVars, answers.EnvVars)
 	return envVars
 }

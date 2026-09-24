@@ -201,7 +201,7 @@ func mergeLanguagesByName(base, overlay []types.LanguageConfig) []types.Language
 // service is appended, and a known one takes the overlay's non-empty version
 // and its options on top of the committed ones.
 func mergeServicesByName(base, overlay []types.ServiceConfig) []types.ServiceConfig {
-	out := make([]types.ServiceConfig, 0, len(base)+len(overlay))
+	out := make([]types.ServiceConfig, 0, max(len(base), len(overlay)))
 	for _, s := range base {
 		s.Options = maps.Clone(s.Options)
 		out = append(out, s)

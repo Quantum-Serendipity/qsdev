@@ -9,7 +9,7 @@ import (
 )
 
 // TestMain registers the framework adapters into spi.DefaultRegistry() once for
-// the whole test binary, using the same adapters.All() list cmd/qsdev/main.go
+// the whole test binary, using the same adapters.All() list instance/runtime.go
 // registers (the adapters do not self-register via init()), so every shipped
 // adapter is exercised here. The server under test reads the default registry,
 // so the integration tests in this package need it populated before they

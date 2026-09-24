@@ -21,7 +21,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools"
 	// The framework adapters these tests exercise are registered into
 	// spi.DefaultRegistry() once by this package's TestMain
-	// (adapters_register_test.go), mirroring cmd/qsdev/main.go's explicit wiring.
+	// (adapters_register_test.go), mirroring instance/runtime.go's explicit wiring.
 )
 
 // protocolVersion is the MCP revision the universal server negotiates.

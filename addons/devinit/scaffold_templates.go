@@ -79,13 +79,6 @@ func main() {
 		GitHubOwner:   "{{.GitHubOwner}}",
 		GitHubRepo:    "{{.GitHubRepo}}",
 	})
-	// Same runtime wiring as qsdev itself: MCP framework adapters, external-log
-	// providers, the release version stamped via -ldflags (see Makefile), and
-	// the project's add-or-tighten-only .{{.AppName}}/defaults.yaml.
-	instance.RegisterFrameworkAdapters()
-	instance.ApplyBuildVersion()
-	instance.UseProjectDefaults()
-
 	bootstrap.Configure(
 		bootstrap.WithSteps(
 			devenv.InstallDevenvStep(),
@@ -101,6 +94,10 @@ func main() {
 		devinit.WithPlanPreview(true),
 	)
 
+	// Same runtime as qsdev itself: MCP framework adapters, external-log
+	// providers, the release version stamped via -ldflags (see Makefile), the
+	// project's add-or-tighten-only .{{.AppName}}/defaults.yaml, the
+	// self-update, logs and report commands, and redacting session logging.
 	instance.Main()
 }
 `

@@ -8,7 +8,7 @@
 //
 // The root mcpserve package and everything it transitively imports stay free of
 // addons/claudecode; all addon delegation is quarantined in mcpserve/adapters/*,
-// imported only from cmd/qsdev/main.go.
+// imported only from instance/runtime.go.
 //
 // This is required because the `serve` command is wired into the `qsdev mcp`
 // command group, which lives in addons/claudecode. That makes addons/claudecode
@@ -17,9 +17,10 @@
 // contain an import cycle. Concrete framework adapters legitimately need to
 // delegate to addons/claudecode, so they live in their own sub-packages under
 // internal/mcpserve/adapters. Each exposes a New constructor and performs no
-// init()-time self-registration; the program entry point (cmd/qsdev/main.go,
-// registerFrameworkAdapters) registers them explicitly into
-// spi.DefaultRegistry — never this package. A new adapter is added to that list.
+// init()-time self-registration; the program's runtime wiring
+// (instance.RegisterFrameworkAdapters, installed by instance.Main) registers
+// every adapter in adapters.All explicitly into spi.DefaultRegistry — never
+// this package. A new adapter is added to that list.
 //
 // # Protocol
 //

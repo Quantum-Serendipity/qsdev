@@ -12,16 +12,23 @@ import (
 	gdevinstance "fastcat.org/go/gdev/instance"
 
 	"github.com/Quantum-Serendipity/qsdev/instance"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
-// TestMain applies qsdev's real configuration and locks customizations, so
-// tests can build the command tree exactly as the binary does. The startup
-// helper process must observe package initialization alone, so it skips this.
+// TestMain applies qsdev's real configuration and default runtime and locks
+// customizations, so tests can build the command tree exactly as the binary
+// does. The startup helper process must observe package initialization alone,
+// so it skips this.
 func TestMain(m *testing.M) {
 	if os.Getenv(startupHelperEnv) == "1" {
 		os.Exit(m.Run()) //nolint:forbidigo // test entrypoint
 	}
 	configure()
+	// The standard commands (logs among them) come with the default runtime.
+	// Skip its background update check; session logging stays off because the
+	// test binary's own arguments name no command.
+	_ = os.Setenv(branding.Get().EnvNoUpdate, "1")
+	instance.DefaultRuntime()
 	gdevaddons.Initialize()
 	gdevinstance.TestMain(m)
 }

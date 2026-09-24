@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sync"
 
+	gdevinstance "fastcat.org/go/gdev/instance"
+
 	// External-log providers register themselves with the extlog registry.
 	// Importing them here gives every tool built on this package the same
 	// provider set as qsdev without reaching into internal packages.
@@ -55,11 +57,22 @@ func RegisterFrameworkAdaptersInto(reg *spi.AdapterRegistry) {
 
 // ApplyBuildVersion propagates the version stamped into VersionPackage to the
 // framework's version override, so `version` output and update checks report
-// the release rather than "dev". Development builds are left untouched.
+// the release rather than "dev". Development builds, and tools that already
+// set their own version with SetVersionOverride, are left untouched.
 func ApplyBuildVersion() {
-	if vi := version.Info(); vi.Version != "dev" && vi.Version != "(devel)" {
-		SetVersionOverride(vi.Version, vi.Commit)
+	if ver, commit, ok := buildVersionOverride(version.Info(), versionOverridden.Load()); ok {
+		gdevinstance.SetVersionOverride(ver, commit)
 	}
+}
+
+// buildVersionOverride returns the version override ApplyBuildVersion sets
+// for build info vi, and false when it sets none: for development builds and
+// when the tool set its own version (overridden).
+func buildVersionOverride(vi version.BuildInfo, overridden bool) (ver, commit string, ok bool) {
+	if overridden || vi.Version == "dev" || vi.Version == "(devel)" {
+		return "", "", false
+	}
+	return vi.Version, vi.Commit, true
 }
 
 // UseProjectDefaults points the catalog at the project enclosing the working

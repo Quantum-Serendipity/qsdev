@@ -1,7 +1,7 @@
 // Package codex registers the Codex framework stub adapter for the universal
 // qsdev MCP server (Phase 32, Unit 32.5). All behavior lives in the shared
 // frameworkstub adapter; this package contributes only the Codex descriptor. It
-// is registered into the adapter registry explicitly from cmd/qsdev/main.go.
+// is registered into the adapter registry explicitly from instance/runtime.go.
 //
 // Enforcement note: Codex ships a native sandbox, so its enforcement tier is
 // kernel — the strongest qsdev models. That sandbox is a client-side guarantee

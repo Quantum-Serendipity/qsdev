@@ -66,8 +66,9 @@ func main() {
     // 4. Add custom commands
     instance.AddCommands(acmeHelloCmd())
 
-    // 5. Launch (in place of gdev's cmd.Main: it also makes every command
-    // group reject unknown subcommands, so a typo exits non-zero)
+    // 5. Install the standard runtime and launch (in place of gdev's
+    // cmd.Main: it also makes every command group reject unknown
+    // subcommands, so a typo exits non-zero)
     instance.Main()
 }
 
@@ -83,6 +84,30 @@ func acmeHelloCmd() *cobra.Command {
 ```
 
 That's the whole binary.
+
+`instance.Main()` must be the last call in `main`. It installs the same runtime
+qsdev itself runs with, then starts the CLI:
+
+- the universal MCP server's framework adapters (`mcp serve`) and the
+  external-log providers
+- the release version stamped at build time (see [Version injection](#version-injection))
+- the project's committed `.acmedev/defaults.yaml` catalog layer
+- the standard `self-update`, `logs` and `report` commands
+- the `--debug` flag and a redacting session log, written to the project's
+  `.acmedev/logs/` or to `~/.acmedev/logs/` (override with `ACMEDEV_LOG_DIR`)
+- the background update check against your GitHub releases
+
+Calling gdev's `cmd.Main()` directly skips all of this: `mcp serve` finds no
+framework adapters, nothing is logged, and unknown subcommands at the root and
+in `config` print help and exit 0 (see strict command dispatch below). If you
+do need to call `cmd.Main()` yourself, call `instance.DefaultRuntime()` first
+and its `Finish()` method afterwards:
+
+```go
+rt := instance.DefaultRuntime()
+cmd.Main()
+rt.Finish()
+```
 
 ## Step 3: Build and run
 
@@ -193,17 +218,20 @@ devinit.Configure(
 
 ### Version injection
 
-Wire your release version at build time:
-
-```go
-instance.SetVersionOverride(version, commit)
-```
-
-Then build with:
+`instance.Main()` reports the version stamped into `instance.VersionPackage`,
+which the self-update check and generated state also read. Stamp that package,
+not your own `main`:
 
 ```bash
-go build -ldflags "-X main.version=1.2.3 -X main.commit=$(git rev-parse --short HEAD)" .
+go build -ldflags "-X github.com/Quantum-Serendipity/qsdev/internal/version.version=v1.2.3 \
+  -X github.com/Quantum-Serendipity/qsdev/internal/version.commit=$(git rev-parse --short HEAD)" .
 ```
+
+Development builds (no stamp) report `dev`. A version set explicitly with
+`instance.SetVersionOverride(version, commit)` before `instance.Main()` takes
+precedence over the stamp for `version` and `self-update`; the background
+update notice, bug reports and session logs still read the stamped version, so
+keep the two in step.
 
 ## What you get for free
 

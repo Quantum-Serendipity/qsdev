@@ -58,8 +58,8 @@ func TestID(t *testing.T) {
 
 // TestRegisters proves the adapter registers cleanly and exposes the Claude Code
 // FrameworkID. Production wiring into spi.DefaultRegistry() now happens explicitly
-// from cmd/qsdev/main.go (no longer via package init()); that wiring is covered by
-// TestRegisterFrameworkAdapters in package main.
+// from instance/runtime.go (no longer via package init()); that wiring is covered by
+// TestRegisterFrameworkAdapters in package instance.
 func TestRegisters(t *testing.T) {
 	t.Parallel()
 	reg := spi.NewAdapterRegistry()

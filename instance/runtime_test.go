@@ -1,12 +1,12 @@
-package main
+package instance
 
 import (
 	"strings"
 	"testing"
 
-	"github.com/Quantum-Serendipity/qsdev/instance"
 	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
+	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
 )
 
@@ -16,8 +16,8 @@ import (
 // a duplicate (it is called twice here, as qsdev and a downstream tool both may).
 // It is the regression guard for the init()->explicit-wiring refactor.
 func TestRegisterFrameworkAdapters(t *testing.T) {
-	instance.RegisterFrameworkAdapters()
-	instance.RegisterFrameworkAdapters()
+	RegisterFrameworkAdapters()
+	RegisterFrameworkAdapters()
 
 	got := map[aiframework.FrameworkID]bool{}
 	for _, a := range spi.DefaultRegistry().All() {
@@ -49,7 +49,7 @@ func TestRegisterFrameworkAdaptersInto(t *testing.T) {
 	t.Parallel()
 
 	reg := spi.NewAdapterRegistry()
-	instance.RegisterFrameworkAdaptersInto(reg)
+	RegisterFrameworkAdaptersInto(reg)
 
 	got := map[aiframework.FrameworkID]bool{}
 	for _, a := range reg.All() {
@@ -79,7 +79,7 @@ func TestRegisterFrameworkAdapters_DuplicatePanics(t *testing.T) {
 	t.Parallel()
 
 	reg := spi.NewAdapterRegistry()
-	instance.RegisterFrameworkAdaptersInto(reg)
+	RegisterFrameworkAdaptersInto(reg)
 
 	defer func() {
 		r := recover()
@@ -90,7 +90,7 @@ func TestRegisterFrameworkAdapters_DuplicatePanics(t *testing.T) {
 			t.Errorf("panic = %v, want an already-registered error", r)
 		}
 	}()
-	instance.RegisterFrameworkAdaptersInto(reg)
+	RegisterFrameworkAdaptersInto(reg)
 }
 
 // TestClassifyInvocation_MCPServers proves every agent-launched MCP server,
@@ -115,6 +115,34 @@ func TestClassifyInvocation_MCPServers(t *testing.T) {
 			t.Parallel()
 			if got := classifyInvocation(tt.args); got != tt.want {
 				t.Errorf("classifyInvocation(%q) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildVersionOverride(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		vi         version.BuildInfo
+		overridden bool
+		wantVer    string
+		wantCommit string
+		wantOK     bool
+	}{
+		{name: "stamped release", vi: version.BuildInfo{Version: "v1.2.3", Commit: "abc"}, wantVer: "v1.2.3", wantCommit: "abc", wantOK: true},
+		{name: "dev build", vi: version.BuildInfo{Version: "dev", Commit: "abc"}},
+		{name: "devel build", vi: version.BuildInfo{Version: "(devel)"}},
+		{name: "tool set its own version", vi: version.BuildInfo{Version: "v1.2.3", Commit: "abc"}, overridden: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ver, commit, ok := buildVersionOverride(tt.vi, tt.overridden)
+			if ver != tt.wantVer || commit != tt.wantCommit || ok != tt.wantOK {
+				t.Errorf("buildVersionOverride(%+v, %v) = (%q, %q, %v), want (%q, %q, %v)",
+					tt.vi, tt.overridden, ver, commit, ok, tt.wantVer, tt.wantCommit, tt.wantOK)
 			}
 		})
 	}

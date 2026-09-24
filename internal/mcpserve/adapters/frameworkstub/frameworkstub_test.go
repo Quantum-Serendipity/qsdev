@@ -120,7 +120,7 @@ func toolByName(t *testing.T, a *frameworkstub.Adapter, name string) spi.ToolReg
 
 // TestIDAndRegistration proves each descriptor yields an adapter with the right
 // FrameworkID and that the adapter registers cleanly. Production wiring into
-// spi.DefaultRegistry() now happens explicitly from cmd/qsdev/main.go (no longer
+// spi.DefaultRegistry() now happens explicitly from instance/runtime.go (no longer
 // via package init()); that wiring is covered by TestRegisterFrameworkAdapters in
 // package main, so here we exercise registrability against a fresh registry.
 func TestIDAndRegistration(t *testing.T) {

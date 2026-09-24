@@ -5,14 +5,14 @@
 // adapter registry.
 //
 // The adapter is a stateless singleton. It is registered into the adapter
-// registry explicitly from cmd/qsdev/main.go, before any project root is
+// registry explicitly from instance/runtime.go, before any project root is
 // resolved, so it captures no project root: every tool and resource handler reads the
 // resolved root from its *spi.ToolCallContext at call time. The mount-time
 // applicability check (Applies) likewise receives the root as an argument.
 //
 // Delegation: this package performs no generation of its own. It is the
 // quarantined leaf that is permitted to import addons/claudecode (it is
-// imported only from cmd/qsdev/main.go, never from the mcpserve server
+// imported only from instance/runtime.go, never from the mcpserve server
 // root, so it cannot create an import cycle). Policy translation, config
 // rendering, detection, and gap analysis delegate to the P19 reference adapter
 // in pkg/aiframework/adapters/claudecode; context-budget accounting and the

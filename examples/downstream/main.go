@@ -55,6 +55,9 @@ func main() {
 
 	instance.AddCommands(acmeHelloCmd())
 
+	// Main installs the same runtime as qsdev (MCP framework adapters,
+	// external-log providers, build version, project defaults, the self-update,
+	// logs and report commands, and redacting session logging) and runs.
 	instance.Main()
 }
 

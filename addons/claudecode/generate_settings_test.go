@@ -383,6 +383,50 @@ func TestGenerateSettings_DotnetPackageAddsAreAskGated(t *testing.T) {
 	}
 }
 
+// TestGenerateSettings_DenoPackageCommands keeps deno's dependency commands
+// reachable for package-guard and its fetch-and-run forms denied (W065), in
+// every preset: add/install/update are ask rules no deny rule blocks, while
+// running an npm or JSR package directly is denied like npx.
+func TestGenerateSettings_DenoPackageCommands(t *testing.T) {
+	t.Parallel()
+	guarded := []string{
+		"deno add npm:chalk", "deno add jsr:@std/path", "deno install", "deno install npm:chalk",
+		"deno i npm:chalk", "deno update --latest", "deno outdated --update", "deno outdated -u",
+		"deno -q add chalk", "deno -q i chalk", "deno -L debug update --latest",
+	}
+	denied := []string{
+		"deno x evil-cli", "deno run -A npm:evil-cli", "deno -A npm:evil-cli", "deno npm:evil-cli",
+		"deno -q run npm:evil-cli", "deno serve jsr:@evil/server", "deno watch npm:evil-cli",
+		"deno -q x evil-cli",
+	}
+	matches := func(rules []string, cmd string) bool {
+		return slices.ContainsFunc(rules, func(r string) bool { return denyutil.MatchesDenyRule(r, "Bash("+cmd+")") })
+	}
+	for _, preset := range []string{"minimal", "standard", "permissive", "supply-chain-only"} {
+		t.Run(preset, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{
+				PermissionLevel: preset,
+				Languages:       []types.LanguageChoice{{Name: ecosystem.NameJavaScript, PackageManager: "npm"}},
+			}
+			s := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, ecosystem.DefaultRegistry()))
+			for _, cmd := range guarded {
+				if !matches(s.Permissions.Ask, cmd) {
+					t.Errorf("%q is not ask-gated", cmd)
+				}
+				if matches(s.Permissions.Deny, cmd) {
+					t.Errorf("%q is denied, so package-guard can never allow it", cmd)
+				}
+			}
+			for _, cmd := range denied {
+				if !matches(s.Permissions.Deny, cmd) {
+					t.Errorf("%q is not denied", cmd)
+				}
+			}
+		})
+	}
+}
+
 func TestGenerateSettings_DenyRuleDeduplication(t *testing.T) {
 	reg := ecosystem.NewRegistry()
 	// Two modules both returning an overlapping rule.

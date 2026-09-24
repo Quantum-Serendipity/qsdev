@@ -288,6 +288,11 @@ var remotePackageExecDenyRules = []string{
 	"Bash(deno serve *jsr:*)",
 	"Bash(deno npm:*)",
 	"Bash(deno jsr:*)",
+	"Bash(deno watch *npm:*)",
+	"Bash(deno watch *jsr:*)",
+	"Bash(deno -* npm:*)",
+	"Bash(deno -* jsr:*)",
+	"Bash(deno -* x *)",
 }
 
 // DenyRules returns Claude Code deny-rule patterns for the JavaScript/TypeScript ecosystem.

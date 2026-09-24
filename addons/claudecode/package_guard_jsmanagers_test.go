@@ -132,8 +132,41 @@ func TestPackageGuard_DenoRegistryPackages(t *testing.T) {
 		{"deno npm:evil-cli", true, []string{"evil-cli"}},
 		{"deno -A npm:evil-cli", true, []string{"evil-cli"}},
 		{"deno serve jsr:@std/http/file-server", true, []string{"jsr:@std/http/file-server"}},
-		{"deno create npm:vite my-app", true, []string{"vite"}},
-		{"deno create --npm create-vite my-app", true, []string{"create-vite"}},
+		// create and init --npm/--jsr run a template package; an npm name
+		// maps to its create-* package like `npm create` (deno's
+		// npm_name_to_create_package), a JSR package runs its ./create export.
+		{"deno create npm:vite my-app", true, []string{"create-vite"}},
+		{"deno create --npm create-vite my-app", true, []string{"create-create-vite"}},
+		{"deno create --npm @scope/foo@1", true, []string{"@scope/create-foo@1"}},
+		{"deno create npm:@scope", true, []string{"@scope/create"}},
+		{"deno create jsr:@fresh/init -- --force", true, []string{"jsr:@fresh/init"}},
+		{"deno create --jsr @fresh/init", true, []string{"jsr:@fresh/init"}},
+		{"deno init --npm vite my-app", true, []string{"create-vite"}},
+		{"deno init --jsr @fresh/init", true, []string{"jsr:@fresh/init"}},
+		{"deno init my-app", false, nil},
+		{"deno create vite", false, nil},
+		// Deno's global flags may precede the subcommand.
+		{"deno -q add npm:evil", true, []string{"evil"}},
+		{"deno --quiet install evil", true, []string{"evil"}},
+		{"deno -L debug add evil", true, []string{"evil"}},
+		{"deno --log-level=debug x evil", true, []string{"evil"}},
+		{"deno -q run -A npm:evil", true, []string{"evil"}},
+		{"deno -q main.ts", false, nil},
+		{"deno -q fmt", false, nil},
+		// deno x -p/--package names the package providing the binary.
+		{"deno x -p evil-pkg cli", true, []string{"evil-pkg"}},
+		{"deno x --package=@evil/pkg cli", true, []string{"@evil/pkg"}},
+		// Other subcommands that install, update or fetch-and-run packages.
+		{"deno i npm:chalk", true, []string{"chalk"}},
+		{"deno update --latest react", true, []string{"react"}},
+		{"deno update", true, []string{}},
+		{"deno outdated --update", true, []string{}},
+		{"deno outdated -ru chalk", true, []string{"chalk"}},
+		{"deno outdated", false, nil},
+		{"deno ci", true, []string{}},
+		{"deno watch npm:evil", true, []string{"evil"}},
+		{"deno compile -o out npm:evil", true, []string{"evil"}},
+		{"deno compile main.ts", false, nil},
 		{"deno x @angular/cli new app", true, []string{"@angular/cli"}},
 		// A value flag or `--` must not hide the executed package.
 		{"deno run --config npm:evil", true, []string{"evil"}},
@@ -174,39 +207,17 @@ func TestPackageGuard_DenoRegistryPackages(t *testing.T) {
 	}
 }
 
-// TestPackageGuard_JSRPackagesAsk verifies W065: JSR packages have no OSV feed
-// or age check in the guard, so they are escalated to the user rather than
-// silently allowed (or denied by a bogus npm-registry lookup).
-func TestPackageGuard_JSRPackagesAsk(t *testing.T) {
-	t.Parallel()
-	var res struct {
-		Code int    `json:"code"`
-		Out  string `json:"out"`
-	}
-	runPGJSDriver(t, "main", "deno add jsr:@std/path", "", &res)
-	if res.Code != 0 {
-		t.Fatalf("exit code = %d, want 0 with a JSON decision; out: %s", res.Code, res.Out)
-	}
-	var decision struct {
-		HookSpecificOutput struct {
-			PermissionDecision string `json:"permissionDecision"`
-		} `json:"hookSpecificOutput"`
-	}
-	if err := json.Unmarshal([]byte(res.Out), &decision); err != nil {
-		t.Fatalf("hook output is not a JSON decision: %q: %v", res.Out, err)
-	}
-	if got := decision.HookSpecificOutput.PermissionDecision; got != "ask" {
-		t.Errorf("permissionDecision = %q, want ask; out: %s", got, res.Out)
-	}
-}
-
 // TestPackageGuard_DenoPackagesAreValidated verifies W065 end to end: npm
-// packages fetched by deno (prefixed or, since Deno 2.8, bare) go through the
-// registry validation. With the network stubbed out that validation fails
-// closed, so a deny proves the package was checked rather than waved through.
+// packages fetched by deno (prefixed or, since Deno 2.8, bare) and JSR
+// packages (from deno or pnpm) go through the registry validation. With the
+// network stubbed out that validation fails closed, so a deny proves the
+// package was checked rather than waved through.
 func TestPackageGuard_DenoPackagesAreValidated(t *testing.T) {
 	t.Parallel()
-	for _, command := range []string{"deno add express", "deno -A npm:evil-cli", "deno x @evil/cli"} {
+	for _, command := range []string{
+		"deno add express", "deno -A npm:evil-cli", "deno x @evil/cli", "deno -q add npm:evil-cli",
+		"deno add jsr:@std/path", "pnpm add jsr:@std/path",
+	} {
 		t.Run(command, func(t *testing.T) {
 			t.Parallel()
 			var res struct {

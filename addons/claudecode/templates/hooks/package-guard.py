@@ -112,7 +112,14 @@ _ECOSYSTEM_QUALIFIERS: dict = {
     "npm": "npm", "pypi": "PyPI", "pip": "PyPI", "crates.io": "crates.io", "crates": "crates.io",
     "cargo": "crates.io", "go": "Go", "golang": "Go", "rubygems": "RubyGems", "gem": "RubyGems",
     "packagist": "Packagist", "composer": "Packagist", "nuget": "NuGet", "pub": "Pub",
+    "jsr": "JSR",
 }
+
+# The JSR registry (jsr.io), reached through `jsr:` specifiers from deno,
+# pnpm and yarn. OSV.dev has no JSR ecosystem, so JSR packages are resolved
+# and age-gated but still need the user's confirmation.
+JSR_ECOSYSTEM = "JSR"
+_NO_VULN_FEED: frozenset = frozenset({JSR_ECOSYSTEM})
 
 
 def normalize_name(name: str, ecosystem: str) -> str:
@@ -973,8 +980,40 @@ def _resolve_pub(name: str, kind: str, value: str) -> tuple:
     return name, version, _age_days(published.get(version))
 
 
+def _jsr_name_version(spec: str) -> tuple:
+    """Split a JSR specifier into (name, version part), dropping the `jsr:`
+    prefix and any export subpath: `jsr:@std/http@^1/file-server` ->
+    (`@std/http`, `^1`)."""
+    if spec.startswith("jsr:"):
+        spec = spec[len("jsr:"):]
+    name, ver = _npm_name_version(spec)
+    return "/".join(name.split("/")[:2]), ver.split("/", 1)[0]
+
+
+# JSR package names: @scope/name in lowercase letters, digits and hyphens.
+_JSR_NAME_RE = re.compile(r"^@[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9-]*$")
+
+
+def _resolve_jsr(name: str, kind: str, value: str) -> tuple:
+    """Resolve a JSR package from jsr.io's package metadata (the document
+    deno reads): the newest non-yanked stable release matching the
+    requirement, like deno's resolver, and its publication time."""
+    if not _JSR_NAME_RE.match(name):
+        raise UnresolvableSpec(f"'{name}' is not a JSR package name (@scope/name)")
+    data = _get_json(f"https://jsr.io/{name}/meta.json")
+    versions = data.get("versions") or {}
+    live = [v for v, meta in versions.items() if not (isinstance(meta, dict) and meta.get("yanked"))]
+    if kind == "exact":
+        version = _match_exact(versions.keys(), value)
+    else:
+        version = _pick_version(live, value or ">=0", "=")
+    meta = versions.get(version)
+    return name, version, _age_days(meta.get("createdAt") if isinstance(meta, dict) else None)
+
+
 _RESOLVERS = {
     "npm": _resolve_npm,
+    JSR_ECOSYSTEM: _resolve_jsr,
     "PyPI": _resolve_pypi,
     "crates.io": _resolve_crates,
     "Go": _resolve_go,
@@ -1011,12 +1050,28 @@ def _npm_name_version(spec: str) -> tuple:
     return (spec, "") if at < 0 else (spec[:at], spec[at + 1:])
 
 
+def specifier_ecosystem(ecosystem: str, spec: str) -> str:
+    """The registry a detected package specifier is fetched from: a `jsr:`
+    specifier given to an npm-ecosystem manager (deno, pnpm, yarn) comes from
+    JSR, everything else from the detection's own ecosystem."""
+    return JSR_ECOSYSTEM if ecosystem == "npm" and spec.startswith("jsr:") else ecosystem
+
+
 def parse_spec(ecosystem: str, manager: str, spec: str) -> tuple:
     """Parse a registry package specifier (already classified as a registry
     package by the detector) into (name, kind, value, alias). kind is one of
     none / exact / range / tag / remove; alias is the npm alias name for
     `alias@npm:target` (the target is what is installed and validated)."""
     alias = ""
+    if ecosystem == JSR_ECOSYSTEM:
+        name, ver = _jsr_name_version(spec)
+        if not _JSR_NAME_RE.match(name):
+            raise UnresolvableSpec(f"'{name}' is not a JSR package name (@scope/name)")
+        if not ver:
+            return name, "none", "", alias
+        if _EXACT_SEMVER_RE.match(ver):
+            return name, "exact", ver.lstrip("=vV"), alias
+        return name, "range", ver, alias
     if ecosystem == "npm":
         name, ver = _npm_name_version(spec)
         if ver.startswith("npm:"):
@@ -2417,7 +2472,7 @@ def _classify_spec(ecosystem: str, spec: str) -> tuple:
         if spec.startswith("npm:"):
             spec = spec[4:]
         elif spec.startswith("jsr:"):
-            return "source", f"'{spec}' comes from JSR, which the guard cannot verify"
+            return "registry", spec  # validated against JSR (specifier_ecosystem)
         if _is_urlish(spec):
             return "source", f"'{spec}' installs from a URL or git source"
         if _is_local(spec):
@@ -3060,18 +3115,28 @@ def _parse_pwsh(rest: list, dyn: list) -> Optional[Install]:
 
 
 # Deno subcommands that fetch registry packages. add/install add dependencies
-# (a bare `deno install` installs from deno.json, like `npm install`); run,
-# serve, x and create download and execute a package, like npx / npm create.
+# (a bare `deno install` installs from deno.json, like `npm install`), and
+# update/ci and `outdated --update` change or install them; run, serve,
+# watch, x and compile fetch a package to execute (or embed) it, like npx;
+# create and `init --npm/--jsr` run a template package, like `npm create`.
 # `deno <module>` (no subcommand) is an implicit `deno run`.
-_DENO_INSTALL_VERBS: frozenset = frozenset({"add", "install", "i"})
-_DENO_EXEC_VERBS: frozenset = frozenset({"run", "serve", "x", "create"})
+_DENO_INSTALL_VERBS: frozenset = frozenset({"add", "install", "i", "update", "ci", "outdated"})
+_DENO_EXEC_VERBS: frozenset = frozenset({"run", "serve", "watch", "x", "compile", "create", "init"})
+# Deno's root (global) flags, which may precede the subcommand (`deno -q add
+# npm:x`): name -> whether, given without `=`, it is followed by a value
+# token. Mirrors resolve_subcommand in deno's cli_parser, which picks the
+# subcommand exactly this way (it ignores flag aliases such as --env and -v).
+_DENO_GLOBAL_LONG: dict = {"quiet": False, "log-level": True, "env-file": True, "help": True, "version": False}
+_DENO_GLOBAL_SHORT: dict = {"q": False, "L": True, "h": True, "V": False}
 # Deno flags that consume the following token as their value.
 _DENO_VALUE_FLAGS: frozenset = frozenset({
     "--config", "-c", "--import-map", "--lock", "--cert", "--location",
     "--seed", "--v8-flags", "--env-file", "--ext", "--root", "--name", "-n",
     "--os", "--arch", "--log-level", "-L", "--preload", "--require",
-    "--port", "--host",
+    "--port", "--host", "--output", "-o", "--target", "--include", "--exclude",
 })
+# `deno x -p <pkg> <bin>` / `--package`: the package providing the binary.
+_DENO_X_PACKAGE_FLAGS = ("-p", "--package")
 # Specifier prefixes naming a registry package in deno.
 _NPM_PREFIX = "npm:"
 _JSR_PREFIX = "jsr:"
@@ -3082,15 +3147,11 @@ _DENO_SCRIPT_SUFFIXES = (
     ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".json", ".jsonc",
 )
 
-# JSR packages have no OSV feed or age check in this guard, so they cannot be
-# validated automatically and are escalated to the user.
-_UNVALIDATED_PREFIXES = (_JSR_PREFIX,)
-
 
 def _deno_package(specifier: str) -> str:
     """Map a deno `npm:` specifier to the npm package (with version, without
     any subpath): `npm:@scope/pkg@1.2/bin` -> `@scope/pkg@1.2`. `jsr:`
-    specifiers are returned unchanged."""
+    specifiers are returned unchanged (the JSR resolver drops the subpath)."""
     if not specifier.startswith(_NPM_PREFIX):
         return specifier
     spec = specifier[len(_NPM_PREFIX):]
@@ -3098,15 +3159,40 @@ def _deno_package(specifier: str) -> str:
     return "/".join(spec.split("/")[:keep])
 
 
-def _deno_operands(tokens: list, dyn: list) -> tuple:
+def _deno_subcommand_index(rest: list) -> Optional[int]:
+    """Index in `rest` (argv after `deno`) of the first positional past
+    deno's global flags: the subcommand, or the module of an implicit `deno
+    run`. None when a non-global flag or `--` comes first (`deno -A npm:x`
+    is an implicit run)."""
+    i = 0
+    while i < len(rest):
+        tok = rest[i]
+        if tok == "--":
+            return None
+        if tok.startswith("--"):
+            name = tok[2:].split("=", 1)[0]
+            if name not in _DENO_GLOBAL_LONG:
+                return None
+            i += 2 if _DENO_GLOBAL_LONG[name] and "=" not in tok else 1
+        elif tok.startswith("-") and len(tok) > 1:
+            if tok[1] not in _DENO_GLOBAL_SHORT:
+                return None
+            i += 2 if _DENO_GLOBAL_SHORT[tok[1]] and len(tok) == 2 else 1
+        else:
+            return i
+    return None
+
+
+def _deno_operands(tokens: list, dyn: list, package_flags: tuple = ()) -> tuple:
     """Split deno arguments into positional operands (token, computed-by-the-
-    shell) and the flags seen. Arguments after `--` belong to the executed
-    program and are dropped, except a module named right after it (`deno run
-    -- npm:cli`). A registry specifier is always kept as an operand, even where
-    a value flag would consume it, so a misjudged flag can never hide a
-    package."""
+    shell), the flags seen and the values of `package_flags`. Arguments
+    after `--` belong to the executed program and are dropped, except a
+    module named right after it (`deno run -- npm:cli`). A registry
+    specifier is always kept as an operand, even where a value flag would
+    consume it, so a misjudged flag can never hide a package."""
     operands: list = []
     flags: set = set()
+    flag_packages: list = []
     i, n = 0, len(tokens)
     while i < n:
         tok = tokens[i]
@@ -3118,11 +3204,18 @@ def _deno_operands(tokens: list, dyn: list) -> tuple:
         if tok.startswith(_DENO_REGISTRY_PREFIXES) or not tok.startswith("-"):
             operands.append((tok, dyn[i - 1]))
             continue
-        flags.add(tok.split("=", 1)[0])
-        if "=" not in tok and tok in _DENO_VALUE_FLAGS and i < n:
+        name, eq, value = tok.partition("=")
+        flags.add(name)
+        if name in package_flags:
+            if eq:
+                flag_packages.append((value, dyn[i - 1]))
+            elif i < n:
+                flag_packages.append((tokens[i], dyn[i]))
+                i += 1
+        elif not eq and tok in _DENO_VALUE_FLAGS and i < n:
             if not tokens[i].startswith(_DENO_REGISTRY_PREFIXES):
                 i += 1  # consume the flag's value
-    return operands, flags
+    return operands, flags, flag_packages
 
 
 def _deno_registry_package(operand: str, bare: str) -> Optional[str]:
@@ -3153,48 +3246,83 @@ def _deno_candidates(operands: list, bare: str) -> tuple:
     return packages, issues
 
 
-def _parse_deno(rest: list, dyn: list) -> Optional[Install]:
-    """Classify a deno invocation (argv after `deno`). Registry packages are:
-    every operand of add/install (Deno >= 2.8 treats unprefixed names as npm
-    packages; `install -e`/`-g` operands may be local modules), and the module
-    run by run/serve/x/create or by an implicit `deno <module>`. `deno run
-    main.ts` runs a local script and is not an install."""
-    if not rest:
-        return None
-    verb = rest[0]
-    if verb.startswith("-") or verb.startswith(_DENO_REGISTRY_PREFIXES):
-        verb, args, adyn = "run", rest, dyn  # `deno -A npm:cli` == `deno run -A npm:cli`
-    elif verb in _DENO_INSTALL_VERBS or verb in _DENO_EXEC_VERBS:
-        args, adyn = rest[1:], dyn[1:]
-    else:
-        return None
-    operands, flags = _deno_operands(args, adyn)
+def _deno_template(operand: tuple, flags: set) -> Optional[tuple]:
+    """The template package `deno create <pkg>` / `deno init --npm|--jsr
+    <pkg>` runs, as an operand: an npm name maps to its create-* package like
+    `npm create` (npm:vite -> create-vite), a JSR package runs its ./create
+    export. None when the operand is neither (deno rejects it)."""
+    tok, computed = operand
+    if not tok.startswith(_DENO_REGISTRY_PREFIXES):
+        prefix = _JSR_PREFIX if "--jsr" in flags else _NPM_PREFIX if "--npm" in flags else ""
+        if not prefix:
+            return None
+        tok = prefix + tok
+    if tok.startswith(_NPM_PREFIX) and not computed:
+        tok = _NPM_PREFIX + _create_package(tok[len(_NPM_PREFIX):])
+    return tok, computed
 
-    if verb in _DENO_INSTALL_VERBS:
-        if flags & {"-e", "--entrypoint"}:
-            bare = ""  # operands are local entrypoint modules
-        elif flags & {"-g", "--global"}:
+
+def _parse_deno_install(verb: str, operands: list, flags: set) -> Optional[Install]:
+    """add/install/update/ci/`outdated --update`: every operand is a package
+    or filter (Deno >= 2.8 treats unprefixed names as npm packages;
+    `install -e`/`-g` operands may be local modules)."""
+    if verb == "outdated" and not any(f == "--update" or (f[1:2] != "-" and "u" in f[1:]) for f in flags):
+        return None  # a report, not an update (-u may be clustered: -ru)
+    if flags & {"-e", "--entrypoint"}:
+        bare = ""  # operands are local entrypoint modules
+    else:
+        if flags & {"-g", "--global"}:
             # A global install takes a package, URL or local script.
             operands = [o for o in operands if not o[0].endswith(_DENO_SCRIPT_SUFFIXES)]
-            bare = _NPM_PREFIX
-        else:
-            bare = _NPM_PREFIX
-        packages, issues = _deno_candidates(operands, bare)
-        return Install("npm", "deno", packages, issues, 0, [])
+        bare = _NPM_PREFIX
+    packages, issues = _deno_candidates(operands, bare)
+    return Install("npm", "deno", packages, issues, 0, [])
 
+
+def _parse_deno_exec(verb: str, operands: list, flags: set, x_packages: list) -> Optional[Install]:
+    """run/serve/watch/compile/x/create/init: the module (or template) named
+    by the first operand; later operands are the program's own arguments.
+    `deno x -p <pkg> <bin>` runs a binary of <pkg>."""
+    if verb == "x" and x_packages:
+        packages, issues = _deno_candidates(x_packages, _NPM_PREFIX)
+        return Install("npm", "deno", packages, issues, 0, [])
     if not operands:
         return None
-    target = operands[0]  # later operands are the program's own arguments
-    if verb == "x":
+    target: Optional[tuple] = operands[0]
+    if verb in ("create", "init"):
+        if verb == "init" and not flags & {"--npm", "--jsr"}:
+            return None  # `deno init [dir]` scaffolds locally
+        target = _deno_template(target, flags)
+        if target is None:
+            return None
+        bare = ""
+    elif verb == "x":
         bare = "" if target[0].endswith(_DENO_SCRIPT_SUFFIXES) else _NPM_PREFIX
-    elif verb == "create":
-        bare = _JSR_PREFIX if "--jsr" in flags else _NPM_PREFIX if "--npm" in flags else ""
     else:
-        bare = ""  # run/serve: an unprefixed module is a local file
+        bare = ""  # run/serve/watch/compile: an unprefixed module is a local file
     packages, issues = _deno_candidates([target], bare)
     if not packages and not issues:
         return None
     return Install("npm", "deno", packages, issues, 0, [])
+
+
+def _parse_deno(rest: list, dyn: list) -> Optional[Install]:
+    """Classify a deno invocation (argv after `deno`). The subcommand is found
+    past deno's global flags (`deno -q add npm:x`); `deno -A npm:cli` and
+    `deno npm:cli` are an implicit `deno run`. `deno run main.ts` runs a local
+    script and is not an install."""
+    idx = _deno_subcommand_index(rest)
+    verb = rest[idx] if idx is not None else ""
+    if verb in _DENO_INSTALL_VERBS or verb in _DENO_EXEC_VERBS:
+        args, adyn = rest[:idx] + rest[idx + 1:], dyn[:idx] + dyn[idx + 1:]
+    elif idx is None or verb.startswith(_DENO_REGISTRY_PREFIXES):
+        verb, args, adyn = "run", rest, dyn
+    else:
+        return None  # another subcommand, or `deno main.ts`
+    operands, flags, x_packages = _deno_operands(args, adyn, _DENO_X_PACKAGE_FLAGS if verb == "x" else ())
+    if verb in _DENO_INSTALL_VERBS:
+        return _parse_deno_install(verb, operands, flags)
+    return _parse_deno_exec(verb, operands, flags, x_packages)
 
 
 def _parse_cmd(rest: list, dyn: list) -> Optional[Install]:
@@ -3696,6 +3824,32 @@ def validate_package(package_name: str, ecosystem: str, kind: str = "none", valu
                         f"Failing closed."), ""
 
     # 4. Check OSV.dev for known vulnerabilities in THAT version.
+    if ecosystem not in _NO_VULN_FEED:
+        refusal = _check_vulns(name, ecosystem, version)
+        if refusal:
+            return refusal
+
+    # 5. Publication age of the resolved version.
+    if age_days is not None and age_days < MIN_AGE_DAYS:
+        return "deny", (
+            f"Package '{name}@{version}' was published {age_days:.1f} days ago "
+            f"(minimum: {MIN_AGE_DAYS} days). New releases are quarantined to "
+            f"block supply chain attacks. Wait for the quarantine period to pass, "
+            f"or pin an older, established version."
+        ), version
+
+    if ecosystem in _NO_VULN_FEED:
+        return "ask", (
+            f"Package '{name}@{version}' ({ecosystem}) passed the {MIN_AGE_DAYS}-day age check, but "
+            f"OSV.dev has no {ecosystem} vulnerability feed, so the guard cannot check it for "
+            f"advisories. Confirm it manually."
+        ), version
+    return "allow", f"Package '{name}@{version}' passed all checks.", version
+
+
+def _check_vulns(name: str, ecosystem: str, version: str) -> Optional[tuple]:
+    """OSV.dev advisories for the resolved version: a deny decision tuple, or
+    None when there are none. A failed query fails closed."""
     try:
         vulns = query_osv(name, ecosystem, version).get("vulns") or []
         vulns = [v for v in vulns if not v.get("withdrawn")]
@@ -3715,17 +3869,7 @@ def validate_package(package_name: str, ecosystem: str, kind: str = "none", valu
             + ". Pin a version without these advisories, or choose an alternative package."
         )
         return "deny", summary, version
-
-    # 5. Publication age of the resolved version.
-    if age_days is not None and age_days < MIN_AGE_DAYS:
-        return "deny", (
-            f"Package '{name}@{version}' was published {age_days:.1f} days ago "
-            f"(minimum: {MIN_AGE_DAYS} days). New releases are quarantined to "
-            f"block supply chain attacks. Wait for the quarantine period to pass, "
-            f"or pin an older, established version."
-        ), version
-
-    return "allow", f"Package '{name}@{version}' passed all checks.", version
+    return None
 
 
 class Job(NamedTuple):
@@ -3871,26 +4015,22 @@ def main() -> None:
         ask_reasons.extend(d.issues)
 
         for specifier in d.packages:
-            if specifier.startswith(_UNVALIDATED_PREFIXES):
-                ask_reasons.append(f"Package '{specifier}' comes from a registry this guard cannot "
-                                   f"check for vulnerabilities or publication age. Confirm it manually.")
-                checked_packages.append(specifier)
-                continue
+            ecosystem = specifier_ecosystem(d.ecosystem, specifier)
             try:
-                pkg_name, kind, value, alias = parse_spec(d.ecosystem, d.manager, specifier)
+                pkg_name, kind, value, alias = parse_spec(ecosystem, d.manager, specifier)
             except UnresolvableSpec as e:
                 ask_reasons.append(f"Cannot parse package specifier '{specifier}' ({e}).")
                 continue
             if kind == "remove":
                 continue
             checked_packages.append(pkg_name)
-            if alias and (DENYLIST.matches(alias, d.ecosystem) or TEAM_DENYLIST.matches(alias, d.ecosystem)):
+            if alias and (DENYLIST.matches(alias, ecosystem) or TEAM_DENYLIST.matches(alias, ecosystem)):
                 deny_reasons.append(f"Package alias '{alias}' is on the denylist.")
                 continue
-            key = (normalize_name(pkg_name, d.ecosystem), d.ecosystem, kind, value)
+            key = (normalize_name(pkg_name, ecosystem), ecosystem, kind, value)
             if key not in seen:  # a repeated or differently-spelled package is checked once
                 seen.add(key)
-                jobs.append(Job(pkg_name, d.ecosystem, kind, value))
+                jobs.append(Job(pkg_name, ecosystem, kind, value))
 
     # 5. Validate (skipped once the command is refused anyway).
     results = {} if deny_reasons else validate_all(jobs)

@@ -195,6 +195,18 @@ func guardFixtures(t *testing.T) string {
 			}},
 			nugetPage("Paged.Lib", "1.0.0"): map[string]any{"items": []map[string]any{nugetLeaf("Paged.Lib", "1.0.0", oldTime, true)}},
 			nugetPage("Paged.Lib", "1.1.0"): map[string]any{"items": []map[string]any{nugetLeaf("Paged.Lib", "1.1.0", fresh, true)}},
+			// JSR package metadata (jsr.io/<name>/meta.json): @std/path has
+			// old releases, a yanked newer one and a fresh pre-release;
+			// @evil/new was published two hours ago.
+			"https://jsr.io/@std/path/meta.json": map[string]any{"latest": "1.1.0", "versions": map[string]any{
+				"1.0.9": map[string]string{"createdAt": oldTime}, "1.1.0": map[string]string{"createdAt": oldTime},
+				"1.2.0":      map[string]any{"createdAt": fresh, "yanked": true},
+				"2.0.0-rc.1": map[string]string{"createdAt": fresh},
+			}},
+			"https://jsr.io/@evil/new/meta.json": map[string]any{"latest": "0.1.0", "versions": map[string]any{
+				"0.1.0": map[string]string{"createdAt": fresh}}},
+			"https://jsr.io/@fresh/init/meta.json": map[string]any{"latest": "2.0.0", "versions": map[string]any{
+				"2.0.0": map[string]string{"createdAt": oldTime}}},
 		},
 		"gzip": []string{nugetReg + "paged.lib/index.json", nugetPage("Paged.Lib", "1.0.0"), nugetPage("Paged.Lib", "1.1.0")},
 		"osv": map[string][]any{
@@ -508,6 +520,30 @@ func TestPackageGuard_HookDecisions(t *testing.T) {
 		{name: "dnx runner", command: "dnx Evil", decision: "deny", reason: "GHSA-nuget"},
 		{name: "deno run npm:", command: "deno run -A npm:evil-new", decision: "deny"},
 		{name: "deno run local script", command: "deno run -A main.ts", decision: "silent"},
+		// W065: global flags before the deno subcommand do not hide it, and
+		// templates are checked as the create-* package deno runs.
+		{name: "deno -q add", command: "deno -q add npm:evil-new", decision: "deny", reason: "evil-new@1.0.0"},
+		{name: "deno create npm: runs create-*", command: "deno create npm:evil-new app", decision: "deny",
+			lookupsHave: "registry.npmjs.org/create-evil-new", lookupsLack: "registry.npmjs.org/evil-new"},
+		{name: "deno init --npm runs create-*", command: "deno init --npm @evil-new", decision: "deny",
+			lookupsHave: "registry.npmjs.org/@evil-new/create"},
+		// W065: JSR packages are resolved on jsr.io and age-gated; OSV has
+		// no JSR feed, so one that passes still needs confirmation.
+		{name: "jsr latest skips yanked and pre-releases", command: "deno add jsr:@std/path", decision: "ask",
+			reason: "@std/path@1.1.0", lookupsHave: "jsr.io/@std/path/meta.json", lookupsLack: "osv:"},
+		{name: "jsr range", command: "deno add jsr:@std/path@~1.0", decision: "ask", reason: "@std/path@1.0.9"},
+		{name: "jsr subpath", command: "deno run jsr:@std/path@1.1.0/posix", decision: "ask", reason: "@std/path@1.1.0"},
+		{name: "jsr fresh release is quarantined", command: "deno add jsr:@evil/new", decision: "deny",
+			reason: "@evil/new@0.1.0' was published"},
+		{name: "jsr pinned yanked version is aged", command: "deno add jsr:@std/path@1.2.0", decision: "deny",
+			reason: "@std/path@1.2.0' was published"},
+		{name: "jsr unknown package", command: "deno add jsr:@nobody/nothing", decision: "ask",
+			reason: "not published on the public JSR registry"},
+		{name: "jsr template", command: "deno create jsr:@fresh/init", decision: "ask", reason: "@fresh/init@2.0.0"},
+		{name: "pnpm jsr: specifier", command: "pnpm add jsr:@evil/new", decision: "deny", reason: "@evil/new@0.1.0"},
+		{name: "jsr invalid name", command: "deno add jsr:std/path", decision: "ask", reason: "not a JSR package name"},
+		{name: "jsr allowlisted", command: "deno add jsr:@evil/new", decision: "silent",
+			env: []string{"PACKAGE_GUARD_ALLOWLIST=jsr:@evil/new"}},
 		{name: "pip local project with extras", command: "pip install --only-binary :all: '.[dev]'", decision: "silent"},
 		{name: "tcsh -c", command: "tcsh -c 'npm install evil-new'", decision: "deny"},
 		{name: "pwsh -Command", command: `pwsh -Command "npm install evil-new"`, decision: "deny"},

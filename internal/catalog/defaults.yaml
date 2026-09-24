@@ -1222,6 +1222,13 @@ permission_deny_rules:
         - "Bash(deno serve *jsr:*)"
         - "Bash(deno npm:*)"
         - "Bash(deno jsr:*)"
+        - "Bash(deno watch *npm:*)"
+        - "Bash(deno watch *jsr:*)"
+        # Flags before the module (`deno -A npm:x`, an implicit `deno run`) or
+        # deno global flags before the subcommand (`deno -q run npm:x`).
+        - "Bash(deno -* npm:*)"
+        - "Bash(deno -* jsr:*)"
+        - "Bash(deno -* x *)"
     nix:
         - "Bash(nix-env -i *)"
         - "Bash(nix-env --install *)"
@@ -1599,12 +1606,21 @@ permission_ask_rules:
         - "Bash(deno add *)"
         - "Bash(deno install *)"
         - "Bash(deno install)"
+        - "Bash(deno i *)"
+        - "Bash(deno i)"
+        - "Bash(deno update *)"
+        - "Bash(deno update)"
+        - "Bash(deno outdated *-u*)"
         - "Bash(deno remove *)"
         # Global options before the verb (`npm -g install`, `pnpm --filter web add`).
         - "Bash(npm -* install *)"
         - "Bash(npm -* i *)"
         - "Bash(pnpm -* add *)"
         - "Bash(pnpm -* install *)"
+        - "Bash(deno -* add *)"
+        - "Bash(deno -* install *)"
+        - "Bash(deno -* i *)"
+        - "Bash(deno -* update *)"
         - "Bash(yarn workspace * add *)"
         - "Bash(yarn --cwd * add *)"
     python:

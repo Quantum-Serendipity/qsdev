@@ -102,6 +102,8 @@ The `package-guard` hook runs as a Claude Code PreToolUse interceptor on every `
 
 Package install commands live in the `ask` list (not `deny`), meaning the hook gets a chance to validate them before the user sees a prompt. Only bypass vectors that cannot be safely validated remain in `deny`. For .NET that means adding a package reference is ask-gated and guard-checked, while commands that download and run a NuGet package or install outside the project's references (`dotnet tool install/update/exec/run`, `dnx`, `dotnet dnx`, `dotnet new install`/`-i`, `dotnet package update`, the `nuget` CLI) are denied by the .NET ecosystem module.
 
+Deno is covered the same way. `deno add`, `deno install` (`i`), `deno update` and `deno outdated --update` are ask-gated and guard-checked, with unprefixed names treated as npm packages as Deno does. `deno x` and running an `npm:` or `jsr:` module (`deno run`, `serve`, `watch`, or an implicit `deno npm:pkg` / `deno -A npm:pkg`) are denied like `npx`. The guard also checks those forms, along with `deno compile` and the template that `deno create` / `deno init --npm|--jsr` runs (for npm, the `create-*` package, as with `npm create`). It finds the subcommand after Deno's global flags, so `deno -q add npm:pkg` is still checked. `jsr:` packages, whether from Deno, pnpm or Yarn, are resolved against jsr.io's package metadata and age-gated. OSV.dev has no JSR feed, so a JSR package that passes the age gate still needs your confirmation. List it in `PACKAGE_GUARD_ALLOWLIST` as `jsr:@scope/name` to pre-approve it.
+
 ### Layer 6: Nix Hardening
 
 The generated `devenv.yaml` enforces:
@@ -411,7 +413,7 @@ Commands that represent bypass vectors â€” ways to circumvent the hook-gating â€
 | eval/xargs | `eval *npm install*`, `xargs cargo install` | ~7 |
 | env/command Prefix | `env npm install`, `command pip install` | ~10 |
 | sudo Prefix | `sudo npm install`, `sudo apt install` | ~8 |
-| Remote Package Execution | `npx <package>`, `pnpm dlx`, `yarn dlx`, `bunx`, `npm exec` | ~8 |
+| Remote Package Execution | `npx <package>`, `pnpm dlx`, `yarn dlx`, `bunx`, `npm exec`, `deno x`, `deno run npm:`/`jsr:` | ~20 |
 | Destructive Ops | `git push --force`, `rm -rf /`, `Read(./.env)` | ~6 |
 | Nix Bypass | `nix-env -i`, `cachix use` | ~8 |
 | Uncategorized | Per-ecosystem edge cases | ~14 |

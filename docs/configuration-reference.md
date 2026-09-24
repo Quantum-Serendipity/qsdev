@@ -592,6 +592,49 @@ It is team-wide, like `java`, because it changes the committed devenv.nix:
 only `.qsdev.yaml` sets it (a `cloud` key in `.qsdev.local.yaml` is an
 error). `qsdev init --update` applies a change.
 
+### `.qsdev/defaults.yaml`
+
+A project can commit a catalog defaults file at `.qsdev/defaults.yaml`. It
+uses the same schema as the user defaults file (`~/.config/qsdev/defaults.yaml`
+or `$QSDEV_ORG_CONFIG`, see `qsdev defaults`), but because anyone who can
+push to the repository controls it, it may only **add or tighten**:
+
+| Section | Project effect |
+|---------|----------------|
+| `permission_deny_rules` | Rules are added to a deny set (built-in rules are never removed); new sets may be defined |
+| `permission_all_deny_sets`, `permission_supply_chain_deny_sets` | Sets are added to the lists |
+| `permission_preset_defs` | An existing preset gains `deny_sets`; no other preset field may be set and no preset may be defined |
+| `security_hooks` | Hooks are added to the always-on list |
+| `custom_hooks` | New hooks are added; an `id` that already names a custom hook, security or tiered hook, or tool cannot be reused |
+| `hook_tiers` | Hooks are added to an existing hook tier |
+| `tier_to_compliance` | A tier may move to a compliance level of equal or higher `order`, never a lower one |
+
+Every other section (for example `mcp_servers`, `tools`, `tiers`,
+`compliance`, `permission_allow_rules`, `permission_ask_rules`, `keep_vars`,
+`unset_vars`, `default_mcp_servers`) is rejected. A file that sets a
+rejected section or tries a weakening above stops every command with an
+error naming each offending field, rather than being ignored: it is policy
+the repository declares. `qsdev defaults validate` checks it.
+
+```yaml
+# .qsdev/defaults.yaml
+permission_deny_rules:
+  project_secrets:
+    - Read(./deploy/keys/**)
+permission_all_deny_sets: [project_secrets]
+permission_preset_defs:
+  standard:
+    deny_sets: [project_secrets]
+tier_to_compliance:
+  standard: strict
+```
+
+Layers apply in the order built-in, project, user: the user defaults file
+has the last word, so a developer's own file overrides the project's
+additions where both set the same entry. The file is found in the project
+enclosing the working directory (the directory holding `.qsdev.yaml` or the
+state directory), or in the working directory outside a project.
+
 ---
 
 ## Devenv Files

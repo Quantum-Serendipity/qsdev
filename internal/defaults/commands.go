@@ -85,7 +85,7 @@ func showCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "show",
-		Short: "Show effective defaults (embedded + user overrides)",
+		Short: "Show effective defaults (embedded + project + user overrides)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runShow(cmd, section, jsonFlag)
@@ -136,7 +136,7 @@ func runShow(cmd *cobra.Command, section string, jsonFlag bool) error {
 func validateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate",
-		Short: "Validate the user defaults file",
+		Short: "Validate the user and project defaults files",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runValidate(cmd)
@@ -146,7 +146,8 @@ func validateCmd() *cobra.Command {
 
 func runValidate(cmd *cobra.Command) error {
 	orgFile := catalog.OrgConfigFile()
-	if orgFile == "" {
+	projFile := catalog.ProjectConfigFile(catalog.ProjectRoot())
+	if orgFile == "" && projFile == "" {
 		path := catalog.OrgConfigPath()
 		fmt.Fprintf(cmd.OutOrStdout(), "No defaults file found at %s. Using embedded defaults.\n", path)
 		return nil
@@ -158,7 +159,12 @@ func runValidate(cmd *cobra.Command) error {
 		return fmt.Errorf("defaults file is invalid")
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Defaults file is valid.")
+	if projFile != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "Project defaults file %s is valid.\n", projFile)
+	}
+	if orgFile != "" {
+		fmt.Fprintln(cmd.OutOrStdout(), "Defaults file is valid.")
+	}
 	return nil
 }
 
@@ -284,9 +290,14 @@ func runReset(cmd *cobra.Command, yes bool) error {
 	return nil
 }
 
-// loadFresh loads the catalog without using the cached Default() singleton.
+// loadFresh loads the catalog, with the same project and user defaults files
+// as Default, without using the cached Default() singleton.
 func loadFresh() (*catalog.Catalog, error) {
 	var opts []catalog.LoadOption
+
+	if projFile := catalog.ProjectConfigFile(catalog.ProjectRoot()); projFile != "" {
+		opts = append(opts, catalog.WithProjectConfigFile(projFile))
+	}
 
 	if orgFile := catalog.OrgConfigFile(); orgFile != "" {
 		opts = append(opts, catalog.WithOrgConfigFile(orgFile))

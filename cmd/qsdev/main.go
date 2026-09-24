@@ -56,11 +56,13 @@ func main() {
 // the root directly, so logsCmd.Root() reaches the root once execution starts.
 func configure() *cobra.Command {
 	instance.SetBranding(branding.Default())
-	// Framework adapters, external-log providers and the release version are
-	// wired through the instance package so downstream tools (including
+	// Framework adapters, external-log providers, the release version and the
+	// project's .qsdev/defaults.yaml catalog layer are wired through the
+	// instance package so downstream tools (including
 	// scaffold-instance output) get exactly the same runtime as qsdev.
 	instance.RegisterFrameworkAdapters()
 	instance.ApplyBuildVersion()
+	instance.UseProjectDefaults()
 
 	bootstrap.Configure(
 		bootstrap.WithSteps(

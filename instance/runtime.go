@@ -15,6 +15,8 @@ import (
 	// internal/mcpserve/adapters is the single list of them; they are wired in
 	// explicitly by RegisterFrameworkAdapters rather than self-registering from
 	// init(), so registration order is visible.
+	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
+	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/adapters"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
@@ -58,4 +60,19 @@ func ApplyBuildVersion() {
 	if vi := version.Info(); vi.Version != "dev" && vi.Version != "(devel)" {
 		SetVersionOverride(vi.Version, vi.Commit)
 	}
+}
+
+// UseProjectDefaults points the catalog at the project enclosing the working
+// directory (or the working directory itself outside a project), so that
+// project's committed .qsdev/defaults.yaml applies on top of the built-in
+// defaults and under the user's own defaults file. The project file may only
+// add deny rules and hooks or raise compliance; anything else stops the
+// command with an error. Call it after SetBranding (the file's location
+// follows the app name) and before the command runs.
+func UseProjectDefaults() {
+	root, err := cmdutil.ProjectRoot()
+	if err != nil {
+		return
+	}
+	catalog.SetProjectRoot(root)
 }

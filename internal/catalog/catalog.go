@@ -42,16 +42,26 @@ var (
 	projectRootDir string
 )
 
-// SetProjectRoot configures the project-level override path.
-// Must be called before Default() is first accessed.
+// SetProjectRoot sets the project whose defaults file
+// (<root>/.qsdev/defaults.yaml, see ProjectConfigPath) Default applies. main
+// calls it (via instance.UseProjectDefaults) before any command runs; it has
+// no effect once Default has loaded the catalog.
 func SetProjectRoot(root string) {
 	mu.Lock()
 	projectRootDir = root
 	mu.Unlock()
 }
 
+// ProjectRoot returns the root set by SetProjectRoot, or "" when none is set.
+func ProjectRoot() string {
+	mu.Lock()
+	defer mu.Unlock()
+	return projectRootDir
+}
+
 // Default returns the lazily-initialized global catalog loaded from
-// embedded defaults, with optional org and project overrides.
+// embedded defaults, with optional project and org overrides (see Load for
+// their order and the project file's add-or-tighten restriction).
 //
 // The user-level org overlay ($QSDEV_ORG_CONFIG or
 // ~/.config/qsdev/defaults.yaml) is the developer's own file. If it fails to
@@ -59,7 +69,9 @@ func SetProjectRoot(root string) {
 // take down every command, including the `defaults validate/edit/reset`
 // commands that exist to repair it. The overlay is skipped with a warning
 // instead, and the error is kept for OrgOverlayError. Errors in the embedded
-// or project-level catalog are still returned.
+// or project-level catalog are still returned: the project file is policy
+// the repository declares, so one that fails to parse or tries to loosen the
+// defaults stops the command rather than being dropped.
 func Default() (*Catalog, error) {
 	defaultOnce.Do(func() {
 		mu.Lock()

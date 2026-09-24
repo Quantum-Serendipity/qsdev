@@ -80,9 +80,11 @@ func main() {
 		GitHubRepo:    "{{.GitHubRepo}}",
 	})
 	// Same runtime wiring as qsdev itself: MCP framework adapters, external-log
-	// providers, and the release version stamped via -ldflags (see Makefile).
+	// providers, the release version stamped via -ldflags (see Makefile), and
+	// the project's add-or-tighten-only .{{.AppName}}/defaults.yaml.
 	instance.RegisterFrameworkAdapters()
 	instance.ApplyBuildVersion()
+	instance.UseProjectDefaults()
 
 	bootstrap.Configure(
 		bootstrap.WithSteps(

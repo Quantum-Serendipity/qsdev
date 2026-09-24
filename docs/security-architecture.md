@@ -410,6 +410,22 @@ The resolver has no organization-defaults layer, so a project without a
 `security` block is not silently raised to built-in defaults. See the
 [configuration reference](configuration-reference.md#security-floor-client-policy-and-local-overrides).
 
+### Project catalog defaults
+
+A committed `.qsdev/defaults.yaml` overlays qsdev's built-in catalog (deny
+rule sets, permission presets, hooks, compliance mappings) for that project.
+A cloned repository controls this file, so it is held to a tighten-only trust
+model: it may add deny rules and deny sets (including to an existing
+preset's `deny_sets`), add hooks and custom hooks, and raise a tier's
+compliance level. It can never remove a built-in deny rule or set, redefine
+an existing hook (a custom hook id cannot reuse a built-in hook or tool
+name), change an MCP server's command, touch tools, tiers,
+compliance definitions, allow or ask rules, or lower compliance. A file that
+tries is rejected with an error naming each violation, and the command
+stops. The project layer is applied beneath the developer's own user
+defaults file, so a repository cannot override the user's policy. See the
+[configuration reference](configuration-reference.md#qsdevdefaultsyaml).
+
 ## Project File Write Containment
 
 A cloned repository is untrusted input, and it can commit symbolic links. If

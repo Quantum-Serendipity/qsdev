@@ -1,9 +1,11 @@
 package catalog
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -64,9 +66,8 @@ func TestDefault_ErrorReturn(t *testing.T) {
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("creating config dir: %v", err)
 	}
-	// Write YAML that is syntactically valid but produces a catalog with a
-	// tier missing its required description and having order=0. The merged
-	// catalog will fail validation.
+	// Write YAML that is syntactically valid but defines a tier, which a
+	// project defaults file may not do.
 	badYAML := []byte("tiers:\n  bad-tier:\n    order: 0\n")
 	if err := os.WriteFile(filepath.Join(configDir, "defaults.yaml"), badYAML, 0o644); err != nil {
 		t.Fatalf("writing bad config: %v", err)
@@ -80,8 +81,8 @@ func TestDefault_ErrorReturn(t *testing.T) {
 	if cat != nil {
 		t.Error("Default() should return nil catalog on error")
 	}
-	if !strings.Contains(err.Error(), "catalog validation") {
-		t.Errorf("error = %q, want it to contain %q", err.Error(), "catalog validation")
+	if !errors.Is(err, ErrProjectOverlayRejected) {
+		t.Errorf("error = %q, want it to wrap ErrProjectOverlayRejected", err.Error())
 	}
 }
 
@@ -89,7 +90,7 @@ func TestMustDefault_Panics(t *testing.T) {
 	ResetDefault()
 	t.Cleanup(func() { ResetDefault() })
 
-	// Set up a project root with malformed config to force Load to fail.
+	// Set up a project root with a rejected config to force Load to fail.
 	tmpDir := t.TempDir()
 	configDir := filepath.Join(tmpDir, ".qsdev")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
@@ -253,5 +254,35 @@ func TestResetDefault(t *testing.T) {
 	}
 	if cat3 == cat1 {
 		t.Error("Default() after ResetDefault() should return a new catalog instance")
+	}
+}
+
+// TestDefault_AppliesProjectDefaults proves the project layer set through
+// SetProjectRoot reaches Default: a deny rule the project adds is part of
+// the catalog every generator reads.
+func TestDefault_AppliesProjectDefaults(t *testing.T) {
+	ResetDefault()
+	t.Cleanup(func() { ResetDefault() })
+
+	root := t.TempDir()
+	configDir := filepath.Join(root, "."+branding.Get().AppName)
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	overlay := []byte("permission_deny_rules:\n  npx:\n    - Bash(project-only-deny *)\n")
+	if err := os.WriteFile(filepath.Join(configDir, "defaults.yaml"), overlay, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	SetProjectRoot(root)
+	if got := ProjectRoot(); got != root {
+		t.Errorf("ProjectRoot() = %q, want %q", got, root)
+	}
+	cat, err := Default()
+	if err != nil {
+		t.Fatalf("Default() error: %v", err)
+	}
+	if !slices.Contains(cat.AllPermissionDenyRules(), "Bash(project-only-deny *)") {
+		t.Error("project deny rule missing from AllPermissionDenyRules()")
 	}
 }

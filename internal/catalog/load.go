@@ -8,8 +8,13 @@ import (
 	"strings"
 )
 
-// Load reads the embedded defaults and optionally overlays organization
-// and project configuration from unified defaults files.
+// Load reads the embedded defaults and optionally overlays project and
+// organization configuration from unified defaults files. Layers apply in
+// order embedded, project, org, so the org file (the developer's own
+// defaults) overrides the project file. The project file is committed to
+// the repository and is restricted to adding or tightening (see
+// applyProjectOverlay); a file that tries anything else fails the load with
+// an error wrapping ErrProjectOverlayRejected.
 func Load(opts ...LoadOption) (*Catalog, error) {
 	cfg := &loadConfig{}
 	for _, opt := range opts {
@@ -22,6 +27,15 @@ func Load(opts ...LoadOption) (*Catalog, error) {
 	}
 	cat := embedded
 
+	// The project layer goes first so the org layer above it keeps the last
+	// word; the project layer itself may only add or tighten.
+	if cfg.projectConfigFile != "" {
+		cat, err = applyProjectConfigFile(cat, cfg.projectConfigFile)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if cfg.orgConfigFile != "" {
 		orgCat, err := loadUnifiedFile(cfg.orgConfigFile)
 		if err != nil {
@@ -33,28 +47,39 @@ func Load(opts ...LoadOption) (*Catalog, error) {
 		}
 	}
 
-	if cfg.projectConfigFile != "" {
-		projCat, err := loadUnifiedFile(cfg.projectConfigFile)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				return nil, fmt.Errorf("loading project config from %s: %w", cfg.projectConfigFile, err)
-			}
-		} else {
-			cat = MergeCatalogs(cat, projCat)
-		}
-	}
-
 	errs := cat.Validate()
 	errs = append(errs, validateBuiltinTierOrders(embedded, cat)...)
 	if len(errs) > 0 {
-		msgs := make([]string, len(errs))
-		for i, e := range errs {
-			msgs[i] = e.Error()
-		}
-		return nil, fmt.Errorf("catalog validation: %s", strings.Join(msgs, "; "))
+		return nil, fmt.Errorf("catalog validation: %s", joinCatalogErrors(errs))
 	}
 
 	return cat, nil
+}
+
+// applyProjectConfigFile applies the project defaults file at path to cat.
+// A missing file leaves cat unchanged.
+func applyProjectConfigFile(cat *Catalog, path string) (*Catalog, error) {
+	ov, err := loadProjectOverlay(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return cat, nil
+		}
+		return nil, fmt.Errorf("loading project config from %s: %w", path, err)
+	}
+	out, errs := applyProjectOverlay(cat, ov)
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("%w: %s", ErrProjectOverlayRejected, joinCatalogErrors(errs))
+	}
+	return out, nil
+}
+
+// joinCatalogErrors renders catalog errors as one "; "-separated message.
+func joinCatalogErrors(errs []CatalogError) string {
+	msgs := make([]string, len(errs))
+	for i, e := range errs {
+		msgs[i] = e.Error()
+	}
+	return strings.Join(msgs, "; ")
 }
 
 // validateBuiltinTierOrders rejects overlays that renumber a built-in tier.

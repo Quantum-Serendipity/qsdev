@@ -370,7 +370,7 @@ func TestScaffoldCmd_MainGoCompiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, w := range []string{"instance.RegisterFrameworkAdapters()", "instance.ApplyBuildVersion()", "devinit.WithPlanPreview(true)"} {
+	for _, w := range []string{"instance.RegisterFrameworkAdapters()", "instance.ApplyBuildVersion()", "instance.UseProjectDefaults()", "devinit.WithPlanPreview(true)"} {
 		if !strings.Contains(string(content), w) {
 			t.Errorf("scaffold main.go missing %q", w)
 		}

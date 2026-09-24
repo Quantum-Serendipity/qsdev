@@ -50,7 +50,9 @@ func OrgConfigFile() string {
 	return ""
 }
 
-// ProjectConfigPath returns the expected path for a project-level defaults file.
+// ProjectConfigPath returns the expected path for a project-level defaults
+// file, <projectRoot>/.qsdev/defaults.yaml. The file is committed with the
+// project and may only add or tighten (see Load).
 func ProjectConfigPath(projectRoot string) string {
 	if projectRoot == "" {
 		return ""

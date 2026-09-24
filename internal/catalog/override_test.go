@@ -3,6 +3,7 @@ package catalog
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -53,35 +54,6 @@ tools:
 	}
 	if _, ok := cat.Tool("semgrep"); !ok {
 		t.Error("semgrep should still be present after org overlay")
-	}
-}
-
-func TestLoadWithProjectOverride_AddsProjectProfile(t *testing.T) {
-	t.Parallel()
-
-	f := writeUnifiedFile(t, `
-project_profiles:
-  custom-web:
-    description: "Custom project profile"
-    tier: full
-    languages:
-      - name: go
-    services: []
-    direnv: true
-    claude_code: true
-    permission_level: standard
-`)
-
-	cat, err := Load(WithProjectConfigFile(f))
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
-
-	if _, ok := cat.ProjectProfile("custom-web"); !ok {
-		t.Error("custom-web should be present after project overlay")
-	}
-	if _, ok := cat.ProjectProfile("go-web"); !ok {
-		t.Error("go-web should still be present")
 	}
 }
 
@@ -153,27 +125,26 @@ tiers:
 	}
 }
 
+// The org layer (the developer's own defaults) applies above the project
+// layer: where both set the same deny set, the org file wins, and project
+// additions the org file does not touch survive.
 func TestLoadWithCombinedOrgAndProject(t *testing.T) {
 	t.Parallel()
 
 	orgFile := writeUnifiedFile(t, `
-tiers:
-  org-tier:
-    order: 10
-    description: "Org tier original"
-    default_permission_preset: standard
+permission_deny_rules:
+  npx:
+    - Bash(org-deny *)
 `)
 
 	projFile := writeUnifiedFile(t, `
-tiers:
-  org-tier:
-    order: 10
-    description: "Org tier overridden by project"
-    default_permission_preset: standard
-  proj-tier:
-    order: 11
-    description: "Project-only tier"
-    default_permission_preset: standard
+permission_deny_rules:
+  npx:
+    - Bash(project-deny *)
+  project_extra:
+    - Bash(project-extra *)
+permission_all_deny_sets:
+  - project_extra
 `)
 
 	cat, err := Load(WithOrgConfigFile(orgFile), WithProjectConfigFile(projFile))
@@ -181,20 +152,14 @@ tiers:
 		t.Fatalf("Load() error: %v", err)
 	}
 
-	if _, ok := cat.TierDef("full"); !ok {
-		t.Error("base tier 'full' missing")
+	if got := cat.PermissionDenyRules("npx"); !slices.Equal(got, []string{"Bash(org-deny *)"}) {
+		t.Errorf("npx deny rules = %v, want the org file's list", got)
 	}
-
-	orgTier, ok := cat.TierDef("org-tier")
-	if !ok {
-		t.Fatal("org-tier missing")
+	if got := cat.PermissionDenyRules("project_extra"); !slices.Equal(got, []string{"Bash(project-extra *)"}) {
+		t.Errorf("project_extra deny rules = %v, want the project's rule", got)
 	}
-	if orgTier.Description != "Org tier overridden by project" {
-		t.Errorf("org-tier description = %q, want project override", orgTier.Description)
-	}
-
-	if _, ok := cat.TierDef("proj-tier"); !ok {
-		t.Error("proj-tier missing")
+	if !slices.Contains(cat.AllPermissionDenyRules(), "Bash(project-extra *)") {
+		t.Error("project deny set missing from AllPermissionDenyRules()")
 	}
 }
 

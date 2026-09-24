@@ -38,3 +38,42 @@ func TestCandidatePaths_ResolvesSymlinks(t *testing.T) {
 		t.Errorf("CandidatePaths(%q) = %v, missing the resolved target %q", link, got, wantTarget)
 	}
 }
+
+// TestExpandedDenyPaths_IncludesResolvedForms pins that the deny list used for
+// comparison carries each entry's symlink-resolved location, including entries
+// that do not exist but live under a symlinked directory.
+func TestExpandedDenyPaths_IncludesResolvedForms(t *testing.T) {
+	realHome := t.TempDir()
+	homeLink := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink(realHome, homeLink); err != nil {
+		t.Fatalf("creating home symlink: %v", err)
+	}
+	t.Setenv("HOME", homeLink)
+	if err := os.Mkdir(filepath.Join(realHome, ".ssh"), 0o700); err != nil {
+		t.Fatalf("creating fake ~/.ssh: %v", err)
+	}
+	resolvedHome, err := filepath.EvalSymlinks(realHome)
+	if err != nil {
+		t.Fatalf("resolving home: %v", err)
+	}
+
+	got := ExpandedDenyPaths()
+
+	for _, want := range []string{
+		filepath.Join(homeLink, ".ssh"),     // literal entry is kept
+		filepath.Join(resolvedHome, ".ssh"), // existing entry, resolved
+		filepath.Join(resolvedHome, ".aws"), // absent entry, resolved parent
+		filepath.Join(resolvedHome, ".config", "gcloud"),
+	} {
+		if !slices.Contains(got, want) {
+			t.Errorf("ExpandedDenyPaths() missing %q; got %v", want, got)
+		}
+	}
+	seen := make(map[string]bool, len(got))
+	for _, p := range got {
+		if seen[p] {
+			t.Errorf("ExpandedDenyPaths() has duplicate %q", p)
+		}
+		seen[p] = true
+	}
+}

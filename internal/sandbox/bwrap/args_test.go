@@ -229,11 +229,19 @@ func TestBuildArgs_DefaultPolicyDenyDoesNotBreakExec(t *testing.T) {
 func TestBuildArgs_MasksDenyPaths(t *testing.T) {
 	t.Parallel()
 
+	// denyMasks skips deny entries absent on the host (nothing to expose), so
+	// the fixture must be a file that exists everywhere: /etc/shadow does not
+	// exist on macOS, where it would be skipped and nothing asserted.
+	secret := filepath.Join(t.TempDir(), "shadow")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("creating deny fixture: %v", err)
+	}
+
 	cfg := sandbox.SandboxConfig{
 		ProjectDir:   "/home/user/project",
 		HookCategory: sandbox.CategoryFormatter,
 		Network:      sandbox.NetworkPolicy{Mode: "deny"},
-		Deny:         []string{"/etc/shadow"},
+		Deny:         []string{secret},
 	}
 
 	args, err := BuildArgs(&cfg, sandbox.TierFull)
@@ -241,14 +249,14 @@ func TestBuildArgs_MasksDenyPaths(t *testing.T) {
 		t.Fatalf("BuildArgs returned unexpected error: %v", err)
 	}
 
-	if !containsSequence(args, []string{"--ro-bind", "/dev/null", "/etc/shadow"}) {
-		t.Errorf("expected /etc/shadow (a file) masked with /dev/null, got args: %v", args)
+	if !containsSequence(args, []string{"--ro-bind", "/dev/null", secret}) {
+		t.Errorf("expected %s (a file) masked with /dev/null, got args: %v", secret, args)
 	}
 	projectIdx := indexOfSequence(args, []string{"--bind", "/home/user/project", "/home/user/project"})
 	if projectIdx < 0 {
 		t.Fatalf("expected project dir bind, got args: %v", args)
 	}
-	if maskIdx := indexOfMask(args, "/etc/shadow"); maskIdx <= projectIdx {
+	if maskIdx := indexOfMask(args, secret); maskIdx <= projectIdx {
 		t.Errorf("deny mask (idx %d) must be emitted after the project bind (idx %d), got args: %v", maskIdx, projectIdx, args)
 	}
 }

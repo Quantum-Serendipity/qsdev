@@ -72,6 +72,49 @@ func AllDenyPaths() []string {
 	return paths
 }
 
+// ExpandedDenyPaths returns AllDenyPaths together with the symlink-resolved
+// form of every entry, without duplicates. Mount validators compare a path's
+// CandidatePaths (literal and resolved) against this list: comparing a
+// resolved mount path against only the literal deny entries misses every entry
+// that sits under a symlinked directory. On macOS /etc, /var and /tmp are
+// symlinks into /private, so a link to ~/.ssh under a /var home resolves to
+// /private/var/.../.ssh and /private/etc contains /etc/sudoers; without the
+// resolved entries both would pass validation.
+func ExpandedDenyPaths() []string {
+	base := AllDenyPaths()
+	out := make([]string, 0, 2*len(base))
+	seen := make(map[string]bool, 2*len(base))
+	for _, p := range base {
+		for _, c := range []string{filepath.Clean(p), resolveExistingPrefix(p)} {
+			if !seen[c] {
+				seen[c] = true
+				out = append(out, c)
+			}
+		}
+	}
+	return out
+}
+
+// resolveExistingPrefix returns path with symlinks resolved in its deepest
+// existing ancestor and the missing remainder re-appended. A deny entry need
+// not exist (e.g. ~/.aws on a host without the AWS CLI), yet the directory it
+// would live in may still be reached through a symlink, so the entry's
+// resolved location must be known either way.
+func resolveExistingPrefix(path string) string {
+	clean := filepath.Clean(path)
+	var rest []string
+	for dir := clean; ; dir = filepath.Dir(dir) {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(append([]string{resolved}, rest...)...)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return clean
+		}
+		rest = append([]string{filepath.Base(dir)}, rest...)
+	}
+}
+
 // CandidatePaths returns the deny-comparison candidates for path: the cleaned
 // literal path plus its symlink-resolved form when that differs, so a symlink
 // to (or toward) a sensitive location is caught. Both mount validators build

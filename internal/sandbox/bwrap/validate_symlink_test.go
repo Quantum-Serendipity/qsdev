@@ -57,3 +57,29 @@ func TestValidateMountPath_AllowsSymlinkToSafePath(t *testing.T) {
 		t.Errorf("IsDenyPath(%q -> %q) = true, want false", link, target)
 	}
 }
+
+// TestValidateMountPath_RejectsResolvedHomeUnderSymlinkedHome reproduces the
+// macOS layout on any host: HOME is reached through a symlink (as /var is a
+// symlink to /private/var on macOS), so the deny entries built from HOME are
+// literal while a mount path may name the resolved location directly.
+func TestValidateMountPath_RejectsResolvedHomeUnderSymlinkedHome(t *testing.T) {
+	realHome := t.TempDir()
+	homeLink := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink(realHome, homeLink); err != nil {
+		t.Fatalf("creating home symlink: %v", err)
+	}
+	t.Setenv("HOME", homeLink)
+	if err := os.Mkdir(filepath.Join(realHome, ".ssh"), 0o700); err != nil {
+		t.Fatalf("creating fake ~/.ssh: %v", err)
+	}
+
+	for _, path := range []string{
+		filepath.Join(realHome, ".ssh"), // the credential store itself
+		filepath.Join(realHome, ".aws"), // an absent entry under the resolved home
+		realHome,                        // an ancestor that would re-expose ~/.ssh
+	} {
+		if err := ValidateMountPath(path); err == nil {
+			t.Errorf("ValidateMountPath(%q) with HOME=%q = nil, want a deny error", path, homeLink)
+		}
+	}
+}

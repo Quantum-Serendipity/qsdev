@@ -58,3 +58,24 @@ func TestValidateMountDecl_RejectsSymlinkEscape(t *testing.T) {
 		t.Errorf("ValidateMountDecl(symlink within the project) = %v, want nil", err)
 	}
 }
+
+// TestValidateMountDecl_RejectsCredentialsUnderSymlinkedHome reproduces the
+// macOS layout (/var -> /private/var) on any host: HOME is reached through a
+// symlink, so a mount naming the resolved ~/.ssh must still be denied.
+func TestValidateMountDecl_RejectsCredentialsUnderSymlinkedHome(t *testing.T) {
+	realHome := t.TempDir()
+	homeLink := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink(realHome, homeLink); err != nil {
+		t.Fatalf("creating home symlink: %v", err)
+	}
+	t.Setenv("HOME", homeLink)
+	ssh := filepath.Join(realHome, ".ssh")
+	if err := os.Mkdir(ssh, 0o700); err != nil {
+		t.Fatalf("creating fake ~/.ssh: %v", err)
+	}
+
+	decl := MountDecl{Source: ssh, Target: ssh, ReadOnly: true}
+	if err := ValidateMountDecl(decl, realHome); err == nil {
+		t.Errorf("ValidateMountDecl(%+v) with HOME=%q = nil, want a deny error", decl, homeLink)
+	}
+}

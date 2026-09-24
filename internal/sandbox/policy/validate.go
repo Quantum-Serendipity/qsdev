@@ -110,7 +110,7 @@ func checkSourceType(source string) error {
 // checkDenyList checks a single path against the shared deny list, using both
 // the cleaned path and its symlink-resolved form.
 func checkDenyList(path, role string) error {
-	denyPaths := denylist.AllDenyPaths()
+	denyPaths := denylist.ExpandedDenyPaths()
 	for _, candidate := range denylist.CandidatePaths(path) {
 		for _, deny := range denyPaths {
 			// Reject the deny path itself, any descendant of it, AND any ancestor

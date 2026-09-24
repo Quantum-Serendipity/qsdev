@@ -116,8 +116,11 @@ type ReadDenyRuleProvider interface {
 }
 
 // DoctorCheckProvider is an optional interface that ecosystem modules can
-// implement to contribute doctor health checks. Each check is an independent
-// validation that runs during "qsdev doctor".
+// implement to contribute doctor health checks. "qsdev devenv doctor" runs
+// the checks of every module configured in .qsdev.yaml statically: an
+// EnvCheck is judged from the environment and the project's devenv modules,
+// and a Command is never executed, only resolved on PATH and shown to the
+// user as the manual verification step.
 type DoctorCheckProvider interface {
 	DoctorChecks(config ModuleConfig) []DoctorCheck
 }

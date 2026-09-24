@@ -16,19 +16,20 @@ import (
 
 // Report is the top-level output of qsdev doctor.
 type Report struct {
-	QsdevVersion       string            `json:"qsdev_version"`
-	Timestamp          string            `json:"timestamp"`
-	System             SystemInfo        `json:"system"`
-	Shell              ShellInfo         `json:"shell"`
-	PackageMgrs        []PkgMgrInfo      `json:"package_managers"`
-	ContainerRuntime   *ContainerSection `json:"container_runtime,omitempty"`
-	SandboxRuntime     *SandboxSection   `json:"sandbox_runtime,omitempty"`
-	MCPServers         *MCPSection       `json:"mcp_servers,omitempty"`
-	CloudProviders     *CloudSection     `json:"cloud_providers,omitempty"`
-	RequiredTools      []ToolEntry       `json:"required_tools"`
-	OptionalTools      []ToolEntry       `json:"optional_tools"`
-	Recommendations    []string          `json:"recommendations,omitempty"`
-	AllRequiredPresent bool              `json:"all_required_present"`
+	QsdevVersion       string              `json:"qsdev_version"`
+	Timestamp          string              `json:"timestamp"`
+	System             SystemInfo          `json:"system"`
+	Shell              ShellInfo           `json:"shell"`
+	PackageMgrs        []PkgMgrInfo        `json:"package_managers"`
+	ContainerRuntime   *ContainerSection   `json:"container_runtime,omitempty"`
+	SandboxRuntime     *SandboxSection     `json:"sandbox_runtime,omitempty"`
+	MCPServers         *MCPSection         `json:"mcp_servers,omitempty"`
+	CloudProviders     *CloudSection       `json:"cloud_providers,omitempty"`
+	ModuleChecks       *ModuleCheckSection `json:"module_checks,omitempty"`
+	RequiredTools      []ToolEntry         `json:"required_tools"`
+	OptionalTools      []ToolEntry         `json:"optional_tools"`
+	Recommendations    []string            `json:"recommendations,omitempty"`
+	AllRequiredPresent bool                `json:"all_required_present"`
 }
 
 // SetContainerSection attaches a container runtime check result to the report.
@@ -336,6 +337,11 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 	// Cloud Providers
 	if r.CloudProviders != nil && r.CloudProviders.Detected {
 		formatCloudSection(w, r.CloudProviders, okSym, warnSym, failSym)
+	}
+
+	// Ecosystem module checks
+	if r.ModuleChecks != nil && r.ModuleChecks.Detected {
+		formatModuleCheckSection(w, r.ModuleChecks, okSym, warnSym)
 	}
 
 	// Required Tools

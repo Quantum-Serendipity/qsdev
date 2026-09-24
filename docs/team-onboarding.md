@@ -249,7 +249,7 @@ When AWS, GCP, or Azure project files are detected (CDK, SAM, Terraform provider
 
 Cloud CLIs remain available for read-only operations like listing resources or describing infrastructure.
 
-`qsdev devenv doctor` and `qsdev check` verify the three layers for each configured provider without running a cloud CLI. A missing credential masking path or deny rule fails `qsdev check` at high severity; run `qsdev init --update` to restore it. A per-project variable (`AWS_PROFILE`, `CLOUDSDK_ACTIVE_CONFIG_NAME`, `ARM_SUBSCRIPTION_ID`) that is not declared in `devenv.nix` or `devenv.local.nix`, or still holds a placeholder, is reported as a warning. See [Layer 11: Cloud Credential Isolation](security-architecture.md#layer-11-cloud-credential-isolation).
+`qsdev devenv doctor` and `qsdev check` verify the three layers for each configured provider without running a cloud CLI. A missing credential masking path or deny rule fails `qsdev check` at high severity; run `qsdev init --update` to restore it. A per-project variable (`AWS_PROFILE`, `CLOUDSDK_ACTIVE_CONFIG_NAME`, `ARM_SUBSCRIPTION_ID`) that is not declared in `devenv.nix` or `devenv.local.nix`, or still holds a placeholder, is reported as a warning. Doctor's **Ecosystem Checks** section lists each provider's login command (for example `az account show`) for you to run; doctor does not run it. See [Layer 11: Cloud Credential Isolation](security-architecture.md#layer-11-cloud-credential-isolation).
 
 ## Available Services
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/sandbox"
 	"github.com/Quantum-Serendipity/qsdev/internal/sysinfo"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 func doctorCmd() *cobra.Command {
@@ -28,7 +30,9 @@ func doctorCmd() *cobra.Command {
 		Short: "Check system prerequisites for development environment",
 		Long: `Check that required and recommended tools are installed and meet
 minimum version requirements. Outputs a formatted report of system info,
-detected tools, and actionable recommendations.
+detected tools, and actionable recommendations. Inside a project it also
+runs the health checks of the configured ecosystem modules statically: no
+cloud CLI or other check command is executed.
 
 Use --json for machine-readable output, or --check for a simple pass/fail
 exit code (suitable for CI).`,
@@ -52,7 +56,7 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 	osInfo := sysinfo.DetectOS()
 
 	// An unknown working directory only disables the project-scoped checks
-	// (NFS, cloud credential isolation).
+	// (NFS, cloud credential isolation, ecosystem module checks).
 	projectRoot, _ := cmdutil.ProjectRoot()
 
 	var containerSection *doctor.ContainerSection
@@ -72,6 +76,10 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 	report.SetContainerSection(containerSection)
 	report.SetSandboxSection(sandboxSection)
 	report.SetCloudSection(cloudIsolationSection(projectRoot))
+	report.SetModuleCheckSection(moduleCheckSection(projectRoot, ecosystem.DefaultRegistry(), doctor.ModuleCheckEnv{
+		LookupEnv: os.LookupEnv,
+		LookPath:  exec.LookPath,
+	}))
 	slog.Info("doctor check complete",
 		"required_tools", len(report.RequiredTools),
 		"optional_tools", len(report.OptionalTools),

@@ -69,7 +69,7 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 
 	switch pm {
 	case "npm":
-		return []types.GeneratedFile{npmSecurityConfig(config.RegistryProxy, config.Version)}
+		return []types.GeneratedFile{npmSecurityConfig(config.RegistryProxy)}
 	case "pnpm":
 		return []types.GeneratedFile{pnpmSecurityConfig(config.RegistryProxy, config.Extra(ExtraPnpmVersion, ""))}
 	case "yarn":
@@ -80,23 +80,17 @@ func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.Generate
 	case "bun":
 		return []types.GeneratedFile{bunSecurityConfig(config.RegistryProxy)}
 	default:
-		return []types.GeneratedFile{npmSecurityConfig(config.RegistryProxy, config.Version)}
+		return []types.GeneratedFile{npmSecurityConfig(config.RegistryProxy)}
 	}
 }
 
-// npmSecurityConfig generates a hardened .npmrc in INI format. nodeVersion
-// is the project's Node.js constraint: when it resolves to a Node.js whose
-// bundled npm predates min-release-age, the file says the age gate is inert
-// instead of implying it is enforced.
-func npmSecurityConfig(registryProxy, nodeVersion string) types.GeneratedFile {
+// npmSecurityConfig generates a hardened .npmrc in INI format.
+func npmSecurityConfig(registryProxy string) types.GeneratedFile {
 	var b strings.Builder
 	b.WriteString("# Security-hardened npm configuration\n")
 	b.WriteString("# " + branding.GeneratedBy() + " - do not remove security settings\n")
-	b.WriteString("# Requires: npm >= 11.10.0 for min-release-age support (Feb 2026)\n")
-	if major, _ := resolveNodeMajor(nodeVersion); major < npmMinReleaseAgeNodeMajor {
-		fmt.Fprintf(&b, "# WARNING: Node.js %d bundles npm 10, which ignores min-release-age:\n", major)
-		fmt.Fprintf(&b, "# the age gate below is NOT enforced until the project moves to Node.js >= %d.\n", npmMinReleaseAgeNodeMajor)
-	}
+	fmt.Fprintf(&b, "# Requires: npm >= %s for min-release-age (older npm silently ignores it).\n", npmMinReleaseAgeVersion)
+	fmt.Fprintf(&b, "# The devenv shell provides it; `%s check` fails when npm on PATH is older.\n", branding.Get().AppName)
 	b.WriteString("\n")
 	if registryProxy != "" {
 		fmt.Fprintf(&b, "registry=%s\n", ecosystem.INIEscapeValue(registryProxy))

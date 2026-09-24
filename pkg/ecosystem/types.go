@@ -338,3 +338,17 @@ type DoctorCheck struct {
 	Timeout     int    `yaml:"timeout"     json:"timeout"`
 	Provider    string `yaml:"provider"    json:"provider"`
 }
+
+// ToolchainRequirement is a minimum tool version that a module's generated
+// security setting depends on (see ToolchainRequirementProvider).
+type ToolchainRequirement struct {
+	// Binary is the executable looked up on PATH, e.g. "npm".
+	Binary string
+	// VersionArg is the argument that makes Binary print its version.
+	VersionArg string
+	// MinVersion is the oldest version that honours Setting, e.g. "11.10.0".
+	MinVersion string
+	// Setting names the generated setting that needs MinVersion, e.g.
+	// ".npmrc min-release-age".
+	Setting string
+}

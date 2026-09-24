@@ -50,6 +50,8 @@ New package versions are blocked for a configurable period after publication. Th
 
 For pnpm workspaces, age-gating is additionally enforced at install time via `minimumReleaseAge: 4320` in `pnpm-workspace.yaml`.
 
+For npm projects, the generated `.npmrc` sets `min-release-age=3` (days). npm only honours that setting from 11.10.0 on; older npm, such as the npm 10 bundled with Node.js 22, reads it as an unknown key and ignores it. The generated `devenv.nix` therefore sets `languages.javascript.npm.package` to an npm that is at least 11.10 (the npm output of `nodejs-slim_24`, or of the project's Node.js when that is newer), whatever Node.js major the project uses, and takes Node.js itself from the matching `nodejs-slim` package so its bundled npm is not also on `PATH`. The `npm` output of `nodejs-slim` needs nixpkgs 26.05 or later, and the npm it carries only reaches 11.10 from Node.js 24.14.1 on, so an existing project whose `devenv.lock` pins an older nixpkgs should run `qsdev init --update`, which regenerates `devenv.nix` and refreshes the lock. `qsdev check` probes the `npm` on `PATH` and fails (high severity) when it is older than 11.10.0; run it inside the devenv shell. When `npm` is not on `PATH` the probe is skipped.
+
 ### Layer 2: Install Script Blocking
 
 Per-ecosystem configuration files disable install-time script execution — the single most exploited attack vector in package supply chains.

@@ -20,9 +20,14 @@ var supportedNodeMajors = []int{22, 24, 26}
 // when the project states no Node.js version or asks for "lts/*".
 const defaultNodeMajor = 24
 
-// npmMinReleaseAgeNodeMajor is the oldest supported Node.js major whose
-// bundled npm (>= 11.10) knows the min-release-age setting the generated
-// .npmrc relies on. npm 10, bundled with Node.js 22, ignores it.
+// npmMinReleaseAgeVersion is the first npm release that knows the
+// min-release-age setting the generated .npmrc relies on. Older npm (npm 10,
+// bundled with Node.js 22) reads the key as an unknown string and ignores it.
+const npmMinReleaseAgeVersion = "11.10.0"
+
+// npmMinReleaseAgeNodeMajor is the oldest supported Node.js major whose npm
+// is at least npmMinReleaseAgeVersion. npm projects on an older Node.js get
+// the npm of this major instead of their own (see npmNixPackage).
 const npmMinReleaseAgeNodeMajor = 24
 
 // nodeLTSCodenames maps .nvmrc "lts/<codename>" aliases to their major.
@@ -185,7 +190,23 @@ func resolveNodeMajor(spec string) (major int, note string) {
 	return newest, fmt.Sprintf("Node.js %s is newer than any packaged release; using nodejs_%d", spec, newest)
 }
 
-// nodeNixPackage returns the nixpkgs attribute for a supported Node.js major.
+// nodeNixPackage returns the nixpkgs attribute for a supported Node.js major,
+// including its bundled npm.
 func nodeNixPackage(major int) string {
 	return fmt.Sprintf("pkgs.nodejs_%d", major)
+}
+
+// nodeSlimNixPackage returns the nixpkgs attribute for a supported Node.js
+// major without npm, for projects that take npm from npmNixPackage: the full
+// nodejs_<major> would put its own bundled npm on PATH as well.
+func nodeSlimNixPackage(major int) string {
+	return fmt.Sprintf("pkgs.nodejs-slim_%d", major)
+}
+
+// npmNixPackage returns the npm for an npm project on Node.js major: the npm
+// output of that major's nodejs-slim when it is new enough to enforce
+// min-release-age, otherwise that of npmMinReleaseAgeNodeMajor. The npm output
+// runs on its own Node.js, while the project's scripts use the project's.
+func npmNixPackage(major int) string {
+	return fmt.Sprintf("pkgs.nodejs-slim_%d.npm", max(major, npmMinReleaseAgeNodeMajor))
 }

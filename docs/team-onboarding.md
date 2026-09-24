@@ -351,7 +351,7 @@ Add `qsdev check` to your CI pipeline to enforce configuration integrity and sec
 qsdev check
 ```
 
-`qsdev check` validates that security controls are present, deny rules are intact, and no configuration has drifted. It exits non-zero on violations and supports JSON, SARIF, and JUnit output formats for integration with CI dashboards.
+`qsdev check` validates that security controls are present, deny rules are intact, no configuration has drifted, and the tools on `PATH` are new enough to honour the generated settings (for example, an npm project fails when `npm` is older than 11.10.0, which ignores the `.npmrc` `min-release-age` gate). Run it inside the devenv shell so those probes see the project's tools. It exits non-zero on violations and supports JSON, SARIF, and JUnit output formats for integration with CI dashboards.
 
 To enforce team-specific requirements (a score floor, a tool that must be enabled, no critical vulnerabilities), commit a [`.qsdev-policy.yaml`](configuration-reference.md#qsdev-policyyaml). Both `qsdev check` and `qsdev status` evaluate it; add `--scan` when a requirement reads `dependencies.totals`, since those fail without a fresh scan.
 

@@ -17,6 +17,7 @@ var _ ecosystem.DenyRuleProvider = (*Module)(nil)
 var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
+var _ ecosystem.ToolchainRequirementProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -142,18 +143,25 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	if note != "" {
 		b.WriteString("  # " + note + "\n")
 	}
-	if pm == "npm" && major < npmMinReleaseAgeNodeMajor {
-		fmt.Fprintf(&b, "  # WARNING: the npm bundled with Node.js %d ignores min-release-age, so the\n", major)
-		fmt.Fprintf(&b, "  # .npmrc package age gate is not enforced; use Node.js >= %d.\n", npmMinReleaseAgeNodeMajor)
-	}
 	b.WriteString("  languages.javascript = {\n")
 	b.WriteString("    enable = true;\n")
-	fmt.Fprintf(&b, "    package = %s;\n", nodeNixPackage(major))
+	if pm == "npm" {
+		// npm comes from npm.package, so Node.js is the slim build: the full
+		// one would also put its bundled (possibly too old) npm on PATH.
+		fmt.Fprintf(&b, "    package = %s;\n", nodeSlimNixPackage(major))
+	} else {
+		fmt.Fprintf(&b, "    package = %s;\n", nodeNixPackage(major))
+	}
 
 	// Package manager specific configuration.
 	switch pm {
 	case "npm":
 		b.WriteString("    npm.enable = true;\n")
+		// The .npmrc age gate (min-release-age) needs npm >= 11.10, which
+		// Node.js 22's bundled npm 10 is not, so npm is chosen independently
+		// of the Node.js major.
+		fmt.Fprintf(&b, "    # npm >= %s: enforces the .npmrc min-release-age gate\n", npmMinReleaseAgeVersion)
+		fmt.Fprintf(&b, "    npm.package = %s;\n", npmNixPackage(major))
 	case "pnpm":
 		b.WriteString("    pnpm.enable = true;\n")
 	case "yarn":
@@ -176,6 +184,22 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	}
 
 	return b.String(), nil
+}
+
+// ToolchainRequirements returns the tool versions the generated hardening
+// needs to take effect: an npm project's .npmrc age gate is ignored by npm
+// older than npmMinReleaseAgeVersion. pnpm, Yarn and Bun gate release age in
+// their own config files and need no probe.
+func (m *Module) ToolchainRequirements(config ecosystem.ModuleConfig) []ecosystem.ToolchainRequirement {
+	if config.PM("npm") != "npm" {
+		return nil
+	}
+	return []ecosystem.ToolchainRequirement{{
+		Binary:     "npm",
+		VersionArg: "--version",
+		MinVersion: npmMinReleaseAgeVersion,
+		Setting:    ".npmrc min-release-age",
+	}}
 }
 
 // jsLintExtensions is the file pattern the eslint hook lints: JavaScript and

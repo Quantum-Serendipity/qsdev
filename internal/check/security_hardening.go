@@ -58,6 +58,11 @@ func CheckSecurityHardening(ctx CheckContext) []CheckResult {
 		}
 	}
 
+	// Check that the tools on PATH are new enough to honour those settings.
+	for _, lang := range ctx.QsdevConfig.Languages {
+		results = append(results, checkToolchainRequirements(ctx, lang)...)
+	}
+
 	if len(results) == 0 {
 		// Nothing was verified, so report a skip rather than a pass: a green
 		// result here would claim hardening that was never checked.

@@ -3,6 +3,7 @@ package javascript_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -205,8 +206,9 @@ func TestDevenvNixFragment_NPM(t *testing.T) {
 	requiredStrings := []string{
 		"languages.javascript",
 		"enable = true",
-		"pkgs.nodejs_24",
+		"package = pkgs.nodejs-slim_24;",
 		"npm.enable = true",
+		"npm.package = pkgs.nodejs-slim_24.npm;",
 	}
 	for _, s := range requiredStrings {
 		if !strings.Contains(fragment, s) {
@@ -397,41 +399,98 @@ func TestDevenvNixFragment_VersionMapping(t *testing.T) {
 	}
 }
 
-// TestDevenvNixFragment_NPMAgeGateWarning verifies W054: npm 10 (bundled
-// with Node.js 22) ignores min-release-age, so an npm project resolving to
-// Node.js 22 is told the .npmrc age gate is inert, in both devenv.nix and
-// .npmrc, while the default Node.js (24, npm 11) gets no warning.
-func TestDevenvNixFragment_NPMAgeGateWarning(t *testing.T) {
+// TestDevenvNixFragment_NPMPackage verifies W054: npm 10 (bundled with
+// Node.js 22) ignores min-release-age, so an npm project gets an npm >= 11.10
+// whatever its Node.js major, and the slim Node.js so the bundled npm is not
+// also on PATH. Other package managers keep the full Node.js package.
+func TestDevenvNixFragment_NPMPackage(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		version string
-		pm      string
-		warn    bool
+		name     string
+		version  string
+		pm       string
+		wantNode string
+		wantNpm  string // empty: no npm.package line
 	}{
-		{"", "npm", false},
-		{"24", "npm", false},
-		{">=20", "npm", false},
-		{"22", "npm", true},
-		{"22", "pnpm", false}, // pnpm has its own age gate
+		{"default node", "", "npm", "pkgs.nodejs-slim_24", "pkgs.nodejs-slim_24.npm"},
+		{"node 22 takes node 24 npm", "22", "npm", "pkgs.nodejs-slim_22", "pkgs.nodejs-slim_24.npm"},
+		{"EOL node 20 maps to 22", "20", "npm", "pkgs.nodejs-slim_22", "pkgs.nodejs-slim_24.npm"},
+		{"node 24", "24", "npm", "pkgs.nodejs-slim_24", "pkgs.nodejs-slim_24.npm"},
+		{"node 26 keeps its newer npm", "26", "npm", "pkgs.nodejs-slim_26", "pkgs.nodejs-slim_26.npm"},
+		{"unset package manager is npm", "22", "", "pkgs.nodejs-slim_22", "pkgs.nodejs-slim_24.npm"},
+		{"pnpm has its own age gate", "22", "pnpm", "pkgs.nodejs_22", ""},
+		{"yarn", "22", "yarn", "pkgs.nodejs_22", ""},
+		{"bun", "", "bun", "pkgs.nodejs_24", ""},
 	}
 	m := &javascript.Module{}
 	for _, tt := range tests {
-		t.Run(tt.pm+"_"+tt.version, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			cfg := ecosystem.ModuleConfig{PackageManager: tt.pm, Version: tt.version}
-			fragment, err := m.DevenvNixFragment(cfg)
+			fragment, err := m.DevenvNixFragment(ecosystem.ModuleConfig{PackageManager: tt.pm, Version: tt.version})
 			if err != nil {
 				t.Fatalf("DevenvNixFragment() error: %v", err)
 			}
-			if got := strings.Contains(fragment, "ignores min-release-age"); got != tt.warn {
-				t.Errorf("devenv.nix warning = %v, want %v\ngot:\n%s", got, tt.warn, fragment)
+			if want := "    package = " + tt.wantNode + ";\n"; !strings.Contains(fragment, want) {
+				t.Errorf("missing %q\ngot:\n%s", want, fragment)
 			}
-			if tt.pm != "npm" {
+			gotNpm := strings.Contains(fragment, "npm.package = ")
+			if tt.wantNpm == "" {
+				if gotNpm {
+					t.Errorf("unexpected npm.package for %s\ngot:\n%s", tt.pm, fragment)
+				}
 				return
 			}
-			npmrc := string(m.SecurityConfigs(cfg)[0].Content)
-			if got := strings.Contains(npmrc, "NOT enforced"); got != tt.warn {
-				t.Errorf(".npmrc warning = %v, want %v\ngot:\n%s", got, tt.warn, npmrc)
+			if want := "    npm.package = " + tt.wantNpm + ";\n"; !strings.Contains(fragment, want) {
+				t.Errorf("missing %q\ngot:\n%s", want, fragment)
+			}
+			if strings.Contains(fragment, "WARNING") {
+				t.Errorf("npm project must not be warned about an inert age gate\ngot:\n%s", fragment)
+			}
+		})
+	}
+}
+
+// TestNPMSecurityConfig_AgeGateRequirement verifies the generated .npmrc
+// states the npm version min-release-age needs, for every Node.js major.
+func TestNPMSecurityConfig_AgeGateRequirement(t *testing.T) {
+	t.Parallel()
+	m := &javascript.Module{}
+	for _, version := range []string{"", "22", "24"} {
+		t.Run("node_"+version, func(t *testing.T) {
+			t.Parallel()
+			npmrc := string(m.SecurityConfigs(ecosystem.ModuleConfig{PackageManager: "npm", Version: version})[0].Content)
+			for _, want := range []string{"# Requires: npm >= 11.10.0 for min-release-age", "min-release-age=3\n"} {
+				if !strings.Contains(npmrc, want) {
+					t.Errorf(".npmrc missing %q\ngot:\n%s", want, npmrc)
+				}
+			}
+			if strings.Contains(npmrc, "NOT enforced") {
+				t.Errorf(".npmrc still claims the age gate is inert\ngot:\n%s", npmrc)
+			}
+		})
+	}
+}
+
+// TestToolchainRequirements verifies W054's probe: npm projects require an
+// npm that knows min-release-age; other package managers need no probe.
+func TestToolchainRequirements(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		pm   string
+		want []ecosystem.ToolchainRequirement
+	}{
+		{"npm", []ecosystem.ToolchainRequirement{{Binary: "npm", VersionArg: "--version", MinVersion: "11.10.0", Setting: ".npmrc min-release-age"}}},
+		{"", []ecosystem.ToolchainRequirement{{Binary: "npm", VersionArg: "--version", MinVersion: "11.10.0", Setting: ".npmrc min-release-age"}}},
+		{"pnpm", nil},
+		{"yarn", nil},
+		{"bun", nil},
+	}
+	for _, tt := range tests {
+		t.Run("pm_"+tt.pm, func(t *testing.T) {
+			t.Parallel()
+			got := (&javascript.Module{}).ToolchainRequirements(ecosystem.ModuleConfig{PackageManager: tt.pm})
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ToolchainRequirements(%q) = %+v, want %+v", tt.pm, got, tt.want)
 			}
 		})
 	}

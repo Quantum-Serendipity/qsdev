@@ -17,6 +17,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/posture"
 	"github.com/Quantum-Serendipity/qsdev/internal/posture/conformance"
 	"github.com/Quantum-Serendipity/qsdev/internal/state"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolcheck"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -76,6 +77,9 @@ func runCheck(cmd *cobra.Command, format check.OutputFormat, auditLevel check.Au
 		BinaryVersion: version.Info().Version,
 		StateFile:     filepath.Join(projectRoot, stateFilePath()),
 		ManifestFile:  filepath.Join(projectRoot, state.ManifestFile()),
+		ProbeTool: func(binary, versionArg string) toolcheck.Info {
+			return toolcheck.Detect(cmd.Context(), binary, versionArg)
+		},
 	}
 
 	// Parse config if present. The error travels in the context so the report

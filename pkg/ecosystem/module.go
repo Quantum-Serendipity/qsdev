@@ -124,3 +124,12 @@ type ReadDenyRuleProvider interface {
 type DoctorCheckProvider interface {
 	DoctorChecks(config ModuleConfig) []DoctorCheck
 }
+
+// ToolchainRequirementProvider is an optional interface for modules whose
+// generated security settings only take effect with a minimum version of a
+// tool: an older tool silently ignores the setting. "qsdev check" probes the
+// tool on PATH for each requirement, so an inert setting is reported rather
+// than assumed to be enforced.
+type ToolchainRequirementProvider interface {
+	ToolchainRequirements(config ModuleConfig) []ToolchainRequirement
+}

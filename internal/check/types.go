@@ -188,6 +188,9 @@ type CheckContext struct {
 	// it. DeclaredEnvErr records a module that could not be read or parsed.
 	DeclaredEnv    map[string]string
 	DeclaredEnvErr error
+	// ProbeTool runs a tool's version probe for the toolchain requirement
+	// checks; nil skips them.
+	ProbeTool ToolProber
 }
 
 // CustomConformance carries the evaluated requirements of a project's custom

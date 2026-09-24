@@ -524,13 +524,34 @@ This is the most complex generated file and the one most likely to be customized
 
 - **Packages** -- Base packages (`git`, `jq`, `curl`, `coreutils`) plus language-specific toolchains and extra packages
 - **Services** -- Database, cache, messaging, and infrastructure services (PostgreSQL, Redis, MySQL, MongoDB, Elasticsearch, RabbitMQ, Kafka, MinIO, Mailpit, Keycloak, NATS)
-- **Pre-commit hooks** -- Security hooks (`ripsecrets`, `check-added-large-files`, `no-commit-to-branch`, `check-merge-conflict`, `shellcheck`, `statix`) plus custom hooks (`lock-file-audit`, `nix-secrets-check`)
+- **Pre-commit hooks** -- Language-independent hooks (`ripsecrets`, `check-added-large-files`, `no-commit-to-branch`, `check-merge-conflicts`, `shellcheck`, and `statix` from `enhanced` up), custom hooks (`lock-file-audit`, `nix-secrets-check`) and each selected language's formatters, linters and scanners, tiered by the effective security level (see [Pre-commit hook tiers](#pre-commit-hook-tiers))
 - **Tool sections** -- Sections contributed by enabled tools, such as the always-on `branch-naming` pre-push hook (see [Git settings](#git-settings)) and the opt-in `commit-ticket` prepare-commit-msg hook
 - **Environment variables** -- `DEVENV_SECURITY_HARDENED=true` sentinel, user-defined variables, credential variable unsetting
 - **enterShell** -- Security posture banner displayed on shell entry
 - **enterTest** -- Validation script for `devenv test`
 
 On update, if the file has been modified, a `devenv.nix.new` sidecar is created and the user is shown a diff.
+
+#### Pre-commit hook tiers
+
+The catalog's `hook_tier_order` and `hook_tiers` assign pre-commit hooks to
+one tier per security level (`baseline`, `enhanced`, `strict`). `devenv.nix`
+gets the hooks of the effective security level's tier (the stricter of
+`security.level` and `client.security_level`) and of every tier below it:
+
+| Tier | Hooks | Runs at |
+|------|-------|---------|
+| `baseline` | Security hooks (`ripsecrets`, `gitleaks`, `semgrep`, `opengrep`, `nix-secrets-check`, `lock-file-audit`, `shellcheck`, `govulncheck`, `bandit`, `tfsec`) and repository hygiene (`check-added-large-files`, `no-commit-to-branch`, `check-merge-conflicts`) | Every level |
+| `enhanced` | Language formatters and linters (`gofmt`, `govet`, `staticcheck`, `ruff`, `mypy`, `eslint`, `prettier`, `rustfmt`, `clippy`, `statix`, ...) | `enhanced`, `strict` |
+| `strict` | None (strict adds audit logging and auto-format, not pre-commit hooks) | `strict` |
+
+Security hooks are never tiered out: only non-security hooks sit above
+`baseline`. A hook no tier lists (for example a tool's `commit-ticket` or
+`branch-naming` hook) runs at every level. A project without a security level
+gets every hook. An org or project catalog overlay can move hooks between
+tiers; `hook_tier_order` must match `security_levels`, a hook may appear in
+only one tier, and a compliance level's `required_pre_commit_hooks` may not be
+tiered above that level.
 
 ### `.envrc`
 

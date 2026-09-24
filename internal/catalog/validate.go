@@ -134,6 +134,9 @@ func (c *Catalog) validateDerivations() []CatalogError {
 	return errs
 }
 
+// validateHookTiers checks that every ordered hook tier is defined, that the
+// tiers are the security levels in order (a project's security level selects
+// its hook tier), and that no hook is placed in two tiers.
 func (c *Catalog) validateHookTiers() []CatalogError {
 	var errs []CatalogError
 
@@ -146,6 +149,50 @@ func (c *Catalog) validateHookTiers() []CatalogError {
 		}
 	}
 
+	if !slices.Equal(c.hookTiers.TierOrder, c.validation.SecurityLevels) {
+		errs = append(errs, CatalogError{
+			"hook_tiers.yaml", "tier_order",
+			fmt.Sprintf("tiers %v must be the security levels in order %v", c.hookTiers.TierOrder, c.validation.SecurityLevels),
+		})
+	}
+
+	tierOf := make(map[string]string)
+	for _, tier := range slices.Sorted(maps.Keys(c.hookTiers.Tiers)) {
+		for _, hook := range c.hookTiers.Tiers[tier] {
+			if prev, ok := tierOf[hook]; ok && prev != tier {
+				errs = append(errs, CatalogError{
+					"hook_tiers.yaml", tier,
+					fmt.Sprintf("hook %q is also in tier %q", hook, prev),
+				})
+				continue
+			}
+			tierOf[hook] = tier
+		}
+	}
+
+	return append(errs, c.validateRequiredHookTiers(tierOf)...)
+}
+
+// validateRequiredHookTiers rejects a hook tier layout that would tier a
+// compliance level's required pre-commit hook out of that level: devenv.nix
+// drops every hook placed in a tier above the project's security level.
+func (c *Catalog) validateRequiredHookTiers(tierOf map[string]string) []CatalogError {
+	var errs []CatalogError
+	order := c.hookTiers.TierOrder
+	for _, level := range slices.Sorted(maps.Keys(c.compliance.Levels)) {
+		at := slices.Index(order, level)
+		if at < 0 {
+			continue // tier order vs security levels is reported above
+		}
+		for _, hook := range c.compliance.Levels[level].RequiredPreCommitHooks {
+			if tier, ok := tierOf[hook]; ok && slices.Index(order, tier) > at {
+				errs = append(errs, CatalogError{
+					"hook_tiers.yaml", tier,
+					fmt.Sprintf("hook %q is required at security level %q but tiered above it", hook, level),
+				})
+			}
+		}
+	}
 	return errs
 }
 

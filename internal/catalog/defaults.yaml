@@ -1061,25 +1061,76 @@ custom_hooks:
       pass_filenames: true
       stages:
         - pre-commit
+# Pre-commit hook tiers, one per security level and in security_levels order.
+# A project gets the hooks of its security level's tier and of every tier
+# below it; devenv.nix leaves out only the hooks listed in a higher tier. The
+# baseline tier applies at every level, so every security hook belongs there:
+# only non-security hooks are tiered above it. A hook no tier lists (such as a
+# tool's commit-ticket hook) runs at every level. Entries are real hook IDs.
 hook_tier_order:
     - baseline
     - enhanced
-    - specialized
+    - strict
 hook_tiers:
     baseline:
+        # Security: secrets, SAST, supply chain and vulnerability scanning.
         - ripsecrets
         - gitleaks
+        - semgrep
+        - opengrep
+        - nix-secrets-check
+        - lock-file-audit
+        - shellcheck
+        - govulncheck
+        - bandit
+        - tfsec
+        # Repository hygiene.
         - check-added-large-files
         - no-commit-to-branch
         - check-merge-conflicts
     enhanced:
-        - semgrep
-        - shellcheck
-        - formatters
-    specialized:
-        - lock-file-audit
-        - nix-secrets-check
+        # Language-aware formatters and linters from the ecosystem modules.
+        - ansible-lint
+        - buildifier
+        - clang-format
+        - clippy
+        - cljfmt
+        - cppcheck
+        - dart-format
+        - deadnix
+        - dotnet-format
+        - eslint
+        - gofmt
+        - google-java-format
+        - govet
+        - hadolint
+        - helmlint
+        - ktlint
+        - luacheck
+        - mix-format
+        - mypy
+        - nixfmt
+        - ormolu
+        - perltidy
+        - phpcs
+        - phpstan
+        - pmd
+        - prettier
+        - rubocop
+        - ruff
+        - rustfmt
+        - scalafmt
+        - shfmt
+        - staticcheck
         - statix
+        - stylua
+        - swiftformat
+        - terraform-format
+        - terraform-validate
+        - tflint
+        - zig-fmt
+    # strict adds audit logging and auto-format hooks, not pre-commit hooks.
+    strict: []
 # The tier a project gets when nothing selects one. init persists it to
 # .qsdev.yaml so readers never have to guess the tier.
 default_tier: standard

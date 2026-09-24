@@ -409,7 +409,7 @@ func TestHookTierOrder(t *testing.T) {
 	t.Parallel()
 	cat := loadTestCatalog(t)
 	order := cat.HookTierOrder()
-	want := []string{"baseline", "enhanced", "specialized"}
+	want := []string{"baseline", "enhanced", "strict"}
 	if len(order) != len(want) {
 		t.Fatalf("HookTierOrder() = %v, want %v", order, want)
 	}
@@ -864,6 +864,66 @@ func TestValidate_BrokenHookTierOrder(t *testing.T) {
 	errs := cat.Validate()
 	if !hasValidationError(errs, `"phantom-tier"`) {
 		t.Errorf("expected broken hook tier order error, got: %v", errs)
+	}
+}
+
+func TestValidate_HookTiers(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		mutate  func(c *Catalog)
+		wantErr string
+	}{
+		{
+			name:   "default catalog",
+			mutate: func(*Catalog) {},
+		},
+		{
+			name: "tier order differs from security levels",
+			mutate: func(c *Catalog) {
+				c.hookTiers.TierOrder = []string{"enhanced", "baseline", "strict"}
+			},
+			wantErr: "must be the security levels in order",
+		},
+		{
+			name: "security level without a hook tier",
+			mutate: func(c *Catalog) {
+				c.validation.SecurityLevels = append(c.validation.SecurityLevels, "paranoid")
+			},
+			wantErr: "must be the security levels in order",
+		},
+		{
+			name: "hook in two tiers",
+			mutate: func(c *Catalog) {
+				c.hookTiers.Tiers["strict"] = append(c.hookTiers.Tiers["strict"], "gitleaks")
+			},
+			wantErr: `hook "gitleaks" is also in tier "baseline"`,
+		},
+		{
+			name: "required hook tiered above its security level",
+			mutate: func(c *Catalog) {
+				c.hookTiers.Tiers["baseline"] = slices.DeleteFunc(slices.Clone(c.hookTiers.Tiers["baseline"]), func(h string) bool { return h == "gitleaks" })
+				c.hookTiers.Tiers["enhanced"] = append(slices.Clone(c.hookTiers.Tiers["enhanced"]), "gitleaks")
+			},
+			wantErr: `hook "gitleaks" is required at security level "baseline" but tiered above it`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cat := loadTestCatalog(t)
+			tt.mutate(cat)
+			errs := cat.validateHookTiers()
+			if tt.wantErr == "" {
+				if len(errs) != 0 {
+					t.Fatalf("validateHookTiers() = %v, want no errors", errs)
+				}
+				return
+			}
+			if !hasValidationError(errs, tt.wantErr) {
+				t.Errorf("validateHookTiers() = %v, want an error containing %q", errs, tt.wantErr)
+			}
+		})
 	}
 }
 

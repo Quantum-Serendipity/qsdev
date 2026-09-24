@@ -177,8 +177,14 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	// (an explicit infra profile's nix cache, or infrastructure.nix_cache).
 	data.CachixPull = cachixPullCaches(answers.Infrastructure)
 
-	// 4. Language fragments and hooks from ecosystem modules.
-	hookResult, err := collectLanguageFragmentsAndHooks(answers, registry)
+	// 4. Language fragments and hooks from ecosystem modules. Hooks the
+	// catalog tiers above the project's security level are left out here and
+	// in step 6 (security hooks sit in the lowest tier and are always kept).
+	runsAtTier, err := hookTierFilter(answers.HookTier, answers.ComplianceLevel)
+	if err != nil {
+		return nil, fmt.Errorf("selecting pre-commit hooks: %w", err)
+	}
+	hookResult, err := collectLanguageFragmentsAndHooks(answers, registry, runsAtTier)
 	if err != nil {
 		return nil, err
 	}
@@ -251,11 +257,12 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 		return nil, err
 	}
 
-	// 6. Security hooks are always present. An ecosystem module may declare
-	// the same hook (shellcheck for shell, statix for nix); rendering both
-	// defines one git-hooks attribute twice and devenv.nix fails to evaluate,
-	// so the always-on security entry wins.
-	data.SecurityHooks = defaultSecurityHooks()
+	// 6. The always-on hooks are present whatever the languages, less the
+	// non-security ones (statix) tiered above the security level. An
+	// ecosystem module may declare the same hook (shellcheck for shell,
+	// statix for nix); rendering both defines one git-hooks attribute twice
+	// and devenv.nix fails to evaluate, so the always-on entry wins.
+	data.SecurityHooks = slices.DeleteFunc(defaultSecurityHooks(), func(id string) bool { return !runsAtTier(id) })
 	seenHookIDs := hookResult.SeenHookIDs
 	securityHookIDs := make(map[string]bool, len(data.SecurityHooks))
 	for _, id := range data.SecurityHooks {
@@ -277,9 +284,9 @@ func BuildDevenvNixData(answers types.WizardAnswers, registry *ecosystem.Registr
 	data.HookOverrides = append(data.HookOverrides, securityHookOverrides(registry, data.SecurityHooks, overridden)...)
 	data.BuiltInHooks = slices.DeleteFunc(data.BuiltInHooks, func(h BuiltInHookData) bool { return securityHookIDs[h.ID] })
 
-	// Specialized security custom hooks (always present), deduped against ecosystem hooks.
+	// Specialized security custom hooks, deduped against ecosystem hooks.
 	for _, hook := range defaultSpecializedHooks(projectLockFiles(answers.Languages)) {
-		if !seenHookIDs[hook.ID] {
+		if !seenHookIDs[hook.ID] && runsAtTier(hook.ID) {
 			seenHookIDs[hook.ID] = true
 			data.CustomHooks = append(data.CustomHooks, hook)
 		}
@@ -351,8 +358,10 @@ func dropOverriddenEnv(fragments []LanguageFragment, env map[string]string) erro
 }
 
 // collectLanguageFragmentsAndHooks iterates over selected languages, generates
-// their Nix fragments, and collects pre-commit hooks (both built-in and custom).
-func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *ecosystem.Registry) (languageHookResult, error) {
+// their Nix fragments, and collects the pre-commit hooks (both built-in and
+// custom) for which runsAtTier reports true; a skipped hook contributes no
+// package either.
+func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *ecosystem.Registry, runsAtTier func(id string) bool) (languageHookResult, error) {
 	result := languageHookResult{
 		SeenHookIDs: make(map[string]bool),
 	}
@@ -377,7 +386,7 @@ func collectLanguageFragmentsAndHooks(answers types.WizardAnswers, registry *eco
 		}
 
 		for _, hook := range mod.PreCommitHooks(cfg) {
-			if result.SeenHookIDs[hook.ID] {
+			if result.SeenHookIDs[hook.ID] || !runsAtTier(hook.ID) {
 				continue
 			}
 			result.SeenHookIDs[hook.ID] = true

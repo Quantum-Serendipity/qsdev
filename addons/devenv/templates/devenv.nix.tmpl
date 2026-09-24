@@ -72,9 +72,10 @@
 {{- if .GitHooksEnabled}}
 
   # Git hooks — managed by prek (devenv 1.11+ default hook runner).
-  # Tiers: baseline (always-on), enhanced (language-aware), specialized (custom)
+  # Hook tiers follow the security level: security hooks run at every level,
+  # language-aware formatters and linters from "enhanced" up (catalog hook_tiers).
   git-hooks.hooks = {
-    # Baseline security hooks (always enabled)
+    # Always-on hooks (less any tiered above the security level)
 {{- range .SecurityHooks}}
     {{ . }}.enable = true;
 {{- end}}

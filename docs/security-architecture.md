@@ -117,8 +117,9 @@ The generated `devenv.nix` additionally:
 
 - **Unsets 38 credential-bearing variables** — AWS, GCP, Azure, GitHub, GitLab, Docker, database, secrets management, and generic API keys.
 - **Sets `DEVENV_SECURITY_HARDENED=true`** — A sentinel flag verified by `devenv test`.
-- **Installs security pre-commit hooks** — ripsecrets, check-added-large-files, no-commit-to-branch, check-merge-conflict, shellcheck, statix.
-- **Installs custom hooks** — lock-file-audit and nix-secrets-check (detects hardcoded credentials in `.nix` files).
+- **Installs security pre-commit hooks** — ripsecrets, shellcheck and the language security scanners (govulncheck, bandit, tfsec) at every security level, plus repository hygiene hooks (check-added-large-files, no-commit-to-branch, check-merge-conflicts).
+- **Installs custom hooks** — lock-file-audit and nix-secrets-check (detects hardcoded credentials in `.nix` files), at every security level.
+- **Tiers only non-security hooks** — language formatters and linters (and statix) run from the `enhanced` security level up; a `baseline` project skips them. The tiers are the catalog's `hook_tiers` (see the configuration reference's "Pre-commit hook tiers").
 
 ### Layer 7: SAST (Semgrep)
 

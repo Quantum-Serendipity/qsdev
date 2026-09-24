@@ -1411,7 +1411,27 @@ Bundler hardening (`BUNDLE_FROZEN`, `BUNDLE_DISABLE_EXEC_LOAD`) is exported as e
 
 | File | Merge Strategy | Purpose |
 |------|---------------|---------|
-| Composer config | `overwrite` | Script restrictions, repository pinning |
+| `.qsdev/composer/config.json` | `overwrite` | Composer global config: `secure-http`, plugin allowlist, `audit.abandoned: fail`, repository pinning to the registry proxy |
+
+devenv.nix exports `COMPOSER_HOME=$DEVENV_ROOT/.qsdev/composer`, so every `composer` run in the devenv shell loads the generated `config.json` as its global configuration. Composer reads global settings only from `$COMPOSER_HOME/config.json`. It has no include directive and no environment variable that points at another config file, so the file has to live there. Composer applies the project's `composer.json` on top of this file, which means the generated values fill in every key the project leaves unset and explicit `composer.json` settings still take precedence.
+
+The file sets:
+
+- `secure-http: true`, which refuses plain-HTTP downloads.
+- `allow-plugins: {}`, which grants no plugins itself. Composer runs only the plugins that the project's `composer.json` allows. It prompts for any other plugin in an interactive shell and fails the install in a non-interactive one.
+- `audit.abandoned: fail`, `lock: true` and `preferred-install: dist`.
+
+With a registry proxy configured (see [Infrastructure settings](#infrastructure-settings)), the file also adds the proxy as a `composer` repository and disables `packagist.org`, so every package resolves through the proxy.
+
+The file replaces your user-level Composer home (`~/.config/composer` or `~/.composer`) inside the devenv shell, which has three effects:
+
+- **Credentials.** Composer does not read your global `auth.json` in the shell. Put credentials for private repositories in the `COMPOSER_AUTH` environment variable or in an `auth.json` next to `composer.json`. Keep that `auth.json` out of version control.
+- **Cache.** Composer keeps its download cache in `.qsdev/composer/cache` unless you set `COMPOSER_CACHE_DIR`.
+- **Global packages.** `composer global require` installs into `.qsdev/composer/vendor`.
+
+`.qsdev/` is gitignored, so these files never reach the repository. `qsdev init --mode join` writes `config.json` for each teammate. Earlier qsdev versions wrote `.qsdev/composer-security.json`, which Composer never loaded. `qsdev init --update` removes that file when it is unmodified.
+
+The generated config cannot block install scripts. Composer has no setting for that, so the CI install step runs `composer install --no-scripts`.
 
 ### Docker
 

@@ -65,7 +65,7 @@ Per-ecosystem configuration files disable install-time script execution — the 
 | Python (pip) | `pip.conf` via `PIP_CONFIG_FILE` | `only-binary = :all:` (index packages only; the local project still builds) |
 | Rust | `.cargo/config.toml` | Registry pinning |
 | Ruby | `devenv.nix` env | `BUNDLE_DISABLE_EXEC_LOAD=true` |
-| PHP | `composer.json` config | Script restrictions |
+| PHP | `.qsdev/composer/config.json` via `COMPOSER_HOME` | `allow-plugins: {}` (only plugins the project allows run); install scripts are not blocked locally, so CI installs with `--no-scripts` |
 | .NET | `nuget.config` | Source pinning |
 
 pnpm workspaces additionally enforce `blockExoticSubdeps` to prevent subdependencies from pulling in unexpected transitive packages.

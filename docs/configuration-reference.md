@@ -1070,6 +1070,24 @@ The lookup-docs skill routes documentation queries through 4 sources in priority
 
 ## Security Tool Files
 
+The configuration files of project tools (everything outside the `ai-agent`
+category of `qsdev list`: `.semgrepignore`, `.gitleaks.toml`, `cliff.toml`,
+`.commitlintrc.yml`, `secretspec.toml`, `.starship.toml`, the container,
+license and GitHub workflow files below) belong to the project, not to Claude
+Code. `qsdev init`, `qsdev init --update`, `--mode join` and `qsdev repair`
+generate them whether or not Claude Code is configured, including with
+`--devenv-only` or `--claude-only`. Which tools get files follows each
+tool's default policy:
+
+| Policy | Files generated |
+|---|---|
+| `always-on` | At the `standard` and `full` tiers, unless force-disabled (`qsdev disable --force`) |
+| `on-when-detected` | At the `standard` and `full` tiers while the tool is enabled (detected or enabled explicitly) |
+| `opt-in` | At every tier once enabled, exactly as `qsdev enable <tool>` writes them |
+
+Agent tools (skills, sub-agents, MCP servers) are generated with the rest of
+the Claude Code configuration and only when Claude Code is configured.
+
 ### `.semgrepignore`
 
 | | |

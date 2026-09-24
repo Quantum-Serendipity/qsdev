@@ -122,7 +122,7 @@ The generated `devenv.nix` additionally:
 
 ### Layer 7: SAST (Semgrep)
 
-Semgrep is an AlwaysOn tool that provides static analysis during development:
+Semgrep runs as an AlwaysOn tool, providing static analysis during development. Its `.semgrepignore` is generated at the `standard` and `full` tiers whether or not Claude Code is configured:
 
 - Detects dangerous code patterns (command injection, path traversal, unsafe deserialization).
 - The generated `qsdev-security-scan` devenv task runs `semgrep` with the registry rule packs of the detected ecosystems (`p/golang`, `p/python`, `p/owasp-top-ten` and so on), plus the project's own rules in `.semgrep/` when that directory exists. It runs with `--metrics=off --error`, so a finding fails the task.

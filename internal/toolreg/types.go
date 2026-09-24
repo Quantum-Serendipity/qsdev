@@ -146,6 +146,14 @@ type Tool struct {
 	SectionDataFunc SectionDataFunc
 }
 
+// IsAgentTool reports whether the tool configures the AI coding agent itself
+// (catalog category ai-agent: skills, sub-agents, MCP servers). The claudecode
+// addon generates these tools' files; every other tool's files belong to the
+// project and are generated whether or not Claude Code is configured.
+func (t *Tool) IsAgentTool() bool {
+	return t.Category == CategoryAIAgent
+}
+
 // ExclusiveFiles returns all files this tool exclusively owns.
 func (t *Tool) ExclusiveFiles() []FileOwnership {
 	var result []FileOwnership

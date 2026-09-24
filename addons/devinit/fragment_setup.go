@@ -6,6 +6,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
 	"github.com/Quantum-Serendipity/qsdev/internal/profile"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -25,7 +26,9 @@ const (
 	mergeModeDevenvOnly = "devenv-only"
 )
 
-// generationScope restricts which generators runAccumulator registers.
+// generationScope restricts which addon generators runAccumulator registers:
+// ClaudeOnly skips devenv, DevenvOnly skips Claude Code. Tool files (see
+// toolFilesGenerator) belong to neither addon and are produced in every scope.
 type generationScope struct {
 	ClaudeOnly bool
 	DevenvOnly bool
@@ -70,6 +73,11 @@ func runAccumulator(answers types.WizardAnswers, scope generationScope) (accumul
 		}
 	}
 
+	tools := toolFilesGenerator{registry: toolreg.DefaultRegistry()}
+	if err := acc.RegisterProducer(toolFilesSource, generate.NewGeneratorAdapter(toolFilesSource, tools)); err != nil {
+		return accumulatorResult{}, err
+	}
+
 	if err := acc.CollectAll(answers); err != nil {
 		return accumulatorResult{}, err
 	}
@@ -79,19 +87,22 @@ func runAccumulator(answers types.WizardAnswers, scope generationScope) (accumul
 		return accumulatorResult{}, err
 	}
 
-	var devenvCount, claudeCount int
+	var devenvCount, claudeCount, toolCount int
 	for _, f := range acc.FragmentSet() {
 		switch f.Source {
 		case "devenv":
 			devenvCount++
 		case "claudecode":
 			claudeCount++
+		case toolFilesSource:
+			toolCount++
 		}
 	}
 
 	slog.Info("files generated via fragment accumulator",
 		"devenv", devenvCount,
 		"claudecode", claudeCount,
+		toolFilesSource, toolCount,
 		"total_files", len(allFiles))
 
 	return accumulatorResult{

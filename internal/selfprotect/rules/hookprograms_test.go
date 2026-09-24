@@ -101,31 +101,37 @@ func TestSP011_HookCommandHijack(t *testing.T) {
 		})
 	}
 
+	// Commands spell paths the way a shell reads them: with forward slashes.
+	// Claude Code's Bash tool runs Git Bash on Windows, where an unquoted
+	// backslash is an escape, so C:\Users\x\qsdev names C:Usersxqsdev.
+	early, shadowSh := filepath.ToSlash(f.early), filepath.ToSlash(shadowQsdev)
+	sh := func(elem ...string) string { return filepath.ToSlash(filepath.Join(elem...)) }
 	commands := []struct {
 		name, command string
 		want          Verdict
 	}{
-		{"copy over shadow path", "cp /tmp/evil " + shadowQsdev, Deny},
-		{"redirect into shadow path", "echo x > " + filepath.Join(f.early, "gofmt"), Deny},
-		{"symlink shadow", "ln -s /tmp/evil " + shadowQsdev, Deny},
-		{"move over resolved program", "mv /tmp/evil " + realPython, Deny},
-		{"chmod resolved program", "chmod -x " + filepath.Join(f.bin, "qsdev"), Deny},
-		{"copy into PATH directory", "cp /tmp/evil/qsdev " + f.early + "/", Deny},
-		{"copy with target directory option", "cp -t " + f.early + " /tmp/evil/qsdev", Deny},
-		{"install with target directory option", "install --target-directory=" + f.early + " /tmp/evil/gofmt", Deny},
-		{"dd output operand", "dd if=/tmp/evil of=" + shadowQsdev, Deny},
-		{"relative after cd", "cd " + f.early + " && cp /tmp/e python3", Deny},
-		{"brace expansion", "cp /tmp/e " + f.early + "/{qsdev,other}", Deny},
-		{"glob", "cp /tmp/e " + f.early + "/qsd?v", Deny},
+		{"copy over shadow path", "cp /tmp/evil " + shadowSh, Deny},
+		{"copy over quoted native shadow path", "cp /tmp/evil '" + shadowQsdev + "'", Deny},
+		{"redirect into shadow path", "echo x > " + sh(f.early, "gofmt"), Deny},
+		{"symlink shadow", "ln -s /tmp/evil " + shadowSh, Deny},
+		{"move over resolved program", "mv /tmp/evil " + filepath.ToSlash(realPython), Deny},
+		{"chmod resolved program", "chmod -x " + sh(f.bin, "qsdev"), Deny},
+		{"copy into PATH directory", "cp /tmp/evil/qsdev " + early + "/", Deny},
+		{"copy with target directory option", "cp -t " + early + " /tmp/evil/qsdev", Deny},
+		{"install with target directory option", "install --target-directory=" + early + " /tmp/evil/gofmt", Deny},
+		{"dd output operand", "dd if=/tmp/evil of=" + shadowSh, Deny},
+		{"relative after cd", "cd " + early + " && cp /tmp/e python3", Deny},
+		{"brace expansion", "cp /tmp/e " + early + "/{qsdev,other}", Deny},
+		{"glob", "cp /tmp/e " + early + "/qsd?v", Deny},
 		{"directory from expansion", `cp /tmp/e "$D/python3"`, Deny},
-		{"sh -c script", "sh -c 'cp /tmp/e " + shadowQsdev + "'", Deny},
-		{"inline python program", `python3 -c "open('` + shadowQsdev + `','w')"`, Deny},
-		{"unparseable naming target", "cp /tmp/e " + shadowQsdev + ` "unterminated`, Deny},
-		{"read program", "cat " + filepath.Join(f.bin, "qsdev"), Allow},
-		{"list PATH dir", "ls " + f.early, Allow},
-		{"copy unrelated into PATH dir", "cp /tmp/tool " + f.early + "/", Allow},
-		{"copy unrelated with target directory option", "cp -t " + f.early + " /tmp/tool", Allow},
-		{"rsync times flag is not a target directory", "rsync -t " + f.early + " /tmp/qsdev", Allow},
+		{"sh -c script", "sh -c 'cp /tmp/e " + shadowSh + "'", Deny},
+		{"inline python program", `python3 -c "open('` + shadowSh + `','w')"`, Deny},
+		{"unparseable naming target", "cp /tmp/e " + shadowSh + ` "unterminated`, Deny},
+		{"read program", "cat " + sh(f.bin, "qsdev"), Allow},
+		{"list PATH dir", "ls " + early, Allow},
+		{"copy unrelated into PATH dir", "cp /tmp/tool " + early + "/", Allow},
+		{"copy unrelated with target directory option", "cp -t " + early + " /tmp/tool", Allow},
+		{"rsync times flag is not a target directory", "rsync -t " + early + " /tmp/qsdev", Allow},
 		{"build into non-PATH dir", "go build -o ./bin/qsdev ./cmd/qsdev", Allow},
 		{"expansion to other name", `cp /tmp/e "$D/unrelated"`, Allow},
 		{"run hook program", "qsdev status", Allow},

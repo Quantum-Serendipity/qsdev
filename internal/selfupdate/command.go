@@ -93,7 +93,7 @@ Prefer 'qsdev update' which coordinates binary updates with config regeneration.
 	cmd.Flags().BoolVar(&force, "force", false, "Reinstall the latest release even if already up to date (refuses to downgrade)")
 	cmd.Flags().StringVar(&version, "version", "", "Install a specific version (e.g. 1.2.3); may downgrade")
 	cmd.Flags().BoolVar(&strict, "strict", true, "Require a verified release signature before updating")
-	cmd.Flags().BoolVar(&noStrict, "no-strict", false, "Allow updating without signature verification (escape hatch for dev/self-built binaries)")
+	cmd.Flags().BoolVar(&noStrict, "no-strict", false, "Allow installing a release that has no signature bundle (escape hatch for dev/self-built releases)")
 
 	return cmd
 }

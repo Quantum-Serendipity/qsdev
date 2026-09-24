@@ -87,6 +87,10 @@ type FullUpdateOptions struct {
 	Check          bool
 	Changelog      bool
 	SkipContainer  bool
+	// NoStrict allows the binary stage to install a release that publishes
+	// no Sigstore signature bundle. A bundle that is present is always
+	// verified, and a failed verification is never overridden.
+	NoStrict bool
 }
 
 func updateCmd() *cobra.Command {
@@ -126,6 +130,7 @@ Use stage-specific flags to run only one stage.`,
 	cmd.Flags().BoolVar(&opts.DepsOnly, "deps-only", false, "Only update devenv inputs")
 	cmd.Flags().BoolVar(&opts.Check, "check", false, "Check for updates without installing")
 	cmd.Flags().BoolVar(&opts.Changelog, "changelog", false, "Show release notes (use with --check)")
+	cmd.Flags().BoolVar(&opts.NoStrict, "no-strict", false, "Allow installing a release that has no signature bundle (escape hatch for dev/self-built releases)")
 	cmd.Flags().BoolVar(&opts.SkipContainer, "skip-container", false, "Skip generating Gateway container config for hookless frameworks")
 	return cmd
 }
@@ -378,6 +383,14 @@ func runConfigStageInBinary(cmd *cobra.Command, exePath string, opts FullUpdateO
 	}
 }
 
+// selfUpdateConfig returns the binary-stage configuration for opts: the
+// release defaults, with signature strictness relaxed only by --no-strict.
+func selfUpdateConfig(opts FullUpdateOptions) selfupdate.Config {
+	cfg := selfupdate.DefaultConfig()
+	cfg.Strict = cfg.Strict && !opts.NoStrict
+	return cfg
+}
+
 func runSelfUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult {
 	currentVersion := strings.TrimPrefix(version.Info().Version, "v")
 
@@ -389,7 +402,7 @@ func runSelfUpdateStage(cmd *cobra.Command, opts FullUpdateOptions) StageResult 
 		}
 	}
 
-	cfg := selfupdate.DefaultConfig()
+	cfg := selfUpdateConfig(opts)
 	ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
 	defer cancel()
 

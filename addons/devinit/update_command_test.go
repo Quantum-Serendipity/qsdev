@@ -60,6 +60,33 @@ func TestRunSelfUpdateStage_DevBuild(t *testing.T) {
 	}
 }
 
+func TestSelfUpdateConfig_Strictness(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		opts       FullUpdateOptions
+		wantStrict bool
+	}{
+		{name: "signature required by default", opts: FullUpdateOptions{}, wantStrict: true},
+		{name: "--no-strict relaxes it", opts: FullUpdateOptions{NoStrict: true}, wantStrict: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := selfUpdateConfig(tt.opts).Strict; got != tt.wantStrict {
+				t.Errorf("Strict = %v, want %v", got, tt.wantStrict)
+			}
+		})
+	}
+}
+
+func TestUpdateCmd_NoStrictFlag(t *testing.T) {
+	t.Parallel()
+	if updateCmd().Flags().Lookup("no-strict") == nil {
+		t.Fatal("qsdev update must expose --no-strict, the escape hatch the strict-mode error points to")
+	}
+}
+
 func TestRunDevenvInputStage_NotInstalled(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 

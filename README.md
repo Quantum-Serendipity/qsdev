@@ -154,7 +154,7 @@ The installer handles all dependencies automatically — no manual setup require
 | [pre-commit](https://pre-commit.com) | Lockfile checks, formatting, linting hooks |
 | [Socket.dev](https://socket.dev) | Behavioral supply chain analysis via MCP |
 | [Podman](https://podman.io) | Rootless container runtime (auto-detected alongside Docker) |
-| [Sigstore](https://sigstore.dev) | Binary and SBOM verification via cosign |
+| [Sigstore](https://sigstore.dev) | Release verification (in-process sigstore-go for `qsdev update`, cosign in the install script) and SBOM signing |
 
 ## Available Services
 
@@ -203,7 +203,7 @@ qsdev trial                   # Evaluate in an isolated git worktree
 | `check` | CI enforcement checks (JSON, SARIF, JUnit output). `--auto-fix` repairs issues |
 | `info` | Project status at a glance (cached, instant) |
 | `repair` | Fix corrupted or drifted config files |
-| `update` | Update binary + configs + devenv inputs. Flags: `--check`, `--changelog`, `--dry-run`, `--force` (reinstall the binary only), `--overwrite-modified` (replace config files you edited), `--allow-downgrade`, `--self-only`, `--configs-only`, `--deps-only` |
+| `update` | Update binary + configs + devenv inputs. Flags: `--check`, `--changelog`, `--dry-run`, `--force` (reinstall the binary only), `--overwrite-modified` (replace config files you edited), `--allow-downgrade`, `--no-strict` (install a release that has no signature bundle), `--self-only`, `--configs-only`, `--deps-only` |
 | `outdated` | Check for outdated dependencies across ecosystems |
 | `teardown` | Remove all qsdev configuration from project |
 | `enable <tool>` | Enable a tool |

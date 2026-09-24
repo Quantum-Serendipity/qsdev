@@ -156,7 +156,8 @@ func workflowSubjectPrefix() string {
 //
 //	https://github.com/<owner>/<repo>/.github/workflows/release.yml@refs/tags/<tag>
 //
-// It is intended for cosign's --certificate-identity flag (exact match), which
+// Self-update matches it exactly as the SAN of the signing certificate (the
+// in-process sigstore-go equivalent of cosign's --certificate-identity), which
 // rejects any signature produced by a different workflow file or on a different
 // ref — closing the impersonation gap left by a permissive regexp. issuer is the
 // GitHub Actions OIDC token issuer. Owner/repo derive from branding so

@@ -340,7 +340,7 @@ qsdev update --configs-only  # Regenerate configs only
 qsdev update --deps-only     # Update devenv inputs only
 ```
 
-The update workflow respects user modifications via three-way merge. Files you have customized are merged intelligently rather than overwritten.
+The binary stage verifies the release's Sigstore signature in-process before installing it and refuses an unsigned release unless you pass `--no-strict` (see [Self-Update Verification](security-architecture.md#self-update-verification)). The update workflow respects user modifications via three-way merge. Files you have customized are merged intelligently rather than overwritten.
 
 ### Step 5: Enforce in CI
 

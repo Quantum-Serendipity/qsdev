@@ -550,6 +550,41 @@ into generated files. See
 - **Syft** (all profiles) — Generates software bill of materials.
 - **Cosign** (`enterprise` only) — Signs the SBOM for supply chain attestation.
 
+## Self-Update Verification
+
+`qsdev update` (and the hidden `self-update` alias) installs a new binary only
+after authenticating the release:
+
+1. `checksums.txt` must carry a Sigstore bundle (`checksums.txt.sigstore.json`)
+   produced by the release workflow. qsdev verifies it **in-process** with
+   [sigstore-go](https://github.com/sigstore/sigstore-go); no external `cosign`
+   is run, so nothing on `PATH` (a devenv profile, a direnv-added directory, a
+   user shim) can vouch for a release.
+2. The only trust anchor is the Sigstore public-good trusted root (Fulcio CA,
+   Rekor and CT log keys, timestamp authority) embedded in the binary at
+   build time. It is not refreshed from the network or read from
+   `~/.sigstore` at update time. Maintainers refresh it with
+   `go generate ./internal/selfupdate`, which fetches it through an
+   authenticated TUF update.
+3. The signing certificate must match the **exact** identity of this
+   release's workflow run:
+   `https://github.com/<owner>/<repo>/.github/workflows/release.yml@refs/tags/<tag>`,
+   issued by `https://token.actions.githubusercontent.com`. A signature from
+   another workflow, another tag or another repository is rejected.
+4. The bundle must include a Rekor inclusion proof, an embedded SCT and a
+   trusted timestamp. The archive's SHA-256 is then checked against the
+   authenticated `checksums.txt`.
+
+Any verification failure aborts the update and leaves the current binary in
+place. A release that publishes **no** bundle is refused by default; `--no-strict`
+(on both `qsdev update` and `qsdev self-update`) installs such an unsigned
+release for dev or self-built releases. `--no-strict` never overrides a bundle
+that is present but fails verification.
+
+If Sigstore rotates its keys after a qsdev release was built, that binary may
+be unable to verify newer releases; install the newer release with the
+[install script](../README.md#quick-start) or a package manager instead.
+
 ## Security Validation
 
 The generated `devenv.nix` includes an `enterTest` script that verifies security controls:

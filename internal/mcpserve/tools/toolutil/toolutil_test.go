@@ -159,3 +159,31 @@ func TestEmptyObjectSchema(t *testing.T) {
 		t.Errorf("EmptyObjectSchema returned a shared map; second call type = %v", fresh["type"])
 	}
 }
+
+// TestIsRooted pins which paths are never joined under a confinement root: on
+// Windows a leading separator or a volume name roots a path even though
+// filepath.IsAbs reports it relative.
+func TestIsRooted(t *testing.T) {
+	t.Parallel()
+	windows := runtime.GOOS == "windows"
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"", false},
+		{"rel/x", false},
+		{"./x", false},
+		{"../x", false},
+		{"/srv/x", true},
+		{"/", true},
+		{`\srv`, windows},
+		{`C:\x`, windows},
+		{`C:x`, windows},
+		{`\\host\share\x`, windows},
+	}
+	for _, tt := range tests {
+		if got := toolutil.IsRooted(tt.path); got != tt.want {
+			t.Errorf("IsRooted(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}

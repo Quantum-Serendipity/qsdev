@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -185,7 +186,9 @@ func TestSaveInitState_WritesStateAndManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm()&0o022 != 0 {
+	// Windows has no POSIX group/other bits: Go reports every writable file
+	// as 0666, so the permission check is meaningful only elsewhere.
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o022 != 0 {
 		t.Errorf("manifest mode = %v, want no group/other write", info.Mode().Perm())
 	}
 }

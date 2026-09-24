@@ -3,6 +3,7 @@ package canon
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sync"
 	"testing"
@@ -15,6 +16,11 @@ import (
 func TestClaudeConfigDirEntries(t *testing.T) {
 	t.Parallel()
 	dir := filepath.FromSlash("/home/alice/.config/claude")
+	if runtime.GOOS == "windows" {
+		// A rooted path without a drive letter is not absolute on Windows, so
+		// the entries would gain the current drive; use a volume-qualified one.
+		dir = `C:\Users\alice\.config\claude`
+	}
 	sep := string(filepath.Separator)
 	tests := []struct {
 		name string

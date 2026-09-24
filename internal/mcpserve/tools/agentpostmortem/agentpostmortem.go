@@ -228,7 +228,10 @@ func (m *module) confine(path, arg string) (string, *spi.ToolResult) {
 		}
 		return "", toolutil.ErrorResult(fmt.Sprintf("resolving sessions root %s: %v", root, err), nil)
 	}
-	if !filepath.IsAbs(path) {
+	// Only a genuinely relative path is taken relative to the root; a Windows
+	// rooted path such as "/" or `\x` names a place on the current drive and
+	// resolvePath makes it absolute there.
+	if !toolutil.IsRooted(path) {
 		path = filepath.Join(root, path)
 	}
 	realPath, err := resolvePath(path)

@@ -192,6 +192,7 @@ func TestDefault_ValidOrgOverlayHasNoOverlayError(t *testing.T) {
 func TestOrgConfigPath_IgnoresHomeOverlayInTests(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads USERPROFILE on Windows
 	t.Setenv(branding.Get().EnvPrefix+"ORG_CONFIG", "")
 
 	overlay := filepath.Join(home, ".config", branding.Get().AppName, "defaults.yaml")

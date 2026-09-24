@@ -10,6 +10,7 @@ package toolutil
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -226,8 +227,16 @@ func ConfineToRoot(root, candidate string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	if !filepath.IsAbs(candidate) {
+	switch {
+	case !IsRooted(candidate):
 		candidate = filepath.Join(absRoot, candidate)
+	case !filepath.IsAbs(candidate):
+		// A Windows rooted path without a drive (`\srv`) or a drive-relative
+		// one (`C:x`) is resolved against its drive, as the OS would, never
+		// joined under root.
+		if candidate, err = filepath.Abs(candidate); err != nil {
+			return "", false
+		}
 	}
 	candidate = filepath.Clean(candidate)
 
@@ -238,6 +247,17 @@ func ConfineToRoot(root, candidate string) (string, bool) {
 		return "", false
 	}
 	return candidate, true
+}
+
+// IsRooted reports whether p names a location independent of any base
+// directory it might be joined under: an absolute path, or on Windows a path
+// with a volume name (`C:x`, `\\host\share`) or a leading separator (`/srv`,
+// `\srv`). filepath.IsAbs alone is insufficient on Windows, where such paths
+// are not absolute, and joining one under a root would silently reinterpret an
+// out-of-root path as an in-root one. On Unix it is equivalent to
+// filepath.IsAbs.
+func IsRooted(p string) bool {
+	return filepath.IsAbs(p) || filepath.VolumeName(p) != "" || (p != "" && os.IsPathSeparator(p[0]))
 }
 
 // withinRoot reports whether candidate is lexically inside root (root itself

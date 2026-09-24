@@ -429,8 +429,20 @@ func runClean(cmd *cobra.Command) error {
 }
 
 // logFileNames lists the .jsonl session logs in dir. A missing directory has
-// no logs; any other read failure is returned.
+// no logs; any other read failure is returned. A path that is not a directory
+// is checked explicitly: on Windows os.ReadDir of a regular file does not
+// reliably fail, which would report a misconfigured log dir as empty.
 func logFileNames(dir string) ([]string, error) {
+	info, err := os.Stat(dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading log directory %s: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("reading log directory %s: not a directory", dir)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {

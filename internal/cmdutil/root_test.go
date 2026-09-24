@@ -55,6 +55,7 @@ func TestProjectRoot(t *testing.T) {
 				home = filepath.Join(root, filepath.FromSlash(tt.home))
 			}
 			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home) // os.UserHomeDir reads USERPROFILE on Windows
 			t.Chdir(cwd)
 
 			got, err := ProjectRoot()

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -170,7 +171,9 @@ func installableRejection(projectRoot, ref string) (string, bool) {
 	if strings.Contains(trimmed, "://") {
 		return "references a remote URL", true
 	}
-	if scheme, ok := uriScheme(trimmed); ok && scheme != "path" {
+	// A Windows drive letter (`C:\x`) is a volume, not a one-letter scheme; the
+	// ref is then a local path and is confined below like any other.
+	if scheme, ok := uriScheme(trimmed); ok && scheme != "path" && filepath.VolumeName(trimmed) == "" {
 		return fmt.Sprintf("uses remote flakeref scheme %q", scheme), true
 	}
 	if p, ok := localInstallablePath(trimmed); ok {

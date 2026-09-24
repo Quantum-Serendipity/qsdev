@@ -27,6 +27,14 @@ func makeTree(t *testing.T, root string, paths ...string) {
 	}
 }
 
+// setHome points the user's home directory at home: HOME for Unix and
+// USERPROFILE, which os.UserHomeDir reads instead on Windows.
+func setHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
 // TestFindProjectRoot pins the shared project marker set: config file, state
 // directory, or project data directory — the last one never in the user's
 // home, where the same name is the per-user global data directory.
@@ -61,7 +69,7 @@ func TestFindProjectRoot(t *testing.T) {
 			if tt.home != "" {
 				home = filepath.Join(root, filepath.FromSlash(tt.home))
 			}
-			t.Setenv("HOME", home)
+			setHome(t, home)
 
 			got, ok := FindProjectRoot(filepath.Join(root, filepath.FromSlash(tt.start)))
 			want := ""
@@ -75,7 +83,7 @@ func TestFindProjectRoot(t *testing.T) {
 	}
 }
 
-// TestFindProjectRoot_SymlinkedHome covers a $HOME reached through a symlink
+// TestFindProjectRoot_SymlinkedHome covers a home directory reached through a symlink
 // while the start directory is the resolved path, as os.Getwd reports it.
 func TestFindProjectRoot_SymlinkedHome(t *testing.T) {
 	realHome, err := filepath.EvalSymlinks(t.TempDir())
@@ -87,7 +95,7 @@ func TestFindProjectRoot_SymlinkedHome(t *testing.T) {
 	if err := os.Symlink(realHome, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	t.Setenv("HOME", link)
+	setHome(t, link)
 
 	if got, ok := FindProjectRoot(filepath.Join(realHome, "code")); ok {
 		t.Errorf("FindProjectRoot() = %q, want no project: the home data dir is not a marker", got)
@@ -100,7 +108,7 @@ func TestDetectProjectRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	makeTree(t, root, ".qsdev.yaml", "internal/pkg/")
-	t.Setenv("HOME", t.TempDir())
+	setHome(t, t.TempDir())
 	t.Chdir(filepath.Join(root, "internal", "pkg"))
 
 	if got := DetectProjectRoot(); got != root {

@@ -316,3 +316,47 @@ func TestBuildReport_FixCommands(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatReport_ProjectToolchains(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		warnings []string
+		want     []string
+		notWant  []string
+	}{
+		{
+			name:     "warnings shown",
+			warnings: []string{"Haskell: stack.yaml needs GHC 9.6.7"},
+			want:     []string{"Project Toolchains\n", "  [WARN] Haskell: stack.yaml needs GHC 9.6.7\n"},
+		},
+		{name: "section omitted without warnings", notWant: []string{"Project Toolchains"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := &Report{QsdevVersion: "0.1.0", System: SystemInfo{OS: "Linux", Arch: "amd64"}}
+			r.SetProjectToolchains(tt.warnings)
+			var buf bytes.Buffer
+			FormatReport(&buf, r, false)
+			out := buf.String()
+			for _, sub := range tt.want {
+				if !strings.Contains(out, sub) {
+					t.Errorf("output does not contain %q:\n%s", sub, out)
+				}
+			}
+			for _, sub := range tt.notWant {
+				if strings.Contains(out, sub) {
+					t.Errorf("output contains %q:\n%s", sub, out)
+				}
+			}
+			data, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(string(data), `"project_toolchains"`); got != (len(tt.warnings) > 0) {
+				t.Errorf("JSON has project_toolchains = %v, want %v: %s", got, len(tt.warnings) > 0, data)
+			}
+		})
+	}
+}

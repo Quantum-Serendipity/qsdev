@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -140,6 +141,48 @@ func TestToolchainBinaries(t *testing.T) {
 			t.Parallel()
 			if got := toolchainBinaries(tt.det); !slices.Equal(got, tt.want) {
 				t.Errorf("toolchainBinaries() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCheckToolsReportsToolchainMismatch covers the Stack snapshot check: a
+// stack.yaml whose snapshot pins GHC 9.6.7 against a ghc 9.10.3 on PATH is a
+// warning naming both versions, and a matching ghc passes.
+func TestCheckToolsReportsToolchainMismatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake ghc is a shell script")
+	}
+	tests := []struct {
+		name       string
+		shellGHC   string
+		wantStatus string
+		want       []string
+	}{
+		{name: "mismatch", shellGHC: "9.10.3", wantStatus: checkWarn, want: []string{"Haskell:", "GHC 9.6.7", "ghc on PATH is 9.10.3"}},
+		{name: "match", shellGHC: "9.6.7", wantStatus: checkPass},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bin := t.TempDir()
+			script := "#!/bin/sh\necho " + tt.shellGHC + "\n"
+			if err := os.WriteFile(filepath.Join(bin, "ghc"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin)
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "stack.yaml"), []byte("resolver: lts-22.44\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			got := newDoctorChecker(root).checkTools(context.Background())
+			if got.Status != tt.wantStatus {
+				t.Fatalf("checkTools() = %+v, want status %q", got, tt.wantStatus)
+			}
+			for _, sub := range tt.want {
+				if !strings.Contains(got.Detail, sub) {
+					t.Errorf("detail %q does not contain %q", got.Detail, sub)
+				}
 			}
 		})
 	}

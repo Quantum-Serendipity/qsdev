@@ -228,13 +228,14 @@ func (d *doctorChecker) checkState(_ context.Context) checkResult {
 }
 
 // checkTools verifies the primary toolchain binary for each detected language is
-// resolvable on PATH. It uses marker-file detection only (no container-runtime
-// or environment probing), so it stays cheap and cannot stall on a hung daemon.
-func (d *doctorChecker) checkTools(_ context.Context) checkResult {
-	want := toolchainBinaries(ecosystem.DefaultRegistry().DetectAll(d.projectRoot).Project)
-	if len(want) == 0 {
-		return checkResult{"tools", checkPass, "no language toolchains required by detection", ""}
-	}
+// resolvable on PATH, and that each toolchain matches what the project's files
+// require (see ecosystem.ToolchainChecker). It uses marker-file detection only
+// (no container-runtime or environment probing), so it stays cheap and cannot
+// stall on a hung daemon.
+func (d *doctorChecker) checkTools(ctx context.Context) checkResult {
+	reg := ecosystem.DefaultRegistry()
+	summary := reg.DetectAll(d.projectRoot)
+	want := toolchainBinaries(summary.Project)
 	var missing []string
 	for _, bin := range want {
 		if _, err := exec.LookPath(bin); err != nil {
@@ -243,6 +244,12 @@ func (d *doctorChecker) checkTools(_ context.Context) checkResult {
 	}
 	if len(missing) > 0 {
 		return checkResult{"tools", checkFail, "missing on PATH: " + strings.Join(missing, ", "), "enter the devenv shell or install the toolchain"}
+	}
+	if mismatched := reg.ToolchainWarnings(ctx, d.projectRoot, summary.Results); len(mismatched) > 0 {
+		return checkResult{"tools", checkWarn, "toolchain mismatch: " + strings.Join(mismatched, "; "), "follow each warning's remedy, then re-enter the devenv shell"}
+	}
+	if len(want) == 0 {
+		return checkResult{"tools", checkPass, "no language toolchains required by detection", ""}
 	}
 	return checkResult{"tools", checkPass, fmt.Sprintf("%d toolchain binary/binaries present", len(want)), ""}
 }

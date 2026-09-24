@@ -1382,6 +1382,23 @@ Bundler hardening (`BUNDLE_FROZEN`, `BUNDLE_DISABLE_EXEC_LOAD`) is exported as e
 |------|---------------|---------|
 | sbt or Mill config | `overwrite` | Repository pinning |
 
+### Haskell
+
+Haskell produces no extra security config files. `cabal.project.freeze` pins versions but records no content hashes.
+
+**GHC version.** devenv runs Stack with `--no-nix --system-ghc --no-install-ghc`, which means Stack must use the shell's GHC. Stack's default compiler check also requires that GHC to be exactly the version the snapshot pins. nixpkgs' default `pkgs.ghc` is usually a different version, so for a Stack project qsdev reads the GHC version from `stack.yaml` and records it as the haskell `version` in `.qsdev.yaml`. A `compiler:` override wins. Otherwise the version comes from the `snapshot:` (or older `resolver:`) value:
+
+| Value | GHC |
+|-------|-----|
+| `lts-M.N`, or a stackage-snapshots `.../lts/M/N.yaml` URL | Looked up in qsdev's table of LTS releases (lts-12.0 through lts-24.60) |
+| `lts-M` | The last release of a closed series |
+| `ghc-X.Y.Z` | X.Y.Z |
+| `nightly-*`, other URLs or files, and newer LTS releases | Unknown |
+
+When the version is known, devenv.nix sets `languages.haskell.package` to nixpkgs' `haskell.compiler.ghcXYZ` (for example `ghc967` for 9.6.7). It does this only when the pinned nixpkgs has that attribute, the attribute evaluates, the package is available on the host platform, and its version matches. Otherwise the shell keeps `pkgs.ghc`, devenv.nix sets `languages.haskell.stack.args = [ "--no-nix" ]`, and Nix prints an evaluation warning. Stack then downloads and installs the snapshot's GHC itself, outside Nix. When the version is unknown, devenv.nix always uses the `--no-nix` fallback. `qsdev init` prints a warning in that case. It also warns when the configured version no longer matches `stack.yaml`, for example after a snapshot bump (`.qsdev.yaml` keeps the version detected at init), and when a `.qsdev.yaml` written by an older qsdev has no haskell version, since `qsdev init --update` keeps it empty and falls back to `--no-nix`. To pin the snapshot's GHC again, set the version to the snapshot's GHC and run `qsdev init --update`. A Cabal project can set the haskell `version` too, either as a full release or a `major.minor` series such as `9.8`. The shell then uses that nixpkgs GHC, or `pkgs.ghc` with a warning when nixpkgs lacks it.
+
+`qsdev devenv doctor` compares the GHC that `stack.yaml` needs with `ghc --numeric-version` on PATH. Run it inside the devenv shell. It lists any mismatch under **Project Toolchains**; the `devenv_doctor` MCP tool reports it in its `tools` check.
+
 ### AWS
 
 When AWS project files are detected (CDK, SAM, Terraform `aws` provider):

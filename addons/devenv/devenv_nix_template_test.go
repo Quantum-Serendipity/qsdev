@@ -109,3 +109,47 @@ in [ m.services.keycloak.initialAdminPassword (builtins.head m.unsetEnvVars) (bu
 		t.Errorf("evaluated = %s\nwant       %s", got, want)
 	}
 }
+
+// TestGenerateDevenvNix_HaskellStackGHC checks that a Stack project's GHC pin
+// survives devenv.nix assembly: the module keeps the lib and config
+// arguments the pin reads, the pin and its --no-nix fallback are present, and
+// the file parses.
+func TestGenerateDevenvNix_HaskellStackGHC(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		ProjectName: "demo",
+		Languages: []types.LanguageChoice{{
+			Name: "haskell", Version: "9.6.7", Extras: []string{"build_tool=stack"},
+		}},
+	}
+	got, err := devenv.GenerateDevenvNix(answers, ecosystem.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("GenerateDevenvNix: %v", err)
+	}
+	content := string(got.Content)
+	firstLine, _, _ := strings.Cut(content, "\n")
+	for _, formal := range []string{"lib", "config"} {
+		if !strings.Contains(firstLine, formal) {
+			t.Errorf("module arguments %q lack %s", firstLine, formal)
+		}
+	}
+	for _, sub := range []string{"pkgs.haskell.compiler.ghc967", `[ "--no-nix" ]`} {
+		if !strings.Contains(content, sub) {
+			t.Errorf("devenv.nix lacks %q", sub)
+		}
+	}
+
+	nixInstantiate, err := exec.LookPath("nix-instantiate")
+	if err != nil {
+		t.Skip("nix-instantiate not available")
+	}
+	path := filepath.Join(t.TempDir(), "devenv.nix")
+	if err := os.WriteFile(path, got.Content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, nixInstantiate, "--parse", path).CombinedOutput(); err != nil {
+		t.Fatalf("generated devenv.nix does not parse: %v\n%s", err, out)
+	}
+}

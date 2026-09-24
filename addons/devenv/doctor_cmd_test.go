@@ -2,12 +2,17 @@ package devenv
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/doctor"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
+	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 )
 
 func TestDoctorCmd_Flags(t *testing.T) {
@@ -204,5 +209,28 @@ func TestWriterUsesColor_NonTerminalWriter(t *testing.T) {
 	t.Parallel()
 	if writerUsesColor(&bytes.Buffer{}) {
 		t.Error("a buffer must never receive colored output")
+	}
+}
+
+// TestProjectToolchainWarnings covers the doctor's project toolchain check
+// end to end: a Stack snapshot pinning GHC 9.6.7 against a ghc 9.10.3 on
+// PATH is reported under the Haskell module.
+func TestProjectToolchainWarnings(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake ghc is a shell script")
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "ghc"), []byte("#!/bin/sh\necho 9.10.3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "stack.yaml"), []byte("snapshot: lts-22.44\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := projectToolchainWarnings(context.Background(), ecosystem.DefaultRegistry(), root)
+	if len(got) != 1 || !strings.HasPrefix(got[0], "Haskell: ") || !strings.Contains(got[0], "needs GHC 9.6.7") {
+		t.Errorf("projectToolchainWarnings() = %q, want one Haskell GHC 9.6.7 warning", got)
 	}
 }

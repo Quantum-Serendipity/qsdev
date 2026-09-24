@@ -27,6 +27,7 @@ type Report struct {
 	MCPServers         *MCPSection         `json:"mcp_servers,omitempty"`
 	CloudProviders     *CloudSection       `json:"cloud_providers,omitempty"`
 	ModuleChecks       *ModuleCheckSection `json:"module_checks,omitempty"`
+	ProjectToolchains  []string            `json:"project_toolchains,omitempty"` // see ecosystem.ToolchainChecker
 	RequiredTools      []ToolEntry         `json:"required_tools"`
 	OptionalTools      []ToolEntry         `json:"optional_tools"`
 	Recommendations    []string            `json:"recommendations,omitempty"`
@@ -104,6 +105,12 @@ type CloudLayerInfo struct {
 // SetCloudSection attaches cloud credential isolation results to the report.
 func (r *Report) SetCloudSection(cs *CloudSection) {
 	r.CloudProviders = cs
+}
+
+// SetProjectToolchains attaches the project's toolchain mismatch warnings
+// to the report.
+func (r *Report) SetProjectToolchains(warnings []string) {
+	r.ProjectToolchains = warnings
 }
 
 // SystemInfo captures OS-level details for the report.
@@ -337,6 +344,15 @@ func FormatReport(w io.Writer, r *Report, useColor bool) {
 	// Ecosystem module checks
 	if r.ModuleChecks != nil && r.ModuleChecks.Detected {
 		formatModuleCheckSection(w, r.ModuleChecks, okSym, warnSym)
+	}
+
+	// Project Toolchains
+	if len(r.ProjectToolchains) > 0 {
+		fmt.Fprintln(w, "Project Toolchains")
+		for _, warn := range r.ProjectToolchains {
+			fmt.Fprintf(w, "  %s %s\n", warnSym, warn)
+		}
+		fmt.Fprintln(w)
 	}
 
 	// Required Tools

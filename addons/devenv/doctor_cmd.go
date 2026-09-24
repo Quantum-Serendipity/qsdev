@@ -63,6 +63,7 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 
 	var containerSection *doctor.ContainerSection
 	var sandboxSection *doctor.SandboxSection
+	var toolchainWarnings []string
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		containerSection = doctor.RunContainerCheck(ctx, &container.ExecProber{}, osInfo, projectRoot)
@@ -70,6 +71,11 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 	wg.Go(func() {
 		sandboxSection = doctor.RunSandboxCheck(ctx, &sandbox.ExecSandboxProber{})
 	})
+	if projectRoot != "" {
+		wg.Go(func() {
+			toolchainWarnings = projectToolchainWarnings(ctx, ecosystem.DefaultRegistry(), projectRoot)
+		})
+	}
 
 	checks := doctor.RunAllChecks(ctx, osInfo)
 	wg.Wait()
@@ -83,6 +89,7 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 		LookupEnv: os.LookupEnv,
 		LookPath:  exec.LookPath,
 	}))
+	report.SetProjectToolchains(toolchainWarnings)
 	slog.Info("doctor check complete",
 		"required_tools", len(report.RequiredTools),
 		"optional_tools", len(report.OptionalTools),
@@ -91,6 +98,12 @@ func runDoctor(cmd *cobra.Command, jsonOutput, checkMode bool) error {
 
 	w := cmd.OutOrStdout()
 	return renderDoctorReport(w, report, jsonOutput, checkMode)
+}
+
+// projectToolchainWarnings reports where the toolchains on PATH do not match
+// what the ecosystems detected in projectRoot require.
+func projectToolchainWarnings(ctx context.Context, reg *ecosystem.Registry, projectRoot string) []string {
+	return reg.ToolchainWarnings(ctx, projectRoot, reg.DetectAll(projectRoot).Results)
 }
 
 // renderDoctorReport writes report to w as JSON, a pass/fail check summary,

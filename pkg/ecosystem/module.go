@@ -1,6 +1,10 @@
 package ecosystem
 
-import "github.com/Quantum-Serendipity/qsdev/pkg/types"
+import (
+	"context"
+
+	"github.com/Quantum-Serendipity/qsdev/pkg/types"
+)
 
 // EcosystemModule is the contract that every language/platform ecosystem
 // must implement. It drives detection, code generation, security policy,
@@ -141,4 +145,15 @@ type ToolchainRequirementProvider interface {
 // with nothing to check simply omit this interface.
 type SetupWarner interface {
 	SetupWarnings(projectRoot string, config ModuleConfig) []string
+}
+
+// ToolchainChecker is an optional interface for modules that can tell when
+// the toolchain on PATH does not match what the project's own files require,
+// such as a GHC other than the one a Stack snapshot pins. It runs during
+// "qsdev devenv doctor" and the devenv_doctor MCP tool, against the
+// configuration the module's own Detect suggested. A check that cannot run
+// (the tool is not on PATH, the file cannot be read) reports nothing; modules
+// with nothing to check simply omit this interface.
+type ToolchainChecker interface {
+	ToolchainWarnings(ctx context.Context, projectRoot string, config ModuleConfig) []string
 }

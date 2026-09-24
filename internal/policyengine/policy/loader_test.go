@@ -640,6 +640,49 @@ func TestLoadPolicyFile_UnknownField(t *testing.T) {
 	}
 }
 
+// TestLoadPolicyFile_UnimplementedFieldsRejected is the F196 regression: the
+// settings and action fields no evaluator ever read (evaluation_timeout_ms,
+// log_format, inherit_from, exit_code, stderr, timeout_seconds) are rejected
+// by the strict decoder rather than accepted and silently ignored.
+func TestLoadPolicyFile_UnimplementedFieldsRejected(t *testing.T) {
+	t.Parallel()
+
+	rule := func(actionExtra string) string {
+		return "  - id: UNIMPL-001\n    category: test\n    name: unimplemented field\n" +
+			"    severity: high\n    bypass_tier: session\n    conditions:\n" +
+			"      type: tool_match\n      tool_name: Bash\n    action:\n      type: block\n" + actionExtra
+	}
+
+	tests := []struct {
+		name     string
+		settings string
+		rules    string
+		field    string
+	}{
+		{"evaluation_timeout_ms", "  evaluation_timeout_ms: 100\n", rule(""), "evaluation_timeout_ms"},
+		{"log_format", "  log_format: json\n", rule(""), "log_format"},
+		{"inherit_from", "  inherit_from: [org.yaml]\n", rule(""), "inherit_from"},
+		{"exit_code", "", rule("      exit_code: 1\n"), "exit_code"},
+		{"stderr", "", rule("      stderr: denied\n"), "stderr"},
+		{"timeout_seconds", "", rule("      timeout_seconds: 5\n"), "timeout_seconds"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := writePolicyFile(t, t.TempDir(), "unimpl", tt.settings, tt.rules)
+			_, err := LoadPolicyFile(path)
+			if err == nil {
+				t.Fatalf("expected error for unimplemented field %q, got nil", tt.field)
+			}
+			if !strings.Contains(err.Error(), tt.field) {
+				t.Errorf("error = %v, want it to name field %q", err, tt.field)
+			}
+		})
+	}
+}
+
 // TestResolveFailMode pins the fail-closed default for a policy set that
 // cannot be loaded (F177): only a base file that itself loads cleanly and
 // explicitly opts into fail_open may fail open.

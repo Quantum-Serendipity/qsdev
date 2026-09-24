@@ -533,6 +533,7 @@ The permission model uses approximately **90 deny rules** and **60 ask rules**:
 
 - **Deny rules** block dangerous operations outright: npx, nix-env imperative installs, system package managers, pipe-to-shell, shell wrapping, env/command prefix bypass, sudo-prefixed installs, subprocess escapes, eval/xargs, and destructive operations.
 - **Ask rules** gate package install operations (npm, pip, cargo, go, gem, composer, dotnet) through the PreToolUse hook, which performs age-gating and vulnerability checks before allowing the install.
+- **MCP tool deny rules** deny, as whole tools, the file tools of MCP servers in the fallback (lowest) trust tier: every tool of the reference `filesystem` server and `mcp__github__create_or_update_file`. A permission rule cannot scope an MCP tool by its path argument, so a path rule such as `Read(./.env)` cannot be carried over to `mcp__filesystem__read_file`; the tool is denied outright instead. Servers are scored from their generated `.mcp.json` definition and the known-server database, and a server qsdev does not configure scores into the fallback tier. Manual overrides in `~/.qsdev/trust.yaml` apply only to the enforce hook, not to the committed `settings.json`. Tools of higher-tier servers stay available and are path-checked by the confused-deputy PreToolUse hook. See [MCP trust scoring](security-architecture.md#layer-13-package-and-mcp-risk-scoring).
 
 The three-way merge during updates preserves any custom allow/deny rules you have added while incorporating new rules from template upgrades.
 
@@ -770,6 +771,8 @@ After any bootstrap install command exits successfully, qsdev detects the tool's
 | **Purpose** | YAML security policy definitions for the policy engine |
 
 Policy files define rules evaluated as PreToolUse hooks. Each rule specifies a condition tree, an action (block/warn/audit/prompt), a severity level (critical/high/medium/low), and a bypass tier (enforce_always/session/command).
+
+Policy files are decoded strictly: an unknown key is a load error, not a silently ignored field. The only `settings` key is `fail_mode` (`fail_closed`, the default, or `fail_open`). An `action` takes `type`, `message` and, for `prompt`, `default_on_timeout`. Keys that earlier versions accepted but never acted on (`settings.evaluation_timeout_ms`, `settings.log_format`, `settings.inherit_from`, `action.exit_code`, `action.stderr`, `action.timeout_seconds`) are rejected; remove them from existing policy files. A blocking action always exits with code 2.
 
 ```bash
 qsdev policy list          # List all rules with severity and bypass tier

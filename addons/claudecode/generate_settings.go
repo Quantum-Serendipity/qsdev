@@ -7,6 +7,7 @@ import (
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
+	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/trust"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
@@ -231,6 +232,45 @@ func readDenyPermissionRules(paths []string) []string {
 	return rules
 }
 
+// mcpToolDenyRules returns whole-tool deny entries for the path-bearing tools of
+// MCP servers in the fallback trust tier, projected from the path rules in deny
+// (see trust.GenerateDenyRuleProjections). A permission rule cannot scope an
+// MCP tool by path, so an untrusted server's file tools are denied outright;
+// trusted servers' tools stay available and are path-checked by the
+// confused-deputy PreToolUse hook.
+//
+// Servers are scored as the enforce hook scores them: from their generated
+// .mcp.json definition, enriched by the known-server database. A server qsdev
+// does not configure (one added in a user-scope MCP config, say) carries no
+// trust signals and scores into the fallback tier. Manual tier overrides in the
+// user's trust config are not applied: they are per-machine, and the committed
+// settings.json must be the same for every checkout.
+func mcpToolDenyRules(deny []string, answers types.WizardAnswers, cfg Config) ([]string, error) {
+	servers, err := buildMcpServers(answers, cfg)
+	if err != nil {
+		return nil, err
+	}
+	engine, err := trust.NewMcpTrustEngine("")
+	if err != nil {
+		return nil, fmt.Errorf("creating MCP trust engine: %w", err)
+	}
+
+	tierOf := func(name string) trust.TrustTier {
+		var configured *trust.McpServerInfo
+		if entry, ok := servers[name]; ok {
+			configured = &trust.McpServerInfo{
+				Name:    name,
+				Command: entry.Command,
+				Args:    entry.Args,
+				Env:     entry.Env,
+			}
+		}
+		info := trust.ResolveServerInfo(name, configured)
+		return engine.ScoreServer(&info).Tier
+	}
+	return trust.GenerateDenyRuleProjections(deny, tierOf), nil
+}
+
 // buildSandbox returns a SandboxConfig when sandbox is enabled, or nil otherwise.
 func buildSandbox(cfg Config, answers types.WizardAnswers, registry *ecosystem.Registry) *SandboxConfig {
 	if !cfg.SandboxEnabled {
@@ -319,6 +359,11 @@ func GenerateSettings(answers types.WizardAnswers, registry *ecosystem.Registry,
 	if err != nil {
 		return nil, fmt.Errorf("building permissions: %w", err)
 	}
+	mcpDeny, err := mcpToolDenyRules(perms.Deny, answers, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("projecting deny rules onto MCP tools: %w", err)
+	}
+	perms.Deny = sliceutil.Dedup(append(perms.Deny, mcpDeny...))
 
 	settings := SettingsJSON{
 		Permissions: perms,

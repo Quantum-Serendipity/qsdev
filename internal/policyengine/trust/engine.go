@@ -11,8 +11,6 @@ import (
 	"slices"
 
 	"gopkg.in/yaml.v3"
-
-	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 type McpTrustEngine struct {
@@ -34,6 +32,9 @@ func NewMcpTrustEngine(configPath string) (*McpTrustEngine, error) {
 	engine := &McpTrustEngine{
 		configPath: configPath,
 		config:     &TrustConfig{Servers: make(map[string]TrustServerEntry)},
+	}
+	if configPath == "" {
+		return engine, nil
 	}
 
 	cfg, err := LoadTrustConfig(configPath)
@@ -198,17 +199,4 @@ func LoadTrustConfig(path string) (*TrustConfig, error) {
 	}
 
 	return &cfg, nil
-}
-
-func SaveTrustConfig(path string, config *TrustConfig) error {
-	data, err := yaml.Marshal(config)
-	if err != nil {
-		return fmt.Errorf("marshaling trust config: %w", err)
-	}
-
-	if err := fileutil.WriteFileAtomic(path, data, fileutil.ModeReadWrite); err != nil {
-		return fmt.Errorf("writing trust config: %w", err)
-	}
-
-	return nil
 }

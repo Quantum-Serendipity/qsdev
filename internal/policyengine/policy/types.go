@@ -138,11 +138,11 @@ type PolicyMetadata struct {
 	Labels      map[string]string `yaml:"labels,omitempty"`
 }
 
+// PolicySettings holds policy-wide settings. Only fields the engine acts on
+// belong here: the loader decodes strictly, so a key without a field is
+// rejected instead of being accepted and silently ignored.
 type PolicySettings struct {
-	FailMode            FailMode `yaml:"fail_mode,omitempty"`
-	EvaluationTimeoutMS int      `yaml:"evaluation_timeout_ms,omitempty"`
-	LogFormat           string   `yaml:"log_format,omitempty"`
-	InheritFrom         []string `yaml:"inherit_from,omitempty"`
+	FailMode FailMode `yaml:"fail_mode,omitempty"`
 }
 
 type PolicyRule struct {
@@ -175,12 +175,11 @@ type Condition struct {
 	Condition  *Condition  `yaml:"condition,omitempty"`
 }
 
+// Action is what a matching rule does. As with PolicySettings, only fields the
+// evaluator reads are declared, so the strict loader rejects any other key.
 type Action struct {
 	Type             ActionType `yaml:"type"`
-	ExitCode         int        `yaml:"exit_code,omitempty"`
 	Message          string     `yaml:"message,omitempty"`
-	Stderr           string     `yaml:"stderr,omitempty"`
-	TimeoutSeconds   int        `yaml:"timeout_seconds,omitempty"`
 	DefaultOnTimeout string     `yaml:"default_on_timeout,omitempty"`
 }
 

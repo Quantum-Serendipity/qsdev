@@ -142,7 +142,7 @@ func enforceSecurityFloor(existing, incoming *PolicyRule) error {
 	}
 
 	if enforcementAction(existing.Action) != enforcementAction(incoming.Action) {
-		return fmt.Errorf("security floor violation: rule %q with enforce_always bypass_tier cannot change its action (only message and stderr may be overridden)", existing.ID)
+		return fmt.Errorf("security floor violation: rule %q with enforce_always bypass_tier cannot change its action (only its message may be overridden)", existing.ID)
 	}
 
 	if !reflect.DeepEqual(existing.Conditions, incoming.Conditions) {
@@ -153,10 +153,9 @@ func enforceSecurityFloor(existing, incoming *PolicyRule) error {
 }
 
 // enforcementAction returns the parts of an action that decide the verdict,
-// clearing the purely presentational message fields an overlay may reword.
+// clearing the purely presentational message an overlay may reword.
 func enforcementAction(a Action) Action {
 	a.Message = ""
-	a.Stderr = ""
 	return a
 }
 

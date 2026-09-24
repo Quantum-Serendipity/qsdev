@@ -1,7 +1,5 @@
 package sarif
 
-import "strings"
-
 type RuleDefinition struct {
 	ID               string
 	Name             string
@@ -169,15 +167,4 @@ var AllRules = []RuleDefinition{
 		SecuritySeverity: 5.0,
 		Tags:             []string{"trust", "suspicious"},
 	},
-}
-
-func RulesByNamespace(namespace string) []RuleDefinition {
-	var matched []RuleDefinition
-	prefix := namespace + "/"
-	for _, r := range AllRules {
-		if strings.HasPrefix(r.ID, prefix) {
-			matched = append(matched, r)
-		}
-	}
-	return matched
 }

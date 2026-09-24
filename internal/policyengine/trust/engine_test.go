@@ -160,19 +160,7 @@ func TestManualOverride(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "trust.yaml")
 
-	cfg := &TrustConfig{
-		Servers: map[string]TrustServerEntry{
-			"overridden": {
-				Tier:           Tier1Local,
-				Score:          100,
-				ManualOverride: true,
-			},
-		},
-	}
-
-	if err := SaveTrustConfig(configPath, cfg); err != nil {
-		t.Fatalf("saving config: %v", err)
-	}
+	writeTrustConfig(t, configPath, "servers:\n  overridden:\n    tier: 1\n    score: 100\n    manual_override: true\n")
 
 	engine := mustTrustEngine(t, configPath)
 
@@ -186,24 +174,11 @@ func TestManualOverride(t *testing.T) {
 	}
 }
 
-func TestLoadSaveTrustConfig(t *testing.T) {
+func TestLoadTrustConfig(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "trust.yaml")
-
-	cfg := &TrustConfig{
-		Servers: map[string]TrustServerEntry{
-			"test-server": {
-				Tier:  Tier2Enterprise,
-				Score: 55,
-			},
-		},
-	}
-
-	if err := SaveTrustConfig(path, cfg); err != nil {
-		t.Fatalf("saving: %v", err)
-	}
+	path := filepath.Join(t.TempDir(), "trust.yaml")
+	writeTrustConfig(t, path, "servers:\n  test-server:\n    tier: 2\n    score: 55\n")
 
 	loaded, err := LoadTrustConfig(path)
 	if err != nil {
@@ -283,6 +258,14 @@ func TestNewMcpTrustEngineWithBadPath(t *testing.T) {
 	}
 	if engine.config == nil {
 		t.Fatal("config should not be nil")
+	}
+}
+
+// writeTrustConfig writes a trust config file with the given YAML content.
+func writeTrustConfig(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("writing trust config: %v", err)
 	}
 }
 
@@ -434,21 +417,18 @@ func TestResolveServerInfo(t *testing.T) {
 	}
 }
 
-func TestSaveTrustConfigCreatesFile(t *testing.T) {
+// TestNewMcpTrustEngineEmptyPath checks an empty config path means "no manual
+// overrides" on every platform, without touching the filesystem: servers are
+// scored from their signals alone.
+func TestNewMcpTrustEngineEmptyPath(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "new-trust.yaml")
-
-	cfg := &TrustConfig{
-		Servers: map[string]TrustServerEntry{},
+	engine, err := NewMcpTrustEngine("")
+	if err != nil {
+		t.Fatalf("NewMcpTrustEngine(\"\") error = %v, want nil", err)
 	}
-
-	if err := SaveTrustConfig(path, cfg); err != nil {
-		t.Fatalf("saving: %v", err)
-	}
-
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("file should exist: %v", err)
+	info, _ := KnownServerInfo("man-pages")
+	if got := engine.ScoreServer(&info).Tier; got != Tier1Local {
+		t.Errorf("tier = %v, want %v (no fallback forced)", got, Tier1Local)
 	}
 }

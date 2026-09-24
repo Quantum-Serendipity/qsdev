@@ -39,7 +39,6 @@ rules:
     action:
       type: block
       message: "Cannot edit {file_path}: protected configuration file"
-      exit_code: 2
 `
 
 // ruleWithoutID is appended to a valid policy to make it fail to load.

@@ -46,46 +46,14 @@ type MCPServerEntry struct {
 // package at launch without an exact version, whether it comes from the
 // catalog or the addon configuration.
 func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedFile, error) {
-	policy := answers.MCPPolicy
-	names := policy.Filter(answers.MCPServers)
-	var configured []MCPServerConfig
-	for _, srv := range cfg.MCPServers {
-		if policy.Permits(srv.Name) {
-			configured = append(configured, srv)
-		}
+	servers, err := buildMcpServers(answers, cfg)
+	if err != nil {
+		return nil, err
 	}
-	if len(names) == 0 && len(configured) == 0 && policy.IsZero() {
+	if len(servers) == 0 && answers.MCPPolicy.IsZero() {
 		return nil, nil
 	}
-
-	cat, err := catalog.Default()
-	if err != nil {
-		return nil, fmt.Errorf("loading catalog for MCP server definitions: %w", err)
-	}
-
-	mcp := McpJSON{
-		MCPServers: make(map[string]MCPServerEntry),
-	}
-
-	// Populate from wizard-selected known servers.
-	installed := installedMCPServers(answers.ProjectRoot)
-	for _, name := range names {
-		def, ok := cat.MCPServer(name)
-		if !ok {
-			return nil, fmt.Errorf("unknown MCP server %q: must be one of %s", name, mcpServerNameList(cat))
-		}
-		mcp.MCPServers[name] = catalogServerEntry(name, def, installed)
-	}
-
-	// Populate from config-provided servers (overrides wizard on collision).
-	for _, srv := range configured {
-		entry := MCPServerEntry{
-			Command: srv.Command,
-			Args:    srv.Args,
-			Env:     srv.Env,
-		}
-		mcp.MCPServers[srv.Name] = entry
-	}
+	mcp := McpJSON{MCPServers: servers}
 
 	for _, name := range slices.Sorted(maps.Keys(mcp.MCPServers)) {
 		if err := requirePinnedLaunch(name, mcp.MCPServers[name]); err != nil {
@@ -109,6 +77,42 @@ func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedF
 		Mode:     fileutil.ModeReadWrite,
 		Strategy: types.ThreeWayMerge,
 	}, nil
+}
+
+// buildMcpServers returns the .mcp.json server entries qsdev generates: the
+// wizard-selected catalog servers and the config-provided servers (which win on
+// a name collision), less those the client MCP policy (answers.MCPPolicy) does
+// not permit. A catalog server `qsdev mcp install` installed runs its installed
+// binary (catalogServerEntry).
+func buildMcpServers(answers types.WizardAnswers, cfg Config) (map[string]MCPServerEntry, error) {
+	policy := answers.MCPPolicy
+	servers := make(map[string]MCPServerEntry)
+
+	if names := policy.Filter(answers.MCPServers); len(names) > 0 {
+		cat, err := catalog.Default()
+		if err != nil {
+			return nil, fmt.Errorf("loading catalog for MCP server definitions: %w", err)
+		}
+		installed := installedMCPServers(answers.ProjectRoot)
+		for _, name := range names {
+			def, ok := cat.MCPServer(name)
+			if !ok {
+				return nil, fmt.Errorf("unknown MCP server %q: must be one of %s", name, mcpServerNameList(cat))
+			}
+			servers[name] = catalogServerEntry(name, def, installed)
+		}
+	}
+
+	for _, srv := range cfg.MCPServers {
+		if policy.Permits(srv.Name) {
+			servers[srv.Name] = MCPServerEntry{
+				Command: srv.Command,
+				Args:    srv.Args,
+				Env:     srv.Env,
+			}
+		}
+	}
+	return servers, nil
 }
 
 // catalogDefToEntry converts a catalog MCP server definition to a .mcp.json entry.

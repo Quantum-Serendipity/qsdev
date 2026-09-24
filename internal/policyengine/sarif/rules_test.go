@@ -20,30 +20,6 @@ func TestAllRuleIDsUnique(t *testing.T) {
 	}
 }
 
-func TestRulesByNamespace(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		namespace string
-		wantCount int
-	}{
-		{"qsdev/policy", 9},
-		{"qsdev/dep-risk", 6},
-		{"qsdev/trust", 4},
-		{"qsdev/nonexistent", 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.namespace, func(t *testing.T) {
-			t.Parallel()
-			got := RulesByNamespace(tt.namespace)
-			if len(got) != tt.wantCount {
-				t.Errorf("RulesByNamespace(%q) returned %d rules, want %d", tt.namespace, len(got), tt.wantCount)
-			}
-		})
-	}
-}
-
 func TestPolicySeverityToSARIF(t *testing.T) {
 	t.Parallel()
 

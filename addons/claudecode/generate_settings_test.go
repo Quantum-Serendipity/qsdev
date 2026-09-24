@@ -1231,3 +1231,71 @@ func TestGenerateSettings_NoPromptlessCodeExecution(t *testing.T) {
 		})
 	}
 }
+
+// TestGenerateSettings_MCPToolDenyProjection is the F196 regression: the
+// path-bearing tools of MCP servers in the fallback trust tier are denied as
+// whole tools, since a permission rule cannot scope an MCP tool by path. Every
+// server the catalog can configure for these tools scores into the fallback
+// tier, as does a server qsdev does not configure at all.
+func TestGenerateSettings_MCPToolDenyProjection(t *testing.T) {
+	t.Parallel()
+
+	wantDenied := []string{
+		"mcp__filesystem__read_file",
+		"mcp__filesystem__read_multiple_files",
+		"mcp__filesystem__write_file",
+		"mcp__filesystem__move_file",
+		"mcp__filesystem__directory_tree",
+		"mcp__github__create_or_update_file",
+	}
+
+	tests := []struct {
+		name    string
+		servers []string
+		opts    []claudecode.Option
+	}{
+		{name: "servers not configured by qsdev"},
+		{name: "catalog servers", servers: []string{"filesystem", "github"}},
+		{
+			name: "config-provided server",
+			opts: []claudecode.Option{claudecode.WithMCPServer(claudecode.MCPServerConfig{
+				Name: "filesystem", Command: "/opt/fs-mcp/bin/server",
+			})},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{
+				PermissionLevel: "standard",
+				ClaudeCode:      true,
+				MCPServers:      tt.servers,
+			}
+			s := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, newTestRegistry(t), tt.opts...))
+
+			for _, tool := range wantDenied {
+				if !containsRule(s.Permissions.Deny, tool) {
+					t.Errorf("deny is missing whole-tool rule %q", tool)
+				}
+			}
+			var mcpRules []string
+			for _, rule := range s.Permissions.Deny {
+				if strings.HasPrefix(rule, "mcp__") {
+					mcpRules = append(mcpRules, rule)
+				}
+			}
+			for _, rule := range mcpRules {
+				if strings.ContainsAny(rule, "()*") {
+					t.Errorf("MCP deny %q is not a whole-tool rule", rule)
+				}
+				if strings.Contains(rule, "qsdev_") || strings.HasPrefix(rule, "mcp__github__get_file_contents") {
+					t.Errorf("MCP deny %q names a tool without a local path argument", rule)
+				}
+			}
+			if len(slices.Compact(slices.Clone(mcpRules))) != len(mcpRules) {
+				t.Errorf("MCP deny rules contain duplicates: %v", mcpRules)
+			}
+		})
+	}
+}

@@ -30,7 +30,6 @@ type ConfigCapabilities struct {
 // ConfigRenderer translates into framework-specific files.
 type PolicyInput struct {
 	ProjectRoot string
-	Detection   *FrameworkDetection
 	Permissions *PermissionPolicy
 	MCPServers  []MCPServerSpec
 	Sandbox     *SandboxPolicy

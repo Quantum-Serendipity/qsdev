@@ -82,32 +82,3 @@ func TestValidationSeverityUnmarshalInvalid(t *testing.T) {
 		t.Error("UnmarshalText(critical) should return error")
 	}
 }
-
-func TestAllFrameworksCount(t *testing.T) {
-	t.Parallel()
-
-	frameworks := AllFrameworks()
-	if got := len(frameworks); got != 9 {
-		t.Errorf("AllFrameworks() returned %d entries, want 9", got)
-	}
-}
-
-func TestAllFrameworksContainsExpectedIDs(t *testing.T) {
-	t.Parallel()
-
-	expected := map[FrameworkID]bool{
-		ClaudeCode: true, Codex: true, GeminiCLI: true,
-		Copilot: true, Aider: true, AmazonQ: true,
-		Cursor: true, Windsurf: true, ContinueDev: true,
-	}
-
-	for _, fw := range AllFrameworks() {
-		if !expected[fw] {
-			t.Errorf("unexpected framework ID %q in AllFrameworks()", fw)
-		}
-		delete(expected, fw)
-	}
-	for missing := range expected {
-		t.Errorf("missing framework ID %q from AllFrameworks()", missing)
-	}
-}

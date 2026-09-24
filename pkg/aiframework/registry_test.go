@@ -122,33 +122,3 @@ func TestFilterServersHelper(t *testing.T) {
 		t.Errorf("FilterServers()[0].Name = %q, want %q", filtered[0].Name, "local-tool")
 	}
 }
-
-func TestToolCeilingConstants(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name  string
-		value int
-	}{
-		{name: "Cursor", value: ToolCeilingCursor},
-		{name: "Windsurf", value: ToolCeilingWindsurf},
-		{name: "Copilot", value: ToolCeilingCopilot},
-	}
-
-	expected := map[string]int{
-		"Cursor":   40,
-		"Windsurf": 100,
-		"Copilot":  128,
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			want := expected[tc.name]
-			if tc.value != want {
-				t.Errorf("ToolCeiling%s = %d, want %d", tc.name, tc.value, want)
-			}
-		})
-	}
-}

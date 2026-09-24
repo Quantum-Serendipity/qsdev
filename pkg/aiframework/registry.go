@@ -54,12 +54,6 @@ type MCPToolSpec struct {
 	Category    string
 }
 
-const (
-	ToolCeilingCursor   = 40
-	ToolCeilingWindsurf = 100
-	ToolCeilingCopilot  = 128
-)
-
 // RegistryClient manages MCP server configuration for a specific framework.
 type RegistryClient interface {
 	FrameworkID() FrameworkID

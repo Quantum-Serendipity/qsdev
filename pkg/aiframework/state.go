@@ -8,6 +8,12 @@ import (
 )
 
 // StateBackend persists chronicle entries and task state for multi-agent coordination.
+//
+// Experimental: no production backend exists yet (the Claude Code adapter's
+// chronicle methods are no-ops and its task methods return "not yet
+// implemented") and the task lifecycle is
+// incomplete; see the package documentation. The interface may change without
+// notice when multi-agent coordination is implemented.
 type StateBackend interface {
 	ChronicleAppend(ctx context.Context, entry ChronicleEntry) error
 	ChronicleRead(ctx context.Context, opts ChronicleQuery) ([]ChronicleEntry, error)
@@ -37,19 +43,6 @@ const (
 	VerbLessonFiled     ChronicleVerb = "lesson_filed"
 )
 
-var validVerbs = map[ChronicleVerb]bool{
-	VerbTaskStarted: true, VerbTaskCompleted: true, VerbTaskFailed: true,
-	VerbTaskBlocked: true, VerbWorktreeCreated: true, VerbWorktreeCleaned: true,
-	VerbFileCreated: true, VerbFileModified: true, VerbTestPassed: true,
-	VerbTestFailed: true, VerbReviewRequested: true, VerbReviewCompleted: true,
-	VerbLessonFiled: true,
-}
-
-// ValidChronicleVerb reports whether v is a recognized chronicle verb.
-func ValidChronicleVerb(v ChronicleVerb) bool {
-	return validVerbs[v]
-}
-
 // ChronicleEntry is a single timestamped record in the chronicle log.
 type ChronicleEntry struct {
 	Timestamp time.Time
@@ -67,6 +60,11 @@ type ChronicleQuery struct {
 }
 
 // TaskStatus tracks a task's lifecycle state.
+//
+// Experimental: only the non-terminal states exist. A task's outcome is
+// reported through StateBackend.TaskComplete, but TaskInfo.Status has no
+// completed, failed or cancelled value to reflect it, and no transition rules
+// are defined. Both will be settled with the first real StateBackend.
 type TaskStatus int
 
 const (
@@ -113,24 +111,6 @@ func (o TaskOutcome) String() string { return taskOutcomeText.String(o) }
 func (o TaskOutcome) MarshalText() ([]byte, error) { return taskOutcomeText.MarshalText(o) }
 
 func (o *TaskOutcome) UnmarshalText(text []byte) error { return taskOutcomeText.UnmarshalText(text, o) }
-
-// ValidTaskTransition reports whether moving from one status to another is allowed.
-// Valid transitions: open->assigned, assigned->in_progress, in_progress->blocked,
-// blocked->in_progress.
-func ValidTaskTransition(from, to TaskStatus) bool {
-	switch {
-	case from == TaskOpen && to == TaskAssigned:
-		return true
-	case from == TaskAssigned && to == TaskInProgress:
-		return true
-	case from == TaskInProgress && to == TaskBlocked:
-		return true
-	case from == TaskBlocked && to == TaskInProgress:
-		return true
-	default:
-		return false
-	}
-}
 
 // TaskSpec describes a new task to create.
 type TaskSpec struct {

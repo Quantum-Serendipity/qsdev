@@ -178,10 +178,9 @@ func configError(err error) *spi.ToolResult {
 }
 
 // policyInputFor builds the framework-agnostic PolicyInput a ConfigRenderer
-// consumes, derived from .qsdev.yaml (preset, hooks, declared MCP servers) and
-// live detection. Model is intentionally left nil so a render preview never
-// fails on the context-budget threshold; budget accounting has its own
-// dedicated tool. It also returns the enabled hook choices the framework-agnostic
+// consumes, derived from .qsdev.yaml (preset, hooks, declared MCP servers).
+// Model is intentionally left nil so a render preview never fails on the
+// context-budget threshold; budget accounting has its own dedicated tool. It also returns the enabled hook choices the framework-agnostic
 // hook vocabulary cannot express (so they are absent from the render), letting
 // callers surface that gap rather than present the render as complete.
 func (a *Adapter) policyInputFor(projectRoot string) (*aiframework.PolicyInput, []string, error) {
@@ -197,9 +196,6 @@ func (a *Adapter) policyInputFor(projectRoot string) (*aiframework.PolicyInput, 
 		ProjectRoot: projectRoot,
 		Permissions: &aiframework.PermissionPolicy{Preset: presetOf(cfg)},
 		Hooks:       &aiframework.HookConfiguration{Hooks: specs},
-	}
-	if det, derr := a.ref.Detect(projectRoot); derr == nil {
-		input.Detection = det
 	}
 	if cfg != nil {
 		for _, name := range cfg.ClaudeCode.MCPServers {

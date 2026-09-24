@@ -13,9 +13,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/middleware"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/spi"
 	"github.com/Quantum-Serendipity/qsdev/internal/mcpserve/tools/toolutil"
-	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/pkg/aiframework"
-	"github.com/Quantum-Serendipity/qsdev/pkg/generate"
 )
 
 // Tools returns the five Claude Code tool registrations. Each handler delegates
@@ -53,10 +51,11 @@ func (a *Adapter) Tools() []spi.ToolRegistration {
 		},
 		{
 			Name:        toolConfigRender,
-			Description: "Render the Claude Code configuration files (.claude/settings.json and .mcp.json) from the project's qsdev policy. Dry-run by default: it returns the generated file contents without writing. Set write=true to materialize the files to disk.",
-			InputSchema: optionalBoolSchema("write", "Write the rendered files to disk instead of returning them as a dry-run preview."),
+			Description: "Preview the Claude Code configuration files (.claude/settings.json and .mcp.json) rendered from the project's qsdev policy. Dry-run only: it returns the generated file contents and never writes them; run `qsdev init --update` to apply them.",
+			InputSchema: toolutil.EmptyObjectSchema(),
 			Category:    middleware.CategoryGeneral,
 			Tier:        tierExtended,
+			Annotations: spi.ReadOnlyAnnotations(false),
 			Handler:     a.handleConfigRender,
 		},
 		{
@@ -173,10 +172,18 @@ func (a *Adapter) handleContextBudget(_ context.Context, cc *spi.ToolCallContext
 	return &spi.ToolResult{Text: text, Structured: structured}, nil
 }
 
-// handleConfigRender renders the Claude Code config via the reference adapter.
-// It is dry-run by default (returns contents without writing); write=true
-// materializes the files through the generation pipeline.
+// handleConfigRender renders the Claude Code config via the reference adapter
+// and returns it as a dry-run preview. It never writes: .claude/settings.json
+// and .mcp.json are the agent's own guardrail configuration, and a write through
+// an MCP call names no target path, so no PreToolUse path check (selfprotect or
+// the confused-deputy map) would ever see it. Materializing them is left to the
+// human-run `qsdev init --update`. A call that still asks to write is refused.
 func (a *Adapter) handleConfigRender(ctx context.Context, cc *spi.ToolCallContext, req *spi.ToolRequest) (*spi.ToolResult, error) {
+	if boolArg(req.Arguments, "write") {
+		return toolutil.ErrorResult(configRenderWriteRefused,
+			map[string]any{"apply_with": configApplyCommand}), nil
+	}
+
 	input, unrendered, err := a.policyInputFor(cc.ProjectRoot)
 	if err != nil {
 		return configError(err), nil
@@ -198,11 +205,11 @@ func (a *Adapter) handleConfigRender(ctx context.Context, cc *spi.ToolCallContex
 		})
 	}
 
-	write := boolArg(req.Arguments, "write")
 	structured := map[string]any{
 		"project_root":      cc.ProjectRoot,
 		"preset":            input.Permissions.Preset,
-		"write":             write,
+		"dry_run":           true,
+		"apply_with":        configApplyCommand,
 		"file_count":        len(files),
 		"files":             rendered,
 		"validation_issues": validationIssues(a.ref.Validate(ctx, files)),
@@ -211,28 +218,10 @@ func (a *Adapter) handleConfigRender(ctx context.Context, cc *spi.ToolCallContex
 		structured["unrendered_hooks"] = unrendered
 		structured["warnings"] = []string{fmt.Sprintf(
 			"hook choice(s) %v are enabled for this project but cannot be expressed through the framework-agnostic render; "+
-				"run `qsdev init --update` to generate them", unrendered)}
+				"run `%s` to generate them", unrendered, configApplyCommand)}
 	}
 
-	if write {
-		res, werr := generate.WriteFiles(files, generate.PipelineOptions{
-			ProjectRoot:       cc.ProjectRoot,
-			SectionMergeFunc:  merge.SectionMarkersOrAppend,
-			ThreeWayMergeFunc: merge.MergeOnCreate,
-		})
-		if werr != nil {
-			return nil, fmt.Errorf("writing rendered claude code files: %w", werr)
-		}
-		structured["write_result"] = map[string]any{
-			"created": res.Created, "updated": res.Updated,
-			"skipped": res.Skipped, "failed": res.Failed,
-			"summary": res.Summary(),
-		}
-		text := fmt.Sprintf("rendered and wrote %d claude code file(s): %s", len(files), res.Summary())
-		return &spi.ToolResult{Text: text, Structured: structured, IsError: res.HasFailures()}, nil
-	}
-
-	text := fmt.Sprintf("rendered %d claude code file(s) (dry-run, not written)", len(files))
+	text := fmt.Sprintf("rendered %d claude code file(s) (dry-run, not written; run `%s` to apply)", len(files), configApplyCommand)
 	return &spi.ToolResult{Text: text, Structured: structured}, nil
 }
 

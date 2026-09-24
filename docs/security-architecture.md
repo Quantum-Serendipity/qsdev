@@ -234,6 +234,17 @@ separate namespace, and never becomes an MCP deny. `qsdev check` fails on an
 misspelling cannot silently leave a tool enabled in a CI-gated project. See
 [MCP tool deny list](configuration-reference.md#mcp-tool-deny-list).
 
+**No guardrail writes through MCP.** `qsdev_cc_config_render` only previews
+the `.claude/settings.json` and `.mcp.json` that qsdev would generate. It
+takes no `write` argument and refuses a call that asks to write. A write made
+through an MCP call names no target path, so self-protection's path rules
+would never see it, and an agent could edit `.qsdev.yaml` and then widen its
+own allow list. The files are applied only by a person running
+`qsdev init --update`. As a second check, the confused-deputy map treats a
+`qsdev_cc_config_render` call with `write` set as an `Edit` of both files,
+under whatever name the qsdev server is registered, so a path deny rule on
+them also blocks an older qsdev server that still writes.
+
 ### Layer 13: Package and MCP Risk Scoring
 
 **Package risk scoring** evaluates packages across 28 probes in 6 weighted categories:

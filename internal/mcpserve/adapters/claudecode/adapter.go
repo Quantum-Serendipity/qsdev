@@ -50,6 +50,15 @@ const (
 	toolEnforcementGaps = "qsdev_cc_enforcement_gaps"
 )
 
+// configApplyCommand is the human-run command that materializes the Claude Code
+// configuration qsdev_cc_config_render previews. The MCP surface never writes it.
+const configApplyCommand = "qsdev init --update"
+
+// configRenderWriteRefused is the reason returned to a qsdev_cc_config_render
+// call that asks to write.
+const configRenderWriteRefused = "qsdev_cc_config_render is dry-run only: it cannot write .claude/settings.json or .mcp.json " +
+	"(the agent's own guardrail configuration); run `" + configApplyCommand + "` to apply the rendered files"
+
 // Resource URIs and the single MIME type the adapter emits.
 const (
 	resURISettings = "qsdev://claudecode/settings"

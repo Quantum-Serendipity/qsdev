@@ -312,3 +312,44 @@ func TestCheckAccess_SymlinkAlias(t *testing.T) {
 		t.Error("read through a symlink into a denied directory must be blocked")
 	}
 }
+
+// TestCheckAccess_QsdevConfigRender guards F224: a qsdev_cc_config_render call
+// asking to write materializes the agent's own .claude/settings.json and
+// .mcp.json, so it is checked as an Edit of both files whatever name the qsdev
+// server is registered under. A dry-run call writes nothing and is not blocked.
+func TestCheckAccess_QsdevConfigRender(t *testing.T) {
+	t.Parallel()
+
+	settingsRule := []policy.DenyRule{{Pattern: "**/.claude/settings.json", Type: "path"}}
+	mcpRule := []policy.DenyRule{{Pattern: "**/.mcp.json", Type: "path"}}
+
+	tests := []struct {
+		name      string
+		tool      string
+		args      string
+		rules     []policy.DenyRule
+		wantBlock bool
+	}{
+		{"write=true hits settings.json", "mcp__qsdev__qsdev_cc_config_render", `{"write":true}`, settingsRule, true},
+		{"write=true hits .mcp.json", "mcp__qsdev__qsdev_cc_config_render", `{"write":true}`, mcpRule, true},
+		{"any server name", "mcp__qsdev-universal__qsdev_cc_config_render", `{"write":true}`, settingsRule, true},
+		{"non-boolean write fails closed", "mcp__qsdev__qsdev_cc_config_render", `{"write":"yes"}`, settingsRule, true},
+		{"malformed args fail closed", "mcp__qsdev__qsdev_cc_config_render", `{"write":`, settingsRule, true},
+		{"dry-run empty args", "mcp__qsdev__qsdev_cc_config_render", `{}`, settingsRule, false},
+		{"dry-run no args", "mcp__qsdev__qsdev_cc_config_render", ``, settingsRule, false},
+		{"write=false", "mcp__qsdev__qsdev_cc_config_render", `{"write":false}`, settingsRule, false},
+		{"write=null", "mcp__qsdev__qsdev_cc_config_render", `{"write":null}`, settingsRule, false},
+		{"write=true, unrelated rule", "mcp__qsdev__qsdev_cc_config_render", `{"write":true}`, []policy.DenyRule{{Pattern: "**/.ssh/*", Type: "path"}}, false},
+		{"other qsdev tool unaffected", "mcp__qsdev__qsdev_cc_permissions", `{"write":true}`, settingsRule, false},
+		{"bare tool name is not an mcp call", "qsdev_cc_config_render", `{"write":true}`, settingsRule, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			blocked, reason := CheckAccess(tt.tool, json.RawMessage(tt.args), tt.rules)
+			if blocked != tt.wantBlock {
+				t.Errorf("CheckAccess(%s, %s) blocked = %v, want %v (reason: %s)", tt.tool, tt.args, blocked, tt.wantBlock, reason)
+			}
+		})
+	}
+}

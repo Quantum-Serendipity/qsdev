@@ -212,13 +212,20 @@ func TestEnforcementGapsTool(t *testing.T) {
 	}
 }
 
-// TestConfigRenderTool checks the dry-run render produces valid JSON files
-// without writing, and that write=true materializes them.
+// TestConfigRenderTool checks the render produces valid JSON files as a dry-run
+// preview without writing anything, and advertises itself as read-only.
 func TestConfigRenderTool(t *testing.T) {
 	t.Parallel()
 	a := New()
 	reg := toolByName(t, a, toolConfigRender)
 	root := presentRoot(t)
+
+	if reg.Annotations.ReadOnly == nil || !*reg.Annotations.ReadOnly {
+		t.Error("config render must be annotated read-only")
+	}
+	if props, _ := reg.InputSchema["properties"].(map[string]any); len(props) != 0 {
+		t.Errorf("config render input schema = %v, want no arguments", props)
+	}
 
 	res, err := reg.Handler(context.Background(), callCtx(root), &spi.ToolRequest{Name: toolConfigRender, Arguments: map[string]any{}})
 	if err != nil {
@@ -228,8 +235,11 @@ func TestConfigRenderTool(t *testing.T) {
 		t.Fatalf("unexpected not_configured result: %s", res.Text)
 	}
 	structured := res.Structured.(map[string]any)
-	if structured["write"].(bool) {
-		t.Error("dry-run result reports write=true")
+	if dry, _ := structured["dry_run"].(bool); !dry {
+		t.Error("render result does not report dry_run=true")
+	}
+	if structured["apply_with"] != configApplyCommand {
+		t.Errorf("apply_with = %v, want %q", structured["apply_with"], configApplyCommand)
 	}
 	files := structured["files"].([]map[string]any)
 	if len(files) == 0 {
@@ -248,63 +258,66 @@ func TestConfigRenderTool(t *testing.T) {
 	if !sawSettings {
 		t.Error("render did not produce settings.json")
 	}
-	// Dry-run must not have written anything.
-	if _, statErr := os.Stat(filepath.Join(root, ".claude", "settings.json")); !os.IsNotExist(statErr) {
-		t.Error("dry-run wrote settings.json to disk")
-	}
-
-	// write=true materializes the files.
-	wres, err := reg.Handler(context.Background(), callCtx(root),
-		&spi.ToolRequest{Name: toolConfigRender, Arguments: map[string]any{"write": true}})
-	if err != nil {
-		t.Fatalf("write handler error: %v", err)
-	}
-	if wres.IsError {
-		t.Fatalf("write reported failures: %s", wres.Text)
-	}
-	if _, statErr := os.Stat(filepath.Join(root, ".claude", "settings.json")); statErr != nil {
-		t.Errorf("write=true did not create settings.json: %v", statErr)
+	for _, rel := range []string{".claude/settings.json", ".mcp.json"} {
+		if _, statErr := os.Stat(filepath.Join(root, rel)); !os.IsNotExist(statErr) {
+			t.Errorf("dry-run wrote %s to disk", rel)
+		}
 	}
 }
 
-// TestConfigRenderTool_PreservesUserEnv guards DEFECT-6 on the MCP render write
-// path: rendering with write=true over an existing settings.json that carries a
-// user-owned "env" block must preserve it (the ThreeWayMerge func is wired in).
-func TestConfigRenderTool_PreservesUserEnv(t *testing.T) {
+// TestConfigRenderTool_RefusesWrite is the regression test for F224: an agent
+// that switched .qsdev.yaml to the permissive preset could call the render tool
+// with write=true to rewrite its own .claude/settings.json allow list outside
+// selfprotect. Every write request is refused and leaves the guardrail files
+// byte-for-byte untouched; write=false is an ordinary dry-run.
+func TestConfigRenderTool_RefusesWrite(t *testing.T) {
 	t.Parallel()
-	a := New()
-	reg := toolByName(t, a, toolConfigRender)
-	root := presentRoot(t)
+	tests := []struct {
+		name      string
+		args      map[string]any
+		wantError bool
+	}{
+		{"write=true refused", map[string]any{"write": true}, true},
+		{"write=false is a dry-run", map[string]any{"write": false}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := presentRoot(t)
+			permissive := "version: 1\nclaude_code:\n  permission_level: permissive\n"
+			if err := os.WriteFile(filepath.Join(root, ".qsdev.yaml"), []byte(permissive), 0o644); err != nil {
+				t.Fatalf("writing .qsdev.yaml: %v", err)
+			}
+			settingsPath := filepath.Join(root, ".claude", "settings.json")
+			existing := []byte(`{"permissions":{"allow":[],"deny":[]}}`)
+			if err := os.WriteFile(settingsPath, existing, 0o644); err != nil {
+				t.Fatalf("seeding settings.json: %v", err)
+			}
 
-	// Seed an existing settings.json with a user env block.
-	settingsPath := filepath.Join(root, ".claude", "settings.json")
-	existing := []byte(`{"env":{"CLAUDE_CODE_USE_BEDROCK":"1"},"permissions":{"allow":["Read(*)"],"deny":[]}}`)
-	if err := os.WriteFile(settingsPath, existing, 0o644); err != nil {
-		t.Fatalf("seeding settings.json: %v", err)
-	}
+			reg := toolByName(t, New(), toolConfigRender)
+			res, err := reg.Handler(context.Background(), callCtx(root),
+				&spi.ToolRequest{Name: toolConfigRender, Arguments: tt.args})
+			if err != nil {
+				t.Fatalf("handler error: %v", err)
+			}
+			if res.IsError != tt.wantError {
+				t.Fatalf("IsError = %v, want %v: %s", res.IsError, tt.wantError, res.Text)
+			}
+			if tt.wantError && !strings.Contains(res.Text, configApplyCommand) {
+				t.Errorf("refusal %q does not point at %q", res.Text, configApplyCommand)
+			}
 
-	wres, err := reg.Handler(context.Background(), callCtx(root),
-		&spi.ToolRequest{Name: toolConfigRender, Arguments: map[string]any{"write": true}})
-	if err != nil {
-		t.Fatalf("write handler error: %v", err)
-	}
-	if wres.IsError {
-		t.Fatalf("write reported failures: %s", wres.Text)
-	}
-
-	got, err := os.ReadFile(settingsPath)
-	if err != nil {
-		t.Fatalf("reading merged settings.json: %v", err)
-	}
-	var parsed map[string]json.RawMessage
-	if err := json.Unmarshal(got, &parsed); err != nil {
-		t.Fatalf("merged settings.json is not valid JSON: %v\n%s", err, got)
-	}
-	if _, ok := parsed["env"]; !ok {
-		t.Errorf("user env block dropped by render write path: %s", got)
-	}
-	if _, ok := parsed["permissions"]; !ok {
-		t.Errorf("generated permissions missing after merge: %s", got)
+			got, err := os.ReadFile(settingsPath)
+			if err != nil {
+				t.Fatalf("reading settings.json: %v", err)
+			}
+			if string(got) != string(existing) {
+				t.Errorf("settings.json changed:\n%s", got)
+			}
+			if _, statErr := os.Stat(filepath.Join(root, ".mcp.json")); !os.IsNotExist(statErr) {
+				t.Error(".mcp.json was written")
+			}
+		})
 	}
 }
 

@@ -344,8 +344,10 @@ func TestSubmitViaGH_BodyOnStdinAndLabelFallback(t *testing.T) {
 			if tt.failOnLabel {
 				failFlag = "1"
 			}
+			// $((...)) normalises the count: BSD wc (macOS) left-pads it
+			// with spaces, which would otherwise name the files "args   0".
 			script := `#!/bin/sh
-n=$(ls "` + record + `" | wc -l)
+n=$(($(ls "` + record + `" | wc -l)))
 echo "$@" > "` + record + `/args$n"
 cat > "` + record + `/stdin$n"
 case "$*" in

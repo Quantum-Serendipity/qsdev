@@ -257,6 +257,21 @@ func TestProjectPolicy_Apply(t *testing.T) {
 			},
 		},
 		{
+			name: "committed hooks block replaces the answers' hook policy",
+			project: types.QsdevConfig{Version: 2, Hooks: types.HooksConfig{
+				FileBoundary: types.FileBoundaryConfig{ExtraReadPaths: []string{"/opt/sdk"}},
+			}},
+			answers: types.WizardAnswers{HookPolicy: types.HooksConfig{
+				FileBoundary: types.FileBoundaryConfig{ExtraReadPaths: []string{"/stale"}},
+			}},
+			check: func(t *testing.T, a types.WizardAnswers) {
+				t.Helper()
+				if got := a.HookPolicy.FileBoundary.ExtraReadPaths; !slices.Equal(got, []string{"/opt/sdk"}) {
+					t.Errorf("ExtraReadPaths = %v, want [/opt/sdk]", got)
+				}
+			},
+		},
+		{
 			name:    "removed branch pattern clears a stale one",
 			project: types.QsdevConfig{Version: 2},
 			answers: types.WizardAnswers{BranchPattern: `^old/.+$`},
@@ -264,6 +279,19 @@ func TestProjectPolicy_Apply(t *testing.T) {
 				t.Helper()
 				if a.BranchPattern != "" {
 					t.Errorf("BranchPattern = %q, want empty (default)", a.BranchPattern)
+				}
+			},
+		},
+		{
+			name:    "removed hooks block clears a stale hook policy",
+			project: types.QsdevConfig{Version: 2},
+			answers: types.WizardAnswers{HookPolicy: types.HooksConfig{
+				FileBoundary: types.FileBoundaryConfig{ExtraReadPaths: []string{"/stale"}},
+			}},
+			check: func(t *testing.T, a types.WizardAnswers) {
+				t.Helper()
+				if got := a.HookPolicy.FileBoundary.ExtraReadPaths; len(got) != 0 {
+					t.Errorf("stale ExtraReadPaths kept: %v", got)
 				}
 			},
 		},
@@ -300,6 +328,7 @@ func TestPreserveCommittedPolicy(t *testing.T) {
 		Client:   &types.ClientConfig{Name: "acme", BlockedMCP: []string{"github"}},
 		Git:      types.GitConfig{BranchPattern: "^feat/"},
 		Tools:    types.ToolsConfig{Config: map[string]map[string]any{"semgrep": {"rules": "p/ci"}}},
+		Hooks:    types.HooksConfig{FileBoundary: types.FileBoundaryConfig{ExtraReadPaths: []string{"/opt/sdk"}}},
 	}
 	tests := []struct {
 		name      string
@@ -325,6 +354,9 @@ func TestPreserveCommittedPolicy(t *testing.T) {
 			}
 			if fresh.Git.BranchPattern != "^feat/" || fresh.Tools.Config["semgrep"]["rules"] != "p/ci" {
 				t.Errorf("git/tools.config not carried: %+v %+v", fresh.Git, fresh.Tools.Config)
+			}
+			if got := fresh.Hooks.FileBoundary.ExtraReadPaths; !slices.Equal(got, []string{"/opt/sdk"}) {
+				t.Errorf("hooks not carried: %v", got)
 			}
 		})
 	}

@@ -11,8 +11,9 @@ is the home directory and relative paths are relative to the session's cwd
 (the hook input's `cwd`). Reads (Read, Grep, Glob) may also reach dependency
 sources outside the project — the Go module cache, Cargo registry, rustup
 toolchains, Maven/Gradle caches, /nix/store and Claude Code plugins — so the
-agent can follow an LSP go-to-definition into a library. Those locations are
-never writable through this hook.
+agent can follow an LSP go-to-definition into a library, as may the
+directories .qsdev.yaml lists under hooks.file_boundary.extra_read_paths. Those
+locations are never writable through this hook.
 
 Scope: this hook sees Claude Code's file tools only. Shell commands (Bash,
 PowerShell, Monitor) can still read outside the project; use the sandbox to
@@ -25,8 +26,15 @@ Exit codes:
 Configuration via environment variables:
   FILE_BOUNDARY_SAFE_PATHS  — comma-separated paths exempt from boundary check
                               (default: /tmp)
+  FILE_BOUNDARY_EXTRA_READ_PATHS — comma-separated absolute or ~/ paths that
+                              Read, Grep and Glob may reach (read-only);
+                              generated into settings.json "env" from
+                              .qsdev.yaml hooks.file_boundary.extra_read_paths.
+                              Relative paths, the filesystem root and the home
+                              directory or an ancestor of it are ignored.
   FILE_BOUNDARY_STRICT_MODE — set to "true" to deny ALL out-of-project access
-                              including safe paths and dependency caches
+                              including safe paths, dependency caches and
+                              extra read paths
 """
 
 from __future__ import annotations
@@ -64,7 +72,8 @@ PATH_KEYS: dict[str, str] = {
     "Glob": "path",
 }
 
-# Tools that only read; they may also reach the dependency caches.
+# Tools that only read; they may also reach the dependency caches and the
+# configured extra read paths.
 READ_ONLY_TOOLS: frozenset[str] = frozenset({"Read", "Grep", "Glob"})
 
 _GLOB_CHARS = set("*?[{")
@@ -88,6 +97,28 @@ def _dependency_source_dirs() -> list[str]:
         "/nix/store",
     ]
     return [d for d in dirs if d]
+
+
+def _extra_read_paths() -> list[str]:
+    """The configured extra read-only directories. An entry that is not
+    absolute after ~ expansion, or that resolves to the filesystem root, the
+    home directory or an ancestor of it (which would lift the read boundary),
+    grants nothing."""
+    home = os.path.realpath(os.path.expanduser("~"))
+    paths = []
+    for raw in os.environ.get("FILE_BOUNDARY_EXTRA_READ_PATHS", "").split(","):
+        p = os.path.expanduser(raw.strip())
+        if not p or not os.path.isabs(p):
+            continue
+        try:
+            real = os.path.realpath(p)
+        except (OSError, ValueError):
+            continue
+        if os.path.dirname(real) == real or real == home or home.startswith(real + os.sep):
+            continue
+        paths.append(p)
+    return paths
+
 
 BLOCKED_PREFIXES: tuple[str, ...] = (
     "/proc/self/root",
@@ -138,10 +169,12 @@ def deny(reason: str, target: str, cwd: str) -> None:
 
 def is_safe_path(resolved: str, read_only: bool) -> bool:
     """Check if the resolved path falls within a configured safe path, or,
-    for a read-only tool, within a dependency source directory."""
+    for a read-only tool, within a dependency source directory or a
+    configured extra read path."""
     if STRICT_MODE:
         return False
-    for safe in SAFE_PATHS + (_dependency_source_dirs() if read_only else []):
+    read_dirs = _dependency_source_dirs() + _extra_read_paths() if read_only else []
+    for safe in SAFE_PATHS + read_dirs:
         try:
             safe_resolved = os.path.realpath(safe)
             if resolved == safe_resolved or resolved.startswith(safe_resolved + "/"):

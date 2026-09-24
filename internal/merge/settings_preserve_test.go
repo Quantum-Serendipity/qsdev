@@ -2,6 +2,7 @@ package merge
 
 import (
 	"encoding/json"
+	"reflect"
 	"slices"
 	"testing"
 )
@@ -208,6 +209,85 @@ func TestMergeSettings_SandboxAllowRespectsBase(t *testing.T) {
 			}
 			assertStringSlice(t, "network.allowedDomains", derefOr(parsed.Sandbox.Network).AllowedDomains, tt.wantNetAllow)
 			assertStringSlice(t, "filesystem.denyWrite", derefOr(parsed.Sandbox.Filesystem).DenyWrite, tt.wantWriteDeny)
+		})
+	}
+}
+
+// TestMergeSettings_Env covers the generated hook-policy variables in "env":
+// ours sets them, a stale generated one is dropped unless the user changed
+// it, and user variables survive on the update and create paths.
+func TestMergeSettings_Env(t *testing.T) {
+	t.Parallel()
+	const perms = `"permissions":{"allow":[],"deny":[]}`
+	tests := []struct {
+		name    string
+		base    string
+		theirs  string
+		ours    string
+		wantEnv map[string]any
+	}{
+		{
+			name:    "generated variable added to existing file",
+			base:    `{` + perms + `}`,
+			theirs:  `{` + perms + `,"env":{"MY_VAR":"1"}}`,
+			ours:    `{` + perms + `,"env":{"FILE_BOUNDARY_EXTRA_READ_PATHS":"/opt/sdk"}}`,
+			wantEnv: map[string]any{"MY_VAR": "1", "FILE_BOUNDARY_EXTRA_READ_PATHS": "/opt/sdk"},
+		},
+		{
+			name:    "create path adds generated variable",
+			theirs:  `{` + perms + `,"env":{"MY_VAR":"1"}}`,
+			ours:    `{` + perms + `,"env":{"FILE_BOUNDARY_EXTRA_READ_PATHS":"/opt/sdk"}}`,
+			wantEnv: map[string]any{"MY_VAR": "1", "FILE_BOUNDARY_EXTRA_READ_PATHS": "/opt/sdk"},
+		},
+		{
+			name:    "generated value replaces edited value",
+			base:    `{` + perms + `,"env":{"FILE_BOUNDARY_EXTRA_READ_PATHS":"/opt/sdk"}}`,
+			theirs:  `{` + perms + `,"env":{"FILE_BOUNDARY_EXTRA_READ_PATHS":"/"}}`,
+			ours:    `{` + perms + `,"env":{"FILE_BOUNDARY_EXTRA_READ_PATHS":"/opt/sdk,/opt/b"}}`,
+			wantEnv: map[string]any{"FILE_BOUNDARY_EXTRA_READ_PATHS": "/opt/sdk,/opt/b"},
+		},
+		{
+			name:    "stale generated variable removed",
+			base:    `{` + perms + `,"env":{"FILE_BOUNDARY_EXTRA_READ_PATHS":"/opt/sdk"}}`,
+			theirs:  `{` + perms + `,"env":{"FILE_BOUNDARY_EXTRA_READ_PATHS":"/opt/sdk"}}`,
+			ours:    `{` + perms + `}`,
+			wantEnv: nil,
+		},
+		{
+			name:    "stale variable the user changed is kept",
+			base:    `{` + perms + `,"env":{"FILE_BOUNDARY_EXTRA_READ_PATHS":"/opt/sdk"}}`,
+			theirs:  `{` + perms + `,"env":{"FILE_BOUNDARY_EXTRA_READ_PATHS":"/opt/mine"}}`,
+			ours:    `{` + perms + `}`,
+			wantEnv: map[string]any{"FILE_BOUNDARY_EXTRA_READ_PATHS": "/opt/mine"},
+		},
+		{
+			name:    "user env untouched when nothing generated",
+			base:    `{` + perms + `}`,
+			theirs:  `{` + perms + `,"env":{"MY_VAR":"1","N":2}}`,
+			ours:    `{` + perms + `}`,
+			wantEnv: map[string]any{"MY_VAR": "1", "N": float64(2)},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var base []byte
+			if tt.base != "" {
+				base = []byte(tt.base)
+			}
+			got, err := MergeSettings(base, []byte(tt.theirs), []byte(tt.ours))
+			if err != nil {
+				t.Fatalf("MergeSettings: %v", err)
+			}
+			var doc struct {
+				Env map[string]any `json:"env"`
+			}
+			if err := json.Unmarshal(got, &doc); err != nil {
+				t.Fatalf("invalid JSON: %v\n%s", err, got)
+			}
+			if !reflect.DeepEqual(doc.Env, tt.wantEnv) {
+				t.Errorf("env = %#v, want %#v\n%s", doc.Env, tt.wantEnv, got)
+			}
 		})
 	}
 }

@@ -288,6 +288,7 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 	errs = append(errs, validateMCPDisabledTools(cfg, opts)...)
 	errs = append(errs, validateCredentialVend(cfg.Security.CredentialVend)...)
 	errs = append(errs, validateProfiles(cfg, opts)...)
+	errs = append(errs, validateHooks(cfg.Hooks)...)
 
 	// git.branch_pattern is spliced into the branch-naming pre-push hook.
 	if err := validation.CheckBranchPattern(cfg.Git.BranchPattern); err != nil {
@@ -378,6 +379,22 @@ func validateProfiles(cfg *types.QsdevConfig, opts ValidateOptions) []Validation
 				Field:   "infra_profile",
 				Value:   cfg.InfraProfile,
 				Message: "unknown infrastructure profile; " + validValues(infra.Names()),
+			})
+		}
+	}
+	return errs
+}
+
+// validateHooks checks the hooks block: each file-boundary extra read path
+// must be one the hook can resolve and must not lift the read boundary.
+func validateHooks(h types.HooksConfig) []ValidationError {
+	var errs []ValidationError
+	for i, p := range h.FileBoundary.ExtraReadPaths {
+		if err := validation.CheckBoundaryReadPath(p); err != nil {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("hooks.file_boundary.extra_read_paths[%d]", i),
+				Value:   p,
+				Message: err.Error(),
 			})
 		}
 	}

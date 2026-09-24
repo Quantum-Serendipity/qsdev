@@ -34,6 +34,7 @@ type QsdevConfig struct {
 	Security       SecurityConfig   `yaml:"security,omitempty"`
 	Tools          ToolsConfig      `yaml:"tools,omitempty"`
 	ClaudeCode     ClaudeCodeConfig `yaml:"claude_code,omitempty"`
+	Hooks          HooksConfig      `yaml:"hooks,omitempty"`
 	Infrastructure InfraConfig      `yaml:"infrastructure,omitempty"`
 	Client         *ClientConfig    `yaml:"client,omitempty"`
 	Git            GitConfig        `yaml:"git,omitempty"`
@@ -156,6 +157,29 @@ type ClaudeCodeConfig struct {
 	PermissionLevel string   `yaml:"permission_level,omitempty"`
 	Skills          []string `yaml:"skills,omitempty"`
 	MCPServers      []string `yaml:"mcp_servers,omitempty"`
+}
+
+// HooksConfig holds settings for the generated Claude Code hooks in
+// .qsdev.yaml. It is team policy: only the committed file sets it, never
+// .qsdev.local.yaml.
+type HooksConfig struct {
+	FileBoundary FileBoundaryConfig `yaml:"file_boundary,omitempty"`
+}
+
+// FileBoundaryConfig configures the file-boundary hook.
+type FileBoundaryConfig struct {
+	// ExtraReadPaths are directories outside the project that the Read, Grep
+	// and Glob tools may reach, in addition to the dependency caches the hook
+	// always allows reading. Each is an absolute or ~/-relative path. They are
+	// never writable through the hook.
+	ExtraReadPaths []string `yaml:"extra_read_paths,omitempty"`
+}
+
+// Clone returns a deep copy of c.
+func (c HooksConfig) Clone() HooksConfig {
+	out := c
+	out.FileBoundary.ExtraReadPaths = slices.Clone(c.FileBoundary.ExtraReadPaths)
+	return out
 }
 
 // InfraDisabled is the InfraConfig value that switches off a component an

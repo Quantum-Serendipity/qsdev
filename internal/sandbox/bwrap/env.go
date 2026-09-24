@@ -17,6 +17,8 @@ var allowedExact = map[string]bool{
 	"NODE_PATH":          true,
 	"PYTHONPATH":         true,
 	"GOPATH":             true,
+	"GOMODCACHE":         true,
+	"GOROOT":             true,
 	"RUSTUP_HOME":        true,
 	"CARGO_HOME":         true,
 	"XDG_CACHE_HOME":     true,
@@ -27,7 +29,11 @@ var allowedExact = map[string]bool{
 }
 
 // allowedPrefixes lists name prefixes that are always permitted.
+// FILE_BOUNDARY_ carries the file-boundary hook's policy (settings.json "env"),
+// which a sandboxed hook must still receive; with GOMODCACHE and GOROOT above
+// it tells the hook which dependency sources it may let the agent read.
 var allowedPrefixes = []string{
+	"FILE_BOUNDARY_",
 	"LC_",
 	"GIT_DIR",
 	"GIT_WORK_TREE",

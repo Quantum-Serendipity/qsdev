@@ -567,3 +567,41 @@ func TestValidateQsdevConfig_BranchPattern(t *testing.T) {
 		})
 	}
 }
+
+// TestQsdevConfig_HooksFileBoundary covers parsing and validating
+// hooks.file_boundary.extra_read_paths.
+func TestQsdevConfig_HooksFileBoundary(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		paths      string
+		wantFields []string
+	}{
+		{name: "valid paths", paths: `["/opt/sdk", "~/.m2/repository"]`},
+		{
+			name:       "root, relative and dotdot rejected",
+			paths:      `["/opt/sdk", "/", "vendor", "/opt/../etc"]`,
+			wantFields: []string{"hooks.file_boundary.extra_read_paths[1]", "hooks.file_boundary.extra_read_paths[2]", "hooks.file_boundary.extra_read_paths[3]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := "version: 2\nhooks:\n  file_boundary:\n    extra_read_paths: " + tt.paths + "\n"
+			cfg, err := ParseQsdevConfigBytes([]byte(data))
+			if err != nil {
+				t.Fatalf("ParseQsdevConfigBytes: %v", err)
+			}
+			if len(cfg.Hooks.FileBoundary.ExtraReadPaths) == 0 {
+				t.Fatal("extra_read_paths not parsed")
+			}
+			var fields []string
+			for _, e := range ValidateQsdevConfig(cfg, ValidateOptions{}) {
+				fields = append(fields, e.Field)
+			}
+			if strings.Join(fields, " ") != strings.Join(tt.wantFields, " ") {
+				t.Errorf("validation error fields = %v, want %v", fields, tt.wantFields)
+			}
+		})
+	}
+}

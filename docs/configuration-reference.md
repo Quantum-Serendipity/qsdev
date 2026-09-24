@@ -92,6 +92,9 @@ claude_code:
   permission_level: standard
   skills: [deploy, review-pr, security-review-owasp]
   mcp_servers: [context7, github, socket, semble]
+hooks:
+  file_boundary:
+    extra_read_paths: [/opt/android-sdk]   # read-only; see Hook settings
 infrastructure:
   registry_proxy: https://repo.corp.internal/artifactory   # "none" opts out
   nix_cache: corp                                           # URL, or a Cachix cache name; "none" opts out
@@ -338,6 +341,42 @@ It is now read as `standard`, and `qsdev init --update` removes those files
 if they are unmodified. To keep them, add `tier: full` to `.qsdev.yaml`
 before updating.
 
+### Hook settings
+
+The `hooks:` block configures the generated Claude Code hooks. It is team
+policy: only the committed `.qsdev.yaml` sets it (`.qsdev.local.yaml`
+rejects the key), and init, join and update refresh it from there.
+
+```yaml
+hooks:
+  file_boundary:
+    extra_read_paths:
+      - /opt/android-sdk
+      - ~/.local/share/my-sdk
+```
+
+- **`file_boundary.extra_read_paths`** widens what the `file-boundary` hook
+  lets the agent *read*. The hook confines Write, Edit, MultiEdit,
+  NotebookEdit, Read, Grep and Glob to the project directory. Read, Grep
+  and Glob may also reach the dependency sources an LSP go-to-definition
+  lands in: the Go module cache (`GOMODCACHE`, else `$GOPATH/pkg/mod`),
+  `GOROOT`, the Cargo registry and git checkouts, rustup toolchains,
+  `~/.m2/repository`, `~/.gradle/caches`, `~/.claude/plugins` and
+  `/nix/store`. `extra_read_paths` adds directories to that read-only list,
+  for example an SDK installed outside those caches. Write and Edit are
+  still denied there. Each entry must be an absolute path or start with
+  `~/`. The filesystem root, the home directory or a directory containing
+  it, a path that is, contains or lies inside a credential store (`~/.ssh`,
+  `~/.aws`, `~/.config` with its `gcloud` and `helm` stores, `/etc` with
+  `/etc/shadow`, and the rest of the sandbox deny list), `..` segments,
+  commas and control characters are rejected by `qsdev check` and stop
+  init with an error. The hook itself also ignores an entry that resolves,
+  through symlinks, to the root, the home directory or an ancestor of it.
+  The paths reach the hook through the
+  `FILE_BOUNDARY_EXTRA_READ_PATHS` variable in the `env` block of
+  `.claude/settings.json`. `FILE_BOUNDARY_STRICT_MODE=true` revokes every
+  out-of-project allowance, including these paths.
+
 #### Security floor, client policy and local overrides
 
 `qsdev init` (create over an existing `.qsdev.yaml`, `--mode join`, and
@@ -389,6 +428,7 @@ client:
   | `claude_code.permission_level` | Applied only when stricter than the committed level (or, when none is committed, the tier's preset): `minimal` is stricter than `standard`, which is stricter than `permissive`. `custom` and `supply-chain-only` are not comparable, so a local override can neither switch to them nor away from them |
   | `security.level`, `security.*` | Can raise the floor, never lower it |
   | `tools.disabled`, `tools.config`, `claude_code.enabled` | Ignored: only `.qsdev.yaml` sets them |
+  | `hooks` | Not accepted: the local file fails to parse, since only `.qsdev.yaml` sets hook policy |
 
   Every ignored or raised setting is reported as a warning (for example
   `security.level: baseline raised to strict`,
@@ -410,7 +450,8 @@ block is generated with the settings it was created with, not raised to
 qsdev's built-in defaults. An unreadable `.qsdev.yaml` or `.qsdev.local.yaml`
 stops init and update with an error rather than generating without its policy.
 Re-creating a project (`qsdev init --force`) keeps the committed `client`
-block, `security` switches, `git` settings and `tools.config`, and never
+block, `security` switches, `hooks` block, `git` settings and `tools.config`,
+and never
 records a lower `security.level` than the committed one.
 
 ---
@@ -510,6 +551,9 @@ Top-level structure:
 
 ```json
 {
+  "env": {
+    "FILE_BOUNDARY_EXTRA_READ_PATHS": "/opt/android-sdk"
+  },
   "permissions": {
     "defaultMode": "default",
     "disableBypassPermissionsMode": "disable",
@@ -542,6 +586,12 @@ The permission model uses approximately **90 deny rules** and **60 ask rules**:
 - **MCP tool deny rules** deny, as whole tools, the file tools of MCP servers in the fallback (lowest) trust tier: every tool of the reference `filesystem` server and `mcp__github__create_or_update_file`. A permission rule cannot scope an MCP tool by its path argument, so a path rule such as `Read(./.env)` cannot be carried over to `mcp__filesystem__read_file`; the tool is denied outright instead. Servers are scored from their generated `.mcp.json` definition and the known-server database, and a server qsdev does not configure scores into the fallback tier. Manual overrides in `~/.qsdev/trust.yaml` apply only to the enforce hook, not to the committed `settings.json`. Tools of higher-tier servers stay available and are path-checked by the confused-deputy PreToolUse hook. See [MCP trust scoring](security-architecture.md#layer-13-package-and-mcp-risk-scoring).
 
 The three-way merge during updates preserves any custom allow/deny rules you have added while incorporating new rules from template upgrades.
+
+`env` holds variables qsdev generates to configure its hooks
+(`FILE_BOUNDARY_EXTRA_READ_PATHS`, from `hooks.file_boundary.extra_read_paths`)
+alongside any you add. A regeneration sets the generated variables to the
+committed policy's values, removes one the policy no longer produces unless
+you changed it, and keeps your own variables.
 
 #### Permission Presets
 

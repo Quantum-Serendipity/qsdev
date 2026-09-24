@@ -81,6 +81,8 @@ func TestParseLocalConfig_StrictKeys(t *testing.T) {
 		{"misspelled nested key", "tools:\n  disable: [semgrep]\n", true},
 		{"misspelled top-level key", "tools:\n  disabled: [semgrep]\nsecurty:\n  level: baseline\n", true},
 		{"valid keys", "tools:\n  disabled: [semgrep]\n", false},
+		// Hook settings are team policy: a local file cannot widen them.
+		{"hooks block", "hooks:\n  file_boundary:\n    extra_read_paths: [/]\n", true},
 		{"empty file", "", false},
 		{"comments only", "# extra_packages:\n#   - neovim\n", false},
 	}

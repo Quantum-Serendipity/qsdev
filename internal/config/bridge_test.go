@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
@@ -233,5 +234,26 @@ func TestBranchPattern_RoundTrip(t *testing.T) {
 				t.Errorf("AnswersToConfig git.branch_pattern = %q, want %q", got, pattern)
 			}
 		})
+	}
+}
+
+// TestConfigToAnswers_HookPolicyRoundTrip covers the hooks block surviving
+// join (ConfigToAnswers) and re-creation (AnswersToConfig) as a copy.
+func TestConfigToAnswers_HookPolicyRoundTrip(t *testing.T) {
+	t.Parallel()
+	cfg := &types.QsdevConfig{Hooks: types.HooksConfig{
+		FileBoundary: types.FileBoundaryConfig{ExtraReadPaths: []string{"/opt/sdk", "~/.m2/repository"}},
+	}}
+	answers := ConfigToAnswers(cfg, types.DetectedProject{}, "/tmp/myproject")
+	if !slices.Equal(answers.HookPolicy.FileBoundary.ExtraReadPaths, cfg.Hooks.FileBoundary.ExtraReadPaths) {
+		t.Fatalf("HookPolicy = %+v, want %+v", answers.HookPolicy, cfg.Hooks)
+	}
+	answers.HookPolicy.FileBoundary.ExtraReadPaths[0] = "/changed"
+	if cfg.Hooks.FileBoundary.ExtraReadPaths[0] != "/opt/sdk" {
+		t.Error("ConfigToAnswers aliased the config's extra_read_paths")
+	}
+	back := AnswersToConfig(ConfigToAnswers(cfg, types.DetectedProject{}, "/tmp/myproject"), "")
+	if !slices.Equal(back.Hooks.FileBoundary.ExtraReadPaths, cfg.Hooks.FileBoundary.ExtraReadPaths) {
+		t.Errorf("AnswersToConfig hooks = %+v, want %+v", back.Hooks, cfg.Hooks)
 	}
 }

@@ -3,10 +3,13 @@ package merge
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"reflect"
 )
 
 // settingsJSON mirrors the claudecode.SettingsJSON structure.
 type settingsJSON struct {
+	Env         map[string]any           `json:"env,omitempty"`
 	Permissions permissions              `json:"permissions"`
 	Sandbox     *sandboxConfig           `json:"sandbox,omitempty"`
 	Hooks       map[string][]hookMatcher `json:"hooks,omitempty"`
@@ -139,6 +142,9 @@ func MergeSettings(base, theirs, ours []byte) ([]byte, error) {
 	// Sandbox merge.
 	result.Sandbox = mergeSandbox(baseParsed.Sandbox, theirsParsed.Sandbox, oursParsed.Sandbox)
 
+	// Env merge.
+	result.Env = mergeEnv(baseParsed.Env, theirsParsed.Env, oursParsed.Env)
+
 	// Marshal the typed result.
 	typedBytes, err := json.Marshal(result)
 	if err != nil {
@@ -184,9 +190,12 @@ func MergeSettings(base, theirs, ours []byte) ([]byte, error) {
 		merged["sandbox"] = sandboxMerged
 	}
 
-	// Remove hooks when the merged result has none.
+	// Remove hooks and env when the merged result has none.
 	if result.Hooks == nil {
 		delete(merged, "hooks")
+	}
+	if result.Env == nil {
+		delete(merged, "env")
 	}
 
 	out, err := json.Marshal(merged)
@@ -217,6 +226,27 @@ func deepMergeObject(key string, theirsRaw, typedRaw json.RawMessage) (json.RawM
 		return nil, fmt.Errorf("marshaling merged %s: %w", key, err)
 	}
 	return out, nil
+}
+
+// mergeEnv three-way merges the "env" object. qsdev generates only the
+// variables that configure its hooks from the committed policy, so a variable
+// ours sets takes ours' value, and a variable qsdev generated before (in base)
+// but no longer sets is removed unless the user changed it. Every other
+// variable the user has is kept. It returns nil when no variable remains.
+func mergeEnv(base, theirs, ours map[string]any) map[string]any {
+	out := make(map[string]any, len(theirs)+len(ours))
+	for k, v := range theirs {
+		_, stillGenerated := ours[k]
+		if bv, generated := base[k]; generated && !stillGenerated && reflect.DeepEqual(bv, v) {
+			continue
+		}
+		out[k] = v
+	}
+	maps.Copy(out, ours)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // mergeHooks performs a three-way merge of hook maps. Generated matchers and

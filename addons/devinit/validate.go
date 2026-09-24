@@ -60,6 +60,13 @@ func ValidateAnswers(answers types.WizardAnswers) error {
 		}
 	}
 
+	// File-boundary extra read paths widen what the agent may read.
+	for _, p := range answers.HookPolicy.FileBoundary.ExtraReadPaths {
+		if err := validation.CheckBoundaryReadPath(p); err != nil {
+			errs = append(errs, fmt.Sprintf("invalid hooks.file_boundary.extra_read_paths entry %q: %v", p, err))
+		}
+	}
+
 	if len(errs) == 0 {
 		return nil
 	}

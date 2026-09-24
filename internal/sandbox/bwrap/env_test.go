@@ -65,6 +65,17 @@ func TestFilterEnvironment(t *testing.T) {
 			denyKeys: []string{"RANDOM_VAR", "FOO_BAR"},
 		},
 		{
+			name: "preserves hook policy and dependency-cache variables",
+			env: map[string]string{
+				"FILE_BOUNDARY_EXTRA_READ_PATHS": "/opt/sdk",
+				"FILE_BOUNDARY_STRICT_MODE":      "true",
+				"GOMODCACHE":                     "/home/user/go/pkg/mod",
+				"GOROOT":                         "/nix/store/x-go/share/go",
+			},
+			category: sandbox.CategoryLinter,
+			wantKeys: []string{"FILE_BOUNDARY_EXTRA_READ_PATHS", "FILE_BOUNDARY_STRICT_MODE", "GOMODCACHE", "GOROOT"},
+		},
+		{
 			name:     "empty env returns empty map",
 			env:      map[string]string{},
 			category: sandbox.CategoryLinter,

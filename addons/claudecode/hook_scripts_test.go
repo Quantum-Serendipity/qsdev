@@ -366,6 +366,7 @@ func TestFileBoundaryHook(t *testing.T) {
 	env := []string{
 		"CLAUDE_PROJECT_DIR=" + project, "HOME=" + home,
 		"FILE_BOUNDARY_SAFE_PATHS=/tmp/qsdev-safe-path-test",
+		"FILE_BOUNDARY_EXTRA_READ_PATHS=", "FILE_BOUNDARY_STRICT_MODE=",
 		"GOPATH=", "GOMODCACHE=", "GOROOT=", "CARGO_HOME=", "RUSTUP_HOME=",
 	}
 	inside := filepath.Join(project, "src", "a.txt")
@@ -416,6 +417,71 @@ func TestFileBoundaryHook(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			payload := map[string]any{"tool_name": tc.tool, "tool_input": tc.input}
+			if got := runHookScript(t, "file-boundary.py", payload, env...); got != tc.want {
+				t.Errorf("decision = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFileBoundaryHook_ExtraReadPaths covers .qsdev.yaml
+// hooks.file_boundary.extra_read_paths, which settings.json "env" hands the
+// hook: Read, Grep and Glob may reach them, Write and Edit never, strict mode
+// revokes them, and entries that would lift the boundary grant nothing.
+func TestFileBoundaryHook_ExtraReadPaths(t *testing.T) {
+	t.Parallel()
+	project := t.TempDir()
+	home := t.TempDir()
+	sdk := filepath.Join(t.TempDir(), "sdk")
+	homeSDK := filepath.Join(home, "sdks", "android")
+	base := []string{
+		"CLAUDE_PROJECT_DIR=" + project, "HOME=" + home,
+		"FILE_BOUNDARY_SAFE_PATHS=/tmp/qsdev-safe-path-test", "FILE_BOUNDARY_STRICT_MODE=",
+		"GOPATH=", "GOMODCACHE=", "GOROOT=", "CARGO_HOME=", "RUSTUP_HOME=",
+	}
+	extra := []string{"FILE_BOUNDARY_EXTRA_READ_PATHS=" + sdk + ", ~/sdks/android"}
+	only := func(v string) []string { return []string{"FILE_BOUNDARY_EXTRA_READ_PATHS=" + v} }
+	outside := "/etc/qsdev-file-boundary-test"
+	homeLink := filepath.Join(t.TempDir(), "home-link")
+	if err := os.Symlink(home, homeLink); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	relTarget, err := filepath.Abs(filepath.Join("templates", "hooks", "file-boundary.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name  string
+		env   []string
+		tool  string
+		input map[string]any
+		want  string
+	}{
+		{"read extra path", extra, "Read", map[string]any{"file_path": filepath.Join(sdk, "src", "lib.h")}, "allow"},
+		{"read home-relative extra path", extra, "Read", map[string]any{"file_path": filepath.Join(homeSDK, "a.java")}, "allow"},
+		{"grep extra path", extra, "Grep", map[string]any{"pattern": "x", "path": sdk}, "allow"},
+		{"glob extra path", extra, "Glob", map[string]any{"pattern": sdk + "/**/*.h"}, "allow"},
+		{"write extra path", extra, "Write", map[string]any{"file_path": filepath.Join(sdk, "x.h")}, "deny"},
+		{"edit extra path", extra, "Edit", map[string]any{"file_path": filepath.Join(homeSDK, "a.java")}, "deny"},
+		{"sibling of extra path", extra, "Read", map[string]any{"file_path": sdk + "-other/x"}, "deny"},
+		{"traversal out of extra path", extra, "Read", map[string]any{"file_path": filepath.Join(sdk, "..", "..", "etc")}, "deny"},
+		{"other outside path", extra, "Read", map[string]any{"file_path": outside}, "deny"},
+		{"not configured", only(""), "Read", map[string]any{"file_path": filepath.Join(sdk, "x.h")}, "deny"},
+		{"strict mode", append(slices.Clone(extra), "FILE_BOUNDARY_STRICT_MODE=true"), "Read", map[string]any{"file_path": filepath.Join(sdk, "x.h")}, "deny"},
+		{"root ignored", only("/"), "Read", map[string]any{"file_path": outside}, "deny"},
+		{"home ignored", only("~"), "Read", map[string]any{"file_path": filepath.Join(home, ".ssh", "id_ed25519")}, "deny"},
+		{"home ancestor ignored", only(filepath.Dir(home)), "Read", map[string]any{"file_path": filepath.Join(home, ".ssh", "id_ed25519")}, "deny"},
+		{"symlink to home ignored", only(homeLink), "Read", map[string]any{"file_path": filepath.Join(homeLink, ".ssh", "id_ed25519")}, "deny"},
+		// The hook runs in this package's directory, so "templates" would
+		// cover the target if a relative entry were resolved against it.
+		{"relative ignored", only("templates"), "Read", map[string]any{"file_path": relTarget}, "deny"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := append(slices.Clone(base), tc.env...)
 			payload := map[string]any{"tool_name": tc.tool, "tool_input": tc.input}
 			if got := runHookScript(t, "file-boundary.py", payload, env...); got != tc.want {
 				t.Errorf("decision = %q, want %q", got, tc.want)

@@ -9,6 +9,7 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/merge"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/trust"
 	"github.com/Quantum-Serendipity/qsdev/internal/sliceutil"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/ecosystem"
 	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
@@ -17,10 +18,18 @@ import (
 
 // SettingsJSON is the top-level structure that marshals to .claude/settings.json.
 type SettingsJSON struct {
+	// Env holds the environment Claude Code sets for the session and the
+	// hooks it runs; qsdev uses it to hand hooks their configured policy.
+	Env         map[string]string        `json:"env,omitempty"`
 	Permissions Permissions              `json:"permissions"`
 	Sandbox     *SandboxConfig           `json:"sandbox,omitempty"`
 	Hooks       map[string][]HookMatcher `json:"hooks,omitempty"`
 }
+
+// FileBoundaryExtraReadPathsEnv is the variable through which the
+// file-boundary hook receives .qsdev.yaml hooks.file_boundary.extra_read_paths,
+// comma-separated.
+const FileBoundaryExtraReadPathsEnv = "FILE_BOUNDARY_EXTRA_READ_PATHS"
 
 // Permissions defines the permission rules for Claude Code.
 type Permissions struct {
@@ -289,6 +298,25 @@ func buildSandbox(cfg Config, answers types.WizardAnswers, registry *ecosystem.R
 	return sandbox
 }
 
+// buildHookEnv returns the settings.json env entries that configure the
+// enabled hooks from the committed hook policy, or nil when there are none.
+// A path that fails validation is an error rather than being dropped, so a
+// bad policy is reported instead of silently narrowing or widening access.
+func buildHookEnv(answers types.WizardAnswers) (map[string]string, error) {
+	paths := answers.HookPolicy.FileBoundary.ExtraReadPaths
+	if !answers.Hooks.FileBoundary || len(paths) == 0 {
+		return nil, nil
+	}
+	for _, p := range paths {
+		if err := validation.CheckBoundaryReadPath(p); err != nil {
+			return nil, fmt.Errorf("hooks.file_boundary.extra_read_paths entry %q: %w", p, err)
+		}
+	}
+	return map[string]string{
+		FileBoundaryExtraReadPathsEnv: strings.Join(sliceutil.Dedup(paths), ","),
+	}, nil
+}
+
 // buildHooks returns the hooks map based on enabled hook presets.
 // It delegates to the default HookRegistry which evaluates each registered
 // hook's EnabledFunc against the provided answers. When sandbox is enabled,
@@ -365,7 +393,13 @@ func GenerateSettings(answers types.WizardAnswers, registry *ecosystem.Registry,
 	}
 	perms.Deny = sliceutil.Dedup(append(perms.Deny, mcpDeny...))
 
+	env, err := buildHookEnv(answers)
+	if err != nil {
+		return nil, fmt.Errorf("building hook environment: %w", err)
+	}
+
 	settings := SettingsJSON{
+		Env:         env,
 		Permissions: perms,
 		Sandbox:     buildSandbox(cfg, answers, registry),
 		Hooks:       buildHooks(answers),

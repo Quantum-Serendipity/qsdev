@@ -143,6 +143,8 @@ func deepMerge(base, overlay *types.QsdevConfig) *types.QsdevConfig {
 
 	// MCP.DisabledTools: union, so an MCP tool denied at any layer stays denied.
 	result.MCP.DisabledTools = mergeUnionStrings(base.MCP.DisabledTools, overlay.MCP.DisabledTools)
+	// Hooks.FileBoundary.ExtraReadPaths: union.
+	result.Hooks.FileBoundary.ExtraReadPaths = mergeUnionStrings(base.Hooks.FileBoundary.ExtraReadPaths, overlay.Hooks.FileBoundary.ExtraReadPaths)
 
 	// Infrastructure: last-wins scalars, map merge for overrides.
 	if overlay.Infrastructure.RegistryProxy != "" {
@@ -355,6 +357,7 @@ func cloneQsdevConfig(cfg *types.QsdevConfig) *types.QsdevConfig {
 			BuildCache:        cfg.Infrastructure.BuildCache,
 			BuildCacheURL:     cfg.Infrastructure.BuildCacheURL,
 		},
+		Hooks:    cfg.Hooks.Clone(),
 		Git:      cfg.Git,
 		Packages: slices.Clone(cfg.Packages),
 		Overlays: slices.Clone(cfg.Overlays),

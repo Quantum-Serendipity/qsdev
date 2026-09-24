@@ -79,6 +79,7 @@ func ConfigToAnswers(cfg *types.QsdevConfig, detected types.DetectedProject, pro
 
 	answers.Infrastructure = cloneInfra(cfg.Infrastructure)
 	answers.BranchPattern = cfg.Git.BranchPattern
+	answers.HookPolicy = cfg.Hooks.Clone()
 
 	return answers
 }

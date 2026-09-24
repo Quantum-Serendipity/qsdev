@@ -1299,3 +1299,49 @@ func TestGenerateSettings_MCPToolDenyProjection(t *testing.T) {
 		})
 	}
 }
+
+// TestGenerateSettings_FileBoundaryExtraReadPaths covers handing .qsdev.yaml
+// hooks.file_boundary.extra_read_paths to the file-boundary hook through
+// settings.json "env".
+func TestGenerateSettings_FileBoundaryExtraReadPaths(t *testing.T) {
+	t.Parallel()
+	policy := func(paths ...string) types.HooksConfig {
+		return types.HooksConfig{FileBoundary: types.FileBoundaryConfig{ExtraReadPaths: paths}}
+	}
+	tests := []struct {
+		name     string
+		boundary bool
+		policy   types.HooksConfig
+		wantEnv  map[string]string
+		wantErr  string
+	}{
+		{
+			name: "paths configured", boundary: true, policy: policy("/opt/sdk", "~/.m2/repository", "/opt/sdk"),
+			wantEnv: map[string]string{claudecode.FileBoundaryExtraReadPathsEnv: "/opt/sdk,~/.m2/repository"},
+		},
+		{name: "hook disabled", boundary: false, policy: policy("/opt/sdk")},
+		{name: "no paths", boundary: true},
+		{name: "root rejected", boundary: true, policy: policy("/"), wantErr: "extra_read_paths"},
+		{name: "comma rejected", boundary: true, policy: policy("/opt/a,/etc"), wantErr: "comma"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{
+				Hooks:      types.HookChoices{FileBoundary: tt.boundary},
+				HookPolicy: tt.policy,
+			}
+			if tt.wantErr != "" {
+				_, err := claudecode.GenerateSettings(answers, nil, claudecode.NewConfig())
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("GenerateSettings error = %v, want one containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			settings := mustUnmarshalSettings(t, mustGenerateSettings(t, answers, nil))
+			if !reflect.DeepEqual(settings.Env, tt.wantEnv) {
+				t.Errorf("env = %#v, want %#v", settings.Env, tt.wantEnv)
+			}
+		})
+	}
+}

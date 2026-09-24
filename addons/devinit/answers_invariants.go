@@ -44,5 +44,6 @@ func cloneAnswers(a types.WizardAnswers) types.WizardAnswers {
 	c.MCPServers = slices.Clone(a.MCPServers)
 	c.EnabledTools = maps.Clone(a.EnabledTools)
 	c.Overlays = slices.Clone(a.Overlays)
+	c.HookPolicy = a.HookPolicy.Clone()
 	return c
 }

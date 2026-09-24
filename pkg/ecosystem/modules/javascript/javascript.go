@@ -3,6 +3,7 @@ package javascript
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -36,24 +37,35 @@ func (m *Module) DisplayName() string { return "JavaScript/TypeScript" }
 func (m *Module) Tier() int { return 1 }
 
 // Detect scans projectRoot for JavaScript/TypeScript indicators.
-// It checks for package.json (Certain confidence), determines the package
-// manager from the package.json pin or lockfiles, reads Node.js version from
-// .nvmrc or package.json engines, and checks for TypeScript via tsconfig.json.
+// It checks for package.json (Certain confidence) in the project root or,
+// failing that, in a subproject directory such as frontend/ (recorded as the
+// ExtraDirectory extra), determines the package manager from the package.json
+// pin or lockfiles, reads Node.js version from .nvmrc or package.json engines,
+// and checks for TypeScript via tsconfig.json.
 func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
-	pkgJSONPath := filepath.Join(projectRoot, "package.json")
-	if !fileutil.FileExists(pkgJSONPath) {
+	dir, others := findProjectDir(projectRoot)
+	if dir == "" {
 		return ecosystem.DetectionAbsent()
 	}
-	pkg, _ := readPackageJSON(pkgJSONPath)
-
+	extras := make(map[string]string)
 	evidence := []string{"package.json found"}
+	if dir != "." {
+		extras[ecosystem.ExtraDirectory] = dir
+		evidence = []string{fmt.Sprintf("package.json found in %s/ (no package.json in the project root)", dir)}
+	}
+	if len(others) > 0 {
+		evidence = append(evidence, fmt.Sprintf("WARNING: other JavaScript projects are not configured (devenv supports one JavaScript project directory): %s/", strings.Join(others, "/, ")))
+	}
+	// Every other file is read from the JavaScript project directory.
+	jsRoot := filepath.Join(projectRoot, filepath.FromSlash(dir))
+	pkg, _ := readPackageJSON(filepath.Join(jsRoot, "package.json"))
 
-	pm := detectPackageManager(projectRoot, pkg)
+	pm := detectPackageManager(jsRoot, pkg)
 	evidence = append(evidence, fmt.Sprintf("package manager: %s", pm))
 
 	// Determine Node.js version: .nvmrc takes priority over engines.node.
 	version := ""
-	nvmrcPath := filepath.Join(projectRoot, ".nvmrc")
+	nvmrcPath := filepath.Join(jsRoot, ".nvmrc")
 	if fileutil.FileExists(nvmrcPath) {
 		version = strings.TrimPrefix(fileutil.ReadFirstLine(nvmrcPath), "v")
 		if version != "" {
@@ -70,13 +82,12 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 		evidence = append(evidence, "WARNING: "+note)
 	}
 
-	extras := make(map[string]string)
-	tsconfigPath := filepath.Join(projectRoot, "tsconfig.json")
+	tsconfigPath := filepath.Join(jsRoot, "tsconfig.json")
 	if fileutil.FileExists(tsconfigPath) {
 		extras["typescript"] = "true"
 		evidence = append(evidence, "tsconfig.json found")
 	}
-	if pm == "yarn" && isYarnClassic(projectRoot, pkg) {
+	if pm == "yarn" && isYarnClassic(jsRoot, pkg) {
 		extras[ExtraYarnClassic] = "true"
 		evidence = append(evidence, "Yarn Classic (v1) project")
 	}
@@ -88,11 +99,11 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 			}
 		}
 	}
-	if src := detectJSTool(projectRoot, pkg, "eslint", eslintConfigFiles, pkg.ESLintConfig); src != "" {
+	if src := detectJSTool(jsRoot, pkg, "eslint", eslintConfigFiles, pkg.ESLintConfig); src != "" {
 		extras[ExtraESLint] = src
 		evidence = append(evidence, "eslint configured")
 	}
-	if src := detectJSTool(projectRoot, pkg, "prettier", prettierConfigFiles, pkg.Prettier); src != "" {
+	if src := detectJSTool(jsRoot, pkg, "prettier", prettierConfigFiles, pkg.Prettier); src != "" {
 		extras[ExtraPrettier] = src
 		evidence = append(evidence, "prettier configured")
 	}
@@ -112,25 +123,82 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 // packageManagers lists the package managers the module supports.
 var packageManagers = []string{"npm", "pnpm", "yarn", "bun"}
 
+// lockfilePackageManagers maps each package manager lockfile to its package
+// manager, in the priority order detectPackageManager applies.
+var lockfilePackageManagers = []struct{ lockfile, pm string }{
+	{"pnpm-lock.yaml", "pnpm"},
+	{"yarn.lock", "yarn"},
+	{"bun.lock", "bun"},
+	{"bun.lockb", "bun"},
+	{"package-lock.json", "npm"},
+	{"npm-shrinkwrap.json", "npm"},
+}
+
 // detectPackageManager determines the package manager. A package.json pin
 // ("packageManager", then devEngines.packageManager) is authoritative, since
 // Corepack and the package managers themselves enforce it; otherwise the
 // lockfile decides, in priority order pnpm-lock.yaml > yarn.lock >
 // bun.lock/bun.lockb > package-lock.json > npm (default).
-func detectPackageManager(projectRoot string, pkg packageJSON) string {
+func detectPackageManager(jsRoot string, pkg packageJSON) string {
 	if name, _ := pkg.packageManagerPin(); slices.Contains(packageManagers, name) {
 		return name
 	}
-	if fileutil.FileExists(filepath.Join(projectRoot, "pnpm-lock.yaml")) {
-		return "pnpm"
-	}
-	if fileutil.FileExists(filepath.Join(projectRoot, "yarn.lock")) {
-		return "yarn"
-	}
-	if fileutil.FileExists(filepath.Join(projectRoot, "bun.lock")) || fileutil.FileExists(filepath.Join(projectRoot, "bun.lockb")) {
-		return "bun"
+	for _, l := range lockfilePackageManagers {
+		if fileutil.FileExists(filepath.Join(jsRoot, l.lockfile)) {
+			return l.pm
+		}
 	}
 	return "npm"
+}
+
+// hasLockfile reports whether dir holds any package manager lockfile.
+func hasLockfile(dir string) bool {
+	return slices.ContainsFunc(lockfilePackageManagers, func(l struct{ lockfile, pm string }) bool {
+		return fileutil.FileExists(filepath.Join(dir, l.lockfile))
+	})
+}
+
+// findProjectDir returns the JavaScript project directory, relative to
+// projectRoot in slash form: "." when package.json is in the project root, or
+// else the subproject directory (frontend/, web/, ...) holding one within
+// ecosystem.ProjectScanDepth levels, or "" when there is none. devenv
+// configures a single JavaScript project directory, so when several
+// subprojects exist the one with a lockfile wins, then the shallowest, then
+// the first by name; the other subprojects are returned as others.
+// Directories nested inside another candidate are its workspace members, not
+// separate projects, and are left out of others.
+func findProjectDir(projectRoot string) (dir string, others []string) {
+	if fileutil.FileExists(filepath.Join(projectRoot, "package.json")) {
+		return ".", nil
+	}
+	candidates := ecosystem.ShellSafeDirs(ecosystem.ProjectDirsWith(projectRoot, func(name string) bool {
+		return name == "package.json"
+	}))
+	if len(candidates) == 0 {
+		return "", nil
+	}
+	locked := func(d string) bool { return hasLockfile(filepath.Join(projectRoot, filepath.FromSlash(d))) }
+	slices.SortStableFunc(candidates, func(a, b string) int {
+		if la, lb := locked(a), locked(b); la != lb {
+			if la {
+				return -1
+			}
+			return 1
+		}
+		if da, db := strings.Count(a, "/"), strings.Count(b, "/"); da != db {
+			return da - db
+		}
+		return strings.Compare(a, b)
+	})
+	dir = candidates[0]
+	for _, c := range candidates[1:] {
+		nested := slices.ContainsFunc(candidates, func(parent string) bool { return strings.HasPrefix(c, parent+"/") })
+		if !nested {
+			others = append(others, c)
+		}
+	}
+	slices.Sort(others)
+	return dir, others
 }
 
 // DevenvNixFragment returns the Nix code fragment to include in devenv.nix
@@ -151,6 +219,11 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 		fmt.Fprintf(&b, "    package = %s;\n", nodeSlimNixPackage(major))
 	} else {
 		fmt.Fprintf(&b, "    package = %s;\n", nodeNixPackage(major))
+	}
+	if dir := config.Directory(); dir != "" {
+		// An absolute path: devenv also puts <directory>/node_modules/.bin on
+		// PATH, which must not depend on the shell's working directory.
+		fmt.Fprintf(&b, "    directory = \"${config.devenv.root}/%s\";\n", dir)
 	}
 
 	// Package manager specific configuration.
@@ -220,7 +293,8 @@ var prettierTypes = []string{"javascript", "jsx", "ts", "tsx", "css", "scss", "l
 // them onto other projects fails every commit, since eslint without a config
 // exits with an error and prettier reformats files the project never
 // formatted. When the project depends on a tool, the hook runs the project's
-// own copy so its version and plugins match.
+// own copy so its version and plugins match. A project in a subdirectory
+// (frontend/) gets hooks that run there instead; see subprojectHook.
 func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookConfig {
 	var hooks []ecosystem.HookConfig
 	if src := config.Extra(ExtraPrettier, ""); src != "" {
@@ -236,6 +310,10 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 			BuiltIn:       true,
 			Settings:      nodeModulesBinPath(src, "prettier", nil),
 		})
+		if dir := config.Directory(); dir != "" {
+			// git-hooks.nix's defaults: --ignore-unknown --list-different --write.
+			hooks[len(hooks)-1] = subprojectHook(hooks[len(hooks)-1], dir, src, "", "--ignore-unknown --list-different --write")
+		}
 	}
 	if src := config.Extra(ExtraESLint, ""); src != "" {
 		hooks = append(hooks, ecosystem.HookConfig{
@@ -249,6 +327,9 @@ func (m *Module) PreCommitHooks(config ecosystem.ModuleConfig) []ecosystem.HookC
 			BuiltIn:       true,
 			Settings:      nodeModulesBinPath(src, "eslint", map[string]string{"extensions": jsLintExtensions}),
 		})
+		if dir := config.Directory(); dir != "" {
+			hooks[len(hooks)-1] = subprojectHook(hooks[len(hooks)-1], dir, src, ".*"+jsLintExtensions, "--fix")
+		}
 	}
 	return hooks
 }
@@ -265,6 +346,43 @@ func nodeModulesBinPath(src, bin string, settings map[string]string) map[string]
 	}
 	settings["binPath"] = "./node_modules/.bin/" + bin
 	return settings
+}
+
+// subprojectHookScript runs a tool from the JavaScript project directory
+// (%[1]s) on the staged files there, which pre-commit passes relative to the
+// repository root. Running from that directory is what makes the tool find
+// its configuration: ESLint 9 looks for eslint.config.* in the working
+// directory only, and prettier reads .prettierignore from it.
+const subprojectHookScript = `cd %[1]s || exit 1
+files=()
+for f in "$@"; do
+  files+=("${f#%[1]s/}")
+done
+exec %[2]s %[3]s "${files[@]}"`
+
+// subprojectHook turns a git-hooks.nix built-in hook into a script hook for a
+// JavaScript project in the subdirectory dir. The built-in hooks cannot
+// change directory, and the project's tool and configuration live in dir,
+// so they would lint every JavaScript file in the repository with the wrong
+// (or no) configuration. The hook keeps the built-in's ID, so it replaces
+// that definition, and runs only on files under dir whose path, relative to
+// dir, matches pathPattern (any file when empty). src says where the tool
+// comes from, as for nodeModulesBinPath: the project's node_modules, or the
+// nixpkgs build otherwise.
+func subprojectHook(hook ecosystem.HookConfig, dir, src, pathPattern, args string) ecosystem.HookConfig {
+	bin := hook.ID
+	hook.NixPackage = hook.ID
+	if src == toolFromNodeModules {
+		bin = "./node_modules/.bin/" + hook.ID
+		hook.NixPackage = ""
+	}
+	hook.Entry = bin + " " + args
+	hook.Script = fmt.Sprintf(subprojectHookScript, dir, bin, args)
+	hook.Language = "system"
+	hook.Files = "^" + regexp.QuoteMeta(dir) + "/" + pathPattern
+	hook.BuiltIn = false
+	hook.Settings = nil
+	return hook
 }
 
 // remotePackageExecDenyRules block every package manager's "download and run
@@ -307,10 +425,11 @@ func (m *Module) DenyRules(_ ecosystem.ModuleConfig) []string {
 }
 
 // CICommands returns CI pipeline commands for the JavaScript/TypeScript ecosystem.
-// The frozen install command depends on the detected package manager. npm
-// projects also get an `npm audit` scan step: the generated .npmrc's
-// audit-level only sets `npm audit`'s exit code (`npm ci` and `npm install`
-// never fail on audit results), so without this step nothing gates on it.
+// The frozen install command depends on the detected package manager and runs
+// in the JavaScript project directory. npm projects also get an `npm audit`
+// scan step: the generated .npmrc's audit-level only sets `npm audit`'s exit
+// code (`npm ci` and `npm install` never fail on audit results), so without
+// this step nothing gates on it.
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
 	pm := config.PM("npm")
 
@@ -337,7 +456,7 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 	cmds := []ecosystem.CICommand{
 		{
 			Name:        fmt.Sprintf("%s-install", pm),
-			Command:     installCmd,
+			Command:     config.InDirectoryCommand(installCmd),
 			Description: fmt.Sprintf("Install dependencies using %s with frozen lockfile", pm),
 			Phase:       ecosystem.CIPhaseInstall,
 		},
@@ -345,7 +464,7 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 	if pm == "npm" {
 		cmds = append(cmds, ecosystem.CICommand{
 			Name:        "npm-audit",
-			Command:     "npm audit --audit-level=" + npmAuditLevel,
+			Command:     config.InDirectoryCommand("npm audit --audit-level=" + npmAuditLevel),
 			Description: fmt.Sprintf("Fail on known %s-or-higher severity vulnerabilities in dependencies", npmAuditLevel),
 			Phase:       ecosystem.CIPhaseScan,
 		})
@@ -413,7 +532,8 @@ func (m *Module) WizardFields() []ecosystem.WizardField {
 	}
 }
 
-// VerificationCommands returns project verification commands for the JavaScript/TypeScript ecosystem.
+// VerificationCommands returns project verification commands for the
+// JavaScript/TypeScript ecosystem, run in the JavaScript project directory.
 func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.VerificationCommands {
 	pm := config.PM("npm")
 	vc := ecosystem.VerificationCommands{
@@ -425,10 +545,16 @@ func (m *Module) VerificationCommands(config ecosystem.ModuleConfig) ecosystem.V
 	if pm == "bun" {
 		vc.Test = []string{"bun run test"}
 	}
+	for _, cmds := range [][]string{vc.Build, vc.Test, vc.Lint, vc.Format} {
+		for i, cmd := range cmds {
+			cmds[i] = config.InDirectoryCommand(cmd)
+		}
+	}
 	return vc
 }
 
-// ManifestFiles returns manifest file metadata for the JavaScript/TypeScript ecosystem.
+// ManifestFiles returns manifest file metadata for the JavaScript/TypeScript
+// ecosystem, as paths in the JavaScript project directory.
 func (m *Module) ManifestFiles(config ecosystem.ModuleConfig) []ecosystem.ManifestFileInfo {
 	pm := config.PM("npm")
 	info := ecosystem.ManifestFileInfo{
@@ -449,6 +575,8 @@ func (m *Module) ManifestFiles(config ecosystem.ModuleConfig) []ecosystem.Manife
 	default:
 		info.LockFile = "package-lock.json"
 	}
+	info.Path = config.InDirectory(info.Path)
+	info.LockFile = config.InDirectory(info.LockFile)
 	return []ecosystem.ManifestFileInfo{info}
 }
 

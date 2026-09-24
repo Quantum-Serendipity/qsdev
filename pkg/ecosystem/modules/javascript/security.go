@@ -60,27 +60,39 @@ const bunMinimumReleaseAgeSeconds = 7 * 24 * 60 * 60
 // detected (or user-selected) package manager. Only one PM-specific config
 // is generated per invocation.
 //
+// The files are written to the JavaScript project directory (a subproject
+// such as frontend/ when that is where package.json lives), where the package
+// manager reads them.
+//
 // Every file returned here is a conventional, often user-maintained package
 // manager config (a pnpm monorepo's workspace list, scoped registries and
 // auth in .npmrc, yarnPath/plugins in .yarnrc.yml). They therefore use the
 // Skip strategy: an existing file is never replaced on first generation.
 func (m *Module) SecurityConfigs(config ecosystem.ModuleConfig) []types.GeneratedFile {
+	gf := securityConfig(config)
+	gf.Path = config.InDirectory(gf.Path)
+	return []types.GeneratedFile{gf}
+}
+
+// securityConfig returns the hardening file for the configured package
+// manager, with a path relative to the JavaScript project directory.
+func securityConfig(config ecosystem.ModuleConfig) types.GeneratedFile {
 	pm := config.PM("npm")
 
 	switch pm {
 	case "npm":
-		return []types.GeneratedFile{npmSecurityConfig(config.RegistryProxy)}
+		return npmSecurityConfig(config.RegistryProxy)
 	case "pnpm":
-		return []types.GeneratedFile{pnpmSecurityConfig(config.RegistryProxy, config.Extra(ExtraPnpmVersion, ""))}
+		return pnpmSecurityConfig(config.RegistryProxy, config.Extra(ExtraPnpmVersion, ""))
 	case "yarn":
 		if config.Extra(ExtraYarnClassic, "") == "true" {
-			return []types.GeneratedFile{yarnClassicSecurityConfig(config.RegistryProxy)}
+			return yarnClassicSecurityConfig(config.RegistryProxy)
 		}
-		return []types.GeneratedFile{yarnSecurityConfig(config.RegistryProxy)}
+		return yarnSecurityConfig(config.RegistryProxy)
 	case "bun":
-		return []types.GeneratedFile{bunSecurityConfig(config.RegistryProxy)}
+		return bunSecurityConfig(config.RegistryProxy)
 	default:
-		return []types.GeneratedFile{npmSecurityConfig(config.RegistryProxy)}
+		return npmSecurityConfig(config.RegistryProxy)
 	}
 }
 

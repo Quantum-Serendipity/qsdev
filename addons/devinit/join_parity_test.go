@@ -555,3 +555,45 @@ func TestWarnIgnoredInitFlags(t *testing.T) {
 		t.Errorf("unexpected warning with only run-control flags: %q", quietBuf.String())
 	}
 }
+
+// TestJoin_JavaScriptSubprojectParity is the regression test for join
+// dropping detected module extras: .qsdev.yaml records no JavaScript project
+// directory, so a joiner of a Go service with its UI in frontend/ must
+// re-detect it and generate the same devenv.nix and frontend/.npmrc the
+// creator did, not a root .npmrc npm never reads there.
+func TestJoin_JavaScriptSubprojectParity(t *testing.T) {
+	dir := newGoProject(t)
+	for name, content := range map[string]string{
+		"frontend/package.json":      `{"dependencies":{"react":"19.0.0"}}`,
+		"frontend/package-lock.json": "{}",
+	} {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	created := createAnswers(t, dir, "--lang", "go,javascript")
+	commitConfig(t, dir, created)
+
+	cmd, _ := newJoinTestCmd()
+	joined, err := buildJoinAnswers(cmd, InitOptions{Quiet: true}, dir)
+	if err != nil {
+		t.Fatalf("buildJoinAnswers: %v", err)
+	}
+
+	joinFiles, createFiles := generatedContent(t, joined), generatedContent(t, created)
+	if _, ok := createFiles["frontend/.npmrc"]; !ok {
+		t.Fatalf("create generated no frontend/.npmrc; files: %v", slices.Sorted(maps.Keys(createFiles)))
+	}
+	for _, path := range []string{"devenv.nix", "frontend/.npmrc"} {
+		if joinFiles[path] != createFiles[path] {
+			t.Errorf("%s differs:\njoin:\n%s\ncreate:\n%s", path, joinFiles[path], createFiles[path])
+		}
+	}
+	if _, ok := joinFiles[".npmrc"]; ok {
+		t.Error("join generated a root .npmrc for a frontend/ subproject")
+	}
+}

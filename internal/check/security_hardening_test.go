@@ -377,3 +377,106 @@ func TestCheckSecurityHardening_LockFileRequirement(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckSecurityHardening_JavaScriptSubproject verifies that the lock file
+// and security config checks look where generation writes for a JavaScript
+// project in a subdirectory (a Go service with its UI in frontend/), and that
+// they honour detected extras such as Yarn Classic.
+func TestCheckSecurityHardening_JavaScriptSubproject(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		files        map[string]string
+		wantLock     CheckStatus
+		wantLockPath string
+		wantConfig   CheckStatus
+		wantConfPath string
+	}{
+		{
+			name: "hardened subproject",
+			files: map[string]string{
+				"go.mod":                     "module x\n",
+				"frontend/package.json":      `{"dependencies":{"react":"19.0.0"}}`,
+				"frontend/package-lock.json": "{}",
+				"frontend/.npmrc":            hardenedNpmrc,
+			},
+			wantLock:     StatusPass,
+			wantLockPath: "frontend/package-lock.json",
+			wantConfig:   StatusPass,
+			wantConfPath: "frontend/.npmrc",
+		},
+		{
+			name: "subproject without lock file or npmrc",
+			files: map[string]string{
+				"frontend/package.json": `{"dependencies":{"react":"19.0.0"}}`,
+			},
+			wantLock:     StatusFail,
+			wantLockPath: "",
+			wantConfig:   StatusFail,
+			wantConfPath: "frontend/.npmrc",
+		},
+		{
+			name: "root npmrc does not harden the subproject",
+			files: map[string]string{
+				"web/package.json":   `{}`,
+				"web/pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+				".npmrc":             hardenedNpmrc,
+			},
+			wantLock:     StatusPass,
+			wantLockPath: "web/pnpm-lock.yaml",
+			wantConfig:   StatusFail,
+			wantConfPath: "web/pnpm-workspace.yaml",
+		},
+		{
+			name: "yarn classic subproject checks .yarnrc",
+			files: map[string]string{
+				"ui/package.json": `{"packageManager":"yarn@1.22.22"}`,
+				"ui/yarn.lock":    "# yarn lockfile v1\n",
+				"ui/.yarnrc":      "ignore-scripts true\n",
+			},
+			wantLock:     StatusPass,
+			wantLockPath: "ui/yarn.lock",
+			wantConfig:   StatusPass,
+			wantConfPath: "ui/.yarnrc",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for name, content := range tt.files {
+				p := filepath.Join(dir, filepath.FromSlash(name))
+				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			results := CheckSecurityHardening(CheckContext{
+				ProjectRoot: dir,
+				QsdevConfig: &types.QsdevConfig{Languages: []types.LanguageConfig{{Name: "javascript"}}},
+			})
+
+			for _, want := range []struct {
+				name   string
+				status CheckStatus
+				path   string
+			}{
+				{"lockfile_javascript", tt.wantLock, tt.wantLockPath},
+				{"security_config_javascript", tt.wantConfig, tt.wantConfPath},
+			} {
+				got := findResult(results, want.name)
+				if got == nil {
+					t.Fatalf("no %s result in %+v", want.name, results)
+				}
+				if got.Status != want.status || got.FilePath != want.path {
+					t.Errorf("%s = %s %q (%s), want %s %q", want.name, got.Status, got.FilePath, got.Message, want.status, want.path)
+				}
+			}
+		})
+	}
+}

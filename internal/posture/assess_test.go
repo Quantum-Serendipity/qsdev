@@ -436,3 +436,50 @@ func TestBuildEcosystemStatuses_PrefersDedicatedLockfile(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildEcosystemStatuses_Subproject verifies that an ecosystem detected in
+// a subproject directory (a JavaScript UI in frontend/) has its lock file
+// looked up there rather than reported missing from the root.
+func TestBuildEcosystemStatuses_Subproject(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		files  []string
+		extras []string
+		want   string
+	}{
+		{name: "lock file in the subproject", files: []string{"frontend/package-lock.json"}, extras: []string{"directory=frontend"}, want: "frontend/package-lock.json"},
+		{name: "root lock file does not count", files: []string{"package-lock.json"}, extras: []string{"directory=frontend"}, want: "missing"},
+		{name: "unsafe directory falls back to root", files: []string{"package-lock.json"}, extras: []string{"directory=../elsewhere"}, want: "package-lock.json"},
+		{name: "no directory", files: []string{"package-lock.json"}, want: "package-lock.json"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			for _, name := range tt.files {
+				p := filepath.Join(root, filepath.FromSlash(name))
+				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, []byte("{}"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			detected := types.DetectedProject{
+				Ecosystems: map[string]bool{ecosystem.NameJavaScript: true},
+				Suggested: map[string]types.LanguageChoice{
+					ecosystem.NameJavaScript: {Name: ecosystem.NameJavaScript, Extras: tt.extras},
+				},
+			}
+
+			statuses := buildEcosystemStatuses(detected, root, nil)
+
+			if len(statuses) != 1 || statuses[0].LockFile != tt.want {
+				t.Errorf("statuses = %+v, want javascript lock file %q", statuses, tt.want)
+			}
+		})
+	}
+}

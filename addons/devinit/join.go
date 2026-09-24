@@ -160,6 +160,13 @@ func buildJoinAnswers(cmd *cobra.Command, opts InitOptions, projectRoot string) 
 	answers.ProjectName = filepath.Base(projectRoot)
 	answers.Detected = detected
 	answers.Confirmed = true
+	// .qsdev.yaml records no module extras (a JavaScript UI in frontend/,
+	// Yarn Classic, TypeScript), so complete each language from detection as
+	// the create path does; otherwise the joiner would regenerate devenv.nix,
+	// hooks and hardening files for the wrong directory or package manager.
+	for i := range answers.Languages {
+		answers.Languages[i] = detected.WithSuggested(answers.Languages[i])
+	}
 
 	cat, err := catalog.Default()
 	if err != nil {

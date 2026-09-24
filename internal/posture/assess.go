@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -392,18 +393,22 @@ func buildEcosystemStatuses(detected types.DetectedProject, projectPath string, 
 			Name:     name,
 			Detected: true,
 		}
+		// An ecosystem detected in a subproject (a JavaScript UI in
+		// frontend/) keeps its lock file there.
+		dir := ecosystem.CleanProjectDir(ecosystem.ExtrasMap(detected.Suggested[name].Extras)[ecosystem.ExtraDirectory])
+		ecoRoot := filepath.Join(projectPath, filepath.FromSlash(dir))
 		// Prefer the lock file the scanner would choose (dedicated locks such as
 		// poetry.lock before a loose requirements.txt), so a scan reads the
 		// authoritative pins; fall back to any catalog lock file for display,
 		// in the same dedicated-first order.
-		lf, lockAbs, scannable := vulnscan.LockFileForEcosystem(projectPath, name)
+		lf, lockAbs, scannable := vulnscan.LockFileForEcosystem(ecoRoot, name)
 		if scannable {
-			status.LockFile = lf.Name()
+			status.LockFile = path.Join(dir, lf.Name())
 		} else {
 			for _, lf := range ecosystem.OrderedLockFiles(name) {
-				absPath := filepath.Join(projectPath, lf)
+				absPath := filepath.Join(ecoRoot, lf)
 				if _, err := os.Stat(absPath); err == nil {
-					status.LockFile = lf
+					status.LockFile = path.Join(dir, lf)
 					lockAbs = absPath
 					break
 				}

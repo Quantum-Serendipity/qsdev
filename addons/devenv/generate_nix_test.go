@@ -657,3 +657,41 @@ func TestGenerateDevenvNix_JVMCombinationsParse(t *testing.T) {
 		})
 	}
 }
+
+// TestGenerateDevenvNix_JavaScriptSubproject verifies W064: a JavaScript
+// project detected in a subdirectory sets languages.javascript.directory
+// (absolute, so the node_modules/.bin PATH entry does not depend on the
+// shell's working directory) and runs the eslint hook from that directory.
+func TestGenerateDevenvNix_JavaScriptSubproject(t *testing.T) {
+	t.Parallel()
+	answers := types.WizardAnswers{
+		Languages: []types.LanguageChoice{{
+			Name:           "javascript",
+			PackageManager: "npm",
+			Extras:         []string{"directory=frontend", "eslint=node_modules"},
+		}},
+	}
+	got, err := devenv.GenerateDevenvNix(answers, ecosystem.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	content := string(got.Content)
+	requireContains(t, content, `    directory = "${config.devenv.root}/frontend";`)
+	requireContains(t, content, `files = "^frontend/.*\\.(c|m)?[jt]sx?$";`)
+	requireContains(t, content, `exec ./node_modules/.bin/eslint --fix "''${files[@]}"`)
+	if strings.Contains(content, "binPath") {
+		t.Errorf("subproject eslint hook still uses the root-relative built-in binPath:\n%s", content)
+	}
+
+	nixInstantiate, err := exec.LookPath("nix-instantiate")
+	if err != nil {
+		t.Skip("nix-instantiate not available, skipping syntax validation")
+	}
+	path := filepath.Join(t.TempDir(), "devenv.nix")
+	if err := os.WriteFile(path, got.Content, 0o644); err != nil {
+		t.Fatalf("writing devenv.nix: %v", err)
+	}
+	if out, err := exec.Command(nixInstantiate, "--parse", path).CombinedOutput(); err != nil {
+		t.Fatalf("nix-instantiate --parse rejected generated devenv.nix: %v\n%s\n%s", err, out, content)
+	}
+}

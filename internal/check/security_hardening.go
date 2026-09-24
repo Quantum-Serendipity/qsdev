@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -86,10 +87,17 @@ func CheckSecurityHardening(ctx CheckContext) []CheckResult {
 // ecosystems such as Terraform (.terraform.lock.hcl) are not silently passed.
 func checkLanguageLockFiles(projectRoot string, lang types.LanguageConfig) []CheckResult {
 	mod, hasMod := ecosystem.DefaultRegistry().ByName(lang.Name)
+	cfg := ecosystem.ModuleConfig{Version: lang.Version, PackageManager: lang.PackageManager}
+	if hasMod {
+		cfg = detectedModuleConfig(projectRoot, mod, lang)
+	}
+	// The ecosystem's own project may sit in a subdirectory (frontend/).
+	dir := cfg.Directory()
+	ecoRoot := filepath.Join(projectRoot, filepath.FromSlash(dir))
 	if hasMod {
 		if dd, ok := mod.(ecosystem.DependencyDeclarer); ok {
 			// An error leaves the answer unknown: enforce the lock file.
-			if declares, err := dd.DeclaresDependencies(projectRoot); err == nil && !declares {
+			if declares, err := dd.DeclaresDependencies(ecoRoot); err == nil && !declares {
 				return []CheckResult{{
 					Category: CategorySecurityHarden,
 					Name:     "lockfile_" + lang.Name,
@@ -101,7 +109,7 @@ func checkLanguageLockFiles(projectRoot string, lang types.LanguageConfig) []Che
 		}
 	}
 
-	if r, ok := checkLockFile(projectRoot, lang.Name); ok {
+	if r, ok := checkLockFile(projectRoot, dir, lang.Name); ok {
 		return []CheckResult{r}
 	}
 	if !hasMod {
@@ -112,7 +120,7 @@ func checkLanguageLockFiles(projectRoot string, lang types.LanguageConfig) []Che
 		return nil
 	}
 	var results []CheckResult
-	for _, mf := range mfp.ManifestFiles(ecosystem.ModuleConfig{PackageManager: lang.PackageManager}) {
+	for _, mf := range mfp.ManifestFiles(cfg) {
 		if r, ok := checkDeclaredLockFile(projectRoot, lang.Name, mf); ok {
 			results = append(results, r)
 		}
@@ -165,8 +173,9 @@ func checkDeclaredLockFile(projectRoot, langName string, mf ecosystem.ManifestFi
 // file that is also the ecosystem's dependency manifest (pom.xml,
 // requirements.txt, vcpkg.json) is never accepted as proof of pinning on its
 // own: it yields a warning rather than a pass. ok is false when the ecosystem
-// has no known lock files.
-func checkLockFile(projectRoot, langName string) (CheckResult, bool) {
+// has no known lock files. dir is the ecosystem's project directory relative
+// to projectRoot ("" for the root); reported paths include it.
+func checkLockFile(projectRoot, dir, langName string) (CheckResult, bool) {
 	lockFiles, ok := ecosystem.LockFilesByEcosystem[langName]
 	if !ok {
 		return CheckResult{}, false
@@ -180,7 +189,8 @@ func checkLockFile(projectRoot, langName string) (CheckResult, bool) {
 		if !isManifest {
 			pureLockFiles = append(pureLockFiles, lf)
 		}
-		if _, err := os.Stat(filepath.Join(projectRoot, lf)); err != nil {
+		rel := path.Join(dir, lf)
+		if _, err := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(rel))); err != nil {
 			continue
 		}
 		if !isManifest {
@@ -189,12 +199,12 @@ func checkLockFile(projectRoot, langName string) (CheckResult, bool) {
 				Name:     "lockfile_" + langName,
 				Status:   StatusPass,
 				Severity: SeverityInfo,
-				Message:  fmt.Sprintf("Lock file %s found for %s", lf, langName),
-				FilePath: lf,
+				Message:  fmt.Sprintf("Lock file %s found for %s", rel, langName),
+				FilePath: rel,
 			}, true
 		}
 		if manifestFound == "" {
-			manifestFound = lf
+			manifestFound = rel
 		}
 	}
 
@@ -245,10 +255,31 @@ func checkSecurityConfigSettings(projectRoot string, lang types.LanguageConfig) 
 	}
 
 	var results []CheckResult
-	for _, gf := range mod.SecurityConfigs(ecosystem.ModuleConfig{PackageManager: lang.PackageManager}) {
+	for _, gf := range mod.SecurityConfigs(detectedModuleConfig(projectRoot, mod, lang)) {
 		results = append(results, checkConfigFileSettings(projectRoot, name, lang.Name, gf))
 	}
 	return results
+}
+
+// detectedModuleConfig returns the ModuleConfig generation uses for lang: the
+// configured version and package manager completed from what the module
+// detects in projectRoot, the same merge types.DetectedProject.WithSuggested
+// applies. The checks therefore inspect the files generation actually wrote,
+// such as a subproject's frontend/.npmrc or a Yarn Classic .yarnrc.
+func detectedModuleConfig(projectRoot string, mod ecosystem.EcosystemModule, lang types.LanguageConfig) ecosystem.ModuleConfig {
+	cfg := ecosystem.ModuleConfig{Version: lang.Version, PackageManager: lang.PackageManager}
+	det := mod.Detect(projectRoot)
+	if !det.Detected {
+		return cfg
+	}
+	if cfg.Version == "" {
+		cfg.Version = det.SuggestedConfig.Version
+	}
+	if cfg.PackageManager == "" {
+		cfg.PackageManager = det.SuggestedConfig.PackageManager
+	}
+	cfg.Extras = maps.Clone(det.SuggestedConfig.Extras)
+	return cfg
 }
 
 // checkConfigFileSettings compares one generated security config file against

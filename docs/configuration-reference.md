@@ -1233,6 +1233,18 @@ Files with the `skip` strategy are conventional package-manager or tool configs 
 | `bunfig.toml` | `skip` | `install.minimumReleaseAge` in seconds (when bun is detected; only created if absent) |
 | `.nvmrc` | `overwrite` | Pinned Node.js version |
 
+**Package manager.** A pin in `package.json` decides the package manager: the Corepack `packageManager` field (`"pnpm@10.17.0"`), then `devEngines.packageManager`. The pin applies even before the project has a lockfile. Without a pin, the lockfile decides, in this order: `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`/`bun.lockb`, `package-lock.json`/`npm-shrinkwrap.json`. If none of these exist, qsdev uses npm. A Yarn pin also tells Yarn Classic (`yarn@1.x`, hardened through `.yarnrc`) apart from Yarn Berry (`yarn@2+`, hardened through `.yarnrc.yml`).
+
+**Subproject layouts.** When the repository root has no `package.json`, qsdev looks for one up to three directories deep, for example a Go or Python service with its UI in `frontend/` or `web/`. `node_modules/`, `vendor/` and hidden directories are skipped. qsdev then treats that directory as the JavaScript project:
+
+- It is recorded as the `directory` extra, and devenv.nix sets `languages.javascript.directory = "${config.devenv.root}/<dir>"`.
+- The hardening file from the table above is written into that directory, for example `frontend/.npmrc`.
+- The eslint and prettier hooks run from that directory, on staged files under it only, so ESLint finds the subproject's `eslint.config.*` and Prettier its `.prettierignore`. The CI install command and the build, test and lint tasks also run there.
+- `qsdev check` and `qsdev status` look for the lock file and the hardening file in that directory.
+- `.qsdev.yaml` does not record the directory. `qsdev init`, `qsdev init --mode join` and `qsdev check` detect it again, so every teammate generates the same files.
+
+devenv supports only one JavaScript project directory. If several subprojects exist, qsdev picks one in this order: a directory with a lockfile, then the shallowest, then the first by name. Detection lists any other subprojects in a warning. `package.json` files nested inside the chosen directory are treated as its workspace members. Directory names with spaces or shell metacharacters are skipped.
+
 ### Python
 
 | File | Merge Strategy | Purpose |

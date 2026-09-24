@@ -169,7 +169,12 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 
 	// Persist the generation scope so update and repair keep honouring it.
 	applyScopeFlags(opts, &answers)
-	accResult, err := runAccumulator(answers, scopeFromAnswers(answers))
+	// Generation also sees .qsdev.local.yaml; what is persisted does not.
+	genAnswers, err := localGenerationAnswers(projectRoot, answers)
+	if err != nil {
+		return err
+	}
+	accResult, err := runAccumulator(genAnswers, scopeFromAnswers(genAnswers))
 	if err != nil {
 		return fmt.Errorf("generating files: %w", err)
 	}

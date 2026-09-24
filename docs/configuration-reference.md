@@ -181,13 +181,35 @@ client:
   or above always gets a `.mcp.json` (possibly with no servers), and init,
   join and update also remove forbidden servers already in an existing
   `.mcp.json`.
-- **Local overrides.** `.qsdev.local.yaml` can raise the security level for
-  your own checkout but never lower it below the floor: `security.level`
-  or `security.*` switches below the floor are ignored, and each is reported
-  as a warning (for example `security.level: baseline raised to strict`).
-  Join never writes local overrides back into `.qsdev.yaml`; re-creating a
-  project (`qsdev init --force`) records the level it generated with, so a
-  local raise in effect at that moment becomes the committed level.
+- **Local overrides.** `.qsdev.local.yaml` (gitignored) adds to the
+  committed configuration for your own checkout. It may only add or
+  tighten, never remove or loosen:
+
+  | Key | Local effect |
+  |-----|--------------|
+  | `extra_packages` | Added to the generated `devenv.nix` packages |
+  | `languages` | A new language is added; a committed one takes the local `version`. Its committed `package_manager` cannot change |
+  | `services` | A new service is added; a committed one takes the local `version` and gains new `options`, but a committed option cannot change |
+  | `tools.enabled` | Enables the tools, including ones `.qsdev.yaml` disables |
+  | `claude_code.skills`, `claude_code.mcp_servers` | Added (servers still subject to the client MCP policy) |
+  | `claude_code.permission_level` | Applied only when stricter than the committed level (or, when none is committed, the tier's preset): `minimal` is stricter than `standard`, which is stricter than `permissive`. `custom` and `supply-chain-only` are not comparable, so a local override can neither switch to them nor away from them |
+  | `security.level`, `security.*` | Can raise the floor, never lower it |
+  | `tools.disabled`, `tools.config`, `claude_code.enabled` | Ignored: only `.qsdev.yaml` sets them |
+
+  Every ignored or raised setting is reported as a warning (for example
+  `security.level: baseline raised to strict`,
+  `claude_code.permission_level: permissive raised to standard` or
+  `tools.disabled: gitleaks ignored (...)`). Create (over an existing
+  `.qsdev.yaml`), join and update generate with the local additions, but
+  never write them to `.qsdev.yaml` or the saved answers, so a local override
+  never reaches the team through them; the files generated for your checkout
+  (for example `devenv.nix` with your extra packages) do contain them. A
+  project being created for the first time has no committed configuration
+  yet, so the local file takes effect from the next join or update. An
+  invalid local value (such as a package that is not a Nix attribute path)
+  stops init with an error. Re-creating a project (`qsdev init --force`)
+  records the security level it generated with, so a local raise in effect
+  at that moment becomes the committed level.
 
 There is no organization-defaults layer: a project without a `security`
 block is generated with the settings it was created with, not raised to

@@ -138,8 +138,13 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 	}
 
 	// 4. Generate new files via fragment accumulation, honouring the
-	// generation scope the project was initialized with.
-	accResult, err := runAccumulator(answers, scopeFromAnswers(answers))
+	// generation scope the project was initialized with. Generation also
+	// sees .qsdev.local.yaml; the answers and .qsdev.yaml saved below do not.
+	genAnswers, err := localGenerationAnswers(projectRoot, answers)
+	if err != nil {
+		return err
+	}
+	accResult, err := runAccumulator(genAnswers, scopeFromAnswers(genAnswers))
 	if err != nil {
 		return fmt.Errorf("generating files: %w", err)
 	}
@@ -147,8 +152,8 @@ func runUpdate(cmd *cobra.Command, opts UpdateOptions) error {
 
 	// 5. Build update plan, including cleanup of files no longer generated.
 	plan := buildUpdatePlan(allFiles, modStatus, existingState, projectRoot, opts)
-	plan.MCPPolicy = answers.MCPPolicy
-	plan.Files = append(plan.Files, planOrphans(existingState, allFiles, modStatus, answers)...)
+	plan.MCPPolicy = genAnswers.MCPPolicy
+	plan.Files = append(plan.Files, planOrphans(existingState, allFiles, modStatus, genAnswers)...)
 
 	// 6. Preview.
 	previewUpdatePlan(plan, cmd.OutOrStdout())

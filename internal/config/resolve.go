@@ -8,13 +8,19 @@ import (
 
 // ResolvedConfig is the result of merging all configuration layers.
 type ResolvedConfig struct {
-	Config     *types.QsdevConfig
+	Config *types.QsdevConfig
+	// Local is the local developer layer as it was applied: only what adds
+	// to or tightens the committed layers (see sanitizeLocal). It is nil when
+	// no local layer was given.
+	Local      *types.QsdevConfig
 	Traces     []ResolutionTrace
 	Violations []FloorViolation
 }
 
 // FloorViolation records a case where a local or project override attempted
-// to weaken a security setting below the enforced floor.
+// to weaken a security setting below the enforced floor, or where a local
+// override tried to change something it may only add to. Enforced is the
+// value kept, or nil when the override was dropped with nothing to enforce.
 type FloorViolation struct {
 	Field     string
 	Attempted any
@@ -27,7 +33,11 @@ type FloorViolation struct {
 //  2. Profile overlay (if profile is not nil)
 //  3. Compliance level overlay (if project has Client.SecurityLevel)
 //  4. Project overrides (project)
-//  5. Local developer overrides (local, converted to QsdevConfig)
+//  5. Local developer overrides (local), which may only add to or tighten
+//     layers 1-4: sanitizeLocal drops, as FloorViolations, whatever would
+//     remove or loosen something, including a permission level less strict
+//     than the committed one, and mergeLocal merges languages and services
+//     by name instead of replacing them.
 //
 // After merging, enforceSecurityFloor ensures security settings cannot be
 // weakened below the project's declared floor.
@@ -62,18 +72,21 @@ func ResolveConfig(orgDefaults, profile, project *types.QsdevConfig, local *Loca
 		tracer.Record("*", "project", "layer-4", nil, "project overrides applied")
 	}
 
-	// Layer 5: Merge local overrides.
+	// Layer 5: Merge local overrides, keeping only additions and tightenings.
+	var applied *types.QsdevConfig
+	var violations []FloorViolation
 	if local != nil {
-		localCfg := localToQsdevConfig(local)
-		resolved = deepMerge(resolved, localCfg)
+		applied, violations = sanitizeLocal(resolved, local)
+		resolved = mergeLocal(resolved, applied)
 		tracer.Record("*", "local", "layer-5", nil, "local overrides applied")
 	}
 
 	// Post-merge: enforce security floor.
-	violations := enforceSecurityFloor(resolved, project)
+	violations = append(violations, enforceSecurityFloor(resolved, project)...)
 
 	return &ResolvedConfig{
 		Config:     resolved,
+		Local:      applied,
 		Traces:     tracer.Traces(),
 		Violations: violations,
 	}, nil

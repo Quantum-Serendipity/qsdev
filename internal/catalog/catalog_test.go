@@ -630,6 +630,27 @@ func TestPermissionPresets(t *testing.T) {
 	}
 }
 
+// TestPermissionPresetStrictness checks the built-in strictness ranks order
+// minimal > standard > permissive and leave custom and supply-chain-only
+// (whose restrictiveness is not comparable) unranked.
+func TestPermissionPresetStrictness(t *testing.T) {
+	t.Parallel()
+	cat := loadTestCatalog(t)
+	rank := func(name string) (int, bool) { return cat.PermissionPresetStrictness(name) }
+	minimal, okMin := rank("minimal")
+	standard, okStd := rank("standard")
+	permissive, okPerm := rank("permissive")
+	if !okMin || !okStd || !okPerm || minimal <= standard || standard <= permissive {
+		t.Errorf("strictness minimal=%d(%v) standard=%d(%v) permissive=%d(%v), want minimal > standard > permissive",
+			minimal, okMin, standard, okStd, permissive, okPerm)
+	}
+	for _, name := range []string{"custom", "supply-chain-only", "nonexistent"} {
+		if r, ok := rank(name); ok {
+			t.Errorf("%s ranked %d, want unranked", name, r)
+		}
+	}
+}
+
 // --- Merge Tests ---
 
 func TestMergeCatalogs_OverlayAddsTier(t *testing.T) {

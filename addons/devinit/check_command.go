@@ -13,7 +13,6 @@ import (
 	"github.com/Quantum-Serendipity/qsdev/internal/check"
 	"github.com/Quantum-Serendipity/qsdev/internal/cmdutil"
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
-	"github.com/Quantum-Serendipity/qsdev/internal/tier"
 	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
 	"github.com/Quantum-Serendipity/qsdev/internal/version"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
@@ -219,12 +218,5 @@ func effectivePermissionPreset(answers types.WizardAnswers, cfg *types.QsdevConf
 	if level == "" && tierName == "" && cfg != nil {
 		level, tierName = cfg.ClaudeCode.PermissionLevel, cfg.Tier
 	}
-	switch {
-	case level != "":
-		return level
-	case tierName != "":
-		return tier.Resolve(tierName, level, mcp).DefaultPermissionPreset()
-	default:
-		return string(claudecode.PermissionPresetStandard)
-	}
+	return qsdevconfig.EffectivePermissionLevel(level, tierName, mcp)
 }

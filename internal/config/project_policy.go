@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 
@@ -100,6 +101,84 @@ func (p *ProjectPolicy) Apply(a *types.WizardAnswers) {
 	a.MCPServers = a.MCPPolicy.Filter(a.MCPServers)
 }
 
+// ApplyLocal adds the developer's .qsdev.local.yaml, as ResolveConfig applied
+// it (only additions and tightenings; see ResolvedConfig.Local), to answers:
+// extra packages, languages and services (a known one takes a local version,
+// and a package manager or service option only where the answers set none),
+// enabled tools, Claude Code skills and MCP servers (filtered by the client
+// MCP policy), and a permission level stricter than the answers' effective
+// one. Call it after Apply, on a copy of the answers used only for
+// generation: .qsdev.yaml and the saved answers must keep the committed
+// choices, so a local override never reaches the team.
+func (p *ProjectPolicy) ApplyLocal(a *types.WizardAnswers) {
+	local := p.Effective.Local
+	if local == nil {
+		return
+	}
+	a.ExtraPackages = mergeUnionStrings(a.ExtraPackages, local.Packages)
+	a.Languages = addLocalLanguages(a.Languages, local.Languages)
+	a.Services = addLocalServices(a.Services, local.Services)
+	for _, name := range local.Tools.Enabled {
+		if a.EnabledTools == nil {
+			a.EnabledTools = make(map[string]bool)
+		}
+		a.EnabledTools[name] = true
+	}
+	if !a.ClaudeCode {
+		return
+	}
+	a.Skills = mergeUnionStrings(a.Skills, local.ClaudeCode.Skills)
+	a.MCPServers = a.MCPPolicy.Filter(mergeUnionStrings(a.MCPServers, local.ClaudeCode.MCPServers))
+	if level := local.ClaudeCode.PermissionLevel; level != "" {
+		current := EffectivePermissionLevel(a.PermissionLevel, a.Tier, a.MCPServers)
+		if c, ok := ComparePermissionLevels(level, current); ok && c > 0 {
+			a.PermissionLevel = level
+		}
+	}
+}
+
+// addLocalLanguages merges local languages into the answers' by name.
+func addLocalLanguages(langs []types.LanguageChoice, local []types.LanguageConfig) []types.LanguageChoice {
+	for _, l := range local {
+		i := slices.IndexFunc(langs, func(c types.LanguageChoice) bool { return c.Name == l.Name })
+		if i < 0 {
+			langs = append(langs, types.LanguageChoice{Name: l.Name, Version: l.Version, PackageManager: l.PackageManager})
+			continue
+		}
+		if l.Version != "" {
+			langs[i].Version = l.Version
+		}
+		if langs[i].PackageManager == "" {
+			langs[i].PackageManager = l.PackageManager
+		}
+	}
+	return langs
+}
+
+// addLocalServices merges local services into the answers' by name.
+func addLocalServices(svcs []types.ServiceChoice, local []types.ServiceConfig) []types.ServiceChoice {
+	for _, s := range local {
+		i := slices.IndexFunc(svcs, func(c types.ServiceChoice) bool { return c.Name == s.Name })
+		if i < 0 {
+			svcs = append(svcs, types.ServiceChoice{Name: s.Name, Version: s.Version, Settings: maps.Clone(s.Options)})
+			continue
+		}
+		if s.Version != "" {
+			svcs[i].Version = s.Version
+		}
+		for k, v := range s.Options {
+			if _, set := svcs[i].Settings[k]; set {
+				continue
+			}
+			if svcs[i].Settings == nil {
+				svcs[i].Settings = make(map[string]string, len(s.Options))
+			}
+			svcs[i].Settings[k] = v
+		}
+	}
+	return svcs
+}
+
 // clientComplianceOverlay returns the layer-3 overlay for the committed
 // client security level, or nil when the project declares none.
 func (p *ProjectPolicy) clientComplianceOverlay() *types.QsdevConfig {
@@ -109,15 +188,20 @@ func (p *ProjectPolicy) clientComplianceOverlay() *types.QsdevConfig {
 	return ComplianceLevelToConfig(p.Committed.Client.SecurityLevel)
 }
 
-// Warnings describes each setting the security floor raised: a local
-// override (or a project setting) weaker than what the project or its client
-// compliance level requires.
+// Warnings describes each setting the security floor raised or ignored: a
+// local override (or a project setting) weaker than what the project or its
+// client compliance level requires, or a local override that would remove
+// or loosen a committed setting.
 func (p *ProjectPolicy) Warnings() []string {
 	warnings := make([]string, 0, len(p.Effective.Violations))
 	for _, v := range p.Effective.Violations {
 		attempted := "unset"
 		if v.Attempted != nil {
 			attempted = fmt.Sprint(v.Attempted)
+		}
+		if v.Enforced == nil {
+			warnings = append(warnings, fmt.Sprintf("%s: %s ignored (%s)", v.Field, attempted, v.Reason))
+			continue
 		}
 		warnings = append(warnings, fmt.Sprintf("%s: %s raised to %v (%s)", v.Field, attempted, v.Enforced, v.Reason))
 	}

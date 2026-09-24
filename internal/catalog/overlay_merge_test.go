@@ -180,6 +180,16 @@ func TestLoadWithOrgOverride_RejectsInvalidFiles(t *testing.T) {
 			wantErr: `unknown ask set "pythn"`,
 		},
 		{
+			name:    "duplicate preset strictness",
+			content: "permission_preset_defs:\n  permissive:\n    strictness: 3\n",
+			wantErr: `strictness 3 is also used by preset "minimal"`,
+		},
+		{
+			name:    "negative preset strictness",
+			content: "permission_preset_defs:\n  custom:\n    strictness: -1\n",
+			wantErr: "strictness must not be negative",
+		},
+		{
 			name:    "unknown preset allow set",
 			content: "permission_preset_defs:\n  standard:\n    allow_sets: [nope]\n",
 			wantErr: `unknown allow set "nope"`,

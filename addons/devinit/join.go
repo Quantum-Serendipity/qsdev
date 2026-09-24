@@ -40,7 +40,12 @@ func runJoin(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 
 	// 3. Generate files via fragment accumulation.
 	applyScopeFlags(opts, &answers)
-	accResult, err := runAccumulator(answers, scopeFromAnswers(answers))
+	// Generation also sees .qsdev.local.yaml; the saved answers do not.
+	genAnswers, err := localGenerationAnswers(projectRoot, answers)
+	if err != nil {
+		return err
+	}
+	accResult, err := runAccumulator(genAnswers, scopeFromAnswers(genAnswers))
 	if err != nil {
 		return fmt.Errorf("generating files: %w", err)
 	}

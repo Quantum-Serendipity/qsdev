@@ -1708,8 +1708,12 @@ permission_package_ask_sets:
     - php
 
 # Permission presets define which allow/deny/ask sets compose each preset.
+# strictness ranks the presets a .qsdev.local.yaml may tighten between
+# (higher is stricter); a preset without one is not comparable, so a local
+# override can neither switch to it nor away from it.
 permission_preset_defs:
     minimal:
+        strictness: 3
         default_mode: plan
         disable_bypass_mode: disable
         allow_sets:
@@ -1741,6 +1745,7 @@ permission_preset_defs:
             - ruby
             - php
     standard:
+        strictness: 2
         default_mode: default
         disable_bypass_mode: disable
         allow_sets:
@@ -1772,6 +1777,7 @@ permission_preset_defs:
             - ruby
             - php
     permissive:
+        strictness: 1
         default_mode: default
         disable_bypass_mode: disable
         allow_sets:

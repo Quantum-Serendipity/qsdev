@@ -319,7 +319,31 @@ func (c *Catalog) validatePresetRefs() []CatalogError {
 			})
 		}
 	}
+	errs = append(errs, c.validatePresetStrictness()...)
 
+	return errs
+}
+
+// validatePresetStrictness checks that strictness ranks are non-negative and
+// that no two presets share one, so tightening a permission level is never
+// ambiguous.
+func (c *Catalog) validatePresetStrictness() []CatalogError {
+	var errs []CatalogError
+	byRank := make(map[int]string)
+	for _, name := range slices.Sorted(maps.Keys(c.permissionRules.PresetDefs)) {
+		rank := c.permissionRules.PresetDefs[name].Strictness
+		field := "permission_preset_defs." + name + ".strictness"
+		switch {
+		case rank < 0:
+			errs = append(errs, CatalogError{"permission_rules", field, "strictness must not be negative"})
+		case rank == 0:
+		case byRank[rank] != "":
+			errs = append(errs, CatalogError{"permission_rules", field,
+				fmt.Sprintf("strictness %d is also used by preset %q", rank, byRank[rank])})
+		default:
+			byRank[rank] = name
+		}
+	}
 	return errs
 }
 

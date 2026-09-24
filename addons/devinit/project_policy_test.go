@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -210,4 +211,133 @@ func TestRunJoin_StripsForbiddenServersFromCommittedMcpJson(t *testing.T) {
 	if !strings.Contains(settings, "audit-log") {
 		t.Errorf("strict client did not enable the audit-log hook:\n%s", settings)
 	}
+}
+
+// TestLocalGenerationAnswers checks .qsdev.local.yaml reaches only the
+// answers generation uses, with its additions applied and its loosening
+// overrides dropped, and that invalid local values fail.
+func TestLocalGenerationAnswers(t *testing.T) {
+	tests := []struct {
+		name      string
+		committed bool
+		local     string
+		wantErr   string
+		check     func(t *testing.T, base, gen types.WizardAnswers)
+	}{
+		{
+			name:      "adds and tightens",
+			committed: true,
+			local: "extra_packages: [neovim]\ntools:\n  enabled: [changelog]\n  disabled: [gitleaks]\n" +
+				"claude_code:\n  permission_level: minimal\n",
+			check: func(t *testing.T, base, gen types.WizardAnswers) {
+				t.Helper()
+				if !slices.Contains(gen.ExtraPackages, "neovim") || slices.Contains(base.ExtraPackages, "neovim") {
+					t.Errorf("ExtraPackages gen %v, base %v; want neovim in gen only", gen.ExtraPackages, base.ExtraPackages)
+				}
+				if gen.PermissionLevel != "minimal" || base.PermissionLevel == "minimal" {
+					t.Errorf("PermissionLevel gen %q, base %q; want minimal in gen only", gen.PermissionLevel, base.PermissionLevel)
+				}
+				if !gen.EnabledTools["changelog"] || base.EnabledTools["changelog"] {
+					t.Errorf("changelog gen %v, base %v; want enabled in gen only", gen.EnabledTools["changelog"], base.EnabledTools["changelog"])
+				}
+				if !base.EnabledTools["gitleaks"] {
+					t.Fatal("fixture does not enable gitleaks, so the tools.disabled case proves nothing")
+				}
+				if !gen.EnabledTools["gitleaks"] {
+					t.Error("a local tools.disabled turned gitleaks off")
+				}
+			},
+		},
+		{
+			name:      "loosening permission level ignored",
+			committed: true,
+			local:     "claude_code:\n  permission_level: permissive\n",
+			check: func(t *testing.T, base, gen types.WizardAnswers) {
+				t.Helper()
+				if gen.PermissionLevel != base.PermissionLevel {
+					t.Errorf("PermissionLevel = %q, want the committed %q", gen.PermissionLevel, base.PermissionLevel)
+				}
+			},
+		},
+		{name: "invalid package fails", committed: true, local: "extra_packages: ['bad;pkg']\n", wantErr: "invalid package name"},
+		{
+			name:  "no committed config",
+			local: "extra_packages: [neovim]\n",
+			check: func(t *testing.T, base, gen types.WizardAnswers) {
+				t.Helper()
+				if len(gen.ExtraPackages) != 0 {
+					t.Errorf("ExtraPackages = %v, want none before the project has a .qsdev.yaml", gen.ExtraPackages)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			var base types.WizardAnswers
+			if tt.committed {
+				dir = initLifecycleProject(t)
+				base = loadProjectAnswers(t, dir)
+			}
+			writeLocalConfig(t, dir, tt.local)
+			baseCopy := cloneAnswers(base)
+
+			gen, err := localGenerationAnswers(dir, base)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(base, baseCopy) {
+				t.Error("localGenerationAnswers modified the answers it was given")
+			}
+			tt.check(t, base, gen)
+		})
+	}
+}
+
+// TestUpdateAndJoin_ApplyLocalOverridesWithoutPersisting is the finding's
+// failure scenario: extra_packages in .qsdev.local.yaml must reach the
+// generated devenv.nix on update and join, but never .qsdev.yaml or the saved
+// answers, which the team shares or regenerates from.
+func TestUpdateAndJoin_ApplyLocalOverridesWithoutPersisting(t *testing.T) {
+	const local = "extra_packages: [neovim]\n"
+	assertLocalOnly := func(t *testing.T, dir string) {
+		t.Helper()
+		if nix := readProjectFile(t, dir, "devenv.nix"); !strings.Contains(nix, "neovim") {
+			t.Errorf("devenv.nix lacks the local extra package:\n%s", nix)
+		}
+		cfg, err := qsdevconfig.ParseQsdevConfig(filepath.Join(dir, branding.Get().ConfigFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if slices.Contains(cfg.Packages, "neovim") {
+			t.Errorf("local package written to %s: %v", branding.Get().ConfigFile, cfg.Packages)
+		}
+		if a := loadProjectAnswers(t, dir); slices.Contains(a.ExtraPackages, "neovim") {
+			t.Errorf("local package saved in the answers: %v", a.ExtraPackages)
+		}
+	}
+
+	t.Run("update", func(t *testing.T) {
+		dir := initLifecycleProject(t)
+		writeLocalConfig(t, dir, local)
+		if out, err := executeInitCmd(t, dir, "--update"); err != nil {
+			t.Fatalf("update: %v\n%s", err, out)
+		}
+		assertLocalOnly(t, dir)
+	})
+	t.Run("join", func(t *testing.T) {
+		src := initLifecycleProject(t)
+		dst := cloneCommitted(t, src, branding.Get().ConfigFile, "go.mod")
+		writeLocalConfig(t, dst, local)
+		if out, err := executeInitCmd(t, dst, "--mode", "join", "--yes"); err != nil {
+			t.Fatalf("join: %v\n%s", err, out)
+		}
+		assertLocalOnly(t, dst)
+	})
 }

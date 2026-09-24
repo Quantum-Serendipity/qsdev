@@ -256,6 +256,9 @@ type ZIMArchiveDef struct {
 
 // PermissionPresetDef defines a permission preset's composition.
 type PermissionPresetDef struct {
+	// Strictness ranks the preset for local-override tightening: higher is
+	// stricter, and 0 (unset) means the preset is not comparable to others.
+	Strictness        int      `yaml:"strictness,omitempty"`
 	DefaultMode       string   `yaml:"default_mode,omitempty"`
 	DisableBypassMode string   `yaml:"disable_bypass_mode,omitempty"`
 	AllowSets         []string `yaml:"allow_sets"`

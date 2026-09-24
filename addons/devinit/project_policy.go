@@ -7,6 +7,8 @@ import (
 	"io/fs"
 
 	qsdevconfig "github.com/Quantum-Serendipity/qsdev/internal/config"
+	"github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -35,4 +37,35 @@ func warnPolicyViolations(w io.Writer, policy *qsdevconfig.ProjectPolicy) {
 	for _, msg := range policy.Warnings() {
 		fmt.Fprintln(w, "Warning: "+msg)
 	}
+}
+
+// localGenerationAnswers returns the answers generation uses: a copy of
+// answers with the developer's .qsdev.local.yaml added through
+// ProjectPolicy.ApplyLocal (additions and tightenings only), validated like
+// any other answers, with the tools the additions imply inferred. answers
+// itself is left as it is, because it is what init, join and update persist
+// to .qsdev.yaml and the saved answers: a local override must never reach the
+// team. A project without a committed .qsdev.yaml has nothing yet for local
+// overrides to add to, so its answers are returned unchanged. The overrides
+// the floor dropped were already reported when the committed policy was
+// applied.
+func localGenerationAnswers(projectRoot string, answers types.WizardAnswers) (types.WizardAnswers, error) {
+	policy, err := qsdevconfig.LoadProjectPolicy(projectRoot)
+	if errors.Is(err, fs.ErrNotExist) {
+		return answers, nil
+	}
+	if err != nil {
+		return types.WizardAnswers{}, err
+	}
+	if policy.Effective.Local == nil {
+		return answers, nil
+	}
+	gen := cloneAnswers(answers)
+	policy.ApplyLocal(&gen)
+	if err := ValidateAnswers(gen); err != nil {
+		return types.WizardAnswers{}, fmt.Errorf("applying %s: %w", branding.Get().LocalConfig, err)
+	}
+	toolreg.MergeInferredTools(&gen, toolreg.DefaultRegistry())
+	enforceAnswerInvariants(&gen)
+	return gen, nil
 }

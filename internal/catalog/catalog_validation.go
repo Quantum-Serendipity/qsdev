@@ -150,3 +150,14 @@ func (c *Catalog) PermissionPreset(name string) (PermissionPresetDef, bool) {
 	d, ok := c.permissionRules.PresetDefs[name]
 	return d, ok
 }
+
+// PermissionPresetStrictness returns a preset's strictness rank (higher is
+// stricter) and whether it has one. A preset without a rank, or an unknown
+// one, is not comparable to any other.
+func (c *Catalog) PermissionPresetStrictness(name string) (int, bool) {
+	d, ok := c.permissionRules.PresetDefs[name]
+	if !ok || d.Strictness <= 0 {
+		return 0, false
+	}
+	return d.Strictness, true
+}

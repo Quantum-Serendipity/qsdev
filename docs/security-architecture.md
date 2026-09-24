@@ -255,7 +255,13 @@ resolver in create, join and update, and generation never goes below it:
 
 - the compliance level and the hooks it requires are raised to the floor,
   and a security switch it mandates cannot be disabled locally;
-- a floor violation in `.qsdev.local.yaml` is ignored and reported;
+- `.qsdev.local.yaml` may only add to or tighten the committed
+  configuration: a looser permission level (catalog `strictness` ranks
+  `minimal` > `standard` > `permissive`; unranked presets are not
+  comparable and fail closed), a `tools.disabled` entry, `tools.config`, a
+  changed `claude_code.enabled`, package manager or service option, and any
+  floor violation are ignored and reported. Its additions reach generation
+  only, never the committed `.qsdev.yaml`;
 - a forbidden MCP server is dropped from `.mcp.json` whatever requested it,
   including entries already present in a committed or hand-edited file.
 

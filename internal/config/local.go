@@ -56,25 +56,6 @@ func ParseLocalConfig(path string) (*LocalConfig, error) {
 	return &local, nil
 }
 
-// localToQsdevConfig converts a LocalConfig to a QsdevConfig for use in the
-// merge chain. extra_packages is the local counterpart of packages. Fields
-// that exist only in QsdevConfig (Version, QsdevVersion, Profile,
-// InfraProfile, Client, Infrastructure) are left at zero values.
-func localToQsdevConfig(local *LocalConfig) *types.QsdevConfig {
-	if local == nil {
-		return nil
-	}
-
-	return &types.QsdevConfig{
-		Languages:  local.Languages,
-		Services:   local.Services,
-		Security:   local.Security,
-		Tools:      local.Tools,
-		ClaudeCode: local.ClaudeCode,
-		Packages:   local.ExtraPackages,
-	}
-}
-
 // GenerateLocalTemplate writes a .qsdev.local.yaml template file with
 // commented-out examples. It only creates the file if it doesn't already
 // exist (idempotent). The template content is context-sensitive: it includes
@@ -90,7 +71,9 @@ func GenerateLocalTemplate(projectRoot string, resolved *types.QsdevConfig) erro
 
 	var sb strings.Builder
 	sb.WriteString("# " + b.LocalConfig + " — Local developer overrides (gitignored)\n")
-	sb.WriteString("# These settings override " + b.ConfigFile + " but cannot lower security settings.\n")
+	sb.WriteString("# These settings add to " + b.ConfigFile + " for your checkout only. They can add\n")
+	sb.WriteString("# packages, languages, services, tools and MCP servers or tighten security,\n")
+	sb.WriteString("# never loosen it: weaker settings are ignored with a warning.\n")
 	sb.WriteString("#\n")
 	sb.WriteString("# extra_packages:\n")
 	sb.WriteString("#   - neovim\n")
@@ -114,7 +97,7 @@ func GenerateLocalTemplate(projectRoot string, resolved *types.QsdevConfig) erro
 	// Include Claude Code section if enabled.
 	if resolved != nil && resolved.ClaudeCode.Enabled != nil && *resolved.ClaudeCode.Enabled {
 		sb.WriteString("# claude_code:\n")
-		sb.WriteString("#   permission_level: permissive\n")
+		sb.WriteString("#   permission_level: minimal   # only a stricter level than the committed one\n")
 		sb.WriteString("#\n")
 	}
 

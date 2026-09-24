@@ -124,17 +124,19 @@ func TestResolveConfig_LocalOverridesProject(t *testing.T) {
 			PermissionLevel: "standard",
 		},
 	}
+	// A local override may tighten the permission level (loosening is
+	// covered by TestResolveConfig_LocalPermissionLevel).
 	local := &LocalConfig{
 		ClaudeCode: types.ClaudeCodeConfig{
-			PermissionLevel: "permissive",
+			PermissionLevel: "minimal",
 		},
 	}
 	result, err := ResolveConfig(org, nil, project, local, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Config.ClaudeCode.PermissionLevel != "permissive" {
-		t.Errorf("expected permissive from local, got %q", result.Config.ClaudeCode.PermissionLevel)
+	if result.Config.ClaudeCode.PermissionLevel != "minimal" {
+		t.Errorf("expected minimal from local, got %q", result.Config.ClaudeCode.PermissionLevel)
 	}
 }
 

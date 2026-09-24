@@ -10,11 +10,6 @@ import (
 	"testing"
 )
 
-// testProjectDir is the project directory the policy tests pass to
-// ToSandboxConfig and ValidateMountDecl. It does not exist, so no symlink
-// resolution applies to paths under it.
-const testProjectDir = "/srv/qsdev-policy-test/project"
-
 func TestValidateMountDecl(t *testing.T) {
 	t.Parallel()
 

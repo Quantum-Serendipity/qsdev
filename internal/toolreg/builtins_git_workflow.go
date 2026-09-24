@@ -2,8 +2,11 @@ package toolreg
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/gitworkflow"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -41,32 +44,55 @@ func gitWorkflowBehaviors() map[string]ToolBehavior {
 // is a plain Nix string literal and must not be backslash-escaped, and the
 // script body reaches the shell verbatim, so it uses ordinary shell quoting.
 
-func branchNamingNixContent(_ types.WizardAnswers) ([]byte, error) {
-	pattern := `^(feat|fix|chore|docs|refactor|test|ci)/[a-z0-9._-]+$`
+// branchNamingNixContent renders the branch-naming pre-push hook for the
+// committed git.branch_pattern (answers.BranchPattern), or the broad
+// gitworkflow.DefaultBranchPattern when none is set. The pattern is validated
+// again here because this is where it is spliced into devenv.nix: it lands
+// in a shell single-quoted string inside the Nix indented string, so it must
+// not contain a quote, and a "${" in it is escaped for Nix ("”${").
+func branchNamingNixContent(answers types.WizardAnswers) ([]byte, error) {
+	pattern := gitworkflow.EffectiveBranchPattern(answers.BranchPattern)
+	if err := validation.CheckBranchPattern(pattern); err != nil {
+		return nil, fmt.Errorf("rendering branch-naming hook for git.branch_pattern %q: %w", pattern, err)
+	}
+	b := branding.Get()
+	r := strings.NewReplacer(
+		"@PATTERN@", strings.ReplaceAll(pattern, "${", "''${"),
+		"@CONFIG@", b.ConfigFile,
+		"@APP@", b.AppName,
+	)
+	return []byte(r.Replace(branchNamingNixTemplate)), nil
+}
 
-	nix := fmt.Sprintf(`  git-hooks.hooks.branch-naming = {
+// branchNamingNixTemplate is the hook section; branchNamingNixContent fills
+// in the @...@ placeholders. A detached HEAD and the usual default branches
+// are always accepted, so a custom pattern never blocks pushing them. The
+// check is about the branch, not files, so always_run keeps pre-commit from
+// skipping it when the pushed commits touch no matching file (e.g. only
+// deletions).
+const branchNamingNixTemplate = `  git-hooks.hooks.branch-naming = {
     enable = true;
     name = "Branch naming convention";
-    description = "Validates branch name against allowed patterns";
+    description = "Validates the branch name against git.branch_pattern";
     entry = "${pkgs.writeShellScript "branch-naming" ''
       branch=$(git rev-parse --abbrev-ref HEAD)
-      pattern='%s'
-      if [ "$branch" = "main" ] || [ "$branch" = "master" ] || [ "$branch" = "develop" ]; then
-        exit 0
-      fi
-      if ! echo "$branch" | grep -qE "$pattern"; then
-        echo "ERROR: Branch name '$branch' does not match convention."
-        echo "Expected: feat|fix|chore|docs|refactor|test|ci/<description>"
+      pattern='@PATTERN@'
+      case "$branch" in
+        HEAD|main|master|develop) exit 0 ;;
+      esac
+      if ! printf '%s\n' "$branch" | LC_ALL=C grep -qE -e "$pattern"; then
+        echo "ERROR: Branch name '$branch' does not match the branch naming pattern."
+        echo "Expected a name matching: $pattern"
+        echo "Rename the branch (git branch -m <new-name>), or set git.branch_pattern"
+        echo "in @CONFIG@ and run '@APP@ init --update'."
         exit 1
       fi
     ''}";
     language = "system";
     stages = [ "pre-push" ];
     pass_filenames = false;
-  };`, pattern)
-
-	return []byte(nix), nil
-}
+    always_run = true;
+  };`
 
 func commitTicketNixContent(_ types.WizardAnswers) ([]byte, error) {
 	nix := `  git-hooks.hooks.commit-ticket = {

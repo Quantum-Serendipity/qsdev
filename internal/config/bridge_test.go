@@ -216,3 +216,22 @@ func TestConfigToAnswers_JoinSemantics(t *testing.T) {
 		})
 	}
 }
+
+// TestBranchPattern_RoundTrip checks that git.branch_pattern survives the
+// config -> answers -> config round trip join and init perform.
+func TestBranchPattern_RoundTrip(t *testing.T) {
+	t.Parallel()
+	for _, pattern := range []string{"", `^(feat|fix)/[a-z0-9._-]+$`} {
+		t.Run(pattern, func(t *testing.T) {
+			t.Parallel()
+			cfg := &types.QsdevConfig{Version: types.ConfigVersionCurrent, Git: types.GitConfig{BranchPattern: pattern}}
+			answers := ConfigToAnswers(cfg, types.DetectedProject{}, "/tmp/myproject")
+			if answers.BranchPattern != pattern {
+				t.Fatalf("ConfigToAnswers BranchPattern = %q, want %q", answers.BranchPattern, pattern)
+			}
+			if got := AnswersToConfig(answers, "").Git.BranchPattern; got != pattern {
+				t.Errorf("AnswersToConfig git.branch_pattern = %q, want %q", got, pattern)
+			}
+		})
+	}
+}

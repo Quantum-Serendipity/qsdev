@@ -118,6 +118,9 @@ func (c InfraConfig) NixCacheURL() string {
 
 // GitConfig holds git workflow settings in .qsdev.yaml.
 type GitConfig struct {
+	// BranchPattern is the POSIX extended regular expression the always-on
+	// branch-naming pre-push hook checks the current branch against. Empty
+	// selects the built-in default (gitworkflow.DefaultBranchPattern).
 	BranchPattern string `yaml:"branch_pattern,omitempty"`
 }
 

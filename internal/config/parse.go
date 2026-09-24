@@ -276,6 +276,15 @@ func ValidateQsdevConfig(cfg *types.QsdevConfig, opts ValidateOptions) []Validat
 
 	errs = append(errs, validateProfiles(cfg, opts)...)
 
+	// git.branch_pattern is spliced into the branch-naming pre-push hook.
+	if err := validation.CheckBranchPattern(cfg.Git.BranchPattern); err != nil {
+		errs = append(errs, ValidationError{
+			Field:   "git.branch_pattern",
+			Value:   cfg.Git.BranchPattern,
+			Message: err.Error(),
+		})
+	}
+
 	// Validate qsdev_version syntax (if present).
 	if cfg.QsdevVersion != "" {
 		if _, err := ParseVersionConstraint(cfg.QsdevVersion); err != nil {

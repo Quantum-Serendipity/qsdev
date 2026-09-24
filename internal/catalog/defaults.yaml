@@ -293,7 +293,7 @@ tools:
     branch-naming:
         display_name: Branch Naming Convention
         category: devex
-        description: Pre-push hook enforcing branch naming conventions (feat|fix|chore|docs|refactor|test|ci/<description>)
+        description: Pre-push hook enforcing the git.branch_pattern branch naming pattern from .qsdev.yaml (default accepts any portable ASCII branch name)
         default_policy: always-on
         owned_files:
             - path: devenv.nix

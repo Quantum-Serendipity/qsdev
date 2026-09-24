@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -538,5 +539,31 @@ func TestValidateQsdevConfig_QsdevVersionValidation(t *testing.T) {
 	}
 	if errs[0].Field != "qsdev_version" {
 		t.Errorf("Field = %q, want qsdev_version", errs[0].Field)
+	}
+}
+
+func TestValidateQsdevConfig_BranchPattern(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		pattern   string
+		wantField bool
+	}{
+		{"unset", "", false},
+		{"valid ERE", `^(feat|fix|chore)/[a-z0-9._-]+$`, false},
+		{"invalid ERE", `^(feat|fix/`, true},
+		{"single quote", `^it's$`, true},
+		{"control character", "^feat/\u0007", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &types.QsdevConfig{Version: 2, Git: types.GitConfig{BranchPattern: tt.pattern}}
+			errs := ValidateQsdevConfig(cfg, ValidateOptions{})
+			gotField := slices.ContainsFunc(errs, func(e ValidationError) bool { return e.Field == "git.branch_pattern" })
+			if gotField != tt.wantField || len(errs) > 1 {
+				t.Errorf("ValidateQsdevConfig(git.branch_pattern=%q) = %v, want git.branch_pattern error: %v", tt.pattern, errs, tt.wantField)
+			}
+		})
 	}
 }

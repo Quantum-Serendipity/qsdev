@@ -246,6 +246,28 @@ func TestProjectPolicy_Apply(t *testing.T) {
 			},
 		},
 		{
+			name:    "committed branch pattern replaces the answers' pattern",
+			project: types.QsdevConfig{Version: 2, Git: types.GitConfig{BranchPattern: `^(feat|fix)/.+$`}},
+			answers: types.WizardAnswers{BranchPattern: `^old/.+$`},
+			check: func(t *testing.T, a types.WizardAnswers) {
+				t.Helper()
+				if a.BranchPattern != `^(feat|fix)/.+$` {
+					t.Errorf("BranchPattern = %q, want the committed pattern", a.BranchPattern)
+				}
+			},
+		},
+		{
+			name:    "removed branch pattern clears a stale one",
+			project: types.QsdevConfig{Version: 2},
+			answers: types.WizardAnswers{BranchPattern: `^old/.+$`},
+			check: func(t *testing.T, a types.WizardAnswers) {
+				t.Helper()
+				if a.BranchPattern != "" {
+					t.Errorf("BranchPattern = %q, want empty (default)", a.BranchPattern)
+				}
+			},
+		},
+		{
 			name:    "removed client block clears a stale MCP policy",
 			project: types.QsdevConfig{Version: 2},
 			answers: types.WizardAnswers{MCPPolicy: types.MCPPolicy{Blocked: []string{"github"}}, MCPServers: []string{"github"}},

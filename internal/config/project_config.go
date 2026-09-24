@@ -88,6 +88,7 @@ func AnswersToConfig(answers types.WizardAnswers, binaryVersion string) types.Qs
 		BuildCache:             answers.Infrastructure.BuildCache,
 		BuildCacheURL:          answers.Infrastructure.BuildCacheURL,
 	}
+	cfg.Git.BranchPattern = answers.BranchPattern
 
 	return cfg
 }

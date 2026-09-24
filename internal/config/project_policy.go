@@ -67,8 +67,8 @@ func ResolveProjectPolicy(project *types.QsdevConfig, local *LocalConfig) (*Proj
 // to the effective security floor, enables the tools the client compliance
 // level requires unless the answers record a decision about them, fills an
 // unset permission level from the client compliance level, and installs the
-// client MCP policy, which replaces any earlier one because .qsdev.yaml is
-// authoritative for it.
+// client MCP policy and the git branch naming pattern, which replace any
+// earlier ones because .qsdev.yaml is authoritative for them.
 func (p *ProjectPolicy) Apply(a *types.WizardAnswers) {
 	level := effectiveSecurityLevel(p.Effective.Config)
 	if CompareComplianceLevels(level, a.ComplianceLevel) > 0 {
@@ -99,6 +99,7 @@ func (p *ProjectPolicy) Apply(a *types.WizardAnswers) {
 
 	a.MCPPolicy = ClientMCPPolicy(p.Committed)
 	a.MCPServers = a.MCPPolicy.Filter(a.MCPServers)
+	a.BranchPattern = p.Committed.Git.BranchPattern
 }
 
 // ApplyLocal adds the developer's .qsdev.local.yaml, as ResolveConfig applied

@@ -437,6 +437,18 @@ changes to it: a pull request that edits a hook and updates its digest passes
 this check, and shows both changes in the diff. See
 [`.qsdev-generated.sha256`](configuration-reference.md#qsdev-generatedsha256).
 
+### Branch Name Hygiene
+
+The always-on `branch-naming` tool installs a pre-push hook that checks the
+current branch against `git.branch_pattern` in `.qsdev.yaml`. Its default
+accepts any portable ASCII branch name but rejects shell metacharacters, a
+leading `-` and non-ASCII characters, the branch names that turn into command
+injection where CI interpolates `${{ github.head_ref }}` unquoted into a
+script. It is a local hook, so `git push --no-verify` (or a branch created on
+the forge) skips it: workflows must still pass branch names through
+environment variables rather than inline expressions. See
+[Git settings](configuration-reference.md#git-settings).
+
 ### Custom Conformance Policy
 
 A committed `.qsdev-policy.yaml` adds project-specific requirements to the

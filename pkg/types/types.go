@@ -45,6 +45,10 @@ type WizardAnswers struct {
 	// drops every server it does not permit. It is refreshed from .qsdev.yaml
 	// by init, join and update, never chosen interactively.
 	MCPPolicy MCPPolicy `yaml:"mcp_policy,omitempty" json:"mcp_policy,omitempty"`
+	// BranchPattern is the committed git.branch_pattern the branch-naming
+	// pre-push hook enforces ("" selects the built-in default). Like
+	// MCPPolicy it is refreshed from .qsdev.yaml by init, join and update.
+	BranchPattern string `yaml:"branch_pattern,omitempty" json:"branch_pattern,omitempty"`
 }
 
 // AgentToolsAnswers holds AI agent tool selections from the wizard.

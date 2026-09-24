@@ -94,6 +94,8 @@ infrastructure:
   nix_cache_public_key: "corp.cachix.org-1:<base64 key>"
   build_cache: sccache
   build_cache_url: ""                                       # e.g. a self-hosted Turborepo remote cache
+git:
+  branch_pattern: '^(feat|fix|chore|docs|refactor|test|ci)/[a-z0-9._-]+$'   # optional; see Git settings
 ```
 
 `version` is the schema version (currently `2`). Each profile key is
@@ -118,6 +120,33 @@ validated against its own registry by `qsdev check`:
 from the committed file, so a joining teammate generates the same CI,
 Renovate/Dependabot and security files as the project's creator (an explicit
 `--infra-profile` on the join command overrides the committed value).
+
+### Git settings
+
+`git.branch_pattern` is the POSIX extended regular expression the always-on
+`branch-naming` tool's pre-push hook (in `devenv.nix`) checks the current
+branch name against with `grep -E`. It is optional; when it is absent the
+hook enforces a broad default,
+
+```
+^[A-Za-z0-9][A-Za-z0-9._/@+-]*$
+```
+
+which accepts any existing convention (`feat/login`, `audit/deep-review`,
+`users/jane/JIRA-12_fix`, `dependabot/npm_and_yarn/@types/node-20.1.0`) and
+rejects only names that are hazardous where branch names are interpolated
+unquoted, such as CI scripts and shell prompts: shell metacharacters, a leading
+`-`, and non-ASCII characters (homoglyphs, bidirectional overrides). Set a
+stricter pattern to enforce a team convention. A detached `HEAD` and the
+`main`, `master` and `develop` branches are always accepted.
+
+The committed value is authoritative: `qsdev init`, `--mode join` and
+`--update` read it from `.qsdev.yaml`, so after changing it run
+`qsdev init --update` to regenerate the hook (`.qsdev.local.yaml` cannot
+override it). The pattern must compile as a POSIX ERE and be printable ASCII
+without a single quote, because it is embedded in a shell single-quoted string
+in `devenv.nix`; `qsdev check` reports an invalid pattern and generation
+refuses to render one.
 
 ### Infrastructure settings
 
@@ -295,6 +324,7 @@ This is the most complex generated file and the one most likely to be customized
 - **Packages** -- Base packages (`git`, `jq`, `curl`, `coreutils`) plus language-specific toolchains and extra packages
 - **Services** -- Database, cache, messaging, and infrastructure services (PostgreSQL, Redis, MySQL, MongoDB, Elasticsearch, RabbitMQ, Kafka, MinIO, Mailpit, Keycloak, NATS)
 - **Pre-commit hooks** -- Security hooks (`ripsecrets`, `check-added-large-files`, `no-commit-to-branch`, `check-merge-conflict`, `shellcheck`, `statix`) plus custom hooks (`lock-file-audit`, `nix-secrets-check`)
+- **Tool sections** -- Sections contributed by enabled tools, such as the always-on `branch-naming` pre-push hook (see [Git settings](#git-settings)) and the opt-in `commit-ticket` prepare-commit-msg hook
 - **Environment variables** -- `DEVENV_SECURITY_HARDENED=true` sentinel, user-defined variables, credential variable unsetting
 - **enterShell** -- Security posture banner displayed on shell entry
 - **enterTest** -- Validation script for `devenv test`

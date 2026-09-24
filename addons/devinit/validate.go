@@ -45,6 +45,11 @@ func ValidateAnswers(answers types.WizardAnswers) error {
 		}
 	}
 
+	// The branch pattern is spliced into the branch-naming pre-push hook.
+	if err := validation.CheckBranchPattern(answers.BranchPattern); err != nil {
+		errs = append(errs, err.Error())
+	}
+
 	// Validate environment variable names; keys are emitted unquoted.
 	for _, k := range slices.Sorted(maps.Keys(answers.EnvVars)) {
 		switch {

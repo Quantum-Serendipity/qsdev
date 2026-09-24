@@ -4,6 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
 
 // makeTree creates the given relative paths under root; a trailing "/" makes
@@ -25,6 +29,21 @@ func makeTree(t *testing.T, root string, paths ...string) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// isAnyMarker reports whether dir holds any project marker, including a data
+// directory that would only be ignored when dir is the (real) home directory.
+func isAnyMarker(dir string) bool {
+	b := branding.Get()
+	return fileutil.FileExists(dir, b.ConfigFile) || fileutil.DirExists(dir, b.StateDir) ||
+		fileutil.DirExists(dir, "."+b.AppName)
+}
+
+// walkRoot returns a temp directory no marker above which can leak into a
+// walk-up, even when the default temp dir sits inside the real user profile.
+func walkRoot(t *testing.T) string {
+	t.Helper()
+	return testutil.MarkerFreeTempDir(t, isAnyMarker)
 }
 
 // setHome points the user's home directory at home: HOME for Unix and
@@ -60,10 +79,7 @@ func TestFindProjectRoot(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			root, err := filepath.EvalSymlinks(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			root := walkRoot(t)
 			makeTree(t, root, tt.tree...)
 			home := t.TempDir()
 			if tt.home != "" {
@@ -86,10 +102,7 @@ func TestFindProjectRoot(t *testing.T) {
 // TestFindProjectRoot_SymlinkedHome covers a home directory reached through a symlink
 // while the start directory is the resolved path, as os.Getwd reports it.
 func TestFindProjectRoot_SymlinkedHome(t *testing.T) {
-	realHome, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	realHome := walkRoot(t)
 	makeTree(t, realHome, ".qsdev/logs/", "code/")
 	link := filepath.Join(t.TempDir(), "home")
 	if err := os.Symlink(realHome, link); err != nil {

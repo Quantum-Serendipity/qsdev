@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -14,21 +14,35 @@ import (
 // outlives its timeout would otherwise keep the project directory open and
 // block deleting or renaming it.
 func TestExecProber_RunsOutsideWorkingDirectory(t *testing.T) {
-	pwd, err := exec.LookPath("pwd")
+	// Print the probe's working directory in the platform's own path form:
+	// Git Bash's pwd on Windows reports MSYS paths (/tmp), which never equal
+	// the Windows form of os.TempDir().
+	name, args := "pwd", []string{"-P"}
+	if runtime.GOOS == "windows" {
+		name, args = "cmd", []string{"/c", "cd"}
+	}
+	bin, err := exec.LookPath(name)
 	if err != nil {
-		t.Skip("pwd not available")
+		t.Skipf("%s not available", name)
 	}
 	t.Chdir(t.TempDir())
 
-	out, err := (&ExecProber{}).Output(context.Background(), pwd, "-P")
+	out, err := (&ExecProber{}).Output(context.Background(), bin, args...)
 	if err != nil {
-		t.Fatalf("pwd: %v", err)
+		t.Fatalf("%s: %v", name, err)
 	}
-	want, err := filepath.EvalSymlinks(os.TempDir())
+	got := strings.TrimSpace(string(out))
+	// Compare by file identity: symlinks (/tmp on macOS) and 8.3 short names
+	// (C:\Users\RUNNER~1 on Windows) name the same directory differently.
+	gotInfo, err := os.Stat(got)
+	if err != nil {
+		t.Fatalf("probe reported working directory %q: %v", got, err)
+	}
+	wantInfo, err := os.Stat(os.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(string(out)); got != want {
-		t.Errorf("probe ran in %q, want %q", got, want)
+	if !os.SameFile(gotInfo, wantInfo) {
+		t.Errorf("probe ran in %q, want %q", got, os.TempDir())
 	}
 }

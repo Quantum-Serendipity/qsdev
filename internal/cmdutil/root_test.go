@@ -4,7 +4,21 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Quantum-Serendipity/qsdev/internal/testutil"
+	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
+	"github.com/Quantum-Serendipity/qsdev/pkg/fileutil"
 )
+
+// isAnyMarker reports whether dir holds any project marker, including a data
+// directory that ProjectRoot only ignores when dir is the real home directory.
+// Test trees must not sit below such a directory (on Windows the default temp
+// dir is inside the user profile), or the walk escapes the tree.
+func isAnyMarker(dir string) bool {
+	b := branding.Get()
+	return fileutil.FileExists(dir, b.ConfigFile) || fileutil.DirExists(dir, b.StateDir) ||
+		fileutil.DirExists(dir, "."+b.AppName)
+}
 
 func TestProjectRoot(t *testing.T) {
 	// Not parallel: t.Chdir and t.Setenv change process-wide state.
@@ -27,10 +41,7 @@ func TestProjectRoot(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			root, err := filepath.EvalSymlinks(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			root := testutil.MarkerFreeTempDir(t, isAnyMarker)
 			for _, m := range tt.markers {
 				p := filepath.Join(root, filepath.FromSlash(m))
 				if m[len(m)-1] == '/' {

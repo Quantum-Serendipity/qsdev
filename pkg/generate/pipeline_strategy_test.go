@@ -151,21 +151,28 @@ func TestWriteFiles_EnforcesStrategyOnExistingFile(t *testing.T) {
 	}
 }
 
-// TestWriteFiles_ManualMergeRegeneratesRecordedOutput verifies a ManualMerge
+// TestWriteFiles_RegeneratesRecordedOutput verifies a ManualMerge or Skip
 // file that still matches a hash recorded in the project's state is
-// regenerated in place (e.g. devenv add-package), while one that doesn't match
-// gets a sidecar.
-func TestWriteFiles_ManualMergeRegeneratesRecordedOutput(t *testing.T) {
+// regenerated in place (e.g. devenv add-package), while one the user wrote or
+// edited is left alone: ManualMerge writes a sidecar beside it and Skip keeps
+// it without recording it as qsdev output (skip-if-exists).
+func TestWriteFiles_RegeneratesRecordedOutput(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name        string
+		path        string
+		strategy    types.MergeStrategy
+		force       bool
 		onDisk      string
 		wantContent string
 		wantAction  generate.FileAction
 	}{
-		{name: "unmodified recorded output", onDisk: "{ v1 }\n", wantContent: "{ v2 }\n", wantAction: generate.ActionUpdated},
-		{name: "hand-edited", onDisk: "{ v1 + edits }\n", wantContent: "{ v1 + edits }\n", wantAction: generate.ActionSkipped},
+		{name: "manual-merge unmodified recorded output", path: "devenv.nix", strategy: types.ManualMerge, onDisk: "{ v1 }\n", wantContent: "{ v2 }\n", wantAction: generate.ActionUpdated},
+		{name: "manual-merge hand-edited", path: "devenv.nix", strategy: types.ManualMerge, onDisk: "{ v1 + edits }\n", wantContent: "{ v1 + edits }\n", wantAction: generate.ActionSkipped},
+		{name: "skip unmodified recorded output", path: ".github/pull_request_template.md", strategy: types.Skip, onDisk: "{ v1 }\n", wantContent: "{ v2 }\n", wantAction: generate.ActionUpdated},
+		{name: "skip user-owned file", path: ".github/pull_request_template.md", strategy: types.Skip, onDisk: "MY TEMPLATE\n", wantContent: "MY TEMPLATE\n", wantAction: generate.ActionSkipped},
+		{name: "skip user-owned file with force", path: ".github/pull_request_template.md", strategy: types.Skip, force: true, onDisk: "MY TEMPLATE\n", wantContent: "MY TEMPLATE\n", wantAction: generate.ActionSkipped},
 	}
 
 	for _, tt := range tests {
@@ -173,28 +180,32 @@ func TestWriteFiles_ManualMergeRegeneratesRecordedOutput(t *testing.T) {
 			t.Parallel()
 
 			dir := t.TempDir()
-			writeTestFile(t, filepath.Join(dir, "devenv.nix"), tt.onDisk, 0o644)
+			writeTestFile(t, filepath.Join(dir, tt.path), tt.onDisk, 0o644)
 
 			recorded := state.RecordFiles([]types.GeneratedFile{
-				{Path: "devenv.nix", Content: []byte("{ v1 }\n"), Mode: 0o644, Strategy: types.ManualMerge},
+				{Path: tt.path, Content: []byte("{ v1 }\n"), Mode: 0o644, Strategy: tt.strategy},
 			})
 			statePath := filepath.Join(dir, state.StateFilePaths()[1])
 			if err := state.SaveStateToFile(statePath, recorded); err != nil {
 				t.Fatal(err)
 			}
 
-			result, err := generate.WriteFiles([]types.GeneratedFile{{
-				Path: "devenv.nix", Content: []byte("{ v2 }\n"), Strategy: types.ManualMerge, SkipValidation: true,
-			}}, generate.PipelineOptions{ProjectRoot: dir})
+			files := []types.GeneratedFile{{
+				Path: tt.path, Content: []byte("{ v2 }\n"), Strategy: tt.strategy, SkipValidation: true,
+			}}
+			result, err := generate.WriteFiles(files, generate.PipelineOptions{ProjectRoot: dir, Force: tt.force})
 			if err != nil {
 				t.Fatalf("WriteFiles: %v", err)
 			}
 			if got := result.Files[0].Action; got != tt.wantAction {
 				t.Errorf("action = %v, want %v", got, tt.wantAction)
 			}
-			got, _ := os.ReadFile(filepath.Join(dir, "devenv.nix"))
+			got, _ := os.ReadFile(filepath.Join(dir, tt.path))
 			if string(got) != tt.wantContent {
-				t.Errorf("devenv.nix = %q, want %q", got, tt.wantContent)
+				t.Errorf("%s = %q, want %q", tt.path, got, tt.wantContent)
+			}
+			if kept := tt.wantAction == generate.ActionSkipped; kept && len(result.SuccessfulFiles(files)) != 0 {
+				t.Error("a kept user file must not be recorded as generated output")
 			}
 		})
 	}

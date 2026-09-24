@@ -707,30 +707,26 @@ func TestLifecycle_NoOutputErrorBlamesTierOnlyBelowFull(t *testing.T) {
 // --force), and must never write through a symlink out of the project.
 func TestLifecycle_EnableRefusesToClobberUserFiles(t *testing.T) {
 	dir := initLifecycleProject(t)
-	const tmplPath = ".github/pull_request_template.md"
-	mustDisable(t, dir, "pr-templates", "--force")
+	const cliffPath = "cliff.toml" // Overwrite strategy
 
-	userFile := filepath.Join(dir, tmplPath)
-	if err := os.MkdirAll(filepath.Dir(userFile), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(userFile, []byte("MY OWN TEMPLATE\n"), 0o644); err != nil {
+	userFile := filepath.Join(dir, cliffPath)
+	if err := os.WriteFile(userFile, []byte("# MY OWN CLIFF CONFIG\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := enableTool(t, dir, "pr-templates"); err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
+	if _, err := enableTool(t, dir, "changelog"); err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
 		t.Fatalf("enable over a user file: want refusal, got %v", err)
 	}
-	if got := readProjectFile(t, dir, tmplPath); got != "MY OWN TEMPLATE\n" {
-		t.Fatalf("user template was modified: %q", got)
+	if got := readProjectFile(t, dir, cliffPath); got != "# MY OWN CLIFF CONFIG\n" {
+		t.Fatalf("user cliff.toml was modified: %q", got)
 	}
-	if loadProjectAnswers(t, dir).EnabledTools["pr-templates"] {
+	if loadProjectAnswers(t, dir).EnabledTools["changelog"] {
 		t.Error("a refused enable must not mark the tool enabled")
 	}
 
-	mustEnable(t, dir, "pr-templates", "--force")
-	if got := readProjectFile(t, dir, tmplPath); got == "MY OWN TEMPLATE\n" {
-		t.Error("--force should overwrite the existing template")
+	mustEnable(t, dir, "changelog", "--force")
+	if got := readProjectFile(t, dir, cliffPath); got == "# MY OWN CLIFF CONFIG\n" {
+		t.Error("--force should overwrite an existing overwrite-strategy file")
 	}
 
 	if runtime.GOOS == "windows" {
@@ -754,6 +750,60 @@ func TestLifecycle_EnableRefusesToClobberUserFiles(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(victim); string(data) != "OUTSIDE\n" {
 		t.Errorf("file outside the project was modified: %q", data)
+	}
+}
+
+// TestLifecycle_EnableKeepsUserOwnedSkipFiles is the F503 regression: a
+// skip-if-exists file (the PR template) the user already has is kept by
+// enable — with or without --force — is not recorded as qsdev output, and is
+// therefore never deleted by disable, not even with --force.
+func TestLifecycle_EnableKeepsUserOwnedSkipFiles(t *testing.T) {
+	const (
+		tmplPath = ".github/pull_request_template.md"
+		userTmpl = "MY OWN TEMPLATE\n"
+	)
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprintf("force=%v", force), func(t *testing.T) {
+			dir := initLifecycleProject(t)
+			mustDisable(t, dir, "pr-templates", "--force")
+			if _, err := os.Stat(filepath.Join(dir, tmplPath)); !os.IsNotExist(err) {
+				t.Fatalf("disable should remove the template qsdev generated (stat err=%v)", err)
+			}
+
+			userFile := filepath.Join(dir, tmplPath)
+			if err := os.MkdirAll(filepath.Dir(userFile), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(userFile, []byte(userTmpl), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			args := []string{"pr-templates"}
+			if force {
+				args = append(args, "--force")
+			}
+			out, err := enableTool(t, dir, args...)
+			if err != nil {
+				t.Fatalf("enable next to a user template: %v\n%s", err, out)
+			}
+			if !strings.Contains(out, tmplPath+": kept your existing file") {
+				t.Errorf("enable should say the user template was kept:\n%s", out)
+			}
+			if got := readProjectFile(t, dir, tmplPath); got != userTmpl {
+				t.Fatalf("user template was modified: %q", got)
+			}
+			if !loadProjectAnswers(t, dir).EnabledTools["pr-templates"] {
+				t.Error("the tool should be enabled")
+			}
+			if _, tracked := loadProjectState(t, dir).Files[tmplPath]; tracked {
+				t.Error("a kept user file must not be recorded as qsdev output")
+			}
+
+			mustDisable(t, dir, "pr-templates", "--force")
+			if got := readProjectFile(t, dir, tmplPath); got != userTmpl {
+				t.Errorf("disable --force removed or changed the user template: %q", got)
+			}
+		})
 	}
 }
 
@@ -783,7 +833,7 @@ func TestExecuteUpdatePlan_RefusesSymlinkEscape(t *testing.T) {
 }
 
 // TestLifecycle_DisableKeepsUntrackedFiles checks disable never deletes a
-// declared tool file qsdev did not generate unless --force is given.
+// declared tool file qsdev did not generate, not even with --force.
 func TestLifecycle_DisableKeepsUntrackedFiles(t *testing.T) {
 	dir := initLifecycleProject(t)
 	mustEnable(t, dir, "changelog")
@@ -795,9 +845,9 @@ func TestLifecycle_DisableKeepsUntrackedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mustDisable(t, dir, "changelog")
+	mustDisable(t, dir, "changelog", "--force")
 	if _, err := os.Stat(filepath.Join(dir, "cliff.toml")); err != nil {
-		t.Errorf("untracked cliff.toml must be left in place: %v", err)
+		t.Errorf("untracked cliff.toml must be left in place, even with --force: %v", err)
 	}
 }
 

@@ -49,6 +49,19 @@ func RecordFiles(files []types.GeneratedFile) types.GeneratedState {
 	return state
 }
 
+// IsRecordedOutput reports whether content is exactly what one of states
+// recorded for relPath, i.e. a file on disk holding it is unmodified qsdev
+// output that may be regenerated in place rather than a file the user owns.
+func IsRecordedOutput(states []types.GeneratedState, relPath string, content []byte) bool {
+	hash := ComputeHash(content)
+	for _, st := range states {
+		if recorded, ok := st.Files[relPath]; ok && recorded.Hash == hash {
+			return true
+		}
+	}
+	return false
+}
+
 // OrphanedFiles returns paths that exist in oldState but are not present in
 // the newFiles set. These are files that were previously generated but are
 // no longer produced after a configuration change (e.g., removing a language).

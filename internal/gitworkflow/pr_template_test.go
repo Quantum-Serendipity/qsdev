@@ -25,8 +25,8 @@ func TestGeneratePRTemplate_EmptyAnswers(t *testing.T) {
 	if f.Mode != 0o644 {
 		t.Errorf("mode = %o, want 644", f.Mode)
 	}
-	if f.Strategy != types.Overwrite {
-		t.Errorf("strategy = %v, want Overwrite", f.Strategy)
+	if f.Strategy != types.Skip {
+		t.Errorf("strategy = %v, want Skip (a curated PR template is the user's)", f.Strategy)
 	}
 
 	content := string(f.Content)

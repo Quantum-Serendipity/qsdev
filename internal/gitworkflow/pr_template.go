@@ -11,7 +11,8 @@ import (
 )
 
 // GeneratePRTemplate produces a GitHub pull request template tailored to
-// the project's detected ecosystems and enabled security tools.
+// the project's detected ecosystems and enabled security tools. It uses the
+// Skip strategy: a repository that already has a PR template keeps it.
 func GeneratePRTemplate(answers types.WizardAnswers) (*types.GeneratedFile, error) {
 	var b strings.Builder
 
@@ -59,7 +60,7 @@ func GeneratePRTemplate(answers types.WizardAnswers) (*types.GeneratedFile, erro
 		Path:     ".github/pull_request_template.md",
 		Content:  []byte(b.String()),
 		Mode:     fileutil.ModeReadWrite,
-		Strategy: types.Overwrite,
+		Strategy: types.Skip,
 	}, nil
 }
 

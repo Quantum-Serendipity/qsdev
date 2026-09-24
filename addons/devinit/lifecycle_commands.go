@@ -21,7 +21,9 @@ The tool's prerequisites are validated before enabling. Shared files (like
 CLAUDE.md, devenv.nix or settings.json) are regenerated and merged exactly as
 '%[1]s update' would, preserving your edits; the tool's own files are written
 fresh. Existing files %[1]s did not generate are never overwritten unless
---force is given. Use '%[1]s list' to see available tools.`, branding.Get().AppName),
+--force is given; files the tool only creates when absent (such as a PR
+template or labeler config) are kept even with --force. Use '%[1]s list' to
+see available tools.`, branding.Get().AppName),
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runEnable(cmd, args[0], opts)
@@ -41,12 +43,12 @@ func disableCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "disable <tool>",
 		Short: "Disable a tool in the current project",
-		Long: `Disable a tool and remove its configuration files.
+		Long: fmt.Sprintf(`Disable a tool and remove its configuration files.
 
 Files exclusively owned by the tool are deleted. Shared files are
 regenerated without the tool's contribution, preserving your edits. If any
 owned file has been modified by the user, the command warns and exits unless
---force is specified.`,
+--force is specified. Files %s did not generate are always left in place.`, branding.Get().AppName),
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDisable(cmd, args[0], opts)

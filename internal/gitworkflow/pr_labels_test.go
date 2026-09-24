@@ -29,8 +29,8 @@ func TestGenerateLabelerConfig_ReturnsTwoFiles(t *testing.T) {
 		if f.Mode != 0o644 {
 			t.Errorf("files[%d].Mode = %o, want 644", i, f.Mode)
 		}
-		if f.Strategy != types.Overwrite {
-			t.Errorf("files[%d].Strategy = %v, want Overwrite", i, f.Strategy)
+		if f.Strategy != types.Skip {
+			t.Errorf("files[%d].Strategy = %v, want Skip (a curated labeler config is the user's)", i, f.Strategy)
 		}
 	}
 }

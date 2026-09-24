@@ -66,7 +66,7 @@ type fileWriter struct {
 	result       WriteResult
 
 	// priorStates holds the project's recorded generation states, loaded on
-	// first use by a ManualMerge decision.
+	// first use by a Skip or ManualMerge decision.
 	priorStates       []types.GeneratedState
 	priorStatesLoaded bool
 }
@@ -205,8 +205,10 @@ type existingDecision struct {
 // existingContent applies file.Strategy to an existing target:
 //
 //   - Overwrite, LibraryManaged: replace with the generated content.
-//   - Skip: keep the existing file unless it already holds the generated
-//     content (only-create-if-absent; Force does not override this).
+//   - Skip: keep the existing file (it belongs to the user) unless it is
+//     unmodified qsdev output — the generated content itself, or content
+//     matching a recorded state hash — which is regenerated in place
+//     (skip-if-exists; Force does not override this).
 //   - ManualMerge: replace only when the existing file is known qsdev output
 //     (identical content, or content matching a recorded state hash) or the
 //     caller set Force; otherwise leave it and write a sidecar.
@@ -229,7 +231,7 @@ func (w *fileWriter) existingContent(file types.GeneratedFile, fullPath string) 
 
 	switch file.Strategy {
 	case types.Skip:
-		if bytes.Equal(existing, file.Content) {
+		if bytes.Equal(existing, file.Content) || w.isRecordedOutput(file.Path, existing) {
 			return existingDecision{content: file.Content}, nil
 		}
 		return existingDecision{skip: true}, nil
@@ -285,13 +287,7 @@ func (w *fileWriter) isRecordedOutput(relPath string, existing []byte) bool {
 		}
 		w.priorStates = states
 	}
-	hash := state.ComputeHash(existing)
-	for _, st := range w.priorStates {
-		if recorded, ok := st.Files[relPath]; ok && recorded.Hash == hash {
-			return true
-		}
-	}
-	return false
+	return state.IsRecordedOutput(w.priorStates, relPath, existing)
 }
 
 // writeSidecar writes the generated content next to a ManualMerge file that

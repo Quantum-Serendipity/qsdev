@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -77,6 +78,16 @@ PATH_KEYS: dict[str, str] = {
 READ_ONLY_TOOLS: frozenset[str] = frozenset({"Read", "Grep", "Glob"})
 
 _GLOB_CHARS = set("*?[{")
+# Separators in a Glob pattern: on Windows a backslash separates too.
+_GLOB_SEP = re.compile(r"[\\/]" if os.sep == "\\" else "/")
+
+
+def _within(path: str, root: str) -> bool:
+    """Whether the resolved path is root or lies inside it, compared as the
+    filesystem compares them: with the platform separator (realpath returns
+    backslashes on Windows) and, on Windows, ignoring case."""
+    path, root = os.path.normcase(path), os.path.normcase(root)
+    return path == root or path.startswith(root + os.sep)
 
 
 def _dependency_source_dirs() -> list[str]:
@@ -114,7 +125,7 @@ def _extra_read_paths() -> list[str]:
             real = os.path.realpath(p)
         except (OSError, ValueError):
             continue
-        if os.path.dirname(real) == real or real == home or home.startswith(real + os.sep):
+        if os.path.dirname(real) == real or _within(home, real):
             continue
         paths.append(p)
     return paths
@@ -177,7 +188,7 @@ def is_safe_path(resolved: str, read_only: bool) -> bool:
     for safe in SAFE_PATHS + read_dirs:
         try:
             safe_resolved = os.path.realpath(safe)
-            if resolved == safe_resolved or resolved.startswith(safe_resolved + "/"):
+            if _within(resolved, safe_resolved):
                 return True
         except (OSError, ValueError):
             pass  # Skip invalid safe paths; continue checking others.
@@ -191,7 +202,7 @@ def _glob_base(pattern: str) -> str:
     base: list[str] = []
     climbs = 0
     wild = False
-    for part in pattern.split("/"):
+    for part in _GLOB_SEP.split(pattern):
         wild = wild or bool(_GLOB_CHARS & set(part))
         if not wild:
             base.append(part)
@@ -213,7 +224,7 @@ def target_path(tool_name: str, tool_input: dict, session_cwd: str) -> str:
     path = path or session_cwd
     if tool_name == "Glob":
         base = _glob_base(tool_input.get("pattern") or "")
-        path = base if base.startswith(("/", "~")) else os.path.join(path, base)
+        path = base if base.startswith("~") or os.path.isabs(base) else os.path.join(path, base)
     return path
 
 
@@ -275,7 +286,7 @@ def main() -> None:
         target_resolved = os.path.normpath(expanded)
 
     # Check if target is within the project directory.
-    if target_resolved == cwd_resolved or target_resolved.startswith(cwd_resolved + "/"):
+    if _within(target_resolved, cwd_resolved):
         audit_log({
             "event": "allow",
             "hook": "file-boundary",

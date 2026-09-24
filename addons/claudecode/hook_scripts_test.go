@@ -300,7 +300,8 @@ func TestBlockDestructiveHook_ShellTools(t *testing.T) {
 // hook writes its audit log under CLAUDE_PROJECT_DIR.)
 func TestBlockDestructiveHook_WindowsHome(t *testing.T) {
 	t.Parallel()
-	env := []string{"CLAUDE_PROJECT_DIR=" + t.TempDir(), `HOME=C:/Users/dev`}
+	// Git Bash's HOME may differ from USERPROFILE; both are home.
+	env := []string{"CLAUDE_PROJECT_DIR=" + t.TempDir(), `HOME=C:/Users/dev`, `USERPROFILE=D:\Profiles\dev`}
 	cases := []struct {
 		command string
 		want    string
@@ -308,6 +309,8 @@ func TestBlockDestructiveHook_WindowsHome(t *testing.T) {
 		{`Remove-Item -Recurse -Force ~`, "deny"},
 		{`Remove-Item -Recurse -Force $env:USERPROFILE`, "deny"},
 		{`Remove-Item -Recurse -Force C:\Users\dev`, "deny"},
+		{`Remove-Item -Recurse -Force D:\Profiles`, "deny"},
+		{`Remove-Item -Recurse -Force $env:USERPROFILE\Downloads\old`, "allow"},
 		{`Remove-Item -Recurse -Force C:\Users\dev\Downloads\old`, "allow"},
 	}
 	for _, tc := range cases {
@@ -368,8 +371,10 @@ func TestFileBoundaryHook(t *testing.T) {
 	t.Parallel()
 	project := t.TempDir()
 	home := t.TempDir()
+	// Python (like Claude Code) takes the home directory from USERPROFILE on
+	// Windows and HOME elsewhere; set both so ~ is this test's home.
 	env := []string{
-		"CLAUDE_PROJECT_DIR=" + project, "HOME=" + home,
+		"CLAUDE_PROJECT_DIR=" + project, "HOME=" + home, "USERPROFILE=" + home,
 		"FILE_BOUNDARY_SAFE_PATHS=/tmp/qsdev-safe-path-test",
 		"FILE_BOUNDARY_EXTRA_READ_PATHS=", "FILE_BOUNDARY_STRICT_MODE=",
 		"GOPATH=", "GOMODCACHE=", "GOROOT=", "CARGO_HOME=", "RUSTUP_HOME=",
@@ -399,6 +404,8 @@ func TestFileBoundaryHook(t *testing.T) {
 		{"grep no path", "Grep", map[string]any{"pattern": "x"}, "allow"},
 		{"glob outside", "Glob", map[string]any{"pattern": "**/*", "path": "/etc"}, "deny"},
 		{"glob absolute pattern", "Glob", map[string]any{"pattern": home + "/.ssh/*"}, "deny"},
+		// Native separators: backslashes on Windows, where they separate too.
+		{"glob native absolute pattern", "Glob", map[string]any{"pattern": filepath.Join(home, ".ssh", "*")}, "deny"},
 		{"glob relative pattern", "Glob", map[string]any{"pattern": "src/**/*.go"}, "allow"},
 		{"glob pattern climbing out", "Glob", map[string]any{"pattern": "../**/*"}, "deny"},
 		{"glob pattern climbing after wildcard", "Glob", map[string]any{"pattern": "src/**/../../../**"}, "deny"},
@@ -441,7 +448,7 @@ func TestFileBoundaryHook_ExtraReadPaths(t *testing.T) {
 	sdk := filepath.Join(t.TempDir(), "sdk")
 	homeSDK := filepath.Join(home, "sdks", "android")
 	base := []string{
-		"CLAUDE_PROJECT_DIR=" + project, "HOME=" + home,
+		"CLAUDE_PROJECT_DIR=" + project, "HOME=" + home, "USERPROFILE=" + home,
 		"FILE_BOUNDARY_SAFE_PATHS=/tmp/qsdev-safe-path-test", "FILE_BOUNDARY_STRICT_MODE=",
 		"GOPATH=", "GOMODCACHE=", "GOROOT=", "CARGO_HOME=", "RUSTUP_HOME=",
 	}

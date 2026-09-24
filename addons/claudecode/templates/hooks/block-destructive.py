@@ -413,8 +413,16 @@ def _slash(p: str) -> str:
     return p.replace("\\", "/")
 
 
-HOME: str = _slash(os.path.expanduser("~"))
-_HOME_SPELLINGS: tuple[str, ...] = ("${HOME}", "$HOME", "$env:USERPROFILE", "$env:HOME", "~")
+# The shell's home: $HOME, which is what ~ and $HOME expand to in Bash, Git
+# Bash on Windows included. Python's expanduser ignores HOME on Windows, so it
+# is only the fallback. PowerShell's $env:USERPROFILE is read separately, and
+# every spelling of home counts as a critical path.
+HOME: str = _slash(os.environ.get("HOME") or os.path.expanduser("~"))
+_PROFILE: str = _slash(os.environ.get("USERPROFILE") or HOME)
+_HOME_SPELLINGS: tuple[tuple[str, str], ...] = (
+    ("${HOME}", HOME), ("$HOME", HOME), ("$env:USERPROFILE", _PROFILE),
+    ("$env:HOME", HOME), ("~", HOME),
+)
 _DRIVE = re.compile(r"^[A-Za-z]:(/|$)")
 
 
@@ -434,15 +442,15 @@ def _anchor(p: str) -> str:
     return _normpath(p)
 
 
-def resolve_path(path: str, cwd: str) -> str | None:
-    """Resolve a shell word naming a path to a normalised absolute path: ~,
-    $HOME and ${HOME} are expanded, trailing `/*` globs dropped (`dir/*`
-    reaches everything `dir` holds), and relative paths resolved against cwd.
-    Returns None when the word still holds an unexpanded variable."""
+def _absolute(path: str, cwd: str) -> str | None:
+    """A shell word naming a path as an absolute, slash-separated path that
+    keeps any drive letter: ~, $HOME and ${HOME} are expanded, trailing `/*`
+    globs dropped (`dir/*` reaches everything `dir` holds), and relative paths
+    joined to cwd. None when the word still holds an unexpanded variable."""
     p = _slash(path)
-    for h in _HOME_SPELLINGS:
-        if p == h or p.startswith(h + "/"):
-            p = HOME + p[len(h):]
+    for spelling, home in _HOME_SPELLINGS:
+        if p == spelling or p.startswith(spelling + "/"):
+            p = home + p[len(spelling):]
             break
     while p.endswith("/*"):
         p = p[:-2] or "/"
@@ -452,7 +460,25 @@ def resolve_path(path: str, cwd: str) -> str | None:
         return None
     if not _DRIVE.match(p) and not p.startswith("/"):
         p = posixpath.join(_slash(cwd), p)
-    return _anchor(p)  # a drive root compares like "/"
+    return p
+
+
+def resolve_path(path: str, cwd: str) -> str | None:
+    """Resolve a shell word naming a path (see _absolute) to the normalised,
+    drive-less form paths are compared in. None when it cannot be resolved."""
+    p = _absolute(path, cwd)
+    return None if p is None else _anchor(p)  # a drive root compares like "/"
+
+
+def resolve_dir(path: str, cwd: str) -> str | None:
+    """Like resolve_path, but keeps the drive letter: for a directory the hook
+    itself opens (the repository `git -C` or `cd` moves to), where a drive-less
+    path would resolve against this process's current drive on Windows."""
+    p = _absolute(path, cwd)
+    if p is None:
+        return None
+    drive = p[:2] if _DRIVE.match(p) else ""
+    return drive + _anchor(p)
 
 
 def _covers(ancestor: str, path: str) -> bool:
@@ -462,11 +488,18 @@ def _covers(ancestor: str, path: str) -> bool:
     return path == ancestor or path.startswith(ancestor.rstrip("/") + "/")
 
 
+# Every spelling of the home directory: the shell's $HOME, Windows'
+# USERPROFILE and the platform default, which differ on Windows.
+_HOMES: frozenset[str] = frozenset(
+    _anchor(h) for h in (HOME, _PROFILE, _slash(os.path.expanduser("~")))
+)
+
+
 def is_critical_path(resolved: str, project: str, include_project: bool) -> bool:
     """A recursive delete of resolved would take out the filesystem root, the
     home directory (or a directory above it), or, when include_project, the
     project root (or a directory above it)."""
-    if resolved == "/" or _covers(resolved, _anchor(HOME)):
+    if resolved == "/" or any(_covers(resolved, h) for h in _HOMES):
         return True
     return include_project and bool(project) and _covers(resolved, _anchor(project))
 
@@ -497,7 +530,7 @@ def working_dirs(cmds: list[Cmd], cwd: str) -> list[str]:
         operands = [a for a in argv[1:] if not a.startswith("-")]
         if argv[1:2] == ["-"]:
             continue  # `cd -`: the previous directory, unknown here
-        target = resolve_path(operands[0] if operands else "~", cur)
+        target = resolve_dir(operands[0] if operands else "~", cur)
         if target is not None:
             cur = target
     return dirs
@@ -669,7 +702,7 @@ def _git_subcommand(args: list[str], cwd: str) -> tuple[str, list[str], str]:
     k = 0
     while k < len(args) and args[k].startswith("-"):
         if args[k] == "-C" and k + 1 < len(args):
-            cwd = resolve_path(args[k + 1], cwd) or cwd
+            cwd = resolve_dir(args[k + 1], cwd) or cwd
         k += 2 if args[k] in _GIT_VALUE_OPTS else 1
     if k >= len(args):
         return "", [], cwd

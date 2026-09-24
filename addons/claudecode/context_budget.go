@@ -211,10 +211,20 @@ func rulesTokens(rulesDir string) (int, error) {
 // skillDescTokens sums the name and description front matter of every
 // <skillsDir>/<name>/SKILL.md.
 func skillDescTokens(skillsDir string) (int, error) {
-	entries, err := os.ReadDir(skillsDir)
+	// Stat first: on Windows, ReadDir of a regular file can succeed with no
+	// entries instead of failing, which would count a broken skills path as
+	// zero tokens.
+	info, err := os.Stat(skillsDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return 0, nil
 	}
+	if err != nil {
+		return 0, fmt.Errorf("reading skills directory %s: %w", skillsDir, err)
+	}
+	if !info.IsDir() {
+		return 0, fmt.Errorf("reading skills directory %s: not a directory", skillsDir)
+	}
+	entries, err := os.ReadDir(skillsDir)
 	if err != nil {
 		return 0, fmt.Errorf("reading skills directory %s: %w", skillsDir, err)
 	}

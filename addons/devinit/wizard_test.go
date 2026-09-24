@@ -202,7 +202,10 @@ func TestIsAccessible(t *testing.T) {
 	}{
 		{name: "no accessibility variables", trm: "xterm-256color", want: false},
 		{name: "ACCESSIBLE set", accessible: "1", trm: "xterm-256color", want: true},
-		{name: "NO_COLOR set", noColor: "1", trm: "xterm-256color", want: true},
+		// NO_COLOR only disables color (https://no-color.org/); it must not
+		// downgrade the wizard to huh's line-by-line accessible mode.
+		{name: "NO_COLOR set keeps TUI", noColor: "1", trm: "xterm-256color", want: false},
+		{name: "ACCESSIBLE and NO_COLOR set", accessible: "1", noColor: "1", trm: "xterm-256color", want: true},
 		{name: "TERM=dumb", trm: "dumb", want: true},
 	}
 

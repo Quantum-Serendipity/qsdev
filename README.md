@@ -39,6 +39,8 @@ qsdev init --yes
 
 The installer verifies downloads with SHA-256 checksums and Sigstore cosign (when cosign is available). On Apple Silicon under Rosetta 2, it detects translation and downloads the native arm64 binary. Flags: `--verify-only` (check an existing install), `--no-verify` (skip verification), `--force-arch` (override architecture detection).
 
+Without `--yes`, `qsdev init` runs an interactive wizard. Set `ACCESSIBLE=1` (or run under `TERM=dumb`) to get plain line-by-line prompts that work with screen readers. `NO_COLOR` only removes color, following [no-color.org](https://no-color.org/); the wizard stays interactive.
+
 ## Try It Out
 
 ### On an existing project (non-destructive)

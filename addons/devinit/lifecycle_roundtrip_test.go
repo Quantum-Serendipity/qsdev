@@ -181,7 +181,7 @@ func TestLifecycle_SharedContentMatchesFileFormat(t *testing.T) {
 func TestLifecycle_EnableProducesWellFormedSharedFiles(t *testing.T) {
 	dir := initLifecycleProject(t)
 
-	for _, tool := range []string{"opengrep", "changelog", "postgres-mcp", "man-pages", "commit-ticket", "starship-integration"} {
+	for _, tool := range []string{"opengrep", "changelog", "postgres-mcp", "mcp-nixos", "commit-ticket", "starship-integration"} {
 		mustEnable(t, dir, tool)
 		assertSharedFilesWellFormed(t, dir)
 	}
@@ -193,7 +193,7 @@ func TestLifecycle_EnableProducesWellFormedSharedFiles(t *testing.T) {
 		}
 	}
 	mcp := readProjectFile(t, dir, ".mcp.json")
-	for _, server := range []string{`"postgres"`, `"man-pages"`} {
+	for _, server := range []string{`"postgres"`, `"mcp-nixos"`} {
 		if !strings.Contains(mcp, server) {
 			t.Errorf(".mcp.json missing server %s after enable:\n%s", server, mcp)
 		}

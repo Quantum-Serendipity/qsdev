@@ -39,7 +39,8 @@ func generateSembleConfig(answers types.WizardAnswers) (*sembleResult, error) {
 			if !ok {
 				return nil, fmt.Errorf("semble MCP server not found in catalog")
 			}
-			override := sembleTextFilesServer(def)
+			entry := catalogServerEntry(sembleServerName, def, installedMCPServers(answers.ProjectRoot))
+			override := sembleTextFilesServer(entry)
 			result.Override = &override
 		}
 	}
@@ -76,12 +77,13 @@ func ValidateSemblePrerequisites(mode string) []string {
 const sembleServerName = types.SembleMCPServer
 
 // sembleTextFilesServer returns the .mcp.json definition written for semble
-// when text-file indexing is enabled: the catalog definition plus
-// --include-text-files.
-func sembleTextFilesServer(def catalog.MCPServerDef) MCPServerConfig {
+// when text-file indexing is enabled: the server's entry (installed binary or
+// pinned launcher) plus --include-text-files.
+func sembleTextFilesServer(entry MCPServerEntry) MCPServerConfig {
 	return MCPServerConfig{
 		Name:    sembleServerName,
-		Command: def.Command,
-		Args:    append(append([]string{}, def.Args...), "--include-text-files"),
+		Command: entry.Command,
+		Args:    append(append([]string{}, entry.Args...), "--include-text-files"),
+		Env:     entry.Env,
 	}
 }

@@ -53,6 +53,8 @@ func catalogDefToRegistryDef(name string, def catalog.MCPServerDef) McpServerDef
 		Source:        SourceBuiltin,
 		InstallMethod: parseMcpInstallMethod(def.InstallMethod),
 		PackageName:   def.PackageName,
+		Version:       def.Version,
+		Bin:           def.Bin,
 	}
 }
 

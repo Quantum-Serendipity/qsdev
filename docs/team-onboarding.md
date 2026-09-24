@@ -198,7 +198,6 @@ MCP servers are configured by default or activated based on project detection:
 | `version-sentinel` | Dependency version monitoring | Default |
 | `local-docs-devdocs` | Offline DevDocs API references | On when detected |
 | `local-docs-zim` | Offline Stack Exchange via ZIM | Opt-in |
-| `man-pages` | Local man page documentation | Opt-in |
 | `mcp-nixos` | NixOS packages and options | Opt-in |
 
 These are included automatically during `qsdev init`. No additional flags are needed.
@@ -209,7 +208,8 @@ Use `qsdev mcp grade` to check compliance levels and `qsdev mcp health` to verif
 qsdev mcp grade                # Grade the servers configured in .mcp.json
 qsdev mcp grade --all          # Also grade registry servers not configured
 qsdev mcp grade context7       # Grade a specific server
-qsdev mcp install <name>       # Install a server from the registry
+qsdev mcp install <name>       # Install a server's pinned release; .mcp.json then runs the binary
+qsdev mcp update --all         # After cloning: install the pinned releases the project state records
 qsdev mcp health               # Health check all configured servers
 ```
 
@@ -288,7 +288,7 @@ qsdev docs status        # Show installed documentation sets
 qsdev docs enable go     # Enable a documentation set
 ```
 
-Downloaded documentation is served through MCP servers (local-docs-devdocs, local-docs-zim) and routed by the lookup-docs skill, which queries 5 sources in priority order: local DevDocs, Stack Exchange ZIM, man pages, mcp-nixos, Context7 (web fallback).
+Downloaded documentation is served through MCP servers (local-docs-devdocs, local-docs-zim) and routed by the lookup-docs skill, which queries 4 sources in priority order: local DevDocs, Stack Exchange ZIM, mcp-nixos, Context7 (web fallback).
 
 ## Rolling Out to a Team
 

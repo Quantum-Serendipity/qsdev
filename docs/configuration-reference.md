@@ -580,17 +580,20 @@ Three servers are configured by default in `.mcp.json` (context7, github, socket
 
 | Server | Command | Purpose | Activation |
 |--------|---------|---------|------------|
-| `context7` | `npx -y @upstash/context7-mcp` | Library documentation lookup | Default |
-| `github` | `npx @anthropic-ai/mcp-github` | GitHub API access | Default |
-| `socket` | `npx @anthropic-ai/mcp-socket` | Behavioral dependency analysis | Default |
-| `semble` | `uvx --from semble[mcp] semble` | Semantic code search | Opt-in (`--agent-semble` or `qsdev enable semble`) |
+| `context7` | `npx @upstash/context7-mcp@4.1.1` | Library documentation lookup | Default |
+| `github` | `github-mcp-server stdio` (Nix package) | GitHub API access | Default |
+| `socket` | HTTP `https://mcp.socket.dev/` | Behavioral dependency analysis | Default |
+| `semble` | `uvx --from semble[mcp]==0.6.0 semble` | Semantic code search | Opt-in (`--agent-semble` or `qsdev enable semble`) |
 | `agent-postmortem` | `qsdev mcp agent-postmortem` | Session analysis and failure patterns | Enabled when tool active |
 | `version-sentinel` | `qsdev mcp version-sentinel` | Dependency version monitoring | Enabled when tool active |
-| `local-docs-devdocs` | `npx devdocs-mcp-server` | Local DevDocs API references | On when detected |
-| `local-docs-zim` | `openzim-mcp` | Offline Stack Exchange via ZIM | Opt-in |
-| `man-pages` | `uvx man-mcp-server` | System manual pages | Opt-in |
-| `mcp-nixos` | `uvx mcp-nixos` | NixOS packages and options | Opt-in |
-| `postgres` | `npx @anthropic-ai/mcp-postgres` | Database querying | When PostgreSQL service active |
+| `local-docs-devdocs` | `npx @madhan-g-p/devdocs-mcp-server@1.0.1` | Local DevDocs API references | On when detected |
+| `local-docs-zim` | `openzim-mcp` (installed by `qsdev mcp install`) | Offline Stack Exchange via ZIM | Opt-in |
+| `mcp-nixos` | `uvx --from mcp-nixos==3.1.0 mcp-nixos` | NixOS packages and options | Opt-in |
+| `postgres` | `uvx --from postgres-mcp==0.3.0 postgres-mcp --access-mode=restricted` | Read-only database querying ([Postgres MCP Pro](https://github.com/crystaldba/postgres-mcp)); `DATABASE_URI` is set from `DATABASE_URL` | Opt-in (`qsdev enable postgres-mcp`) |
+
+**Pinned launch specs.** Every server that `npx`, `uvx` or another package launcher would fetch at session start names an exact release (npm `name@1.2.3`, PyPI `name==1.2.3`, container `image@sha256:...`). These launches happen outside the package guard, the Bash deny rules and lockfile pinning, so an unpinned spec would run whatever release the registry serves that day. Generation refuses an unpinned launcher from any source, including servers in the claudecode addon's `mcp_servers` configuration, with an error naming the server; pin the release to fix it. Shell wrappers (`sh -c ...`) cannot be inspected here, and `qsdev mcp grade` fails them closed.
+
+**Installed binaries.** Servers with an install method (context7, semble, local-docs-devdocs, local-docs-zim, mcp-nixos, postgres) can be installed with `qsdev mcp install <name>`, which installs exactly the pinned release (subject to the same release-age cutoff as project dependencies) and records it in `.claude/.qsdev-claude-state.yaml`. While that record matches the pinned release, `qsdev init --update` writes the installed executable (for example `context7-mcp`) into `.mcp.json` instead of the launcher, so no package is fetched at session start. `qsdev mcp update` moves an installed server to the release the current qsdev pins; `qsdev mcp remove` drops the record, and the next regeneration returns to the pinned launcher. The installed binary must be on the `PATH` Claude Code starts with. The install record lives in the committed project state, so the committed `.mcp.json` runs the binary for every teammate: after cloning or `qsdev init --mode join`, run `qsdev mcp update --all` to install the same pinned releases on your machine (`qsdev mcp health` reports a server whose binary is missing).
 
 Structure:
 
@@ -599,21 +602,20 @@ Structure:
   "mcpServers": {
     "context7": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"]
+      "args": ["@upstash/context7-mcp@4.1.1"]
     },
     "github": {
-      "command": "npx",
-      "args": ["@anthropic-ai/mcp-github"],
-      "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}
+      "command": "github-mcp-server",
+      "args": ["stdio"],
+      "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"}
     },
     "socket": {
-      "command": "npx",
-      "args": ["@anthropic-ai/mcp-socket"],
-      "env": {"SOCKET_SECURITY_API_KEY": "${SOCKET_SECURITY_API_KEY}"}
+      "type": "http",
+      "url": "https://mcp.socket.dev/"
     },
     "semble": {
       "command": "uvx",
-      "args": ["--from", "semble[mcp]", "semble"]
+      "args": ["--from", "semble[mcp]==0.6.0", "semble"]
     }
   }
 }
@@ -761,7 +763,7 @@ reuses this to check signed corpus files, falling back to the manifest SHA-256 f
 unsigned sets. Servers serving content with a trusted, signature-verified binary can
 reach the `Attested` compliance grade reported by `qsdev mcp grade`.
 
-The lookup-docs skill routes documentation queries through 5 sources in priority order: local DevDocs, Stack Exchange ZIM, man pages, mcp-nixos, Context7 (web fallback).
+The lookup-docs skill routes documentation queries through 4 sources in priority order: local DevDocs, Stack Exchange ZIM, mcp-nixos, Context7 (web fallback).
 
 ---
 

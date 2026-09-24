@@ -35,18 +35,32 @@ const (
 	uvMinReleaseAge  = 7 * 24 * time.Hour
 )
 
-// packageOp is a package-manager operation on an MCP server package.
-type packageOp int
+// pinnedSpec returns the package-manager spec for def's exact Version
+// (name@1.2.3 for npm, name==1.2.3 for uv). A definition without an exact
+// version is refused: installing it would take whatever release the registry
+// serves, the fetch-on-run risk the pinned catalog exists to remove.
+func pinnedSpec(def *McpServerDefinition) (string, error) {
+	switch def.InstallMethod {
+	case InstallNpmGlobal:
+		if exactVersionPattern.MatchString(def.Version) {
+			return def.PackageName + "@" + def.Version, nil
+		}
+	case InstallUvTool:
+		if pythonExactVersionPattern.MatchString(def.Version) {
+			return def.PackageName + "==" + def.Version, nil
+		}
+	default:
+		return "", fmt.Errorf("install method %s has no package spec", def.InstallMethod)
+	}
+	return "", fmt.Errorf("%s has no exact pinned version (got %q); refusing to install an unpinned package", def.PackageName, def.Version)
+}
 
-const (
-	opInstall packageOp = iota
-	opUpgrade
-)
-
-// packageCommand builds the package-manager command for op on pkg. Every
-// command is hardened the way project installs are: only releases older than
-// the minimum release age are eligible, and npm lifecycle scripts never run.
-func (lc *McpLifecycle) packageCommand(method McpInstallMethod, op packageOp, pkg string) (string, []string) {
+// packageCommand builds the package-manager command that installs spec. The
+// same command installs and updates: spec pins an exact version, so updating
+// means installing the release the catalog now pins. Every command is
+// hardened the way project installs are: only releases older than the minimum
+// release age are eligible, and npm lifecycle scripts never run.
+func (lc *McpLifecycle) packageCommand(method McpInstallMethod, spec string) (string, []string) {
 	now := time.Now
 	if lc.Now != nil {
 		now = lc.Now
@@ -57,31 +71,39 @@ func (lc *McpLifecycle) packageCommand(method McpInstallMethod, op packageOp, pk
 
 	switch method {
 	case InstallUvTool:
-		verb := "install"
-		if op == opUpgrade {
-			verb = "upgrade"
-		}
-		return "uv", []string{"tool", verb, "--exclude-newer", cutoff(uvMinReleaseAge), pkg}
+		return "uv", []string{"tool", "install", "--exclude-newer", cutoff(uvMinReleaseAge), spec}
 	case InstallNpmGlobal:
-		verb := "install"
-		if op == opUpgrade {
-			verb = "update"
-		}
-		return "npm", []string{verb, "-g", "--ignore-scripts", "--before=" + cutoff(npmMinReleaseAge), pkg}
+		return "npm", []string{"install", "-g", "--ignore-scripts", "--before=" + cutoff(npmMinReleaseAge), spec}
 	default:
 		return "", nil
 	}
 }
 
-// runPackageCommand runs op for pkg and returns a failure description, or ""
-// on success.
-func (lc *McpLifecycle) runPackageCommand(ctx context.Context, method McpInstallMethod, op packageOp, pkg string) string {
-	name, args := lc.packageCommand(method, op, pkg)
-	out, err := lc.CmdRunner.Run(ctx, name, args...)
+// installPinned installs def's pinned release and verifies the manager's
+// inventory now holds exactly that release. It returns the installed version
+// and a failure description, or "" on success.
+func (lc *McpLifecycle) installPinned(ctx context.Context, def *McpServerDefinition) (string, string) {
+	spec, err := pinnedSpec(def)
 	if err != nil {
-		return fmt.Sprintf("%s %s %s failed: %v: %s", name, args[0], args[1], err, out)
+		return "", err.Error()
 	}
-	return ""
+	name, args := lc.packageCommand(def.InstallMethod, spec)
+	if out, err := lc.CmdRunner.Run(ctx, name, args...); err != nil {
+		return "", fmt.Sprintf("%s %s %s failed: %v: %s", name, args[0], args[1], err, out)
+	}
+
+	// The command succeeded; resolve the real installed version and verify it
+	// is the pinned release. A package missing from the inventory is not
+	// installed, whatever the exit code said, and a different release is not
+	// the one qsdev vouches for.
+	version, found := lc.resolveInstalledVersion(ctx, def.InstallMethod, def.PackageName)
+	switch {
+	case !found:
+		return version, notInInventory(def.InstallMethod, def.PackageName)
+	case version != def.Version:
+		return version, fmt.Sprintf("%s installed %s %s, not the pinned %s", def.InstallMethod, def.PackageName, version, def.Version)
+	}
+	return version, ""
 }
 
 // notInInventory describes a package-manager command that exited 0 without
@@ -134,7 +156,7 @@ func (lc *McpLifecycle) Install(ctx context.Context, serverName string) (*Instal
 
 	switch def.InstallMethod {
 	case InstallUvTool, InstallNpmGlobal:
-		result.Error = lc.runPackageCommand(ctx, def.InstallMethod, opInstall, def.PackageName)
+		result.Version, result.Error = lc.installPinned(ctx, def)
 	case InstallNixPackage:
 		result.Error = "nix packages are declarative; add to devenv.nix instead"
 		return result, nil
@@ -143,22 +165,13 @@ func (lc *McpLifecycle) Install(ctx context.Context, serverName string) (*Instal
 		return result, nil
 	}
 
-	// Fail closed: a failed package-manager command must never be recorded as a
-	// successful install. Return before touching state so a broken install
-	// cannot masquerade as installed.
+	// Fail closed: a failed or unverified install must never be recorded as a
+	// successful one. Return before touching state so a broken install cannot
+	// masquerade as installed.
 	if result.Error != "" {
 		return result, nil
 	}
-
-	// The command succeeded; resolve the real installed version and verify the
-	// package is actually present before recording success. A package missing
-	// from the inventory is not installed, whatever the exit code said.
-	version, found := lc.resolveInstalledVersion(ctx, def.InstallMethod, def.PackageName)
-	result.Version = version
-	if !found {
-		result.Error = notInInventory(def.InstallMethod, def.PackageName)
-		return result, nil
-	}
+	version := result.Version
 	result.Installed = true
 
 	if err := lc.updateServerState(serverName, def.InstallMethod, version); err != nil {
@@ -168,7 +181,7 @@ func (lc *McpLifecycle) Install(ctx context.Context, serverName string) (*Instal
 	return result, nil
 }
 
-// Update upgrades an installed MCP server to its latest version.
+// Update moves an installed MCP server to the release the catalog pins.
 func (lc *McpLifecycle) Update(ctx context.Context, serverName string) (*UpdateResult, error) {
 	def, ok := DefaultRegistry().ByName(serverName)
 	if !ok {
@@ -200,7 +213,7 @@ func (lc *McpLifecycle) Update(ctx context.Context, serverName string) (*UpdateR
 
 	switch def.InstallMethod {
 	case InstallUvTool, InstallNpmGlobal:
-		result.Error = lc.runPackageCommand(ctx, def.InstallMethod, opUpgrade, def.PackageName)
+		result.NewVersion, result.Error = lc.installPinned(ctx, def)
 	case InstallNixPackage:
 		result.Error = "nix packages are declarative; update devenv.nix instead"
 		return result, nil
@@ -209,19 +222,12 @@ func (lc *McpLifecycle) Update(ctx context.Context, serverName string) (*UpdateR
 		return result, nil
 	}
 
-	// Fail closed: a failed upgrade must not overwrite state with a new
-	// successful entry. Return before touching state.
+	// Fail closed: a failed or unverified update must not overwrite state with
+	// a new successful entry. Return before touching state.
 	if result.Error != "" {
 		return result, nil
 	}
-
-	// Resolve the real post-upgrade version and verify presence.
-	version, found := lc.resolveInstalledVersion(ctx, def.InstallMethod, def.PackageName)
-	result.NewVersion = version
-	if !found {
-		result.Error = notInInventory(def.InstallMethod, def.PackageName)
-		return result, nil
-	}
+	version := result.NewVersion
 	result.Updated = true
 
 	if err := lc.updateServerState(serverName, def.InstallMethod, version); err != nil {
@@ -231,7 +237,8 @@ func (lc *McpLifecycle) Update(ctx context.Context, serverName string) (*UpdateR
 	return result, nil
 }
 
-// UpdateAll upgrades all MCP servers recorded in generated state.
+// UpdateAll moves every MCP server recorded in generated state to its pinned
+// release.
 func (lc *McpLifecycle) UpdateAll(ctx context.Context) ([]*UpdateResult, error) {
 	state, err := lc.StateLoader()
 	if err != nil {

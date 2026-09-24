@@ -37,7 +37,7 @@ var knownServers = map[string]McpServerInfo{
 	},
 	"postgres": {
 		Name:           "postgres",
-		Command:        "npx",
+		Command:        "uvx",
 		IsLocalBinary:  false,
 		OfflineCapable: true,
 	},

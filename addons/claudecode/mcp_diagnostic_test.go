@@ -63,24 +63,41 @@ func TestPartitionTrusted_GeneratedConfigIsTrusted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := addon.Config
-	if def, ok := cat.MCPServer(sembleServerName); ok {
-		cfg.MCPServers = append(append([]MCPServerConfig{}, cfg.MCPServers...), sembleTextFilesServer(def))
-	}
-	f, err := GenerateMcpJson(types.WizardAnswers{MCPServers: cat.MCPServerNames()}, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var generated McpJSON
-	if err := json.Unmarshal(f.Content, &generated); err != nil {
-		t.Fatal(err)
-	}
-	servers := make(map[string]mcphealth.ServerConfig, len(generated.MCPServers))
-	for name, e := range generated.MCPServers {
-		servers[name] = mcphealth.ServerConfig{Name: name, Command: e.Command, Args: e.Args, URL: e.URL, Env: e.Env}
-	}
-	if _, skipped := partitionTrusted(servers, trustedMCPDefinitions()); len(skipped) > 0 {
-		t.Errorf("generated servers treated as untrusted: %v", skipped)
+	for _, tc := range []struct {
+		name      string
+		installed bool
+	}{
+		{name: "pinned launchers"},
+		{name: "installed binaries", installed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var root string
+			if tc.installed {
+				root = t.TempDir()
+				writeInstalledMCPState(t, root, installedAtPin(cat))
+			}
+			cfg := addon.Config
+			if def, ok := cat.MCPServer(sembleServerName); ok {
+				entry := catalogServerEntry(sembleServerName, def, installedMCPServers(root))
+				cfg.MCPServers = append(append([]MCPServerConfig{}, cfg.MCPServers...), sembleTextFilesServer(entry))
+			}
+			f, err := GenerateMcpJson(types.WizardAnswers{MCPServers: cat.MCPServerNames(), ProjectRoot: root}, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var generated McpJSON
+			if err := json.Unmarshal(f.Content, &generated); err != nil {
+				t.Fatal(err)
+			}
+			servers := make(map[string]mcphealth.ServerConfig, len(generated.MCPServers))
+			for name, e := range generated.MCPServers {
+				servers[name] = mcphealth.ServerConfig{Name: name, Command: e.Command, Args: e.Args, URL: e.URL, Env: e.Env}
+			}
+			if _, skipped := partitionTrusted(servers, trustedMCPDefinitions()); len(skipped) > 0 {
+				t.Errorf("generated servers treated as untrusted: %v", skipped)
+			}
+		})
 	}
 }
 

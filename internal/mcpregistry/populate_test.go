@@ -67,8 +67,8 @@ func TestBuildDefault_KnownServerProperties(t *testing.T) {
 			wantCmd:     "npx",
 		},
 		{
-			name:        "man-pages",
-			wantDisplay: "Man Pages MCP",
+			name:        "mcp-nixos",
+			wantDisplay: "MCP-NixOS Documentation",
 			wantCat:     CategoryDocumentation,
 			wantCmd:     "uvx",
 		},

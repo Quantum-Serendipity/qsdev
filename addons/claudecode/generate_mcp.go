@@ -3,6 +3,8 @@ package claudecode
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/catalog"
@@ -36,6 +38,13 @@ type MCPServerEntry struct {
 // policy it always returns a file (possibly with no servers), so the writers
 // that merge it over an existing .mcp.json remove the servers the policy
 // forbids (merge.EnforceMCPPolicy).
+//
+// A catalog server that `qsdev mcp install` installed at its pinned release
+// (recorded in the project state under answers.ProjectRoot) runs its installed
+// binary; any other runs the catalog's pinned launcher. GenerateMcpJson
+// refuses, with ErrUnpinnedMCPServer, any server whose command would fetch a
+// package at launch without an exact version, whether it comes from the
+// catalog or the addon configuration.
 func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedFile, error) {
 	policy := answers.MCPPolicy
 	names := policy.Filter(answers.MCPServers)
@@ -59,12 +68,13 @@ func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedF
 	}
 
 	// Populate from wizard-selected known servers.
+	installed := installedMCPServers(answers.ProjectRoot)
 	for _, name := range names {
 		def, ok := cat.MCPServer(name)
 		if !ok {
 			return nil, fmt.Errorf("unknown MCP server %q: must be one of %s", name, mcpServerNameList(cat))
 		}
-		mcp.MCPServers[name] = catalogDefToEntry(def)
+		mcp.MCPServers[name] = catalogServerEntry(name, def, installed)
 	}
 
 	// Populate from config-provided servers (overrides wizard on collision).
@@ -75,6 +85,12 @@ func GenerateMcpJson(answers types.WizardAnswers, cfg Config) (*types.GeneratedF
 			Env:     srv.Env,
 		}
 		mcp.MCPServers[srv.Name] = entry
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(mcp.MCPServers)) {
+		if err := requirePinnedLaunch(name, mcp.MCPServers[name]); err != nil {
+			return nil, fmt.Errorf("generating .mcp.json: %w", err)
+		}
 	}
 
 	raw, err := json.Marshal(mcp)

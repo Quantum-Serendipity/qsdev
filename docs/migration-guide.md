@@ -142,7 +142,7 @@ The generated `.claude/settings.json` uses the `three-way-merge` strategy. To ad
 
 ### Preserving Custom MCP Servers
 
-`.mcp.json` also uses `three-way-merge`. Custom MCP server entries you add will be preserved during updates, as long as they do not conflict with built-in server names (`context7`, `github`, `semble`, `socket`). Documentation servers (`local-docs-devdocs`, `local-docs-zim`, `man-pages`, `mcp-nixos`) may also be present if enabled via `qsdev docs enable` — avoid conflicting with these names as well.
+`.mcp.json` also uses `three-way-merge`. Custom MCP server entries you add will be preserved during updates, as long as they do not conflict with built-in server names (`context7`, `github`, `semble`, `socket`). Documentation servers (`local-docs-devdocs`, `local-docs-zim`, `mcp-nixos`) may also be present if enabled via `qsdev docs enable` — avoid conflicting with these names as well.
 
 To add a custom server after initial setup:
 
@@ -250,6 +250,8 @@ If your project was initialized before qsdev 0.7.0, running `qsdev update` intro
 
 **Generated-file manifest** — `qsdev check` now verifies machine-owned generated files in CI against a committed `.qsdev-generated.sha256` manifest, and a project with `.qsdev.yaml` but no manifest fails the `generated_manifest` check at high severity. A project set up by an earlier version has none: run `qsdev init --update` (or `qsdev repair`, or `qsdev check --auto-fix`) once locally and commit `.qsdev-generated.sha256`.
 
+**Pinned MCP servers** — Every catalog MCP server that `npx` or `uvx` fetches at session start now names an exact release, and generation refuses an unpinned launcher (`npx -y pkg`, `uvx pkg`) from any source, including servers under the claudecode addon's `mcp_servers` configuration; pin those (`pkg@1.2.3`, `pkg==1.2.3`) before running `qsdev init --update`. The `postgres` server now runs Postgres MCP Pro (`uvx --from postgres-mcp==0.3.0 postgres-mcp --access-mode=restricted`, read-only) with `DATABASE_URI` taken from `DATABASE_URL`, because the npm package it named was never published. The `man-pages` tool and server were removed for the same reason (their PyPI package does not exist): drop `man-pages` from `tools.enabled` and `mcp_servers` in `.qsdev.yaml`, and `qsdev init --update` removes its `.mcp.json` entry. See [`.mcp.json`](configuration-reference.md#mcpjson).
+
 **Removed defaults sections** — The `profiles` and `profile_aliases` sections of the defaults file (`~/.config/qsdev/defaults.yaml`, see `qsdev defaults edit`) and of an organization catalog were never read by any command, so they have been removed. A file that still sets either section keeps loading: the section is ignored with a warning naming it and its line, and the rest of the file still applies. Delete the section to silence the warning. What a tier turns on is set by `tiers`, `tier_to_compliance` and `tier_to_enabled_tools`.
 
 ## Common Issues
@@ -297,7 +299,7 @@ If `devenv test` reports credential variables are set:
 
 ### MCP server "unknown" error
 
-qsdev configures 3 default MCP servers in `.mcp.json`: `context7`, `github`, `socket`. Additional servers (`semble` when opted in with `--agent-semble`, `agent-postmortem`, `version-sentinel`, `local-docs-devdocs`, `local-docs-zim`, `man-pages`, `mcp-nixos`) activate based on tool enablement and project detection. Custom servers can be added by editing `.mcp.json` directly after generation — the three-way merge preserves custom entries on update.
+qsdev configures 3 default MCP servers in `.mcp.json`: `context7`, `github`, `socket`. Additional servers (`semble` when opted in with `--agent-semble`, `agent-postmortem`, `version-sentinel`, `local-docs-devdocs`, `local-docs-zim`, `mcp-nixos`) activate based on tool enablement and project detection. Custom servers can be added by editing `.mcp.json` directly after generation — the three-way merge preserves custom entries on update.
 
 ### Corrupted or drifted configuration files
 

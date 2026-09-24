@@ -74,10 +74,10 @@ func TestGenerateMcpJson_MultipleServers(t *testing.T) {
 		t.Errorf("expected 2 entries, got %d", len(mcp.MCPServers))
 	}
 
-	// Verify postgres has DATABASE_URL env.
+	// Verify postgres receives the project's DATABASE_URL as DATABASE_URI.
 	pg := mcp.MCPServers["postgres"]
-	if pg.Env["DATABASE_URL"] != "${DATABASE_URL}" {
-		t.Errorf("expected DATABASE_URL env var for postgres, got %v", pg.Env)
+	if pg.Env["DATABASE_URI"] != "${DATABASE_URL}" {
+		t.Errorf("expected DATABASE_URI env var for postgres, got %v", pg.Env)
 	}
 }
 
@@ -391,7 +391,7 @@ func TestGenerateMcpJson_Context7Server(t *testing.T) {
 	if entry.Command != "npx" {
 		t.Errorf("expected command 'npx', got %q", entry.Command)
 	}
-	if len(entry.Args) != 2 || entry.Args[0] != "-y" || entry.Args[1] != "@upstash/context7-mcp" {
+	if len(entry.Args) != 1 || entry.Args[0] != "@upstash/context7-mcp@4.1.1" {
 		t.Errorf("unexpected args: %v", entry.Args)
 	}
 	// context7 should have no env vars.
@@ -471,7 +471,7 @@ func TestGenerateMcpJson_DevDocsServer(t *testing.T) {
 	if entry.Command != "npx" {
 		t.Errorf("expected command 'npx', got %q", entry.Command)
 	}
-	if len(entry.Args) != 2 || entry.Args[0] != "-y" || entry.Args[1] != "@madhan-g-p/devdocs-mcp-server" {
+	if len(entry.Args) != 1 || entry.Args[0] != "@madhan-g-p/devdocs-mcp-server@1.0.1" {
 		t.Errorf("unexpected args: %v", entry.Args)
 	}
 	if entry.Env["DEVDOCS_DATA_PATH"] != "${HOME}/.qsdev/docs/devdocs" {

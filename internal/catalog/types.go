@@ -206,7 +206,15 @@ type MCPServerDef struct {
 	Transport     string            `yaml:"transport,omitempty"`
 	InstallMethod string            `yaml:"install_method,omitempty"`
 	PackageName   string            `yaml:"package_name,omitempty"`
-	NixPackage    string            `yaml:"nix_package,omitempty"`
+	// Version is the exact release of PackageName that both the fetch-on-run
+	// launcher in Args and `qsdev mcp install` use; never a range or tag.
+	Version string `yaml:"version,omitempty"`
+	// Bin is the executable InstallMethod puts on PATH. Once `qsdev mcp
+	// install` has installed Version, .mcp.json runs Bin, with BinArgs,
+	// instead of the fetch-on-run launcher.
+	Bin        string   `yaml:"bin,omitempty"`
+	BinArgs    []string `yaml:"bin_args,omitempty"`
+	NixPackage string   `yaml:"nix_package,omitempty"`
 }
 
 // PermissionRulesFile represents the permission_rules section of defaults.yaml.

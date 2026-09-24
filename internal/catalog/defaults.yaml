@@ -733,20 +733,6 @@ tools:
               ownership: shared
               section_id: local-docs-zim
               section_content: "- **Stack Exchange ZIM** offline Q&A available (community content, medium trust)."
-    man-pages:
-        display_name: Man Pages MCP
-        category: ai-agent
-        description: Local man page documentation server for system command reference
-        default_policy: opt-in
-        mcp_server_name: man-pages
-        owned_files:
-            - path: .mcp.json
-              ownership: shared
-              section_id: man-pages
-            - path: CLAUDE.md
-              ownership: shared
-              section_id: man-pages
-              section_content: "- **Man Pages** local system documentation available (high trust)."
     mcp-nixos:
         display_name: MCP-NixOS Documentation
         category: ai-agent
@@ -798,11 +784,18 @@ mcp_servers:
         display_name: "PostgreSQL MCP"
         category: integration
         description: "PostgreSQL database access"
-        command: npx
-        args: ["@anthropic-ai/mcp-postgres"]
+        # Postgres MCP Pro (github.com/crystaldba/postgres-mcp), exact pin.
+        # Restricted mode runs only read-only transactions.
+        command: uvx
+        args: ["--from", "postgres-mcp==0.3.0", "postgres-mcp", "--access-mode=restricted"]
         env:
-            DATABASE_URL: "${DATABASE_URL}"
+            DATABASE_URI: "${DATABASE_URL}"
         transport: stdio
+        install_method: uv-tool
+        package_name: "postgres-mcp"
+        version: "0.3.0"
+        bin: postgres-mcp
+        bin_args: ["--access-mode=restricted"]
     fetch:
         display_name: "Fetch MCP"
         category: integration
@@ -821,20 +814,27 @@ mcp_servers:
         display_name: "Semble Semantic Search"
         category: agent
         description: "Local semantic code search — CPU-only, no API keys"
+        # Exact pin (version below); `qsdev mcp install semble` installs the
+        # same release and .mcp.json then runs the installed bin.
         command: uvx
-        args: ["--from", "semble[mcp]", "semble"]
+        args: ["--from", "semble[mcp]==0.6.0", "semble"]
         transport: stdio
         install_method: uv-tool
         package_name: "semble[mcp]"
+        version: "0.6.0"
+        bin: semble
     context7:
         display_name: "Context7"
         category: agent
         description: "Library documentation lookups via web"
+        # Exact pin, no -y (see filesystem above).
         command: npx
-        args: ["-y", "@upstash/context7-mcp"]
+        args: ["@upstash/context7-mcp@4.1.1"]
         transport: stdio
         install_method: npm-global
         package_name: "@upstash/context7-mcp"
+        version: "4.1.1"
+        bin: context7-mcp
     agent-postmortem:
         display_name: "Agent Postmortem"
         category: agent
@@ -854,13 +854,15 @@ mcp_servers:
         category: documentation
         description: "Version-aware DevDocs documentation with local caching"
         command: npx
-        args: ["-y", "@madhan-g-p/devdocs-mcp-server"]
+        args: ["@madhan-g-p/devdocs-mcp-server@1.0.1"]
         env:
             DEVDOCS_DATA_PATH: "${HOME}/.qsdev/docs/devdocs"
             MCP_DB_PATH: "${HOME}/.qsdev/docs/mcp.db"
         transport: stdio
         install_method: npm-global
         package_name: "@madhan-g-p/devdocs-mcp-server"
+        version: "1.0.1"
+        bin: devdocs-mcp
     local-docs-zim:
         display_name: "Stack Exchange ZIM Documentation"
         category: documentation
@@ -874,24 +876,19 @@ mcp_servers:
         transport: stdio
         install_method: uv-tool
         package_name: "openzim-mcp"
-    man-pages:
-        display_name: "Man Pages MCP"
-        category: documentation
-        description: "Local man page documentation for system commands"
-        command: uvx
-        args: ["man-mcp-server"]
-        transport: stdio
-        install_method: uv-tool
-        package_name: "man-mcp-server"
+        version: "3.3.3"
+        bin: openzim-mcp
     mcp-nixos:
         display_name: "MCP-NixOS Documentation"
         category: documentation
         description: "NixOS packages, options, and Home Manager documentation"
         command: uvx
-        args: ["mcp-nixos"]
+        args: ["--from", "mcp-nixos==3.1.0", "mcp-nixos"]
         transport: stdio
         install_method: uv-tool
         package_name: "mcp-nixos"
+        version: "3.1.0"
+        bin: mcp-nixos
 docs_corpus:
     devdocs_base_url: "https://documents.devdocs.io"
     devdocs_slugs:
@@ -1056,8 +1053,9 @@ default_agent_tools:
     postmortem_enabled: true
     version_sentinel: true
     version_sentinel_hours: 24
-    # Opt-in (matches --agent-semble's default): the server runs an unpinned
-    # PyPI package through uvx at every session start.
+    # Opt-in (matches --agent-semble's default): unless installed with
+    # `qsdev mcp install semble`, the server fetches its pinned PyPI release
+    # through uvx at session start.
     semble_enabled: false
     semble_mode: both
 languages:

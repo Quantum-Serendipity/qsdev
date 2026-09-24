@@ -422,6 +422,17 @@ func imageDigestPinned(args []string) bool {
 	return slices.ContainsFunc(args, imageDigestPattern.MatchString)
 }
 
+// LaunchesUnpinnedPackage reports whether command and args start a package
+// launcher (npx, uvx, pnpm dlx, docker run, ...) that may fetch a package
+// without naming an exact version or image digest, so every session could run
+// whatever release the registry serves that day. Shell wrappers cannot be
+// inspected and are not reported here; the compliance grader fails them
+// closed.
+func LaunchesUnpinnedPackage(command string, args []string) bool {
+	inv := classifyInvocation(command, args)
+	return inv.kind == invocationLauncher && (inv.rule.pinned == nil || !inv.rule.pinned(inv.args))
+}
+
 // isLocalOnly returns true when the server runs locally: a URL on the loopback
 // interface (a remote endpoint is never local), or a command that does not
 // fetch packages from the network at runtime: it is not a package launcher, or

@@ -1,55 +1,55 @@
 {
   "mcpServers": {
     "agent-postmortem": {
-      "command": "qsdev",
       "args": [
         "mcp",
         "agent-postmortem"
-      ]
+      ],
+      "command": "qsdev"
     },
     "context7": {
-      "command": "npx",
       "args": [
-        "-y",
-        "@upstash/context7-mcp"
-      ]
+        "@upstash/context7-mcp@4.1.1"
+      ],
+      "command": "npx"
     },
     "github": {
-      "command": "npx",
       "args": [
-        "@anthropic-ai/mcp-github"
+        "stdio"
       ],
+      "command": "github-mcp-server",
       "env": {
-        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
       }
     },
     "local-docs-devdocs": {
-      "command": "npx",
       "args": [
-        "devdocs-mcp-server"
+        "@madhan-g-p/devdocs-mcp-server@1.0.1"
       ],
+      "command": "npx",
       "env": {
-        "DEVDOCS_DATA_DIR": "${HOME}/.local/share/qsdev/docs/devdocs"
+        "DEVDOCS_DATA_PATH": "${HOME}/.qsdev/docs/devdocs",
+        "MCP_DB_PATH": "${HOME}/.qsdev/docs/mcp.db"
       }
     },
     "semble": {
-      "command": "uvx",
       "args": [
         "--from",
-        "semble[mcp]",
+        "semble[mcp]==0.6.0",
         "semble"
-      ]
+      ],
+      "command": "uvx"
     },
     "socket": {
       "type": "http",
       "url": "https://mcp.socket.dev/"
     },
     "version-sentinel": {
-      "command": "qsdev",
       "args": [
         "mcp",
         "version-sentinel"
-      ]
+      ],
+      "command": "qsdev"
     }
   }
 }

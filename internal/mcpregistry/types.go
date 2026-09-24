@@ -140,6 +140,11 @@ type McpServerDefinition struct {
 	ToolRegName     string
 	InstallMethod   McpInstallMethod
 	PackageName     string
+	// Version is the exact release of PackageName that the lifecycle
+	// installs; an unversioned package is never installed.
+	Version string
+	// Bin is the executable InstallMethod provides.
+	Bin string
 }
 
 // HealthResult wraps a health check outcome with caching metadata.

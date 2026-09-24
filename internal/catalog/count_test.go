@@ -20,7 +20,7 @@ func TestCatalogToolCount(t *testing.T) {
 		t.Fatalf("LoadEmbeddedOnly() error: %v", err)
 	}
 
-	const wantTools = 43
+	const wantTools = 42
 	if got := len(cat.Tools()); got != wantTools {
 		t.Errorf("catalog tools = %d, want %d; if intentional, update internal-docs/profile-comparison.md",
 			got, wantTools)

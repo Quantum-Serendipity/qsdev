@@ -261,7 +261,7 @@ qsdev trial                   # Evaluate in an isolated git worktree
 | `mcp list` | List configured MCP servers |
 | `mcp grade [name]` | Compliance grade (basic/standard/secure/verified/attested) |
 | `mcp install <name>` | Install an MCP server from the registry |
-| `mcp update [name]` | Update an installed MCP server (`--all` for all) |
+| `mcp update [name]` | Move an installed MCP server to its pinned release (`--all` for all) |
 | `mcp remove <name>` | Remove an MCP server |
 | `mcp health` | Run health probes on all configured servers |
 

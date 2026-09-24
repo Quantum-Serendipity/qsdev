@@ -166,12 +166,13 @@ func trustedMCPDefinitions() map[string][]mcpLaunchSpec {
 	}
 	if cat, err := catalog.Load(opts...); err == nil {
 		for name, def := range cat.MCPServers() {
-			e := catalogDefToEntry(def)
-			trusted[name] = append(trusted[name], mcpLaunchSpec{Command: e.Command, Args: e.Args, Env: e.Env})
-			if name == sembleServerName {
-				// Generation writes this variant when text-file indexing is on.
-				v := sembleTextFilesServer(def)
-				trusted[name] = append(trusted[name], mcpLaunchSpec{Command: v.Command, Args: v.Args, Env: v.Env})
+			for _, e := range catalogServerVariants(def) {
+				trusted[name] = append(trusted[name], mcpLaunchSpec{Command: e.Command, Args: e.Args, Env: e.Env})
+				if name == sembleServerName {
+					// Generation writes this variant when text-file indexing is on.
+					v := sembleTextFilesServer(e)
+					trusted[name] = append(trusted[name], mcpLaunchSpec{Command: v.Command, Args: v.Args, Env: v.Env})
+				}
 			}
 		}
 	}

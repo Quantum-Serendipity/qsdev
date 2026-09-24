@@ -57,7 +57,10 @@ func mcpInstallCmd() *cobra.Command {
 		Use:   "install <server>",
 		Short: "Install an MCP server binary",
 		Long: `Install an MCP server using its declared install method (uv tool, npm global,
-or nix package). The server must be known to the registry.`,
+or nix package). The server must be known to the registry, and uv tool and npm
+global installs take the exact release the catalog pins. Once installed, the
+next ` + "`qsdev init --update`" + ` points .mcp.json at the installed binary instead of a
+fetch-on-run launcher.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectRoot, err := cmdutil.ProjectRoot()
@@ -77,8 +80,8 @@ func mcpUpdateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "update [server]",
-		Short: "Update an MCP server to latest version",
-		Long: `Update an installed MCP server to the latest available version. Use --all
+		Short: "Update an MCP server to its pinned version",
+		Long: `Move an installed MCP server to the exact release the catalog pins. Use --all
 to update all MCP servers recorded in the project state.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -138,6 +141,7 @@ func runMCPInstall(ctx context.Context, w io.Writer, lc *mcpregistry.McpLifecycl
 		return fmt.Errorf("%w: install %s: %s", errMCPOperationFailed, result.ServerName, result.Error)
 	}
 	_, _ = fmt.Fprintf(w, "Installed %s via %s (version: %s)\n", result.ServerName, result.Method, result.Version)
+	_, _ = fmt.Fprintln(w, mcpRegenerateHint)
 	return nil
 }
 
@@ -178,6 +182,7 @@ func runMCPUpdateAll(ctx context.Context, w io.Writer, lc *mcpregistry.McpLifecy
 func reportUpdate(w io.Writer, r *mcpregistry.UpdateResult) bool {
 	if r.Updated {
 		_, _ = fmt.Fprintf(w, "Updated %s: %s -> %s\n", r.ServerName, r.PreviousVer, r.NewVersion)
+		_, _ = fmt.Fprintln(w, mcpRegenerateHint)
 		return true
 	}
 	_, _ = fmt.Fprintf(w, "Could not update %s: %s\n", r.ServerName, r.Error)
@@ -196,8 +201,14 @@ func runMCPRemove(ctx context.Context, w io.Writer, lc *mcpregistry.McpLifecycle
 		return fmt.Errorf("%w: remove %s: %s", errMCPOperationFailed, result.ServerName, result.Error)
 	}
 	_, _ = fmt.Fprintf(w, "Removed %s\n", result.ServerName)
+	_, _ = fmt.Fprintln(w, mcpRegenerateHint)
 	return nil
 }
+
+// mcpRegenerateHint follows a change to the installed MCP servers: .mcp.json
+// runs a server's installed binary only while the project state records the
+// pinned release as installed, and is rewritten on regeneration.
+const mcpRegenerateHint = "Run `qsdev init --update` to regenerate .mcp.json for the installed MCP servers."
 
 func mcpHealthCmd() *cobra.Command {
 	opts := mcpProbeOptions{title: "MCP Server Health", failUnhealthy: true}

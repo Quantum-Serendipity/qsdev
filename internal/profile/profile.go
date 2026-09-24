@@ -62,7 +62,7 @@ func (p *InfraProfile) ConfigFiles(in ProjectInputs) ([]types.GeneratedFile, err
 
 	// CI vulnerability scanning workflow
 	if p.generatesSecurityScanWorkflow() {
-		f, err := p.generateSecurityScanWorkflow()
+		f, err := p.generateSecurityScanWorkflow(in)
 		if err != nil {
 			return nil, err
 		}

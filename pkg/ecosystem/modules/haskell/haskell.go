@@ -168,14 +168,12 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:             "cabal",
-			LockFile:         "cabal.project.freeze",
-			AgeGatingSupport: false,
+			Name:     "cabal",
+			LockFile: "cabal.project.freeze",
 		},
 		{
-			Name:             "stack",
-			LockFile:         "stack.yaml.lock",
-			AgeGatingSupport: false,
+			Name:     "stack",
+			LockFile: "stack.yaml.lock",
 		},
 	}
 }

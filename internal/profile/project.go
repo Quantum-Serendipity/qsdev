@@ -20,6 +20,13 @@ type ProjectInputs struct {
 	// (after an explicit infra profile was resolved), which the security
 	// overview describes.
 	Infrastructure types.InfraConfig
+	// CI are the project's ecosystem CI commands (frozen/locked installs,
+	// tests, audits) grouped by phase, from each selected module's
+	// CICommands. The security-scan workflow runs them in the project's
+	// devenv shell. The caller that holds the ecosystem registry fills this
+	// in (see ecosystem.AggregateCICommands); ProjectInputsFromAnswers
+	// leaves it empty.
+	CI []ecosystem.CIPhaseGroup
 }
 
 // ProjectInputsFromAnswers derives ProjectInputs from the wizard answers: the

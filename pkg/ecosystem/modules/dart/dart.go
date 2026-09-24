@@ -168,10 +168,8 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "pub",
-			LockFile:             "pubspec.lock",
-			FrozenInstallCommand: "dart pub get --enforce-lockfile",
-			AgeGatingSupport:     false,
+			Name:     "pub",
+			LockFile: "pubspec.lock",
 		},
 	}
 }

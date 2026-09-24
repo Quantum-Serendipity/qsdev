@@ -228,14 +228,16 @@ func usesSccache(config ecosystem.ModuleConfig) bool {
 	return config.Extra(ecosystem.ExtraBuildCache, "") == "sccache"
 }
 
-// DevenvPackages returns sccache when it is the configured build cache:
-// .cargo/config.toml then names it as the rustc wrapper, and cargo fails every
-// compile when the wrapper is not on PATH.
+// DevenvPackages returns cargo-audit, which the generated CI runs as
+// `cargo audit` in the devenv shell, plus sccache when it is the configured
+// build cache: .cargo/config.toml then names it as the rustc wrapper, and
+// cargo fails every compile when the wrapper is not on PATH.
 func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
+	pkgs := []string{"cargo-audit"}
 	if usesSccache(config) {
-		return []string{"sccache"}
+		pkgs = append(pkgs, "sccache")
 	}
-	return nil
+	return pkgs
 }
 
 // ReadDenyRules returns the Cargo credential files, which hold crates.io and
@@ -296,12 +298,9 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "cargo",
-			LockFile:             "Cargo.lock",
-			InstallCommand:       "cargo build",
-			FrozenInstallCommand: "cargo build --locked",
-			AuditCommand:         "cargo audit",
-			AgeGatingSupport:     false,
+			Name:           "cargo",
+			LockFile:       "Cargo.lock",
+			InstallCommand: "cargo build",
 		},
 	}
 }

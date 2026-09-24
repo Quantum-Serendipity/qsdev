@@ -1019,15 +1019,6 @@ func TestPackageManagers(t *testing.T) {
 	if pm.LockFile != "packages.lock.json" {
 		t.Errorf("LockFile = %q, want %q", pm.LockFile, "packages.lock.json")
 	}
-	if pm.FrozenInstallCommand != "dotnet restore --locked-mode" {
-		t.Errorf("FrozenInstallCommand = %q, want %q", pm.FrozenInstallCommand, "dotnet restore --locked-mode")
-	}
-	if pm.AuditCommand != "dotnet list package --vulnerable" {
-		t.Errorf("AuditCommand = %q, want %q", pm.AuditCommand, "dotnet list package --vulnerable")
-	}
-	if pm.AgeGatingSupport {
-		t.Error("AgeGatingSupport should be false for nuget")
-	}
 }
 
 // --- WizardFields tests ---

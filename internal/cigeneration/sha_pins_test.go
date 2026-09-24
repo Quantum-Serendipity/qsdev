@@ -128,6 +128,7 @@ func TestActionRefsAreWellFormed(t *testing.T) {
 		"ActionOSVScanner":       ActionOSVScanner,
 		"ActionGrype":            ActionGrype,
 		"ActionSnyk":             ActionSnyk,
+		"ActionInstallNix":       ActionInstallNix,
 		"ActionLabeler":          ActionLabeler,
 	} {
 		t.Run(name, func(t *testing.T) {

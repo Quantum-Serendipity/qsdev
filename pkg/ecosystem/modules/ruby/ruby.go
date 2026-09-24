@@ -25,6 +25,7 @@ var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 var _ ecosystem.DevenvYamlInputProvider = (*Module)(nil)
 var _ ecosystem.DenyRuleProvider = (*Module)(nil)
+var _ ecosystem.PackageProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -252,16 +253,19 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 	}
 }
 
+// DevenvPackages returns bundler-audit, whose bundler-audit executable
+// Bundler dispatches `bundle audit` to in the generated CI's scan step.
+func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
+	return []string{"bundler-audit"}
+}
+
 // PackageManagers returns metadata about Ruby's Bundler package manager.
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "bundler",
-			LockFile:             "Gemfile.lock",
-			InstallCommand:       "bundle install",
-			FrozenInstallCommand: "bundle install --frozen",
-			AuditCommand:         "bundle audit check",
-			AgeGatingSupport:     false,
+			Name:           "bundler",
+			LockFile:       "Gemfile.lock",
+			InstallCommand: "bundle install",
 		},
 	}
 }

@@ -167,15 +167,14 @@ type CICommand struct {
 	Phase       CIPhase `yaml:"phase"       json:"phase"`
 }
 
-// PackageManagerInfo describes a package manager's capabilities and commands,
-// used for security policy generation and CI integration.
+// PackageManagerInfo describes one of an ecosystem's package managers. CI
+// lock-file enforcement and audit commands are not package manager metadata:
+// they come from EcosystemModule.CICommands, which the generated CI workflow
+// runs.
 type PackageManagerInfo struct {
-	Name                 string `yaml:"name"                   json:"name"`
-	LockFile             string `yaml:"lock_file"              json:"lock_file"`
-	InstallCommand       string `yaml:"install_command"        json:"install_command"`
-	FrozenInstallCommand string `yaml:"frozen_install_command" json:"frozen_install_command"`
-	AuditCommand         string `yaml:"audit_command"          json:"audit_command"`
-	AgeGatingSupport     bool   `yaml:"age_gating_support"     json:"age_gating_support"`
+	Name           string `yaml:"name"            json:"name"`
+	LockFile       string `yaml:"lock_file"       json:"lock_file"`
+	InstallCommand string `yaml:"install_command" json:"install_command"`
 }
 
 // WizardFieldType categorizes the kind of TUI form widget to render.

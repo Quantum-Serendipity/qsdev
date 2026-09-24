@@ -327,12 +327,9 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "sbt",
-			LockFile:             "build.sbt.lock",
-			InstallCommand:       "sbt compile",
-			FrozenInstallCommand: "sbt compile",
-			AuditCommand:         "sbt dependencyCheck",
-			AgeGatingSupport:     false,
+			Name:           "sbt",
+			LockFile:       "build.sbt.lock",
+			InstallCommand: "sbt compile",
 		},
 	}
 }

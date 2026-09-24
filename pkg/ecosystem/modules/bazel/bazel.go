@@ -242,9 +242,8 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:             "bzlmod",
-			LockFile:         "MODULE.bazel.lock",
-			AgeGatingSupport: false,
+			Name:     "bzlmod",
+			LockFile: "MODULE.bazel.lock",
 		},
 	}
 }

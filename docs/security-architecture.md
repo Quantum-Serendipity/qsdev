@@ -417,12 +417,33 @@ The following tools are installed and available to Claude Code without per-invoc
 
 ### Generated Workflows
 
-Infrastructure profiles generate `.github/workflows/security-scan.yml` with:
+Infrastructure profiles (tier `standard` and above) generate
+`.github/workflows/security-scan.yml` when the profile configures a
+vulnerability scanner or CI runner protection. It has two jobs:
 
-- **harden-runner** (all profiles) — Restricts network egress from CI runners, preventing exfiltration of secrets.
-- **OSV-Scanner / Snyk / Grype** — Scans dependencies for known vulnerabilities.
-- **Semgrep** — SAST rules for the detected ecosystems.
-- **gitleaks** — Full-repo secrets scan.
+- **`security-scan`**
+  - **harden-runner** (profiles with `ci_protection: harden-runner`) — audits
+    network egress from the runner.
+  - **Validate lock files** — fails when a tracked manifest has no committed
+    lock file, for every manifest/lock-file pair in the ecosystem catalog.
+  - **OSV-Scanner / Snyk / Grype** (profile-dependent) — scans dependencies
+    for known vulnerabilities.
+- **`ecosystem-ci`** (when the project's languages contribute CI commands) —
+  runs every selected ecosystem module's `CICommands` in the project's devenv
+  shell (`cachix/install-nix-action`, then `devenv shell`), so CI uses the
+  toolchains `devenv.nix` pins. Steps are grouped by phase: all **install**
+  steps first (lock-file enforcing installs such as `npm ci --ignore-scripts`,
+  `pnpm install --frozen-lockfile`, `cargo build --locked`,
+  `dotnet restore --locked-mode`, `uv sync --locked`,
+  `terraform init -lockfile=readonly`), then **test** steps, then **scan**
+  steps (audits such as `cargo audit`, `govulncheck`, `pip-audit`, Grype on the
+  built container image). The modules add these audit tools (`cargo-audit`,
+  `pip-audit`, `bundler-audit`, `syft`, `grype`, `govulncheck`) to the
+  `devenv.nix` packages, so they are on the shell's PATH locally and in CI.
+  A drifted or missing lock entry therefore fails CI before anything builds. Commands come from each module configured with the
+  language's package manager and extras from `.qsdev.yaml`; a command
+  containing a GitHub Actions expression (`${{`) is refused at generation
+  time, since GitHub would evaluate it before the shell ran the step.
 
 ### Generated-File Drift in CI
 

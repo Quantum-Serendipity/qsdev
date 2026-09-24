@@ -193,11 +193,9 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "renv",
-			LockFile:             "renv.lock",
-			InstallCommand:       `Rscript -e "renv::restore()"`,
-			FrozenInstallCommand: `Rscript -e "renv::restore()"`,
-			AgeGatingSupport:     false,
+			Name:           "renv",
+			LockFile:       "renv.lock",
+			InstallCommand: `Rscript -e "renv::restore()"`,
 		},
 	}
 }

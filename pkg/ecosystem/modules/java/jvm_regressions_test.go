@@ -146,7 +146,7 @@ func TestGradleCommandsUseNixGradle(t *testing.T) {
 			cmds = append(cmds, c.Command)
 		}
 		for _, pm := range m.PackageManagers() {
-			cmds = append(cmds, pm.InstallCommand, pm.FrozenInstallCommand, pm.AuditCommand)
+			cmds = append(cmds, pm.InstallCommand)
 		}
 		for _, c := range cmds {
 			if strings.Contains(c, "gradlew") {

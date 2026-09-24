@@ -163,14 +163,12 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:             "tools-deps",
-			LockFile:         "",
-			AgeGatingSupport: false,
+			Name:     "tools-deps",
+			LockFile: "",
 		},
 		{
-			Name:             "leiningen",
-			LockFile:         "",
-			AgeGatingSupport: false,
+			Name:     "leiningen",
+			LockFile: "",
 		},
 	}
 }

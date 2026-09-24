@@ -169,3 +169,46 @@ jobs:
           path: "."
           fail-build: true
 {{- end }}
+{{- if .EcosystemCI }}
+
+  # Each ecosystem's CI commands: frozen/locked dependency installs first, so
+  # a drifted or unlocked dependency set fails before anything builds, then
+  # tests, then audits. They run in the project's devenv shell, so CI uses
+  # the toolchains and tools devenv.nix pins rather than whatever the runner
+  # image ships.
+  ecosystem-ci:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: devenv shell bash -- -eo pipefail {0}
+    steps:
+{{- if .HasHardenRunner }}
+      - name: Harden Runner
+        uses: {{ .ActionHardenRunner }} {{ .ActionHardenRunner.Comment }}
+        with:
+          egress-policy: audit
+{{ end }}
+      - name: Checkout
+        uses: {{ .ActionCheckout }} {{ .ActionCheckout.Comment }}
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: {{ .ActionInstallNix }} {{ .ActionInstallNix.Comment }}
+
+      - name: Install devenv
+        shell: bash
+        run: nix profile add nixpkgs#devenv
+{{- range .EcosystemCI }}
+{{- $phase := .Phase.String }}
+{{- range .Commands }}
+
+      # {{ oneLine .Description }}
+      - name: {{ yamlString (printf "%s: %s" $phase .Name) }}
+        run: |
+          {{ indentBlock 10 .Command }}
+{{- end }}
+{{- end }}
+{{- end }}

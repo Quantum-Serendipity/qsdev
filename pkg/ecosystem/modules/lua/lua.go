@@ -171,14 +171,12 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:             "luarocks",
-			LockFile:         "",
-			AgeGatingSupport: false,
+			Name:     "luarocks",
+			LockFile: "",
 		},
 		{
-			Name:             "lux",
-			LockFile:         "lux.lock",
-			AgeGatingSupport: false,
+			Name:     "lux",
+			LockFile: "lux.lock",
 		},
 	}
 }

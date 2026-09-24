@@ -254,11 +254,8 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "go modules",
-			LockFile:             "go.sum",
-			FrozenInstallCommand: "go mod download",
-			AuditCommand:         "govulncheck ./...",
-			AgeGatingSupport:     false,
+			Name:     "go modules",
+			LockFile: "go.sum",
 		},
 	}
 }

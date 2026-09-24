@@ -569,12 +569,12 @@ func TestCICommands_Terraform(t *testing.T) {
 	}
 	cmds := m.CICommands(config)
 
-	if len(cmds) != 5 {
-		t.Fatalf("expected 5 CI commands, got %d", len(cmds))
+	if len(cmds) != 4 {
+		t.Fatalf("expected 4 CI commands, got %d", len(cmds))
 	}
 
-	// First three commands should use the terraform binary.
-	for i := 0; i < 3; i++ {
+	// First two commands should use the terraform binary.
+	for i := 0; i < 2; i++ {
 		if !strings.Contains(cmds[i].Command, "terraform") {
 			t.Errorf("cmd[%d]: expected terraform in command, got %q", i, cmds[i].Command)
 		}
@@ -587,19 +587,25 @@ func TestCICommands_Terraform(t *testing.T) {
 	if cmds[1].Phase != ecosystem.CIPhaseTest {
 		t.Errorf("validate command should be Test phase, got %v", cmds[1].Phase)
 	}
-	if cmds[2].Phase != ecosystem.CIPhaseTest {
-		t.Errorf("plan command should be Test phase, got %v", cmds[2].Phase)
+	if cmds[2].Phase != ecosystem.CIPhaseScan {
+		t.Errorf("tflint command should be Scan phase, got %v", cmds[2].Phase)
 	}
 	if cmds[3].Phase != ecosystem.CIPhaseScan {
-		t.Errorf("tflint command should be Scan phase, got %v", cmds[3].Phase)
-	}
-	if cmds[4].Phase != ecosystem.CIPhaseScan {
-		t.Errorf("tfsec command should be Scan phase, got %v", cmds[4].Phase)
+		t.Errorf("tfsec command should be Scan phase, got %v", cmds[3].Phase)
 	}
 
-	// init should use -backend=false.
-	if !strings.Contains(cmds[0].Command, "-backend=false") {
-		t.Errorf("init command should contain -backend=false, got %q", cmds[0].Command)
+	// init skips the backend and must enforce, not rewrite, the lock file.
+	for _, flag := range []string{"-backend=false", "-lockfile=readonly"} {
+		if !strings.Contains(cmds[0].Command, flag) {
+			t.Errorf("init command should contain %s, got %q", flag, cmds[0].Command)
+		}
+	}
+
+	// A plan needs the backend init skipped, so CI must not run one.
+	for _, c := range cmds {
+		if strings.Contains(c.Command, " plan") {
+			t.Errorf("CI command %q runs a plan without a backend", c.Command)
+		}
 	}
 }
 
@@ -610,12 +616,12 @@ func TestCICommands_OpenTofu(t *testing.T) {
 	}
 	cmds := m.CICommands(config)
 
-	if len(cmds) != 5 {
-		t.Fatalf("expected 5 CI commands, got %d", len(cmds))
+	if len(cmds) != 4 {
+		t.Fatalf("expected 4 CI commands, got %d", len(cmds))
 	}
 
-	// First three commands should use the tofu binary.
-	for i := 0; i < 3; i++ {
+	// First two commands should use the tofu binary.
+	for i := 0; i < 2; i++ {
 		if !strings.Contains(cmds[i].Command, "tofu") {
 			t.Errorf("cmd[%d]: expected tofu in command for opentofu variant, got %q", i, cmds[i].Command)
 		}
@@ -638,12 +644,6 @@ func TestPackageManagers(t *testing.T) {
 	}
 	if pm.LockFile != ".terraform.lock.hcl" {
 		t.Errorf("expected lockfile .terraform.lock.hcl, got %q", pm.LockFile)
-	}
-	if pm.FrozenInstallCommand != "terraform init -lockfile=readonly" {
-		t.Errorf("expected frozen install command terraform init -lockfile=readonly, got %q", pm.FrozenInstallCommand)
-	}
-	if pm.AgeGatingSupport {
-		t.Error("expected AgeGatingSupport=false")
 	}
 }
 

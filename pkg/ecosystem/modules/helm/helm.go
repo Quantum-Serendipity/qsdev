@@ -223,11 +223,9 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "helm",
-			LockFile:             "Chart.lock",
-			InstallCommand:       "helm dependency update",
-			FrozenInstallCommand: "helm dependency build",
-			AgeGatingSupport:     false,
+			Name:           "helm",
+			LockFile:       "Chart.lock",
+			InstallCommand: "helm dependency update",
 		},
 	}
 }

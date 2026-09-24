@@ -436,20 +436,14 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "maven",
-			LockFile:             "pom.xml",
-			InstallCommand:       "mvn install",
-			FrozenInstallCommand: "mvn dependency:resolve --strict-checksums",
-			AuditCommand:         "mvn org.owasp:dependency-check-maven:check",
-			AgeGatingSupport:     false,
+			Name:           "maven",
+			LockFile:       "pom.xml",
+			InstallCommand: "mvn install",
 		},
 		{
-			Name:                 "gradle",
-			LockFile:             "gradle.lockfile",
-			InstallCommand:       gradleCmd + " build",
-			FrozenInstallCommand: gradleCmd + " build --dependency-verification strict",
-			AuditCommand:         gradleCmd + " dependencyCheckAnalyze",
-			AgeGatingSupport:     false,
+			Name:           "gradle",
+			LockFile:       "gradle.lockfile",
+			InstallCommand: gradleCmd + " build",
 		},
 	}
 }

@@ -114,14 +114,15 @@ func (m *Module) Detect(projectRoot string) ecosystem.DetectionResult {
 
 // DevenvPackages returns the Nix packages required for the configured
 // container runtime. Docker gets docker/hadolint/dive; Podman gets
-// podman/podman-compose/buildah/skopeo/hadolint/dive.
+// podman/podman-compose/buildah/skopeo/hadolint/dive. Both get syft and
+// grype, which the generated CI's SBOM and image scan steps run.
 func (m *Module) DevenvPackages(config ecosystem.ModuleConfig) []string {
 	rt := config.Extra("container_runtime", "")
 	switch rt {
 	case "podman-rootless", "podman-rootful":
-		return []string{"podman", "podman-compose", "buildah", "skopeo", "hadolint", "dive"}
+		return []string{"podman", "podman-compose", "buildah", "skopeo", "hadolint", "dive", "syft", "grype"}
 	default: // "docker" or empty — backward compatible
-		return []string{"docker", "hadolint", "dive"}
+		return []string{"docker", "hadolint", "dive", "syft", "grype"}
 	}
 }
 
@@ -306,15 +307,21 @@ func (m *Module) ReadDenyRules(_ ecosystem.ModuleConfig) []string {
 	return slices.Clone(registryAuthFiles)
 }
 
+// ciImageTag names the image the CI container build produces, so the SBOM
+// and vulnerability scan steps scan exactly that image.
+const ciImageTag = "qsdev-ci-image:latest"
+
 // CICommands returns CI pipeline commands for the container ecosystem.
 // Commands are runtime-aware: Podman runtimes use `podman`, Docker uses `docker`.
 func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand {
 	rt := config.Extra("container_runtime", "")
-	imgCmd := "docker"
+	// buildCmd is the runtime CLI; imgSource is the matching Syft source
+	// scheme, which reads the image from that runtime's local store.
 	buildCmd := "docker"
+	imgSource := "docker"
 	if rt == "podman-rootless" || rt == "podman-rootful" {
-		imgCmd = "podman"
 		buildCmd = "podman"
+		imgSource = "podman"
 	}
 
 	return []ecosystem.CICommand{
@@ -326,26 +333,23 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 		},
 		{
 			Name:        "container-build",
-			Command:     buildCmd + " build --no-cache .",
+			Command:     buildCmd + " build --no-cache -t " + ciImageTag + " .",
 			Description: "Build container image without layer cache to verify reproducibility",
 			Phase:       ecosystem.CIPhaseScan,
 		},
 		{
+			// Scans the image built above by its tag. The "newest image"
+			// was ambiguous, and cosign verification is left to the
+			// pipeline that signs and pushes: a local build has no signature.
 			Name:        "syft-sbom",
-			Command:     fmt.Sprintf("syft scan $(%s images -q | head -1) -o spdx-json=sbom.spdx.json", imgCmd),
-			Description: "Generate SPDX SBOM from container image with Syft",
+			Command:     fmt.Sprintf("syft scan %s:%s -o spdx-json=sbom.spdx.json", imgSource, ciImageTag),
+			Description: "Generate SPDX SBOM from the built container image with Syft",
 			Phase:       ecosystem.CIPhaseScan,
 		},
 		{
 			Name:        "grype-scan",
 			Command:     "grype sbom:sbom.spdx.json --fail-on high",
 			Description: "Scan SBOM for vulnerabilities with Grype",
-			Phase:       ecosystem.CIPhaseScan,
-		},
-		{
-			Name:        "cosign-verify",
-			Command:     fmt.Sprintf("cosign verify --key cosign.pub $(%s images --format '{{.Repository}}:{{.Tag}}' | head -1)", imgCmd),
-			Description: "Verify container image signature with cosign",
 			Phase:       ecosystem.CIPhaseScan,
 		},
 	}

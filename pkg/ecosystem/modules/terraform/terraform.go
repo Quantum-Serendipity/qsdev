@@ -431,21 +431,19 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 
 	return []ecosystem.CICommand{
 		{
+			// -lockfile=readonly fails when .terraform.lock.hcl is missing
+			// a provider or its checksums instead of rewriting it. No plan
+			// step follows: a plan needs the backend this init skips, and
+			// the cloud credentials CI does not hold.
 			Name:        binary + "-init",
-			Command:     binary + " init -backend=false",
-			Description: fmt.Sprintf("Initialize %s providers without backend", variant),
+			Command:     binary + " init -backend=false -input=false -lockfile=readonly",
+			Description: fmt.Sprintf("Install %s providers pinned by .terraform.lock.hcl, without a backend", variant),
 			Phase:       ecosystem.CIPhaseInstall,
 		},
 		{
 			Name:        binary + "-validate",
 			Command:     binary + " validate",
 			Description: fmt.Sprintf("Validate %s configuration syntax", variant),
-			Phase:       ecosystem.CIPhaseTest,
-		},
-		{
-			Name:        binary + "-plan",
-			Command:     binary + " plan",
-			Description: fmt.Sprintf("Generate %s execution plan", variant),
 			Phase:       ecosystem.CIPhaseTest,
 		},
 		{
@@ -467,10 +465,8 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "terraform-registry",
-			LockFile:             ".terraform.lock.hcl",
-			FrozenInstallCommand: "terraform init -lockfile=readonly",
-			AgeGatingSupport:     false,
+			Name:     "terraform-registry",
+			LockFile: ".terraform.lock.hcl",
 		},
 	}
 }

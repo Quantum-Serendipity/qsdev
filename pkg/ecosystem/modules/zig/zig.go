@@ -180,9 +180,8 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:             "zig-build",
-			LockFile:         "build.zig.zon",
-			AgeGatingSupport: false,
+			Name:     "zig-build",
+			LockFile: "build.zig.zon",
 		},
 	}
 }

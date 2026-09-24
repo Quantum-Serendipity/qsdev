@@ -20,6 +20,7 @@ func allPins() map[string]ActionRef {
 		"ActionOSVScanner":       ActionOSVScanner,
 		"ActionGrype":            ActionGrype,
 		"ActionSnyk":             ActionSnyk,
+		"ActionInstallNix":       ActionInstallNix,
 		"ActionLabeler":          ActionLabeler,
 	}
 }
@@ -150,7 +151,7 @@ func TestActionPinsResolveUpstream_CoversCatalog(t *testing.T) {
 	t.Parallel()
 
 	// Mirrors the exported catalog. Update both together when adding a pin.
-	const catalogSize = 8
+	const catalogSize = 9
 
 	if got := len(allPins()); got != catalogSize {
 		t.Errorf("allPins covers %d pins, expected %d; a new catalog entry must be "+

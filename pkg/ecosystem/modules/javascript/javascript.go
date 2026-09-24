@@ -315,36 +315,24 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "npm",
-			LockFile:             "package-lock.json",
-			InstallCommand:       "npm install",
-			FrozenInstallCommand: "npm ci",
-			AuditCommand:         "npm audit",
-			AgeGatingSupport:     true,
+			Name:           "npm",
+			LockFile:       "package-lock.json",
+			InstallCommand: "npm install",
 		},
 		{
-			Name:                 "pnpm",
-			LockFile:             "pnpm-lock.yaml",
-			InstallCommand:       "pnpm install",
-			FrozenInstallCommand: "pnpm install --frozen-lockfile",
-			AuditCommand:         "pnpm audit",
-			AgeGatingSupport:     true,
+			Name:           "pnpm",
+			LockFile:       "pnpm-lock.yaml",
+			InstallCommand: "pnpm install",
 		},
 		{
-			Name:                 "yarn",
-			LockFile:             "yarn.lock",
-			InstallCommand:       "yarn install",
-			FrozenInstallCommand: "yarn install --immutable",
-			AuditCommand:         "yarn npm audit",
-			AgeGatingSupport:     true,
+			Name:           "yarn",
+			LockFile:       "yarn.lock",
+			InstallCommand: "yarn install",
 		},
 		{
-			Name:                 "bun",
-			LockFile:             "bun.lock",
-			InstallCommand:       "bun install",
-			FrozenInstallCommand: "bun install --frozen-lockfile",
-			AuditCommand:         "",
-			AgeGatingSupport:     true,
+			Name:           "bun",
+			LockFile:       "bun.lock",
+			InstallCommand: "bun install",
 		},
 	}
 }

@@ -157,7 +157,7 @@ func TestDevenvPackages_Docker(t *testing.T) {
 		Extras: map[string]string{"container_runtime": "docker"},
 	}
 	pkgs := newModule().DevenvPackages(cfg)
-	want := []string{"docker", "hadolint", "dive"}
+	want := []string{"docker", "hadolint", "dive", "syft", "grype"}
 	if len(pkgs) != len(want) {
 		t.Fatalf("DevenvPackages(docker) = %v, want %v", pkgs, want)
 	}
@@ -177,7 +177,7 @@ func TestDevenvPackages_Podman(t *testing.T) {
 				Extras: map[string]string{"container_runtime": rt},
 			}
 			pkgs := newModule().DevenvPackages(cfg)
-			want := []string{"podman", "podman-compose", "buildah", "skopeo", "hadolint", "dive"}
+			want := []string{"podman", "podman-compose", "buildah", "skopeo", "hadolint", "dive", "syft", "grype"}
 			if len(pkgs) != len(want) {
 				t.Fatalf("DevenvPackages(%s) = %v, want %v", rt, pkgs, want)
 			}
@@ -194,7 +194,7 @@ func TestDevenvPackages_NoRuntime(t *testing.T) {
 	t.Parallel()
 	pkgs := newModule().DevenvPackages(ecosystem.ModuleConfig{})
 	// Default should be docker packages.
-	want := []string{"docker", "hadolint", "dive"}
+	want := []string{"docker", "hadolint", "dive", "syft", "grype"}
 	if len(pkgs) != len(want) {
 		t.Fatalf("DevenvPackages(default) = %v, want %v", pkgs, want)
 	}
@@ -321,8 +321,8 @@ func TestPreCommitHooks(t *testing.T) {
 func TestCICommands(t *testing.T) {
 	t.Parallel()
 	cmds := newModule().CICommands(ecosystem.ModuleConfig{})
-	if len(cmds) != 5 {
-		t.Fatalf("expected 5 CI commands, got %d", len(cmds))
+	if len(cmds) != 4 {
+		t.Fatalf("expected 4 CI commands, got %d", len(cmds))
 	}
 
 	names := make(map[string]ecosystem.CICommand, len(cmds))
@@ -349,8 +349,20 @@ func TestCICommands(t *testing.T) {
 	if _, ok := names["grype-scan"]; !ok {
 		t.Error("missing grype-scan CI command")
 	}
-	if _, ok := names["cosign-verify"]; !ok {
-		t.Error("missing cosign-verify CI command")
+	// A locally built image carries no signature, so verifying one can
+	// only fail; signature checks belong to the pipeline that signs.
+	if _, ok := names["cosign-verify"]; ok {
+		t.Error("cosign-verify must not run against the unsigned CI build")
+	}
+
+	// The scan must target the image the build step tagged, not whichever
+	// image happens to be newest in the local store.
+	build, sbom := names["container-build"].Command, names["syft-sbom"].Command
+	if !strings.Contains(build, "-t qsdev-ci-image:latest") {
+		t.Errorf("container-build = %q, want it tagged qsdev-ci-image:latest", build)
+	}
+	if sbom != "syft scan docker:qsdev-ci-image:latest -o spdx-json=sbom.spdx.json" {
+		t.Errorf("syft-sbom = %q, want it to scan the tagged build from the docker store", sbom)
 	}
 
 	// trivy-image should be absent (replaced by syft-sbom + grype-scan).
@@ -403,15 +415,8 @@ func TestCICommands_PodmanRuntime(t *testing.T) {
 					t.Errorf("container-build should start with 'podman ', got %q", build.Command)
 				}
 			}
-			if sbom, ok := names["syft-sbom"]; ok {
-				if !strings.Contains(sbom.Command, "podman images") {
-					t.Errorf("syft-sbom should use 'podman images', got %q", sbom.Command)
-				}
-			}
-			if cosign, ok := names["cosign-verify"]; ok {
-				if !strings.Contains(cosign.Command, "podman images") {
-					t.Errorf("cosign-verify should use 'podman images', got %q", cosign.Command)
-				}
+			if sbom := names["syft-sbom"].Command; !strings.Contains(sbom, "syft scan podman:qsdev-ci-image:latest") {
+				t.Errorf("syft-sbom should scan the build from the podman store, got %q", sbom)
 			}
 		})
 	}

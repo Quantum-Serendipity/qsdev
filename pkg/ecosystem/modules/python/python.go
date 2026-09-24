@@ -24,6 +24,7 @@ var _ ecosystem.WizardFieldProvider = (*Module)(nil)
 var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
 var _ ecosystem.DevenvYamlInputProvider = (*Module)(nil)
+var _ ecosystem.PackageProvider = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -493,32 +494,29 @@ func (m *Module) CICommands(config ecosystem.ModuleConfig) []ecosystem.CICommand
 	})
 }
 
+// DevenvPackages returns pip-audit, which the generated CI's scan step runs
+// in the devenv shell for every package manager.
+func (m *Module) DevenvPackages(_ ecosystem.ModuleConfig) []string {
+	return []string{"pip-audit"}
+}
+
 // PackageManagers returns metadata about Python's package managers.
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "pip",
-			LockFile:             "requirements.txt",
-			InstallCommand:       "pip install -r requirements.txt",
-			FrozenInstallCommand: "pip install --require-hashes --only-binary :all: -r requirements.txt",
-			AuditCommand:         "pip-audit",
-			AgeGatingSupport:     false,
+			Name:           "pip",
+			LockFile:       "requirements.txt",
+			InstallCommand: "pip install -r requirements.txt",
 		},
 		{
-			Name:                 "uv",
-			LockFile:             "uv.lock",
-			InstallCommand:       "uv sync",
-			FrozenInstallCommand: "uv sync --locked",
-			AuditCommand:         "pip-audit",
-			AgeGatingSupport:     true,
+			Name:           "uv",
+			LockFile:       "uv.lock",
+			InstallCommand: "uv sync",
 		},
 		{
-			Name:                 "poetry",
-			LockFile:             "poetry.lock",
-			InstallCommand:       "poetry install",
-			FrozenInstallCommand: "poetry install --no-interaction",
-			AuditCommand:         "pip-audit",
-			AgeGatingSupport:     false,
+			Name:           "poetry",
+			LockFile:       "poetry.lock",
+			InstallCommand: "poetry install",
 		},
 	}
 }

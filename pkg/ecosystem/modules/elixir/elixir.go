@@ -135,11 +135,8 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "mix",
-			LockFile:             "mix.lock",
-			FrozenInstallCommand: "mix deps.get --check-locked",
-			AuditCommand:         "mix deps.audit",
-			AgeGatingSupport:     false,
+			Name:     "mix",
+			LockFile: "mix.lock",
 		},
 	}
 }

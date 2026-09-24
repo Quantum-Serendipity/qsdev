@@ -1015,30 +1015,6 @@ func TestPackageManagers(t *testing.T) {
 		if pm.LockFile == "" {
 			t.Errorf("pms[%d].LockFile should not be empty", i)
 		}
-		if pm.FrozenInstallCommand == "" {
-			t.Errorf("pms[%d].FrozenInstallCommand should not be empty", i)
-		}
-		if pm.AuditCommand == "" {
-			t.Errorf("pms[%d].AuditCommand should not be empty", i)
-		}
-	}
-}
-
-func TestPackageManagers_AgeGating(t *testing.T) {
-	m := &python.Module{}
-	pms := m.PackageManagers()
-
-	for _, pm := range pms {
-		switch pm.Name {
-		case "uv":
-			if !pm.AgeGatingSupport {
-				t.Errorf("uv should have AgeGatingSupport=true")
-			}
-		default:
-			if pm.AgeGatingSupport {
-				t.Errorf("%s should have AgeGatingSupport=false", pm.Name)
-			}
-		}
 	}
 }
 

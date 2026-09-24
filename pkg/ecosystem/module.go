@@ -31,7 +31,11 @@ type EcosystemModule interface {
 	PreCommitHooks(config ModuleConfig) []HookConfig
 
 	// CICommands returns CI pipeline commands for this ecosystem. Returning nil
-	// means this ecosystem contributes no CI steps.
+	// means this ecosystem contributes no CI steps. The generated
+	// security-scan workflow runs them in the project's devenv shell, grouped
+	// by phase (AggregateCICommands): install commands must enforce the lock
+	// file rather than update it, and every command must succeed on a clean
+	// checkout without credentials.
 	CICommands(config ModuleConfig) []CICommand
 
 	// PackageManagers returns metadata about the ecosystem's package managers.

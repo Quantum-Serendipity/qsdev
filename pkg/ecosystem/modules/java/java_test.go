@@ -820,9 +820,6 @@ func TestPackageManagers(t *testing.T) {
 	if maven.LockFile != "pom.xml" {
 		t.Errorf("pms[0].LockFile = %q, want %q", maven.LockFile, "pom.xml")
 	}
-	if maven.AuditCommand == "" {
-		t.Error("pms[0].AuditCommand should not be empty")
-	}
 
 	gradle := pms[1]
 	if gradle.Name != "gradle" {
@@ -830,9 +827,6 @@ func TestPackageManagers(t *testing.T) {
 	}
 	if gradle.LockFile != "gradle.lockfile" {
 		t.Errorf("pms[1].LockFile = %q, want %q", gradle.LockFile, "gradle.lockfile")
-	}
-	if gradle.AuditCommand == "" {
-		t.Error("pms[1].AuditCommand should not be empty")
 	}
 }
 

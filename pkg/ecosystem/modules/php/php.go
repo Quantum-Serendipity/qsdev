@@ -278,12 +278,9 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "composer",
-			LockFile:             "composer.lock",
-			InstallCommand:       "composer install",
-			FrozenInstallCommand: "composer install --no-dev --no-scripts",
-			AuditCommand:         "composer audit",
-			AgeGatingSupport:     false,
+			Name:           "composer",
+			LockFile:       "composer.lock",
+			InstallCommand: "composer install",
 		},
 	}
 }

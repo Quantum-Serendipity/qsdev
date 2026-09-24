@@ -167,10 +167,13 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 			Phase:       ecosystem.CIPhaseTest,
 		},
 		{
-			Name:        "nix-flake-lock-drift",
-			Command:     "nix flake lock --update-input nixpkgs && git diff --exit-code flake.lock",
-			Description: "Detect nixpkgs input drift in flake.lock",
-			Phase:       ecosystem.CIPhaseScan,
+			// --no-update-lock-file fails when flake.lock lacks an input
+			// flake.nix declares, instead of silently adding it. Updating
+			// inputs here would fail on every upstream nixpkgs commit.
+			Name:        "nix-flake-lock-check",
+			Command:     "nix flake metadata --no-update-lock-file",
+			Description: "Fail when flake.lock does not lock every input flake.nix declares",
+			Phase:       ecosystem.CIPhaseInstall,
 		},
 	}
 }
@@ -179,10 +182,9 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:             "nix-flake",
-			LockFile:         "flake.lock",
-			InstallCommand:   "nix develop",
-			AgeGatingSupport: false,
+			Name:           "nix-flake",
+			LockFile:       "flake.lock",
+			InstallCommand: "nix develop",
 		},
 	}
 }

@@ -179,11 +179,8 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "carton",
-			LockFile:             "cpanfile.snapshot",
-			FrozenInstallCommand: "carton install --deployment",
-			AuditCommand:         "cpan-audit installed",
-			AgeGatingSupport:     false,
+			Name:     "carton",
+			LockFile: "cpanfile.snapshot",
 		},
 	}
 }

@@ -429,15 +429,6 @@ func TestPackageManagers(t *testing.T) {
 	if pm.LockFile != "go.sum" {
 		t.Errorf("LockFile = %q, want %q", pm.LockFile, "go.sum")
 	}
-	if pm.FrozenInstallCommand != "go mod download" {
-		t.Errorf("FrozenInstallCommand = %q, want %q", pm.FrozenInstallCommand, "go mod download")
-	}
-	if pm.AuditCommand != "govulncheck ./..." {
-		t.Errorf("AuditCommand = %q, want %q", pm.AuditCommand, "govulncheck ./...")
-	}
-	if pm.AgeGatingSupport {
-		t.Error("AgeGatingSupport should be false")
-	}
 }
 
 func TestWizardFields(t *testing.T) {

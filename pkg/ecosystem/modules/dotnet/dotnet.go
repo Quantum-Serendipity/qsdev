@@ -270,12 +270,9 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:                 "nuget",
-			LockFile:             "packages.lock.json",
-			InstallCommand:       "dotnet restore",
-			FrozenInstallCommand: "dotnet restore --locked-mode",
-			AuditCommand:         "dotnet list package --vulnerable",
-			AgeGatingSupport:     false,
+			Name:           "nuget",
+			LockFile:       "packages.lock.json",
+			InstallCommand: "dotnet restore",
 		},
 	}
 }

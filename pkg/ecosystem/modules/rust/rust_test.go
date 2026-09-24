@@ -535,15 +535,6 @@ func TestPackageManagers(t *testing.T) {
 	if pm.LockFile != "Cargo.lock" {
 		t.Errorf("LockFile = %q, want %q", pm.LockFile, "Cargo.lock")
 	}
-	if pm.FrozenInstallCommand != "cargo build --locked" {
-		t.Errorf("FrozenInstallCommand = %q, want %q", pm.FrozenInstallCommand, "cargo build --locked")
-	}
-	if pm.AuditCommand != "cargo audit" {
-		t.Errorf("AuditCommand = %q, want %q", pm.AuditCommand, "cargo audit")
-	}
-	if pm.AgeGatingSupport {
-		t.Error("AgeGatingSupport should be false for cargo")
-	}
 }
 
 // --- WizardFields tests ---
@@ -735,8 +726,8 @@ func TestDevenvPackages_Sccache(t *testing.T) {
 	if got := m.DevenvPackages(cfg); !slices.Contains(got, "sccache") {
 		t.Errorf("DevenvPackages() = %v, want sccache when it is the rustc wrapper", got)
 	}
-	if got := m.DevenvPackages(ecosystem.ModuleConfig{}); len(got) != 0 {
-		t.Errorf("DevenvPackages() = %v, want none without a build cache", got)
+	if got := m.DevenvPackages(ecosystem.ModuleConfig{}); slices.Contains(got, "sccache") {
+		t.Errorf("DevenvPackages() = %v, want no sccache without a build cache", got)
 	}
 }
 

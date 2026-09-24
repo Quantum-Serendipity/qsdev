@@ -97,6 +97,14 @@ var (
 		SHA:   "9cf6ca713d71123d2d229cc3d7f145b96ea3c518",
 		Tag:   "master",
 	}
+	// Installs Nix for the generated ecosystem-ci job, which runs each
+	// ecosystem's CI commands inside the project's devenv shell.
+	ActionInstallNix = ActionRef{
+		Owner: "cachix",
+		Repo:  "install-nix-action",
+		SHA:   "13d8dd58da0234aa297dedd986986ccb8e7f3e24",
+		Tag:   "v31.11.1",
+	}
 	ActionLabeler = ActionRef{
 		Owner: "actions",
 		Repo:  "labeler",

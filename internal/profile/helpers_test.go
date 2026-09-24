@@ -8,7 +8,7 @@ import (
 
 func mustWorkflow(t *testing.T, p *InfraProfile) types.GeneratedFile {
 	t.Helper()
-	f, err := p.generateSecurityScanWorkflow()
+	f, err := p.generateSecurityScanWorkflow(ProjectInputs{})
 	if err != nil {
 		t.Fatalf("generateSecurityScanWorkflow(%s): %v", p.Name, err)
 	}

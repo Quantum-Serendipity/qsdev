@@ -934,13 +934,11 @@ func TestPackageManagers(t *testing.T) {
 	expectedPMs := []struct {
 		name     string
 		lockFile string
-		frozen   string
-		ageGate  bool
 	}{
-		{"npm", "package-lock.json", "npm ci", true},
-		{"pnpm", "pnpm-lock.yaml", "pnpm install --frozen-lockfile", true},
-		{"yarn", "yarn.lock", "yarn install --immutable", true},
-		{"bun", "bun.lock", "bun install --frozen-lockfile", true},
+		{"npm", "package-lock.json"},
+		{"pnpm", "pnpm-lock.yaml"},
+		{"yarn", "yarn.lock"},
+		{"bun", "bun.lock"},
 	}
 
 	for i, expected := range expectedPMs {
@@ -950,12 +948,6 @@ func TestPackageManagers(t *testing.T) {
 		}
 		if pm.LockFile != expected.lockFile {
 			t.Errorf("pms[%d].LockFile = %q, want %q", i, pm.LockFile, expected.lockFile)
-		}
-		if pm.FrozenInstallCommand != expected.frozen {
-			t.Errorf("pms[%d].FrozenInstallCommand = %q, want %q", i, pm.FrozenInstallCommand, expected.frozen)
-		}
-		if pm.AgeGatingSupport != expected.ageGate {
-			t.Errorf("pms[%d].AgeGatingSupport = %v, want %v", i, pm.AgeGatingSupport, expected.ageGate)
 		}
 		if pm.InstallCommand == "" {
 			t.Errorf("pms[%d].InstallCommand should not be empty", i)

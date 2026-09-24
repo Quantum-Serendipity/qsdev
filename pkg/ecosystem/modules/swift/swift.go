@@ -201,9 +201,8 @@ func (m *Module) CICommands(_ ecosystem.ModuleConfig) []ecosystem.CICommand {
 func (m *Module) PackageManagers() []ecosystem.PackageManagerInfo {
 	return []ecosystem.PackageManagerInfo{
 		{
-			Name:             "spm",
-			LockFile:         "Package.resolved",
-			AgeGatingSupport: false,
+			Name:     "spm",
+			LockFile: "Package.resolved",
 		},
 	}
 }

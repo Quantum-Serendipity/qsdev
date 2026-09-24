@@ -382,3 +382,87 @@ permission_level: standard
 		t.Error("devenv.nix does not contain 'go'")
 	}
 }
+
+// TestInitCmd_WarnsPoetryProjectFiles guards W072: init warns when the chosen
+// Poetry package manager lacks the pyproject.toml or poetry.lock the devenv
+// shell needs, and stays quiet for a complete Poetry project or a
+// Claude-only run that generates no devenv configuration.
+func TestInitCmd_WarnsPoetryProjectFiles(t *testing.T) {
+	tests := []struct {
+		name    string
+		files   []string
+		extra   []string
+		want    string
+		notWant []string
+	}{
+		{name: "requirements project", files: []string{"requirements.txt"}, want: "Warning: Python: poetry is the package manager but pyproject.toml is missing"},
+		{name: "no lockfile", files: []string{"pyproject.toml"}, want: "Warning: Python: poetry.lock is missing"},
+		{name: "complete project", files: []string{"pyproject.toml", "poetry.lock"}, notWant: []string{"pyproject.toml is missing", "poetry.lock is missing"}},
+		{name: "claude only", files: []string{"requirements.txt"}, extra: []string{"--claude-only"}, notWant: []string{"pyproject.toml is missing"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, f := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, f), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			args := append([]string{"--lang", "python", "--python-pkg-mgr", "poetry", "--yes", "--dry-run"}, tt.extra...)
+			output, err := executeInitCmd(t, dir, args...)
+			if err != nil {
+				t.Fatalf("init failed: %v\nOutput: %s", err, output)
+			}
+			if tt.want != "" && !strings.Contains(output, tt.want) {
+				t.Errorf("output does not contain %q:\n%s", tt.want, output)
+			}
+			for _, nw := range tt.notWant {
+				if strings.Contains(output, nw) {
+					t.Errorf("output unexpectedly contains %q:\n%s", nw, output)
+				}
+			}
+		})
+	}
+}
+
+// TestUpdateAndJoin_WarnPoetryProjectFiles guards W072 for existing
+// projects: `init --update` and join regenerate the Poetry lock check too,
+// so they warn about a missing poetry.lock or pyproject.toml like init does.
+func TestUpdateAndJoin_WarnPoetryProjectFiles(t *testing.T) {
+	t.Run("update", func(t *testing.T) {
+		dir := t.TempDir()
+		for _, f := range []string{"pyproject.toml", "poetry.lock"} {
+			if err := os.WriteFile(filepath.Join(dir, f), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if out, err := executeInitCmd(t, dir, "--lang", "python", "--python-pkg-mgr", "poetry", "--yes"); err != nil {
+			t.Fatalf("init failed: %v\n%s", err, out)
+		}
+		if err := os.Remove(filepath.Join(dir, "poetry.lock")); err != nil {
+			t.Fatal(err)
+		}
+		out, err := executeInitCmd(t, dir, "--update", "--dry-run")
+		if err != nil {
+			t.Fatalf("update failed: %v\n%s", err, out)
+		}
+		if want := "Warning: Python: poetry.lock is missing"; !strings.Contains(out, want) {
+			t.Errorf("update output does not contain %q:\n%s", want, out)
+		}
+	})
+	t.Run("join", func(t *testing.T) {
+		t.Setenv("QSDEV_SKIP_SETUP", "1")
+		dir := t.TempDir()
+		config := "version: 1\nlanguages:\n  - name: python\n    package_manager: poetry\n"
+		if err := os.WriteFile(filepath.Join(dir, ".qsdev.yaml"), []byte(config), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd, buf := newJoinTestCmd()
+		if err := runJoin(cmd, InitOptions{DryRun: true, Yes: true, Quiet: true}, dir); err != nil {
+			t.Fatalf("runJoin: %v", err)
+		}
+		if want := "Warning: Python: poetry is the package manager but pyproject.toml is missing"; !strings.Contains(buf.String(), want) {
+			t.Errorf("join output does not contain %q:\n%s", want, buf.String())
+		}
+	})
+}

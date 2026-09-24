@@ -95,6 +95,15 @@ func matrixCases(t *testing.T) map[string]types.WizardAnswers {
 			ProjectName: "matrix", Languages: langs, Services: services, EnabledTools: tools,
 			EnvVars: map[string]string{"EDITOR": "vim"},
 		}
+		// Package managers change the rendered fragment (Python's poetry
+		// adds a devenv task), so each one gets its own case.
+		m, _ := reg.ByName(lang)
+		for _, pm := range m.PackageManagers() {
+			cases["pm-"+lang+"-"+pm.Name] = types.WizardAnswers{
+				ProjectName: "matrix",
+				Languages:   []types.LanguageChoice{{Name: lang, PackageManager: pm.Name}},
+			}
+		}
 	}
 	return cases
 }

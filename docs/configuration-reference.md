@@ -1251,6 +1251,15 @@ devenv supports only one JavaScript project directory. If several subprojects ex
 |------|---------------|---------|
 | `pip.conf` | `skip` | Registry configuration, hash-checking mode (only created if absent) |
 
+**Poetry.** With `--python-pkg-mgr poetry`, the devenv shell uses Poetry's own `.venv` in the project root. devenv.nix does not enable `languages.python.venv`, which would activate a second, empty virtualenv on top of Poetry's. On shell entry, devenv runs `poetry install --no-interaction` and activates `.venv`, but only when both of these hold:
+
+- `pyproject.toml` and `poetry.lock` both exist, so the shell never resolves dependencies without a lockfile.
+- `poetry check --lock` passes, so the shell never installs from a lockfile that is out of date with `pyproject.toml`.
+
+The `qsdev:python:poetry-check-lock` task checks both conditions each time the shell loads. It runs before devenv's `devenv:python:poetry` task. If a check fails, devenv skips the install and prints the reason. The shell still loads, so you can run `poetry lock` from it and then reload. `devenv test` fails until the check passes, because its tasks run after the shell's. The check runs when the shell loads, not when devenv.nix is evaluated. devenv's evaluation cache would otherwise keep a stale "no lockfile" result after you create `poetry.lock`.
+
+`qsdev init` (including `--update` and `--mode join`) prints a warning when a Poetry project is missing `pyproject.toml`, which devenv's Poetry setup needs. It also warns when `poetry.lock` is missing, because the shell then neither installs dependencies nor activates `.venv`. The warnings do not block generation.
+
 ### Rust
 
 | File | Merge Strategy | Purpose |

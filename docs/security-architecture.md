@@ -77,6 +77,7 @@ pnpm workspaces additionally enforce `blockExoticSubdeps` to prevent subdependen
 - **Pre-commit hooks** — The `lock-file-audit` custom hook flags changes to `devenv.lock`, `flake.lock`, `package-lock.json`, and `pnpm-lock.yaml` with a warning to verify the diff during code review.
 - **CI** — Security scan workflows verify lockfile integrity as part of the build.
 - **pnpm workspace** — `trustPolicy: no-downgrade` prevents lockfile changes that regress dependency versions.
+- **Poetry shell install** — The devenv shell runs `poetry install` on entry only from a `poetry.lock` that `poetry check --lock` accepts. A task checks this each time the shell loads. Without a lockfile, or with a stale one, the shell skips the install and never resolves dependencies itself.
 - **CLAUDE.md rules** — Generated project documentation instructs Claude Code to never modify lockfiles without explicit approval.
 
 ### Layer 4: Vulnerability Scanning

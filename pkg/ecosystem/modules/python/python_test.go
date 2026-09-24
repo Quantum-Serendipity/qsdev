@@ -492,7 +492,8 @@ func TestDevenvNixFragment_Poetry(t *testing.T) {
 
 // TestDevenvNixFragment_PoetryOwnsVenv guards W072: devenv's virtualenv task
 // runs after the poetry task and would activate a second, empty venv over
-// poetry's .venv, and poetry.install must never resolve without a lockfile.
+// poetry's .venv, and poetry.install must never resolve without a lockfile
+// or run against one `poetry check --lock` rejects.
 func TestDevenvNixFragment_PoetryOwnsVenv(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -504,13 +505,21 @@ func TestDevenvNixFragment_PoetryOwnsVenv(t *testing.T) {
 			pm: "poetry",
 			want: []string{
 				"poetry.enable = true;",
-				"poetry.install.enable = builtins.pathExists ./poetry.lock;",
+				"poetry.install.enable = true;",
 				"poetry.activate.enable = true;",
+				`tasks."qsdev:python:poetry-check-lock" = lib.mkIf config.languages.python.poetry.install.enable {`,
+				"if [ ! -f pyproject.toml ]; then",
+				"if [ ! -f poetry.lock ]; then",
+				"if ! ${config.languages.python.poetry.package}/bin/poetry check --lock --no-interaction; then",
+				"cwd = config.devenv.root;",
+				`before = [ "devenv:python:poetry" ];`,
 			},
-			notWant: []string{"venv.enable"},
+			// pathExists results stick in devenv's evaluation cache, so a
+			// lockfile created later would never enable the install.
+			notWant: []string{"venv.enable", "pathExists"},
 		},
-		{pm: "pip", want: []string{"venv.enable = true;"}, notWant: []string{"poetry."}},
-		{pm: "uv", want: []string{"venv.enable = true;"}, notWant: []string{"poetry."}},
+		{pm: "pip", want: []string{"venv.enable = true;"}, notWant: []string{"poetry.", "tasks."}},
+		{pm: "uv", want: []string{"venv.enable = true;"}, notWant: []string{"poetry.", "tasks."}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.pm, func(t *testing.T) {
@@ -524,6 +533,46 @@ func TestDevenvNixFragment_PoetryOwnsVenv(t *testing.T) {
 			}
 			for _, nw := range tt.notWant {
 				assertNotContains(t, fragment, nw)
+			}
+		})
+	}
+}
+
+// TestSetupWarnings guards W072: init warns when a poetry-mode project lacks
+// the pyproject.toml devenv's poetry task needs, or the poetry.lock the shell
+// needs before it installs and activates poetry's .venv.
+func TestSetupWarnings(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		pm    string
+		files []string
+		want  string // substring of the only warning; "" for no warnings
+	}{
+		{name: "poetry without pyproject.toml", pm: "poetry", files: []string{"requirements.txt"}, want: "pyproject.toml is missing"},
+		{name: "poetry lockfile without pyproject.toml", pm: "poetry", files: []string{"poetry.lock"}, want: "pyproject.toml is missing"},
+		{name: "poetry without poetry.lock", pm: "poetry", files: []string{"pyproject.toml"}, want: "poetry.lock is missing"},
+		{name: "poetry project", pm: "poetry", files: []string{"pyproject.toml", "poetry.lock"}},
+		{name: "pip without pyproject.toml", pm: "pip", files: []string{"requirements.txt"}},
+		{name: "default package manager", files: []string{"requirements.txt"}},
+		{name: "uv without uv.lock", pm: "uv", files: []string{"pyproject.toml"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for _, f := range tt.files {
+				writeFile(t, dir, f, "")
+			}
+			got := (&python.Module{}).SetupWarnings(dir, ecosystem.ModuleConfig{PackageManager: tt.pm})
+			if tt.want == "" {
+				if len(got) != 0 {
+					t.Errorf("SetupWarnings() = %q, want none", got)
+				}
+				return
+			}
+			if len(got) != 1 || !strings.Contains(got[0], tt.want) {
+				t.Errorf("SetupWarnings() = %q, want one warning containing %q", got, tt.want)
 			}
 		})
 	}

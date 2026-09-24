@@ -174,7 +174,9 @@ func runCreate(cmd *cobra.Command, opts InitOptions, projectRoot string) error {
 	if err != nil {
 		return err
 	}
-	accResult, err := runAccumulator(genAnswers, scopeFromAnswers(genAnswers))
+	scope := scopeFromAnswers(genAnswers)
+	warnEcosystemSetup(cmd.ErrOrStderr(), projectRoot, genAnswers, scope)
+	accResult, err := runAccumulator(genAnswers, scope)
 	if err != nil {
 		return fmt.Errorf("generating files: %w", err)
 	}

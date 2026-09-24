@@ -1,6 +1,8 @@
 package devinit
 
 import (
+	"fmt"
+	"io"
 	"log/slog"
 
 	"github.com/Quantum-Serendipity/qsdev/addons/claudecode"
@@ -111,4 +113,17 @@ func runAccumulator(answers types.WizardAnswers, scope generationScope) (accumul
 		devenvGenerated: devenvCount > 0,
 		claudeGenerated: claudeCount > 0,
 	}, nil
+}
+
+// warnEcosystemSetup writes a warning for each file the configured ecosystems
+// need but the project at projectRoot lacks (see ecosystem.SetupWarner), such
+// as the pyproject.toml a Poetry project needs. Only the devenv configuration
+// depends on those files, so a Claude-only scope skips the check.
+func warnEcosystemSetup(w io.Writer, projectRoot string, answers types.WizardAnswers, scope generationScope) {
+	if scope.ClaudeOnly {
+		return
+	}
+	for _, msg := range ecosystem.DefaultRegistry().SetupWarnings(projectRoot, answers.Languages) {
+		_, _ = fmt.Fprintln(w, "Warning: "+msg)
+	}
 }

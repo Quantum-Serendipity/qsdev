@@ -25,6 +25,7 @@ var _ ecosystem.ManifestFileProvider = (*Module)(nil)
 var _ ecosystem.SASTModule = (*Module)(nil)
 var _ ecosystem.DevenvYamlInputProvider = (*Module)(nil)
 var _ ecosystem.PackageProvider = (*Module)(nil)
+var _ ecosystem.SetupWarner = (*Module)(nil)
 
 func init() {
 	ecosystem.MustRegisterModule(&Module{})
@@ -268,6 +269,7 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 		{Key: "version", Value: ecosystem.NixString(version)},
 	}
 	var envVars []ecosystem.NixEnvVar
+	var extraBlocks []string
 
 	switch pm := config.PM("pip"); pm {
 	case "poetry":
@@ -275,13 +277,17 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 		// must stay off: its task runs after poetry's and would activate a
 		// second, empty virtualenv over it. The task (and so activation)
 		// only exists while install.enable is true, and installing is only
-		// safe from a committed lockfile: without poetry.lock, `poetry
-		// install` would resolve fresh on every shell entry.
+		// safe from a lockfile that matches pyproject.toml: without one,
+		// `poetry install` would resolve fresh on every shell entry. The
+		// lock check task enforces that when the shell loads rather than
+		// through builtins.pathExists, whose result devenv's evaluation
+		// cache keeps after poetry.lock is created.
 		props = append(props,
 			ecosystem.NixProperty{Key: "poetry.enable", Value: "true"},
-			ecosystem.NixProperty{Key: "poetry.install.enable", Value: "builtins.pathExists ./poetry.lock"},
+			ecosystem.NixProperty{Key: "poetry.install.enable", Value: "true"},
 			ecosystem.NixProperty{Key: "poetry.activate.enable", Value: "true"},
 		)
+		extraBlocks = append(extraBlocks, poetryCheckLockTask())
 		envVars = append(envVars, ecosystem.NixEnvVar{
 			Key:     "POETRY_INSTALLER_ONLY_BINARY",
 			Value:   ecosystem.NixString(":all:"),
@@ -315,10 +321,67 @@ func (m *Module) DevenvNixFragment(config ecosystem.ModuleConfig) (string, error
 	}
 
 	return ecosystem.BuildLanguageFragment(ecosystem.NixLangConfig{
-		EnablePath: "languages.python",
-		Properties: props,
-		EnvVars:    envVars,
+		EnablePath:  "languages.python",
+		Properties:  props,
+		EnvVars:     envVars,
+		ExtraBlocks: extraBlocks,
 	}), nil
+}
+
+// poetryDevenvTask is the devenv task that runs `poetry install` and
+// activates poetry's .venv on shell entry. devenv defines it only while
+// languages.python.poetry.install.enable is true.
+const poetryDevenvTask = "devenv:python:poetry"
+
+// poetryCheckLockTask returns a devenv task that runs before
+// poetryDevenvTask, and exists exactly when that task does. It fails when
+// pyproject.toml or poetry.lock is missing or `poetry check --lock` rejects
+// the lockfile, so devenv skips the install and activation (their dependency
+// failed) and prints why, instead of letting poetry resolve dependencies
+// afresh or act on a lock that no longer matches pyproject.toml. The shell
+// itself still loads, so `poetry lock` can be run from it.
+func poetryCheckLockTask() string {
+	return `  # Only install from a poetry.lock that matches pyproject.toml.
+  tasks."` + branding.Get().AppName + `:python:poetry-check-lock" = lib.mkIf config.languages.python.poetry.install.enable {
+    description = "Check that poetry.lock exists and matches pyproject.toml";
+    exec = ''
+      if [ ! -f pyproject.toml ]; then
+        echo "pyproject.toml not found; skipping poetry install. Run 'poetry init' to create it." >&2
+        exit 1
+      fi
+      if [ ! -f poetry.lock ]; then
+        echo "poetry.lock not found; skipping poetry install. Run 'poetry lock', commit poetry.lock and reload the shell." >&2
+        exit 1
+      fi
+      if ! ${config.languages.python.poetry.package}/bin/poetry check --lock --no-interaction; then
+        echo "poetry check --lock failed (see above): poetry.lock is out of date with pyproject.toml or pyproject.toml is invalid; skipping poetry install. Run 'poetry lock', commit poetry.lock and reload the shell." >&2
+        exit 1
+      fi
+    '';
+    cwd = config.devenv.root;
+    before = [ "` + poetryDevenvTask + `" ];
+  };
+`
+}
+
+// SetupWarnings reports the Poetry files a poetry-mode project is missing.
+// The generated shell installs dependencies and activates poetry's .venv only
+// once both pyproject.toml (absent when a requirements.txt project picks
+// poetry) and poetry.lock exist (see poetryCheckLockTask). Other package
+// managers need no check.
+func (m *Module) SetupWarnings(projectRoot string, config ecosystem.ModuleConfig) []string {
+	if config.PM("pip") != "poetry" {
+		return nil
+	}
+	switch {
+	case !fileutil.FileExists(projectRoot, "pyproject.toml"):
+		return []string{"poetry is the package manager but pyproject.toml is missing, so the devenv shell cannot set up poetry's .venv; " +
+			"run 'poetry init' and 'poetry lock', or choose another package manager with --python-pkg-mgr"}
+	case !fileutil.FileExists(projectRoot, "poetry.lock"):
+		return []string{"poetry.lock is missing, so the devenv shell will not install dependencies or activate poetry's .venv; " +
+			"run 'poetry lock', commit poetry.lock and reload the shell"}
+	}
+	return nil
 }
 
 // pipConfigPath is the project-relative path of the generated pip.conf.

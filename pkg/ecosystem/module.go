@@ -133,3 +133,12 @@ type DoctorCheckProvider interface {
 type ToolchainRequirementProvider interface {
 	ToolchainRequirements(config ModuleConfig) []ToolchainRequirement
 }
+
+// SetupWarner is an optional interface for modules that can tell when a
+// project lacks files its configuration depends on, such as a package
+// manager chosen for a project that has no manifest for it yet. The warnings
+// are shown when the configuration is generated and never block it; modules
+// with nothing to check simply omit this interface.
+type SetupWarner interface {
+	SetupWarnings(projectRoot string, config ModuleConfig) []string
+}

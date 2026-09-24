@@ -60,6 +60,7 @@ func setupSessionTest(t *testing.T, interactive, inAgent bool) (statePath, proje
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads USERPROFILE on Windows
 	agentMarker := ""
 	if inAgent {
 		agentMarker = "1"

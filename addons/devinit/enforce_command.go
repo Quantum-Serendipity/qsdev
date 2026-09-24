@@ -315,16 +315,17 @@ func policyProjectRoot(payloadCWD string) string {
 func projectRootFrom(start string) string {
 	start = filepath.Clean(start)
 
-	home, err := os.UserHomeDir()
-	if err == nil {
-		home = filepath.Clean(home)
-	}
+	// Home is recognised by file identity, not spelling: on Windows the walk
+	// can reach it as C:\Users\RUNNER~1 (8.3 name) or in another case, and on
+	// any OS through a symlinked $HOME, and a string comparison would then
+	// take the user-level ~/.qsdev for a project marker.
+	isHome := logging.HomeDirMatcher()
 	configFile := branding.Get().ConfigFile
 	root, ok := logging.WalkUp(start, func(dir string) bool {
 		if _, err := os.Stat(filepath.Join(dir, configFile)); err == nil {
 			return true
 		}
-		if dir == home {
+		if isHome(dir) {
 			return false
 		}
 		info, err := os.Stat(filepath.Join(dir, policyDirName))

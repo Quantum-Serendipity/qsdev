@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Quantum-Serendipity/qsdev/internal/exitcode"
+	"github.com/Quantum-Serendipity/qsdev/internal/logging"
 	"github.com/Quantum-Serendipity/qsdev/pkg/branding"
 )
 
@@ -484,8 +485,15 @@ func TestPolicyFilesForDeduplicatesHomeProject(t *testing.T) {
 	if err := os.MkdirAll(start, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if root := policyProjectRoot(start); root != start {
-		t.Errorf("policyProjectRoot(%q) = %q, want the start directory", start, root)
+	want := start
+	if outer, ok := markerAbove(e.home); ok {
+		// On Windows the temp dir sits inside the real user profile, whose own
+		// ~/.qsdev is an ordinary ancestor here because the test points the
+		// home directory elsewhere; the walk rightly stops there, above home.
+		want = outer
+	}
+	if root := policyProjectRoot(start); root != want {
+		t.Errorf("policyProjectRoot(%q) = %q, want %q (the start directory unless a project marker lies above the test home)", start, root, want)
 	}
 	if files := policyFilesFor(start); len(files) != 1 || files[0] != userPolicy {
 		t.Errorf("policyFilesFor(%q) = %v, want only %s", start, files, userPolicy)
@@ -502,6 +510,51 @@ func TestPolicyFilesForDeduplicatesHomeProject(t *testing.T) {
 	}
 	if files := policyFilesFor(root); len(files) != 1 {
 		t.Fatalf("policyFilesFor(%q) = %v, want exactly the user policy once", root, files)
+	}
+}
+
+// markerAbove reports the nearest ancestor of dir (dir excluded) carrying a
+// project marker — a directory outside the test's control, such as the real
+// user profile that contains the Windows temp dir.
+func markerAbove(dir string) (string, bool) {
+	return logging.WalkUp(filepath.Dir(filepath.Clean(dir)), func(d string) bool {
+		if _, err := os.Stat(filepath.Join(d, branding.Get().ConfigFile)); err == nil {
+			return true
+		}
+		info, err := os.Stat(filepath.Join(d, policyDirName))
+		return err == nil && info.IsDir()
+	})
+}
+
+// TestPolicyProjectRoot_HomeMatchedByIdentity is the regression for comparing
+// the walk's directories with $HOME by spelling: a home reached through a
+// symlink (or, on Windows, an 8.3 short name or another case) must still be
+// recognised, so its user-level .qsdev/ is not taken for a project marker.
+func TestPolicyProjectRoot_HomeMatchedByIdentity(t *testing.T) {
+	realHome, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := filepath.Join(realHome, "scratch")
+	for _, dir := range []string{filepath.Join(realHome, policyDirName), start} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink(realHome, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	t.Setenv("HOME", link)
+	t.Setenv("USERPROFILE", link) // os.UserHomeDir reads USERPROFILE on Windows
+	t.Setenv(envClaudeProjectDir, "")
+
+	want := start
+	if outer, ok := markerAbove(realHome); ok {
+		want = outer
+	}
+	if root := policyProjectRoot(start); root != want {
+		t.Errorf("policyProjectRoot(%q) = %q, want %q: the symlinked home's .qsdev/ is not a project marker", start, root, want)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -731,7 +732,7 @@ func TestRunPreToolUse_DeputyDenyRulesFollowRuleSemantics(t *testing.T) {
     bypass_tier: session
     conditions:
       type: path_glob
-      pattern: "%s/*"
+      pattern: %q
     action:
       type: block
 `,
@@ -743,7 +744,7 @@ func TestRunPreToolUse_DeputyDenyRulesFollowRuleSemantics(t *testing.T) {
     bypass_tier: session
     conditions:
       type: path_glob
-      pattern: "%s/*"
+      pattern: %q
     action:
       type: warn
 `,
@@ -756,7 +757,7 @@ func TestRunPreToolUse_DeputyDenyRulesFollowRuleSemantics(t *testing.T) {
     monitor_mode: true
     conditions:
       type: path_glob
-      pattern: "%s/*"
+      pattern: %q
     action:
       type: block
 `,
@@ -774,7 +775,7 @@ func TestRunPreToolUse_DeputyDenyRulesFollowRuleSemantics(t *testing.T) {
         - type: not
           condition:
             type: path_glob
-            pattern: "%s/*"
+            pattern: %q
     action:
       type: block
 `,
@@ -786,7 +787,7 @@ func TestRunPreToolUse_DeputyDenyRulesFollowRuleSemantics(t *testing.T) {
     bypass_tier: session
     conditions:
       type: path_glob
-      pattern: "%s/*"
+      pattern: %q
     action:
       type: block
 `,
@@ -811,7 +812,7 @@ func TestRunPreToolUse_DeputyDenyRulesFollowRuleSemantics(t *testing.T) {
 
 			content := "apiVersion: qsdev/v1\nkind: SecurityPolicy\nmetadata:\n  name: deputy\nrules:\n" +
 				"  - id: DEP-001\n    category: config-guard\n    name: protected dir\n" +
-				fmt.Sprintf(tt.rule, protected)
+				fmt.Sprintf(tt.rule, protected+"/*") // %q: a Windows path's backslashes need escaping in YAML
 			policyFile := filepath.Join(tmpDir, "policy.yaml")
 			if err := os.WriteFile(policyFile, []byte(content), 0o644); err != nil {
 				t.Fatalf("writing policy: %v", err)
@@ -851,10 +852,11 @@ func writeDeputyPolicy(t *testing.T, tier string) (policyFile, protectedFile str
 	if err != nil {
 		t.Fatalf("EvalSymlinks: %v", err)
 	}
+	// strconv.Quote: a Windows path's backslashes need escaping in YAML.
 	content := "apiVersion: qsdev/v1\nkind: SecurityPolicy\nmetadata:\n  name: deputy\nrules:\n" +
 		"  - id: DEP-001\n    category: config-guard\n    name: protected dir\n" +
 		"    severity: high\n    bypass_tier: " + tier + "\n" +
-		"    conditions:\n      type: path_glob\n      pattern: \"" + protected + "/*\"\n" +
+		"    conditions:\n      type: path_glob\n      pattern: " + strconv.Quote(protected+"/*") + "\n" +
 		"    action:\n      type: block\n"
 	policyFile = filepath.Join(tmpDir, "policy.yaml")
 	if err := os.WriteFile(policyFile, []byte(content), 0o644); err != nil {

@@ -34,7 +34,15 @@ type PathMatcher struct {
 // written, it compiles the variant with a leading `~` expanded and the variant
 // whose literal directory prefix is symlink-resolved, so an absolute pattern
 // still matches the canonical (symlink-resolved) spelling of a path under it.
+//
+// Path forms always use forward slashes, so the pattern's separators are
+// normalized the same way first: on Windows a pattern built from a native path
+// (C:\Users\me\.ssh\*) would otherwise have its separators read as glob
+// escapes and never match. filepath.ToSlash is a no-op on Unix, where `\`
+// keeps its glob-escape meaning; Windows file names cannot contain `*` or `?`,
+// so there is little to escape there.
 func CompilePathMatcher(pattern string) (*PathMatcher, error) {
+	pattern = filepath.ToSlash(pattern)
 	m := &PathMatcher{foldCase: caseInsensitiveFS()}
 	for _, p := range patternVariants(pattern) {
 		if m.foldCase {

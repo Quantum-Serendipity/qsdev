@@ -18,7 +18,9 @@ import (
 // are not parallel.
 func isolateApprovals(t *testing.T) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads USERPROFILE on Windows
 }
 
 // recordApproval approves the policy's current content in the default store.

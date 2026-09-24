@@ -90,7 +90,7 @@ func DetectProjectRoot() string {
 //     directory, where the same name is the per-user global data directory
 //     (logs, cache, binaries) rather than a project.
 func FindProjectRoot(start string) (string, bool) {
-	isHome := homeDirMatcher()
+	isHome := HomeDirMatcher()
 	b := branding.Get()
 	dataDir := "." + b.AppName
 	return WalkUp(filepath.Clean(start), func(dir string) bool {
@@ -101,12 +101,12 @@ func FindProjectRoot(start string) (string, bool) {
 	})
 }
 
-// homeDirMatcher returns a predicate reporting whether a directory is the
+// HomeDirMatcher returns a predicate reporting whether a directory is the
 // user's home directory. It compares file identity (os.SameFile), so a $HOME
 // reached through a symlink, a bind mount or a differently-cased path on a
 // case-insensitive filesystem still matches the resolved working directory.
 // With no resolvable home directory it matches nothing.
-func homeDirMatcher() func(dir string) bool {
+func HomeDirMatcher() func(dir string) bool {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return func(string) bool { return false }

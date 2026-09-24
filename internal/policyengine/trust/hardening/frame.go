@@ -19,8 +19,10 @@ const frameTagPrefix = "qsdev:data-"
 
 // frameTagRe matches the opening of any qsdev start or end tag in untrusted
 // content, tolerating case changes and whitespace an attacker might use to
-// slip a forged tag past an exact-match check ("< /QSDEV:data").
-var frameTagRe = regexp.MustCompile(`(?i)<(\s*/?\s*qsdev:)`)
+// slip a forged tag past an exact-match check ("< /QSDEV:data"). Private Use
+// Area runes count as whitespace: datamarking, which runs before framing,
+// replaces the whitespace of such a tag with a PUA marker rune.
+var frameTagRe = regexp.MustCompile(`(?i)<([\s\p{Co}]*/?[\s\p{Co}]*qsdev:)`)
 
 // Frame wraps MCP tool output in a provenance element for the model. The
 // element name carries a per-call random nonce the content cannot predict, and

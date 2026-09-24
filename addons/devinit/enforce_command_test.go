@@ -299,6 +299,43 @@ func TestRunEnforce_PostToolUseHardensMCPOutput(t *testing.T) {
 			},
 		},
 		{
+			// F291: a JSON text block is datamarked token-wise and hardened on
+			// its own, so the model still receives a parseable JSON document.
+			name:     "MCP JSON result stays parseable",
+			toolName: "mcp__evil__get_issue",
+			response: []map[string]string{
+				{"type": "text", "text": `{"body": "` + injection + `", "number": 7}`},
+				{"type": "text", "text": "second block"},
+			},
+			wantOutput: true,
+			check: func(t *testing.T, updated json.RawMessage) {
+				t.Helper()
+				var blocks []map[string]string
+				if err := json.Unmarshal(updated, &blocks); err != nil {
+					t.Fatalf("updated output is not a content array: %v (%s)", err, updated)
+				}
+				if len(blocks) != 2 {
+					t.Fatalf("got %d blocks, want the 2 text blocks kept apart: %v", len(blocks), blocks)
+				}
+				assertHardened(t, blocks[0]["text"])
+
+				var issue struct {
+					Body   string `json:"body"`
+					Number int    `json:"number"`
+				}
+				doc := datamarkedBody(t, blocks[0]["text"])
+				if err := json.Unmarshal([]byte(doc), &issue); err != nil {
+					t.Fatalf("datamarked JSON block does not parse: %v (%q)", err, doc)
+				}
+				if issue.Number != 7 || strings.Contains(issue.Body, "Ignore previous") {
+					t.Errorf("issue = %+v, want number 7 and a datamarked body", issue)
+				}
+				if !strings.Contains(blocks[1]["text"], "<qsdev:data") {
+					t.Errorf("second text block is not hardened: %q", blocks[1]["text"])
+				}
+			},
+		},
+		{
 			name:       "MCP string result",
 			toolName:   "mcp__evil__fetch",
 			response:   injection,
@@ -369,6 +406,18 @@ func TestRunEnforce_PostToolUseHardensMCPOutput(t *testing.T) {
 	}
 }
 
+// datamarkedBody returns the datamarked content between the contentsign
+// framing delimiters of hardened MCP output.
+func datamarkedBody(t *testing.T, hardened string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(hardened, "---BEGIN DOC---\n")
+	body, _, ok2 := strings.Cut(rest, "\n---END DOC---\n")
+	if !ok || !ok2 {
+		t.Fatalf("hardened output has no datamark framing: %q", hardened)
+	}
+	return body
+}
+
 func assertHardened(t *testing.T, text string) {
 	t.Helper()
 	if !strings.Contains(text, "<qsdev:data") {
@@ -376,85 +425,6 @@ func assertHardened(t *testing.T, text string) {
 	}
 	if !strings.Contains(text, "potential prompt injection") {
 		t.Errorf("hardened text lacks the injection warning: %q", text)
-	}
-}
-
-func TestToolResponseTextRoundTrip(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name        string
-		raw         string
-		wantText    string
-		wantOK      bool
-		replacement string
-		wantReplace string
-	}{
-		{
-			name:        "string",
-			raw:         `"hello"`,
-			wantText:    "hello",
-			wantOK:      true,
-			replacement: "X",
-			wantReplace: `"X"`,
-		},
-		{
-			name:        "bare content array keeps non-text blocks",
-			raw:         `[{"type":"text","text":"a"},{"type":"image","data":"AA==","mimeType":"image/png"},{"type":"text","text":"b"}]`,
-			wantText:    "a\nb",
-			wantOK:      true,
-			replacement: "X",
-			wantReplace: `[{"text":"X","type":"text"},{"data":"AA==","mimeType":"image/png","type":"image"}]`,
-		},
-		{
-			name:        "content wrapper object",
-			raw:         `{"content":[{"type":"text","text":"a"}],"isError":false}`,
-			wantText:    "a",
-			wantOK:      true,
-			replacement: "X",
-			wantReplace: `{"content":[{"text":"X","type":"text"}],"isError":false}`,
-		},
-		{
-			name:        "single text block",
-			raw:         `{"type":"text","text":"a"}`,
-			wantText:    "a",
-			wantOK:      true,
-			replacement: "X",
-			wantReplace: `{"text":"X","type":"text"}`,
-		},
-		{
-			name:   "image-only content has no text",
-			raw:    `[{"type":"image","data":"AA==","mimeType":"image/png"}]`,
-			wantOK: false,
-		},
-		{
-			name:        "unknown object is hardened as its JSON",
-			raw:         `{"rows":[1,2]}`,
-			wantText:    `{"rows":[1,2]}`,
-			wantOK:      true,
-			replacement: "X",
-			wantReplace: `"X"`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			text, ok := toolResponseText(json.RawMessage(tt.raw))
-			if ok != tt.wantOK || text != tt.wantText {
-				t.Fatalf("toolResponseText = (%q, %v), want (%q, %v)", text, ok, tt.wantText, tt.wantOK)
-			}
-			if !ok {
-				return
-			}
-			got, err := replaceToolResponseText(json.RawMessage(tt.raw), tt.replacement)
-			if err != nil {
-				t.Fatalf("replaceToolResponseText: %v", err)
-			}
-			if string(got) != tt.wantReplace {
-				t.Errorf("replaceToolResponseText = %s, want %s", got, tt.wantReplace)
-			}
-		})
 	}
 }
 

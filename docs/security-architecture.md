@@ -290,6 +290,30 @@ Trust scores feed a 3-tier model (high / medium / low trust) and drive confused 
 
 **Pinned MCP launches.** Claude Code starts `.mcp.json` servers itself, outside the package guard, the Bash deny rules and lockfile pinning. qsdev therefore pins every catalog server that a package launcher (`npx`, `uvx`, ...) fetches at session start to an exact release, and generation refuses any launcher spec, catalog or configured, that does not name one. `qsdev mcp install` installs exactly the pinned release under the release-age cutoff, and while the project records that install, `.mcp.json` runs the installed executable, so nothing is fetched at session start. See [`.mcp.json`](configuration-reference.md#mcpjson).
 
+**MCP output hardening.** The `qsdev enforce --hook PostToolUse` hook
+rewrites every MCP tool result before the agent reads it, scaled to the
+server's trust tier:
+
+| Tier | Treatment |
+|------|-----------|
+| 1 (local, trusted) | Wrapped in a provenance frame |
+| 2 (enterprise) | Datamarked, then framed |
+| 3 (fallback, untrusted) | Scanned for injection patterns (hits become an inline warning), datamarked, then framed |
+
+Datamarking replaces the whitespace in prose with a Private Use Area rune
+(U+E000–U+E0FF) chosen at random for each result, so injected text no longer
+reads as instructions. Fenced and inline code keep their whitespace. The marked
+text sits between `---BEGIN DOC---` / `---END DOC---` delimiters under a header
+that says what the marker means, and a body line that would forge a delimiter
+is neutralized. A tool result that is a JSON object or array is marked token by
+token: only the whitespace inside its strings is replaced, so the agent still
+gets the same, parseable JSON document. Each text block of an MCP result is
+hardened on its own, and image, audio and resource blocks, other block fields
+and `structuredContent` are kept as the tool returned them. The provenance frame
+tag carries a random nonce per result, and a qsdev tag inside the output is
+escaped, so tool output can neither close the frame nor open a forged trusted
+one.
+
 ### Layer 14: Agent Self-Protection
 
 Self-protection runs as the first PreToolUse hook, before all other hooks. It blocks the AI agent from tampering with its own guardrails, security configuration, or audit trail.

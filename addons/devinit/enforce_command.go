@@ -496,9 +496,9 @@ func writePostToolUseOutput(w io.Writer, specific postToolUseSpecific) error {
 	return nil
 }
 
-// enforcePostToolUse hardens the text of a tool result and, when hardening
-// changed it, hands the hardened result back to Claude Code as a replacement
-// tool output in the same shape the tool produced.
+// enforcePostToolUse hardens each text a tool result carries and, when
+// hardening changed any of it, hands the hardened result back to Claude Code as
+// a replacement tool output in the same shape the tool produced.
 func enforcePostToolUse(cmd *cobra.Command, orchestrator *policyengine.SecurityOrchestrator, evalCtx *policy.EvalContext, input *hookInput) error {
 	response := bytes.TrimSpace(input.ToolResponse)
 	if len(response) == 0 || bytes.Equal(response, []byte("null")) {
@@ -512,19 +512,16 @@ func enforcePostToolUse(cmd *cobra.Command, orchestrator *policyengine.SecurityO
 		response = encoded
 	}
 
-	text, ok := toolResponseText(response)
-	if !ok {
-		return nil
+	harden := func(text string) string {
+		hardened, _ := orchestrator.RunPostToolUse(evalCtx, text)
+		return hardened
 	}
-
-	hardened, _ := orchestrator.RunPostToolUse(evalCtx, text)
-	if hardened == text {
-		return nil
-	}
-
-	replacement, err := replaceToolResponseText(response, hardened)
+	replacement, changed, err := hardenToolResponse(response, harden)
 	if err != nil {
 		return fmt.Errorf("building hardened tool output: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	specific := postToolUseSpecific{UpdatedToolOutput: replacement}
@@ -532,124 +529,4 @@ func enforcePostToolUse(cmd *cobra.Command, orchestrator *policyengine.SecurityO
 		specific.UpdatedMCPToolOutput = replacement
 	}
 	return writePostToolUseOutput(cmd.OutOrStdout(), specific)
-}
-
-// toolResponseText extracts the text the model reads from a tool_response: a
-// bare string, the text blocks of an MCP content array (bare or under
-// "content"), a single {"type":"text"} block, or otherwise the JSON itself.
-// It reports false when the response carries no text to harden, such as an
-// image-only MCP result.
-func toolResponseText(raw json.RawMessage) (string, bool) {
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		return s, true
-	}
-
-	if blocks, _, ok := responseContentBlocks(raw); ok {
-		var texts []string
-		for _, b := range blocks {
-			if t, isText := textBlockText(b); isText {
-				texts = append(texts, t)
-			}
-		}
-		if len(texts) == 0 {
-			return "", false
-		}
-		return strings.Join(texts, "\n"), true
-	}
-
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err == nil {
-		if t, isText := textBlockText(obj); isText {
-			return t, true
-		}
-	}
-
-	return string(raw), true
-}
-
-// replaceToolResponseText rebuilds raw with its text replaced by text, keeping
-// the response's shape: a content array keeps its non-text blocks and carries
-// text as a single text block where the first text block was.
-func replaceToolResponseText(raw json.RawMessage, text string) (json.RawMessage, error) {
-	if blocks, wrapper, ok := responseContentBlocks(raw); ok {
-		replaced := replaceTextBlocks(blocks, text)
-		if wrapper == nil {
-			return json.Marshal(replaced)
-		}
-		content, err := json.Marshal(replaced)
-		if err != nil {
-			return nil, err
-		}
-		wrapper["content"] = content
-		return json.Marshal(wrapper)
-	}
-
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err == nil {
-		if _, isText := textBlockText(obj); isText {
-			encoded, err := json.Marshal(text)
-			if err != nil {
-				return nil, err
-			}
-			obj["text"] = encoded
-			return json.Marshal(obj)
-		}
-	}
-
-	return json.Marshal(text)
-}
-
-// responseContentBlocks decodes raw as an MCP content-block array, either bare
-// or under the "content" key of an object. wrapper is that object (nil for a
-// bare array).
-func responseContentBlocks(raw json.RawMessage) (blocks []map[string]json.RawMessage, wrapper map[string]json.RawMessage, ok bool) {
-	if err := json.Unmarshal(raw, &blocks); err == nil {
-		return blocks, nil, true
-	}
-	if err := json.Unmarshal(raw, &wrapper); err != nil {
-		return nil, nil, false
-	}
-	content, has := wrapper["content"]
-	if !has {
-		return nil, nil, false
-	}
-	if err := json.Unmarshal(content, &blocks); err != nil {
-		return nil, nil, false
-	}
-	return blocks, wrapper, true
-}
-
-// replaceTextBlocks puts text in place of the first text block, drops the
-// other text blocks (their text is already part of text), and keeps every
-// non-text block in order.
-func replaceTextBlocks(blocks []map[string]json.RawMessage, text string) []any {
-	out := make([]any, 0, len(blocks))
-	placed := false
-	for _, b := range blocks {
-		if _, isText := textBlockText(b); !isText {
-			out = append(out, b)
-			continue
-		}
-		if placed {
-			continue
-		}
-		out = append(out, map[string]string{"type": "text", "text": text})
-		placed = true
-	}
-	if !placed {
-		out = append([]any{map[string]string{"type": "text", "text": text}}, out...)
-	}
-	return out
-}
-
-func textBlockText(block map[string]json.RawMessage) (string, bool) {
-	var typ, text string
-	if json.Unmarshal(block["type"], &typ) != nil || typ != "text" {
-		return "", false
-	}
-	if json.Unmarshal(block["text"], &text) != nil {
-		return "", false
-	}
-	return text, true
 }

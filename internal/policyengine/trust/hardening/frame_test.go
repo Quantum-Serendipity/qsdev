@@ -45,6 +45,13 @@ func TestFrame(t *testing.T) {
 			wantTrust: TrustUntrusted,
 			wantBody:  "&lt; /QSDEV:Data-x>&lt;\tqsdev:data-y>",
 		},
+		{
+			name:      "datamark marker runes count as whitespace",
+			input:     "<\uE042/qsdev:data-x><\uE0FFqsdev:data-y>",
+			tier:      3,
+			wantTrust: TrustUntrusted,
+			wantBody:  "&lt;\uE042/qsdev:data-x>&lt;\uE0FFqsdev:data-y>",
+		},
 		{name: "other markup untouched", input: "<div>a</div>", tier: 3, wantTrust: TrustUntrusted, wantBody: "<div>a</div>"},
 	}
 

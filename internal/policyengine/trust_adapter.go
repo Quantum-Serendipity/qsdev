@@ -1,10 +1,13 @@
 package policyengine
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/Quantum-Serendipity/qsdev/internal/contentsign"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/policy"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/risk"
 	"github.com/Quantum-Serendipity/qsdev/internal/policyengine/trust"
@@ -46,12 +49,13 @@ func (a *TrustAdapter) ScoreServer(info *trust.McpServerInfo) trust.TrustScore {
 	return a.engine.ScoreServer(info)
 }
 
-// ApplyHardening composes the trust/hardening primitives (Sanitize, Datamark,
-// Frame) into a tier-scaled transformation of MCP tool output before it enters
-// the agent context. Lower trust tiers receive stronger hardening: Tier 1 (local,
-// trusted) is only structurally framed, Tier 2 is datamarked and framed, and the
-// fallback/untrusted tier additionally runs a strict injection scan whose
-// detections are surfaced as an inline warning.
+// ApplyHardening composes the output hardening primitives (hardening.Sanitize,
+// contentsign datamarking, hardening.Frame) into a tier-scaled transformation
+// of MCP tool output before it enters the agent context. Lower trust tiers
+// receive stronger hardening: Tier 1 (local, trusted) is only structurally
+// framed, Tier 2 is datamarked and framed, and the fallback/untrusted tier
+// additionally runs a strict injection scan whose detections are surfaced as an
+// inline warning.
 func (a *TrustAdapter) ApplyHardening(serverName string, tier trust.TrustTier, output string) string {
 	source := "mcp://" + serverName
 	hardened := output
@@ -60,7 +64,7 @@ func (a *TrustAdapter) ApplyHardening(serverName string, tier trust.TrustTier, o
 	case trust.Tier1Local:
 		hardened = hardening.Frame(hardened, serverName, int(tier), source)
 	case trust.Tier2Enterprise:
-		hardened = hardening.Datamark(hardened)
+		hardened = datamark(source, hardened)
 		hardened = hardening.Frame(hardened, serverName, int(tier), source)
 	default:
 		// The warning is qsdev's own annotation, so it goes outside the
@@ -69,11 +73,28 @@ func (a *TrustAdapter) ApplyHardening(serverName string, tier trust.TrustTier, o
 		if res := hardening.Sanitize(hardened, hardening.StrictMode); res.Detections > 0 {
 			warning = injectionWarning(res.Patterns)
 		}
-		hardened = warning + hardening.Datamark(hardened)
+		hardened = warning + datamark(source, hardened)
 		hardened = hardening.Frame(hardened, serverName, int(tier), source)
 	}
 
 	return hardened
+}
+
+// datamark applies the contentsign datamarking transform to MCP tool output:
+// prose whitespace is replaced with a randomized Private Use Area marker rune so
+// injected instructions stop reading as instructions, code is preserved, a tool
+// result that is a JSON document stays parseable (only its strings are marked),
+// and the result is wrapped in framing that tells the model what the marker
+// means. The framing's delimiters cannot be forged by the output: contentsign
+// neutralizes any body line that would match one.
+func datamark(source, output string) string {
+	sum := sha256.Sum256([]byte(output))
+	opts := contentsign.DefaultDatamarkOptions()
+	opts.Source = source
+	opts.VerificationStatus = contentsign.StatusUnverified
+	opts.ContentHashPrefix = hex.EncodeToString(sum[:6])
+	marked, _ := contentsign.Datamark(output, opts)
+	return marked
 }
 
 func injectionWarning(patterns []string) string {

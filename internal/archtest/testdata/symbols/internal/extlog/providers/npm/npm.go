@@ -1,0 +1,3 @@
+package npm
+
+func init() {}

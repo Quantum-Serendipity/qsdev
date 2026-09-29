@@ -4,6 +4,7 @@ linters:
   default: standard
   enable:
     - depguard
+    - forbidigo
   exclusions:
     generated: lax
     presets:
@@ -23,6 +24,15 @@ linters:
       - linters:
           - errcheck
         text: "Error return value of `os\\.Remove"
+      # Tests may exit from helper processes and TestMain.
+      - linters:
+          - forbidigo
+        path: _test\.go
+      # Only process entrypoints decide the exit code.
+      - linters:
+          - forbidigo
+        path: ^(cmd|instance|internal/selfupdate/internal/gentrustedroot)/
+        text: "os\\.Exit"
   settings:
     depguard:
       rules:
@@ -44,3 +54,53 @@ linters:
               desc: "claudecode must not import devenv — addons communicate through pkg/types"
             - pkg: "github.com/Quantum-Serendipity/qsdev/addons/devinit"
               desc: "claudecode must not import devinit — only devinit may orchestrate other addons"
+        # Forward-declared on the §3.1 foundation packages so they stay leaves
+        # from their first file. internal/archtest enforces the same rule
+        # transitively; depguard gives direct-import feedback in the editor.
+        foundation-leaf:
+          list-mode: lax
+          files:
+            - "**/internal/projectctx/**"
+            - "**/internal/finding/**"
+            - "**/internal/procexec/**"
+            - "**/internal/nixexpr/**"
+            - "**/internal/pathmatch/**"
+            - "**/internal/secrets/**"
+            - "**/internal/claudesettings/**"
+            - "**/internal/mcpconfig/**"
+            - "**/pkg/fileutil/**"
+          deny:
+            - pkg: "github.com/Quantum-Serendipity/qsdev/internal/catalog"
+              desc: "foundation packages must not pull in the tool catalog"
+            - pkg: "github.com/Quantum-Serendipity/qsdev/internal/toolreg"
+              desc: "foundation packages must not pull in the tool registry"
+            - pkg: "github.com/Quantum-Serendipity/qsdev/internal/posture"
+              desc: "foundation packages must not pull in posture scoring"
+            - pkg: "github.com/charmbracelet"
+              desc: "foundation packages must not pull in the TUI stack"
+            - pkg: "net/http"
+              desc: "foundation packages must not pull in the network stack"
+        hookrt-lean:
+          list-mode: lax
+          files:
+            - "**/internal/hookrt/**"
+          deny:
+            - pkg: "github.com/charmbracelet"
+              desc: "the hook runtime must stay lean: no TUI stack"
+            - pkg: "github.com/Quantum-Serendipity/qsdev/internal/posture"
+              desc: "the hook runtime must stay lean: no posture scoring"
+            - pkg: "github.com/Quantum-Serendipity/qsdev/internal/mcpregistry"
+              desc: "the hook runtime must stay lean: no MCP registry"
+            - pkg: "github.com/Quantum-Serendipity/qsdev/internal/selfupdate"
+              desc: "the hook runtime must stay lean: no self-update"
+    # Zero-violation hard bans. Rules that still have violations live in
+    # internal/archtest, whose baseline may only shrink.
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^os\.Exit$
+          msg: "return an error; only cmd, instance and generator mains choose the exit code"
+        - pattern: ^log\.Fatal(f|ln)?$
+          msg: "return a wrapped error instead of log.Fatal"
+        - pattern: ^context\.TODO$
+          msg: "accept a ctx parameter instead of context.TODO"
